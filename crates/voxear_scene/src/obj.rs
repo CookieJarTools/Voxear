@@ -64,4 +64,6 @@ pub fn register_obj_components(world: &mut World) {
     world.register_named_component::<Behaviours>("Voxear.Behaviours");
     world.register_named_component::<InstanceMarker>("Voxear.InstanceMarker");
     world.register_named_component::<ScenePersistence>("Voxear.ScenePersistence");
+    world.register_named_component::<crate::Parent>("Voxear.Parent");
+    world.register_named_component::<crate::WorldTransform>("Voxear.WorldTransform");
 }

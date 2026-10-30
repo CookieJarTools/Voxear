@@ -4,8 +4,10 @@
 //! behaviours attach to it and are driven by the [`Lifecycle`], which
 //! guarantees Awake → OnEnable → Start ordering.
 
+mod hierarchy;
 mod lifecycle;
 mod obj;
 
+pub use hierarchy::{Parent, WorldTransform, propagate_transforms};
 pub use lifecycle::{BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};
 pub use obj::{Behaviours, InstanceMarker, Name, ScenePersistence, Transform, register_obj_components};

@@ -1,0 +1,216 @@
+//! Rendering components on Objs, and extraction of what to draw from the
+//! world each frame.
+
+use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4, camera::lh::proj::vulkan};
+use voxear_ecs::{Component, World};
+use voxear_scene::{Transform, WorldTransform};
+
+use crate::{
+    assets::{MaterialHandle, MeshHandle},
+    gpu::{GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT, cols, vec3},
+};
+
+/// Renders the scene from this Obj, looking along its +Z like Unity.
+#[derive(Clone, Copy, Debug)]
+pub struct Camera {
+    pub fov_y_degrees: f32,
+    pub near: f32,
+    pub exposure: f32,
+}
+impl Component for Camera {}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self { fov_y_degrees: 60.0, near: 0.1, exposure: 1.0 }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightKind {
+    /// Shines along the Obj's +Z, like a sun.
+    Directional,
+    Point,
+    /// Shines along the Obj's +Z.
+    Spot,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Light {
+    pub kind: LightKind,
+    pub color: Vec3,
+    pub intensity: f32,
+    pub range: f32,
+    pub spot_inner_degrees: f32,
+    pub spot_outer_degrees: f32,
+}
+impl Component for Light {}
+
+impl Light {
+    pub fn directional(color: Vec3, intensity: f32) -> Self {
+        Self { kind: LightKind::Directional, color, intensity, range: 0.0, spot_inner_degrees: 0.0, spot_outer_degrees: 0.0 }
+    }
+
+    pub fn point(color: Vec3, intensity: f32, range: f32) -> Self {
+        Self { kind: LightKind::Point, color, intensity, range, spot_inner_degrees: 0.0, spot_outer_degrees: 0.0 }
+    }
+
+    pub fn spot(color: Vec3, intensity: f32, range: f32, inner_degrees: f32, outer_degrees: f32) -> Self {
+        Self {
+            kind: LightKind::Spot,
+            color,
+            intensity,
+            range,
+            spot_inner_degrees: inner_degrees,
+            spot_outer_degrees: outer_degrees,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MeshRenderer {
+    pub mesh: MeshHandle,
+    pub material: MaterialHandle,
+}
+impl Component for MeshRenderer {}
+
+/// Everything the GPU needs for one view of the world.
+pub struct ExtractedFrame {
+    pub frame: GpuFrame,
+    pub instances: Vec<GpuInstance>,
+    pub lights: Vec<GpuLight>,
+}
+
+/// Sky colours when the scene has no sky settings: a clear midday.
+const SKY_ZENITH: Vec3 = Vec3::new(0.23, 0.45, 0.85);
+const SKY_HORIZON: Vec3 = Vec3::new(0.62, 0.72, 0.86);
+const GROUND: Vec3 = Vec3::new(0.22, 0.2, 0.18);
+
+pub fn extract(world: &World, width: u32, height: u32, time: f32) -> ExtractedFrame {
+    let aspect = width as f32 / height.max(1) as f32;
+    let (camera, transform) = world
+        .query_ref::<(&Camera, &Transform)>()
+        .into_iter()
+        .next()
+        .map(|(c, t)| (*c, *t))
+        .unwrap_or((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.0, -5.0))));
+
+    let fov = camera.fov_y_degrees.to_radians();
+    let view = Mat4::from_rotation_translation(transform.rotation, transform.position).inverse();
+    let view_proj = vulkan::perspective_infinite_reverse(fov, aspect, camera.near) * view;
+
+    let mut frame = GpuFrame {
+        view_proj: cols(view_proj),
+        planes: frustum_planes(transform.position, transform.rotation, fov, aspect, camera.near),
+        camera_position: vec3(transform.position),
+        time,
+        sun_direction: vec3(Vec3::new(0.3, -0.8, 0.5).normalize()),
+        sun_color: [0.0; 3],
+        exposure: camera.exposure,
+        sky_zenith: vec3(SKY_ZENITH),
+        sky_horizon: vec3(SKY_HORIZON),
+        ground_color: vec3(GROUND),
+        viewport: [width, height],
+        inv_view_proj: cols(view_proj.inverse()),
+        ..Default::default()
+    };
+
+    let mut lights = Vec::new();
+    let mut sun_found = false;
+    for (light, transform) in world.query_ref::<(&Light, &Transform)>() {
+        let forward = transform.rotation * Vec3::Z;
+        let radiance = light.color * light.intensity;
+        match light.kind {
+            LightKind::Directional if !sun_found => {
+                sun_found = true;
+                frame.sun_direction = vec3(forward);
+                frame.sun_color = vec3(radiance);
+            }
+            LightKind::Directional => {}
+            LightKind::Point | LightKind::Spot => lights.push(GpuLight {
+                position: vec3(transform.position),
+                range: light.range,
+                color: vec3(radiance),
+                kind: if light.kind == LightKind::Spot { LIGHT_SPOT } else { LIGHT_POINT },
+                direction: vec3(forward),
+                cos_outer: (light.spot_outer_degrees.to_radians() * 0.5).cos(),
+                cos_inner: (light.spot_inner_degrees.to_radians() * 0.5).cos(),
+                _pad: [0.0; 3],
+            }),
+        }
+    }
+    frame.light_count = lights.len() as u32;
+
+    let instances: Vec<GpuInstance> = world
+        .query_ref::<(&MeshRenderer, &Transform, Option<&WorldTransform>)>()
+        .into_iter()
+        .map(|(renderer, transform, world_transform)| {
+            let model = world_transform.map_or_else(
+                || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
+                |w| w.0,
+            );
+            let normal = Mat3::from_mat4(model).inverse().transpose();
+            GpuInstance {
+                model: cols(model),
+                normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
+                mesh: renderer.mesh.0,
+                material: renderer.material.0,
+                _pad: [0; 2],
+            }
+        })
+        .collect();
+    frame.instance_count = instances.len() as u32;
+
+    ExtractedFrame { frame, instances, lights }
+}
+
+/// Inward-facing side and near planes of an infinite perspective frustum.
+fn frustum_planes(position: Vec3, rotation: Quat, fov_y: f32, aspect: f32, near: f32) -> [[f32; 4]; 6] {
+    let forward = rotation * Vec3::Z;
+    let right = rotation * Vec3::X;
+    let up = rotation * Vec3::Y;
+    let half_v = fov_y * 0.5;
+    let half_h = (half_v.tan() * aspect).atan();
+    let plane = |normal: Vec3| {
+        let normal = normal.normalize();
+        [normal.x, normal.y, normal.z, -normal.dot(position)]
+    };
+    let near_plane = [forward.x, forward.y, forward.z, -forward.dot(position) - near];
+    [
+        plane(right * half_h.cos() + forward * half_h.sin()),
+        plane(-right * half_h.cos() + forward * half_h.sin()),
+        plane(up * half_v.cos() + forward * half_v.sin()),
+        plane(-up * half_v.cos() + forward * half_v.sin()),
+        near_plane,
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inside(planes: &[[f32; 4]; 6], point: Vec3, radius: f32) -> bool {
+        planes.iter().all(|p| Vec3::new(p[0], p[1], p[2]).dot(point) + p[3] >= -radius)
+    }
+
+    #[test]
+    fn frustum_keeps_what_is_in_front_and_drops_the_rest() {
+        let planes = frustum_planes(Vec3::ZERO, Quat::IDENTITY, 60f32.to_radians(), 16.0 / 9.0, 0.1);
+        assert!(inside(&planes, Vec3::new(0.0, 0.0, 10.0), 0.5));
+        assert!(inside(&planes, Vec3::new(0.0, 0.0, 10_000.0), 0.5), "the far plane is at infinity");
+        assert!(!inside(&planes, Vec3::new(0.0, 0.0, -10.0), 0.5), "behind the camera");
+        assert!(!inside(&planes, Vec3::new(50.0, 0.0, 10.0), 0.5), "far to the right");
+        assert!(!inside(&planes, Vec3::new(0.0, 20.0, 10.0), 0.5), "far above");
+        assert!(inside(&planes, Vec3::new(5.9, 0.0, 10.0), 0.5), "just inside the right edge");
+    }
+
+    #[test]
+    fn camera_looks_along_positive_z() {
+        let view = Mat4::from_rotation_translation(Quat::IDENTITY, Vec3::ZERO).inverse();
+        let clip = vulkan::perspective_infinite_reverse(1.0, 1.0, 0.1) * view * Vec4::new(0.0, 1.0, 5.0, 1.0);
+        let ndc = clip.truncate() / clip.w;
+        assert!(clip.w > 0.0, "points in front have positive w");
+        assert!(ndc.y < 0.0, "up in the world is up on screen, which is -Y in Vulkan");
+        assert!(ndc.z > 0.0 && ndc.z < 1.0, "reverse-Z depth lies in (0, 1)");
+    }
+}

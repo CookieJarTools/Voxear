@@ -7,8 +7,9 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
-use voxear_core::math::{EulerRot, Vec3};
-use voxear_engine::{Engine, Project, core_assembly, run_windowed};
+use voxear_core::math::EulerRot;
+use voxear_engine::{Engine, Project, core_assembly, run_windowed, spawn_objs};
+use voxear_render::{Renderer, RendererSettings};
 use voxear_scene::{Name, Transform};
 use voxear_scripting::{DotnetInstall, ScriptRuntime, find_dotnet};
 
@@ -39,6 +40,31 @@ enum Commands {
         /// Skip building the C# scripts first.
         #[arg(long)]
         no_build: bool,
+        /// Load RenderDoc so F12 captures a frame.
+        #[arg(long)]
+        renderdoc: bool,
+    },
+    /// Render a project offscreen and save the image, with GPU timings.
+    Render {
+        /// Project folder or its voxear.toml.
+        #[arg(default_value = ".")]
+        project: PathBuf,
+        /// Where to write the PNG.
+        #[arg(long, default_value = "frame.png")]
+        out: PathBuf,
+        #[arg(long, default_value_t = 1280)]
+        width: u32,
+        #[arg(long, default_value_t = 720)]
+        height: u32,
+        /// Frames to simulate first, so scripts and timings settle.
+        #[arg(long, default_value_t = 10)]
+        frames: u64,
+        /// Skip building the C# scripts first.
+        #[arg(long)]
+        no_build: bool,
+        /// Capture the final frame in RenderDoc.
+        #[arg(long)]
+        renderdoc: bool,
     },
 }
 
@@ -46,37 +72,95 @@ fn main() -> Result<()> {
     voxear_core::logging::init();
     match Cli::parse().command {
         Commands::Doctor => doctor(),
-        Commands::Run { project, headless, frames, no_build } => run(&project, headless, frames, no_build),
+        Commands::Run { project, headless, frames, no_build, renderdoc } => {
+            run(&project, headless, frames, no_build, renderdoc)
+        }
+        Commands::Render { project, out, width, height, frames, no_build, renderdoc } => {
+            render(&project, &out, (width, height), frames, no_build, renderdoc)
+        }
     }
 }
 
-fn run(path: &Path, headless: bool, frames: Option<u64>, no_build: bool) -> Result<()> {
+fn run(path: &Path, headless: bool, frames: Option<u64>, no_build: bool, renderdoc: bool) -> Result<()> {
     let project = Project::open(path)?;
-    let mut engine = Engine::new();
-
-    if let Some(csproj) = project.scripts_project() {
-        let dotnet = find_dotnet().context(".NET is not installed; run `vox doctor` for how to get it")?;
-        if !no_build {
-            build_scripts(&dotnet, &csproj)?;
-        }
-        let mut scripts = ScriptRuntime::start(&dotnet, &core_assembly(CONFIGURATION))?;
-        let assembly = project.scripts_assembly(CONFIGURATION).context("scripts project has no file name")?;
-        scripts.load_game_assembly(&assembly)?;
-        engine.set_scripts(scripts);
-    }
-
-    for obj in &project.file.objs {
-        engine.spawn_obj(&obj.name, Vec3::from(obj.position), &obj.behaviours)?;
-    }
+    let settings = renderer_settings(&project, renderdoc);
+    let engine = start_engine(&project, no_build)?;
 
     if !headless {
-        return run_windowed(engine, &format!("{} — Voxear", project.name()), frames);
+        let title = format!("{} — Voxear", project.name());
+        let setup = Box::new(move |engine: &mut Engine, renderer: &mut Renderer| spawn_objs(engine, Some(renderer), &project));
+        return run_windowed(engine, &title, frames, settings, setup);
     }
-    let frames = frames.unwrap_or(3);
-    for _ in 0..frames {
+    let mut engine = engine;
+    spawn_objs(&mut engine, None, &project)?;
+    for _ in 0..frames.unwrap_or(3) {
         engine.tick(1.0 / 60.0);
     }
     print_objs(&engine);
+    Ok(())
+}
+
+fn render(
+    path: &Path,
+    out: &Path,
+    (width, height): (u32, u32),
+    frames: u64,
+    no_build: bool,
+    renderdoc: bool,
+) -> Result<()> {
+    let project = Project::open(path)?;
+    let mut engine = start_engine(&project, no_build)?;
+    let mut renderer = Renderer::new_offscreen(width, height, &renderer_settings(&project, renderdoc))?;
+    spawn_objs(&mut engine, Some(&mut renderer), &project)?;
+    let frames = frames.max(1);
+    for frame in 1..=frames {
+        engine.tick(1.0 / 60.0);
+        let capture = frame == frames && renderer.has_renderdoc();
+        if capture {
+            renderer.start_capture();
+        }
+        renderer.render(&engine.world, engine.time().elapsed as f32)?;
+        if capture && let Some(path) = renderer.end_capture() {
+            println!("RenderDoc capture: {}", path.display());
+        }
+    }
+
+    let (width, height, pixels) = renderer.read_pixels()?;
+    write_png(out, width, height, &pixels)?;
+    println!("wrote {} ({width}×{height}) on {}", out.display(), renderer.gpu().name);
+    for (pass, ms) in renderer.timings() {
+        println!("  {pass:<12} {ms:>7.3} ms");
+    }
+    Ok(())
+}
+
+/// RenderDoc captures land in the project's `.voxear/Captures`.
+fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
+    RendererSettings { renderdoc, capture_folder: Some(project.root.join(".voxear").join("Captures")) }
+}
+
+/// Creates the engine and, when the project has scripts, builds and loads them.
+fn start_engine(project: &Project, no_build: bool) -> Result<Engine> {
+    let mut engine = Engine::new();
+    let Some(csproj) = project.scripts_project() else { return Ok(engine) };
+    let dotnet = find_dotnet().context(".NET is not installed; run `vox doctor` for how to get it")?;
+    if !no_build {
+        build_scripts(&dotnet, &csproj)?;
+    }
+    let mut scripts = ScriptRuntime::start(&dotnet, &core_assembly(CONFIGURATION))?;
+    let assembly = project.scripts_assembly(CONFIGURATION).context("scripts project has no file name")?;
+    scripts.load_game_assembly(&assembly)?;
+    engine.set_scripts(scripts);
+    Ok(engine)
+}
+
+fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+    let file = std::fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+    encoder.write_header()?.write_image_data(rgba)?;
     Ok(())
 }
 
@@ -134,13 +218,13 @@ fn doctor() -> Result<()> {
     }
 
     println!("\nShader compiler");
-    match tool_version("glslc") {
+    match tool_version("slangc", "-v") {
         Some(version) => {
-            ok(&format!("glslc ({version})"));
+            ok(&format!("slangc ({version})"));
         }
         None => {
-            ready &= fail("glslc not found");
-            hint("Arch: sudo pacman -S shaderc    Windows: install the Vulkan SDK");
+            ready &= fail("slangc not found");
+            hint("Arch: sudo pacman -S shader-slang    Windows: install the Vulkan SDK");
         }
     }
 
@@ -168,9 +252,10 @@ fn report_gpu(gpu: &voxear_rhi::GpuInfo) -> bool {
     }
 }
 
-fn tool_version(tool: &str) -> Option<String> {
-    let output = Command::new(tool).arg("--version").output().ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
+fn tool_version(tool: &str, flag: &str) -> Option<String> {
+    let output = Command::new(tool).arg(flag).output().ok()?;
+    let text = [output.stdout, output.stderr].concat();
+    let text = String::from_utf8_lossy(&text);
     Some(text.lines().next().unwrap_or_default().trim().to_string())
 }
 

@@ -19,7 +19,29 @@ milestone ends with something you can run. Design details for every system are i
   frames in flight, and a first pipeline using dynamic rendering.
 - **`vox` CLI.** `vox doctor`, `vox run` (windowed or `--headless`), and the `samples/Hello` project.
 
-## M1 — Rendering core
+## M1 — Rendering core (in progress)
+
+Done so far:
+- **Render graph** with automatic barriers, debug labels and per-pass GPU timers.
+- **Bindless resources:** textures and samplers by index, and buffers by device address.
+- **Slang shaders** compiled at build time.
+- **GPU-driven drawing:** GPU frustum culling writes indirect draws, and all meshes share one vertex and index
+  buffer.
+- **Lighting:** a camera with reverse-Z depth, a PBR forward pass, a sun plus point and spot lights, an analytic sky,
+  and ACES tonemapping.
+- **glTF import:** mirrored to Unity's coordinates, with textures and mips.
+- **Hierarchy:** parent/child transforms.
+- **Rendering modes:** headless offscreen rendering (`vox render`), and RenderDoc capture (F12 or `--renderdoc`).
+
+Still to do in M1:
+- Shader hot reload.
+- Clustered lights; today every light is looped over per pixel.
+- Cascaded shadows.
+- Two-phase Hi-Z occlusion culling.
+- Meshlets and LOD.
+- Debug views.
+
+The original M1 scope:
 
 - Render graph (barriers, transient aliasing, async compute) and bindless descriptors.
 - Slang toolchain, with shader hot reload.
@@ -31,7 +53,8 @@ milestone ends with something you can run. Design details for every system are i
 - **GPU culling:** frustum culling plus two-phase Hi-Z occlusion culling per instance, with no CPU readback.
 - **Built-in LOD:** LODs generated on import, selected on the GPU by screen-space error, with dithered
   cross-fades.
-- Debug views (wireframe, normals, overdraw) and GPU timestamps.
+- Debug views (wireframe, normals, overdraw), GPU timestamps, and Vulkan debug names on every pass and resource.
+- One-button RenderDoc capture through its in-app API.
 
 **Exit:** a glTF scene renders lit and shadowed at a solid frame rate, on Linux and Windows.
 
@@ -43,6 +66,7 @@ milestone ends with something you can run. Design details for every system are i
 - Levels, scene diffing on level change, and Scene Persistence.
 - Content build: usage-set bundling, a catalog, and incremental content hashing.
 - Runtime loading, sync and async, with reference counting.
+- Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
 - `vox content build`.
 
 **Exit:** a two-level sample shares scenes between levels and loads only what each level needs.
@@ -57,15 +81,30 @@ milestone ends with something you can run. Design details for every system are i
 - OKLCH theme tokens.
 - Docking, Hierarchy (with instance badges), Inspector, Project, Scene and Game views, and Console.
 - Command palette (Ctrl+K), gizmos, selection, undo/redo, play mode, and C# hot reload.
+- Debug tools:
+  - the stats overlay and the profiler panel (with Tracy)
+  - the frame debugger and the ECS inspector
+  - the memory profiler with snapshots and diffs
+  - debug draw and the dev console
+- `vox new` with project templates and default setups, and versioned engine builds with a release manifest, which
+  together are the contract the launcher needs.
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
 
-## M4 — Input, audio and physics
+## M4 — Input, localization, audio and physics
 
 - Input:
   - actions, schemes and auto-switching
   - the rebinding UI
   - prompt glyphs per scheme, device and locale
+- **Localization:**
+  - string and asset tables
+  - ICU smart strings (plurals, gender, number and date formatting)
+  - binding through `@key` in UI markup, `LocalizedString` fields, `LocalizedText`, and observable `Localized(key)`
+  - CSV import from a file or URL with a diff preview, and CSV export
+  - the Localization Tables editor window, with pseudo-localisation
+  - automatic language detection (saved choice, then store, then OS) with fallback chains
+  - RTL mirroring and per-locale fonts
 - Audio mixer, 2D/3D sources, and Steam Audio occlusion, reflections and pathing.
 - Jolt integration (bodies, joints, character controller, queries, events) and Box2D v3.
 
@@ -117,13 +156,29 @@ milestone ends with something you can run. Design details for every system are i
 - Sprites and atlases, tilemaps with rule tiles, 2D lights, and the pixel-perfect camera.
 - Replication, RPCs, prediction and rollback, interpolation, the network simulator, and multi-instance play mode.
 
-## M11 — Ship it
+## M11 — Modding and platform services
+
+- **Platform API.** A provider interface with capability checks, an offline provider, and Steam: achievements,
+  stats, leaderboards, cloud saves, rich presence, the overlay, Steam Input, lobbies and Steam Networking Sockets.
+- **Content mods.** Layered catalogs, overridable-asset rules, Definition patches and conflict detection.
+- **Script mods.** The `[ModApi]` surface, the allowlist scan, per-mod load contexts, fault isolation and the
+  watchdog.
+- **Mod packaging.** `mod.toml` manifests, dependency and version resolution, load order, signing, and the consent
+  prompt.
+- **Distribution and tools.**
+  - The built-in mod manager screen.
+  - Steam Workshop as a mod source and publish target.
+  - Multiplayer mod-set matching.
+  - Mod SDK export and editor mod mode.
+  - `vox mod` and `vox steam upload`.
+
+## M12 — Ship it
 
 - `vox build` end to end, NativeAOT players, and Windows CI.
-- Profiler, frame debugger, memory tools and documentation.
+- Crash reporter, GPU crash diagnostics, remote attach for every debug panel, and documentation.
 - Editor RPC for `vox`, and the hook for AI tooling.
 
-## M12 — Virtualised geometry (Nanite-style)
+## M13 — Virtualised geometry (Nanite-style)
 
 M1 and M5 already lay the groundwork: meshlets, the visibility buffer and two-phase Hi-Z culling. This milestone
 can move earlier if it becomes a priority.
@@ -133,6 +188,17 @@ can move earlier if it becomes a priority.
 - Continuous per-cluster LOD selected on the GPU.
 - Cluster page streaming through Content.
 - Compute rasterisation for tiny triangles.
+
+## Separate repository: Voxear Launcher
+
+The launcher, the equivalent of Unity Hub, lives in its own repository. It covers:
+- installing engine versions side by side
+- updating itself
+- the project list
+- the new-project flow with templates and default setups
+
+It relies on the engine contract described under "Versions, installs and the launcher" in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Decisions
 

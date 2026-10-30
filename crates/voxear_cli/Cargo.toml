@@ -20,3 +20,5 @@ anyhow.workspace = true
 clap.workspace = true
 voxear_scene.workspace = true
 tracing.workspace = true
+voxear_render.workspace = true
+png.workspace = true

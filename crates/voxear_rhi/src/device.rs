@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CStr, c_char, c_void},
+    ffi::{CStr, CString, c_char, c_void},
     mem::ManuallyDrop,
     sync::Mutex,
 };
@@ -21,6 +21,8 @@ pub struct GpuInfo {
     pub device_local_mb: u64,
     pub mesh_shaders: bool,
     pub ray_tracing: bool,
+    /// Nanoseconds per timestamp tick.
+    pub timestamp_period: f32,
     /// Why the GPU cannot run Voxear, if it cannot.
     pub unsupported: Option<String>,
 }
@@ -37,7 +39,16 @@ pub struct Gpu {
     pub surface_loader: khr::surface::Instance,
     pub swapchain_loader: khr::swapchain::Device,
     pub allocator: ManuallyDrop<Mutex<Allocator>>,
-    debug: Option<(ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+    /// Names and labels for RenderDoc, Nsight and validation messages.
+    debug_utils: Option<ext::debug_utils::Device>,
+    messenger: Option<(ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+}
+
+/// A window to present to.
+#[derive(Clone, Copy)]
+pub struct WindowHandles {
+    pub display: RawDisplayHandle,
+    pub window: RawWindowHandle,
 }
 
 impl Gpu {
@@ -46,17 +57,34 @@ impl Gpu {
     ///
     /// # Safety
     /// The window handles must stay valid until the surface is destroyed.
-    pub unsafe fn new(display: RawDisplayHandle, window: RawWindowHandle) -> Result<(Self, vk::SurfaceKHR)> {
+    pub unsafe fn new(window: WindowHandles) -> Result<(Self, vk::SurfaceKHR)> {
+        let (gpu, surface) = unsafe { Self::create(Some(window))? };
+        Ok((gpu, surface.expect("a window was given")))
+    }
+
+    /// Creates a device with no window, for offscreen rendering and tools.
+    pub fn new_headless() -> Result<Self> {
+        Ok(unsafe { Self::create(None)? }.0)
+    }
+
+    unsafe fn create(window: Option<WindowHandles>) -> Result<(Self, Option<vk::SurfaceKHR>)> {
         let entry = unsafe { ash::Entry::load() }.context("the Vulkan loader is not installed")?;
         let validation = wants_validation(&entry);
-        let mut extensions = ash_window::enumerate_required_extensions(display)?.to_vec();
-        if validation {
+        let debug_utils = has_instance_extension(&entry, ext::debug_utils::NAME);
+        let mut extensions = match window {
+            Some(w) => ash_window::enumerate_required_extensions(w.display)?.to_vec(),
+            None => vec![khr::surface::NAME.as_ptr()],
+        };
+        if debug_utils {
             extensions.push(ext::debug_utils::NAME.as_ptr());
         }
         let instance = create_instance(&entry, &extensions, validation)?;
-        let debug = validation.then(|| create_messenger(&entry, &instance)).transpose()?;
+        let messenger = (validation && debug_utils).then(|| create_messenger(&entry, &instance)).transpose()?;
 
-        let surface = unsafe { ash_window::create_surface(&entry, &instance, display, window, None)? };
+        let surface = match window {
+            Some(w) => Some(unsafe { ash_window::create_surface(&entry, &instance, w.display, w.window, None)? }),
+            None => None,
+        };
         let surface_loader = khr::surface::Instance::new(&entry, &instance);
 
         let candidates = unsafe { instance.enumerate_physical_devices()? };
@@ -67,8 +95,8 @@ impl Gpu {
                 tracing::info!("skipping {}: {reason}", info.name);
                 continue;
             }
-            let Some(family) = present_queue_family(&instance, &surface_loader, physical, surface) else {
-                tracing::info!("skipping {}: cannot present to this window", info.name);
+            let Some(family) = queue_family(&instance, &surface_loader, physical, surface) else {
+                tracing::info!("skipping {}: no suitable queue", info.name);
                 continue;
             };
             let score = score(&info);
@@ -95,6 +123,7 @@ impl Gpu {
         let (major, minor, patch) = info.api_version;
         tracing::info!("GPU: {} (Vulkan {major}.{minor}.{patch}, {})", info.name, info.driver);
         let gpu = Self {
+            debug_utils: debug_utils.then(|| ext::debug_utils::Device::new(&instance, &device)),
             entry,
             instance,
             physical,
@@ -105,7 +134,7 @@ impl Gpu {
             surface_loader,
             swapchain_loader,
             allocator: ManuallyDrop::new(Mutex::new(allocator)),
-            debug,
+            messenger,
         };
         Ok((gpu, surface))
     }
@@ -113,6 +142,31 @@ impl Gpu {
     pub fn wait_idle(&self) {
         unsafe {
             let _ = self.device.device_wait_idle();
+        }
+    }
+
+    /// Names a Vulkan object so captures and validation messages read like
+    /// the engine's own structure.
+    pub fn set_name<H: vk::Handle>(&self, handle: H, name: &str) {
+        let Some(debug) = &self.debug_utils else { return };
+        let Ok(name) = CString::new(name) else { return };
+        let info = vk::DebugUtilsObjectNameInfoEXT::default().object_handle(handle).object_name(&name);
+        unsafe {
+            let _ = debug.set_debug_utils_object_name(&info);
+        }
+    }
+
+    /// Opens a named region in a command buffer, shown as a group in GPU tools.
+    pub fn begin_label(&self, cmd: vk::CommandBuffer, name: &str, color: [f32; 4]) {
+        let Some(debug) = &self.debug_utils else { return };
+        let Ok(name) = CString::new(name) else { return };
+        let label = vk::DebugUtilsLabelEXT::default().label_name(&name).color(color);
+        unsafe { debug.cmd_begin_debug_utils_label(cmd, &label) };
+    }
+
+    pub fn end_label(&self, cmd: vk::CommandBuffer) {
+        if let Some(debug) = &self.debug_utils {
+            unsafe { debug.cmd_end_debug_utils_label(cmd) };
         }
     }
 }
@@ -123,7 +177,7 @@ impl Drop for Gpu {
             self.wait_idle();
             ManuallyDrop::drop(&mut self.allocator);
             self.device.destroy_device(None);
-            if let Some((loader, messenger)) = self.debug.take() {
+            if let Some((loader, messenger)) = self.messenger.take() {
                 loader.destroy_debug_utils_messenger(messenger, None);
             }
             self.instance.destroy_instance(None);
@@ -139,6 +193,11 @@ pub fn enumerate_gpus() -> Result<Vec<GpuInfo>> {
     let infos = devices.map(|devices| devices.into_iter().map(|d| describe(&instance, d)).collect());
     unsafe { instance.destroy_instance(None) };
     Ok(infos?)
+}
+
+fn has_instance_extension(entry: &ash::Entry, name: &CStr) -> bool {
+    let extensions = unsafe { entry.enumerate_instance_extension_properties(None) }.unwrap_or_default();
+    extensions.iter().any(|e| e.extension_name_as_c_str() == Ok(name))
 }
 
 fn wants_validation(entry: &ash::Entry) -> bool {
@@ -212,7 +271,8 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
     unsafe { instance.get_physical_device_properties2(physical, &mut properties) };
     let props = properties.properties;
     let memory = unsafe { instance.get_physical_device_memory_properties(physical) };
-    let device_local: u64 = memory.memory_heaps_as_slice()
+    let device_local: u64 = memory
+        .memory_heaps_as_slice()
         .iter()
         .filter(|h| h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
         .map(|h| h.size)
@@ -230,6 +290,8 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
         Some("needs Vulkan 1.3".to_string())
     } else if !has(khr::swapchain::NAME) {
         Some("no swapchain support".to_string())
+    } else if props.limits.timestamp_compute_and_graphics == vk::FALSE {
+        Some("no GPU timestamps".to_string())
     } else {
         let missing = missing_features(instance, physical);
         (!missing.is_empty()).then(|| format!("missing {}", missing.join(", ")))
@@ -243,29 +305,145 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
         device_local_mb: device_local / (1024 * 1024),
         mesh_shaders: has(ext::mesh_shader::NAME),
         ray_tracing: has(khr::acceleration_structure::NAME) && has(khr::ray_query::NAME),
+        timestamp_period: props.limits.timestamp_period,
         unsupported,
     }
 }
 
+/// The feature set Voxear requires. Every entry is supported by current
+/// NVIDIA, AMD and Intel drivers on Linux and Windows.
+struct Features<'a> {
+    core: vk::PhysicalDeviceFeatures2<'a>,
+    v11: vk::PhysicalDeviceVulkan11Features<'a>,
+    v12: vk::PhysicalDeviceVulkan12Features<'a>,
+    v13: vk::PhysicalDeviceVulkan13Features<'a>,
+}
+
+impl Features<'_> {
+    fn required() -> Self {
+        let core = vk::PhysicalDeviceFeatures::default()
+            .multi_draw_indirect(true)
+            .draw_indirect_first_instance(true)
+            .sampler_anisotropy(true)
+            .shader_int64(true)
+            .fill_mode_non_solid(true)
+            .depth_clamp(true)
+            .independent_blend(true);
+        Self {
+            core: vk::PhysicalDeviceFeatures2::default().features(core),
+            v11: vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true),
+            v12: vk::PhysicalDeviceVulkan12Features::default()
+                .timeline_semaphore(true)
+                .buffer_device_address(true)
+                .scalar_block_layout(true)
+                .draw_indirect_count(true)
+                .sampler_filter_minmax(true)
+                .host_query_reset(true)
+                .descriptor_indexing(true)
+                .runtime_descriptor_array(true)
+                .descriptor_binding_partially_bound(true)
+                .descriptor_binding_update_unused_while_pending(true)
+                .descriptor_binding_sampled_image_update_after_bind(true)
+                .descriptor_binding_storage_image_update_after_bind(true)
+                .shader_sampled_image_array_non_uniform_indexing(true)
+                .shader_storage_image_array_non_uniform_indexing(true),
+            v13: vk::PhysicalDeviceVulkan13Features::default()
+                .dynamic_rendering(true)
+                .synchronization2(true)
+                .shader_demote_to_helper_invocation(true),
+        }
+    }
+
+    fn query(instance: &ash::Instance, physical: vk::PhysicalDevice) -> Self {
+        let mut features = Self {
+            core: vk::PhysicalDeviceFeatures2::default(),
+            v11: vk::PhysicalDeviceVulkan11Features::default(),
+            v12: vk::PhysicalDeviceVulkan12Features::default(),
+            v13: vk::PhysicalDeviceVulkan13Features::default(),
+        };
+        let mut chain = vk::PhysicalDeviceFeatures2::default()
+            .push_next(&mut features.v11)
+            .push_next(&mut features.v12)
+            .push_next(&mut features.v13);
+        unsafe { instance.get_physical_device_features2(physical, &mut chain) };
+        features.core.features = chain.features;
+        features
+    }
+
+    /// Pairs of (name, required, supported).
+    fn compare(&self, supported: &Self) -> Vec<(&'static str, bool, bool)> {
+        let (r, s) = (self, supported);
+        let on = |v: vk::Bool32| v == vk::TRUE;
+        vec![
+            ("multi-draw indirect", on(r.core.features.multi_draw_indirect), on(s.core.features.multi_draw_indirect)),
+            (
+                "indirect first instance",
+                on(r.core.features.draw_indirect_first_instance),
+                on(s.core.features.draw_indirect_first_instance),
+            ),
+            ("anisotropic filtering", on(r.core.features.sampler_anisotropy), on(s.core.features.sampler_anisotropy)),
+            ("64-bit shader integers", on(r.core.features.shader_int64), on(s.core.features.shader_int64)),
+            ("wireframe", on(r.core.features.fill_mode_non_solid), on(s.core.features.fill_mode_non_solid)),
+            ("depth clamp", on(r.core.features.depth_clamp), on(s.core.features.depth_clamp)),
+            ("independent blend", on(r.core.features.independent_blend), on(s.core.features.independent_blend)),
+            ("shader draw parameters", on(r.v11.shader_draw_parameters), on(s.v11.shader_draw_parameters)),
+            ("timeline semaphores", on(r.v12.timeline_semaphore), on(s.v12.timeline_semaphore)),
+            ("buffer device address", on(r.v12.buffer_device_address), on(s.v12.buffer_device_address)),
+            ("scalar block layout", on(r.v12.scalar_block_layout), on(s.v12.scalar_block_layout)),
+            ("indirect draw count", on(r.v12.draw_indirect_count), on(s.v12.draw_indirect_count)),
+            ("min/max samplers", on(r.v12.sampler_filter_minmax), on(s.v12.sampler_filter_minmax)),
+            ("host query reset", on(r.v12.host_query_reset), on(s.v12.host_query_reset)),
+            ("descriptor indexing", on(r.v12.descriptor_indexing), on(s.v12.descriptor_indexing)),
+            ("runtime descriptor arrays", on(r.v12.runtime_descriptor_array), on(s.v12.runtime_descriptor_array)),
+            (
+                "partially bound descriptors",
+                on(r.v12.descriptor_binding_partially_bound),
+                on(s.v12.descriptor_binding_partially_bound),
+            ),
+            (
+                "update-unused-while-pending descriptors",
+                on(r.v12.descriptor_binding_update_unused_while_pending),
+                on(s.v12.descriptor_binding_update_unused_while_pending),
+            ),
+            (
+                "update-after-bind sampled images",
+                on(r.v12.descriptor_binding_sampled_image_update_after_bind),
+                on(s.v12.descriptor_binding_sampled_image_update_after_bind),
+            ),
+            (
+                "update-after-bind storage images",
+                on(r.v12.descriptor_binding_storage_image_update_after_bind),
+                on(s.v12.descriptor_binding_storage_image_update_after_bind),
+            ),
+            (
+                "non-uniform image indexing",
+                on(r.v12.shader_sampled_image_array_non_uniform_indexing),
+                on(s.v12.shader_sampled_image_array_non_uniform_indexing),
+            ),
+            (
+                "non-uniform storage image indexing",
+                on(r.v12.shader_storage_image_array_non_uniform_indexing),
+                on(s.v12.shader_storage_image_array_non_uniform_indexing),
+            ),
+            ("dynamic rendering", on(r.v13.dynamic_rendering), on(s.v13.dynamic_rendering)),
+            ("synchronization2", on(r.v13.synchronization2), on(s.v13.synchronization2)),
+            (
+                "demote to helper invocation",
+                on(r.v13.shader_demote_to_helper_invocation),
+                on(s.v13.shader_demote_to_helper_invocation),
+            ),
+        ]
+    }
+}
+
 fn missing_features(instance: &ash::Instance, physical: vk::PhysicalDevice) -> Vec<&'static str> {
-    let mut v12 = vk::PhysicalDeviceVulkan12Features::default();
-    let mut v13 = vk::PhysicalDeviceVulkan13Features::default();
-    let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut v12).push_next(&mut v13);
-    unsafe { instance.get_physical_device_features2(physical, &mut features) };
-    [
-        ("dynamic rendering", v13.dynamic_rendering),
-        ("synchronization2", v13.synchronization2),
-        ("timeline semaphores", v12.timeline_semaphore),
-        ("buffer device address", v12.buffer_device_address),
-        ("descriptor indexing", v12.descriptor_indexing),
-        ("runtime descriptor arrays", v12.runtime_descriptor_array),
-        ("partially bound descriptors", v12.descriptor_binding_partially_bound),
-        ("non-uniform image indexing", v12.shader_sampled_image_array_non_uniform_indexing),
-    ]
-    .into_iter()
-    .filter(|(_, supported)| *supported == vk::FALSE)
-    .map(|(name, _)| name)
-    .collect()
+    let supported = Features::query(instance, physical);
+    Features::required()
+        .compare(&supported)
+        .into_iter()
+        .filter(|(_, required, supported)| *required && !*supported)
+        .map(|(name, _, _)| name)
+        .collect()
 }
 
 fn score(info: &GpuInfo) -> u64 {
@@ -278,18 +456,23 @@ fn score(info: &GpuInfo) -> u64 {
     kind + info.device_local_mb
 }
 
-fn present_queue_family(
+/// A graphics + compute queue family, which must also present when there is
+/// a surface.
+fn queue_family(
     instance: &ash::Instance,
     surface_loader: &khr::surface::Instance,
     physical: vk::PhysicalDevice,
-    surface: vk::SurfaceKHR,
+    surface: Option<vk::SurfaceKHR>,
 ) -> Option<u32> {
     let families = unsafe { instance.get_physical_device_queue_family_properties(physical) };
     families.iter().enumerate().find_map(|(index, family)| {
         let index = index as u32;
         let graphics = family.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE);
-        let present = unsafe { surface_loader.get_physical_device_surface_support(physical, index, surface) };
-        (graphics && present == Ok(true)).then_some(index)
+        let timestamps = family.timestamp_valid_bits > 0;
+        let present = surface.is_none_or(|surface| unsafe {
+            surface_loader.get_physical_device_surface_support(physical, index, surface) == Ok(true)
+        });
+        (graphics && timestamps && present).then_some(index)
     })
 }
 
@@ -297,18 +480,11 @@ fn create_device(instance: &ash::Instance, physical: vk::PhysicalDevice, queue_f
     let priorities = [1.0];
     let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family).queue_priorities(&priorities)];
     let extensions = [khr::swapchain::NAME.as_ptr()];
-    let mut v12 = vk::PhysicalDeviceVulkan12Features::default()
-        .timeline_semaphore(true)
-        .buffer_device_address(true)
-        .descriptor_indexing(true)
-        .runtime_descriptor_array(true)
-        .descriptor_binding_partially_bound(true)
-        .shader_sampled_image_array_non_uniform_indexing(true);
-    let mut v13 = vk::PhysicalDeviceVulkan13Features::default().dynamic_rendering(true).synchronization2(true);
-    let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut v12).push_next(&mut v13);
+    let mut features = Features::required();
+    let mut chain = features.core.push_next(&mut features.v11).push_next(&mut features.v12).push_next(&mut features.v13);
     let info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)
         .enabled_extension_names(&extensions)
-        .push_next(&mut features);
+        .push_next(&mut chain);
     unsafe { instance.create_device(physical, &info, None) }.context("creating the Vulkan device")
 }

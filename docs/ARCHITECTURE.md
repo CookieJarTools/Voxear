@@ -40,25 +40,30 @@ is in [ROADMAP.md](ROADMAP.md).
 | Prefab | **Prefab** | Nested prefabs and variants are planned. |
 | UI Toolkit | **Voxear UI** | One system for the editor and for games, in screen space and world space. |
 | Input System | **Input** | Schemes, rebinding and prompts are built in. |
+| Localization package | **Localization** | String and asset tables, CSV import from a file or URL, live text binding. |
 | Cinemachine | **Camera Rigs** | Simple by default. |
 | Timeline | **Timeline** | |
 | Shuriken / VFX Graph | **Particles** | One system with three levels of depth. |
+| (none built in) | **Mods** | Content, sandboxed-script and full-trust tiers, with Steam Workshop built in. |
+| Unity Hub | **Voxear Launcher** | Separate repository; installs engine versions and creates projects. |
 
 ## Layers
 
 ```
- ┌──────────────── Editor ────────────────┐ ┌─── vox CLI ───┐ ┌─── Player ───┐
- │ panels, gizmos, undo, play mode, C# ext │ │ build, run,   │ │ shipped game │
- └─────────────────────────────────────────┘ │ inspect, RPC  │ └──────────────┘
- ┌──────────────────────────── voxear_engine: frame loop ─────────────────────┐
- │  Scenes/Levels · Content · Input · Audio · Animation · Physics · Navigation │
- │  Particles · Terrain · UI · Cameras · Timeline · Networking                 │
- ├───────────────────────── voxear_render: render graph ──────────────────────┤
- │  GPU-driven geometry · lighting · shadows · voxel GI · fog · post · text   │
- ├────────────┬──────────────┬───────────────┬────────────────┬───────────────┤
- │ voxear_rhi │ voxear_ecs   │ voxear_scene  │ voxear_scripting│ voxear_core   │
- │ Vulkan/ash │ archetypes   │ Obj+lifecycle │ CoreCLR host    │ math, time    │
- └────────────┴──────────────┴───────────────┴────────────────┴───────────────┘
+ ┌──────────────── Editor ─────────────────┐ ┌─── vox CLI ───┐ ┌─── Player ───┐
+ │ panels · gizmos · undo · play mode      │ │ build · run   │ │ shipped game │
+ │ C# extensions · debug tools             │ │ inspect · RPC │ │              │
+ └─────────────────────────────────────────┘ └───────────────┘ └──────────────┘
+ ┌──────────────────────── voxear_engine: frame loop ─────────────────────────┐
+ │ Scenes/Levels · Content · Input · Audio · Animation · Physics · Navigation │
+ │ Particles · Terrain · UI · Cameras · Timeline · Networking · Mods · Stores │
+ │  Profiler · frame debugger · memory tools · debug draw · dev console       │
+ ├─────────────────────── voxear_render: render graph ────────────────────────┤
+ │  GPU culling · LOD · lighting · shadows · voxel GI · fog · post · text     │
+ ├────────────┬──────────────┬───────────────┬──────────────────┬─────────────┤
+ │ voxear_rhi │ voxear_ecs   │ voxear_scene  │ voxear_scripting │ voxear_core │
+ │ Vulkan/ash │ archetypes   │ Obj+lifecycle │ CoreCLR host     │ math, time  │
+ └────────────┴──────────────┴───────────────┴──────────────────┴─────────────┘
 ```
 
 ### Repository layout
@@ -240,6 +245,7 @@ using var handle = Content.Load(MeshRef, Priority.High);  // advanced: explicit 
   GPU decompression where available.
 - When the last reference goes away, the bundle unloads.
 - In the editor the same API reads straight from the asset database, so no build is ever needed to press Play.
+- Catalogs are **layered**, so mods can add or override assets through the same path. See [Modding](#modding).
 
 ## Rendering
 
@@ -455,6 +461,77 @@ await Input.Rebind(actions["Jump"], scheme: ControlScheme.Gamepad);
 - Processors (deadzones, curves, invert), action phases, and polling and event APIs both work. Input is read on the
   main thread and sampled once per frame, plus per fixed step for physics.
 
+## Localization
+
+Every piece of text can be bound to a key. When the language changes, everything bound to it updates at once, with
+no reload. This works like Unity's Localization package, but with the setup done for you.
+
+```csharp
+// Easy: bind once, and the text follows the language
+label.Text = Localized("menu.play");                         // UI
+[SerializeField] LocalizedString title = "quest.intro.title"; // fields on Behaviours and Definitions
+
+// Advanced: smart strings, explicit locales, change events
+var text = Localization.Format("loot.found", ("player", name), ("count", coins));
+// "loot.found" = "{player} found {count, plural, one {# coin} other {# coins}}"
+Localization.Language = Locale.Get("pt-BR");
+Localization.Changed += OnLanguageChanged;
+```
+
+**Tables.**
+- **String tables** map keys to text for each locale. Entries can carry a translator comment, a character limit and
+  a screenshot of where the text appears.
+- **Asset tables** map keys to per-locale assets: voice lines, textures with text in them, and fonts.
+- Asset tables go through Content's layered catalogs, so a build only loads the current language's assets, and each
+  language gets its own bundles.
+
+**Smart strings.** Messages use ICU MessageFormat:
+- variables
+- plurals using each language's real plural rules
+- gender and select
+- per-locale number, date and currency formatting
+
+The formatting runs on ICU4X, the same library behind the UI's text shaping.
+
+**Binding.**
+- **UI:** a markup attribute, `<label text="@menu.play"/>`, binds an element to a key.
+- **Fields:** a `LocalizedString` field on any Behaviour or Definition.
+- **World text:** a `LocalizedText` component.
+- **Code:** `Localized(key)` returns an observable value.
+- **Prompts:** input prompts and key names are localised through the same system.
+
+**Import and export.**
+- **CSV import** from a local file or a **URL**. A Google Sheet published as CSV works directly, so translators can
+  keep using a spreadsheet.
+- Each import shows a diff (added, changed and removed entries) before applying.
+- A URL source can re-sync on demand from the editor or `vox loc pull`.
+- **CSV export** for translators, with comments and character limits included. XLIFF and PO follow later.
+- **Live remote text** in shipped builds is off by default, and the developer opts in per project.
+
+**Editor window (Localization Tables).**
+- A grid with keys as rows and languages as columns, with search and filters.
+- Missing or outdated translations are highlighted.
+- Every cell is editable inline, with a preview of the plural forms.
+- Character-limit warnings.
+- Find usages, and renaming a key updates every reference to it.
+- A one-click **pseudo-localisation** language, which turns text into accented, expanded text (`[Ƥļåý ŧĥé ĝåɱé !!!]`)
+  so layout problems show up before translation starts.
+
+**Language detection.**
+- **Order:**
+  1. the player's saved choice
+  2. the store's language (Steam's game language, when the Steam provider is active)
+  3. the OS language: `LANG`/`LC_MESSAGES` on Linux, the user's preferred UI languages on Windows
+  4. the project default
+- **Fallback chains** handle regional variants, for example `pt-BR`, then `pt`, then `en`.
+- The ready-made settings screen includes a language picker.
+
+**Script and layout support.**
+- Right-to-left languages mirror UI layout automatically, and BiDi text shapes correctly (parley).
+- CJK, Arabic and other scripts get per-locale font fallback chains.
+- Missing keys show as `⟦menu.play⟧` in development builds and log a warning. Release builds fall back silently
+  along the fallback chain.
+
 ## Audio
 
 ```csharp
@@ -661,6 +738,194 @@ The model is server-authoritative and ECS-native.
 - A network simulator (latency, loss, jitter) is built into play mode.
 - Play mode can start multiple instances.
 
+## Modding
+
+Modding is part of Content and scripting rather than a separate loader. A game turns it on with one setting, and
+the developer decides exactly what mods may do.
+
+### What a mod is
+
+A mod is a `.voxmod` package: an archive holding built content, optional script assemblies, and a `mod.toml`
+manifest.
+
+```toml
+[mod]
+id = "ana.better-swords"        # globally unique
+name = "Better Swords"
+version = "1.4.2"               # semver
+game = ">=1.2, <2.0"            # game versions it supports
+api = 1                         # Mod API major version it was built against
+
+[dependencies]
+"ana.weapon-lib" = ">=2.1"
+
+[load]
+after = ["sam.balance-tweaks"]
+
+[permissions]                   # shown to the player before enabling
+scripts = "sandboxed"           # "none", "sandboxed" or "full"
+```
+
+### Three tiers of trust
+
+| Tier | What it can do | How it is kept safe | Default |
+|---|---|---|---|
+| **Content** | Add or override textures, models, audio, levels, UI, localisation and Definitions; patch Definition fields | There is no code. Everything is parsed by memory-safe Rust decoders with size limits. | On whenever modding is on |
+| **Sandboxed scripts** | Add Behaviours, systems and event handlers in C# | Every referenced type and member is checked against an allowlist at load. Each mod gets its own load context, and faults are isolated. | Developer opts in |
+| **Full trust** | Anything, including Harmony-style method patching | Nothing: the player sees a clear warning and approves each such mod. | Off |
+
+### Content mods
+
+**Layered catalogs.** Content catalogs stack: the base game first, then each mod in load order.
+- A mod can **add** assets (new GUIDs).
+- A mod can **override** existing assets by GUID, but only those the game marks as overridable (by folder, type
+  or asset).
+- `Ref<T>` does not change, so game code never knows whether a texture came from a mod.
+
+**Definition patches.** Mods can change individual Definition fields without replacing the asset, for example
+"swords deal 10% more damage". Two mods patching the same field show up as a conflict in the mod manager.
+
+**Building.** Mods are built by the same content build, so they are bundled and optimised the same way.
+
+### Script mods
+
+**The Mod API.**
+- Mods compile against the game's **Mod API**: the types and members the game marks `[ModApi]`.
+- They also see Voxear's own mod-safe API and an allowlisted part of the .NET base library (collections, maths,
+  strings, LINQ, engine-scheduled tasks).
+
+**The access check.** At load, each mod assembly is scanned for every type and member it references, the approach
+s&box uses.
+- Anything outside the allowlist rejects the mod with a readable reason, such as "uses `System.IO.File.Delete`,
+  which mods may not use".
+- File, network and process access are blocked, as are reflection, P/Invoke, `unsafe` code and raw threads.
+- The same scan catches **mods broken by a game update** before they run, such as "uses `Weapon.Damage`, which was
+  removed in 1.4", instead of crashing mid-game.
+
+**Isolation and storage.**
+- Each mod loads into its own collectible context. It can be unloaded and hot-reloaded during mod development, and
+  it only sees other mods it declares as dependencies.
+- Exceptions are caught per mod. A mod that keeps throwing, or overruns its frame budget, is disabled with a message
+  to the player instead of taking the game down.
+- In-process .NET cannot safely interrupt an infinite loop. The watchdog therefore flags the mod and starts the next
+  launch with it disabled.
+- Mods get `ModStorage` (a private folder) and a settings API instead of raw file access.
+
+**Later, a WebAssembly tier** for hard isolation:
+- Mods compile to WebAssembly components and run under wasmtime with memory limits and epoch interruption, so even
+  an infinite loop is stopped.
+- Rust and C mods work today. C# would come through componentize-dotnet, which is still in preview.
+
+### Versions, dependencies and load order
+
+- A mod declares the game versions it supports and the Mod API major version it was built against. The Mod API
+  follows semver.
+- **The developer chooses the policy for outdated mods:** `allow`, `warn` (the player decides), or `block`. A
+  separate choice covers whether mods built for an older Mod API major version may load at all.
+- Dependencies resolve with version ranges. Load order comes from dependencies plus `before`/`after` hints, sorted
+  topologically.
+- Cycles, missing dependencies and conflicts are listed in the mod manager with a fix where one exists.
+- Saves record which mods and versions were active. Loading a save without them warns first.
+
+### Security features
+
+- **Hardened parsing.** Content is decoded only by memory-safe Rust code, with limits on texture size, triangle
+  counts, audio length and archive size. Path traversal ("zip slip") is rejected, and no executable content exists
+  outside the script tiers.
+- **Signing.** Mods can be signed with Ed25519. A game can require signatures from keys it trusts, for example in
+  curated or competitive modes, and show verified authors.
+- **Consent.** The player sees the tiers a mod asks for before enabling it. An update that asks for more re-prompts.
+- **Multiplayer.** The server publishes its mod set (IDs, versions, content hashes) and clients must match it.
+  Missing mods can download automatically from the configured source. The server can forbid client-only mods.
+- **Safe mode.** `--no-mods`, and an automatic offer to start without mods after a crash during mod loading.
+
+### Developer control
+
+**Easy.** In Project Settings, open **Modding**, tick **Enable modding**, and pick sources (local folder, Steam
+Workshop, mod.io). The game gets a ready-made, themeable mod manager screen with `Mods.ShowManager()`.
+
+**Advanced.**
+- The allowed tiers.
+- Which assets are overridable and which Definitions are patchable.
+- The `[ModApi]` surface.
+- The outdated-mod policy and signature requirements.
+- Per-mode rules, such as no script mods in ranked play.
+- `Mods.Loaded` and `Mods.OnLoaded`.
+- `[ModEvent]` hooks.
+- Custom mod sources, and control of load order from code.
+
+```csharp
+// Game: expose data and an extension point to mods
+[ModApi] public sealed class WeaponDefinition : Definition { public float Damage; public Ref<Mesh> Model; }
+[ModApi, ModEvent] public static event Action<Obj> EnemySpawned;
+
+// Mod: plain Voxear code, checked against the allowlist when it loads
+public sealed class GoldenEnemies : ModEntry
+{
+	protected override void OnLoad() => Game.EnemySpawned += enemy => enemy.Get<Tint>().Colour = Colours.Gold;
+}
+```
+
+### Tools for modders
+
+- `vox mod sdk` exports a **Mod SDK** from the game: reference assemblies for the Mod API, Definition schemas and
+  templates.
+- Modders use the Voxear editor in **mod mode**: base game content is visible but read-only, and only their mod is
+  editable.
+- The CLI covers the same work: `vox mod new`, `vox mod build`, `vox mod test`.
+- `vox mod publish --workshop` uploads to Steam Workshop with a preview image, tags and change notes. The editor has
+  the same button.
+
+## Platform services (Steam and other stores)
+
+Store features go through one `Platform` API. Steam is built in, and other stores are providers behind the same
+interface.
+
+**Services.**
+- Identity: user ID, name and avatar.
+- Achievements, stats and leaderboards.
+- Cloud saves.
+- User-generated content (Workshop).
+- Rich presence, friends and invites.
+- Lobbies and matchmaking, and networking relay.
+- Entitlements and DLC.
+- The overlay, screenshots and timeline markers.
+
+**Capability checks.** Each provider reports what it supports, through `Platform.Supports(Feature.Workshop)`.
+Missing features degrade cleanly; for example, achievements are tracked locally when offline.
+
+**Defined once.** Achievements, stats and leaderboards are Definitions, with a localised name, an icon and an ID
+mapping per store. The same call works on every store:
+
+```csharp
+Platform.Achievements.Unlock(Achievements.FirstBlood);
+```
+
+**Providers.**
+- **Steam**, built in.
+- **Offline**, for development and DRM-free builds.
+- Planned: Epic Online Services, GOG Galaxy, mod.io (mods across stores), and itch.io (uploads through butler).
+- A custom provider implements the provider interface, in Rust or C#.
+
+**Steam out of the box.**
+- **Setup.** Steamworks is loaded at runtime through its flat C API. If Steam is not running, the game falls back to
+  the offline provider, unless the developer requires Steam. The App ID lives in project settings, and
+  `steam_appid.txt` is handled automatically during development. Callbacks are pumped in the `First` stage and
+  arrive as C# events or awaitable tasks.
+- **Workshop.**
+  - Subscribed items appear in the mod manager as a mod source.
+  - Updates are detected and installed.
+  - Publishing works from the editor and the CLI.
+- **Steam Input.**
+  - Input actions map to Steam Input action sets automatically.
+  - Prompts use Steam's glyphs for any controller.
+  - Steam Deck is detected, for UI scale, the on-screen keyboard and suspend/resume.
+- **Networking.** Steam Networking Sockets and Steam Datagram Relay serve as a transport for the multiplayer layer.
+  Lobbies and invites work through the overlay.
+- **Other services.** Steam Cloud saves, rich presence, the overlay, screenshots and Steam Timeline markers.
+- **Shipping.** `vox steam upload` pushes a build through SteamPipe, generating the depot configuration from the
+  project.
+
 ## 2D
 
 - Sprites and automatic atlases.
@@ -690,6 +955,68 @@ Every operation the editor can do should be scriptable.
 Objs, run play mode, capture the viewport. AI tooling can later sit on the same RPC, for example as an MCP server,
 without changing the engine.
 
+## Debugging and profiling tools
+
+The debugging and profiling tools are built in and on in the editor and development builds. `vox` can also reach
+them in a running game.
+
+**Easy.**
+- One key toggles a **stats overlay**: FPS, a frame-time graph, the CPU/GPU split, draw and triangle counts, and
+  memory.
+- The **capture button** in the toolbar grabs the next frame in RenderDoc.
+- Every panel below opens from the command palette.
+
+**Advanced.**
+
+- **GPU frame capture.**
+  - RenderDoc is integrated through its in-app API. When it is installed, the engine loads it at startup (or use
+    `vox run --renderdoc`), and a hotkey or toolbar button captures a frame and opens it.
+  - The render graph names every pass, resource and draw through `VK_EXT_debug_utils`, so a capture reads like the
+    engine's own structure.
+  - The same labels make Nsight Graphics, Radeon GPU Profiler and Intel GPA useful.
+- **Frame debugger**, like Unity's, lighter than RenderDoc and always available:
+  - Step through render graph passes inside the editor, with each pass's inputs and outputs.
+  - Inspect any texture (mip, slice, channel, exposure) or buffer.
+  - See culling results (instances and meshlets culled by frustum and occlusion, the LOD chosen) and pipeline state.
+- **CPU and GPU profiler.**
+  - Timeline and hierarchy views.
+  - Cost per system, per job and per behaviour.
+  - GPU time per render graph pass, from timestamp queries.
+  - Managed allocations per frame.
+  - **Tracy** is integrated for deep sessions: zones across Rust systems, jobs and C#
+    (`using (Profiler.Zone("Pathfinding"))`), locks, plots and frame images.
+- **Memory profiler.**
+  - Every native allocation is tagged by subsystem: ECS chunks, Content, render, audio, physics and scripts.
+  - GPU memory is reported per resource and category. The managed heap comes from the .NET runtime.
+  - Snapshots can be diffed, for example before and after a level change to find leaks.
+  - "Who holds this asset" shows the reference chain behind Content's refcounts.
+  - A bundle view shows what is resident and why.
+- **ECS inspector.**
+  - Live archetypes, chunks and entities, with editable component values.
+  - The system schedule, with timings and order.
+  - A query tester.
+- **Debug draw.**
+  - `Debug.Line`, `Box`, `Sphere`, `Arrow` and `Text`, each with a duration, from C# and Rust.
+  - Works in the game and the editor, depth-tested or drawn on top.
+  - Compiled out of release builds.
+- **Debug views.**
+  - Albedo, normals, roughness and overdraw.
+  - LOD and meshlet colouring, light complexity, GI voxels and shadow cascades.
+  - Physics colliders, nav graphs, audio occlusion rays and AI paths.
+- **Dev console.**
+  - An in-game console with commands (`[Command]` on any C# static method) and console variables.
+  - Also reachable through `vox`.
+- **Debuggers.**
+  - Rider, Visual Studio or VS Code attach to the running engine to debug C#, since CoreCLR supports debugging a
+    hosted runtime. The editor writes the launch configurations.
+  - Rust debugs normally with gdb, lldb or Visual Studio.
+- **Validation and GPU crashes.**
+  - Vulkan validation, including synchronisation validation, toggles from settings.
+  - On a lost device, `VK_EXT_device_fault` (and NVIDIA Aftermath when present) reports which pass crashed the GPU.
+- **Crash reports.** A crash handler writes a minidump, the log, breadcrumbs and system info (GPU, driver, OS).
+- **Remote attach.** Every panel can attach to a development build running on another machine, like Unity's "attach
+  to player".
+
 ## Build pipeline
 
 `vox build` runs the stages in order:
@@ -699,6 +1026,35 @@ without changing the engine.
 4. Player packaging.
 
 Each stage can also run on its own and caches its outputs. Builds are reproducible from the project folder alone.
+
+## Versions, installs and the launcher
+
+The **Voxear Launcher** is the equivalent of Unity Hub. It lives in its own repository and works with the engine
+through a small contract.
+
+**Engine versions.**
+- Each engine release is a self-contained, versioned install: editor, `vox`, `Voxear.Core`, templates and docs.
+- Releases are published with a **release manifest**: version, channel (stable, beta or nightly), downloads per
+  platform, sizes, SHA-256 hashes and a signature.
+- Several versions install side by side. `vox` finds its own files through its install folder (`VOXEAR_HOME`).
+
+**Projects pin a version.**
+- `voxear.toml` records the engine version a project uses.
+- The launcher opens a project with that version, and offers to install it if it is missing.
+- Upgrades make a backup first and summarise what changed.
+
+**New project flow.**
+- Templates ship with each engine version and are applied through `vox new`, so the launcher, the CLI and the editor
+  create identical projects.
+- The flow asks for:
+  - name and location
+  - template: Empty, 3D, 2D, First-person, Third-person or Top-down
+  - engine version
+  - a **default setup**: lighting and sky, camera, input actions, a sample scene and quality presets
+- Optional extras: C# IDE setup (Rider, Visual Studio, VS Code), git with a `.gitignore`, modding switched on, and a
+  Steam App ID.
+
+**Launcher self-update.** The launcher updates itself from its own signed manifest, separately from engine versions.
 
 ## Platforms and GPU support
 

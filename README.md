@@ -12,7 +12,8 @@ box.
 - Rust (stable, 1.88 or newer)
 - .NET 10 SDK: `sudo pacman -S dotnet-sdk` on Arch, `winget install Microsoft.DotNet.SDK.10` on Windows
 - A GPU with Vulkan 1.3
-- `glslc`: the `shaderc` package on Linux, or the Vulkan SDK on Windows
+- Slang (`slangc`): `sudo pacman -S shader-slang` on Arch, or the Vulkan SDK on Windows
+- Optional: RenderDoc (`sudo pacman -S renderdoc`) for frame captures
 
 ## Quick start
 
@@ -29,7 +30,15 @@ cargo build
 ```
 
 `vox run` builds the project's C# scripts, hosts .NET, creates the project's Objs and opens a window. Add
-`--headless --frames 120` to simulate without a window and print where every Obj ended up.
+`--headless --frames 120` to simulate without a window and print where every Obj ended up. Add `--renderdoc` and
+press F12 to capture a frame.
+
+```bash
+./target/debug/vox render samples/Hello --out frame.png
+```
+
+`vox render` draws the project offscreen to a PNG and prints GPU time per render pass. `--renderdoc` also saves a
+RenderDoc capture to the project's `.voxear/Captures`.
 
 Set `VOXEAR_LOG=debug` for more logging. Set `VOXEAR_VALIDATION=1` to force Vulkan validation; debug builds use it
 automatically when the `vulkan-validation-layers` package is installed.

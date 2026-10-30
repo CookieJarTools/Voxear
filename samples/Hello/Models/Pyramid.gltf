@@ -1,0 +1,129 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "Voxear sample generator"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "Pyramid",
+   "mesh": 0
+  }
+ ],
+ "meshes": [
+  {
+   "name": "Pyramid",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "Checker",
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.55
+   }
+  }
+ ],
+ "textures": [
+  {
+   "source": 0,
+   "sampler": 0
+  }
+ ],
+ "samplers": [
+  {
+   "magFilter": 9728,
+   "minFilter": 9986
+  }
+ ],
+ "images": [
+  {
+   "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAHElEQVR4nGP42mPz/9e76/9x0Qz4JEE0w7AwAQDn3s9BZe+cVQAAAABJRU5ErkJggg=="
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 612,
+   "uri": "data:application/octet-stream;base64,AAAAvwAAAAAAAAC/AAAAAAAAgD8AAAAAAAAAPwAAAAAAAAC/AAAAPwAAAAAAAAC/AAAAAAAAgD8AAAAAAAAAPwAAAAAAAAA/AAAAPwAAAAAAAAA/AAAAAAAAgD8AAAAAAAAAvwAAAAAAAAA/AAAAvwAAAAAAAAA/AAAAAAAAgD8AAAAAAAAAvwAAAAAAAAC/AAAAvwAAAAAAAAC/AAAAPwAAAAAAAAC/AAAAPwAAAAAAAAA/AAAAvwAAAAAAAAC/AAAAPwAAAAAAAAA/AAAAvwAAAAAAAAA/AAAAAC755D4u+WS/AAAAAC755D4u+WS/AAAAAC755D4u+WS/LvlkPy755D4AAACALvlkPy755D4AAACALvlkPy755D4AAACAAAAAAC755D4u+WQ/AAAAAC755D4u+WQ/AAAAAC755D4u+WQ/Lvlkvy755D4AAAAALvlkvy755D4AAAAALvlkvy755D4AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgD8AAAA/AAAAAAAAgD8AAIA/AAAAAAAAgD8AAAA/AAAAAAAAgD8AAIA/AAAAAAAAgD8AAAA/AAAAAAAAgD8AAIA/AAAAAAAAgD8AAAA/AAAAAAAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AAAAAAAAAAAAAIA/AACAPwAAAAAAAIA/AAABAAIAAwAEAAUABgAHAAgACQAKAAsADAANAA4ADwAQABEA"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 216
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 216,
+   "byteLength": 216
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 432,
+   "byteLength": 144
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 576,
+   "byteLength": 36
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 18,
+   "type": "VEC3",
+   "min": [
+    -0.5,
+    0.0,
+    -0.5
+   ],
+   "max": [
+    0.5,
+    1.0,
+    0.5
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 18,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5126,
+   "count": 18,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5123,
+   "count": 18,
+   "type": "SCALAR"
+  }
+ ]
+}

@@ -1,9 +1,9 @@
 use anyhow::Result;
-use voxear_core::{math::Vec3, time::Time};
+use voxear_core::time::Time;
 use voxear_ecs::{Entity, Schedule, World};
 use voxear_scene::{
     BehaviourHandle, BehaviourHost, Behaviours, InstanceMarker, Lifecycle, Name, Phase, Transform,
-    register_obj_components,
+    propagate_transforms, register_obj_components,
 };
 use voxear_scripting::ScriptRuntime;
 
@@ -37,9 +37,11 @@ impl Engine {
     pub fn new() -> Self {
         let mut world = World::new();
         register_obj_components(&mut world);
+        let mut schedule = Schedule::new(STAGES);
+        schedule.add_system("PostUpdate", "propagate transforms", propagate_transforms);
         Self {
             world,
-            schedule: Schedule::new(STAGES),
+            schedule,
             lifecycle: Lifecycle::new(),
             scripts: None,
             time: Time::default(),
@@ -61,8 +63,8 @@ impl Engine {
 
     /// Creates an Obj and attaches behaviours by C# type name. Behaviours get
     /// their first callbacks at the next tick, as one batch.
-    pub fn spawn_obj(&mut self, name: &str, position: Vec3, behaviours: &[String]) -> Result<Entity> {
-        let entity = self.world.spawn((Name(name.to_string()), Transform::from_position(position)));
+    pub fn spawn_obj(&mut self, name: &str, transform: Transform, behaviours: &[String]) -> Result<Entity> {
+        let entity = self.world.spawn((Name(name.to_string()), transform));
         if behaviours.is_empty() {
             return Ok(entity);
         }

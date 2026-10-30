@@ -111,6 +111,8 @@ pub struct Content {
     source: Source,
     /// Asset texts a background load read ahead, by GUID.
     texts: HashMap<AssetGuid, Arc<str>>,
+    /// Models the content build cooked, which load without import work.
+    cooked: Arc<HashSet<AssetGuid>>,
     models: HashMap<AssetGuid, ImportedModel>,
     meshes: HashMap<AssetRef, MeshHandle>,
     mesh_refs: HashMap<MeshHandle, AssetRef>,
@@ -147,7 +149,10 @@ impl Content {
         let catalog = Catalog::read(content_dir)?;
         let db = AssetDb::from_entries(root, catalog.entries()?);
         let reader = BundleReader::new(content_dir, &catalog);
-        Ok(Self::with_source(db, Source::Bundles(reader, content_dir.to_path_buf(), Arc::new(catalog))))
+        let cooked = catalog.assets.iter().filter(|a| a.cooked).map(|a| a.guid.parse()).collect::<Result<_>>()?;
+        let mut content = Self::with_source(db, Source::Bundles(reader, content_dir.to_path_buf(), Arc::new(catalog)));
+        content.cooked = Arc::new(cooked);
+        Ok(content)
     }
 
     fn with_source(db: AssetDb, source: Source) -> Self {
@@ -155,6 +160,7 @@ impl Content {
             db: Arc::new(db),
             source,
             texts: HashMap::new(),
+            cooked: Arc::default(),
             models: HashMap::new(),
             meshes: HashMap::new(),
             mesh_refs: HashMap::new(),
@@ -199,6 +205,10 @@ impl Content {
 
     pub(crate) fn shared_db(&self) -> Arc<AssetDb> {
         self.db.clone()
+    }
+
+    pub(crate) fn cooked_models(&self) -> Arc<HashSet<AssetGuid>> {
+        self.cooked.clone()
     }
 
     /// The text of an asset of the expected kind, with its project path. A
@@ -254,8 +264,13 @@ impl Content {
                 bail!("{} is not a model", entry.path);
             }
             let path = entry.path.clone();
-            let reader = self.reader();
-            let model = renderer.import_gltf(&path, &mut |file| reader.read(file))?;
+            let model = if self.cooked.contains(&guid) {
+                let prepared = PreparedModel::from_bytes(&path, &self.read(&path)?)?;
+                renderer.upload_model(&prepared)?
+            } else {
+                let reader = self.reader();
+                renderer.import_gltf(&path, &mut |file| reader.read(file))?
+            };
             self.register_model(guid, model);
         }
         Ok(&self.models[&guid].nodes)

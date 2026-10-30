@@ -2066,6 +2066,7 @@ dependencies = [
  "gltf",
  "image",
  "meshopt",
+ "png",
  "raw-window-handle",
  "serde",
  "toml",

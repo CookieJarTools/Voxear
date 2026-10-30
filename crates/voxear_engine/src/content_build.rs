@@ -13,7 +13,11 @@
 //!    same usage set share a bundle, so loading a root opens only bundles
 //!    it needs, and what two levels share sits in a bundle both open.
 //!    Assets no root reaches are left out.
-//! 4. Bundles are named by a hash of their contents, so an unchanged bundle
+//! 4. Models are **cooked**: stored ready for the GPU, with their meshes,
+//!    LODs, decoded textures and materials, so loading one is a read and an
+//!    upload. Cooks are cached by a hash of their inputs, so an unchanged
+//!    model is not cooked again.
+//! 5. Bundles are named by a hash of their contents, so an unchanged bundle
 //!    is not written again.
 
 use std::{
@@ -36,6 +40,9 @@ pub struct BuildReport {
     pub bundles: Vec<BundleReport>,
     /// Assets no root reaches, which the build left out.
     pub excluded: Vec<String>,
+    /// Models cooked this time, and models whose cook came from the cache.
+    pub cooked: usize,
+    pub cached: usize,
 }
 
 #[derive(Debug)]
@@ -53,6 +60,11 @@ pub fn default_output(root: &Path) -> PathBuf {
     root.join(".voxear").join("Content")
 }
 
+/// Where cooked models are kept between builds.
+pub fn cache_dir(root: &Path) -> PathBuf {
+    root.join(".voxear").join("ContentCache")
+}
+
 /// What one asset needs.
 #[derive(Default)]
 struct Needs {
@@ -60,7 +72,8 @@ struct Needs {
     direct: BTreeSet<AssetGuid>,
     /// Assets its behaviour fields name, which load on their own.
     named: BTreeSet<AssetGuid>,
-    /// Files it reads beside its own that are not assets, such as a model's buffers.
+    /// Files it reads beside its own, such as a model's buffers and images.
+    /// They are cooked into it rather than shipped.
     companions: Vec<String>,
 }
 
@@ -86,6 +99,7 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<B
     let path_of = |guid: &AssetGuid| db.get(*guid).expect("from the database").path.clone();
 
     std::fs::create_dir_all(output).with_context(|| format!("creating {}", output.display()))?;
+    let mut cooker = Cooker::open(root)?;
     let mut catalog = Catalog { format: CATALOG_FORMAT, ..Catalog::default() };
     let mut reports = Vec::with_capacity(groups.len());
     let mut bundle_of = HashMap::new();
@@ -94,16 +108,19 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<B
         let mut writer = BundleWriter::default();
         for &guid in &assets {
             let entry = db.get(guid).expect("from the database");
-            let mut files = vec![writer.add(&entry.path, &read(root, &entry.path)?)];
-            for companion in &needs[&guid].companions {
-                files.push(writer.add(companion, &read(root, companion)?));
-            }
+            let cooked = entry.kind == AssetKind::Model;
+            let bytes = if cooked {
+                cooker.cook(&entry.path, &needs[&guid].companions).with_context(|| format!("cooking {}", entry.path))?
+            } else {
+                read(root, &entry.path)?
+            };
             catalog.assets.push(CatalogAsset {
                 guid: guid.to_string(),
                 path: entry.path.clone(),
                 kind: entry.kind,
                 bundle: index,
-                files,
+                files: vec![writer.add(&entry.path, &bytes)],
+                cooked,
             });
             bundle_of.insert(guid, index);
         }
@@ -134,7 +151,9 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<B
     catalog.assets.sort_by(|a, b| a.path.cmp(&b.path));
     catalog.write(output)?;
     remove_stale(output, &catalog)?;
-    Ok(BuildReport { output: output.to_path_buf(), bundles: reports, excluded })
+    cooker.prune()?;
+    let (cooked, cached) = (cooker.cooked, cooker.cached);
+    Ok(BuildReport { output: output.to_path_buf(), bundles: reports, excluded, cooked, cached })
 }
 
 /// The roots that reach each asset. Roots reach themselves and, through
@@ -204,14 +223,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         }
         AssetKind::Model => {
             let bytes = read(db.root(), path)?;
-            for file in voxear_render::companion_files(path, &bytes)? {
-                match db.guid_of(&file) {
-                    Some(texture) => {
-                        needs.direct.insert(texture);
-                    }
-                    None => needs.companions.push(file),
-                }
-            }
+            needs.companions = voxear_render::companion_files(path, &bytes)?;
         }
         AssetKind::Texture => {}
     }
@@ -251,6 +263,57 @@ fn collect(db: &AssetDb, in_fields: bool, value: &toml::Value, needs: &mut Needs
             }
         }
         _ => {}
+    }
+}
+
+/// Cooks models, reusing earlier cooks of the same inputs.
+struct Cooker {
+    root: PathBuf,
+    dir: PathBuf,
+    used: Vec<PathBuf>,
+    cooked: usize,
+    cached: usize,
+}
+
+impl Cooker {
+    fn open(root: &Path) -> Result<Self> {
+        let dir = cache_dir(root);
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        Ok(Self { root: root.to_path_buf(), dir, used: Vec::new(), cooked: 0, cached: 0 })
+    }
+
+    /// The cooked model. Its cache key covers every file it reads and the
+    /// format version, so changing any of them cooks again.
+    fn cook(&mut self, path: &str, companions: &[String]) -> Result<Vec<u8>> {
+        let mut inputs = vec![voxear_render::COOKED_VERSION.to_le_bytes().to_vec(), read(&self.root, path)?];
+        for file in companions {
+            inputs.push(file.as_bytes().to_vec());
+            inputs.push(read(&self.root, file)?);
+        }
+        let parts: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
+        let cached = self.dir.join(format!("{}.model", content_hash(&parts)));
+        self.used.push(cached.clone());
+        if let Ok(bytes) = std::fs::read(&cached) {
+            self.cached += 1;
+            return Ok(bytes);
+        }
+        let root = &self.root;
+        let model = voxear_render::prepare_model(path, &mut |file| read(root, file))?;
+        let bytes = model.to_bytes();
+        std::fs::write(&cached, &bytes).with_context(|| format!("writing {}", cached.display()))?;
+        self.cooked += 1;
+        Ok(bytes)
+    }
+
+    /// Deletes cooks this build did not use, such as those of changed models.
+    fn prune(&self) -> Result<()> {
+        for entry in std::fs::read_dir(&self.dir)? {
+            let path = entry?.path();
+            if !self.used.contains(&path) {
+                std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+            }
+        }
+        Ok(())
     }
 }
 

@@ -9,6 +9,7 @@
 
 mod alloc;
 mod assets;
+mod cooked;
 mod gltf_import;
 mod gpu;
 mod graph;
@@ -33,6 +34,7 @@ use voxear_rhi::{
 
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle};
+pub use cooked::COOKED_VERSION;
 pub use gltf_import::{
     ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
 };

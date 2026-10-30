@@ -53,9 +53,16 @@ pub struct CatalogAsset {
     pub path: String,
     pub kind: AssetKind,
     pub bundle: usize,
-    /// The asset's own file, then any it reads beside it, such as a model's
-    /// buffers.
+    /// The asset's own file, then any it reads beside it.
     pub files: Vec<PackedFile>,
+    /// Stored ready for the GPU rather than as its source file: a model's
+    /// meshes, LODs, textures and materials in Voxear's own format.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cooked: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

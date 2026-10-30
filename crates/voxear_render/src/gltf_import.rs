@@ -48,40 +48,40 @@ pub type ReadFile<'a> = dyn FnMut(&str) -> Result<Vec<u8>> + 'a;
 /// decoded textures, materials and the node layout. Making one is the slow
 /// part of an import, and it needs no GPU, so it can happen on any thread.
 pub struct PreparedModel {
-    path: String,
-    meshes: Vec<(MeshData, Vec<Lod>)>,
-    textures: Vec<PreparedTexture>,
-    materials: Vec<PreparedMaterial>,
-    nodes: Vec<PreparedNode>,
+    pub(crate) path: String,
+    pub(crate) meshes: Vec<(MeshData, Vec<Lod>)>,
+    pub(crate) textures: Vec<PreparedTexture>,
+    pub(crate) materials: Vec<PreparedMaterial>,
+    pub(crate) nodes: Vec<PreparedNode>,
 }
 
-struct PreparedTexture {
-    name: String,
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
-    srgb: bool,
+pub(crate) struct PreparedTexture {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub srgb: bool,
 }
 
 /// A material whose textures are indices into the model's textures until upload.
-struct PreparedMaterial {
-    desc: MaterialDesc,
-    base_color: Option<usize>,
-    metallic_roughness: Option<usize>,
-    normal: Option<usize>,
-    emissive: Option<usize>,
+pub(crate) struct PreparedMaterial {
+    pub desc: MaterialDesc,
+    pub base_color: Option<usize>,
+    pub metallic_roughness: Option<usize>,
+    pub normal: Option<usize>,
+    pub emissive: Option<usize>,
 }
 
-struct PreparedNode {
-    name: String,
-    position: Vec3,
-    rotation: Quat,
-    scale: Vec3,
-    mesh: usize,
+pub(crate) struct PreparedNode {
+    pub name: String,
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+    pub mesh: usize,
     /// `None` for glTF's default material.
-    material: Option<usize>,
-    mesh_part: String,
-    material_part: Option<String>,
+    pub material: Option<usize>,
+    pub mesh_part: String,
+    pub material_part: Option<String>,
 }
 
 impl PreparedModel {

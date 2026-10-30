@@ -137,9 +137,13 @@ Done so far:
 - **Fields and content roots:** nested `[Serializable]` types and behaviour or interface references in fields, and
   `[content]` include and exclude patterns for the build.
 
+- **Cooked models:** the content build stores models ready for the GPU, with meshes, LODs, decoded textures and
+  materials, so loading needs no import work. A cache keyed on input hashes means unchanged models are never cooked
+  twice.
+
 Still to do in M2:
 - Async IO (io_uring and IoRing) and GPU-side decompression.
-- Splitting large bundles and merging tiny ones, and a per-asset build cache (with cooking).
+- Splitting large bundles and merging tiny ones, and compressing textures (BC7, BC5, BC6H) when cooking.
 - A `[ContentRoot]` attribute for code that loads by string.
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
 

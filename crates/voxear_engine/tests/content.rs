@@ -85,13 +85,15 @@ fn assets_are_bundled_by_the_roots_that_use_them() {
     );
     assert_eq!(report.excluded, ["Materials/Unused.material"]);
 
-    // The model's buffer travels with it, under its project path.
+    // The model ships cooked, with its buffer baked in, so the buffer file does not ship.
     let catalog = Catalog::read(&output).unwrap();
     let tree = catalog.assets.iter().find(|a| a.path == "Models/Tree.gltf").unwrap();
     let files: Vec<&str> = tree.files.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(files, ["Models/Tree.gltf", "Models/Tree Data.bin"]);
+    assert_eq!((files, tree.cooked), (vec!["Models/Tree.gltf"], true));
     let mut reader = voxear_assets::bundle::BundleReader::new(&output, &catalog);
-    assert_eq!(reader.read("Models/Tree Data.bin").unwrap(), [0u8; 36]);
+    let cooked = reader.read("Models/Tree.gltf").unwrap();
+    assert!(voxear_render::PreparedModel::from_bytes("Models/Tree.gltf", &cooked).is_ok());
+    assert!(reader.read("Models/Tree Data.bin").is_err());
     assert_eq!(reader.read_text("Materials/Stone.material").unwrap(), MATERIAL);
 }
 
@@ -159,4 +161,23 @@ fn content_settings_add_and_remove_roots() {
     assert!(!roots.contains(&"Prefabs/Torch.prefab".to_string()), "no longer a root of its own");
     assert!(shipped.contains(&"Prefabs/Torch.prefab".to_string()), "but the cave still uses it, so it ships");
     assert!(roots.contains(&"Prefabs/Wolf.prefab".to_string()), "a behaviour field names it, so it stays a root");
+}
+
+#[test]
+fn unchanged_models_are_not_cooked_again() {
+    let dir = project();
+    let output = dir.path().join("Built");
+    let first = content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    assert_eq!((first.cooked, first.cached), (1, 0));
+    let again = content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    assert_eq!((again.cooked, again.cached), (0, 1));
+
+    // Changing a file the model reads cooks it again, and the old cook goes.
+    let mut buffer = vec![0u8; 36];
+    buffer[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+    std::fs::write(dir.path().join("Models/Tree Data.bin"), buffer).unwrap();
+    let changed = content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    assert_eq!((changed.cooked, changed.cached), (1, 0));
+    let cooks = std::fs::read_dir(content_build::cache_dir(dir.path())).unwrap().count();
+    assert_eq!(cooks, 1);
 }

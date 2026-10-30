@@ -103,11 +103,13 @@ impl Loads {
         let db = content.shared_db();
         let mut reader = content.worker_reader();
         let loaded = content.loaded();
+        let cooked = content.cooked_models();
         let progress = Arc::new(Progress::default());
         let counter = progress.clone();
-        let job = std::thread::Builder::new()
-            .name(format!("load {reference}"))
-            .spawn(move || gather(&db, reader.as_mut(), root, &loaded, with_models, &counter))?;
+        let job = std::thread::Builder::new().name(format!("load {reference}")).spawn(move || {
+            let models = Models { prepare: with_models, cooked: &cooked };
+            gather(&db, reader.as_mut(), root, &loaded, models, &counter)
+        })?;
 
         let id = LoadId(self.next);
         self.next += 1;
@@ -244,13 +246,21 @@ fn advance_one(
     }
 }
 
+/// How the worker treats models.
+struct Models<'a> {
+    /// Prepare them at all; headless runs never draw them.
+    prepare: bool,
+    /// Those the content build cooked, which only need reading.
+    cooked: &'a HashSet<AssetGuid>,
+}
+
 /// Runs on the worker: everything `root` needs that is not loaded already.
 fn gather(
     db: &AssetDb,
     reader: &mut dyn AssetReader,
     root: AssetGuid,
     loaded: &HashSet<AssetGuid>,
-    with_models: bool,
+    models: Models,
     progress: &Progress,
 ) -> Result<Prepared> {
     let mut prepared = Prepared::default();
@@ -269,8 +279,12 @@ fn gather(
                 queue.extend(direct_needs(db, &table));
                 prepared.texts.insert(guid, text.into());
             }
-            AssetKind::Model if with_models => {
-                let model = voxear_render::prepare_model(&entry.path, &mut |file| reader.read(file))?;
+            AssetKind::Model if models.prepare => {
+                let model = if models.cooked.contains(&guid) {
+                    PreparedModel::from_bytes(&entry.path, &reader.read(&entry.path)?)?
+                } else {
+                    voxear_render::prepare_model(&entry.path, &mut |file| reader.read(file))?
+                };
                 prepared.models.push((guid, model));
             }
             AssetKind::Model | AssetKind::Texture => {}

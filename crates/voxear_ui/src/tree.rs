@@ -34,6 +34,14 @@ pub enum Kind {
     ListView,
     /// A [`Kind::ListView`] of rows that open and close, as in a hierarchy.
     TreeView,
+    /// A field to type text in.
+    TextField,
+    /// A box that is ticked or not, with a label.
+    Toggle,
+    /// A value dragged along a track.
+    Slider,
+    /// A titled section that opens and closes.
+    Foldout,
 }
 
 impl Kind {
@@ -45,6 +53,10 @@ impl Kind {
             Kind::ScrollView => "ScrollView",
             Kind::ListView => "ListView",
             Kind::TreeView => "TreeView",
+            Kind::TextField => "TextField",
+            Kind::Toggle => "Toggle",
+            Kind::Slider => "Slider",
+            Kind::Foldout => "Foldout",
         }
     }
 }
@@ -74,6 +86,8 @@ pub(crate) struct Element {
     pub list: Option<Box<crate::list::ListState>>,
     /// For a list's row: the list, so a click on it selects it.
     pub row_of: Option<taffy::NodeId>,
+    /// What a text field, slider or foldout keeps.
+    pub control: Option<crate::controls::Control>,
 }
 
 impl Element {
@@ -94,6 +108,7 @@ impl Element {
             scroll_max: [0.0; 2],
             list: None,
             row_of: None,
+            control: None,
         }
     }
 }
@@ -145,6 +160,9 @@ pub struct Ui {
     /// List and tree views, which make rows as they scroll.
     pub(crate) lists: Vec<taffy::NodeId>,
     pub(crate) modifiers: crate::pointer::Modifiers,
+    pub(crate) input: crate::input::Input,
+    /// Text fields, whose layouts are refreshed before each draw.
+    pub(crate) fields: Vec<taffy::NodeId>,
 }
 
 impl Default for Ui {
@@ -177,7 +195,23 @@ impl Ui {
             scrollers: Vec::new(),
             lists: Vec::new(),
             modifiers: Default::default(),
+            input: Default::default(),
+            fields: Vec::new(),
         }
+        .with_theme()
+    }
+
+    /// A UI with no default theme, for styling from nothing.
+    pub fn bare() -> Self {
+        let mut ui = Self::new();
+        ui.clear_sheets(ui.root());
+        ui
+    }
+
+    fn with_theme(mut self) -> Self {
+        let root = self.root();
+        self.add_sheet(root, StyleSheet::parse("Default.vss", crate::DEFAULT_THEME));
+        self
     }
 
     /// The element covering the whole screen, which everything else is in.
@@ -224,6 +258,13 @@ impl Ui {
     /// Changes an element's text. Setting the same text again costs nothing,
     /// so this can be called every frame.
     pub fn set_text(&mut self, node: NodeId, text: &str) {
+        if let Some(edit) = self.editing(node) {
+            if edit.editor.raw_text() != text {
+                edit.editor.set_text(text);
+                let _ = self.tree.mark_dirty(node.0);
+            }
+            return;
+        }
         let Some(label) = self.element_mut(node).and_then(|e| e.text.as_mut()) else { return };
         if label.content == text {
             return;
@@ -404,6 +445,13 @@ impl Ui {
         self.pointer.forget(node.0);
         self.lists.retain(|&n| n != node.0);
         self.scrollers.retain(|&n| n != node.0);
+        self.fields.retain(|&n| n != node.0);
+        if self.input.focused == Some(node.0) {
+            self.input.focused = None;
+        }
+        if self.input.dragging == Some(node.0) {
+            self.input.dragging = None;
+        }
         self.restyle = true;
     }
 
@@ -467,14 +515,17 @@ impl Ui {
             self.layout(width, height, scale);
             self.update_scroll_limits();
         }
+        self.refresh_fields();
         let scale = self.viewport.2;
+        let (focused, caret_on) = (self.input.focused, self.caret_on());
         let mut quads = Vec::new();
         // An atlas that filled up starts again part way through, so the
         // glyphs drawn before then are drawn once more.
         for _ in 0..2 {
             quads.clear();
             self.atlas.restarted = false;
-            let mut draw = Draw { tree: &mut self.tree, atlas: &mut self.atlas, scale, quads: &mut quads };
+            let mut draw =
+                Draw { tree: &mut self.tree, atlas: &mut self.atlas, scale, quads: &mut quads, focused, caret_on };
             draw.node(self.root, (0.0, 0.0), 1.0, Quad::UNCLIPPED);
             if !self.atlas.restarted {
                 break;
@@ -482,6 +533,7 @@ impl Ui {
         }
         self.pointer.clicks.clear();
         self.clear_selection_changes();
+        self.clear_input_events();
         UiFrame { quads, atlas: self.atlas.snapshot() }
     }
 

@@ -6,9 +6,10 @@
 //! `flex-wrap`, `align-items`, `align-self`, `align-content` and
 //! `justify-content`. Look: `background-color`, `border`, `border-width`,
 //! `border-color`, `border-radius`, `opacity`, `pointer-events`, `overflow`
-//! (`visible`, `hidden`, or `scroll`/`auto`) and `scrollbar-color`. Text,
-//! which children inherit: `color`, `font-size`, `font-weight` and
-//! `font-family` (`sans` or `mono`).
+//! (`visible`, `hidden`, or `scroll`/`auto`), `scrollbar-color`, and for
+//! text fields `selection-color` and `caret-color`. Text,
+//! which children inherit: `color`, `font-size`, `font-weight`,
+//! `font-family` (`sans` or `mono`) and `text-align`.
 //!
 //! Lengths are `px` or `%`, colours are `#rgb`, `#rrggbb`, `#rrggbbaa`,
 //! `rgb()`, `rgba()`, `oklch()` or a few names, and `var(--name)` or
@@ -22,7 +23,7 @@ use taffy::{
     Position, Rect, Size,
 };
 
-use crate::{Color, Family, Overflow, Style, TextStyle};
+use crate::{Color, Family, Overflow, Style, TextAlign, TextStyle};
 
 /// Applies one declaration, after replacing its variables. Errors say what
 /// was wrong, for the caller to report with the declaration's place.
@@ -166,6 +167,8 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
             style.overflow = keyword(input, &modes)?;
         }
         "scrollbar-color" => style.scrollbar = color(input)?,
+        "selection-color" => style.selection = color(input)?,
+        "caret-color" => style.caret = Some(color(input)?),
         "color" => text.color = color(input)?,
         "font-size" => text.size = pixels(input)?,
         "font-weight" => {
@@ -173,6 +176,16 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
             text.weight = input
                 .try_parse(|i| keyword(i, &named).map_err(|_| i.new_error_for_next_token::<()>()))
                 .or_else(|_| number(input))?;
+        }
+        "text-align" => {
+            let aligns = [
+                ("left", TextAlign::Start),
+                ("start", TextAlign::Start),
+                ("center", TextAlign::Center),
+                ("right", TextAlign::End),
+                ("end", TextAlign::End),
+            ];
+            text.align = keyword(input, &aligns)?;
         }
         "font-family" => {
             let families = [

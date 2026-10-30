@@ -168,6 +168,12 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        // The overlay sees input first; what it uses, the game does not. While
+        // flying the cursor is captured and points at nothing, so the pointer is left out.
+        let pointer = matches!(event, WindowEvent::CursorMoved { .. } | WindowEvent::MouseWheel { .. });
+        if !(pointer && self.fly.is_looking()) && self.overlay.handle(&event) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -187,23 +193,12 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
                 self.set_flying(state == ElementState::Pressed);
             }
-            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
-                self.overlay.pointer_button(state == ElementState::Pressed);
-            }
-            // While flying the cursor is captured, and points at nothing.
-            WindowEvent::CursorMoved { position, .. } if !self.fly.is_looking() => {
-                self.overlay.pointer_move(position.x as f32, position.y as f32);
-            }
-            WindowEvent::CursorLeft { .. } => self.overlay.pointer_leave(),
             WindowEvent::MouseWheel { delta, .. } => {
                 let notches = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(position) => position.y as f32 / 40.0,
                 };
-                // UI under the pointer scrolls first; otherwise the wheel sets the fly speed.
-                if self.fly.is_looking() || !self.overlay.pointer_scroll(-notches * 40.0) {
-                    self.fly.scroll(notches);
-                }
+                self.fly.scroll(notches);
             }
             WindowEvent::Focused(false) => self.set_flying(false),
             WindowEvent::RedrawRequested => {

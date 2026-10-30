@@ -374,3 +374,63 @@ fn lists_and_trees_draw_clipped_and_selected() {
     assert_eq!(at(x + w - 20.0, y + h / 2.0), selected, "the clicked tree row is selected");
     assert_eq!(ui.selected_items(tree).len(), 1);
 }
+
+/// The input controls with the default theme: a focused text field with a
+/// selection, a toggle, a slider, a foldout and a button. Set
+/// `VOXEAR_TEST_OUTPUT` to keep the image.
+#[test]
+fn controls_draw_with_the_default_theme() {
+    use voxear_ui::{Key, Modifiers, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let markup = r#"
+        <vui>
+            <Panel style="position: absolute; left: 16px; top: 16px; width: 280px; padding: 12px; gap: 10px;
+                          background-color: #111216; border-radius: 10px; font-size: 12px; color: #c8c9d0">
+                <TextField name="name" placeholder="Name" value="Firefly spawner" />
+                <TextField placeholder="Search assets" />
+                <Toggle name="fly" value="true">Can fly</Toggle>
+                <Toggle>Snap to grid</Toggle>
+                <Slider name="speed" min="0" max="20" value="6" />
+                <Foldout text="Movement">
+                    <Label>Speed</Label>
+                    <Label>Lift force</Label>
+                </Foldout>
+                <Button>Bake path</Button>
+            </Panel>
+        </vui>"#;
+    let document = ui.load_markup(root, "Form.vui", markup, &mut |_| Err("no files".into())).unwrap();
+    let (width, height) = (640, 360);
+    ui.frame(width, height, 1.0);
+    let name = ui.find(document, "name").unwrap();
+    ui.focus(name);
+    ui.set_modifiers(Modifiers { shift: false, control: true });
+    ui.key_down(Key::Right);
+    ui.set_modifiers(Modifiers { shift: true, control: true });
+    ui.key_down(Key::Right);
+    ui.set_modifiers(Modifiers::default());
+    renderer.set_ui(&ui.frame(width, height, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("controls.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+    let at = |x: f32, y: f32| {
+        let i = ((y as u32 * width + x as u32) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    let fly = ui.find(document, "fly").unwrap();
+    let check_box = ui.children(fly)[0];
+    let [x, y, w, _] = ui.rect(check_box);
+    assert_eq!(at(x + 2.0, y + 2.0), [0x8b, 0x93, 0xff], "a ticked toggle fills with the accent");
+    let [x, y, _, h] = ui.rect(name);
+    assert_eq!(at(x, y + h / 2.0)[2], 0xff, "the focused field's border is the accent");
+    assert!(w > 0.0 && ui.take_warnings().is_empty());
+}

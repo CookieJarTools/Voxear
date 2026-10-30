@@ -175,14 +175,16 @@ Done so far:
 - **Pointer:** `:hover`, `:active`, clicks and the wheel.
 - **Controls:** ScrollView with clipping and a floating scrollbar, and virtualized ListView and TreeView, which
   keep elements only for the rows on screen. A list of 100,000 items makes 11 rows.
+- **Input controls and the keyboard:** TextField (on parley's editor: selection, word movement, clipboard, input
+  methods), Toggle, Slider and Foldout, keyboard focus with Tab order, `text-align`, and a default theme in the
+  editor concept's look. Window events reach the UI first through `ui_input`, which wraps the system clipboard.
 - **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`,
   written as `StatsOverlay.vui` and `.vss`. Clicking its header folds it.
 
 Still to do in M3:
 - UI core:
   - transitions
-  - keyboard focus and text input
-  - toggles, sliders, foldouts, dropdowns, tabs and split views
+  - dropdowns, tabs and split views
   - grid layout properties
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus

@@ -56,6 +56,7 @@ impl StatsOverlay {
     /// Counts a frame that took `delta` seconds, refreshing the numbers every
     /// [`REFRESH`] seconds.
     pub fn update(&mut self, delta: f32, renderer: &Renderer) {
+        self.ui.advance(delta);
         self.handle_clicks();
         self.frames += 1;
         self.seconds += delta;
@@ -95,6 +96,11 @@ impl StatsOverlay {
 
     fn frame(&mut self, (width, height): (u32, u32), scale: f32) -> UiFrame {
         self.ui.frame(width, height, scale)
+    }
+
+    /// Hands it a window event. Returns whether the overlay used it.
+    pub fn handle(&mut self, event: &winit::event::WindowEvent) -> bool {
+        crate::ui_input::handle(&mut self.ui, event)
     }
 
     /// The pointer moved, in physical pixels from the window's top left.

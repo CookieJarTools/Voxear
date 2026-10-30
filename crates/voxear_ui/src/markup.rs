@@ -11,8 +11,10 @@
 //! </vui>
 //! ```
 //!
-//! Elements are `Panel`, `ScrollView`, `ListView`, `TreeView`, `Label` and
-//! `Button`, each taking `name`, `class`
+//! Elements are `Panel`, `ScrollView`, `ListView`, `TreeView`, `Label`,
+//! `Button`, `TextField` (`placeholder`, `multiline`, `value` or content),
+//! `Toggle` (`value`), `Slider` (`min`, `max`, `value`, `step`) and `Foldout`
+//! (`text`, `open`, children as its content), each taking `name`, `class`
 //! (several, separated by spaces) and `style` (declarations that win over
 //! sheets). A label's or button's text is its content, or its `text`
 //! attribute. A list or tree view takes `item-height`, and gets its rows
@@ -120,6 +122,51 @@ impl Ui {
                         self.set_item_height(node, height);
                     }
                 }
+                "TextField" => {
+                    let content: String = child.children().filter_map(|n| n.text()).collect();
+                    let text = child.attribute("value").map_or_else(|| content.trim().to_string(), str::to_string);
+                    let node = self.text_field(parent, &text);
+                    self.attributes(
+                        node,
+                        child,
+                        &["name", "class", "style", "value", "placeholder", "multiline"],
+                        builder,
+                    );
+                    if let Some(placeholder) = child.attribute("placeholder") {
+                        self.set_placeholder(node, placeholder);
+                    }
+                    if flag(child, "multiline", builder)? {
+                        self.set_multiline(node, true);
+                    }
+                }
+                "Toggle" => {
+                    let content: String = child.children().filter_map(|n| n.text()).collect();
+                    let text = child.attribute("text").map_or_else(|| content.trim().to_string(), str::to_string);
+                    let node = self.toggle(parent, &text, flag(child, "value", builder)?);
+                    self.attributes(node, child, &["name", "class", "style", "text", "value"], builder);
+                }
+                "Slider" => {
+                    let number = |name: &str, default: f32| match child.attribute(name) {
+                        None => Ok(default),
+                        Some(text) => {
+                            text.trim().parse::<f32>().map_err(|_| builder.error(child, format!("{name} is a number")))
+                        }
+                    };
+                    let (min, max) = (number("min", 0.0)?, number("max", 1.0)?);
+                    let (value, step) = (number("value", min)?, number("step", 0.0)?);
+                    let node = self.slider(parent, min, max, min);
+                    self.set_slider_step(node, step);
+                    self.set_slider_value(node, value);
+                    self.attributes(node, child, &["name", "class", "style", "min", "max", "value", "step"], builder);
+                }
+                "Foldout" => {
+                    let title = child.attribute("text").unwrap_or_default();
+                    let open = child.attribute("open").is_none() || flag(child, "open", builder)?;
+                    let node = self.foldout(parent, title, open);
+                    self.attributes(node, child, &["name", "class", "style", "text", "open"], builder);
+                    let content = self.foldout_content(node).expect("a foldout has content");
+                    self.build_children(content, child, builder)?;
+                }
                 tag @ ("Label" | "Button") => {
                     if let Some(inner) = child.children().find(Node::is_element) {
                         return Err(builder.error(inner, format!("a {tag} holds only text")));
@@ -132,7 +179,7 @@ impl Ui {
                     self.attributes(node, child, &["name", "class", "style", "text"], builder);
                 }
                 other => {
-                    let known = "Panel, ScrollView, ListView, TreeView, Label, Button or Style";
+                    let known = "Panel, ScrollView, ListView, TreeView, Label, Button, TextField, Toggle, Slider, Foldout or Style";
                     return Err(builder.error(child, format!("unknown element <{other}>; expected {known}")));
                 }
             }
@@ -163,5 +210,14 @@ impl Ui {
                 _ => {}
             }
         }
+    }
+}
+
+/// A `true` or `false` attribute; absent is false.
+fn flag(xml: Node, name: &str, builder: &Builder) -> Result<bool, UiError> {
+    match xml.attribute(name) {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        Some(other) => Err(builder.error(xml, format!("{name} is true or false, not '{other}'"))),
     }
 }

@@ -84,7 +84,7 @@ fn text_inherits_and_descendant_rules_reach_it() {
 fn the_pointer_hovers_presses_and_clicks() {
     let (mut ui, document) = cards();
     let go = ui.find(document, "go").unwrap();
-    assert_eq!(background(&ui, go), None);
+    assert_eq!(background(&ui, go), Some(Color::hex(0x1a1b20)), "the default theme's button");
 
     ui.pointer_move(120.0, 310.0);
     assert!(ui.wants_pointer() && ui.is_hovered(go) && ui.is_hovered(document), "the button and what it is in");
@@ -149,7 +149,7 @@ fn mistakes_are_reported_with_their_place() {
     let error = load(&mut ui, "<vui>\n  <Lable>Hi</Lable>\n</vui>", &[]).unwrap_err();
     assert_eq!(
         error.0,
-        "Test.vui:2:3: unknown element <Lable>; expected Panel, ScrollView, ListView, TreeView, Label, Button or Style"
+        "Test.vui:2:3: unknown element <Lable>; expected Panel, ScrollView, ListView, TreeView, Label, Button, TextField, Toggle, Slider, Foldout or Style"
     );
     let error = load(&mut ui, "<vui><Style src=\"Missing.vss\" /></vui>", &[]).unwrap_err();
     assert!(error.0.contains("could not read Missing.vss"), "{error}");

@@ -1,0 +1,166 @@
+/* Voxear's default look for controls, as in the editor concept: near-black
+   surfaces, one periwinkle accent and compact rows. Every Ui starts with
+   it on its root. A sheet of your own overrides any of it, and changing the
+   variables is the quickest way to retheme. */
+
+:root {
+    --vx-surface: #1a1b20;
+    --vx-surface-hover: #22232a;
+    --vx-field: #0e0f12;
+    --vx-edge: #2a2b30;
+    --vx-edge-hover: #3a3b42;
+    --vx-text: #e8e8ec;
+    --vx-muted: #8b8c96;
+    --vx-accent: #8b93ff;
+    --vx-on-accent: #0e0f12;
+    --vx-selected: #2b2f55;
+}
+
+Button {
+    padding: 5px 12px;
+    border-radius: 6px;
+    background-color: var(--vx-surface);
+    border: 1px solid var(--vx-edge);
+    color: var(--vx-text);
+    text-align: center;
+}
+
+Button:hover {
+    background-color: var(--vx-surface-hover);
+    border-color: var(--vx-edge-hover);
+}
+
+Button:active {
+    background-color: var(--vx-edge);
+}
+
+Button:focus {
+    border-color: var(--vx-accent);
+}
+
+Button:disabled, TextField:disabled, Toggle:disabled, Slider:disabled {
+    opacity: 0.45;
+}
+
+TextField {
+    padding: 4px 8px;
+    min-height: 26px;
+    border-radius: 6px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-edge);
+    color: var(--vx-text);
+}
+
+TextField:hover {
+    border-color: var(--vx-edge-hover);
+}
+
+TextField:focus {
+    border-color: var(--vx-accent);
+}
+
+Toggle {
+    gap: 8px;
+}
+
+.toggle-box {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid var(--vx-edge-hover);
+    background-color: var(--vx-field);
+    align-items: center;
+}
+
+.toggle-mark {
+    width: 6px;
+    height: 6px;
+    border-radius: 2px;
+}
+
+Toggle:hover .toggle-box {
+    border-color: var(--vx-muted);
+}
+
+Toggle:checked .toggle-box {
+    background-color: var(--vx-accent);
+    border-color: var(--vx-accent);
+}
+
+Toggle:checked .toggle-mark {
+    background-color: var(--vx-on-accent);
+}
+
+Toggle:focus .toggle-box {
+    border-color: var(--vx-accent);
+}
+
+Slider {
+    height: 18px;
+}
+
+.slider-track {
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--vx-edge);
+}
+
+.slider-fill {
+    border-radius: 2px;
+    background-color: var(--vx-accent);
+}
+
+.slider-thumb {
+    width: 12px;
+    height: 12px;
+    top: -4px;
+    margin-left: -6px;
+    border-radius: 6px;
+    background-color: var(--vx-text);
+}
+
+Slider:hover .slider-thumb, Slider:focus .slider-thumb {
+    background-color: #ffffff;
+}
+
+.foldout-header {
+    gap: 6px;
+    padding: 3px 0px;
+}
+
+.foldout-arrow {
+    width: 10px;
+    color: var(--vx-muted);
+}
+
+.foldout-title {
+    color: var(--vx-text);
+    font-weight: 600;
+}
+
+Foldout:focus .foldout-title {
+    color: var(--vx-accent);
+}
+
+.foldout-content {
+    padding-left: 16px;
+    gap: 4px;
+}
+
+.list-row {
+    padding: 0px 8px;
+    border-radius: 6px;
+}
+
+.list-row:hover {
+    background-color: var(--vx-surface);
+}
+
+.list-row:selected {
+    background-color: var(--vx-selected);
+    color: #ffffff;
+}
+
+.tree-arrow {
+    color: var(--vx-muted);
+}

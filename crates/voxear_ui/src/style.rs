@@ -23,6 +23,10 @@ pub struct Style {
     pub overflow: Overflow,
     /// The scrollbar thumb's colour, for elements that scroll.
     pub scrollbar: Color,
+    /// Behind selected text in a text field.
+    pub selection: Color,
+    /// A text field's caret; its text colour when not set.
+    pub caret: Option<Color>,
 }
 
 /// What an element does with children that do not fit inside it.
@@ -51,6 +55,8 @@ impl Default for Style {
             pickable: true,
             overflow: Overflow::Visible,
             scrollbar: Color::WHITE.with_alpha(0x40),
+            selection: Color::hex(0x8b93ff).with_alpha(0x66),
+            caret: None,
         }
     }
 }
@@ -172,11 +178,22 @@ pub struct TextStyle {
     pub weight: f32,
     pub color: Color,
     pub family: Family,
+    pub align: TextAlign,
+}
+
+/// Where lines of text sit across their element.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextAlign {
+    /// Left, or right in right-to-left text.
+    #[default]
+    Start,
+    Center,
+    End,
 }
 
 impl Default for TextStyle {
     fn default() -> Self {
-        Self { size: 13.0, weight: 400.0, color: Color::WHITE, family: Family::Sans }
+        Self { size: 13.0, weight: 400.0, color: Color::WHITE, family: Family::Sans, align: TextAlign::Start }
     }
 }
 

@@ -45,6 +45,7 @@ impl Ui {
         if let Some((node, grab)) = self.pointer.dragging {
             self.drag_thumb(node, point.1 - grab);
         }
+        self.drag_controls(point);
         self.update_hover();
     }
 
@@ -66,6 +67,9 @@ impl Ui {
         if !pressed && self.pointer.dragging.take().is_some() {
             return true;
         }
+        if !pressed {
+            self.input.dragging = None;
+        }
         if pressed
             && let Some(point) = self.pointer.position
             && let Some((node, top, length)) = self.scrollbar_at(point)
@@ -80,6 +84,9 @@ impl Ui {
         if pressed {
             self.set_states(&path, States::ACTIVE, true);
             self.pointer.pressed = path.clone();
+            if let Some(point) = self.pointer.position {
+                self.press_controls(&path, point);
+            }
         } else {
             let pressed = std::mem::take(&mut self.pointer.pressed);
             self.set_states(&pressed, States::ACTIVE, false);
@@ -89,6 +96,7 @@ impl Ui {
             {
                 self.pointer.clicks.push(target);
                 self.row_clicked(target);
+                self.click_controls(target);
             }
         }
         !path.is_empty()

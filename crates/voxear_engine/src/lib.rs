@@ -12,6 +12,7 @@ pub mod prefab;
 mod project;
 pub mod scene_file;
 mod stats_overlay;
+pub mod ui_input;
 mod windowed;
 
 pub use content::{Content, ContentUsage, MaterialData, MaterialSource, Released};

@@ -1,11 +1,12 @@
 //! Measuring text for layout, and walking the laid-out tree into quads.
 
-use parley::{FontContext, Layout, LayoutContext, PositionedLayoutItem};
+use parley::{Alignment, AlignmentOptions, FontContext, Layout, LayoutContext, PositionedLayoutItem};
 use taffy::{AvailableSpace, Display, LayoutInput, LayoutOutput, Size, TaffyTree};
 
 use crate::{
-    Overflow, Quad, Style,
+    Overflow, Quad, Style, TextAlign,
     atlas::GlyphAtlas,
+    controls::Control,
     scroll::{BAR, BAR_INSET, thumb},
     tree::Element,
 };
@@ -19,7 +20,30 @@ pub(crate) fn measure(
     layouts: &mut LayoutContext<()>,
     scale: f32,
 ) -> LayoutOutput {
-    let Some(text) = element.and_then(|e| e.text.as_mut()) else {
+    let Some(element) = element else {
+        return taffy::compute_leaf_layout(input, style, |_, _| 0.0, |_, _| Size::ZERO);
+    };
+    let text_style = element.text_style;
+    if let Some(Control::TextField(edit)) = &mut element.control {
+        return taffy::compute_leaf_layout(
+            input,
+            style,
+            |_, _| 0.0,
+            |known, available| {
+                let width = known.width.or(match available.width {
+                    AvailableSpace::Definite(width) => Some(width),
+                    _ => None,
+                });
+                edit.sync(text_style, scale, width.map(|w| w * scale));
+                let height = edit.editor.layout(fonts, layouts).height() / scale;
+                Size {
+                    width: known.width.unwrap_or(FIELD_WIDTH),
+                    height: known.height.unwrap_or(height.max(text_style.size * 1.25)),
+                }
+            },
+        );
+    }
+    let Some(text) = element.text.as_mut() else {
         return taffy::compute_leaf_layout(input, style, |_, _| 0.0, |_, _| Size::ZERO);
     };
     taffy::compute_leaf_layout(
@@ -42,12 +66,18 @@ pub(crate) fn measure(
     )
 }
 
+/// How wide a text field is when nothing sets its width.
+const FIELD_WIDTH: f32 = 160.0;
+
 /// Walks the laid-out tree into quads, parents before children.
 pub(crate) struct Draw<'a> {
     pub tree: &'a mut TaffyTree<Element>,
     pub atlas: &'a mut GlyphAtlas,
     pub scale: f32,
     pub quads: &'a mut Vec<Quad>,
+    /// The focused element, and whether its caret shows this frame.
+    pub focused: Option<taffy::NodeId>,
+    pub caret_on: bool,
 }
 
 impl Draw<'_> {
@@ -71,6 +101,20 @@ impl Draw<'_> {
             (element.computed.overflow, element.scroll, element.scroll_max, element.computed.scrollbar);
         if !outside {
             shape_quad(&element.computed, [x0, y0, x1 - x0, y1 - y0], self.scale, opacity, clip, self.quads);
+            if let Some(Control::TextField(_)) = &element.control {
+                let inner_height = layout.size.height - inset.1 - layout.border.bottom - layout.padding.bottom;
+                let content =
+                    [origin[0], origin[1], origin[0] + inner * self.scale, origin[1] + inner_height * self.scale];
+                let clip = [
+                    clip[0].max(content[0]),
+                    clip[1].max(content[1]),
+                    clip[2].min(content[2]),
+                    clip[3].min(content[3]),
+                ];
+                let focused = self.focused == Some(node);
+                let field = Field { focused, caret: focused && self.caret_on, opacity, clip };
+                draw_field(element, origin, field, self.atlas, self.quads);
+            }
             let color = element.text_style.color.linear_premultiplied().map(|c| c * opacity);
             if let Some(text) = &mut element.text
                 && let Some((_, shaped)) = &mut text.shaped
@@ -78,6 +122,12 @@ impl Draw<'_> {
                 // Broken again at the width it ended up, which the last
                 // measure may not have been.
                 shaped.break_all_lines(Some((inner * self.scale).ceil()));
+                let alignment = match element.text_style.align {
+                    TextAlign::Start => Alignment::Start,
+                    TextAlign::Center => Alignment::Center,
+                    TextAlign::End => Alignment::End,
+                };
+                shaped.align(alignment, AlignmentOptions::default());
                 glyph_quads(shaped, origin, color, clip, self.atlas, self.quads);
             }
         }
@@ -175,5 +225,56 @@ fn glyph_quads(
                 });
             }
         }
+    }
+}
+
+/// How a text field is drawn this frame.
+struct Field {
+    focused: bool,
+    caret: bool,
+    opacity: f32,
+    /// Its content box, within whatever clips it.
+    clip: [f32; 4],
+}
+
+/// A text field's selection, text (or placeholder) and caret, from the top
+/// left of its content box.
+fn draw_field(element: &mut Element, origin: [f32; 2], field: Field, atlas: &mut GlyphAtlas, quads: &mut Vec<Quad>) {
+    let Some(Control::TextField(edit)) = &mut element.control else { return };
+    let style = &element.computed;
+    let fade = |color: crate::Color| color.linear_premultiplied().map(|c| c * field.opacity);
+    let at = [origin[0] - edit.scroll.round(), origin[1] + edit.top];
+    let solid =
+        |rect: [f32; 4], color: [f32; 4]| Quad { rect, color, clip: field.clip, kind: Quad::SHAPE, ..Quad::default() };
+    if field.focused {
+        for (bounds, _) in edit.editor.selection_geometry() {
+            let rect = [
+                at[0] + bounds.x0 as f32,
+                at[1] + bounds.y0 as f32,
+                (bounds.x1 - bounds.x0) as f32,
+                (bounds.y1 - bounds.y0) as f32,
+            ];
+            quads.push(solid(rect, fade(style.selection)));
+        }
+    }
+    let empty = edit.editor.raw_text().is_empty();
+    if empty && !edit.placeholder.content.is_empty() {
+        if let Some((_, layout)) = &edit.placeholder.shaped {
+            glyph_quads(layout, at, fade(edit.placeholder.style.color), field.clip, atlas, quads);
+        }
+    } else if let Some(layout) = edit.editor.try_layout() {
+        glyph_quads(layout, at, fade(element.text_style.color), field.clip, atlas, quads);
+    }
+    if field.caret
+        && let Some(bounds) = edit.editor.cursor_geometry(1.0)
+    {
+        let caret = style.caret.unwrap_or(element.text_style.color);
+        let rect = [
+            (at[0] + bounds.x0 as f32).round(),
+            at[1] + bounds.y0 as f32,
+            1.0f32.max((bounds.x1 - bounds.x0) as f32),
+            (bounds.y1 - bounds.y0) as f32,
+        ];
+        quads.push(solid(rect, fade(caret)));
     }
 }

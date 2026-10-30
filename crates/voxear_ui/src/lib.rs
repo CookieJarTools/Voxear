@@ -15,15 +15,19 @@
 //!   [`StyleSheet`]) describe UI as Unity's UXML and USS do, with CSS's
 //!   cascade, inherited text and custom properties for theme tokens.
 //! - **The pointer** drives `:hover` and `:active`, clicks and the wheel.
-//! - **Controls**: scroll views, and list and tree views that keep elements
-//!   only for the rows on screen (see [`ListItems`] and [`TreeItems`]).
+//! - **Controls**: scroll views, list and tree views that keep elements
+//!   only for the rows on screen (see [`ListItems`] and [`TreeItems`]),
+//!   text fields, toggles, sliders and foldouts, with keyboard focus.
+//! - **A default theme** in the editor's look, which sheets can override.
 //!
 //! This is the foundation the editor and in-game UI build on.
 
 mod atlas;
 mod cascade;
 mod color;
+mod controls;
 mod draw;
+mod input;
 mod list;
 pub mod markup;
 mod pointer;
@@ -35,12 +39,16 @@ mod style;
 mod tree;
 
 pub use color::Color;
+pub use input::{Clipboard, Key, LocalClipboard};
 pub use list::{ItemFns, ListItems, TreeItems};
 pub use markup::LoadFile;
 pub use pointer::Modifiers;
 pub use sheet::StyleSheet;
-pub use style::{Family, Overflow, Style, TextStyle};
+pub use style::{Family, Overflow, Style, TextAlign, TextStyle};
 pub use tree::{Kind, NodeId, Ui};
+
+/// The default theme every [`Ui`] starts with: `theme/Default.vss`.
+pub const DEFAULT_THEME: &str = include_str!("../theme/Default.vss");
 
 /// A document that could not be loaded, with where and why.
 #[derive(Clone, Debug, PartialEq, Eq)]

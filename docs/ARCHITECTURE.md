@@ -806,7 +806,7 @@ variants inherit from a parent and override only what differs.
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
-## UI (Voxear UI) *(implemented: tree, layout, text, drawing, markup, style sheets, pointer, scroll/list/tree views; transitions, more controls and C# planned)*
+## UI (Voxear UI) *(implemented: tree, layout, text, drawing, markup, style sheets, pointer and keyboard, scroll/list/tree views, input controls, default theme; transitions and C# planned)*
 
 **Recommendation from research.** Build our own retained-mode UI on the Linebender and Servo crates, rendered by our
 own Vulkan code.
@@ -935,9 +935,33 @@ how they look, as UXML and USS do in Unity:
 - **The editor is built from these.** Every long list in the editor (Hierarchy, Project, Console, inspector
   arrays) is a virtualized list or tree view, never one element per item.
 
+**Input controls** *(implemented)*. Each is made of ordinary elements with classes, so a sheet can restyle
+every part:
+- **TextField**: one line, or several with `multiline`. Editing is parley's own: the caret and word movement,
+  selection by drag, double click (a word) and triple click (a line), Ctrl+A/C/X/V, Ctrl+Backspace and Delete
+  by word, a placeholder while empty, and input-method composition with `ime_area` for the candidate list. A
+  long line scrolls to keep the caret in view, and the text is clipped to the field.
+- **Toggle**, **Slider** (dragged, or moved by the arrow keys, with an optional step) and **Foldout** (a header
+  that opens and closes its content; markup children go inside it).
+- **Focus and the keyboard:** clicking a control focuses it, Tab and Shift+Tab walk the controls in tree order
+  (skipping hidden and disabled ones), and the focused one matches `:focus`. Enter and Space press a focused
+  button or toggle, and Escape lets go. While a text field has focus, keys belong to it (`wants_keyboard`),
+  so typing a W never moves the camera.
+- **Events**, read during the frame like clicks: `ui.changed(node)` when the user changed a value,
+  `ui.submitted(field)` for Enter. Setting a value from code is not a change.
+- **The clipboard** is a trait the window provides (`voxear_engine::ui_input::SystemClipboard` wraps the
+  system's, through arboard), so `voxear_ui` holds no platform code and tests use an in-memory one.
+- `voxear_engine::ui_input::handle` turns every winit event into the UI's calls, and returns whether the UI used
+  it, so the game leaves it alone.
+
+**The default theme** (`crates/voxear_ui/theme/Default.vss`) is on every `Ui`'s root: the editor concept's
+near-black surfaces, one periwinkle accent and compact rows, for buttons, fields, toggles, sliders, foldouts and
+list rows. A sheet of your own overrides any of it, and redefining its `--vx-*` variables is the quickest way to
+retheme. `Ui::bare()` starts without it.
+
 **Still to come.**
 - Transitions and animations.
-- Keyboard focus and text fields, then toggles, sliders, foldouts, dropdowns, tabs and split views.
+- Dropdowns, tabs and split views.
 - Grid layout properties.
 - Data binding to C#, using source generators instead of reflection.
 - A live-reloading UI builder in the editor.

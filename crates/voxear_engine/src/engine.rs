@@ -59,6 +59,10 @@ impl Engine {
         self.scripts = Some(scripts);
     }
 
+    pub fn scripts(&self) -> Option<&ScriptRuntime> {
+        self.scripts.as_ref()
+    }
+
     pub fn scripts_mut(&mut self) -> Option<&mut ScriptRuntime> {
         self.scripts.as_mut()
     }

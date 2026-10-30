@@ -10,7 +10,9 @@ use clap::{Parser, Subcommand};
 use voxear_assets::{AssetDb, AssetKind};
 use voxear_core::math::EulerRot;
 use voxear_engine::{
-    Content, Engine, Game, PROJECT_FILE, Project, StatsOverlay, content_build, core_assembly, run_windowed,
+    Content, Engine, Game, PROJECT_FILE, Project, StatsOverlay,
+    content_build::{self, CodeRoot},
+    core_assembly, run_windowed,
 };
 use voxear_render::{
     DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess,
@@ -281,9 +283,10 @@ fn start_game(project: Project, prepare: Prepare) -> Result<Game> {
     }
     let output = content_build::default_output(&project.root);
     if prepare.build {
-        let report = content_build::build(&project.root, &output, &project.file.content)?;
+        let report = content_build::build(&project.root, &output, &project.file.content, &code_roots(&engine)?)?;
         let written = report.bundles.iter().filter(|b| b.written).count();
         tracing::info!("built content: {} bundles, {written} written", report.bundles.len());
+        warn_unmatched(&report);
     }
     let mut content = Content::open_bundles(&project.root, &output)?;
     for overlay in &prepare.overlays {
@@ -297,9 +300,11 @@ fn start_game(project: Project, prepare: Prepare) -> Result<Game> {
 
 fn build_content(path: &Path) -> Result<()> {
     let project = Project::open(path)?;
+    // The scripts declare roots of their own with [ContentRoot].
+    let code_roots = code_roots(&start_engine(&project, false)?)?;
     let started = std::time::Instant::now();
     let output = content_build::default_output(&project.root);
-    let report = content_build::build(&project.root, &output, &project.file.content)?;
+    let report = content_build::build(&project.root, &output, &project.file.content, &code_roots)?;
     let written = report.bundles.iter().filter(|b| b.written).count();
     let shown = output.strip_prefix(&project.root).unwrap_or(&output);
     println!(
@@ -323,7 +328,27 @@ fn build_content(path: &Path) -> Result<()> {
             println!("      {asset}");
         }
     }
+    if !code_roots.is_empty() {
+        println!("\nroots declared in scripts:");
+        for root in &code_roots {
+            println!("      {}  ({})", root.pattern, root.source);
+        }
+    }
+    warn_unmatched(&report);
     Ok(())
+}
+
+/// The `[ContentRoot]` patterns in the game's scripts, if it has any.
+fn code_roots(engine: &Engine) -> Result<Vec<CodeRoot>> {
+    let Some(scripts) = engine.scripts() else { return Ok(Vec::new()) };
+    let roots = scripts.content_roots()?;
+    Ok(roots.into_iter().map(|(pattern, source)| CodeRoot { pattern, source }).collect())
+}
+
+fn warn_unmatched(report: &content_build::BuildReport) {
+    for root in &report.unmatched {
+        tracing::warn!("[ContentRoot(\"{}\")] on {} matches no asset", root.pattern, root.source);
+    }
 }
 
 fn size(bytes: u64) -> String {
@@ -460,6 +485,9 @@ fn report_gpu(gpu: &voxear_rhi::GpuInfo) -> bool {
     }
     if gpu.ray_tracing {
         tiers.push("ray tracing");
+    }
+    if gpu.memory_decompression {
+        tiers.push("GPU decompression");
     }
     let tiers = if tiers.is_empty() { String::new() } else { format!(", {}", tiers.join(", ")) };
     let line =

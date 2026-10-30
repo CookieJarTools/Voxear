@@ -4,7 +4,9 @@
 //! 1. **Roots** are what a game can ask for by name: every level and prefab,
 //!    and every asset a behaviour field names, since `Ref<T>` loads those on
 //!    their own. `[content]` in `voxear.toml` adds roots with `include` and
-//!    takes them away with `exclude` (see [`ContentSettings`]).
+//!    takes them away with `exclude` (see [`ContentSettings`]). `[ContentRoot]`
+//!    in scripts names what code loads by path ([`CodeRoot`]); like a field,
+//!    it ships even when excluded.
 //! 2. **Dependencies** come from the files: a level's scenes, the prefabs,
 //!    meshes and materials that scenes and prefabs use, and a model's
 //!    textures. Files a model reads that are not assets, such as its
@@ -43,6 +45,24 @@ pub struct BuildReport {
     /// Models cooked this time, and models whose cook came from the cache.
     pub cooked: usize,
     pub cached: usize,
+    /// Code roots that match no asset, which is most likely a typo.
+    pub unmatched: Vec<CodeRoot>,
+}
+
+/// A `[ContentRoot]` in the game's scripts: assets that code loads by a path
+/// the build cannot see.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeRoot {
+    /// A project path, a GUID, or a path pattern with `*` and `**`.
+    pub pattern: String,
+    /// The type or member that declares it, for messages.
+    pub source: String,
+}
+
+impl CodeRoot {
+    fn matches(&self, guid: AssetGuid, path: &str) -> bool {
+        glob(&self.pattern, path) || self.pattern.parse::<AssetGuid>().is_ok_and(|g| g == guid)
+    }
 }
 
 #[derive(Debug)]
@@ -77,7 +97,7 @@ struct Needs {
     companions: Vec<String>,
 }
 
-pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<BuildReport> {
+pub fn build(root: &Path, output: &Path, settings: &ContentSettings, code_roots: &[CodeRoot]) -> Result<BuildReport> {
     let (db, _) = AssetDb::scan(root)?;
     let mut needs = HashMap::new();
     for entry in db.entries() {
@@ -86,7 +106,8 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<B
         needs.insert(entry.guid, found);
     }
 
-    let usage = usage_sets(&db, &needs, settings);
+    let usage = usage_sets(&db, &needs, settings, code_roots);
+    let unmatched = code_roots.iter().filter(|r| !db.entries().any(|e| r.matches(e.guid, &e.path))).cloned().collect();
     let mut excluded: Vec<String> =
         db.entries().filter(|e| !usage.contains_key(&e.guid)).map(|e| e.path.clone()).collect();
     excluded.sort();
@@ -126,7 +147,12 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<B
                 path: entry.path.clone(),
                 kind: entry.kind,
                 bundle: index,
-                files: vec![writer.add(&entry.path, &stored[&guid])],
+                // A cooked model compressed its own GPU data, as GDeflate the GPU unpacks.
+                files: vec![if entry.kind == AssetKind::Model {
+                    writer.add_as_is(&entry.path, &stored[&guid])
+                } else {
+                    writer.add(&entry.path, &stored[&guid])
+                }],
                 cooked: entry.kind == AssetKind::Model,
             });
             bundle_of.insert(guid, index);
@@ -160,7 +186,7 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<B
     remove_stale(output, &catalog)?;
     cooker.prune()?;
     let (cooked, cached) = (cooker.cooked, cooker.cached);
-    Ok(BuildReport { output: output.to_path_buf(), bundles: reports, excluded, cooked, cached })
+    Ok(BuildReport { output: output.to_path_buf(), bundles: reports, excluded, cooked, cached, unmatched })
 }
 
 /// A bundle to write: the roots that need it, and its assets in path order.
@@ -229,15 +255,17 @@ fn usage_sets(
     db: &AssetDb,
     needs: &HashMap<AssetGuid, Needs>,
     settings: &ContentSettings,
+    code_roots: &[CodeRoot],
 ) -> HashMap<AssetGuid, BTreeSet<String>> {
     let named: BTreeSet<AssetGuid> = needs.values().flat_map(|n| n.named.iter().copied()).collect();
     let matches = |patterns: &[String], path: &str| patterns.iter().any(|p| glob(p, path));
     let roots = db
         .entries()
         .filter(|e| {
-            // A field naming an asset means something shipped uses it, so exclude cannot drop it.
+            // A field or code naming an asset means something shipped uses it, so exclude cannot drop it.
+            let needed = named.contains(&e.guid) || code_roots.iter().any(|r| r.matches(e.guid, &e.path));
             let blanket = matches!(e.kind, AssetKind::Level | AssetKind::Prefab) || matches(&settings.include, &e.path);
-            named.contains(&e.guid) || (blanket && !matches(&settings.exclude, &e.path))
+            needed || (blanket && !matches(&settings.exclude, &e.path))
         })
         .map(|e| (e.guid, e.path.clone()));
 
@@ -367,7 +395,7 @@ impl Cooker {
         let root = &self.root;
         let mut model = voxear_render::prepare_model(path, &mut |file| read(root, file))?;
         model.compress_textures();
-        let bytes = model.to_bytes();
+        let bytes = model.cook()?.to_bytes();
         std::fs::write(&cached, &bytes).with_context(|| format!("writing {}", cached.display()))?;
         self.cooked += 1;
         Ok(bytes)

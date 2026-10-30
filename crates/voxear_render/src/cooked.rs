@@ -2,39 +2,149 @@
 //! game loads one with a single read and an upload. No glTF parsing, image
 //! decoding or LOD building happens at runtime.
 //!
-//! The layout is little-endian: `VXMODEL`, the format version, then meshes
-//! (vertices and LODs), textures (RGBA8), materials and nodes, each a count
-//! followed by its items. Changing the layout bumps [`COOKED_VERSION`]; the
-//! build cache keys on it, so an old cook is never read as a new one.
+//! The layout is little-endian: `VXMODEL`, the format version, then meshes,
+//! textures, materials and nodes, each a count followed by its items, and
+//! last the [`Payload`]: every vertex, index and texture mip the GPU needs,
+//! in one block that ships GDeflate-compressed and is decompressed by the
+//! GPU where it can. Meshes and textures say where their data sits in it.
+//! Changing the layout bumps [`COOKED_VERSION`]; the build cache keys on it,
+//! so an old cook is never read as a new one.
 
 use anyhow::{Context, Result, bail, ensure};
 use voxear_core::math::{Quat, Vec3};
 
 use crate::{
     assets::MaterialDesc,
-    gltf_import::{PreparedMaterial, PreparedModel, PreparedNode, PreparedTexture, TextureFormat},
-    lod::Lod,
-    mesh::{MeshData, Vertex},
+    gltf_import::{PreparedMaterial, PreparedModel, PreparedNode, TextureFormat},
+    mesh::Vertex,
+    payload::Payload,
+    texture_codec,
 };
 
-/// 2: textures carry a format and their mip chain.
-pub const COOKED_VERSION: u32 = 2;
+/// 3: the GPU data moved into one payload, GDeflate-compressed in tiles, and
+/// every texture carries its whole mip chain.
+pub const COOKED_VERSION: u32 = 3;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
+/// Where each part of the payload starts, a multiple of a compressed
+/// texture's 16-byte blocks, as copies into images require.
+const ALIGN: usize = 16;
+
+/// A model as it ships: what it holds, and its GPU data in a payload.
+pub struct CookedModel {
+    pub(crate) path: String,
+    pub(crate) meshes: Vec<CookedMesh>,
+    pub(crate) textures: Vec<CookedTexture>,
+    pub(crate) materials: Vec<PreparedMaterial>,
+    pub(crate) nodes: Vec<PreparedNode>,
+    pub(crate) payload: Payload,
+}
+
+pub(crate) struct CookedMesh {
+    /// Where the vertices start in the payload, and how many there are.
+    pub vertices: (u64, u32),
+    /// Where the indices start; every LOD's follow one another.
+    pub indices: u64,
+    /// Each LOD's error and index count, finest first.
+    pub lods: Vec<(f32, u32)>,
+    /// Bounding sphere, worked out at cook time since the CPU may never see
+    /// the vertices.
+    pub center: Vec3,
+    pub radius: f32,
+}
+
+pub(crate) struct CookedTexture {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub srgb: bool,
+    pub format: TextureFormat,
+    /// Each mip's place in the payload, level 0 first.
+    pub mips: Vec<(u64, u32)>,
+}
 
 impl PreparedModel {
+    /// Packs the model to ship: textures get their whole mip chain, and all
+    /// GPU data goes into one payload, compressed where that helps. Call
+    /// [`compress_textures`](Self::compress_textures) first to ship BC7 and BC5.
+    pub fn cook(&self) -> Result<CookedModel> {
+        let mut data = Vec::new();
+        let mut place = |bytes: &[u8]| {
+            data.resize(data.len().next_multiple_of(ALIGN), 0);
+            let offset = data.len() as u64;
+            data.extend_from_slice(bytes);
+            offset
+        };
+        let mut meshes = Vec::with_capacity(self.meshes.len());
+        for (mesh, lods) in &self.meshes {
+            let vertices = (place(bytemuck::cast_slice(&mesh.vertices)), mesh.vertices.len() as u32);
+            let indices: Vec<u32> = lods.iter().flat_map(|lod| lod.indices.iter().copied()).collect();
+            let indices = place(bytemuck::cast_slice(&indices));
+            let lods = lods.iter().map(|lod| (lod.error, lod.indices.len() as u32)).collect();
+            let (center, radius) = mesh.bounds();
+            meshes.push(CookedMesh { vertices, indices, lods, center, radius });
+        }
+        let mut textures = Vec::with_capacity(self.textures.len());
+        for texture in &self.textures {
+            // RGBA8 textures leave their mips to the GPU when uploaded from
+            // source; a cooked one carries them, so uploads only copy.
+            let levels = if texture.format == TextureFormat::Rgba8 && texture.mips.len() == 1 {
+                let chain = texture_codec::mip_chain(&texture.mips[0], texture.width, texture.height, texture.srgb);
+                chain.into_iter().map(|(_, _, pixels)| pixels).collect()
+            } else {
+                texture.mips.clone()
+            };
+            let mips = levels.iter().map(|level| (place(level), level.len() as u32)).collect();
+            textures.push(CookedTexture {
+                name: texture.name.clone(),
+                width: texture.width,
+                height: texture.height,
+                srgb: texture.srgb,
+                format: texture.format,
+                mips,
+            });
+        }
+        Ok(CookedModel {
+            path: self.path.clone(),
+            meshes,
+            textures,
+            materials: self.materials.clone(),
+            nodes: self.nodes.clone(),
+            payload: Payload::compress(data)?,
+        })
+    }
+}
+
+impl CookedModel {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Whether the GPU data is still compressed.
+    pub fn is_compressed(&self) -> bool {
+        matches!(self.payload, Payload::Tiled { .. })
+    }
+
+    /// Decompresses the GPU data on this thread, for GPUs that cannot. A
+    /// loading thread does this so the frame does not have to.
+    pub fn decompress(&mut self) -> Result<()> {
+        self.payload.make_raw().with_context(|| format!("decompressing {}", self.path))
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut w = Writer(MAGIC.to_vec());
         w.u32(COOKED_VERSION);
         w.u32(self.meshes.len() as u32);
-        for (mesh, lods) in &self.meshes {
-            w.u32(mesh.vertices.len() as u32);
-            w.bytes(bytemuck::cast_slice(&mesh.vertices));
-            w.u32(lods.len() as u32);
-            for lod in lods {
-                w.f32(lod.error);
-                w.u32(lod.indices.len() as u32);
-                w.bytes(bytemuck::cast_slice(&lod.indices));
+        for mesh in &self.meshes {
+            w.u64(mesh.vertices.0);
+            w.u32(mesh.vertices.1);
+            w.u64(mesh.indices);
+            w.f32s(&mesh.center.to_array());
+            w.f32(mesh.radius);
+            w.u32(mesh.lods.len() as u32);
+            for &(error, count) in &mesh.lods {
+                w.f32(error);
+                w.u32(count);
             }
         }
         w.u32(self.textures.len() as u32);
@@ -45,9 +155,9 @@ impl PreparedModel {
             w.u32(u32::from(texture.srgb));
             w.u32(texture.format as u32);
             w.u32(texture.mips.len() as u32);
-            for level in &texture.mips {
-                w.u32(level.len() as u32);
-                w.bytes(level);
+            for &(offset, len) in &texture.mips {
+                w.u64(offset);
+                w.u32(len);
             }
         }
         w.u32(self.materials.len() as u32);
@@ -79,6 +189,24 @@ impl PreparedModel {
                 None => w.u32(0),
             }
         }
+        match &self.payload {
+            Payload::Raw(bytes) => {
+                w.u32(0);
+                w.u64(bytes.len() as u64);
+                w.bytes(bytes);
+            }
+            Payload::Tiled { size, tiles, data } => {
+                w.u32(1);
+                w.u64(*size);
+                w.u32(tiles.len() as u32);
+                for &(offset, len) in tiles {
+                    w.u32(offset);
+                    w.u32(len);
+                }
+                w.u64(data.len() as u64);
+                w.bytes(data);
+            }
+        }
         w.0
     }
 
@@ -88,7 +216,7 @@ impl PreparedModel {
     }
 }
 
-fn read(path: &str, bytes: &[u8]) -> Result<PreparedModel> {
+fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
     let mut r = Reader { bytes, at: 0 };
     ensure!(r.take(8)? == MAGIC, "not a cooked model");
     let version = r.u32()?;
@@ -96,13 +224,15 @@ fn read(path: &str, bytes: &[u8]) -> Result<PreparedModel> {
 
     let mut meshes = Vec::new();
     for _ in 0..r.u32()? {
-        let vertices = r.pod::<Vertex>()?;
+        let vertices = (r.u64()?, r.u32()?);
+        let indices = r.u64()?;
+        let center = Vec3::from_array(r.f32s()?);
+        let radius = r.f32()?;
         let mut lods = Vec::new();
         for _ in 0..r.u32()? {
-            let error = r.f32()?;
-            lods.push(Lod { indices: r.pod::<u32>()?, error });
+            lods.push((r.f32()?, r.u32()?));
         }
-        meshes.push((MeshData { vertices, indices: Vec::new() }, lods));
+        meshes.push(CookedMesh { vertices, indices, lods, center, radius });
     }
     let mut textures = Vec::new();
     for _ in 0..r.u32()? {
@@ -112,11 +242,10 @@ fn read(path: &str, bytes: &[u8]) -> Result<PreparedModel> {
         let format = TextureFormat::from_u32(format).with_context(|| format!("unknown texture format {format}"))?;
         let mut mips = Vec::new();
         for _ in 0..r.u32()? {
-            let len = r.u32()? as usize;
-            mips.push(r.take(len)?.to_vec());
+            mips.push((r.u64()?, r.u32()?));
         }
         ensure!(!mips.is_empty(), "texture {name} has no pixels");
-        textures.push(PreparedTexture { name, width, height, srgb, format, mips });
+        textures.push(CookedTexture { name, width, height, srgb, format, mips });
     }
     let mut materials = Vec::new();
     for _ in 0..r.u32()? {
@@ -151,14 +280,51 @@ fn read(path: &str, bytes: &[u8]) -> Result<PreparedModel> {
         ensure!(mesh < meshes.len(), "a node uses mesh {mesh}, which is not there");
         nodes.push(PreparedNode { name, position, rotation, scale, mesh, material, mesh_part, material_part });
     }
+    let payload = match r.u32()? {
+        0 => {
+            let len = r.u64()? as usize;
+            Payload::Raw(r.take(len)?.to_vec())
+        }
+        1 => {
+            let size = r.u64()?;
+            let mut tiles = Vec::new();
+            for _ in 0..r.u32()? {
+                tiles.push((r.u32()?, r.u32()?));
+            }
+            let len = r.u64()? as usize;
+            Payload::Tiled { size, tiles, data: r.take(len)?.to_vec() }
+        }
+        kind => bail!("unknown payload kind {kind}"),
+    };
     ensure!(r.at == bytes.len(), "{} bytes follow the model", bytes.len() - r.at);
-    Ok(PreparedModel { path: path.to_string(), meshes, textures, materials, nodes })
+    let size = payload.size();
+    let fits = |(offset, len): (u64, u64)| offset.checked_add(len).is_some_and(|end| end <= size);
+    for mesh in &meshes {
+        let index_count: u64 = mesh.lods.iter().map(|&(_, count)| u64::from(count)).sum();
+        ensure!(
+            fits((mesh.vertices.0, u64::from(mesh.vertices.1) * size_of::<Vertex>() as u64)),
+            "a mesh lies outside the payload"
+        );
+        ensure!(fits((mesh.indices, index_count * 4)), "a mesh's indices lie outside the payload");
+    }
+    for texture in &textures {
+        ensure!(
+            texture.mips.iter().all(|&(o, l)| fits((o, u64::from(l)))),
+            "texture {} lies outside the payload",
+            texture.name
+        );
+    }
+    Ok(CookedModel { path: path.to_string(), meshes, textures, materials, nodes, payload })
 }
 
 struct Writer(Vec<u8>);
 
 impl Writer {
     fn u32(&mut self, value: u32) {
+        self.0.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn u64(&mut self, value: u64) {
         self.0.extend_from_slice(&value.to_le_bytes());
     }
 
@@ -204,6 +370,10 @@ impl Reader<'_> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("four bytes")))
     }
 
+    fn u64(&mut self) -> Result<u64> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
+    }
+
     fn f32(&mut self) -> Result<f32> {
         Ok(f32::from_le_bytes(self.take(4)?.try_into().expect("four bytes")))
     }
@@ -223,16 +393,6 @@ impl Reader<'_> {
 
     fn option(&mut self) -> Result<Option<u32>> {
         Ok(Some(self.u32()?).filter(|&v| v != NONE))
-    }
-
-    /// A count, then that many plain-data items. Copied, since the bytes in a
-    /// bundle are not aligned for them.
-    fn pod<T: bytemuck::Pod + Default>(&mut self) -> Result<Vec<T>> {
-        let count = self.u32()? as usize;
-        let bytes = self.take(count.checked_mul(size_of::<T>()).context("too many items")?)?;
-        let mut items = vec![T::default(); count];
-        bytemuck::cast_slice_mut::<T, u8>(&mut items).copy_from_slice(bytes);
-        Ok(items)
     }
 }
 
@@ -284,13 +444,21 @@ mod tests {
     fn cooked_models_read_back_exactly() {
         let gltf = quad();
         let model = crate::gltf_import::prepare("Models/Quad.gltf", &mut |_| Ok(gltf.clone())).unwrap();
-        let bytes = model.to_bytes();
-        let back = PreparedModel::from_bytes("Models/Quad.gltf", &bytes).unwrap();
+        let bytes = model.cook().unwrap().to_bytes();
+        let back = CookedModel::from_bytes("Models/Quad.gltf", &bytes).unwrap();
 
         assert_eq!(back.to_bytes(), bytes, "writing it again gives the same bytes");
-        assert_eq!(back.meshes[0].0.vertices, model.meshes[0].0.vertices);
-        assert_eq!(back.meshes[0].1[0].indices.len(), 6);
-        assert_eq!(back.textures[0].mips, [vec![255, 0, 0, 255, 0, 0, 255, 255]]);
+        let payload = back.payload.unpack().unwrap();
+        let mesh = &back.meshes[0];
+        let (offset, count) = (mesh.vertices.0 as usize, mesh.vertices.1 as usize);
+        let vertices: &[u8] = bytemuck::cast_slice(&model.meshes[0].0.vertices);
+        assert_eq!(&payload[offset..offset + count * size_of::<Vertex>()], vertices);
+        assert_eq!(mesh.lods[0].1, 6);
+        let texture = &back.textures[0];
+        assert_eq!(texture.mips.len(), 2, "the 1×1 mip was made at cook time");
+        let (offset, len) = texture.mips[0];
+        assert_eq!(&payload[offset as usize..][..len as usize], [255, 0, 0, 255, 0, 0, 255, 255]);
+        assert!(texture.mips.iter().all(|(offset, _)| offset % 16 == 0), "mips start on a block");
         assert_eq!(back.materials[0].desc.roughness, 0.25);
         assert_eq!(back.materials[0].base_color, Some(0));
         let node = &back.nodes[0];
@@ -298,10 +466,28 @@ mod tests {
         assert_eq!(node.material_part.as_deref(), Some("material0"));
         assert_eq!(node.position, Vec3::new(-1.0, 2.0, 3.0), "mirrored to Unity's coordinates at import");
 
-        assert!(PreparedModel::from_bytes("x", &bytes[..bytes.len() - 1]).is_err(), "truncated files are caught");
+        assert!(CookedModel::from_bytes("x", &bytes[..bytes.len() - 1]).is_err(), "truncated files are caught");
         let mut newer = bytes.clone();
         newer[8] = 99;
-        let error = format!("{:#}", PreparedModel::from_bytes("x", &newer).err().expect("a newer version fails"));
+        let error = format!("{:#}", CookedModel::from_bytes("x", &newer).err().expect("a newer version fails"));
         assert!(error.contains("build the content again"), "{error}");
+    }
+
+    #[test]
+    fn large_models_ship_compressed_and_decompress_to_the_same_data() {
+        let gltf = quad();
+        let mut model = crate::gltf_import::prepare("Models/Quad.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+        // A 256×256 gradient: big enough for several tiles, and smooth.
+        let pixels: Vec<u8> = (0..256 * 256).flat_map(|i| [(i % 256) as u8, (i / 256) as u8, 128, 255]).collect();
+        let texture = &mut model.textures[0];
+        (texture.width, texture.height, texture.mips) = (256, 256, vec![pixels]);
+        let cooked = model.cook().unwrap();
+        assert!(cooked.is_compressed());
+
+        let mut back = CookedModel::from_bytes("Models/Quad.gltf", &cooked.to_bytes()).unwrap();
+        let expected = back.payload.unpack().unwrap().into_owned();
+        back.decompress().unwrap();
+        assert!(!back.is_compressed());
+        assert_eq!(back.payload, crate::payload::Payload::Raw(expected));
     }
 }

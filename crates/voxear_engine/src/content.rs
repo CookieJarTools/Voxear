@@ -19,12 +19,15 @@ use voxear_assets::{
 };
 use voxear_ecs::World;
 use voxear_render::{
-    ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, MeshRenderer, PreparedModel, Primitive,
+    CookedModel, ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, MeshRenderer, Primitive,
     Renderer,
 };
 use voxear_scene::Destroying;
 
-use crate::prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, PrefabInstance, Template};
+use crate::{
+    loading::ReadyModel,
+    prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, PrefabInstance, Template},
+};
 
 /// A PBR material as written in `.material` files and inline in scenes.
 /// Colours are sRGB, as picked in a colour picker.
@@ -269,16 +272,14 @@ impl Content {
     }
 
     /// Uploads a model a background load prepared, unless it is loaded already.
-    pub(crate) fn adopt_model(
-        &mut self,
-        renderer: &mut Renderer,
-        guid: AssetGuid,
-        model: &PreparedModel,
-    ) -> Result<()> {
+    pub(crate) fn adopt_model(&mut self, renderer: &mut Renderer, guid: AssetGuid, model: &ReadyModel) -> Result<()> {
         if self.models.contains_key(&guid) {
             return Ok(());
         }
-        let model = renderer.upload_model(model)?;
+        let model = match model {
+            ReadyModel::Source(model) => renderer.upload_model(model)?,
+            ReadyModel::Cooked(model) => renderer.upload_cooked(model)?,
+        };
         self.register_model(guid, model);
         Ok(())
     }
@@ -300,8 +301,7 @@ impl Content {
             }
             let path = entry.path.clone();
             let model = if self.cooked.contains(&guid) {
-                let prepared = PreparedModel::from_bytes(&path, &self.read(&path)?)?;
-                renderer.upload_model(&prepared)?
+                renderer.upload_cooked(&CookedModel::from_bytes(&path, &self.read(&path)?)?)?
             } else {
                 let reader = self.reader();
                 renderer.import_gltf(&path, &mut |file| reader.read(file))?

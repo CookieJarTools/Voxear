@@ -644,6 +644,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdeflate"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3592607e4bf12b707c22523c1ee82b1b6c7b7aac8d24bc055afe62e41734fa2d"
+dependencies = [
+ "gdeflate-sys",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "gdeflate-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57d037ff28c21adce29618dbe9271e8b5a7ed121efe8482b43182db9649797d0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -928,6 +947,17 @@ name = "inflections"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
+
+[[package]]
+name = "io-uring"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed3bd0ecfbb87805f538bb7b32e5239ca0763890c623e349860ecba69469f2bb"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -2409,12 +2439,15 @@ name = "voxear_assets"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "io-uring",
+ "libloading 0.9.0",
  "lz4_flex",
  "serde",
  "tempfile",
  "toml",
  "tracing",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2477,6 +2510,7 @@ dependencies = [
  "ash",
  "base64",
  "bytemuck",
+ "gdeflate",
  "gltf",
  "image",
  "meshopt",

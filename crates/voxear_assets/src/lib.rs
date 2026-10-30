@@ -11,6 +11,7 @@
 pub mod bundle;
 mod db;
 mod guid;
+pub mod io;
 mod reader;
 mod reference;
 

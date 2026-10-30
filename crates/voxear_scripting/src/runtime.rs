@@ -63,7 +63,8 @@ impl ScriptRuntime {
                 && managed.create_behaviour.is_some()
                 && managed.invoke.is_some()
                 && managed.release.is_some()
-                && managed.update.is_some(),
+                && managed.update.is_some()
+                && managed.content_roots.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(managed.create_behaviour.expect("validated above"));
@@ -78,6 +79,25 @@ impl ScriptRuntime {
         let status = unsafe { load(path.as_ptr(), path.len() as i32) };
         ensure!(status == 0, "could not load game scripts from {path}");
         Ok(())
+    }
+
+    /// Every `[ContentRoot]` pattern in the game scripts, with the type or
+    /// member that declares it.
+    pub fn content_roots(&self) -> Result<Vec<(String, String)>> {
+        let call = self.managed.content_roots.expect("validated at start");
+        let mut buffer = vec![0u8; 4096];
+        loop {
+            let length = unsafe { call(buffer.as_mut_ptr(), buffer.len() as i32) };
+            ensure!(length >= 0, "could not read the scripts' [ContentRoot] attributes");
+            let length = length as usize;
+            if length <= buffer.len() {
+                buffer.truncate(length);
+                break;
+            }
+            buffer.resize(length, 0);
+        }
+        let text = String::from_utf8(buffer).context("content roots are not UTF-8")?;
+        Ok(text.lines().filter_map(|line| line.split_once('\t')).map(|(p, s)| (p.into(), s.into())).collect())
     }
 
     /// Instantiates a behaviour type, e.g. `Hello.Spinner`, on an Obj. Its

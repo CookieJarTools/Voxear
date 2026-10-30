@@ -8,7 +8,7 @@ use crate::{
     content::{Content, Released},
     engine::Engine,
     levels::{LevelChange, Levels},
-    loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads},
+    loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
     prefab::PrefabId,
     project::Project,
 };
@@ -21,8 +21,8 @@ pub struct Game {
     pub levels: Levels,
     pub loads: Loads,
     pub project: Project,
-    /// Whether frames render, so background loads know to prepare models.
-    rendering: bool,
+    /// What background loads do with models, which depends on the renderer.
+    models: ModelWork,
     /// Scripts asked for a sweep, which runs at the end of the frame.
     unload_requested: bool,
 }
@@ -42,14 +42,14 @@ impl Game {
             levels: Levels::default(),
             loads: Loads::default(),
             project,
-            rendering: false,
+            models: ModelWork::Skip,
             unload_requested: false,
         }
     }
 
     /// Loads the project's `start_level`.
     pub fn start(&mut self, renderer: Option<&mut Renderer>) -> Result<()> {
-        self.rendering = renderer.is_some();
+        self.models = ModelWork::for_renderer(renderer.as_deref());
         let level = self
             .project
             .file
@@ -88,13 +88,13 @@ impl Game {
     /// once loaded, at the end of a frame, unless activation is held back
     /// with [`Loads::set_allow_activation`].
     pub fn load_level_async(&mut self, level: &str) -> Result<LoadId> {
-        self.loads.start(&self.content, LoadTarget::Level(level.to_string()), self.rendering)
+        self.loads.start(&self.content, LoadTarget::Level(level.to_string()), self.models)
     }
 
     /// Starts loading a prefab in the background; its status gives the
     /// prefab once done.
     pub fn load_prefab_async(&mut self, prefab: &str) -> Result<LoadId> {
-        self.loads.start(&self.content, LoadTarget::Prefab(prefab.to_string()), self.rendering)
+        self.loads.start(&self.content, LoadTarget::Prefab(prefab.to_string()), self.models)
     }
 
     pub fn load_status(&self, id: LoadId) -> Option<LoadStatus> {
@@ -113,10 +113,10 @@ impl Game {
     ) -> Result<Entity> {
         let id = self.content.prefab(renderer.as_deref_mut(), prefab)?;
         let template = self.content.loaded_template(renderer.as_deref_mut(), id)?;
-        let rendering = self.rendering;
+        let models = self.models;
         let unload_requested = &mut self.unload_requested;
         let mut services =
-            GameServices { content: &mut self.content, loads: &mut self.loads, renderer, rendering, unload_requested };
+            GameServices { content: &mut self.content, loads: &mut self.loads, renderer, models, unload_requested };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.instantiate(&template, parent, placement)
     }
@@ -124,18 +124,13 @@ impl Game {
     /// Runs one frame, then any level change scripts asked for. A level that
     /// fails to load is logged and the game carries on, as in Unity.
     pub fn tick(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
-        self.rendering = renderer.is_some();
+        self.models = ModelWork::for_renderer(renderer.as_deref());
         {
             let renderer = renderer.as_deref_mut();
-            let rendering = self.rendering;
+            let models = self.models;
             let unload_requested = &mut self.unload_requested;
-            let mut services = GameServices {
-                content: &mut self.content,
-                loads: &mut self.loads,
-                renderer,
-                rendering,
-                unload_requested,
-            };
+            let mut services =
+                GameServices { content: &mut self.content, loads: &mut self.loads, renderer, models, unload_requested };
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
@@ -161,7 +156,7 @@ struct GameServices<'a> {
     content: &'a mut Content,
     loads: &'a mut Loads,
     renderer: Option<&'a mut Renderer>,
-    rendering: bool,
+    models: ModelWork,
     unload_requested: &'a mut bool,
 }
 
@@ -187,7 +182,7 @@ impl ScriptServices for GameServices<'_> {
 
     fn load_async(&mut self, level: bool, reference: &str) -> Result<u32> {
         let target = if level { LoadTarget::Level(reference.into()) } else { LoadTarget::Prefab(reference.into()) };
-        Ok(self.loads.start(self.content, target, self.rendering)?.0)
+        Ok(self.loads.start(self.content, target, self.models)?.0)
     }
 
     fn load_status(&self, id: u32) -> Option<LoadProgress> {

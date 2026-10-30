@@ -11,11 +11,13 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::Read,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail, ensure};
+
+use crate::io::{Io, ReadAt};
 use serde::{Deserialize, Serialize};
 
 use crate::{AssetEntry, AssetGuid, AssetKind, reader::AssetReader};
@@ -122,6 +124,13 @@ impl BundleWriter {
         PackedFile { path: path.to_string(), offset, size: data.len() as u64, stored: stored.len() as u64 }
     }
 
+    /// Stores a file without compressing it, for data that compressed itself.
+    pub fn add_as_is(&mut self, path: &str, data: &[u8]) -> PackedFile {
+        let offset = self.bytes.len() as u64;
+        self.bytes.extend_from_slice(data);
+        PackedFile { path: path.to_string(), offset, size: data.len() as u64, stored: data.len() as u64 }
+    }
+
     pub fn finish(self) -> Vec<u8> {
         self.bytes
     }
@@ -137,6 +146,7 @@ pub struct BundleReader {
     files: HashMap<String, (usize, PackedFile)>,
     open: HashMap<usize, File>,
     opened: Vec<usize>,
+    io: Io,
 }
 
 impl BundleReader {
@@ -147,6 +157,7 @@ impl BundleReader {
             files: HashMap::new(),
             open: HashMap::new(),
             opened: Vec::new(),
+            io: Io::new(),
         };
         reader.mount(dir, catalog);
         reader
@@ -175,7 +186,7 @@ impl BundleReader {
         self.opened.iter().map(|&b| &self.bundles[b])
     }
 
-    fn bundle(&mut self, index: usize) -> Result<&mut File> {
+    fn open_bundle(&mut self, index: usize) -> Result<()> {
         if !self.open.contains_key(&index) {
             let info = self.bundles.get(index).with_context(|| format!("the catalog has no bundle {index}"))?;
             let path = self.dirs[index].join(&info.file);
@@ -189,22 +200,38 @@ impl BundleReader {
             self.open.insert(index, file);
             self.opened.push(index);
         }
-        Ok(self.open.get_mut(&index).expect("opened above"))
+        Ok(())
     }
 }
 
 impl AssetReader for BundleReader {
     fn read(&mut self, path: &str) -> Result<Vec<u8>> {
-        let (bundle, packed) =
-            self.files.get(path).cloned().with_context(|| format!("{path} is not in the built content"))?;
-        let file = self.bundle(bundle)?;
-        file.seek(SeekFrom::Start(packed.offset))?;
-        let mut stored = vec![0u8; packed.stored as usize];
-        file.read_exact(&mut stored)?;
-        if packed.stored == packed.size {
-            return Ok(stored);
+        Ok(self.read_many(&[path])?.pop().expect("one file asked for"))
+    }
+
+    /// Reads every file's stored bytes in one batch, then decompresses them.
+    fn read_many(&mut self, paths: &[&str]) -> Result<Vec<Vec<u8>>> {
+        let mut found = Vec::with_capacity(paths.len());
+        for path in paths {
+            let (bundle, packed) =
+                self.files.get(*path).cloned().with_context(|| format!("{path} is not in the built content"))?;
+            self.open_bundle(bundle)?;
+            found.push((bundle, packed));
         }
-        lz4_flex::block::decompress(&stored, packed.size as usize).with_context(|| format!("decompressing {path}"))
+        let mut stored: Vec<Vec<u8>> = found.iter().map(|(_, packed)| vec![0; packed.stored as usize]).collect();
+        let mut reads: Vec<ReadAt> = found
+            .iter()
+            .zip(&mut stored)
+            .map(|((bundle, packed), buffer)| ReadAt { file: &self.open[bundle], offset: packed.offset, buffer })
+            .collect();
+        self.io.read_all(&mut reads).with_context(|| format!("reading {} from bundles", paths.join(", ")))?;
+        let unpack = |((bytes, (_, packed)), path): ((Vec<u8>, &(usize, PackedFile)), &&str)| {
+            if packed.stored == packed.size {
+                return Ok(bytes);
+            }
+            lz4_flex::block::decompress(&bytes, packed.size as usize).with_context(|| format!("decompressing {path}"))
+        };
+        stored.into_iter().zip(&found).zip(paths).map(unpack).collect()
     }
 }
 

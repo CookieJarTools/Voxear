@@ -23,6 +23,6 @@ pub use frame::{Acquired, FRAMES_IN_FLIGHT, Frame, Frames};
 pub use gpu_allocator::MemoryLocation;
 pub use pipeline::{Blend, GraphicsPipelineDesc, ShaderModule, create_compute_pipeline, create_graphics_pipeline};
 pub use renderdoc::RenderDoc;
-pub use resources::{Buffer, Image, ImageDesc, Retired, full_mip_count, is_depth};
+pub use resources::{Buffer, Image, ImageDesc, Retired, Transition, full_mip_count, is_depth, mip_barrier};
 pub use swapchain::Swapchain;
 pub use timer::GpuTimer;

@@ -4,7 +4,8 @@
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
-    Camera, Light, MaterialDesc, MeshRenderer, Primitive, RenderStats, Renderer, RendererSettings, ViewOptions,
+    Camera, CookedModel, Light, MaterialDesc, MeshRenderer, Primitive, RenderStats, Renderer, RendererSettings,
+    ViewOptions,
 };
 use voxear_scene::Transform;
 
@@ -168,24 +169,70 @@ fn render_quad(cooked: bool) -> Option<([u8; 4], [u8; 4])> {
     let mut renderer = renderer()?;
     let gltf = textured_quad();
     let mut model = voxear_render::prepare_model("Quad.gltf", &mut |_| Ok(gltf.clone())).unwrap();
-    if cooked {
+    let imported = if cooked {
         model.compress_textures();
-        model = voxear_render::PreparedModel::from_bytes("Quad.gltf", &model.to_bytes()).unwrap();
-    }
-    let imported = renderer.upload_model(&model).unwrap();
+        let bytes = model.cook().unwrap().to_bytes();
+        renderer.upload_cooked(&CookedModel::from_bytes("Quad.gltf", &bytes).unwrap()).unwrap()
+    } else {
+        renderer.upload_model(&model).unwrap()
+    };
+    Some(centre_and_corner(&mut renderer, &imported))
+}
+
+fn centre_and_corner(renderer: &mut Renderer, imported: &voxear_render::ImportedModel) -> ([u8; 4], [u8; 4]) {
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -3.0))));
     world.spawn((
         MeshRenderer { mesh: imported.nodes[0].mesh, material: imported.nodes[0].material },
         Transform::IDENTITY,
     ));
-    run(&mut renderer, &world, &mut 0.0, 8);
+    run(renderer, &world, &mut 0.0, 8);
     let (width, height, pixels) = renderer.read_pixels().unwrap();
     let at = |x: u32, y: u32| {
         let i = ((y * width + x) * 4) as usize;
         [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
     };
-    Some((at(width / 2, height / 2), at(2, 2)))
+    (at(width / 2, height / 2), at(2, 2))
+}
+
+/// A cooked quad whose 512×512 gradient texture spans many GDeflate tiles.
+fn large_cooked_quad() -> CookedModel {
+    let gltf = textured_quad();
+    let mut model = voxear_render::prepare_model("Quad.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+    model.replace_texture(
+        0,
+        512,
+        512,
+        (0..512 * 512).flat_map(|i| [(i % 512 / 2) as u8, (i / 1024) as u8, 90, 255]).collect(),
+    );
+    model.compress_textures();
+    CookedModel::from_bytes("Quad.gltf", &model.cook().unwrap().to_bytes()).unwrap()
+}
+
+#[test]
+fn the_gpu_and_the_cpu_decompress_to_the_same_image() {
+    let Some(mut renderer) = renderer() else { return };
+    if !renderer.decompresses_on_gpu() {
+        eprintln!("skipping: this GPU cannot decompress GDeflate");
+        return;
+    }
+    let model = large_cooked_quad();
+    assert!(model.is_compressed());
+    let on_gpu = renderer.upload_cooked(&model).unwrap();
+    assert!(renderer.asset_usage().decompressed_on_gpu > 512 * 512, "the GPU did the decompressing");
+    let gpu = centre_and_corner(&mut renderer, &on_gpu);
+
+    let Some(mut cpu_renderer) = renderer_without_gpu_decompression() else { return };
+    let on_cpu = cpu_renderer.upload_cooked(&model).unwrap();
+    assert_eq!(cpu_renderer.asset_usage().decompressed_on_gpu, 0);
+    assert_eq!(centre_and_corner(&mut cpu_renderer, &on_cpu), gpu);
+    assert_ne!(gpu.0, gpu.1, "the quad covers the centre");
+}
+
+fn renderer_without_gpu_decompression() -> Option<Renderer> {
+    let mut renderer = renderer()?;
+    renderer.set_gpu_decompression(false);
+    Some(renderer)
 }
 
 #[test]

@@ -13,6 +13,7 @@ use voxear_rhi::{Bindless, Gpu, TextureId, vk};
 
 use crate::{
     assets::{Assets, MaterialDesc, MaterialHandle, MeshHandle, TextureSource},
+    cooked::CookedModel,
     lod::{Lod, build_lods},
     mesh::{MeshData, Vertex},
     texture_codec,
@@ -84,7 +85,7 @@ impl TextureFormat {
         })
     }
 
-    fn vulkan(self, srgb: bool) -> vk::Format {
+    pub(crate) fn vulkan(self, srgb: bool) -> vk::Format {
         match (self, srgb) {
             (Self::Rgba8, true) => vk::Format::R8G8B8A8_SRGB,
             (Self::Rgba8, false) => vk::Format::R8G8B8A8_UNORM,
@@ -96,6 +97,7 @@ impl TextureFormat {
 }
 
 /// A material whose textures are indices into the model's textures until upload.
+#[derive(Clone)]
 pub(crate) struct PreparedMaterial {
     pub desc: MaterialDesc,
     pub base_color: Option<usize>,
@@ -104,6 +106,7 @@ pub(crate) struct PreparedMaterial {
     pub emissive: Option<usize>,
 }
 
+#[derive(Clone)]
 pub(crate) struct PreparedNode {
     pub name: String,
     pub position: Vec3,
@@ -119,6 +122,14 @@ pub(crate) struct PreparedNode {
 impl PreparedModel {
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// Replaces a texture's pixels with `rgba`, for tests and tools that
+    /// need a particular image.
+    pub fn replace_texture(&mut self, index: usize, width: u32, height: u32, rgba: Vec<u8>) {
+        let texture = &mut self.textures[index];
+        (texture.width, texture.height, texture.format, texture.mips) =
+            (width, height, TextureFormat::Rgba8, vec![rgba]);
     }
 
     /// Compresses the textures for shipping: BC5 for normal maps, BC7 for
@@ -191,24 +202,59 @@ pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &P
         };
         textures.push(id);
     }
-    let texture = |index: Option<usize>| index.map(|i| textures[i]);
-    let mut materials = Vec::with_capacity(model.materials.len());
-    for material in &model.materials {
-        let desc = MaterialDesc {
-            base_color_texture: texture(material.base_color),
-            metallic_roughness_texture: texture(material.metallic_roughness),
-            normal_texture: texture(material.normal),
-            emissive_texture: texture(material.emissive),
-            ..material.desc
-        };
-        materials.push(assets.add_material(gpu, &desc)?);
-    }
+    let materials = add_materials(gpu, assets, &model.materials, &textures)?;
     let mut meshes = Vec::with_capacity(model.meshes.len());
     for (data, lods) in &model.meshes {
         meshes.push(assets.add_mesh_with_lods(gpu, data, lods)?);
     }
-    let nodes = model
-        .nodes
+    Ok(imported(assets, &model.nodes, &meshes, &materials, textures))
+}
+
+/// Uploads a cooked model: its meshes and textures with one submission, then
+/// its materials.
+pub fn upload_cooked(
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    assets: &mut Assets,
+    model: &CookedModel,
+    decompress: bool,
+) -> Result<ImportedModel> {
+    let device = gpu.decompression.as_ref().filter(|_| decompress);
+    let (meshes, textures) = assets.add_cooked(gpu, bindless, model, device)?;
+    let materials = add_materials(gpu, assets, &model.materials, &textures)?;
+    Ok(imported(assets, &model.nodes, &meshes, &materials, textures))
+}
+
+fn add_materials(
+    gpu: &Gpu,
+    assets: &mut Assets,
+    materials: &[PreparedMaterial],
+    textures: &[TextureId],
+) -> Result<Vec<MaterialHandle>> {
+    let texture = |index: Option<usize>| index.map(|i| textures[i]);
+    materials
+        .iter()
+        .map(|material| {
+            let desc = MaterialDesc {
+                base_color_texture: texture(material.base_color),
+                metallic_roughness_texture: texture(material.metallic_roughness),
+                normal_texture: texture(material.normal),
+                emissive_texture: texture(material.emissive),
+                ..material.desc
+            };
+            assets.add_material(gpu, &desc)
+        })
+        .collect()
+}
+
+fn imported(
+    assets: &Assets,
+    nodes: &[PreparedNode],
+    meshes: &[MeshHandle],
+    materials: &[MaterialHandle],
+    textures: Vec<TextureId>,
+) -> ImportedModel {
+    let nodes = nodes
         .iter()
         .map(|node| ImportedNode {
             name: node.name.clone(),
@@ -221,7 +267,7 @@ pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &P
             material_part: node.material_part.clone(),
         })
         .collect();
-    Ok(ImportedModel { nodes, textures })
+    ImportedModel { nodes, textures }
 }
 
 /// Reads, processes and uploads a model in one go.

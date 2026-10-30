@@ -17,3 +17,10 @@ uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+libloading.workspace = true

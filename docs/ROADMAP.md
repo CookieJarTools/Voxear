@@ -76,7 +76,7 @@ The original M1 scope:
 
 **Exit:** a glTF scene renders lit and shadowed at a solid frame rate, on Linux and Windows.
 
-## M2 — Content, scenes and levels (in progress)
+## M2 — Content, scenes and levels ✅ (done)
 
 Done so far:
 - **Asset database** (`voxear_assets`): GUIDs in `.meta` sidecars, moves and copies handled, asset references with
@@ -149,9 +149,15 @@ Done so far:
   - `Content::mount` and `--overlay` layer built content over the game, replacing assets by GUID and adding new
     ones. This is the base mods build on in M11.
 
-Still to do in M2:
-- Async IO (io_uring and IoRing) and GPU-side decompression.
-- A `[ContentRoot]` attribute for code that loads by string.
+- **`[ContentRoot]`:** code that loads by path names what it loads, so the build ships it even past `exclude`,
+  and warns about patterns that match nothing.
+
+- **Async IO:** batched reads through io_uring on Linux and IoRing on Windows 11, with a plain fallback.
+  Background loads read in waves, one batch per step down the dependency graph.
+
+- **GPU decompression:** cooked models carry their GPU data as one GDeflate payload in 64 KB tiles. The GPU
+  decompresses it (`VK_NV_memory_decompression`) and uploads the whole model in one submission; without that
+  extension the loading thread decompresses it.
 
 **Exit:** a two-level sample shares scenes between levels and loads only what each level needs.
 
@@ -310,7 +316,7 @@ can move earlier if it becomes a priority.
 - HLOD proxies per level and automatic octahedral impostors.
 - A cluster DAG built at import.
 - Continuous per-cluster LOD selected on the GPU.
-- Cluster page streaming through Content.
+- Cluster page streaming through Content, with uploads on a queue of their own so the main thread never waits.
 - Compute rasterisation for tiny triangles.
 
 ## Separate repository: Voxear Launcher

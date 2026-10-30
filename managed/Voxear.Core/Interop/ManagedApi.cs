@@ -16,5 +16,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<int, uint*, int, void> Invoke;
 		public delegate* unmanaged[Cdecl]<uint*, int, void> Release;
 		public delegate* unmanaged[Cdecl]<void> Update;
+		public delegate* unmanaged[Cdecl]<byte*, int, int> ContentRoots;
 	}
 }

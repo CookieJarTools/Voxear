@@ -507,8 +507,21 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
      ```
 
      Excluding stops an asset being a root of its own. One that a shipped scene still uses, or names in a behaviour
-     field, ships anyway, so a build never loses what it needs. A `[ContentRoot]` attribute on code that loads by
-     string is planned.
+     field, ships anyway, so a build never loses what it needs.
+   - **`[ContentRoot]`** *(implemented)* names what code loads by a path the build cannot see. It takes paths,
+     GUIDs or the same patterns, and goes on a class, struct, method, field, property or the assembly:
+
+     ```csharp
+     [ContentRoot("Prefabs/Bosses/**")]
+     public sealed class BossSpawner : Behaviour
+     {
+         private void Spawn(string boss) => Prefab.Load($"Prefabs/Bosses/{boss}.prefab").Instantiate();
+     }
+     ```
+
+     Like a field naming an asset, a content root ships even when `exclude` matches it. The build loads the game's
+     scripts to read the attributes, lists each root with the type or member that declares it, and warns about a
+     pattern that matches no asset, which is usually a typo.
 2. For each asset, compute its **usage set**: the roots that can reach it. Assets no root reaches are left out, and
    the build lists them.
 3. **Group assets by identical usage set.** Each group is a bundle. Loading any root then loads exactly the bundles
@@ -526,12 +539,19 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
    - *Planned:* large streamable data such as texture mip tails and audio streams in bundles of their own, so they
      stream independently.
 5. **Write bundles and a catalog.**
-   - A bundle is a header followed by each file, LZ4-compressed when that saves space. It is named after a hash of
+   - A bundle is a header followed by each file, LZ4-compressed when that saves space. Cooked models are stored as
+     they are, since they compress their own GPU data (below). A bundle is named after a hash of
      its bytes, so a rebuild that changes nothing writes nothing, and bundles no longer listed are deleted.
    - The **catalog** (`catalog.toml`, readable on purpose) maps each asset's GUID and path to its bundle, offsets
      and sizes. It also lists each bundle's usage set and the bundles it depends on.
    - **Models are cooked**: stored ready for the GPU in Voxear's own format (`crates/voxear_render/src/cooked.rs`).
      - A cooked model holds its meshes with their LOD chains, its textures, its materials and its node layout.
+     - **Its GPU data is one payload**: every vertex, index and texture mip, 16-byte aligned, compressed with
+       **GDeflate** in 64 KB tiles that each decompress on their own. The GPU decompresses all of a model's tiles
+       at once where the driver offers `VK_NV_memory_decompression` (`vox doctor` lists it as GPU decompression),
+       and the loading thread decompresses them otherwise. Data that does not compress ships raw. The encoder is
+       Microsoft's GDeflate code from DirectStorage, through the `gdeflate` crate. The cross-vendor
+       `VK_EXT_memory_decompression` takes the same data, and follows once ash has bindings for it.
      - **Textures are compressed**, to a quarter of RGBA8's GPU memory and bundle size: BC7 for colour, and BC5 for
        normal maps. Shaders rebuild a normal's Z from X and Y, so BC5's two channels are enough. Mips are built on
        the CPU before compression, averaged in linear space so they do not darken. Textures whose sides are not
@@ -539,24 +559,31 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
        simple: BC7 uses mode 6 with endpoints fitted along each block's principal axis, then refined by least
        squares. Hello's textured pyramid renders within 13 levels of its source (71 dB).
      - Loading one is a read and an upload, with no glTF parsing, image decoding or LOD building at runtime, in
-       `Content` and in background loads alike.
+       `Content` and in background loads alike. The upload is **one submission**: decompress the tiles into a
+       scratch buffer, then copy every mesh into the shared buffers and every mip into its texture. RGBA8 textures
+       carry their mips too, made at cook time, so nothing is generated on load. GPU and CPU decompression give
+       byte-identical frames.
      - The model's buffers and images are baked in, so they do not ship separately.
      - Cooks are cached in `.voxear/ContentCache`, keyed on a hash of every file the model reads plus the format
        version. An unchanged model is never cooked twice, and unused cooks are pruned.
-     - Hello renders byte-for-byte the same from cooked bundles as from its source files.
+     - Hello renders from cooked bundles within 13 levels of its source files, the difference being BC7.
      - *Planned:* the other BC7 modes for sharper colour, BC6H for HDR textures, and cooking for other asset
        kinds.
    - Other assets (levels, scenes, prefabs, materials) ship as their source text, LZ4-compressed.
 
-**Runtime** *(implemented: reading through a catalog, opening bundles on first use, background loading, unloading;
-async IO and GPU decompression planned)*.
+**Runtime** *(implemented: reading through a catalog, opening bundles on first use, batched async IO, GPU
+decompression, background loading, unloading)*.
 - Every read goes through an `AssetReader`: `FolderReader` in a project, and `BundleReader` for built content. Levels,
   scenes, prefabs, materials and models, with their buffers and textures, all load the same way from either.
   `Content::open_bundles` and `vox run --bundles` use bundles. Each bundle is logged when it opens, naming its
   roots.
 - Loading a `Ref` resolves its bundle from the catalog, opens it, and returns the asset.
-- *Planned:* IO goes async, with io_uring on Linux and IoRing/overlapped IO on Windows. GPU data uploads on a
-  transfer queue, with GPU decompression where available.
+- **Async IO.** Readers take batches (`AssetReader::read_many`), and the IO layer (`voxear_assets::io`) works on a
+  whole batch at once: **io_uring** on Linux, **IoRing** on Windows 11 (loaded at runtime, so Windows 10 still
+  starts), and one read after another where neither is available. Background loads read in waves, one batch per
+  step down the dependency graph: the level, then its scenes, then everything they use. On an SSD a wave then
+  takes about as long as its slowest read.
+- *Planned:* uploads on a queue of their own, so the main thread never waits for one.
 
 **Unloading** *(implemented)*. It works like Unity's `UnloadUnusedAssets`, run for you after every level change.
 - **What stays.** In use are:

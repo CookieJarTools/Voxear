@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using Voxear.Interop;
 
 namespace Voxear.Scripting
@@ -52,6 +53,30 @@ namespace Voxear.Scripting
 			catch (Exception exception)
 			{
 				Log.Exception(exception);
+			}
+		}
+
+		/// <summary>
+		/// Writes the game scripts' content roots as UTF-8 into the buffer when they fit, and returns their length
+		/// in bytes either way, so the engine can call again with a buffer large enough.
+		/// </summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int ContentRoots(byte* buffer, int capacity)
+		{
+			try
+			{
+				var bytes = Encoding.UTF8.GetBytes(Voxear.ContentRoots.Describe(GameScripts.Assemblies));
+				if (bytes.Length <= capacity)
+				{
+					bytes.CopyTo(new Span<byte>(buffer, capacity));
+				}
+
+				return bytes.Length;
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+				return -1;
 			}
 		}
 

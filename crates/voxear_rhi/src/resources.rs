@@ -361,14 +361,16 @@ impl Gpu {
     }
 }
 
-enum Transition {
+/// Layout changes for uploading into an image, for [`mip_barrier`].
+pub enum Transition {
     UndefinedToTransferDst,
     TransferDstToSrc,
     SrcToShaderRead,
     DstToShaderRead,
 }
 
-fn mip_barrier(gpu: &Gpu, cmd: vk::CommandBuffer, image: vk::Image, mip: u32, count: u32, transition: Transition) {
+/// Moves mips `mip..mip + count` of an image between the layouts an upload uses.
+pub fn mip_barrier(gpu: &Gpu, cmd: vk::CommandBuffer, image: vk::Image, mip: u32, count: u32, transition: Transition) {
     use vk::{AccessFlags2 as A, ImageLayout as L, PipelineStageFlags2 as S};
     let (old, new, src, src_access, dst, dst_access) = match transition {
         Transition::UndefinedToTransferDst => {

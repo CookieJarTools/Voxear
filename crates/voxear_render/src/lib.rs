@@ -17,6 +17,7 @@ mod hot_reload;
 mod lod;
 mod mesh;
 mod passes;
+mod payload;
 mod pipelines;
 mod post;
 mod post_passes;
@@ -36,7 +37,7 @@ use voxear_rhi::{
 
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle};
-pub use cooked::COOKED_VERSION;
+pub use cooked::{COOKED_VERSION, CookedModel};
 pub use gltf_import::{
     ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
 };
@@ -178,6 +179,7 @@ pub struct Renderer {
     stats: RenderStats,
     pending_size: Option<(u32, u32)>,
     ui: ui_pass::UiGpu,
+    gpu_decompression: bool,
 }
 
 impl Renderer {
@@ -250,6 +252,7 @@ impl Renderer {
             stats: RenderStats::default(),
             pending_size: None,
             ui: ui_pass::UiGpu::default(),
+            gpu_decompression: true,
         })
     }
 
@@ -336,6 +339,27 @@ impl Renderer {
     pub fn upload_model(&mut self, model: &PreparedModel) -> Result<ImportedModel> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         gltf_import::upload(&self.gpu, &mut self.bindless, assets, model)
+    }
+
+    /// Uploads a cooked model, as the content build wrote it. All of its
+    /// meshes and textures go up in one submission, decompressed by the GPU
+    /// where it can.
+    pub fn upload_cooked(&mut self, model: &CookedModel) -> Result<ImportedModel> {
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        gltf_import::upload_cooked(&self.gpu, &mut self.bindless, assets, model, self.gpu_decompression)
+    }
+
+    /// Whether cooked models decompress on the GPU. When false, a loading
+    /// thread should call [`CookedModel::decompress`] first, so the frame
+    /// does not have to.
+    pub fn decompresses_on_gpu(&self) -> bool {
+        self.gpu_decompression && self.gpu.decompression.is_some()
+    }
+
+    /// Turns GPU decompression off, or back on where the GPU has it, to
+    /// compare the two paths.
+    pub fn set_gpu_decompression(&mut self, enabled: bool) {
+        self.gpu_decompression = enabled;
     }
 
     /// Frees a mesh once no frame in flight still draws with it. Built-in

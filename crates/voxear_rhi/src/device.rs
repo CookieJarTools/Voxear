@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use ash::{ext, khr, vk};
+use ash::{ext, khr, nv, vk};
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -21,6 +21,8 @@ pub struct GpuInfo {
     pub device_local_mb: u64,
     pub mesh_shaders: bool,
     pub ray_tracing: bool,
+    /// GDeflate decompression on the GPU (`VK_NV_memory_decompression`).
+    pub memory_decompression: bool,
     /// Nanoseconds per timestamp tick.
     pub timestamp_period: f32,
     /// Why the GPU cannot run Voxear, if it cannot.
@@ -39,6 +41,9 @@ pub struct Gpu {
     pub surface_loader: khr::surface::Instance,
     pub swapchain_loader: khr::swapchain::Device,
     pub allocator: ManuallyDrop<Mutex<Allocator>>,
+    /// Decompresses GDeflate on the GPU, where the driver can. Set
+    /// `VOXEAR_GPU_DECOMPRESSION=0` to decompress on the CPU instead.
+    pub decompression: Option<nv::memory_decompression::Device>,
     /// Names and labels for RenderDoc, Nsight and validation messages.
     debug_utils: Option<ext::debug_utils::Device>,
     messenger: Option<(ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
@@ -108,7 +113,9 @@ impl Gpu {
             bail!("no GPU supports Vulkan 1.3 with the features Voxear needs; run `vox doctor` for details");
         };
 
-        let device = create_device(&instance, physical, queue_family)?;
+        let decompress =
+            info.memory_decompression && std::env::var("VOXEAR_GPU_DECOMPRESSION").map(|v| v != "0").unwrap_or(true);
+        let device = create_device(&instance, physical, queue_family, decompress)?;
         let queue = unsafe { device.get_device_queue(queue_family, 0) };
         let swapchain_loader = khr::swapchain::Device::new(&instance, &device);
         let allocator = Allocator::new(&AllocatorCreateDesc {
@@ -122,8 +129,12 @@ impl Gpu {
 
         let (major, minor, patch) = info.api_version;
         tracing::info!("GPU: {} (Vulkan {major}.{minor}.{patch}, {})", info.name, info.driver);
+        if decompress {
+            tracing::info!("GPU decompression: GDeflate");
+        }
         let gpu = Self {
             debug_utils: debug_utils.then(|| ext::debug_utils::Device::new(&instance, &device)),
+            decompression: decompress.then(|| nv::memory_decompression::Device::new(&instance, &device)),
             entry,
             instance,
             physical,
@@ -319,6 +330,7 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
         device_local_mb: device_local / (1024 * 1024),
         mesh_shaders: has(ext::mesh_shader::NAME),
         ray_tracing: has(khr::acceleration_structure::NAME) && has(khr::ray_query::NAME),
+        memory_decompression: has(nv::memory_decompression::NAME) && supports_decompression(instance, physical),
         timestamp_period: props.limits.timestamp_period,
         unsupported,
     }
@@ -496,13 +508,35 @@ fn queue_family(
     })
 }
 
-fn create_device(instance: &ash::Instance, physical: vk::PhysicalDevice, queue_family: u32) -> Result<ash::Device> {
+/// Whether the GPU can decompress GDeflate, the format cooked models ship in.
+fn supports_decompression(instance: &ash::Instance, physical: vk::PhysicalDevice) -> bool {
+    let mut decompression = vk::PhysicalDeviceMemoryDecompressionFeaturesNV::default();
+    let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut decompression);
+    unsafe { instance.get_physical_device_features2(physical, &mut features) };
+    let mut methods = vk::PhysicalDeviceMemoryDecompressionPropertiesNV::default();
+    let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut methods);
+    unsafe { instance.get_physical_device_properties2(physical, &mut properties) };
+    decompression.memory_decompression == vk::TRUE
+        && methods.decompression_methods.contains(vk::MemoryDecompressionMethodFlagsNV::GDEFLATE_1_0)
+}
+
+fn create_device(
+    instance: &ash::Instance,
+    physical: vk::PhysicalDevice,
+    queue_family: u32,
+    decompression: bool,
+) -> Result<ash::Device> {
     let priorities = [1.0];
     let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family).queue_priorities(&priorities)];
-    let extensions = [khr::swapchain::NAME.as_ptr()];
+    let mut extensions = vec![khr::swapchain::NAME.as_ptr()];
     let mut features = Features::required();
     let mut chain =
         features.core.push_next(&mut features.v11).push_next(&mut features.v12).push_next(&mut features.v13);
+    let mut decompress = vk::PhysicalDeviceMemoryDecompressionFeaturesNV::default().memory_decompression(true);
+    if decompression {
+        extensions.push(nv::memory_decompression::NAME.as_ptr());
+        chain = chain.push_next(&mut decompress);
+    }
     let info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)
         .enabled_extension_names(&extensions)

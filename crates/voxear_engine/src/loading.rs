@@ -3,7 +3,9 @@
 //!
 //! A worker thread, with its own reader, reads and parses every level,
 //! scene, prefab and material file the target needs, and prepares its models:
-//! parsing, decoding images and building LODs. The main thread then uploads
+//! parsing, decoding images and building LODs. It reads in waves, one batch
+//! per step down the dependency graph (the level, then its scenes, then what
+//! they use), so the IO system works on each wave's reads together. The main thread then uploads
 //! the models a few at a time within a per-frame budget, and finishes. A
 //! level waits as **ready** until activation is allowed, then changes over
 //! at the end of a frame, like `Level.Load`.
@@ -20,7 +22,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use voxear_assets::{AssetDb, AssetGuid, AssetKind, AssetReader};
-use voxear_render::{PreparedModel, Renderer};
+use voxear_render::{CookedModel, PreparedModel, Renderer};
 
 use crate::{content::Content, content_build::direct_needs, prefab::PrefabId};
 
@@ -57,11 +59,36 @@ pub struct LoadStatus {
     pub prefab: Option<PrefabId>,
 }
 
+/// What a background load does with models.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ModelWork {
+    /// Nothing draws them, as in headless runs.
+    #[default]
+    Skip,
+    /// Ready them to upload. Cooked models stay compressed for the GPU to
+    /// decompress, or with `decompress` are decompressed on the loading
+    /// thread, for GPUs that cannot.
+    Prepare { decompress: bool },
+}
+
+impl ModelWork {
+    pub fn for_renderer(renderer: Option<&Renderer>) -> Self {
+        renderer.map_or(Self::Skip, |r| Self::Prepare { decompress: !r.decompresses_on_gpu() })
+    }
+}
+
+/// A model ready to upload: prepared from its source in a project, or read
+/// cooked from built content.
+pub(crate) enum ReadyModel {
+    Source(PreparedModel),
+    Cooked(CookedModel),
+}
+
 /// What the worker read and prepared.
 #[derive(Default)]
 struct Prepared {
     texts: HashMap<AssetGuid, Arc<str>>,
-    models: Vec<(AssetGuid, PreparedModel)>,
+    models: Vec<(AssetGuid, ReadyModel)>,
 }
 
 /// Counted by the worker, read by the main thread.
@@ -93,9 +120,8 @@ pub struct Loads {
 }
 
 impl Loads {
-    /// Starts loading a level or prefab on a worker thread. Without a
-    /// renderer (headless runs), models are left out.
-    pub fn start(&mut self, content: &Content, target: LoadTarget, with_models: bool) -> Result<LoadId> {
+    /// Starts loading a level or prefab on a worker thread.
+    pub fn start(&mut self, content: &Content, target: LoadTarget, models: ModelWork) -> Result<LoadId> {
         let reference = match &target {
             LoadTarget::Level(path) | LoadTarget::Prefab(path) => path,
         };
@@ -107,7 +133,7 @@ impl Loads {
         let progress = Arc::new(Progress::default());
         let counter = progress.clone();
         let job = std::thread::Builder::new().name(format!("load {reference}")).spawn(move || {
-            let models = Models { prepare: with_models, cooked: &cooked };
+            let models = Models { work: models, cooked: &cooked };
             gather(&db, reader.as_mut(), root, &loaded, models, &counter)
         })?;
 
@@ -248,8 +274,7 @@ fn advance_one(
 
 /// How the worker treats models.
 struct Models<'a> {
-    /// Prepare them at all; headless runs never draw them.
-    prepare: bool,
+    work: ModelWork,
     /// Those the content build cooked, which only need reading.
     cooked: &'a HashSet<AssetGuid>,
 }
@@ -265,31 +290,50 @@ fn gather(
 ) -> Result<Prepared> {
     let mut prepared = Prepared::default();
     let mut seen = HashSet::new();
-    let mut queue = vec![root];
-    while let Some(guid) = queue.pop() {
-        if !seen.insert(guid) || loaded.contains(&guid) {
-            continue;
-        }
-        progress.found.fetch_add(1, Ordering::Relaxed);
-        let entry = db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
-        match entry.kind {
-            AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material => {
-                let text = reader.read_text(&entry.path)?;
-                let table: toml::Table = toml::from_str(&text).with_context(|| format!("reading {}", entry.path))?;
-                queue.extend(direct_needs(db, &table));
-                prepared.texts.insert(guid, text.into());
+    let mut wave = vec![root];
+    while !wave.is_empty() {
+        let mut reads = Vec::new();
+        for guid in wave.drain(..) {
+            if !seen.insert(guid) || loaded.contains(&guid) {
+                continue;
             }
-            AssetKind::Model if models.prepare => {
-                let model = if models.cooked.contains(&guid) {
-                    PreparedModel::from_bytes(&entry.path, &reader.read(&entry.path)?)?
-                } else {
-                    voxear_render::prepare_model(&entry.path, &mut |file| reader.read(file))?
-                };
-                prepared.models.push((guid, model));
-            }
-            AssetKind::Model | AssetKind::Texture => {}
+            let entry = db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+            let read = match entry.kind {
+                AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material => true,
+                // A source model reads its own buffers and images as it is prepared.
+                AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
+                AssetKind::Texture => false,
+            };
+            progress.found.fetch_add(1, Ordering::Relaxed);
+            reads.push((guid, entry, read));
         }
-        progress.done.fetch_add(1, Ordering::Relaxed);
+        let paths: Vec<&str> = reads.iter().filter(|(.., read)| *read).map(|(_, e, _)| e.path.as_str()).collect();
+        let mut bytes = reader.read_many(&paths)?.into_iter();
+        for (guid, entry, read) in reads {
+            let data = if read { bytes.next() } else { None };
+            match (entry.kind, data) {
+                (AssetKind::Model, Some(data)) => {
+                    let mut model = CookedModel::from_bytes(&entry.path, &data)?;
+                    if models.work == (ModelWork::Prepare { decompress: true }) {
+                        model.decompress()?;
+                    }
+                    prepared.models.push((guid, ReadyModel::Cooked(model)));
+                }
+                (AssetKind::Model, None) if models.work != ModelWork::Skip => {
+                    let model = voxear_render::prepare_model(&entry.path, &mut |file| reader.read(file))?;
+                    prepared.models.push((guid, ReadyModel::Source(model)));
+                }
+                (_, Some(data)) => {
+                    let text = String::from_utf8(data).with_context(|| format!("{} is not UTF-8 text", entry.path))?;
+                    let table: toml::Table =
+                        toml::from_str(&text).with_context(|| format!("reading {}", entry.path))?;
+                    wave.extend(direct_needs(db, &table));
+                    prepared.texts.insert(guid, text.into());
+                }
+                (_, None) => {}
+            }
+            progress.done.fetch_add(1, Ordering::Relaxed);
+        }
     }
     Ok(prepared)
 }

@@ -19,7 +19,7 @@ pub use engine::{Engine, STAGES};
 pub use fly_camera::FlyCamera;
 pub use game::Game;
 pub use levels::{LEVEL_FORMAT, LevelChange, LevelFile, LevelScene, Levels};
-pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads};
+pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork};
 pub use prefab::{ObjPath, PrefabId, Template};
 pub use project::{ContentSettings, PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root};
 pub use stats_overlay::StatsOverlay;

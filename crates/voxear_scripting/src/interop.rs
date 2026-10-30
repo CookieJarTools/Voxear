@@ -17,7 +17,7 @@ use voxear_scene::{
 
 use crate::services::{ContentStats, LoadProgress, SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 7;
+pub(crate) const API_VERSION: u32 = 8;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -76,6 +76,9 @@ pub(crate) struct ManagedApi {
     /// Once per frame, before anything else: resumes awaits whose loads
     /// finished and runs continuations posted to the main thread.
     pub update: Option<unsafe extern "C" fn()>,
+    /// Writes the `[ContentRoot]` patterns into a buffer when they fit, and
+    /// returns their length either way, or -1 on failure.
+    pub content_roots: Option<unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32>,
 }
 
 #[repr(C)]

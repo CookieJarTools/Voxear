@@ -8,13 +8,18 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, ensure};
-use voxear_rhi::{Bindless, Buffer, FRAMES_IN_FLIGHT, Gpu, Image, ImageDesc, MemoryLocation, TextureId, vk};
+use ash::nv;
+use voxear_rhi::{
+    Bindless, Buffer, FRAMES_IN_FLIGHT, Gpu, Image, ImageDesc, MemoryLocation, TextureId, Transition, mip_barrier, vk,
+};
 
 use crate::{
     alloc::{RangeAllocator, SlotAllocator},
+    cooked::{CookedMesh, CookedModel, CookedTexture},
     gpu::{GpuMaterial, GpuMesh, GpuMeshLod, MATERIAL_NORMAL_MAP},
     lod::{Lod, build_lods},
     mesh::{MeshData, Primitive, Vertex},
+    payload::{Payload, tile_len},
 };
 
 const MAX_VERTICES: u64 = 2 * 1024 * 1024;
@@ -81,9 +86,12 @@ pub struct AssetUsage {
     pub indices: u64,
     /// Freed, but waiting for frames in flight to finish with them.
     pub retiring: u32,
+    /// Cooked model bytes the GPU has decompressed since startup.
+    pub decompressed_on_gpu: u64,
 }
 
 /// Where a mesh's data sits in the shared buffers.
+#[derive(Clone, Copy)]
 struct MeshRanges {
     vertices: (u64, u64),
     indices: (u64, u64),
@@ -112,6 +120,8 @@ pub struct Assets {
     white: TextureId,
     primitives: HashMap<Primitive, MeshHandle>,
     pub default_material: MaterialHandle,
+    /// Payload bytes the GPU has decompressed, so far.
+    pub decompressed_on_gpu: u64,
 }
 
 impl Assets {
@@ -145,6 +155,7 @@ impl Assets {
             white: TextureId(0),
             primitives: HashMap::new(),
             default_material: MaterialHandle(0),
+            decompressed_on_gpu: 0,
         };
         let white = TextureSource { name: "white", width: 1, height: 1, rgba: &[255; 4], srgb: false };
         assets.white = assets.add_texture(gpu, bindless, &white)?;
@@ -160,18 +171,9 @@ impl Assets {
     /// Uploads a mesh whose LOD chain was built already, such as on a
     /// loading thread.
     pub fn add_mesh_with_lods(&mut self, gpu: &Gpu, mesh: &MeshData, lods: &[Lod]) -> Result<MeshHandle> {
-        let vertex_count = mesh.vertices.len() as u64;
         let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
-        let vertex_offset = self.vertex_space.alloc(vertex_count).context("out of vertex space")?;
-        let Some(index_start) = self.index_space.alloc(index_count) else {
-            self.vertex_space.free(vertex_offset, vertex_count);
-            anyhow::bail!("out of index space");
-        };
-        let Some(slot) = self.mesh_slots.alloc() else {
-            self.vertex_space.free(vertex_offset, vertex_count);
-            self.index_space.free(index_start, index_count);
-            anyhow::bail!("too many meshes");
-        };
+        let (handle, ranges) = self.reserve_mesh(mesh.vertices.len() as u64, index_count)?;
+        let (vertex_offset, index_start, slot) = (ranges.vertices.0, ranges.indices.0, handle.0);
 
         gpu.upload_buffer(
             &self.vertices,
@@ -201,11 +203,160 @@ impl Assets {
         }
         gpu.upload_buffer(&self.indices, index_start * 4, bytemuck::cast_slice(&indices))?;
 
-        let handle = MeshHandle(slot);
         gpu.upload_buffer(&self.meshes, u64::from(slot) * size_of::<GpuMesh>() as u64, bytemuck::bytes_of(&entry))?;
-        let ranges = MeshRanges { vertices: (vertex_offset, vertex_count), indices: (index_start, index_count) };
-        self.mesh_ranges.insert(handle, ranges);
         Ok(handle)
+    }
+
+    /// Takes vertex and index space and a mesh table slot, all or nothing.
+    fn reserve_mesh(&mut self, vertex_count: u64, index_count: u64) -> Result<(MeshHandle, MeshRanges)> {
+        let vertex_offset = self.vertex_space.alloc(vertex_count).context("out of vertex space")?;
+        let Some(index_start) = self.index_space.alloc(index_count) else {
+            self.vertex_space.free(vertex_offset, vertex_count);
+            anyhow::bail!("out of index space");
+        };
+        let Some(slot) = self.mesh_slots.alloc() else {
+            self.vertex_space.free(vertex_offset, vertex_count);
+            self.index_space.free(index_start, index_count);
+            anyhow::bail!("too many meshes");
+        };
+        let ranges = MeshRanges { vertices: (vertex_offset, vertex_count), indices: (index_start, index_count) };
+        self.mesh_ranges.insert(MeshHandle(slot), ranges);
+        Ok((MeshHandle(slot), ranges))
+    }
+
+    /// Uploads a cooked model's meshes and textures with one submission. A
+    /// compressed payload is decompressed by the GPU when `decompress` is
+    /// given, and otherwise on this thread.
+    pub fn add_cooked(
+        &mut self,
+        gpu: &Gpu,
+        bindless: &mut Bindless,
+        model: &CookedModel,
+        decompress: Option<&nv::memory_decompression::Device>,
+    ) -> Result<(Vec<MeshHandle>, Vec<TextureId>)> {
+        let mut meshes = Vec::with_capacity(model.meshes.len());
+        for mesh in &model.meshes {
+            let index_count = mesh.lods.iter().map(|&(_, count)| u64::from(count)).sum();
+            match self.reserve_mesh(u64::from(mesh.vertices.1), index_count) {
+                Ok(reserved) => meshes.push(reserved),
+                Err(error) => {
+                    meshes.into_iter().for_each(|(handle, _)| self.release_mesh(handle));
+                    return Err(error);
+                }
+            }
+        }
+        let mut images = Vec::with_capacity(model.textures.len());
+        for texture in &model.textures {
+            let usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+            let format = texture.format.vulkan(texture.srgb);
+            let desc = ImageDesc {
+                mip_levels: texture.mips.len() as u32,
+                ..ImageDesc::new(texture.width, texture.height, format, usage)
+            };
+            images.push(gpu.create_image(&texture.name, desc)?);
+        }
+
+        let tiled = match (&model.payload, decompress) {
+            (Payload::Tiled { size, tiles, data }, Some(device)) => Some((*size, tiles.as_slice(), data, device)),
+            _ => None,
+        };
+        let unpacked = if tiled.is_some() { None } else { Some(model.payload.unpack()?) };
+        let source: &[u8] = match (&tiled, &unpacked) {
+            (Some((_, _, data, _)), _) => data,
+            (None, Some(bytes)) => bytes,
+            (None, None) => unreachable!("one or the other is set"),
+        };
+        let entries: Vec<GpuMesh> =
+            model.meshes.iter().zip(&meshes).map(|(mesh, (_, ranges))| gpu_mesh(mesh, ranges)).collect();
+        let table = source.len().next_multiple_of(16) as u64;
+        let staging_size = table + (entries.len() * size_of::<GpuMesh>()) as u64;
+        let staging = gpu.create_buffer(
+            "model staging",
+            staging_size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryLocation::CpuToGpu,
+        )?;
+        staging.write(0, source);
+        staging.write(table, &entries);
+        let scratch = match &tiled {
+            Some((size, ..)) => {
+                let usage = vk::BufferUsageFlags::TRANSFER_SRC;
+                Some(gpu.create_buffer("decompressed model", *size, usage, MemoryLocation::GpuOnly)?)
+            }
+            None => None,
+        };
+
+        let recorded = gpu.immediate(|cmd| {
+            let from = match (&tiled, &scratch) {
+                (Some((size, tiles, _, device)), Some(scratch)) => {
+                    decompress_tiles(gpu, cmd, device, (&staging, scratch), *size, tiles);
+                    scratch.handle
+                }
+                _ => staging.handle,
+            };
+            for ((mesh, (handle, ranges)), entry) in model.meshes.iter().zip(&meshes).zip(0u64..) {
+                let vertex = size_of::<Vertex>() as u64;
+                let copies = [
+                    (
+                        from,
+                        self.vertices.handle,
+                        mesh.vertices.0,
+                        ranges.vertices.0 * vertex,
+                        ranges.vertices.1 * vertex,
+                    ),
+                    (from, self.indices.handle, mesh.indices, ranges.indices.0 * 4, ranges.indices.1 * 4),
+                ];
+                let table_entry = table + entry * size_of::<GpuMesh>() as u64;
+                let slot = u64::from(handle.0) * size_of::<GpuMesh>() as u64;
+                let table_copy = (staging.handle, self.meshes.handle, table_entry, slot, size_of::<GpuMesh>() as u64);
+                for (src, dst, src_offset, dst_offset, size) in copies.into_iter().chain([table_copy]) {
+                    let region = vk::BufferCopy { src_offset, dst_offset, size };
+                    unsafe { gpu.device.cmd_copy_buffer(cmd, src, dst, &[region]) };
+                }
+            }
+            for (texture, image) in model.textures.iter().zip(&images) {
+                copy_mips(gpu, cmd, from, texture, image);
+            }
+            // Everything later frames read was written by transfers here.
+            let barrier = vk::MemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::ALL_TRANSFER)
+                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ);
+            unsafe {
+                gpu.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[barrier]))
+            };
+        });
+        gpu.destroy_buffer(staging);
+        if let Some(scratch) = scratch {
+            gpu.destroy_buffer(scratch);
+        }
+        recorded?;
+        if tiled.is_some() {
+            self.decompressed_on_gpu += model.payload.size();
+        }
+        let how = if tiled.is_some() { "decompressed on the GPU" } else { "uncompressed" };
+        tracing::debug!("uploaded {} in one submission: {} bytes, {how}", model.path(), model.payload.size());
+
+        let textures = images
+            .into_iter()
+            .map(|image| {
+                let id = bindless.add_texture(gpu, image.view);
+                self.textures.insert(id, image);
+                id
+            })
+            .collect();
+        Ok((meshes.into_iter().map(|(handle, _)| handle).collect(), textures))
+    }
+
+    /// Gives back what [`reserve_mesh`](Self::reserve_mesh) took, for a mesh
+    /// no frame has drawn yet.
+    fn release_mesh(&mut self, handle: MeshHandle) {
+        if let Some(ranges) = self.mesh_ranges.remove(&handle) {
+            self.vertex_space.free(ranges.vertices.0, ranges.vertices.1);
+            self.index_space.free(ranges.indices.0, ranges.indices.1);
+            self.mesh_slots.free(handle.0);
+        }
     }
 
     /// Built-in meshes, created once on first use.
@@ -338,6 +489,7 @@ impl Assets {
             vertices: self.vertex_space.used(),
             indices: self.index_space.used(),
             retiring: self.retiring.len() as u32,
+            decompressed_on_gpu: self.decompressed_on_gpu,
         }
     }
 
@@ -350,4 +502,82 @@ impl Assets {
             gpu.destroy_buffer(buffer);
         }
     }
+}
+
+/// A cooked mesh's table entry, once its ranges are known.
+fn gpu_mesh(mesh: &CookedMesh, ranges: &MeshRanges) -> GpuMesh {
+    let mut entry = GpuMesh {
+        vertex_offset: ranges.vertices.0 as u32,
+        lod_count: mesh.lods.len() as u32,
+        center: mesh.center.into(),
+        radius: mesh.radius,
+        ..Default::default()
+    };
+    let mut index_offset = ranges.indices.0 as u32;
+    for (slot, &(error, index_count)) in entry.lods.iter_mut().zip(&mesh.lods) {
+        *slot = GpuMeshLod { index_offset, index_count, error, _pad: 0 };
+        index_offset += index_count;
+    }
+    entry
+}
+
+/// Unpacks every tile of a payload from `staging` into `scratch`, one region
+/// per tile, all at once, then makes the result readable by copies.
+fn decompress_tiles(
+    gpu: &Gpu,
+    cmd: vk::CommandBuffer,
+    device: &nv::memory_decompression::Device,
+    (staging, scratch): (&Buffer, &Buffer),
+    size: u64,
+    tiles: &[(u32, u32)],
+) {
+    let regions: Vec<vk::DecompressMemoryRegionNV> = tiles
+        .iter()
+        .enumerate()
+        .map(|(index, &(offset, len))| vk::DecompressMemoryRegionNV {
+            src_address: staging.address + u64::from(offset),
+            dst_address: scratch.address + (index * crate::payload::TILE) as u64,
+            compressed_size: u64::from(len),
+            decompressed_size: tile_len(size, index),
+            decompression_method: vk::MemoryDecompressionMethodFlagsNV::GDEFLATE_1_0,
+        })
+        .collect();
+    // The NV extension names no stage of its own, so the barrier covers all.
+    let barrier = vk::MemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+        .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::ALL_TRANSFER)
+        .dst_access_mask(vk::AccessFlags2::TRANSFER_READ);
+    unsafe {
+        device.cmd_decompress_memory(cmd, &regions);
+        gpu.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[barrier]));
+    }
+}
+
+/// Copies a texture's mips out of the payload into its image, leaving it
+/// ready to sample.
+fn copy_mips(gpu: &Gpu, cmd: vk::CommandBuffer, from: vk::Buffer, texture: &CookedTexture, image: &Image) {
+    let regions: Vec<vk::BufferImageCopy> = texture
+        .mips
+        .iter()
+        .enumerate()
+        .map(|(level, &(offset, _))| {
+            let (width, height) = ((texture.width >> level).max(1), (texture.height >> level).max(1));
+            let layers = vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .mip_level(level as u32)
+                .layer_count(1);
+            vk::BufferImageCopy::default().buffer_offset(offset).image_subresource(layers).image_extent(vk::Extent3D {
+                width,
+                height,
+                depth: 1,
+            })
+        })
+        .collect();
+    let count = regions.len() as u32;
+    mip_barrier(gpu, cmd, image.handle, 0, count, Transition::UndefinedToTransferDst);
+    unsafe {
+        gpu.device.cmd_copy_buffer_to_image(cmd, from, image.handle, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
+    }
+    mip_barrier(gpu, cmd, image.handle, 0, count, Transition::DstToShaderRead);
 }

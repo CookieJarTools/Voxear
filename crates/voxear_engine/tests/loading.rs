@@ -192,7 +192,7 @@ fn prefabs_go_unless_kept_and_come_back_when_used() {
 fn cooked_models_load_from_bundles_now_and_in_the_background() {
     let dir = project();
     let output = voxear_engine::content_build::default_output(dir.path());
-    voxear_engine::content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    voxear_engine::content_build::build(dir.path(), &output, &Default::default(), &[]).unwrap();
     let mut renderer = Renderer::new_offscreen(64, 64, &RendererSettings::default()).unwrap();
     let content = voxear_engine::Content::open_bundles(dir.path(), &output).unwrap();
     let mut game = Game::with_content(Project::open(dir.path()).unwrap(), Engine::new(), content);

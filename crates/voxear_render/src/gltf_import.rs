@@ -9,12 +9,13 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use voxear_core::math::{Mat4, Quat, Vec3};
-use voxear_rhi::{Bindless, Gpu, TextureId};
+use voxear_rhi::{Bindless, Gpu, TextureId, vk};
 
 use crate::{
     assets::{Assets, MaterialDesc, MaterialHandle, MeshHandle, TextureSource},
     lod::{Lod, build_lods},
     mesh::{MeshData, Vertex},
+    texture_codec,
 };
 
 /// A model on the GPU: its drawable pieces, and the textures it created,
@@ -59,8 +60,39 @@ pub(crate) struct PreparedTexture {
     pub name: String,
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
     pub srgb: bool,
+    pub format: TextureFormat,
+    /// Level 0 first. RGBA8 textures have one level and the GPU makes the
+    /// rest; compressed ones carry their whole chain.
+    pub mips: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextureFormat {
+    Rgba8 = 0,
+    Bc7 = 1,
+    Bc5 = 2,
+}
+
+impl TextureFormat {
+    pub fn from_u32(value: u32) -> Option<Self> {
+        Some(match value {
+            0 => Self::Rgba8,
+            1 => Self::Bc7,
+            2 => Self::Bc5,
+            _ => return None,
+        })
+    }
+
+    fn vulkan(self, srgb: bool) -> vk::Format {
+        match (self, srgb) {
+            (Self::Rgba8, true) => vk::Format::R8G8B8A8_SRGB,
+            (Self::Rgba8, false) => vk::Format::R8G8B8A8_UNORM,
+            (Self::Bc7, true) => vk::Format::BC7_SRGB_BLOCK,
+            (Self::Bc7, false) => vk::Format::BC7_UNORM_BLOCK,
+            (Self::Bc5, _) => vk::Format::BC5_UNORM_BLOCK,
+        }
+    }
 }
 
 /// A material whose textures are indices into the model's textures until upload.
@@ -87,6 +119,25 @@ pub(crate) struct PreparedNode {
 impl PreparedModel {
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// Compresses the textures for shipping: BC5 for normal maps, BC7 for
+    /// the rest, each with its whole mip chain. A quarter of RGBA8's memory
+    /// and bundle size. Textures whose sides are not multiples of 4 stay
+    /// RGBA8.
+    pub fn compress_textures(&mut self) {
+        let normals: Vec<usize> = self.materials.iter().filter_map(|m| m.normal).collect();
+        for (index, texture) in self.textures.iter_mut().enumerate() {
+            let fits = texture.width % 4 == 0 && texture.height % 4 == 0;
+            if texture.format != TextureFormat::Rgba8 || !fits {
+                continue;
+            }
+            let normal = normals.contains(&index);
+            let levels = texture_codec::mip_chain(&texture.mips[0], texture.width, texture.height, texture.srgb);
+            let encode = if normal { texture_codec::encode_bc5 } else { texture_codec::encode_bc7 };
+            texture.mips = levels.iter().map(|(w, h, pixels)| encode(pixels, *w, *h)).collect();
+            texture.format = if normal { TextureFormat::Bc5 } else { TextureFormat::Bc7 };
+        }
     }
 }
 
@@ -118,14 +169,27 @@ pub fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
 pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &PreparedModel) -> Result<ImportedModel> {
     let mut textures = Vec::with_capacity(model.textures.len());
     for texture in &model.textures {
-        let source = TextureSource {
-            name: &texture.name,
-            width: texture.width,
-            height: texture.height,
-            rgba: &texture.rgba,
-            srgb: texture.srgb,
+        let id = match texture.format {
+            TextureFormat::Rgba8 => {
+                let source = TextureSource {
+                    name: &texture.name,
+                    width: texture.width,
+                    height: texture.height,
+                    rgba: &texture.mips[0],
+                    srgb: texture.srgb,
+                };
+                assets.add_texture(gpu, bindless, &source)?
+            }
+            format => assets.add_texture_mips(
+                gpu,
+                bindless,
+                &texture.name,
+                (texture.width, texture.height),
+                format.vulkan(texture.srgb),
+                &texture.mips,
+            )?,
         };
-        textures.push(assets.add_texture(gpu, bindless, &source)?);
+        textures.push(id);
     }
     let texture = |index: Option<usize>| index.map(|i| textures[i]);
     let mut materials = Vec::with_capacity(model.materials.len());
@@ -291,8 +355,9 @@ impl Preparer {
             name: texture.name().unwrap_or("gltf texture").to_string(),
             width: image.width,
             height: image.height,
-            rgba,
             srgb,
+            format: TextureFormat::Rgba8,
+            mips: vec![rgba],
         });
         let index = self.model.textures.len() - 1;
         self.textures.insert((image_index, srgb), index);

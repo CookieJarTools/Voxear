@@ -14,8 +14,8 @@
 //!    it needs, and what two levels share sits in a bundle both open.
 //!    Assets no root reaches are left out.
 //! 4. Models are **cooked**: stored ready for the GPU, with their meshes,
-//!    LODs, decoded textures and materials, so loading one is a read and an
-//!    upload. Cooks are cached by a hash of their inputs, so an unchanged
+//!    LODs, materials and textures (BC7, or BC5 for normal maps, with their
+//!    mips), so loading one is a read and an upload. Cooks are cached by a hash of their inputs, so an unchanged
 //!    model is not cooked again.
 //! 5. Bundles are named by a hash of their contents, so an unchanged bundle
 //!    is not written again.
@@ -298,7 +298,8 @@ impl Cooker {
             return Ok(bytes);
         }
         let root = &self.root;
-        let model = voxear_render::prepare_model(path, &mut |file| read(root, file))?;
+        let mut model = voxear_render::prepare_model(path, &mut |file| read(root, file))?;
+        model.compress_textures();
         let bytes = model.to_bytes();
         std::fs::write(&cached, &bytes).with_context(|| format!("writing {}", cached.display()))?;
         self.cooked += 1;

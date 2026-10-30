@@ -141,9 +141,12 @@ Done so far:
   materials, so loading needs no import work. A cache keyed on input hashes means unchanged models are never cooked
   twice.
 
+- **Compressed textures:** cooking compresses colour textures to BC7 and normal maps to BC5, with mips built on the
+  CPU in linear space. The encoders are Voxear's own, and the GPU checks BC support at startup.
+
 Still to do in M2:
 - Async IO (io_uring and IoRing) and GPU-side decompression.
-- Splitting large bundles and merging tiny ones, and compressing textures (BC7, BC5, BC6H) when cooking.
+- Splitting large bundles and merging tiny ones.
 - A `[ContentRoot]` attribute for code that loads by string.
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
 

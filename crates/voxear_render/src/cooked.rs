@@ -12,12 +12,13 @@ use voxear_core::math::{Quat, Vec3};
 
 use crate::{
     assets::MaterialDesc,
-    gltf_import::{PreparedMaterial, PreparedModel, PreparedNode, PreparedTexture},
+    gltf_import::{PreparedMaterial, PreparedModel, PreparedNode, PreparedTexture, TextureFormat},
     lod::Lod,
     mesh::{MeshData, Vertex},
 };
 
-pub const COOKED_VERSION: u32 = 1;
+/// 2: textures carry a format and their mip chain.
+pub const COOKED_VERSION: u32 = 2;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 
@@ -42,7 +43,12 @@ impl PreparedModel {
             w.u32(texture.width);
             w.u32(texture.height);
             w.u32(u32::from(texture.srgb));
-            w.bytes(&texture.rgba);
+            w.u32(texture.format as u32);
+            w.u32(texture.mips.len() as u32);
+            for level in &texture.mips {
+                w.u32(level.len() as u32);
+                w.bytes(level);
+            }
         }
         w.u32(self.materials.len() as u32);
         for material in &self.materials {
@@ -102,8 +108,15 @@ fn read(path: &str, bytes: &[u8]) -> Result<PreparedModel> {
     for _ in 0..r.u32()? {
         let name = r.str()?;
         let (width, height, srgb) = (r.u32()?, r.u32()?, r.u32()? != 0);
-        let rgba = r.take(width as usize * height as usize * 4)?.to_vec();
-        textures.push(PreparedTexture { name, width, height, rgba, srgb });
+        let format = r.u32()?;
+        let format = TextureFormat::from_u32(format).with_context(|| format!("unknown texture format {format}"))?;
+        let mut mips = Vec::new();
+        for _ in 0..r.u32()? {
+            let len = r.u32()? as usize;
+            mips.push(r.take(len)?.to_vec());
+        }
+        ensure!(!mips.is_empty(), "texture {name} has no pixels");
+        textures.push(PreparedTexture { name, width, height, srgb, format, mips });
     }
     let mut materials = Vec::new();
     for _ in 0..r.u32()? {
@@ -277,7 +290,7 @@ mod tests {
         assert_eq!(back.to_bytes(), bytes, "writing it again gives the same bytes");
         assert_eq!(back.meshes[0].0.vertices, model.meshes[0].0.vertices);
         assert_eq!(back.meshes[0].1[0].indices.len(), 6);
-        assert_eq!(back.textures[0].rgba, [255, 0, 0, 255, 0, 0, 255, 255]);
+        assert_eq!(back.textures[0].mips, [vec![255, 0, 0, 255, 0, 0, 255, 255]]);
         assert_eq!(back.materials[0].desc.roughness, 0.25);
         assert_eq!(back.materials[0].base_color, Some(0));
         let node = &back.nodes[0];

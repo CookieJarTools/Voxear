@@ -483,7 +483,7 @@ var mesh = await meshRef.LoadAsync();                     // planned: async
 using var handle = Content.Load(meshRef, Priority.High);  // planned: explicit lifetime and priority
 ```
 
-**Content build** *(implemented: steps 1–3, 5 and model cooking; step 4 and texture compression planned)*. It runs alone
+**Content build** *(implemented: steps 1–3, 5, and cooking models with compressed textures; step 4 planned)*. It runs alone
 with `vox content build`, before `vox run --bundles` and `vox render --bundles`, and will run before every player
 build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundle format and reader are in
 `crates/voxear_assets/src/bundle.rs`.
@@ -523,14 +523,21 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
    - The **catalog** (`catalog.toml`, readable on purpose) maps each asset's GUID and path to its bundle, offsets
      and sizes. It also lists each bundle's usage set and the bundles it depends on.
    - **Models are cooked**: stored ready for the GPU in Voxear's own format (`crates/voxear_render/src/cooked.rs`).
-     - A cooked model holds its meshes with their LOD chains, its decoded textures, its materials and its node layout.
+     - A cooked model holds its meshes with their LOD chains, its textures, its materials and its node layout.
+     - **Textures are compressed**, to a quarter of RGBA8's GPU memory and bundle size: BC7 for colour, and BC5 for
+       normal maps. Shaders rebuild a normal's Z from X and Y, so BC5's two channels are enough. Mips are built on
+       the CPU before compression, averaged in linear space so they do not darken. Textures whose sides are not
+       multiples of 4 stay RGBA8. The encoders (`crates/voxear_render/src/texture_codec.rs`) are Voxear's own and
+       simple: BC7 uses mode 6 with endpoints fitted along each block's principal axis, then refined by least
+       squares. Hello's textured pyramid renders within 13 levels of its source (71 dB).
      - Loading one is a read and an upload, with no glTF parsing, image decoding or LOD building at runtime, in
        `Content` and in background loads alike.
      - The model's buffers and images are baked in, so they do not ship separately.
      - Cooks are cached in `.voxear/ContentCache`, keyed on a hash of every file the model reads plus the format
        version. An unchanged model is never cooked twice, and unused cooks are pruned.
      - Hello renders byte-for-byte the same from cooked bundles as from its source files.
-     - *Planned:* textures compressed to BC7, BC5 and BC6H at cook time, and cooking for other asset kinds.
+     - *Planned:* the other BC7 modes for sharper colour, BC6H for HDR textures, and cooking for other asset
+       kinds.
    - Other assets (levels, scenes, prefabs, materials) ship as their source text, LZ4-compressed.
 
 **Runtime** *(implemented: reading through a catalog, opening bundles on first use, background loading, unloading;

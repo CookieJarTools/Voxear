@@ -232,6 +232,26 @@ impl Assets {
         Ok(id)
     }
 
+    /// Uploads a texture whose mips were made ahead of time, such as a
+    /// block-compressed one from a cooked model. `mips` holds level 0 first.
+    pub fn add_texture_mips(
+        &mut self,
+        gpu: &Gpu,
+        bindless: &mut Bindless,
+        name: &str,
+        (width, height): (u32, u32),
+        format: vk::Format,
+        mips: &[Vec<u8>],
+    ) -> Result<TextureId> {
+        let usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+        let desc = ImageDesc { mip_levels: mips.len() as u32, ..ImageDesc::new(width, height, format, usage) };
+        let image = gpu.create_image(name, desc)?;
+        gpu.upload_mips(&image, mips)?;
+        let id = bindless.add_texture(gpu, image.view);
+        self.textures.insert(id, image);
+        Ok(id)
+    }
+
     pub fn add_material(&mut self, gpu: &Gpu, desc: &MaterialDesc) -> Result<MaterialHandle> {
         let slot = self.material_slots.alloc().context("too many materials")?;
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;

@@ -160,8 +160,9 @@ float3 surfaceNormal(VertexOut input, Material material)
     }
     float3 t = normalize(input.tangent.xyz - n * dot(n, input.tangent.xyz));
     float3 b = cross(n, t) * input.tangent.w;
-    float3 m = sampleTexture(material.normalTexture, input.uv).xyz * 2.0 - 1.0;
-    m.xy *= material.normalScale;
+    // Only X and Y are read: Z follows from them, which lets normal maps ship as two-channel BC5.
+    float2 xy = sampleTexture(material.normalTexture, input.uv).xy * 2.0 - 1.0;
+    float3 m = float3(xy * material.normalScale, sqrt(saturate(1.0 - dot(xy, xy))));
     return normalize(t * m.x + b * m.y + n * m.z);
 }
 

@@ -287,6 +287,44 @@ impl Gpu {
         Ok(())
     }
 
+    /// Uploads every mip of an image whose mips were made ahead of time, such
+    /// as a block-compressed texture, and leaves it ready for sampling.
+    /// `mips` holds level 0 first, in the image's own format.
+    pub fn upload_mips(&self, image: &Image, mips: &[Vec<u8>]) -> Result<()> {
+        let total: usize = mips.iter().map(Vec::len).sum();
+        let staging =
+            self.create_buffer("staging", total as u64, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu)?;
+        let mut regions = Vec::with_capacity(mips.len());
+        let mut offset = 0;
+        for (level, data) in mips.iter().enumerate() {
+            staging.write(offset, data);
+            let (width, height) = ((image.desc.width >> level).max(1), (image.desc.height >> level).max(1));
+            regions.push(
+                vk::BufferImageCopy::default()
+                    .buffer_offset(offset)
+                    .image_subresource(color_layers(level as u32))
+                    .image_extent(vk::Extent3D { width, height, depth: 1 }),
+            );
+            offset += data.len() as u64;
+        }
+        let count = mips.len() as u32;
+        self.immediate(|cmd| {
+            mip_barrier(self, cmd, image.handle, 0, count, Transition::UndefinedToTransferDst);
+            unsafe {
+                self.device.cmd_copy_buffer_to_image(
+                    cmd,
+                    staging.handle,
+                    image.handle,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &regions,
+                );
+            }
+            mip_barrier(self, cmd, image.handle, 0, count, Transition::DstToShaderRead);
+        })?;
+        self.destroy_buffer(staging);
+        Ok(())
+    }
+
     /// Copies an image's first mip into a host-visible buffer and returns its
     /// bytes. For screenshots and tests.
     pub fn read_image(&self, image: vk::Image, desc: ImageDesc, layout: vk::ImageLayout) -> Result<Vec<u8>> {

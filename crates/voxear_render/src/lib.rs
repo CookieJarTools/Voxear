@@ -22,6 +22,7 @@ mod post;
 mod post_passes;
 mod scene;
 mod shadows;
+mod texture_codec;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
 

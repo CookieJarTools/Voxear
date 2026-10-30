@@ -342,7 +342,8 @@ impl Features<'_> {
             .shader_int64(true)
             .fill_mode_non_solid(true)
             .depth_clamp(true)
-            .independent_blend(true);
+            .independent_blend(true)
+            .texture_compression_bc(true);
         Self {
             core: vk::PhysicalDeviceFeatures2::default().features(core),
             v11: vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true),
@@ -400,6 +401,11 @@ impl Features<'_> {
             ("wireframe", on(r.core.features.fill_mode_non_solid), on(s.core.features.fill_mode_non_solid)),
             ("depth clamp", on(r.core.features.depth_clamp), on(s.core.features.depth_clamp)),
             ("independent blend", on(r.core.features.independent_blend), on(s.core.features.independent_blend)),
+            (
+                "BC texture compression",
+                on(r.core.features.texture_compression_bc),
+                on(s.core.features.texture_compression_bc),
+            ),
             ("shader draw parameters", on(r.v11.shader_draw_parameters), on(s.v11.shader_draw_parameters)),
             ("timeline semaphores", on(r.v12.timeline_semaphore), on(s.v12.timeline_semaphore)),
             ("buffer device address", on(r.v12.buffer_device_address), on(s.v12.buffer_device_address)),

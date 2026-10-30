@@ -1,0 +1,8 @@
+# Voxear level
+format = 1
+
+[[scene]]
+scene = "5e0eb1bec582423f9c119d443bad624d"  # Scenes/Environment.scene
+
+[[scene]]
+scene = "77906ce5ad2145938ca0403f1d78c377"  # Scenes/Balls.scene

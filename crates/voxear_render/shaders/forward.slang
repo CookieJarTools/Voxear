@@ -15,7 +15,21 @@ struct VertexOut
     nointerpolation uint lod : LOD;
     nointerpolation uint instance : INSTANCE;
     nointerpolation uint fade : FADE;
+    float4 currentClip : CURRENT_CLIP;
+    float4 previousClip : PREVIOUS_CLIP;
 };
+
+struct FragmentOut
+{
+    float4 color : SV_Target0;
+    // Screen motion since last frame, in UV units, for TAA and motion blur.
+    float2 velocity : SV_Target1;
+};
+
+float2 motion(float4 currentClip, float4 previousClip)
+{
+    return (currentClip.xy / currentClip.w - previousClip.xy / previousClip.w) * 0.5;
+}
 
 [shader("vertex")]
 VertexOut vertexMain(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex)
@@ -38,6 +52,8 @@ VertexOut vertexMain(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex)
     o.lod = lod;
     o.instance = instanceIndex;
     o.fade = fade;
+    o.currentClip = transform(push.frame->unjitteredViewProj, world);
+    o.previousClip = transform(push.frame->prevViewProj, transform(instance.prevModel, float4(v.position, 1.0)));
     return o;
 }
 
@@ -204,7 +220,7 @@ float3 debugColor(uint index)
 }
 
 [shader("fragment")]
-float4 fragmentMain(VertexOut input) : SV_Target
+FragmentOut fragmentMain(VertexOut input)
 {
     Frame* frame = push.frame;
     ditherLodFade(input);
@@ -263,5 +279,8 @@ float4 fragmentMain(VertexOut input) : SV_Target
     {
         color = s.normal * 0.5 + 0.5;
     }
-    return float4(color, 1.0);
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
 }

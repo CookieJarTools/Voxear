@@ -108,6 +108,7 @@ struct Material
 struct Instance
 {
     Mat4 model;
+    Mat4 prevModel;
     float4 normal0;
     float4 normal1;
     float4 normal2;
@@ -129,6 +130,47 @@ struct Light
     float cosOuter;
     float cosInner;
     float3 pad;
+};
+
+// Post-processing settings; mirrors GpuPost in src/gpu.rs.
+struct Post
+{
+    float bloomIntensity;
+    float sharpness;
+    float taaHistory;
+    float chromaticAberration;
+    float exposureCompensation;
+    float exposureMin;
+    float exposureMax;
+    uint autoExposure;
+    float exposureSpeedUp;
+    float exposureSpeedDown;
+    uint tonemapper;
+    uint fxaa;
+    float tonemapContrast;
+    float tonemapSaturation;
+    float temperature;
+    float tint;
+    float gradingContrast;
+    float gradingSaturation;
+    float vignette;
+    float vignetteSmoothness;
+    float3 lift;
+    float vignetteRoundness;
+    float3 gamma;
+    float grain;
+    float3 gain;
+    float grainSize;
+    float3 fogColor;
+    float fogDensity;
+    float fogHeightFalloff;
+    float fogBaseHeight;
+    float fogSunGlow;
+    float bloomScatter;
+    float dofFocus;
+    float dofAperture;
+    float dofMaxBlur;
+    float motionBlur;
 };
 
 struct Frame
@@ -170,6 +212,12 @@ struct Frame
     float lodFadeSpeed;
     float ambient;
     float pad4;
+    Mat4 unjitteredViewProj;
+    Mat4 prevViewProj;
+    float2 jitter;
+    uint taaReset;
+    uint frameIndex;
+    Post post;
 };
 
 struct DrawCommand
@@ -196,6 +244,7 @@ struct Buffers
     uint* stats;
     uint* clusters;
     uint* lodState;
+    float* exposure;
 };
 
 struct Push
@@ -209,6 +258,7 @@ struct Push
     uint2 size;
     uint level;
     uint pad;
+    uint4 textures;
 };
 
 [[vk::push_constant]] ConstantBuffer<Push> push;

@@ -1,0 +1,80 @@
+# Voxear scene: daytime props, lit by the sun
+format = 1
+
+[sky]
+zenith = [0.517, 0.701, 0.931]
+horizon = [0.809, 0.865, 0.936]
+ground = [0.506, 0.485, 0.461]
+ambient = 1.0
+
+[[obj]]
+id = 1
+name = "Sun"
+rotation = [42.0, -35.0, 0.0]
+light = { type = "directional", color = [1.0, 0.95, 0.88], intensity = 3.2 }
+
+[[obj]]
+id = 2
+name = "Spinner A"
+position = [-2.2, 0.75, 0.0]
+scale = [1.5, 1.5, 1.5]
+behaviours = ["Hello.Spinner"]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.55, 0.36, 0.96], roughness = 0.35 }
+
+[[obj]]
+id = 3
+name = "Spinner B"
+position = [2.2, 0.75, 0.0]
+rotation = [0.0, 30.0, 0.0]
+scale = [1.5, 1.5, 1.5]
+behaviours = ["Hello.Spinner"]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.24, 0.62, 0.98], roughness = 0.5 }
+
+[[obj]]
+id = 4
+name = "Chrome Ball"
+position = [0.0, 0.9, 1.6]
+scale = [1.8, 1.8, 1.8]
+[obj.renderer]
+mesh = "builtin:sphere"
+material = { color = [0.95, 0.93, 0.9], metallic = 1.0, roughness = 0.18 }
+
+[[obj]]
+id = 5
+name = "Lamp"
+position = [0.0, 0.6, -1.4]
+light = { type = "point", color = [1.0, 0.45, 0.62], intensity = 6.0, range = 6.0 }
+
+[[obj]]
+id = 6
+name = "Glow"
+position = [0.0, 0.25, -1.4]
+scale = [0.3, 0.3, 0.3]
+[obj.renderer]
+mesh = "builtin:sphere"
+material = { color = [0.0, 0.0, 0.0], emissive = [6.0, 1.8, 3.0] }
+
+[[obj]]
+id = 7
+name = "Pyramid"
+position = [4.6, 0.0, 3.2]
+scale = [2.0, 2.0, 2.0]
+behaviours = ["Hello.Spinner"]
+
+[[obj]]
+id = 8
+name = "Pyramid"
+parent = 7
+[obj.renderer]
+mesh = "277e6fd45f82419a894b65b6b72ed398#mesh0.0"  # Models/Pyramid.gltf
+material = "277e6fd45f82419a894b65b6b72ed398#material0"
+
+[[obj]]
+id = 9
+name = "Game Manager"
+persistent = true
+behaviours = ["Hello.GameManager"]

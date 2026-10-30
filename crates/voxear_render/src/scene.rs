@@ -2,15 +2,16 @@
 //! world each frame.
 
 use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4, camera::lh::proj::vulkan};
-use voxear_ecs::{Component, World};
-use voxear_scene::{Transform, WorldTransform};
+use voxear_ecs::{Component, Entity, World};
+use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use crate::{
     assets::{MaterialHandle, MeshHandle},
     gpu::{
-        CLUSTER_FAR, CLUSTER_GRID, GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT, MAX_CLUSTER_LIGHTS,
-        NO_TEXTURE, cols, vec3,
+        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_NONE, GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT,
+        MAX_CLUSTER_LIGHTS, NO_TEXTURE, cols, vec3,
     },
+    post::{AntiAliasingMode, PostProcess, taa_jitter},
     shadows::{self, CASCADES},
 };
 
@@ -91,6 +92,9 @@ pub struct ExtractedFrame {
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
     pub has_sun: bool,
+    /// The entity behind each instance, for tracking motion between frames.
+    pub entities: Vec<Entity>,
+    pub post: PostProcess,
 }
 
 /// Per-view settings that are not part of the scene.
@@ -101,11 +105,13 @@ pub struct ViewOptions {
     pub lod_threshold: f32,
     /// LOD fades complete in `1 / lod_fade_speed` seconds.
     pub lod_fade_speed: f32,
+    /// Replaces the scene's post-processing, e.g. to compare presets.
+    pub post_override: Option<PostProcess>,
 }
 
 impl Default for ViewOptions {
     fn default() -> Self {
-        Self { debug_view: 0, lod_threshold: 1.0, lod_fade_speed: 4.0 }
+        Self { debug_view: 0, lod_threshold: 1.0, lod_fade_speed: 4.0, post_override: None }
     }
 }
 
@@ -131,10 +137,19 @@ impl Default for Sky {
     }
 }
 
-pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &ViewOptions) -> ExtractedFrame {
+/// `frame_index` picks TAA's sub-pixel camera offset.
+pub fn extract(
+    world: &World,
+    width: u32,
+    height: u32,
+    time: f32,
+    frame_index: u64,
+    options: &ViewOptions,
+) -> ExtractedFrame {
     let aspect = width as f32 / height.max(1) as f32;
     let (camera, position, rotation) = world
         .query_ref::<(&Camera, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
         .into_iter()
         .next()
         .map(|(camera, local, world)| {
@@ -147,7 +162,23 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &View
     let sky = world.resource::<Sky>().copied().unwrap_or_default();
     let fov = camera.fov_y_degrees.to_radians();
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
-    let view_proj = vulkan::perspective_infinite_reverse(fov, aspect, camera.near) * view;
+    let projection = vulkan::perspective_infinite_reverse(fov, aspect, camera.near);
+    let unjittered = projection * view;
+    // Debug views show their colours as they are.
+    let post = if options.debug_view != DEBUG_VIEW_NONE {
+        PostProcess::debug_view()
+    } else {
+        options.post_override.or_else(|| world.resource::<PostProcess>().copied()).unwrap_or_default()
+    };
+    let jitter = match post.anti_aliasing.mode {
+        AntiAliasingMode::Taa => taa_jitter(frame_index, post.anti_aliasing.taa_jitter),
+        _ => [0.0; 2],
+    };
+    // Offsetting the column that multiplies view depth shifts the image by a constant amount in NDC.
+    let mut jittered_projection = projection;
+    jittered_projection.z_axis.x += jitter[0] * 2.0 / width as f32;
+    jittered_projection.z_axis.y += jitter[1] * 2.0 / height as f32;
+    let view_proj = jittered_projection * view;
 
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
@@ -161,6 +192,9 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &View
         hiz_texture: NO_TEXTURE,
         shadow_texture: NO_TEXTURE,
         view: cols(view),
+        unjittered_view_proj: cols(unjittered),
+        jitter,
+        post: post.to_gpu(sky.horizon),
         cluster_grid: CLUSTER_GRID,
         cluster_max_lights: MAX_CLUSTER_LIGHTS,
         cluster_scale: CLUSTER_GRID[2] as f32 / (CLUSTER_FAR / camera.near).ln(),
@@ -182,7 +216,7 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &View
 
     let mut lights = Vec::new();
     let mut sun_found = false;
-    for (light, transform) in world.query_ref::<(&Light, &Transform)>() {
+    for (light, transform) in world.query_ref::<(&Light, &Transform)>().without::<Destroying>() {
         let forward = transform.rotation * Vec3::Z;
         let radiance = light.color * light.intensity;
         match light.kind {
@@ -217,10 +251,13 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &View
         }
     }
 
+    let mut entities = Vec::new();
     let instances: Vec<GpuInstance> = world
-        .query_ref::<(&MeshRenderer, &Transform, Option<&WorldTransform>)>()
+        .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
         .into_iter()
-        .map(|(renderer, transform, world_transform)| {
+        .map(|(entity, renderer, transform, world_transform)| {
+            entities.push(entity);
             let model = world_transform.map_or_else(
                 || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
                 |w| w.0,
@@ -228,6 +265,7 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &View
             let normal = Mat3::from_mat4(model).inverse().transpose();
             GpuInstance {
                 model: cols(model),
+                prev_model: cols(model),
                 normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
                 mesh: renderer.mesh.0,
                 material: renderer.material.0,
@@ -237,7 +275,7 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &View
         .collect();
     frame.instance_count = instances.len() as u32;
 
-    ExtractedFrame { frame, instances, lights, has_sun: sun_found }
+    ExtractedFrame { frame, instances, lights, has_sun: sun_found, entities, post }
 }
 
 /// Inward-facing side and near planes of an infinite perspective frustum.

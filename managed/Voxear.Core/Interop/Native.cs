@@ -63,6 +63,15 @@ namespace Voxear.Interop
 			Api->BehaviourDestroy(behaviour);
 		}
 
+		public static void LoadLevel(string level)
+		{
+			var bytes = Encoding.UTF8.GetBytes(level);
+			fixed (byte* text = bytes)
+			{
+				Api->LevelLoad(text, bytes.Length);
+			}
+		}
+
 		public static string Utf8(byte* text, int length)
 		{
 			return length <= 0 ? string.Empty : Encoding.UTF8.GetString(text, length);

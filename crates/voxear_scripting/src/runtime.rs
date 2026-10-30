@@ -102,6 +102,11 @@ impl ScriptRuntime {
         })
     }
 
+    /// Levels scripts asked to load since the last call, oldest first.
+    pub fn take_level_requests(&mut self) -> Vec<String> {
+        interop::take_level_requests()
+    }
+
     pub fn time(&self) -> &Time {
         &self.time
     }

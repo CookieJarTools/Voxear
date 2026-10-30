@@ -62,6 +62,8 @@ pub struct GpuMaterial {
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuInstance {
     pub model: Mat4Cols,
+    /// Last frame's model matrix, for motion vectors.
+    pub prev_model: Mat4Cols,
     /// Inverse-transpose of the model's 3×3, as three padded columns.
     pub normal: [[f32; 4]; 3],
     pub mesh: u32,
@@ -148,6 +150,58 @@ pub struct GpuFrame {
     /// Scales the sky's ambient light.
     pub ambient: f32,
     pub _pad4: f32,
+    /// The projection without TAA jitter, for motion vectors.
+    pub unjittered_view_proj: Mat4Cols,
+    pub prev_view_proj: Mat4Cols,
+    /// TAA's sub-pixel offset this frame, in pixels.
+    pub jitter: [f32; 2],
+    /// History is invalid (first frame, resize, TAA just enabled).
+    pub taa_reset: u32,
+    pub frame_index: u32,
+    pub post: GpuPost,
+}
+
+/// Post-processing settings as shaders read them. Mirrors `Post` in
+/// `shaders/common.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuPost {
+    pub bloom_intensity: f32,
+    pub sharpness: f32,
+    pub taa_history: f32,
+    pub chromatic_aberration: f32,
+    pub exposure_compensation: f32,
+    pub exposure_min: f32,
+    pub exposure_max: f32,
+    pub auto_exposure: u32,
+    pub exposure_speed_up: f32,
+    pub exposure_speed_down: f32,
+    pub tonemapper: u32,
+    pub fxaa: u32,
+    pub tonemap_contrast: f32,
+    pub tonemap_saturation: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub grading_contrast: f32,
+    pub grading_saturation: f32,
+    pub vignette: f32,
+    pub vignette_smoothness: f32,
+    pub lift: [f32; 3],
+    pub vignette_roundness: f32,
+    pub gamma: [f32; 3],
+    pub grain: f32,
+    pub gain: [f32; 3],
+    pub grain_size: f32,
+    pub fog_color: [f32; 3],
+    pub fog_density: f32,
+    pub fog_height_falloff: f32,
+    pub fog_base_height: f32,
+    pub fog_sun_glow: f32,
+    pub bloom_scatter: f32,
+    pub dof_focus: f32,
+    pub dof_aperture: f32,
+    pub dof_max_blur: f32,
+    pub motion_blur: f32,
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -167,6 +221,8 @@ pub struct GpuBuffers {
     pub stats: u64,
     pub clusters: u64,
     pub lod_state: u64,
+    /// Auto exposure's adapted EV, carried between frames.
+    pub exposure: u64,
 }
 
 /// `VkDrawIndexedIndirectCommand`.
@@ -211,6 +267,8 @@ pub struct Push {
     /// A mip level to read.
     pub level: u32,
     pub _pad: u32,
+    /// Textures a post pass reads.
+    pub textures: [u32; 4],
 }
 
 #[cfg(test)]
@@ -221,13 +279,16 @@ mod tests {
     fn layouts_match_the_shaders() {
         assert_eq!(size_of::<GpuMesh>(), 32 + 16 * MAX_LODS);
         assert_eq!(size_of::<GpuMaterial>(), 64);
-        assert_eq!(size_of::<GpuInstance>(), 128);
+        assert_eq!(size_of::<GpuInstance>(), 192);
         assert_eq!(size_of::<GpuLight>(), 64);
         // Two matrices, six planes, nine 16-byte rows, the cascades, then the
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
-        assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3);
-        assert_eq!(size_of::<GpuBuffers>(), 12 * 8);
+        let motion = 64 * 2 + 16;
+        let post = 16 * 11;
+        assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post);
+        assert_eq!(size_of::<GpuPost>(), post);
+        assert_eq!(size_of::<GpuBuffers>(), 13 * 8);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }
 }

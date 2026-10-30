@@ -1,0 +1,17 @@
+# Voxear scene: camera and ground, shared by both levels
+format = 1
+
+[[obj]]
+id = 1
+name = "Main Camera"
+position = [0.0, 2.2, -7.0]
+rotation = [12.0, 0.0, 0.0]
+camera = { fov = 55.0 }
+
+[[obj]]
+id = 2
+name = "Ground"
+scale = [30.0, 1.0, 30.0]
+[obj.renderer]
+mesh = "builtin:plane"
+material = { color = [0.42, 0.44, 0.46], roughness = 0.9 }

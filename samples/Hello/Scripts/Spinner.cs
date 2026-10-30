@@ -26,6 +26,11 @@ namespace Hello
 			Log.Info($"Start    {Obj.Name} (Spinner), score now {manager?.Score}");
 		}
 
+		protected override void OnDestroy()
+		{
+			Log.Info($"OnDestroy {Obj.Name} (Spinner), score was {Instance<GameManager>.Current?.Score}");
+		}
+
 		protected override void Update()
 		{
 			var step = Quaternion.CreateFromAxisAngle(Vector3.UnitY, DegreesPerSecond * MathF.PI / 180f * Time.Delta);

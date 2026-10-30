@@ -1,0 +1,5 @@
+# Voxear level
+format = 1
+
+[[scene]]
+scene = "482f4e40ab324ff3bee2f801d2ed0f27"  # Scenes/Lights.scene

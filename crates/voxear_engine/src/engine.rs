@@ -1,9 +1,11 @@
+use std::collections::{HashMap, HashSet};
+
 use anyhow::Result;
 use voxear_core::time::Time;
 use voxear_ecs::{Entity, Schedule, World};
 use voxear_scene::{
-    BehaviourHandle, BehaviourHost, Behaviours, InstanceMarker, Lifecycle, Name, Phase, Transform,
-    propagate_transforms, register_obj_components,
+    AttachedBehaviour, BehaviourHandle, BehaviourHost, Behaviours, Destroying, InstanceMarker, Lifecycle, Name, Parent,
+    Phase, Transform, propagate_transforms, register_obj_components,
 };
 use voxear_scripting::ScriptRuntime;
 
@@ -72,19 +74,47 @@ impl Engine {
             anyhow::bail!("{name} has behaviours but the project has no scripts");
         };
 
-        let mut handles = Vec::with_capacity(behaviours.len());
+        let mut attached = Vec::with_capacity(behaviours.len());
         let mut is_instance = false;
         for type_name in behaviours {
             let created = scripts.create_behaviour(&mut self.world, type_name, entity)?;
             is_instance |= created.is_instance;
-            handles.push(created.registration.handle);
+            attached.push(AttachedBehaviour { handle: created.registration.handle, type_name: type_name.clone() });
             self.lifecycle.register(created.registration);
         }
-        self.world.insert(entity, Behaviours(handles));
+        self.world.insert(entity, Behaviours(attached));
         if is_instance {
             self.world.insert(entity, InstanceMarker);
         }
         Ok(entity)
+    }
+
+    /// Destroys Objs and all their children at the end of the frame, after
+    /// their behaviours' OnDisable and OnDestroy, like Unity's `Destroy`.
+    /// They stop rendering immediately.
+    pub fn destroy_objs(&mut self, roots: &[Entity]) {
+        let mut children: HashMap<Entity, Vec<Entity>> = HashMap::new();
+        for (child, parent) in self.world.query_ref::<(Entity, &Parent)>() {
+            children.entry(parent.0).or_default().push(child);
+        }
+        let mut doomed = HashSet::new();
+        let mut stack = roots.to_vec();
+        while let Some(entity) = stack.pop() {
+            if doomed.insert(entity) {
+                stack.extend(children.get(&entity).into_iter().flatten());
+            }
+        }
+        for entity in doomed {
+            if !self.world.is_alive(entity) {
+                continue;
+            }
+            if let Some(behaviours) = self.world.get::<Behaviours>(entity) {
+                for handle in behaviours.handles().collect::<Vec<_>>() {
+                    self.lifecycle.destroy(handle);
+                }
+            }
+            self.world.insert(entity, Destroying);
+        }
     }
 
     /// Advances one frame:
@@ -128,6 +158,10 @@ impl Engine {
         self.flush();
 
         self.with_host(|lifecycle, host| lifecycle.end_of_frame(host));
+        let destroyed: Vec<Entity> = self.world.query_ref::<Entity>().with::<Destroying>().into_iter().collect();
+        for entity in destroyed {
+            self.world.despawn(entity);
+        }
         self.schedule.run_stage("Last", &mut self.world);
     }
 

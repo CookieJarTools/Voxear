@@ -29,7 +29,10 @@ cargo build
 ./target/debug/vox run samples/Hello
 ```
 
-`vox run` builds the project's C# scripts, hosts .NET, creates the project's Objs and opens a window. Add
+`vox run` builds the project's C# scripts, hosts .NET, loads the project's `start_level` and opens a window. A
+level is a list of scenes (`Levels/*.level`, `Scenes/*.scene`, both plain TOML). In Hello, the Game Manager switches
+between a day and a night level every five seconds, and their shared environment scene stays loaded.
+`vox assets samples/Hello` lists a project's assets and their GUIDs. Add
 `--headless --frames 120` to simulate without a window and print where every Obj ended up.
 
 In the window:
@@ -47,11 +50,18 @@ In the window:
 - GPU time per render pass
 - culling counts: what was outside the view, what was hidden by occlusion, and what was drawn
 - how many draws used each LOD
+- the exposure auto exposure settled on
 
 Options:
 - `--debug-view lod` colours objects by their LOD, and `--debug-view cascades` by shadow cascade. F2 and F3 do the
   same in the window.
+- `--post neutral` or `--post cinematic` swaps the scene's post-processing for another preset, to compare with the
+  default Voxear Look.
 - `--renderdoc` also saves a RenderDoc capture to the project's `.voxear/Captures`.
+
+Post-processing is on by default: TAA, bloom, auto exposure, AgX tonemapping, a soft vignette and height fog. A
+scene changes it in a `[post]` section; `samples/Lights` has an example, and
+[Post-processing](docs/ARCHITECTURE.md#post-processing-and-the-voxear-look) lists every setting.
 
 More samples:
 - `samples/Stress` has 1,600 spheres and a wall, for trying culling and LODs.

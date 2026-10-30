@@ -7,11 +7,12 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
+use voxear_assets::{AssetDb, AssetKind};
 use voxear_core::math::EulerRot;
-use voxear_engine::{Engine, Project, core_assembly, run_windowed, spawn_objs};
+use voxear_engine::{Engine, Game, Project, core_assembly, run_windowed};
 use voxear_render::{
-    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, Renderer,
-    RendererSettings, ViewOptions,
+    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess,
+    Renderer, RendererSettings, ViewOptions,
 };
 use voxear_scene::{Name, Transform};
 use voxear_scripting::{DotnetInstall, ScriptRuntime, find_dotnet};
@@ -29,6 +30,12 @@ struct Cli {
 enum Commands {
     /// Check that this machine can build and run Voxear projects.
     Doctor,
+    /// List a project's assets, giving new ones a GUID (`.meta` file).
+    Assets {
+        /// Project folder or its voxear.toml.
+        #[arg(default_value = ".")]
+        project: PathBuf,
+    },
     /// Run a project in a window, or headless for a number of frames.
     Run {
         /// Project folder or its voxear.toml.
@@ -71,6 +78,9 @@ enum Commands {
         /// Show `lod`, shadow `cascades`, `lights` per cluster or `normals` instead of normal shading.
         #[arg(long, value_parser = ["none", "lod", "cascades", "lights", "normals"], default_value = "none")]
         debug_view: String,
+        /// Replace the scene's post-processing with a preset: `voxear`, `neutral` or `cinematic`.
+        #[arg(long)]
+        post: Option<String>,
     },
 }
 
@@ -78,10 +88,11 @@ fn main() -> Result<()> {
     voxear_core::logging::init();
     match Cli::parse().command {
         Commands::Doctor => doctor(),
+        Commands::Assets { project } => assets(&project),
         Commands::Run { project, headless, frames, no_build, renderdoc } => {
             run(&project, headless, frames, no_build, renderdoc)
         }
-        Commands::Render { project, out, width, height, frames, no_build, renderdoc, debug_view } => {
+        Commands::Render { project, out, width, height, frames, no_build, renderdoc, debug_view, post } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
                 "cascades" => DEBUG_VIEW_CASCADES,
@@ -89,7 +100,8 @@ fn main() -> Result<()> {
                 "normals" => DEBUG_VIEW_NORMALS,
                 _ => DEBUG_VIEW_NONE,
             };
-            let options = ViewOptions { debug_view, ..ViewOptions::default() };
+            let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
+            let options = ViewOptions { debug_view, post_override, ..ViewOptions::default() };
             render(&project, &out, (width, height), frames, no_build, renderdoc, options)
         }
     }
@@ -98,20 +110,18 @@ fn main() -> Result<()> {
 fn run(path: &Path, headless: bool, frames: Option<u64>, no_build: bool, renderdoc: bool) -> Result<()> {
     let project = Project::open(path)?;
     let settings = RendererSettings { hot_reload: true, ..renderer_settings(&project, renderdoc) };
-    let engine = start_engine(&project, no_build)?;
+    let title = format!("{} — Voxear", project.name());
+    let mut game = start_game(project, no_build)?;
 
     if !headless {
-        let title = format!("{} — Voxear", project.name());
-        let setup =
-            Box::new(move |engine: &mut Engine, renderer: &mut Renderer| spawn_objs(engine, Some(renderer), &project));
-        return run_windowed(engine, &title, frames, settings, setup);
+        let setup = Box::new(|game: &mut Game, renderer: &mut Renderer| game.start(Some(renderer)));
+        return run_windowed(game, &title, frames, settings, setup);
     }
-    let mut engine = engine;
-    spawn_objs(&mut engine, None, &project)?;
+    game.start(None)?;
     for _ in 0..frames.unwrap_or(3) {
-        engine.tick(1.0 / 60.0);
+        game.tick(1.0 / 60.0, None);
     }
-    print_objs(&engine);
+    print_objs(&game.engine);
     Ok(())
 }
 
@@ -125,18 +135,19 @@ fn render(
     options: ViewOptions,
 ) -> Result<()> {
     let project = Project::open(path)?;
-    let mut engine = start_engine(&project, no_build)?;
-    let mut renderer = Renderer::new_offscreen(width, height, &renderer_settings(&project, renderdoc))?;
+    let settings = renderer_settings(&project, renderdoc);
+    let mut game = start_game(project, no_build)?;
+    let mut renderer = Renderer::new_offscreen(width, height, &settings)?;
     renderer.set_view_options(options);
-    spawn_objs(&mut engine, Some(&mut renderer), &project)?;
+    game.start(Some(&mut renderer))?;
     let frames = frames.max(1);
     for frame in 1..=frames {
-        engine.tick(1.0 / 60.0);
+        game.tick(1.0 / 60.0, Some(&mut renderer));
         let capture = frame == frames && renderer.has_renderdoc();
         if capture {
             renderer.start_capture();
         }
-        renderer.render(&engine.world, engine.time().elapsed as f32)?;
+        renderer.render(&game.engine.world, game.engine.time().elapsed as f32)?;
         if capture && let Some(path) = renderer.end_capture() {
             println!("RenderDoc capture: {}", path.display());
         }
@@ -171,6 +182,9 @@ fn render(
     let lods: Vec<String> =
         stats.lods.iter().enumerate().filter(|(_, n)| **n > 0).map(|(i, n)| format!("LOD{i} {n}")).collect();
     println!("LODs: {}", if lods.is_empty() { "none".into() } else { lods.join(" · ") });
+    if stats.average_luminance > 0.0 {
+        println!("exposure: {:+.2} EV for an average luminance of {:.3}", stats.exposure_ev, stats.average_luminance);
+    }
     Ok(())
 }
 
@@ -183,7 +197,12 @@ fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
     }
 }
 
-/// Creates the engine and, when the project has scripts, builds and loads them.
+/// Creates the game and, when the project has scripts, builds and loads them.
+fn start_game(project: Project, no_build: bool) -> Result<Game> {
+    let engine = start_engine(&project, no_build)?;
+    Game::new(project, engine)
+}
+
 fn start_engine(project: &Project, no_build: bool) -> Result<Engine> {
     let mut engine = Engine::new();
     let Some(csproj) = project.scripts_project() else { return Ok(engine) };
@@ -227,6 +246,31 @@ fn print_objs(engine: &Engine) {
         let (yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
         println!("  {:<14} position {:>5.1?}  yaw {:>6.1}°", name.0, transform.position.to_array(), yaw.to_degrees());
     }
+}
+
+fn assets(path: &Path) -> Result<()> {
+    let project = Project::open(path)?;
+    let (db, report) = AssetDb::scan(&project.root)?;
+    let mut entries: Vec<_> = db.entries().collect();
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    for entry in entries {
+        let kind = match entry.kind {
+            AssetKind::Model => "model",
+            AssetKind::Texture => "texture",
+            AssetKind::Material => "material",
+            AssetKind::Scene => "scene",
+            AssetKind::Level => "level",
+        };
+        println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
+    }
+    println!("{} assets in {}", db.len(), project.name());
+    for path in &report.created {
+        println!("  new: {path} (wrote {path}.meta)");
+    }
+    for path in &report.reassigned {
+        println!("  {path} shared a GUID with another asset and was given a new one");
+    }
+    Ok(())
 }
 
 fn doctor() -> Result<()> {

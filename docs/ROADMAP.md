@@ -76,12 +76,33 @@ The original M1 scope:
 
 **Exit:** a glTF scene renders lit and shadowed at a solid frame rate, on Linux and Windows.
 
-## M2 — Content, scenes and levels
+## M2 — Content, scenes and levels (in progress)
 
-- Asset database with GUIDs, `.meta` sidecars, importers and `Ref<T>`.
-- Text scene format, then prefabs with nesting and variants.
+Done so far:
+- **Asset database** (`voxear_assets`): GUIDs in `.meta` sidecars, moves and copies handled, asset references with
+  parts (`guid#mesh0.0`), and `vox assets`.
+- **Scenes:** the `.scene` TOML format, with loading and saving. A round trip is tested.
+- **Content:** source assets turned into GPU meshes and materials, one import each. Supports `.material` files and
+  inline materials, and remembers sources for saving.
+- **Levels:** `.level` files, scene diffing (shared scenes stay loaded), `reload`, and Scene Persistence with no
+  duplicates on reload.
+- **Destroying Objs:** deferred destruction (OnDisable, then OnDestroy, then removal at the end of the frame;
+  hidden from rendering at once).
+- **From C#:** `Level.Load`.
+- **Samples:** `start_level` in `voxear.toml`, replacing the old `[[objs]]` list. Hello is now a two-level day and
+  night sample sharing its environment scene, which meets the exit criterion's scene-sharing half.
+- **Post-processing, the Voxear Look** (pulled forward from M5):
+  - motion vectors
+  - TAA, FXAA and contrast-adaptive sharpening
+  - bloom and auto exposure
+  - AgX, ACES, Khronos PBR Neutral and Reinhard tonemapping, with white balance and lift/gamma/gain grading
+  - vignette, height fog, depth of field, motion blur, chromatic aberration, grain and dithering
+  - `voxear`, `neutral` and `cinematic` presets, set per scene in `[post]`, and `vox render --post`
+
+Still to do in M2:
+- `Ref<T>` in C#, and prefabs with nesting and variants.
 - `Instantiate` and `AddBehaviour`, running Awake and OnEnable on the new batch before returning.
-- Levels, scene diffing on level change, and Scene Persistence.
+- Async level loading.
 - Content build: usage-set bundling, a catalog, and incremental content hashing.
 - Runtime loading, sync and async, with reference counting.
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
@@ -106,6 +127,13 @@ The original M1 scope:
   - debug draw and the dev console
 - `vox new` with project templates and default setups, and versioned engine builds with a release manifest, which
   together are the contract the launcher needs.
+- **Build profiles and the Build window:**
+  - `.buildprofile` assets that inherit from a base, with a Release and a Development profile per platform in new
+    projects
+  - levels, development options, scripting defines, compression, player settings and versioning
+  - `vox build --profile` for the host platform, with CoreCLR players
+  - builds in their own process, reporting progress as JSON lines
+  - the Build window: live stages, timings, the log, cancel and notifications
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
 
@@ -123,7 +151,8 @@ The original M1 scope:
   - the Localization Tables editor window, with pseudo-localisation
   - automatic language detection (saved choice, then store, then OS) with fallback chains
   - RTL mirroring and per-locale fonts
-- Audio mixer, 2D/3D sources, and Steam Audio occlusion, reflections and pathing.
+- Audio mixer, 2D/3D sources, and Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5,
+  once the ray-tracing acceleration structures exist.
 - Jolt integration (bodies, joints, character controller, queries, events) and Box2D v3.
 
 ## M5 — Lighting
@@ -132,9 +161,11 @@ The original M1 scope:
 - Area and tube lights, IES profiles, sky and atmosphere.
 - Volumetric fog.
 - Virtual shadow maps.
-- Post stack and upscalers.
+- Upscalers (FSR built in, DLSS and XeSS optional), colour grading LUTs, and local post volumes.
 - **Real-time voxel GI** (clipmaps, then injection, gathering and the radiance cache).
 - Baked lightmapper and probes.
+- **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
+  Audio, with baked reverb probes as the fallback.
 
 ## M6 — Animation
 
@@ -193,6 +224,13 @@ The original M1 scope:
 ## M12 — Ship it
 
 - `vox build` end to end, NativeAOT players, and Windows CI.
+- **Builds, advanced:**
+  - other-platform builds from prebuilt player modules installed by the launcher
+  - the build report with size breakdowns, inclusion chains and diffs against the last build
+  - a build queue, with several profiles building at once
+  - pre- and post-stage hooks (`IBuildStep` or shell commands)
+  - store upload straight from a profile (Steam first)
+  - remote build agents for NativeAOT on other operating systems
 - Crash reporter, GPU crash diagnostics, remote attach for every debug panel, and documentation.
 - Editor RPC for `vox`, and the hook for AI tooling.
 

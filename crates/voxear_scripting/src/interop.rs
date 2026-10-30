@@ -11,7 +11,7 @@ use voxear_core::time::Time;
 use voxear_ecs::{Entity, World};
 use voxear_scene::{BehaviourHandle, Name, Request, Transform};
 
-pub(crate) const API_VERSION: u32 = 1;
+pub(crate) const API_VERSION: u32 = 2;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -25,6 +25,7 @@ pub(crate) struct NativeApi {
     pub transform_set: unsafe extern "C" fn(entity: u64, value: *const Transform) -> i32,
     pub behaviour_set_enabled: unsafe extern "C" fn(handle: u32, enabled: i32),
     pub behaviour_destroy: unsafe extern "C" fn(handle: u32),
+    pub level_load: unsafe extern "C" fn(level: *const u8, len: i32),
 }
 
 /// Script functions the engine calls; filled in by `Bootstrap.Initialize`.
@@ -53,6 +54,7 @@ pub(crate) const FLAG_INSTANCE: u32 = 1;
 thread_local! {
     static WORLD: Cell<*mut World> = const { Cell::new(ptr::null_mut()) };
     static REQUESTS: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
+    static LEVEL_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Lends the world to native callbacks for the duration of a script call.
@@ -72,6 +74,10 @@ impl Drop for WorldScope {
 
 pub(crate) fn drain_requests(out: &mut Vec<Request>) {
     REQUESTS.with_borrow_mut(|requests| out.append(requests));
+}
+
+pub(crate) fn take_level_requests() -> Vec<String> {
+    LEVEL_REQUESTS.take()
 }
 
 fn with_world<R>(f: impl FnOnce(&mut World) -> Option<R>) -> Option<R> {
@@ -134,6 +140,11 @@ unsafe extern "C" fn behaviour_destroy(handle: u32) {
     REQUESTS.with_borrow_mut(|r| r.push(Request::Destroy(BehaviourHandle(handle))));
 }
 
+unsafe extern "C" fn level_load(level: *const u8, len: i32) {
+    let level = unsafe { utf8(level, len) }.into_owned();
+    LEVEL_REQUESTS.with_borrow_mut(|r| r.push(level));
+}
+
 pub(crate) fn native_api(time: *const Time) -> NativeApi {
     NativeApi {
         size: size_of::<NativeApi>() as u32,
@@ -145,5 +156,6 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         transform_set,
         behaviour_set_enabled,
         behaviour_destroy,
+        level_load,
     }
 }

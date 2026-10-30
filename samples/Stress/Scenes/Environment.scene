@@ -1,0 +1,32 @@
+# Voxear scene: camera, sun, ground and the occluding wall
+format = 1
+
+[[obj]]
+id = 1
+name = "Main Camera"
+position = [0.0, 3.0, -12.0]
+rotation = [8.0, 0.0, 0.0]
+camera = { fov = 60.0 }
+
+[[obj]]
+id = 2
+name = "Sun"
+rotation = [38.0, -40.0, 0.0]
+light = { type = "directional", color = [1.0, 0.95, 0.88], intensity = 3.2 }
+
+[[obj]]
+id = 3
+name = "Ground"
+scale = [400.0, 1.0, 400.0]
+[obj.renderer]
+mesh = "builtin:plane"
+material = { color = [0.4, 0.42, 0.44], roughness = 0.9 }
+
+[[obj]]
+id = 4
+name = "Wall"
+position = [-10.5, 3.0, -2.0]
+scale = [21.0, 6.0, 0.5]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.85, 0.82, 0.78], roughness = 0.7 }

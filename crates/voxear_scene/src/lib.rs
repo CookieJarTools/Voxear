@@ -10,4 +10,7 @@ mod obj;
 
 pub use hierarchy::{Parent, WorldTransform, propagate_transforms};
 pub use lifecycle::{BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};
-pub use obj::{Behaviours, InstanceMarker, Name, ScenePersistence, Transform, register_obj_components};
+pub use obj::{
+    AttachedBehaviour, Behaviours, Destroying, InstanceMarker, Name, ScenePersistence, Transform,
+    register_obj_components,
+};

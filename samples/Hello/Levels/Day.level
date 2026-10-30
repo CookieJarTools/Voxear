@@ -1,0 +1,8 @@
+# Voxear level
+format = 1
+
+[[scene]]
+scene = "c97199385e09412abd30f4d33fa28537"  # Scenes/Environment.scene
+
+[[scene]]
+scene = "713a4d989c654c6ca23b1d63201e0090"  # Scenes/Day.scene

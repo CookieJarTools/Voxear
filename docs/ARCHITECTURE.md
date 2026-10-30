@@ -193,10 +193,20 @@ duplicate logs a warning naming both Objs. The Obj gets an `InstanceMarker`, whi
 source generator will add the `GameManager.Instance` shorthand. A planned `[Instance(AutoCreate = true, Persistent =
 true)]` attribute covers the common "manager that always exists" case.
 
-## Scenes, Levels and Scene Persistence
+## Scenes, Levels and Scene Persistence *(scenes, levels and persistence implemented; async loading planned)*
 
-- A **Scene** is a text asset (diff- and merge-friendly) holding Objs and their components.
-- A **Level** is a Definition listing the Scenes it needs, plus optional "additive on demand" scenes.
+- A **Scene** is a `.scene` TOML file (diff- and merge-friendly) holding Objs and their components. Each Obj has
+  an `id` that is unique in the file, and `parent` refers to it. Rotations are Euler degrees, applied the way Unity
+  applies them. Components are subtables:
+  - `[obj.camera]`, `[obj.light]` and `[obj.renderer]`, the last with a mesh reference and a material reference or
+    inline material
+  - `behaviours = ["Game.Spinner"]`
+  - `persistent = true`
+  - a scene-level `[sky]`
+  See `crates/voxear_engine/src/scene_file.rs`. Builds will use a binary form made by the content build.
+- A **Level** is a `.level` file listing the Scenes it needs, each optionally marked `reload = true`. Later it may
+  list "additive on demand" scenes too.
+- `vox assets` lists a project's assets and gives new ones a GUID.
 - `Levels.Load(level)` diffs the scenes loaded now against the scenes the level needs:
   - Scenes shared between the two levels **stay loaded** unless marked `ReloadOnLevelChange`.
   - Missing scenes load.
@@ -205,16 +215,26 @@ true)]` attribute covers the common "manager that always exists" case.
   - `Levels.Load(level)` loads synchronously.
   - `await Levels.LoadAsync(level, progress)` streams, and can activate behind a loading screen.
   - `LoadMode.Preload` loads but keeps the level inactive until `Activate()`.
-- **Scene Persistence:** Objs with `ScenePersistence` move to the persistent session scene and survive every level
-  change, like `DontDestroyOnLoad`. `obj.Persist()` is the easy form.
+- **Scene Persistence:** Objs marked `persistent` (the `ScenePersistence` component) survive every level change,
+  along with their children, like `DontDestroyOnLoad`. `obj.Persist()` will be the easy form in code.
+  - **No duplicates on reload, unlike Unity.** Reloading the scene a persistent Obj came from does not create a
+    second copy. The engine remembers which scene and id the survivor came from and skips it, so there is no "destroy
+    myself if a copy exists" boilerplate.
+- From C#, `Level.Load("Levels/Night.level")` changes level after the current frame. Unloaded Objs stop rendering
+  at once, and their behaviours get OnDisable and OnDestroy at the end of the next frame.
 - Loading a scene is one lifecycle batch, so ordering guarantee 2 holds across the whole scene.
 
 ## Content (assets, Bundles, loading)
 
 This is the only way to load assets. It replaces Addressables and fixes the build pain by making bundling automatic.
 
-**Authoring.** Every asset has a stable GUID (stored in a sidecar `.meta`). A field of type `Ref<Mesh>`,
-`Ref<Material>`, `Ref<Level>` and so on is all a developer writes. The editor's object picker fills it in.
+**Authoring.**
+- Every asset has a stable GUID in a sidecar `.meta` file, for example `Ship.glb.meta`. Moving a file together with
+  its `.meta` keeps its GUID, and a copied file and `.meta` get a fresh one *(implemented in `voxear_assets`)*.
+- Files reference assets by GUID, optionally with a part inside the asset: `9f2c…#mesh0.0` is a mesh inside a model.
+  Hand-written files may use project paths instead, which are resolved on load.
+- In code, a field of type `Ref<Mesh>`, `Ref<Material>`, `Ref<Level>` and so on is all a developer writes. The
+  editor's object picker fills it in.
 
 ```csharp
 public Ref<Prefab> Enemy;
@@ -311,8 +331,8 @@ small detail.
 **Atmosphere.** A physically based sky (Hillaire 2020) and **volumetric fog**. The fog is a froxel volume lit by
 every light type and by GI, with temporal reprojection, local fog volumes and height fog.
 
-**Post-processing.** TAA, then the upscalers (FSR built in, DLSS and XeSS optional), bloom, auto exposure, depth of
-field, motion blur, colour grading LUTs, and AgX or ACES tonemapping.
+**Post-processing.** Built in and on by default as the Voxear Look. See
+[Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
 
 **Global illumination** comes in two forms:
 
@@ -336,6 +356,83 @@ field, motion blur, colour grading LUTs, and AgX or ACES tonemapping.
   4. **Specular:** voxel cone tracing for rough surfaces, and screen-space reflections with a voxel fallback for
      glossy ones.
   5. Quality tiers scale cascade count, brick resolution and probe density, from integrated GPUs up to high end.
+
+### Post-processing and the Voxear Look *(implemented; upscalers, LUTs, volumes and the C# API planned)*
+
+Every project starts with a finished look, so nothing has to be set up for a scene to look good. Each effect is a
+plain setting, nothing is hidden behind a profile asset, and the shaders are short and commented.
+
+**Easy.** Pick a preset and change what you like:
+
+```toml
+# In any .scene file
+[post]
+preset = "voxear"          # or "neutral", "cinematic"
+
+[post.bloom]
+intensity = 0.06
+```
+
+| Preset | What it is for |
+| --- | --- |
+| `voxear` (default) | TAA with light sharpening, soft bloom, eye adaptation that keeps nights dark (+0.5 EV compensation), AgX with a little contrast and saturation, a soft vignette and a touch of height fog. |
+| `neutral` | Only what keeps the image correct: TAA, AgX with no look, fixed exposure. A clean base to build a look on. |
+| `cinematic` | ACES, stronger bloom and vignette, motion blur, a little grain and lens fringing. |
+
+A section only lists what differs from its preset, and unknown keys are errors, so typos do not pass silently. Like
+the sky, the last scene loaded with a `[post]` section sets post-processing for the level. Saving a scene writes
+the section back as it was written, preset and overrides, not every resolved value.
+
+**Advanced.** Every setting, with its Voxear Look default:
+
+| Group | Settings |
+| --- | --- |
+| `anti_aliasing` | `mode` (`taa`, `fxaa`, `off`), `sharpness` 0.25, `taa_history` 0.9, `taa_jitter` 1.0 |
+| `bloom` | `enabled`, `intensity` 0.04, `scatter` 0.7 |
+| `exposure` | `auto`, `compensation` +0.5, `min_ev` −3, `max_ev` +1, `speed_up` 2, `speed_down` 1 (EV per second) |
+| `tonemap` | `mapper` (`agx`, `aces`, `neutral` for Khronos PBR Neutral, `reinhard`, `none`), `contrast` 1.1, `saturation` 1.15 |
+| `grading` | `temperature`, `tint`, `contrast`, `saturation`, and per-channel `lift`, `gamma` and `gain` |
+| `vignette` | `intensity` 0.2, `smoothness`, `roundness` |
+| `fog` | `enabled`, `density` 0.004, `height_falloff`, `base_height`, `color` (the sky's horizon when unset), `sun_glow` |
+| `depth_of_field` | off; `focus_distance`, `aperture` (f-stop), `max_blur` (pixels at 1080p) |
+| `motion_blur` | off; `intensity` (fraction of a frame's motion) |
+| `chromatic_aberration`, `grain` | off; `grain.size` |
+
+In Rust the same settings are `PostProcess`, a world resource. `ViewOptions::post_override` replaces it for one
+view, and `vox render --post <preset>` uses that to compare looks. `Renderer::reset_history` drops TAA and motion
+history on camera cuts.
+
+**The passes,** each skipped when its effect is off:
+1. **Velocity.** Opaque and sky passes also write screen motion. Each instance keeps last frame's model matrix, so
+   moving and spinning objects get correct vectors, and new ones count as still.
+2. **Fog:** exponential height fog integrated along each view ray, glowing towards the sun. The froxel volumetric
+   fog in [Atmosphere](#rendering) replaces it in M5.
+3. **TAA.** The camera is jittered along an eight-frame Halton sequence. Each pixel reprojects last frame's result
+   with a nine-tap Catmull-Rom filter, using the nearest surface's motion at edges. History is clipped to the
+   neighbourhood's colour box in YCoCg, and blended in a tonemapped space so highlights do not flicker. Fast
+   motion keeps less history. History resets on the first frame, on resize and when TAA is switched on.
+4. **Depth of field:** a 48-tap golden-angle gather whose weights keep sharp foreground edges from bleeding.
+5. **Motion blur:** 12 taps along each pixel's motion, capped at 40 pixels.
+6. **Bloom:** six levels down with the 13-tap filter from Call of Duty: Advanced Warfare (Karis-averaged on the
+   first level, so single bright pixels cannot flicker), then back up with a tent filter.
+7. **Exposure:** a compute pass meters the bloom level an eighth of the screen across (centre-weighted log
+   average). It adapts at the configured speeds and keeps its state on the GPU between frames. `vox render` prints
+   the adapted EV and the metered luminance.
+8. **Composite:** chromatic aberration, bloom, exposure, white balance, contrast and saturation, the tonemapper,
+   lift/gamma/gain, vignette and grain.
+9. **Finish:** FXAA or contrast-adaptive sharpening (AMD CAS), then a one-code-value dither in sRGB space against
+   banding. Without either, the composite writes straight to the output and dithers there.
+
+**Cost** at 1280×720, measured with the GPU timers:
+- The Voxear Look adds about 0.25 ms. TAA takes 0.06 ms, composite 0.04 ms and finish 0.03 ms.
+- Depth of field, when on, takes about 0.28 ms.
+
+**Planned:**
+- Upscalers: FSR built in, DLSS and XeSS optional. They take TAA's place in the chain.
+- Colour grading LUTs, exportable to and from image editors.
+- Local post volumes that blend by distance (Unity's local Volumes), and per-camera overrides.
+- An inspector with live previews.
+- A C# API: `Post.Current.Bloom.Intensity = 0.1f` for the easy path, and the full struct for the advanced one.
 
 ## Materials and Shader Graph
 
@@ -547,7 +644,16 @@ streaming for music.
 - **Reflections and reverb:** real-time or baked reverb probes, with echo from real geometry.
 - **Pathing:** sound bends around corners and through doorways.
 
-A GPU ray-traced propagation path can follow later.
+**Ray-traced audio (optional setting).** A per-project and per-quality-tier switch traces sound on the GPU instead
+of Steam Audio's CPU ray tracer, through Steam Audio's custom scene callbacks in batches:
+- Rays run against the same acceleration structures as ray-traced GI and the lightmapper, with hardware ray queries
+  where available and the compute BVH elsewhere. Nothing extra has to be built or kept in sync.
+- Thousands of rays per source give real-time reflections, echo and reverb from the actual geometry. Opening a door
+  or collapsing a wall changes how a room sounds immediately, with no baked probes.
+- Each surface's acoustic material (absorption, scattering, transmission per frequency band) comes from its render
+  material, with an override.
+- When the switch is off, or the GPU cannot spare the time, the same sources fall back to baked reverb probes and
+  ray-cast occlusion, so games never depend on it.
 
 **Tools.** An audio debugger shows active voices, occlusion rays and paths in the viewport.
 
@@ -943,10 +1049,12 @@ Every operation the editor can do should be scriptable.
 **Now.**
 - `vox doctor` checks the GPU, .NET and the shader compiler.
 - `vox run <project> [--headless] [--frames N]` runs a project.
+- `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
+  timings, culling stats and the adapted exposure.
 
 **Planned.**
 - Project: `vox new`, `vox open`.
-- Building: `vox build [--platform]`, `vox content build`, `vox scripts build`.
+- Building: `vox build [--profile <name>] [--progress json]`, `vox content build`, `vox scripts build`.
 - Testing: `vox test`.
 - Scenes: `vox scene list/inspect`.
 - `vox import`, `vox profile`.
@@ -1026,6 +1134,88 @@ them in a running game.
 4. Player packaging.
 
 Each stage can also run on its own and caches its outputs. Builds are reproducible from the project folder alone.
+
+### Build profiles
+
+What to build is a **build profile**, like Unity 6's Build Profiles: a `.buildprofile` TOML asset under
+`Settings/BuildProfiles/`. A project can have as many as it likes, such as `Windows Release`, `Linux Demo` and
+`Steam Playtest`.
+
+**Easy.** A new project comes with a Release profile and a Development profile for each platform. Pick one and
+press Build, or run `vox build --profile "Windows Release"`.
+
+**Advanced.** A profile only lists what differs from its base, the same way post-processing presets layer:
+
+```toml
+format = 1
+base = "Windows Release"     # optional: inherit another profile
+platform = "windows-x64"     # or "linux-x64"
+
+[levels]
+start = "Levels/Menu.level"
+include = ["Levels/Demo/*.level"]   # default: every level the start level can reach
+
+[development]
+enabled = true
+script_debugging = true
+profiler_autoconnect = true
+validation_layers = false
+```
+
+The full set of options a profile can carry:
+
+| Group | Options |
+| --- | --- |
+| Platform | Target OS and architecture. Linux and Windows x64 now; arm64 later. |
+| Levels | Start level and which levels ship. By default, what the start level can reach. Content is bundled from the levels' usage sets. |
+| Development | Debug symbols, assertions, the in-game debug panels and console, profiler autoconnect, remote attach, script debugging, deep profiling, Vulkan validation. |
+| Scripting | Backend: CoreCLR (fast builds, allows script mods) or NativeAOT (fast start-up, smaller, harder to reverse, no script mods). IL trimming level, and extra defines for C# (`#if DEMO`) and for shaders. |
+| Content | Bundle compression (LZ4 for load speed, Zstd for size), texture quality caps, which quality tiers' shader variants ship, and asset stripping rules. |
+| Player | Product and company name, icon, splash, default window mode and resolution, vsync, run in background, and crash reporter settings. |
+| Version | Version string, an auto-incremented build number, and the git commit stamped into the player and the report. |
+| Graphics | Defaults per quality tier, including the post-processing preset. |
+| Mods | Whether mods load at all, which trust tiers are allowed, and whether to export the mod SDK alongside. |
+| Store | Steam app and depot IDs, the branch to upload to, and whether to upload when the build succeeds. Other stores slot in through their providers. |
+| Output | The folder and file naming pattern, clean or incremental, and Build and Run. |
+| Hooks | Steps before and after each stage: a C# `IBuildStep` or a shell command, with the build's context as JSON. |
+
+Switching the active profile is instant. Content is cached per platform, and Linux and Windows share desktop
+texture formats, so there is no Unity-style reimport when changing platform.
+
+**Builds for other platforms.** Player runtimes ship prebuilt in each engine install, per platform, as installable
+modules that the launcher manages. Building a Windows player on Linux therefore compiles no Rust: it builds content
+and scripts, then packages the Windows runtime. Script builds for CoreCLR are platform-neutral IL. NativeAOT can only
+compile on the target OS, so the profile says so up front and offers a remote build agent once those exist.
+
+### Builds run in their own process
+
+The editor never builds inside itself. Pressing Build starts `vox build --profile <name> --progress json`, the same
+command CI runs, and the Build window follows it. This means:
+- The editor stays responsive, and you can keep working while it builds.
+- A build that crashes cannot take the editor with it.
+- A build behaves the same from the editor, the terminal and CI.
+- Several profiles can build at once, one process each, sharing the content cache under a lock.
+
+The process reports progress as one JSON object per line on stdout:
+
+```json
+{"event":"stage","stage":"content","index":1,"of":4}
+{"event":"progress","stage":"content","done":120,"total":800,"item":"Textures/Rock.png"}
+{"event":"log","level":"warn","message":"Texture is not a power of two","asset":"6f1c…"}
+{"event":"finished","result":"succeeded","seconds":42.7,"report":"Builds/Windows Release/build-report.json"}
+```
+
+**The Build window** lists profiles on the left and the selected profile's settings on the right, like Unity 6. A
+running build shows its stages with timings, a progress bar for the current stage, and the log, filterable by level.
+Clicking a log entry selects the asset it names. Cancel asks the process to stop at the next safe point, which
+leaves every cache consistent. It is killed only if it does not stop. Finishing posts a notification with the
+result, the output folder and the report.
+
+**The build report** comes with every build:
+- Size by bundle, asset and type.
+- Why each asset was included: the chain of references from a level.
+- Stage timings, warnings and shader variant counts.
+- A diff against the previous build of the same profile, so a size jump points straight at its cause.
 
 ## Versions, installs and the launcher
 

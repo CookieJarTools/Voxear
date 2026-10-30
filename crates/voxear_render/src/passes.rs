@@ -6,7 +6,10 @@
 //! 4. **Depth pyramid** from that depth.
 //! 5. **Cull (late)** and **Opaque (late)**: whatever the pyramid does not
 //!    hide that early missed, which also records visibility for next frame.
-//! 6. **Sky** behind everything, then **Tonemap** into the output.
+//! 6. **Sky** behind everything.
+//!
+//! Opaque and sky passes also write motion vectors. Post-processing follows,
+//! in [`post_passes`](crate::post_passes).
 
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
@@ -19,6 +22,7 @@ use crate::{
 
 pub struct Targets {
     pub hdr: ImageId,
+    pub velocity: ImageId,
     pub depth: ImageId,
     pub depth_texture: TextureId,
     pub pyramid: ImageId,
@@ -26,7 +30,6 @@ pub struct Targets {
     pub pyramid_mips: Vec<StorageImageId>,
     pub pyramid_size: [u32; 2],
     pub shadows: Option<ImageId>,
-    pub output: ImageId,
 }
 
 pub struct Draws {
@@ -48,7 +51,6 @@ pub struct Frame {
     pub push: Push,
     pub instance_count: u32,
     pub extent: vk::Extent2D,
-    pub hdr_texture: TextureId,
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -122,18 +124,20 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     }
 
     let shading = |color: ImageAccess| {
-        let mut images = vec![(targets.hdr, color), (targets.depth, ImageAccess::DepthAttachment)];
+        let mut images =
+            vec![(targets.hdr, color), (targets.velocity, color), (targets.depth, ImageAccess::DepthAttachment)];
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
         images
     };
     let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..push };
-    let (hdr, depth) = (targets.hdr, targets.depth);
+    let (hdr, velocity, depth) = (targets.hdr, targets.velocity, targets.depth);
+    let scene = SceneTargets { hdr, velocity, depth };
 
     fg.add_pass("Cull (early)", &[], &culling, move |ctx| {
         cull(ctx, pipelines.cull, &push, LIST_EARLY, instances, 1);
     });
     fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
-        opaque(ctx, pipelines.forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, hdr, depth, true);
+        opaque(ctx, pipelines.forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, true);
     });
 
     let pyramid = targets.pyramid;
@@ -153,25 +157,33 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         cull(ctx, pipelines.cull, &push, LIST_LATE, instances, 1);
     });
     fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
-        opaque(ctx, pipelines.forward, &Push { list: LIST_LATE, ..shading_push }, indirect, hdr, depth, false);
+        opaque(ctx, pipelines.forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, false);
     });
     fg.sync_buffer(draws.stats, BufferAccess::HostRead);
 
     let extent = frame.extent;
-    fg.add_pass("Sky", &[(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::DepthRead)], &[], move |ctx| {
-        let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+    let sky_images = [
+        (hdr, ImageAccess::ColorAttachment),
+        (velocity, ImageAccess::ColorAttachment),
+        (depth, ImageAccess::DepthRead),
+    ];
+    fg.add_pass("Sky", &sky_images, &[], move |ctx| {
+        let color = [
+            attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None),
+            attachment(ctx.view(velocity), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None),
+        ];
         let depth = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL, None);
         begin_rendering(ctx, extent, &color, Some(&depth));
         fullscreen(ctx, pipelines.sky, &push);
     });
+}
 
-    let output = targets.output;
-    let tonemap_push = Push { texture: frame.hdr_texture.0, ..push };
-    fg.add_pass("Tonemap", &[(hdr, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)], &[], move |ctx| {
-        let color = [attachment(ctx.view(output), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
-        begin_rendering(ctx, extent, &color, None);
-        fullscreen(ctx, pipelines.tonemap, &tonemap_push);
-    });
+/// What the opaque passes draw into.
+#[derive(Clone, Copy)]
+struct SceneTargets {
+    hdr: ImageId,
+    velocity: ImageId,
+    depth: ImageId,
 }
 
 /// The indirect draw buffers; each draw list occupies its own range.
@@ -210,14 +222,17 @@ fn opaque(
     pipeline: vk::Pipeline,
     push: &Push,
     indirect: Indirect,
-    hdr: ImageId,
-    depth: ImageId,
+    targets: SceneTargets,
     clear: bool,
 ) {
-    let extent = ctx.extent(hdr);
-    let color =
-        [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, clear.then(|| clear_color([0.0; 4])))];
-    let depth = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, clear.then(|| clear_depth(0.0)));
+    let extent = ctx.extent(targets.hdr);
+    let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+    let color = [
+        attachment(ctx.view(targets.hdr), layout, clear.then(|| clear_color([0.0; 4]))),
+        attachment(ctx.view(targets.velocity), layout, clear.then(|| clear_color([0.0; 4]))),
+    ];
+    let depth =
+        attachment(ctx.view(targets.depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, clear.then(|| clear_depth(0.0)));
     begin_rendering(ctx, extent, &color, Some(&depth));
     bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
     indirect.draw(ctx, push.list);
@@ -257,7 +272,7 @@ fn build_pyramid(
     }
 }
 
-fn bind(ctx: &PassContext, pipeline: vk::Pipeline, bind_point: vk::PipelineBindPoint, push: &Push) {
+pub(crate) fn bind(ctx: &PassContext, pipeline: vk::Pipeline, bind_point: vk::PipelineBindPoint, push: &Push) {
     unsafe { ctx.gpu.device.cmd_bind_pipeline(ctx.cmd, bind_point, pipeline) };
     ctx.bindless.bind(ctx.gpu, ctx.cmd, bind_point);
     ctx.bindless.push(ctx.gpu, ctx.cmd, push);
@@ -287,7 +302,7 @@ fn attachment(
     }
 }
 
-fn begin_rendering(
+pub(crate) fn begin_rendering(
     ctx: &PassContext,
     extent: vk::Extent2D,
     color: &[vk::RenderingAttachmentInfo],
@@ -318,7 +333,7 @@ fn set_viewport(ctx: &PassContext, offset: vk::Offset2D, extent: vk::Extent2D) {
 }
 
 /// Draws one screen-covering triangle and ends the rendering scope.
-fn fullscreen(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push) {
+pub(crate) fn fullscreen(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push) {
     bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
     unsafe {
         ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0);

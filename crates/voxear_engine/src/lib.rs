@@ -1,14 +1,19 @@
 //! Runs Voxear: the frame loop over the ECS, the behaviour lifecycle, C#
-//! scripts and the renderer, either in a window or headless.
+//! scripts, content, levels and the renderer, either in a window or headless.
 
-mod bootstrap;
+mod content;
 mod engine;
 mod fly_camera;
+mod game;
+mod levels;
 mod project;
+pub mod scene_file;
 mod windowed;
 
-pub use bootstrap::spawn_objs;
+pub use content::{Content, MaterialData, MaterialSource};
 pub use engine::{Engine, STAGES};
 pub use fly_camera::FlyCamera;
-pub use project::{ObjSpec, PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root};
+pub use game::Game;
+pub use levels::{LEVEL_FORMAT, LevelChange, LevelFile, LevelScene, Levels};
+pub use project::{PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root};
 pub use windowed::{Setup, run_windowed};

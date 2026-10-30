@@ -18,5 +18,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<ulong, Transform*, int> TransformSet;
 		public delegate* unmanaged[Cdecl]<uint, int, void> BehaviourSetEnabled;
 		public delegate* unmanaged[Cdecl]<uint, void> BehaviourDestroy;
+		public delegate* unmanaged[Cdecl]<byte*, int, void> LevelLoad;
 	}
 }

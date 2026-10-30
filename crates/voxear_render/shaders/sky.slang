@@ -18,8 +18,22 @@ SkyOut skyVertex(uint vertexId : SV_VertexID)
     return o;
 }
 
+struct SkyFragmentOut
+{
+    float4 color : SV_Target0;
+    float2 velocity : SV_Target1;
+};
+
+// The sky is infinitely far away, so only camera rotation moves it.
+float2 skyMotion(Frame* frame, float3 direction)
+{
+    float4 current = transform(frame->unjitteredViewProj, float4(direction, 0.0));
+    float4 previous = transform(frame->prevViewProj, float4(direction, 0.0));
+    return (current.xy / current.w - previous.xy / previous.w) * 0.5;
+}
+
 [shader("fragment")]
-float4 skyFragment(SkyOut input) : SV_Target
+SkyFragmentOut skyFragment(SkyOut input)
 {
     Frame* frame = push.frame;
     float4 near = transform(frame->invViewProj, float4(input.ndc, 1.0, 1.0));
@@ -32,5 +46,8 @@ float4 skyFragment(SkyOut input) : SV_Target
 
     float toSun = dot(direction, -frame->sunDirection);
     color += frame->sunColor * (smoothstep(0.99955, 0.9998, toSun) * 8.0 + pow(saturate(toSun), 48.0) * 0.12);
-    return float4(color, 1.0);
+    SkyFragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = skyMotion(frame, direction);
+    return o;
 }

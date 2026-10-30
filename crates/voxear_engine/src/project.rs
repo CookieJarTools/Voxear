@@ -6,145 +6,19 @@ use serde::Deserialize;
 pub const PROJECT_FILE: &str = "voxear.toml";
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectFile {
     pub project: ProjectInfo,
-    pub sky: Option<SkySpec>,
-    /// Objs created at startup. A stand-in until scene assets exist.
-    #[serde(default)]
-    pub objs: Vec<ObjSpec>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectInfo {
     pub name: String,
     /// The game's C# project, relative to the project root.
     pub scripts: Option<PathBuf>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ObjSpec {
-    pub name: String,
-    #[serde(default)]
-    pub position: [f32; 3],
-    /// Euler angles in degrees, applied Z, then X, then Y, as in Unity.
-    #[serde(default)]
-    pub rotation: [f32; 3],
-    #[serde(default = "one")]
-    pub scale: [f32; 3],
-    /// Full C# type names, e.g. `Hello.Spinner`.
-    #[serde(default)]
-    pub behaviours: Vec<String>,
-    /// `cube`, `sphere`, `plane`, or a `.gltf`/`.glb` path relative to the project.
-    pub mesh: Option<String>,
-    #[serde(default)]
-    pub material: MaterialSpec,
-    pub camera: Option<CameraSpec>,
-    pub light: Option<LightSpec>,
-    /// Spawns a grid of copies, counted along X, Y and Z, `spacing` apart.
-    pub grid: Option<[u32; 3]>,
-    #[serde(default = "two")]
-    pub spacing: [f32; 3],
-}
-
-fn one() -> [f32; 3] {
-    [1.0; 3]
-}
-
-fn two() -> [f32; 3] {
-    [2.0; 3]
-}
-
-/// Sky colours are sRGB, like every colour in the project file.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SkySpec {
-    pub zenith: [f32; 3],
-    pub horizon: [f32; 3],
-    pub ground: [f32; 3],
-    #[serde(default = "default_exposure")]
-    pub ambient: f32,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MaterialSpec {
-    pub color: Option<[f32; 3]>,
-    pub metallic: Option<f32>,
-    pub roughness: Option<f32>,
-    pub emissive: Option<[f32; 3]>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CameraSpec {
-    #[serde(default = "default_fov")]
-    pub fov: f32,
-    #[serde(default = "default_exposure")]
-    pub exposure: f32,
-}
-
-fn default_fov() -> f32 {
-    60.0
-}
-
-fn default_exposure() -> f32 {
-    1.0
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
-pub enum LightSpec {
-    Directional {
-        #[serde(default = "white")]
-        color: [f32; 3],
-        #[serde(default = "default_sun")]
-        intensity: f32,
-    },
-    Point {
-        #[serde(default = "white")]
-        color: [f32; 3],
-        #[serde(default = "default_lamp")]
-        intensity: f32,
-        #[serde(default = "default_range")]
-        range: f32,
-    },
-    Spot {
-        #[serde(default = "white")]
-        color: [f32; 3],
-        #[serde(default = "default_lamp")]
-        intensity: f32,
-        #[serde(default = "default_range")]
-        range: f32,
-        #[serde(default = "default_inner")]
-        inner_angle: f32,
-        #[serde(default = "default_outer")]
-        outer_angle: f32,
-    },
-}
-
-fn white() -> [f32; 3] {
-    [1.0; 3]
-}
-
-fn default_sun() -> f32 {
-    3.0
-}
-
-fn default_lamp() -> f32 {
-    10.0
-}
-
-fn default_range() -> f32 {
-    10.0
-}
-
-fn default_inner() -> f32 {
-    30.0
-}
-
-fn default_outer() -> f32 {
-    45.0
+    /// The level to load first: a `.level` path or GUID.
+    pub start_level: Option<String>,
 }
 
 pub struct Project {

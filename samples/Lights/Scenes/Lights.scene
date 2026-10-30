@@ -1,0 +1,2466 @@
+# Voxear scene: 256 point lights among 100 pillars, at night
+format = 1
+
+[sky]
+zenith = [0.02, 0.03, 0.08]
+horizon = [0.06, 0.07, 0.14]
+ground = [0.02, 0.02, 0.03]
+ambient = 0.6
+
+# The Voxear Look, with a little more glow around the lamps.
+[post]
+preset = "voxear"
+
+[post.bloom]
+intensity = 0.06
+
+[[obj]]
+id = 1
+name = "Main Camera"
+position = [0.0, 16.0, -36.0]
+rotation = [24.0, 0.0, 0.0]
+camera = { fov = 60.0 }
+
+[[obj]]
+id = 2
+name = "Ground"
+scale = [120.0, 1.0, 120.0]
+[obj.renderer]
+mesh = "builtin:plane"
+material = { color = [0.55, 0.55, 0.58], roughness = 0.6 }
+
+[[obj]]
+id = 3
+name = "Pillar (0,0,0)"
+position = [-27.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 4
+name = "Pillar (1,0,0)"
+position = [-21.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 5
+name = "Pillar (2,0,0)"
+position = [-15.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 6
+name = "Pillar (3,0,0)"
+position = [-9.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 7
+name = "Pillar (4,0,0)"
+position = [-3.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 8
+name = "Pillar (5,0,0)"
+position = [3.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 9
+name = "Pillar (6,0,0)"
+position = [9.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 10
+name = "Pillar (7,0,0)"
+position = [15.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 11
+name = "Pillar (8,0,0)"
+position = [21.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 12
+name = "Pillar (9,0,0)"
+position = [27.0, 1.5, -27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 13
+name = "Pillar (0,0,1)"
+position = [-27.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 14
+name = "Pillar (1,0,1)"
+position = [-21.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 15
+name = "Pillar (2,0,1)"
+position = [-15.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 16
+name = "Pillar (3,0,1)"
+position = [-9.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 17
+name = "Pillar (4,0,1)"
+position = [-3.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 18
+name = "Pillar (5,0,1)"
+position = [3.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 19
+name = "Pillar (6,0,1)"
+position = [9.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 20
+name = "Pillar (7,0,1)"
+position = [15.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 21
+name = "Pillar (8,0,1)"
+position = [21.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 22
+name = "Pillar (9,0,1)"
+position = [27.0, 1.5, -21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 23
+name = "Pillar (0,0,2)"
+position = [-27.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 24
+name = "Pillar (1,0,2)"
+position = [-21.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 25
+name = "Pillar (2,0,2)"
+position = [-15.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 26
+name = "Pillar (3,0,2)"
+position = [-9.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 27
+name = "Pillar (4,0,2)"
+position = [-3.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 28
+name = "Pillar (5,0,2)"
+position = [3.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 29
+name = "Pillar (6,0,2)"
+position = [9.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 30
+name = "Pillar (7,0,2)"
+position = [15.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 31
+name = "Pillar (8,0,2)"
+position = [21.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 32
+name = "Pillar (9,0,2)"
+position = [27.0, 1.5, -15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 33
+name = "Pillar (0,0,3)"
+position = [-27.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 34
+name = "Pillar (1,0,3)"
+position = [-21.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 35
+name = "Pillar (2,0,3)"
+position = [-15.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 36
+name = "Pillar (3,0,3)"
+position = [-9.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 37
+name = "Pillar (4,0,3)"
+position = [-3.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 38
+name = "Pillar (5,0,3)"
+position = [3.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 39
+name = "Pillar (6,0,3)"
+position = [9.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 40
+name = "Pillar (7,0,3)"
+position = [15.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 41
+name = "Pillar (8,0,3)"
+position = [21.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 42
+name = "Pillar (9,0,3)"
+position = [27.0, 1.5, -9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 43
+name = "Pillar (0,0,4)"
+position = [-27.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 44
+name = "Pillar (1,0,4)"
+position = [-21.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 45
+name = "Pillar (2,0,4)"
+position = [-15.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 46
+name = "Pillar (3,0,4)"
+position = [-9.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 47
+name = "Pillar (4,0,4)"
+position = [-3.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 48
+name = "Pillar (5,0,4)"
+position = [3.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 49
+name = "Pillar (6,0,4)"
+position = [9.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 50
+name = "Pillar (7,0,4)"
+position = [15.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 51
+name = "Pillar (8,0,4)"
+position = [21.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 52
+name = "Pillar (9,0,4)"
+position = [27.0, 1.5, -3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 53
+name = "Pillar (0,0,5)"
+position = [-27.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 54
+name = "Pillar (1,0,5)"
+position = [-21.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 55
+name = "Pillar (2,0,5)"
+position = [-15.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 56
+name = "Pillar (3,0,5)"
+position = [-9.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 57
+name = "Pillar (4,0,5)"
+position = [-3.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 58
+name = "Pillar (5,0,5)"
+position = [3.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 59
+name = "Pillar (6,0,5)"
+position = [9.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 60
+name = "Pillar (7,0,5)"
+position = [15.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 61
+name = "Pillar (8,0,5)"
+position = [21.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 62
+name = "Pillar (9,0,5)"
+position = [27.0, 1.5, 3.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 63
+name = "Pillar (0,0,6)"
+position = [-27.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 64
+name = "Pillar (1,0,6)"
+position = [-21.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 65
+name = "Pillar (2,0,6)"
+position = [-15.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 66
+name = "Pillar (3,0,6)"
+position = [-9.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 67
+name = "Pillar (4,0,6)"
+position = [-3.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 68
+name = "Pillar (5,0,6)"
+position = [3.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 69
+name = "Pillar (6,0,6)"
+position = [9.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 70
+name = "Pillar (7,0,6)"
+position = [15.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 71
+name = "Pillar (8,0,6)"
+position = [21.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 72
+name = "Pillar (9,0,6)"
+position = [27.0, 1.5, 9.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 73
+name = "Pillar (0,0,7)"
+position = [-27.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 74
+name = "Pillar (1,0,7)"
+position = [-21.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 75
+name = "Pillar (2,0,7)"
+position = [-15.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 76
+name = "Pillar (3,0,7)"
+position = [-9.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 77
+name = "Pillar (4,0,7)"
+position = [-3.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 78
+name = "Pillar (5,0,7)"
+position = [3.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 79
+name = "Pillar (6,0,7)"
+position = [9.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 80
+name = "Pillar (7,0,7)"
+position = [15.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 81
+name = "Pillar (8,0,7)"
+position = [21.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 82
+name = "Pillar (9,0,7)"
+position = [27.0, 1.5, 15.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 83
+name = "Pillar (0,0,8)"
+position = [-27.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 84
+name = "Pillar (1,0,8)"
+position = [-21.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 85
+name = "Pillar (2,0,8)"
+position = [-15.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 86
+name = "Pillar (3,0,8)"
+position = [-9.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 87
+name = "Pillar (4,0,8)"
+position = [-3.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 88
+name = "Pillar (5,0,8)"
+position = [3.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 89
+name = "Pillar (6,0,8)"
+position = [9.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 90
+name = "Pillar (7,0,8)"
+position = [15.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 91
+name = "Pillar (8,0,8)"
+position = [21.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 92
+name = "Pillar (9,0,8)"
+position = [27.0, 1.5, 21.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 93
+name = "Pillar (0,0,9)"
+position = [-27.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 94
+name = "Pillar (1,0,9)"
+position = [-21.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 95
+name = "Pillar (2,0,9)"
+position = [-15.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 96
+name = "Pillar (3,0,9)"
+position = [-9.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 97
+name = "Pillar (4,0,9)"
+position = [-3.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 98
+name = "Pillar (5,0,9)"
+position = [3.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 99
+name = "Pillar (6,0,9)"
+position = [9.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 100
+name = "Pillar (7,0,9)"
+position = [15.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 101
+name = "Pillar (8,0,9)"
+position = [21.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 102
+name = "Pillar (9,0,9)"
+position = [27.0, 1.5, 27.0]
+scale = [0.8, 3.0, 0.8]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.8, 0.78, 0.74], roughness = 0.5 }
+
+[[obj]]
+id = 103
+name = "Violet light (0,0,0)"
+position = [-30.0, 0.8, -30.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 104
+name = "Violet light (1,0,0)"
+position = [-26.0, 0.8, -30.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 105
+name = "Violet light (2,0,0)"
+position = [-22.0, 0.8, -30.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 106
+name = "Violet light (3,0,0)"
+position = [-18.0, 0.8, -30.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 107
+name = "Violet light (4,0,0)"
+position = [-14.0, 0.8, -30.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 108
+name = "Violet light (5,0,0)"
+position = [-10.0, 0.8, -30.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 109
+name = "Violet light (6,0,0)"
+position = [-6.0, 0.8, -30.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 110
+name = "Violet light (7,0,0)"
+position = [-2.0, 0.8, -30.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 111
+name = "Violet light (0,0,1)"
+position = [-30.0, 0.8, -26.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 112
+name = "Violet light (1,0,1)"
+position = [-26.0, 0.8, -26.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 113
+name = "Violet light (2,0,1)"
+position = [-22.0, 0.8, -26.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 114
+name = "Violet light (3,0,1)"
+position = [-18.0, 0.8, -26.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 115
+name = "Violet light (4,0,1)"
+position = [-14.0, 0.8, -26.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 116
+name = "Violet light (5,0,1)"
+position = [-10.0, 0.8, -26.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 117
+name = "Violet light (6,0,1)"
+position = [-6.0, 0.8, -26.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 118
+name = "Violet light (7,0,1)"
+position = [-2.0, 0.8, -26.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 119
+name = "Violet light (0,0,2)"
+position = [-30.0, 0.8, -22.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 120
+name = "Violet light (1,0,2)"
+position = [-26.0, 0.8, -22.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 121
+name = "Violet light (2,0,2)"
+position = [-22.0, 0.8, -22.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 122
+name = "Violet light (3,0,2)"
+position = [-18.0, 0.8, -22.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 123
+name = "Violet light (4,0,2)"
+position = [-14.0, 0.8, -22.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 124
+name = "Violet light (5,0,2)"
+position = [-10.0, 0.8, -22.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 125
+name = "Violet light (6,0,2)"
+position = [-6.0, 0.8, -22.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 126
+name = "Violet light (7,0,2)"
+position = [-2.0, 0.8, -22.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 127
+name = "Violet light (0,0,3)"
+position = [-30.0, 0.8, -18.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 128
+name = "Violet light (1,0,3)"
+position = [-26.0, 0.8, -18.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 129
+name = "Violet light (2,0,3)"
+position = [-22.0, 0.8, -18.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 130
+name = "Violet light (3,0,3)"
+position = [-18.0, 0.8, -18.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 131
+name = "Violet light (4,0,3)"
+position = [-14.0, 0.8, -18.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 132
+name = "Violet light (5,0,3)"
+position = [-10.0, 0.8, -18.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 133
+name = "Violet light (6,0,3)"
+position = [-6.0, 0.8, -18.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 134
+name = "Violet light (7,0,3)"
+position = [-2.0, 0.8, -18.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 135
+name = "Violet light (0,0,4)"
+position = [-30.0, 0.8, -14.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 136
+name = "Violet light (1,0,4)"
+position = [-26.0, 0.8, -14.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 137
+name = "Violet light (2,0,4)"
+position = [-22.0, 0.8, -14.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 138
+name = "Violet light (3,0,4)"
+position = [-18.0, 0.8, -14.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 139
+name = "Violet light (4,0,4)"
+position = [-14.0, 0.8, -14.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 140
+name = "Violet light (5,0,4)"
+position = [-10.0, 0.8, -14.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 141
+name = "Violet light (6,0,4)"
+position = [-6.0, 0.8, -14.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 142
+name = "Violet light (7,0,4)"
+position = [-2.0, 0.8, -14.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 143
+name = "Violet light (0,0,5)"
+position = [-30.0, 0.8, -10.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 144
+name = "Violet light (1,0,5)"
+position = [-26.0, 0.8, -10.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 145
+name = "Violet light (2,0,5)"
+position = [-22.0, 0.8, -10.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 146
+name = "Violet light (3,0,5)"
+position = [-18.0, 0.8, -10.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 147
+name = "Violet light (4,0,5)"
+position = [-14.0, 0.8, -10.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 148
+name = "Violet light (5,0,5)"
+position = [-10.0, 0.8, -10.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 149
+name = "Violet light (6,0,5)"
+position = [-6.0, 0.8, -10.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 150
+name = "Violet light (7,0,5)"
+position = [-2.0, 0.8, -10.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 151
+name = "Violet light (0,0,6)"
+position = [-30.0, 0.8, -6.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 152
+name = "Violet light (1,0,6)"
+position = [-26.0, 0.8, -6.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 153
+name = "Violet light (2,0,6)"
+position = [-22.0, 0.8, -6.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 154
+name = "Violet light (3,0,6)"
+position = [-18.0, 0.8, -6.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 155
+name = "Violet light (4,0,6)"
+position = [-14.0, 0.8, -6.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 156
+name = "Violet light (5,0,6)"
+position = [-10.0, 0.8, -6.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 157
+name = "Violet light (6,0,6)"
+position = [-6.0, 0.8, -6.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 158
+name = "Violet light (7,0,6)"
+position = [-2.0, 0.8, -6.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 159
+name = "Violet light (0,0,7)"
+position = [-30.0, 0.8, -2.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 160
+name = "Violet light (1,0,7)"
+position = [-26.0, 0.8, -2.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 161
+name = "Violet light (2,0,7)"
+position = [-22.0, 0.8, -2.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 162
+name = "Violet light (3,0,7)"
+position = [-18.0, 0.8, -2.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 163
+name = "Violet light (4,0,7)"
+position = [-14.0, 0.8, -2.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 164
+name = "Violet light (5,0,7)"
+position = [-10.0, 0.8, -2.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 165
+name = "Violet light (6,0,7)"
+position = [-6.0, 0.8, -2.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 166
+name = "Violet light (7,0,7)"
+position = [-2.0, 0.8, -2.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 167
+name = "Cyan light (0,0,0)"
+position = [2.0, 0.8, -30.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 168
+name = "Cyan light (1,0,0)"
+position = [6.0, 0.8, -30.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 169
+name = "Cyan light (2,0,0)"
+position = [10.0, 0.8, -30.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 170
+name = "Cyan light (3,0,0)"
+position = [14.0, 0.8, -30.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 171
+name = "Cyan light (4,0,0)"
+position = [18.0, 0.8, -30.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 172
+name = "Cyan light (5,0,0)"
+position = [22.0, 0.8, -30.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 173
+name = "Cyan light (6,0,0)"
+position = [26.0, 0.8, -30.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 174
+name = "Cyan light (7,0,0)"
+position = [30.0, 0.8, -30.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 175
+name = "Cyan light (0,0,1)"
+position = [2.0, 0.8, -26.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 176
+name = "Cyan light (1,0,1)"
+position = [6.0, 0.8, -26.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 177
+name = "Cyan light (2,0,1)"
+position = [10.0, 0.8, -26.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 178
+name = "Cyan light (3,0,1)"
+position = [14.0, 0.8, -26.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 179
+name = "Cyan light (4,0,1)"
+position = [18.0, 0.8, -26.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 180
+name = "Cyan light (5,0,1)"
+position = [22.0, 0.8, -26.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 181
+name = "Cyan light (6,0,1)"
+position = [26.0, 0.8, -26.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 182
+name = "Cyan light (7,0,1)"
+position = [30.0, 0.8, -26.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 183
+name = "Cyan light (0,0,2)"
+position = [2.0, 0.8, -22.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 184
+name = "Cyan light (1,0,2)"
+position = [6.0, 0.8, -22.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 185
+name = "Cyan light (2,0,2)"
+position = [10.0, 0.8, -22.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 186
+name = "Cyan light (3,0,2)"
+position = [14.0, 0.8, -22.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 187
+name = "Cyan light (4,0,2)"
+position = [18.0, 0.8, -22.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 188
+name = "Cyan light (5,0,2)"
+position = [22.0, 0.8, -22.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 189
+name = "Cyan light (6,0,2)"
+position = [26.0, 0.8, -22.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 190
+name = "Cyan light (7,0,2)"
+position = [30.0, 0.8, -22.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 191
+name = "Cyan light (0,0,3)"
+position = [2.0, 0.8, -18.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 192
+name = "Cyan light (1,0,3)"
+position = [6.0, 0.8, -18.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 193
+name = "Cyan light (2,0,3)"
+position = [10.0, 0.8, -18.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 194
+name = "Cyan light (3,0,3)"
+position = [14.0, 0.8, -18.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 195
+name = "Cyan light (4,0,3)"
+position = [18.0, 0.8, -18.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 196
+name = "Cyan light (5,0,3)"
+position = [22.0, 0.8, -18.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 197
+name = "Cyan light (6,0,3)"
+position = [26.0, 0.8, -18.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 198
+name = "Cyan light (7,0,3)"
+position = [30.0, 0.8, -18.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 199
+name = "Cyan light (0,0,4)"
+position = [2.0, 0.8, -14.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 200
+name = "Cyan light (1,0,4)"
+position = [6.0, 0.8, -14.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 201
+name = "Cyan light (2,0,4)"
+position = [10.0, 0.8, -14.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 202
+name = "Cyan light (3,0,4)"
+position = [14.0, 0.8, -14.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 203
+name = "Cyan light (4,0,4)"
+position = [18.0, 0.8, -14.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 204
+name = "Cyan light (5,0,4)"
+position = [22.0, 0.8, -14.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 205
+name = "Cyan light (6,0,4)"
+position = [26.0, 0.8, -14.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 206
+name = "Cyan light (7,0,4)"
+position = [30.0, 0.8, -14.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 207
+name = "Cyan light (0,0,5)"
+position = [2.0, 0.8, -10.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 208
+name = "Cyan light (1,0,5)"
+position = [6.0, 0.8, -10.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 209
+name = "Cyan light (2,0,5)"
+position = [10.0, 0.8, -10.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 210
+name = "Cyan light (3,0,5)"
+position = [14.0, 0.8, -10.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 211
+name = "Cyan light (4,0,5)"
+position = [18.0, 0.8, -10.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 212
+name = "Cyan light (5,0,5)"
+position = [22.0, 0.8, -10.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 213
+name = "Cyan light (6,0,5)"
+position = [26.0, 0.8, -10.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 214
+name = "Cyan light (7,0,5)"
+position = [30.0, 0.8, -10.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 215
+name = "Cyan light (0,0,6)"
+position = [2.0, 0.8, -6.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 216
+name = "Cyan light (1,0,6)"
+position = [6.0, 0.8, -6.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 217
+name = "Cyan light (2,0,6)"
+position = [10.0, 0.8, -6.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 218
+name = "Cyan light (3,0,6)"
+position = [14.0, 0.8, -6.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 219
+name = "Cyan light (4,0,6)"
+position = [18.0, 0.8, -6.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 220
+name = "Cyan light (5,0,6)"
+position = [22.0, 0.8, -6.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 221
+name = "Cyan light (6,0,6)"
+position = [26.0, 0.8, -6.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 222
+name = "Cyan light (7,0,6)"
+position = [30.0, 0.8, -6.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 223
+name = "Cyan light (0,0,7)"
+position = [2.0, 0.8, -2.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 224
+name = "Cyan light (1,0,7)"
+position = [6.0, 0.8, -2.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 225
+name = "Cyan light (2,0,7)"
+position = [10.0, 0.8, -2.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 226
+name = "Cyan light (3,0,7)"
+position = [14.0, 0.8, -2.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 227
+name = "Cyan light (4,0,7)"
+position = [18.0, 0.8, -2.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 228
+name = "Cyan light (5,0,7)"
+position = [22.0, 0.8, -2.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 229
+name = "Cyan light (6,0,7)"
+position = [26.0, 0.8, -2.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 230
+name = "Cyan light (7,0,7)"
+position = [30.0, 0.8, -2.0]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 231
+name = "Pink light (0,0,0)"
+position = [-30.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 232
+name = "Pink light (1,0,0)"
+position = [-26.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 233
+name = "Pink light (2,0,0)"
+position = [-22.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 234
+name = "Pink light (3,0,0)"
+position = [-18.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 235
+name = "Pink light (4,0,0)"
+position = [-14.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 236
+name = "Pink light (5,0,0)"
+position = [-10.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 237
+name = "Pink light (6,0,0)"
+position = [-6.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 238
+name = "Pink light (7,0,0)"
+position = [-2.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 239
+name = "Pink light (0,0,1)"
+position = [-30.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 240
+name = "Pink light (1,0,1)"
+position = [-26.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 241
+name = "Pink light (2,0,1)"
+position = [-22.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 242
+name = "Pink light (3,0,1)"
+position = [-18.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 243
+name = "Pink light (4,0,1)"
+position = [-14.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 244
+name = "Pink light (5,0,1)"
+position = [-10.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 245
+name = "Pink light (6,0,1)"
+position = [-6.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 246
+name = "Pink light (7,0,1)"
+position = [-2.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 247
+name = "Pink light (0,0,2)"
+position = [-30.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 248
+name = "Pink light (1,0,2)"
+position = [-26.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 249
+name = "Pink light (2,0,2)"
+position = [-22.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 250
+name = "Pink light (3,0,2)"
+position = [-18.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 251
+name = "Pink light (4,0,2)"
+position = [-14.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 252
+name = "Pink light (5,0,2)"
+position = [-10.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 253
+name = "Pink light (6,0,2)"
+position = [-6.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 254
+name = "Pink light (7,0,2)"
+position = [-2.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 255
+name = "Pink light (0,0,3)"
+position = [-30.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 256
+name = "Pink light (1,0,3)"
+position = [-26.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 257
+name = "Pink light (2,0,3)"
+position = [-22.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 258
+name = "Pink light (3,0,3)"
+position = [-18.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 259
+name = "Pink light (4,0,3)"
+position = [-14.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 260
+name = "Pink light (5,0,3)"
+position = [-10.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 261
+name = "Pink light (6,0,3)"
+position = [-6.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 262
+name = "Pink light (7,0,3)"
+position = [-2.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 263
+name = "Pink light (0,0,4)"
+position = [-30.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 264
+name = "Pink light (1,0,4)"
+position = [-26.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 265
+name = "Pink light (2,0,4)"
+position = [-22.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 266
+name = "Pink light (3,0,4)"
+position = [-18.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 267
+name = "Pink light (4,0,4)"
+position = [-14.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 268
+name = "Pink light (5,0,4)"
+position = [-10.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 269
+name = "Pink light (6,0,4)"
+position = [-6.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 270
+name = "Pink light (7,0,4)"
+position = [-2.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 271
+name = "Pink light (0,0,5)"
+position = [-30.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 272
+name = "Pink light (1,0,5)"
+position = [-26.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 273
+name = "Pink light (2,0,5)"
+position = [-22.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 274
+name = "Pink light (3,0,5)"
+position = [-18.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 275
+name = "Pink light (4,0,5)"
+position = [-14.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 276
+name = "Pink light (5,0,5)"
+position = [-10.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 277
+name = "Pink light (6,0,5)"
+position = [-6.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 278
+name = "Pink light (7,0,5)"
+position = [-2.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 279
+name = "Pink light (0,0,6)"
+position = [-30.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 280
+name = "Pink light (1,0,6)"
+position = [-26.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 281
+name = "Pink light (2,0,6)"
+position = [-22.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 282
+name = "Pink light (3,0,6)"
+position = [-18.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 283
+name = "Pink light (4,0,6)"
+position = [-14.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 284
+name = "Pink light (5,0,6)"
+position = [-10.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 285
+name = "Pink light (6,0,6)"
+position = [-6.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 286
+name = "Pink light (7,0,6)"
+position = [-2.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 287
+name = "Pink light (0,0,7)"
+position = [-30.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 288
+name = "Pink light (1,0,7)"
+position = [-26.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 289
+name = "Pink light (2,0,7)"
+position = [-22.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 290
+name = "Pink light (3,0,7)"
+position = [-18.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 291
+name = "Pink light (4,0,7)"
+position = [-14.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 292
+name = "Pink light (5,0,7)"
+position = [-10.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 293
+name = "Pink light (6,0,7)"
+position = [-6.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 294
+name = "Pink light (7,0,7)"
+position = [-2.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 295
+name = "Amber light (0,0,0)"
+position = [2.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 296
+name = "Amber light (1,0,0)"
+position = [6.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 297
+name = "Amber light (2,0,0)"
+position = [10.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 298
+name = "Amber light (3,0,0)"
+position = [14.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 299
+name = "Amber light (4,0,0)"
+position = [18.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 300
+name = "Amber light (5,0,0)"
+position = [22.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 301
+name = "Amber light (6,0,0)"
+position = [26.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 302
+name = "Amber light (7,0,0)"
+position = [30.0, 0.8, 2.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 303
+name = "Amber light (0,0,1)"
+position = [2.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 304
+name = "Amber light (1,0,1)"
+position = [6.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 305
+name = "Amber light (2,0,1)"
+position = [10.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 306
+name = "Amber light (3,0,1)"
+position = [14.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 307
+name = "Amber light (4,0,1)"
+position = [18.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 308
+name = "Amber light (5,0,1)"
+position = [22.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 309
+name = "Amber light (6,0,1)"
+position = [26.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 310
+name = "Amber light (7,0,1)"
+position = [30.0, 0.8, 6.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 311
+name = "Amber light (0,0,2)"
+position = [2.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 312
+name = "Amber light (1,0,2)"
+position = [6.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 313
+name = "Amber light (2,0,2)"
+position = [10.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 314
+name = "Amber light (3,0,2)"
+position = [14.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 315
+name = "Amber light (4,0,2)"
+position = [18.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 316
+name = "Amber light (5,0,2)"
+position = [22.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 317
+name = "Amber light (6,0,2)"
+position = [26.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 318
+name = "Amber light (7,0,2)"
+position = [30.0, 0.8, 10.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 319
+name = "Amber light (0,0,3)"
+position = [2.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 320
+name = "Amber light (1,0,3)"
+position = [6.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 321
+name = "Amber light (2,0,3)"
+position = [10.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 322
+name = "Amber light (3,0,3)"
+position = [14.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 323
+name = "Amber light (4,0,3)"
+position = [18.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 324
+name = "Amber light (5,0,3)"
+position = [22.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 325
+name = "Amber light (6,0,3)"
+position = [26.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 326
+name = "Amber light (7,0,3)"
+position = [30.0, 0.8, 14.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 327
+name = "Amber light (0,0,4)"
+position = [2.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 328
+name = "Amber light (1,0,4)"
+position = [6.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 329
+name = "Amber light (2,0,4)"
+position = [10.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 330
+name = "Amber light (3,0,4)"
+position = [14.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 331
+name = "Amber light (4,0,4)"
+position = [18.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 332
+name = "Amber light (5,0,4)"
+position = [22.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 333
+name = "Amber light (6,0,4)"
+position = [26.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 334
+name = "Amber light (7,0,4)"
+position = [30.0, 0.8, 18.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 335
+name = "Amber light (0,0,5)"
+position = [2.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 336
+name = "Amber light (1,0,5)"
+position = [6.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 337
+name = "Amber light (2,0,5)"
+position = [10.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 338
+name = "Amber light (3,0,5)"
+position = [14.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 339
+name = "Amber light (4,0,5)"
+position = [18.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 340
+name = "Amber light (5,0,5)"
+position = [22.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 341
+name = "Amber light (6,0,5)"
+position = [26.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 342
+name = "Amber light (7,0,5)"
+position = [30.0, 0.8, 22.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 343
+name = "Amber light (0,0,6)"
+position = [2.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 344
+name = "Amber light (1,0,6)"
+position = [6.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 345
+name = "Amber light (2,0,6)"
+position = [10.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 346
+name = "Amber light (3,0,6)"
+position = [14.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 347
+name = "Amber light (4,0,6)"
+position = [18.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 348
+name = "Amber light (5,0,6)"
+position = [22.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 349
+name = "Amber light (6,0,6)"
+position = [26.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 350
+name = "Amber light (7,0,6)"
+position = [30.0, 0.8, 26.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 351
+name = "Amber light (0,0,7)"
+position = [2.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 352
+name = "Amber light (1,0,7)"
+position = [6.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 353
+name = "Amber light (2,0,7)"
+position = [10.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 354
+name = "Amber light (3,0,7)"
+position = [14.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 355
+name = "Amber light (4,0,7)"
+position = [18.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 356
+name = "Amber light (5,0,7)"
+position = [22.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 357
+name = "Amber light (6,0,7)"
+position = [26.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }
+
+[[obj]]
+id = 358
+name = "Amber light (7,0,7)"
+position = [30.0, 0.8, 30.0]
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 8.0, range = 6.0 }

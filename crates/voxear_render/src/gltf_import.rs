@@ -13,7 +13,8 @@ use crate::{
     mesh::{MeshData, Vertex},
 };
 
-/// One drawable piece of the imported scene, with its world transform.
+/// One drawable piece of the imported scene, with its transform relative to
+/// the model's root.
 pub struct ImportedNode {
     pub name: String,
     pub position: Vec3,
@@ -21,6 +22,11 @@ pub struct ImportedNode {
     pub scale: Vec3,
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
+    /// Stable name of the mesh inside the model, `mesh<mesh>.<primitive>`, for
+    /// asset references like `<model guid>#mesh0.0`.
+    pub mesh_part: String,
+    /// `material<index>`, or `None` for glTF's default material.
+    pub material_part: Option<String>,
 }
 
 struct Importer<'a> {
@@ -71,7 +77,16 @@ impl Importer<'_> {
                 let mesh_handle = self.mesh(&mesh, &primitive)?;
                 let material = self.material(primitive.material())?;
                 let name = node.name().or(mesh.name()).unwrap_or("mesh").to_string();
-                self.nodes.push(ImportedNode { name, position, rotation, scale, mesh: mesh_handle, material });
+                self.nodes.push(ImportedNode {
+                    name,
+                    position,
+                    rotation,
+                    scale,
+                    mesh: mesh_handle,
+                    material,
+                    mesh_part: format!("mesh{}.{}", mesh.index(), primitive.index()),
+                    material_part: primitive.material().index().map(|i| format!("material{i}")),
+                });
             }
         }
         for child in node.children() {

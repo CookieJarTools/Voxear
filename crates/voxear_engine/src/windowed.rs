@@ -16,17 +16,17 @@ use winit::{
     window::{CursorGrabMode, Window, WindowId},
 };
 
-use crate::{engine::Engine, fly_camera::FlyCamera};
+use crate::{fly_camera::FlyCamera, game::Game};
 
-/// Called once the renderer exists, to create the project's Objs and meshes.
-pub type Setup = Box<dyn FnOnce(&mut Engine, &mut Renderer) -> Result<()>>;
+/// Called once the renderer exists, typically to load the start level.
+pub type Setup = Box<dyn FnOnce(&mut Game, &mut Renderer) -> Result<()>>;
 
 /// How often the title bar's frame stats refresh.
 const STATS_INTERVAL: f32 = 0.5;
 
 /// Runs the engine in a window until it is closed, or for `frames` frames.
 pub fn run_windowed(
-    engine: Engine,
+    game: Game,
     title: &str,
     frames: Option<u64>,
     settings: RendererSettings,
@@ -34,7 +34,7 @@ pub fn run_windowed(
 ) -> Result<()> {
     let event_loop = event_loop(settings.renderdoc || RenderDoc::is_loaded()).context("creating the event loop")?;
     let mut app = App {
-        engine,
+        game,
         settings,
         debug_view: DEBUG_VIEW_NONE,
         fly: FlyCamera::default(),
@@ -75,7 +75,7 @@ struct Stats {
 }
 
 struct App {
-    engine: Engine,
+    game: Game,
     settings: RendererSettings,
     debug_view: u32,
     fly: FlyCamera,
@@ -100,7 +100,7 @@ impl App {
             WindowHandles { display: window.display_handle()?.as_raw(), window: window.window_handle()?.as_raw() };
         let mut renderer = unsafe { Renderer::new(handles, size.width, size.height, &self.settings)? };
         if let Some(setup) = self.setup.take() {
-            setup(&mut self.engine, &mut renderer)?;
+            setup(&mut self.game, &mut renderer)?;
         }
         self.renderer = Some(renderer);
         self.window = Some(window);
@@ -126,13 +126,13 @@ impl App {
         let now = Instant::now();
         let delta = self.last.map_or(0.0, |last| (now - last).as_secs_f32());
         self.last = Some(now);
-        self.fly.update(&mut self.engine.world, delta);
-        self.engine.tick(delta);
+        self.fly.update(&mut self.game.engine.world, delta);
+        self.game.tick(delta, self.renderer.as_mut());
         if let Some(renderer) = self.renderer.as_mut() {
-            renderer.render(&self.engine.world, self.engine.time().elapsed as f32)?;
+            renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)?;
         }
         self.update_stats(delta);
-        if self.frames.is_some_and(|limit| self.engine.time().frame >= limit) {
+        if self.frames.is_some_and(|limit| self.game.engine.time().frame >= limit) {
             event_loop.exit();
         }
         Ok(())

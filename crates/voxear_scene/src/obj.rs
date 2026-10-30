@@ -41,10 +41,33 @@ impl Transform {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttachedBehaviour {
+    pub handle: BehaviourHandle,
+    /// The full C# type name, which scenes save.
+    pub type_name: String,
+}
+
 /// Script behaviours attached to an Obj, in attach order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Behaviours(pub Vec<BehaviourHandle>);
+pub struct Behaviours(pub Vec<AttachedBehaviour>);
 impl Component for Behaviours {}
+
+impl Behaviours {
+    pub fn handles(&self) -> impl Iterator<Item = BehaviourHandle> + '_ {
+        self.0.iter().map(|b| b.handle)
+    }
+
+    pub fn type_names(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|b| b.type_name.as_str())
+    }
+}
+
+/// The Obj is being destroyed: its behaviours get OnDisable and OnDestroy,
+/// it stops rendering, and it is removed at the end of the frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Destroying;
+impl Component for Destroying {}
 
 /// The Obj carries a behaviour that implements `IInstance`. The editor shows
 /// a badge for it in the hierarchy.
@@ -66,4 +89,5 @@ pub fn register_obj_components(world: &mut World) {
     world.register_named_component::<ScenePersistence>("Voxear.ScenePersistence");
     world.register_named_component::<crate::Parent>("Voxear.Parent");
     world.register_named_component::<crate::WorldTransform>("Voxear.WorldTransform");
+    world.register_named_component::<Destroying>("Voxear.Destroying");
 }

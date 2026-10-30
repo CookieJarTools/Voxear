@@ -37,8 +37,17 @@ press F12 to capture a frame.
 ./target/debug/vox render samples/Hello --out frame.png
 ```
 
-`vox render` draws the project offscreen to a PNG and prints GPU time per render pass. `--renderdoc` also saves a
-RenderDoc capture to the project's `.voxear/Captures`.
+`vox render` draws the project offscreen to a PNG and prints:
+- GPU time per render pass
+- culling counts: what was outside the view, what was hidden by occlusion, and what was drawn
+- how many draws used each LOD
+
+Options:
+- `--debug-view lod` colours objects by their LOD, and `--debug-view cascades` by shadow cascade. F2 and F3 do the
+  same in the window.
+- `--renderdoc` also saves a RenderDoc capture to the project's `.voxear/Captures`.
+
+`samples/Stress` has 1,600 spheres and a wall, for trying culling and LODs.
 
 Set `VOXEAR_LOG=debug` for more logging. Set `VOXEAR_VALIDATION=1` to force Vulkan validation; debug builds use it
 automatically when the `vulkan-validation-layers` package is installed.

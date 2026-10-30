@@ -29,6 +29,7 @@ bytemuck = { version = "1", features = ["derive"] }
 libloading = "0.9"
 gltf = { version = "1.4", features = ["KHR_materials_emissive_strength"] }
 png = "0.18"
+meshopt = "0.7"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"

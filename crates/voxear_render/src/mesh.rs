@@ -36,7 +36,7 @@ impl MeshData {
     pub fn primitive(primitive: Primitive) -> Self {
         match primitive {
             Primitive::Cube => Self::cube(),
-            Primitive::Sphere => Self::sphere(32, 16),
+            Primitive::Sphere => Self::sphere(64, 32),
             Primitive::Plane => Self::plane(),
         }
     }

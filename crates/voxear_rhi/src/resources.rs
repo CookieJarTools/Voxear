@@ -267,9 +267,11 @@ impl Gpu {
         let desc = image.desc;
         self.immediate(|cmd| {
             mip_barrier(self, cmd, image.handle, 0, desc.mip_levels, Transition::UndefinedToTransferDst);
-            let region = vk::BufferImageCopy::default()
-                .image_subresource(color_layers(0))
-                .image_extent(vk::Extent3D { width: desc.width, height: desc.height, depth: 1 });
+            let region = vk::BufferImageCopy::default().image_subresource(color_layers(0)).image_extent(vk::Extent3D {
+                width: desc.width,
+                height: desc.height,
+                depth: 1,
+            });
             unsafe {
                 self.device.cmd_copy_buffer_to_image(
                     cmd,
@@ -289,7 +291,8 @@ impl Gpu {
     /// bytes. For screenshots and tests.
     pub fn read_image(&self, image: vk::Image, desc: ImageDesc, layout: vk::ImageLayout) -> Result<Vec<u8>> {
         let bytes = u64::from(desc.width) * u64::from(desc.height) * 4;
-        let readback = self.create_buffer("readback", bytes, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu)?;
+        let readback =
+            self.create_buffer("readback", bytes, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu)?;
         self.immediate(|cmd| unsafe {
             let to_src = vk::ImageMemoryBarrier2::default()
                 .image(image)
@@ -301,9 +304,11 @@ impl Gpu {
                 .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
                 .subresource_range(color_range(0, 1));
             self.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().image_memory_barriers(&[to_src]));
-            let region = vk::BufferImageCopy::default()
-                .image_subresource(color_layers(0))
-                .image_extent(vk::Extent3D { width: desc.width, height: desc.height, depth: 1 });
+            let region = vk::BufferImageCopy::default().image_subresource(color_layers(0)).image_extent(vk::Extent3D {
+                width: desc.width,
+                height: desc.height,
+                depth: 1,
+            });
             self.device.cmd_copy_image_to_buffer(
                 cmd,
                 image,
@@ -328,16 +333,33 @@ enum Transition {
 fn mip_barrier(gpu: &Gpu, cmd: vk::CommandBuffer, image: vk::Image, mip: u32, count: u32, transition: Transition) {
     use vk::{AccessFlags2 as A, ImageLayout as L, PipelineStageFlags2 as S};
     let (old, new, src, src_access, dst, dst_access) = match transition {
-        Transition::UndefinedToTransferDst => (L::UNDEFINED, L::TRANSFER_DST_OPTIMAL, S::NONE, A::NONE, S::ALL_TRANSFER, A::TRANSFER_WRITE),
-        Transition::TransferDstToSrc => {
-            (L::TRANSFER_DST_OPTIMAL, L::TRANSFER_SRC_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_WRITE, S::ALL_TRANSFER, A::TRANSFER_READ)
+        Transition::UndefinedToTransferDst => {
+            (L::UNDEFINED, L::TRANSFER_DST_OPTIMAL, S::NONE, A::NONE, S::ALL_TRANSFER, A::TRANSFER_WRITE)
         }
-        Transition::SrcToShaderRead => {
-            (L::TRANSFER_SRC_OPTIMAL, L::SHADER_READ_ONLY_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_READ, S::ALL_COMMANDS, A::SHADER_READ)
-        }
-        Transition::DstToShaderRead => {
-            (L::TRANSFER_DST_OPTIMAL, L::SHADER_READ_ONLY_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_WRITE, S::ALL_COMMANDS, A::SHADER_READ)
-        }
+        Transition::TransferDstToSrc => (
+            L::TRANSFER_DST_OPTIMAL,
+            L::TRANSFER_SRC_OPTIMAL,
+            S::ALL_TRANSFER,
+            A::TRANSFER_WRITE,
+            S::ALL_TRANSFER,
+            A::TRANSFER_READ,
+        ),
+        Transition::SrcToShaderRead => (
+            L::TRANSFER_SRC_OPTIMAL,
+            L::SHADER_READ_ONLY_OPTIMAL,
+            S::ALL_TRANSFER,
+            A::TRANSFER_READ,
+            S::ALL_COMMANDS,
+            A::SHADER_READ,
+        ),
+        Transition::DstToShaderRead => (
+            L::TRANSFER_DST_OPTIMAL,
+            L::SHADER_READ_ONLY_OPTIMAL,
+            S::ALL_TRANSFER,
+            A::TRANSFER_WRITE,
+            S::ALL_COMMANDS,
+            A::SHADER_READ,
+        ),
     };
     let barrier = vk::ImageMemoryBarrier2::default()
         .image(image)

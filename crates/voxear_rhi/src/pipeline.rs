@@ -45,9 +45,25 @@ pub struct GraphicsPipelineDesc<'a> {
     pub front_face: vk::FrontFace,
     pub polygon_mode: vk::PolygonMode,
     pub blend: Blend,
+    /// Constant and slope-scaled depth bias, for shadow maps.
+    pub depth_bias: Option<(f32, f32)>,
+    /// Clamp depth instead of clipping, so shadow casters behind the light's
+    /// near plane still cast.
+    pub depth_clamp: bool,
 }
 
 impl<'a> GraphicsPipelineDesc<'a> {
+    /// Depth only, with no fragment stage: for shadow maps and depth prepasses.
+    pub fn depth_only(name: &'a str, module: &'a ShaderModule, vertex: &'a CStr, depth_format: vk::Format) -> Self {
+        Self {
+            fragment_entry: None,
+            depth_format: Some(depth_format),
+            depth_write: true,
+            depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+            ..Self::new(name, module, vertex, vertex)
+        }
+    }
+
     /// Opaque, back-face culled, no depth: change the fields that differ.
     pub fn new(name: &'a str, module: &'a ShaderModule, vertex: &'a CStr, fragment: &'a CStr) -> Self {
         Self {
@@ -65,11 +81,17 @@ impl<'a> GraphicsPipelineDesc<'a> {
             front_face: vk::FrontFace::CLOCKWISE,
             polygon_mode: vk::PolygonMode::FILL,
             blend: Blend::Opaque,
+            depth_bias: None,
+            depth_clamp: false,
         }
     }
 }
 
-pub fn create_graphics_pipeline(gpu: &Gpu, layout: vk::PipelineLayout, desc: &GraphicsPipelineDesc) -> Result<vk::Pipeline> {
+pub fn create_graphics_pipeline(
+    gpu: &Gpu,
+    layout: vk::PipelineLayout,
+    desc: &GraphicsPipelineDesc,
+) -> Result<vk::Pipeline> {
     let mut stages = vec![
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
@@ -87,12 +109,18 @@ pub fn create_graphics_pipeline(gpu: &Gpu, layout: vk::PipelineLayout, desc: &Gr
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default();
     let assembly = vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
     let viewport = vk::PipelineViewportStateCreateInfo::default().viewport_count(1).scissor_count(1);
+    let (bias_constant, bias_slope) = desc.depth_bias.unwrap_or_default();
     let raster = vk::PipelineRasterizationStateCreateInfo::default()
         .polygon_mode(desc.polygon_mode)
         .cull_mode(desc.cull)
         .front_face(desc.front_face)
+        .depth_clamp_enable(desc.depth_clamp)
+        .depth_bias_enable(desc.depth_bias.is_some())
+        .depth_bias_constant_factor(bias_constant)
+        .depth_bias_slope_factor(bias_slope)
         .line_width(1.0);
-    let multisample = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
+    let multisample =
+        vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
     let depth = vk::PipelineDepthStencilStateCreateInfo::default()
         .depth_test_enable(desc.depth_format.is_some())
         .depth_write_enable(desc.depth_write)

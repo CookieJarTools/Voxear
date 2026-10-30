@@ -10,7 +10,8 @@ use anyhow::{Result, ensure};
 use voxear_rhi::{Bindless, Buffer, Gpu, Image, ImageDesc, MemoryLocation, TextureId, vk};
 
 use crate::{
-    gpu::{GpuMaterial, GpuMesh, MATERIAL_NORMAL_MAP},
+    gpu::{GpuMaterial, GpuMesh, GpuMeshLod, MATERIAL_NORMAL_MAP},
+    lod::build_lods,
     mesh::{MeshData, Primitive, Vertex},
 };
 
@@ -87,7 +88,8 @@ impl Assets {
     pub fn new(gpu: &Gpu, bindless: &mut Bindless) -> Result<Self> {
         let device_local = MemoryLocation::GpuOnly;
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-        let vertices = gpu.create_buffer("vertices", MAX_VERTICES * size_of::<Vertex>() as u64, storage, device_local)?;
+        let vertices =
+            gpu.create_buffer("vertices", MAX_VERTICES * size_of::<Vertex>() as u64, storage, device_local)?;
         let indices = gpu.create_buffer(
             "indices",
             MAX_INDICES * 4,
@@ -118,27 +120,44 @@ impl Assets {
         Ok(assets)
     }
 
+    /// Uploads a mesh with an automatically generated LOD chain.
     pub fn add_mesh(&mut self, gpu: &Gpu, mesh: &MeshData) -> Result<MeshHandle> {
+        let lods = build_lods(mesh);
         let vertex_count = mesh.vertices.len() as u64;
-        let index_count = mesh.indices.len() as u64;
+        let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
         ensure!(self.vertex_count + vertex_count <= MAX_VERTICES, "out of vertex space");
         ensure!(self.index_count + index_count <= MAX_INDICES, "out of index space");
         ensure!(self.mesh_count < MAX_MESHES, "too many meshes");
 
         let vertex_offset = self.vertex_count;
-        let index_offset = self.index_count;
-        gpu.upload_buffer(&self.vertices, vertex_offset * size_of::<Vertex>() as u64, bytemuck::cast_slice(&mesh.vertices))?;
-        gpu.upload_buffer(&self.indices, index_offset * 4, bytemuck::cast_slice(&mesh.indices))?;
+        gpu.upload_buffer(
+            &self.vertices,
+            vertex_offset * size_of::<Vertex>() as u64,
+            bytemuck::cast_slice(&mesh.vertices),
+        )?;
 
         let (center, radius) = mesh.bounds();
-        let entry = GpuMesh {
+        let mut entry = GpuMesh {
             vertex_offset: vertex_offset as u32,
-            index_offset: index_offset as u32,
-            index_count: index_count as u32,
-            _pad: 0,
+            lod_count: lods.len() as u32,
             center: center.into(),
             radius,
+            ..Default::default()
         };
+        let mut index_offset = self.index_count;
+        let mut indices = Vec::with_capacity(index_count as usize);
+        for (slot, lod) in entry.lods.iter_mut().zip(&lods) {
+            *slot = GpuMeshLod {
+                index_offset: index_offset as u32,
+                index_count: lod.indices.len() as u32,
+                error: lod.error,
+                _pad: 0,
+            };
+            index_offset += lod.indices.len() as u64;
+            indices.extend_from_slice(&lod.indices);
+        }
+        gpu.upload_buffer(&self.indices, self.index_count * 4, bytemuck::cast_slice(&indices))?;
+
         let handle = MeshHandle(self.mesh_count as u32);
         gpu.upload_buffer(&self.meshes, self.mesh_count * size_of::<GpuMesh>() as u64, bytemuck::bytes_of(&entry))?;
         self.vertex_count += vertex_count;

@@ -40,6 +40,8 @@ pub enum BufferAccess {
     ComputeRead,
     IndirectRead,
     ShaderRead,
+    /// Read on the CPU after the frame's fence.
+    HostRead,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,18 +59,24 @@ impl ImageAccess {
         use vk::{AccessFlags2 as A, ImageLayout as L, PipelineStageFlags2 as S};
         let (layout, stage, access) = match self {
             Self::Undefined => (L::UNDEFINED, S::NONE, A::NONE),
-            Self::ColorAttachment => {
-                (L::COLOR_ATTACHMENT_OPTIMAL, S::COLOR_ATTACHMENT_OUTPUT, A::COLOR_ATTACHMENT_READ | A::COLOR_ATTACHMENT_WRITE)
-            }
+            Self::ColorAttachment => (
+                L::COLOR_ATTACHMENT_OPTIMAL,
+                S::COLOR_ATTACHMENT_OUTPUT,
+                A::COLOR_ATTACHMENT_READ | A::COLOR_ATTACHMENT_WRITE,
+            ),
             Self::DepthAttachment => (
                 L::DEPTH_ATTACHMENT_OPTIMAL,
                 S::EARLY_FRAGMENT_TESTS | S::LATE_FRAGMENT_TESTS,
                 A::DEPTH_STENCIL_ATTACHMENT_READ | A::DEPTH_STENCIL_ATTACHMENT_WRITE,
             ),
-            Self::DepthRead => {
-                (L::DEPTH_READ_ONLY_OPTIMAL, S::EARLY_FRAGMENT_TESTS | S::LATE_FRAGMENT_TESTS, A::DEPTH_STENCIL_ATTACHMENT_READ)
+            Self::DepthRead => (
+                L::DEPTH_READ_ONLY_OPTIMAL,
+                S::EARLY_FRAGMENT_TESTS | S::LATE_FRAGMENT_TESTS,
+                A::DEPTH_STENCIL_ATTACHMENT_READ,
+            ),
+            Self::Sampled => {
+                (L::SHADER_READ_ONLY_OPTIMAL, S::FRAGMENT_SHADER | S::COMPUTE_SHADER, A::SHADER_SAMPLED_READ)
             }
-            Self::Sampled => (L::SHADER_READ_ONLY_OPTIMAL, S::FRAGMENT_SHADER | S::COMPUTE_SHADER, A::SHADER_SAMPLED_READ),
             Self::StorageWrite => (L::GENERAL, S::COMPUTE_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE),
             Self::TransferSrc => (L::TRANSFER_SRC_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_READ),
             Self::Present => (L::PRESENT_SRC_KHR, S::NONE, A::NONE),
@@ -86,6 +94,7 @@ impl BufferAccess {
             Self::ComputeRead => (S::COMPUTE_SHADER, A::SHADER_STORAGE_READ),
             Self::IndirectRead => (S::DRAW_INDIRECT, A::INDIRECT_COMMAND_READ),
             Self::ShaderRead => (S::VERTEX_SHADER | S::FRAGMENT_SHADER | S::COMPUTE_SHADER, A::SHADER_STORAGE_READ),
+            Self::HostRead => (S::HOST, A::HOST_READ),
         }
     }
 }
@@ -219,7 +228,13 @@ impl PassContext<'_> {
 impl<'a> FrameGraph<'a> {
     /// Brings an externally owned image into the graph. `current` is how it
     /// was last used (`Undefined` to discard its contents).
-    pub fn import_image(&mut self, image: vk::Image, view: vk::ImageView, desc: ImageDesc, current: ImageAccess) -> ImageId {
+    pub fn import_image(
+        &mut self,
+        image: vk::Image,
+        view: vk::ImageView,
+        desc: ImageDesc,
+        current: ImageAccess,
+    ) -> ImageId {
         self.images.push(GraphImage::Imported { image, view, desc, state: current.state() });
         ImageId(self.images.len() - 1)
     }
@@ -230,7 +245,13 @@ impl<'a> FrameGraph<'a> {
     }
 
     /// A graph-owned image whose contents carry over to the next frame.
-    pub fn history_image(&mut self, gpu: &Gpu, bindless: &mut Bindless, name: &str, desc: ImageDesc) -> Result<ImageId> {
+    pub fn history_image(
+        &mut self,
+        gpu: &Gpu,
+        bindless: &mut Bindless,
+        name: &str,
+        desc: ImageDesc,
+    ) -> Result<ImageId> {
         self.transient(gpu, bindless, name, desc, true)
     }
 
@@ -251,7 +272,11 @@ impl<'a> FrameGraph<'a> {
         }
         if !self.graph.transients.contains_key(name) {
             let image = gpu.create_image(name, desc)?;
-            let texture = bindless.add_texture(gpu, image.view);
+            let texture = if desc.usage.contains(vk::ImageUsageFlags::STORAGE) {
+                bindless.add_texture_in(gpu, image.view, vk::ImageLayout::GENERAL)
+            } else {
+                bindless.add_texture(gpu, image.view)
+            };
             let storage = image.mip_views.iter().map(|&view| bindless.add_storage_image(gpu, view)).collect();
             let storage = if image.mip_views.is_empty() && desc.usage.contains(vk::ImageUsageFlags::STORAGE) {
                 vec![bindless.add_storage_image(gpu, image.view)]
@@ -282,10 +307,8 @@ impl<'a> FrameGraph<'a> {
     }
 
     pub fn import_buffer(&mut self, _buffer: &Buffer) -> BufferId {
-        self.buffers.push(GraphBuffer {
-            stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-            access: vk::AccessFlags2::MEMORY_WRITE,
-        });
+        self.buffers
+            .push(GraphBuffer { stage: vk::PipelineStageFlags2::ALL_COMMANDS, access: vk::AccessFlags2::MEMORY_WRITE });
         BufferId(self.buffers.len() - 1)
     }
 
@@ -307,6 +330,12 @@ impl<'a> FrameGraph<'a> {
     /// Moves an image into a final state (e.g. `Present`) with no pass.
     pub fn transition(&mut self, id: ImageId, access: ImageAccess) {
         self.passes.push(Pass { name: String::new(), images: vec![(id, access)], buffers: Vec::new(), record: None });
+    }
+
+    /// Orders earlier writes to a buffer before a later use with no pass,
+    /// such as making GPU-written counters visible to the CPU.
+    pub fn sync_buffer(&mut self, id: BufferId, access: BufferAccess) {
+        self.passes.push(Pass { name: String::new(), images: Vec::new(), buffers: vec![(id, access)], record: None });
     }
 
     /// Records every pass with its barriers, labels and timers.
@@ -337,11 +366,21 @@ impl<'a> FrameGraph<'a> {
             .collect()
     }
 
-    fn barriers(&mut self, gpu: &Gpu, cmd: vk::CommandBuffer, pass: &Pass, resolved: &[(vk::Image, vk::ImageView, ImageDesc)]) {
+    fn barriers(
+        &mut self,
+        gpu: &Gpu,
+        cmd: vk::CommandBuffer,
+        pass: &Pass,
+        resolved: &[(vk::Image, vk::ImageView, ImageDesc)],
+    ) {
         let mut image_barriers = Vec::new();
         for &(id, access) in &pass.images {
             let (old, discard) = self.image_state(id);
-            let new = access.state();
+            let mut new = access.state();
+            // Images compute writes stay in GENERAL, so sampling them needs no transition.
+            if resolved[id.0].2.usage.contains(vk::ImageUsageFlags::STORAGE) && access == ImageAccess::Sampled {
+                new.layout = vk::ImageLayout::GENERAL;
+            }
             let hazard = old.layout != new.layout || writes(old.access) || writes(new.access);
             if hazard {
                 let (image, _, desc) = resolved[id.0];
@@ -400,9 +439,8 @@ impl<'a> FrameGraph<'a> {
         if image_barriers.is_empty() && memory_barriers.is_empty() {
             return;
         }
-        let dependency = vk::DependencyInfo::default()
-            .image_memory_barriers(&image_barriers)
-            .memory_barriers(&memory_barriers);
+        let dependency =
+            vk::DependencyInfo::default().image_memory_barriers(&image_barriers).memory_barriers(&memory_barriers);
         unsafe { gpu.device.cmd_pipeline_barrier2(cmd, &dependency) };
     }
 

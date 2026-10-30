@@ -75,7 +75,8 @@ impl World {
     pub fn despawn(&mut self, entity: Entity) -> bool {
         let Some(location) = self.entities.free(entity) else { return false };
         let archetype = &mut self.archetypes[location.archetype.index()];
-        let moved = unsafe { archetype.swap_remove(location.chunk as usize, location.row as usize, true, self.change_tick) };
+        let moved =
+            unsafe { archetype.swap_remove(location.chunk as usize, location.row as usize, true, self.change_tick) };
         if let Some(moved) = moved {
             self.entities.set_location(moved.index(), location);
         }
@@ -115,7 +116,9 @@ impl World {
             bundle.write(&mut |index, src| {
                 let column = archetype.column_index(ids[index]).expect("bundle column exists");
                 let dst = archetype.ptr(chunk, column, row);
-                if existed[index] && let Some(drop_fn) = archetype.column_drop(column) {
+                if existed[index]
+                    && let Some(drop_fn) = archetype.column_drop(column)
+                {
                     drop_fn(dst);
                 }
                 ptr::copy_nonoverlapping(src, dst, archetype.column_size(column));
@@ -299,7 +302,13 @@ impl World {
     /// Columns missing from the target are dropped when `drop_removed`,
     /// otherwise the caller has already moved them out. Columns new in the
     /// target are left uninitialised for the caller to write.
-    fn move_entity(&mut self, entity: Entity, from: EntityLocation, to: ArchetypeId, drop_removed: bool) -> EntityLocation {
+    fn move_entity(
+        &mut self,
+        entity: Entity,
+        from: EntityLocation,
+        to: ArchetypeId,
+        drop_removed: bool,
+    ) -> EntityLocation {
         debug_assert_ne!(from.archetype, to);
         let tick = self.change_tick;
         let (source, target) = pair_mut(&mut self.archetypes, from.archetype.index(), to.index());

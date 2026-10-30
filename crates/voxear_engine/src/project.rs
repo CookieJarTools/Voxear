@@ -40,10 +40,18 @@ pub struct ObjSpec {
     pub material: MaterialSpec,
     pub camera: Option<CameraSpec>,
     pub light: Option<LightSpec>,
+    /// Spawns a grid of copies, counted along X, Y and Z, `spacing` apart.
+    pub grid: Option<[u32; 3]>,
+    #[serde(default = "two")]
+    pub spacing: [f32; 3],
 }
 
 fn one() -> [f32; 3] {
     [1.0; 3]
+}
+
+fn two() -> [f32; 3] {
+    [2.0; 3]
 }
 
 #[derive(Debug, Default, Deserialize)]

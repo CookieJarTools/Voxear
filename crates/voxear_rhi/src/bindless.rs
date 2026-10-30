@@ -10,6 +10,7 @@ use crate::device::Gpu;
 pub const MAX_TEXTURES: u32 = 16 * 1024;
 pub const MAX_STORAGE_IMAGES: u32 = 1024;
 pub const MAX_SAMPLERS: u32 = 16;
+pub const MAX_COMPARISON_SAMPLERS: u32 = 4;
 /// The guaranteed minimum on every Vulkan device.
 pub const PUSH_CONSTANT_SIZE: u32 = 128;
 
@@ -20,11 +21,16 @@ pub mod samplers {
     pub const NEAREST_CLAMP: u32 = 2;
     /// Returns the minimum of the footprint; builds depth pyramids.
     pub const MIN_REDUCTION: u32 = 3;
+
+    /// In `comparisonSamplers`: bilinear PCF, lit when the reference depth is
+    /// less than or equal to the stored one.
+    pub const SHADOW: u32 = 0;
 }
 
 const BINDING_TEXTURES: u32 = 0;
 const BINDING_SAMPLERS: u32 = 1;
 const BINDING_STORAGE_IMAGES: u32 = 2;
+const BINDING_COMPARISON_SAMPLERS: u32 = 3;
 
 /// Index of a sampled texture in the global array.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -87,11 +93,16 @@ impl Bindless {
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                 .descriptor_count(MAX_STORAGE_IMAGES)
                 .stage_flags(vk::ShaderStageFlags::ALL),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_COMPARISON_SAMPLERS)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .descriptor_count(MAX_COMPARISON_SAMPLERS)
+                .stage_flags(vk::ShaderStageFlags::ALL),
         ];
         let flags = vk::DescriptorBindingFlags::PARTIALLY_BOUND
             | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
             | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
-        let binding_flags = [flags; 3];
+        let binding_flags = [flags; 4];
         let mut flags_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
         let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
             .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
@@ -102,7 +113,10 @@ impl Bindless {
             let layout = device.create_descriptor_set_layout(&layout_info, None)?;
             let sizes = [
                 vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLED_IMAGE, descriptor_count: MAX_TEXTURES },
-                vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLER, descriptor_count: MAX_SAMPLERS },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::SAMPLER,
+                    descriptor_count: MAX_SAMPLERS + MAX_COMPARISON_SAMPLERS,
+                },
                 vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_IMAGE, descriptor_count: MAX_STORAGE_IMAGES },
             ];
             let pool_info = vk::DescriptorPoolCreateInfo::default()
@@ -115,7 +129,8 @@ impl Bindless {
             let set = device.allocate_descriptor_sets(&alloc)?[0];
             gpu.set_name(set, "bindless");
 
-            let ranges = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::ALL).size(PUSH_CONSTANT_SIZE)];
+            let ranges =
+                [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::ALL).size(PUSH_CONSTANT_SIZE)];
             let pipeline_layout = device.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts).push_constant_ranges(&ranges),
                 None,
@@ -162,6 +177,15 @@ impl Bindless {
             let index = self.add_sampler(gpu, &info)?;
             debug_assert_eq!(index, expected);
         }
+
+        let shadow = clamp
+            .compare_enable(true)
+            .compare_op(vk::CompareOp::LESS_OR_EQUAL)
+            .mipmap_mode(vk::SamplerMipmapMode::NEAREST);
+        let sampler = gpu.create_sampler(&shadow)?;
+        let info = [vk::DescriptorImageInfo::default().sampler(sampler)];
+        self.write(gpu, BINDING_COMPARISON_SAMPLERS, samplers::SHADOW, vk::DescriptorType::SAMPLER, &info);
+        self.samplers.push(sampler);
         Ok(())
     }
 
@@ -177,10 +201,14 @@ impl Bindless {
 
     /// Makes an image view sampleable as `textures[id]`.
     pub fn add_texture(&mut self, gpu: &Gpu, view: vk::ImageView) -> TextureId {
+        self.add_texture_in(gpu, view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+    }
+
+    /// Like [`add_texture`](Self::add_texture) for images sampled in another
+    /// layout, such as `GENERAL` for images compute also writes.
+    pub fn add_texture_in(&mut self, gpu: &Gpu, view: vk::ImageView, layout: vk::ImageLayout) -> TextureId {
         let index = self.textures.take();
-        let info = [vk::DescriptorImageInfo::default()
-            .image_view(view)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+        let info = [vk::DescriptorImageInfo::default().image_view(view).image_layout(layout)];
         self.write(gpu, BINDING_TEXTURES, index, vk::DescriptorType::SAMPLED_IMAGE, &info);
         TextureId(index)
     }

@@ -236,9 +236,7 @@ fn create_messenger(
 ) -> Result<(ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)> {
     let loader = ext::debug_utils::Instance::new(entry, instance);
     let info = vk::DebugUtilsMessengerCreateInfoEXT::default()
-        .message_severity(
-            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
-        )
+        .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
         .message_type(
             vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
                 | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
@@ -481,7 +479,8 @@ fn create_device(instance: &ash::Instance, physical: vk::PhysicalDevice, queue_f
     let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family).queue_priorities(&priorities)];
     let extensions = [khr::swapchain::NAME.as_ptr()];
     let mut features = Features::required();
-    let mut chain = features.core.push_next(&mut features.v11).push_next(&mut features.v12).push_next(&mut features.v13);
+    let mut chain =
+        features.core.push_next(&mut features.v11).push_next(&mut features.v12).push_next(&mut features.v13);
     let info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)
         .enabled_extension_names(&extensions)

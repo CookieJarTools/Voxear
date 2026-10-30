@@ -21,9 +21,7 @@ pub use bindless::{Bindless, MAX_TEXTURES, PUSH_CONSTANT_SIZE, StorageImageId, T
 pub use device::{Gpu, GpuInfo, WindowHandles, enumerate_gpus};
 pub use frame::{Acquired, FRAMES_IN_FLIGHT, Frame, Frames};
 pub use gpu_allocator::MemoryLocation;
-pub use pipeline::{
-    Blend, GraphicsPipelineDesc, ShaderModule, create_compute_pipeline, create_graphics_pipeline,
-};
+pub use pipeline::{Blend, GraphicsPipelineDesc, ShaderModule, create_compute_pipeline, create_graphics_pipeline};
 pub use renderdoc::RenderDoc;
 pub use resources::{Buffer, Image, ImageDesc, Retired, full_mip_count, is_depth};
 pub use swapchain::Swapchain;

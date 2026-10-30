@@ -2,14 +2,14 @@ use std::{sync::Arc, time::Instant};
 
 use anyhow::{Context, Result};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use voxear_render::{Renderer, RendererSettings};
+use voxear_render::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, Renderer, RendererSettings, ViewOptions};
 use voxear_rhi::WindowHandles;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::{ElementState, WindowEvent},
-    keyboard::{Key, NamedKey},
     event_loop::{ActiveEventLoop, EventLoop},
+    keyboard::{Key, NamedKey},
     window::{Window, WindowId},
 };
 
@@ -33,6 +33,7 @@ pub fn run_windowed(
     let mut app = App {
         engine,
         settings,
+        debug_view: DEBUG_VIEW_NONE,
         title: title.to_string(),
         frames,
         setup: Some(setup),
@@ -58,6 +59,7 @@ struct Stats {
 struct App {
     engine: Engine,
     settings: RendererSettings,
+    debug_view: u32,
     title: String,
     frames: Option<u64>,
     setup: Option<Setup>,
@@ -71,12 +73,12 @@ struct App {
 
 impl App {
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        let attributes = Window::default_attributes()
-            .with_title(&self.title)
-            .with_inner_size(LogicalSize::new(1280.0, 720.0));
+        let attributes =
+            Window::default_attributes().with_title(&self.title).with_inner_size(LogicalSize::new(1280.0, 720.0));
         let window = Arc::new(event_loop.create_window(attributes)?);
         let size = window.inner_size();
-        let handles = WindowHandles { display: window.display_handle()?.as_raw(), window: window.window_handle()?.as_raw() };
+        let handles =
+            WindowHandles { display: window.display_handle()?.as_raw(), window: window.window_handle()?.as_raw() };
         let mut renderer = unsafe { Renderer::new(handles, size.width, size.height, &self.settings)? };
         if let Some(setup) = self.setup.take() {
             setup(&mut self.engine, &mut renderer)?;
@@ -115,6 +117,20 @@ impl App {
         self.stats = Stats::default();
     }
 
+    /// Development keys until the editor exists: F12 captures a frame in
+    /// RenderDoc, F2 and F3 toggle the LOD and shadow cascade views.
+    fn key(&mut self, key: &Key) {
+        let Some(renderer) = self.renderer.as_mut() else { return };
+        let view = match key {
+            Key::Named(NamedKey::F12) => return renderer.capture_next_frame(),
+            Key::Named(NamedKey::F2) => DEBUG_VIEW_LOD,
+            Key::Named(NamedKey::F3) => DEBUG_VIEW_CASCADES,
+            _ => return,
+        };
+        self.debug_view = if self.debug_view == view { DEBUG_VIEW_NONE } else { view };
+        renderer.set_view_options(ViewOptions { debug_view: self.debug_view, ..ViewOptions::default() });
+    }
+
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: anyhow::Error) {
         self.error = Some(error);
         event_loop.exit();
@@ -138,14 +154,8 @@ impl ApplicationHandler for App {
                     renderer.resize(size.width, size.height);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed
-                    && !event.repeat
-                    && event.logical_key == Key::Named(NamedKey::F12) =>
-            {
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.capture_next_frame();
-                }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed && !event.repeat => {
+                self.key(&event.logical_key);
             }
             WindowEvent::RedrawRequested => {
                 if let Err(error) = self.frame(event_loop) {

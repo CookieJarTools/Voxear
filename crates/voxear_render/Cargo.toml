@@ -18,3 +18,4 @@ voxear_ecs.workspace = true
 voxear_scene.workspace = true
 voxear_core.workspace = true
 gltf.workspace = true
+meshopt.workspace = true

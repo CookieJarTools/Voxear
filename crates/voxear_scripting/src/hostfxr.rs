@@ -86,7 +86,9 @@ fn candidate_roots() -> Vec<PathBuf> {
     if cfg!(windows) {
         roots.push(PathBuf::from(r"C:\Program Files\dotnet"));
     } else {
-        roots.extend(["/usr/share/dotnet", "/usr/lib/dotnet", "/usr/local/share/dotnet", "/opt/dotnet"].map(PathBuf::from));
+        roots.extend(
+            ["/usr/share/dotnet", "/usr/lib/dotnet", "/usr/local/share/dotnet", "/opt/dotnet"].map(PathBuf::from),
+        );
         if let Some(home) = std::env::var_os("HOME") {
             roots.push(PathBuf::from(home).join(".dotnet"));
         }
@@ -101,7 +103,11 @@ fn install_at(root: &Path) -> Option<DotnetInstall> {
         .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
         .filter(|version| fxr.join(version).join(HOSTFXR_NAME).is_file())
         .max_by_key(|version| version_key(version))?;
-    Some(DotnetInstall { root: root.to_path_buf(), hostfxr: fxr.join(&newest).join(HOSTFXR_NAME), hostfxr_version: newest })
+    Some(DotnetInstall {
+        root: root.to_path_buf(),
+        hostfxr: fxr.join(&newest).join(HOSTFXR_NAME),
+        hostfxr_version: newest,
+    })
 }
 
 /// Numeric ordering for versions like `10.0.13` and `11.0.0-rc.2`.

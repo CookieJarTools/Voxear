@@ -81,7 +81,8 @@ fn insert_and_remove_move_between_archetypes() {
 #[test]
 fn many_entities_span_chunks_and_stay_consistent() {
     let mut world = World::new();
-    let entities: Vec<_> = (0..10_000).map(|i| world.spawn((Position(i as f32, 0.0, 0.0), Velocity(1.0, 0.0, 0.0)))).collect();
+    let entities: Vec<_> =
+        (0..10_000).map(|i| world.spawn((Position(i as f32, 0.0, 0.0), Velocity(1.0, 0.0, 0.0)))).collect();
     let archetype = world.archetypes().iter().find(|a| a.len() == 10_000).expect("archetype");
     assert!(archetype.chunk_count() > 1);
     assert!(archetype.chunk_capacity() * (size_of::<Position>() + size_of::<Velocity>()) <= CHUNK_SIZE);

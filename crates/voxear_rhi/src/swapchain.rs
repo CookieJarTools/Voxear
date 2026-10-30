@@ -53,8 +53,7 @@ impl Swapchain {
     }
 
     fn build(&mut self, gpu: &Gpu, width: u32, height: u32) -> Result<()> {
-        let caps =
-            unsafe { gpu.surface_loader.get_physical_device_surface_capabilities(gpu.physical, self.surface)? };
+        let caps = unsafe { gpu.surface_loader.get_physical_device_surface_capabilities(gpu.physical, self.surface)? };
         let extent = if caps.current_extent.width != u32::MAX {
             caps.current_extent
         } else {

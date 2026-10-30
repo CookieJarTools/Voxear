@@ -207,7 +207,8 @@ impl Lifecycle {
         debug_assert!(matches!(phase, Phase::FixedUpdate | Phase::Update | Phase::LateUpdate));
         if self.running_dirty {
             self.running.clear();
-            self.running.extend(self.records.iter().filter(|(_, r)| r.started && r.enabled && !r.destroying).map(|(h, _)| *h));
+            self.running
+                .extend(self.records.iter().filter(|(_, r)| r.started && r.enabled && !r.destroying).map(|(h, _)| *h));
             sort_by_order(&self.records, &mut self.running);
             self.running_dirty = false;
         }
@@ -423,10 +424,7 @@ mod tests {
         lifecycle.register(Registration { enabled: false, ..reg(0, 0) });
         lifecycle.register(reg(1, 0));
         lifecycle.flush(&mut host);
-        assert_eq!(
-            host.log,
-            vec![(Phase::Awake, vec![0, 1]), (Phase::OnEnable, vec![1]), (Phase::Start, vec![1])]
-        );
+        assert_eq!(host.log, vec![(Phase::Awake, vec![0, 1]), (Phase::OnEnable, vec![1]), (Phase::Start, vec![1])]);
 
         host.log.clear();
         lifecycle.set_enabled(BehaviourHandle(0), true);

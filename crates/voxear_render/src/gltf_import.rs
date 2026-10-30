@@ -58,7 +58,8 @@ pub fn import(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, path: &Pa
 impl Importer<'_> {
     fn visit(&mut self, node: &gltf::Node, parent: Mat4) -> Result<()> {
         let (translation, rotation, scale) = node.transform().decomposed();
-        let local = Mat4::from_scale_rotation_translation(Vec3::from(scale), mirror_rotation(rotation), mirror(translation));
+        let local =
+            Mat4::from_scale_rotation_translation(Vec3::from(scale), mirror_rotation(rotation), mirror(translation));
         let world = parent * local;
 
         if let Some(mesh) = node.mesh() {

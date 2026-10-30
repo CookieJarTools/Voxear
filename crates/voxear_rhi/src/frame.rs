@@ -130,7 +130,8 @@ impl Frames {
             let wait = [present_ready];
             let swapchains = [swapchain.handle];
             let indices = [acquired.index];
-            let info = vk::PresentInfoKHR::default().wait_semaphores(&wait).swapchains(&swapchains).image_indices(&indices);
+            let info =
+                vk::PresentInfoKHR::default().wait_semaphores(&wait).swapchains(&swapchains).image_indices(&indices);
             match gpu.swapchain_loader.queue_present(gpu.queue, &info) {
                 Ok(suboptimal) => Ok(suboptimal || acquired.suboptimal),
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(true),

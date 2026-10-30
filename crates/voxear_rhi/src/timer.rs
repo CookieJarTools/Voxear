@@ -22,7 +22,8 @@ impl GpuTimer {
     pub fn new(gpu: &Gpu, slots: usize) -> Result<Self> {
         let mut queries = Vec::with_capacity(slots);
         for _ in 0..slots {
-            let info = vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::TIMESTAMP).query_count(MAX_SCOPES * 2);
+            let info =
+                vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::TIMESTAMP).query_count(MAX_SCOPES * 2);
             let pool = unsafe { gpu.device.create_query_pool(&info, None)? };
             unsafe { gpu.device.reset_query_pool(pool, 0, MAX_SCOPES * 2) };
             queries.push(SlotQueries { pool, names: Vec::new() });

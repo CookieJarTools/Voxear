@@ -12,12 +12,14 @@ struct VertexOut
     float4 tangent : TANGENT;
     float2 uv : TEXCOORD0;
     nointerpolation uint material : MATERIAL;
+    nointerpolation uint lod : LOD;
 };
 
 [shader("vertex")]
 VertexOut vertexMain(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex)
 {
-    Instance instance = push.instances[push.drawInstances[drawId]];
+    uint lod;
+    Instance instance = push.instances[drawInstance(drawId, lod)];
     Mesh mesh = push.meshes[instance.mesh];
     Vertex v = push.vertices[mesh.vertexOffset + vertexId];
     float4 world = transform(instance.model, float4(v.position, 1.0));
@@ -29,6 +31,7 @@ VertexOut vertexMain(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex)
     o.tangent = float4(transform(instance.model, float4(v.tangent.xyz, 0.0)).xyz, v.tangent.w);
     o.uv = v.uv;
     o.material = instance.material;
+    o.lod = lod;
     return o;
 }
 
@@ -109,6 +112,60 @@ float3 surfaceNormal(VertexOut input, Material material)
     return normalize(t * m.x + b * m.y + n * m.z);
 }
 
+static const float2 CASCADE_TILES[CASCADES] = { float2(0.0, 0.0), float2(0.5, 0.0), float2(0.0, 0.5), float2(0.5, 0.5) };
+
+uint cascadeAt(Frame frame, float3 position)
+{
+    float depth = dot(position - frame.cameraPosition, frame.cameraForward);
+    uint cascade = 0;
+    while (cascade < CASCADES && depth > frame.cascadeFar[cascade])
+    {
+        cascade++;
+    }
+    return cascade;
+}
+
+// 3x3 taps of hardware 2x2 PCF across one cascade's tile of the atlas.
+float sunShadow(Frame frame, float3 position, float3 normal)
+{
+    uint cascade = cascadeAt(frame, position);
+    if (frame.shadowTexture == NO_TEXTURE || cascade >= CASCADES)
+    {
+        return 1.0;
+    }
+    float3 offsetPosition = position + normal * frame.cascadeTexel[cascade] * 1.5;
+    float4 clip = transform(frame.cascadeViewProj[cascade], float4(offsetPosition, 1.0));
+    float2 uv = clip.xy * 0.5 + 0.5;
+    if (any(uv < 0.0) || any(uv > 1.0) || clip.z > 1.0)
+    {
+        return 1.0;
+    }
+
+    float texel = 0.5 / float(push.size.x);
+    float2 tile = CASCADE_TILES[cascade];
+    float2 low = tile + texel * 1.5;
+    float2 high = tile + 0.5 - texel * 1.5;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            float2 atlasUv = clamp(tile + uv * 0.5 + float2(x, y) * texel * 2.0, low, high);
+            lit += textures[frame.shadowTexture].SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, clip.z);
+        }
+    }
+    return lit / 9.0;
+}
+
+float3 debugColor(uint index)
+{
+    static const float3 PALETTE[6] = {
+        float3(0.20, 0.80, 0.30), float3(0.95, 0.85, 0.20), float3(0.95, 0.50, 0.15),
+        float3(0.90, 0.20, 0.20), float3(0.70, 0.25, 0.85), float3(0.25, 0.45, 0.95),
+    };
+    return PALETTE[min(index, 5)];
+}
+
 [shader("fragment")]
 float4 fragmentMain(VertexOut input) : SV_Target
 {
@@ -130,7 +187,8 @@ float4 fragmentMain(VertexOut input) : SV_Target
     s.diffuse = base.rgb * (1.0 - metallic);
     s.f0 = lerp(float3(0.04), base.rgb, metallic);
 
-    float3 color = shade(s, -frame.sunDirection, frame.sunColor);
+    float shadow = sunShadow(frame, input.worldPosition, s.normal);
+    float3 color = shade(s, -frame.sunDirection, frame.sunColor) * shadow;
     for (uint i = 0; i < frame.lightCount; i++)
     {
         color += shadeLocalLight(s, push.lights[i], input.worldPosition);
@@ -144,5 +202,14 @@ float4 fragmentMain(VertexOut input) : SV_Target
     color += ambient * (s.diffuse + ambientFresnel * (1.0 - s.roughness * 0.7));
 
     color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+
+    if (frame.debugView == DEBUG_VIEW_LOD)
+    {
+        color = debugColor(input.lod) * (0.35 + 0.65 * shadow * saturate(dot(s.normal, -frame.sunDirection)));
+    }
+    else if (frame.debugView == DEBUG_VIEW_CASCADES)
+    {
+        color *= lerp(float3(1.0), debugColor(cascadeAt(frame, input.worldPosition)), 0.5);
+    }
     return float4(color, 1.0);
 }

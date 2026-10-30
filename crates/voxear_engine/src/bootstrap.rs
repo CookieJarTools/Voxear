@@ -15,25 +15,57 @@ use crate::{
 /// meshes are skipped but behaviours, cameras and lights are still created.
 pub fn spawn_objs(engine: &mut Engine, mut renderer: Option<&mut Renderer>, project: &Project) -> Result<()> {
     for spec in &project.file.objs {
-        let entity = engine.spawn_obj(&spec.name, transform(spec), &spec.behaviours)?;
-        if let Some(camera) = &spec.camera {
-            engine.world.insert(entity, Camera { fov_y_degrees: camera.fov, exposure: camera.exposure, ..Camera::default() });
+        for (name, offset) in copies(spec) {
+            spawn(engine, renderer.as_deref_mut(), project, spec, &name, offset)?;
         }
-        if let Some(light) = &spec.light {
-            engine.world.insert(entity, light_component(light));
-        }
-        let (Some(mesh), Some(renderer)) = (&spec.mesh, renderer.as_deref_mut()) else { continue };
-        attach_mesh(engine, renderer, project, spec, entity, mesh)
-            .with_context(|| format!("loading the mesh for {}", spec.name))?;
     }
     Ok(())
 }
 
-fn transform(spec: &ObjSpec) -> Transform {
+fn spawn(
+    engine: &mut Engine,
+    renderer: Option<&mut Renderer>,
+    project: &Project,
+    spec: &ObjSpec,
+    name: &str,
+    offset: Vec3,
+) -> Result<()> {
+    let entity = engine.spawn_obj(name, transform(spec, offset), &spec.behaviours)?;
+    if let Some(camera) = &spec.camera {
+        engine
+            .world
+            .insert(entity, Camera { fov_y_degrees: camera.fov, exposure: camera.exposure, ..Camera::default() });
+    }
+    if let Some(light) = &spec.light {
+        engine.world.insert(entity, light_component(light));
+    }
+    let (Some(mesh), Some(renderer)) = (&spec.mesh, renderer) else { return Ok(()) };
+    attach_mesh(engine, renderer, project, spec, entity, mesh).with_context(|| format!("loading the mesh for {name}"))
+}
+
+/// One copy, or one per cell of the spec's grid, with names and offsets.
+fn copies(spec: &ObjSpec) -> Vec<(String, Vec3)> {
+    let Some([nx, ny, nz]) = spec.grid else {
+        return vec![(spec.name.clone(), Vec3::ZERO)];
+    };
+    let spacing = Vec3::from(spec.spacing);
+    let mut copies = Vec::with_capacity((nx * ny * nz) as usize);
+    for z in 0..nz {
+        for y in 0..ny {
+            for x in 0..nx {
+                let offset = Vec3::new(x as f32, y as f32, z as f32) * spacing;
+                copies.push((format!("{} ({x},{y},{z})", spec.name), offset));
+            }
+        }
+    }
+    copies
+}
+
+fn transform(spec: &ObjSpec, offset: Vec3) -> Transform {
     let [x, y, z] = spec.rotation.map(f32::to_radians);
     // Unity applies Z, then X, then Y: R = Ry · Rx · Rz.
     let rotation = Quat::from_euler(EulerRot::YXZ, y, x, z);
-    Transform::new(Vec3::from(spec.position), rotation, Vec3::from(spec.scale))
+    Transform::new(Vec3::from(spec.position) + offset, rotation, Vec3::from(spec.scale))
 }
 
 fn attach_mesh(

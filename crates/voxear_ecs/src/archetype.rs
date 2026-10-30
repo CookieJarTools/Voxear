@@ -223,7 +223,11 @@ impl Archetype {
             unsafe {
                 for column in 0..self.columns.len() {
                     let size = self.columns[column].size;
-                    ptr::copy_nonoverlapping(self.ptr(last_chunk, column, last_row), self.ptr(chunk, column, row), size);
+                    ptr::copy_nonoverlapping(
+                        self.ptr(last_chunk, column, last_row),
+                        self.ptr(chunk, column, row),
+                        size,
+                    );
                 }
                 let entities = self.chunks[chunk].data.as_ptr().cast::<Entity>();
                 let moved = self.entities_ptr(last_chunk).add(last_row).read();

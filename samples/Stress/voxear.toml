@@ -1,0 +1,39 @@
+[project]
+name = "Stress"
+
+# A culling and LOD test: 1,600 dense spheres stretching into the distance,
+# half of them behind a wall. `vox render samples/Stress --debug-view lod`
+# colours each sphere by the LOD the GPU picked for it.
+
+[[objs]]
+name = "Main Camera"
+position = [0.0, 3.0, -12.0]
+rotation = [8.0, 0.0, 0.0]
+camera = { fov = 60 }
+
+[[objs]]
+name = "Sun"
+rotation = [38.0, -40.0, 0.0]
+light = { type = "directional", color = [1.0, 0.95, 0.88], intensity = 3.2 }
+
+[[objs]]
+name = "Ground"
+mesh = "plane"
+scale = [400.0, 1.0, 400.0]
+material = { color = [0.40, 0.42, 0.44], roughness = 0.9 }
+
+[[objs]]
+name = "Wall"
+position = [-10.5, 3.0, -2.0]
+scale = [21.0, 6.0, 0.5]
+mesh = "cube"
+material = { color = [0.85, 0.82, 0.78], roughness = 0.7 }
+
+[[objs]]
+name = "Ball"
+position = [-39.0, 1.0, 4.0]
+mesh = "sphere"
+scale = [2.0, 2.0, 2.0]
+grid = [40, 1, 40]
+spacing = [2.0, 2.0, 4.0]
+material = { color = [0.55, 0.36, 0.96], roughness = 0.4 }

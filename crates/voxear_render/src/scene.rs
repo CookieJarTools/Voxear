@@ -7,7 +7,8 @@ use voxear_scene::{Transform, WorldTransform};
 
 use crate::{
     assets::{MaterialHandle, MeshHandle},
-    gpu::{GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT, cols, vec3},
+    gpu::{GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT, NO_TEXTURE, cols, vec3},
+    shadows::{self, CASCADES},
 };
 
 /// Renders the scene from this Obj, looking along its +Z like Unity.
@@ -47,7 +48,14 @@ impl Component for Light {}
 
 impl Light {
     pub fn directional(color: Vec3, intensity: f32) -> Self {
-        Self { kind: LightKind::Directional, color, intensity, range: 0.0, spot_inner_degrees: 0.0, spot_outer_degrees: 0.0 }
+        Self {
+            kind: LightKind::Directional,
+            color,
+            intensity,
+            range: 0.0,
+            spot_inner_degrees: 0.0,
+            spot_outer_degrees: 0.0,
+        }
     }
 
     pub fn point(color: Vec3, intensity: f32, range: f32) -> Self {
@@ -78,6 +86,22 @@ pub struct ExtractedFrame {
     pub frame: GpuFrame,
     pub instances: Vec<GpuInstance>,
     pub lights: Vec<GpuLight>,
+    /// A directional light exists, so the sun's shadow cascades are needed.
+    pub has_sun: bool,
+}
+
+/// Per-view settings that are not part of the scene.
+#[derive(Clone, Copy, Debug)]
+pub struct ViewOptions {
+    pub debug_view: u32,
+    /// Largest LOD error allowed on screen, in pixels.
+    pub lod_threshold: f32,
+}
+
+impl Default for ViewOptions {
+    fn default() -> Self {
+        Self { debug_view: 0, lod_threshold: 1.0 }
+    }
 }
 
 /// Sky colours when the scene has no sky settings: a clear midday.
@@ -85,23 +109,34 @@ const SKY_ZENITH: Vec3 = Vec3::new(0.23, 0.45, 0.85);
 const SKY_HORIZON: Vec3 = Vec3::new(0.62, 0.72, 0.86);
 const GROUND: Vec3 = Vec3::new(0.22, 0.2, 0.18);
 
-pub fn extract(world: &World, width: u32, height: u32, time: f32) -> ExtractedFrame {
+pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &ViewOptions) -> ExtractedFrame {
     let aspect = width as f32 / height.max(1) as f32;
-    let (camera, transform) = world
-        .query_ref::<(&Camera, &Transform)>()
+    let (camera, position, rotation) = world
+        .query_ref::<(&Camera, &Transform, Option<&WorldTransform>)>()
         .into_iter()
         .next()
-        .map(|(c, t)| (*c, *t))
-        .unwrap_or((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.0, -5.0))));
+        .map(|(camera, local, world)| {
+            let (_, rotation, position) =
+                world.map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());
+            (*camera, position, rotation)
+        })
+        .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));
 
     let fov = camera.fov_y_degrees.to_radians();
-    let view = Mat4::from_rotation_translation(transform.rotation, transform.position).inverse();
+    let view = Mat4::from_rotation_translation(rotation, position).inverse();
     let view_proj = vulkan::perspective_infinite_reverse(fov, aspect, camera.near) * view;
 
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
-        planes: frustum_planes(transform.position, transform.rotation, fov, aspect, camera.near),
-        camera_position: vec3(transform.position),
+        planes: frustum_planes(position, rotation, fov, aspect, camera.near),
+        camera_position: vec3(position),
+        camera_forward: vec3(rotation * Vec3::Z),
+        near: camera.near,
+        lod_scale: height as f32 / (2.0 * (fov * 0.5).tan()),
+        lod_threshold: options.lod_threshold,
+        debug_view: options.debug_view,
+        hiz_texture: NO_TEXTURE,
+        shadow_texture: NO_TEXTURE,
         time,
         sun_direction: vec3(Vec3::new(0.3, -0.8, 0.5).normalize()),
         sun_color: [0.0; 3],
@@ -140,6 +175,17 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32) -> ExtractedFr
     }
     frame.light_count = lights.len() as u32;
 
+    if sun_found {
+        let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near };
+        let cascades = shadows::cascades(&view, Vec3::from(frame.sun_direction));
+        for (i, cascade) in cascades.iter().enumerate().take(CASCADES) {
+            frame.cascade_view_proj[i] = cols(cascade.view_proj);
+            frame.cascade_planes[i] = cascade.planes;
+            frame.cascade_far[i] = cascade.far;
+            frame.cascade_texel[i] = cascade.texel;
+        }
+    }
+
     let instances: Vec<GpuInstance> = world
         .query_ref::<(&MeshRenderer, &Transform, Option<&WorldTransform>)>()
         .into_iter()
@@ -160,7 +206,7 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32) -> ExtractedFr
         .collect();
     frame.instance_count = instances.len() as u32;
 
-    ExtractedFrame { frame, instances, lights }
+    ExtractedFrame { frame, instances, lights, has_sun: sun_found }
 }
 
 /// Inward-facing side and near planes of an infinite perspective frustum.

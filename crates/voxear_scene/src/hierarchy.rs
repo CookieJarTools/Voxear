@@ -84,7 +84,11 @@ mod tests {
     #[test]
     fn children_follow_their_parents() {
         let mut world = World::new();
-        let root = world.spawn(Transform::new(Vec3::new(10.0, 0.0, 0.0), Quat::from_rotation_y(90f32.to_radians()), Vec3::ONE));
+        let root = world.spawn(Transform::new(
+            Vec3::new(10.0, 0.0, 0.0),
+            Quat::from_rotation_y(90f32.to_radians()),
+            Vec3::ONE,
+        ));
         let child = world.spawn((Transform::from_position(Vec3::new(0.0, 0.0, 1.0)), Parent(root)));
         let grandchild = world.spawn((Transform::from_position(Vec3::new(0.0, 2.0, 0.0)), Parent(child)));
 

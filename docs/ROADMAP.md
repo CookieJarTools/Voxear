@@ -32,14 +32,24 @@ Done so far:
 - **glTF import:** mirrored to Unity's coordinates, with textures and mips.
 - **Hierarchy:** parent/child transforms.
 - **Rendering modes:** headless offscreen rendering (`vox render`), and RenderDoc capture (F12 or `--renderdoc`).
+- **Two-phase Hi-Z occlusion culling.**
+  - The early pass draws what was visible last frame.
+  - A depth pyramid is built from that depth.
+  - The late pass draws whatever newly became visible, and records visibility for the next frame.
+  - GPU counters report what was culled, and why.
+- **Automatic LODs:** generated on import with meshoptimizer, and chosen per instance on the GPU by screen-space
+  error.
+- **Sun shadows:** four cascades fitted to stable spheres and snapped to texels, rendered from GPU-culled draw
+  lists, with 3×3 hardware PCF.
+- **Debug views:** LOD colours and shadow cascades (`--debug-view`, or F2/F3 in the window).
+- **The `samples/Stress` scene:** 1,600 spheres and a wall, for exercising culling and LOD.
 
 Still to do in M1:
 - Shader hot reload.
 - Clustered lights; today every light is looped over per pixel.
-- Cascaded shadows.
-- Two-phase Hi-Z occlusion culling.
-- Meshlets and LOD.
-- Debug views.
+- Dithered LOD cross-fades.
+- Meshlet-level culling (planned for M5).
+- Shadows for point and spot lights.
 
 The original M1 scope:
 

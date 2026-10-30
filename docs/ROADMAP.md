@@ -172,7 +172,9 @@ Done so far:
 - **Markup and style sheets:** `.vui` documents and `.vss` sheets in the spirit of UXML and USS: USS's
   selectors, the CSS cascade with inherited text and `var()` theme tokens, `oklch()` colours, and warnings that
   name the file and line.
-- **Pointer:** `:hover`, `:active` and clicks.
+- **Pointer:** `:hover`, `:active`, clicks and the wheel.
+- **Controls:** ScrollView with clipping and a floating scrollbar, and virtualized ListView and TreeView, which
+  keep elements only for the rows on screen. A list of 100,000 items makes 11 rows.
 - **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`,
   written as `StatsOverlay.vui` and `.vss`. Clicking its header folds it.
 
@@ -180,7 +182,11 @@ Still to do in M3:
 - UI core:
   - transitions
   - keyboard focus and text input
-  - clipping and scrolling
+  - toggles, sliders, foldouts, dropdowns, tabs and split views
+  - grid layout properties
+- **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
+  grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
+  custom drawers in C#.
 - OKLCH theme tokens.
 - Docking, Hierarchy (with instance badges), Inspector, Project, Scene and Game views, and Console.
 - Command palette (Ctrl+K), gizmos, selection, undo/redo, play mode, and C# hot reload.

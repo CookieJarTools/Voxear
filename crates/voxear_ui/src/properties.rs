@@ -5,7 +5,8 @@
 //! `flex`, `flex-direction`, `flex-grow`, `flex-shrink`, `flex-basis`,
 //! `flex-wrap`, `align-items`, `align-self`, `align-content` and
 //! `justify-content`. Look: `background-color`, `border`, `border-width`,
-//! `border-color`, `border-radius`, `opacity` and `pointer-events`. Text,
+//! `border-color`, `border-radius`, `opacity`, `pointer-events`, `overflow`
+//! (`visible`, `hidden`, or `scroll`/`auto`) and `scrollbar-color`. Text,
 //! which children inherit: `color`, `font-size`, `font-weight` and
 //! `font-family` (`sans` or `mono`).
 //!
@@ -21,7 +22,7 @@ use taffy::{
     Position, Rect, Size,
 };
 
-use crate::{Color, Family, Style, TextStyle};
+use crate::{Color, Family, Overflow, Style, TextStyle};
 
 /// Applies one declaration, after replacing its variables. Errors say what
 /// was wrong, for the caller to report with the declaration's place.
@@ -91,7 +92,9 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
     match name {
         "display" => layout.display = keyword(input, &[("flex", Display::Flex), ("none", Display::None)])?,
         "position" => {
-            layout.position = keyword(input, &[("relative", Position::Relative), ("absolute", Position::Absolute)])?
+            let positions =
+                [("relative", Position::Relative), ("absolute", Position::Absolute), ("static", Position::Static)];
+            layout.position = keyword(input, &positions)?
         }
         "left" => layout.inset.left = length_auto(input)?,
         "top" => layout.inset.top = length_auto(input)?,
@@ -153,6 +156,16 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "border-radius" => style.radius = pixels(input)?,
         "opacity" => style.opacity = number(input)?.clamp(0.0, 1.0),
         "pointer-events" => style.pickable = keyword(input, &[("auto", true), ("none", false)])?,
+        "overflow" => {
+            let modes = [
+                ("visible", Overflow::Visible),
+                ("hidden", Overflow::Hidden),
+                ("scroll", Overflow::Scroll),
+                ("auto", Overflow::Scroll),
+            ];
+            style.overflow = keyword(input, &modes)?;
+        }
+        "scrollbar-color" => style.scrollbar = color(input)?,
         "color" => text.color = color(input)?,
         "font-size" => text.size = pixels(input)?,
         "font-weight" => {

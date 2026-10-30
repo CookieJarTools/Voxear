@@ -8,7 +8,7 @@ use parley::{FontContext, FontWeight, Layout, LayoutContext, StyleProperty};
 use taffy::{AvailableSpace, Dimension, Display, Size, TaffyTree};
 
 use crate::{
-    Style, TextStyle, UiFrame,
+    Quad, Style, TextStyle, UiFrame,
     atlas::GlyphAtlas,
     draw::{Draw, measure},
     selector::States,
@@ -28,6 +28,12 @@ pub enum Kind {
     Label,
     /// Text that can be clicked.
     Button,
+    /// A panel whose children scroll.
+    ScrollView,
+    /// A scrolling list that only has elements for the rows on screen.
+    ListView,
+    /// A [`Kind::ListView`] of rows that open and close, as in a hierarchy.
+    TreeView,
 }
 
 impl Kind {
@@ -36,6 +42,9 @@ impl Kind {
             Kind::Panel => "Panel",
             Kind::Label => "Label",
             Kind::Button => "Button",
+            Kind::ScrollView => "ScrollView",
+            Kind::ListView => "ListView",
+            Kind::TreeView => "TreeView",
         }
     }
 }
@@ -58,6 +67,13 @@ pub(crate) struct Element {
     pub computed: Style,
     pub text_style: TextStyle,
     pub text: Option<Text>,
+    /// How far its children are scrolled, and how far they can be.
+    pub scroll: [f32; 2],
+    pub scroll_max: [f32; 2],
+    /// The rows and items of a list or tree view.
+    pub list: Option<Box<crate::list::ListState>>,
+    /// For a list's row: the list, so a click on it selects it.
+    pub row_of: Option<taffy::NodeId>,
 }
 
 impl Element {
@@ -74,6 +90,10 @@ impl Element {
             inline: Vec::new(),
             text_style: TextStyle::default(),
             text: None,
+            scroll: [0.0; 2],
+            scroll_max: [0.0; 2],
+            list: None,
+            row_of: None,
         }
     }
 }
@@ -120,6 +140,11 @@ pub struct Ui {
     pub(crate) restyle: bool,
     pub(crate) pointer: crate::pointer::Pointer,
     pub(crate) warnings: Vec<String>,
+    /// Elements that scroll, as of the last cascade.
+    pub(crate) scrollers: Vec<taffy::NodeId>,
+    /// List and tree views, which make rows as they scroll.
+    pub(crate) lists: Vec<taffy::NodeId>,
+    pub(crate) modifiers: crate::pointer::Modifiers,
 }
 
 impl Default for Ui {
@@ -149,6 +174,9 @@ impl Ui {
             restyle: true,
             pointer: Default::default(),
             warnings: Vec::new(),
+            scrollers: Vec::new(),
+            lists: Vec::new(),
+            modifiers: Default::default(),
         }
     }
 
@@ -374,6 +402,8 @@ impl Ui {
         }
         let _ = self.tree.remove(node.0);
         self.pointer.forget(node.0);
+        self.lists.retain(|&n| n != node.0);
+        self.scrollers.retain(|&n| n != node.0);
         self.restyle = true;
     }
 
@@ -388,15 +418,17 @@ impl Ui {
         self.element(node).map(|e| e.text_style)
     }
 
-    /// Where an element was laid out by the last frame: left, top, width and
-    /// height in logical pixels from the screen's top left.
+    /// Where an element was laid out by the last frame, as it is seen on
+    /// screen (scrolled): left, top, width and height in logical pixels from
+    /// the screen's top left.
     pub fn rect(&self, node: NodeId) -> [f32; 4] {
         let Ok(layout) = self.tree.layout(node.0) else { return [0.0; 4] };
         let (mut x, mut y) = (layout.location.x, layout.location.y);
         let mut at = node.0;
         while let Some(parent) = self.tree.parent(at) {
             let location = self.tree.layout(parent).map(|l| l.location).unwrap_or_default();
-            (x, y) = (x + location.x, y + location.y);
+            let scroll = self.tree.get_node_context(parent).map_or([0.0; 2], |e| e.scroll);
+            (x, y) = (x + location.x - scroll[0], y + location.y - scroll[1]);
             at = parent;
         }
         [x, y, layout.size.width, layout.size.height]
@@ -426,6 +458,15 @@ impl Ui {
             self.cascade();
         }
         self.layout(width, height, scale);
+        self.update_scroll_limits();
+        // Lists make and bind the rows now on screen, which then need laying out.
+        if self.update_lists() {
+            if std::mem::take(&mut self.restyle) {
+                self.cascade();
+            }
+            self.layout(width, height, scale);
+            self.update_scroll_limits();
+        }
         let scale = self.viewport.2;
         let mut quads = Vec::new();
         // An atlas that filled up starts again part way through, so the
@@ -434,26 +475,28 @@ impl Ui {
             quads.clear();
             self.atlas.restarted = false;
             let mut draw = Draw { tree: &mut self.tree, atlas: &mut self.atlas, scale, quads: &mut quads };
-            draw.node(self.root, (0.0, 0.0), 1.0);
+            draw.node(self.root, (0.0, 0.0), 1.0, Quad::UNCLIPPED);
             if !self.atlas.restarted {
                 break;
             }
         }
         self.pointer.clicks.clear();
-        UiFrame { quads, atlas: self.atlas.take_upload() }
+        self.clear_selection_changes();
+        UiFrame { quads, atlas: self.atlas.snapshot() }
     }
 
     fn layout(&mut self, width: u32, height: u32, scale: f32) {
         let scale = scale.max(0.25);
         let viewport = (width as f32 / scale, height as f32 / scale, scale);
-        if viewport != self.viewport {
-            if viewport.2 != self.viewport.2 {
-                self.reshape(self.root);
-            }
-            let size = Size { width: Dimension::length(viewport.0), height: Dimension::length(viewport.1) };
+        if viewport.2 != self.viewport.2 {
+            self.reshape(self.root);
+        }
+        self.viewport = viewport;
+        // The cascade may have replaced the root's style, so its size is checked every frame.
+        let size = Size { width: Dimension::length(viewport.0), height: Dimension::length(viewport.1) };
+        if self.tree.style(self.root).is_ok_and(|style| style.size != size) {
             let style = taffy::Style { size, ..self.tree.style(self.root).cloned().unwrap_or_default() };
             let _ = self.tree.set_style(self.root, style);
-            self.viewport = viewport;
         }
         let (fonts, layouts) = (&mut self.fonts, &mut self.layouts);
         let space = Size { width: AvailableSpace::Definite(viewport.0), height: AvailableSpace::Definite(viewport.1) };

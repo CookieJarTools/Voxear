@@ -66,18 +66,19 @@ fn frames_draw_shapes_then_glyphs_and_upload_the_atlas_once() {
     assert_eq!(shapes[0].radius, 8.0);
     assert_eq!(glyphs(&frame.quads), 6);
     assert_eq!(frame.quads[0].kind, Quad::SHAPE, "the panel is under its text");
-    let atlas = frame.atlas.expect("the first frame uploads the atlas");
+    let atlas = frame.atlas.expect("the first frame has the atlas");
     assert!(atlas.pixels.iter().any(|&p| p > 200), "glyphs were rasterised");
     for glyph in frame.quads.iter().filter(|q| q.kind == Quad::GLYPH) {
         assert_eq!(glyph.rect[0].fract(), 0.0, "glyphs sit on whole pixels");
         assert_eq!(glyph.rect[1].fract(), 0.0, "glyphs sit on whole pixels");
     }
 
-    assert!(ui.frame(WIDTH, HEIGHT, 1.0).atlas.is_none(), "nothing new to upload");
+    let same = ui.frame(WIDTH, HEIGHT, 1.0).atlas.unwrap();
+    assert!(std::sync::Arc::ptr_eq(&same, &atlas), "nothing new, so the same image, uncopied");
     ui.set_text(label, "Voxear!");
     let frame = ui.frame(WIDTH, HEIGHT, 1.0);
     assert_eq!(glyphs(&frame.quads), 7);
-    assert!(frame.atlas.is_some(), "the new glyph was added");
+    assert!(frame.atlas.unwrap().version > atlas.version, "the new glyph made a new version");
 }
 
 #[test]
@@ -122,7 +123,7 @@ fn display_scale_draws_at_physical_size() {
     let height = |quads: &[Quad]| quads.iter().filter(|q| q.kind == Quad::GLYPH).map(|q| q.rect[3]).fold(0.0, f32::max);
     let (small, large) = (height(&one.quads), height(&two.quads));
     assert!(large > small * 1.7, "glyphs rasterised at the larger size: {small} then {large}");
-    assert!(two.atlas.is_some(), "new sizes were rasterised");
+    assert!(two.atlas.unwrap().version > one.atlas.unwrap().version, "new sizes were rasterised");
 }
 
 #[test]

@@ -200,7 +200,10 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(position) => position.y as f32 / 40.0,
                 };
-                self.fly.scroll(notches);
+                // UI under the pointer scrolls first; otherwise the wheel sets the fly speed.
+                if self.fly.is_looking() || !self.overlay.pointer_scroll(-notches * 40.0) {
+                    self.fly.scroll(notches);
+                }
             }
             WindowEvent::Focused(false) => self.set_flying(false),
             WindowEvent::RedrawRequested => {

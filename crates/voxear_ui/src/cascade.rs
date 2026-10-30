@@ -9,7 +9,7 @@ use std::{collections::HashMap, rc::Rc};
 use taffy::Display;
 
 use crate::{
-    TextStyle, Ui, properties,
+    Overflow, TextStyle, Ui, properties,
     selector::{Facts, States},
     sheet::{Declaration, StyleSheet},
 };
@@ -20,6 +20,9 @@ struct Inherited {
     vars: Rc<HashMap<String, String>>,
     /// Sheets in effect, each with how far down it was attached.
     sheets: Vec<(Rc<StyleSheet>, usize)>,
+    /// The parent scrolls, so its children keep their size instead of
+    /// shrinking to fit, as in Unity's ScrollView.
+    in_scroller: bool,
 }
 
 /// An ancestor as selectors see it, owned so the tree can change meanwhile.
@@ -38,7 +41,8 @@ impl Seen {
 
 impl Ui {
     pub(crate) fn cascade(&mut self) {
-        let top = Inherited { text: TextStyle::default(), vars: Rc::default(), sheets: Vec::new() };
+        self.scrollers.clear();
+        let top = Inherited { text: TextStyle::default(), vars: Rc::default(), sheets: Vec::new(), in_scroller: false };
         let mut warnings = Vec::new();
         self.cascade_node(self.root, &top, &mut Vec::new(), &mut warnings);
         self.warn(warnings);
@@ -68,6 +72,9 @@ impl Ui {
             Rc::make_mut(&mut vars).insert(declaration.name.clone(), declaration.value.clone());
         }
         let mut style = base.clone();
+        if parent.in_scroller {
+            style.layout.flex_shrink = 0.0;
+        }
         let mut text = base_text.unwrap_or(parent.text);
         for (declaration, source) in declarations.iter().filter(|(d, _)| !d.name.starts_with("--")) {
             if let Err(message) = properties::apply(&mut style, &mut text, &declaration.name, &declaration.value, &vars)
@@ -78,6 +85,13 @@ impl Ui {
         // Hiding from code wins over sheets.
         if base.layout.display == Display::None {
             style.layout.display = Display::None;
+        }
+        // Scrollbars float over the content, so they take no room in the layout.
+        let clips =
+            if style.overflow == Overflow::Visible { taffy::Overflow::Visible } else { taffy::Overflow::Hidden };
+        style.layout.overflow = taffy::Point { x: clips, y: clips };
+        if style.overflow == Overflow::Scroll {
+            self.scrollers.push(node);
         }
 
         let element = self.tree.get_node_context_mut(node).expect("every node has an element");
@@ -97,7 +111,8 @@ impl Ui {
             let _ = self.tree.mark_dirty(node);
         }
 
-        let inherited = Inherited { text, vars, sheets };
+        let in_scroller = self.tree.get_node_context(node).is_some_and(|e| e.computed.overflow == Overflow::Scroll);
+        let inherited = Inherited { text, vars, sheets, in_scroller };
         for child in self.tree.children(node).unwrap_or_default() {
             self.cascade_node(child, &inherited, path, warnings);
         }

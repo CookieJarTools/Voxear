@@ -11,11 +11,14 @@
 //! </vui>
 //! ```
 //!
-//! Elements are `Panel`, `Label` and `Button`, each taking `name`, `class`
+//! Elements are `Panel`, `ScrollView`, `ListView`, `TreeView`, `Label` and
+//! `Button`, each taking `name`, `class`
 //! (several, separated by spaces) and `style` (declarations that win over
 //! sheets). A label's or button's text is its content, or its `text`
-//! attribute. `<Style src>` attaches a sheet to the element it is in, so it
-//! styles that element and everything in it.
+//! attribute. A list or tree view takes `item-height`, and gets its rows
+//! from code with [`Ui::bind_list`] or [`Ui::bind_tree`]. `<Style src>`
+//! attaches a sheet to the element it is in, so it styles that element and
+//! everything in it.
 
 use roxmltree::{Document, Node};
 
@@ -98,6 +101,25 @@ impl Ui {
                     self.attributes(node, child, &["name", "class", "style"], builder);
                     self.build_children(node, child, builder)?;
                 }
+                "ScrollView" => {
+                    let node = self.add(parent, Element::new(Kind::ScrollView, Style::column().scroll()));
+                    self.attributes(node, child, &["name", "class", "style"], builder);
+                    self.build_children(node, child, builder)?;
+                }
+                tag @ ("ListView" | "TreeView") => {
+                    if let Some(inner) = child.children().find(Node::is_element) {
+                        return Err(builder
+                            .error(inner, format!("a {tag}'s rows come from code, through bind_list or bind_tree")));
+                    }
+                    let kind = if tag == "ListView" { Kind::ListView } else { Kind::TreeView };
+                    let node = self.add(parent, Element::new(kind, Style::column().scroll()));
+                    self.attributes(node, child, &["name", "class", "style", "item-height"], builder);
+                    if let Some(height) = child.attribute("item-height") {
+                        let height = height.trim_end_matches("px").parse::<f32>();
+                        let height = height.map_err(|_| builder.error(child, "item-height is a number of pixels"))?;
+                        self.set_item_height(node, height);
+                    }
+                }
                 tag @ ("Label" | "Button") => {
                     if let Some(inner) = child.children().find(Node::is_element) {
                         return Err(builder.error(inner, format!("a {tag} holds only text")));
@@ -110,8 +132,8 @@ impl Ui {
                     self.attributes(node, child, &["name", "class", "style", "text"], builder);
                 }
                 other => {
-                    return Err(builder
-                        .error(child, format!("unknown element <{other}>; expected Panel, Label, Button or Style")));
+                    let known = "Panel, ScrollView, ListView, TreeView, Label, Button or Style";
+                    return Err(builder.error(child, format!("unknown element <{other}>; expected {known}")));
                 }
             }
         }

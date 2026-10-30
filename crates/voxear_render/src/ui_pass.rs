@@ -20,6 +20,8 @@ pub const MAX_UI_QUADS: u64 = 16 * 1024;
 pub(crate) struct UiGpu {
     quads: Vec<Quad>,
     atlas: Option<(Image, TextureId)>,
+    /// The version of the atlas on the GPU.
+    version: u64,
 }
 
 impl UiGpu {
@@ -29,8 +31,9 @@ impl UiGpu {
         }
         self.quads.clear();
         self.quads.extend(frame.quads.iter().take(MAX_UI_QUADS as usize));
-        if let Some(atlas) = &frame.atlas {
+        if let Some(atlas) = frame.atlas.as_deref().filter(|a| a.version != self.version) {
             self.upload(gpu, bindless, atlas)?;
+            self.version = atlas.version;
         }
         Ok(())
     }

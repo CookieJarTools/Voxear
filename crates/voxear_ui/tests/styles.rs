@@ -147,7 +147,10 @@ fn mistakes_are_reported_with_their_place() {
     assert!(ui.take_warnings().is_empty(), "each is reported once");
 
     let error = load(&mut ui, "<vui>\n  <Lable>Hi</Lable>\n</vui>", &[]).unwrap_err();
-    assert_eq!(error.0, "Test.vui:2:3: unknown element <Lable>; expected Panel, Label, Button or Style");
+    assert_eq!(
+        error.0,
+        "Test.vui:2:3: unknown element <Lable>; expected Panel, ScrollView, ListView, TreeView, Label, Button or Style"
+    );
     let error = load(&mut ui, "<vui><Style src=\"Missing.vss\" /></vui>", &[]).unwrap_err();
     assert!(error.0.contains("could not read Missing.vss"), "{error}");
     assert_eq!(ui.children(ui.root()).len(), 1, "a failed document leaves nothing behind");

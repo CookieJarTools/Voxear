@@ -223,7 +223,7 @@ fn parse_selector<'i>(input: &mut Parser<'i, '_>) -> Result<Selector, ParseError
                 } else {
                     let Some(state) = States::named(&state) else {
                         let message = format!(
-                            "unknown state ':{state}'; expected hover, active, focus, disabled, checked or root"
+                            "unknown state ':{state}'; expected hover, active, focus, disabled, checked, selected or root"
                         );
                         return Err(location.new_custom_error(message));
                     };

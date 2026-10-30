@@ -806,7 +806,7 @@ variants inherit from a parent and override only what differs.
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
-## UI (Voxear UI) *(implemented: tree, layout, text, drawing, markup, style sheets, pointer; transitions, widgets and C# planned)*
+## UI (Voxear UI) *(implemented: tree, layout, text, drawing, markup, style sheets, pointer, scroll/list/tree views; transitions, more controls and C# planned)*
 
 **Recommendation from research.** Build our own retained-mode UI on the Linebender and Servo crates, rendered by our
 own Vulkan code.
@@ -836,8 +836,13 @@ The building blocks are already the Rust standard, and all are MIT, Apache or MP
 What we write is the cascade, tokens, transitions, widgets, the renderer, and the C# binding layer.
 
 **What exists now** (`voxear_ui`, and the UI pass in `voxear_render`):
-- A retained tree of panels and labels, laid out by taffy's flexbox. Layout is in logical pixels; text is shaped
-  at the display scale, so hinting and line breaks match the pixels it lands on.
+- A retained tree of elements, laid out by **taffy**, a layout engine implementing CSS flexbox, grid and block
+  layout (Bevy's UI and Dioxus use it too). Flexbox is exposed today, and grid comes with the inspector's
+  two-column rows. Text joins the layout through a measure callback: parley shapes it at the width offered, so
+  wrapping text gets the right height. taffy caches layouts, so only what changed is laid out again.
+- Layout is in logical pixels; text is shaped at the display scale, so hinting and line breaks match the pixels
+  it lands on. Every element is positioned (`position: relative`), so `position: absolute` places a child in its
+  parent, as in Unity's UI Toolkit, not in the nearest positioned ancestor as CSS's `static` default would.
 - Text is shaped by parley from the system's fonts (fontique), Inter first for the UI and JetBrains Mono for
   numbers, with fallbacks. swash rasterises each glyph hinted at its physical size into a 1024² coverage atlas,
   packed in shelves, and glyphs are placed on whole pixels.
@@ -846,7 +851,8 @@ What we write is the cascade, tokens, transitions, widgets, the renderer, and th
 - The renderer draws every quad in one draw call after post-processing, from a per-frame buffer. Colours are linear
   and premultiplied and the output is sRGB, so blending happens in linear light. Text coverage is leaned back
   towards how the face looks in a design tool, since linear blending makes light text on dark look heavier.
-- The atlas uploads only when new glyphs appear; when it fills it starts again and redraws.
+- The atlas uploads only when new glyphs appear: every frame carries it shared and versioned, so the renderer
+  uploads a new version even if frames were skipped. When it fills it starts again and redraws.
 
 ```rust
 let mut ui = Ui::new();
@@ -905,8 +911,34 @@ how they look, as UXML and USS do in Unity:
 - Code finds elements by name with `ui.find(document, "gpu")`, and changes them with `set_text`, `add_class`,
   `set_enabled` and the like.
 
+**Controls** *(implemented: scroll, list and tree views)*:
+- **ScrollView**, or any element with `overflow: scroll`: children are clipped to its padding box and moved by
+  its scroll offset. The wheel scrolls the innermost one under the pointer that can still move that way, and
+  a thin scrollbar floats over the right edge, as in Linear, to drag or click. Children of a scrolling element
+  keep their size rather than shrinking to fit, as in Unity's ScrollView. Clipping happens in the vertex
+  shader, which trims each quad to its clip rectangle, and whatever lies wholly outside is never drawn.
+- **ListView** keeps elements only for the rows on screen, so 100,000 items cost what 20 do. As in Unity, rows
+  are built once by `make` and filled by `bind` whenever they show a different item, and are reused as the list
+  scrolls. Rows match `:selected`; a click selects, Ctrl adds or removes, and Shift extends.
+
+  ```rust
+  let log = ui.list_view(panel, 18.0, lines.len(), ItemFns {
+      make: |ui, row| { ui.label(row, "", TextStyle::default()); },
+      bind: move |ui, row, index| ui.set_text(ui.children(row)[0], &lines[index]),
+  });
+  ```
+
+  Markup can declare one (`<ListView name="log" item-height="18" />`), and code then gives it items with
+  `bind_list`, as Unity does with `itemsSource`.
+- **TreeView** is a list of the open items of a tree, by `u64` id: rows indent by depth, an arrow opens and
+  closes them, and selection follows items rather than rows. The Hierarchy and Project views are tree views.
+- **The editor is built from these.** Every long list in the editor (Hierarchy, Project, Console, inspector
+  arrays) is a virtualized list or tree view, never one element per item.
+
 **Still to come.**
 - Transitions and animations.
+- Keyboard focus and text fields, then toggles, sliders, foldouts, dropdowns, tabs and split views.
+- Grid layout properties.
 - Data binding to C#, using source generators instead of reflection.
 - A live-reloading UI builder in the editor.
 
@@ -952,6 +984,8 @@ Read Sifter's design before building it.
 - A **command palette** on Ctrl+K reaches every action, asset and setting.
 - Keyboard shortcuts appear everywhere, with fuzzy search in every list.
 - Selection-aware context actions.
+- Every long list (Hierarchy, Project, Console, inspector arrays) is a virtualized list or tree view, so a scene of
+  100,000 Objs scrolls as smoothly as one of 10.
 
 **Core.**
 - Undo and redo for every edit, as commands.
@@ -960,6 +994,50 @@ Read Sifter's design before building it.
   context unloads, the new build loads, and the state is restored.
 
 **Extending.** Custom inspectors, windows, gizmos and tools are written in C#, using the same Voxear UI.
+
+### The Inspector and its attributes *(planned, in M3)*
+
+**Easy.** Every serialized field shows with a fitting control and no code: numbers, vectors, colours, enums,
+`Ref<T>` and Obj pickers, nested `[Serializable]` types as foldouts, and arrays and lists as reorderable,
+virtualized list views.
+
+**Attributes, as Odin Inspector has them,** so designers get a tailored inspector from attributes on the field.
+They live in `Voxear.Core` beside `[SerializeField]`, so game code needs no editor reference, and cost nothing
+at runtime.
+
+```csharp
+[FoldoutGroup("Movement")] [Range(0, 20)] [Suffix("m/s")]
+[SerializeField] private float speed = 6;
+
+[FoldoutGroup("Movement")] [ShowIf(nameof(canFly))]
+[SerializeField] private float liftForce;
+
+[Required] [AssetsOnly] [InfoBox("Plays when the enemy is hit.")]
+[SerializeField] private Ref<Prefab> hitEffect;
+
+[Button("Bake path")] private void BakePath() { ... }
+```
+
+- **Grouping and layout:** `[FoldoutGroup]`, `[BoxGroup]`, `[TabGroup]`, `[HorizontalGroup]`, `[Title]`,
+  `[PropertyOrder]`, `[Indent]`, `[LabelText]`, `[HideLabel]`.
+- **Conditions:** `[ShowIf]`, `[HideIf]`, `[EnableIf]`, `[DisableIf]`, `[ReadOnly]`, `[HideInInspector]`, and
+  `[ShowInInspector]` for properties and runtime state.
+- **Values:** `[Range]`, `[MinValue]`, `[MaxValue]`, `[Suffix]`, `[Multiline]`, `[ProgressBar]`,
+  `[ValueDropdown]`, `[EnumToggleButtons]`, `[ColorPalette]`, `[PreviewField]`.
+- **Validation:** `[Required]`, `[ValidateInput]`, `[AssetsOnly]`, `[SceneObjectsOnly]`. Problems show on the
+  field, and the build checks every scene and prefab, listing failures in the Build window.
+- **Help:** `[InfoBox]` (optionally conditional), `[Tooltip]`.
+- **Collections:** `[ListDrawerSettings]` (paging, index labels, drag to reorder) and `[TableList]`, which shows a
+  list of structs as a table.
+- **Actions:** `[Button]` on methods, `[OnValueChanged]`.
+
+Conditions and callbacks name members with `nameof`, so renames carry through and the compiler catches typos.
+A source generator turns the attributes into inspector metadata at compile time, so the editor reads no
+reflection, and an analyzer reports a condition that names a missing member as a compile error.
+
+**Advanced.** Custom drawers in C#, built with Voxear UI: `ValueDrawer<T>` for a type, and
+`AttributeDrawer<TAttribute>` for your own attributes. Drawers chain as Odin's do, with each decorator wrapping the
+next, so `[InfoBox]` above a custom drawer still shows.
 
 ### The editor concept
 

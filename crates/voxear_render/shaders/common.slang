@@ -237,6 +237,7 @@ struct UiQuad
     float4 uv;
     float4 color;
     float4 borderColor;
+    float4 clip;
     float radius;
     float border;
     uint kind;

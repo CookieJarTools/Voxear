@@ -280,3 +280,97 @@ fn the_ui_draws_over_the_frame() {
     let i = (((y + h / 2) * width + x + w - 20) * 4) as usize;
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "an empty frame clears the UI");
 }
+
+/// A styled list of 100,000 rows and a tree, scrolled, with a selection,
+/// drawn over a frame. Set `VOXEAR_TEST_OUTPUT` to a folder to keep the image.
+#[test]
+fn lists_and_trees_draw_clipped_and_selected() {
+    use voxear_ui::{ItemFns, NodeId, Style, TextStyle, TreeItems, Ui};
+
+    struct Folders;
+    impl TreeItems for Folders {
+        fn children(&self, parent: Option<u64>) -> Vec<u64> {
+            match parent {
+                None => (1..=6).collect(),
+                Some(folder @ 1..=6) => (1..=3).map(|i| folder * 10 + i).collect(),
+                Some(_) => Vec::new(),
+            }
+        }
+        fn make(&mut self, ui: &mut Ui, row: NodeId) {
+            ui.label(row, "", TextStyle::default());
+        }
+        fn bind(&mut self, ui: &mut Ui, row: NodeId, item: u64) {
+            let label = ui.children(row)[0];
+            let name = if item < 10 { format!("Folder {item}") } else { format!("Obj {item}") };
+            ui.set_text(label, &name);
+        }
+    }
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let sheet = r#"
+        .side { padding: 6px; background-color: #111216; border-radius: 10px; font-size: 12px; color: #c8c9d0; }
+        .list-row { padding: 0px 8px; border-radius: 6px; }
+        .list-row:hover { background-color: #1c1d22; }
+        .list-row:selected { background-color: #2b2f55; color: #ffffff; }
+        .tree-arrow { color: #6b6c75; }
+    "#;
+    ui.add_sheet(root, voxear_ui::StyleSheet::parse("Test.vss", sheet));
+    let side = ui.panel(root, Style::default().at(16.0, 16.0).width(260.0).height(300.0));
+    ui.add_class(side, "side");
+    let list = ui.list_view(
+        side,
+        22.0,
+        100_000,
+        ItemFns {
+            make: |ui: &mut Ui, row: NodeId| {
+                ui.label(row, "", TextStyle::default());
+            },
+            bind: |ui: &mut Ui, row: NodeId, index: usize| {
+                let label = ui.children(row)[0];
+                ui.set_text(label, &format!("Item {index}"));
+            },
+        },
+    );
+    ui.set_style(list, Style::column().scroll().grow());
+    let other = ui.panel(root, Style::default().at(300.0, 16.0).width(260.0).height(300.0));
+    ui.add_class(other, "side");
+    let tree = ui.tree_view(other, 22.0, Folders);
+    ui.set_style(tree, Style::column().scroll().grow());
+    ui.set_expanded(tree, 2, true);
+
+    let (width, height) = (640, 360);
+    ui.frame(width, height, 1.0);
+    ui.set_scroll(list, [0.0, 22.0 * 49_998.0]);
+    ui.set_selection(list, &[50_000]);
+    ui.frame(width, height, 1.0);
+    let rows: Vec<NodeId> =
+        ui.children(tree).into_iter().filter(|&r| ui.has_class(r, "list-row") && ui.is_visible(r)).collect();
+    let file = *rows.iter().find(|&&r| ui.rect(r)[1] > ui.rect(rows[0])[1] + 50.0).unwrap();
+    let [x, y, w, h] = ui.rect(file);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_button(true);
+    ui.pointer_button(false);
+    renderer.set_ui(&ui.frame(width, height, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("lists.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+
+    let at = |x: f32, y: f32| {
+        let i = ((y as u32 * width + x as u32) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    let selected = [0x2b, 0x2f, 0x55];
+    let [lx, ly, lw, _] = ui.viewport(list);
+    assert_eq!(at(lx + lw - 30.0, ly + 2.0 * 22.0 + 11.0), selected, "item 50,000 is third from the top, selected");
+    assert_eq!(at(x + w - 20.0, y + h / 2.0), selected, "the clicked tree row is selected");
+    assert_eq!(ui.selected_items(tree).len(), 1);
+}

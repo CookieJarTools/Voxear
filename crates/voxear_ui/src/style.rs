@@ -19,17 +19,38 @@ pub struct Style {
     /// Whether the pointer can hover and press it. Its children decide for
     /// themselves.
     pub pickable: bool,
+    /// What happens to children that do not fit.
+    pub overflow: Overflow,
+    /// The scrollbar thumb's colour, for elements that scroll.
+    pub scrollbar: Color,
+}
+
+/// What an element does with children that do not fit inside it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Overflow {
+    /// They show outside it.
+    #[default]
+    Visible,
+    /// They are cut off at its padding edge.
+    Hidden,
+    /// They are cut off, and the wheel or the scrollbar moves them.
+    Scroll,
 }
 
 impl Default for Style {
+    /// Every element is positioned (`position: relative`), so an absolute
+    /// child is placed in its parent, as in Unity's UI Toolkit, rather than
+    /// in the nearest positioned ancestor as CSS's `static` default would.
     fn default() -> Self {
         Self {
-            layout: taffy::Style::default(),
+            layout: taffy::Style { position: Position::Relative, ..taffy::Style::default() },
             background: None,
             border: None,
             radius: 0.0,
             opacity: 1.0,
             pickable: true,
+            overflow: Overflow::Visible,
+            scrollbar: Color::WHITE.with_alpha(0x40),
         }
     }
 }
@@ -50,6 +71,12 @@ impl Style {
         style.layout.inset = Rect::length(0.0);
         style.pickable = false;
         style
+    }
+
+    /// Scrolls its children when they do not fit; see [`Overflow::Scroll`].
+    pub fn scroll(mut self) -> Self {
+        self.overflow = Overflow::Scroll;
+        self
     }
 
     /// Children side by side.

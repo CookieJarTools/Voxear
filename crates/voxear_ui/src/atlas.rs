@@ -9,6 +9,8 @@ use swash::{
     zeno::Format,
 };
 
+use std::sync::Arc;
+
 use crate::AtlasImage;
 
 const SIZE: u32 = 1024;
@@ -36,6 +38,8 @@ pub(crate) struct GlyphAtlas {
     shelves: Vec<(u32, u32, u32)>,
     scaler: ScaleContext,
     dirty: bool,
+    /// The pixels as last handed out.
+    snapshot: Option<Arc<AtlasImage>>,
     /// Set when the atlas filled up and was emptied.
     pub restarted: bool,
 }
@@ -48,6 +52,7 @@ impl GlyphAtlas {
             shelves: Vec::new(),
             scaler: ScaleContext::new(),
             dirty: true,
+            snapshot: None,
             restarted: false,
         }
     }
@@ -120,11 +125,14 @@ impl GlyphAtlas {
         self.restarted = true;
     }
 
-    /// The whole atlas, once, after it changed.
-    pub fn take_upload(&mut self) -> Option<AtlasImage> {
-        if !std::mem::take(&mut self.dirty) {
-            return None;
+    /// The atlas as it is now: the same shared image until glyphs are added,
+    /// then a copy with the next version. `None` until a glyph is drawn.
+    pub fn snapshot(&mut self) -> Option<Arc<AtlasImage>> {
+        if std::mem::take(&mut self.dirty) && !self.glyphs.is_empty() {
+            let version = self.snapshot.as_ref().map_or(1, |s| s.version + 1);
+            let image = AtlasImage { width: SIZE, height: SIZE, pixels: self.pixels.clone(), version };
+            self.snapshot = Some(Arc::new(image));
         }
-        Some(AtlasImage { width: SIZE, height: SIZE, pixels: self.pixels.clone() })
+        self.snapshot.clone()
     }
 }

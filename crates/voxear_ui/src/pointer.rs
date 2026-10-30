@@ -1,7 +1,15 @@
 //! The pointer: which elements it is over (`:hover`), which it holds down
-//! (`:active`), and clicks. Hit testing uses the last frame's layout.
+//! (`:active`), clicks, and dragging scrollbars. Hit testing uses the last
+//! frame's layout, scrolled and clipped as it was drawn.
 
-use crate::{NodeId, Ui, selector::States};
+use crate::{NodeId, Overflow, Ui, selector::States};
+
+/// Keys held with the pointer, which change what a click on a list does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub control: bool,
+}
 
 #[derive(Default)]
 pub(crate) struct Pointer {
@@ -13,6 +21,9 @@ pub(crate) struct Pointer {
     pressed: Vec<taffy::NodeId>,
     /// Elements clicked since the last frame.
     pub clicks: Vec<taffy::NodeId>,
+    /// A scrollbar being dragged: its element, and where on the thumb it was
+    /// grabbed.
+    dragging: Option<(NodeId, f32)>,
 }
 
 impl Pointer {
@@ -29,8 +40,17 @@ impl Ui {
     /// top left.
     pub fn pointer_move(&mut self, x: f32, y: f32) {
         let scale = if self.viewport.2 > 0.0 { self.viewport.2 } else { 1.0 };
-        self.pointer.position = Some((x / scale, y / scale));
+        let point = (x / scale, y / scale);
+        self.pointer.position = Some(point);
+        if let Some((node, grab)) = self.pointer.dragging {
+            self.drag_thumb(node, point.1 - grab);
+        }
         self.update_hover();
+    }
+
+    /// Which keys are held, for what clicks on lists do.
+    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
+        self.modifiers = modifiers;
     }
 
     /// The pointer left the window.
@@ -43,6 +63,19 @@ impl Ui {
     /// element is a click on it. Returns whether the UI is under the pointer,
     /// so the game can leave the press alone.
     pub fn pointer_button(&mut self, pressed: bool) -> bool {
+        if !pressed && self.pointer.dragging.take().is_some() {
+            return true;
+        }
+        if pressed
+            && let Some(point) = self.pointer.position
+            && let Some((node, top, length)) = self.scrollbar_at(point)
+        {
+            // On the thumb it is grabbed where it was pressed; on the track it jumps to centre there.
+            let grab = if (top..top + length).contains(&point.1) { point.1 - top } else { length / 2.0 };
+            self.drag_thumb(node, point.1 - grab);
+            self.pointer.dragging = Some((node, grab));
+            return true;
+        }
         let path = self.hit_path();
         if pressed {
             self.set_states(&path, States::ACTIVE, true);
@@ -55,6 +88,7 @@ impl Ui {
                 && !self.disabled(&pressed)
             {
                 self.pointer.clicks.push(target);
+                self.row_clicked(target);
             }
         }
         !path.is_empty()
@@ -74,7 +108,7 @@ impl Ui {
         self.pointer.clicks.iter().any(|&target| self.is_within(NodeId(target), node))
     }
 
-    fn update_hover(&mut self) {
+    pub(crate) fn update_hover(&mut self) {
         let path = self.hit_path();
         let left: Vec<taffy::NodeId> = self.pointer.hovered.iter().copied().filter(|n| !path.contains(n)).collect();
         self.set_states(&left, States::HOVER, false);
@@ -94,7 +128,7 @@ impl Ui {
 
     /// The topmost pickable element under the pointer and everything it is
     /// in, from the root down; empty when there is none.
-    fn hit_path(&self) -> Vec<taffy::NodeId> {
+    pub(crate) fn hit_path(&self) -> Vec<taffy::NodeId> {
         let Some(point) = self.pointer.position else { return Vec::new() };
         let Some(target) = self.hit(self.root, (0.0, 0.0), point) else { return Vec::new() };
         let mut path = vec![target];
@@ -112,13 +146,17 @@ impl Ui {
         }
         let layout = self.tree.layout(node).ok()?;
         let at = (parent.0 + layout.location.x, parent.1 + layout.location.y);
-        // Later children draw on top, so they are hit first.
-        let children = self.tree.children(node).unwrap_or_default();
-        if let Some(found) = children.into_iter().rev().find_map(|child| self.hit(child, at, point)) {
-            return Some(found);
-        }
         let inside =
             (at.0..at.0 + layout.size.width).contains(&point.0) && (at.1..at.1 + layout.size.height).contains(&point.1);
+        // Children it clips can only be hit inside it.
+        if inside || element.computed.overflow == Overflow::Visible {
+            let origin = (at.0 - element.scroll[0], at.1 - element.scroll[1]);
+            // Later children draw on top, so they are hit first.
+            let children = self.tree.children(node).unwrap_or_default();
+            if let Some(found) = children.into_iter().rev().find_map(|child| self.hit(child, origin, point)) {
+                return Some(found);
+            }
+        }
         (inside && element.computed.pickable).then_some(node)
     }
 }

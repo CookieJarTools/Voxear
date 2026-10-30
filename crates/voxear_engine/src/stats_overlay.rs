@@ -106,6 +106,12 @@ impl StatsOverlay {
         self.ui.pointer_leave();
     }
 
+    /// The wheel turned by `dy` logical pixels, positive downwards. Returns
+    /// whether anything in the overlay scrolled.
+    pub fn pointer_scroll(&mut self, dy: f32) -> bool {
+        self.ui.pointer_scroll(0.0, dy)
+    }
+
     /// The primary button went down or up. Returns whether the overlay was
     /// under the pointer, so the game can leave the press alone.
     pub fn pointer_button(&mut self, pressed: bool) -> bool {

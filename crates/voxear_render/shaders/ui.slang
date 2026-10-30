@@ -26,10 +26,12 @@ UiOut uiVertex(uint vertexId : SV_VertexID)
     uint index = vertexId / 6;
     UiQuad q = buffers().uiQuads[index];
     float2 corner = UI_CORNERS[vertexId % 6];
-    float2 pixel = q.rect.xy + corner * q.rect.zw;
+    // Trimmed to its clip, so what lies outside is never rasterised; a quad
+    // wholly outside collapses to nothing.
+    float2 pixel = clamp(q.rect.xy + corner * q.rect.zw, q.clip.xy, q.clip.zw);
     UiOut o;
     o.position = float4(pixel / float2(push.size) * 2.0 - 1.0, 0.0, 1.0);
-    o.local = corner * q.rect.zw;
+    o.local = pixel - q.rect.xy;
     o.quad = index;
     return o;
 }

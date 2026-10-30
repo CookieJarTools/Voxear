@@ -492,3 +492,64 @@ fn panes_draw_an_editor_like_layout() {
     assert_eq!(pixels[i..i + 3], [0x2a, 0x2b, 0x30], "the divider between the panes");
     assert!(ui.take_warnings().is_empty());
 }
+
+/// A docked editor layout, caught mid-drag: the ghost of a tab and the
+/// preview of where it would land. Set `VOXEAR_TEST_OUTPUT` to keep the image.
+#[test]
+fn docking_draws_areas_and_a_drag_preview() {
+    use voxear_ui::{NodeId, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let markup = r#"
+        <vui>
+            <DockSpace name="dock" layout="row(150, [hierarchy, project], column(230, [scene, game], row(250, [console], [inspector])))"
+                       style="position: absolute; left: 8px; top: 8px; right: 8px; bottom: 8px; font-size: 12px; color: #c8c9d0">
+                <DockPanel id="hierarchy" title="Hierarchy"><Label>Main Camera</Label><Label>Sun</Label><Label>Lamp</Label></DockPanel>
+                <DockPanel id="project" title="Project"><Label>Assets</Label></DockPanel>
+                <DockPanel id="scene" title="Scene" />
+                <DockPanel id="game" title="Game" />
+                <DockPanel id="console" title="Console"><Label>Loaded game scripts</Label></DockPanel>
+                <DockPanel id="inspector" title="Inspector">
+                    <Panel style="display: grid; grid-template-columns: 70px 1fr; gap: 6px; align-items: center">
+                        <Label>Name</Label><TextField value="Lamp" />
+                        <Label>Intensity</Label><Slider min="0" max="10" value="3" />
+                    </Panel>
+                </DockPanel>
+            </DockSpace>
+        </vui>"#;
+    let document = ui.load_markup(root, "Editor.vui", markup, &mut |_| Err("no files".into())).unwrap();
+    let (width, height) = (640, 360);
+    ui.frame(width, height, 1.0);
+    let dock = ui.find(document, "dock").unwrap();
+    fn find_tab(ui: &Ui, node: NodeId, title: &str) -> Option<NodeId> {
+        if ui.has_class(node, "tab") && ui.text(node) == title {
+            return Some(node);
+        }
+        ui.children(node).into_iter().find_map(|child| find_tab(ui, child, title))
+    }
+    let console = find_tab(&ui, dock, "Console").unwrap();
+    let scene_area = ui.parent(ui.parent(find_tab(&ui, dock, "Scene").unwrap()).unwrap()).unwrap();
+    let [cx, cy, cw, ch] = ui.rect(console);
+    let [sx, sy, _, sh] = ui.rect(scene_area);
+    ui.pointer_move(cx + cw / 2.0, cy + ch / 2.0);
+    ui.pointer_button(true);
+    ui.pointer_move(sx + 40.0, sy + sh / 2.0 - 10.0);
+    ui.pointer_move(sx + 30.0, sy + sh / 2.0);
+    renderer.set_ui(&ui.frame(width, height, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("dock.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+    let [x, y, ..] = ui.rect(scene_area);
+    let i = (((y + 4.0) as u32 * width + x as u32) * 4) as usize;
+    assert!(pixels[i + 2] > 0xa0, "the preview's accent edge over the scene's left half");
+    assert!(ui.take_warnings().is_empty());
+}

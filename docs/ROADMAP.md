@@ -180,13 +180,14 @@ Done so far:
   editor concept's look. Window events reach the UI first through `ui_input`, which wraps the system clipboard.
 - **Layout and motion:** CSS grid through taffy's own parser, transitions with CSS's easing curves, and
   SplitView, Tabs and Dropdown (with a popup layer above everything).
+- **Docking:** areas of tabbed panels in split panes, rearranged by dragging tabs into an area or onto its edge,
+  with a drop preview; layouts read and write as text for workspace presets.
 - **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`,
   written as `StatsOverlay.vui` and `.vss`. Clicking its header folds it.
 
 Still to do in M3:
 - UI core:
-  - docking: tabs dragged between split panes
-  - keyframe animations
+  - keyframe animations and floating windows
   - the C# UI API
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus

@@ -50,6 +50,7 @@ pub(crate) enum Control {
         dropdown: taffy::NodeId,
         index: usize,
     },
+    Dock(Box<crate::dock::DockState>),
 }
 
 /// A text field's editor and how its text sits in the field.

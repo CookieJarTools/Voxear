@@ -14,6 +14,7 @@
     --vx-accent: #8b93ff;
     --vx-on-accent: #0e0f12;
     --vx-selected: #2b2f55;
+    --vx-panel: #111216;
     --vx-fade: 120ms ease-out;
 }
 
@@ -253,4 +254,36 @@ Dropdown:focus {
 
 .dropdown-option:checked {
     color: var(--vx-accent);
+}
+
+/* Docking: near-black rounded areas with gaps between them, as in the editor
+   concept. The gaps are the dividers, which light up when the pointer finds them. */
+
+.dock-area {
+    padding: 6px;
+    overflow: hidden;
+    border-radius: 10px;
+    background-color: var(--vx-panel);
+}
+
+DockSpace .split-divider {
+    background-color: transparent;
+}
+
+DockSpace .split-divider:hover, DockSpace .split-divider:active {
+    background-color: var(--vx-accent);
+}
+
+.dock-ghost {
+    padding: 4px 10px;
+    border-radius: 6px;
+    background-color: var(--vx-surface-hover);
+    border: 1px solid var(--vx-accent);
+    color: var(--vx-text);
+}
+
+.dock-preview {
+    border-radius: 10px;
+    background-color: #8b93ff26;
+    border: 1px solid var(--vx-accent);
 }

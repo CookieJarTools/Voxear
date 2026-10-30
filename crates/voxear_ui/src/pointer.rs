@@ -46,6 +46,7 @@ impl Ui {
             self.drag_thumb(node, point.1 - grab);
         }
         self.drag_controls(point);
+        self.drag_dock(point);
         self.update_hover();
     }
 
@@ -69,6 +70,9 @@ impl Ui {
         }
         if !pressed {
             self.input.dragging = None;
+            if self.release_dock() {
+                return true;
+            }
         }
         if pressed
             && let Some(point) = self.pointer.position
@@ -95,6 +99,7 @@ impl Ui {
             self.pointer.pressed = path.clone();
             if let Some(point) = self.pointer.position {
                 self.press_controls(&path, point);
+                self.press_dock(&path, point);
             }
         } else {
             let pressed = std::mem::take(&mut self.pointer.pressed);
@@ -110,6 +115,13 @@ impl Ui {
             }
         }
         !path.is_empty()
+    }
+
+    /// Forgets the press in progress, so letting go is no click: for a press
+    /// that turned into a drag.
+    pub(crate) fn pointer_cancel(&mut self) {
+        let pressed = std::mem::take(&mut self.pointer.pressed);
+        self.set_states(&pressed, States::ACTIVE, false);
     }
 
     /// Whether the pointer is over an element that takes it.

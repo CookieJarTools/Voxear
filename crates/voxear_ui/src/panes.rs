@@ -267,7 +267,7 @@ impl Ui {
 
     /// The layer popups open in: over the whole screen, letting the pointer
     /// through, and kept last so it draws above everything.
-    fn popup_layer(&mut self) -> NodeId {
+    pub(crate) fn popup_layer(&mut self) -> NodeId {
         let layer = match self.popups {
             Some(layer) if self.tree.parent(layer) == Some(self.root) => NodeId(layer),
             _ => {

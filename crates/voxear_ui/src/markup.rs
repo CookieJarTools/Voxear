@@ -16,7 +16,8 @@
 //! `Toggle` (`value`), `Slider` (`min`, `max`, `value`, `step`) and `Foldout`
 //! (`text`, `open`, children as its content), `SplitView` (`direction`,
 //! `size`, `min`, and two elements for its panes), `Tabs` (of `Tab`s with
-//! `text`, and `selected`) and `Dropdown` (of `Option`s, and `value`), each
+//! `text`, and `selected`), `Dropdown` (of `Option`s, and `value`) and
+//! `DockSpace` (of `DockPanel`s with `id` and `title`, and `layout`), each
 //! taking `name`, `class`
 //! (several, separated by spaces) and `style` (declarations that win over
 //! sheets). A label's or button's text is its content, or its `text`
@@ -217,6 +218,23 @@ impl Ui {
                     let node = self.dropdown(parent, &options, number(child, "value", 0.0, builder)? as usize);
                     self.attributes(node, child, &["name", "class", "style", "value"], builder);
                 }
+                "DockSpace" => {
+                    let node = self.dock_space(parent);
+                    self.attributes(node, child, &["name", "class", "style", "layout"], builder);
+                    for panel in child.children().filter(Node::is_element) {
+                        if panel.tag_name().name() != "DockPanel" {
+                            return Err(builder.error(panel, "a DockSpace holds DockPanel elements"));
+                        }
+                        let id =
+                            panel.attribute("id").ok_or_else(|| builder.error(panel, "a DockPanel needs an id"))?;
+                        let content = self.add_dock_panel(node, id, panel.attribute("title").unwrap_or(id));
+                        self.attributes(content, panel, &["name", "class", "style", "id", "title"], builder);
+                        self.build_children(content, panel, builder)?;
+                    }
+                    if let Some(layout) = child.attribute("layout") {
+                        self.set_dock_layout(node, layout).map_err(|e| builder.error(child, e))?;
+                    }
+                }
                 tag @ ("Label" | "Button") => {
                     if let Some(inner) = child.children().find(Node::is_element) {
                         return Err(builder.error(inner, format!("a {tag} holds only text")));
@@ -229,8 +247,8 @@ impl Ui {
                     self.attributes(node, child, &["name", "class", "style", "text"], builder);
                 }
                 other => {
-                    let known = "Panel, ScrollView, ListView, TreeView, SplitView, Tabs, Label, Button, TextField, \
-                                 Toggle, Slider, Foldout, Dropdown or Style";
+                    let known = "Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, \
+                                 TextField, Toggle, Slider, Foldout, Dropdown or Style";
                     return Err(builder.error(child, format!("unknown element <{other}>; expected {known}")));
                 }
             }

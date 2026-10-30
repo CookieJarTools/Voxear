@@ -48,6 +48,8 @@ pub enum Kind {
     Tabs,
     /// A choice from a list that opens on demand.
     Dropdown,
+    /// Tabbed areas of panels in split panes, rearranged by dragging tabs.
+    DockSpace,
 }
 
 impl Kind {
@@ -66,6 +68,7 @@ impl Kind {
             Kind::SplitView => "SplitView",
             Kind::Tabs => "Tabs",
             Kind::Dropdown => "Dropdown",
+            Kind::DockSpace => "DockSpace",
         }
     }
 }
@@ -181,6 +184,8 @@ pub struct Ui {
     /// The layer popups open in, and the open dropdown with its popup.
     pub(crate) popups: Option<taffy::NodeId>,
     pub(crate) open_popup: Option<(taffy::NodeId, taffy::NodeId)>,
+    /// A dock tab pressed, and maybe being dragged.
+    pub(crate) dock_drag: Option<crate::dock::DockDrag>,
 }
 
 impl Default for Ui {
@@ -217,6 +222,7 @@ impl Ui {
             fields: Vec::new(),
             popups: None,
             open_popup: None,
+            dock_drag: None,
         }
         .with_theme()
     }

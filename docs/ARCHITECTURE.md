@@ -806,7 +806,7 @@ variants inherit from a parent and override only what differs.
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
-## UI (Voxear UI) *(implemented: tree, layout incl. grid, text, drawing, markup, style sheets, transitions, pointer and keyboard, scroll/list/tree views, input controls, split views, tabs, dropdowns, default theme; C# planned)*
+## UI (Voxear UI) *(implemented: tree, layout incl. grid, text, drawing, markup, style sheets, transitions, pointer and keyboard, scroll/list/tree views, input controls, split views, tabs, dropdowns, docking, default theme; C# planned)*
 
 **Recommendation from research.** Build our own retained-mode UI on the Linebender and Servo crates, rendered by our
 own Vulkan code.
@@ -963,6 +963,24 @@ every part:
   dropdown's text style. A choice, Escape or a press anywhere else closes it, and that press goes no further.
   The arrow keys change the choice while it is focused.
 
+**Docking** *(implemented)*, the editor's layout: a `DockSpace` is a tree of split panes whose leaves are
+tabbed areas of panels.
+- Dragging a panel's tab onto another area's middle adds it there as a tab; onto an edge (the outer quarter),
+  it splits that area. A ghost of the tab follows the pointer and a preview shows where it will land. Areas
+  left empty fold away, and a press that never moves stays a click on the tab.
+- A panel keeps its own elements wherever it goes, so a half-typed field or a scrolled list survives a move.
+- The layout reads and writes as text, for workspace presets and saving between sessions:
+  `row(240, [hierarchy, project], column(420, [scene, game*], [console]))`, where `row` and `column` give the
+  first part's size in pixels and `*` marks the showing tab. Divider moves and tab choices are part of it.
+
+  ```xml
+  <DockSpace layout="row(240, [hierarchy], [scene, inspector])">
+      <DockPanel id="hierarchy" title="Hierarchy">...</DockPanel>
+      <DockPanel id="scene" title="Scene" />
+      <DockPanel id="inspector" title="Inspector">...</DockPanel>
+  </DockSpace>
+  ```
+
 **Transitions** *(implemented)*: `transition: background-color 120ms ease-out, opacity 0.2s` eases colours and
 opacity when the cascade changes them, as hover, focus and selection do. Easing follows CSS's curves (`linear`,
 `ease`, `ease-in`, `ease-out`, `ease-in-out`), colours blend in linear premultiplied space, and nothing animates
@@ -977,7 +995,7 @@ retheme. `Ui::bare()` starts without it.
 
 **Still to come.**
 - Keyframe animations, beyond transitions.
-- Docking: dragging tabs between split panes, which the editor's layout is built from.
+- Floating windows that panels can be torn off into.
 - The C# API, so game UI and editor extensions are written in C#.
 - Data binding to C#, using source generators instead of reflection.
 - A live-reloading UI builder in the editor.

@@ -18,7 +18,8 @@
 //! - **Controls**: scroll views, list and tree views that keep elements
 //!   only for the rows on screen (see [`ListItems`] and [`TreeItems`]),
 //!   text fields, toggles, sliders and foldouts, with keyboard focus, and
-//!   split views, tabs and dropdowns.
+//!   split views, tabs and dropdowns, and docking: areas of tabbed panels
+//!   rearranged by dragging tabs.
 //! - **Transitions** ease colours and opacity between styles.
 //! - **A default theme** in the editor's look, which sheets can override.
 //!
@@ -29,6 +30,7 @@ mod atlas;
 mod cascade;
 mod color;
 mod controls;
+mod dock;
 mod draw;
 mod input;
 mod list;

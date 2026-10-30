@@ -36,8 +36,10 @@ pub(crate) fn measure(
                 });
                 edit.sync(text_style, scale, width.map(|w| w * scale));
                 let height = edit.editor.layout(fonts, layouts).height() / scale;
+                // Like CSS's inputs: a set width when there is room, but able to shrink.
+                let natural = if available.width == AvailableSpace::MinContent { FIELD_MIN_WIDTH } else { FIELD_WIDTH };
                 Size {
-                    width: known.width.unwrap_or(FIELD_WIDTH),
+                    width: known.width.unwrap_or(natural),
                     height: known.height.unwrap_or(height.max(text_style.size * 1.25)),
                 }
             },
@@ -66,8 +68,10 @@ pub(crate) fn measure(
     )
 }
 
-/// How wide a text field is when nothing sets its width.
+/// How wide a text field is when nothing sets its width, and the least it
+/// shrinks to.
 const FIELD_WIDTH: f32 = 160.0;
+const FIELD_MIN_WIDTH: f32 = 40.0;
 
 /// Walks the laid-out tree into quads, parents before children.
 pub(crate) struct Draw<'a> {

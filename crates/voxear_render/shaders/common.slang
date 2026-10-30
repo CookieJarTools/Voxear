@@ -230,6 +230,19 @@ struct DrawCommand
 };
 
 // Device addresses of every buffer, written once per frame->
+// A rectangle or glyph of the UI. Mirrors `Quad` in voxear_ui.
+struct UiQuad
+{
+    float4 rect;
+    float4 uv;
+    float4 color;
+    float4 borderColor;
+    float radius;
+    float border;
+    uint kind;
+    uint pad;
+};
+
 struct Buffers
 {
     Instance* instances;
@@ -245,6 +258,7 @@ struct Buffers
     uint* clusters;
     uint* lodState;
     float* exposure;
+    UiQuad* uiQuads;
 };
 
 struct Push

@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 voxear_assets = { path = "crates/voxear_assets" }
+voxear_ui = { path = "crates/voxear_ui" }
 voxear_core = { path = "crates/voxear_core" }
 voxear_ecs = { path = "crates/voxear_ecs" }
 voxear_scene = { path = "crates/voxear_scene" }
@@ -34,6 +35,9 @@ png = "0.18"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 base64 = "0.13"
 lz4_flex = "0.11"
+taffy = "0.15"
+parley = "0.12"
+swash = "0.2"
 meshopt = "0.7"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"

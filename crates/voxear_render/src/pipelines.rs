@@ -40,6 +40,7 @@ pub struct Pipelines {
     /// Writes the output directly, when nothing follows.
     pub composite: vk::Pipeline,
     pub finish: vk::Pipeline,
+    pub ui: vk::Pipeline,
 }
 
 impl Pipelines {
@@ -55,8 +56,9 @@ impl Pipelines {
             module("clusters")?,
             module("post")?,
             module("exposure")?,
+            module("ui")?,
         ];
-        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure] = &modules;
+        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui] = &modules;
 
         let graphics = |desc: &GraphicsPipelineDesc| create_graphics_pipeline(gpu, layout, desc);
         let fullscreen = |name, entry, formats, blend| {
@@ -107,6 +109,12 @@ impl Pipelines {
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
+            ui: graphics(&GraphicsPipelineDesc {
+                color_formats: output,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("UI", ui, c"uiVertex", c"uiFragment")
+            })?,
         };
         for module in modules {
             module.destroy(gpu);
@@ -132,6 +140,7 @@ impl Pipelines {
             self.composite_ldr,
             self.composite,
             self.finish,
+            self.ui,
         ];
         for pipeline in all {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };

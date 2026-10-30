@@ -16,19 +16,18 @@ use winit::{
     window::{CursorGrabMode, Window, WindowId},
 };
 
-use crate::{fly_camera::FlyCamera, game::Game};
+use crate::{fly_camera::FlyCamera, game::Game, stats_overlay::StatsOverlay};
 
 /// Called once the renderer exists, typically to load the start level.
 pub type Setup = Box<dyn FnOnce(&mut Game, &mut Renderer) -> Result<()>>;
 
-/// How often the title bar's frame stats refresh.
-const STATS_INTERVAL: f32 = 0.5;
-
 /// Runs the engine in a window until it is closed, or for `frames` frames.
+/// `stats` starts with the stats overlay shown.
 pub fn run_windowed(
     game: Game,
     title: &str,
     frames: Option<u64>,
+    stats: bool,
     settings: RendererSettings,
     setup: Setup,
 ) -> Result<()> {
@@ -44,7 +43,7 @@ pub fn run_windowed(
         renderer: None,
         window: None,
         last: None,
-        stats: Stats::default(),
+        overlay: StatsOverlay::new(stats),
         error: None,
     };
     event_loop.run_app(&mut app)?;
@@ -68,12 +67,6 @@ fn event_loop(renderdoc: bool) -> Result<EventLoop<()>, winit::error::EventLoopE
     EventLoop::new()
 }
 
-#[derive(Default)]
-struct Stats {
-    frames: u32,
-    seconds: f32,
-}
-
 struct App {
     game: Game,
     settings: RendererSettings,
@@ -86,7 +79,7 @@ struct App {
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
     last: Option<Instant>,
-    stats: Stats,
+    overlay: StatsOverlay,
     error: Option<anyhow::Error>,
 }
 
@@ -105,6 +98,7 @@ impl App {
         self.renderer = Some(renderer);
         self.window = Some(window);
         tracing::info!("hold the right mouse button to fly: WASD to move, Q/E down/up, Shift faster, wheel for speed");
+        tracing::info!("F1 shows frame stats");
         Ok(())
     }
 
@@ -128,36 +122,25 @@ impl App {
         self.last = Some(now);
         self.fly.update(&mut self.game.engine.world, delta);
         self.game.tick(delta, self.renderer.as_mut());
-        if let Some(renderer) = self.renderer.as_mut() {
+        if let (Some(renderer), Some(window)) = (self.renderer.as_mut(), &self.window) {
+            self.overlay.update(delta, renderer);
+            let size = window.inner_size();
+            self.overlay.draw(renderer, (size.width, size.height), window.scale_factor() as f32)?;
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)?;
         }
-        self.update_stats(delta);
         if self.frames.is_some_and(|limit| self.game.engine.time().frame >= limit) {
             event_loop.exit();
         }
         Ok(())
     }
 
-    /// Shows frame rate and GPU time in the title until the editor has a stats overlay.
-    fn update_stats(&mut self, delta: f32) {
-        self.stats.frames += 1;
-        self.stats.seconds += delta;
-        if self.stats.seconds < STATS_INTERVAL {
-            return;
-        }
-        let (Some(window), Some(renderer)) = (&self.window, &self.renderer) else { return };
-        let fps = self.stats.frames as f32 / self.stats.seconds;
-        let gpu_ms: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
-        window.set_title(&format!("{} · {fps:.0} fps · GPU {gpu_ms:.2} ms", self.title));
-        self.stats = Stats::default();
-    }
-
-    /// Development keys until the editor exists: F12 captures a frame in
-    /// RenderDoc; F2 to F5 toggle the LOD, shadow cascade, light complexity
-    /// and normals views.
+    /// Development keys until the editor exists: F1 shows frame stats; F12
+    /// captures a frame in RenderDoc; F2 to F5 toggle the LOD, shadow
+    /// cascade, light complexity and normals views.
     fn key(&mut self, key: &Key) {
         let Some(renderer) = self.renderer.as_mut() else { return };
         let view = match key {
+            Key::Named(NamedKey::F1) => return self.overlay.toggle(),
             Key::Named(NamedKey::F12) => return renderer.capture_next_frame(),
             Key::Named(NamedKey::F2) => DEBUG_VIEW_LOD,
             Key::Named(NamedKey::F3) => DEBUG_VIEW_CASCADES,

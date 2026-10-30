@@ -223,6 +223,7 @@ pub struct GpuBuffers {
     pub lod_state: u64,
     /// Auto exposure's adapted EV, carried between frames.
     pub exposure: u64,
+    pub ui_quads: u64,
 }
 
 /// `VkDrawIndexedIndirectCommand`.
@@ -288,7 +289,7 @@ mod tests {
         let post = 16 * 11;
         assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 13 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 14 * 8);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }
 }

@@ -23,6 +23,7 @@ mod post_passes;
 mod scene;
 mod shadows;
 mod texture_codec;
+mod ui_pass;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
 
@@ -144,6 +145,7 @@ struct FrameBuffers {
     stats: Buffer,
     clusters: Buffer,
     pointers: Buffer,
+    ui: Buffer,
 }
 
 pub struct Renderer {
@@ -175,6 +177,7 @@ pub struct Renderer {
     options: ViewOptions,
     stats: RenderStats,
     pending_size: Option<(u32, u32)>,
+    ui: ui_pass::UiGpu,
 }
 
 impl Renderer {
@@ -246,6 +249,7 @@ impl Renderer {
             options: ViewOptions::default(),
             stats: RenderStats::default(),
             pending_size: None,
+            ui: ui_pass::UiGpu::default(),
         })
     }
 
@@ -435,7 +439,7 @@ impl Renderer {
             Output::Offscreen { image, last } => (image.handle, image.view, image.desc, *last),
         };
 
-        let Self { gpu, graph, bindless, pipelines, buffers, assets, visibility, lod_state, exposure, .. } = self;
+        let Self { gpu, graph, bindless, pipelines, buffers, assets, visibility, lod_state, exposure, ui, .. } = self;
         let assets = assets.as_ref().expect("assets live until drop");
         let visibility = visibility.as_ref().expect("visibility lives until drop");
         let lod_state = lod_state.as_ref().expect("LOD state lives until drop");
@@ -500,6 +504,7 @@ impl Renderer {
                 clusters: buffers.clusters.address,
                 lod_state: lod_state.address,
                 exposure: exposure.address,
+                ui_quads: buffers.ui.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -550,6 +555,7 @@ impl Renderer {
             history: (frame_index % 2) as usize,
         };
         post_passes::record(&mut fg, gpu, bindless, &post)?;
+        ui.record(&mut fg, pipelines.ui, push, &buffers.ui, (output, extent));
         if acquired.is_some() {
             fg.transition(output, ImageAccess::Present);
         }
@@ -592,6 +598,12 @@ impl Renderer {
         extracted.frame.prev_view_proj = self.prev_view_proj.replace(current).unwrap_or(current);
     }
 
+    /// What the UI draws over every frame from now on, until replaced. An
+    /// empty frame draws nothing.
+    pub fn set_ui(&mut self, frame: &voxear_ui::UiFrame) -> Result<()> {
+        self.ui.set(&self.gpu, &mut self.bindless, frame)
+    }
+
     /// Reads back the last rendered offscreen frame as RGBA8 (sRGB).
     pub fn read_pixels(&mut self) -> Result<(u32, u32, Vec<u8>)> {
         let Output::Offscreen { image, last } = &mut self.output else {
@@ -615,9 +627,19 @@ impl Drop for Renderer {
         let gpu = &self.gpu;
         self.pipelines.destroy(gpu);
         for buffers in self.buffers.drain(..) {
-            let FrameBuffers { frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers } =
-                buffers;
-            for buffer in [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers] {
+            let FrameBuffers {
+                frame,
+                instances,
+                lights,
+                draws,
+                draw_count,
+                draw_instances,
+                stats,
+                clusters,
+                pointers,
+                ui,
+            } = buffers;
+            for buffer in [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers, ui] {
                 self.frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -625,6 +647,7 @@ impl Drop for Renderer {
             self.frames.retire(Retired::Buffer(buffer));
         }
         self.graph.destroy(gpu, &mut self.bindless);
+        self.ui.destroy(gpu, &mut self.bindless);
         if let Some(assets) = self.assets.take() {
             assets.destroy(gpu, &mut self.bindless);
         }
@@ -696,5 +719,11 @@ fn create_frame_buffers(gpu: &Gpu, slot: usize) -> Result<FrameBuffers> {
             MemoryLocation::GpuOnly,
         )?,
         pointers: gpu.create_buffer(&format!("pointers {slot}"), size_of::<GpuBuffers>() as u64, storage, host)?,
+        ui: gpu.create_buffer(
+            &format!("ui quads {slot}"),
+            ui_pass::MAX_UI_QUADS * size_of::<voxear_ui::Quad>() as u64,
+            storage,
+            host,
+        )?,
     })
 }

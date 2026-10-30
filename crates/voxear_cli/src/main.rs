@@ -9,7 +9,9 @@ use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use voxear_assets::{AssetDb, AssetKind};
 use voxear_core::math::EulerRot;
-use voxear_engine::{Content, Engine, Game, PROJECT_FILE, Project, content_build, core_assembly, run_windowed};
+use voxear_engine::{
+    Content, Engine, Game, PROJECT_FILE, Project, StatsOverlay, content_build, core_assembly, run_windowed,
+};
 use voxear_render::{
     DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess,
     Renderer, RendererSettings, ViewOptions,
@@ -75,6 +77,9 @@ enum Commands {
         /// built content.
         #[arg(long = "overlay", value_name = "DIR")]
         overlays: Vec<PathBuf>,
+        /// Show the stats overlay (F1 in a window).
+        #[arg(long)]
+        stats: bool,
     },
     /// Render a project offscreen and save the image, with GPU timings.
     Render {
@@ -110,6 +115,9 @@ enum Commands {
         /// built content.
         #[arg(long = "overlay", value_name = "DIR")]
         overlays: Vec<PathBuf>,
+        /// Show the stats overlay (F1 in a window).
+        #[arg(long)]
+        stats: bool,
     },
 }
 
@@ -129,8 +137,9 @@ fn main() -> Result<()> {
         Commands::Doctor => doctor(),
         Commands::Assets { project } => assets(&project),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
-        Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays } => {
-            run(&project, headless, frames, Prepare { build: !no_build, bundles, overlays }, renderdoc)
+        Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays, stats } => {
+            let prepare = Prepare { build: !no_build, bundles, overlays };
+            run(&project, headless, frames, prepare, renderdoc, stats)
         }
         Commands::Render {
             project,
@@ -144,6 +153,7 @@ fn main() -> Result<()> {
             post,
             bundles,
             overlays,
+            stats,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -155,12 +165,13 @@ fn main() -> Result<()> {
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
             let options = ViewOptions { debug_view, post_override, ..ViewOptions::default() };
             let prepare = Prepare { build: !no_build, bundles, overlays };
-            render(&project, &out, (width, height), frames, prepare, renderdoc, options)
+            let shot = Shot { out, size: (width, height), frames, options, stats };
+            render(&project, shot, prepare, renderdoc)
         }
     }
 }
 
-fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, renderdoc: bool) -> Result<()> {
+fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, renderdoc: bool, stats: bool) -> Result<()> {
     let project = Project::open(path)?;
     let settings = RendererSettings { hot_reload: true, ..renderer_settings(&project, renderdoc) };
     let title = format!("{} — Voxear", project.name());
@@ -168,7 +179,7 @@ fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, rende
 
     if !headless {
         let setup = Box::new(|game: &mut Game, renderer: &mut Renderer| game.start(Some(renderer)));
-        return run_windowed(game, &title, frames, settings, setup);
+        return run_windowed(game, &title, frames, stats, settings, setup);
     }
     game.start(None)?;
     for _ in 0..frames.unwrap_or(3) {
@@ -178,24 +189,35 @@ fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, rende
     Ok(())
 }
 
-fn render(
-    path: &Path,
-    out: &Path,
-    (width, height): (u32, u32),
+/// What `vox render` draws and where it saves it.
+struct Shot {
+    out: PathBuf,
+    size: (u32, u32),
+    /// Frames to simulate before the one saved.
     frames: u64,
-    prepare: Prepare,
-    renderdoc: bool,
     options: ViewOptions,
-) -> Result<()> {
+    /// Draw the stats overlay over the image.
+    stats: bool,
+}
+
+fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<()> {
+    let Shot { out, size: (width, height), frames, options, stats } = shot;
     let project = Project::open(path)?;
     let settings = renderer_settings(&project, renderdoc);
     let mut game = start_game(project, prepare)?;
     let mut renderer = Renderer::new_offscreen(width, height, &settings)?;
     renderer.set_view_options(options);
     game.start(Some(&mut renderer))?;
+    let mut overlay = StatsOverlay::new(stats);
     let frames = frames.max(1);
     for frame in 1..=frames {
         game.tick(1.0 / 60.0, Some(&mut renderer));
+        if stats {
+            // Refreshed every frame, since a render is over too soon to wait.
+            overlay.update(1.0 / 60.0, &renderer);
+            overlay.refresh(&renderer);
+            overlay.draw(&mut renderer, (width, height), 1.0)?;
+        }
         let capture = frame == frames && renderer.has_renderdoc();
         if capture {
             renderer.start_capture();
@@ -207,7 +229,7 @@ fn render(
     }
 
     let (width, height, pixels) = renderer.read_pixels()?;
-    write_png(out, width, height, &pixels)?;
+    write_png(&out, width, height, &pixels)?;
     println!("wrote {} ({width}×{height}) on {}", out.display(), renderer.gpu().name);
     let total: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
     for (pass, ms) in renderer.timings() {

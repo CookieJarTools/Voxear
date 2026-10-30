@@ -30,6 +30,8 @@ pub enum Blend {
     Opaque,
     Alpha,
     Additive,
+    /// For colours already multiplied by their alpha, such as the UI's.
+    Premultiplied,
 }
 
 pub struct GraphicsPipelineDesc<'a> {
@@ -179,6 +181,14 @@ fn blend_state(blend: Blend) -> vk::PipelineColorBlendAttachmentState {
         Blend::Alpha => state
             .blend_enable(true)
             .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD),
+        Blend::Premultiplied => state
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::ONE)
             .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
             .color_blend_op(vk::BlendOp::ADD)
             .src_alpha_blend_factor(vk::BlendFactor::ONE)

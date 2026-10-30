@@ -74,7 +74,9 @@ crates/            Rust engine (one crate per system)
   voxear_ecs       archetype ECS, queries, schedule
   voxear_scene     Obj components, behaviour lifecycle
   voxear_rhi       Vulkan device, swapchain, frame pacing
+  voxear_assets    asset database, bundles and the content catalog
   voxear_render    renderer and passes, shaders/
+  voxear_ui        Voxear UI: element tree, layout, text and the draw list
   voxear_scripting CoreCLR hosting and the interop tables
   voxear_engine    frame loop, projects, windowed runner
   voxear_cli       the `vox` binary
@@ -98,7 +100,7 @@ docs/              this document and the roadmap
 | Shipping scripts | CoreCLR now; NativeAOT as an option later | NativeAOT gives faster startup and no JIT for players and consoles. Hot reload stays CoreCLR-only. |
 | Physics | **Jolt** (C++, MIT) behind a Rust API | It is the fastest and most robust open option (Horizon Forbidden West, Godot 4). It is wrapped so that it is not a black box to users. |
 | 2D physics | Box2D v3 (C, MIT) | The modern solver is fast and deterministic, and it pairs naturally with Jolt. |
-| UI | **Our own retained UI** on taffy, parley, skrifa and cssparser, rendered by our Vulkan renderer | See [UI](#ui-voxear-ui). |
+| UI | **Our own retained UI** on taffy, parley, swash and cssparser, rendered by our Vulkan renderer | See [UI](#ui-voxear-ui). |
 | Audio | Rust mixer on cpal, with spatial acoustics from **Steam Audio** (Apache-2.0) | Steam Audio provides HRTF, occlusion, transmission, reflections and pathing around corners. A GPU ray-traced path can come later. |
 | Mesh import | glTF 2.0 first, then FBX via ufbx | meshoptimizer handles meshlets, LOD and vertex cache optimisation. |
 
@@ -777,7 +779,7 @@ variants inherit from a parent and override only what differs.
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
-## UI (Voxear UI)
+## UI (Voxear UI) *(foundation implemented: tree, layout, text, drawing; markup, styles and widgets planned)*
 
 **Recommendation from research.** Build our own retained-mode UI on the Linebender and Servo crates, rendered by our
 own Vulkan code.
@@ -800,10 +802,36 @@ In particular:
 The building blocks are already the Rust standard, and all are MIT, Apache or MPL:
 - **taffy** for flexbox, grid and block layout
 - **parley + fontique + harfrust + ICU4X** for shaping, BiDi, line breaking and font fallback (CJK included)
-- **skrifa** for hinted glyph outlines (it is Chrome's font backend on Linux)
+- **swash** for rasterising hinted glyphs. It sits on the same font data as parley, and skrifa (Chrome's font
+  backend on Linux) remains the option if its hinting ever falls short.
 - **cssparser + selectors** for the stylesheet engine
 
 What we write is the cascade, tokens, transitions, widgets, the renderer, and the C# binding layer.
+
+**What exists now** (`voxear_ui`, and the UI pass in `voxear_render`):
+- A retained tree of panels and labels, laid out by taffy's flexbox. Layout is in logical pixels; text is shaped
+  at the display scale, so hinting and line breaks match the pixels it lands on.
+- Text is shaped by parley from the system's fonts (fontique), Inter first for the UI and JetBrains Mono for
+  numbers, with fallbacks. swash rasterises each glyph hinted at its physical size into a 1024² coverage atlas,
+  packed in shelves, and glyphs are placed on whole pixels.
+- `Ui::frame` lays out what changed and returns quads: SDF rounded rectangles with borders, and glyphs. Nothing in
+  `voxear_ui` touches the GPU, so it is tested without one.
+- The renderer draws every quad in one draw call after post-processing, from a per-frame buffer. Colours are linear
+  and premultiplied and the output is sRGB, so blending happens in linear light. Text coverage is leaned back
+  towards how the face looks in a design tool, since linear blending makes light text on dark look heavier.
+- The atlas uploads only when new glyphs appear; when it fills it starts again and redraws.
+
+```rust
+let mut ui = Ui::new();
+let panel = ui.panel(ui.root(), Style::column().at(12.0, 12.0).padding(12.0).radius(10.0).background(Color::hex(0x111216)));
+let row = ui.panel(panel, Style::row().spread());
+ui.label(row, "GPU", TextStyle::default().color(Color::hex(0x8b8c96)));
+let gpu = ui.label(row, "–", TextStyle::default().mono());
+ui.set_text(gpu, "0.43 ms"); // costs nothing when unchanged, so call it every frame
+renderer.set_ui(&ui.frame(width, height, scale))?;
+```
+
+The first thing built with it is the stats overlay (see [Debugging and profiling tools](#debugging-and-profiling-tools)).
 
 **Authoring.**
 - Markup (`.vui`) and stylesheets (`.vss`), in the spirit of UXML and USS, with design tokens as CSS variables.
@@ -812,9 +840,10 @@ What we write is the cascade, tokens, transitions, widgets, the renderer, and th
 - A live-reloading UI builder in the editor.
 
 **Crisp text** uses two paths, the same split Chrome uses:
-- **Screen-space and editor text** is rasterised at the exact physical pixel size with light hinting. It goes into an
-  atlas keyed by font, size and one of 4 sub-pixel x positions, with the baseline snapped to whole pixels. A
-  contrast and gamma table tuned for light-on-dark text is applied. This is what makes small editor text sharp.
+- **Screen-space and editor text** is rasterised at the exact physical pixel size with hinting. It goes into an
+  atlas keyed by font, size and glyph, with the baseline snapped to whole pixels, and a coverage curve tuned for
+  light-on-dark text is applied. This is what makes small editor text sharp. *(Implemented, with glyphs on whole
+  pixels; 4 sub-pixel x positions come with light hinting.)*
 - **World-space and large or transformed text** uses MSDF, with an option for Slug-style curve rendering (now patent
   free). It stays sharp at any distance and angle. The renderer switches paths on scale and perspective.
 
@@ -1431,6 +1460,7 @@ Every operation the editor can do should be scriptable.
   then what was left out.
 - `--bundles` on `run` and `render` reads assets from those bundles, as a player will, and builds them first unless
   `--no-build`.
+- `--stats` on `run` and `render` shows the stats overlay (F1 toggles it in a window).
 
 **Planned.**
 - Project: `vox new`, `vox open`.
@@ -1450,7 +1480,9 @@ them in a running game.
 
 **Easy.**
 - One key toggles a **stats overlay**: FPS, a frame-time graph, the CPU/GPU split, draw and triangle counts, and
-  memory.
+  memory. *(First version implemented: F1 in a game window, or `--stats` on `vox run` and `vox render`. It shows
+  frame rate, frame time, GPU time, draws, shadow draws, culled instances, lights per cluster and exposure. The
+  graph, triangles and memory come with the profiler.)*
 - The **capture button** in the toolbar grabs the next frame in RenderDoc.
 - Every panel below opens from the command palette.
 

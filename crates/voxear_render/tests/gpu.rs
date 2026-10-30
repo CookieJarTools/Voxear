@@ -195,3 +195,41 @@ fn cooked_textures_look_like_their_source() {
     let difference = (0..3).map(|c| source.0[c].abs_diff(cooked.0[c])).max().unwrap();
     assert!(difference <= 4, "BC7 and BC5 stay within a few levels: {:?} vs {:?}", source.0, cooked.0);
 }
+
+#[test]
+fn the_ui_draws_over_the_frame() {
+    use voxear_ui::{Color, Style, TextStyle, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let style = Style::column().at(20.0, 20.0).width(200.0).padding(16.0).radius(12.0);
+    let panel = ui.panel(root, style.background(Color::hex(0xff0000)).border(2.0, Color::hex(0x00ff00)));
+    ui.label(panel, "Voxear", TextStyle::default().size(24.0));
+    let (width, height) = (640, 360);
+    renderer.set_ui(&ui.frame(width, height, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let at = |x: u32, y: u32| {
+        let i = ((y * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    let [x, y, w, h] = ui.rect(panel).map(|v| v as u32);
+    assert_eq!(at(x + w - 20, y + h / 2), [255, 0, 0], "the panel is filled");
+    assert_eq!(at(x, y + h / 2), [0, 255, 0], "its left edge is the border");
+    assert_eq!(at(x + w - 1, y + h / 2), [0, 255, 0], "and its right");
+    let corner = at(x, y);
+    assert!(corner[0] < 200 && corner[1] < 200, "the corner is rounded off, got {corner:?}");
+    let text = (x + 16..x + 100).flat_map(|tx| (y + 16..y + h - 16).map(move |ty| (tx, ty)));
+    let brightest = text.map(|(tx, ty)| at(tx, ty).into_iter().min().unwrap()).max().unwrap();
+    assert!(brightest > 230, "white text is drawn, brightest {brightest}");
+
+    renderer.set_ui(&voxear_ui::UiFrame::default()).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let i = (((y + h / 2) * width + x + w - 20) * 4) as usize;
+    assert_ne!(pixels[i..i + 3], [255, 0, 0], "an empty frame clears the UI");
+}

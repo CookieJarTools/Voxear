@@ -17,6 +17,7 @@ raw-window-handle.workspace = true
 voxear_ecs.workspace = true
 voxear_scene.workspace = true
 voxear_core.workspace = true
+voxear_ui.workspace = true
 gltf.workspace = true
 image.workspace = true
 base64.workspace = true

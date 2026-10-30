@@ -157,16 +157,23 @@ Still to do in M2:
 
 ## M3 — Editor shell and Voxear UI
 
+Done so far:
+- **Voxear UI foundation** (`voxear_ui`):
+  - a retained tree of panels and labels with taffy flexbox layout
+  - parley text from system fonts, rasterised hinted by swash at the physical size into a glyph atlas
+  - SDF rounded, bordered quads and glyphs, drawn in one pass after post-processing with linear blending
+  - 6 tests without a GPU, and one that checks the drawn pixels
+- **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`.
+
+Still to do in M3:
 - UI core:
-  - taffy layout
-  - parley and skrifa text with crisp hinted atlases
   - `.vui` markup and `.vss` styles
   - transitions
 - OKLCH theme tokens.
 - Docking, Hierarchy (with instance badges), Inspector, Project, Scene and Game views, and Console.
 - Command palette (Ctrl+K), gizmos, selection, undo/redo, play mode, and C# hot reload.
 - Debug tools:
-  - the stats overlay and the profiler panel (with Tracy)
+  - the stats overlay's frame-time graph, and the profiler panel (with Tracy)
   - the frame debugger and the ECS inspector
   - the memory profiler with snapshots and diffs
   - debug draw and the dev console

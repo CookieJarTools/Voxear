@@ -1,0 +1,133 @@
+//! The cascade: each element's style, worked out as CSS does. It starts
+//! from the style given in code, applies the matching rules of every sheet
+//! in effect (those attached to it and its ancestors) from least to most
+//! specific, then its inline declarations. Text styles and custom
+//! properties are inherited from the parent.
+
+use std::{collections::HashMap, rc::Rc};
+
+use taffy::Display;
+
+use crate::{
+    TextStyle, Ui, properties,
+    selector::{Facts, States},
+    sheet::{Declaration, StyleSheet},
+};
+
+/// What an element passes down to its children.
+struct Inherited {
+    text: TextStyle,
+    vars: Rc<HashMap<String, String>>,
+    /// Sheets in effect, each with how far down it was attached.
+    sheets: Vec<(Rc<StyleSheet>, usize)>,
+}
+
+/// An ancestor as selectors see it, owned so the tree can change meanwhile.
+struct Seen {
+    tag: &'static str,
+    name: Option<String>,
+    classes: Vec<String>,
+    states: States,
+}
+
+impl Seen {
+    fn facts(&self, depth: usize) -> Facts<'_> {
+        Facts { tag: self.tag, name: self.name.as_deref(), classes: &self.classes, states: self.states, depth }
+    }
+}
+
+impl Ui {
+    pub(crate) fn cascade(&mut self) {
+        let top = Inherited { text: TextStyle::default(), vars: Rc::default(), sheets: Vec::new() };
+        let mut warnings = Vec::new();
+        self.cascade_node(self.root, &top, &mut Vec::new(), &mut warnings);
+        self.warn(warnings);
+    }
+
+    fn cascade_node(
+        &mut self,
+        node: taffy::NodeId,
+        parent: &Inherited,
+        path: &mut Vec<Seen>,
+        warnings: &mut Vec<String>,
+    ) {
+        let element = self.tree.get_node_context(node).expect("every node has an element");
+        let mut sheets = parent.sheets.clone();
+        sheets.extend(element.sheets.iter().map(|sheet| (sheet.clone(), path.len())));
+        path.push(Seen {
+            tag: element.kind.tag(),
+            name: element.name.clone(),
+            classes: element.classes.clone(),
+            states: element.states,
+        });
+        let (base, base_text, inline) = (element.base.clone(), element.base_text, element.inline.clone());
+
+        let declarations = matching(&sheets, path, &inline);
+        let mut vars = parent.vars.clone();
+        for (declaration, _) in declarations.iter().filter(|(d, _)| d.name.starts_with("--")) {
+            Rc::make_mut(&mut vars).insert(declaration.name.clone(), declaration.value.clone());
+        }
+        let mut style = base.clone();
+        let mut text = base_text.unwrap_or(parent.text);
+        for (declaration, source) in declarations.iter().filter(|(d, _)| !d.name.starts_with("--")) {
+            if let Err(message) = properties::apply(&mut style, &mut text, &declaration.name, &declaration.value, &vars)
+            {
+                warnings.push(format!("{source}:{}: {message}", declaration.line));
+            }
+        }
+        // Hiding from code wins over sheets.
+        if base.layout.display == Display::None {
+            style.layout.display = Display::None;
+        }
+
+        let element = self.tree.get_node_context_mut(node).expect("every node has an element");
+        let layout = (element.computed.layout != style.layout).then(|| style.layout.clone());
+        element.computed = style;
+        element.text_style = text;
+        let mut reshape = false;
+        if let Some(label) = &mut element.text
+            && label.style != text
+        {
+            (label.style, label.shaped, reshape) = (text, None, true);
+        }
+        if let Some(layout) = layout {
+            let _ = self.tree.set_style(node, layout);
+        }
+        if reshape {
+            let _ = self.tree.mark_dirty(node);
+        }
+
+        let inherited = Inherited { text, vars, sheets };
+        for child in self.tree.children(node).unwrap_or_default() {
+            self.cascade_node(child, &inherited, path, warnings);
+        }
+        path.pop();
+    }
+}
+
+/// Every declaration that applies to the last element of `path`, in the
+/// order they apply, each with where it came from: sheet rules from least to
+/// most specific (later sheets, then later rules, winning ties), then the
+/// inline ones.
+fn matching<'a>(
+    sheets: &'a [(Rc<StyleSheet>, usize)],
+    path: &[Seen],
+    inline: &'a [Declaration],
+) -> Vec<(&'a Declaration, &'a str)> {
+    let facts: Vec<Facts> = path.iter().enumerate().map(|(depth, seen)| seen.facts(depth)).collect();
+    let mut matched = Vec::new();
+    for (sheet_index, (sheet, scope)) in sheets.iter().enumerate() {
+        for (rule_index, rule) in sheet.rules.iter().enumerate() {
+            let best = rule.selectors.iter().filter(|s| s.matches(&facts, *scope)).map(|s| s.specificity).max();
+            if let Some(specificity) = best {
+                matched.push((specificity, sheet_index, rule_index));
+            }
+        }
+    }
+    matched.sort_unstable();
+    let from_sheets = matched.into_iter().flat_map(|(_, sheet, rule)| {
+        let sheet = &sheets[sheet].0;
+        sheet.rules[rule].declarations.iter().map(move |d| (d, sheet.source.as_str()))
+    });
+    from_sheets.chain(inline.iter().map(|d| (d, "inline style"))).collect()
+}

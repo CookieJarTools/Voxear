@@ -187,6 +187,14 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
                 self.set_flying(state == ElementState::Pressed);
             }
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                self.overlay.pointer_button(state == ElementState::Pressed);
+            }
+            // While flying the cursor is captured, and points at nothing.
+            WindowEvent::CursorMoved { position, .. } if !self.fly.is_looking() => {
+                self.overlay.pointer_move(position.x as f32, position.y as f32);
+            }
+            WindowEvent::CursorLeft { .. } => self.overlay.pointer_leave(),
             WindowEvent::MouseWheel { delta, .. } => {
                 let notches = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,

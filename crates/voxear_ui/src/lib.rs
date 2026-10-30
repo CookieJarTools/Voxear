@@ -11,17 +11,42 @@
 //!   game; nothing here touches the GPU, so the tree can be built and laid
 //!   out in tests.
 //!
-//! This is the foundation the editor and in-game UI build on. Markup
-//! (`.vui`), style sheets (`.vss`), events and animation come next.
+//! - **Markup** (`.vui`, see [`markup`]) and **style sheets** (`.vss`, see
+//!   [`StyleSheet`]) describe UI as Unity's UXML and USS do, with CSS's
+//!   cascade, inherited text and custom properties for theme tokens.
+//! - **The pointer** drives `:hover` and `:active`, and clicks.
+//!
+//! This is the foundation the editor and in-game UI build on.
 
 mod atlas;
+mod cascade;
 mod color;
+mod draw;
+pub mod markup;
+mod pointer;
+pub mod properties;
+mod selector;
+mod sheet;
 mod style;
 mod tree;
 
 pub use color::Color;
+pub use markup::LoadFile;
+pub use sheet::StyleSheet;
 pub use style::{Family, Style, TextStyle};
-pub use tree::{NodeId, Ui};
+pub use tree::{Kind, NodeId, Ui};
+
+/// A document that could not be loaded, with where and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiError(pub String);
+
+impl std::fmt::Display for UiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UiError {}
 
 /// One thing to draw: a rounded, bordered rectangle, or a glyph from the
 /// atlas. Coordinates are physical pixels from the top left; colours are

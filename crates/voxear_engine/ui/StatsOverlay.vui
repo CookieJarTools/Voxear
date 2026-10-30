@@ -1,0 +1,22 @@
+<vui>
+    <Style src="StatsOverlay.vss" />
+    <Panel name="stats" class="stats">
+        <Panel name="header" class="header">
+            <Label class="title">Stats</Label>
+            <Label class="hint">F1</Label>
+        </Panel>
+        <Panel class="body">
+            <Panel class="divider" />
+            <Panel class="row"><Label>Frame rate</Label><Label name="fps" class="value accent">–</Label></Panel>
+            <Panel class="row"><Label>Frame</Label><Label name="frame" class="value">–</Label></Panel>
+            <Panel class="row"><Label>GPU</Label><Label name="gpu" class="value">–</Label></Panel>
+            <Panel class="divider" />
+            <Panel class="row"><Label>Draws</Label><Label name="draws" class="value">–</Label></Panel>
+            <Panel class="row"><Label>Shadow draws</Label><Label name="shadow-draws" class="value">–</Label></Panel>
+            <Panel class="row"><Label>Culled</Label><Label name="culled" class="value">–</Label></Panel>
+            <Panel class="divider" />
+            <Panel class="row"><Label>Lights per cluster</Label><Label name="lights" class="value">–</Label></Panel>
+            <Panel class="row"><Label>Exposure</Label><Label name="exposure" class="value">–</Label></Panel>
+        </Panel>
+    </Panel>
+</vui>

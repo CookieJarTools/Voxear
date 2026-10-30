@@ -5,14 +5,33 @@ use taffy::{
 use crate::Color;
 
 /// How an element looks and where it goes. Layout fields are taffy's
-/// (flexbox, as in CSS); the builder methods cover the common ones.
-#[derive(Clone, Debug, Default)]
+/// (flexbox, as in CSS); the builder methods cover the common ones. Style
+/// sheets set the same fields by their CSS names.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Style {
     pub layout: taffy::Style,
     pub background: Option<Color>,
     /// Width in logical pixels, and colour.
     pub border: Option<(f32, Color)>,
     pub radius: f32,
+    /// Multiplies this element's and its children's alpha.
+    pub opacity: f32,
+    /// Whether the pointer can hover and press it. Its children decide for
+    /// themselves.
+    pub pickable: bool,
+}
+
+impl Default for Style {
+    fn default() -> Self {
+        Self {
+            layout: taffy::Style::default(),
+            background: None,
+            border: None,
+            radius: 0.0,
+            opacity: 1.0,
+            pickable: true,
+        }
+    }
 }
 
 impl Style {
@@ -20,6 +39,16 @@ impl Style {
     pub fn column() -> Self {
         let mut style = Self::default();
         style.layout.flex_direction = FlexDirection::Column;
+        style
+    }
+
+    /// Covers its parent and lets the pointer through to what is under it,
+    /// as a document's container does.
+    pub fn cover() -> Self {
+        let mut style = Self::column();
+        style.layout.position = Position::Absolute;
+        style.layout.inset = Rect::length(0.0);
+        style.pickable = false;
         style
     }
 
@@ -76,8 +105,10 @@ impl Style {
         self
     }
 
+    /// A border, which also insets the content, as in CSS.
     pub fn border(mut self, width: f32, color: Color) -> Self {
         self.border = Some((width, color));
+        self.layout.border = Rect::length(width);
         self
     }
 

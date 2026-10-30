@@ -168,13 +168,19 @@ Done so far:
   - a retained tree of panels and labels with taffy flexbox layout
   - parley text from system fonts, rasterised hinted by swash at the physical size into a glyph atlas
   - SDF rounded, bordered quads and glyphs, drawn in one pass after post-processing with linear blending
-  - 6 tests without a GPU, and one that checks the drawn pixels
-- **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`.
+  - tests without a GPU, and one that checks the drawn pixels
+- **Markup and style sheets:** `.vui` documents and `.vss` sheets in the spirit of UXML and USS: USS's
+  selectors, the CSS cascade with inherited text and `var()` theme tokens, `oklch()` colours, and warnings that
+  name the file and line.
+- **Pointer:** `:hover`, `:active` and clicks.
+- **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`,
+  written as `StatsOverlay.vui` and `.vss`. Clicking its header folds it.
 
 Still to do in M3:
 - UI core:
-  - `.vui` markup and `.vss` styles
   - transitions
+  - keyboard focus and text input
+  - clipping and scrolling
 - OKLCH theme tokens.
 - Docking, Hierarchy (with instance badges), Inspector, Project, Scene and Game views, and Console.
 - Command palette (Ctrl+K), gizmos, selection, undo/redo, play mode, and C# hot reload.

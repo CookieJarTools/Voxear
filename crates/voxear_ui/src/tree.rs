@@ -1,32 +1,99 @@
-//! The element tree: taffy nodes, each carrying its element's look and text.
+//! The element tree: taffy nodes, each carrying its element's identity
+//! (type, name, classes and states), the style it was given, the style the
+//! cascade worked out, and its text.
 
-use parley::{FontContext, FontWeight, Layout, LayoutContext, PositionedLayoutItem, StyleProperty};
-use taffy::{AvailableSpace, Dimension, Display, LayoutInput, LayoutOutput, Size, TaffyTree};
+use std::rc::Rc;
 
-use crate::{Quad, Style, TextStyle, UiFrame, atlas::GlyphAtlas};
+use parley::{FontContext, FontWeight, Layout, LayoutContext, StyleProperty};
+use taffy::{AvailableSpace, Dimension, Display, Size, TaffyTree};
+
+use crate::{
+    Style, TextStyle, UiFrame,
+    atlas::GlyphAtlas,
+    draw::{Draw, measure},
+    selector::States,
+    sheet::{Declaration, StyleSheet, parse_inline},
+};
 
 /// An element in a [`Ui`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct NodeId(taffy::NodeId);
+pub struct NodeId(pub(crate) taffy::NodeId);
 
-/// What each taffy node carries besides its layout.
-#[derive(Default)]
-struct Element {
-    style: Style,
-    text: Option<Text>,
+/// What an element is, which style sheets select by type name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A box that holds other elements.
+    Panel,
+    /// Text.
+    Label,
+    /// Text that can be clicked.
+    Button,
 }
 
-struct Text {
-    content: String,
-    style: TextStyle,
+impl Kind {
+    pub fn tag(self) -> &'static str {
+        match self {
+            Kind::Panel => "Panel",
+            Kind::Label => "Label",
+            Kind::Button => "Button",
+        }
+    }
+}
+
+/// What each taffy node carries besides its layout.
+pub(crate) struct Element {
+    pub kind: Kind,
+    pub name: Option<String>,
+    pub classes: Vec<String>,
+    pub states: States,
+    /// Sheets that style this element and everything in it.
+    pub sheets: Vec<Rc<StyleSheet>>,
+    /// The style given in code, which sheets refine.
+    pub base: Style,
+    /// The text style given in code; without one, text is inherited.
+    pub base_text: Option<TextStyle>,
+    /// Declarations from a `style` attribute, which win over sheets.
+    pub inline: Vec<Declaration>,
+    /// The result of the cascade, which is what is drawn.
+    pub computed: Style,
+    pub text_style: TextStyle,
+    pub text: Option<Text>,
+}
+
+impl Element {
+    pub fn new(kind: Kind, base: Style) -> Self {
+        Self {
+            kind,
+            name: None,
+            classes: Vec::new(),
+            states: States::default(),
+            sheets: Vec::new(),
+            computed: base.clone(),
+            base,
+            base_text: None,
+            inline: Vec::new(),
+            text_style: TextStyle::default(),
+            text: None,
+        }
+    }
+}
+
+pub(crate) struct Text {
+    pub content: String,
+    /// The style it was last shaped with.
+    pub style: TextStyle,
     /// Shaped at the display scale it was last laid out at.
-    shaped: Option<(f32, Layout<()>)>,
+    pub shaped: Option<(f32, Layout<()>)>,
 }
 
 impl Text {
+    pub fn new(content: &str) -> Self {
+        Self { content: content.to_owned(), style: TextStyle::default(), shaped: None }
+    }
+
     /// Shaped at physical size, so hinting and line breaks match the pixels
     /// it is drawn at.
-    fn shaped(&mut self, fonts: &mut FontContext, layouts: &mut LayoutContext<()>, scale: f32) -> &mut Layout<()> {
+    pub fn shaped(&mut self, fonts: &mut FontContext, layouts: &mut LayoutContext<()>, scale: f32) -> &mut Layout<()> {
         if self.shaped.as_ref().is_none_or(|(at, _)| *at != scale) {
             let mut builder = layouts.ranged_builder(fonts, &self.content, scale, true);
             builder.push_default(StyleProperty::FontSize(self.style.size));
@@ -38,16 +105,21 @@ impl Text {
     }
 }
 
-/// A retained tree of UI elements. Build it once, change what changes, and
-/// call [`frame`](Self::frame) each frame for what to draw.
+/// A retained tree of UI elements. Build it in code or from markup
+/// ([`load_markup`](Self::load_markup)), style it with sheets, change what
+/// changes, and call [`frame`](Self::frame) each frame for what to draw.
 pub struct Ui {
-    tree: TaffyTree<Element>,
-    root: taffy::NodeId,
-    fonts: FontContext,
-    layouts: LayoutContext<()>,
-    atlas: GlyphAtlas,
+    pub(crate) tree: TaffyTree<Element>,
+    pub(crate) root: taffy::NodeId,
+    pub(crate) fonts: FontContext,
+    pub(crate) layouts: LayoutContext<()>,
+    pub(crate) atlas: GlyphAtlas,
     /// Logical size and display scale of the last frame.
-    viewport: (f32, f32, f32),
+    pub(crate) viewport: (f32, f32, f32),
+    /// Something the cascade reads changed since it last ran.
+    pub(crate) restyle: bool,
+    pub(crate) pointer: crate::pointer::Pointer,
+    pub(crate) warnings: Vec<String>,
 }
 
 impl Default for Ui {
@@ -62,8 +134,11 @@ impl Ui {
         // Snapped to physical pixels when drawn instead, which is what matters
         // at display scales other than 1.
         tree.disable_rounding();
-        let root =
-            tree.new_leaf_with_context(taffy::Style::default(), Element::default()).expect("a new tree has room");
+        let root = Element {
+            base: Style { pickable: false, ..Style::default() },
+            ..Element::new(Kind::Panel, Style::default())
+        };
+        let root = tree.new_leaf_with_context(taffy::Style::default(), root).expect("a new tree has room");
         Self {
             tree,
             root,
@@ -71,6 +146,9 @@ impl Ui {
             layouts: LayoutContext::new(),
             atlas: GlyphAtlas::new(),
             viewport: (0.0, 0.0, 0.0),
+            restyle: true,
+            pointer: Default::default(),
+            warnings: Vec::new(),
         }
     }
 
@@ -79,27 +157,46 @@ impl Ui {
         NodeId(self.root)
     }
 
-    /// A box that holds other elements.
+    /// A box that holds other elements, styled by `style` and any sheets.
     pub fn panel(&mut self, parent: NodeId, style: Style) -> NodeId {
-        self.add(parent, Element { style, text: None })
+        self.add(parent, Element::new(Kind::Panel, style))
     }
 
     /// A line or paragraph of text, wrapping when its parent is narrower.
     pub fn label(&mut self, parent: NodeId, text: &str, style: TextStyle) -> NodeId {
-        let text = Text { content: text.to_owned(), style, shaped: None };
-        self.add(parent, Element { style: Style::default(), text: Some(text) })
+        let element = Element {
+            base_text: Some(style),
+            text: Some(Text::new(text)),
+            ..Element::new(Kind::Label, Style::default())
+        };
+        self.add(parent, element)
     }
 
-    fn add(&mut self, parent: NodeId, element: Element) -> NodeId {
-        let node = self.tree.new_leaf_with_context(element.style.layout.clone(), element).expect("room for a node");
+    /// Text that can be clicked; see [`clicked`](Self::clicked). Its text
+    /// style comes from sheets and its parent.
+    pub fn button(&mut self, parent: NodeId, text: &str) -> NodeId {
+        self.add(parent, Element { text: Some(Text::new(text)), ..Element::new(Kind::Button, Style::default()) })
+    }
+
+    pub(crate) fn add(&mut self, parent: NodeId, element: Element) -> NodeId {
+        let node = self.tree.new_leaf_with_context(element.base.layout.clone(), element).expect("room for a node");
         self.tree.add_child(parent.0, node).expect("the parent is in this tree");
+        self.restyle = true;
         NodeId(node)
     }
 
-    /// Changes a label's text. Setting the same text again costs nothing, so
-    /// this can be called every frame.
+    pub(crate) fn element(&self, node: NodeId) -> Option<&Element> {
+        self.tree.get_node_context(node.0)
+    }
+
+    pub(crate) fn element_mut(&mut self, node: NodeId) -> Option<&mut Element> {
+        self.tree.get_node_context_mut(node.0)
+    }
+
+    /// Changes an element's text. Setting the same text again costs nothing,
+    /// so this can be called every frame.
     pub fn set_text(&mut self, node: NodeId, text: &str) {
-        let Some(label) = self.text_mut(node) else { return };
+        let Some(label) = self.element_mut(node).and_then(|e| e.text.as_mut()) else { return };
         if label.content == text {
             return;
         }
@@ -109,39 +206,165 @@ impl Ui {
         let _ = self.tree.mark_dirty(node.0);
     }
 
+    /// The text style a label starts from, before sheets.
     pub fn set_text_style(&mut self, node: NodeId, style: TextStyle) {
-        let Some(label) = self.text_mut(node) else { return };
-        if label.style == style {
+        if let Some(element) = self.element_mut(node)
+            && element.base_text != Some(style)
+        {
+            element.base_text = Some(style);
+            self.restyle = true;
+        }
+    }
+
+    /// The style an element starts from, before sheets.
+    pub fn set_style(&mut self, node: NodeId, style: Style) {
+        if let Some(element) = self.element_mut(node)
+            && element.base != style
+        {
+            element.base = style;
+            self.restyle = true;
+        }
+    }
+
+    /// Declarations that win over every sheet, written as in a `style`
+    /// attribute: `"width: 120px; color: #fff"`.
+    pub fn set_inline_style(&mut self, node: NodeId, declarations: &str) {
+        let mut warnings = Vec::new();
+        let inline = parse_inline("inline style", declarations, &mut warnings);
+        self.warn(warnings);
+        if let Some(element) = self.element_mut(node) {
+            element.inline = inline;
+            self.restyle = true;
+        }
+    }
+
+    /// Styles `node` and everything in it with `sheet`. Sheets nearer an
+    /// element win over those further up when rules are equally specific.
+    pub fn add_sheet(&mut self, node: NodeId, sheet: StyleSheet) {
+        self.warn(sheet.warnings().to_vec());
+        if let Some(element) = self.element_mut(node) {
+            element.sheets.push(Rc::new(sheet));
+            self.restyle = true;
+        }
+    }
+
+    /// Takes away every sheet `node` was given, for loading them again.
+    pub fn clear_sheets(&mut self, node: NodeId) {
+        if let Some(element) = self.element_mut(node) {
+            element.sheets.clear();
+            self.restyle = true;
+        }
+    }
+
+    pub fn set_name(&mut self, node: NodeId, name: &str) {
+        if let Some(element) = self.element_mut(node) {
+            element.name = Some(name.to_string());
+            self.restyle = true;
+        }
+    }
+
+    pub fn name(&self, node: NodeId) -> Option<&str> {
+        self.element(node)?.name.as_deref()
+    }
+
+    pub fn kind(&self, node: NodeId) -> Option<Kind> {
+        self.element(node).map(|e| e.kind)
+    }
+
+    pub fn add_class(&mut self, node: NodeId, class: &str) {
+        self.set_class(node, class, true);
+    }
+
+    pub fn remove_class(&mut self, node: NodeId, class: &str) {
+        self.set_class(node, class, false);
+    }
+
+    pub fn toggle_class(&mut self, node: NodeId, class: &str) {
+        let on = !self.has_class(node, class);
+        self.set_class(node, class, on);
+    }
+
+    pub fn set_class(&mut self, node: NodeId, class: &str, on: bool) {
+        let Some(element) = self.element_mut(node) else { return };
+        let has = element.classes.iter().any(|c| c == class);
+        if has == on {
             return;
         }
-        label.style = style;
-        label.shaped = None;
-        let _ = self.tree.mark_dirty(node.0);
-    }
-
-    fn text_mut(&mut self, node: NodeId) -> Option<&mut Text> {
-        self.tree.get_node_context_mut(node.0)?.text.as_mut()
-    }
-
-    pub fn set_style(&mut self, node: NodeId, style: Style) {
-        let _ = self.tree.set_style(node.0, style.layout.clone());
-        if let Some(element) = self.tree.get_node_context_mut(node.0) {
-            element.style = style;
+        if on {
+            element.classes.push(class.to_string());
+        } else {
+            element.classes.retain(|c| c != class);
         }
+        self.restyle = true;
+    }
+
+    pub fn has_class(&self, node: NodeId, class: &str) -> bool {
+        self.element(node).is_some_and(|e| e.classes.iter().any(|c| c == class))
+    }
+
+    pub(crate) fn set_state(&mut self, node: NodeId, state: States, on: bool) {
+        let Some(element) = self.element_mut(node) else { return };
+        if element.states.contains(state) != on {
+            element.states.set(state, on);
+            self.restyle = true;
+        }
+    }
+
+    /// A disabled element matches `:disabled`, and neither it nor anything in
+    /// it can be clicked.
+    pub fn set_enabled(&mut self, node: NodeId, enabled: bool) {
+        self.set_state(node, States::DISABLED, !enabled);
+    }
+
+    /// For toggles and selected rows: matches `:checked`.
+    pub fn set_checked(&mut self, node: NodeId, checked: bool) {
+        self.set_state(node, States::CHECKED, checked);
     }
 
     /// Hidden elements take no space and draw nothing, nor do their children.
+    /// This wins over sheets.
     pub fn set_visible(&mut self, node: NodeId, visible: bool) {
-        let Ok(style) = self.tree.style(node.0) else { return };
+        let Some(element) = self.element_mut(node) else { return };
         let display = if visible { Display::Flex } else { Display::None };
-        if style.display != display {
-            let style = taffy::Style { display, ..style.clone() };
-            let _ = self.tree.set_style(node.0, style);
+        if element.base.layout.display != display {
+            element.base.layout.display = display;
+            element.inline.retain(|d| d.name != "display");
+            self.restyle = true;
         }
     }
 
     pub fn is_visible(&self, node: NodeId) -> bool {
-        self.tree.style(node.0).is_ok_and(|s| s.display != Display::None)
+        self.element(node).is_some_and(|e| e.base.layout.display != Display::None)
+    }
+
+    /// The first element with this name in `node`, or `node` itself,
+    /// searching depth first, like Unity's `Q`.
+    pub fn find(&self, node: NodeId, name: &str) -> Option<NodeId> {
+        if self.name(node) == Some(name) {
+            return Some(node);
+        }
+        let children = self.tree.children(node.0).unwrap_or_default();
+        children.into_iter().find_map(|child| self.find(NodeId(child), name))
+    }
+
+    pub fn children(&self, node: NodeId) -> Vec<NodeId> {
+        self.tree.children(node.0).unwrap_or_default().into_iter().map(NodeId).collect()
+    }
+
+    pub fn parent(&self, node: NodeId) -> Option<NodeId> {
+        self.tree.parent(node.0).map(NodeId)
+    }
+
+    /// Whether `node` is `ancestor` or inside it.
+    pub fn is_within(&self, node: NodeId, ancestor: NodeId) -> bool {
+        let mut at = Some(node.0);
+        while let Some(current) = at {
+            if current == ancestor.0 {
+                return true;
+            }
+            at = self.tree.parent(current);
+        }
+        false
     }
 
     /// Removes an element and everything in it.
@@ -150,6 +373,19 @@ impl Ui {
             self.remove(NodeId(child));
         }
         let _ = self.tree.remove(node.0);
+        self.pointer.forget(node.0);
+        self.restyle = true;
+    }
+
+    /// An element's style as the last frame's cascade worked it out.
+    pub fn style(&self, node: NodeId) -> Option<&Style> {
+        self.element(node).map(|e| &e.computed)
+    }
+
+    /// The text style an element has, or passes to the text in it, as of the
+    /// last frame.
+    pub fn text_style(&self, node: NodeId) -> Option<TextStyle> {
+        self.element(node).map(|e| e.text_style)
     }
 
     /// Where an element was laid out by the last frame: left, top, width and
@@ -166,9 +402,29 @@ impl Ui {
         [x, y, layout.size.width, layout.size.height]
     }
 
-    /// Lays the tree out for a screen `width` by `height` physical pixels at
-    /// `scale` physical pixels per logical one, and returns what to draw.
+    /// Problems found in sheets and markup since the last call: unknown
+    /// properties, bad values and the like. Each is also logged once.
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
+    }
+
+    pub(crate) fn warn(&mut self, warnings: Vec<String>) {
+        for warning in warnings {
+            if !self.warnings.contains(&warning) {
+                tracing::warn!("{warning}");
+                self.warnings.push(warning);
+            }
+        }
+    }
+
+    /// Restyles what changed, lays the tree out for a screen `width` by
+    /// `height` physical pixels at `scale` physical pixels per logical one,
+    /// and returns what to draw. Clicks seen since the last frame are
+    /// forgotten after this.
     pub fn frame(&mut self, width: u32, height: u32, scale: f32) -> UiFrame {
+        if std::mem::take(&mut self.restyle) {
+            self.cascade();
+        }
         self.layout(width, height, scale);
         let scale = self.viewport.2;
         let mut quads = Vec::new();
@@ -178,11 +434,12 @@ impl Ui {
             quads.clear();
             self.atlas.restarted = false;
             let mut draw = Draw { tree: &mut self.tree, atlas: &mut self.atlas, scale, quads: &mut quads };
-            draw.node(self.root, (0.0, 0.0));
+            draw.node(self.root, (0.0, 0.0), 1.0);
             if !self.atlas.restarted {
                 break;
             }
         }
+        self.pointer.clicks.clear();
         UiFrame { quads, atlas: self.atlas.take_upload() }
     }
 
@@ -214,125 +471,5 @@ impl Ui {
         let Some(text) = self.tree.get_node_context_mut(node).and_then(|e| e.text.as_mut()) else { return };
         text.shaped = None;
         let _ = self.tree.mark_dirty(node);
-    }
-}
-
-/// How big a leaf is: its text, broken to fit, or nothing.
-fn measure(
-    input: LayoutInput,
-    element: Option<&mut Element>,
-    style: &taffy::Style,
-    fonts: &mut FontContext,
-    layouts: &mut LayoutContext<()>,
-    scale: f32,
-) -> LayoutOutput {
-    let Some(text) = element.and_then(|e| e.text.as_mut()) else {
-        return taffy::compute_leaf_layout(input, style, |_, _| 0.0, |_, _| Size::ZERO);
-    };
-    taffy::compute_leaf_layout(
-        input,
-        style,
-        |_, _| 0.0,
-        |known, available| {
-            let max = known.width.or(match available.width {
-                AvailableSpace::Definite(width) => Some(width),
-                AvailableSpace::MinContent => Some(0.0),
-                AvailableSpace::MaxContent => None,
-            });
-            let layout = text.shaped(fonts, layouts, scale);
-            layout.break_all_lines(max.map(|w| w * scale));
-            Size {
-                width: known.width.unwrap_or(layout.width() / scale),
-                height: known.height.unwrap_or(layout.height() / scale),
-            }
-        },
-    )
-}
-
-/// Walks the laid-out tree into quads, parents before children.
-struct Draw<'a> {
-    tree: &'a mut TaffyTree<Element>,
-    atlas: &'a mut GlyphAtlas,
-    scale: f32,
-    quads: &'a mut Vec<Quad>,
-}
-
-impl Draw<'_> {
-    fn node(&mut self, node: taffy::NodeId, parent: (f32, f32)) {
-        if self.tree.style(node).is_ok_and(|s| s.display == Display::None) {
-            return;
-        }
-        let layout = *self.tree.layout(node).expect("laid out");
-        let at = (parent.0 + layout.location.x, parent.1 + layout.location.y);
-        let [x0, y0] = self.snap(at.0, at.1);
-        let [x1, y1] = self.snap(at.0 + layout.size.width, at.1 + layout.size.height);
-        let inset = (layout.border.left + layout.padding.left, layout.border.top + layout.padding.top);
-        let origin = self.snap(at.0 + inset.0, at.1 + inset.1);
-        let inner = layout.size.width - inset.0 - layout.border.right - layout.padding.right;
-        if let Some(element) = self.tree.get_node_context_mut(node) {
-            shape_quad(&element.style, [x0, y0, x1 - x0, y1 - y0], self.scale, self.quads);
-            if let Some(text) = &mut element.text
-                && let Some((_, shaped)) = &mut text.shaped
-            {
-                // Broken again at the width it ended up, which the last
-                // measure may not have been.
-                shaped.break_all_lines(Some((inner * self.scale).ceil()));
-                glyph_quads(shaped, origin, text.style.color.linear_premultiplied(), self.atlas, self.quads);
-            }
-        }
-        for child in self.tree.children(node).unwrap_or_default() {
-            self.node(child, at);
-        }
-    }
-
-    /// A logical point on the physical pixel grid.
-    fn snap(&self, x: f32, y: f32) -> [f32; 2] {
-        [(x * self.scale).round(), (y * self.scale).round()]
-    }
-}
-
-fn shape_quad(style: &Style, rect: [f32; 4], scale: f32, quads: &mut Vec<Quad>) {
-    let border = style.border.filter(|(width, _)| *width > 0.0);
-    if style.background.is_none() && border.is_none() {
-        return;
-    }
-    let (border, border_color) =
-        border.map_or((0.0, [0.0; 4]), |(w, c)| ((w * scale).round().max(1.0), c.linear_premultiplied()));
-    quads.push(Quad {
-        rect,
-        color: style.background.map_or([0.0; 4], |c| c.linear_premultiplied()),
-        border_color,
-        radius: style.radius * scale,
-        border,
-        kind: Quad::SHAPE,
-        ..Quad::default()
-    });
-}
-
-/// Every glyph of a shaped text, on whole pixels: hinted glyphs are drawn
-/// where the hinting expected them.
-fn glyph_quads(layout: &Layout<()>, origin: [f32; 2], color: [f32; 4], atlas: &mut GlyphAtlas, quads: &mut Vec<Quad>) {
-    let size = atlas.size() as f32;
-    for line in layout.lines() {
-        for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(glyph_run) = item else { continue };
-            let run = glyph_run.run();
-            let font = run.font();
-            let font = (font.data.data(), font.index, font.data.id());
-            let coords: Vec<i16> = run.normalized_coords().iter().map(|c| c.to_bits()).collect();
-            for glyph in glyph_run.positioned_glyphs() {
-                let Some(found) = atlas.glyph(font, glyph.id as u16, run.font_size(), &coords) else { continue };
-                let pen = [(origin[0] + glyph.x).round(), (origin[1] + glyph.y).round()];
-                let (x, y) = (found.x as f32, found.y as f32);
-                let (w, h) = (found.width as f32, found.height as f32);
-                quads.push(Quad {
-                    rect: [pen[0] + found.left as f32, pen[1] - found.top as f32, w, h],
-                    uv: [x / size, y / size, (x + w) / size, (y + h) / size],
-                    color,
-                    kind: Quad::GLYPH,
-                    ..Quad::default()
-                });
-            }
-        }
     }
 }

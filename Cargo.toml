@@ -39,6 +39,8 @@ gdeflate = "0.4"
 io-uring = "0.7"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 taffy = "0.15"
+cssparser = "0.36"
+roxmltree = "0.21"
 parley = "0.12"
 swash = "0.2"
 meshopt = "0.7"

@@ -1,28 +1,27 @@
 //! The stats overlay: frame rate, GPU time and what the renderer drew, in a
-//! panel over the game. F1 shows and hides it in a game window. It is the
-//! first thing built with Voxear UI, styled as the editor will be.
+//! panel over the game. F1 shows and hides it in a game window, and
+//! clicking its header folds it away. It is the first thing built with
+//! Voxear UI markup: `ui/StatsOverlay.vui` and `ui/StatsOverlay.vss`.
 
 use anyhow::Result;
 use voxear_render::Renderer;
-use voxear_ui::{Color, NodeId, Style, TextStyle, Ui};
+use voxear_ui::{NodeId, Ui, UiFrame};
 
 /// How often the numbers change, slow enough to read.
 const REFRESH: f32 = 0.25;
 
-const PANEL: Color = Color::hex(0x111216).with_alpha(0xeb);
-const EDGE: Color = Color::hex(0x2a2b30);
-const TEXT: Color = Color::hex(0xe8e8ec);
-const MUTED: Color = Color::hex(0x8b8c96);
-const FAINT: Color = Color::hex(0x5c5d66);
-const ACCENT: Color = Color::hex(0x8b93ff);
+const MARKUP: &str = include_str!("../ui/StatsOverlay.vui");
+const SHEET: &str = include_str!("../ui/StatsOverlay.vss");
 
-/// Rows in groups, each group under a divider.
-const SECTIONS: [&[&str]; 3] =
-    [&["Frame rate", "Frame", "GPU"], &["Draws", "Shadow draws", "Culled"], &["Lights per cluster", "Exposure"]];
+/// The labels the numbers go in, by name, in the order [`refresh`] fills them.
+///
+/// [`refresh`]: StatsOverlay::refresh
+const VALUES: [&str; 8] = ["fps", "frame", "gpu", "draws", "shadow-draws", "culled", "lights", "exposure"];
 
 pub struct StatsOverlay {
     ui: Ui,
     panel: NodeId,
+    header: NodeId,
     values: Vec<NodeId>,
     frames: u32,
     seconds: f32,
@@ -32,26 +31,17 @@ impl StatsOverlay {
     pub fn new(visible: bool) -> Self {
         let mut ui = Ui::new();
         let root = ui.root();
-        let style = Style::column().at(12.0, 12.0).width(228.0).padding(12.0).gap(6.0).radius(10.0);
-        let panel = ui.panel(root, style.background(PANEL).border(1.0, EDGE));
-        let header = ui.panel(panel, Style::row().spread());
-        ui.label(header, "Stats", TextStyle::default().size(12.0).weight(600.0).color(TEXT));
-        ui.label(header, "F1", TextStyle::default().size(11.0).color(FAINT).mono());
-
-        let name = TextStyle::default().size(12.0).color(MUTED);
-        let value = TextStyle::default().size(12.0).color(TEXT).mono();
-        let mut values = Vec::new();
-        for section in SECTIONS {
-            ui.panel(panel, Style::default().height(1.0).background(EDGE));
-            for row_name in section {
-                let row = ui.panel(panel, Style::row().spread());
-                ui.label(row, row_name, name);
-                values.push(ui.label(row, "–", value));
-            }
-        }
-        ui.set_text_style(values[0], value.color(ACCENT));
+        let mut load = |path: &str| match path {
+            "StatsOverlay.vss" => Ok(SHEET.to_string()),
+            other => Err(format!("{other} is not built in")),
+        };
+        let document =
+            ui.load_markup(root, "StatsOverlay.vui", MARKUP, &mut load).expect("the overlay's markup is built in");
+        let find = |name: &str| ui.find(document, name).unwrap_or_else(|| panic!("StatsOverlay.vui has no {name}"));
+        let (panel, header) = (find("stats"), find("header"));
+        let values = VALUES.iter().map(|name| find(name)).collect();
         ui.set_visible(panel, visible);
-        Self { ui, panel, values, frames: 0, seconds: 0.0 }
+        Self { ui, panel, header, values, frames: 0, seconds: 0.0 }
     }
 
     pub fn is_visible(&self) -> bool {
@@ -66,6 +56,7 @@ impl StatsOverlay {
     /// Counts a frame that took `delta` seconds, refreshing the numbers every
     /// [`REFRESH`] seconds.
     pub fn update(&mut self, delta: f32, renderer: &Renderer) {
+        self.handle_clicks();
         self.frames += 1;
         self.seconds += delta;
         if self.seconds >= REFRESH {
@@ -98,8 +89,33 @@ impl StatsOverlay {
 
     /// Hands the renderer the overlay for an output of `width` by `height`
     /// pixels at `scale` pixels per logical pixel. Hidden, it draws nothing.
-    pub fn draw(&mut self, renderer: &mut Renderer, (width, height): (u32, u32), scale: f32) -> Result<()> {
-        renderer.set_ui(&self.ui.frame(width, height, scale))
+    pub fn draw(&mut self, renderer: &mut Renderer, size: (u32, u32), scale: f32) -> Result<()> {
+        renderer.set_ui(&self.frame(size, scale))
+    }
+
+    fn frame(&mut self, (width, height): (u32, u32), scale: f32) -> UiFrame {
+        self.ui.frame(width, height, scale)
+    }
+
+    /// The pointer moved, in physical pixels from the window's top left.
+    pub fn pointer_move(&mut self, x: f32, y: f32) {
+        self.ui.pointer_move(x, y);
+    }
+
+    pub fn pointer_leave(&mut self) {
+        self.ui.pointer_leave();
+    }
+
+    /// The primary button went down or up. Returns whether the overlay was
+    /// under the pointer, so the game can leave the press alone.
+    pub fn pointer_button(&mut self, pressed: bool) -> bool {
+        self.ui.pointer_button(pressed)
+    }
+
+    fn handle_clicks(&mut self) {
+        if self.ui.clicked(self.header) {
+            self.ui.toggle_class(self.panel, "collapsed");
+        }
     }
 }
 
@@ -118,6 +134,29 @@ fn grouped(n: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn clicking_the_header_folds_the_panel() {
+        let mut overlay = StatsOverlay::new(true);
+        let size = (800, 600);
+        let open = overlay.frame(size, 1.0).quads.len();
+        let [x, y, w, h] = overlay.ui.rect(overlay.header);
+        overlay.pointer_move(x + w / 2.0, y + h / 2.0);
+        assert!(overlay.pointer_button(true), "the overlay takes the press");
+        overlay.pointer_button(false);
+        overlay.handle_clicks();
+        let folded = overlay.frame(size, 1.0).quads.len();
+        assert!(folded < open / 2, "{open} quads open, {folded} folded");
+        assert!(overlay.ui.take_warnings().is_empty(), "the built-in markup and sheet are clean");
+
+        overlay.pointer_move(x + w / 2.0, y + h / 2.0);
+        overlay.pointer_button(true);
+        overlay.pointer_button(false);
+        overlay.handle_clicks();
+        assert_eq!(overlay.frame(size, 1.0).quads.len(), open, "and unfolds it again");
+    }
+
     #[test]
     fn numbers_are_grouped_in_thousands() {
         assert_eq!(super::grouped(0), "0");

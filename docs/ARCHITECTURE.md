@@ -806,7 +806,7 @@ variants inherit from a parent and override only what differs.
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
-## UI (Voxear UI) *(foundation implemented: tree, layout, text, drawing; markup, styles and widgets planned)*
+## UI (Voxear UI) *(implemented: tree, layout, text, drawing, markup, style sheets, pointer; transitions, widgets and C# planned)*
 
 **Recommendation from research.** Build our own retained-mode UI on the Linebender and Servo crates, rendered by our
 own Vulkan code.
@@ -860,8 +860,52 @@ renderer.set_ui(&ui.frame(width, height, scale))?;
 
 The first thing built with it is the stats overlay (see [Debugging and profiling tools](#debugging-and-profiling-tools)).
 
-**Authoring.**
-- Markup (`.vui`) and stylesheets (`.vss`), in the spirit of UXML and USS, with design tokens as CSS variables.
+**Markup and style sheets** *(implemented)*. A `.vui` document says what the elements are, and `.vss` sheets say
+how they look, as UXML and USS do in Unity:
+
+```xml
+<vui>
+    <Style src="StatsOverlay.vss" />
+    <Panel name="stats" class="stats">
+        <Panel name="header" class="header">
+            <Label class="title">Stats</Label>
+        </Panel>
+        <Panel class="row"><Label>GPU</Label><Label name="gpu" class="value">–</Label></Panel>
+    </Panel>
+</vui>
+```
+
+```css
+:root { --surface: #111216eb; --accent: oklch(70% 0.14 275); }
+.stats { position: absolute; left: 12px; top: 12px; padding: 12px; gap: 6px; border-radius: 10px;
+         background-color: var(--surface); border: 1px solid #2a2b30; font-size: 12px; }
+.header:hover .title { color: var(--accent); }
+.collapsed .body { display: none; }
+```
+
+- **Elements:** `Panel`, `Label` and `Button`, each with `name`, `class` and `style` (declarations that win over
+  sheets). Text is the element's content. `<Style src>` attaches a sheet to the element it is in.
+- **Selectors:** USS's set, which is types, `.class`, `#name`, `*`, the states `:hover`, `:active`, `:focus`,
+  `:disabled` and `:checked`, and descendant and `>` combinators. `:root` is the element a sheet is attached to,
+  so each document keeps its theme tokens at its own top.
+- **The cascade:** the style given in code first, then matching rules from least to most specific (a nearer
+  sheet, then a later rule, wins a tie), then inline declarations. Text styles and custom properties
+  (`--name`, read with `var()`) are inherited, as in CSS.
+- **Properties:** CSS's names for flexbox layout, sizes, margins, padding, gaps and positions, plus
+  `background-color`, `border`, `border-radius`, `opacity`, `pointer-events`, `color`, `font-size`,
+  `font-weight` and `font-family`. Lengths are `px` or `%`. Colours are hex, `rgb()`, `rgba()`, `oklch()` or a
+  few names.
+- **Mistakes** are reported once each, with the file, line and what was wrong, such as
+  `Stats.vss:12: unknown property 'colour'` or `Test.vui:2:3: unknown element <Lable>`. A broken rule is
+  skipped, as browsers do, and the rest of the sheet still applies.
+- **The pointer** sets `:hover` on the element under it and everything it is in, and `:active` while pressed.
+  A press and release on the same element is a click, which code reads with `ui.clicked(node)`, as the overlay
+  does to fold itself away. Disabled elements cannot be clicked, and `pointer-events: none` lets the pointer
+  through. A document's container lets it through too, so UI over a game takes only the clicks it is under.
+- Code finds elements by name with `ui.find(document, "gpu")`, and changes them with `set_text`, `add_class`,
+  `set_enabled` and the like.
+
+**Still to come.**
 - Transitions and animations.
 - Data binding to C#, using source generators instead of reflection.
 - A live-reloading UI builder in the editor.
@@ -1507,7 +1551,7 @@ them in a running game.
 
 **Easy.**
 - One key toggles a **stats overlay**: FPS, a frame-time graph, the CPU/GPU split, draw and triangle counts, and
-  memory. *(First version implemented: F1 in a game window, or `--stats` on `vox run` and `vox render`. It shows
+  memory. *(First version implemented, in markup: F1 in a game window, or `--stats` on `vox run` and `vox render`; clicking its header folds it. It shows
   frame rate, frame time, GPU time, draws, shadow draws, culled instances, lights per cluster and exposure. The
   graph, triangles and memory come with the profiler.)*
 - The **capture button** in the toolbar grabs the next frame in RenderDoc.

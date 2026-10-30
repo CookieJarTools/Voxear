@@ -12,3 +12,6 @@ taffy.workspace = true
 parley.workspace = true
 swash.workspace = true
 bytemuck.workspace = true
+cssparser.workspace = true
+roxmltree.workspace = true
+tracing.workspace = true

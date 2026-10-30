@@ -61,6 +61,10 @@ namespace Voxear.Scripting
 			{
 				return ReadRotation(value);
 			}
+			if (type == typeof(Obj))
+			{
+				return ReadObj(value);
+			}
 			return ReadAssetOrList(value, type);
 		}
 
@@ -96,6 +100,23 @@ namespace Voxear.Scripting
 
 			var euler = Floats(value, 3);
 			return Quaternion.CreateFromYawPitchRoll(euler[1] * DegreesToRadians, euler[0] * DegreesToRadians, euler[2] * DegreesToRadians);
+		}
+
+		/// <summary>
+		/// Scenes write { obj = 3 }, and the engine hands over the entity it became as { entity = n }. An empty table is
+		/// a reference whose Obj was not saved with the scene, and reads as None.
+		/// </summary>
+		private static Obj ReadObj(JsonElement value)
+		{
+			if (value.TryGetProperty("entity", out var entity))
+			{
+				return new Obj((ulong)entity.GetInt64());
+			}
+			if (value.ValueKind == JsonValueKind.Object && !value.EnumerateObject().MoveNext())
+			{
+				return Obj.None;
+			}
+			throw new FormatException("An Obj field takes { obj = 3 }: an Obj in the same scene or prefab.");
 		}
 
 		private static object ReadEnum(JsonElement value, Type type)

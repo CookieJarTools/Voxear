@@ -40,7 +40,9 @@
 //! ```
 //!
 //! Nesting needs nothing more: a prefab can hold instances of other prefabs,
-//! whose Objs are addressed as `"<instance id>/<id>"`. A **variant** is a
+//! whose Objs are addressed as `"<instance id>/<id>"`. Behaviour fields can
+//! point at Objs in the same file the same way, as `{ obj = 2 }` or
+//! `{ obj = "3/2" }`; each instance's references point at its own copies. A **variant** is a
 //! prefab whose root is an instance of another prefab, with its overrides
 //! and any children it adds, as in Unity.
 
@@ -85,7 +87,11 @@ impl ObjPath {
         Self(vec![id])
     }
 
+    /// `2`, `3/2`, or the empty string for a prefab's own root.
     pub fn parse(text: &str) -> Result<Self> {
+        if text.is_empty() {
+            return Ok(Self::default());
+        }
         let ids = text.split('/').map(|id| id.trim().parse::<u32>()).collect::<Result<_, _>>();
         Ok(Self(ids.with_context(|| format!("`{text}` is not an Obj path such as `2` or `3/2`"))?))
     }
@@ -154,7 +160,7 @@ fn expand_into(
             out.push(FlatObj { path, parent, data: obj.clone(), prefab: None });
             continue;
         };
-        let instance = expand_instance(content, obj, reference, stack)
+        let instance = expand_instance(content, obj, reference, &path, stack)
             .with_context(|| format!("Obj {} (an instance of {reference})", obj.id))?;
         out.extend(instance.into_iter().map(|flat| FlatObj {
             path: path.join(&flat.path),
@@ -168,14 +174,20 @@ fn expand_into(
     Ok(())
 }
 
+/// The instance's Objs with paths relative to it. Their Obj references are
+/// already in the file's own terms, like those its overrides write.
 fn expand_instance(
     content: &mut Content,
     instance: &ObjData,
     reference: &str,
+    path: &ObjPath,
     stack: &mut Vec<AssetGuid>,
 ) -> Result<Vec<FlatObj>> {
     let guid = content.parse(reference)?.guid().with_context(|| format!("`{reference}` is not a prefab"))?;
     let mut objs = expand_prefab_inner(content, guid, stack)?;
+    for obj in &mut objs {
+        map_refs(&mut obj.data.fields, &|target| path.join(target))?;
+    }
     for (key, changes) in &instance.overrides {
         let target = ObjPath::parse(key)?;
         ensure!(!target.is_root(), "set the root's fields on the instance itself, not in `overrides`");
@@ -210,10 +222,70 @@ fn expand_prefab_inner(content: &mut Content, guid: AssetGuid, stack: &mut Vec<A
     for obj in &mut objs {
         obj.path = rebase(std::mem::take(&mut obj.path));
         obj.parent = obj.parent.take().map(rebase);
+        map_refs(&mut obj.data.fields, &|target| rebase(target.clone()))?;
     }
     let root = objs.iter_mut().find(|o| o.path.is_root()).expect("the root was expanded");
     root.prefab = Some(guid);
     Ok(objs)
+}
+
+/// `{ obj = 3 }` or `{ obj = "3/2" }` in a behaviour field: a reference to
+/// an Obj in the same file.
+pub(crate) fn obj_ref(table: &toml::Table) -> Result<Option<ObjPath>> {
+    if table.len() != 1 {
+        return Ok(None);
+    }
+    match table.get("obj") {
+        Some(toml::Value::Integer(id)) => Ok(Some(ObjPath::new(u32::try_from(*id)?))),
+        Some(toml::Value::String(path)) => ObjPath::parse(path).map(Some),
+        Some(_) => bail!("`obj` takes an Obj id such as 3, or a path such as \"3/2\""),
+        None => Ok(None),
+    }
+}
+
+/// How files write a reference: a plain id when it can be one.
+pub(crate) fn ref_value(path: &ObjPath) -> toml::Value {
+    match path.ids() {
+        [id] => toml::Value::Integer(i64::from(*id)),
+        _ => toml::Value::String(path.to_string()),
+    }
+}
+
+/// Rewrites every Obj reference in behaviour fields.
+pub(crate) fn map_refs(fields: &mut BTreeMap<String, toml::Table>, f: &dyn Fn(&ObjPath) -> ObjPath) -> Result<()> {
+    for table in fields.iter_mut().map(|(_, v)| v) {
+        for value in table.iter_mut().map(|(_, v)| v) {
+            map_value(value, f)?;
+        }
+    }
+    Ok(())
+}
+
+fn map_value(value: &mut toml::Value, f: &dyn Fn(&ObjPath) -> ObjPath) -> Result<()> {
+    match value {
+        toml::Value::Table(table) => match obj_ref(table)? {
+            Some(path) => {
+                table.insert("obj".into(), ref_value(&f(&path)));
+            }
+            None => table.iter_mut().map(|(_, v)| v).try_for_each(|v| map_value(v, f))?,
+        },
+        toml::Value::Array(items) => items.iter_mut().try_for_each(|v| map_value(v, f))?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Every Obj a value refers to.
+fn collect_refs(value: &toml::Value, out: &mut Vec<ObjPath>) -> Result<()> {
+    match value {
+        toml::Value::Table(table) => match obj_ref(table)? {
+            Some(path) => out.push(path),
+            None => table.values().try_for_each(|v| collect_refs(v, out))?,
+        },
+        toml::Value::Array(items) => items.iter().try_for_each(|v| collect_refs(v, out))?,
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Fields that place an Obj in its file, which overrides cannot change.
@@ -273,6 +345,8 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
 #[derive(Debug, Default)]
 pub struct Template {
     pub objs: Vec<TemplateObj>,
+    /// Each Obj's index by path, for resolving references between them.
+    paths: HashMap<ObjPath, usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -329,10 +403,26 @@ impl Template {
                 None => None,
             };
             let resolved = resolve_obj(content, renderer.as_deref_mut(), obj, parent)
+                .and_then(|resolved| check_refs(obj, &index).map(|()| resolved))
                 .with_context(|| format!("Obj {} ({})", obj.path, obj.data.name))?;
             objs.push(resolved);
         }
-        Ok(Self { objs })
+        let paths = objs.iter().enumerate().map(|(i, o)| (o.path.clone(), i)).collect();
+        Ok(Self { objs, paths })
+    }
+
+    /// The behaviours to create on the Obj at `index`, with its Obj
+    /// references pointing at the entities just spawned, as `{ entity = n }`.
+    pub fn behaviours(&self, index: usize, entities: &[Entity]) -> Vec<BehaviourSpec> {
+        let lookup = |path: &ObjPath| self.paths.get(path).map(|&i| entities[i]);
+        self.objs[index]
+            .behaviours
+            .iter()
+            .map(|spec| match bind_refs(&spec.fields, &lookup) {
+                Some(fields) => BehaviourSpec { type_name: spec.type_name.clone(), fields: Arc::new(fields) },
+                None => spec.clone(),
+            })
+            .collect()
     }
 
     /// Creates the Objs' entities and components, but not their behaviours.
@@ -370,6 +460,47 @@ impl Template {
         }
         link_instances(world, &self.objs, &entities);
         entities
+    }
+}
+
+/// References must stay inside the file, since nothing else is guaranteed to
+/// be loaded alongside it (as in Unity, where they cannot cross scenes).
+fn check_refs(obj: &FlatObj, index: &HashMap<&ObjPath, usize>) -> Result<()> {
+    for (behaviour, table) in &obj.data.fields {
+        let mut refs = Vec::new();
+        table.values().try_for_each(|v| collect_refs(v, &mut refs))?;
+        if let Some(missing) = refs.iter().find(|r| !index.contains_key(r)) {
+            bail!("a field of {behaviour} refers to Obj {missing}, which is not in the same file");
+        }
+    }
+    Ok(())
+}
+
+/// A copy of `fields` with each reference replaced by its entity, or `None`
+/// when there are no references, so most behaviours share their fields.
+fn bind_refs(fields: &toml::Table, lookup: &dyn Fn(&ObjPath) -> Option<Entity>) -> Option<toml::Table> {
+    let mut refs = Vec::new();
+    fields.values().try_for_each(|v| collect_refs(v, &mut refs)).ok()?;
+    if refs.is_empty() {
+        return None;
+    }
+    let mut bound = fields.clone();
+    bound.iter_mut().map(|(_, v)| v).for_each(|v| bind_value(v, lookup));
+    Some(bound)
+}
+
+fn bind_value(value: &mut toml::Value, lookup: &dyn Fn(&ObjPath) -> Option<Entity>) {
+    match value {
+        toml::Value::Table(table) => match obj_ref(table).ok().flatten() {
+            Some(path) => {
+                let entity = lookup(&path).map_or(0, Entity::to_bits);
+                // Entity bits go through TOML's i64 unchanged.
+                *table = toml::Table::from_iter([("entity".to_string(), toml::Value::Integer(entity as i64))]);
+            }
+            None => table.iter_mut().map(|(_, v)| v).for_each(|v| bind_value(v, lookup)),
+        },
+        toml::Value::Array(items) => items.iter_mut().for_each(|v| bind_value(v, lookup)),
+        _ => {}
     }
 }
 

@@ -108,7 +108,8 @@ Done so far:
 
 - **Behaviour fields** set from scenes and prefabs before Awake (`[obj.fields."Type"]`, `[SerializeField]`),
   layering through instances and overrides. Covers numbers, vectors, rotations, enums, lists, `Prefab` and the lazy
-  `Ref<T>`, with warnings that name the field when a value does not fit.
+  `Ref<T>`, with warnings that name the field when a value does not fit. `Obj` fields reference Objs in the same
+  file as `{ obj = 3 }`, follow each prefab instance to its own copies, and save back as ids or paths.
 
 - **Math helpers** for scripts: Unity's Vector3, Vector2, Quaternion, Mathf and Random helpers on the
   System.Numerics types, through C# 14 extension members. Also Obj world position and rotation, the
@@ -116,7 +117,7 @@ Done so far:
 
 Still to do in M2:
 - Async level loading, and `Prefab.LoadAsync`.
-- Obj references in behaviour fields, and nested serializable types.
+- Nested serializable types, and fields that reference behaviours.
 - Content build: usage-set bundling, a catalog, and incremental content hashing.
 - Runtime loading, sync and async, with reference counting.
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.

@@ -321,3 +321,101 @@ fn behaviour_fields_are_saved_as_loaded() {
     let reloaded: scene_file::SceneFile = toml::from_str(&text).unwrap();
     assert_eq!(reloaded.objs[0].fields["Game.Turret"]["range"], toml::Value::Float(12.0));
 }
+
+const PULSING_LAMP: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Lamp"
+behaviours = ["Game.Pulse"]
+fields."Game.Pulse" = { target = { obj = 2 }, all = [{ obj = 1 }, { obj = 2 }] }
+
+[[obj]]
+id = 2
+name = "Bulb"
+parent = 1
+"#;
+
+const LAMP_POST: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Post"
+behaviours = ["Game.Watch"]
+fields."Game.Watch" = { bulb = { obj = "2/2" } }
+
+[[obj]]
+id = 2
+prefab = "PulsingLamp.prefab"
+parent = 1
+"#;
+
+/// The entity a bound reference field points at.
+fn bound(spec: &BehaviourSpec, field: &str) -> Vec<Entity> {
+    let entity = |value: &toml::Value| match value.as_table().and_then(|t| t.get("entity")) {
+        Some(toml::Value::Integer(bits)) => Entity::from_bits(*bits as u64),
+        other => panic!("{field} is not bound to an entity: {other:?}"),
+    };
+    match &spec.fields[field] {
+        toml::Value::Array(items) => items.iter().map(entity).collect(),
+        value => vec![entity(value)],
+    }
+}
+
+#[test]
+fn obj_references_point_at_each_instances_own_objs() {
+    let dir = project(&[("PulsingLamp.prefab", PULSING_LAMP), ("LampPost.prefab", LAMP_POST)]);
+    let mut content = Content::open(dir.path()).unwrap();
+    let id = content.prefab(None, "LampPost.prefab").unwrap();
+    let template = content.template(id).unwrap().clone();
+    let mut world = voxear_ecs::World::new();
+
+    for _ in 0..2 {
+        let entities = template.spawn_objs(&mut world, None, None);
+        let index = |name: &str| template.objs.iter().position(|o| o.name == name).unwrap();
+        let (post, lamp, bulb) = (index("Post"), index("Lamp"), index("Bulb"));
+
+        let watch = &template.behaviours(post, &entities)[0];
+        assert_eq!(bound(watch, "bulb"), [entities[bulb]], "a reference into a nested prefab");
+        let pulse = &template.behaviours(lamp, &entities)[0];
+        assert_eq!(bound(pulse, "target"), [entities[bulb]], "a reference inside the nested prefab");
+        assert_eq!(bound(pulse, "all"), [entities[lamp], entities[bulb]], "references in a list");
+    }
+}
+
+#[test]
+fn obj_references_stay_inside_their_file_and_save_as_paths() {
+    let dir = project(&[("Lamp.prefab", LAMP)]);
+    let mut content = Content::open(dir.path()).unwrap();
+    let stray: scene_file::SceneFile = toml::from_str(
+        "format = 1\n[[obj]]\nid = 1\nname = \"A\"\nbehaviours = [\"Game.X\"]\nfields.\"Game.X\" = { other = { obj = 9 } }\n",
+    )
+    .unwrap();
+    let flat = prefab::expand(&mut content, &stray.objs).unwrap();
+    let error = format!("{:#}", voxear_engine::Template::resolve(&mut content, None, &flat).unwrap_err());
+    assert!(error.contains("refers to Obj 9, which is not in the same file"), "{error}");
+
+    // A watcher pointing at the glow inside a lamp instance saves the reference as a path.
+    let scene: scene_file::SceneFile =
+        toml::from_str("format = 1\n[[obj]]\nid = 7\nname = \"Watcher\"\n[[obj]]\nid = 8\nprefab = \"Lamp.prefab\"\n")
+            .unwrap();
+    let mut engine = Engine::new();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    let watcher = spawned[0].1;
+    let glow = spawned.iter().find(|(path, _)| path.to_string() == "8/2").unwrap().1;
+    let fields: toml::Table = toml::from_str(&format!("glow = {{ entity = {} }}", glow.to_bits() as i64)).unwrap();
+    let spec = BehaviourSpec { type_name: "Game.Watch".into(), fields: std::sync::Arc::new(fields) };
+    engine.world.insert(watcher, Behaviours(vec![AttachedBehaviour { handle: BehaviourHandle(0), spec }]));
+
+    let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();
+    let saved = scene_file::capture(&engine.world, &mut content, &entities);
+    let watcher = saved.objs.iter().find(|o| o.name == "Watcher").unwrap();
+    let instance = saved.objs.iter().find(|o| o.prefab.is_some()).unwrap();
+    assert_eq!(
+        watcher.fields["Game.Watch"]["glow"].to_string(),
+        format!("{{ obj = \"{}/2\" }}", instance.id),
+        "saved ids are renumbered, and the reference follows"
+    );
+}

@@ -389,6 +389,20 @@ behaviour with field values always gets Awake dispatched, even if its type does 
 - **`Prefab`:** a direct reference, loaded with the Obj, before Awake.
 - **`Ref<T>`:** a lazy reference, like an Addressables AssetReference. It holds the path or GUID, and
   `rareFirefly.Load()` loads it when the game first needs it. `T` is any `IAsset<T>`, which `Prefab` is today.
+- **`Obj`:** another Obj in the same scene or prefab, like dragging a GameObject into a field. It is written as its
+  id or path, and arrays of them work too:
+
+  ```toml
+  lamps = [{ obj = 3 }, { obj = 5 }]   # Objs 3 and 5 in this file
+  bulb = { obj = "9/2" }               # Obj 2 inside the prefab instance 9
+  ```
+
+  - **Inside a prefab**, references point at each instance's own copies: the Lamp prefab's `Pulse` names its bulb as
+    `{ obj = 2 }`, and every lamp pulses its own. This holds through nesting and variants.
+  - **References stay inside their file**, because nothing else is sure to be loaded with it (Unity has the same
+    rule across scenes). A reference to an Obj that is not in the file is an error that names both.
+  - **Saving** writes each reference back as an id or path in the saved file, following any renumbering. A
+    reference to an Obj that is not being saved becomes `{}`, which loads as `Obj.None`.
 
 **Mistakes are reported, never silent:**
 - Field values for a behaviour the Obj does not have are an error that names the Obj.
@@ -400,8 +414,8 @@ prefab. Values that scripts change at runtime are not written back. The editor's
 directly.
 
 **Not yet supported:**
-- Obj references, such as a field pointing at another Obj in the scene.
 - Nested serializable classes and structs.
+- References to behaviours, such as a field of type `Spinner`. For now, hold the `Obj` and call `GetBehaviour<T>()`.
 - A Roslyn suppressor for warning CS0649, which fires on `[SerializeField]` fields because the compiler cannot see
   the engine set them. Until it exists, game projects turn that warning off, as Hello's `.csproj` does.
 

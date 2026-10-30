@@ -65,5 +65,7 @@ position = [0.0, 0.0, 0.5]
 behaviours = ["Hello.FireflySpawner"]
 [obj.fields."Hello.FireflySpawner"]
 firefly = "Prefabs/Firefly.prefab"
+lamps = [{ obj = 3 }, { obj = 5 }, { obj = 7 }, { obj = 9 }]
 rare_firefly = "Prefabs/RareFirefly.prefab"
 rare_chance = 0.1
+spread = 1.5

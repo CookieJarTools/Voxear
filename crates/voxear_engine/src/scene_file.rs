@@ -339,7 +339,11 @@ fn capture_instance(
     members: &HashMap<ObjPath, Entity>,
     ids: &HashMap<Entity, u32>,
 ) -> Result<ObjData> {
-    let expected = prefab::expand_prefab(content, guid)?;
+    let mut expected = prefab::expand_prefab(content, guid)?;
+    // Inside the prefab, references read from its root; in this file, from the instance.
+    for obj in &mut expected {
+        prefab::map_refs(&mut obj.data.fields, &|target| ObjPath::new(root.id).join(target))?;
+    }
     let mut instance = ObjData::new(root.id, "");
     instance.prefab = Some(AssetRef::asset(guid, None).to_string());
     instance.parent = root.parent;
@@ -419,6 +423,54 @@ fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Resul
     Ok(changes)
 }
 
+/// A copy of behaviour fields with each `{ entity = n }` written back as a
+/// path in the file being saved. An Obj outside the saved set becomes an
+/// empty table, which loads as `Obj.None`, like a missing reference in Unity.
+fn unbind_refs(world: &World, ids: &HashMap<Entity, u32>, fields: &toml::Table) -> toml::Table {
+    let mut unbound = fields.clone();
+    unbound.iter_mut().for_each(|(_, v)| unbind_value(world, ids, v));
+    unbound
+}
+
+fn unbind_value(world: &World, ids: &HashMap<Entity, u32>, value: &mut toml::Value) {
+    match value {
+        toml::Value::Table(table) => match entity_ref(table) {
+            Some(entity) => {
+                *table = match file_path(world, ids, entity) {
+                    Some(path) => toml::Table::from_iter([("obj".to_string(), prefab::ref_value(&path))]),
+                    None => {
+                        tracing::warn!(
+                            "a behaviour field points at an Obj that is not being saved; it is saved as none"
+                        );
+                        toml::Table::new()
+                    }
+                };
+            }
+            None => table.iter_mut().for_each(|(_, v)| unbind_value(world, ids, v)),
+        },
+        toml::Value::Array(items) => items.iter_mut().for_each(|v| unbind_value(world, ids, v)),
+        _ => {}
+    }
+}
+
+/// The entity in a bound reference, `{ entity = n }`.
+fn entity_ref(table: &toml::Table) -> Option<Entity> {
+    match (table.len(), table.get("entity")) {
+        (1, Some(toml::Value::Integer(bits))) => Some(Entity::from_bits(*bits as u64)),
+        _ => None,
+    }
+}
+
+/// Where an entity is in the file being saved: its own id, or its path
+/// inside a saved prefab instance.
+fn file_path(world: &World, ids: &HashMap<Entity, u32>, entity: Entity) -> Option<ObjPath> {
+    if let Some(&id) = ids.get(&entity) {
+        return Some(ObjPath::new(id));
+    }
+    let link = world.get::<FromPrefab>(entity)?;
+    ids.get(&link.instance).map(|&id| ObjPath::new(id).join(&link.path))
+}
+
 /// The field values in `actual` that `expected` does not already have. Fields
 /// merge one by one, so only these need writing.
 fn changed_fields(
@@ -481,7 +533,7 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
             .0
             .iter()
             .filter(|b| !b.spec.fields.is_empty())
-            .map(|b| (b.spec.type_name.clone(), (*b.spec.fields).clone()))
+            .map(|b| (b.spec.type_name.clone(), unbind_refs(world, ids, &b.spec.fields)))
             .collect();
     }
     obj.camera = world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure });

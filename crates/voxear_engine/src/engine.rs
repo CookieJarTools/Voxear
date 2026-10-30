@@ -86,8 +86,9 @@ impl Engine {
         placement: Option<Placement>,
     ) -> Result<Vec<Entity>> {
         let entities = template.spawn_objs(&mut self.world, parent, placement);
-        for (obj, &entity) in template.objs.iter().zip(&entities) {
-            self.attach_behaviours(entity, &obj.behaviours).with_context(|| format!("Obj {}", obj.name))?;
+        for (index, (obj, &entity)) in template.objs.iter().zip(&entities).enumerate() {
+            let behaviours = template.behaviours(index, &entities);
+            self.attach_behaviours(entity, &behaviours).with_context(|| format!("Obj {}", obj.name))?;
         }
         Ok(entities)
     }

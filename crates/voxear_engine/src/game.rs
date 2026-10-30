@@ -101,8 +101,9 @@ impl ScriptServices for GameServices<'_> {
         let template = self.content.template(PrefabId(prefab)).context("no prefab with that id is loaded")?;
         let root = template.root().context("the prefab has no Objs")?;
         let entities = template.spawn_objs(world, parent, placement);
-        let behaviours = template.objs.iter().map(|o| o.behaviours.clone());
-        Ok(SpawnedPrefab { root: entities[root], objs: entities.iter().copied().zip(behaviours).collect() })
+        let objs =
+            entities.iter().enumerate().map(|(i, &entity)| (entity, template.behaviours(i, &entities))).collect();
+        Ok(SpawnedPrefab { root: entities[root], objs })
     }
 }
 

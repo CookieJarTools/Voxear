@@ -26,5 +26,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<int, Transform*, int, ulong, ulong*, int> PrefabInstantiate;
 		public delegate* unmanaged[Cdecl]<uint*, int, int> BatchHandles;
 		public delegate* unmanaged[Cdecl]<uint*, uint*, int, void> BehavioursAdopt;
+		public delegate* unmanaged[Cdecl]<ulong, Transform*, int> ObjWorldTransform;
 	}
 }

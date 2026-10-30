@@ -69,6 +69,9 @@ More samples:
 
 `--debug-view` takes `lod`, `cascades`, `lights` or `normals`.
 
+Tests: `cargo test` for the engine, and `dotnet run --project managed/Voxear.Core.Tests` for the C# helpers that
+run without the engine.
+
 Set `VOXEAR_LOG=debug` for more logging. Set `VOXEAR_VALIDATION=1` to force Vulkan validation; debug builds use it
 automatically when the `vulkan-validation-layers` package is installed.
 

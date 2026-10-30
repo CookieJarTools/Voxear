@@ -193,6 +193,53 @@ duplicate logs a warning naming both Objs. The Obj gets an `InstanceMarker`, whi
 source generator will add the `GameManager.Instance` shorthand. A planned `[Instance(AutoCreate = true, Persistent =
 true)]` attribute covers the common "manager that always exists" case.
 
+### Math helpers *(implemented)*
+
+Scripts use .NET's `System.Numerics` types, `Vector2`, `Vector3`, `Quaternion` and `Matrix4x4`, so they work with
+any .NET library. Voxear.Core adds Unity's helpers onto those same types with C# 14 extension members. They read as
+if they were built in, with no second `Vector3` type to convert to and from:
+
+```csharp
+Obj.Position = Vector3.MoveTowards(Obj.Position, goal, speed * Time.Delta);
+Obj.Rotation = Quaternion.RotateTowards(Obj.Rotation, Quaternion.LookRotation(goal - Obj.WorldPosition), 90f * Time.Delta);
+var hit = Obj.Forward * range;                       // world-space +Z, like transform.forward
+var spot = Obj.WorldPosition + Random.InsideUnitSphere * 2f;
+if (Random.Chance(0.1f)) { /* ... */ }
+```
+
+- **Vector3:**
+  - directions: `Forward`, `Back`, `Up`, `Down`, `Right`, `Left`
+  - movement and smoothing: `MoveTowards`, `SmoothDamp`, `Damp`
+  - angles: `Angle`, `SignedAngle`
+  - projection: `Project`, `ProjectOnPlane`, `ClampMagnitude`
+  - on a value: `.Magnitude`, `.SqrMagnitude`, `.Normalized` (zero for a zero vector, where `Normalize` gives NaN),
+    `.WithX/Y/Z`
+- **Vector2:** the same set where it applies, plus `Perpendicular`.
+- **Quaternion:**
+  - `rotation * vector`
+  - `Euler(x, y, z)` in degrees, Z then X then Y like scene files
+  - `AngleAxis`, `LookRotation`, `FromToRotation`, `RotateTowards`, `Angle`
+  - on a value: `.EulerAngles` (0 to 360, as Unity), `.Forward`, `.Right`, `.Up`
+- **Mathf:**
+  - `Clamp`, `Clamp01`, `Lerp`, `LerpUnclamped`, `InverseLerp`, `Remap`, `SmoothStep`
+  - `MoveTowards`, `Repeat`, `PingPong`
+  - angles: `DeltaAngle`, `LerpAngle`, `MoveTowardsAngle`
+  - smoothing: `SmoothDamp`, and `Damp`, which smooths the same at any frame rate with no velocity to keep
+  - `Approximately`
+- **Random:** extensions on `System.Random`, so there is no second `Random` to clash with.
+  - `Random.Range` (float, or int with max excluded), `Value`, `Chance`
+  - `InsideUnitSphere`, `OnUnitSphere`, `InsideUnitCircle`, `Rotation`
+  - For repeatable results, a seeded generator has the same helpers as `Next…`: `new Random(42).NextFloat(0f, 10f)`.
+- **Obj:**
+  - `Position` and `Rotation` are local, like Unity's localPosition.
+  - `WorldPosition`, `WorldRotation`, and `Forward`/`Right`/`Up` are in world space, through every parent, and up to
+    date mid-frame.
+  - `LookAt(target)`.
+
+`LookRotation` is Voxear's own, because the look-at helpers in `Matrix4x4` are right-handed and would face the wrong
+way. Their tests, in `managed/Voxear.Core.Tests`, check Unity's conventions: a positive yaw turns forward to the right,
+and a positive pitch looks down.
+
 ## Scenes, Levels and Scene Persistence *(scenes, levels and persistence implemented; async loading planned)*
 
 - A **Scene** is a `.scene` TOML file (diff- and merge-friendly) holding Objs and their components. Each Obj has
@@ -355,6 +402,8 @@ directly.
 **Not yet supported:**
 - Obj references, such as a field pointing at another Obj in the scene.
 - Nested serializable classes and structs.
+- A Roslyn suppressor for warning CS0649, which fires on `[SerializeField]` fields because the compiler cannot see
+  the engine set them. Until it exists, game projects turn that warning off, as Hello's `.csproj` does.
 
 ## Content (assets, Bundles, loading)
 
@@ -646,6 +695,14 @@ surfaces in 3D.
   Lighting.
 - Workspace presets along the top (World Building, Animation, Lighting, Profiling), as in the concept.
 - Floating tool overlays in the viewport, like the Paint Texture panel in the concept.
+
+**Console.** Modelled on CookieJarTools' [Sifter](https://github.com/CookieJarTools/Sifter), a Unity console
+whose source is in `Dev/CookieJar` (design notes in `Docs/Sifter-Design.md`):
+- Every part of a stack trace is coloured for what it is, and any frame can be clicked.
+- Categories come from the messages themselves, with nothing to declare.
+- The list survives a script recompile, which here means C# hot reload.
+
+Read Sifter's design before building it.
 
 **Speed.**
 - A **command palette** on Ctrl+K reaches every action, asset and setting.

@@ -2,6 +2,8 @@
 	<PropertyGroup>
 		<RootNamespace>Hello</RootNamespace>
 		<OutputPath>$(MSBuildProjectDirectory)/../.voxear/Scripts/$(Configuration)/</OutputPath>
+		<!-- [SerializeField] fields are set by the engine, which the compiler cannot see. -->
+		<NoWarn>$(NoWarn);CS0649</NoWarn>
 	</PropertyGroup>
 	<ItemGroup>
 		<!-- Voxear.Core is shared from the engine, so the game must not ship its own copy. -->

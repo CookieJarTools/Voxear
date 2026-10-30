@@ -19,6 +19,9 @@ name = "Monolith"
 position = [0.0, 1.5, 1.0]
 rotation = [0.0, 25.0, 0.0]
 scale = [0.8, 3.0, 0.3]
+behaviours = ["Hello.Turner"]
+# It turns to face the camera as the night goes on.
+fields."Hello.Turner" = { target = [0.0, 2.2, -7.0], degrees_per_second = 40.0 }
 [obj.renderer]
 mesh = "builtin:cube"
 material = { color = [0.12, 0.12, 0.14], metallic = 0.6, roughness = 0.25 }

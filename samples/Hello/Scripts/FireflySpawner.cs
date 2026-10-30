@@ -30,8 +30,8 @@ namespace Hello
 			}
 
 			timer = 0f;
-			var offset = new Vector3(Random.Shared.NextSingle() - 0.5f, 0.1f, Random.Shared.NextSingle() - 0.5f) * spread;
-			var copy = Choose().Instantiate(Obj.Position + offset, Quaternion.Identity);
+			var offset = new Vector3(Random.Range(-0.5f, 0.5f), 0.03f, Random.Range(-0.5f, 0.5f)) * spread;
+			var copy = Choose().Instantiate(Obj.WorldPosition + offset, Quaternion.Identity);
 			released++;
 			if (released == 1)
 			{
@@ -41,7 +41,7 @@ namespace Hello
 
 		private Prefab Choose()
 		{
-			if (Random.Shared.NextSingle() >= rareChance)
+			if (!Random.Chance(rareChance))
 			{
 				return firefly;
 			}

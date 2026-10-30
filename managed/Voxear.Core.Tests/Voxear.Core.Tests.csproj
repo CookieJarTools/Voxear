@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<!--
+		Tests for Voxear.Core code that runs without the engine, such as the math helpers. Run them with dotnet run
+		from this folder. A small runner of our own keeps this free of NuGet packages.
+	-->
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<RootNamespace>Voxear.Tests</RootNamespace>
+		<OutputPath>$(VoxearRoot)target/managed-tests/$(Configuration)/</OutputPath>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="../Voxear.Core/Voxear.Core.csproj" />
+	</ItemGroup>
+</Project>

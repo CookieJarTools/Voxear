@@ -26,25 +26,62 @@ namespace Voxear
 
 		public string Name => IsValid ? Native.ObjName(Id) : string.Empty;
 
+		/// <summary>Position, rotation and scale relative to the parent, or to the world for an Obj without one.</summary>
 		public Transform Transform
 		{
 			get { return Native.GetTransform(Id); }
 			set { Native.SetTransform(Id, value); }
 		}
 
+		/// <summary>Relative to the parent, like Unity's localPosition. WorldPosition is in world space.</summary>
 		public Vector3 Position
 		{
 			get { return Transform.Position; }
 			set { Transform = Transform with { Position = value }; }
 		}
 
+		/// <summary>Relative to the parent, like Unity's localRotation. WorldRotation is in world space.</summary>
 		public Quaternion Rotation
 		{
 			get { return Transform.Rotation; }
 			set { Transform = Transform with { Rotation = value }; }
 		}
 
+		/// <summary>Where the Obj is in the world, through all its parents, as of now. Like Unity's position.</summary>
+		public Vector3 WorldPosition => Native.GetWorldTransform(Id).Position;
+
+		/// <summary>The Obj's rotation in the world, through all its parents. Like Unity's rotation.</summary>
+		public Quaternion WorldRotation => Native.GetWorldTransform(Id).Rotation;
+
+		/// <summary>The direction the Obj faces in the world: its +Z, as Unity's transform.forward.</summary>
+		public Vector3 Forward => WorldRotation.Forward;
+
+		public Vector3 Right => WorldRotation.Right;
+
+		public Vector3 Up => WorldRotation.Up;
+
 		internal ulong Id { get; }
+
+		/// <summary>Turns the Obj so it faces a point in the world, keeping its up towards Vector3.Up.</summary>
+		public void LookAt(Vector3 target)
+		{
+			LookAt(target, Vector3.Up);
+		}
+
+		/// <summary>Turns the Obj so it faces a point in the world, keeping its up as close to up as it can.</summary>
+		public void LookAt(Vector3 target, Vector3 up)
+		{
+			var world = Native.GetWorldTransform(Id);
+			var direction = target - world.Position;
+			if (direction.LengthSquared() < 1e-10f)
+			{
+				return;
+			}
+
+			// The parent's rotation is what is left of the world rotation once the local one is taken off.
+			var parent = world.Rotation * Quaternion.Inverse(Rotation);
+			Rotation = Quaternion.Normalize(Quaternion.Inverse(parent) * Quaternion.LookRotation(direction, up));
+		}
 
 		/// <summary>
 		/// Destroys this Obj and everything under it at the end of the frame, after their behaviours' OnDisable and

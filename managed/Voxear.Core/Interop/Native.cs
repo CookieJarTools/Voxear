@@ -48,6 +48,13 @@ namespace Voxear.Interop
 			return transform;
 		}
 
+		public static Transform GetWorldTransform(ulong obj)
+		{
+			var transform = Transform.Identity;
+			Api->ObjWorldTransform(obj, &transform);
+			return transform;
+		}
+
 		public static void SetTransform(ulong obj, Transform transform)
 		{
 			Api->TransformSet(obj, &transform);

@@ -21,8 +21,8 @@ namespace Hello
 
 		protected override void Awake()
 		{
-			var angle = Random.Shared.NextSingle() * MathF.Tau;
-			wander = new Vector3(MathF.Cos(angle), 0f, MathF.Sin(angle)) * WanderSpeed;
+			var drift = Random.InsideUnitCircle * WanderSpeed;
+			wander = new Vector3(drift.X, 0f, drift.Y);
 		}
 
 		protected override void OnEnable()
@@ -33,7 +33,7 @@ namespace Hello
 		protected override void Update()
 		{
 			age += Time.Delta;
-			Obj.Position += (Vector3.UnitY * riseSpeed + wander) * Time.Delta;
+			Obj.Position += (Vector3.Up * riseSpeed + wander) * Time.Delta;
 			if (age < lifetime || leaving)
 			{
 				return;

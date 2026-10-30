@@ -1,4 +1,3 @@
-using System;
 using System.Numerics;
 using Voxear;
 
@@ -33,8 +32,7 @@ namespace Hello
 
 		protected override void Update()
 		{
-			var step = Quaternion.CreateFromAxisAngle(Vector3.UnitY, degreesPerSecond * MathF.PI / 180f * Time.Delta);
-			Obj.Rotation = Quaternion.Normalize(Obj.Rotation * step);
+			Obj.Rotation = Quaternion.Normalize(Obj.Rotation * Quaternion.AngleAxis(degreesPerSecond * Time.Delta, Vector3.Up));
 		}
 	}
 }

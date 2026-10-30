@@ -110,6 +110,10 @@ Done so far:
   layering through instances and overrides. Covers numbers, vectors, rotations, enums, lists, `Prefab` and the lazy
   `Ref<T>`, with warnings that name the field when a value does not fit.
 
+- **Math helpers** for scripts: Unity's Vector3, Vector2, Quaternion, Mathf and Random helpers on the
+  System.Numerics types, through C# 14 extension members. Also Obj world position and rotation, the
+  Forward/Right/Up directions and `LookAt`, all tested in `managed/Voxear.Core.Tests`.
+
 Still to do in M2:
 - Async level loading, and `Prefab.LoadAsync`.
 - Obj references in behaviour fields, and nested serializable types.

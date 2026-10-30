@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Component, World};
 
@@ -55,15 +57,30 @@ impl Placement {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AttachedBehaviour {
-    pub handle: BehaviourHandle,
+/// A behaviour to create: its C# type, and field values to set before its
+/// Awake.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BehaviourSpec {
     /// The full C# type name, which scenes save.
     pub type_name: String,
+    /// Field values as the scene or prefab wrote them, by field name.
+    pub fields: Arc<toml::Table>,
+}
+
+impl BehaviourSpec {
+    pub fn new(type_name: &str) -> Self {
+        Self { type_name: type_name.to_string(), fields: Arc::default() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttachedBehaviour {
+    pub handle: BehaviourHandle,
+    pub spec: BehaviourSpec,
 }
 
 /// Script behaviours attached to an Obj, in attach order.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Behaviours(pub Vec<AttachedBehaviour>);
 impl Component for Behaviours {}
 
@@ -73,7 +90,7 @@ impl Behaviours {
     }
 
     pub fn type_names(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(|b| b.type_name.as_str())
+        self.0.iter().map(|b| b.spec.type_name.as_str())
     }
 }
 

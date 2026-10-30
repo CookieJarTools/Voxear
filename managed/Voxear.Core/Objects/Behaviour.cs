@@ -31,6 +31,9 @@ namespace Voxear
 		/// <summary>The type's ExecutionOrder, which orders behaviours within a phase.</summary>
 		internal int Order { get; private set; }
 
+		/// <summary>Field values from the scene or prefab, as JSON, waiting to be set before Awake.</summary>
+		internal string? PendingFields { get; set; }
+
 		private Obj obj;
 		private uint handle;
 		private bool enabled = true;
@@ -84,6 +87,18 @@ namespace Voxear
 			this.obj = obj;
 			this.handle = handle;
 			Order = order;
+		}
+
+		internal void ApplyFields()
+		{
+			if (PendingFields == null)
+			{
+				return;
+			}
+
+			var fields = PendingFields;
+			PendingFields = null;
+			BehaviourFields.Apply(this, fields);
 		}
 
 		internal void Detach()

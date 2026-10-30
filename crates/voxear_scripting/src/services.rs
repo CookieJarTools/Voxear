@@ -6,7 +6,7 @@ use std::{cell::Cell, marker::PhantomData, ptr::NonNull};
 
 use anyhow::Result;
 use voxear_ecs::{Entity, World};
-use voxear_scene::Placement;
+use voxear_scene::{BehaviourSpec, Placement};
 
 pub trait ScriptServices {
     /// Loads a prefab by GUID or project path. Loading it again returns the
@@ -28,8 +28,8 @@ pub trait ScriptServices {
 /// What [`ScriptServices::spawn_prefab`] created.
 pub struct SpawnedPrefab {
     pub root: Entity,
-    /// Every new Obj, with the behaviour types to create on it.
-    pub objs: Vec<(Entity, Vec<String>)>,
+    /// Every new Obj, with the behaviours to create on it.
+    pub objs: Vec<(Entity, Vec<BehaviourSpec>)>,
 }
 
 thread_local! {

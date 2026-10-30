@@ -2077,6 +2077,7 @@ name = "voxear_scene"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "toml",
  "voxear_core",
  "voxear_ecs",
 ]
@@ -2087,6 +2088,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libloading 0.9.0",
+ "serde_json",
  "tracing",
  "voxear_core",
  "voxear_ecs",

@@ -300,6 +300,62 @@ and overrides, and Objs inside instances are not written on their own.
 `Instantiate` after that only creates entities, so spawning bullets costs no file or GPU work. Loading through
 bundles and async loading (`Prefab.LoadAsync`) come with the content build.
 
+### Behaviour fields *(implemented)*
+
+Scenes and prefabs set behaviour fields, as Unity's inspector does. Values are written per behaviour type, so an
+instance or override changes one field at a time:
+
+```toml
+[[obj]]
+id = 11
+name = "Fireflies"
+behaviours = ["Hello.FireflySpawner"]
+[obj.fields."Hello.FireflySpawner"]
+firefly = "Prefabs/Firefly.prefab"        # a Prefab field: loaded with the Obj
+rare_firefly = "Prefabs/RareFirefly.prefab"  # a Ref<Prefab> field: loaded when asked
+rare_chance = 0.1
+```
+
+```csharp
+public sealed class FireflySpawner : Behaviour
+{
+	[SerializeField] private Prefab firefly;
+	[SerializeField] private Ref<Prefab> rareFirefly;
+	[SerializeField] private float rareChance = 0.1f;
+	public float Interval = 0.25f;                   // public fields need no attribute
+}
+```
+
+**Which fields.**
+- A field can be set when it is public, or private with `[SerializeField]`, and is neither readonly nor
+  `[NonSerialized]`.
+- Names match ignoring case and underscores, so scenes use snake_case like every other key.
+
+**When.** Values are set just before the behaviour's Awake, which is when Unity has finished deserialising too. A
+behaviour with field values always gets Awake dispatched, even if its type does not override it.
+
+**Types:**
+- numbers, `bool`, `string` and enums (by name or number)
+- `Vector2`, `Vector3` and `Vector4`
+- `Quaternion`: Euler degrees like transforms, or four components
+- arrays and `List<T>` of any of these
+- **`Prefab`:** a direct reference, loaded with the Obj, before Awake.
+- **`Ref<T>`:** a lazy reference, like an Addressables AssetReference. It holds the path or GUID, and
+  `rareFirefly.Load()` loads it when the game first needs it. `T` is any `IAsset<T>`, which `Prefab` is today.
+
+**Mistakes are reported, never silent:**
+- Field values for a behaviour the Obj does not have are an error that names the Obj.
+- A field name the type does not have, or a value that does not fit, is a warning naming the behaviour, the Obj and
+  the field. The field keeps its default.
+
+**Saving.** Scenes save field values as they were loaded. Instances save only the fields that differ from the
+prefab. Values that scripts change at runtime are not written back. The editor's inspector will edit the saved values
+directly.
+
+**Not yet supported:**
+- Obj references, such as a field pointing at another Obj in the scene.
+- Nested serializable classes and structs.
+
 ## Content (assets, Bundles, loading)
 
 This is the only way to load assets. It replaces Addressables and fixes the build pain by making bundling automatic.
@@ -313,11 +369,11 @@ This is the only way to load assets. It replaces Addressables and fixes the buil
   editor's object picker fills it in.
 
 ```csharp
-public Ref<Prefab> Enemy;
+[SerializeField] private Ref<Prefab> enemy;             // set in the scene as a path or GUID
 
-var enemy = Enemy.Instantiate(at: spawnPoint);          // easy: loads its bundle if needed
-var mesh = await MeshRef.LoadAsync();                     // async
-using var handle = Content.Load(MeshRef, Priority.High);  // advanced: explicit lifetime and priority
+var copy = enemy.Load().Instantiate(spawnPoint, Quaternion.Identity);  // implemented: loads on first use
+var mesh = await meshRef.LoadAsync();                     // planned: async
+using var handle = Content.Load(meshRef, Priority.High);  // planned: explicit lifetime and priority
 ```
 
 **Content build.** Runs automatically before a player build, or alone with `vox content build`.
@@ -606,52 +662,46 @@ surfaces in 3D.
 
 ### The editor concept
 
-The design target for M3. The concept is a world-building session on voxel terrain:
+The design target for M3's **look and layout**. The concept's content is only an example scene: its voxel
+terrain, brush tools and asset names are placeholders, not planned features.
 
 - **Top bar:**
   - the Voxear mark
-  - workspace tabs: World, Animation and Profiling
+  - workspace tabs (World, Animation, Profiling)
   - a command bar ("Search or run a command", Ctrl+K)
   - play, pause and step in the centre
   - the user's avatar, and an accent **Build** button that opens the Build window
-- **Left rail.** Icons for the main areas: World, Layers, Code, Audio and Animation, with source control at the
+- **Left rail.** Icons for the main areas (World, Layers, Code, Audio, Animation), with source control at the
   bottom.
-- **Hierarchy.**
-  - A filter box.
-  - Folders that group Objs: Cameras, Lighting, World, Props, Player and Trigger Volumes.
-  - A per-type icon on each Obj: camera, sun, sky volume, terrain, water.
-  - The selected row has an accent outline.
-- **Project, with a Packages tab.**
-  - A breadcrumb (Assets / Worlds).
-  - Folders with item counts, and files with their sizes, such as `Highlands.vxw  1.2 GB`.
-- **Viewport.**
-  - Tabs: Scene, Game and Shader Graph.
-  - A shading mode menu (Lit), a Gizmos toggle and full screen.
-  - A floating tool strip: select, move, rotate, scale and brush, Pivot/Global, and grid snap (0.5 m).
-  - The transform gizmo uses Unity's axis colours.
-  - A view gizmo (Persp) bottom right.
-  - A live stats chip bottom left: chunks, voxels and GPU ms.
-- **Voxel Brush overlay.** A floating panel with:
-  - Add, Carve, Paint and Smooth modes
-  - a shape grid: cube, sphere, cylinder, cone, noise, terrace, arch and stamp
-  - material swatches
-  - Radius, Strength and Falloff sliders
-  - Snap to voxel grid
-- **Inspector, with Lighting and Navigation tabs.**
-  - A header with the Obj's icon, name and enabled toggle, then Tag, Layer and Static.
-  - Transform rows with coloured X/Y/Z fields.
-  - Components as collapsible sections with enable toggles:
-    - Voxel Terrain: chunk size 32³, voxel size, LOD levels, greedy meshing, material atlas, heightmap and shadows.
-    - Voxel Collider: per-chunk mode and Is Trigger.
-  - A dashed **Add Component** button at the end.
+- **Hierarchy:**
+  - a filter box
+  - folders that group Objs
+  - a per-type icon on each Obj
+  - an accent outline on the selected row
+- **Project, with a Packages tab:**
+  - a breadcrumb
+  - folders with item counts
+  - files with their sizes
+- **Viewport:**
+  - Scene, Game and Shader Graph tabs
+  - a shading mode menu, a Gizmos toggle and full screen
+  - a floating tool strip: select, move, rotate, scale, tool modes, Pivot/Global and grid snap
+  - Unity's axis colours on the gizmo, and a view gizmo bottom right
+  - a live stats chip bottom left
+  - tools as floating overlay panels with segmented mode buttons, icon grids, swatches, sliders and toggles
+- **Inspector, with Lighting and Navigation tabs:**
+  - a header with the Obj's icon, name and enabled toggle, then Tag, Layer and Static
+  - Transform rows with coloured X/Y/Z fields
+  - components as collapsible sections with enable toggles
+  - a dashed **Add Component** button at the end
 - **Status bar:**
-  - left: Ready and "Scripts compiled in 0.8 s"
-  - right: the graphics API, FPS, memory and the git branch
-- **Style.**
-  - Near-black panels with rounded corners, separated by gaps.
-  - One periwinkle accent for selection, toggles and primary buttons.
-  - Inter for text and a monospaced face for numbers.
-  - Compact rows, as in Linear.
+  - on the left, status and script compile time
+  - on the right, the graphics API, FPS, memory and the git branch
+- **Style:**
+  - near-black panels with rounded corners, separated by gaps
+  - one periwinkle accent for selection, toggles and primary buttons
+  - Inter for text, and a monospaced face for numbers
+  - compact rows, as in Linear
 
 ## Input
 

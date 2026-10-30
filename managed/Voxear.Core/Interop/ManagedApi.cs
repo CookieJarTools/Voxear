@@ -12,7 +12,7 @@ namespace Voxear.Interop
 		public uint Size;
 		public uint Version;
 		public delegate* unmanaged[Cdecl]<byte*, int, int> LoadGameAssembly;
-		public delegate* unmanaged[Cdecl]<byte*, int, ulong, BehaviourInfo*, int> CreateBehaviour;
+		public delegate* unmanaged[Cdecl]<byte*, int, ulong, byte*, int, BehaviourInfo*, int> CreateBehaviour;
 		public delegate* unmanaged[Cdecl]<int, uint*, int, void> Invoke;
 		public delegate* unmanaged[Cdecl]<uint*, int, void> Release;
 	}

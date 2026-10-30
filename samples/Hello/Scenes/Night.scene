@@ -60,3 +60,7 @@ id = 11
 name = "Fireflies"
 position = [0.0, 0.0, 0.5]
 behaviours = ["Hello.FireflySpawner"]
+[obj.fields."Hello.FireflySpawner"]
+firefly = "Prefabs/Firefly.prefab"
+rare_firefly = "Prefabs/RareFirefly.prefab"
+rare_chance = 0.1

@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use voxear_core::time::Time;
 use voxear_ecs::{Entity, World};
-use voxear_scene::{BehaviourHandle, BehaviourHost, Callbacks, Phase, Registration, Request};
+use voxear_scene::{BehaviourHandle, BehaviourHost, BehaviourSpec, Callbacks, Phase, Registration, Request};
 
 use crate::{
     hostfxr::{DotnetInstall, Runtime},
@@ -79,21 +79,27 @@ impl ScriptRuntime {
         Ok(())
     }
 
-    /// Instantiates a behaviour type, e.g. `Hello.Spinner`, on an Obj. The
-    /// result still has to be registered with the lifecycle.
-    pub fn create_behaviour(&mut self, world: &mut World, type_name: &str, entity: Entity) -> Result<CreatedBehaviour> {
+    /// Instantiates a behaviour type, e.g. `Hello.Spinner`, on an Obj. Its
+    /// fields are set just before its Awake. The result still has to be
+    /// registered with the lifecycle.
+    pub fn create_behaviour(
+        &mut self,
+        world: &mut World,
+        spec: &BehaviourSpec,
+        entity: Entity,
+    ) -> Result<CreatedBehaviour> {
         let create = self.managed.create_behaviour.expect("validated at start");
         let mut info = BehaviourInfo::default();
         let handle = {
             let _scope = WorldScope::enter(world);
-            unsafe { create(type_name.as_ptr(), type_name.len() as i32, entity.to_bits(), &mut info) }
+            interop::call_create(create, spec, entity, &mut info)
         };
-        if handle < 0 {
-            bail!("could not create behaviour `{type_name}`; is it a Behaviour in the game assembly?");
-        }
+        let Some(handle) = handle else {
+            bail!("could not create behaviour `{}`; is it a Behaviour in the game assembly?", spec.type_name);
+        };
         Ok(CreatedBehaviour {
             registration: Registration {
-                handle: BehaviourHandle(handle as u32),
+                handle,
                 entity,
                 callbacks: Callbacks(info.callbacks),
                 order: info.order,

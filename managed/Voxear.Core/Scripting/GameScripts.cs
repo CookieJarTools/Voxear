@@ -16,6 +16,7 @@ namespace Voxear.Scripting
 			context ??= new GameLoadContext(path);
 			assemblies.Add(context.LoadFromAssemblyPath(path));
 			BehaviourTypes.Clear();
+			BehaviourFields.Clear();
 			Log.Info($"Loaded game scripts from {path}");
 		}
 	}

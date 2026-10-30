@@ -27,11 +27,12 @@ namespace Voxear.Scripting
 		}
 
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-		public static int CreateBehaviour(byte* typeName, int length, ulong obj, BehaviourInfo* info)
+		public static int CreateBehaviour(byte* typeName, int length, ulong obj, byte* fields, int fieldsLength, BehaviourInfo* info)
 		{
 			try
 			{
-				return BehaviourTable.Create(Native.Utf8(typeName, length), new Obj(obj), info);
+				var json = fields == null ? null : Native.Utf8(fields, fieldsLength);
+				return BehaviourTable.Create(Native.Utf8(typeName, length), new Obj(obj), json, info);
 			}
 			catch (Exception exception)
 			{

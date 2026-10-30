@@ -106,10 +106,13 @@ Done so far:
   active scene. Hello's night lamps are prefab instances and a variant, and its fireflies are instantiated at
   runtime.
 
+- **Behaviour fields** set from scenes and prefabs before Awake (`[obj.fields."Type"]`, `[SerializeField]`),
+  layering through instances and overrides. Covers numbers, vectors, rotations, enums, lists, `Prefab` and the lazy
+  `Ref<T>`, with warnings that name the field when a value does not fit.
+
 Still to do in M2:
-- `Ref<T>` in C#, with behaviour fields saved in scenes and prefabs, so a Spawner can hold its prefab without a
-  path string.
 - Async level loading, and `Prefab.LoadAsync`.
+- Obj references in behaviour fields, and nested serializable types.
 - Content build: usage-set bundling, a catalog, and incremental content hashing.
 - Runtime loading, sync and async, with reference counting.
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
@@ -278,7 +281,3 @@ Settled on 2026-10-30:
 
 1. **Scene file format.** A text format such as RON or TOML-like (diffable, mergeable), with a binary form generated
    for builds. *Recommendation: text in projects, binary in builds.*
-2. **Voxel terrain.** The editor concept shows voxel terrain: chunked worlds in `.vxw` files, a Voxel Brush that
-   adds, carves, paints and smooths, greedy meshing with LODs, and per-chunk colliders. M8 plans layered heightmap
-   terrain. Does voxel terrain replace it, sit beside it (heightmap for open land, voxels for caves and
-   destruction), or come in addition as its own system?

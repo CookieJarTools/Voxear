@@ -10,6 +10,8 @@
 //! id = 1
 //! name = "Lamp"
 //! behaviours = ["Game.Flicker"]
+//! [obj.fields."Game.Flicker"]
+//! speed = 2.0
 //! [obj.renderer]
 //! mesh = "builtin:sphere"
 //!
@@ -24,7 +26,7 @@
 //! The prefab's root takes the instance's id and parent, and whatever else
 //! the instance gives: name, position, rotation, scale, camera, light,
 //! renderer and `persistent`. Behaviours listed on the instance are added to
-//! the root's. `overrides`
+//! the root's, and `fields` on the instance set the root's one by one. `overrides`
 //! changes Objs inside the prefab, addressed by their path from the instance,
 //! and only the fields written change:
 //!
@@ -42,7 +44,11 @@
 //! prefab whose root is an instance of another prefab, with its overrides
 //! and any children it adds, as in Unity.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    sync::Arc,
+};
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -50,7 +56,7 @@ use voxear_assets::AssetGuid;
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
-use voxear_scene::{Name, Parent, Placement, ScenePersistence, Transform};
+use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
 
 use crate::{
     content::{Content, MaterialSource},
@@ -248,6 +254,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.scale = instance.scale.or(root.scale);
     root.persistent |= instance.persistent;
     root.behaviours.extend(instance.behaviours.iter().cloned());
+    for (behaviour, values) in &instance.fields {
+        merge(root.fields.entry(behaviour.clone()).or_default(), values.clone());
+    }
     if instance.camera.is_some() {
         root.camera = instance.camera;
     }
@@ -274,7 +283,7 @@ pub struct TemplateObj {
     pub name: String,
     pub transform: Transform,
     pub persistent: bool,
-    pub behaviours: Vec<String>,
+    pub behaviours: Vec<BehaviourSpec>,
     pub camera: Option<Camera>,
     pub light: Option<Light>,
     pub renderer: Option<MeshRenderer>,
@@ -410,12 +419,24 @@ fn resolve_obj(
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },
         transform: Transform::new(Vec3::from(data.position()), rotation, Vec3::from(data.scale())),
         persistent: data.persistent,
-        behaviours: data.behaviours.clone(),
+        behaviours: behaviour_specs(&data.behaviours, &data.fields)?,
         camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, ..Camera::default() }),
         light: data.light.map(light_component),
         renderer,
         prefab: obj.prefab,
     })
+}
+
+/// Pairs each behaviour with its field values. Values for a behaviour the Obj
+/// does not have are an error, since they would otherwise vanish unnoticed.
+fn behaviour_specs(types: &[String], fields: &BTreeMap<String, toml::Table>) -> Result<Vec<BehaviourSpec>> {
+    if let Some(stray) = fields.keys().find(|t| !types.contains(t)) {
+        bail!("it has fields for {stray}, which is not one of its behaviours");
+    }
+    Ok(types
+        .iter()
+        .map(|t| BehaviourSpec { type_name: t.clone(), fields: Arc::new(fields.get(t).cloned().unwrap_or_default()) })
+        .collect())
 }
 
 /// A loaded prefab, by the id scripts hold.

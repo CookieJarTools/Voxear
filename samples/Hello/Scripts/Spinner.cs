@@ -7,7 +7,7 @@ namespace Hello
 	/// <summary>Spins its Obj around the up axis and checks in with the GameManager when it starts.</summary>
 	public sealed class Spinner : Behaviour
 	{
-		private const float DegreesPerSecond = 90f;
+		[SerializeField] private float degreesPerSecond = 90f;
 
 		protected override void Awake()
 		{
@@ -33,7 +33,7 @@ namespace Hello
 
 		protected override void Update()
 		{
-			var step = Quaternion.CreateFromAxisAngle(Vector3.UnitY, DegreesPerSecond * MathF.PI / 180f * Time.Delta);
+			var step = Quaternion.CreateFromAxisAngle(Vector3.UnitY, degreesPerSecond * MathF.PI / 180f * Time.Delta);
 			Obj.Rotation = Quaternion.Normalize(Obj.Rotation * step);
 		}
 	}

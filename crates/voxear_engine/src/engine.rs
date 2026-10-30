@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 use voxear_core::time::Time;
 use voxear_ecs::{Entity, Schedule, World};
 use voxear_scene::{
-    AttachedBehaviour, BehaviourHandle, BehaviourHost, Behaviours, Destroying, InstanceMarker, Lifecycle, Name, Parent,
-    Phase, Placement, Transform, propagate_transforms, register_obj_components,
+    AttachedBehaviour, BehaviourHandle, BehaviourHost, BehaviourSpec, Behaviours, Destroying, InstanceMarker,
+    Lifecycle, Name, Parent, Phase, Placement, Transform, propagate_transforms, register_obj_components,
 };
 use voxear_scripting::ScriptRuntime;
 
@@ -71,7 +71,8 @@ impl Engine {
     /// their first callbacks at the next flush, as one batch.
     pub fn spawn_obj(&mut self, name: &str, transform: Transform, behaviours: &[String]) -> Result<Entity> {
         let entity = self.world.spawn((Name(name.to_string()), transform));
-        self.attach_behaviours(entity, behaviours)?;
+        let specs: Vec<BehaviourSpec> = behaviours.iter().map(|t| BehaviourSpec::new(t)).collect();
+        self.attach_behaviours(entity, &specs)?;
         Ok(entity)
     }
 
@@ -111,14 +112,14 @@ impl Engine {
     /// Attaches a behaviour by C# type name and runs its Awake and OnEnable
     /// before returning, like Unity's `AddComponent`.
     pub fn add_behaviour(&mut self, entity: Entity, type_name: &str) -> Result<BehaviourHandle> {
-        let handles = self.attach_behaviours(entity, &[type_name.to_string()])?;
+        let handles = self.attach_behaviours(entity, &[BehaviourSpec::new(type_name)])?;
         self.with_host(|lifecycle, host| lifecycle.activate(&handles, host));
         Ok(handles[0])
     }
 
     /// Creates behaviours on an Obj and queues them for the next batch.
-    fn attach_behaviours(&mut self, entity: Entity, types: &[String]) -> Result<Vec<BehaviourHandle>> {
-        if types.is_empty() {
+    fn attach_behaviours(&mut self, entity: Entity, specs: &[BehaviourSpec]) -> Result<Vec<BehaviourHandle>> {
+        if specs.is_empty() {
             return Ok(Vec::new());
         }
         let Some(scripts) = self.scripts.as_mut() else {
@@ -126,12 +127,12 @@ impl Engine {
             bail!("{name} has behaviours but the project has no scripts");
         };
 
-        let mut attached = Vec::with_capacity(types.len());
+        let mut attached = Vec::with_capacity(specs.len());
         let mut is_instance = false;
-        for type_name in types {
-            let created = scripts.create_behaviour(&mut self.world, type_name, entity)?;
+        for spec in specs {
+            let created = scripts.create_behaviour(&mut self.world, spec, entity)?;
             is_instance |= created.is_instance;
-            attached.push(AttachedBehaviour { handle: created.registration.handle, type_name: type_name.clone() });
+            attached.push(AttachedBehaviour { handle: created.registration.handle, spec: spec.clone() });
             self.lifecycle.register(created.registration);
         }
         let handles = attached.iter().map(|b| b.handle).collect();

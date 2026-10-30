@@ -17,6 +17,8 @@
 //! name = "Crate"
 //! parent = 1
 //! behaviours = ["Game.Spinner"]
+//! [obj.fields."Game.Spinner"]
+//! degrees_per_second = 45.0
 //! [obj.renderer]
 //! mesh = "builtin:cube"          # or "<model guid>#mesh0.0", or a project path
 //! material = { color = [0.5, 0.3, 0.9] }
@@ -111,6 +113,10 @@ pub struct ObjData {
     /// Full C# type names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behaviours: Vec<String>,
+    /// Values for the behaviours' serialized fields, by behaviour type and
+    /// then field name. Field names may be written in snake_case.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, toml::Table>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<CameraData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,6 +140,7 @@ impl ObjData {
             scale: None,
             persistent: false,
             behaviours: Vec::new(),
+            fields: BTreeMap::new(),
             camera: None,
             light: None,
             renderer: None,
@@ -350,6 +357,7 @@ fn capture_instance(
         Some(added) => instance.behaviours = added.to_vec(),
         None => tracing::warn!("{}: behaviours removed from a prefab root are not saved yet", root.name),
     }
+    instance.fields = changed_fields(&prefab_root.fields, &root.fields);
     if root.camera.is_some() && root.camera != prefab_root.camera {
         instance.camera = root.camera;
     }
@@ -395,6 +403,10 @@ fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Resul
     if actual.behaviours != expected.behaviours {
         put("behaviours", toml::Value::try_from(&actual.behaviours)?);
     }
+    let fields = changed_fields(&expected.fields, &actual.fields);
+    if !fields.is_empty() {
+        put("fields", toml::Value::try_from(&fields)?);
+    }
     if let Some(camera) = actual.camera.filter(|c| Some(*c) != expected.camera) {
         put("camera", toml::Value::try_from(camera)?);
     }
@@ -405,6 +417,27 @@ fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Resul
         put("renderer", toml::Value::try_from(&actual.renderer)?);
     }
     Ok(changes)
+}
+
+/// The field values in `actual` that `expected` does not already have. Fields
+/// merge one by one, so only these need writing.
+fn changed_fields(
+    expected: &BTreeMap<String, toml::Table>,
+    actual: &BTreeMap<String, toml::Table>,
+) -> BTreeMap<String, toml::Table> {
+    let mut changed = BTreeMap::new();
+    for (behaviour, values) in actual {
+        let before = expected.get(behaviour);
+        let values: toml::Table = values
+            .iter()
+            .filter(|(k, v)| before.and_then(|b| b.get(*k)) != Some(*v))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if !values.is_empty() {
+            changed.insert(behaviour.clone(), values);
+        }
+    }
+    changed
 }
 
 /// Compares renderers by what they load, so `Models/Ship.gltf` and its GUID
@@ -441,8 +474,16 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
     }
     obj.parent = world.get::<Parent>(entity).and_then(|p| ids.get(&p.0).copied());
     obj.persistent = world.has::<ScenePersistence>(entity);
-    obj.behaviours =
-        world.get::<Behaviours>(entity).map(|b| b.type_names().map(str::to_string).collect()).unwrap_or_default();
+    if let Some(behaviours) = world.get::<Behaviours>(entity) {
+        obj.behaviours = behaviours.type_names().map(str::to_string).collect();
+        // Saved as loaded: values scripts change at runtime are not written back.
+        obj.fields = behaviours
+            .0
+            .iter()
+            .filter(|b| !b.spec.fields.is_empty())
+            .map(|b| (b.spec.type_name.clone(), (*b.spec.fields).clone()))
+            .collect();
+    }
     obj.camera = world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure });
     obj.light = world.get::<Light>(entity).map(light_data);
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {

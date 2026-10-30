@@ -10,7 +10,7 @@ namespace Voxear
 	/// Awake, then instantiate it whenever a copy is needed. Every copy's behaviours have had Awake and OnEnable by
 	/// the time Instantiate returns, and get Start at the end of the current phase, as in Unity.
 	/// </summary>
-	public readonly struct Prefab : IEquatable<Prefab>
+	public readonly struct Prefab : IEquatable<Prefab>, IAsset<Prefab>
 	{
 		public static readonly Prefab None = default;
 

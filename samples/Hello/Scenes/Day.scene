@@ -30,6 +30,8 @@ position = [2.2, 0.75, 0.0]
 rotation = [0.0, 30.0, 0.0]
 scale = [1.5, 1.5, 1.5]
 behaviours = ["Hello.Spinner"]
+[obj.fields."Hello.Spinner"]
+degrees_per_second = -45.0
 [obj.renderer]
 mesh = "builtin:cube"
 material = { color = [0.24, 0.62, 0.98], roughness = 0.5 }

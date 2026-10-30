@@ -6,6 +6,7 @@ id = 1
 name = "Firefly"
 scale = [0.06, 0.06, 0.06]
 behaviours = ["Hello.Firefly"]
+fields."Hello.Firefly" = { lifetime = 3.0 }
 light = { type = "point", color = [0.8, 1.0, 0.4], intensity = 1.5, range = 1.5 }
 [obj.renderer]
 mesh = "builtin:sphere"

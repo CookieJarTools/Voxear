@@ -7,9 +7,10 @@ namespace Hello
 	/// <summary>Drifts upward with a little wander, then destroys its own Obj.</summary>
 	public sealed class Firefly : Behaviour
 	{
-		private const float Lifetime = 3f;
-		private const float RiseSpeed = 0.35f;
 		private const float WanderSpeed = 0.25f;
+
+		[SerializeField] private float lifetime = 3f;
+		[SerializeField] private float riseSpeed = 0.35f;
 
 		/// <summary>Set in OnEnable, which runs before Instantiate returns.</summary>
 		public bool Ready { get; private set; }
@@ -32,8 +33,8 @@ namespace Hello
 		protected override void Update()
 		{
 			age += Time.Delta;
-			Obj.Position += (Vector3.UnitY * RiseSpeed + wander) * Time.Delta;
-			if (age < Lifetime || leaving)
+			Obj.Position += (Vector3.UnitY * riseSpeed + wander) * Time.Delta;
+			if (age < lifetime || leaving)
 			{
 				return;
 			}

@@ -8,7 +8,7 @@ use voxear_engine::{
     scene_file,
 };
 use voxear_render::Light;
-use voxear_scene::{Name, Parent, Placement, Transform};
+use voxear_scene::{AttachedBehaviour, BehaviourHandle, BehaviourSpec, Behaviours, Name, Parent, Placement, Transform};
 
 const LAMP: &str = r#"
 format = 1
@@ -250,4 +250,74 @@ fn mistakes_are_reported_clearly() {
     assert!(expand("[obj.overrides.9]\nname = \"X\"\n", &mut content).contains("no Obj at that path"));
     assert!(expand("[obj.overrides.2]\nparent = 1\n", &mut content).contains("`parent` cannot be overridden"));
     assert!(expand("[obj.overrides.2]\nglow = 1\n", &mut content).contains("glow"), "typos are caught");
+}
+
+const TURRET: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Turret"
+behaviours = ["Game.Turret"]
+fields."Game.Turret" = { range = 10.0, target = "Player" }
+
+[[obj]]
+id = 2
+name = "Barrel"
+parent = 1
+behaviours = ["Game.Recoil"]
+fields."Game.Recoil" = { kick = 0.2, recover = 4.0 }
+"#;
+
+#[test]
+fn behaviour_fields_layer_one_by_one() {
+    let dir = project(&[("Turret.prefab", TURRET)]);
+    let mut content = Content::open(dir.path()).unwrap();
+    let scene: scene_file::SceneFile = toml::from_str(
+        r#"
+format = 1
+[[obj]]
+id = 1
+prefab = "Turret.prefab"
+fields."Game.Turret" = { range = 25.0 }
+[obj.overrides.2.fields."Game.Recoil"]
+kick = 0.5
+"#,
+    )
+    .unwrap();
+    let objs = prefab::expand(&mut content, &scene.objs).unwrap();
+    let field = |path: &str, behaviour: &str, name: &str| {
+        let obj = objs.iter().find(|o| o.path.to_string() == path).unwrap();
+        obj.data.fields[behaviour][name].clone()
+    };
+    assert_eq!(field("1", "Game.Turret", "range"), toml::Value::Float(25.0));
+    assert_eq!(field("1", "Game.Turret", "target"), toml::Value::from("Player"), "untouched fields stay");
+    assert_eq!(field("1/2", "Game.Recoil", "kick"), toml::Value::Float(0.5));
+    assert_eq!(field("1/2", "Game.Recoil", "recover"), toml::Value::Float(4.0));
+
+    let stray: scene_file::SceneFile =
+        toml::from_str("format = 1\n[[obj]]\nid = 1\nname = \"A\"\nfields.\"Game.Missing\" = { x = 1 }\n").unwrap();
+    let flat = prefab::expand(&mut content, &stray.objs).unwrap();
+    let error = format!("{:#}", voxear_engine::Template::resolve(&mut content, None, &flat).unwrap_err());
+    assert!(error.contains("fields for Game.Missing, which is not one of its behaviours"), "{error}");
+}
+
+#[test]
+fn behaviour_fields_are_saved_as_loaded() {
+    let dir = project(&[("Turret.prefab", TURRET)]);
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    let scene: scene_file::SceneFile = toml::from_str("format = 1\n[[obj]]\nid = 1\nname = \"Turret\"\n").unwrap();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    // Headless runs have no scripts, so the behaviour is attached by hand.
+    let turret = spawned[0].1;
+    let fields: toml::Table = toml::from_str("range = 12.0").unwrap();
+    let spec = BehaviourSpec { type_name: "Game.Turret".into(), fields: std::sync::Arc::new(fields) };
+    engine.world.insert(turret, Behaviours(vec![AttachedBehaviour { handle: BehaviourHandle(0), spec }]));
+
+    let saved = scene_file::capture(&engine.world, &mut content, &[turret]);
+    let text = toml::to_string(&saved).unwrap();
+    assert!(text.contains("behaviours = [\"Game.Turret\"]"), "{text}");
+    let reloaded: scene_file::SceneFile = toml::from_str(&text).unwrap();
+    assert_eq!(reloaded.objs[0].fields["Game.Turret"]["range"], toml::Value::Float(12.0));
 }

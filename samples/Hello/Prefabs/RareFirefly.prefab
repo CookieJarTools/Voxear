@@ -1,0 +1,11 @@
+# Voxear prefab: a variant of Firefly that is blue, brighter and lasts longer.
+# FireflySpawner holds it as a Ref<Prefab>, so it loads the first time one appears.
+format = 1
+
+[[obj]]
+id = 1
+name = "Rare firefly"
+prefab = "Prefabs/Firefly.prefab"
+light = { type = "point", color = [0.4, 0.7, 1.0], intensity = 2.5, range = 2.0 }
+renderer = { mesh = "builtin:sphere", material = { color = [0.0, 0.0, 0.0], emissive = [1.5, 3.5, 6.0] } }
+fields."Hello.Firefly" = { lifetime = 4.5 }

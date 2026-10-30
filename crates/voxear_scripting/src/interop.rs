@@ -11,13 +11,13 @@ use std::{
 use voxear_core::time::Time;
 use voxear_ecs::{Entity, World};
 use voxear_scene::{
-    Adopted, AttachedBehaviour, BehaviourHandle, Behaviours, Callbacks, InstanceMarker, Name, Placement, Registration,
-    Request, Transform, world_matrix,
+    Adopted, AttachedBehaviour, BehaviourHandle, BehaviourSpec, Behaviours, Callbacks, InstanceMarker, Name, Placement,
+    Registration, Request, Transform, world_matrix,
 };
 
 use crate::services::{SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 3;
+pub(crate) const API_VERSION: u32 = 4;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -53,7 +53,8 @@ const ADOPT_ENABLED: u32 = 1;
 const ADOPT_WANTS_ENABLED: u32 = 2;
 const ADOPT_DESTROYED: u32 = 4;
 
-pub(crate) type CreateBehaviour = unsafe extern "C" fn(*const u8, i32, u64, *mut BehaviourInfo) -> i32;
+/// Type name, entity, field values as JSON (or null), and the info to fill.
+pub(crate) type CreateBehaviour = unsafe extern "C" fn(*const u8, i32, u64, *const u8, i32, *mut BehaviourInfo) -> i32;
 
 /// Script functions the engine calls; filled in by `Bootstrap.Initialize`.
 #[repr(C)]
@@ -210,7 +211,7 @@ unsafe extern "C" fn behaviour_add(entity: u64, type_name: *const u8, len: i32) 
         tracing::error!(target: "script", "AddBehaviour<{type_name}>: the Obj no longer exists");
         return -1;
     }
-    attach(entity, &[type_name]).first().map_or(-1, |&handle| handle as i32)
+    attach(entity, &[BehaviourSpec::new(&type_name)]).first().map_or(-1, |&handle| handle as i32)
 }
 
 unsafe extern "C" fn prefab_load(reference: *const u8, len: i32) -> i32 {
@@ -264,7 +265,7 @@ unsafe extern "C" fn prefab_instantiate(
     };
     // Behaviours are created only now, outside the world borrow, because
     // creating one runs managed code that may call back into the world.
-    let handles: Vec<u32> = objs.iter().flat_map(|(entity, types)| attach(*entity, types)).collect();
+    let handles: Vec<u32> = objs.iter().flat_map(|(entity, specs)| attach(*entity, specs)).collect();
     let count = handles.len() as i32;
     LAST_BATCH.set(handles);
     unsafe { out_root.write(root.to_bits()) };
@@ -304,23 +305,25 @@ unsafe extern "C" fn behaviours_adopt(handles: *const u32, states: *const u32, c
 
 /// Creates behaviours on an Obj during a script call. Scripts then run their
 /// Awake and OnEnable and hand them back through `behaviours_adopt`.
-fn attach(entity: Entity, types: &[String]) -> Vec<u32> {
+fn attach(entity: Entity, specs: &[BehaviourSpec]) -> Vec<u32> {
     let Some(create) = CREATE.get() else { return Vec::new() };
-    let mut attached = Vec::with_capacity(types.len());
+    let mut attached = Vec::with_capacity(specs.len());
     let mut is_instance = false;
-    for type_name in types {
+    for spec in specs {
         let mut info = BehaviourInfo::default();
-        let handle = unsafe { create(type_name.as_ptr(), type_name.len() as i32, entity.to_bits(), &mut info) };
-        if handle < 0 {
-            tracing::error!(target: "script", "could not create behaviour `{type_name}`; is it a Behaviour in the game assembly?");
+        let Some(handle) = call_create(create, spec, entity, &mut info) else {
+            tracing::error!(
+                target: "script",
+                "could not create behaviour `{}`; is it a Behaviour in the game assembly?",
+                spec.type_name
+            );
             continue;
-        }
-        let handle = BehaviourHandle(handle as u32);
+        };
         let registration =
             Registration { handle, entity, callbacks: Callbacks(info.callbacks), order: info.order, enabled: true };
         ACTIVATING.with_borrow_mut(|activating| activating.insert(handle.0, registration));
         is_instance |= info.flags & FLAG_INSTANCE != 0;
-        attached.push(AttachedBehaviour { handle, type_name: type_name.clone() });
+        attached.push(AttachedBehaviour { handle, spec: spec.clone() });
     }
     let handles = attached.iter().map(|b| b.handle.0).collect();
     with_world(|world| {
@@ -336,6 +339,21 @@ fn attach(entity: Entity, types: &[String]) -> Vec<u32> {
         Some(())
     });
     handles
+}
+
+/// Calls managed `CreateBehaviour`, passing the spec's fields as JSON, which
+/// .NET reads without extra packages.
+pub(crate) fn call_create(
+    create: CreateBehaviour,
+    spec: &BehaviourSpec,
+    entity: Entity,
+    info: &mut BehaviourInfo,
+) -> Option<BehaviourHandle> {
+    let fields = if spec.fields.is_empty() { None } else { serde_json::to_string(&*spec.fields).ok() };
+    let (fields_ptr, fields_len) = fields.as_deref().map_or((ptr::null(), 0), |f| (f.as_ptr(), f.len() as i32));
+    let name = &spec.type_name;
+    let handle = unsafe { create(name.as_ptr(), name.len() as i32, entity.to_bits(), fields_ptr, fields_len, info) };
+    (handle >= 0).then_some(BehaviourHandle(handle as u32))
 }
 
 /// A world-space placement made relative to `parent`, as of now. Like

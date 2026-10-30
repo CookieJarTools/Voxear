@@ -129,9 +129,14 @@ Done so far:
   - A main-thread `SynchronizationContext` brings every await back to the frame. Hello switches levels with
     `await Level.LoadAsync`.
 
+- **Unloading:** after every level change, everything no live Obj or prefab in use needs is freed: models, meshes,
+  materials, textures, prefab data and open bundles. The GPU buffers use a range allocator, with frees deferred past
+  frames in flight. Developer controls are `Content.UnloadUnused()`, `Content.Usage` and `prefab.Keep()` /
+  `Release()`.
+
 Still to do in M2:
 - Nested serializable types, and fields that reference behaviours.
-- Reference-counted bundle unloading, async IO, and freeing GPU meshes, materials and textures that nothing uses.
+- Async IO (io_uring and IoRing) and GPU-side decompression.
 - Splitting large bundles and merging tiny ones, and a per-asset build cache (with cooking).
 - Content roots for assets loaded by strings the build cannot see (`[ContentRoot]`, `[content]` in voxear.toml).
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.

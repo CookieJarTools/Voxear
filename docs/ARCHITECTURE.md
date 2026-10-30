@@ -498,17 +498,41 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
    - Every build still reads and packs every asset. A per-asset cache keyed on source hashes comes with cooking,
      which will turn source formats into GPU-ready data at build time.
 
-**Runtime** *(implemented: reading through a catalog, opening bundles on first use; reference counting, unloading
-and async IO planned)*.
+**Runtime** *(implemented: reading through a catalog, opening bundles on first use, background loading, unloading;
+async IO and GPU decompression planned)*.
 - Every read goes through an `AssetReader`: `FolderReader` in a project, and `BundleReader` for built content. Levels,
   scenes, prefabs, materials and models, with their buffers and textures, all load the same way from either.
   `Content::open_bundles` and `vox run --bundles` use bundles. Each bundle is logged when it opens, naming its
   roots.
-- Loading a `Ref` resolves its bundle from the catalog, loads that bundle and its dependencies (reference counted),
-  and returns the asset.
-- IO is async: io_uring on Linux and IoRing/overlapped IO on Windows. GPU data uploads on a transfer queue, with
-  GPU decompression where available.
-- When the last reference goes away, the bundle unloads.
+- Loading a `Ref` resolves its bundle from the catalog, opens it, and returns the asset.
+- *Planned:* IO goes async, with io_uring on Linux and IoRing/overlapped IO on Windows. GPU data uploads on a
+  transfer queue, with GPU decompression where available.
+
+**Unloading** *(implemented)*. It works like Unity's `UnloadUnusedAssets`, run for you after every level change.
+- **What stays.** In use are:
+  - the meshes and materials that live Objs draw with
+  - prefabs that are kept, loaded or instantiated since the last sweep, or have a live instance, together with
+    everything they draw with
+  - models that an unfinished background load has uploaded
+- **What goes.**
+  - Everything else is freed. A model goes as a whole, with its meshes, materials and textures.
+  - Texts read ahead and parsed prefab files are dropped, and bundles close.
+  - Anything freed loads again by itself when used: a released prefab's id never goes stale.
+- **GPU side.** The shared vertex and index buffers hand out ranges from a first-fit allocator whose freed ranges
+  merge. Mesh and material table slots are reused, and textures are destroyed. Nothing is reclaimed until the
+  frames still on the GPU are done with it.
+- **The developer's controls** follow Unity's names:
+
+  ```csharp
+  enemyPrefab.Keep();           // survives level changes until Release, so it never loads again mid-game
+  enemyPrefab.Release();        // freed at the next sweep once nothing uses it
+  Content.UnloadUnused();       // sweep at the end of this frame, e.g. after a boss fight
+  Log.Info(Content.Usage);      // models, prefabs and materials loaded; GPU meshes, materials, textures
+  var load = Level.LoadAsync(next, activate: false);   // preload, change over when ready
+  ```
+
+  In Rust these are `Game::release_unused`, `Content::keep_prefab`, `Content::usage` and
+  `Renderer::asset_usage`.
 - In the editor the same API reads straight from the asset database, so no build is ever needed to press Play.
 - Catalogs are **layered**, so mods can add or override assets through the same path. See [Modding](#modding).
 

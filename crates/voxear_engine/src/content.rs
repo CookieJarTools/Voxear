@@ -17,9 +17,14 @@ use voxear_assets::{
     AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader,
     bundle::{BundleInfo, BundleReader, Catalog},
 };
-use voxear_render::{ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, PreparedModel, Primitive, Renderer};
+use voxear_ecs::World;
+use voxear_render::{
+    ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, MeshRenderer, PreparedModel, Primitive,
+    Renderer,
+};
+use voxear_scene::Destroying;
 
-use crate::prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, Template};
+use crate::prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, PrefabInstance, Template};
 
 /// A PBR material as written in `.material` files and inline in scenes.
 /// Colours are sRGB, as picked in a colour picker.
@@ -68,6 +73,32 @@ impl MaterialData {
     }
 }
 
+/// What [`Content::release_unused`] freed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Released {
+    pub prefabs: usize,
+    pub models: usize,
+    pub meshes: usize,
+    pub materials: usize,
+    pub textures: usize,
+}
+
+impl Released {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// What content has loaded, beside what the GPU holds (see
+/// `Renderer::asset_usage`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContentUsage {
+    pub models: usize,
+    pub prefabs: usize,
+    pub kept_prefabs: usize,
+    pub materials: usize,
+}
+
 /// Where a material came from, so scenes save it back the way it was written.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MaterialSource {
@@ -80,7 +111,7 @@ pub struct Content {
     source: Source,
     /// Asset texts a background load read ahead, by GUID.
     texts: HashMap<AssetGuid, Arc<str>>,
-    models: HashMap<AssetGuid, Vec<ImportedNode>>,
+    models: HashMap<AssetGuid, ImportedModel>,
     meshes: HashMap<AssetRef, MeshHandle>,
     mesh_refs: HashMap<MeshHandle, AssetRef>,
     asset_materials: HashMap<AssetRef, MaterialHandle>,
@@ -202,8 +233,8 @@ impl Content {
         if self.models.contains_key(&guid) {
             return Ok(());
         }
-        let nodes = renderer.upload_model(model)?;
-        self.register_model(guid, nodes);
+        let model = renderer.upload_model(model)?;
+        self.register_model(guid, model);
         Ok(())
     }
 
@@ -224,14 +255,14 @@ impl Content {
             }
             let path = entry.path.clone();
             let reader = self.reader();
-            let nodes = renderer.import_gltf(&path, &mut |file| reader.read(file))?;
-            self.register_model(guid, nodes);
+            let model = renderer.import_gltf(&path, &mut |file| reader.read(file))?;
+            self.register_model(guid, model);
         }
-        Ok(&self.models[&guid])
+        Ok(&self.models[&guid].nodes)
     }
 
-    fn register_model(&mut self, guid: AssetGuid, nodes: Vec<ImportedNode>) {
-        for node in &nodes {
+    fn register_model(&mut self, guid: AssetGuid, model: ImportedModel) {
+        for node in &model.nodes {
             let mesh = AssetRef::asset(guid, Some(&node.mesh_part));
             self.mesh_refs.insert(node.mesh, mesh.clone());
             self.meshes.insert(mesh, node.mesh);
@@ -239,7 +270,7 @@ impl Content {
             self.material_sources.insert(node.material, MaterialSource::Asset(material.clone()));
             self.asset_materials.insert(material, node.material);
         }
-        self.models.insert(guid, nodes);
+        self.models.insert(guid, model);
     }
 
     pub fn mesh(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<MeshHandle> {
@@ -318,19 +349,154 @@ impl Content {
     /// returns the same id.
     pub fn prefab(&mut self, renderer: Option<&mut Renderer>, reference: &str) -> Result<PrefabId> {
         let guid = self.parse(reference)?.guid().with_context(|| format!("`{reference}` is not a prefab"))?;
-        if let Some(&id) = self.prefabs.ids.get(&guid) {
-            return Ok(id);
-        }
-        let objs = prefab::expand_prefab(self, guid).with_context(|| format!("loading {reference}"))?;
-        let template = Template::resolve(self, renderer, &objs).with_context(|| format!("loading {reference}"))?;
-        let id = PrefabId(self.prefabs.templates.len() as u32);
-        self.prefabs.templates.push(Arc::new(template));
-        self.prefabs.ids.insert(guid, id);
+        let id = match self.prefabs.ids.get(&guid) {
+            Some(&id) => id,
+            None => {
+                let id = PrefabId(self.prefabs.templates.len() as u32);
+                self.prefabs.templates.push(None);
+                self.prefabs.guids.push(guid);
+                self.prefabs.ids.insert(guid, id);
+                id
+            }
+        };
+        self.loaded_template(renderer, id).with_context(|| format!("loading {reference}"))?;
         Ok(id)
     }
 
+    /// A loaded prefab's template, or `None` once it has been released.
     pub fn template(&self, prefab: PrefabId) -> Option<&Arc<Template>> {
-        self.prefabs.templates.get(prefab.0 as usize)
+        self.prefabs.templates.get(prefab.0 as usize)?.as_ref()
+    }
+
+    /// A prefab's template, loading it again if a sweep released it, so a
+    /// prefab id never goes stale.
+    pub fn loaded_template(&mut self, renderer: Option<&mut Renderer>, prefab: PrefabId) -> Result<Arc<Template>> {
+        let index = prefab.0 as usize;
+        let guid = *self.prefabs.guids.get(index).context("no prefab with that id was ever loaded")?;
+        self.prefabs.used.insert(prefab);
+        if let Some(template) = &self.prefabs.templates[index] {
+            return Ok(template.clone());
+        }
+        let objs = prefab::expand_prefab(self, guid)?;
+        let template = Arc::new(Template::resolve(self, renderer, &objs)?);
+        self.prefabs.templates[index] = Some(template.clone());
+        Ok(template)
+    }
+
+    /// Keeps a prefab loaded across sweeps until it is let go, as for a
+    /// prefab a persistent manager spawns now and then.
+    pub fn keep_prefab(&mut self, prefab: PrefabId, keep: bool) {
+        if keep {
+            self.prefabs.kept.insert(prefab);
+        } else {
+            self.prefabs.kept.remove(&prefab);
+        }
+    }
+
+    /// Frees what nothing uses any more, as Unity's `UnloadUnusedAssets`
+    /// does; the game calls it after every level change.
+    ///
+    /// In use are the meshes and materials live Objs draw with, and the
+    /// prefabs that are kept, loaded or instantiated since the last sweep, or
+    /// have a live instance, with everything they draw with. A model goes as
+    /// a whole once none of its pieces is in use. Texts read ahead and parsed
+    /// prefab files are dropped too, and bundles close: whatever is needed
+    /// later is read again. A released prefab loads again the next time it
+    /// is used.
+    pub fn release_unused(
+        &mut self,
+        world: &World,
+        renderer: Option<&mut Renderer>,
+        keep_models: &HashSet<AssetGuid>,
+    ) -> Released {
+        let mut released = Released::default();
+        let mut meshes = HashSet::new();
+        let mut materials = HashSet::new();
+        for renderer in world.query_ref::<&MeshRenderer>().without::<Destroying>() {
+            meshes.insert(renderer.mesh);
+            materials.insert(renderer.material);
+        }
+
+        let instances: HashSet<AssetGuid> =
+            world.query_ref::<&PrefabInstance>().without::<Destroying>().into_iter().map(|p| p.0).collect();
+        let cache = &mut self.prefabs;
+        for (index, slot) in cache.templates.iter_mut().enumerate() {
+            let id = PrefabId(index as u32);
+            let in_use =
+                cache.kept.contains(&id) || cache.used.contains(&id) || instances.contains(&cache.guids[index]);
+            match slot {
+                Some(template) if in_use => {
+                    let drawn = template.objs.iter().filter_map(|o| o.renderer);
+                    drawn.for_each(|r| {
+                        meshes.insert(r.mesh);
+                        materials.insert(r.material);
+                    });
+                }
+                Some(_) => {
+                    *slot = None;
+                    released.prefabs += 1;
+                }
+                None => {}
+            }
+        }
+        cache.used.clear();
+        cache.files.clear();
+        self.texts.clear();
+        if let Source::Bundles(reader, ..) = &mut self.source {
+            reader.close_all();
+        }
+
+        let Some(renderer) = renderer else { return released };
+        let unused: Vec<AssetGuid> = self
+            .models
+            .iter()
+            .filter(|(guid, m)| {
+                let drawn = m.nodes.iter().any(|n| meshes.contains(&n.mesh) || materials.contains(&n.material));
+                !drawn && !keep_models.contains(guid)
+            })
+            .map(|(guid, _)| *guid)
+            .collect();
+        for guid in unused {
+            let model = self.models.remove(&guid).expect("listed above");
+            let model_meshes: HashSet<MeshHandle> = model.nodes.iter().map(|n| n.mesh).collect();
+            let model_materials: HashSet<MaterialHandle> = model.nodes.iter().map(|n| n.material).collect();
+            model_meshes.iter().for_each(|&m| renderer.free_mesh(m));
+            model_materials.iter().for_each(|&m| renderer.free_material(m));
+            model.textures.iter().for_each(|&t| renderer.free_texture(t));
+            self.meshes.retain(|_, m| !model_meshes.contains(m));
+            self.mesh_refs.retain(|m, _| !model_meshes.contains(m));
+            self.asset_materials.retain(|_, m| !model_materials.contains(m));
+            released.models += 1;
+            released.meshes += model_meshes.len();
+            released.materials += model_materials.len();
+            released.textures += model.textures.len();
+        }
+
+        // Materials of their own: `.material` files and inline ones.
+        let mut free_material = |handle: MaterialHandle| {
+            let unused = !materials.contains(&handle);
+            if unused {
+                renderer.free_material(handle);
+                released.materials += 1;
+            }
+            !unused
+        };
+        self.asset_materials.retain(|_, handle| free_material(*handle));
+        self.inline_materials.retain(|_, handle| free_material(*handle));
+        let known: HashSet<MaterialHandle> =
+            self.asset_materials.values().chain(self.inline_materials.values()).copied().collect();
+        self.material_sources.retain(|handle, _| known.contains(handle));
+        released
+    }
+
+    /// What is loaded now, for the stats overlay and scripts.
+    pub fn usage(&self) -> ContentUsage {
+        ContentUsage {
+            models: self.models.len(),
+            prefabs: self.prefabs.templates.iter().flatten().count(),
+            kept_prefabs: self.prefabs.kept.len(),
+            materials: self.asset_materials.len() + self.inline_materials.len(),
+        }
     }
 
     /// The reference a mesh was loaded from, for saving scenes.

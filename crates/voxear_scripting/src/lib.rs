@@ -12,4 +12,4 @@ mod services;
 
 pub use hostfxr::{DotnetInstall, find_dotnet};
 pub use runtime::{CreatedBehaviour, ScriptHost, ScriptRuntime};
-pub use services::{LoadProgress, ScriptServices, ServicesScope, SpawnedPrefab};
+pub use services::{ContentStats, LoadProgress, ScriptServices, ServicesScope, SpawnedPrefab};

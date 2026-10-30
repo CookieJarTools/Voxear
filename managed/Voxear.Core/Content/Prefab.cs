@@ -49,6 +49,30 @@ namespace Voxear
 			return Loading.Track(new PrefabLoad(Native.LoadAsync(false, path)));
 		}
 
+		/// <summary>
+		/// Keeps this prefab, and everything it draws with, loaded through level changes until Release. Use it for a
+		/// prefab a persistent manager spawns now and then, so it never loads again mid-game.
+		/// </summary>
+		public void Keep()
+		{
+			if (IsValid)
+			{
+				Native.KeepPrefab(id - 1, true);
+			}
+		}
+
+		/// <summary>
+		/// Lets go of a prefab held with Keep. It is freed at the next level change or Content.UnloadUnused once
+		/// nothing uses it, and loads again by itself if it is instantiated later.
+		/// </summary>
+		public void Release()
+		{
+			if (IsValid)
+			{
+				Native.KeepPrefab(id - 1, false);
+			}
+		}
+
 		/// <summary>A copy placed where the prefab places its own root.</summary>
 		public Obj Instantiate()
 		{

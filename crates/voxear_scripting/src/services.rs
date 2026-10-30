@@ -30,6 +30,29 @@ pub trait ScriptServices {
     fn load_status(&self, id: u32) -> Option<LoadProgress>;
 
     fn allow_activation(&mut self, id: u32, allow: bool);
+
+    /// Keeps a loaded prefab across sweeps, or lets it go again.
+    fn keep_prefab(&mut self, prefab: u32, keep: bool);
+
+    /// Frees what nothing uses at the end of the frame.
+    fn unload_unused(&mut self);
+
+    fn usage(&self) -> ContentStats;
+}
+
+/// What is loaded, as scripts see it. Mirrors `ContentUsage` in Voxear.Core.
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct ContentStats {
+    pub models: u32,
+    pub prefabs: u32,
+    pub kept_prefabs: u32,
+    pub materials: u32,
+    pub gpu_meshes: u32,
+    pub gpu_materials: u32,
+    pub gpu_textures: u32,
+    /// Freed, waiting for frames in flight to finish with them.
+    pub gpu_retiring: u32,
 }
 
 /// A background load as scripts see it.

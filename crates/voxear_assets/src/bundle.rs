@@ -146,6 +146,11 @@ impl BundleReader {
         }
     }
 
+    /// Closes every open bundle; each opens again when next read from.
+    pub fn close_all(&mut self) {
+        self.open.clear();
+    }
+
     /// The bundles opened so far, in the order they were first needed.
     pub fn opened(&self) -> impl Iterator<Item = &BundleInfo> {
         self.opened.iter().map(|&b| &self.bundles[b])

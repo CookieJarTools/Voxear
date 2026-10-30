@@ -30,5 +30,8 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<int, byte*, int, int> LoadAsync;
 		public delegate* unmanaged[Cdecl]<uint, LoadProgress*, int> LoadStatus;
 		public delegate* unmanaged[Cdecl]<uint, int, void> LoadAllowActivation;
+		public delegate* unmanaged[Cdecl]<int, int, void> PrefabKeep;
+		public delegate* unmanaged[Cdecl]<void> ContentUnloadUnused;
+		public delegate* unmanaged[Cdecl]<ContentUsage*, int> ContentUsage;
 	}
 }

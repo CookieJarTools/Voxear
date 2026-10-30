@@ -15,9 +15,9 @@ use voxear_scene::{
     Registration, Request, Transform, world_matrix,
 };
 
-use crate::services::{LoadProgress, SpawnedPrefab, with_services};
+use crate::services::{ContentStats, LoadProgress, SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 6;
+pub(crate) const API_VERSION: u32 = 7;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -50,6 +50,9 @@ pub(crate) struct NativeApi {
     pub load_async: unsafe extern "C" fn(level: i32, reference: *const u8, len: i32) -> i32,
     pub load_status: unsafe extern "C" fn(id: u32, out: *mut LoadProgress) -> i32,
     pub load_allow_activation: unsafe extern "C" fn(id: u32, allow: i32),
+    pub prefab_keep: unsafe extern "C" fn(prefab: i32, keep: i32),
+    pub content_unload_unused: unsafe extern "C" fn(),
+    pub content_usage: unsafe extern "C" fn(out: *mut ContentStats) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -223,6 +226,26 @@ unsafe extern "C" fn load_status(id: u32, out: *mut LoadProgress) -> i32 {
 
 unsafe extern "C" fn load_allow_activation(id: u32, allow: i32) {
     with_services(|services| services.allow_activation(id, allow != 0));
+}
+
+unsafe extern "C" fn prefab_keep(prefab: i32, keep: i32) {
+    if prefab >= 0 {
+        with_services(|services| services.keep_prefab(prefab as u32, keep != 0));
+    }
+}
+
+unsafe extern "C" fn content_unload_unused() {
+    with_services(|services| services.unload_unused());
+}
+
+unsafe extern "C" fn content_usage(out: *mut ContentStats) -> i32 {
+    match with_services(|services| services.usage()) {
+        Some(stats) => {
+            unsafe { out.write(stats) };
+            1
+        }
+        None => 0,
+    }
 }
 
 /// The Obj's transform in the world as of now, through its parents.
@@ -437,5 +460,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         load_async,
         load_status,
         load_allow_activation,
+        prefab_keep,
+        content_unload_unused,
+        content_usage,
     }
 }

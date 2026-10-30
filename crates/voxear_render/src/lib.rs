@@ -7,6 +7,7 @@
 //! visibility. See [`passes`] for the frame's pass order, and
 //! [`post_passes`] for the post-processing after it.
 
+mod alloc;
 mod assets;
 mod gltf_import;
 mod gpu;
@@ -30,8 +31,11 @@ use voxear_rhi::{
     Swapchain, WindowHandles, full_mip_count, vk,
 };
 
+pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle};
-pub use gltf_import::{ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model};
+pub use gltf_import::{
+    ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
+};
 pub use gpu::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS};
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::MAX_LODS;
@@ -41,6 +45,7 @@ pub use post::{
     Tonemap, Tonemapper, Vignette,
 };
 pub use scene::{Camera, Light, LightKind, MeshRenderer, Sky, ViewOptions};
+pub use voxear_rhi::TextureId;
 
 use crate::{
     assets::Assets,
@@ -314,16 +319,40 @@ impl Renderer {
     /// Loads a `.gltf` or `.glb` file and returns its drawable pieces. `path`
     /// is the model's project path, and `read` reads it and every file it
     /// names, from wherever the content lives.
-    pub fn import_gltf(&mut self, path: &str, read: &mut ReadFile) -> Result<Vec<ImportedNode>> {
+    pub fn import_gltf(&mut self, path: &str, read: &mut ReadFile) -> Result<ImportedModel> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         gltf_import::import(&self.gpu, &mut self.bindless, assets, path, read)
     }
 
     /// Uploads a model made with [`prepare_model`], for example on a
     /// loading thread.
-    pub fn upload_model(&mut self, model: &PreparedModel) -> Result<Vec<ImportedNode>> {
+    pub fn upload_model(&mut self, model: &PreparedModel) -> Result<ImportedModel> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         gltf_import::upload(&self.gpu, &mut self.bindless, assets, model)
+    }
+
+    /// Frees a mesh once no frame in flight still draws with it. Built-in
+    /// meshes are never freed.
+    pub fn free_mesh(&mut self, mesh: MeshHandle) {
+        let frame = self.frame_index;
+        self.assets.as_mut().expect("assets live until drop").free_mesh(mesh, frame);
+    }
+
+    /// Frees a material once no frame in flight still uses it. The default
+    /// material is never freed.
+    pub fn free_material(&mut self, material: MaterialHandle) {
+        let frame = self.frame_index;
+        self.assets.as_mut().expect("assets live until drop").free_material(material, frame);
+    }
+
+    pub fn free_texture(&mut self, texture: TextureId) {
+        let frame = self.frame_index;
+        self.assets.as_mut().expect("assets live until drop").free_texture(texture, frame);
+    }
+
+    /// How much of the GPU asset storage is in use.
+    pub fn asset_usage(&self) -> AssetUsage {
+        self.assets.as_ref().expect("assets live until drop").usage()
     }
 
     fn extent(&self) -> vk::Extent2D {
@@ -363,6 +392,9 @@ impl Renderer {
         }
 
         let frame = self.frames.begin(&self.gpu)?;
+        // This slot's previous frame has finished, and with it every frame that could use what was freed before it.
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
         // This slot's previous frame has finished, so its counters are final.
         let counters = bytemuck::cast_slice(&self.buffers[frame.slot].stats.read()[..stat::COUNT * 4]);
         let exposure = bytemuck::cast_slice(self.exposure.as_ref().expect("exposure lives until drop").read());

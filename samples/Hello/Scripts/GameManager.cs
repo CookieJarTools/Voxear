@@ -57,6 +57,7 @@ namespace Hello
 			loading = Level.LoadAsync(level);
 			await loading;
 			Log.Info($"{level} is in after loading in the background{(loading.Error == null ? "" : $", but: {loading.Error}")}");
+			Log.Info($"Loaded now: {Content.Usage}");
 			loading = null;
 		}
 

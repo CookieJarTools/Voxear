@@ -78,6 +78,8 @@ struct Load {
     job: Option<JoinHandle<Result<Prepared>>>,
     prepared: Option<Prepared>,
     uploads: usize,
+    /// Models this load uploaded, which sweeps leave alone until it is done.
+    uploaded: Vec<AssetGuid>,
     allow_activation: bool,
     status: LoadStatus,
 }
@@ -116,6 +118,7 @@ impl Loads {
             job: Some(job),
             prepared: None,
             uploads: 0,
+            uploaded: Vec::new(),
             allow_activation: true,
             status: LoadStatus { state: LoadState::Loading, progress: 0.0, prefab: None },
         });
@@ -137,6 +140,11 @@ impl Loads {
 
     pub fn is_idle(&self) -> bool {
         self.active.is_empty()
+    }
+
+    /// Models that loads still in progress have uploaded.
+    pub fn uploaded_models(&self) -> HashSet<AssetGuid> {
+        self.active.iter().flat_map(|l| l.uploaded.iter().copied()).collect()
     }
 
     /// Moves every load along: collects finished workers, uploads within the
@@ -207,16 +215,18 @@ fn advance_one(
         while let Some((guid, model)) = prepared.models.pop() {
             content.adopt_model(renderer, guid, &model)?;
             load.uploads += 1;
+            load.uploaded.push(guid);
             load.status.progress = 0.8 + 0.1 * load.uploads as f32 / total as f32;
             if frame_started.elapsed() > UPLOAD_BUDGET {
                 return Ok(None);
             }
         }
     }
-    content.adopt_texts(std::mem::take(&mut prepared.texts));
-
+    // Texts go to content only when used, so a level held at ready keeps its
+    // own through any sweep another level change makes.
     match &load.target {
         LoadTarget::Prefab(path) => {
+            content.adopt_texts(std::mem::take(&mut prepared.texts));
             load.status.prefab = Some(content.prefab(renderer, path)?);
             load.status.state = LoadState::Done;
             load.status.progress = 1.0;
@@ -225,7 +235,11 @@ fn advance_one(
         LoadTarget::Level(path) => {
             load.status.state = LoadState::Ready;
             load.status.progress = 0.9;
-            Ok(load.allow_activation.then(|| path.clone()))
+            if !load.allow_activation {
+                return Ok(None);
+            }
+            content.adopt_texts(std::mem::take(&mut prepared.texts));
+            Ok(Some(path.clone()))
         }
     }
 }

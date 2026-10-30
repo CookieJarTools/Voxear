@@ -13,7 +13,7 @@ mod project;
 pub mod scene_file;
 mod windowed;
 
-pub use content::{Content, MaterialData, MaterialSource};
+pub use content::{Content, ContentUsage, MaterialData, MaterialSource, Released};
 pub use engine::{Engine, STAGES};
 pub use fly_camera::FlyCamera;
 pub use game::Game;

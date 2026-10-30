@@ -168,6 +168,23 @@ namespace Voxear.Interop
 			}
 		}
 
+		public static void KeepPrefab(int prefab, bool keep)
+		{
+			Api->PrefabKeep(prefab, keep ? 1 : 0);
+		}
+
+		public static void ContentUnloadUnused()
+		{
+			Api->ContentUnloadUnused();
+		}
+
+		public static ContentUsage ContentUsage()
+		{
+			var usage = default(ContentUsage);
+			Api->ContentUsage(&usage);
+			return usage;
+		}
+
 		public static string Utf8(byte* text, int length)
 		{
 			return length <= 0 ? string.Empty : Encoding.UTF8.GetString(text, length);

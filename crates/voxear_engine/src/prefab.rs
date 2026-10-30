@@ -47,7 +47,7 @@
 //! and any children it adds, as in Unity.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt,
     sync::Arc,
 };
@@ -578,6 +578,12 @@ pub struct PrefabId(pub u32);
 #[derive(Default)]
 pub(crate) struct PrefabCache {
     pub files: HashMap<AssetGuid, Arc<PrefabFile>>,
-    pub templates: Vec<Arc<Template>>,
+    /// By id; `None` once released, until it is used again.
+    pub templates: Vec<Option<Arc<Template>>>,
+    pub guids: Vec<AssetGuid>,
     pub ids: HashMap<AssetGuid, PrefabId>,
+    /// Kept loaded across sweeps until released.
+    pub kept: HashSet<PrefabId>,
+    /// Loaded or instantiated since the last sweep.
+    pub used: HashSet<PrefabId>,
 }

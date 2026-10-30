@@ -132,3 +132,58 @@ fn models_are_prepared_on_the_worker_and_uploaded_on_the_main_thread() {
     assert!(drawn, "the tree's mesh came from the prepared model");
     renderer.render(&game.engine.world, 0.0).unwrap();
 }
+
+#[test]
+fn a_level_change_frees_what_only_the_old_level_used() {
+    let dir = project();
+    let mut renderer = Renderer::new_offscreen(64, 64, &RendererSettings::default()).unwrap();
+    let mut game = game(&dir);
+    game.start(Some(&mut renderer)).unwrap();
+    let before = renderer.asset_usage();
+
+    game.load_level("Levels/Forest.level", Some(&mut renderer)).unwrap();
+    let forest = renderer.asset_usage();
+    assert_eq!(game.content.usage().models, 1);
+    assert_eq!(forest.meshes, before.meshes + 1, "the tree's mesh");
+
+    game.load_level("Levels/Start.level", Some(&mut renderer)).unwrap();
+    assert_eq!(game.content.usage().models, 0, "nothing in Start uses the tree");
+    // Freed space comes back once the frames that might still draw it are done.
+    for _ in 0..4 {
+        game.tick(1.0 / 60.0, Some(&mut renderer));
+        renderer.render(&game.engine.world, 0.0).unwrap();
+    }
+    let after = renderer.asset_usage();
+    assert_eq!((after.meshes, after.materials, after.retiring), (before.meshes, before.materials, 0));
+
+    // And it loads again when needed.
+    game.load_level("Levels/Forest.level", Some(&mut renderer)).unwrap();
+    assert_eq!(renderer.asset_usage().meshes, forest.meshes);
+}
+
+#[test]
+fn prefabs_go_unless_kept_and_come_back_when_used() {
+    let dir = project();
+    let mut game = game(&dir);
+    game.start(None).unwrap();
+    let rock = game.content.prefab(None, "Prefabs/Rock.prefab").unwrap();
+
+    game.release_unused(None);
+    assert!(game.content.template(rock).is_some(), "used since the last sweep, so it stays once");
+    let released = game.release_unused(None);
+    assert_eq!(released.prefabs, 1);
+    assert!(game.content.template(rock).is_none());
+
+    let again = game.content.loaded_template(None, rock).unwrap();
+    assert_eq!(again.objs[0].name, "Rock", "the same id loads it again");
+
+    game.content.keep_prefab(rock, true);
+    for _ in 0..3 {
+        game.release_unused(None);
+    }
+    assert!(game.content.template(rock).is_some(), "kept prefabs stay");
+    game.content.keep_prefab(rock, false);
+    game.release_unused(None);
+    game.release_unused(None);
+    assert!(game.content.template(rock).is_none());
+}

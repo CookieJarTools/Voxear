@@ -9,13 +9,20 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use voxear_core::math::{Mat4, Quat, Vec3};
-use voxear_rhi::{Bindless, Gpu};
+use voxear_rhi::{Bindless, Gpu, TextureId};
 
 use crate::{
     assets::{Assets, MaterialDesc, MaterialHandle, MeshHandle, TextureSource},
     lod::{Lod, build_lods},
     mesh::{MeshData, Vertex},
 };
+
+/// A model on the GPU: its drawable pieces, and the textures it created,
+/// which are freed with it.
+pub struct ImportedModel {
+    pub nodes: Vec<ImportedNode>,
+    pub textures: Vec<TextureId>,
+}
 
 /// One drawable piece of the imported scene, with its transform relative to
 /// the model's root.
@@ -108,12 +115,7 @@ pub fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
 }
 
 /// Uploads a prepared model and returns its drawable pieces.
-pub fn upload(
-    gpu: &Gpu,
-    bindless: &mut Bindless,
-    assets: &mut Assets,
-    model: &PreparedModel,
-) -> Result<Vec<ImportedNode>> {
+pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &PreparedModel) -> Result<ImportedModel> {
     let mut textures = Vec::with_capacity(model.textures.len());
     for texture in &model.textures {
         let source = TextureSource {
@@ -141,7 +143,7 @@ pub fn upload(
     for (data, lods) in &model.meshes {
         meshes.push(assets.add_mesh_with_lods(gpu, data, lods)?);
     }
-    Ok(model
+    let nodes = model
         .nodes
         .iter()
         .map(|node| ImportedNode {
@@ -154,7 +156,8 @@ pub fn upload(
             mesh_part: node.mesh_part.clone(),
             material_part: node.material_part.clone(),
         })
-        .collect())
+        .collect();
+    Ok(ImportedModel { nodes, textures })
 }
 
 /// Reads, processes and uploads a model in one go.
@@ -164,7 +167,7 @@ pub fn import(
     assets: &mut Assets,
     path: &str,
     read: &mut ReadFile,
-) -> Result<Vec<ImportedNode>> {
+) -> Result<ImportedModel> {
     upload(gpu, bindless, assets, &prepare(path, read)?)
 }
 

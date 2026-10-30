@@ -185,3 +185,28 @@ fn scenes_set_post_processing() {
     assert_eq!(post.tonemap.mapper, PostProcess::cinematic().tonemap.mapper);
     assert!(post.motion_blur.enabled, "the rest comes from the preset");
 }
+
+#[test]
+fn edit_mode_loads_behaviours_as_data_without_scripts() {
+    let dir = tempfile::tempdir().unwrap();
+    let scene = "format = 1\n[[obj]]\nid = 1\nname = \"Spawner\"\nbehaviours = [\"Game.Spawner\"]\nfields.\"Game.Spawner\" = { count = 3 }\n";
+    std::fs::create_dir_all(dir.path().join("Scenes")).unwrap();
+    std::fs::create_dir_all(dir.path().join("Levels")).unwrap();
+    std::fs::write(dir.path().join("Scenes/Main.scene"), scene).unwrap();
+    std::fs::write(dir.path().join("Levels/Main.level"), "format = 1\n[[scene]]\nscene = \"Scenes/Main.scene\"\n")
+        .unwrap();
+    let mut engine = voxear_engine::Engine::new();
+    engine.set_edit_mode(true);
+    let mut content = voxear_engine::Content::open(dir.path()).unwrap();
+    let mut levels = voxear_engine::Levels::default();
+    levels.load(&mut engine, &mut content, None, "Levels/Main.level").unwrap();
+    engine.tick(1.0 / 60.0);
+    let (_, kept) = engine
+        .world
+        .query_ref::<(&voxear_scene::Name, &voxear_engine::EditBehaviours)>()
+        .into_iter()
+        .next()
+        .expect("the spawner keeps its behaviour as data");
+    assert_eq!(kept.0[0].type_name, "Game.Spawner");
+    assert_eq!(kept.0[0].fields.get("count").and_then(|v| v.as_integer()), Some(3));
+}

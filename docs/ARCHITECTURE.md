@@ -1016,6 +1016,26 @@ surfaces in 3D.
 
 ## Editor
 
+**What exists now** *(first slice, in `crates/voxear_editor`)*: `vox editor <project>` opens the project's start
+level in **edit mode**, laid out as the editor concept is, in Voxear UI:
+- **Edit mode:** Objs load with their behaviours kept as data (`EditBehaviours`), so no script runs and a project
+  opens without its scripts built, as in Unity.
+- **The top bar** has the workspaces, the command bar (Ctrl+K), play, pause and step, and the Build button.
+- **Docked panels:** the Hierarchy (Objs by parent, with type icons and a filter), the Project's assets, the
+  Scene view, a Game tab, the Console (every log line, warnings and errors coloured, following new lines) and
+  the Inspector. They can all be dragged around, as docking allows.
+- **The Scene view** renders into its panel through the editor's own camera, flown with the right mouse button
+  as in Unity. The renderer draws the 3D view into a rectangle of the window (`Renderer::set_view_rect`) and looks
+  through a chosen camera (`ViewOptions::camera`).
+- **The Inspector** edits the selected Obj's name, position, rotation (in degrees) and scale as they are typed,
+  shows changes made elsewhere in fields not being edited, and lists its mesh, light, camera and behaviours with
+  their fields.
+- **The status bar** shows the level, the Obj count, the GPU, the frame rate, GPU time and the git branch.
+- `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
+
+Play mode with state restore, saving scenes, gizmos, undo, the command palette and the Odin-style inspector
+attributes come next.
+
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.
 - Themes are generated in OKLCH from three inputs (base, accent, contrast), as Linear does, so light, dark and
@@ -1663,6 +1683,7 @@ Every operation the editor can do should be scriptable.
 - `vox run <project> [--headless] [--frames N]` runs a project.
 - `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
   timings, culling stats and the adapted exposure.
+- `vox editor <project> [--screenshot <png>]` opens the editor, or renders it offscreen.
 - `vox content build <project>` packs the content into bundles and prints each bundle, its usage set and its assets,
   then what was left out.
 - `--bundles` on `run` and `render` reads assets from those bundles, as a player will, and builds them first unless

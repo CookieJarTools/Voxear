@@ -107,11 +107,14 @@ pub struct ViewOptions {
     pub lod_fade_speed: f32,
     /// Replaces the scene's post-processing, e.g. to compare presets.
     pub post_override: Option<PostProcess>,
+    /// The Obj whose camera to look through, rather than the first camera
+    /// found, as the editor's Scene view does.
+    pub camera: Option<voxear_ecs::Entity>,
 }
 
 impl Default for ViewOptions {
     fn default() -> Self {
-        Self { debug_view: 0, lod_threshold: 1.0, lod_fade_speed: 4.0, post_override: None }
+        Self { debug_view: 0, lod_threshold: 1.0, lod_fade_speed: 4.0, post_override: None, camera: None }
     }
 }
 
@@ -148,10 +151,11 @@ pub fn extract(
 ) -> ExtractedFrame {
     let aspect = width as f32 / height.max(1) as f32;
     let (camera, position, rotation) = world
-        .query_ref::<(&Camera, &Transform, Option<&WorldTransform>)>()
+        .query_ref::<(voxear_ecs::Entity, &Camera, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .next()
+        .find(|(entity, ..)| options.camera.is_none_or(|chosen| chosen == *entity))
+        .map(|(_, camera, local, world)| (camera, local, world))
         .map(|(camera, local, world)| {
             let (_, rotation, position) =
                 world.map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());

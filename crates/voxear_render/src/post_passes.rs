@@ -17,7 +17,7 @@ use voxear_rhi::{Bindless, Gpu, ImageDesc, vk};
 use crate::{
     gpu::{NO_TEXTURE, Push},
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
-    passes::{begin_rendering, bind, fullscreen},
+    passes::{begin_rendering, begin_rendering_in, bind, fullscreen},
     pipelines::{BLOOM_FORMAT, HDR_FORMAT, LDR_FORMAT, Pipelines},
     post::{AntiAliasingMode, PostProcess},
 };
@@ -39,6 +39,9 @@ pub struct PostInput {
     pub velocity: ImageId,
     pub depth: ImageId,
     pub output: ImageId,
+    /// Where in the output the view goes, when not all of it. Anything
+    /// outside it is cleared.
+    pub output_rect: Option<vk::Rect2D>,
     /// Auto exposure's adapted EV, which persists between frames.
     pub exposure: BufferId,
     /// Which of the two TAA history images this frame writes; the other
@@ -142,13 +145,23 @@ pub fn record(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless, input
     }
     let buffers = [(input.exposure, BufferAccess::ShaderRead)];
     let composite = if finish { pipelines.composite_ldr } else { pipelines.composite };
-    fg.add_pass("Composite", &images, &buffers, move |ctx| draw(ctx, composite, &push, composited, false));
+    let rect = input.output_rect;
+    if rect.is_some() {
+        let output = input.output;
+        fg.add_pass("Clear output", &[(output, ImageAccess::ColorAttachment)], &[], move |ctx| clear(ctx, output));
+    }
+    let composite_rect = if composited == input.output { rect } else { None };
+    let origin = |rect: Option<vk::Rect2D>| rect.map_or([0, 0], |r| [r.offset.x as u32, r.offset.y as u32]);
+    let push = Push { size: origin(composite_rect), ..push };
+    fg.add_pass("Composite", &images, &buffers, move |ctx| {
+        draw_into(ctx, composite, &push, composited, composite_rect)
+    });
 
     if finish {
         let output = input.output;
-        let push = Push { textures: [fg.texture(composited).0, 0, 0, 0], ..push };
+        let push = Push { textures: [fg.texture(composited).0, 0, 0, 0], size: origin(rect), ..push };
         let images = [(composited, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)];
-        fg.add_pass("Finish", &images, &[], move |ctx| draw(ctx, pipelines.finish, &push, output, false));
+        fg.add_pass("Finish", &images, &[], move |ctx| draw_into(ctx, pipelines.finish, &push, output, rect));
     }
     Ok(())
 }
@@ -164,4 +177,28 @@ fn draw(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId,
         .store_op(vk::AttachmentStoreOp::STORE)];
     begin_rendering(ctx, ctx.extent(target), &color, None);
     fullscreen(ctx, pipeline, push);
+}
+
+/// A fullscreen pass into part of `target`, or all of it.
+fn draw_into(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId, rect: Option<vk::Rect2D>) {
+    let Some(rect) = rect else { return draw(ctx, pipeline, push, target, false) };
+    let color = [vk::RenderingAttachmentInfo::default()
+        .image_view(ctx.view(target))
+        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::LOAD)
+        .store_op(vk::AttachmentStoreOp::STORE)];
+    begin_rendering_in(ctx, rect, &color);
+    fullscreen(ctx, pipeline, push);
+}
+
+/// Clears all of `target` to black, before a view drawn into part of it.
+fn clear(ctx: &PassContext, target: ImageId) {
+    let color = [vk::RenderingAttachmentInfo::default()
+        .image_view(ctx.view(target))
+        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .clear_value(vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } })
+        .store_op(vk::AttachmentStoreOp::STORE)];
+    begin_rendering(ctx, ctx.extent(target), &color, None);
+    unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
 }

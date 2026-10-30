@@ -185,6 +185,10 @@ Done so far:
 - **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`,
   written as `StatsOverlay.vui` and `.vss`. Clicking its header folds it.
 
+- **The editor, first slice** (`vox editor`): edit mode without scripts, the concept's layout with the top bar,
+  docked Hierarchy, Project, Scene, Console and Inspector, and the status bar. The Scene view renders into its
+  panel through the editor's own fly camera, and the Inspector edits the selected Obj's name and Transform.
+
 Still to do in M3:
 - UI core:
   - keyframe animations and floating windows
@@ -193,8 +197,9 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- Docking, Hierarchy (with instance badges), Inspector, Project, Scene and Game views, and Console.
-- Command palette (Ctrl+K), gizmos, selection, undo/redo, play mode, and C# hot reload.
+- The editor's next steps: play mode with state restore, saving scenes, Hierarchy instance badges and
+  drag-to-reparent, the Game view, the Console's Sifter features, and C# hot reload.
+- Command palette (Ctrl+K), gizmos, viewport picking, and undo/redo.
 - Debug tools:
   - the stats overlay's frame-time graph, and the profiler panel (with Tracy)
   - the frame debugger and the ECS inspector

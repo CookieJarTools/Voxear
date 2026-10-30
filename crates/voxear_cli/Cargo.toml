@@ -12,6 +12,7 @@ name = "vox"
 path = "src/main.rs"
 
 [dependencies]
+voxear_editor.workspace = true
 voxear_core.workspace = true
 voxear_engine.workspace = true
 voxear_rhi.workspace = true

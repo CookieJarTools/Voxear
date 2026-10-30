@@ -88,6 +88,14 @@ impl FlyCamera {
             return;
         }
         let Some((_, transform)) = world.query::<(&Camera, &mut Transform)>().into_iter().next() else { return };
+        self.update_transform(transform, delta);
+    }
+
+    /// Moves one transform, such as the editor's own Scene camera.
+    pub fn update_transform(&mut self, transform: &mut Transform, delta: f32) {
+        if !self.looking {
+            return;
+        }
         if !self.synced {
             let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
             (self.yaw, self.pitch) = (yaw, pitch);

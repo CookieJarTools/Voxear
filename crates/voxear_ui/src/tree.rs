@@ -260,6 +260,12 @@ impl Ui {
         self.add(parent, element)
     }
 
+    /// A label whose text style comes from its parent and sheets, as one
+    /// written in markup does.
+    pub fn add_label(&mut self, parent: NodeId, text: &str) -> NodeId {
+        self.add(parent, Element { text: Some(Text::new(text)), ..Element::new(Kind::Label, Style::default()) })
+    }
+
     /// Text that can be clicked; see [`clicked`](Self::clicked). Its text
     /// style comes from sheets and its parent.
     pub fn button(&mut self, parent: NodeId, text: &str) -> NodeId {

@@ -2739,6 +2739,7 @@ dependencies = [
  "tracing",
  "voxear_assets",
  "voxear_core",
+ "voxear_editor",
  "voxear_engine",
  "voxear_render",
  "voxear_rhi",
@@ -2759,6 +2760,25 @@ dependencies = [
 [[package]]
 name = "voxear_ecs"
 version = "0.1.0"
+
+[[package]]
+name = "voxear_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "png",
+ "raw-window-handle",
+ "tracing",
+ "voxear_assets",
+ "voxear_core",
+ "voxear_ecs",
+ "voxear_engine",
+ "voxear_render",
+ "voxear_rhi",
+ "voxear_scene",
+ "voxear_ui",
+ "winit",
+]
 
 [[package]]
 name = "voxear_engine"

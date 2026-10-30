@@ -1,0 +1,48 @@
+<vui>
+    <Style src="Editor.vss" />
+    <Panel name="editor" class="editor">
+        <Panel class="topbar">
+            <Label class="mark">Voxear</Label>
+            <Panel class="workspaces">
+                <Button name="workspace-world" class="workspace">World</Button>
+                <Button class="workspace">Animation</Button>
+                <Button class="workspace">Profiling</Button>
+            </Panel>
+            <TextField name="command" class="command" placeholder="Search or run a command     Ctrl+K" />
+            <Panel class="spacer" />
+            <Panel class="play">
+                <Button name="play" class="tool">▶</Button>
+                <Button name="pause" class="tool">▮▮</Button>
+                <Button name="step" class="tool">▶▮</Button>
+            </Panel>
+            <Panel class="spacer" />
+            <Button name="build" class="primary">Build</Button>
+        </Panel>
+        <DockSpace name="dock" class="dock">
+            <DockPanel id="hierarchy" title="Hierarchy">
+                <TextField name="hierarchy-filter" class="filter" placeholder="Filter" />
+                <TreeView name="hierarchy-tree" class="fill" item-height="24" />
+            </DockPanel>
+            <DockPanel id="project" title="Project">
+                <TreeView name="project-tree" class="fill" item-height="22" />
+            </DockPanel>
+            <DockPanel id="scene" title="Scene">
+                <Panel name="viewport" class="viewport" />
+            </DockPanel>
+            <DockPanel id="game" title="Game">
+                <Label class="placeholder">The game view shows the game's own camera while playing.</Label>
+            </DockPanel>
+            <DockPanel id="console" title="Console">
+                <ListView name="console-list" class="fill" item-height="20" />
+            </DockPanel>
+            <DockPanel id="inspector" title="Inspector">
+                <ScrollView name="inspector" class="fill inspector" />
+            </DockPanel>
+        </DockSpace>
+        <Panel class="statusbar">
+            <Label name="status-left">Edit mode</Label>
+            <Panel class="spacer" />
+            <Label name="status-right" class="numbers" />
+        </Panel>
+    </Panel>
+</vui>

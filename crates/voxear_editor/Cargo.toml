@@ -1,0 +1,26 @@
+[package]
+name = "voxear_editor"
+description = "The Voxear editor: docked panels over the engine, built with Voxear UI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+voxear_core.workspace = true
+voxear_ecs.workspace = true
+voxear_scene.workspace = true
+voxear_rhi.workspace = true
+voxear_render.workspace = true
+voxear_ui.workspace = true
+voxear_engine.workspace = true
+voxear_assets.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+winit.workspace = true
+raw-window-handle.workspace = true
+png.workspace = true
+
+[dev-dependencies]
+voxear_core.workspace = true

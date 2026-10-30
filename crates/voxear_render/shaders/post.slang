@@ -408,6 +408,14 @@ float3 dither(float3 color, float2 pixel, uint frameIndex)
     return fromSrgb(toSrgb(color) + noise / 255.0);
 }
 
+// The composite and the finish may draw into part of the output (the
+// editor's Scene panel), so push.size holds where that part starts, to turn
+// output pixels back into pixels of the view's own images.
+int2 viewPixel(PostOut input)
+{
+    return int2(input.position.xy) - int2(push.size);
+}
+
 // textures: x HDR colour, y bloom (or NO_TEXTURE). push.output is 1 when
 // this is the last pass, which then dithers.
 [shader("fragment")]
@@ -425,7 +433,7 @@ float4 compositeFragment(PostOut input) : SV_Target
     }
     else
     {
-        color = load(push.textures.x, int2(input.position.xy)).rgb;
+        color = load(push.textures.x, viewPixel(input)).rgb;
     }
 
     if (post.bloomIntensity > 0.0 && push.textures.y != NO_TEXTURE)
@@ -532,6 +540,6 @@ float4 finishFragment(PostOut input) : SV_Target
     Frame* frame = push.frame;
     float3 color = frame->post.fxaa != 0
         ? fxaa(push.textures.x, input.uv, 1.0 / float2(frame->viewport))
-        : sharpen(push.textures.x, int2(input.position.xy), frame->post.sharpness);
+        : sharpen(push.textures.x, viewPixel(input), frame->post.sharpness);
     return float4(dither(color, input.position.xy, frame->frameIndex), 1.0);
 }

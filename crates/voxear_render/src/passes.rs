@@ -317,6 +317,14 @@ pub(crate) fn begin_rendering(
     set_viewport(ctx, vk::Offset2D::default(), extent);
 }
 
+/// Begins rendering into `rect` of the colour attachments, with the viewport
+/// and scissor on it, so a fullscreen pass fills just that rectangle.
+pub(crate) fn begin_rendering_in(ctx: &PassContext, rect: vk::Rect2D, color: &[vk::RenderingAttachmentInfo]) {
+    let info = vk::RenderingInfo::default().render_area(rect).layer_count(1).color_attachments(color);
+    unsafe { ctx.gpu.device.cmd_begin_rendering(ctx.cmd, &info) };
+    set_viewport(ctx, rect.offset, rect.extent);
+}
+
 fn set_viewport(ctx: &PassContext, offset: vk::Offset2D, extent: vk::Extent2D) {
     let viewport = vk::Viewport {
         x: offset.x as f32,

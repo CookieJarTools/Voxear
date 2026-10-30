@@ -29,7 +29,15 @@ pub struct Engine {
     scripts: Option<ScriptRuntime>,
     time: Time,
     fixed_accumulator: f32,
+    /// The editor's edit mode: behaviours are kept as data, and no script runs.
+    edit_mode: bool,
 }
+
+/// An Obj's behaviours in edit mode, as data: what the Inspector shows and a
+/// save writes, with no C# instance behind them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EditBehaviours(pub Vec<BehaviourSpec>);
+impl voxear_ecs::Component for EditBehaviours {}
 
 impl Default for Engine {
     fn default() -> Self {
@@ -52,7 +60,19 @@ impl Engine {
             scripts: None,
             time: Time::default(),
             fixed_accumulator: 0.0,
+            edit_mode: false,
         }
+    }
+
+    /// Edit mode, as in Unity's editor when not playing: Objs load with their
+    /// behaviours as [`EditBehaviours`], and no script runs, so a project
+    /// opens without its scripts built.
+    pub fn set_edit_mode(&mut self, edit_mode: bool) {
+        self.edit_mode = edit_mode;
+    }
+
+    pub fn is_edit_mode(&self) -> bool {
+        self.edit_mode
     }
 
     pub fn set_scripts(&mut self, scripts: ScriptRuntime) {
@@ -125,6 +145,15 @@ impl Engine {
     /// Creates behaviours on an Obj and queues them for the next batch.
     fn attach_behaviours(&mut self, entity: Entity, specs: &[BehaviourSpec]) -> Result<Vec<BehaviourHandle>> {
         if specs.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.edit_mode {
+            match self.world.get_mut::<EditBehaviours>(entity) {
+                Some(kept) => kept.0.extend(specs.iter().cloned()),
+                None => {
+                    self.world.insert(entity, EditBehaviours(specs.to_vec()));
+                }
+            }
             return Ok(Vec::new());
         }
         let Some(scripts) = self.scripts.as_mut() else {

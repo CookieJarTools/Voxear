@@ -16,7 +16,7 @@ pub mod ui_input;
 mod windowed;
 
 pub use content::{Content, ContentUsage, MaterialData, MaterialSource, Released};
-pub use engine::{Engine, STAGES};
+pub use engine::{EditBehaviours, Engine, STAGES};
 pub use fly_camera::FlyCamera;
 pub use game::Game;
 pub use levels::{LEVEL_FORMAT, LevelChange, LevelFile, LevelScene, Levels};

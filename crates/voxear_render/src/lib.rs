@@ -180,6 +180,8 @@ pub struct Renderer {
     pending_size: Option<(u32, u32)>,
     ui: ui_pass::UiGpu,
     gpu_decompression: bool,
+    /// Where in the output the 3D view goes; all of it when `None`.
+    view: Option<[u32; 4]>,
 }
 
 impl Renderer {
@@ -253,6 +255,7 @@ impl Renderer {
             pending_size: None,
             ui: ui_pass::UiGpu::default(),
             gpu_decompression: true,
+            view: None,
         })
     }
 
@@ -386,6 +389,26 @@ impl Renderer {
         self.assets.as_ref().expect("assets live until drop").usage()
     }
 
+    /// Draws the 3D view into `rect` (left, top, width, height in pixels of
+    /// the output) instead of all of it, as the editor's Scene panel does.
+    /// What lies outside is cleared, for the UI to draw over.
+    pub fn set_view_rect(&mut self, rect: Option<[u32; 4]>) {
+        if rect != self.view {
+            self.view = rect;
+        }
+    }
+
+    /// The view rectangle within an output of `full`, at least a pixel each way.
+    fn view_rect(&self, full: vk::Extent2D) -> vk::Rect2D {
+        let Some([x, y, w, h]) = self.view else {
+            return vk::Rect2D { offset: vk::Offset2D::default(), extent: full };
+        };
+        let x = x.min(full.width - 1);
+        let y = y.min(full.height - 1);
+        let extent = vk::Extent2D { width: w.clamp(1, full.width - x), height: h.clamp(1, full.height - y) };
+        vk::Rect2D { offset: vk::Offset2D { x: x as i32, y: y as i32 }, extent }
+    }
+
     fn extent(&self) -> vk::Extent2D {
         match &self.output {
             Output::Window(swapchain) => swapchain.extent,
@@ -417,8 +440,8 @@ impl Renderer {
         if let (Some((width, height)), Output::Window(swapchain)) = (self.pending_size.take(), &mut self.output) {
             swapchain.recreate(&self.gpu, width, height)?;
         }
-        let extent = self.extent();
-        if extent.width == 0 || extent.height == 0 {
+        let full = self.extent();
+        if full.width == 0 || full.height == 0 {
             return Ok(());
         }
 
@@ -434,13 +457,16 @@ impl Renderer {
             Output::Window(swapchain) => match self.frames.acquire(&self.gpu, swapchain)? {
                 Some(acquired) => Some(acquired),
                 None => {
-                    self.pending_size = Some((extent.width, extent.height));
+                    self.pending_size = Some((full.width, full.height));
                     return Ok(());
                 }
             },
             Output::Offscreen { .. } => None,
         };
 
+        // The 3D view fills the output, or the rectangle the editor gives it.
+        let view = self.view_rect(full);
+        let extent = view.extent;
         let mut extracted = scene::extract(world, extent.width, extent.height, time, self.frame_index, &self.options);
         let delta_time = self.last_time.map_or(0.0, |last| (time - last).clamp(0.0, 0.25));
         self.last_time = Some(time);
@@ -457,7 +483,7 @@ impl Renderer {
             Output::Window(swapchain) => {
                 let acquired = acquired.as_ref().expect("acquired above");
                 let desc =
-                    ImageDesc::new(extent.width, extent.height, swapchain.format.format, vk::ImageUsageFlags::empty());
+                    ImageDesc::new(full.width, full.height, swapchain.format.format, vk::ImageUsageFlags::empty());
                 (acquired.image, acquired.view, desc, ImageAccess::Undefined)
             }
             Output::Offscreen { image, last } => (image.handle, image.view, image.desc, *last),
@@ -575,11 +601,12 @@ impl Renderer {
             velocity,
             depth,
             output,
+            output_rect: (view.extent != full).then_some(view),
             exposure: fg.import_buffer(exposure),
             history: (frame_index % 2) as usize,
         };
         post_passes::record(&mut fg, gpu, bindless, &post)?;
-        ui.record(&mut fg, pipelines.ui, push, &buffers.ui, (output, extent));
+        ui.record(&mut fg, pipelines.ui, push, &buffers.ui, (output, full));
         if acquired.is_some() {
             fg.transition(output, ImageAccess::Present);
         }
@@ -596,7 +623,7 @@ impl Renderer {
             (Output::Window(_), None) => unreachable!("windows always acquire"),
         };
         if needs_resize {
-            self.pending_size = Some((extent.width, extent.height));
+            self.pending_size = Some((full.width, full.height));
         }
         if self.show_capture
             && let Some(renderdoc) = self.renderdoc.as_ref().filter(|r| !r.is_capturing())

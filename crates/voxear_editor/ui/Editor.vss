@@ -1,0 +1,203 @@
+/* The editor's look, after the editor concept: near-black panels with
+   gaps, one periwinkle accent, Inter for text and a monospaced face for
+   numbers, and compact rows. Controls come from the default theme. */
+
+:root {
+    --ed-faint: #5c5d66;
+    --ed-x: #ff6b6b;
+    --ed-y: #7bd88f;
+    --ed-z: #6ba8ff;
+}
+
+.editor {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+    font-size: 12px;
+    color: var(--vx-text);
+}
+
+.topbar {
+    flex-direction: row;
+    align-items: center;
+    height: 44px;
+    padding: 0px 12px;
+    gap: 10px;
+}
+
+.mark {
+    font-size: 13px;
+    font-weight: 700;
+    padding-right: 8px;
+}
+
+.workspaces {
+    flex-direction: row;
+    gap: 2px;
+}
+
+.workspace {
+    padding: 5px 10px;
+    border: 0px transparent;
+    background-color: transparent;
+    color: var(--vx-muted);
+}
+
+.workspace:checked {
+    background-color: var(--vx-surface-hover);
+    color: var(--vx-text);
+}
+
+.command {
+    width: 320px;
+    margin-left: 12px;
+}
+
+.spacer {
+    flex-grow: 1;
+}
+
+.play {
+    flex-direction: row;
+    gap: 4px;
+}
+
+.tool {
+    padding: 4px 10px;
+    color: var(--vx-muted);
+}
+
+.primary {
+    background-color: var(--vx-accent);
+    border-color: var(--vx-accent);
+    color: var(--vx-on-accent);
+    font-weight: 600;
+}
+
+.primary:hover {
+    background-color: #a3a9ff;
+    border-color: #a3a9ff;
+}
+
+.dock {
+    flex-grow: 1;
+    padding: 0px 8px;
+}
+
+/* The Scene panel's area lets the 3D view show through. */
+.viewport-area {
+    background-color: transparent;
+}
+
+.viewport {
+    flex-grow: 1;
+}
+
+.fill {
+    flex-grow: 1;
+    flex-basis: 0px;
+}
+
+.filter {
+    margin-bottom: 6px;
+}
+
+.statusbar {
+    flex-direction: row;
+    align-items: center;
+    height: 26px;
+    padding: 0px 14px;
+    color: var(--vx-muted);
+    font-size: 11px;
+}
+
+.numbers {
+    font-family: mono;
+}
+
+.placeholder {
+    color: var(--ed-faint);
+    padding: 8px;
+}
+
+.obj-icon {
+    width: 18px;
+    color: var(--vx-muted);
+}
+
+.icon-camera {
+    color: #8bd3ff;
+}
+
+.icon-light {
+    color: #ffd27f;
+}
+
+.icon-mesh {
+    color: var(--vx-accent);
+}
+
+.icon-folder {
+    color: #c9a86b;
+}
+
+.inspector {
+    gap: 8px;
+    padding-right: 6px;
+}
+
+.obj-name {
+    font-weight: 600;
+}
+
+.props {
+    display: grid;
+    grid-template-columns: 74px 1fr 1fr 1fr;
+    gap: 6px;
+    align-items: center;
+}
+
+.props-two {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 6px;
+    align-items: center;
+}
+
+.prop-label {
+    color: var(--vx-muted);
+}
+
+.axis {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+}
+
+.axis-x {
+    color: var(--ed-x);
+}
+
+.axis-y {
+    color: var(--ed-y);
+}
+
+.axis-z {
+    color: var(--ed-z);
+}
+
+.number {
+    font-family: mono;
+    padding: 2px 6px;
+    min-height: 22px;
+}
+
+.log-warn {
+    color: #ffd27f;
+}
+
+.log-error {
+    color: #ff6b6b;
+}

@@ -83,6 +83,22 @@ enum Commands {
         #[arg(long)]
         stats: bool,
     },
+    /// Open a project in the editor.
+    Editor {
+        /// Project folder or its voxear.toml.
+        #[arg(default_value = ".")]
+        project: PathBuf,
+        /// Render the editor offscreen to this PNG instead of opening a window.
+        #[arg(long, value_name = "PNG")]
+        screenshot: Option<PathBuf>,
+        #[arg(long, default_value_t = 1600)]
+        width: u32,
+        #[arg(long, default_value_t = 900)]
+        height: u32,
+        /// Frames to run before a screenshot.
+        #[arg(long, default_value_t = 30)]
+        frames: u32,
+    },
     /// Render a project offscreen and save the image, with GPU timings.
     Render {
         /// Project folder or its voxear.toml.
@@ -134,8 +150,29 @@ struct Prepare {
 }
 
 fn main() -> Result<()> {
-    voxear_core::logging::init();
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    // The editor keeps every log line for its Console.
+    let log = match cli.command {
+        Commands::Editor { .. } => Some(voxear_core::logging::init_capturing()),
+        _ => {
+            voxear_core::logging::init();
+            None
+        }
+    };
+    match cli.command {
+        Commands::Editor { project, screenshot, width, height, frames } => {
+            let log = log.expect("captured above");
+            let project = Project::open(&project)?;
+            let settings = RendererSettings { hot_reload: true, ..renderer_settings(&project, false) };
+            match screenshot {
+                Some(out) => {
+                    voxear_editor::screenshot(project, &settings, log, &out, (width, height), frames)?;
+                    println!("wrote {}", out.display());
+                    Ok(())
+                }
+                None => voxear_editor::run_editor(project, settings, log),
+            }
+        }
         Commands::Doctor => doctor(),
         Commands::Assets { project } => assets(&project),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),

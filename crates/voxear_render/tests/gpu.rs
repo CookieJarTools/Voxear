@@ -553,3 +553,35 @@ fn docking_draws_areas_and_a_drag_preview() {
     assert!(pixels[i + 2] > 0xa0, "the preview's accent edge over the scene's left half");
     assert!(ui.take_warnings().is_empty());
 }
+
+/// The 3D view drawn into part of the output, as the editor's Scene panel
+/// does, and through a chosen camera rather than the first one.
+#[test]
+fn the_view_draws_into_a_rect_through_a_chosen_camera() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -100.0))));
+    let chosen = world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -3.0))));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let material =
+        renderer.add_material(&MaterialDesc { base_color: [1.0, 0.1, 0.1, 1.0], ..Default::default() }).unwrap();
+    world.spawn((MeshRenderer { mesh: cube, material }, Transform::IDENTITY));
+    renderer.set_view_rect(Some([320, 40, 200, 200]));
+    renderer.set_view_options(ViewOptions { camera: Some(chosen), ..ViewOptions::default() });
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    let at = |x: u32, y: u32| {
+        let i = ((y * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    assert_eq!(at(10, 10), [0, 0, 0], "outside the view is cleared");
+    assert_eq!(at(600, 300), [0, 0, 0]);
+    let centre = at(420, 140);
+    // Lit only by the sky, so a dim red, but clearly red.
+    assert!(
+        centre[0] > 60 && centre[0] > 2 * centre[1],
+        "the near camera sees the red cube filling the view's middle: {centre:?}"
+    );
+    let sky = at(325, 45);
+    assert!(sky[2] > sky[0], "the view's corner shows sky: {sky:?}");
+}

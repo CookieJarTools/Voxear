@@ -63,6 +63,7 @@ struct MetaFile {
     guid: String,
 }
 
+#[derive(Clone)]
 pub struct AssetDb {
     root: PathBuf,
     by_guid: HashMap<AssetGuid, AssetEntry>,
@@ -93,6 +94,16 @@ impl AssetDb {
             db.by_guid.insert(entry.guid, entry);
         }
         db
+    }
+
+    /// Adds an entry, replacing any with the same GUID or the same path, as
+    /// an overlay catalog does.
+    pub fn insert(&mut self, entry: AssetEntry) {
+        if let Some(old) = self.by_guid.get(&entry.guid) {
+            self.by_path.remove(&old.path);
+        }
+        self.by_path.insert(entry.path.clone(), entry.guid);
+        self.by_guid.insert(entry.guid, entry);
     }
 
     pub fn root(&self) -> &Path {

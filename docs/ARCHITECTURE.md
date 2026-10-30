@@ -514,9 +514,15 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
    bundles automatically. In Hello, the Day level opens its own bundle and the Environment bundle it shares with
    Night. Night opens its own, the shared one is already open, and the firefly bundle opens only when the spawner
    loads its prefab.
-4. *Planned.* Refine: split groups over a size cap, and keep large streamable data such as texture mip tails and
-   audio streams in separate bundles so they stream independently. Merge tiny bundles only when per-bundle overhead
-   would dominate (the threshold is configurable).
+4. **Refine the sizes.**
+   - A group over `split_above_mb` (64 MB by default) splits into several bundles with the same roots, so a patch or
+     download touches less. Assets themselves never split.
+   - A bundle under `merge_below_kb` (16 KB by default) merges into one whose roots include all of its own.
+     Whenever any of its roots loads, that bundle opens anyway, so the merge saves a file at no cost. It picks the
+     host with the fewest roots, then the smallest. Hello goes from 7 bundles to 3 this way.
+   - Both limits are set under `[content]` in `voxear.toml`, and 0 turns merging off.
+   - *Planned:* large streamable data such as texture mip tails and audio streams in bundles of their own, so they
+     stream independently.
 5. **Write bundles and a catalog.**
    - A bundle is a header followed by each file, LZ4-compressed when that saves space. It is named after a hash of
      its bytes, so a rebuild that changes nothing writes nothing, and bundles no longer listed are deleted.
@@ -576,7 +582,15 @@ async IO and GPU decompression planned)*.
   In Rust these are `Game::release_unused`, `Content::keep_prefab`, `Content::usage` and
   `Renderer::asset_usage`.
 - In the editor the same API reads straight from the asset database, so no build is ever needed to press Play.
-- Catalogs are **layered**, so mods can add or override assets through the same path. See [Modding](#modding).
+- Catalogs are **layered** *(implemented)*, so mods, patches and DLC add or override assets through the same path.
+  See [Modding](#modding).
+  - `Content::mount(dir)` puts built content on top. In the CLI, `vox run --bundles --overlay <dir or mod project>`
+    does the same, and the flag can be repeated.
+  - An overlay asset with the GUID of one below replaces it, so copying the original's `.meta` is how a mod
+    overrides an asset. One with a new GUID is added, and path lookups find the topmost layer's asset.
+  - Each layer reads from its own bundle folder. A content-only mod is just a project with `[content] include`
+    patterns for what it replaces.
+  - Mount before loading: what is already loaded stays as it was.
 
 ## Rendering
 

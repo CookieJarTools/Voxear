@@ -144,11 +144,14 @@ Done so far:
 - **Compressed textures:** cooking compresses colour textures to BC7 and normal maps to BC5, with mips built on the
   CPU in linear space. The encoders are Voxear's own, and the GPU checks BC support at startup.
 
+- **Bundle sizing and layered catalogs:**
+  - Large groups split, and tiny bundles merge into one their roots open anyway (Hello goes from 7 bundles to 3).
+  - `Content::mount` and `--overlay` layer built content over the game, replacing assets by GUID and adding new
+    ones. This is the base mods build on in M11.
+
 Still to do in M2:
 - Async IO (io_uring and IoRing) and GPU-side decompression.
-- Splitting large bundles and merging tiny ones.
 - A `[ContentRoot]` attribute for code that loads by string.
-- Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
 
 **Exit:** a two-level sample shares scenes between levels and loads only what each level needs.
 
@@ -217,6 +220,13 @@ Still to do in M2:
 - Baked lightmapper and probes.
 - **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
   Audio, with baked reverb probes as the fallback.
+- **HDR colour, end to end.** Rendering is HDR already: a float target, emissive and lights above 1, exposure and
+  tonemapping. Still to come:
+  - a C# `Color` type, with HDR intensity for fields such as `[ColorUsage(hdr: true)]`
+  - HDR textures (`.exr` and `.hdr`) imported as half floats and cooked to BC6H, for skies, light probes and
+    emissive maps
+  - HDR display output: HDR10 and scRGB swapchains with paper-white and peak-brightness settings, and tonemapping
+    that targets the display
 
 ## M6 — Animation
 

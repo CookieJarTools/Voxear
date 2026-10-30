@@ -9,7 +9,7 @@ use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use voxear_assets::{AssetDb, AssetKind};
 use voxear_core::math::EulerRot;
-use voxear_engine::{Content, Engine, Game, Project, content_build, core_assembly, run_windowed};
+use voxear_engine::{Content, Engine, Game, PROJECT_FILE, Project, content_build, core_assembly, run_windowed};
 use voxear_render::{
     DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess,
     Renderer, RendererSettings, ViewOptions,
@@ -71,6 +71,10 @@ enum Commands {
         /// Read assets from built content bundles, as a player does. Builds the content first unless --no-build.
         #[arg(long)]
         bundles: bool,
+        /// Built content to layer over the game's, such as a mod's (with --bundles). A project folder means its
+        /// built content.
+        #[arg(long = "overlay", value_name = "DIR")]
+        overlays: Vec<PathBuf>,
     },
     /// Render a project offscreen and save the image, with GPU timings.
     Render {
@@ -102,16 +106,21 @@ enum Commands {
         /// Read assets from built content bundles, as a player does. Builds the content first unless --no-build.
         #[arg(long)]
         bundles: bool,
+        /// Built content to layer over the game's, such as a mod's (with --bundles). A project folder means its
+        /// built content.
+        #[arg(long = "overlay", value_name = "DIR")]
+        overlays: Vec<PathBuf>,
     },
 }
 
 /// What to do before starting a project.
-#[derive(Clone, Copy)]
 struct Prepare {
     /// Build the scripts, and the content when reading bundles.
     build: bool,
     /// Read assets from built bundles instead of the project folder.
     bundles: bool,
+    /// Built content layered on top, topmost last.
+    overlays: Vec<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -120,10 +129,22 @@ fn main() -> Result<()> {
         Commands::Doctor => doctor(),
         Commands::Assets { project } => assets(&project),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
-        Commands::Run { project, headless, frames, no_build, renderdoc, bundles } => {
-            run(&project, headless, frames, Prepare { build: !no_build, bundles }, renderdoc)
+        Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays } => {
+            run(&project, headless, frames, Prepare { build: !no_build, bundles, overlays }, renderdoc)
         }
-        Commands::Render { project, out, width, height, frames, no_build, renderdoc, debug_view, post, bundles } => {
+        Commands::Render {
+            project,
+            out,
+            width,
+            height,
+            frames,
+            no_build,
+            renderdoc,
+            debug_view,
+            post,
+            bundles,
+            overlays,
+        } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
                 "cascades" => DEBUG_VIEW_CASCADES,
@@ -133,7 +154,8 @@ fn main() -> Result<()> {
             };
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
             let options = ViewOptions { debug_view, post_override, ..ViewOptions::default() };
-            render(&project, &out, (width, height), frames, Prepare { build: !no_build, bundles }, renderdoc, options)
+            let prepare = Prepare { build: !no_build, bundles, overlays };
+            render(&project, &out, (width, height), frames, prepare, renderdoc, options)
         }
     }
 }
@@ -232,6 +254,7 @@ fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
 fn start_game(project: Project, prepare: Prepare) -> Result<Game> {
     let engine = start_engine(&project, !prepare.build)?;
     if !prepare.bundles {
+        anyhow::ensure!(prepare.overlays.is_empty(), "--overlay layers built content, so it needs --bundles");
         return Game::new(project, engine);
     }
     let output = content_build::default_output(&project.root);
@@ -240,7 +263,13 @@ fn start_game(project: Project, prepare: Prepare) -> Result<Game> {
         let written = report.bundles.iter().filter(|b| b.written).count();
         tracing::info!("built content: {} bundles, {written} written", report.bundles.len());
     }
-    let content = Content::open_bundles(&project.root, &output)?;
+    let mut content = Content::open_bundles(&project.root, &output)?;
+    for overlay in &prepare.overlays {
+        // A project folder means the content built from it.
+        let dir =
+            if overlay.join(PROJECT_FILE).is_file() { content_build::default_output(overlay) } else { overlay.clone() };
+        content.mount(&dir)?;
+    }
     Ok(Game::with_content(project, engine, content))
 }
 

@@ -26,13 +26,22 @@ pub struct ProjectFile {
 ///
 /// Patterns are project paths where `*` matches within a folder, `**` any
 /// number of folders, and `?` one character.
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct ContentSettings {
-    #[serde(default)]
     pub include: Vec<String>,
-    #[serde(default)]
     pub exclude: Vec<String>,
+    /// Bundles smaller than this merge into one that every one of their
+    /// roots opens anyway, saving a file at no cost. 0 never merges.
+    pub merge_below_kb: u64,
+    /// Bundles larger than this split, so patches and downloads stay small.
+    pub split_above_mb: u64,
+}
+
+impl Default for ContentSettings {
+    fn default() -> Self {
+        Self { include: Vec::new(), exclude: Vec::new(), merge_below_kb: 16, split_above_mb: 64 }
+    }
 }
 
 #[derive(Debug, Deserialize)]

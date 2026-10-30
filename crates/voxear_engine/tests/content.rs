@@ -2,7 +2,7 @@
 //! (headless: no GPU, no scripts).
 
 use voxear_assets::{AssetReader, bundle::Catalog};
-use voxear_engine::{Content, Engine, Levels, content_build};
+use voxear_engine::{Content, ContentSettings, Engine, Levels, content_build};
 use voxear_scene::Name;
 
 const SHARED: &str = "format = 1\n[[obj]]\nid = 1\nname = \"Ground\"\n[obj.renderer]\nmesh = \"builtin:plane\"\nmaterial = \"Materials/Stone.material\"\n";
@@ -55,6 +55,11 @@ fn project() -> tempfile::TempDir {
     dir
 }
 
+/// Bundles by usage set alone, without merging small ones, to check the grouping itself.
+fn unmerged() -> ContentSettings {
+    ContentSettings { merge_below_kb: 0, ..ContentSettings::default() }
+}
+
 /// Each bundle's roots and assets, in build order.
 fn layout(report: &content_build::BuildReport) -> Vec<(Vec<String>, Vec<String>)> {
     report.bundles.iter().map(|b| (b.roots.clone(), b.assets.clone())).collect()
@@ -64,7 +69,7 @@ fn layout(report: &content_build::BuildReport) -> Vec<(Vec<String>, Vec<String>)
 fn assets_are_bundled_by_the_roots_that_use_them() {
     let dir = project();
     let output = dir.path().join("Built");
-    let report = content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    let report = content_build::build(dir.path(), &output, &unmerged()).unwrap();
     let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert_eq!(
         layout(&report),
@@ -101,13 +106,13 @@ fn assets_are_bundled_by_the_roots_that_use_them() {
 fn rebuilding_keeps_unchanged_bundles_and_drops_stale_ones() {
     let dir = project();
     let output = dir.path().join("Built");
-    content_build::build(dir.path(), &output, &Default::default()).unwrap();
-    let again = content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    content_build::build(dir.path(), &output, &unmerged()).unwrap();
+    let again = content_build::build(dir.path(), &output, &unmerged()).unwrap();
     assert!(again.bundles.iter().all(|b| !b.written), "nothing changed, so nothing is written");
 
     std::fs::write(dir.path().join("Scenes/Cave.scene"), CAVE.replace("id = 1", "id = 1\nname = \"Big Torch\""))
         .unwrap();
-    let changed = content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    let changed = content_build::build(dir.path(), &output, &unmerged()).unwrap();
     let written: Vec<&Vec<String>> = changed.bundles.iter().filter(|b| b.written).map(|b| &b.roots).collect();
     assert_eq!(written, [&vec!["Levels/Cave.level".to_string()]], "only the cave's own bundle changes");
     let bundles = std::fs::read_dir(&output)
@@ -124,7 +129,7 @@ fn a_level_opens_only_the_bundles_it_needs() {
     let forest = FOREST.split("[[obj]]\nid = 2").next().unwrap();
     std::fs::write(dir.path().join("Scenes/Forest.scene"), forest).unwrap();
     let output = dir.path().join("Built");
-    content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    content_build::build(dir.path(), &output, &unmerged()).unwrap();
     let mut content = Content::open_bundles(dir.path(), &output).unwrap();
     let mut engine = Engine::new();
     let mut levels = Levels::default();
@@ -148,9 +153,10 @@ fn content_settings_add_and_remove_roots() {
     let dir = project();
     std::fs::create_dir_all(dir.path().join("Prefabs/Debug")).unwrap();
     std::fs::write(dir.path().join("Prefabs/Debug/Cheats.prefab"), WOLF).unwrap();
-    let settings = voxear_engine::ContentSettings {
+    let settings = ContentSettings {
         include: vec!["Materials/Unused.material".into()],
         exclude: vec!["Prefabs/Debug/**".into(), "Prefabs/Torch.prefab".into(), "Prefabs/Wolf.prefab".into()],
+        ..ContentSettings::default()
     };
     let report = content_build::build(dir.path(), &dir.path().join("Built"), &settings).unwrap();
     let roots: Vec<String> = report.bundles.iter().flat_map(|b| b.roots.clone()).collect();
@@ -180,4 +186,65 @@ fn unchanged_models_are_not_cooked_again() {
     assert_eq!((changed.cooked, changed.cached), (1, 0));
     let cooks = std::fs::read_dir(content_build::cache_dir(dir.path())).unwrap().count();
     assert_eq!(cooks, 1);
+}
+
+#[test]
+fn small_bundles_merge_only_where_it_is_free() {
+    let dir = project();
+    let report = content_build::build(dir.path(), &dir.path().join("Built"), &ContentSettings::default()).unwrap();
+    // Every bundle here is tiny. Each merged into one that all its roots open anyway: the cave's own
+    // bundle went into the torch's ({Cave} is within {Cave, Torch}), and so on.
+    for bundle in &report.bundles {
+        for other in &report.bundles {
+            let covered = bundle.roots.iter().all(|r| other.roots.contains(r));
+            assert!(
+                bundle.file == other.file || !covered,
+                "{:?} could still merge into {:?}",
+                bundle.roots,
+                other.roots
+            );
+        }
+    }
+    assert!(
+        report.bundles.len()
+            < layout(&content_build::build(dir.path(), &dir.path().join("Plain"), &unmerged()).unwrap()).len()
+    );
+
+    // A level still opens what it needs from merged bundles.
+    let mut content = Content::open_bundles(dir.path(), &dir.path().join("Built")).unwrap();
+    let mut engine = Engine::new();
+    Levels::default().load(&mut engine, &mut content, None, "Levels/Cave.level").unwrap();
+    assert!(content.opened_bundles().iter().all(|b| b.roots.contains(&"Levels/Cave.level".to_string())));
+}
+
+#[test]
+fn overlays_replace_assets_by_guid_and_add_new_ones() {
+    let base = project();
+    content_build::build(base.path(), &base.path().join("Built"), &ContentSettings::default()).unwrap();
+
+    // A mod: the shared scene again, under the same GUID, and a prefab of its own.
+    let overlay = tempfile::tempdir().unwrap();
+    let write = |path: &str, text: &str| {
+        let path = overlay.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("Scenes/Shared.scene", "format = 1\n[[obj]]\nid = 1\nname = \"Moss\"\n");
+    let meta = std::fs::read_to_string(base.path().join("Scenes/Shared.scene.meta")).unwrap();
+    write("Scenes/Shared.scene.meta", &meta);
+    write("Prefabs/Hat.prefab", "format = 1\n[[obj]]\nid = 1\nname = \"Hat\"\n");
+    let settings = ContentSettings { include: vec!["Scenes/**".into()], ..ContentSettings::default() };
+    content_build::build(overlay.path(), &overlay.path().join("Built"), &settings).unwrap();
+
+    let mut content = Content::open_bundles(base.path(), &base.path().join("Built")).unwrap();
+    content.mount(&overlay.path().join("Built")).unwrap();
+    let mut engine = Engine::new();
+    Levels::default().load(&mut engine, &mut content, None, "Levels/Cave.level").unwrap();
+    let names: Vec<String> = engine.world.query_ref::<&Name>().into_iter().map(|n| n.0.clone()).collect();
+    assert!(names.contains(&"Moss".to_string()) && !names.contains(&"Ground".to_string()), "{names:?}");
+    assert!(content.prefab(None, "Prefabs/Hat.prefab").is_ok(), "the mod's own prefab");
+    assert!(content.prefab(None, "Prefabs/Torch.prefab").is_ok(), "the game's prefabs are still there");
+
+    let mut project_folder = Content::open(base.path()).unwrap();
+    assert!(project_folder.mount(&overlay.path().join("Built")).is_err(), "layers need built content");
 }

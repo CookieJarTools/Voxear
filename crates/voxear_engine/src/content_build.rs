@@ -91,36 +91,43 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<B
         db.entries().filter(|e| !usage.contains_key(&e.guid)).map(|e| e.path.clone()).collect();
     excluded.sort();
 
-    // One bundle per distinct usage set, each holding its assets in path order.
+    // Every asset as it will ship: models cooked, everything else as written.
+    let mut cooker = Cooker::open(root)?;
+    let mut stored = HashMap::with_capacity(usage.len());
+    for guid in usage.keys() {
+        let entry = db.get(*guid).expect("from the database");
+        let bytes = if entry.kind == AssetKind::Model {
+            cooker.cook(&entry.path, &needs[guid].companions).with_context(|| format!("cooking {}", entry.path))?
+        } else {
+            read(root, &entry.path)?
+        };
+        stored.insert(*guid, bytes);
+    }
+
+    // One bundle per distinct usage set, then split and merged to size.
     let mut groups: BTreeMap<Vec<String>, Vec<AssetGuid>> = BTreeMap::new();
     for (guid, roots) in &usage {
         groups.entry(roots.iter().cloned().collect()).or_default().push(*guid);
     }
     let path_of = |guid: &AssetGuid| db.get(*guid).expect("from the database").path.clone();
+    let limits = (settings.merge_below_kb * 1024, settings.split_above_mb * 1024 * 1024);
+    let planned = plan_bundles(groups, |g| stored[g].len() as u64, path_of, limits);
 
     std::fs::create_dir_all(output).with_context(|| format!("creating {}", output.display()))?;
-    let mut cooker = Cooker::open(root)?;
     let mut catalog = Catalog { format: CATALOG_FORMAT, ..Catalog::default() };
-    let mut reports = Vec::with_capacity(groups.len());
+    let mut reports = Vec::with_capacity(planned.len());
     let mut bundle_of = HashMap::new();
-    for (index, (roots, mut assets)) in groups.into_iter().enumerate() {
-        assets.sort_by_key(path_of);
+    for (index, Planned { roots, assets, .. }) in planned.into_iter().enumerate() {
         let mut writer = BundleWriter::default();
         for &guid in &assets {
             let entry = db.get(guid).expect("from the database");
-            let cooked = entry.kind == AssetKind::Model;
-            let bytes = if cooked {
-                cooker.cook(&entry.path, &needs[&guid].companions).with_context(|| format!("cooking {}", entry.path))?
-            } else {
-                read(root, &entry.path)?
-            };
             catalog.assets.push(CatalogAsset {
                 guid: guid.to_string(),
                 path: entry.path.clone(),
                 kind: entry.kind,
                 bundle: index,
-                files: vec![writer.add(&entry.path, &bytes)],
-                cooked,
+                files: vec![writer.add(&entry.path, &stored[&guid])],
+                cooked: entry.kind == AssetKind::Model,
             });
             bundle_of.insert(guid, index);
         }
@@ -154,6 +161,66 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<B
     cooker.prune()?;
     let (cooked, cached) = (cooker.cooked, cooker.cached);
     Ok(BuildReport { output: output.to_path_buf(), bundles: reports, excluded, cooked, cached })
+}
+
+/// A bundle to write: the roots that need it, and its assets in path order.
+struct Planned {
+    roots: Vec<String>,
+    assets: Vec<AssetGuid>,
+    size: u64,
+}
+
+/// Turns usage-set groups into bundles of a sensible size.
+///
+/// Groups over `split_above` bytes split into several bundles with the same
+/// roots, so a patch or download touches less. A bundle under `merge_below`
+/// bytes merges into one whose roots include all of its own: whenever any
+/// of its roots loads, that bundle opens anyway, so the merge saves a file
+/// and costs nothing. It picks the host with the fewest roots, then the
+/// smallest, and never grows a bundle past the split size.
+fn plan_bundles(
+    groups: BTreeMap<Vec<String>, Vec<AssetGuid>>,
+    size_of: impl Fn(&AssetGuid) -> u64,
+    path_of: impl Fn(&AssetGuid) -> String,
+    (merge_below, split_above): (u64, u64),
+) -> Vec<Planned> {
+    let split_above = if split_above == 0 { u64::MAX } else { split_above };
+    let mut planned = Vec::new();
+    for (roots, mut assets) in groups {
+        assets.sort_by_key(&path_of);
+        let mut current = Planned { roots: roots.clone(), assets: Vec::new(), size: 0 };
+        for guid in assets {
+            let size = size_of(&guid);
+            if !current.assets.is_empty() && current.size + size > split_above {
+                let full =
+                    std::mem::replace(&mut current, Planned { roots: roots.clone(), assets: Vec::new(), size: 0 });
+                planned.push(full);
+            }
+            current.size += size;
+            current.assets.push(guid);
+        }
+        planned.push(current);
+    }
+
+    let covers = |host: &Planned, tiny: &Planned| tiny.roots.iter().all(|r| host.roots.contains(r));
+    loop {
+        let merge = (0..planned.len()).filter(|&t| planned[t].size < merge_below).find_map(|tiny| {
+            let fits = |&host: &usize| {
+                host != tiny
+                    && covers(&planned[host], &planned[tiny])
+                    && planned[host].size + planned[tiny].size <= split_above
+            };
+            let host = (0..planned.len()).filter(fits).min_by_key(|&h| (planned[h].roots.len(), planned[h].size))?;
+            Some((tiny, host))
+        });
+        let Some((tiny, host)) = merge else { break };
+        let moved = planned.remove(tiny);
+        let host = &mut planned[if host > tiny { host - 1 } else { host }];
+        host.size += moved.size;
+        host.assets.extend(moved.assets);
+        host.assets.sort_by_key(&path_of);
+    }
+    planned
 }
 
 /// The roots that reach each asset. Roots reach themselves and, through
@@ -350,7 +417,43 @@ fn read(root: &Path, path: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::glob;
+    use std::collections::{BTreeMap, HashMap};
+
+    use voxear_assets::AssetGuid;
+
+    use super::{glob, plan_bundles};
+
+    #[test]
+    fn large_groups_split_and_tiny_bundles_merge_into_covering_ones() {
+        let assets: Vec<(AssetGuid, &str, u64)> = [("a1", 60), ("a2", 60), ("ac", 30), ("b", 500), ("c", 5)]
+            .into_iter()
+            .map(|(name, size)| (AssetGuid::new_random(), name, size))
+            .collect();
+        let size: HashMap<AssetGuid, u64> = assets.iter().map(|(g, _, s)| (*g, *s)).collect();
+        let name: HashMap<AssetGuid, &str> = assets.iter().map(|(g, n, _)| (*g, *n)).collect();
+        let roots = |list: &[&str]| list.iter().map(|r| r.to_string()).collect::<Vec<_>>();
+        let mut groups = BTreeMap::new();
+        groups.insert(roots(&["A"]), vec![assets[0].0, assets[1].0]);
+        groups.insert(roots(&["A", "C"]), vec![assets[2].0]);
+        groups.insert(roots(&["B"]), vec![assets[3].0]);
+        groups.insert(roots(&["C"]), vec![assets[4].0]);
+
+        let planned = plan_bundles(groups, |g| size[g], |g| name[g].to_string(), (50, 100));
+        let layout: Vec<(Vec<String>, Vec<&str>)> =
+            planned.iter().map(|p| (p.roots.clone(), p.assets.iter().map(|g| name[g]).collect())).collect();
+        assert_eq!(
+            layout,
+            [
+                // 120 bytes for A split in two at 100.
+                (roots(&["A"]), vec!["a1"]),
+                (roots(&["A"]), vec!["a2"]),
+                // C's 5 bytes join the bundle {A, C}, which C opens anyway.
+                (roots(&["A", "C"]), vec!["ac", "c"]),
+                // One asset past the split size still gets a bundle; assets never split.
+                (roots(&["B"]), vec!["b"]),
+            ]
+        );
+    }
 
     #[test]
     fn patterns_match_like_gitignore_globs() {

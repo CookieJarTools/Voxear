@@ -128,10 +128,12 @@ impl BundleWriter {
 }
 
 /// Reads assets out of built bundles, opening each bundle the first time one
-/// of its files is needed.
+/// of its files is needed. Catalogs can be layered: a later one, such as a
+/// mod or a patch, wins for every file it also has.
 pub struct BundleReader {
-    dir: PathBuf,
     bundles: Vec<BundleInfo>,
+    /// The folder each bundle is in, since layers come from different builds.
+    dirs: Vec<PathBuf>,
     files: HashMap<String, (usize, PackedFile)>,
     open: HashMap<usize, File>,
     opened: Vec<usize>,
@@ -139,17 +141,27 @@ pub struct BundleReader {
 
 impl BundleReader {
     pub fn new(dir: &Path, catalog: &Catalog) -> Self {
-        let files = catalog
-            .assets
-            .iter()
-            .flat_map(|asset| asset.files.iter().map(|file| (file.path.clone(), (asset.bundle, file.clone()))))
-            .collect();
-        Self {
-            dir: dir.to_path_buf(),
-            bundles: catalog.bundles.clone(),
-            files,
+        let mut reader = Self {
+            bundles: Vec::new(),
+            dirs: Vec::new(),
+            files: HashMap::new(),
             open: HashMap::new(),
             opened: Vec::new(),
+        };
+        reader.mount(dir, catalog);
+        reader
+    }
+
+    /// Layers another catalog on top: its files replace any with the same
+    /// project path.
+    pub fn mount(&mut self, dir: &Path, catalog: &Catalog) {
+        let first = self.bundles.len();
+        self.bundles.extend(catalog.bundles.iter().cloned());
+        self.dirs.extend(catalog.bundles.iter().map(|_| dir.to_path_buf()));
+        for asset in &catalog.assets {
+            for file in &asset.files {
+                self.files.insert(file.path.clone(), (first + asset.bundle, file.clone()));
+            }
         }
     }
 
@@ -166,7 +178,7 @@ impl BundleReader {
     fn bundle(&mut self, index: usize) -> Result<&mut File> {
         if !self.open.contains_key(&index) {
             let info = self.bundles.get(index).with_context(|| format!("the catalog has no bundle {index}"))?;
-            let path = self.dir.join(&info.file);
+            let path = self.dirs[index].join(&info.file);
             let mut file = File::open(&path).with_context(|| format!("opening {}", path.display()))?;
             let mut header = [0u8; HEADER_SIZE as usize];
             file.read_exact(&mut header)?;

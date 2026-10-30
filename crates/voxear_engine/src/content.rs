@@ -125,7 +125,8 @@ pub struct Content {
 /// Where asset files are read from.
 enum Source {
     Folder(FolderReader, PathBuf),
-    Bundles(BundleReader, PathBuf, Arc<Catalog>),
+    /// The reader, and every catalog layer with its folder, base first.
+    Bundles(BundleReader, Vec<(PathBuf, Arc<Catalog>)>),
 }
 
 impl Content {
@@ -150,9 +151,38 @@ impl Content {
         let db = AssetDb::from_entries(root, catalog.entries()?);
         let reader = BundleReader::new(content_dir, &catalog);
         let cooked = catalog.assets.iter().filter(|a| a.cooked).map(|a| a.guid.parse()).collect::<Result<_>>()?;
-        let mut content = Self::with_source(db, Source::Bundles(reader, content_dir.to_path_buf(), Arc::new(catalog)));
+        let layers = vec![(content_dir.to_path_buf(), Arc::new(catalog))];
+        let mut content = Self::with_source(db, Source::Bundles(reader, layers));
         content.cooked = Arc::new(cooked);
         Ok(content)
+    }
+
+    /// Layers more built content on top, such as a mod, a patch or DLC. An
+    /// asset with the GUID of one already here replaces it (give a
+    /// replacement the original's `.meta`); one with a new GUID is added.
+    /// Path lookups find the topmost layer's asset. Mount before loading:
+    /// what is loaded already stays as it was.
+    pub fn mount(&mut self, content_dir: &Path) -> Result<()> {
+        let catalog = Catalog::read(content_dir)?;
+        let Source::Bundles(reader, layers) = &mut self.source else {
+            bail!("only built content can have layers; open it with Content::open_bundles");
+        };
+        reader.mount(content_dir, &catalog);
+        let mut db = (*self.db).clone();
+        let mut cooked = (*self.cooked).clone();
+        for (asset, entry) in catalog.assets.iter().zip(catalog.entries()?) {
+            if asset.cooked {
+                cooked.insert(entry.guid);
+            } else {
+                cooked.remove(&entry.guid);
+            }
+            db.insert(entry);
+        }
+        self.db = Arc::new(db);
+        self.cooked = Arc::new(cooked);
+        layers.push((content_dir.to_path_buf(), Arc::new(catalog)));
+        tracing::info!("mounted {} over the content", content_dir.display());
+        Ok(())
     }
 
     fn with_source(db: AssetDb, source: Source) -> Self {
@@ -183,7 +213,7 @@ impl Content {
     /// The bundles opened so far, when reading built content.
     pub fn opened_bundles(&self) -> Vec<&BundleInfo> {
         match &self.source {
-            Source::Bundles(reader, ..) => reader.opened().collect(),
+            Source::Bundles(reader, _) => reader.opened().collect(),
             Source::Folder(..) => Vec::new(),
         }
     }
@@ -191,7 +221,7 @@ impl Content {
     fn reader(&mut self) -> &mut dyn AssetReader {
         match &mut self.source {
             Source::Folder(reader, _) => reader,
-            Source::Bundles(reader, ..) => reader,
+            Source::Bundles(reader, _) => reader,
         }
     }
 
@@ -199,7 +229,12 @@ impl Content {
     pub(crate) fn worker_reader(&self) -> Box<dyn AssetReader> {
         match &self.source {
             Source::Folder(_, root) => Box::new(FolderReader::new(root)),
-            Source::Bundles(_, dir, catalog) => Box::new(BundleReader::new(dir, catalog)),
+            Source::Bundles(_, layers) => {
+                let (base_dir, base) = &layers[0];
+                let mut reader = BundleReader::new(base_dir, base);
+                layers[1..].iter().for_each(|(dir, catalog)| reader.mount(dir, catalog));
+                Box::new(reader)
+            }
         }
     }
 
@@ -457,7 +492,7 @@ impl Content {
         cache.used.clear();
         cache.files.clear();
         self.texts.clear();
-        if let Source::Bundles(reader, ..) = &mut self.source {
+        if let Source::Bundles(reader, _) = &mut self.source {
             reader.close_all();
         }
 

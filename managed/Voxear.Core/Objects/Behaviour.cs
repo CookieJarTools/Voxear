@@ -26,6 +26,11 @@ namespace Voxear
 
 		public bool IsDestroyed { get; private set; }
 
+		internal uint Handle => handle;
+
+		/// <summary>The type's ExecutionOrder, which orders behaviours within a phase.</summary>
+		internal int Order { get; private set; }
+
 		private Obj obj;
 		private uint handle;
 		private bool enabled = true;
@@ -74,10 +79,11 @@ namespace Voxear
 		{
 		}
 
-		internal void Attach(Obj obj, uint handle)
+		internal void Attach(Obj obj, uint handle, int order)
 		{
 			this.obj = obj;
 			this.handle = handle;
+			Order = order;
 		}
 
 		internal void Detach()

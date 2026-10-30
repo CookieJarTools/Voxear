@@ -260,6 +260,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Material => "material",
             AssetKind::Scene => "scene",
             AssetKind::Level => "level",
+            AssetKind::Prefab => "prefab",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

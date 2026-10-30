@@ -1,0 +1,18 @@
+# Voxear prefab: a lamp with a glowing bulb. Scenes tint each instance.
+format = 1
+
+[[obj]]
+id = 1
+name = "Lamp"
+position = [0.0, 0.6, 0.0]
+light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 6.0, range = 5.0 }
+
+[[obj]]
+id = 2
+name = "Glow"
+parent = 1
+position = [0.0, -0.35, 0.0]
+scale = [0.3, 0.3, 0.3]
+[obj.renderer]
+mesh = "builtin:sphere"
+material = { color = [0.0, 0.0, 0.0], emissive = [3.1, 1.9, 5.0] }

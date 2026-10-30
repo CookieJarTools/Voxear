@@ -21,6 +21,7 @@ pub enum AssetKind {
     Material,
     Scene,
     Level,
+    Prefab,
 }
 
 impl AssetKind {
@@ -32,6 +33,7 @@ impl AssetKind {
             "material" => Self::Material,
             "scene" => Self::Scene,
             "level" => Self::Level,
+            "prefab" => Self::Prefab,
             _ => return None,
         })
     }

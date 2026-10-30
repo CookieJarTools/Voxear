@@ -65,6 +65,7 @@ impl ScriptRuntime {
                 && managed.release.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
+        interop::set_create_behaviour(managed.create_behaviour.expect("validated above"));
         Ok(Self { managed, _native: native, time })
     }
 
@@ -100,6 +101,11 @@ impl ScriptRuntime {
             },
             is_instance: info.flags & FLAG_INSTANCE != 0,
         })
+    }
+
+    /// Objs scripts asked to destroy since the last call.
+    pub fn take_obj_destroys(&mut self) -> Vec<Entity> {
+        interop::take_obj_destroys()
     }
 
     /// Levels scripts asked to load since the last call, oldest first.

@@ -8,9 +8,9 @@ mod hierarchy;
 mod lifecycle;
 mod obj;
 
-pub use hierarchy::{Parent, WorldTransform, propagate_transforms};
-pub use lifecycle::{BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};
+pub use hierarchy::{Parent, WorldTransform, propagate_transforms, world_matrix};
+pub use lifecycle::{Adopted, BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};
 pub use obj::{
-    AttachedBehaviour, Behaviours, Destroying, InstanceMarker, Name, ScenePersistence, Transform,
+    AttachedBehaviour, Behaviours, Destroying, InstanceMarker, Name, Placement, ScenePersistence, Transform,
     register_obj_components,
 };

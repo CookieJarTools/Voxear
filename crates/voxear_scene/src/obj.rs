@@ -41,6 +41,20 @@ impl Transform {
     }
 }
 
+/// Where to put a new Obj's root, as Unity's `Instantiate(prefab, position,
+/// rotation)` does: its scale stays the prefab's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Placement {
+    pub position: Vec3,
+    pub rotation: Quat,
+}
+
+impl Placement {
+    pub const fn at(position: Vec3) -> Self {
+        Self { position, rotation: Quat::IDENTITY }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttachedBehaviour {
     pub handle: BehaviourHandle,

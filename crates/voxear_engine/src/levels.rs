@@ -16,6 +16,9 @@
 //! change (Unity's `DontDestroyOnLoad`), along with their children. Unlike
 //! Unity, reloading the scene a persistent Obj came from does not create a
 //! second copy of it.
+//!
+//! Objs created at runtime, such as instantiated prefabs, belong to the
+//! level's last scene (Unity's active scene) and unload with it.
 
 use std::collections::{HashMap, HashSet};
 
@@ -24,9 +27,9 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetGuid, AssetKind};
 use voxear_ecs::Entity;
 use voxear_render::Renderer;
-use voxear_scene::{Parent, ScenePersistence};
+use voxear_scene::{Destroying, Name, Parent, ScenePersistence};
 
-use crate::{content::Content, engine::Engine, scene_file};
+use crate::{content::Content, engine::Engine, prefab::ObjPath, scene_file};
 
 pub const LEVEL_FORMAT: u32 = 1;
 
@@ -58,8 +61,8 @@ pub struct LevelChange {
 struct LoadedScene {
     guid: AssetGuid,
     path: String,
-    /// Each Obj's id in the scene file, and its entity.
-    objs: Vec<(u32, Entity)>,
+    /// Each Obj's path in the scene file, and its entity.
+    objs: Vec<(ObjPath, Entity)>,
 }
 
 struct Target {
@@ -72,8 +75,8 @@ struct Target {
 pub struct Levels {
     current: Option<String>,
     scenes: Vec<LoadedScene>,
-    /// Persistent Objs that outlived their scene, by scene and id.
-    persistent: HashMap<(AssetGuid, u32), Entity>,
+    /// Persistent Objs that outlived their scene, by scene and path.
+    persistent: HashMap<(AssetGuid, ObjPath), Entity>,
 }
 
 impl Levels {
@@ -95,6 +98,7 @@ impl Levels {
     ) -> Result<LevelChange> {
         let (level_path, targets) = read_level(content, level)?;
         let mut change = LevelChange::default();
+        self.adopt_runtime_objs(engine);
 
         let mut kept = Vec::new();
         for scene in std::mem::take(&mut self.scenes) {
@@ -117,8 +121,8 @@ impl Levels {
             let path = content.db().path(target.guid).expect("resolved above");
             let scene = scene_file::read(&path)?;
             self.persistent.retain(|_, entity| engine.world.is_alive(*entity));
-            let survivors: HashSet<u32> =
-                self.persistent.keys().filter(|(guid, _)| *guid == target.guid).map(|(_, id)| *id).collect();
+            let survivors: HashSet<ObjPath> =
+                self.persistent.keys().filter(|(guid, _)| *guid == target.guid).map(|(_, path)| path.clone()).collect();
             let objs = scene_file::spawn(engine, content, renderer.as_deref_mut(), &scene, &survivors)
                 .with_context(|| format!("loading {}", target.path))?;
             kept.push(LoadedScene { guid: target.guid, path: target.path.clone(), objs });
@@ -129,6 +133,29 @@ impl Levels {
         self.scenes = kept;
         self.current = Some(level_path);
         Ok(change)
+    }
+}
+
+impl Levels {
+    /// Hands root Objs that no scene loaded, which scripts or the engine
+    /// created at runtime, to the active scene.
+    fn adopt_runtime_objs(&mut self, engine: &Engine) {
+        let tracked: HashSet<Entity> = self
+            .scenes
+            .iter()
+            .flat_map(|scene| scene.objs.iter().map(|(_, entity)| *entity))
+            .chain(self.persistent.values().copied())
+            .collect();
+        let Some(active) = self.scenes.last_mut() else { return };
+        let runtime = engine
+            .world
+            .query_ref::<(Entity, &Name)>()
+            .without::<Parent>()
+            .without::<Destroying>()
+            .into_iter()
+            .map(|(entity, _)| entity)
+            .filter(|entity| !tracked.contains(entity));
+        active.objs.extend(runtime.map(|entity| (ObjPath::default(), entity)));
     }
 }
 
@@ -158,7 +185,7 @@ fn read_level(content: &Content, level: &str) -> Result<(String, Vec<Target>)> {
 
 /// Destroys a scene's Objs, except persistent ones and their children, which
 /// are detached from any doomed parent and kept. Returns the kept Objs.
-fn unload(engine: &mut Engine, scene: &LoadedScene) -> Vec<(u32, Entity)> {
+fn unload(engine: &mut Engine, scene: &LoadedScene) -> Vec<(ObjPath, Entity)> {
     let world = &engine.world;
     let alive: Vec<Entity> = scene.objs.iter().map(|(_, e)| *e).filter(|e| world.is_alive(*e)).collect();
     let persistent = |entity: Entity| {
@@ -184,5 +211,5 @@ fn unload(engine: &mut Engine, scene: &LoadedScene) -> Vec<(u32, Entity)> {
     }
     let doomed: Vec<Entity> = alive.into_iter().filter(|e| !kept.contains(e)).collect();
     engine.destroy_objs(&doomed);
-    scene.objs.iter().copied().filter(|(_, e)| kept.contains(e)).collect()
+    scene.objs.iter().filter(|(_, e)| kept.contains(e)).cloned().collect()
 }

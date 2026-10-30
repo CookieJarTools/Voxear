@@ -8,6 +8,8 @@
 mod hostfxr;
 mod interop;
 mod runtime;
+mod services;
 
 pub use hostfxr::{DotnetInstall, find_dotnet};
 pub use runtime::{CreatedBehaviour, ScriptHost, ScriptRuntime};
+pub use services::{ScriptServices, ServicesScope, SpawnedPrefab};

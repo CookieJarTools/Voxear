@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Voxear.Interop;
 
 namespace Voxear.Scripting
@@ -24,7 +25,7 @@ namespace Voxear.Scripting
 
 			var behaviour = type.Create();
 			var handle = Allocate(behaviour);
-			behaviour.Attach(obj, (uint)handle);
+			behaviour.Attach(obj, (uint)handle, type.Order);
 			info->Callbacks = type.Callbacks;
 			info->Order = type.Order;
 			info->Flags = type.IsInstance ? BehaviourInfo.InstanceFlag : 0;
@@ -35,6 +36,17 @@ namespace Voxear.Scripting
 				InstanceRegistry.Register(behaviour);
 			}
 			return handle;
+		}
+
+		public static Behaviour? Get(uint handle)
+		{
+			return handle < behaviours.Count ? behaviours[(int)handle] : null;
+		}
+
+		/// <summary>The live behaviours among these handles, by execution order and then in the order given.</summary>
+		public static List<Behaviour> Ordered(IEnumerable<uint> handles)
+		{
+			return handles.Select(Get).OfType<Behaviour>().OrderBy(behaviour => behaviour.Order).ToList();
 		}
 
 		public static void Invoke(Phase phase, ReadOnlySpan<uint> handles)
@@ -88,7 +100,7 @@ namespace Voxear.Scripting
 			return !perFrame || (behaviour.Enabled && !behaviour.IsDestroyed);
 		}
 
-		private static void Run(Behaviour behaviour, Phase phase)
+		public static void Run(Behaviour behaviour, Phase phase)
 		{
 			try
 			{

@@ -1,10 +1,14 @@
 use anyhow::{Context, Result};
+use voxear_ecs::{Entity, World};
 use voxear_render::Renderer;
+use voxear_scene::Placement;
+use voxear_scripting::{ScriptServices, ServicesScope, SpawnedPrefab};
 
 use crate::{
     content::Content,
     engine::Engine,
     levels::{LevelChange, Levels},
+    prefab::PrefabId,
     project::Project,
 };
 
@@ -41,16 +45,64 @@ impl Game {
         Ok(())
     }
 
+    /// Instantiates a prefab by GUID or project path, loading it first if
+    /// needed. Awake and OnEnable run before this returns; see
+    /// [`Engine::instantiate`].
+    pub fn instantiate(
+        &mut self,
+        prefab: &str,
+        parent: Option<Entity>,
+        placement: Option<Placement>,
+        mut renderer: Option<&mut Renderer>,
+    ) -> Result<Entity> {
+        let id = self.content.prefab(renderer.as_deref_mut(), prefab)?;
+        let template = self.content.template(id).expect("just loaded").clone();
+        let mut services = GameServices { content: &mut self.content, renderer };
+        let _scope = ServicesScope::enter(&mut services);
+        self.engine.instantiate(&template, parent, placement)
+    }
+
     /// Runs one frame, then any level change scripts asked for. A level that
     /// fails to load is logged and the game carries on, as in Unity.
-    pub fn tick(&mut self, delta: f32, renderer: Option<&mut Renderer>) {
-        self.engine.tick(delta);
+    pub fn tick(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
+        {
+            let mut services = GameServices { content: &mut self.content, renderer: renderer.as_deref_mut() };
+            let _scope = ServicesScope::enter(&mut services);
+            self.engine.tick(delta);
+        }
         let requested = self.engine.scripts_mut().and_then(|scripts| scripts.take_level_requests().pop());
         if let Some(level) = requested
             && let Err(error) = self.load_level(&level, renderer)
         {
             tracing::error!("could not load level {level}: {error:#}");
         }
+    }
+}
+
+/// What scripts reach through native calls while the game runs: content,
+/// and the renderer to upload what they load.
+struct GameServices<'a> {
+    content: &'a mut Content,
+    renderer: Option<&'a mut Renderer>,
+}
+
+impl ScriptServices for GameServices<'_> {
+    fn load_prefab(&mut self, reference: &str) -> Result<u32> {
+        Ok(self.content.prefab(self.renderer.as_deref_mut(), reference)?.0)
+    }
+
+    fn spawn_prefab(
+        &mut self,
+        world: &mut World,
+        prefab: u32,
+        parent: Option<Entity>,
+        placement: Option<Placement>,
+    ) -> Result<SpawnedPrefab> {
+        let template = self.content.template(PrefabId(prefab)).context("no prefab with that id is loaded")?;
+        let root = template.root().context("the prefab has no Objs")?;
+        let entities = template.spawn_objs(world, parent, placement);
+        let behaviours = template.objs.iter().map(|o| o.behaviours.clone());
+        Ok(SpawnedPrefab { root: entities[root], objs: entities.iter().copied().zip(behaviours).collect() })
     }
 }
 

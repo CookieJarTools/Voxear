@@ -1,0 +1,11 @@
+# Voxear prefab: a variant of Lamp, in amber. Its root is a Lamp instance.
+format = 1
+
+[[obj]]
+id = 1
+name = "Amber lamp"
+prefab = "Prefabs/Lamp.prefab"
+light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 6.0, range = 5.0 }
+
+[obj.overrides.2.renderer.material]
+emissive = [5.0, 3.6, 1.5]

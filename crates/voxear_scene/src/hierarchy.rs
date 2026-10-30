@@ -50,6 +50,21 @@ pub fn propagate_transforms(world: &mut World) {
     }
 }
 
+/// An Obj's local-to-world matrix from its current transforms. Unlike
+/// `WorldTransform`, which is worked out once per frame, it is up to date
+/// mid-frame, for placing new Objs in world space.
+pub fn world_matrix(world: &World, entity: Entity) -> Mat4 {
+    let mut matrix = Mat4::IDENTITY;
+    let mut current = Some(entity);
+    for _ in 0..MAX_DEPTH {
+        let Some(e) = current else { break };
+        let Some(t) = world.get::<Transform>(e) else { break };
+        matrix = Mat4::from_scale_rotation_translation(t.scale, t.rotation, t.position) * matrix;
+        current = world.get::<Parent>(e).map(|p| p.0);
+    }
+    matrix
+}
+
 /// Deep enough for any real hierarchy; deeper means a cycle.
 const MAX_DEPTH: usize = 256;
 
@@ -99,6 +114,14 @@ mod tests {
         // A quarter turn about Y takes local +Z to world +X.
         assert!((position(child) - Vec3::new(11.0, 0.0, 0.0)).length() < 1e-5);
         assert!((position(grandchild) - Vec3::new(11.0, 2.0, 0.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn world_matrix_is_current_before_propagation() {
+        let mut world = World::new();
+        let root = world.spawn(Transform::new(Vec3::new(10.0, 0.0, 0.0), Quat::IDENTITY, Vec3::splat(2.0)));
+        let child = world.spawn((Transform::from_position(Vec3::new(0.0, 1.0, 0.0)), Parent(root)));
+        assert!((world_matrix(&world, child).w_axis.truncate() - Vec3::new(10.0, 2.0, 0.0)).length() < 1e-5);
     }
 
     #[test]

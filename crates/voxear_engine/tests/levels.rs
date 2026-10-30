@@ -2,7 +2,7 @@
 
 use voxear_engine::{Content, Engine, Levels, scene_file};
 use voxear_render::{Camera, PostProcess};
-use voxear_scene::{Name, Parent, ScenePersistence};
+use voxear_scene::{Name, Parent, ScenePersistence, Transform};
 
 const ENVIRONMENT: &str = r#"
 format = 1
@@ -126,6 +126,24 @@ fn levels_keep_shared_scenes_and_persistent_objs() {
 }
 
 #[test]
+fn objs_created_at_runtime_unload_with_the_active_scene() {
+    let dir = project();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    let mut levels = Levels::default();
+    levels.load(&mut engine, &mut content, None, "Levels/Day.level").unwrap();
+    engine.spawn_obj("Bullet", Transform::IDENTITY, &[]).unwrap();
+    let keeper = engine.spawn_obj("Keeper", Transform::IDENTITY, &[]).unwrap();
+    engine.world.insert(keeper, ScenePersistence);
+
+    levels.load(&mut engine, &mut content, None, "Levels/Night.level").unwrap();
+    engine.tick(1.0 / 60.0);
+    let names = names(&engine);
+    assert!(!names.contains(&"Bullet".to_string()), "Day was the active scene, and it unloaded");
+    assert!(names.contains(&"Keeper".to_string()), "persistent runtime Objs survive");
+}
+
+#[test]
 fn scenes_survive_a_save_and_load_round_trip() {
     let dir = project();
     let mut content = Content::open(dir.path()).unwrap();
@@ -134,7 +152,7 @@ fn scenes_survive_a_save_and_load_round_trip() {
     let spawned = scene_file::spawn(&mut engine, &mut content, None, &original, &Default::default()).unwrap();
     let entities: Vec<_> = spawned.iter().map(|(_, e)| *e).collect();
 
-    let captured = scene_file::capture(&engine.world, &content, &entities);
+    let captured = scene_file::capture(&engine.world, &mut content, &entities);
     let saved = dir.path().join("Scenes/Copy.scene");
     scene_file::write(&saved, &captured).unwrap();
     let reloaded = scene_file::read(&saved).unwrap();
@@ -142,10 +160,10 @@ fn scenes_survive_a_save_and_load_round_trip() {
     assert_eq!(toml::to_string(&reloaded).unwrap(), toml::to_string(&captured).unwrap());
     assert_eq!(reloaded.objs.len(), 4);
     let tree = reloaded.objs.iter().find(|o| o.name == "Tree").unwrap();
-    assert_eq!(tree.position, [3.0, 0.0, 1.0]);
-    assert_eq!(tree.scale, [1.0, 2.0, 1.0]);
+    assert_eq!(tree.position, Some([3.0, 0.0, 1.0]));
+    assert_eq!(tree.scale, Some([1.0, 2.0, 1.0]));
     let sun = reloaded.objs.iter().find(|o| o.name == "Sun").unwrap();
-    assert_eq!(sun.rotation, [45.0, -30.0, 0.0], "Euler angles come back as written");
+    assert_eq!(sun.rotation, Some([45.0, -30.0, 0.0]), "Euler angles come back as written");
     assert!(sun.light.is_some());
     let child = reloaded.objs.iter().find(|o| o.name == "Manager child").unwrap();
     let manager = reloaded.objs.iter().find(|o| o.name == "Manager").unwrap();

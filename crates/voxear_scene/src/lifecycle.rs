@@ -11,6 +11,10 @@
 //!    OnEnable, so Start always sees a fully initialised world.
 //! 4. Within a phase, behaviours run by execution order, then creation order
 //!    (hierarchy order for scene loads).
+//!
+//! Instantiating is the one exception to waiting for a flush, as in Unity:
+//! [`activate`](Lifecycle::activate) runs Awake and OnEnable on the new batch
+//! before it returns, and its Start still waits for the next flush.
 
 use std::collections::HashMap;
 
@@ -70,10 +74,22 @@ pub struct Registration {
 /// A change script code asked for while its callbacks were running.
 #[derive(Clone, Copy, Debug)]
 pub enum Request {
-    /// A behaviour created mid-dispatch, such as an Obj instantiated in Awake.
+    /// A behaviour created mid-dispatch, to start with the next batch.
     Register(Registration),
+    /// A behaviour created mid-dispatch that scripts already took through
+    /// Awake and OnEnable themselves, such as an Obj instantiated in Update.
+    Adopt(Registration, Adopted),
     SetEnabled(BehaviourHandle, bool),
     Destroy(BehaviourHandle),
+}
+
+/// How far scripts took an adopted behaviour. Awake has always run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Adopted {
+    /// OnEnable ran.
+    pub enabled: bool,
+    /// It was destroyed during its own activation.
+    pub destroyed: bool,
 }
 
 /// Runs behaviour callbacks; implemented by the C# script host.
@@ -162,9 +178,38 @@ impl Lifecycle {
         }
     }
 
+    /// Takes over a behaviour that scripts activated themselves (see
+    /// [`Request::Adopt`]). It starts at the next flush.
+    pub fn adopt(&mut self, registration: Registration, adopted: Adopted) {
+        self.register(registration);
+        self.pending.pop();
+        let handle = registration.handle;
+        let record = self.record(handle);
+        record.awake = true;
+        record.enabled = adopted.enabled;
+        if adopted.enabled {
+            self.to_start.push(handle);
+        }
+        // OnEnable may have disabled it again, or it never got enabled.
+        if adopted.enabled != registration.enabled {
+            self.toggled.push(handle);
+        }
+        if adopted.destroyed {
+            self.destroy(handle);
+        }
+    }
+
+    /// Runs Awake on these newly registered behaviours, then OnEnable, now
+    /// rather than at the next flush. Start waits for the next flush.
+    pub fn activate(&mut self, handles: &[BehaviourHandle], host: &mut dyn BehaviourHost) {
+        self.pending.retain(|h| !handles.contains(h));
+        self.awaken(handles.to_vec(), host);
+    }
+
     pub fn apply(&mut self, request: Request) {
         match request {
             Request::Register(registration) => self.register(registration),
+            Request::Adopt(registration, adopted) => self.adopt(registration, adopted),
             Request::SetEnabled(handle, enabled) => self.set_enabled(handle, enabled),
             Request::Destroy(handle) => self.destroy(handle),
         }
@@ -245,7 +290,11 @@ impl Lifecycle {
     }
 
     fn activate_batch(&mut self, host: &mut dyn BehaviourHost) {
-        let mut batch = std::mem::take(&mut self.pending);
+        let batch = std::mem::take(&mut self.pending);
+        self.awaken(batch, host);
+    }
+
+    fn awaken(&mut self, mut batch: Vec<BehaviourHandle>, host: &mut dyn BehaviourHost) {
         sort_by_order(&self.records, &mut batch);
 
         let awakening = self.filtered(&batch, |r| !r.destroying);
@@ -460,6 +509,54 @@ mod tests {
         assert_eq!(host.log, vec![(Phase::OnDisable, vec![0]), (Phase::OnDestroy, vec![0, 1])]);
         assert_eq!(host.released, vec![0, 1, 2]);
         assert!(lifecycle.is_empty());
+    }
+
+    #[test]
+    fn activate_runs_awake_and_on_enable_now_and_start_later() {
+        let mut lifecycle = Lifecycle::new();
+        let mut host = Recorder::default();
+        lifecycle.register(reg(0, 0));
+        lifecycle.register(reg(1, 5));
+        lifecycle.register(reg(2, 0));
+        lifecycle.activate(&[BehaviourHandle(1), BehaviourHandle(2)], &mut host);
+        assert_eq!(host.log, vec![(Phase::Awake, vec![2, 1]), (Phase::OnEnable, vec![2, 1])]);
+
+        host.log.clear();
+        lifecycle.flush(&mut host);
+        assert_eq!(
+            host.log,
+            vec![(Phase::Awake, vec![0]), (Phase::OnEnable, vec![0]), (Phase::Start, vec![0, 2, 1])],
+            "the rest of the pending batch waits for the flush, and Start waits for everyone"
+        );
+    }
+
+    #[test]
+    fn adopted_behaviours_skip_to_start() {
+        let mut lifecycle = Lifecycle::new();
+        let mut host = Recorder::default();
+        let enabled = Adopted { enabled: true, destroyed: false };
+        host.requests.push(Request::Adopt(reg(0, 0), enabled));
+        // Disabled in its own Awake, so OnEnable never ran.
+        host.requests
+            .push(Request::Adopt(Registration { enabled: false, ..reg(1, 0) }, Adopted { enabled: false, ..enabled }));
+        // Disabled again in its own OnEnable.
+        host.requests.push(Request::Adopt(Registration { enabled: false, ..reg(2, 0) }, enabled));
+        host.requests.push(Request::Adopt(reg(3, 0), Adopted { destroyed: true, ..enabled }));
+        lifecycle.run(Phase::Update, &mut host);
+        lifecycle.flush(&mut host);
+        lifecycle.run(Phase::Update, &mut host);
+        lifecycle.end_of_frame(&mut host);
+        assert_eq!(
+            host.log,
+            vec![
+                (Phase::OnDisable, vec![2]),
+                (Phase::Start, vec![0]),
+                (Phase::Update, vec![0]),
+                (Phase::OnDisable, vec![3]),
+                (Phase::OnDestroy, vec![3]),
+            ]
+        );
+        assert!(!lifecycle.is_enabled(BehaviourHandle(1)) && !lifecycle.is_enabled(BehaviourHandle(2)));
     }
 
     #[test]

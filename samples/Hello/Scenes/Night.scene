@@ -23,66 +23,40 @@ scale = [0.8, 3.0, 0.3]
 mesh = "builtin:cube"
 material = { color = [0.12, 0.12, 0.14], metallic = 0.6, roughness = 0.25 }
 
+# The lamps are instances of Prefabs/Lamp.prefab, each tinted with its own light
+# and an override on the bulb (Obj 2 inside the prefab).
 [[obj]]
 id = 3
 name = "Violet lamp"
+prefab = "Prefabs/Lamp.prefab"
 position = [-2.5, 0.6, -0.5]
-light = { type = "point", color = [0.62, 0.38, 1.0], intensity = 6.0, range = 5.0 }
-
-[[obj]]
-id = 4
-name = "Violet glow"
-parent = 3
-position = [0.0, -0.35, 0.0]
-scale = [0.3, 0.3, 0.3]
-[obj.renderer]
-mesh = "builtin:sphere"
-material = { color = [0.0, 0.0, 0.0], emissive = [3.1, 1.9, 5.0] }
 
 [[obj]]
 id = 5
 name = "Cyan lamp"
+prefab = "Prefabs/Lamp.prefab"
 position = [2.5, 0.6, -0.5]
 light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 6.0, range = 5.0 }
-
-[[obj]]
-id = 6
-name = "Cyan glow"
-parent = 5
-position = [0.0, -0.35, 0.0]
-scale = [0.3, 0.3, 0.3]
-[obj.renderer]
-mesh = "builtin:sphere"
-material = { color = [0.0, 0.0, 0.0], emissive = [1.25, 4.25, 5.0] }
+[obj.overrides.2.renderer.material]
+emissive = [1.25, 4.25, 5.0]
 
 [[obj]]
 id = 7
 name = "Pink lamp"
+prefab = "Prefabs/Lamp.prefab"
 position = [-2.5, 0.6, 2.5]
 light = { type = "point", color = [1.0, 0.35, 0.6], intensity = 6.0, range = 5.0 }
+[obj.overrides.2.renderer.material]
+emissive = [5.0, 1.75, 3.0]
 
-[[obj]]
-id = 8
-name = "Pink glow"
-parent = 7
-position = [0.0, -0.35, 0.0]
-scale = [0.3, 0.3, 0.3]
-[obj.renderer]
-mesh = "builtin:sphere"
-material = { color = [0.0, 0.0, 0.0], emissive = [5.0, 1.75, 3.0] }
-
+# A variant: AmberLamp is a Lamp with its colours already changed.
 [[obj]]
 id = 9
-name = "Amber lamp"
+prefab = "Prefabs/AmberLamp.prefab"
 position = [2.5, 0.6, 2.5]
-light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 6.0, range = 5.0 }
 
 [[obj]]
-id = 10
-name = "Amber glow"
-parent = 9
-position = [0.0, -0.35, 0.0]
-scale = [0.3, 0.3, 0.3]
-[obj.renderer]
-mesh = "builtin:sphere"
-material = { color = [0.0, 0.0, 0.0], emissive = [5.0, 3.6, 1.5] }
+id = 11
+name = "Fireflies"
+position = [0.0, 0.0, 0.5]
+behaviours = ["Hello.FireflySpawner"]

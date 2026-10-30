@@ -5,12 +5,14 @@
 //! needs a build. Shipped games will read the bundles the content build
 //! makes instead, through the same calls.
 
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetDb, AssetGuid, AssetKind, AssetRef};
 use voxear_render::{ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, Primitive, Renderer};
+
+use crate::prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, Template};
 
 /// A PBR material as written in `.material` files and inline in scenes.
 /// Colours are sRGB, as picked in a colour picker.
@@ -74,6 +76,7 @@ pub struct Content {
     asset_materials: HashMap<AssetRef, MaterialHandle>,
     inline_materials: HashMap<[u32; 8], MaterialHandle>,
     material_sources: HashMap<MaterialHandle, MaterialSource>,
+    prefabs: PrefabCache,
 }
 
 impl Content {
@@ -94,6 +97,7 @@ impl Content {
             asset_materials: HashMap::new(),
             inline_materials: HashMap::new(),
             material_sources: HashMap::new(),
+            prefabs: PrefabCache::default(),
         })
     }
 
@@ -184,6 +188,44 @@ impl Content {
         };
         self.asset_materials.insert(reference.clone(), handle);
         Ok(handle)
+    }
+
+    /// A `.prefab` file as written, read on first use.
+    pub fn prefab_file(&mut self, guid: AssetGuid) -> Result<Arc<PrefabFile>> {
+        if let Some(file) = self.prefabs.files.get(&guid) {
+            return Ok(file.clone());
+        }
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        if entry.kind != AssetKind::Prefab {
+            bail!("{} is not a .prefab file", entry.path);
+        }
+        let path = self.db.root().join(&entry.path);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let file: PrefabFile = toml::from_str(&text).with_context(|| format!("reading {}", entry.path))?;
+        ensure!(file.format == PREFAB_FORMAT, "{} uses prefab format {}, not {PREFAB_FORMAT}", entry.path, file.format);
+        let file = Arc::new(file);
+        self.prefabs.files.insert(guid, file.clone());
+        Ok(file)
+    }
+
+    /// Loads a prefab by GUID or project path, with its meshes and materials,
+    /// so it can be instantiated any number of times. Loading it again
+    /// returns the same id.
+    pub fn prefab(&mut self, renderer: Option<&mut Renderer>, reference: &str) -> Result<PrefabId> {
+        let guid = self.parse(reference)?.guid().with_context(|| format!("`{reference}` is not a prefab"))?;
+        if let Some(&id) = self.prefabs.ids.get(&guid) {
+            return Ok(id);
+        }
+        let objs = prefab::expand_prefab(self, guid).with_context(|| format!("loading {reference}"))?;
+        let template = Template::resolve(self, renderer, &objs).with_context(|| format!("loading {reference}"))?;
+        let id = PrefabId(self.prefabs.templates.len() as u32);
+        self.prefabs.templates.push(Arc::new(template));
+        self.prefabs.ids.insert(guid, id);
+        Ok(id)
+    }
+
+    pub fn template(&self, prefab: PrefabId) -> Option<&Arc<Template>> {
+        self.prefabs.templates.get(prefab.0 as usize)
     }
 
     /// The reference a mesh was loaded from, for saving scenes.

@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use voxear_core::time::Time;
 use voxear_ecs::{Entity, Schedule, World};
 use voxear_scene::{
     AttachedBehaviour, BehaviourHandle, BehaviourHost, Behaviours, Destroying, InstanceMarker, Lifecycle, Name, Parent,
-    Phase, Transform, propagate_transforms, register_obj_components,
+    Phase, Placement, Transform, propagate_transforms, register_obj_components,
 };
 use voxear_scripting::ScriptRuntime;
+
+use crate::prefab::{FromPrefab, PrefabInstance, Template};
 
 /// Engine stages in run order. Behaviour callbacks run alongside them: see
 /// [`Engine::tick`].
@@ -39,6 +41,8 @@ impl Engine {
     pub fn new() -> Self {
         let mut world = World::new();
         register_obj_components(&mut world);
+        world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");
+        world.register_named_component::<FromPrefab>("Voxear.FromPrefab");
         let mut schedule = Schedule::new(STAGES);
         schedule.add_system("PostUpdate", "propagate transforms", propagate_transforms);
         Self {
@@ -64,29 +68,83 @@ impl Engine {
     }
 
     /// Creates an Obj and attaches behaviours by C# type name. Behaviours get
-    /// their first callbacks at the next tick, as one batch.
+    /// their first callbacks at the next flush, as one batch.
     pub fn spawn_obj(&mut self, name: &str, transform: Transform, behaviours: &[String]) -> Result<Entity> {
         let entity = self.world.spawn((Name(name.to_string()), transform));
-        if behaviours.is_empty() {
-            return Ok(entity);
+        self.attach_behaviours(entity, behaviours)?;
+        Ok(entity)
+    }
+
+    /// Spawns a template's Objs and attaches their behaviours, which start
+    /// with the next batch, as a scene load does. Roots go under `parent`,
+    /// and take `placement`, relative to it, when it is given.
+    pub fn spawn_template(
+        &mut self,
+        template: &Template,
+        parent: Option<Entity>,
+        placement: Option<Placement>,
+    ) -> Result<Vec<Entity>> {
+        let entities = template.spawn_objs(&mut self.world, parent, placement);
+        for (obj, &entity) in template.objs.iter().zip(&entities) {
+            self.attach_behaviours(entity, &obj.behaviours).with_context(|| format!("Obj {}", obj.name))?;
+        }
+        Ok(entities)
+    }
+
+    /// Spawns a prefab like Unity's `Instantiate`: every new behaviour gets
+    /// Awake, then OnEnable, before this returns, and Start at the next
+    /// flush. Returns the root.
+    pub fn instantiate(
+        &mut self,
+        template: &Template,
+        parent: Option<Entity>,
+        placement: Option<Placement>,
+    ) -> Result<Entity> {
+        let root = template.root().context("the prefab has no Objs")?;
+        let entities = self.spawn_template(template, parent, placement)?;
+        let handles: Vec<BehaviourHandle> =
+            entities.iter().filter_map(|e| self.world.get::<Behaviours>(*e)).flat_map(Behaviours::handles).collect();
+        self.with_host(|lifecycle, host| lifecycle.activate(&handles, host));
+        Ok(entities[root])
+    }
+
+    /// Attaches a behaviour by C# type name and runs its Awake and OnEnable
+    /// before returning, like Unity's `AddComponent`.
+    pub fn add_behaviour(&mut self, entity: Entity, type_name: &str) -> Result<BehaviourHandle> {
+        let handles = self.attach_behaviours(entity, &[type_name.to_string()])?;
+        self.with_host(|lifecycle, host| lifecycle.activate(&handles, host));
+        Ok(handles[0])
+    }
+
+    /// Creates behaviours on an Obj and queues them for the next batch.
+    fn attach_behaviours(&mut self, entity: Entity, types: &[String]) -> Result<Vec<BehaviourHandle>> {
+        if types.is_empty() {
+            return Ok(Vec::new());
         }
         let Some(scripts) = self.scripts.as_mut() else {
-            anyhow::bail!("{name} has behaviours but the project has no scripts");
+            let name = self.world.get::<Name>(entity).map_or("An Obj", |n| n.0.as_str());
+            bail!("{name} has behaviours but the project has no scripts");
         };
 
-        let mut attached = Vec::with_capacity(behaviours.len());
+        let mut attached = Vec::with_capacity(types.len());
         let mut is_instance = false;
-        for type_name in behaviours {
+        for type_name in types {
             let created = scripts.create_behaviour(&mut self.world, type_name, entity)?;
             is_instance |= created.is_instance;
             attached.push(AttachedBehaviour { handle: created.registration.handle, type_name: type_name.clone() });
             self.lifecycle.register(created.registration);
         }
-        self.world.insert(entity, Behaviours(attached));
+        let handles = attached.iter().map(|b| b.handle).collect();
+        match self.world.get_mut::<Behaviours>(entity) {
+            Some(behaviours) => behaviours.0.extend(attached),
+            None => {
+                self.world.insert(entity, Behaviours(attached));
+            }
+        }
         if is_instance {
             self.world.insert(entity, InstanceMarker);
         }
-        Ok(entity)
+        Ok(handles)
     }
 
     /// Destroys Objs and all their children at the end of the frame, after
@@ -157,8 +215,10 @@ impl Engine {
         self.schedule.run_stage("PostUpdate", &mut self.world);
         self.flush();
 
-        self.with_host(|lifecycle, host| lifecycle.end_of_frame(host));
+        // Objs destroyed by OnDestroy callbacks below get theirs next frame,
+        // so only these are removed now.
         let destroyed: Vec<Entity> = self.world.query_ref::<Entity>().with::<Destroying>().into_iter().collect();
+        self.with_host(|lifecycle, host| lifecycle.end_of_frame(host));
         for entity in destroyed {
             self.world.despawn(entity);
         }
@@ -180,10 +240,16 @@ impl Engine {
         }
     }
 
+    /// Runs lifecycle work with scripts attached, then destroys the Objs
+    /// scripts asked to destroy meanwhile.
     fn with_host(&mut self, f: impl FnOnce(&mut Lifecycle, &mut dyn BehaviourHost)) {
         match &self.scripts {
             Some(scripts) => f(&mut self.lifecycle, &mut scripts.host(&mut self.world)),
             None => f(&mut self.lifecycle, &mut NoScripts),
+        }
+        let doomed = self.scripts.as_mut().map(ScriptRuntime::take_obj_destroys).unwrap_or_default();
+        if !doomed.is_empty() {
+            self.destroy_objs(&doomed);
         }
     }
 }

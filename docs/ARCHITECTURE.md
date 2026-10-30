@@ -223,6 +223,82 @@ true)]` attribute covers the common "manager that always exists" case.
 - From C#, `Level.Load("Levels/Night.level")` changes level after the current frame. Unloaded Objs stop rendering
   at once, and their behaviours get OnDisable and OnDestroy at the end of the next frame.
 - Loading a scene is one lifecycle batch, so ordering guarantee 2 holds across the whole scene.
+- **Objs created at runtime**, such as instantiated prefabs, belong to the level's last scene (Unity's active scene)
+  and unload with it, unless they are persistent.
+
+### Prefabs *(implemented: nesting, variants, overrides, Instantiate; inspector editing planned)*
+
+A **Prefab** is a `.prefab` file: Objs written exactly as in a scene, with one root.
+
+**Easy.**
+
+```csharp
+private Prefab enemy;
+
+protected override void Awake()
+{
+	enemy = Prefab.Load("Prefabs/Enemy.prefab");     // once; loading again is free
+}
+
+protected override void Update()
+{
+	var copy = enemy.Instantiate(spawnPoint, Quaternion.Identity);
+	copy.GetBehaviour<Enemy>()!.Target = player;      // its Awake and OnEnable have already run
+}
+```
+
+`Instantiate` works like Unity's:
+- Every new behaviour gets Awake, then OnEnable, before it returns, in batch order: Awake on all of them first, by
+  execution order and then creation order.
+- Start comes at the end of the current phase, before the next Update.
+- `Instantiate(position, rotation)` places the root in world space and keeps the prefab's scale.
+- `Instantiate(parent)` keeps the root's local placement under the parent.
+
+Also from C#:
+- `obj.AddBehaviour<T>()` runs Awake and OnEnable before returning, like AddComponent.
+- `obj.GetBehaviour<T>()` and `TryGetBehaviour<T>(out ...)`.
+- `obj.Destroy()` destroys the Obj and its children at the end of the frame.
+
+In Rust:
+- `Game::instantiate(path, parent, placement)`, or `Content::prefab` and then `Engine::instantiate` with a loaded
+  template.
+- `Engine::add_behaviour`.
+
+**In scenes.** An Obj with `prefab = "Prefabs/Lamp.prefab"` is an instance:
+- The prefab's root takes the instance's id and parent.
+- It also takes whatever else the instance writes: name, position, rotation, scale, camera, light, renderer and
+  `persistent`. Behaviours listed on the instance are added to the root's.
+- `[obj.overrides."<path>"]` changes Objs inside the prefab, layering only the fields written, the same way
+  `[post]` layers onto a preset. A path is an Obj's id in the prefab, so `2`, or `3/2` inside a nested prefab.
+- Overrides cannot change `id`, `parent` or `prefab`, and typos are errors.
+
+```toml
+[[obj]]
+id = 5
+name = "Cyan lamp"
+prefab = "Prefabs/Lamp.prefab"
+position = [2.5, 0.6, -0.5]
+light = { type = "point", color = [0.25, 0.85, 1.0], intensity = 6.0 }
+[obj.overrides.2.renderer.material]
+emissive = [1.25, 4.25, 5.0]
+```
+
+**Nesting and variants** need nothing extra:
+- A prefab can contain instances of other prefabs. Expansion is recursive, and a prefab that contains itself is an
+  error that names it.
+- A **variant** is a prefab whose root is an instance of another prefab, carrying its overrides and any children it
+  adds. Changes to the base flow through to every variant.
+
+**Saving.** A scene saves each instance as an instance: what differs from the prefab is written as instance fields
+and overrides, and Objs inside instances are not written on their own.
+- Every Obj from an instance carries `FromPrefab`, which names the outermost instance and the Obj's path inside it.
+  The instance root also carries `PrefabInstance`.
+- Not saved yet: Objs deleted inside an instance, and cameras, lights or renderers removed from one. Both come back
+  from the prefab on reload, until the editor adds "removed" overrides.
+
+**Loading.** `Prefab.Load` expands the prefab once and loads its meshes and materials into a template. Every
+`Instantiate` after that only creates entities, so spawning bullets costs no file or GPU work. Loading through
+bundles and async loading (`Prefab.LoadAsync`) come with the content build.
 
 ## Content (assets, Bundles, loading)
 
@@ -527,6 +603,55 @@ surfaces in 3D.
   context unloads, the new build loads, and the state is restored.
 
 **Extending.** Custom inspectors, windows, gizmos and tools are written in C#, using the same Voxear UI.
+
+### The editor concept
+
+The design target for M3. The concept is a world-building session on voxel terrain:
+
+- **Top bar:**
+  - the Voxear mark
+  - workspace tabs: World, Animation and Profiling
+  - a command bar ("Search or run a command", Ctrl+K)
+  - play, pause and step in the centre
+  - the user's avatar, and an accent **Build** button that opens the Build window
+- **Left rail.** Icons for the main areas: World, Layers, Code, Audio and Animation, with source control at the
+  bottom.
+- **Hierarchy.**
+  - A filter box.
+  - Folders that group Objs: Cameras, Lighting, World, Props, Player and Trigger Volumes.
+  - A per-type icon on each Obj: camera, sun, sky volume, terrain, water.
+  - The selected row has an accent outline.
+- **Project, with a Packages tab.**
+  - A breadcrumb (Assets / Worlds).
+  - Folders with item counts, and files with their sizes, such as `Highlands.vxw  1.2 GB`.
+- **Viewport.**
+  - Tabs: Scene, Game and Shader Graph.
+  - A shading mode menu (Lit), a Gizmos toggle and full screen.
+  - A floating tool strip: select, move, rotate, scale and brush, Pivot/Global, and grid snap (0.5 m).
+  - The transform gizmo uses Unity's axis colours.
+  - A view gizmo (Persp) bottom right.
+  - A live stats chip bottom left: chunks, voxels and GPU ms.
+- **Voxel Brush overlay.** A floating panel with:
+  - Add, Carve, Paint and Smooth modes
+  - a shape grid: cube, sphere, cylinder, cone, noise, terrace, arch and stamp
+  - material swatches
+  - Radius, Strength and Falloff sliders
+  - Snap to voxel grid
+- **Inspector, with Lighting and Navigation tabs.**
+  - A header with the Obj's icon, name and enabled toggle, then Tag, Layer and Static.
+  - Transform rows with coloured X/Y/Z fields.
+  - Components as collapsible sections with enable toggles:
+    - Voxel Terrain: chunk size 32³, voxel size, LOD levels, greedy meshing, material atlas, heightmap and shadows.
+    - Voxel Collider: per-chunk mode and Is Trigger.
+  - A dashed **Add Component** button at the end.
+- **Status bar:**
+  - left: Ready and "Scripts compiled in 0.8 s"
+  - right: the graphics API, FPS, memory and the git branch
+- **Style.**
+  - Near-black panels with rounded corners, separated by gaps.
+  - One periwinkle accent for selection, toggles and primary buttons.
+  - Inter for text and a monospaced face for numbers.
+  - Compact rows, as in Linear.
 
 ## Input
 

@@ -19,5 +19,12 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<uint, int, void> BehaviourSetEnabled;
 		public delegate* unmanaged[Cdecl]<uint, void> BehaviourDestroy;
 		public delegate* unmanaged[Cdecl]<byte*, int, void> LevelLoad;
+		public delegate* unmanaged[Cdecl]<ulong, void> ObjDestroy;
+		public delegate* unmanaged[Cdecl]<ulong, uint*, int, int> ObjBehaviours;
+		public delegate* unmanaged[Cdecl]<ulong, byte*, int, int> BehaviourAdd;
+		public delegate* unmanaged[Cdecl]<byte*, int, int> PrefabLoad;
+		public delegate* unmanaged[Cdecl]<int, Transform*, int, ulong, ulong*, int> PrefabInstantiate;
+		public delegate* unmanaged[Cdecl]<uint*, int, int> BatchHandles;
+		public delegate* unmanaged[Cdecl]<uint*, uint*, int, void> BehavioursAdopt;
 	}
 }

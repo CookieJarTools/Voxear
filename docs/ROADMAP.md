@@ -99,10 +99,17 @@ Done so far:
   - vignette, height fog, depth of field, motion blur, chromatic aberration, grain and dithering
   - `voxear`, `neutral` and `cinematic` presets, set per scene in `[post]`, and `vox render --post`
 
+- **Prefabs:** `.prefab` files, instances in scenes with per-field overrides, nesting and variants, and instances
+  saved back as instances.
+- **Instantiate from Rust and C#:** `Prefab.Load` and `Instantiate`, `AddBehaviour`, `GetBehaviour` and
+  `Obj.Destroy`. Awake and OnEnable run before Instantiate and AddBehaviour return. Runtime Objs unload with the
+  active scene. Hello's night lamps are prefab instances and a variant, and its fireflies are instantiated at
+  runtime.
+
 Still to do in M2:
-- `Ref<T>` in C#, and prefabs with nesting and variants.
-- `Instantiate` and `AddBehaviour`, running Awake and OnEnable on the new batch before returning.
-- Async level loading.
+- `Ref<T>` in C#, with behaviour fields saved in scenes and prefabs, so a Spawner can hold its prefab without a
+  path string.
+- Async level loading, and `Prefab.LoadAsync`.
 - Content build: usage-set bundling, a catalog, and incremental content hashing.
 - Runtime loading, sync and async, with reference counting.
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
@@ -271,3 +278,7 @@ Settled on 2026-10-30:
 
 1. **Scene file format.** A text format such as RON or TOML-like (diffable, mergeable), with a binary form generated
    for builds. *Recommendation: text in projects, binary in builds.*
+2. **Voxel terrain.** The editor concept shows voxel terrain: chunked worlds in `.vxw` files, a Voxel Brush that
+   adds, carves, paints and smooths, greedy meshing with LODs, and per-chunk colliders. M8 plans layered heightmap
+   terrain. Does voxel terrain replace it, sit beside it (heightmap for open land, voxels for caves and
+   destruction), or come in addition as its own system?

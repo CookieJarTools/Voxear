@@ -1,6 +1,8 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using Voxear.Interop;
+using Voxear.Scripting;
 
 namespace Voxear
 {
@@ -43,6 +45,50 @@ namespace Voxear
 		}
 
 		internal ulong Id { get; }
+
+		/// <summary>
+		/// Destroys this Obj and everything under it at the end of the frame, after their behaviours' OnDisable and
+		/// OnDestroy, like Destroy(gameObject). They stop rendering straight away.
+		/// </summary>
+		public void Destroy()
+		{
+			if (IsValid)
+			{
+				Native.DestroyObj(Id);
+			}
+		}
+
+		/// <summary>Attaches a new behaviour and runs its Awake and OnEnable before returning, like AddComponent.</summary>
+		public T AddBehaviour<T>() where T : Behaviour
+		{
+			var handle = Native.AddBehaviour(Id, typeof(T).FullName!);
+			if (handle < 0)
+			{
+				throw new InvalidOperationException($"Could not add {typeof(T).Name} to {this}.");
+			}
+
+			Activation.Run(new[] { (uint)handle });
+			return (T)BehaviourTable.Get((uint)handle)!;
+		}
+
+		/// <summary>The first behaviour on this Obj that is a T, or null. Like GetComponent, it finds subclasses too.</summary>
+		public T? GetBehaviour<T>() where T : Behaviour
+		{
+			foreach (var handle in Native.Behaviours(Id))
+			{
+				if (BehaviourTable.Get(handle) is T found)
+				{
+					return found;
+				}
+			}
+			return null;
+		}
+
+		public bool TryGetBehaviour<T>([NotNullWhen(true)] out T? behaviour) where T : Behaviour
+		{
+			behaviour = GetBehaviour<T>();
+			return behaviour != null;
+		}
 
 		public static bool operator ==(Obj left, Obj right)
 		{

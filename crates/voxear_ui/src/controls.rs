@@ -30,7 +30,26 @@ use crate::{
 pub(crate) enum Control {
     TextField(Box<Editing>),
     Slider(Slider),
-    Foldout { arrow: taffy::NodeId, content: taffy::NodeId, header: taffy::NodeId },
+    Foldout {
+        arrow: taffy::NodeId,
+        content: taffy::NodeId,
+        header: taffy::NodeId,
+    },
+    Split(crate::panes::Split),
+    /// A split view's divider, naming the split view.
+    Divider(taffy::NodeId),
+    Tabs(crate::panes::Tabs),
+    /// A tab's button: its tabs, and which tab it is.
+    Tab {
+        tabs: taffy::NodeId,
+        index: usize,
+    },
+    Dropdown(crate::panes::Dropdown),
+    /// One choice in an open dropdown's popup.
+    Option {
+        dropdown: taffy::NodeId,
+        index: usize,
+    },
 }
 
 /// A text field's editor and how its text sits in the field.
@@ -435,6 +454,7 @@ impl Ui {
                 self.edit(node, |d| d.extend_selection_to_point(x, y));
             }
             Some(Kind::Slider) => self.slide_to(node, point.0),
+            Some(Kind::SplitView) => self.drag_divider(node, point),
             _ => {}
         }
     }

@@ -14,7 +14,10 @@
 //! Elements are `Panel`, `ScrollView`, `ListView`, `TreeView`, `Label`,
 //! `Button`, `TextField` (`placeholder`, `multiline`, `value` or content),
 //! `Toggle` (`value`), `Slider` (`min`, `max`, `value`, `step`) and `Foldout`
-//! (`text`, `open`, children as its content), each taking `name`, `class`
+//! (`text`, `open`, children as its content), `SplitView` (`direction`,
+//! `size`, `min`, and two elements for its panes), `Tabs` (of `Tab`s with
+//! `text`, and `selected`) and `Dropdown` (of `Option`s, and `value`), each
+//! taking `name`, `class`
 //! (several, separated by spaces) and `style` (declarations that win over
 //! sheets). A label's or button's text is its content, or its `text`
 //! attribute. A list or tree view takes `item-height`, and gets its rows
@@ -78,8 +81,22 @@ impl Ui {
         Ok(container)
     }
 
+    /// Builds one element and what is in it.
+    fn build_one(&mut self, parent: NodeId, xml: Node, builder: &mut Builder) -> Result<(), UiError> {
+        self.build_nodes(parent, std::iter::once(xml), builder)
+    }
+
     fn build_children(&mut self, parent: NodeId, xml: Node, builder: &mut Builder) -> Result<(), UiError> {
-        for child in xml.children() {
+        self.build_nodes(parent, xml.children(), builder)
+    }
+
+    fn build_nodes<'a, 'input: 'a>(
+        &mut self,
+        parent: NodeId,
+        nodes: impl Iterator<Item = Node<'a, 'input>>,
+        builder: &mut Builder,
+    ) -> Result<(), UiError> {
+        for child in nodes {
             if child.is_text() {
                 if child.text().is_some_and(|t| !t.trim().is_empty()) {
                     builder
@@ -146,14 +163,8 @@ impl Ui {
                     self.attributes(node, child, &["name", "class", "style", "text", "value"], builder);
                 }
                 "Slider" => {
-                    let number = |name: &str, default: f32| match child.attribute(name) {
-                        None => Ok(default),
-                        Some(text) => {
-                            text.trim().parse::<f32>().map_err(|_| builder.error(child, format!("{name} is a number")))
-                        }
-                    };
-                    let (min, max) = (number("min", 0.0)?, number("max", 1.0)?);
-                    let (value, step) = (number("value", min)?, number("step", 0.0)?);
+                    let (min, max) = (number(child, "min", 0.0, builder)?, number(child, "max", 1.0, builder)?);
+                    let (value, step) = (number(child, "value", min, builder)?, number(child, "step", 0.0, builder)?);
                     let node = self.slider(parent, min, max, min);
                     self.set_slider_step(node, step);
                     self.set_slider_value(node, value);
@@ -167,6 +178,45 @@ impl Ui {
                     let content = self.foldout_content(node).expect("a foldout has content");
                     self.build_children(content, child, builder)?;
                 }
+                "SplitView" => {
+                    let row = child.attribute("direction") != Some("column");
+                    let size = number(child, "size", 240.0, builder)?;
+                    let node = self.split_view(parent, row, size);
+                    self.set_split_min(node, number(child, "min", 40.0, builder)?);
+                    self.attributes(node, child, &["name", "class", "style", "direction", "size", "min"], builder);
+                    let panes = self.split_panes(node).expect("a split view has panes");
+                    let elements: Vec<Node> = child.children().filter(Node::is_element).collect();
+                    let [first, second] = elements[..] else {
+                        return Err(
+                            builder.error(child, format!("a SplitView holds two elements, not {}", elements.len()))
+                        );
+                    };
+                    self.build_one(panes.0, first, builder)?;
+                    self.build_one(panes.1, second, builder)?;
+                }
+                "Tabs" => {
+                    let node = self.tabs(parent);
+                    self.attributes(node, child, &["name", "class", "style", "selected"], builder);
+                    for tab in child.children().filter(Node::is_element) {
+                        if tab.tag_name().name() != "Tab" {
+                            return Err(builder.error(tab, "Tabs hold Tab elements"));
+                        }
+                        let page = self.add_tab(node, tab.attribute("text").unwrap_or_default());
+                        self.attributes(page, tab, &["name", "class", "style", "text"], builder);
+                        self.build_children(page, tab, builder)?;
+                    }
+                    self.set_selected_tab(node, number(child, "selected", 0.0, builder)? as usize);
+                }
+                "Dropdown" => {
+                    let options: Vec<String> = child
+                        .children()
+                        .filter(|n| n.is_element() && n.tag_name().name() == "Option")
+                        .map(|n| n.children().filter_map(|t| t.text()).collect::<String>().trim().to_string())
+                        .collect();
+                    let options: Vec<&str> = options.iter().map(String::as_str).collect();
+                    let node = self.dropdown(parent, &options, number(child, "value", 0.0, builder)? as usize);
+                    self.attributes(node, child, &["name", "class", "style", "value"], builder);
+                }
                 tag @ ("Label" | "Button") => {
                     if let Some(inner) = child.children().find(Node::is_element) {
                         return Err(builder.error(inner, format!("a {tag} holds only text")));
@@ -179,7 +229,8 @@ impl Ui {
                     self.attributes(node, child, &["name", "class", "style", "text"], builder);
                 }
                 other => {
-                    let known = "Panel, ScrollView, ListView, TreeView, Label, Button, TextField, Toggle, Slider, Foldout or Style";
+                    let known = "Panel, ScrollView, ListView, TreeView, SplitView, Tabs, Label, Button, TextField, \
+                                 Toggle, Slider, Foldout, Dropdown or Style";
                     return Err(builder.error(child, format!("unknown element <{other}>; expected {known}")));
                 }
             }
@@ -219,5 +270,16 @@ fn flag(xml: Node, name: &str, builder: &Builder) -> Result<bool, UiError> {
         None | Some("false") => Ok(false),
         Some("true") => Ok(true),
         Some(other) => Err(builder.error(xml, format!("{name} is true or false, not '{other}'"))),
+    }
+}
+
+/// A number attribute, or `default` when absent.
+fn number(xml: Node, name: &str, default: f32, builder: &Builder) -> Result<f32, UiError> {
+    match xml.attribute(name) {
+        None => Ok(default),
+        Some(text) => {
+            let text = text.trim().trim_end_matches("px");
+            text.parse().map_err(|_| builder.error(xml, format!("{name} is a number, not '{text}'")))
+        }
     }
 }

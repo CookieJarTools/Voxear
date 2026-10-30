@@ -806,7 +806,7 @@ variants inherit from a parent and override only what differs.
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
-## UI (Voxear UI) *(implemented: tree, layout, text, drawing, markup, style sheets, pointer and keyboard, scroll/list/tree views, input controls, default theme; transitions and C# planned)*
+## UI (Voxear UI) *(implemented: tree, layout incl. grid, text, drawing, markup, style sheets, transitions, pointer and keyboard, scroll/list/tree views, input controls, split views, tabs, dropdowns, default theme; C# planned)*
 
 **Recommendation from research.** Build our own retained-mode UI on the Linebender and Servo crates, rendered by our
 own Vulkan code.
@@ -837,8 +837,9 @@ What we write is the cascade, tokens, transitions, widgets, the renderer, and th
 
 **What exists now** (`voxear_ui`, and the UI pass in `voxear_render`):
 - A retained tree of elements, laid out by **taffy**, a layout engine implementing CSS flexbox, grid and block
-  layout (Bevy's UI and Dioxus use it too). Flexbox is exposed today, and grid comes with the inspector's
-  two-column rows. Text joins the layout through a measure callback: parley shapes it at the width offered, so
+  layout (Bevy's UI and Dioxus use it too). Flexbox and grid are both exposed: `display: grid` with
+  `grid-template-columns: 120px 1fr`, `repeat()`, `minmax()`, `grid-column: 1 / span 2` and the rest, which taffy
+  parses itself, so the syntax is exactly CSS's. The inspector's label and field rows are a two-column grid. Text joins the layout through a measure callback: parley shapes it at the width offered, so
   wrapping text gets the right height. taffy caches layouts, so only what changed is laid out again.
 - Layout is in logical pixels; text is shaped at the display scale, so hinting and line breaks match the pixels
   it lands on. Every element is positioned (`position: relative`), so `position: absolute` places a child in its
@@ -954,15 +955,30 @@ every part:
 - `voxear_engine::ui_input::handle` turns every winit event into the UI's calls, and returns whether the UI used
   it, so the game leaves it alone.
 
+**Split views, tabs and dropdowns** *(implemented)*, which docking and the editor's panels are made from:
+- **SplitView**: two panes either side of a divider the pointer drags. The first pane keeps its size and the
+  second takes the rest, each kept above a minimum, as in Unity's TwoPaneSplitView.
+- **Tabs**: a row of tab buttons over pages, showing the selected one (`:checked` on its tab).
+- **Dropdown**: opens its options in a **popup layer** that is always drawn above everything and takes the
+  dropdown's text style. A choice, Escape or a press anywhere else closes it, and that press goes no further.
+  The arrow keys change the choice while it is focused.
+
+**Transitions** *(implemented)*: `transition: background-color 120ms ease-out, opacity 0.2s` eases colours and
+opacity when the cascade changes them, as hover, focus and selection do. Easing follows CSS's curves (`linear`,
+`ease`, `ease-in`, `ease-out`, `ease-in-out`), colours blend in linear premultiplied space, and nothing animates
+the first time an element is styled. Transitions run on the UI's clock, which `ui.advance(seconds)` moves each
+frame; until it is first called, styles change at once, so a caller without a clock never sees a colour stuck
+mid-fade.
+
 **The default theme** (`crates/voxear_ui/theme/Default.vss`) is on every `Ui`'s root: the editor concept's
-near-black surfaces, one periwinkle accent and compact rows, for buttons, fields, toggles, sliders, foldouts and
-list rows. A sheet of your own overrides any of it, and redefining its `--vx-*` variables is the quickest way to
+near-black surfaces, one periwinkle accent and compact rows, for buttons, fields, toggles, sliders, foldouts,
+list rows, split dividers, tabs and dropdowns, with 120 ms ease-out transitions on what the pointer touches. A sheet of your own overrides any of it, and redefining its `--vx-*` variables is the quickest way to
 retheme. `Ui::bare()` starts without it.
 
 **Still to come.**
-- Transitions and animations.
-- Dropdowns, tabs and split views.
-- Grid layout properties.
+- Keyframe animations, beyond transitions.
+- Docking: dragging tabs between split panes, which the editor's layout is built from.
+- The C# API, so game UI and editor extensions are written in C#.
 - Data binding to C#, using source generators instead of reflection.
 - A live-reloading UI builder in the editor.
 

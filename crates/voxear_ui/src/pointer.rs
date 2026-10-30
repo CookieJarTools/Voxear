@@ -81,6 +81,15 @@ impl Ui {
             return true;
         }
         let path = self.hit_path();
+        if pressed && self.press_popup(&path) {
+            return true;
+        }
+        if pressed
+            && let Some(point) = self.pointer.position
+            && self.press_divider(&path, point)
+        {
+            return true;
+        }
         if pressed {
             self.set_states(&path, States::ACTIVE, true);
             self.pointer.pressed = path.clone();
@@ -97,6 +106,7 @@ impl Ui {
                 self.pointer.clicks.push(target);
                 self.row_clicked(target);
                 self.click_controls(target);
+                self.click_panes(target);
             }
         }
         !path.is_empty()

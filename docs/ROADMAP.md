@@ -178,14 +178,16 @@ Done so far:
 - **Input controls and the keyboard:** TextField (on parley's editor: selection, word movement, clipboard, input
   methods), Toggle, Slider and Foldout, keyboard focus with Tab order, `text-align`, and a default theme in the
   editor concept's look. Window events reach the UI first through `ui_input`, which wraps the system clipboard.
+- **Layout and motion:** CSS grid through taffy's own parser, transitions with CSS's easing curves, and
+  SplitView, Tabs and Dropdown (with a popup layer above everything).
 - **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`,
   written as `StatsOverlay.vui` and `.vss`. Clicking its header folds it.
 
 Still to do in M3:
 - UI core:
-  - transitions
-  - dropdowns, tabs and split views
-  - grid layout properties
+  - docking: tabs dragged between split panes
+  - keyframe animations
+  - the C# UI API
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.

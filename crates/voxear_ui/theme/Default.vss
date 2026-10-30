@@ -14,6 +14,7 @@
     --vx-accent: #8b93ff;
     --vx-on-accent: #0e0f12;
     --vx-selected: #2b2f55;
+    --vx-fade: 120ms ease-out;
 }
 
 Button {
@@ -23,6 +24,7 @@ Button {
     border: 1px solid var(--vx-edge);
     color: var(--vx-text);
     text-align: center;
+    transition: background-color var(--vx-fade), border-color var(--vx-fade), color var(--vx-fade);
 }
 
 Button:hover {
@@ -49,6 +51,7 @@ TextField {
     background-color: var(--vx-field);
     border: 1px solid var(--vx-edge);
     color: var(--vx-text);
+    transition: border-color var(--vx-fade);
 }
 
 TextField:hover {
@@ -150,6 +153,7 @@ Foldout:focus .foldout-title {
 .list-row {
     padding: 0px 8px;
     border-radius: 6px;
+    transition: background-color var(--vx-fade);
 }
 
 .list-row:hover {
@@ -163,4 +167,90 @@ Foldout:focus .foldout-title {
 
 .tree-arrow {
     color: var(--vx-muted);
+}
+
+.split-divider {
+    background-color: var(--vx-edge);
+    transition: background-color var(--vx-fade);
+}
+
+.split-row > .split-divider {
+    width: 4px;
+}
+
+.split-column > .split-divider {
+    height: 4px;
+}
+
+.split-divider:hover, .split-divider:active {
+    background-color: var(--vx-accent);
+}
+
+.tab-bar {
+    gap: 2px;
+    padding: 0px 0px 6px 0px;
+}
+
+.tab {
+    padding: 4px 10px;
+    border: 0px transparent;
+    background-color: transparent;
+    color: var(--vx-muted);
+}
+
+.tab:hover {
+    background-color: var(--vx-surface);
+    color: var(--vx-text);
+}
+
+.tab:checked {
+    background-color: var(--vx-surface-hover);
+    color: var(--vx-text);
+}
+
+Dropdown {
+    padding: 4px 8px;
+    min-height: 26px;
+    gap: 6px;
+    border-radius: 6px;
+    background-color: var(--vx-surface);
+    border: 1px solid var(--vx-edge);
+    color: var(--vx-text);
+    transition: background-color var(--vx-fade), border-color var(--vx-fade);
+}
+
+Dropdown:hover {
+    border-color: var(--vx-edge-hover);
+}
+
+Dropdown:focus {
+    border-color: var(--vx-accent);
+}
+
+.dropdown-arrow {
+    color: var(--vx-muted);
+}
+
+.dropdown-popup {
+    padding: 4px;
+    max-height: 240px;
+    overflow: auto;
+    border-radius: 8px;
+    background-color: var(--vx-surface);
+    border: 1px solid var(--vx-edge-hover);
+    color: var(--vx-text);
+}
+
+.dropdown-option {
+    padding: 4px 8px;
+    border-radius: 5px;
+    transition: background-color var(--vx-fade);
+}
+
+.dropdown-option:hover {
+    background-color: var(--vx-surface-hover);
+}
+
+.dropdown-option:checked {
+    color: var(--vx-accent);
 }

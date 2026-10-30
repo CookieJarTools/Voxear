@@ -64,6 +64,9 @@ pub(crate) struct Input {
     pub clipboard: Box<dyn Clipboard>,
     /// Seconds since the UI was made, as [`Ui::advance`] reports them.
     pub time: f32,
+    /// Whether anything calls [`Ui::advance`]. Without a clock, transitions
+    /// could never finish, so styles change at once instead.
+    pub clock: bool,
     /// When the caret last moved, so it shows straight away after.
     pub blink_from: f32,
     /// Controls whose value the user changed since the last frame.
@@ -82,6 +85,7 @@ impl Default for Input {
             focused: None,
             clipboard: Box::new(LocalClipboard::default()),
             time: 0.0,
+            clock: false,
             blink_from: 0.0,
             changed: Vec::new(),
             submitted: Vec::new(),
@@ -92,10 +96,12 @@ impl Default for Input {
 }
 
 impl Ui {
-    /// Moves the UI's clock on by a frame's time, for the caret's blink and
-    /// double clicks.
+    /// Moves the UI's clock on by a frame's time, for transitions, the
+    /// caret's blink and double clicks. Call it once a frame; until it is
+    /// first called, styles change at once rather than transition.
     pub fn advance(&mut self, seconds: f32) {
         self.input.time += seconds;
+        self.input.clock = true;
     }
 
     /// Where copied text goes and pasted text comes from.
@@ -144,6 +150,10 @@ impl Ui {
     /// A key went down, with the modifiers last set. Returns whether the UI
     /// used it, so the game can leave it alone.
     pub fn key_down(&mut self, key: Key) -> bool {
+        if key == Key::Escape && self.open_popup.is_some() {
+            self.close_popup();
+            return true;
+        }
         if key == Key::Tab {
             return self.move_focus(!self.modifiers.shift);
         }
@@ -163,6 +173,7 @@ impl Ui {
                 true
             }
             Some(Kind::Slider) => self.slider_key(focused, key),
+            Some(Kind::Dropdown) => self.dropdown_key(focused, key),
             _ if key == Key::Escape => {
                 self.blur();
                 true
@@ -233,8 +244,10 @@ impl Ui {
     /// is disabled.
     pub(crate) fn focusable(&self, node: taffy::NodeId) -> bool {
         let Some(element) = self.tree.get_node_context(node) else { return false };
-        let control =
-            matches!(element.kind, Kind::TextField | Kind::Button | Kind::Toggle | Kind::Slider | Kind::Foldout);
+        let control = matches!(
+            element.kind,
+            Kind::TextField | Kind::Button | Kind::Toggle | Kind::Slider | Kind::Foldout | Kind::Dropdown
+        );
         let mut at = Some(node);
         while let Some(current) = at {
             let Some(e) = self.tree.get_node_context(current) else { return false };

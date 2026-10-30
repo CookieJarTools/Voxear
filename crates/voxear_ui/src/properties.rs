@@ -1,10 +1,14 @@
 //! The properties a style sheet can set, with CSS's names and values.
 //!
-//! Layout: `display`, `position`, `left`/`top`/`right`/`bottom`, `width`,
+//! Layout: `display` (`flex`, `grid`, `block`, `none`), `position`, `left`/`top`/`right`/`bottom`, `width`,
 //! `height` and their `min-`/`max-` forms, `margin`, `padding`, `gap`,
 //! `flex`, `flex-direction`, `flex-grow`, `flex-shrink`, `flex-basis`,
 //! `flex-wrap`, `align-items`, `align-self`, `align-content` and
-//! `justify-content`. Look: `background-color`, `border`, `border-width`,
+//! `justify-content`. Grid: `grid-template-columns`, `grid-template-rows`,
+//! `grid-auto-columns`, `grid-auto-rows`, `grid-auto-flow`, `grid-column`
+//! and `grid-row`, in CSS's syntax (`120px 1fr`, `repeat(3, 40px)`,
+//! `minmax(...)`, `span 2`, `1 / 3`), read by taffy itself. Motion:
+//! `transition` (`background-color 150ms ease-out, opacity 0.1s`). Look: `background-color`, `border`, `border-width`,
 //! `border-color`, `border-radius`, `opacity`, `pointer-events`, `overflow`
 //! (`visible`, `hidden`, or `scroll`/`auto`), `scrollbar-color`, and for
 //! text fields `selection-color` and `caret-color`. Text,
@@ -23,7 +27,9 @@ use taffy::{
     Position, Rect, Size,
 };
 
-use crate::{Color, Family, Overflow, Style, TextAlign, TextStyle};
+use taffy::{GridAutoTracks, GridPlacement, GridTemplateComponent, GridTemplateTracks, Line};
+
+use crate::{Animated, Color, Easing, Family, Overflow, Style, TextAlign, TextStyle, Transition};
 
 /// Applies one declaration, after replacing its variables. Errors say what
 /// was wrong, for the caller to report with the declaration's place.
@@ -91,7 +97,25 @@ type Parsed<T> = Result<T, String>;
 fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) -> Parsed<bool> {
     let layout = &mut style.layout;
     match name {
-        "display" => layout.display = keyword(input, &[("flex", Display::Flex), ("none", Display::None)])?,
+        "display" => {
+            let displays =
+                [("flex", Display::Flex), ("grid", Display::Grid), ("block", Display::Block), ("none", Display::None)];
+            layout.display = keyword(input, &displays)?;
+        }
+        "grid-template-columns" | "grid-template-rows" => {
+            let tracks: GridTemplateTracks<String, GridTemplateComponent<String>> = taffy_value(input)?;
+            if name == "grid-template-columns" {
+                (layout.grid_template_columns, layout.grid_template_column_names) = (tracks.tracks, tracks.line_names);
+            } else {
+                (layout.grid_template_rows, layout.grid_template_row_names) = (tracks.tracks, tracks.line_names);
+            }
+        }
+        "grid-auto-columns" => layout.grid_auto_columns = taffy_value::<GridAutoTracks>(input)?.0,
+        "grid-auto-rows" => layout.grid_auto_rows = taffy_value::<GridAutoTracks>(input)?.0,
+        "grid-auto-flow" => layout.grid_auto_flow = taffy_value(input)?,
+        "grid-column" => layout.grid_column = grid_line(input)?,
+        "grid-row" => layout.grid_row = grid_line(input)?,
+        "transition" => style.transitions = transitions(input)?,
         "position" => {
             let positions =
                 [("relative", Position::Relative), ("absolute", Position::Absolute), ("static", Position::Static)];
@@ -222,6 +246,72 @@ const ALIGN_CONTENT: &[(&str, AlignContent)] = &[
     ("space-around", AlignContent::SPACE_AROUND),
     ("space-evenly", AlignContent::SPACE_EVENLY),
 ];
+
+/// The rest of the value, read by taffy's own CSS parser, which knows its
+/// grid syntax best.
+fn taffy_value<T: std::str::FromStr>(input: &mut Parser) -> Parsed<T> {
+    let start = input.position();
+    while input.next().is_ok() {}
+    let text = input.slice_from(start).trim().to_string();
+    text.parse().map_err(|_| format!("'{text}' is not a value taffy can lay out"))
+}
+
+/// `grid-column` and `grid-row`: a start, then optionally `/` and an end.
+fn grid_line(input: &mut Parser) -> Parsed<Line<GridPlacement<String>>> {
+    let start = input.position();
+    while input.next().is_ok() {}
+    let text = input.slice_from(start).to_string();
+    let parse = |part: &str| {
+        part.trim().parse::<GridPlacement<String>>().map_err(|_| format!("'{}' is not a grid line", part.trim()))
+    };
+    Ok(match text.split_once('/') {
+        Some((start, end)) => Line { start: parse(start)?, end: parse(end)? },
+        None => Line { start: parse(&text)?, end: GridPlacement::Auto },
+    })
+}
+
+/// `none`, or comma-separated `property duration [easing] [delay]`.
+fn transitions(input: &mut Parser) -> Parsed<Vec<Transition>> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Ok(Vec::new());
+    }
+    let parsed = input.parse_comma_separated(|input| {
+        let properties = [
+            ("all", Animated::All),
+            ("background-color", Animated::Background),
+            ("border-color", Animated::BorderColor),
+            ("color", Animated::Color),
+            ("opacity", Animated::Opacity),
+        ];
+        let property = keyword(input, &properties).map_err(|e| input.new_custom_error::<_, String>(e))?;
+        let duration = seconds(input).map_err(|e| input.new_custom_error::<_, String>(e))?;
+        let easings = [
+            ("linear", Easing::Linear),
+            ("ease", Easing::Ease),
+            ("ease-in", Easing::EaseIn),
+            ("ease-out", Easing::EaseOut),
+            ("ease-in-out", Easing::EaseInOut),
+        ];
+        let easing = input
+            .try_parse(|i| keyword(i, &easings).map_err(|_| i.new_error_for_next_token::<String>()))
+            .unwrap_or_default();
+        let delay = input.try_parse(|i| seconds(i).map_err(|_| i.new_error_for_next_token::<String>())).unwrap_or(0.0);
+        Ok(Transition { property, duration, delay, easing })
+    });
+    parsed.map_err(|e: cssparser::ParseError<String>| match e.kind {
+        cssparser::ParseErrorKind::Custom(message) => message,
+        _ => "expected a property, a time and an easing".to_string(),
+    })
+}
+
+/// A time in `s` or `ms`, as seconds.
+fn seconds(input: &mut Parser) -> Parsed<f32> {
+    match input.next().map_err(|_| "expected a time".to_string())? {
+        Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("ms") => Ok(value / 1000.0),
+        Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("s") => Ok(*value),
+        other => Err(format!("expected a time in s or ms, not {other:?}")),
+    }
+}
 
 /// A border is drawn and also insets the content, as in CSS.
 fn border(style: &mut Style, width: f32, color: Option<Color>) {
@@ -456,9 +546,32 @@ mod tests {
     }
 
     #[test]
+    fn grids_and_transitions_read_as_in_css() {
+        let (style, _) = applied("grid-template-columns", "120px 1fr repeat(2, minmax(40px, auto))").unwrap();
+        assert_eq!(style.layout.grid_template_columns.len(), 3, "two tracks and a repeat");
+        let (style, _) = applied("grid-column", "1 / span 2").unwrap();
+        assert_eq!(style.layout.grid_column.end, GridPlacement::Span(2));
+        let (style, _) = applied("display", "grid").unwrap();
+        assert_eq!(style.layout.display, Display::Grid);
+        let (style, _) = applied("transition", "background-color 150ms ease-out, opacity 0.2s linear 50ms").unwrap();
+        assert_eq!(
+            style.transitions,
+            [
+                Transition { property: Animated::Background, duration: 0.15, delay: 0.0, easing: Easing::EaseOut },
+                Transition { property: Animated::Opacity, duration: 0.2, delay: 0.05, easing: Easing::Linear },
+            ]
+        );
+        assert!(applied("transition", "none").unwrap().0.transitions.is_empty());
+        assert_eq!((Easing::EaseOut.at(0.0), Easing::EaseOut.at(1.0)), (0.0, 1.0));
+        assert!(Easing::EaseOut.at(0.5) > 0.5 && Easing::EaseIn.at(0.5) < 0.5, "out starts fast, in starts slow");
+    }
+
+    #[test]
     fn mistakes_say_what_was_wrong() {
         assert_eq!(applied("colour", "red").unwrap_err(), "unknown property 'colour'");
-        assert!(applied("display", "grid").unwrap_err().contains("not one of flex, none"));
+        assert!(applied("display", "table").unwrap_err().contains("not one of flex, grid, block, none"));
+        assert!(applied("grid-template-columns", "120px banana").unwrap_err().contains("not a value taffy"));
+        assert!(applied("transition", "opacity fast").unwrap_err().contains("time"));
         assert!(applied("width", "12em").unwrap_err().contains("px or %"));
         assert!(applied("color", "var(--missing)").unwrap_err().contains("--missing is not defined"));
         assert_eq!(applied("color", "var(--missing, #fff)").unwrap().1.color, Color::WHITE);

@@ -1,0 +1,189 @@
+//! Grid layout, transitions, split views, tabs and dropdowns, without a GPU.
+
+use voxear_ui::{Color, Key, NodeId, Quad, Style, StyleSheet, TextStyle, Ui};
+
+const WIDTH: u32 = 800;
+const HEIGHT: u32 = 600;
+
+fn click(ui: &mut Ui, node: NodeId) {
+    let [x, y, w, h] = ui.rect(node);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_button(true);
+    ui.pointer_button(false);
+}
+
+fn load(ui: &mut Ui, markup: &str) -> NodeId {
+    let root = ui.root();
+    let document = ui.load_markup(root, "Test.vui", markup, &mut |_| Err("no files".into())).unwrap();
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(ui.take_warnings().is_empty());
+    document
+}
+
+#[test]
+fn grids_place_children_in_tracks() {
+    let mut ui = Ui::new();
+    let document = load(
+        &mut ui,
+        r#"<vui>
+            <Panel name="grid" style="display: grid; grid-template-columns: 100px 1fr; gap: 10px; width: 400px">
+                <Label name="a">Name</Label><TextField name="b" />
+                <Label name="c">Speed</Label><Slider name="d" />
+                <Label name="wide" style="grid-column: 1 / span 2">All the way across</Label>
+            </Panel>
+        </vui>"#,
+    );
+    let rect = |name: &str| ui.rect(ui.find(document, name).unwrap());
+    assert_eq!((rect("a")[0], rect("b")[0]), (0.0, 110.0), "a 100px column, a gap, then the rest");
+    assert_eq!(rect("b")[2], 290.0, "1fr takes what is left of 400");
+    assert_eq!(rect("c")[0], 0.0, "the third child starts the second row");
+    assert!(rect("c")[1] > rect("a")[1]);
+    assert_eq!(rect("wide")[2], 400.0, "spanning both columns");
+}
+
+#[test]
+fn transitions_ease_between_styles_but_not_on_creation() {
+    let mut ui = Ui::bare();
+    ui.advance(0.0);
+    let root = ui.root();
+    let sheet = ".box { background-color: #000000; transition: background-color 100ms linear; } .box.lit { background-color: #ffffff; }";
+    ui.add_sheet(root, StyleSheet::parse("Fade.vss", sheet));
+    let node = ui.panel(root, Style::default().at(0.0, 0.0).width(10.0).height(10.0));
+    ui.add_class(node, "box");
+    let red = |ui: &mut Ui| ui.frame(WIDTH, HEIGHT, 1.0).quads.iter().find(|q| q.kind == Quad::SHAPE).unwrap().color[0];
+    assert_eq!(red(&mut ui), 0.0, "new elements appear as they are");
+    assert!(!ui.is_animating());
+
+    ui.add_class(node, "lit");
+    assert_eq!(red(&mut ui), 0.0, "the change starts from what was showing");
+    assert!(ui.is_animating());
+    ui.advance(0.05);
+    let half = red(&mut ui);
+    assert!((half - 0.5).abs() < 0.02, "halfway in linear light, got {half}");
+    ui.advance(0.06);
+    assert_eq!(red(&mut ui), 1.0);
+    assert!(!ui.is_animating(), "finished animations are dropped");
+    assert_eq!(ui.style(node).unwrap().background, Some(Color::WHITE));
+
+    let mut still = Ui::bare();
+    let root = still.root();
+    still.add_sheet(root, StyleSheet::parse("Fade.vss", sheet));
+    let node = still.panel(root, Style::default().at(0.0, 0.0).width(10.0).height(10.0));
+    still.add_class(node, "box");
+    still.frame(WIDTH, HEIGHT, 1.0);
+    still.add_class(node, "lit");
+    assert_eq!(red(&mut still), 1.0, "with no clock, there is no transition to wait for");
+}
+
+#[test]
+fn split_views_drag_their_divider_within_limits() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let split = ui.split_view(root, true, 200.0);
+    ui.set_style(split, {
+        let mut style = Style::row().at(0.0, 0.0).width(600.0).height(300.0);
+        style.layout.align_items = taffy::AlignItems::STRETCH;
+        style
+    });
+    ui.add_class(split, "split-row");
+    ui.set_split_min(split, 100.0);
+    let (first, second) = ui.split_panes(split).unwrap();
+    ui.label(first, "Hierarchy", TextStyle::default());
+    ui.label(second, "Scene", TextStyle::default());
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.rect(first)[2], 200.0);
+    assert_eq!(ui.rect(second)[2], 600.0 - 200.0 - 4.0, "the rest, after the divider");
+
+    let divider = ui.children(split)[1];
+    let [x, y, w, h] = ui.rect(divider);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    assert!(ui.pointer_button(true));
+    ui.pointer_move(x + w / 2.0 + 150.0, y + h / 2.0);
+    ui.pointer_button(false);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.split_size(split), 350.0);
+    assert_eq!(ui.rect(first)[2], 350.0);
+    assert!(ui.changed(split) || ui.split_size(split) == 350.0);
+
+    ui.set_split(split, 10.0);
+    assert_eq!(ui.split_size(split), 100.0, "no smaller than the minimum");
+    ui.set_split(split, 590.0);
+    assert_eq!(ui.split_size(split), 600.0 - 100.0 - 4.0, "nor so big the second pane goes under its minimum");
+}
+
+#[test]
+fn tabs_show_one_page_at_a_time() {
+    let mut ui = Ui::new();
+    let document = load(
+        &mut ui,
+        r#"<vui>
+            <Tabs name="views" selected="1" style="width: 300px; height: 200px">
+                <Tab text="Scene"><Label name="scene">Scene view</Label></Tab>
+                <Tab text="Game"><Label name="game">Game view</Label></Tab>
+            </Tabs>
+        </vui>"#,
+    );
+    let views = ui.find(document, "views").unwrap();
+    let page = |ui: &Ui, name: &str| ui.parent(ui.find(document, name).unwrap()).unwrap();
+    assert_eq!(ui.selected_tab(views), 1);
+    assert!(ui.is_visible(page(&ui, "game")) && !ui.is_visible(page(&ui, "scene")));
+
+    let bar = ui.children(views)[0];
+    let scene_tab = ui.children(bar)[0];
+    assert!(!ui.is_checked(scene_tab));
+    click(&mut ui, scene_tab);
+    assert_eq!(ui.selected_tab(views), 0);
+    assert!(ui.changed(views) && ui.is_checked(scene_tab));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(ui.is_visible(page(&ui, "scene")) && !ui.is_visible(page(&ui, "game")));
+}
+
+#[test]
+fn dropdowns_open_choose_and_close() {
+    let mut ui = Ui::new();
+    let document = load(
+        &mut ui,
+        r#"<vui>
+            <Panel style="position: absolute; left: 20px; top: 20px; width: 200px; gap: 8px">
+                <Dropdown name="shading" value="1">
+                    <Option>Lit</Option><Option>Unlit</Option><Option>Wireframe</Option>
+                </Dropdown>
+                <Button name="other">Other</Button>
+            </Panel>
+        </vui>"#,
+    );
+    let shading = ui.find(document, "shading").unwrap();
+    let other = ui.find(document, "other").unwrap();
+    assert_eq!((ui.selected_option(shading), ui.text(ui.children(shading)[0])), (1, "Unlit".to_string()));
+
+    click(&mut ui, shading);
+    assert!(ui.is_dropdown_open(shading));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let layer = *ui.children(ui.root()).last().unwrap();
+    let popup = ui.children(layer)[0];
+    assert!(ui.rect(popup)[1] > ui.rect(shading)[1], "the list opens below");
+    let options = ui.children(popup);
+    assert!(ui.is_checked(options[1]), "the current choice is marked");
+    assert!(ui.rect(other)[1] < ui.rect(options[2])[1] + 20.0, "and covers the button below it");
+    click(&mut ui, options[2]);
+    assert!(!ui.is_dropdown_open(shading));
+    assert_eq!(ui.selected_option(shading), 2);
+    assert!(ui.changed(shading));
+    assert!(!ui.clicked(other), "the option took the click, not what was under it");
+
+    click(&mut ui, shading);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let [x, y, ..] = ui.rect(other);
+    ui.pointer_move(x + 150.0, y + 200.0);
+    assert!(ui.pointer_button(true), "a press elsewhere closes it and is used up");
+    ui.pointer_button(false);
+    assert!(!ui.is_dropdown_open(shading));
+
+    ui.focus(shading);
+    ui.key_down(Key::Up);
+    assert_eq!(ui.selected_option(shading), 1, "arrows move the choice");
+    ui.key_down(Key::Enter);
+    assert!(ui.is_dropdown_open(shading));
+    assert!(ui.key_down(Key::Escape));
+    assert!(!ui.is_dropdown_open(shading));
+}

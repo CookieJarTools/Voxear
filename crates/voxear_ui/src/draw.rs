@@ -4,7 +4,7 @@ use parley::{Alignment, AlignmentOptions, FontContext, Layout, LayoutContext, Po
 use taffy::{AvailableSpace, Display, LayoutInput, LayoutOutput, Size, TaffyTree};
 
 use crate::{
-    Overflow, Quad, Style, TextAlign,
+    Animated, Overflow, Quad, Style, TextAlign, animation,
     atlas::GlyphAtlas,
     controls::Control,
     scroll::{BAR, BAR_INSET, thumb},
@@ -78,6 +78,8 @@ pub(crate) struct Draw<'a> {
     /// The focused element, and whether its caret shows this frame.
     pub focused: Option<taffy::NodeId>,
     pub caret_on: bool,
+    /// The UI's clock, for transitions.
+    pub time: f32,
 }
 
 impl Draw<'_> {
@@ -96,11 +98,21 @@ impl Draw<'_> {
         let inner = layout.size.width - inset.0 - layout.border.right - layout.padding.right;
         let outside = x1 <= clip[0] || y1 <= clip[1] || x0 >= clip[2] || y0 >= clip[3];
         let Some(element) = self.tree.get_node_context_mut(node) else { return };
-        let opacity = opacity * element.computed.opacity;
+        let mut look = Look::of(&element.computed);
+        let mut text_color = element.text_style.color.linear_premultiplied();
+        let mut own_opacity = element.computed.opacity;
+        if !element.animations.is_empty() {
+            look.background = animation::showing(element, Animated::Background, self.time);
+            look.border_color = animation::showing(element, Animated::BorderColor, self.time);
+            text_color = animation::showing(element, Animated::Color, self.time);
+            own_opacity = animation::showing(element, Animated::Opacity, self.time)[0];
+            animation::settle(element, self.time);
+        }
+        let opacity = opacity * own_opacity;
         let (overflow, scroll, scroll_max, bar) =
             (element.computed.overflow, element.scroll, element.scroll_max, element.computed.scrollbar);
         if !outside {
-            shape_quad(&element.computed, [x0, y0, x1 - x0, y1 - y0], self.scale, opacity, clip, self.quads);
+            shape_quad(&look, [x0, y0, x1 - x0, y1 - y0], self.scale, opacity, clip, self.quads);
             if let Some(Control::TextField(_)) = &element.control {
                 let inner_height = layout.size.height - inset.1 - layout.border.bottom - layout.padding.bottom;
                 let content =
@@ -115,7 +127,7 @@ impl Draw<'_> {
                 let field = Field { focused, caret: focused && self.caret_on, opacity, clip };
                 draw_field(element, origin, field, self.atlas, self.quads);
             }
-            let color = element.text_style.color.linear_premultiplied().map(|c| c * opacity);
+            let color = text_color.map(|c| c * opacity);
             if let Some(text) = &mut element.text
                 && let Some((_, shaped)) = &mut text.shaped
             {
@@ -158,8 +170,8 @@ impl Draw<'_> {
             let x = padding_box[0] + padding_box[2] - BAR - BAR_INSET;
             let [l, t] = self.snap(x, padding_box[1] + top);
             let [r, b] = self.snap(x + BAR, padding_box[1] + top + length);
-            let style = Style { background: Some(bar), radius: BAR / 2.0, ..Style::default() };
-            shape_quad(&style, [l, t, r - l, b - t], self.scale, opacity, child_clip, self.quads);
+            let look = Look { background: bar.linear_premultiplied(), radius: BAR / 2.0, ..Look::default() };
+            shape_quad(&look, [l, t, r - l, b - t], self.scale, opacity, child_clip, self.quads);
         }
     }
 
@@ -169,20 +181,40 @@ impl Draw<'_> {
     }
 }
 
-fn shape_quad(style: &Style, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
-    let border = style.border.filter(|(width, color)| *width > 0.0 && color.a > 0);
-    let background = style.background.filter(|color| color.a > 0);
-    if (background.is_none() && border.is_none()) || opacity <= 0.0 {
+/// The colours of a box as drawn this frame, linear and premultiplied:
+/// its style's, or what its transitions show.
+#[derive(Default)]
+struct Look {
+    background: [f32; 4],
+    border: f32,
+    border_color: [f32; 4],
+    radius: f32,
+}
+
+impl Look {
+    fn of(style: &Style) -> Self {
+        let (border, border_color) = style.border.map_or((0.0, [0.0; 4]), |(w, c)| (w, c.linear_premultiplied()));
+        Self {
+            background: style.background.map_or([0.0; 4], |c| c.linear_premultiplied()),
+            border,
+            border_color,
+            radius: style.radius,
+        }
+    }
+}
+
+fn shape_quad(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
+    let border = look.border > 0.0 && look.border_color[3] > 0.0;
+    if (look.background[3] <= 0.0 && !border) || opacity <= 0.0 {
         return;
     }
-    let fade = |color: crate::Color| color.linear_premultiplied().map(|c| c * opacity);
-    let (border, border_color) = border.map_or((0.0, [0.0; 4]), |(w, c)| ((w * scale).round().max(1.0), fade(c)));
+    let border = if border { (look.border * scale).round().max(1.0) } else { 0.0 };
     quads.push(Quad {
         rect,
-        color: background.map_or([0.0; 4], fade),
-        border_color,
+        color: look.background.map(|c| c * opacity),
+        border_color: look.border_color.map(|c| c * opacity),
         clip,
-        radius: style.radius * scale,
+        radius: look.radius * scale,
         border,
         kind: Quad::SHAPE,
         ..Quad::default()

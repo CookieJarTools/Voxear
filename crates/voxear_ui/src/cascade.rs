@@ -9,7 +9,7 @@ use std::{collections::HashMap, rc::Rc};
 use taffy::Display;
 
 use crate::{
-    Overflow, TextStyle, Ui, properties,
+    Overflow, TextStyle, Ui, animation, properties,
     selector::{Facts, States},
     sheet::{Declaration, StyleSheet},
 };
@@ -94,7 +94,12 @@ impl Ui {
             self.scrollers.push(node);
         }
 
+        let (now, clock) = (self.input.time, self.input.clock);
         let element = self.tree.get_node_context_mut(node).expect("every node has an element");
+        if clock {
+            animation::start(element, &style, &text, now);
+        }
+        element.styled = true;
         let layout = (element.computed.layout != style.layout).then(|| style.layout.clone());
         element.computed = style;
         element.text_style = text;

@@ -434,3 +434,61 @@ fn controls_draw_with_the_default_theme() {
     assert_eq!(at(x, y + h / 2.0)[2], 0xff, "the focused field's border is the accent");
     assert!(w > 0.0 && ui.take_warnings().is_empty());
 }
+
+/// A split view, tabs, a grid-laid inspector and an open dropdown, as the
+/// editor will use them. Set `VOXEAR_TEST_OUTPUT` to keep the image.
+#[test]
+fn panes_draw_an_editor_like_layout() {
+    use voxear_ui::Ui;
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let markup = r#"
+        <vui>
+            <SplitView name="split" size="170" style="position: absolute; left: 12px; top: 12px; right: 12px; bottom: 12px;
+                                                       font-size: 12px; color: #c8c9d0">
+                <Panel style="padding: 10px; gap: 6px; background-color: #111216; border-radius: 10px; flex-grow: 1">
+                    <Label style="font-weight: 600; color: #e8e8ec">Hierarchy</Label>
+                    <Label>Main Camera</Label>
+                    <Label>Sun</Label>
+                    <Label>Lamp</Label>
+                </Panel>
+                <Tabs selected="2" style="padding: 10px; background-color: #111216; border-radius: 10px; flex-grow: 1">
+                    <Tab text="Scene" />
+                    <Tab text="Game" />
+                    <Tab text="Inspector">
+                        <Panel style="display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center">
+                            <Label>Name</Label><TextField value="Lamp" />
+                            <Label>Shading</Label>
+                            <Dropdown name="shading" value="0"><Option>Lit</Option><Option>Unlit</Option><Option>Wireframe</Option></Dropdown>
+                            <Label>Intensity</Label><Slider min="0" max="10" value="3" />
+                            <Label>Shadows</Label><Toggle value="true">Cast</Toggle>
+                        </Panel>
+                    </Tab>
+                </Tabs>
+            </SplitView>
+        </vui>"#;
+    let document = ui.load_markup(root, "Editor.vui", markup, &mut |_| Err("no files".into())).unwrap();
+    let (width, height) = (640, 360);
+    ui.frame(width, height, 1.0);
+    let shading = ui.find(document, "shading").unwrap();
+    ui.open_dropdown(shading);
+    renderer.set_ui(&ui.frame(width, height, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("panes.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+    let split = ui.find(document, "split").unwrap();
+    let divider = ui.children(split)[1];
+    let [x, y, _, h] = ui.rect(divider);
+    let i = (((y + h / 2.0) as u32 * width + x as u32 + 1) * 4) as usize;
+    assert_eq!(pixels[i..i + 3], [0x2a, 0x2b, 0x30], "the divider between the panes");
+    assert!(ui.take_warnings().is_empty());
+}

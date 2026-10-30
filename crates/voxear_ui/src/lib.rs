@@ -17,11 +17,14 @@
 //! - **The pointer** drives `:hover` and `:active`, clicks and the wheel.
 //! - **Controls**: scroll views, list and tree views that keep elements
 //!   only for the rows on screen (see [`ListItems`] and [`TreeItems`]),
-//!   text fields, toggles, sliders and foldouts, with keyboard focus.
+//!   text fields, toggles, sliders and foldouts, with keyboard focus, and
+//!   split views, tabs and dropdowns.
+//! - **Transitions** ease colours and opacity between styles.
 //! - **A default theme** in the editor's look, which sheets can override.
 //!
 //! This is the foundation the editor and in-game UI build on.
 
+mod animation;
 mod atlas;
 mod cascade;
 mod color;
@@ -30,6 +33,7 @@ mod draw;
 mod input;
 mod list;
 pub mod markup;
+mod panes;
 mod pointer;
 pub mod properties;
 mod scroll;
@@ -44,7 +48,7 @@ pub use list::{ItemFns, ListItems, TreeItems};
 pub use markup::LoadFile;
 pub use pointer::Modifiers;
 pub use sheet::StyleSheet;
-pub use style::{Family, Overflow, Style, TextAlign, TextStyle};
+pub use style::{Animated, Easing, Family, Overflow, Style, TextAlign, TextStyle, Transition};
 pub use tree::{Kind, NodeId, Ui};
 
 /// The default theme every [`Ui`] starts with: `theme/Default.vss`.

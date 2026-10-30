@@ -42,6 +42,12 @@ pub enum Kind {
     Slider,
     /// A titled section that opens and closes.
     Foldout,
+    /// Two panes with a divider between them.
+    SplitView,
+    /// Pages chosen by a row of tabs.
+    Tabs,
+    /// A choice from a list that opens on demand.
+    Dropdown,
 }
 
 impl Kind {
@@ -57,6 +63,9 @@ impl Kind {
             Kind::Toggle => "Toggle",
             Kind::Slider => "Slider",
             Kind::Foldout => "Foldout",
+            Kind::SplitView => "SplitView",
+            Kind::Tabs => "Tabs",
+            Kind::Dropdown => "Dropdown",
         }
     }
 }
@@ -88,6 +97,10 @@ pub(crate) struct Element {
     pub row_of: Option<taffy::NodeId>,
     /// What a text field, slider or foldout keeps.
     pub control: Option<crate::controls::Control>,
+    /// Properties easing to new values.
+    pub animations: Vec<crate::animation::Animation>,
+    /// The cascade has styled it at least once, so changes from now on may animate.
+    pub styled: bool,
 }
 
 impl Element {
@@ -109,6 +122,8 @@ impl Element {
             list: None,
             row_of: None,
             control: None,
+            animations: Vec::new(),
+            styled: false,
         }
     }
 }
@@ -163,6 +178,9 @@ pub struct Ui {
     pub(crate) input: crate::input::Input,
     /// Text fields, whose layouts are refreshed before each draw.
     pub(crate) fields: Vec<taffy::NodeId>,
+    /// The layer popups open in, and the open dropdown with its popup.
+    pub(crate) popups: Option<taffy::NodeId>,
+    pub(crate) open_popup: Option<(taffy::NodeId, taffy::NodeId)>,
 }
 
 impl Default for Ui {
@@ -197,6 +215,8 @@ impl Ui {
             modifiers: Default::default(),
             input: Default::default(),
             fields: Vec::new(),
+            popups: None,
+            open_popup: None,
         }
         .with_theme()
     }
@@ -438,6 +458,12 @@ impl Ui {
 
     /// Removes an element and everything in it.
     pub fn remove(&mut self, node: NodeId) {
+        if self.open_popup.is_some_and(|(dropdown, _)| dropdown == node.0) {
+            self.close_popup();
+        }
+        if self.open_popup.is_some_and(|(_, popup)| popup == node.0) {
+            self.open_popup = None;
+        }
         for child in self.tree.children(node.0).unwrap_or_default() {
             self.remove(NodeId(child));
         }
@@ -458,6 +484,17 @@ impl Ui {
     /// An element's style as the last frame's cascade worked it out.
     pub fn style(&self, node: NodeId) -> Option<&Style> {
         self.element(node).map(|e| &e.computed)
+    }
+
+    /// Whether anything is mid-transition, so a caller that only redraws on
+    /// change knows to keep drawing.
+    pub fn is_animating(&self) -> bool {
+        self.animating(self.root)
+    }
+
+    fn animating(&self, node: taffy::NodeId) -> bool {
+        let busy = self.tree.get_node_context(node).is_some_and(|e| !e.animations.is_empty());
+        busy || self.tree.children(node).unwrap_or_default().into_iter().any(|child| self.animating(child))
     }
 
     /// The text style an element has, or passes to the text in it, as of the
@@ -517,15 +554,22 @@ impl Ui {
         }
         self.refresh_fields();
         let scale = self.viewport.2;
-        let (focused, caret_on) = (self.input.focused, self.caret_on());
+        let (focused, caret_on, time) = (self.input.focused, self.caret_on(), self.input.time);
         let mut quads = Vec::new();
         // An atlas that filled up starts again part way through, so the
         // glyphs drawn before then are drawn once more.
         for _ in 0..2 {
             quads.clear();
             self.atlas.restarted = false;
-            let mut draw =
-                Draw { tree: &mut self.tree, atlas: &mut self.atlas, scale, quads: &mut quads, focused, caret_on };
+            let mut draw = Draw {
+                tree: &mut self.tree,
+                atlas: &mut self.atlas,
+                scale,
+                quads: &mut quads,
+                focused,
+                caret_on,
+                time,
+            };
             draw.node(self.root, (0.0, 0.0), 1.0, Quad::UNCLIPPED);
             if !self.atlas.restarted {
                 break;

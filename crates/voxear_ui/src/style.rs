@@ -27,6 +27,66 @@ pub struct Style {
     pub selection: Color,
     /// A text field's caret; its text colour when not set.
     pub caret: Option<Color>,
+    /// Which changes animate rather than jump, and how.
+    pub transitions: Vec<Transition>,
+}
+
+/// A property that eases from its old value to its new one when the cascade
+/// changes it, as CSS's `transition` does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transition {
+    pub property: Animated,
+    /// In seconds.
+    pub duration: f32,
+    pub delay: f32,
+    pub easing: Easing,
+}
+
+/// The properties that can transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Animated {
+    /// Every one below.
+    All,
+    Background,
+    BorderColor,
+    Color,
+    Opacity,
+}
+
+/// How a transition moves from start to end over its time.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Easing {
+    Linear,
+    /// CSS's default: a quick start that settles.
+    #[default]
+    Ease,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+impl Easing {
+    /// Progress at time `t`, both from 0 to 1, along CSS's cubic Béziers.
+    pub fn at(self, t: f32) -> f32 {
+        if t <= 0.0 || t >= 1.0 {
+            return t.clamp(0.0, 1.0);
+        }
+        let (x1, y1, x2, y2) = match self {
+            Easing::Linear => return t,
+            Easing::Ease => (0.25, 0.1, 0.25, 1.0),
+            Easing::EaseIn => (0.42, 0.0, 1.0, 1.0),
+            Easing::EaseOut => (0.0, 0.0, 0.58, 1.0),
+            Easing::EaseInOut => (0.42, 0.0, 0.58, 1.0),
+        };
+        let bezier = |a: f32, b: f32, s: f32| 3.0 * a * s * (1.0 - s).powi(2) + 3.0 * b * s * s * (1.0 - s) + s.powi(3);
+        // Solve x(s) = t by bisection, which is plenty for a UI.
+        let (mut low, mut high) = (0.0f32, 1.0f32);
+        for _ in 0..20 {
+            let mid = (low + high) / 2.0;
+            if bezier(x1, x2, mid) < t { low = mid } else { high = mid }
+        }
+        bezier(y1, y2, (low + high) / 2.0)
+    }
 }
 
 /// What an element does with children that do not fit inside it.
@@ -57,6 +117,7 @@ impl Default for Style {
             scrollbar: Color::WHITE.with_alpha(0x40),
             selection: Color::hex(0x8b93ff).with_alpha(0x66),
             caret: None,
+            transitions: Vec::new(),
         }
     }
 }

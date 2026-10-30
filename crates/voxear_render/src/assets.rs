@@ -11,7 +11,7 @@ use voxear_rhi::{Bindless, Buffer, Gpu, Image, ImageDesc, MemoryLocation, Textur
 
 use crate::{
     gpu::{GpuMaterial, GpuMesh, GpuMeshLod, MATERIAL_NORMAL_MAP},
-    lod::build_lods,
+    lod::{Lod, build_lods},
     mesh::{MeshData, Primitive, Vertex},
 };
 
@@ -122,7 +122,12 @@ impl Assets {
 
     /// Uploads a mesh with an automatically generated LOD chain.
     pub fn add_mesh(&mut self, gpu: &Gpu, mesh: &MeshData) -> Result<MeshHandle> {
-        let lods = build_lods(mesh);
+        self.add_mesh_with_lods(gpu, mesh, &build_lods(mesh))
+    }
+
+    /// Uploads a mesh whose LOD chain was built already, such as on a
+    /// loading thread.
+    pub fn add_mesh_with_lods(&mut self, gpu: &Gpu, mesh: &MeshData, lods: &[Lod]) -> Result<MeshHandle> {
         let vertex_count = mesh.vertices.len() as u64;
         let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
         ensure!(self.vertex_count + vertex_count <= MAX_VERTICES, "out of vertex space");
@@ -146,7 +151,7 @@ impl Assets {
         };
         let mut index_offset = self.index_count;
         let mut indices = Vec::with_capacity(index_count as usize);
-        for (slot, lod) in entry.lods.iter_mut().zip(&lods) {
+        for (slot, lod) in entry.lods.iter_mut().zip(lods) {
             *slot = GpuMeshLod {
                 index_offset: index_offset as u32,
                 index_count: lod.indices.len() as u32,

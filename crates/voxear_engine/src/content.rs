@@ -5,7 +5,11 @@
 //! needs a build. Built games read the bundles `vox content build` makes,
 //! through the same calls (see [`Content::open_bundles`]).
 
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -13,7 +17,7 @@ use voxear_assets::{
     AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader,
     bundle::{BundleInfo, BundleReader, Catalog},
 };
-use voxear_render::{ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, Primitive, Renderer};
+use voxear_render::{ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, PreparedModel, Primitive, Renderer};
 
 use crate::prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, Template};
 
@@ -72,8 +76,10 @@ pub enum MaterialSource {
 }
 
 pub struct Content {
-    db: AssetDb,
+    db: Arc<AssetDb>,
     source: Source,
+    /// Asset texts a background load read ahead, by GUID.
+    texts: HashMap<AssetGuid, Arc<str>>,
     models: HashMap<AssetGuid, Vec<ImportedNode>>,
     meshes: HashMap<AssetRef, MeshHandle>,
     mesh_refs: HashMap<MeshHandle, AssetRef>,
@@ -85,8 +91,8 @@ pub struct Content {
 
 /// Where asset files are read from.
 enum Source {
-    Folder(FolderReader),
-    Bundles(BundleReader),
+    Folder(FolderReader, PathBuf),
+    Bundles(BundleReader, PathBuf, Arc<Catalog>),
 }
 
 impl Content {
@@ -100,7 +106,7 @@ impl Content {
         for path in &report.reassigned {
             tracing::warn!("{path} had the same GUID as another asset (copied with its .meta?); it has a new one");
         }
-        Ok(Self::with_source(db, Source::Folder(FolderReader::new(root))))
+        Ok(Self::with_source(db, Source::Folder(FolderReader::new(root), root.to_path_buf())))
     }
 
     /// Reads assets from built bundles in `content_dir` (see
@@ -109,13 +115,15 @@ impl Content {
     pub fn open_bundles(root: &Path, content_dir: &Path) -> Result<Self> {
         let catalog = Catalog::read(content_dir)?;
         let db = AssetDb::from_entries(root, catalog.entries()?);
-        Ok(Self::with_source(db, Source::Bundles(BundleReader::new(content_dir, &catalog))))
+        let reader = BundleReader::new(content_dir, &catalog);
+        Ok(Self::with_source(db, Source::Bundles(reader, content_dir.to_path_buf(), Arc::new(catalog))))
     }
 
     fn with_source(db: AssetDb, source: Source) -> Self {
         Self {
-            db,
+            db: Arc::new(db),
             source,
+            texts: HashMap::new(),
             models: HashMap::new(),
             meshes: HashMap::new(),
             mesh_refs: HashMap::new(),
@@ -138,24 +146,65 @@ impl Content {
     /// The bundles opened so far, when reading built content.
     pub fn opened_bundles(&self) -> Vec<&BundleInfo> {
         match &self.source {
-            Source::Bundles(reader) => reader.opened().collect(),
-            Source::Folder(_) => Vec::new(),
+            Source::Bundles(reader, ..) => reader.opened().collect(),
+            Source::Folder(..) => Vec::new(),
         }
     }
 
     fn reader(&mut self) -> &mut dyn AssetReader {
         match &mut self.source {
-            Source::Folder(reader) => reader,
-            Source::Bundles(reader) => reader,
+            Source::Folder(reader, _) => reader,
+            Source::Bundles(reader, ..) => reader,
         }
     }
 
-    /// The text of an asset of the expected kind, with its project path.
+    /// A second reader over the same content, for a loading thread.
+    pub(crate) fn worker_reader(&self) -> Box<dyn AssetReader> {
+        match &self.source {
+            Source::Folder(_, root) => Box::new(FolderReader::new(root)),
+            Source::Bundles(_, dir, catalog) => Box::new(BundleReader::new(dir, catalog)),
+        }
+    }
+
+    pub(crate) fn shared_db(&self) -> Arc<AssetDb> {
+        self.db.clone()
+    }
+
+    /// The text of an asset of the expected kind, with its project path. A
+    /// background load may have read it already.
     pub fn asset_text(&mut self, guid: AssetGuid, kind: AssetKind) -> Result<(String, String)> {
         let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
         ensure!(entry.kind == kind, "{} is not a {kind:?} asset", entry.path);
         let path = entry.path.clone();
+        if let Some(text) = self.texts.get(&guid) {
+            return Ok((text.to_string(), path));
+        }
         Ok((self.read_text(&path)?, path))
+    }
+
+    /// Assets that are loaded already, which a background load can skip.
+    pub(crate) fn loaded(&self) -> HashSet<AssetGuid> {
+        self.texts.keys().chain(self.models.keys()).chain(self.prefabs.files.keys()).copied().collect()
+    }
+
+    /// Keeps texts a background load read, so later loads need no IO.
+    pub(crate) fn adopt_texts(&mut self, texts: HashMap<AssetGuid, Arc<str>>) {
+        self.texts.extend(texts);
+    }
+
+    /// Uploads a model a background load prepared, unless it is loaded already.
+    pub(crate) fn adopt_model(
+        &mut self,
+        renderer: &mut Renderer,
+        guid: AssetGuid,
+        model: &PreparedModel,
+    ) -> Result<()> {
+        if self.models.contains_key(&guid) {
+            return Ok(());
+        }
+        let nodes = renderer.upload_model(model)?;
+        self.register_model(guid, nodes);
+        Ok(())
     }
 
     pub fn db(&self) -> &AssetDb {
@@ -174,22 +223,23 @@ impl Content {
                 bail!("{} is not a model", entry.path);
             }
             let path = entry.path.clone();
-            let reader = match &mut self.source {
-                Source::Folder(reader) => reader as &mut dyn AssetReader,
-                Source::Bundles(reader) => reader,
-            };
+            let reader = self.reader();
             let nodes = renderer.import_gltf(&path, &mut |file| reader.read(file))?;
-            for node in &nodes {
-                let mesh = AssetRef::asset(guid, Some(&node.mesh_part));
-                self.mesh_refs.insert(node.mesh, mesh.clone());
-                self.meshes.insert(mesh, node.mesh);
-                let material = AssetRef::asset(guid, node.material_part.as_deref());
-                self.material_sources.insert(node.material, MaterialSource::Asset(material.clone()));
-                self.asset_materials.insert(material, node.material);
-            }
-            self.models.insert(guid, nodes);
+            self.register_model(guid, nodes);
         }
         Ok(&self.models[&guid])
+    }
+
+    fn register_model(&mut self, guid: AssetGuid, nodes: Vec<ImportedNode>) {
+        for node in &nodes {
+            let mesh = AssetRef::asset(guid, Some(&node.mesh_part));
+            self.mesh_refs.insert(node.mesh, mesh.clone());
+            self.meshes.insert(mesh, node.mesh);
+            let material = AssetRef::asset(guid, node.material_part.as_deref());
+            self.material_sources.insert(node.material, MaterialSource::Asset(material.clone()));
+            self.asset_materials.insert(material, node.material);
+        }
+        self.models.insert(guid, nodes);
     }
 
     pub fn mesh(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<MeshHandle> {

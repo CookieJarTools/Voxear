@@ -27,5 +27,8 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<uint*, int, int> BatchHandles;
 		public delegate* unmanaged[Cdecl]<uint*, uint*, int, void> BehavioursAdopt;
 		public delegate* unmanaged[Cdecl]<ulong, Transform*, int> ObjWorldTransform;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, int> LoadAsync;
+		public delegate* unmanaged[Cdecl]<uint, LoadProgress*, int> LoadStatus;
+		public delegate* unmanaged[Cdecl]<uint, int, void> LoadAllowActivation;
 	}
 }

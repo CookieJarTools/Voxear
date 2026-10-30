@@ -42,6 +42,20 @@ namespace Voxear.Scripting
 		}
 
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static void Update()
+		{
+			try
+			{
+				Loading.Update();
+				MainThreadContext.Instance.Run();
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+			}
+		}
+
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static void Invoke(int phase, uint* handles, int count)
 		{
 			BehaviourTable.Invoke((Phase)phase, new ReadOnlySpan<uint>(handles, count));

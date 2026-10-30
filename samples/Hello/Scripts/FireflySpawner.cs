@@ -6,8 +6,9 @@ namespace Hello
 {
 	/// <summary>
 	/// Releases fireflies around the lamps it is given, or around itself without any. The common one is a Prefab field,
-	/// loaded with the scene before Awake. The rare one is a Ref&lt;Prefab&gt;, loaded the first time it is picked.
-	/// Fireflies are created at runtime, so they belong to the Night scene and go when it unloads.
+	/// loaded with the scene before Awake. The rare one is a Ref&lt;Prefab&gt; loaded in the background from Awake, and
+	/// common ones stand in until it arrives. Fireflies are created at runtime, so they belong to the Night scene and
+	/// go when it unloads.
 	/// </summary>
 	public sealed class FireflySpawner : Behaviour
 	{
@@ -18,9 +19,14 @@ namespace Hello
 		[SerializeField] private float spread = 3f;
 		[SerializeField] private float rareChance = 0.1f;
 
-		private Prefab rare;
+		private PrefabLoad? rare;
 		private float timer;
 		private int released;
+
+		protected override void Awake()
+		{
+			rare = Prefab.LoadAsync(rareFirefly.Path);
+		}
 
 		protected override void Update()
 		{
@@ -47,17 +53,8 @@ namespace Hello
 
 		private Prefab Choose()
 		{
-			if (!Random.Chance(rareChance))
-			{
-				return firefly;
-			}
-
-			if (!rare.IsValid)
-			{
-				rare = rareFirefly.Load();
-				Log.Info($"Loaded {rareFirefly.Path} the first time it was needed");
-			}
-			return rare;
+			var ready = rare != null && rare.IsDone && rare.Prefab.IsValid;
+			return ready && Random.Chance(rareChance) ? rare!.Prefab : firefly;
 		}
 	}
 }

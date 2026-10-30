@@ -15,9 +15,9 @@ use voxear_scene::{
     Registration, Request, Transform, world_matrix,
 };
 
-use crate::services::{SpawnedPrefab, with_services};
+use crate::services::{LoadProgress, SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 5;
+pub(crate) const API_VERSION: u32 = 6;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -47,6 +47,9 @@ pub(crate) struct NativeApi {
     pub batch_handles: unsafe extern "C" fn(out: *mut u32, capacity: i32) -> i32,
     pub behaviours_adopt: unsafe extern "C" fn(handles: *const u32, states: *const u32, count: i32),
     pub obj_world_transform: unsafe extern "C" fn(entity: u64, out: *mut Transform) -> i32,
+    pub load_async: unsafe extern "C" fn(level: i32, reference: *const u8, len: i32) -> i32,
+    pub load_status: unsafe extern "C" fn(id: u32, out: *mut LoadProgress) -> i32,
+    pub load_allow_activation: unsafe extern "C" fn(id: u32, allow: i32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -67,6 +70,9 @@ pub(crate) struct ManagedApi {
     pub create_behaviour: Option<CreateBehaviour>,
     pub invoke: Option<unsafe extern "C" fn(phase: i32, handles: *const u32, count: i32)>,
     pub release: Option<unsafe extern "C" fn(handles: *const u32, count: i32)>,
+    /// Once per frame, before anything else: resumes awaits whose loads
+    /// finished and runs continuations posted to the main thread.
+    pub update: Option<unsafe extern "C" fn()>,
 }
 
 #[repr(C)]
@@ -187,6 +193,36 @@ unsafe extern "C" fn behaviour_destroy(handle: u32) {
 unsafe extern "C" fn level_load(level: *const u8, len: i32) {
     let level = unsafe { utf8(level, len) }.into_owned();
     LEVEL_REQUESTS.with_borrow_mut(|r| r.push(level));
+}
+
+unsafe extern "C" fn load_async(level: i32, reference: *const u8, len: i32) -> i32 {
+    let reference = unsafe { utf8(reference, len) };
+    let what = if level != 0 { "Level.LoadAsync" } else { "Prefab.LoadAsync" };
+    match with_services(|services| services.load_async(level != 0, &reference)) {
+        Some(Ok(id)) => id as i32,
+        Some(Err(error)) => {
+            tracing::error!(target: "script", "{what}(\"{reference}\"): {error:#}");
+            -1
+        }
+        None => {
+            tracing::error!(target: "script", "{what}(\"{reference}\"): content is not available here");
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn load_status(id: u32, out: *mut LoadProgress) -> i32 {
+    match with_services(|services| services.load_status(id)).flatten() {
+        Some(status) => {
+            unsafe { out.write(status) };
+            1
+        }
+        None => 0,
+    }
+}
+
+unsafe extern "C" fn load_allow_activation(id: u32, allow: i32) {
+    with_services(|services| services.allow_activation(id, allow != 0));
 }
 
 /// The Obj's transform in the world as of now, through its parents.
@@ -398,5 +434,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         batch_handles,
         behaviours_adopt,
         obj_world_transform,
+        load_async,
+        load_status,
+        load_allow_activation,
     }
 }

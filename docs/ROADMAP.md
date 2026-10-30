@@ -122,8 +122,14 @@ Done so far:
   - Every read goes through an `AssetReader`, so `vox run --bundles` plays from built content. Hello shows each level
     opening only the bundles it needs, which meets the exit criterion.
 
+- **Async loading:**
+  - `Level.LoadAsync` with progress, `IsReady` and `AllowActivation`, and `Prefab.LoadAsync`, both awaitable.
+  - A worker thread reads files and prepares models: glTF parsing, image decoding and LOD building. The main thread
+    uploads them within a per-frame budget.
+  - A main-thread `SynchronizationContext` brings every await back to the frame. Hello switches levels with
+    `await Level.LoadAsync`.
+
 Still to do in M2:
-- Async level loading, and `Prefab.LoadAsync`.
 - Nested serializable types, and fields that reference behaviours.
 - Reference-counted bundle unloading, async IO, and freeing GPU meshes, materials and textures that nothing uses.
 - Splitting large bundles and merging tiny ones, and a per-asset build cache (with cooking).
@@ -147,6 +153,15 @@ Still to do in M2:
   - the frame debugger and the ECS inspector
   - the memory profiler with snapshots and diffs
   - debug draw and the dev console
+- **C# ECS API**, the advanced path beside Behaviours (see "ECS and the Obj model" in the architecture):
+  - C# components as `unmanaged` structs, registered by name and layout, living in the same chunk memory as Rust
+    components
+  - `SystemBase` systems placed in schedule stages, with queries over chunks that hand out `Span<T>` reads and
+    writes with no copies, plus `With`, `Without` and `Changed` filters
+  - entity commands from C#: create, destroy, and add or remove components, applied at sync points
+  - a bridge to Objs (`obj.Add<Spin>()`, `obj.Get<Spin>()`), so Behaviours and systems can mix
+  - components written in scenes and prefabs, and shown in the inspector
+  - Later: parallel jobs over chunks.
 - `vox new` with project templates and default setups, and versioned engine builds with a release manifest, which
   together are the contract the launcher needs.
 - **Build profiles and the Build window:**

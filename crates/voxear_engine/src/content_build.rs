@@ -208,6 +208,16 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
     Ok(needs)
 }
 
+/// The assets a level, scene, prefab or material file loads with it: what it
+/// names outside behaviour fields.
+pub(crate) fn direct_needs(db: &AssetDb, table: &toml::Table) -> BTreeSet<AssetGuid> {
+    let mut needs = Needs::default();
+    for (key, value) in table {
+        collect(db, key == "fields", value, &mut needs);
+    }
+    needs.direct
+}
+
 /// Every string in a file that names an asset. Those inside behaviour
 /// `fields` are named rather than direct, since a `Ref<T>` loads its asset
 /// only when asked. Strings that name nothing, such as Obj names, are

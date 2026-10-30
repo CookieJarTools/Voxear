@@ -1,4 +1,5 @@
 using Voxear.Interop;
+using Voxear.Scripting;
 
 namespace Voxear
 {
@@ -15,6 +16,21 @@ namespace Voxear
 		public static void Load(string level)
 		{
 			Native.LoadLevel(level);
+		}
+
+		/// <summary>
+		/// Loads a level in the background while the game carries on. It changes over at the end of the frame it
+		/// finishes in; pass activate false to hold it at IsReady until AllowActivation is set, for a loading screen.
+		/// Await it to continue once the new level is in.
+		/// </summary>
+		public static LevelLoad LoadAsync(string level, bool activate = true)
+		{
+			var load = new LevelLoad(Native.LoadAsync(true, level));
+			if (!activate)
+			{
+				load.AllowActivation = false;
+			}
+			return Loading.Track(load);
 		}
 	}
 }

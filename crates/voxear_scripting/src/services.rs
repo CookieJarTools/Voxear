@@ -23,6 +23,24 @@ pub trait ScriptServices {
         parent: Option<Entity>,
         placement: Option<Placement>,
     ) -> Result<SpawnedPrefab>;
+
+    /// Starts loading a level (`level` true) or a prefab in the background.
+    fn load_async(&mut self, level: bool, reference: &str) -> Result<u32>;
+
+    fn load_status(&self, id: u32) -> Option<LoadProgress>;
+
+    fn allow_activation(&mut self, id: u32, allow: bool);
+}
+
+/// A background load as scripts see it.
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct LoadProgress {
+    /// 0 loading, 1 ready and waiting for activation, 2 done, 3 failed.
+    pub state: u32,
+    pub progress: f32,
+    /// The loaded prefab once a prefab load is done, or -1.
+    pub prefab: i32,
 }
 
 /// What [`ScriptServices::spawn_prefab`] created.

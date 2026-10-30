@@ -1,16 +1,19 @@
 //! glTF 2.0 import. glTF is right-handed and Voxear is left-handed like
 //! Unity, so everything is mirrored on X at import and nothing is flipped at
 //! runtime. Files come through a callback, so a model loads the same from a
-//! project folder or from a content bundle.
+//! project folder or from a content bundle. [`prepare`] does the slow work
+//! (parsing, decoding images, building LODs) on any thread, and [`upload`]
+//! then needs only the GPU.
 
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use voxear_core::math::{Mat4, Quat, Vec3};
-use voxear_rhi::{Bindless, Gpu, TextureId};
+use voxear_rhi::{Bindless, Gpu};
 
 use crate::{
     assets::{Assets, MaterialDesc, MaterialHandle, MeshHandle, TextureSource},
+    lod::{Lod, build_lods},
     mesh::{MeshData, Vertex},
 };
 
@@ -30,22 +33,131 @@ pub struct ImportedNode {
     pub material_part: Option<String>,
 }
 
-struct Importer<'a> {
-    gpu: &'a Gpu,
-    bindless: &'a mut Bindless,
-    assets: &'a mut Assets,
-    images: Vec<gltf::image::Data>,
-    buffers: Vec<gltf::buffer::Data>,
-    textures: HashMap<(usize, bool), TextureId>,
-    materials: HashMap<Option<usize>, MaterialHandle>,
-    meshes: HashMap<(usize, usize), MeshHandle>,
-    nodes: Vec<ImportedNode>,
-}
-
 /// Reads one of a model's files by project path: the `.gltf` or `.glb`
 /// itself, or a buffer or image it names.
 pub type ReadFile<'a> = dyn FnMut(&str) -> Result<Vec<u8>> + 'a;
 
+/// A model read and processed, ready to upload: meshes with their LOD chains,
+/// decoded textures, materials and the node layout. Making one is the slow
+/// part of an import, and it needs no GPU, so it can happen on any thread.
+pub struct PreparedModel {
+    path: String,
+    meshes: Vec<(MeshData, Vec<Lod>)>,
+    textures: Vec<PreparedTexture>,
+    materials: Vec<PreparedMaterial>,
+    nodes: Vec<PreparedNode>,
+}
+
+struct PreparedTexture {
+    name: String,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    srgb: bool,
+}
+
+/// A material whose textures are indices into the model's textures until upload.
+struct PreparedMaterial {
+    desc: MaterialDesc,
+    base_color: Option<usize>,
+    metallic_roughness: Option<usize>,
+    normal: Option<usize>,
+    emissive: Option<usize>,
+}
+
+struct PreparedNode {
+    name: String,
+    position: Vec3,
+    rotation: Quat,
+    scale: Vec3,
+    mesh: usize,
+    /// `None` for glTF's default material.
+    material: Option<usize>,
+    mesh_part: String,
+    material_part: Option<String>,
+}
+
+impl PreparedModel {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+/// Reads and processes a model without touching the GPU.
+pub fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
+    let (document, buffers, images) = load(path, read).with_context(|| format!("reading {path}"))?;
+    let mut preparer = Preparer {
+        buffers,
+        images,
+        model: PreparedModel {
+            path: path.to_string(),
+            meshes: Vec::new(),
+            textures: Vec::new(),
+            materials: Vec::new(),
+            nodes: Vec::new(),
+        },
+        meshes: HashMap::new(),
+        textures: HashMap::new(),
+        materials: HashMap::new(),
+    };
+    let scene = document.default_scene().or_else(|| document.scenes().next()).context("the file has no scenes")?;
+    for node in scene.nodes() {
+        preparer.visit(&node, Mat4::IDENTITY).with_context(|| format!("reading {path}"))?;
+    }
+    Ok(preparer.model)
+}
+
+/// Uploads a prepared model and returns its drawable pieces.
+pub fn upload(
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    assets: &mut Assets,
+    model: &PreparedModel,
+) -> Result<Vec<ImportedNode>> {
+    let mut textures = Vec::with_capacity(model.textures.len());
+    for texture in &model.textures {
+        let source = TextureSource {
+            name: &texture.name,
+            width: texture.width,
+            height: texture.height,
+            rgba: &texture.rgba,
+            srgb: texture.srgb,
+        };
+        textures.push(assets.add_texture(gpu, bindless, &source)?);
+    }
+    let texture = |index: Option<usize>| index.map(|i| textures[i]);
+    let mut materials = Vec::with_capacity(model.materials.len());
+    for material in &model.materials {
+        let desc = MaterialDesc {
+            base_color_texture: texture(material.base_color),
+            metallic_roughness_texture: texture(material.metallic_roughness),
+            normal_texture: texture(material.normal),
+            emissive_texture: texture(material.emissive),
+            ..material.desc
+        };
+        materials.push(assets.add_material(gpu, &desc)?);
+    }
+    let mut meshes = Vec::with_capacity(model.meshes.len());
+    for (data, lods) in &model.meshes {
+        meshes.push(assets.add_mesh_with_lods(gpu, data, lods)?);
+    }
+    Ok(model
+        .nodes
+        .iter()
+        .map(|node| ImportedNode {
+            name: node.name.clone(),
+            position: node.position,
+            rotation: node.rotation,
+            scale: node.scale,
+            mesh: meshes[node.mesh],
+            material: node.material.map_or(assets.default_material, |m| materials[m]),
+            mesh_part: node.mesh_part.clone(),
+            material_part: node.material_part.clone(),
+        })
+        .collect())
+}
+
+/// Reads, processes and uploads a model in one go.
 pub fn import(
     gpu: &Gpu,
     bindless: &mut Bindless,
@@ -53,26 +165,19 @@ pub fn import(
     path: &str,
     read: &mut ReadFile,
 ) -> Result<Vec<ImportedNode>> {
-    let (document, buffers, images) = load(path, read).with_context(|| format!("reading {path}"))?;
-    let mut importer = Importer {
-        gpu,
-        bindless,
-        assets,
-        images,
-        buffers,
-        textures: HashMap::new(),
-        materials: HashMap::new(),
-        meshes: HashMap::new(),
-        nodes: Vec::new(),
-    };
-    let scene = document.default_scene().or_else(|| document.scenes().next()).context("the file has no scenes")?;
-    for node in scene.nodes() {
-        importer.visit(&node, Mat4::IDENTITY)?;
-    }
-    Ok(importer.nodes)
+    upload(gpu, bindless, assets, &prepare(path, read)?)
 }
 
-impl Importer<'_> {
+struct Preparer {
+    buffers: Vec<gltf::buffer::Data>,
+    images: Vec<gltf::image::Data>,
+    model: PreparedModel,
+    meshes: HashMap<(usize, usize), usize>,
+    textures: HashMap<(usize, bool), usize>,
+    materials: HashMap<usize, usize>,
+}
+
+impl Preparer {
     fn visit(&mut self, node: &gltf::Node, parent: Mat4) -> Result<()> {
         let (translation, rotation, scale) = node.transform().decomposed();
         let local =
@@ -85,15 +190,14 @@ impl Importer<'_> {
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
                     continue;
                 }
-                let mesh_handle = self.mesh(&mesh, &primitive)?;
+                let mesh_index = self.mesh(&mesh, &primitive)?;
                 let material = self.material(primitive.material())?;
-                let name = node.name().or(mesh.name()).unwrap_or("mesh").to_string();
-                self.nodes.push(ImportedNode {
-                    name,
+                self.model.nodes.push(PreparedNode {
+                    name: node.name().or(mesh.name()).unwrap_or("mesh").to_string(),
                     position,
                     rotation,
                     scale,
-                    mesh: mesh_handle,
+                    mesh: mesh_index,
                     material,
                     mesh_part: format!("mesh{}.{}", mesh.index(), primitive.index()),
                     material_part: primitive.material().index().map(|i| format!("material{i}")),
@@ -106,10 +210,10 @@ impl Importer<'_> {
         Ok(())
     }
 
-    fn mesh(&mut self, mesh: &gltf::Mesh, primitive: &gltf::Primitive) -> Result<MeshHandle> {
+    fn mesh(&mut self, mesh: &gltf::Mesh, primitive: &gltf::Primitive) -> Result<usize> {
         let key = (mesh.index(), primitive.index());
-        if let Some(&handle) = self.meshes.get(&key) {
-            return Ok(handle);
+        if let Some(&index) = self.meshes.get(&key) {
+            return Ok(index);
         }
         let reader = primitive.reader(|buffer| Some(&self.buffers[buffer.index()]));
         let positions: Vec<[f32; 3]> = reader.read_positions().context("primitive has no positions")?.collect();
@@ -133,27 +237,26 @@ impl Importer<'_> {
             .collect();
         let mut data = MeshData { vertices, indices };
         data.mirror_x();
-        let handle = self.assets.add_mesh(self.gpu, &data)?;
-        self.meshes.insert(key, handle);
-        Ok(handle)
+        let lods = build_lods(&data);
+        self.model.meshes.push((data, lods));
+        let index = self.model.meshes.len() - 1;
+        self.meshes.insert(key, index);
+        Ok(index)
     }
 
-    fn material(&mut self, material: gltf::Material) -> Result<MaterialHandle> {
-        let key = material.index();
-        if let Some(&handle) = self.materials.get(&key) {
-            return Ok(handle);
-        }
-        if key.is_none() {
-            return Ok(self.assets.default_material);
+    fn material(&mut self, material: gltf::Material) -> Result<Option<usize>> {
+        let Some(key) = material.index() else { return Ok(None) };
+        if let Some(&index) = self.materials.get(&key) {
+            return Ok(Some(index));
         }
         let pbr = material.pbr_metallic_roughness();
-        let base_color_texture = pbr.base_color_texture().map(|t| self.texture(t.texture(), true)).transpose()?;
-        let metallic_roughness_texture =
+        let base_color = pbr.base_color_texture().map(|t| self.texture(t.texture(), true)).transpose()?;
+        let metallic_roughness =
             pbr.metallic_roughness_texture().map(|t| self.texture(t.texture(), false)).transpose()?;
-        let normal = material.normal_texture();
-        let normal_scale = normal.as_ref().map_or(1.0, |n| n.scale());
-        let normal_texture = normal.map(|t| self.texture(t.texture(), false)).transpose()?;
-        let emissive_texture = material.emissive_texture().map(|t| self.texture(t.texture(), true)).transpose()?;
+        let normal_info = material.normal_texture();
+        let normal_scale = normal_info.as_ref().map_or(1.0, |n| n.scale());
+        let normal = normal_info.map(|t| self.texture(t.texture(), false)).transpose()?;
+        let emissive = material.emissive_texture().map(|t| self.texture(t.texture(), true)).transpose()?;
         let alpha_cutoff = match material.alpha_mode() {
             gltf::material::AlphaMode::Mask => Some(material.alpha_cutoff().unwrap_or(0.5)),
             _ => None,
@@ -163,35 +266,34 @@ impl Importer<'_> {
             metallic: pbr.metallic_factor(),
             roughness: pbr.roughness_factor(),
             emissive: material.emissive_factor().map(|c| c * material.emissive_strength().unwrap_or(1.0)),
-            base_color_texture,
-            metallic_roughness_texture,
-            normal_texture,
             normal_scale,
-            emissive_texture,
             alpha_cutoff,
+            ..MaterialDesc::default()
         };
-        let handle = self.assets.add_material(self.gpu, &desc)?;
-        self.materials.insert(key, handle);
-        Ok(handle)
+        self.model.materials.push(PreparedMaterial { desc, base_color, metallic_roughness, normal, emissive });
+        let index = self.model.materials.len() - 1;
+        self.materials.insert(key, index);
+        Ok(Some(index))
     }
 
-    fn texture(&mut self, texture: gltf::Texture, srgb: bool) -> Result<TextureId> {
-        let index = texture.source().index();
-        if let Some(&id) = self.textures.get(&(index, srgb)) {
-            return Ok(id);
+    fn texture(&mut self, texture: gltf::Texture, srgb: bool) -> Result<usize> {
+        let image_index = texture.source().index();
+        if let Some(&index) = self.textures.get(&(image_index, srgb)) {
+            return Ok(index);
         }
-        let image = &self.images[index];
-        let rgba = to_rgba8(image).with_context(|| format!("texture {index} uses an unsupported pixel format"))?;
-        let source = TextureSource {
-            name: texture.name().unwrap_or("gltf texture"),
+        let image = &self.images[image_index];
+        let rgba =
+            to_rgba8(image).with_context(|| format!("texture {image_index} uses an unsupported pixel format"))?;
+        self.model.textures.push(PreparedTexture {
+            name: texture.name().unwrap_or("gltf texture").to_string(),
             width: image.width,
             height: image.height,
-            rgba: &rgba,
+            rgba,
             srgb,
-        };
-        let id = self.assets.add_texture(self.gpu, self.bindless, &source)?;
-        self.textures.insert((index, srgb), id);
-        Ok(id)
+        });
+        let index = self.model.textures.len() - 1;
+        self.textures.insert((image_index, srgb), index);
+        Ok(index)
     }
 }
 

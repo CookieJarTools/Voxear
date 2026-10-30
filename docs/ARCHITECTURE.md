@@ -138,7 +138,7 @@ public sealed class Spinner : Behaviour
 	}
 }
 
-// Advanced: a C# system over chunk spans, no per-object calls (planned API).
+// Advanced: a C# system over chunk spans, no per-object calls (planned for M3).
 public sealed class SpinSystem : SystemBase
 {
 	protected override void Update()
@@ -240,7 +240,7 @@ if (Random.Chance(0.1f)) { /* ... */ }
 way. Their tests, in `managed/Voxear.Core.Tests`, check Unity's conventions: a positive yaw turns forward to the right,
 and a positive pitch looks down.
 
-## Scenes, Levels and Scene Persistence *(scenes, levels and persistence implemented; async loading planned)*
+## Scenes, Levels and Scene Persistence *(implemented)*
 
 - A **Scene** is a `.scene` TOML file (diff- and merge-friendly) holding Objs and their components. Each Obj has
   an `id` that is unique in the file, and `parent` refers to it. Rotations are Euler degrees, applied the way Unity
@@ -258,10 +258,31 @@ and a positive pitch looks down.
   - Scenes shared between the two levels **stay loaded** unless marked `ReloadOnLevelChange`.
   - Missing scenes load.
   - Scenes the new level does not need unload, and their content refcounts release.
-- Sync and async are a choice per call:
-  - `Levels.Load(level)` loads synchronously.
-  - `await Levels.LoadAsync(level, progress)` streams, and can activate behind a loading screen.
-  - `LoadMode.Preload` loads but keeps the level inactive until `Activate()`.
+- Sync and async are a choice per call *(implemented)*:
+  - `Level.Load(level)` changes level at the end of the frame, reading everything then.
+  - `Level.LoadAsync(level)` loads in the background while the game runs, then changes over at the end of the frame
+    it finishes in. It returns a `LevelLoad`:
+    - `Progress`, which reaches 0.9 when loaded and 1 when changed over, as in Unity
+    - `IsReady`, `IsDone` and `Error`
+    - `AllowActivation`
+    - `LoadAsync(level, activate: false)` holds the change at `IsReady` until `AllowActivation` is set, which is
+      what a loading screen wants.
+
+    ```csharp
+    var load = Level.LoadAsync("Levels/Night.level", activate: false);
+    while (!load.IsReady) { bar.Fill = load.Progress; await Task.Yield(); }
+    load.AllowActivation = true;
+    await load;                       // continues on the main thread once Night is in
+    ```
+
+  - **How it works.** A worker thread with its own reader works from the project folder or from bundles. It reads and
+    parses every level, scene, prefab and material file the level needs, and prepares its models: parsing glTF,
+    decoding images and building LODs. The main thread uploads the prepared models within a 4 ms budget per frame,
+    then changes level from the texts already read, with no IO left to do. Anything already loaded is skipped. In
+    Rust it is `Game::load_level_async`, `Game::load_status` and `Loads::set_allow_activation`; the code is in
+    `crates/voxear_engine/src/loading.rs`.
+  - Assets that behaviour fields name (`Prefab` and `Ref<T>` fields) are not preloaded, since they load on their
+    own.
 - **Scene Persistence:** Objs marked `persistent` (the `ScenePersistence` component) survive every level change,
   along with their children, like `DontDestroyOnLoad`. `obj.Persist()` will be the easy form in code.
   - **No duplicates on reload, unlike Unity.** Reloading the scene a persistent Obj came from does not create a
@@ -344,8 +365,14 @@ and overrides, and Objs inside instances are not written on their own.
   from the prefab on reload, until the editor adds "removed" overrides.
 
 **Loading.** `Prefab.Load` expands the prefab once and loads its meshes and materials into a template. Every
-`Instantiate` after that only creates entities, so spawning bullets costs no file or GPU work. Loading through
-bundles and async loading (`Prefab.LoadAsync`) come with the content build.
+`Instantiate` after that only creates entities, so spawning bullets costs no file or GPU work. `Prefab.LoadAsync`
+loads in the background the same way levels do, and awaiting it gives the prefab:
+`var boss = await Prefab.LoadAsync("Prefabs/Boss.prefab");`.
+
+**Awaiting in scripts.** Voxear.Core installs a main-thread `SynchronizationContext`, as Unity does. A continuation
+after any await (a load, `Task.Delay`, a web request) runs on the main thread at the start of the next frame, before
+the `First` stage, where it can touch Objs. `async void` lifecycle methods work too: `protected override async void
+Start()`. An exception thrown after an await is logged against the frame, never lost.
 
 ### Behaviour fields *(implemented)*
 

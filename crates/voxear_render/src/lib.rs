@@ -31,7 +31,7 @@ use voxear_rhi::{
 };
 
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle};
-pub use gltf_import::{ImportedNode, ReadFile, companion_files};
+pub use gltf_import::{ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model};
 pub use gpu::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS};
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::MAX_LODS;
@@ -317,6 +317,13 @@ impl Renderer {
     pub fn import_gltf(&mut self, path: &str, read: &mut ReadFile) -> Result<Vec<ImportedNode>> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         gltf_import::import(&self.gpu, &mut self.bindless, assets, path, read)
+    }
+
+    /// Uploads a model made with [`prepare_model`], for example on a
+    /// loading thread.
+    pub fn upload_model(&mut self, model: &PreparedModel) -> Result<Vec<ImportedNode>> {
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        gltf_import::upload(&self.gpu, &mut self.bindless, assets, model)
     }
 
     fn extent(&self) -> vk::Extent2D {

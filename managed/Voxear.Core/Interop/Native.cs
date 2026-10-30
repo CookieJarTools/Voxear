@@ -142,6 +142,32 @@ namespace Voxear.Interop
 			}
 		}
 
+		/// <summary>Starts a background load and returns its id, or -1 when it could not start.</summary>
+		public static int LoadAsync(bool level, string reference)
+		{
+			var bytes = Encoding.UTF8.GetBytes(reference);
+			fixed (byte* text = bytes)
+			{
+				return Api->LoadAsync(level ? 1 : 0, text, bytes.Length);
+			}
+		}
+
+		public static bool LoadStatus(int id, out LoadProgress status)
+		{
+			var result = default(LoadProgress);
+			var known = id >= 0 && Api->LoadStatus((uint)id, &result) != 0;
+			status = known ? result : default;
+			return known;
+		}
+
+		public static void AllowActivation(int id, bool allow)
+		{
+			if (id >= 0)
+			{
+				Api->LoadAllowActivation((uint)id, allow ? 1 : 0);
+			}
+		}
+
 		public static string Utf8(byte* text, int length)
 		{
 			return length <= 0 ? string.Empty : Encoding.UTF8.GetString(text, length);

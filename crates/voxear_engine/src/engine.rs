@@ -179,6 +179,7 @@ impl Engine {
 
     /// Advances one frame:
     ///
+    /// 0. Scripts resume awaits that finished and run posted continuations.
     /// 1. `First` systems, then pending behaviours get Awake/OnEnable/Start.
     /// 2. Fixed steps: FixedUpdate behaviours, then `FixedUpdate` systems.
     /// 3. Update behaviours, then `Update` systems.
@@ -190,6 +191,10 @@ impl Engine {
     pub fn tick(&mut self, unscaled_delta: f32) {
         self.time.advance(unscaled_delta);
         self.sync_script_time(self.time.delta);
+        if let Some(scripts) = self.scripts.as_mut() {
+            scripts.update(&mut self.world);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+        }
 
         self.schedule.run_stage("First", &mut self.world);
         self.flush();

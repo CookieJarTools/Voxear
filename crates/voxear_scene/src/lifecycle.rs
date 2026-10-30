@@ -361,6 +361,12 @@ impl Lifecycle {
         handles.iter().copied().filter(|h| self.records.get(h).is_some_and(&keep)).collect()
     }
 
+    /// Applies requests scripts made outside a dispatch, such as in an await
+    /// continuation.
+    pub fn apply_requests(&mut self, host: &mut dyn BehaviourHost) {
+        self.collect_requests(host);
+    }
+
     fn collect_requests(&mut self, host: &mut dyn BehaviourHost) {
         host.drain_requests(&mut self.requests);
         for request in std::mem::take(&mut self.requests) {

@@ -3,7 +3,8 @@ using Voxear;
 namespace Hello
 {
 	/// <summary>
-	/// Keeps score and alternates between the Day and Night levels every few seconds. It is an IInstance,
+	/// Keeps score and alternates between the Day and Night levels every few seconds, loading each in the background
+	/// with Level.LoadAsync and carrying on once it is in. It is an IInstance,
 	/// so any script reaches it through Instance&lt;GameManager&gt;.Current, and its Obj is persistent, so it
 	/// survives every level change while the scenes around it come and go.
 	/// </summary>
@@ -16,6 +17,7 @@ namespace Hello
 
 		private float timer;
 		private bool night;
+		private LevelLoad? loading;
 
 		public void AddScore(int amount)
 		{
@@ -40,14 +42,22 @@ namespace Hello
 		protected override void Update()
 		{
 			timer += Time.Delta;
-			if (timer < SecondsPerLevel)
+			if (timer < SecondsPerLevel || loading != null)
 			{
 				return;
 			}
 
 			timer = 0f;
 			night = !night;
-			Level.Load(night ? "Levels/Night.level" : "Levels/Day.level");
+			SwitchLevel(night ? "Levels/Night.level" : "Levels/Day.level");
+		}
+
+		private async void SwitchLevel(string level)
+		{
+			loading = Level.LoadAsync(level);
+			await loading;
+			Log.Info($"{level} is in after loading in the background{(loading.Error == null ? "" : $", but: {loading.Error}")}");
+			loading = null;
 		}
 
 		protected override void OnDestroy()

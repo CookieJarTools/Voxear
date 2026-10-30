@@ -62,7 +62,8 @@ impl ScriptRuntime {
             managed.load_game_assembly.is_some()
                 && managed.create_behaviour.is_some()
                 && managed.invoke.is_some()
-                && managed.release.is_some(),
+                && managed.release.is_some()
+                && managed.update.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(managed.create_behaviour.expect("validated above"));
@@ -107,6 +108,14 @@ impl ScriptRuntime {
             },
             is_instance: info.flags & FLAG_INSTANCE != 0,
         })
+    }
+
+    /// The once-per-frame script step: finished loads resume their awaits,
+    /// and continuations posted to the main thread run.
+    pub fn update(&mut self, world: &mut World) {
+        let update = self.managed.update.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        unsafe { update() };
     }
 
     /// Objs scripts asked to destroy since the last call.

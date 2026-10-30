@@ -24,6 +24,11 @@ namespace Voxear
 
 		public bool IsValid => id > 0;
 
+		internal static Prefab FromEngine(int engineId)
+		{
+			return new Prefab(engineId);
+		}
+
 		/// <summary>
 		/// Loads a prefab by project path or GUID, for example "Prefabs/Enemy.prefab", with its meshes and
 		/// materials. Loading one that is already loaded costs nothing. Logs an error and returns None when the
@@ -33,6 +38,15 @@ namespace Voxear
 		{
 			var loaded = Native.LoadPrefab(path);
 			return loaded < 0 ? None : new Prefab(loaded);
+		}
+
+		/// <summary>
+		/// Loads a prefab in the background: its files are read and its models prepared on another thread, then
+		/// uploaded a little each frame. Await it for the prefab.
+		/// </summary>
+		public static PrefabLoad LoadAsync(string path)
+		{
+			return Loading.Track(new PrefabLoad(Native.LoadAsync(false, path)));
 		}
 
 		/// <summary>A copy placed where the prefab places its own root.</summary>

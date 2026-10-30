@@ -8,4 +8,8 @@
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<NoWarn>$(NoWarn);CS1591</NoWarn>
 	</PropertyGroup>
+	<ItemGroup>
+		<!-- The tests reach the field reader directly, without the engine. -->
+		<InternalsVisibleTo Include="Voxear.Core.Tests" />
+	</ItemGroup>
 </Project>

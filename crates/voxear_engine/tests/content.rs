@@ -64,7 +64,7 @@ fn layout(report: &content_build::BuildReport) -> Vec<(Vec<String>, Vec<String>)
 fn assets_are_bundled_by_the_roots_that_use_them() {
     let dir = project();
     let output = dir.path().join("Built");
-    let report = content_build::build(dir.path(), &output).unwrap();
+    let report = content_build::build(dir.path(), &output, &Default::default()).unwrap();
     let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert_eq!(
         layout(&report),
@@ -99,13 +99,13 @@ fn assets_are_bundled_by_the_roots_that_use_them() {
 fn rebuilding_keeps_unchanged_bundles_and_drops_stale_ones() {
     let dir = project();
     let output = dir.path().join("Built");
-    content_build::build(dir.path(), &output).unwrap();
-    let again = content_build::build(dir.path(), &output).unwrap();
+    content_build::build(dir.path(), &output, &Default::default()).unwrap();
+    let again = content_build::build(dir.path(), &output, &Default::default()).unwrap();
     assert!(again.bundles.iter().all(|b| !b.written), "nothing changed, so nothing is written");
 
     std::fs::write(dir.path().join("Scenes/Cave.scene"), CAVE.replace("id = 1", "id = 1\nname = \"Big Torch\""))
         .unwrap();
-    let changed = content_build::build(dir.path(), &output).unwrap();
+    let changed = content_build::build(dir.path(), &output, &Default::default()).unwrap();
     let written: Vec<&Vec<String>> = changed.bundles.iter().filter(|b| b.written).map(|b| &b.roots).collect();
     assert_eq!(written, [&vec!["Levels/Cave.level".to_string()]], "only the cave's own bundle changes");
     let bundles = std::fs::read_dir(&output)
@@ -122,7 +122,7 @@ fn a_level_opens_only_the_bundles_it_needs() {
     let forest = FOREST.split("[[obj]]\nid = 2").next().unwrap();
     std::fs::write(dir.path().join("Scenes/Forest.scene"), forest).unwrap();
     let output = dir.path().join("Built");
-    content_build::build(dir.path(), &output).unwrap();
+    content_build::build(dir.path(), &output, &Default::default()).unwrap();
     let mut content = Content::open_bundles(dir.path(), &output).unwrap();
     let mut engine = Engine::new();
     let mut levels = Levels::default();
@@ -139,4 +139,24 @@ fn a_level_opens_only_the_bundles_it_needs() {
     let mut names: Vec<String> = engine.world.query_ref::<&Name>().into_iter().map(|n| n.0.clone()).collect();
     names.sort();
     assert_eq!(names, ["Ground", "Tree"]);
+}
+
+#[test]
+fn content_settings_add_and_remove_roots() {
+    let dir = project();
+    std::fs::create_dir_all(dir.path().join("Prefabs/Debug")).unwrap();
+    std::fs::write(dir.path().join("Prefabs/Debug/Cheats.prefab"), WOLF).unwrap();
+    let settings = voxear_engine::ContentSettings {
+        include: vec!["Materials/Unused.material".into()],
+        exclude: vec!["Prefabs/Debug/**".into(), "Prefabs/Torch.prefab".into(), "Prefabs/Wolf.prefab".into()],
+    };
+    let report = content_build::build(dir.path(), &dir.path().join("Built"), &settings).unwrap();
+    let roots: Vec<String> = report.bundles.iter().flat_map(|b| b.roots.clone()).collect();
+    let shipped: Vec<String> = report.bundles.iter().flat_map(|b| b.assets.clone()).collect();
+
+    assert!(roots.contains(&"Materials/Unused.material".to_string()), "included");
+    assert!(report.excluded.contains(&"Prefabs/Debug/Cheats.prefab".to_string()), "excluded, and nothing uses it");
+    assert!(!roots.contains(&"Prefabs/Torch.prefab".to_string()), "no longer a root of its own");
+    assert!(shipped.contains(&"Prefabs/Torch.prefab".to_string()), "but the cave still uses it, so it ships");
+    assert!(roots.contains(&"Prefabs/Wolf.prefab".to_string()), "a behaviour field names it, so it stays a root");
 }

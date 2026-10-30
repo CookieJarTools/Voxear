@@ -134,11 +134,13 @@ Done so far:
   frames in flight. Developer controls are `Content.UnloadUnused()`, `Content.Usage` and `prefab.Keep()` /
   `Release()`.
 
+- **Fields and content roots:** nested `[Serializable]` types and behaviour or interface references in fields, and
+  `[content]` include and exclude patterns for the build.
+
 Still to do in M2:
-- Nested serializable types, and fields that reference behaviours.
 - Async IO (io_uring and IoRing) and GPU-side decompression.
 - Splitting large bundles and merging tiny ones, and a per-asset build cache (with cooking).
-- Content roots for assets loaded by strings the build cannot see (`[ContentRoot]`, `[content]` in voxear.toml).
+- A `[ContentRoot]` attribute for code that loads by string.
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
 
 **Exit:** a two-level sample shares scenes between levels and loads only what each level needs.

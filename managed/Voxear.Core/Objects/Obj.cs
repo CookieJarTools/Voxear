@@ -111,11 +111,17 @@ namespace Voxear
 		/// <summary>The first behaviour on this Obj that is a T, or null. Like GetComponent, it finds subclasses too.</summary>
 		public T? GetBehaviour<T>() where T : Behaviour
 		{
+			return GetBehaviour(typeof(T)) as T;
+		}
+
+		/// <summary>The first behaviour on this Obj that is a type, or implements an interface, or null.</summary>
+		public Behaviour? GetBehaviour(Type type)
+		{
 			foreach (var handle in Native.Behaviours(Id))
 			{
-				if (BehaviourTable.Get(handle) is T found)
+				if (BehaviourTable.Get(handle) is { } behaviour && type.IsInstanceOfType(behaviour))
 				{
-					return found;
+					return behaviour;
 				}
 			}
 			return null;

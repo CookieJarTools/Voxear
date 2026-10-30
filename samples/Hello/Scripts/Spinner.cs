@@ -3,10 +3,16 @@ using Voxear;
 
 namespace Hello
 {
-	/// <summary>Spins its Obj around the up axis and checks in with the GameManager when it starts.</summary>
+	/// <summary>
+	/// Spins its Obj around the up axis and checks in with the GameManager when it starts. Given a leader, it spins
+	/// the other way at the leader's speed.
+	/// </summary>
 	public sealed class Spinner : Behaviour
 	{
 		[SerializeField] private float degreesPerSecond = 90f;
+		[SerializeField] private Spinner? leader;
+
+		public float DegreesPerSecond => leader != null ? -leader.degreesPerSecond : degreesPerSecond;
 
 		protected override void Awake()
 		{
@@ -32,7 +38,7 @@ namespace Hello
 
 		protected override void Update()
 		{
-			Obj.Rotation = Quaternion.Normalize(Obj.Rotation * Quaternion.AngleAxis(degreesPerSecond * Time.Delta, Vector3.Up));
+			Obj.Rotation = Quaternion.Normalize(Obj.Rotation * Quaternion.AngleAxis(DegreesPerSecond * Time.Delta, Vector3.Up));
 		}
 	}
 }

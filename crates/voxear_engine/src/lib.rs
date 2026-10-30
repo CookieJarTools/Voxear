@@ -20,5 +20,5 @@ pub use game::Game;
 pub use levels::{LEVEL_FORMAT, LevelChange, LevelFile, LevelScene, Levels};
 pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads};
 pub use prefab::{ObjPath, PrefabId, Template};
-pub use project::{PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root};
+pub use project::{ContentSettings, PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root};
 pub use windowed::{Setup, run_windowed};

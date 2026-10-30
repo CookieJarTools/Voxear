@@ -3,7 +3,8 @@
 //!
 //! 1. **Roots** are what a game can ask for by name: every level and prefab,
 //!    and every asset a behaviour field names, since `Ref<T>` loads those on
-//!    their own.
+//!    their own. `[content]` in `voxear.toml` adds roots with `include` and
+//!    takes them away with `exclude` (see [`ContentSettings`]).
 //! 2. **Dependencies** come from the files: a level's scenes, the prefabs,
 //!    meshes and materials that scenes and prefabs use, and a model's
 //!    textures. Files a model reads that are not assets, such as its
@@ -25,6 +26,8 @@ use voxear_assets::{
     AssetDb, AssetGuid, AssetKind, AssetRef,
     bundle::{BundleInfo, BundleWriter, CATALOG_FORMAT, Catalog, CatalogAsset, content_hash},
 };
+
+use crate::project::ContentSettings;
 
 /// What a build produced, for `vox content build` to print.
 #[derive(Debug)]
@@ -61,7 +64,7 @@ struct Needs {
     companions: Vec<String>,
 }
 
-pub fn build(root: &Path, output: &Path) -> Result<BuildReport> {
+pub fn build(root: &Path, output: &Path, settings: &ContentSettings) -> Result<BuildReport> {
     let (db, _) = AssetDb::scan(root)?;
     let mut needs = HashMap::new();
     for entry in db.entries() {
@@ -70,7 +73,7 @@ pub fn build(root: &Path, output: &Path) -> Result<BuildReport> {
         needs.insert(entry.guid, found);
     }
 
-    let usage = usage_sets(&db, &needs);
+    let usage = usage_sets(&db, &needs, settings);
     let mut excluded: Vec<String> =
         db.entries().filter(|e| !usage.contains_key(&e.guid)).map(|e| e.path.clone()).collect();
     excluded.sort();
@@ -136,11 +139,20 @@ pub fn build(root: &Path, output: &Path) -> Result<BuildReport> {
 
 /// The roots that reach each asset. Roots reach themselves and, through
 /// direct needs, everything that loads with them.
-fn usage_sets(db: &AssetDb, needs: &HashMap<AssetGuid, Needs>) -> HashMap<AssetGuid, BTreeSet<String>> {
+fn usage_sets(
+    db: &AssetDb,
+    needs: &HashMap<AssetGuid, Needs>,
+    settings: &ContentSettings,
+) -> HashMap<AssetGuid, BTreeSet<String>> {
     let named: BTreeSet<AssetGuid> = needs.values().flat_map(|n| n.named.iter().copied()).collect();
+    let matches = |patterns: &[String], path: &str| patterns.iter().any(|p| glob(p, path));
     let roots = db
         .entries()
-        .filter(|e| matches!(e.kind, AssetKind::Level | AssetKind::Prefab) || named.contains(&e.guid))
+        .filter(|e| {
+            // A field naming an asset means something shipped uses it, so exclude cannot drop it.
+            let blanket = matches!(e.kind, AssetKind::Level | AssetKind::Prefab) || matches(&settings.include, &e.path);
+            named.contains(&e.guid) || (blanket && !matches(&settings.exclude, &e.path))
+        })
         .map(|e| (e.guid, e.path.clone()));
 
     let mut usage: HashMap<AssetGuid, BTreeSet<String>> = HashMap::new();
@@ -242,7 +254,48 @@ fn collect(db: &AssetDb, in_fields: bool, value: &toml::Value, needs: &mut Needs
     }
 }
 
+/// Whether a project path matches a pattern: `*` within a folder, `**` across
+/// any number of folders (including none), `?` one character.
+fn glob(pattern: &str, path: &str) -> bool {
+    fn segments(pattern: &[&str], path: &[&str]) -> bool {
+        match (pattern.first(), path.first()) {
+            (None, None) => true,
+            (Some(&"**"), _) => segments(&pattern[1..], path) || (!path.is_empty() && segments(pattern, &path[1..])),
+            (Some(p), Some(s)) => segment(p.as_bytes(), s.as_bytes()) && segments(&pattern[1..], &path[1..]),
+            _ => false,
+        }
+    }
+    fn segment(pattern: &[u8], text: &[u8]) -> bool {
+        match (pattern.first(), text.first()) {
+            (None, None) => true,
+            (Some(b'*'), _) => segment(&pattern[1..], text) || (!text.is_empty() && segment(pattern, &text[1..])),
+            (Some(b'?'), Some(_)) => segment(&pattern[1..], &text[1..]),
+            (Some(p), Some(t)) => p == t && segment(&pattern[1..], &text[1..]),
+            _ => false,
+        }
+    }
+    let pattern: Vec<&str> = pattern.split('/').collect();
+    let path: Vec<&str> = path.split('/').collect();
+    segments(&pattern, &path)
+}
+
 fn read(root: &Path, path: &str) -> Result<Vec<u8>> {
     let file = root.join(path);
     std::fs::read(&file).with_context(|| format!("reading {}", file.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glob;
+
+    #[test]
+    fn patterns_match_like_gitignore_globs() {
+        assert!(glob("Prefabs/*.prefab", "Prefabs/Wolf.prefab"));
+        assert!(!glob("Prefabs/*.prefab", "Prefabs/Debug/Wolf.prefab"), "* stays within a folder");
+        assert!(glob("Prefabs/**", "Prefabs/Debug/Deep/Wolf.prefab"));
+        assert!(glob("**/Debug/*", "Prefabs/Debug/Wolf.prefab"));
+        assert!(glob("**/Wolf.prefab", "Wolf.prefab"), "** can be no folders at all");
+        assert!(glob("Levels/Level?.level", "Levels/Level2.level"));
+        assert!(!glob("Levels/Level?.level", "Levels/Level10.level"));
+    }
 }

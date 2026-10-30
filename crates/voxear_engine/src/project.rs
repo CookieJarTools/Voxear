@@ -9,6 +9,30 @@ pub const PROJECT_FILE: &str = "voxear.toml";
 #[serde(deny_unknown_fields)]
 pub struct ProjectFile {
     pub project: ProjectInfo,
+    #[serde(default)]
+    pub content: ContentSettings,
+}
+
+/// What the content build treats as roots, beside every level and prefab.
+///
+/// ```toml
+/// [content]
+/// include = ["Textures/Icons/**"]   # loaded by paths the build cannot see
+/// exclude = ["Prefabs/Debug/**"]    # not shipped unless something shipped uses them
+/// ```
+///
+/// Excluding only stops an asset being a root of its own: one that a shipped
+/// scene uses, or names in a behaviour field, still ships.
+///
+/// Patterns are project paths where `*` matches within a folder, `**` any
+/// number of folders, and `?` one character.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContentSettings {
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

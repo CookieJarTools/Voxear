@@ -9,7 +9,7 @@ namespace Voxear.Scripting
 	/// Sets behaviour fields from the values a scene or prefab gives them, just before Awake, which is when Unity has
 	/// finished deserialising too. A field can be set when it is public, or private with [SerializeField], and is
 	/// neither readonly nor [NonSerialized]. Names match ignoring case and underscores, so speed_limit in a scene sets
-	/// SpeedLimit or speedLimit.
+	/// SpeedLimit or speedLimit. The same rules fill [Serializable] classes and structs nested inside behaviours.
 	/// </summary>
 	internal static class BehaviourFields
 	{
@@ -21,11 +21,20 @@ namespace Voxear.Scripting
 
 		public static void Apply(Behaviour behaviour, string json)
 		{
-			var fields = Find(behaviour.GetType());
 			using var document = JsonDocument.Parse(json);
-			foreach (var property in document.RootElement.EnumerateObject())
+			Fill(behaviour, document.RootElement, $"{behaviour.GetType().Name} on {behaviour.Obj.Name}");
+		}
+
+		/// <summary>
+		/// Sets the fields of target from a table of values. path names where target sits, such as
+		/// "Spawner on Wolves: waves[1]", so warnings say exactly which value did not fit.
+		/// </summary>
+		public static void Fill(object target, JsonElement table, string path)
+		{
+			var fields = Find(target.GetType());
+			foreach (var property in table.EnumerateObject())
 			{
-				Set(behaviour, fields, property);
+				Set(target, fields, property, path);
 			}
 		}
 
@@ -40,30 +49,29 @@ namespace Voxear.Scripting
 			return name.Replace("_", string.Empty).ToLowerInvariant();
 		}
 
-		private static void Set(Behaviour behaviour, Dictionary<string, FieldInfo> fields, JsonProperty property)
+		private static void Set(object target, Dictionary<string, FieldInfo> fields, JsonProperty property, string path)
 		{
-			var owner = $"{behaviour.GetType().Name} on {behaviour.Obj.Name}";
 			if (!fields.TryGetValue(Normalize(property.Name), out var field))
 			{
-				Log.Warning($"{owner} has no field named {property.Name} that scenes can set, so the value is ignored.");
+				Log.Warning($"{path} has no field named {property.Name} that scenes can set, so the value is ignored.");
 				return;
 			}
 
 			try
 			{
-				field.SetValue(behaviour, FieldValues.Read(property.Value, field.FieldType));
+				field.SetValue(target, FieldValues.Read(property.Value, field.FieldType, $"{path}: {field.Name}"));
 			}
 			catch (Exception exception) when (IsBadValue(exception))
 			{
-				Log.Warning($"{owner}: {field.Name} cannot be set to {property.Value.GetRawText()}. {exception.Message}");
+				Log.Warning($"{path}: {field.Name} cannot be set to {property.Value.GetRawText()}. {exception.Message}");
 			}
 		}
 
 		/// <summary>The exceptions that mean the value does not fit the field, as opposed to a bug.</summary>
-		private static bool IsBadValue(Exception exception)
+		public static bool IsBadValue(Exception exception)
 		{
 			return exception is FormatException or InvalidOperationException or OverflowException
-				or NotSupportedException or ArgumentException;
+				or NotSupportedException or ArgumentException or MissingMethodException;
 		}
 
 		private static Dictionary<string, FieldInfo> Find(Type type)
@@ -74,7 +82,7 @@ namespace Voxear.Scripting
 			}
 
 			found = new Dictionary<string, FieldInfo>();
-			for (var current = type; current != null && current != typeof(Behaviour); current = current.BaseType)
+			for (var current = type; current != null && !IsBase(current); current = current.BaseType)
 			{
 				AddSettable(current, found);
 			}
@@ -92,6 +100,12 @@ namespace Voxear.Scripting
 					found.TryAdd(Normalize(field.Name), field);
 				}
 			}
+		}
+
+		/// <summary>Where the search for fields stops: the engine's own base classes have none for scenes to set.</summary>
+		private static bool IsBase(Type type)
+		{
+			return type == typeof(Behaviour) || type == typeof(object) || type == typeof(ValueType);
 		}
 
 		private static bool IsSettable(FieldInfo field)

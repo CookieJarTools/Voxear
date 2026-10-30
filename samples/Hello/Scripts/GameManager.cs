@@ -1,22 +1,23 @@
+using System;
 using Voxear;
 
 namespace Hello
 {
 	/// <summary>
-	/// Keeps score and alternates between the Day and Night levels every few seconds, loading each in the background
-	/// with Level.LoadAsync and carrying on once it is in. It is an IInstance,
+	/// Keeps score and moves through the levels its scene lists in cycle, loading each in the background with
+	/// Level.LoadAsync and carrying on once it is in. It is an IInstance,
 	/// so any script reaches it through Instance&lt;GameManager&gt;.Current, and its Obj is persistent, so it
 	/// survives every level change while the scenes around it come and go.
 	/// </summary>
 	[ExecutionOrder(-100)]
 	public sealed class GameManager : Behaviour, IInstance
 	{
-		private const float SecondsPerLevel = 5f;
+		[SerializeField] private LevelStop[] cycle = Array.Empty<LevelStop>();
 
 		public int Score { get; private set; }
 
 		private float timer;
-		private bool night;
+		private int next;
 		private LevelLoad? loading;
 
 		public void AddScore(int amount)
@@ -42,14 +43,14 @@ namespace Hello
 		protected override void Update()
 		{
 			timer += Time.Delta;
-			if (timer < SecondsPerLevel || loading != null)
+			if (cycle.Length == 0 || timer < cycle[next].Seconds || loading != null)
 			{
 				return;
 			}
 
 			timer = 0f;
-			night = !night;
-			SwitchLevel(night ? "Levels/Night.level" : "Levels/Day.level");
+			SwitchLevel(cycle[next].Level);
+			next = (next + 1) % cycle.Length;
 		}
 
 		private async void SwitchLevel(string level)

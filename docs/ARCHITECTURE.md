@@ -430,6 +430,23 @@ behaviour with field values always gets Awake dispatched, even if its type does 
     rule across scenes). A reference to an Obj that is not in the file is an error that names both.
   - **Saving** writes each reference back as an id or path in the saved file, following any renumbering. A
     reference to an Obj that is not being saved becomes `{}`, which loads as `Obj.None`.
+- **Behaviours and interfaces:** a field of a behaviour type (`Spinner leader`) or an interface (`IDamageable
+  target`) is written as the Obj it is on, `{ obj = 2 }`, and gets that Obj's first matching behaviour. Every
+  behaviour in a scene or prefab exists before any Awake, so the reference is always there to find. In Hello,
+  Spinner B follows Spinner A this way.
+- **Nested types:** a `[Serializable]` class or struct is written as a table of its own fields, by the same rules,
+  so lists of settings read naturally. Warnings name the exact value that did not fit, such as
+  `GameManager on Game Manager: cycle[1]: Seconds`.
+
+  ```toml
+  fields."Hello.GameManager" = { cycle = [
+      { level = "Levels/Night.level", seconds = 5.0 },
+      { level = "Levels/Day.level", seconds = 5.0 },
+  ] }
+  ```
+
+  A table with only an `obj` key, or only an `entity` key, is always read as a reference, so those names are
+  reserved inside nested types.
 
 **Mistakes are reported, never silent:**
 - Field values for a behaviour the Obj does not have are an error that names the Obj.
@@ -441,8 +458,8 @@ prefab. Values that scripts change at runtime are not written back. The editor's
 directly.
 
 **Not yet supported:**
-- Nested serializable classes and structs.
-- References to behaviours, such as a field of type `Spinner`. For now, hold the `Obj` and call `GetBehaviour<T>()`.
+- Dictionaries, and polymorphic values (a field of a base class holding a subclass), which Unity's
+  `[SerializeReference]` covers.
 - A Roslyn suppressor for warning CS0649, which fires on `[SerializeField]` fields because the compiler cannot see
   the engine set them. Until it exists, game projects turn that warning off, as Hello's `.csproj` does.
 
@@ -478,8 +495,18 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
    - Dependencies come from the files: a level's scenes, the prefabs, meshes and materials that scenes and prefabs
      use (overrides included), and the textures a model names. Files a model reads that are not assets, such as its
      `.bin` buffers, are packed with it.
-   - *Planned:* `[ContentRoot]` and a `[content]` list in `voxear.toml`, for assets that code loads by a string
-     the build cannot see.
+   - `[content]` in `voxear.toml` adjusts the roots with path patterns (`*` within a folder, `**` across
+     folders):
+
+     ```toml
+     [content]
+     include = ["Textures/Icons/**"]   # loaded by paths the build cannot see
+     exclude = ["Prefabs/Debug/**"]    # test and debug content stays out of builds
+     ```
+
+     Excluding stops an asset being a root of its own. One that a shipped scene still uses, or names in a behaviour
+     field, ships anyway, so a build never loses what it needs. A `[ContentRoot]` attribute on code that loads by
+     string is planned.
 2. For each asset, compute its **usage set**: the roots that can reach it. Assets no root reaches are left out, and
    the build lists them.
 3. **Group assets by identical usage set.** Each group is a bundle. Loading any root then loads exactly the bundles

@@ -3,19 +3,21 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
+using System.Reflection;
 using System.Text.Json;
 
 namespace Voxear.Scripting
 {
 	/// <summary>
 	/// Turns field values from scenes and prefabs, which arrive as JSON, into the types behaviour fields declare. A
-	/// value that does not fit throws, and BehaviourFields reports it as a warning naming the field.
+	/// value that does not fit throws, and BehaviourFields reports it as a warning naming the field. path says where
+	/// the value sits, for warnings about values nested inside it.
 	/// </summary>
 	internal static class FieldValues
 	{
 		private const float DegreesToRadians = MathF.PI / 180f;
 
-		public static object? Read(JsonElement value, Type type)
+		public static object? Read(JsonElement value, Type type, string path)
 		{
 			if (type == typeof(string))
 			{
@@ -37,10 +39,10 @@ namespace Voxear.Scripting
 			{
 				return Convert.ChangeType(value.GetDouble(), type, CultureInfo.InvariantCulture);
 			}
-			return ReadStructured(value, type);
+			return ReadStructured(value, type, path);
 		}
 
-		private static object? ReadStructured(JsonElement value, Type type)
+		private static object? ReadStructured(JsonElement value, Type type, string path)
 		{
 			if (type == typeof(Vector2))
 			{
@@ -65,10 +67,10 @@ namespace Voxear.Scripting
 			{
 				return ReadObj(value);
 			}
-			return ReadAssetOrList(value, type);
+			return ReadAssetOrList(value, type, path);
 		}
 
-		private static object? ReadAssetOrList(JsonElement value, Type type)
+		private static object? ReadAssetOrList(JsonElement value, Type type, string path)
 		{
 			if (IsGeneric(type, typeof(Ref<>)))
 			{
@@ -80,13 +82,54 @@ namespace Voxear.Scripting
 			}
 			if (type.IsArray)
 			{
-				return ReadArray(value, type.GetElementType()!);
+				return ReadArray(value, type.GetElementType()!, path);
 			}
 			if (IsGeneric(type, typeof(List<>)))
 			{
-				return ReadList(value, type);
+				return ReadList(value, type, path);
 			}
-			throw new NotSupportedException($"Fields of type {type.Name} cannot be set from scenes yet.");
+			return ReadReferenceOrNested(value, type, path);
+		}
+
+		private static object? ReadReferenceOrNested(JsonElement value, Type type, string path)
+		{
+			if (typeof(Behaviour).IsAssignableFrom(type) || type.IsInterface)
+			{
+				return ReadBehaviour(value, type);
+			}
+			if (type.Attributes.HasFlag(TypeAttributes.Serializable))
+			{
+				return ReadNested(value, type, path);
+			}
+			throw new NotSupportedException($"Fields of type {type.Name} cannot be set from scenes. Mark {type.Name} [Serializable] to set its fields as a table.");
+		}
+
+		/// <summary>
+		/// A behaviour on another Obj, written as that Obj: { obj = 3 }. It is the Obj's first behaviour of the
+		/// field's type, or that implements the field's interface. Every behaviour of a scene exists before any Awake,
+		/// so it is always there to find.
+		/// </summary>
+		private static Behaviour? ReadBehaviour(JsonElement value, Type type)
+		{
+			var obj = ReadObj(value);
+			if (!obj.IsValid)
+			{
+				return null;
+			}
+			return obj.GetBehaviour(type) ?? throw new FormatException($"{obj.Name} has no {type.Name}.");
+		}
+
+		/// <summary>A [Serializable] class or struct, written as a table of its fields.</summary>
+		private static object ReadNested(JsonElement value, Type type, string path)
+		{
+			if (value.ValueKind != JsonValueKind.Object)
+			{
+				throw new FormatException($"A {type.Name} is written as a table, such as {{ name = value }}.");
+			}
+
+			var nested = Activator.CreateInstance(type)!;
+			BehaviourFields.Fill(nested, value, path);
+			return nested;
 		}
 
 		/// <summary>Euler degrees applied Z, then X, then Y, like transforms in scenes, or four quaternion components.</summary>
@@ -137,24 +180,25 @@ namespace Voxear.Scripting
 			throw new FormatException($"{type.Name} has no value named {value.GetString()}; it has {string.Join(", ", Enum.GetNames(type))}.");
 		}
 
-		private static Array ReadArray(JsonElement value, Type elementType)
+		private static Array ReadArray(JsonElement value, Type elementType, string path)
 		{
 			var array = Array.CreateInstance(elementType, value.GetArrayLength());
 			var index = 0;
 			foreach (var item in value.EnumerateArray())
 			{
-				array.SetValue(Read(item, elementType), index++);
+				array.SetValue(Read(item, elementType, $"{path}[{index}]"), index);
+				index++;
 			}
 			return array;
 		}
 
-		private static IList ReadList(JsonElement value, Type listType)
+		private static IList ReadList(JsonElement value, Type listType, string path)
 		{
 			var list = (IList)Activator.CreateInstance(listType)!;
 			var elementType = listType.GetGenericArguments()[0];
 			foreach (var item in value.EnumerateArray())
 			{
-				list.Add(Read(item, elementType));
+				list.Add(Read(item, elementType, $"{path}[{list.Count}]"));
 			}
 			return list;
 		}
@@ -186,9 +230,20 @@ namespace Voxear.Scripting
 			return type.IsGenericType && type.GetGenericTypeDefinition() == definition;
 		}
 
+		/// <summary>
+		/// Whether the type is an IAsset of itself. Asking through its interfaces, rather than MakeGenericType, does not
+		/// throw for the many structs that fail IAsset's constraint.
+		/// </summary>
 		private static bool IsAsset(Type type)
 		{
-			return type.IsValueType && typeof(IAsset<>).MakeGenericType(type).IsAssignableFrom(type);
+			foreach (var contract in type.GetInterfaces())
+			{
+				if (IsGeneric(contract, typeof(IAsset<>)) && contract.GetGenericArguments()[0] == type)
+				{
+					return true;
+				}
+			}
+			return false;
 		}
 	}
 }

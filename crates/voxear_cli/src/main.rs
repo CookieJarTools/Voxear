@@ -236,7 +236,7 @@ fn start_game(project: Project, prepare: Prepare) -> Result<Game> {
     }
     let output = content_build::default_output(&project.root);
     if prepare.build {
-        let report = content_build::build(&project.root, &output)?;
+        let report = content_build::build(&project.root, &output, &project.file.content)?;
         let written = report.bundles.iter().filter(|b| b.written).count();
         tracing::info!("built content: {} bundles, {written} written", report.bundles.len());
     }
@@ -248,7 +248,7 @@ fn build_content(path: &Path) -> Result<()> {
     let project = Project::open(path)?;
     let started = std::time::Instant::now();
     let output = content_build::default_output(&project.root);
-    let report = content_build::build(&project.root, &output)?;
+    let report = content_build::build(&project.root, &output, &project.file.content)?;
     let written = report.bundles.iter().filter(|b| b.written).count();
     let shown = output.strip_prefix(&project.root).unwrap_or(&output);
     println!(

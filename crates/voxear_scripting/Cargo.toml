@@ -4,6 +4,7 @@ description = "C# scripting: hosts CoreCLR through hostfxr and bridges Obj behav
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

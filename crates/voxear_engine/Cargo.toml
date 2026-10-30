@@ -4,6 +4,7 @@ description = "Runs the frame loop: window, ECS schedule, lifecycle, scripts and
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

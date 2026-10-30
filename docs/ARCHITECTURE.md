@@ -22,8 +22,8 @@ is in [ROADMAP.md](ROADMAP.md).
 6. **UX is a feature.** The editor has to be pleasant to use. Interactions are fast and keyboard-first, there are
    small 100–180 ms animations, it is built with the same UI system games use, and every feature works out of the
    box without reading documentation.
-7. **Cross-platform from day one.** Linux and Windows on NVIDIA, AMD and Intel GPUs. The baseline is Vulkan 1.3;
-   mesh shaders and ray tracing are optional tiers.
+7. **Linux and Windows, every GPU vendor.** NVIDIA, AMD and Intel on both. The baseline is Vulkan 1.3; mesh
+   shaders and ray tracing are optional tiers.
 
 ## Names
 
@@ -37,7 +37,7 @@ is in [ROADMAP.md](ROADMAP.md).
 | Addressables / AssetBundles | **Content** and **Bundles** | Built automatically; you only hold a `Ref<T>`. |
 | Scenes | **Scenes** and **Levels** | A Level is a set of Scenes. |
 | Script Execution Order | `[ExecutionOrder(n)]` | |
-| Prefab | Prefab *(open question)* | Nested prefabs and variants are planned. |
+| Prefab | **Prefab** | Nested prefabs and variants are planned. |
 | UI Toolkit | **Voxear UI** | One system for the editor and for games, in screen space and world space. |
 | Input System | **Input** | Schemes, rebinding and prompts are built in. |
 | Cinemachine | **Camera Rigs** | Simple by default. |
@@ -83,7 +83,7 @@ docs/              this document and the roadmap
 | Area | Choice | Why |
 |---|---|---|
 | Core language | Rust (2024 edition) | Speed and memory safety without a GC; good SIMD and threading. |
-| GPU API | Vulkan 1.3 on `ash` | Direct control with nothing hidden; one API for Linux and Windows. macOS can follow through MoltenVK. |
+| GPU API | Vulkan 1.3 on `ash` | Direct control with nothing hidden; one API for Linux and Windows. |
 | Required Vulkan features | dynamic rendering, synchronization2, timeline semaphores, buffer device address, descriptor indexing | Bindless, GPU-driven rendering. Supported by NVIDIA Maxwell+, AMD GCN+ and Intel Gen9+ on current drivers. |
 | Optional tiers | mesh shaders, ray query / acceleration structures | Detected at startup (`vox doctor` shows them). Compute fallbacks always exist. |
 | GPU memory | gpu-allocator | Proven allocator. It can be replaced later without API churn. |
@@ -96,6 +96,17 @@ docs/              this document and the roadmap
 | UI | **Our own retained UI** on taffy, parley, skrifa and cssparser, rendered by our Vulkan renderer | See [UI](#ui-voxear-ui). |
 | Audio | Rust mixer on cpal, with spatial acoustics from **Steam Audio** (Apache-2.0) | Steam Audio provides HRTF, occlusion, transmission, reflections and pathing around corners. A GPU ray-traced path can come later. |
 | Mesh import | glTF 2.0 first, then FBX via ufbx | meshoptimizer handles meshlets, LOD and vertex cache optimisation. |
+
+## Conventions
+
+- **Coordinates match Unity:** left-handed, **Y up**, **Z forward**, X right, units in metres. Positive rotation
+  follows the left-hand rule, so a positive yaw turns to the right. Scripts and scenes ported from Unity keep their
+  numbers.
+- Rotations are quaternions. Euler angles in the inspector are in degrees and applied in Z, X, Y order, as in Unity.
+- Importers convert right-handed formats such as glTF and FBX so that assets face +Z, and nothing is flipped at
+  runtime.
+- The renderer uses left-handed projection with reverse-Z depth (1 near, 0 far) for precision, and handles Vulkan's
+  Y-down clip space internally.
 
 ## ECS and the Obj model *(implemented)*
 
@@ -148,6 +159,12 @@ guarantees four things instead (`crates/voxear_scene/src/lifecycle.rs`):
 3. **No Start runs while anything is still waiting for Awake or OnEnable**, so Start always sees a fully initialised
    world. Objs created inside Awake finish their own Awake and OnEnable before any Start in the frame.
 4. Within a phase, order is `[ExecutionOrder]`, then creation order (hierarchy order for scenes).
+
+**Instantiate behaves like Unity's.** `Instantiate` and `AddBehaviour` run Awake on the whole new batch, then
+OnEnable on it, before they return, so the caller gets an initialised object to configure. Start waits for the next
+flush, so guarantee 3 still holds. The native side invokes Awake and OnEnable on the new batch directly, then hands
+the lifecycle the batch as already awake and enabled. That way the lifecycle is never re-entered in the middle of a
+dispatch. *(Planned with prefabs in M2; today behaviours are only created by the engine at startup.)*
 
 The engine also skips phases a type does not override, so empty callbacks cost nothing. Enable, disable and destroy
 requests made by scripts are applied between phases. A destroyed behaviour gets no further updates, then OnDisable
@@ -231,13 +248,48 @@ using var handle = Content.Load(MeshRef, Priority.High);  // advanced: explicit 
   compute.
 - Resources are fully bindless through descriptor indexing and buffer device address.
 
-**Geometry.** GPU-driven:
-- Meshes are split into meshlets.
-- Culling is two-phase: frustum, then hierarchical-Z occlusion using last frame's depth, then a second pass for
-  newly visible objects.
-- Mesh shaders draw where supported, with a compute and indirect-draw fallback.
-- A visibility buffer keeps shading cost independent of overdraw.
-- LODs are generated on import.
+**Geometry.** GPU-driven, with occlusion culling and LOD built in. See
+[Geometry: GPU culling and LOD](#geometry-gpu-culling-and-lod) below.
+
+### Geometry: GPU culling and LOD
+
+Culling and LOD run entirely on the GPU, and are on for every mesh by default with no setup.
+
+**Easy.** Import a mesh and it already has LODs, and it is already occlusion culled. The inspector shows the LOD
+chain with live triangle counts, and a slider sets how aggressive LOD is per mesh or per quality tier.
+
+**Advanced.** Hand-authored LOD meshes, per-LOD materials, custom screen-size thresholds, forced LODs for
+cinematics, and per-camera culling overrides.
+
+**GPU occlusion culling** is two-phase, using a hierarchical depth pyramid (Hi-Z):
+1. **Phase 1.** Test every instance against the frustum and against *last frame's* depth pyramid. Draw the
+   survivors, which are the objects that were visible last frame.
+2. **Build the pyramid.** Rebuild the depth pyramid from that depth in one pass (single-pass downsampler).
+3. **Phase 2.** Retest only the instances that failed phase 1 against the *new* pyramid, and draw any that are now
+   visible. This catches disocclusion with no popping and no CPU readback.
+
+The same tests then run per meshlet: frustum, backface cone and Hi-Z. Mesh shaders do this where available, and a
+compute pass with indirect draws does it elsewhere. Shadow passes reuse the culling per cascade, so hidden casters
+cost nothing. The CPU never touches visibility.
+
+**LOD.**
+- **Generated on import** with meshoptimizer. Simplification keeps UV seams, normals and silhouettes.
+  Far LODs use more aggressive simplification. Every LOD is meshletised.
+- **Selected on the GPU by screen-space error**, not by distance. The same mesh picks the right LOD at any FOV or
+  resolution.
+- **Transitions are dithered cross-fades**, smoothed by TAA, so LOD changes do not pop.
+- **HLOD:** distant groups of objects merge into one proxy mesh, generated per level.
+- **Impostors:** octahedral impostors for foliage and far props, generated automatically.
+
+**Toward virtualised geometry (Nanite-style).** Meshlets, the visibility buffer and two-phase Hi-Z culling are the
+foundations Nanite is built on, so this is a later step rather than a rewrite:
+1. Build a **cluster DAG** at import: group meshlets, simplify each group with its boundary locked, re-split, and
+   repeat. meshoptimizer provides the partitioning and simplification steps.
+2. **Select continuous LOD per cluster** at runtime by projected error. This removes discrete LOD switches and
+   cracks.
+3. **Stream cluster pages** from disk on demand through Content, so geometry memory scales with screen pixels.
+4. **Rasterise tiny triangles in software** in a compute shader, using 64-bit atomics into the visibility buffer
+   where the GPU supports them, with a hardware fallback.
 
 **Lights.** All light types are clustered:
 - directional (sun and moon)
@@ -648,15 +700,14 @@ without changing the engine.
 
 Each stage can also run on its own and caches its outputs. Builds are reproducible from the project folder alone.
 
-## Cross-platform and GPU support
+## Platforms and GPU support
 
-**Targets now.** Linux (Wayland and X11) and Windows 10/11 on x86-64. ARM64 builds should follow, since nothing
-here is x86-specific.
+**Targets.** Linux (Wayland and X11) and Windows 10/11 on x86-64. These are the only platforms for now.
 
 **GPU support.** Any GPU with Vulkan 1.3 and the features listed above: NVIDIA (proprietary and NVK), AMD (RADV and
 AMDVLK), and Intel (ANV and Windows drivers). `vox doctor` explains exactly what a GPU lacks.
 
 **Optional tiers.** Mesh shaders, hardware ray tracing and DLSS/XeSS. Every feature has a fallback.
 
-**Later.** macOS (MoltenVK), Android, consoles and XR are realistic later targets. The RHI keeps platform code
-contained.
+Other platforms (macOS, mobile, consoles, XR) are out of scope for now. The RHI still keeps platform code
+contained, so adding one later does not mean reworking the engine.

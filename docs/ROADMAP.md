@@ -28,7 +28,9 @@ milestone ends with something you can run. Design details for every system are i
   - camera, depth and a PBR forward pass
   - directional, point and spot lights in clusters
   - cascaded shadow maps
-- The first parts of GPU-driven culling.
+- **GPU culling:** frustum culling plus two-phase Hi-Z occlusion culling per instance, with no CPU readback.
+- **Built-in LOD:** LODs generated on import, selected on the GPU by screen-space error, with dithered
+  cross-fades.
 - Debug views (wireframe, normals, overdraw) and GPU timestamps.
 
 **Exit:** a glTF scene renders lit and shadowed at a solid frame rate, on Linux and Windows.
@@ -37,6 +39,7 @@ milestone ends with something you can run. Design details for every system are i
 
 - Asset database with GUIDs, `.meta` sidecars, importers and `Ref<T>`.
 - Text scene format, then prefabs with nesting and variants.
+- `Instantiate` and `AddBehaviour`, running Awake and OnEnable on the new batch before returning.
 - Levels, scene diffing on level change, and Scene Persistence.
 - Content build: usage-set bundling, a catalog, and incremental content hashing.
 - Runtime loading, sync and async, with reference counting.
@@ -68,6 +71,7 @@ milestone ends with something you can run. Design details for every system are i
 
 ## M5 — Lighting
 
+- Per-meshlet culling (frustum, cone, Hi-Z) on mesh shaders with a compute fallback, including shadow passes.
 - Area and tube lights, IES profiles, sky and atmosphere.
 - Volumetric fog.
 - Virtual shadow maps.
@@ -119,24 +123,29 @@ milestone ends with something you can run. Design details for every system are i
 - Profiler, frame debugger, memory tools and documentation.
 - Editor RPC for `vox`, and the hook for AI tooling.
 
+## M12 — Virtualised geometry (Nanite-style)
+
+M1 and M5 already lay the groundwork: meshlets, the visibility buffer and two-phase Hi-Z culling. This milestone
+can move earlier if it becomes a priority.
+
+- HLOD proxies per level and automatic octahedral impostors.
+- A cluster DAG built at import.
+- Continuous per-cluster LOD selected on the GPU.
+- Cluster page streaming through Content.
+- Compute rasterisation for tiny triangles.
+
+## Decisions
+
+Settled on 2026-10-30:
+
+- **Prefab** keeps its name.
+- **`Instantiate` works like Unity's:** Awake and OnEnable run on the new batch before it returns, and Start waits
+  for the next flush.
+- **Coordinates match Unity:** left-handed, Y up, Z forward, metres.
+- **Licence:** PolyForm Shield 1.0.0.
+- **Platforms:** Linux and Windows only for now.
+
 ## Open questions
 
-These are decisions that change design or naming. Each has a recommendation.
-
-1. **Prefab name.** Keep "Prefab" (familiar), or rename it to fit Obj and Definition ("Template")? *Recommendation:
-   keep Prefab.*
-2. **What `Instantiate` returns.**
-   - **Option A** *(recommended)*: the new batch's Awake and OnEnable run before `Instantiate` returns, so callers
-     get an initialised object, as in Unity. Start still waits for the next flush.
-   - **Option B**: everything is deferred to the next flush. This is simpler and stricter, but the object is not
-     yet Awake when you configure it.
-   - Today the engine does B; A needs a re-entrant lifecycle.
-3. **Coordinate system.**
-   - Left-handed Y-up, like Unity: easy migration and familiar.
-   - Right-handed Y-up, like glTF and most tools: no import flips.
-   - *Recommendation: right-handed Y-up in metres, converted transparently on import.*
-4. **Scene file format.** A text format such as RON or TOML-like (diffable, mergeable), with a binary form generated
+1. **Scene file format.** A text format such as RON or TOML-like (diffable, mergeable), with a binary form generated
    for builds. *Recommendation: text in projects, binary in builds.*
-5. **Engine licence.** Open source (MIT/Apache, or MPL), source-available, or private for now?
-6. **Platforms after Linux and Windows.** macOS, Android, consoles, XR? This affects how early to abstract the RHI
-   further.

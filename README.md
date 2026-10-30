@@ -42,3 +42,10 @@ managed/    C# scripting API (Voxear.Core)
 samples/    example projects
 docs/       architecture and roadmap
 ```
+
+## Licence
+
+Voxear is licensed under the [PolyForm Shield License 1.0.0](LICENSE.md): you may use, change and ship games
+with it, but not use it to build a product that competes with Voxear itself.
+
+Required Notice: Copyright 2026 Joseph Cook

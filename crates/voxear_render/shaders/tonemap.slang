@@ -19,5 +19,5 @@ float3 aces(float3 x)
 float4 tonemapFragment(float4 position : SV_Position) : SV_Target
 {
     float3 hdr = textures[push.texture].Load(int3(int2(position.xy), 0)).rgb;
-    return float4(aces(hdr * push.frame[0].exposure), 1.0);
+    return float4(aces(hdr * push.frame->exposure), 1.0);
 }

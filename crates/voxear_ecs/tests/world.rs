@@ -270,3 +270,12 @@ fn schedule_runs_stages_in_declared_order() {
     schedule.run(&mut world);
     assert_eq!(world.resource::<Vec<&str>>().unwrap(), &["a", "b", "c"]);
 }
+
+#[test]
+fn optional_components_never_registered_still_match() {
+    let mut world = World::new();
+    world.spawn(Position(1.0, 2.0, 3.0));
+    // `Velocity` has never been registered in this world.
+    let found: Vec<_> = world.query_ref::<(&Position, Option<&Velocity>)>().into_iter().collect();
+    assert_eq!(found, vec![(&Position(1.0, 2.0, 3.0), None)]);
+}

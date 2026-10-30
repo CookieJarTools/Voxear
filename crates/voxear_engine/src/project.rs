@@ -8,6 +8,7 @@ pub const PROJECT_FILE: &str = "voxear.toml";
 #[derive(Debug, Deserialize)]
 pub struct ProjectFile {
     pub project: ProjectInfo,
+    pub sky: Option<SkySpec>,
     /// Objs created at startup. A stand-in until scene assets exist.
     #[serde(default)]
     pub objs: Vec<ObjSpec>,
@@ -52,6 +53,17 @@ fn one() -> [f32; 3] {
 
 fn two() -> [f32; 3] {
     [2.0; 3]
+}
+
+/// Sky colours are sRGB, like every colour in the project file.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkySpec {
+    pub zenith: [f32; 3],
+    pub horizon: [f32; 3],
+    pub ground: [f32; 3],
+    #[serde(default = "default_exposure")]
+    pub ambient: f32,
 }
 
 #[derive(Debug, Default, Deserialize)]

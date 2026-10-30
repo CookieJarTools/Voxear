@@ -10,6 +10,7 @@ mod assets;
 mod gltf_import;
 mod gpu;
 mod graph;
+mod hot_reload;
 mod lod;
 mod mesh;
 mod passes;
@@ -31,15 +32,19 @@ use voxear_rhi::{
 
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle};
 pub use gltf_import::ImportedNode;
-pub use gpu::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE};
+pub use gpu::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS};
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::MAX_LODS;
 pub use mesh::{MeshData, Primitive, Vertex};
-pub use scene::{Camera, Light, LightKind, MeshRenderer, ViewOptions};
+pub use scene::{Camera, Light, LightKind, MeshRenderer, Sky, ViewOptions};
 
 use crate::{
     assets::Assets,
-    gpu::{DRAW_COMMAND_SIZE, GpuFrame, GpuInstance, GpuLight, LIST_COUNT, NO_TEXTURE, Push, stat},
+    gpu::{
+        CLUSTER_COUNT, DRAW_COMMAND_SIZE, GpuBuffers, GpuFrame, GpuInstance, GpuLight, LIST_COUNT, MAX_CLUSTER_LIGHTS,
+        NO_TEXTURE, Push, stat,
+    },
+    hot_reload::{ShaderSet, ShaderWatcher},
     pipelines::{DEPTH_FORMAT, HDR_FORMAT, PYRAMID_FORMAT, Pipelines},
     shadows::ATLAS_RESOLUTION,
 };
@@ -59,6 +64,12 @@ pub struct RenderStats {
     /// Main-view draws per LOD level.
     pub lods: [u32; MAX_LODS],
     pub shadow_draws: u32,
+    /// Extra draws for the outgoing LOD of instances that are fading.
+    pub fade_draws: u32,
+    /// The most lights any one cluster had to shade.
+    pub cluster_max_lights: u32,
+    /// Light-to-cluster assignments across the whole grid.
+    pub cluster_light_links: u32,
 }
 
 impl RenderStats {
@@ -73,6 +84,9 @@ impl RenderStats {
             drawn_late: counters[stat::DRAWN_LATE],
             lods,
             shadow_draws: counters[stat::SHADOW_DRAWS],
+            fade_draws: counters[stat::FADE_DRAWS],
+            cluster_max_lights: counters[stat::CLUSTER_MAX_LIGHTS],
+            cluster_light_links: counters[stat::CLUSTER_LIGHT_LINKS],
         }
     }
 }
@@ -84,6 +98,8 @@ pub struct RendererSettings {
     pub renderdoc: bool,
     /// Where RenderDoc captures go; RenderDoc's own default when `None`.
     pub capture_folder: Option<PathBuf>,
+    /// Recompile shaders when their source changes (source checkouts only).
+    pub hot_reload: bool,
 }
 
 fn attach_renderdoc(settings: &RendererSettings) -> Option<RenderDoc> {
@@ -108,6 +124,8 @@ struct FrameBuffers {
     draw_count: Buffer,
     draw_instances: Buffer,
     stats: Buffer,
+    clusters: Buffer,
+    pointers: Buffer,
 }
 
 pub struct Renderer {
@@ -120,9 +138,14 @@ pub struct Renderer {
     graph: RenderGraph,
     assets: Option<Assets>,
     pipelines: Pipelines,
+    output_format: vk::Format,
+    watcher: Option<ShaderWatcher>,
     buffers: Vec<FrameBuffers>,
     /// Which instances were visible last frame; drives the early pass.
     visibility: Option<Buffer>,
+    /// Each instance's current and previous LOD and fade progress.
+    lod_state: Option<Buffer>,
+    last_time: Option<f32>,
     options: ViewOptions,
     stats: RenderStats,
     pending_size: Option<(u32, u32)>,
@@ -138,7 +161,7 @@ impl Renderer {
         let (gpu, surface) = unsafe { Gpu::new(window)? };
         let vsync = std::env::var("VOXEAR_VSYNC").map(|v| v != "0").unwrap_or(true);
         let swapchain = Swapchain::new(&gpu, surface, width, height, vsync)?;
-        Self::build(gpu, Output::Window(swapchain), renderdoc)
+        Self::build(gpu, Output::Window(swapchain), renderdoc, settings.hot_reload)
     }
 
     /// Renders into an image with no window, for screenshots, tests and tools.
@@ -147,10 +170,11 @@ impl Renderer {
         let gpu = Gpu::new_headless()?;
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC;
         let image = gpu.create_image("output", ImageDesc::new(width, height, OFFSCREEN_FORMAT, usage))?;
-        Self::build(gpu, Output::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined }, renderdoc)
+        let output = Output::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined };
+        Self::build(gpu, output, renderdoc, settings.hot_reload)
     }
 
-    fn build(gpu: Gpu, output: Output, renderdoc: Option<RenderDoc>) -> Result<Self> {
+    fn build(gpu: Gpu, output: Output, renderdoc: Option<RenderDoc>, hot_reload: bool) -> Result<Self> {
         let frames = Frames::new(&gpu)?;
         let mut bindless = Bindless::new(&gpu)?;
         let graph = RenderGraph::new(&gpu, FRAMES_IN_FLIGHT)?;
@@ -159,16 +183,16 @@ impl Renderer {
             Output::Window(swapchain) => swapchain.format.format,
             Output::Offscreen { image, .. } => image.desc.format,
         };
-        let pipelines = Pipelines::new(&gpu, &bindless, output_format)?;
+        let pipelines = Pipelines::new(&gpu, &bindless, output_format, &ShaderSet::embedded())?;
         let buffers = (0..FRAMES_IN_FLIGHT).map(|slot| create_frame_buffers(&gpu, slot)).collect::<Result<_>>()?;
-        let visibility = gpu.create_buffer(
-            "visibility",
-            MAX_INSTANCES * 4,
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            MemoryLocation::GpuOnly,
-        )?;
-        // Nothing was visible before the first frame.
-        gpu.immediate(|cmd| unsafe { gpu.device.cmd_fill_buffer(cmd, visibility.handle, 0, vk::WHOLE_SIZE, 0) })?;
+        let persistent = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        let visibility = gpu.create_buffer("visibility", MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
+        let lod_state = gpu.create_buffer("lod state", MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
+        // Nothing was visible, and no LOD chosen, before the first frame.
+        gpu.immediate(|cmd| unsafe {
+            gpu.device.cmd_fill_buffer(cmd, visibility.handle, 0, vk::WHOLE_SIZE, 0);
+            gpu.device.cmd_fill_buffer(cmd, lod_state.handle, 0, vk::WHOLE_SIZE, 0);
+        })?;
         Ok(Self {
             renderdoc,
             show_capture: false,
@@ -179,8 +203,12 @@ impl Renderer {
             graph,
             assets: Some(assets),
             pipelines,
+            output_format,
+            watcher: if hot_reload { ShaderWatcher::new() } else { None },
             buffers,
             visibility: Some(visibility),
+            lod_state: Some(lod_state),
+            last_time: None,
             options: ViewOptions::default(),
             stats: RenderStats::default(),
             pending_size: None,
@@ -262,8 +290,27 @@ impl Renderer {
         }
     }
 
+    /// Swaps in recompiled shaders when the watcher saw a change.
+    fn reload_shaders(&mut self) {
+        let started = std::time::Instant::now();
+        let Some(result) = self.watcher.as_mut().and_then(ShaderWatcher::poll) else { return };
+        let reloaded = result.and_then(|shaders| {
+            self.gpu.wait_idle();
+            Pipelines::new(&self.gpu, &self.bindless, self.output_format, &shaders)
+        });
+        match reloaded {
+            Ok(pipelines) => {
+                self.pipelines.destroy(&self.gpu);
+                self.pipelines = pipelines;
+                tracing::info!("shaders reloaded in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0);
+            }
+            Err(error) => tracing::error!("shader reload failed, keeping the previous shaders: {error:#}"),
+        }
+    }
+
     /// Draws the world's cameras, lights and mesh renderers.
     pub fn render(&mut self, world: &World, time: f32) -> Result<()> {
+        self.reload_shaders();
         if let (Some((width, height)), Output::Window(swapchain)) = (self.pending_size.take(), &mut self.output) {
             swapchain.recreate(&self.gpu, width, height)?;
         }
@@ -287,6 +334,8 @@ impl Renderer {
         };
 
         let extracted = scene::extract(world, extent.width, extent.height, time, &self.options);
+        let delta_time = self.last_time.map_or(0.0, |last| (time - last).clamp(0.0, 0.25));
+        self.last_time = Some(time);
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         let light_count = extracted.lights.len().min(MAX_LIGHTS as usize);
 
@@ -300,9 +349,10 @@ impl Renderer {
             Output::Offscreen { image, last } => (image.handle, image.view, image.desc, *last),
         };
 
-        let Self { gpu, graph, bindless, pipelines, buffers, assets, visibility, .. } = self;
+        let Self { gpu, graph, bindless, pipelines, buffers, assets, visibility, lod_state, .. } = self;
         let assets = assets.as_ref().expect("assets live until drop");
         let visibility = visibility.as_ref().expect("visibility lives until drop");
+        let lod_state = lod_state.as_ref().expect("LOD state lives until drop");
         let buffers = &buffers[frame.slot];
         let mut fg = graph.begin(gpu, frame.slot);
 
@@ -337,22 +387,31 @@ impl Renderer {
         frame_data.hiz_size = [pyramid_desc.width, pyramid_desc.height];
         frame_data.hiz_mips = pyramid_desc.mip_levels;
         frame_data.shadow_texture = shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
+        frame_data.delta_time = delta_time;
         buffers.frame.write(0, &[frame_data]);
+        buffers.pointers.write(
+            0,
+            &[GpuBuffers {
+                instances: buffers.instances.address,
+                meshes: assets.meshes.address,
+                vertices: assets.vertices.address,
+                materials: assets.materials.address,
+                lights: buffers.lights.address,
+                draws: buffers.draws.address,
+                draw_count: buffers.draw_count.address,
+                draw_instances: buffers.draw_instances.address,
+                visibility: visibility.address,
+                stats: buffers.stats.address,
+                clusters: buffers.clusters.address,
+                lod_state: lod_state.address,
+            }],
+        );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
         buffers.lights.write(0, &extracted.lights[..light_count]);
 
         let push = Push {
             frame: buffers.frame.address,
-            instances: buffers.instances.address,
-            meshes: assets.meshes.address,
-            vertices: assets.vertices.address,
-            materials: assets.materials.address,
-            lights: buffers.lights.address,
-            draws: buffers.draws.address,
-            draw_count: buffers.draw_count.address,
-            draw_instances: buffers.draw_instances.address,
-            visibility: visibility.address,
-            stats: buffers.stats.address,
+            buffers: buffers.pointers.address,
             max_draws: MAX_INSTANCES as u32,
             ..Default::default()
         };
@@ -372,7 +431,9 @@ impl Renderer {
             count: fg.import_buffer(&buffers.draw_count),
             instances: fg.import_buffer(&buffers.draw_instances),
             visibility: fg.import_buffer(visibility),
+            lod_state: fg.import_buffer(lod_state),
             stats: fg.import_buffer(&buffers.stats),
+            clusters: fg.import_buffer(&buffers.clusters),
             draws_handle: buffers.draws.handle,
             count_handle: buffers.draw_count.handle,
             stats_handle: buffers.stats.handle,
@@ -436,13 +497,14 @@ impl Drop for Renderer {
         let gpu = &self.gpu;
         self.pipelines.destroy(gpu);
         for buffers in self.buffers.drain(..) {
-            let FrameBuffers { frame, instances, lights, draws, draw_count, draw_instances, stats } = buffers;
-            for buffer in [frame, instances, lights, draws, draw_count, draw_instances, stats] {
+            let FrameBuffers { frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers } =
+                buffers;
+            for buffer in [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers] {
                 self.frames.retire(Retired::Buffer(buffer));
             }
         }
-        if let Some(visibility) = self.visibility.take() {
-            self.frames.retire(Retired::Buffer(visibility));
+        for buffer in [self.visibility.take(), self.lod_state.take()].into_iter().flatten() {
+            self.frames.retire(Retired::Buffer(buffer));
         }
         self.graph.destroy(gpu, &mut self.bindless);
         if let Some(assets) = self.assets.take() {
@@ -509,5 +571,12 @@ fn create_frame_buffers(gpu: &Gpu, slot: usize) -> Result<FrameBuffers> {
             storage | vk::BufferUsageFlags::TRANSFER_DST,
             MemoryLocation::GpuToCpu,
         )?,
+        clusters: gpu.create_buffer(
+            &format!("light clusters {slot}"),
+            u64::from(CLUSTER_COUNT) * u64::from(MAX_CLUSTER_LIGHTS + 1) * 4,
+            storage,
+            MemoryLocation::GpuOnly,
+        )?,
+        pointers: gpu.create_buffer(&format!("pointers {slot}"), size_of::<GpuBuffers>() as u64, storage, host)?,
     })
 }

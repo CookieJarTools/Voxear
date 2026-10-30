@@ -31,10 +31,21 @@ static const uint STAT_DRAWN_EARLY = 3;
 static const uint STAT_DRAWN_LATE = 4;
 static const uint STAT_LOD = 5;
 static const uint STAT_SHADOW_DRAWS = STAT_LOD + MAX_LODS;
+static const uint STAT_FADE_DRAWS = STAT_SHADOW_DRAWS + 1;
+static const uint STAT_CLUSTER_MAX_LIGHTS = STAT_FADE_DRAWS + 1;
+static const uint STAT_CLUSTER_LIGHT_LINKS = STAT_CLUSTER_MAX_LIGHTS + 1;
 
 static const uint DEBUG_VIEW_NONE = 0;
 static const uint DEBUG_VIEW_LOD = 1;
 static const uint DEBUG_VIEW_CASCADES = 2;
+static const uint DEBUG_VIEW_LIGHT_COMPLEXITY = 3;
+static const uint DEBUG_VIEW_NORMALS = 4;
+
+// A draw's instance index, with its LOD and fade role packed in the top byte.
+static const uint DRAW_INSTANCE_MASK = 0xFFFFFF;
+static const uint DRAW_LOD_SHIFT = 24;
+static const uint DRAW_FADING_IN = 1u << 28;
+static const uint DRAW_FADING_OUT = 1u << 29;
 
 static const float PI = 3.14159265359;
 
@@ -149,6 +160,16 @@ struct Frame
     float4 cascadePlanes[CASCADES][6];
     float cascadeFar[CASCADES];
     float cascadeTexel[CASCADES];
+    Mat4 view;
+    uint3 clusterGrid;
+    uint clusterMaxLights;
+    float clusterScale;
+    float clusterBias;
+    float2 tileSize;
+    float deltaTime;
+    float lodFadeSpeed;
+    float ambient;
+    float pad4;
 };
 
 struct DrawCommand
@@ -160,9 +181,9 @@ struct DrawCommand
     uint firstInstance;
 };
 
-struct Push
+// Device addresses of every buffer, written once per frame->
+struct Buffers
 {
-    Frame* frame;
     Instance* instances;
     Mesh* meshes;
     Vertex* vertices;
@@ -173,6 +194,14 @@ struct Push
     uint* drawInstances;
     uint* visibility;
     uint* stats;
+    uint* clusters;
+    uint* lodState;
+};
+
+struct Push
+{
+    Frame* frame;
+    Buffers* buffers;
     uint texture;
     uint maxDraws;
     uint list;
@@ -182,15 +211,21 @@ struct Push
     uint pad;
 };
 
-// Culling packs the chosen LOD into the top byte of each draw's instance index.
-uint drawInstance(uint drawId, out uint lod)
+[[vk::push_constant]] ConstantBuffer<Push> push;
+
+Buffers* buffers()
 {
-    uint packed = push.drawInstances[push.list * push.maxDraws + drawId];
-    lod = packed >> 24;
-    return packed & 0xFFFFFF;
+    return push.buffers;
 }
 
-[[vk::push_constant]] ConstantBuffer<Push> push;
+uint drawInstance(uint drawId, out uint lod, out uint fade)
+{
+    uint packed = buffers()->drawInstances[push.list * push.maxDraws + drawId];
+    lod = (packed >> DRAW_LOD_SHIFT) & 0xF;
+    fade = packed & (DRAW_FADING_IN | DRAW_FADING_OUT);
+    return packed & DRAW_INSTANCE_MASK;
+}
+
 
 float4 sampleTexture(uint index, float2 uv)
 {

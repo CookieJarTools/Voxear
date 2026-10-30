@@ -87,6 +87,12 @@ impl RenderDoc {
         unsafe { (self.api.set_capture_file_path_template)(template.as_ptr()) };
     }
 
+    /// RenderDoc is already in the process, typically because the game was
+    /// launched from RenderDoc's UI.
+    pub fn is_loaded() -> bool {
+        already_loaded().is_some()
+    }
+
     /// Captures the next presented frame.
     pub fn trigger_capture(&self) {
         unsafe { (self.api.trigger_capture)() };

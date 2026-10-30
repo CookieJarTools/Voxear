@@ -4,11 +4,11 @@
 
 use std::{env, path::PathBuf, process::Command};
 
-/// Files that only hold shared code and have no entry points.
-const MODULES: &[&str] = &["common"];
+include!("shader_build.rs");
 
 fn main() {
     println!("cargo:rerun-if-changed=shaders");
+    println!("cargo:rerun-if-changed=shader_build.rs");
     println!("cargo:rerun-if-env-changed=SLANGC");
     let slangc = env::var("SLANGC").unwrap_or_else(|_| "slangc".into());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -19,15 +19,14 @@ fn main() {
             continue;
         }
         let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
-        if MODULES.contains(&stem.as_str()) {
+        if SHADER_MODULES.contains(&stem.as_str()) {
             continue;
         }
         let target = out.join(format!("{stem}.spv"));
         let output = Command::new(&slangc)
             .arg(&path)
-            .args(["-target", "spirv", "-profile", "spirv_1_6", "-O2", "-I", "shaders"])
-            .args(["-matrix-layout-column-major", "-fvk-use-scalar-layout", "-fvk-use-entrypoint-name"])
-            .arg("-o")
+            .args(SLANG_ARGS)
+            .args(["-I", "shaders", "-o"])
             .arg(&target)
             .output()
             .unwrap_or_else(|e| {

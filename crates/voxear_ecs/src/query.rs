@@ -149,30 +149,34 @@ unsafe impl<T: Component> QueryData for &mut T {
     }
 }
 
+// The state is `None` when `T` was never registered: no entity can have it,
+// but the rest of the query still matches.
 unsafe impl<T: Component> QueryData for Option<&T> {
-    type State = ComponentId;
+    type State = Option<ComponentId>;
     type Fetch = *const T;
     type Item<'w> = Option<&'w T>;
     type Slice<'w> = Option<&'w [T]>;
 
-    fn init(registry: &mut ComponentRegistry) -> ComponentId {
-        registry.register::<T>()
+    fn init(registry: &mut ComponentRegistry) -> Option<ComponentId> {
+        Some(registry.register::<T>())
     }
 
-    fn lookup(registry: &ComponentRegistry) -> Option<ComponentId> {
-        registry.id_of::<T>()
+    fn lookup(registry: &ComponentRegistry) -> Option<Option<ComponentId>> {
+        Some(registry.id_of::<T>())
     }
 
-    fn access(state: &ComponentId, access: &mut Access) {
-        access.read(*state);
+    fn access(state: &Option<ComponentId>, access: &mut Access) {
+        if let Some(id) = state {
+            access.read(*id);
+        }
     }
 
-    fn matches(_: &ComponentId, _: &Archetype) -> bool {
+    fn matches(_: &Option<ComponentId>, _: &Archetype) -> bool {
         true
     }
 
-    unsafe fn fetch(state: &ComponentId, archetype: &Archetype, chunk: usize, _tick: u32) -> *const T {
-        match archetype.column_index(*state) {
+    unsafe fn fetch(state: &Option<ComponentId>, archetype: &Archetype, chunk: usize, _tick: u32) -> *const T {
+        match state.and_then(|id| archetype.column_index(id)) {
             Some(column) => archetype.column_base(chunk, column).cast(),
             None => std::ptr::null(),
         }

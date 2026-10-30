@@ -217,6 +217,10 @@ fn wants_validation(entry: &ash::Entry) -> bool {
 }
 
 fn create_instance(entry: &ash::Entry, extensions: &[*const c_char], validation: bool) -> Result<ash::Instance> {
+    let missing = missing_instance_extensions(entry, extensions);
+    if !missing.is_empty() {
+        bail!("the Vulkan driver or an active layer does not offer {}", missing.join(", "));
+    }
     let app = vk::ApplicationInfo::default()
         .application_name(c"Voxear")
         .engine_name(c"Voxear")
@@ -228,6 +232,18 @@ fn create_instance(entry: &ash::Entry, extensions: &[*const c_char], validation:
         .enabled_extension_names(extensions)
         .enabled_layer_names(&layers);
     unsafe { entry.create_instance(&info, None) }.context("creating the Vulkan instance")
+}
+
+/// Requested instance extensions the loader does not list, by name. Layers
+/// such as RenderDoc's can hide extensions they do not support.
+fn missing_instance_extensions(entry: &ash::Entry, requested: &[*const c_char]) -> Vec<String> {
+    let available = unsafe { entry.enumerate_instance_extension_properties(None) }.unwrap_or_default();
+    requested
+        .iter()
+        .map(|&name| unsafe { CStr::from_ptr(name) })
+        .filter(|name| !available.iter().any(|e| e.extension_name_as_c_str() == Ok(*name)))
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn create_messenger(

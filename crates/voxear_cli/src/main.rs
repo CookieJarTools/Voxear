@@ -9,7 +9,10 @@ use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use voxear_core::math::EulerRot;
 use voxear_engine::{Engine, Project, core_assembly, run_windowed, spawn_objs};
-use voxear_render::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, Renderer, RendererSettings, ViewOptions};
+use voxear_render::{
+    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, Renderer,
+    RendererSettings, ViewOptions,
+};
 use voxear_scene::{Name, Transform};
 use voxear_scripting::{DotnetInstall, ScriptRuntime, find_dotnet};
 
@@ -65,8 +68,8 @@ enum Commands {
         /// Capture the final frame in RenderDoc.
         #[arg(long)]
         renderdoc: bool,
-        /// Colour by `lod` or by shadow `cascades` instead of shading normally.
-        #[arg(long, value_parser = ["none", "lod", "cascades"], default_value = "none")]
+        /// Show `lod`, shadow `cascades`, `lights` per cluster or `normals` instead of normal shading.
+        #[arg(long, value_parser = ["none", "lod", "cascades", "lights", "normals"], default_value = "none")]
         debug_view: String,
     },
 }
@@ -82,6 +85,8 @@ fn main() -> Result<()> {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
                 "cascades" => DEBUG_VIEW_CASCADES,
+                "lights" => DEBUG_VIEW_LIGHT_COMPLEXITY,
+                "normals" => DEBUG_VIEW_NORMALS,
                 _ => DEBUG_VIEW_NONE,
             };
             let options = ViewOptions { debug_view, ..ViewOptions::default() };
@@ -92,7 +97,7 @@ fn main() -> Result<()> {
 
 fn run(path: &Path, headless: bool, frames: Option<u64>, no_build: bool, renderdoc: bool) -> Result<()> {
     let project = Project::open(path)?;
-    let settings = renderer_settings(&project, renderdoc);
+    let settings = RendererSettings { hot_reload: true, ..renderer_settings(&project, renderdoc) };
     let engine = start_engine(&project, no_build)?;
 
     if !headless {
@@ -156,6 +161,13 @@ fn render(
         stats.drawn_late,
         stats.shadow_draws
     );
+    if stats.fade_draws > 0 {
+        println!("LOD fades in progress: {}", stats.fade_draws);
+    }
+    println!(
+        "lights: up to {} per cluster · {} light-cluster links",
+        stats.cluster_max_lights, stats.cluster_light_links
+    );
     let lods: Vec<String> =
         stats.lods.iter().enumerate().filter(|(_, n)| **n > 0).map(|(i, n)| format!("LOD{i} {n}")).collect();
     println!("LODs: {}", if lods.is_empty() { "none".into() } else { lods.join(" · ") });
@@ -164,7 +176,11 @@ fn render(
 
 /// RenderDoc captures land in the project's `.voxear/Captures`.
 fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
-    RendererSettings { renderdoc, capture_folder: Some(project.root.join(".voxear").join("Captures")) }
+    RendererSettings {
+        renderdoc,
+        capture_folder: Some(project.root.join(".voxear").join("Captures")),
+        hot_reload: false,
+    }
 }
 
 /// Creates the engine and, when the project has scripts, builds and loads them.

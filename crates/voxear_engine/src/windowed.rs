@@ -2,18 +2,21 @@ use std::{sync::Arc, time::Instant};
 
 use anyhow::{Context, Result};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use voxear_render::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, Renderer, RendererSettings, ViewOptions};
-use voxear_rhi::WindowHandles;
+use voxear_render::{
+    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, Renderer,
+    RendererSettings, ViewOptions,
+};
+use voxear_rhi::{RenderDoc, WindowHandles};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::{ElementState, WindowEvent},
+    event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{Key, NamedKey},
-    window::{Window, WindowId},
+    keyboard::{Key, NamedKey, PhysicalKey},
+    window::{CursorGrabMode, Window, WindowId},
 };
 
-use crate::engine::Engine;
+use crate::{engine::Engine, fly_camera::FlyCamera};
 
 /// Called once the renderer exists, to create the project's Objs and meshes.
 pub type Setup = Box<dyn FnOnce(&mut Engine, &mut Renderer) -> Result<()>>;
@@ -29,11 +32,12 @@ pub fn run_windowed(
     settings: RendererSettings,
     setup: Setup,
 ) -> Result<()> {
-    let event_loop = EventLoop::new().context("creating the event loop")?;
+    let event_loop = event_loop(settings.renderdoc || RenderDoc::is_loaded()).context("creating the event loop")?;
     let mut app = App {
         engine,
         settings,
         debug_view: DEBUG_VIEW_NONE,
+        fly: FlyCamera::default(),
         title: title.to_string(),
         frames,
         setup: Some(setup),
@@ -50,6 +54,20 @@ pub fn run_windowed(
     }
 }
 
+/// RenderDoc cannot capture Wayland windows (its layer hides
+/// `VK_KHR_wayland_surface`), so with RenderDoc in the process the window
+/// opens through X11 instead, which XWayland provides on Wayland desktops.
+fn event_loop(renderdoc: bool) -> Result<EventLoop<()>, winit::error::EventLoopError> {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if renderdoc && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        tracing::info!("RenderDoc cannot capture Wayland windows, so this run uses X11 (XWayland)");
+        return EventLoop::builder().with_x11().build();
+    }
+    let _ = renderdoc;
+    EventLoop::new()
+}
+
 #[derive(Default)]
 struct Stats {
     frames: u32,
@@ -60,6 +78,7 @@ struct App {
     engine: Engine,
     settings: RendererSettings,
     debug_view: u32,
+    fly: FlyCamera,
     title: String,
     frames: Option<u64>,
     setup: Option<Setup>,
@@ -85,13 +104,29 @@ impl App {
         }
         self.renderer = Some(renderer);
         self.window = Some(window);
+        tracing::info!("hold the right mouse button to fly: WASD to move, Q/E down/up, Shift faster, wheel for speed");
         Ok(())
+    }
+
+    /// Captures the mouse while flying so it can turn without limit.
+    fn set_flying(&mut self, flying: bool) {
+        if flying == self.fly.is_looking() {
+            return;
+        }
+        self.fly.set_looking(flying);
+        let Some(window) = &self.window else { return };
+        let grab = if flying { CursorGrabMode::Locked } else { CursorGrabMode::None };
+        if window.set_cursor_grab(grab).is_err() && flying {
+            let _ = window.set_cursor_grab(CursorGrabMode::Confined);
+        }
+        window.set_cursor_visible(!flying);
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         let now = Instant::now();
         let delta = self.last.map_or(0.0, |last| (now - last).as_secs_f32());
         self.last = Some(now);
+        self.fly.update(&mut self.engine.world, delta);
         self.engine.tick(delta);
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.render(&self.engine.world, self.engine.time().elapsed as f32)?;
@@ -118,13 +153,16 @@ impl App {
     }
 
     /// Development keys until the editor exists: F12 captures a frame in
-    /// RenderDoc, F2 and F3 toggle the LOD and shadow cascade views.
+    /// RenderDoc; F2 to F5 toggle the LOD, shadow cascade, light complexity
+    /// and normals views.
     fn key(&mut self, key: &Key) {
         let Some(renderer) = self.renderer.as_mut() else { return };
         let view = match key {
             Key::Named(NamedKey::F12) => return renderer.capture_next_frame(),
             Key::Named(NamedKey::F2) => DEBUG_VIEW_LOD,
             Key::Named(NamedKey::F3) => DEBUG_VIEW_CASCADES,
+            Key::Named(NamedKey::F4) => DEBUG_VIEW_LIGHT_COMPLEXITY,
+            Key::Named(NamedKey::F5) => DEBUG_VIEW_NORMALS,
             _ => return,
         };
         self.debug_view = if self.debug_view == view { DEBUG_VIEW_NONE } else { view };
@@ -154,15 +192,38 @@ impl ApplicationHandler for App {
                     renderer.resize(size.width, size.height);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed && !event.repeat => {
-                self.key(&event.logical_key);
+            WindowEvent::KeyboardInput { event, .. } => {
+                let pressed = event.state == ElementState::Pressed;
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    self.fly.key(code, pressed);
+                }
+                if pressed && !event.repeat {
+                    self.key(&event.logical_key);
+                }
             }
+            WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
+                self.set_flying(state == ElementState::Pressed);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let notches = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(position) => position.y as f32 / 40.0,
+                };
+                self.fly.scroll(notches);
+            }
+            WindowEvent::Focused(false) => self.set_flying(false),
             WindowEvent::RedrawRequested => {
                 if let Err(error) = self.frame(event_loop) {
                     self.fail(event_loop, error);
                 }
             }
             _ => {}
+        }
+    }
+
+    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            self.fly.look(delta.0, delta.1);
         }
     }
 

@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result, bail};
 use voxear_core::math::{EulerRot, Quat, Vec3};
-use voxear_render::{Camera, Light, MaterialDesc, MeshRenderer, Primitive, Renderer};
+use voxear_render::{Camera, Light, MaterialDesc, MeshRenderer, Primitive, Renderer, Sky};
 use voxear_scene::{Name, Parent, Transform};
 
 use crate::{
@@ -14,6 +14,14 @@ use crate::{
 /// Spawns every Obj in the project. Without a renderer (headless runs),
 /// meshes are skipped but behaviours, cameras and lights are still created.
 pub fn spawn_objs(engine: &mut Engine, mut renderer: Option<&mut Renderer>, project: &Project) -> Result<()> {
+    if let Some(sky) = &project.file.sky {
+        engine.world.insert_resource(Sky {
+            zenith: Vec3::from(linear(sky.zenith)),
+            horizon: Vec3::from(linear(sky.horizon)),
+            ground: Vec3::from(linear(sky.ground)),
+            ambient: sky.ambient,
+        });
+    }
     for spec in &project.file.objs {
         for (name, offset) in copies(spec) {
             spawn(engine, renderer.as_deref_mut(), project, spec, &name, offset)?;

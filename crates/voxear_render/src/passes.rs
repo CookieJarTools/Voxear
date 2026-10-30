@@ -1,6 +1,6 @@
 //! The passes of one frame, in order:
 //!
-//! 1. **Reset** draw counters and stats.
+//! 1. **Reset** draw counters and stats, then build **Light clusters**.
 //! 2. **Shadow cull** and **Shadows**: casters per sun cascade into the atlas.
 //! 3. **Cull (early)** and **Opaque (early)**: what was visible last frame.
 //! 4. **Depth pyramid** from that depth.
@@ -11,7 +11,7 @@
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
-    gpu::{DRAW_COMMAND_SIZE, LIST_COUNT, LIST_EARLY, LIST_LATE, LIST_SHADOW, Push, stat},
+    gpu::{CLUSTER_COUNT, DRAW_COMMAND_SIZE, LIST_COUNT, LIST_EARLY, LIST_LATE, LIST_SHADOW, Push, stat},
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
     shadows::{CASCADE_RESOLUTION, CASCADES},
@@ -34,7 +34,9 @@ pub struct Draws {
     pub count: BufferId,
     pub instances: BufferId,
     pub visibility: BufferId,
+    pub lod_state: BufferId,
     pub stats: BufferId,
+    pub clusters: BufferId,
     pub draws_handle: vk::Buffer,
     pub count_handle: vk::Buffer,
     pub stats_handle: vk::Buffer,
@@ -55,12 +57,20 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         (draws.draws, BufferAccess::ComputeWrite),
         (draws.instances, BufferAccess::ComputeWrite),
         (draws.visibility, BufferAccess::ComputeWrite),
+        (draws.lod_state, BufferAccess::ComputeWrite),
         (draws.stats, BufferAccess::ComputeWrite),
     ];
     let drawing = [
         (draws.draws, BufferAccess::IndirectRead),
         (draws.count, BufferAccess::IndirectRead),
         (draws.instances, BufferAccess::ShaderRead),
+    ];
+    let shading_buffers = [
+        (draws.draws, BufferAccess::IndirectRead),
+        (draws.count, BufferAccess::IndirectRead),
+        (draws.instances, BufferAccess::ShaderRead),
+        (draws.clusters, BufferAccess::ShaderRead),
+        (draws.lod_state, BufferAccess::ShaderRead),
     ];
 
     let (count_handle, stats_handle) = (draws.count_handle, draws.stats_handle);
@@ -77,6 +87,16 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     let push = frame.push;
     let instances = frame.instance_count;
     let pipelines = frame.pipelines;
+
+    fg.add_pass(
+        "Light clusters",
+        &[],
+        &[(draws.clusters, BufferAccess::ComputeWrite), (draws.stats, BufferAccess::ComputeWrite)],
+        move |ctx| {
+            bind(ctx, pipelines.clusters, vk::PipelineBindPoint::COMPUTE, &push);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, CLUSTER_COUNT.div_ceil(64), 1, 1) };
+        },
+    );
     let indirect = Indirect { draws: draws.draws_handle, count: draws.count_handle, index_buffer: draws.index_buffer };
 
     if let Some(atlas) = targets.shadows {
@@ -112,7 +132,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     fg.add_pass("Cull (early)", &[], &culling, move |ctx| {
         cull(ctx, pipelines.cull, &push, LIST_EARLY, instances, 1);
     });
-    fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &drawing, move |ctx| {
+    fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
         opaque(ctx, pipelines.forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, hdr, depth, true);
     });
 
@@ -132,7 +152,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     fg.add_pass("Cull (late)", &[(pyramid, ImageAccess::Sampled)], &culling, move |ctx| {
         cull(ctx, pipelines.cull, &push, LIST_LATE, instances, 1);
     });
-    fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &drawing, move |ctx| {
+    fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
         opaque(ctx, pipelines.forward, &Push { list: LIST_LATE, ..shading_push }, indirect, hdr, depth, false);
     });
     fg.sync_buffer(draws.stats, BufferAccess::HostRead);

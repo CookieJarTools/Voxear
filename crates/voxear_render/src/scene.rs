@@ -7,7 +7,10 @@ use voxear_scene::{Transform, WorldTransform};
 
 use crate::{
     assets::{MaterialHandle, MeshHandle},
-    gpu::{GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT, NO_TEXTURE, cols, vec3},
+    gpu::{
+        CLUSTER_FAR, CLUSTER_GRID, GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT, MAX_CLUSTER_LIGHTS,
+        NO_TEXTURE, cols, vec3,
+    },
     shadows::{self, CASCADES},
 };
 
@@ -96,18 +99,37 @@ pub struct ViewOptions {
     pub debug_view: u32,
     /// Largest LOD error allowed on screen, in pixels.
     pub lod_threshold: f32,
+    /// LOD fades complete in `1 / lod_fade_speed` seconds.
+    pub lod_fade_speed: f32,
 }
 
 impl Default for ViewOptions {
     fn default() -> Self {
-        Self { debug_view: 0, lod_threshold: 1.0 }
+        Self { debug_view: 0, lod_threshold: 1.0, lod_fade_speed: 4.0 }
     }
 }
 
-/// Sky colours when the scene has no sky settings: a clear midday.
-const SKY_ZENITH: Vec3 = Vec3::new(0.23, 0.45, 0.85);
-const SKY_HORIZON: Vec3 = Vec3::new(0.62, 0.72, 0.86);
-const GROUND: Vec3 = Vec3::new(0.22, 0.2, 0.18);
+/// Sky colours (linear) and ambient light, as a world resource. Without one
+/// the scene gets a clear midday.
+#[derive(Clone, Copy, Debug)]
+pub struct Sky {
+    pub zenith: Vec3,
+    pub horizon: Vec3,
+    pub ground: Vec3,
+    /// Scales the ambient light the sky gives the scene.
+    pub ambient: f32,
+}
+
+impl Default for Sky {
+    fn default() -> Self {
+        Self {
+            zenith: Vec3::new(0.23, 0.45, 0.85),
+            horizon: Vec3::new(0.62, 0.72, 0.86),
+            ground: Vec3::new(0.22, 0.2, 0.18),
+            ambient: 1.0,
+        }
+    }
+}
 
 pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &ViewOptions) -> ExtractedFrame {
     let aspect = width as f32 / height.max(1) as f32;
@@ -122,6 +144,7 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &View
         })
         .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));
 
+    let sky = world.resource::<Sky>().copied().unwrap_or_default();
     let fov = camera.fov_y_degrees.to_radians();
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
     let view_proj = vulkan::perspective_infinite_reverse(fov, aspect, camera.near) * view;
@@ -137,13 +160,21 @@ pub fn extract(world: &World, width: u32, height: u32, time: f32, options: &View
         debug_view: options.debug_view,
         hiz_texture: NO_TEXTURE,
         shadow_texture: NO_TEXTURE,
+        view: cols(view),
+        cluster_grid: CLUSTER_GRID,
+        cluster_max_lights: MAX_CLUSTER_LIGHTS,
+        cluster_scale: CLUSTER_GRID[2] as f32 / (CLUSTER_FAR / camera.near).ln(),
+        cluster_bias: CLUSTER_GRID[2] as f32 * camera.near.ln() / (CLUSTER_FAR / camera.near).ln(),
+        tile_size: [width as f32 / CLUSTER_GRID[0] as f32, height as f32 / CLUSTER_GRID[1] as f32],
+        lod_fade_speed: options.lod_fade_speed,
         time,
         sun_direction: vec3(Vec3::new(0.3, -0.8, 0.5).normalize()),
         sun_color: [0.0; 3],
         exposure: camera.exposure,
-        sky_zenith: vec3(SKY_ZENITH),
-        sky_horizon: vec3(SKY_HORIZON),
-        ground_color: vec3(GROUND),
+        sky_zenith: vec3(sky.zenith),
+        sky_horizon: vec3(sky.horizon),
+        ground_color: vec3(sky.ground),
+        ambient: sky.ambient,
         viewport: [width, height],
         inv_view_proj: cols(view_proj.inverse()),
         ..Default::default()

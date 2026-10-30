@@ -30,8 +30,14 @@ cargo build
 ```
 
 `vox run` builds the project's C# scripts, hosts .NET, creates the project's Objs and opens a window. Add
-`--headless --frames 120` to simulate without a window and print where every Obj ended up. Add `--renderdoc` and
-press F12 to capture a frame.
+`--headless --frames 120` to simulate without a window and print where every Obj ended up.
+
+In the window:
+- **Fly around:** hold the right mouse button. WASD moves, Q/E go down and up, Shift goes faster, and the mouse wheel
+  changes speed. These are Unity's scene-view controls.
+- **Debug views:** F2 shows LODs, F3 shadow cascades, F4 lights per cluster, and F5 normals.
+- **Frame capture:** F12 captures a frame in RenderDoc when run with `--renderdoc`.
+- **Shader hot reload:** shaders in `crates/voxear_render/shaders` reload on save.
 
 ```bash
 ./target/debug/vox render samples/Hello --out frame.png
@@ -47,7 +53,11 @@ Options:
   same in the window.
 - `--renderdoc` also saves a RenderDoc capture to the project's `.voxear/Captures`.
 
-`samples/Stress` has 1,600 spheres and a wall, for trying culling and LODs.
+More samples:
+- `samples/Stress` has 1,600 spheres and a wall, for trying culling and LODs.
+- `samples/Lights` has 256 coloured point lights at night, for clustered lighting.
+
+`--debug-view` takes `lod`, `cascades`, `lights` or `normals`.
 
 Set `VOXEAR_LOG=debug` for more logging. Set `VOXEAR_VALIDATION=1` to force Vulkan validation; debug builds use it
 automatically when the `vulkan-validation-layers` package is installed.

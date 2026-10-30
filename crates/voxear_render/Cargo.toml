@@ -19,3 +19,6 @@ voxear_scene.workspace = true
 voxear_core.workspace = true
 gltf.workspace = true
 meshopt.workspace = true
+
+[dev-dependencies]
+voxear_core.workspace = true

@@ -89,6 +89,16 @@ pub struct GpuLight {
 pub const DEBUG_VIEW_NONE: u32 = 0;
 pub const DEBUG_VIEW_LOD: u32 = 1;
 pub const DEBUG_VIEW_CASCADES: u32 = 2;
+pub const DEBUG_VIEW_LIGHT_COMPLEXITY: u32 = 3;
+pub const DEBUG_VIEW_NORMALS: u32 = 4;
+
+/// Froxel grid for clustered lighting: screen tiles by depth slices.
+pub const CLUSTER_GRID: [u32; 3] = [16, 9, 24];
+pub const CLUSTER_COUNT: u32 = CLUSTER_GRID[0] * CLUSTER_GRID[1] * CLUSTER_GRID[2];
+/// Lights one cluster can hold; each cluster stores a count then the indices.
+pub const MAX_CLUSTER_LIGHTS: u32 = 128;
+/// Depth where the last cluster slice ends; lights beyond use that slice.
+pub const CLUSTER_FAR: f32 = 500.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -124,6 +134,39 @@ pub struct GpuFrame {
     pub cascade_planes: [[[f32; 4]; 6]; CASCADES],
     pub cascade_far: [f32; CASCADES],
     pub cascade_texel: [f32; CASCADES],
+    pub view: Mat4Cols,
+    pub cluster_grid: [u32; 3],
+    pub cluster_max_lights: u32,
+    /// `slice = log(depth) * cluster_scale - cluster_bias`.
+    pub cluster_scale: f32,
+    pub cluster_bias: f32,
+    /// Pixels per cluster tile.
+    pub tile_size: [f32; 2],
+    pub delta_time: f32,
+    /// LOD fades progress by this much per second.
+    pub lod_fade_speed: f32,
+    /// Scales the sky's ambient light.
+    pub ambient: f32,
+    pub _pad4: f32,
+}
+
+/// Device addresses of every buffer shaders use, written once per frame and
+/// reached through one pointer in the push constants.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuBuffers {
+    pub instances: u64,
+    pub meshes: u64,
+    pub vertices: u64,
+    pub materials: u64,
+    pub lights: u64,
+    pub draws: u64,
+    pub draw_count: u64,
+    pub draw_instances: u64,
+    pub visibility: u64,
+    pub stats: u64,
+    pub clusters: u64,
+    pub lod_state: u64,
 }
 
 /// `VkDrawIndexedIndirectCommand`.
@@ -145,24 +188,19 @@ pub mod stat {
     /// One counter per LOD, for the main view.
     pub const LOD: usize = 5;
     pub const SHADOW_DRAWS: usize = LOD + crate::lod::MAX_LODS;
-    pub const COUNT: usize = SHADOW_DRAWS + 1;
+    /// Draws made for the outgoing LOD of an instance that is fading.
+    pub const FADE_DRAWS: usize = SHADOW_DRAWS + 1;
+    pub const CLUSTER_MAX_LIGHTS: usize = FADE_DRAWS + 1;
+    pub const CLUSTER_LIGHT_LINKS: usize = CLUSTER_MAX_LIGHTS + 1;
+    pub const COUNT: usize = CLUSTER_LIGHT_LINKS + 1;
 }
 
-/// Device addresses every shader reads, plus per-pass parameters.
+/// The frame and buffer pointers every shader reads, plus per-pass parameters.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Push {
     pub frame: u64,
-    pub instances: u64,
-    pub meshes: u64,
-    pub vertices: u64,
-    pub materials: u64,
-    pub lights: u64,
-    pub draws: u64,
-    pub draw_count: u64,
-    pub draw_instances: u64,
-    pub visibility: u64,
-    pub stats: u64,
+    pub buffers: u64,
     pub texture: u32,
     pub max_draws: u32,
     /// Which draw list to fill or draw.
@@ -185,9 +223,11 @@ mod tests {
         assert_eq!(size_of::<GpuMaterial>(), 64);
         assert_eq!(size_of::<GpuInstance>(), 128);
         assert_eq!(size_of::<GpuLight>(), 64);
-        // Two matrices, six planes, nine 16-byte rows, then the cascades.
+        // Two matrices, six planes, nine 16-byte rows, the cascades, then the
+        // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
-        assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades);
+        assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3);
+        assert_eq!(size_of::<GpuBuffers>(), 12 * 8);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }
 }

@@ -19,7 +19,7 @@ milestone ends with something you can run. Design details for every system are i
   frames in flight, and a first pipeline using dynamic rendering.
 - **`vox` CLI.** `vox doctor`, `vox run` (windowed or `--headless`), and the `samples/Hello` project.
 
-## M1 — Rendering core (in progress)
+## M1 — Rendering core ✅ (done)
 
 Done so far:
 - **Render graph** with automatic barriers, debug labels and per-pass GPU timers.
@@ -41,15 +41,23 @@ Done so far:
   error.
 - **Sun shadows:** four cascades fitted to stable spheres and snapped to texels, rendered from GPU-culled draw
   lists, with 3×3 hardware PCF.
-- **Debug views:** LOD colours and shadow cascades (`--debug-view`, or F2/F3 in the window).
-- **The `samples/Stress` scene:** 1,600 spheres and a wall, for exercising culling and LOD.
+- **Debug views:** LOD colours, shadow cascades, light complexity and normals (`--debug-view`, or F2 to F5 in the
+  window).
+- **Samples:** `samples/Stress` (1,600 spheres and a wall) for culling and LOD, and `samples/Lights` (256 point lights
+  at night) for clustered lighting.
+- **Clustered lighting:** a 16×9×24 froxel grid whose light lists are built on the GPU each frame. 256 lights shade a
+  1280×720 frame in about 0.3 ms on an RTX 3070.
+- **Dithered LOD cross-fades:** when an instance changes LOD, both LODs draw for a quarter of a second with
+  complementary dither patterns.
+- **Shader hot reload:** in a source checkout, saving a `.slang` file recompiles it and swaps pipelines while running.
+  Errors are logged and the previous shaders keep running.
+- **Scene-view fly camera** in the window, with Unity's controls.
+- **GPU integration tests** for occlusion, clustering and LOD fading, rendering offscreen. They skip on machines
+  without a GPU.
 
-Still to do in M1:
-- Shader hot reload.
-- Clustered lights; today every light is looped over per pixel.
-- Dithered LOD cross-fades.
-- Meshlet-level culling (planned for M5).
+Moved to M5 (Lighting), where they belong with the rest of the shadow and geometry work:
 - Shadows for point and spot lights.
+- Meshlet-level culling.
 
 The original M1 scope:
 

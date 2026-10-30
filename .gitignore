@@ -1,0 +1,8 @@
+/target
+**/bin/
+**/obj/
+.voxear/
+*.user
+.vs/
+.idea/
+.vscode/

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<RootNamespace>Voxear</RootNamespace>
+		<!-- Produces Voxear.Core.runtimeconfig.json, which the engine hands to hostfxr. -->
+		<EnableDynamicLoading>true</EnableDynamicLoading>
+		<RollForward>LatestMajor</RollForward>
+		<OutputPath>$(VoxearRoot)target/managed/$(Configuration)/</OutputPath>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+	</PropertyGroup>
+</Project>

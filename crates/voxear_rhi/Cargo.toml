@@ -1,0 +1,15 @@
+[package]
+name = "voxear_rhi"
+description = "Vulkan device, swapchain and frame pacing on ash"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ash.workspace = true
+ash-window.workspace = true
+raw-window-handle.workspace = true
+gpu-allocator.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

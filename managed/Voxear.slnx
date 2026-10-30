@@ -1,0 +1,4 @@
+<Solution>
+	<Project Path="Voxear.Core/Voxear.Core.csproj" />
+	<Project Path="../samples/Hello/Scripts/Hello.Scripts.csproj" />
+</Solution>

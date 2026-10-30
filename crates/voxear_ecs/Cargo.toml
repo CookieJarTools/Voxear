@@ -1,0 +1,9 @@
+[package]
+name = "voxear_ecs"
+description = "Voxear's data-oriented core: an archetype ECS with 16 KiB chunk storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]

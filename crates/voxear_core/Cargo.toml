@@ -1,0 +1,13 @@
+[package]
+name = "voxear_core"
+description = "Shared foundations: math, time and logging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+glam.workspace = true
+bytemuck.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

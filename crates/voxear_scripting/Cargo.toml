@@ -1,0 +1,15 @@
+[package]
+name = "voxear_scripting"
+description = "C# scripting: hosts CoreCLR through hostfxr and bridges Obj behaviours"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+voxear_core.workspace = true
+voxear_ecs.workspace = true
+voxear_scene.workspace = true
+libloading.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

@@ -1,0 +1,11 @@
+<Project>
+	<PropertyGroup>
+		<VoxearRoot>$(MSBuildThisFileDirectory)</VoxearRoot>
+		<TargetFramework>net10.0</TargetFramework>
+		<LangVersion>latest</LangVersion>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>disable</ImplicitUsings>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+	</PropertyGroup>
+</Project>

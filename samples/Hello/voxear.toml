@@ -1,0 +1,20 @@
+[project]
+name = "Hello"
+scripts = "Scripts/Hello.Scripts.csproj"
+
+# Objs created at startup, until scene assets land. The Game Manager is listed
+# last on purpose: its [ExecutionOrder(-100)] still puts it first in every phase.
+
+[[objs]]
+name = "Spinner A"
+position = [-2.0, 0.0, 0.0]
+behaviours = ["Hello.Spinner"]
+
+[[objs]]
+name = "Spinner B"
+position = [2.0, 0.0, 0.0]
+behaviours = ["Hello.Spinner"]
+
+[[objs]]
+name = "Game Manager"
+behaviours = ["Hello.GameManager"]

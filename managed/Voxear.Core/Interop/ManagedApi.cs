@@ -1,0 +1,19 @@
+using System.Runtime.InteropServices;
+
+namespace Voxear.Interop
+{
+	/// <summary>
+	/// Script functions that the engine calls, filled in by Bootstrap.Initialize. The layout mirrors
+	/// ManagedApi in crates/voxear_scripting/src/interop.rs.
+	/// </summary>
+	[StructLayout(LayoutKind.Sequential)]
+	internal unsafe struct ManagedApi
+	{
+		public uint Size;
+		public uint Version;
+		public delegate* unmanaged[Cdecl]<byte*, int, int> LoadGameAssembly;
+		public delegate* unmanaged[Cdecl]<byte*, int, ulong, BehaviourInfo*, int> CreateBehaviour;
+		public delegate* unmanaged[Cdecl]<int, uint*, int, void> Invoke;
+		public delegate* unmanaged[Cdecl]<uint*, int, void> Release;
+	}
+}

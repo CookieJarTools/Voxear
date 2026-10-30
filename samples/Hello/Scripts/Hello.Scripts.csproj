@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<RootNamespace>Hello</RootNamespace>
+		<OutputPath>$(MSBuildProjectDirectory)/../.voxear/Scripts/$(Configuration)/</OutputPath>
+	</PropertyGroup>
+	<ItemGroup>
+		<!-- Voxear.Core is shared from the engine, so the game must not ship its own copy. -->
+		<ProjectReference Include="$(VoxearRoot)managed/Voxear.Core/Voxear.Core.csproj" Private="false" />
+	</ItemGroup>
+</Project>

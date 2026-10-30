@@ -22,9 +22,15 @@ pub struct Game {
 }
 
 impl Game {
+    /// A game reading assets from the project folder.
     pub fn new(project: Project, engine: Engine) -> Result<Self> {
         let content = Content::open(&project.root)?;
-        Ok(Self { engine, content, levels: Levels::default(), project })
+        Ok(Self::with_content(project, engine, content))
+    }
+
+    /// A game reading assets from `content`, such as built bundles.
+    pub fn with_content(project: Project, engine: Engine, content: Content) -> Self {
+        Self { engine, content, levels: Levels::default(), project }
     }
 
     /// Loads the project's `start_level`.

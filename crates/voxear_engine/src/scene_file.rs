@@ -221,8 +221,13 @@ pub enum MaterialRef {
 
 pub fn read(path: &Path) -> Result<SceneFile> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let scene: SceneFile = toml::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
-    ensure!(scene.format == SCENE_FORMAT, "{} uses scene format {}, not {SCENE_FORMAT}", path.display(), scene.format);
+    parse(&text, &path.display().to_string())
+}
+
+/// A scene from its text; `name` says which file it was, for errors.
+pub fn parse(text: &str, name: &str) -> Result<SceneFile> {
+    let scene: SceneFile = toml::from_str(text).with_context(|| format!("reading {name}"))?;
+    ensure!(scene.format == SCENE_FORMAT, "{name} uses scene format {}, not {SCENE_FORMAT}", scene.format);
     Ok(scene)
 }
 

@@ -30,6 +30,10 @@ bytemuck = { version = "1", features = ["derive"] }
 libloading = "0.9"
 gltf = { version = "1.4", features = ["KHR_materials_emissive_strength"] }
 png = "0.18"
+# Already in the build through gltf; used directly to load glTF files from memory.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+base64 = "0.13"
+lz4_flex = "0.11"
 meshopt = "0.7"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"

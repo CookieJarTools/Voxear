@@ -439,21 +439,44 @@ var mesh = await meshRef.LoadAsync();                     // planned: async
 using var handle = Content.Load(meshRef, Priority.High);  // planned: explicit lifetime and priority
 ```
 
-**Content build.** Runs automatically before a player build, or alone with `vox content build`.
+**Content build** *(implemented: steps 1–3 and 5; step 4, cooking and the per-asset cache planned)*. It runs alone
+with `vox content build`, before `vox run --bundles` and `vox render --bundles`, and will run before every player
+build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundle format and reader are in
+`crates/voxear_assets/src/bundle.rs`.
 
-1. Walk the dependency graph from every root: levels, scenes, and anything loaded by `Ref` from code. Static analysis
-   finds `Ref<T>` fields, and `[ContentRoot]` covers dynamic cases.
-2. For each asset, compute its **usage set**: the roots that can reach it.
+1. **Walk the dependency graph from every root.** Roots are what a game can ask for by name: every level, every
+   prefab, and every asset a behaviour field names.
+   - A field's asset is a root of its own because `Ref<T>` loads it separately. A `Prefab` field is treated the same
+     way, so its bundle opens at the Obj's Awake.
+   - Dependencies come from the files: a level's scenes, the prefabs, meshes and materials that scenes and prefabs
+     use (overrides included), and the textures a model names. Files a model reads that are not assets, such as its
+     `.bin` buffers, are packed with it.
+   - *Planned:* `[ContentRoot]` and a `[content]` list in `voxear.toml`, for assets that code loads by a string
+     the build cannot see.
+2. For each asset, compute its **usage set**: the roots that can reach it. Assets no root reaches are left out, and
+   the build lists them.
 3. **Group assets by identical usage set.** Each group is a bundle. Loading any root then loads exactly the bundles
    whose usage set contains it, and nothing it does not need. Shared assets between levels end up in their own
-   bundles automatically.
-4. Refine: split groups over a size cap, and keep large streamable data such as texture mip tails and audio streams
-   in separate bundles so they stream independently. Merge tiny bundles only when per-bundle overhead would dominate
-   (the threshold is configurable).
-5. The build is incremental and content-hashed: unchanged inputs reuse cached outputs. It writes a **catalog**
-   mapping asset GUID to bundle, offset and size, plus a bundle dependency list.
+   bundles automatically. In Hello, the Day level opens its own bundle and the Environment bundle it shares with
+   Night. Night opens its own, the shared one is already open, and the firefly bundle opens only when the spawner
+   loads its prefab.
+4. *Planned.* Refine: split groups over a size cap, and keep large streamable data such as texture mip tails and
+   audio streams in separate bundles so they stream independently. Merge tiny bundles only when per-bundle overhead
+   would dominate (the threshold is configurable).
+5. **Write bundles and a catalog.**
+   - A bundle is a header followed by each file, LZ4-compressed when that saves space. It is named after a hash of
+     its bytes, so a rebuild that changes nothing writes nothing, and bundles no longer listed are deleted.
+   - The **catalog** (`catalog.toml`, readable on purpose) maps each asset's GUID and path to its bundle, offsets
+     and sizes. It also lists each bundle's usage set and the bundles it depends on.
+   - Every build still reads and packs every asset. A per-asset cache keyed on source hashes comes with cooking,
+     which will turn source formats into GPU-ready data at build time.
 
-**Runtime.**
+**Runtime** *(implemented: reading through a catalog, opening bundles on first use; reference counting, unloading
+and async IO planned)*.
+- Every read goes through an `AssetReader`: `FolderReader` in a project, and `BundleReader` for built content. Levels,
+  scenes, prefabs, materials and models, with their buffers and textures, all load the same way from either.
+  `Content::open_bundles` and `vox run --bundles` use bundles. Each bundle is logged when it opens, naming its
+  roots.
 - Loading a `Ref` resolves its bundle from the catalog, loads that bundle and its dependencies (reference counted),
   and returns the asset.
 - IO is async: io_uring on Linux and IoRing/overlapped IO on Windows. GPU data uploads on a transfer queue, with
@@ -1297,10 +1320,14 @@ Every operation the editor can do should be scriptable.
 - `vox run <project> [--headless] [--frames N]` runs a project.
 - `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
   timings, culling stats and the adapted exposure.
+- `vox content build <project>` packs the content into bundles and prints each bundle, its usage set and its assets,
+  then what was left out.
+- `--bundles` on `run` and `render` reads assets from those bundles, as a player will, and builds them first unless
+  `--no-build`.
 
 **Planned.**
 - Project: `vox new`, `vox open`.
-- Building: `vox build [--profile <name>] [--progress json]`, `vox content build`, `vox scripts build`.
+- Building: `vox build [--profile <name>] [--progress json]`, `vox scripts build`.
 - Testing: `vox test`.
 - Scenes: `vox scene list/inspect`.
 - `vox import`, `vox profile`.

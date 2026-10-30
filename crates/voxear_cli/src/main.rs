@@ -9,7 +9,7 @@ use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use voxear_assets::{AssetDb, AssetKind};
 use voxear_core::math::EulerRot;
-use voxear_engine::{Engine, Game, Project, core_assembly, run_windowed};
+use voxear_engine::{Content, Engine, Game, Project, content_build, core_assembly, run_windowed};
 use voxear_render::{
     DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess,
     Renderer, RendererSettings, ViewOptions,
@@ -27,6 +27,16 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum ContentCommand {
+    /// Pack the assets that levels and prefabs use into bundles, by which of them use each one.
+    Build {
+        /// Project folder or its voxear.toml.
+        #[arg(default_value = ".")]
+        project: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum Commands {
     /// Check that this machine can build and run Voxear projects.
     Doctor,
@@ -35,6 +45,11 @@ enum Commands {
         /// Project folder or its voxear.toml.
         #[arg(default_value = ".")]
         project: PathBuf,
+    },
+    /// Build or inspect a project's content bundles.
+    Content {
+        #[command(subcommand)]
+        command: ContentCommand,
     },
     /// Run a project in a window, or headless for a number of frames.
     Run {
@@ -53,6 +68,9 @@ enum Commands {
         /// Load RenderDoc so F12 captures a frame.
         #[arg(long)]
         renderdoc: bool,
+        /// Read assets from built content bundles, as a player does. Builds the content first unless --no-build.
+        #[arg(long)]
+        bundles: bool,
     },
     /// Render a project offscreen and save the image, with GPU timings.
     Render {
@@ -81,7 +99,19 @@ enum Commands {
         /// Replace the scene's post-processing with a preset: `voxear`, `neutral` or `cinematic`.
         #[arg(long)]
         post: Option<String>,
+        /// Read assets from built content bundles, as a player does. Builds the content first unless --no-build.
+        #[arg(long)]
+        bundles: bool,
     },
+}
+
+/// What to do before starting a project.
+#[derive(Clone, Copy)]
+struct Prepare {
+    /// Build the scripts, and the content when reading bundles.
+    build: bool,
+    /// Read assets from built bundles instead of the project folder.
+    bundles: bool,
 }
 
 fn main() -> Result<()> {
@@ -89,10 +119,11 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Commands::Doctor => doctor(),
         Commands::Assets { project } => assets(&project),
-        Commands::Run { project, headless, frames, no_build, renderdoc } => {
-            run(&project, headless, frames, no_build, renderdoc)
+        Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
+        Commands::Run { project, headless, frames, no_build, renderdoc, bundles } => {
+            run(&project, headless, frames, Prepare { build: !no_build, bundles }, renderdoc)
         }
-        Commands::Render { project, out, width, height, frames, no_build, renderdoc, debug_view, post } => {
+        Commands::Render { project, out, width, height, frames, no_build, renderdoc, debug_view, post, bundles } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
                 "cascades" => DEBUG_VIEW_CASCADES,
@@ -102,16 +133,16 @@ fn main() -> Result<()> {
             };
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
             let options = ViewOptions { debug_view, post_override, ..ViewOptions::default() };
-            render(&project, &out, (width, height), frames, no_build, renderdoc, options)
+            render(&project, &out, (width, height), frames, Prepare { build: !no_build, bundles }, renderdoc, options)
         }
     }
 }
 
-fn run(path: &Path, headless: bool, frames: Option<u64>, no_build: bool, renderdoc: bool) -> Result<()> {
+fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, renderdoc: bool) -> Result<()> {
     let project = Project::open(path)?;
     let settings = RendererSettings { hot_reload: true, ..renderer_settings(&project, renderdoc) };
     let title = format!("{} — Voxear", project.name());
-    let mut game = start_game(project, no_build)?;
+    let mut game = start_game(project, prepare)?;
 
     if !headless {
         let setup = Box::new(|game: &mut Game, renderer: &mut Renderer| game.start(Some(renderer)));
@@ -130,13 +161,13 @@ fn render(
     out: &Path,
     (width, height): (u32, u32),
     frames: u64,
-    no_build: bool,
+    prepare: Prepare,
     renderdoc: bool,
     options: ViewOptions,
 ) -> Result<()> {
     let project = Project::open(path)?;
     let settings = renderer_settings(&project, renderdoc);
-    let mut game = start_game(project, no_build)?;
+    let mut game = start_game(project, prepare)?;
     let mut renderer = Renderer::new_offscreen(width, height, &settings)?;
     renderer.set_view_options(options);
     game.start(Some(&mut renderer))?;
@@ -198,9 +229,57 @@ fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
 }
 
 /// Creates the game and, when the project has scripts, builds and loads them.
-fn start_game(project: Project, no_build: bool) -> Result<Game> {
-    let engine = start_engine(&project, no_build)?;
-    Game::new(project, engine)
+fn start_game(project: Project, prepare: Prepare) -> Result<Game> {
+    let engine = start_engine(&project, !prepare.build)?;
+    if !prepare.bundles {
+        return Game::new(project, engine);
+    }
+    let output = content_build::default_output(&project.root);
+    if prepare.build {
+        let report = content_build::build(&project.root, &output)?;
+        let written = report.bundles.iter().filter(|b| b.written).count();
+        tracing::info!("built content: {} bundles, {written} written", report.bundles.len());
+    }
+    let content = Content::open_bundles(&project.root, &output)?;
+    Ok(Game::with_content(project, engine, content))
+}
+
+fn build_content(path: &Path) -> Result<()> {
+    let project = Project::open(path)?;
+    let started = std::time::Instant::now();
+    let output = content_build::default_output(&project.root);
+    let report = content_build::build(&project.root, &output)?;
+    let written = report.bundles.iter().filter(|b| b.written).count();
+    let shown = output.strip_prefix(&project.root).unwrap_or(&output);
+    println!(
+        "{}: {} bundles in {} ({:.2} s), {written} written, {} unchanged",
+        project.name(),
+        report.bundles.len(),
+        shown.display(),
+        started.elapsed().as_secs_f32(),
+        report.bundles.len() - written
+    );
+    for bundle in &report.bundles {
+        println!("\n  {}  {:>8}  used by {}", &bundle.file[..8], size(bundle.size), bundle.roots.join(", "));
+        for asset in &bundle.assets {
+            println!("      {asset}");
+        }
+    }
+    if !report.excluded.is_empty() {
+        println!("\nleft out, since no level or prefab uses them:");
+        for asset in &report.excluded {
+            println!("      {asset}");
+        }
+    }
+    Ok(())
+}
+
+fn size(bytes: u64) -> String {
+    match bytes {
+        0..1024 => format!("{bytes} B"),
+        1024..1_048_576 => format!("{:.1} KB", bytes as f64 / 1024.0),
+        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
+    }
 }
 
 fn start_engine(project: &Project, no_build: bool) -> Result<Engine> {

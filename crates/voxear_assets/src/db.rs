@@ -14,7 +14,8 @@ pub const META_EXTENSION: &str = "meta";
 /// output.
 const SKIPPED_FOLDERS: &[&str] = &["bin", "obj", "target", "node_modules"];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AssetKind {
     Model,
     Texture,
@@ -81,6 +82,17 @@ impl AssetDb {
             db.add(&file, &mut report)?;
         }
         Ok((db, report))
+    }
+
+    /// A database of known entries, such as those a content catalog lists,
+    /// with nothing read from disk.
+    pub fn from_entries(root: &Path, entries: impl IntoIterator<Item = AssetEntry>) -> Self {
+        let mut db = Self { root: root.to_path_buf(), by_guid: HashMap::new(), by_path: HashMap::new() };
+        for entry in entries {
+            db.by_path.insert(entry.path.clone(), entry.guid);
+            db.by_guid.insert(entry.guid, entry);
+        }
+        db
     }
 
     pub fn root(&self) -> &Path {

@@ -63,6 +63,9 @@ Post-processing is on by default: TAA, bloom, auto exposure, AgX tonemapping, a 
 scene changes it in a `[post]` section; `samples/Lights` has an example, and
 [Post-processing](docs/ARCHITECTURE.md#post-processing-and-the-voxear-look) lists every setting.
 
+`vox content build samples/Hello` packs the content into bundles, grouped by which levels and prefabs use each asset.
+`vox run samples/Hello --bundles` then plays from those bundles as a built game would, logging each one as it opens.
+
 More samples:
 - `samples/Stress` has 1,600 spheres and a wall, for trying culling and LODs.
 - `samples/Lights` has 256 coloured point lights at night, for clustered lighting.

@@ -115,13 +115,20 @@ Done so far:
   System.Numerics types, through C# 14 extension members. Also Obj world position and rotation, the
   Forward/Right/Up directions and `LookAt`, all tested in `managed/Voxear.Core.Tests`.
 
+- **Content build:**
+  - `vox content build` walks the dependency graph from levels, prefabs and field-named assets, and groups assets by
+    usage set into LZ4 bundles.
+  - The bundles are named by content hash, with a readable catalog.
+  - Every read goes through an `AssetReader`, so `vox run --bundles` plays from built content. Hello shows each level
+    opening only the bundles it needs, which meets the exit criterion.
+
 Still to do in M2:
 - Async level loading, and `Prefab.LoadAsync`.
 - Nested serializable types, and fields that reference behaviours.
-- Content build: usage-set bundling, a catalog, and incremental content hashing.
-- Runtime loading, sync and async, with reference counting.
+- Reference-counted bundle unloading, async IO, and freeing GPU meshes, materials and textures that nothing uses.
+- Splitting large bundles and merging tiny ones, and a per-asset build cache (with cooking).
+- Content roots for assets loaded by strings the build cannot see (`[ContentRoot]`, `[content]` in voxear.toml).
 - Catalogs that layer (base plus overlays), so mods slot in at M11 without reworking loading.
-- `vox content build`.
 
 **Exit:** a two-level sample shares scenes between levels and loads only what each level needs.
 

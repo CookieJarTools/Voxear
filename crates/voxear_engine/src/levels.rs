@@ -118,8 +118,8 @@ impl Levels {
             if kept.iter().any(|s| s.guid == target.guid) {
                 continue;
             }
-            let path = content.db().path(target.guid).expect("resolved above");
-            let scene = scene_file::read(&path)?;
+            let (text, path) = content.asset_text(target.guid, AssetKind::Scene)?;
+            let scene = scene_file::parse(&text, &path)?;
             self.persistent.retain(|_, entity| engine.world.is_alive(*entity));
             let survivors: HashSet<ObjPath> =
                 self.persistent.keys().filter(|(guid, _)| *guid == target.guid).map(|(_, path)| path.clone()).collect();
@@ -159,17 +159,22 @@ impl Levels {
     }
 }
 
-fn read_level(content: &Content, level: &str) -> Result<(String, Vec<Target>)> {
+/// A level's file, parsed. The content build reads levels too.
+pub(crate) fn parse_level(text: &str, path: &str) -> Result<LevelFile> {
+    let file: LevelFile = toml::from_str(text).with_context(|| format!("reading {path}"))?;
+    ensure!(file.format == LEVEL_FORMAT, "{path} uses level format {}, not {LEVEL_FORMAT}", file.format);
+    Ok(file)
+}
+
+fn read_level(content: &mut Content, level: &str) -> Result<(String, Vec<Target>)> {
     let reference = content.parse(level)?;
     let guid = reference.guid().with_context(|| format!("`{level}` is not a level asset"))?;
-    let entry = content.db().get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+    let entry = content.db().get(guid).with_context(|| format!("no asset with GUID {guid}"))?.clone();
     if entry.kind != AssetKind::Level {
         bail!("{} is not a .level file", entry.path);
     }
-    let path = content.db().root().join(&entry.path);
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let file: LevelFile = toml::from_str(&text).with_context(|| format!("reading {}", entry.path))?;
-    ensure!(file.format == LEVEL_FORMAT, "{} uses level format {}, not {LEVEL_FORMAT}", entry.path, file.format);
+    let (text, _) = content.asset_text(guid, AssetKind::Level)?;
+    let file = parse_level(&text, &entry.path)?;
 
     let mut targets = Vec::with_capacity(file.scenes.len());
     for scene in &file.scenes {

@@ -21,11 +21,7 @@ mod post_passes;
 mod scene;
 mod shadows;
 
-use std::{
-    collections::HashMap,
-    mem::ManuallyDrop,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
 
 use anyhow::{Result, ensure};
 use voxear_ecs::{Entity, World};
@@ -35,7 +31,7 @@ use voxear_rhi::{
 };
 
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle};
-pub use gltf_import::ImportedNode;
+pub use gltf_import::{ImportedNode, ReadFile, companion_files};
 pub use gpu::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS};
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::MAX_LODS;
@@ -315,10 +311,12 @@ impl Renderer {
         self.assets.as_mut().expect("assets live until drop").add_material(&self.gpu, desc)
     }
 
-    /// Loads a `.gltf` or `.glb` file and returns its drawable pieces.
-    pub fn import_gltf(&mut self, path: &Path) -> Result<Vec<ImportedNode>> {
+    /// Loads a `.gltf` or `.glb` file and returns its drawable pieces. `path`
+    /// is the model's project path, and `read` reads it and every file it
+    /// names, from wherever the content lives.
+    pub fn import_gltf(&mut self, path: &str, read: &mut ReadFile) -> Result<Vec<ImportedNode>> {
         let assets = self.assets.as_mut().expect("assets live until drop");
-        gltf_import::import(&self.gpu, &mut self.bindless, assets, path)
+        gltf_import::import(&self.gpu, &mut self.bindless, assets, path, read)
     }
 
     fn extent(&self) -> vk::Extent2D {

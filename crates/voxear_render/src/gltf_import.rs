@@ -1,8 +1,9 @@
 //! glTF 2.0 import. glTF is right-handed and Voxear is left-handed like
 //! Unity, so everything is mirrored on X at import and nothing is flipped at
-//! runtime. This loads straight to the GPU; Content (M2) will cache imports.
+//! runtime. Files come through a callback, so a model loads the same from a
+//! project folder or from a content bundle.
 
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use voxear_core::math::{Mat4, Quat, Vec3};
@@ -41,8 +42,18 @@ struct Importer<'a> {
     nodes: Vec<ImportedNode>,
 }
 
-pub fn import(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, path: &Path) -> Result<Vec<ImportedNode>> {
-    let (document, buffers, images) = gltf::import(path).with_context(|| format!("reading {}", path.display()))?;
+/// Reads one of a model's files by project path: the `.gltf` or `.glb`
+/// itself, or a buffer or image it names.
+pub type ReadFile<'a> = dyn FnMut(&str) -> Result<Vec<u8>> + 'a;
+
+pub fn import(
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    assets: &mut Assets,
+    path: &str,
+    read: &mut ReadFile,
+) -> Result<Vec<ImportedNode>> {
+    let (document, buffers, images) = load(path, read).with_context(|| format!("reading {path}"))?;
     let mut importer = Importer {
         gpu,
         bindless,
@@ -182,6 +193,103 @@ impl Importer<'_> {
         self.textures.insert((index, srgb), id);
         Ok(id)
     }
+}
+
+/// The project paths of the files a glTF file names, relative to its own
+/// folder: its buffers and images, but not those embedded in it.
+pub fn companion_files(path: &str, bytes: &[u8]) -> Result<Vec<String>> {
+    let document = gltf::Gltf::from_slice(bytes)?.document;
+    let buffers = document.buffers().filter_map(|b| match b.source() {
+        gltf::buffer::Source::Uri(uri) => Some(uri),
+        gltf::buffer::Source::Bin => None,
+    });
+    let images = document.images().filter_map(|i| match i.source() {
+        gltf::image::Source::Uri { uri, .. } => Some(uri),
+        gltf::image::Source::View { .. } => None,
+    });
+    Ok(buffers.chain(images).filter(|uri| !uri.starts_with("data:")).map(|uri| resolve(path, uri)).collect())
+}
+
+type Loaded = (gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>);
+
+/// What `gltf::import` does, but reading every file through `read`.
+fn load(path: &str, read: &mut ReadFile) -> Result<Loaded> {
+    let gltf::Gltf { document, mut blob } = gltf::Gltf::from_slice(&read(path)?)?;
+    let mut buffers = Vec::new();
+    for buffer in document.buffers() {
+        let data = match buffer.source() {
+            gltf::buffer::Source::Bin => blob.take().context("the file names a binary chunk it does not have")?,
+            gltf::buffer::Source::Uri(uri) => read_uri(path, uri, read)?,
+        };
+        buffers.push(gltf::buffer::Data(data));
+    }
+    let mut images = Vec::new();
+    for image in document.images() {
+        let encoded = match image.source() {
+            gltf::image::Source::View { view, .. } => {
+                let buffer = &buffers[view.buffer().index()].0;
+                buffer[view.offset()..view.offset() + view.length()].to_vec()
+            }
+            gltf::image::Source::Uri { uri, .. } => read_uri(path, uri, read)?,
+        };
+        let decoded =
+            image::load_from_memory(&encoded).with_context(|| format!("decoding image {}", image.index()))?.to_rgba8();
+        let (width, height) = decoded.dimensions();
+        images.push(gltf::image::Data {
+            pixels: decoded.into_raw(),
+            format: gltf::image::Format::R8G8B8A8,
+            width,
+            height,
+        });
+    }
+    Ok((document, buffers, images))
+}
+
+fn read_uri(path: &str, uri: &str, read: &mut ReadFile) -> Result<Vec<u8>> {
+    match uri.strip_prefix("data:") {
+        Some(data) => {
+            let (_, encoded) = data.split_once(";base64,").context("only base64 data URIs are supported")?;
+            Ok(base64::decode(encoded)?)
+        }
+        None => read(&resolve(path, uri)),
+    }
+}
+
+/// A URI relative to the glTF file, as a project path: percent escapes
+/// decoded and `..` folded away.
+fn resolve(path: &str, uri: &str) -> String {
+    let mut parts: Vec<String> = path.split('/').map(str::to_string).collect();
+    parts.pop();
+    for part in percent_decode(uri).split('/') {
+        match part {
+            "." | "" => {}
+            ".." => {
+                parts.pop();
+            }
+            part => parts.push(part.to_string()),
+        }
+    }
+    parts.join("/")
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escaped = (bytes[i] == b'%').then(|| text.get(i + 1..i + 3)).flatten();
+        match escaped.and_then(|hex| u8::from_str_radix(hex, 16).ok()) {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn mirror(v: [f32; 3]) -> Vec3 {

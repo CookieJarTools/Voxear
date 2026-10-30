@@ -2,6 +2,7 @@
 //! scripts, content, levels and the renderer, either in a window or headless.
 
 mod content;
+pub mod content_build;
 mod engine;
 mod fly_camera;
 mod game;

@@ -2,14 +2,17 @@
 //! importing each source asset once.
 //!
 //! In a project this reads source files directly, so pressing play never
-//! needs a build. Shipped games will read the bundles the content build
-//! makes instead, through the same calls.
+//! needs a build. Built games read the bundles `vox content build` makes,
+//! through the same calls (see [`Content::open_bundles`]).
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
-use voxear_assets::{AssetDb, AssetGuid, AssetKind, AssetRef};
+use voxear_assets::{
+    AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader,
+    bundle::{BundleInfo, BundleReader, Catalog},
+};
 use voxear_render::{ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, Primitive, Renderer};
 
 use crate::prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, Template};
@@ -70,6 +73,7 @@ pub enum MaterialSource {
 
 pub struct Content {
     db: AssetDb,
+    source: Source,
     models: HashMap<AssetGuid, Vec<ImportedNode>>,
     meshes: HashMap<AssetRef, MeshHandle>,
     mesh_refs: HashMap<MeshHandle, AssetRef>,
@@ -79,8 +83,15 @@ pub struct Content {
     prefabs: PrefabCache,
 }
 
+/// Where asset files are read from.
+enum Source {
+    Folder(FolderReader),
+    Bundles(BundleReader),
+}
+
 impl Content {
-    /// Scans the project's assets, creating `.meta` files for new ones.
+    /// Scans the project's assets, creating `.meta` files for new ones, and
+    /// reads them from the project folder.
     pub fn open(root: &Path) -> Result<Self> {
         let (db, report) = AssetDb::scan(root)?;
         for path in &report.created {
@@ -89,8 +100,22 @@ impl Content {
         for path in &report.reassigned {
             tracing::warn!("{path} had the same GUID as another asset (copied with its .meta?); it has a new one");
         }
-        Ok(Self {
+        Ok(Self::with_source(db, Source::Folder(FolderReader::new(root))))
+    }
+
+    /// Reads assets from built bundles in `content_dir` (see
+    /// `vox content build`), as a player does. Only assets the build
+    /// included can load.
+    pub fn open_bundles(root: &Path, content_dir: &Path) -> Result<Self> {
+        let catalog = Catalog::read(content_dir)?;
+        let db = AssetDb::from_entries(root, catalog.entries()?);
+        Ok(Self::with_source(db, Source::Bundles(BundleReader::new(content_dir, &catalog))))
+    }
+
+    fn with_source(db: AssetDb, source: Source) -> Self {
+        Self {
             db,
+            source,
             models: HashMap::new(),
             meshes: HashMap::new(),
             mesh_refs: HashMap::new(),
@@ -98,7 +123,39 @@ impl Content {
             inline_materials: HashMap::new(),
             material_sources: HashMap::new(),
             prefabs: PrefabCache::default(),
-        })
+        }
+    }
+
+    /// Reads one of an asset's files by project path.
+    pub fn read(&mut self, path: &str) -> Result<Vec<u8>> {
+        self.reader().read(path)
+    }
+
+    pub fn read_text(&mut self, path: &str) -> Result<String> {
+        self.reader().read_text(path)
+    }
+
+    /// The bundles opened so far, when reading built content.
+    pub fn opened_bundles(&self) -> Vec<&BundleInfo> {
+        match &self.source {
+            Source::Bundles(reader) => reader.opened().collect(),
+            Source::Folder(_) => Vec::new(),
+        }
+    }
+
+    fn reader(&mut self) -> &mut dyn AssetReader {
+        match &mut self.source {
+            Source::Folder(reader) => reader,
+            Source::Bundles(reader) => reader,
+        }
+    }
+
+    /// The text of an asset of the expected kind, with its project path.
+    pub fn asset_text(&mut self, guid: AssetGuid, kind: AssetKind) -> Result<(String, String)> {
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == kind, "{} is not a {kind:?} asset", entry.path);
+        let path = entry.path.clone();
+        Ok((self.read_text(&path)?, path))
     }
 
     pub fn db(&self) -> &AssetDb {
@@ -116,8 +173,12 @@ impl Content {
             if entry.kind != AssetKind::Model {
                 bail!("{} is not a model", entry.path);
             }
-            let path = self.db.root().join(&entry.path);
-            let nodes = renderer.import_gltf(&path)?;
+            let path = entry.path.clone();
+            let reader = match &mut self.source {
+                Source::Folder(reader) => reader as &mut dyn AssetReader,
+                Source::Bundles(reader) => reader,
+            };
+            let nodes = renderer.import_gltf(&path, &mut |file| reader.read(file))?;
             for node in &nodes {
                 let mesh = AssetRef::asset(guid, Some(&node.mesh_part));
                 self.mesh_refs.insert(node.mesh, mesh.clone());
@@ -175,9 +236,8 @@ impl Content {
         let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
         let handle = match entry.kind {
             AssetKind::Material => {
-                let path = self.db.root().join(&entry.path);
-                let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-                let data: MaterialData = toml::from_str(&text).with_context(|| format!("reading {}", entry.path))?;
+                let (text, path) = self.asset_text(guid, AssetKind::Material)?;
+                let data: MaterialData = toml::from_str(&text).with_context(|| format!("reading {path}"))?;
                 renderer.add_material(&data.desc())?
             }
             AssetKind::Model => {
@@ -195,14 +255,9 @@ impl Content {
         if let Some(file) = self.prefabs.files.get(&guid) {
             return Ok(file.clone());
         }
-        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
-        if entry.kind != AssetKind::Prefab {
-            bail!("{} is not a .prefab file", entry.path);
-        }
-        let path = self.db.root().join(&entry.path);
-        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        let file: PrefabFile = toml::from_str(&text).with_context(|| format!("reading {}", entry.path))?;
-        ensure!(file.format == PREFAB_FORMAT, "{} uses prefab format {}, not {PREFAB_FORMAT}", entry.path, file.format);
+        let (text, path) = self.asset_text(guid, AssetKind::Prefab)?;
+        let file: PrefabFile = toml::from_str(&text).with_context(|| format!("reading {path}"))?;
+        ensure!(file.format == PREFAB_FORMAT, "{path} uses prefab format {}, not {PREFAB_FORMAT}", file.format);
         let file = Arc::new(file);
         self.prefabs.files.insert(guid, file.clone());
         Ok(file)

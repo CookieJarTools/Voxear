@@ -2768,6 +2768,7 @@ dependencies = [
  "anyhow",
  "clap",
  "png",
+ "serde_json",
  "tracing",
  "voxear_assets",
  "voxear_core",
@@ -2810,6 +2811,7 @@ dependencies = [
  "anyhow",
  "clap",
  "tar",
+ "voxear_engine",
  "zstd",
 ]
 

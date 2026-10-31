@@ -22,6 +22,7 @@ voxear_engine.workspace = true
 voxear_rhi.workspace = true
 voxear_scripting.workspace = true
 anyhow.workspace = true
+serde_json.workspace = true
 clap.workspace = true
 voxear_scene.workspace = true
 tracing.workspace = true

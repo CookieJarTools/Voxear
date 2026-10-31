@@ -179,13 +179,14 @@ fn build_managed(root: &Path) -> Result<()> {
 }
 
 /// What the install is, for the launcher, which reads it rather than running
-/// anything. `[supports]` lists the launcher contracts its `vox` answers:
-/// none yet, since `vox new` and `vox upgrade` are still to come.
+/// anything. `[supports]` lists the launcher contracts its `vox` answers, each
+/// with its format: `vox new` so far, with `vox upgrade` still to come.
 fn engine_file(version: &str, channel: Channel, commit: &str) -> String {
     format!(
         "format = 1\nversion = \"{version}\"\nchannel = \"{}\"\nplatform = \"{PLATFORM}\"\ncommit = \"{commit}\"\n\n\
-         # The launcher contracts this install's vox answers: none yet.\n[supports]\n",
-        channel.name()
+         # The launcher contracts this install's vox answers.\n[supports]\nnew = {}\n",
+        channel.name(),
+        voxear_engine::new_project::FORMAT
     )
 }
 

@@ -8,6 +8,7 @@ mod fly_camera;
 mod game;
 mod levels;
 mod loading;
+pub mod new_project;
 pub mod prefab;
 mod project;
 pub mod scene_file;

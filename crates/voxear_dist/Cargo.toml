@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+voxear_engine.workspace = true
 clap.workspace = true
 tar.workspace = true
 zstd.workspace = true

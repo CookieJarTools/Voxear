@@ -52,6 +52,9 @@ pub(crate) fn lock() -> MutexGuard<'static, ()> {
 /// [`build`], for a thread already holding [`lock`].
 pub(crate) fn build_unlocked(project: &Project) -> Result<()> {
     let Some(csproj) = project.scripts_project() else { return Ok(()) };
+    let props = project.root.join(".voxear").join("Engine.props");
+    std::fs::create_dir_all(project.root.join(".voxear"))?;
+    std::fs::write(&props, engine_props()).with_context(|| format!("writing {}", props.display()))?;
     build_csproj(&dotnet()?, &csproj)
 }
 
@@ -156,10 +159,26 @@ fn read_all(pipe: Option<impl Read + Send + 'static>) -> Receiver<Vec<u8>> {
 /// `managed/Voxear.Scripts.props` there, so a project needs no checkout.
 /// MSBuild reads `;` and `,` in a property as separators, so they are escaped.
 fn engine_home_property() -> String {
+    let escaped = engine_home().replace('%', "%25").replace(';', "%3B").replace(',', "%2C");
+    format!("-p:VoxearHome={escaped}")
+}
+
+/// A project's `.voxear/Engine.props`: the engine its scripts last built
+/// with, for an IDE, which builds them without the editor or `vox` naming
+/// one. Every build of the scripts writes it.
+pub fn engine_props() -> String {
+    let home = engine_home().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    format!(
+        "<Project>\n\t<!-- Written by Voxear on each build of the scripts: the engine they build with, for an IDE. -->\n\
+         \t<PropertyGroup>\n\t\t<VoxearHome>{home}</VoxearHome>\n\t</PropertyGroup>\n</Project>\n"
+    )
+}
+
+/// The engine's folder as a scripts build names it, ending in a separator.
+fn engine_home() -> String {
     let root = engine_root();
     let root = root.canonicalize().unwrap_or(root);
-    let escaped = root.display().to_string().replace('%', "%25").replace(';', "%3B").replace(',', "%2C");
-    format!("-p:VoxearHome={escaped}{}", std::path::MAIN_SEPARATOR)
+    format!("{}{}", root.display(), std::path::MAIN_SEPARATOR)
 }
 
 fn dotnet() -> Result<DotnetInstall> {

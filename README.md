@@ -32,6 +32,7 @@ cargo build
 `vox run` builds the project's C# scripts, hosts .NET, loads the project's `start_level` and opens a window. A
 level is a list of scenes (`Levels/*.level`, `Scenes/*.scene`, both plain TOML). In Hello, the Game Manager switches
 between a day and a night level every five seconds, and their shared environment scene stays loaded.
+`vox new ~/Games/Orbit` makes a new project (`--template empty` for a bare one, `--git` for a repository).
 `vox assets samples/Hello` lists a project's assets and their GUIDs. Add
 `--headless --frames 120` to simulate without a window and print where every Obj ended up.
 

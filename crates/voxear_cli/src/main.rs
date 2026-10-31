@@ -43,6 +43,36 @@ enum ContentCommand {
 enum Commands {
     /// Check that this machine can build and run Voxear projects.
     Doctor,
+    /// Make a new project, as the launcher asks; `--describe --json` says what this version offers.
+    New {
+        /// The project folder itself, which must not exist or must be empty.
+        #[arg(required_unless_present = "describe")]
+        folder: Option<PathBuf>,
+        /// Print the templates, setup items and IDEs this version offers.
+        #[arg(long)]
+        describe: bool,
+        /// Report as JSON: one object for --describe, or one line per step.
+        #[arg(long)]
+        json: bool,
+        /// The project's name (default: the folder's).
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, default_value = "3d")]
+        template: String,
+        /// Setup items, comma-separated, or `none` (default: the template's own).
+        #[arg(long, value_delimiter = ',')]
+        setup: Option<Vec<String>>,
+        /// Set up a C# IDE: rider, visual-studio or vscode.
+        #[arg(long)]
+        ide: Option<String>,
+        /// Start a git repository, with a .gitignore and .gitattributes.
+        #[arg(long)]
+        git: bool,
+        #[arg(long)]
+        modding: bool,
+        #[arg(long)]
+        steam_app_id: Option<u64>,
+    },
     /// List a project's assets, giving new ones a GUID (`.meta` file).
     Assets {
         /// Project folder or its voxear.toml.
@@ -173,6 +203,25 @@ fn main() -> Result<()> {
             }
         }
         Commands::Doctor => doctor(),
+        Commands::New { folder, describe, json, name, template, setup, ide, git, modding, steam_app_id } => {
+            if describe {
+                println!("{}", voxear_engine::new_project::describe());
+                return Ok(());
+            }
+            let folder = folder.expect("clap asks for it without --describe");
+            let name = name.unwrap_or_else(|| folder.file_name().unwrap_or_default().to_string_lossy().into_owned());
+            let request = voxear_engine::new_project::NewProject {
+                folder,
+                name,
+                template,
+                setup,
+                ide,
+                git,
+                modding,
+                steam_app_id,
+            };
+            new_project(&request, json)
+        }
         Commands::Assets { project } => assets(&project),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
         Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays, stats } => {
@@ -545,4 +594,29 @@ fn hint(message: &str) {
 /// shader sources of its own, and must not pick up a checkout's.
 fn shaders_reload() -> bool {
     !voxear_engine::is_install(&voxear_engine::engine_root())
+}
+
+/// `vox new`: reports each step as it starts, as a line of JSON for the
+/// launcher when asked, and ends with where the project is or what went
+/// wrong. With JSON, a failure is reported on stdout as well as by the exit
+/// code, so nothing else goes there.
+fn new_project(request: &voxear_engine::new_project::NewProject, json: bool) -> Result<()> {
+    let line = |event: serde_json::Value| println!("{event}");
+    let mut step = |message: &str| {
+        if json {
+            line(serde_json::json!({ "event": "step", "message": message }));
+        } else {
+            println!("{message}");
+        }
+    };
+    match voxear_engine::new_project::create(request, &mut step) {
+        Ok(path) if json => line(serde_json::json!({ "event": "done", "path": path })),
+        Ok(path) => println!("Made {}", path.display()),
+        Err(error) if json => {
+            line(serde_json::json!({ "event": "error", "message": format!("{error:#}") }));
+            std::process::exit(1);
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }

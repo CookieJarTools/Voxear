@@ -2195,6 +2195,16 @@ through a small contract.
   the checkout it sits in.
 - **Projects can be pinned.** `engine` in `[project]` is the version the launcher pins; a different version warns
   when the project opens.
+- **`vox new`** makes projects for the launcher's New Project form (`voxear_engine::new_project`): `--describe
+  --json` says what this version offers, and `vox new <folder> --name … --template … [--setup …] [--ide …]
+  [--git] --json` makes the project, reporting each step as a line of JSON. The templates are Empty and 3D, with
+  the setup items lighting and sky, camera, and a sample scene (a ground and a cube turned by a script); the
+  first-person, third-person, top-down and 2D templates wait for an input API and 2D rendering. A project gets
+  `voxear.toml` pinned to this version, a level and its scene, a scripts project and a solution, and its assets'
+  `.meta` files; the IDE choice adds VS Code's settings, and `--git` a repository that leaves `.voxear/` out.
+  Modding and a Steam App ID are reported as not there yet. Every scripts build writes the project's
+  `.voxear/Engine.props`, naming the engine it built with, which a scripts project imports when nothing else
+  names one, so an IDE builds it too.
 - **`voxear-editor`** opens a project as the launcher asks (`--project <folder>`), handing over to `vox editor`
   beside it, so an install carries the engine once. `vox --version` gives the release's version.
 - **Packaging** (`voxear-dist`, `cargo run -p voxear_dist -- --channel nightly`): builds `vox` and
@@ -2206,8 +2216,8 @@ through a small contract.
 - **Publishing** is by hand, with the launcher repository's `voxear-release`: `engine add` signs the archive with
   the engine key and lists it in the site's `engine/releases.toml`, then the archive and its `.minisig` go up as
   assets of the `engine-v<version>` release in VoxearReleases, and the site goes to its `gh-pages` branch.
-- **Not yet:** `vox new` and `vox upgrade` (so `[supports]` is empty, and the launcher cannot make projects with
-  these builds), Windows archives, and a workflow that builds and publishes them.
+- **Not yet:** `vox upgrade` (so `[supports]` lists only `new`), Windows archives, and a workflow that builds and
+  publishes them.
 
 ## Platforms and GPU support
 

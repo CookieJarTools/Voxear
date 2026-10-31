@@ -24,13 +24,28 @@ use crate::{Project, core_assembly, scripts};
 /// The description's file, beside the scripts' build.
 const DESCRIPTION: &str = "Behaviours.json";
 
-/// The project's behaviours, and the `[Serializable]` types their fields use.
+/// The project's behaviours, the `[Serializable]` types their fields use,
+/// and the `[Command]` methods for the editor's palette.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct ScriptTypes {
     pub behaviours: Vec<BehaviourType>,
     /// Each `[Serializable]` type's fields, by full name.
     #[serde(rename = "types")]
     pub structs: BTreeMap<String, NestedType>,
+    #[serde(default)]
+    pub commands: Vec<ScriptCommand>,
+}
+
+/// A static method marked `[Command]`: what the palette calls it, keys that
+/// run it ("Ctrl+Shift+L", or empty), and where it is.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptCommand {
+    pub title: String,
+    #[serde(default)]
+    pub keys: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub method: String,
 }
 
 impl ScriptTypes {

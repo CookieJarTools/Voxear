@@ -90,6 +90,18 @@ impl ScriptRuntime {
         unsafe { switch(level.as_ptr(), level.len() as i32) };
     }
 
+    /// Runs a `[Command]` method of the game scripts against `world`, as the
+    /// editor's palette asks. Fails when the method is not there or throws;
+    /// what it threw is logged.
+    pub fn run_command(&mut self, world: &mut World, type_name: &str, method: &str) -> Result<()> {
+        let run = self.managed.run_command.context("Voxear.Core cannot run commands")?;
+        let _scope = WorldScope::enter(world);
+        let status = unsafe { run(type_name.as_ptr(), type_name.len() as i32, method.as_ptr(), method.len() as i32) };
+        ensure!(status != 1, "{type_name} has no [Command] method {method}");
+        ensure!(status == 0, "{type_name}.{method} threw; the Console has what it said");
+        Ok(())
+    }
+
     /// Every `[ContentRoot]` pattern in the game scripts, with the type or
     /// member that declares it.
     pub fn content_roots(&self) -> Result<Vec<(String, String)>> {

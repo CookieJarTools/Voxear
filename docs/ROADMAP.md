@@ -225,6 +225,12 @@ Done so far:
   with items added and taken out, and nested
   `[Serializable]` tables; Add Component and Remove Component; all of it undoable, and component values keepable
   after play.
+- **Command palette** (Ctrl+K): commands with their shortcuts, Objs, levels, assets, settings and Cookbook pages,
+  matched fuzzily, run from the keyboard or with a click, with what ran recently first. Scripts add commands with
+  `[Command]` (run in edit mode against the edited level, undoable, with their own keys), and Rust code with
+  `Editor::add_command`.
+- **Settings:** the Scene view's and play mode's settings in a Settings panel and the palette, kept per project with
+  the palette's recent items.
 
 Still to do in M3:
 - UI core:
@@ -235,8 +241,8 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The editor's next steps, to make it usable for real work: the command palette (Ctrl+K), Hierarchy instance badges and sibling order, the Console's
-  Sifter features, and C# hot reload (which play mode will then use to pick up changed scripts).
+- The editor's next steps, to make it usable for real work: Hierarchy instance badges and sibling order, the
+  Console's Sifter features, and C# hot reload (which play mode will then use to pick up changed scripts).
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.

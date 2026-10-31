@@ -26,6 +26,17 @@ namespace Voxear.Tests
 			Check.True(waveFields.SequenceEqual(new[] { "Count", "delay" }), "nested types are described once, with private [SerializeField] fields");
 		}
 
+		[Test]
+		private static void CommandsThatTakeAndGiveNothingAreListed()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestCommands).Assembly));
+			var commands = document.RootElement.GetProperty("commands").EnumerateArray().ToList();
+			Check.True(commands.Count == 1, $"one command, not {commands.Count}");
+			var tidy = commands[0];
+			Check.True(tidy.GetProperty("title").GetString() == "Tidy Up" && tidy.GetProperty("keys").GetString() == "Ctrl+Shift+T", "its title and keys");
+			Check.True(tidy.GetProperty("type").GetString() == "Voxear.Tests.TestCommands" && tidy.GetProperty("method").GetString() == "TidyUp", "and where it is");
+		}
+
 		private static string? Kind(JsonElement field)
 		{
 			return field.GetProperty("type").GetProperty("kind").GetString();

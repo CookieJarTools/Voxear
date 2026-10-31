@@ -11,10 +11,13 @@ namespace Voxear.Scripting
 	/// Describes the behaviours of a built game assembly for the editor, as JSON: each behaviour a scene can add, the
 	/// types it derives from and implements, and the fields BehaviourFields can set on it, with the kind of value each
 	/// takes and the value a new instance starts with. The editor reads this rather than the source, so what it shows
-	/// is what the compiler made. [Serializable] types those fields use are described once each, by name.
+	/// is what the compiler made. [Serializable] types those fields use are described once each, by name, and every
+	/// [Command] method is listed for the palette.
 	/// </summary>
 	internal static class ScriptCatalog
 	{
+		private const BindingFlags Static = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+
 		public static string Describe(Assembly assembly)
 		{
 			var nested = new SortedSet<string>(StringComparer.Ordinal);
@@ -30,6 +33,7 @@ namespace Voxear.Scripting
 				}
 				json.WriteEndArray();
 				WriteNestedTypes(json, types, nested);
+				WriteCommands(json, assembly);
 				json.WriteEndObject();
 			}
 			return Encoding.UTF8.GetString(stream.ToArray());
@@ -114,6 +118,40 @@ namespace Voxear.Scripting
 				WriteFields(json, type, FieldDefaults.Create(type), types);
 				json.WriteEndObject();
 			}
+			json.WriteEndObject();
+		}
+
+		/// <summary>Each static method marked [Command] that takes nothing and returns nothing, as the palette runs it.</summary>
+		private static void WriteCommands(Utf8JsonWriter json, Assembly assembly)
+		{
+			json.WriteStartArray("commands");
+			foreach (var type in Loadable(assembly))
+			{
+				if (type == null)
+				{
+					continue;
+				}
+				foreach (var method in type.GetMethods(Static))
+				{
+					WriteCommand(json, type, method);
+				}
+			}
+			json.WriteEndArray();
+		}
+
+		private static void WriteCommand(Utf8JsonWriter json, Type type, MethodInfo method)
+		{
+			var command = method.GetCustomAttribute<CommandAttribute>();
+			if (command == null || method.GetParameters().Length > 0 || method.ReturnType != typeof(void))
+			{
+				return;
+			}
+
+			json.WriteStartObject();
+			json.WriteString("title", command.Title);
+			json.WriteString("keys", command.Keys);
+			json.WriteString("type", type.FullName);
+			json.WriteString("method", method.Name);
 			json.WriteEndObject();
 		}
 

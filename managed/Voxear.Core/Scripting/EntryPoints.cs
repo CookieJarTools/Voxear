@@ -74,6 +74,24 @@ namespace Voxear.Scripting
 			}
 		}
 
+		/// <summary>
+		/// Runs a [Command] method the editor's palette picked: 0 when it ran, 1 when it could not be found, and 2 when
+		/// it threw, which is logged.
+		/// </summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int RunCommand(byte* type, int typeLength, byte* method, int methodLength)
+		{
+			try
+			{
+				return Commands.Run(Native.Utf8(type, typeLength), Native.Utf8(method, methodLength)) ? 0 : 1;
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+				return 2;
+			}
+		}
+
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static int ContentRoots(byte* buffer, int capacity)
 		{

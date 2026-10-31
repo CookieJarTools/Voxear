@@ -3,7 +3,9 @@
 //!
 //! This first slice opens a project's start level in **edit mode** (no
 //! script runs), with:
-//! - a top bar: the mark, workspaces, the command bar (Ctrl+K), play
+//! - a top bar: the mark, workspaces, the command bar with its palette
+//!   (Ctrl+K) of commands, settings, Objs, levels, assets and docs, which
+//!   scripts' `[Command]` methods and [`PaletteCommand`]s add to, play
 //!   controls, the account and Build; and a rail of tool icons
 //! - the **Hierarchy** of Objs, filterable, and the **Project**: folders on
 //!   the left and the open folder's assets and scripts on the right, as in
@@ -31,6 +33,7 @@
 //! - a status bar: what the editor is doing, frame rate, memory and git
 //!   branch
 //! - saving with Ctrl+S, and undo and redo of every edit with Ctrl+Z and Ctrl+Y
+//! - **Settings**, kept per project with what the palette ran recently
 
 mod console;
 mod editor;
@@ -40,9 +43,12 @@ mod history;
 mod inspector;
 mod levels_panel;
 mod objs;
+mod palette;
 mod project_view;
 mod props;
 pub mod scene_tools;
+mod settings;
+mod settings_panel;
 mod window;
 
 use std::path::Path;
@@ -54,6 +60,8 @@ use voxear_render::{Renderer, RendererSettings};
 
 pub use editor::Editor;
 pub use hierarchy::EditorOnly;
+pub use palette::{PaletteCommand, PaletteKey};
+pub use settings::{SETTINGS, SettingInfo, SettingKind, SettingValue, Settings};
 pub use window::run_editor;
 
 /// Renders the editor offscreen after `frames` frames, with the first Obj
@@ -68,7 +76,7 @@ pub fn screenshot(
     frames: u32,
 ) -> Result<()> {
     let mut renderer = Renderer::new_offscreen(width, height, settings)?;
-    let mut editor = Editor::open(project, &mut renderer, log)?;
+    let mut editor = Editor::open_without_memory(project, &mut renderer, log)?;
     let selected = editor.first_mesh();
     for frame in 0..frames.max(2) {
         if frame == 1 {

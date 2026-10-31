@@ -35,5 +35,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<ContentUsage*, int> ContentUsage;
 		public delegate* unmanaged[Cdecl]<byte*, int, LevelLoadOptionsData*, int> LevelLoadAsync;
 		public delegate* unmanaged[Cdecl]<int, int, byte*, int, int> LevelInfo;
+		public delegate* unmanaged[Cdecl]<byte*, int, ulong*, int, int> ObjFind;
 	}
 }

@@ -17,7 +17,7 @@ use voxear_scene::{
 
 use crate::services::{ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 9;
+pub(crate) const API_VERSION: u32 = 10;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -55,6 +55,9 @@ pub(crate) struct NativeApi {
     pub content_usage: unsafe extern "C" fn(out: *mut ContentStats) -> i32,
     pub level_load_async: unsafe extern "C" fn(reference: *const u8, len: i32, options: *const LevelLoadOptions) -> i32,
     pub level_info: unsafe extern "C" fn(what: i32, id: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// Writes the Objs called `name`, oldest first, as many as fit, and
+    /// returns how many there are.
+    pub obj_find: unsafe extern "C" fn(name: *const u8, len: i32, out: *mut u64, capacity: i32) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -84,6 +87,10 @@ pub(crate) struct ManagedApi {
     /// Starts a level change as `Level.LoadAsync` does, for the editor, so
     /// scripts hear about it as they would about their own.
     pub switch_level: Option<unsafe extern "C" fn(level: *const u8, len: i32)>,
+    /// Runs a `[Command]` method, for the editor's palette: 0 when it ran,
+    /// 1 when it was not found, 2 when it threw.
+    pub run_command:
+        Option<unsafe extern "C" fn(ty: *const u8, ty_len: i32, method: *const u8, method_len: i32) -> i32>,
 }
 
 #[repr(C)]
@@ -164,6 +171,29 @@ unsafe extern "C" fn log(level: i32, message: *const u8, len: i32) {
         2 => tracing::warn!(target: "script", "{text}"),
         _ => tracing::error!(target: "script", "{text}"),
     }
+}
+
+unsafe extern "C" fn obj_find(name: *const u8, len: i32, out: *mut u64, capacity: i32) -> i32 {
+    let name = unsafe { utf8(name, len) };
+    let found = with_world(|world| {
+        let mut found: Vec<Entity> = world
+            .query_ref::<(Entity, &Name)>()
+            .without::<voxear_scene::EditorOnly>()
+            .without::<voxear_scene::Destroying>()
+            .into_iter()
+            .filter(|(_, n)| n.0 == name)
+            .map(|(entity, _)| entity)
+            .collect();
+        found.sort_by_key(|entity| entity.index());
+        Some(found)
+    })
+    .unwrap_or_default();
+    if !out.is_null() {
+        for (at, entity) in found.iter().take(capacity.max(0) as usize).enumerate() {
+            unsafe { *out.add(at) = entity.to_bits() };
+        }
+    }
+    found.len() as i32
 }
 
 unsafe extern "C" fn obj_name(entity: u64, buffer: *mut u8, capacity: i32) -> i32 {
@@ -502,5 +532,6 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         content_usage,
         level_load_async,
         level_info,
+        obj_find,
     }
 }

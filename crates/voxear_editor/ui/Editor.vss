@@ -133,6 +133,81 @@
     background-color: transparent;
 }
 
+/* The Settings panel: groups of settings, laid out as the Inspector's rows. */
+.settings-body {
+    padding: 4px 12px 12px 12px;
+}
+
+.settings-group {
+    margin-top: 12px;
+    margin-bottom: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--vx-muted);
+}
+
+.setting .prop-label {
+    color: var(--vx-text-2);
+}
+
+.setting.found .prop-label {
+    color: var(--vx-accent);
+}
+
+/* Names in full, as settings have room the Inspector's fields do not. */
+.prop.setting {
+    grid-template-columns: minmax(0px, 1fr) 132px;
+}
+
+.setting-unit {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+/* The command palette, under the command bar. */
+.palette {
+    position: absolute;
+    width: 460px;
+    padding: 4px;
+    z-index: 20;
+    border-radius: 8px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-line-2);
+    box-shadow: 0px 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.palette-list .list-row {
+    align-items: center;
+    gap: 8px;
+    padding: 0px 8px;
+    border-radius: 5px;
+}
+
+.palette-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+.palette-title {
+    flex-grow: 1;
+    min-width: 0px;
+    color: var(--vx-text);
+}
+
+.palette-detail {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.palette-empty {
+    padding: 8px;
+    color: var(--vx-muted);
+}
+
 .kbd {
     height: 16px;
     padding: 0px 4px;
@@ -870,6 +945,12 @@ DockSpace .project-split > .split-divider {
 
 .status-text {
     color: var(--vx-text-2);
+}
+
+/* Numbers that change, in figures of one width so they do not shift. */
+.status-number {
+    font-family: mono;
+    font-size: 10px;
 }
 
 .status-branch {

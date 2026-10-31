@@ -16,6 +16,9 @@ pub struct Console {
     log: LogCapture,
     lines: Rc<RefCell<Vec<(Level, String)>>>,
     seen: u64,
+    /// How many lines had been logged when the Console was last cleared;
+    /// those are no longer shown.
+    cleared: u64,
 }
 
 impl Console {
@@ -37,7 +40,17 @@ impl Console {
             },
         };
         ui.bind_list(list, 0, items);
-        Self { list, log, lines, seen: 0 }
+        Self { list, log, lines, seen: 0, cleared: 0 }
+    }
+
+    /// Hides every line logged so far, as Clear does.
+    pub fn clear(&mut self, ui: &mut Ui) {
+        let Ok(log) = self.log.lock() else { return };
+        self.cleared = log.total;
+        drop(log);
+        self.lines.borrow_mut().clear();
+        ui.set_list_count(self.list, 0);
+        ui.refresh_list(self.list);
     }
 
     /// Shows lines logged since the last frame.
@@ -48,7 +61,10 @@ impl Console {
         }
         self.seen = log.total;
         let before = self.lines.borrow().len();
-        *self.lines.borrow_mut() = log.lines.iter().map(|l| (l.level, l.message.clone())).collect();
+        // The log keeps its latest lines; the first kept is line `total - kept` of all.
+        let first = log.total - log.lines.len() as u64;
+        let skip = self.cleared.saturating_sub(first) as usize;
+        *self.lines.borrow_mut() = log.lines.iter().skip(skip).map(|l| (l.level, l.message.clone())).collect();
         drop(log);
         let count = self.lines.borrow().len();
         // Scrolled to the end, so new lines are followed; scrolled up, the view stays put.

@@ -26,6 +26,19 @@ namespace Voxear
 
 		public string Name => IsValid ? Native.ObjName(Id) : string.Empty;
 
+		/// <summary>The first Obj with this name, or None, like GameObject.Find. It looks through every Obj, so keep what it finds.</summary>
+		public static Obj Find(string name)
+		{
+			var found = Native.FindObjs(name);
+			return found.Length > 0 ? new Obj(found[0]) : None;
+		}
+
+		/// <summary>Every Obj with this name, oldest first.</summary>
+		public static Obj[] FindAll(string name)
+		{
+			return Array.ConvertAll(Native.FindObjs(name), id => new Obj(id));
+		}
+
 		/// <summary>Position, rotation and scale relative to the parent, or to the world for an Obj without one.</summary>
 		public Transform Transform
 		{

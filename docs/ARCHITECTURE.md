@@ -1112,6 +1112,29 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **The top bar** has the Voxear mark, the workspaces, the command bar (Ctrl+K), play, pause and step in a pill,
   the user's avatar and the Build button. A **rail** of icons runs down the left, with source control at the
   bottom.
+- **The command palette** (`palette`) opens under the command bar when it has focus (Ctrl+K). It holds the editor's
+  commands with their shortcuts (play, save, undo, duplicate, the Scene view's tools, new Objs, showing each panel),
+  commands added by code, the settings, every Obj (selecting it), the levels (opening them), the project's assets
+  (showing them in the Project) and the Cookbook's pages. Matching is fuzzy: the letters typed need only come in
+  order, and a result ranks higher the more of them start words or follow one another, then the shorter it is. What
+  was run is remembered per project, by a key that stays the same from run to run (an Obj by its scene and its place
+  there): with nothing typed the recent come first, then the commands, and typed for they rank higher. Up and Down
+  move the highlight, Enter or a click runs it, and Escape closes the palette and empties the bar.
+- **Adding to the palette.** Game scripts mark a static method that takes and returns nothing with
+  `[Command("Swap Spinners", Keys = "Ctrl+Shift+X")]`, as Unity's `[MenuItem]`; the scripts' description lists it
+  (`script_types`), so it is in the palette, and its keys run it from anywhere in the editor. It runs in edit mode,
+  against the level being edited: .NET starts for it the first time (building the scripts if need be), the method is
+  called with the edited world lent (`ScriptRuntime::run_command`), and what it changed, renamed, moved or destroyed is
+  one step to undo. Scripts find Objs with `Obj.Find` and `Obj.FindAll`. Behaviours do not run in edit mode, so a
+  command finds none; while playing, a command runs against the game. Rust code built on the editor adds commands
+  with `Editor::add_command(PaletteCommand { id, title, keys, icon, run })`, `run` getting the editor.
+- **Settings** (`settings`): the Scene view's snap distance, handle position (pivot or center) and space (global or
+  local), fly speed, and whether the stats chip and axis gizmo show; and whether Play starts paused, saves first, and
+  clears the Console. They are kept per project in `.voxear/Editor.toml` with the palette's recent items, and shown in
+  the Settings panel (a tab beside the Inspector, with a filter that matches as the palette does). The tool strip's
+  Pivot, Global and snap buttons and the wheel's fly speed are the same settings. From the palette, a toggle flips, a
+  choice moves to the next, and a number opens the Settings panel at it, focused to type. Tests and screenshots open
+  the editor without memory (`Editor::open_without_memory`), so nothing carries from one run to the next.
 - **Docked panels:** the Hierarchy (Objs by parent, with type icons, child counts and a filter), the Scene view and
   the Game view (through the level's first camera, and the one drawn while playing when both show), the Project and
   the Console under them, and the Inspector on the right at 300px. Each panel has a
@@ -1187,10 +1210,11 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   so every step naming them is pointed at the new ones.
 - **The status bar** shows a light, what the editor is doing (ready, building scripts, playing or paused, or that
   there are unsaved changes) and how long the project took to open, then the renderer, frame rate, memory and git
-  branch.
+  branch. The numbers are in figures of one width and change at most once a second; the frame rate follows the trend
+  and holds still within 3% of what it shows, so it can be read.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
-The command palette and the Odin-style inspector attributes come next.
+The Odin-style inspector attributes come next.
 
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.
@@ -1251,7 +1275,7 @@ engine in its own crate (`crates/voxear_cookbook`). Its source and design are in
   an editor with the page beside its Markdown.
 
 **Speed.**
-- A **command palette** on Ctrl+K reaches every action, asset and setting.
+- A **command palette** on Ctrl+K reaches every action, asset and setting *(implemented; see "What exists now")*.
 - Keyboard shortcuts appear everywhere, with fuzzy search in every list.
 - Selection-aware context actions.
 - Every long list (Hierarchy, Project, Console, inspector arrays) is a virtualized list or tree view, so a scene of

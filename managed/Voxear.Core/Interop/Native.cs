@@ -30,6 +30,22 @@ namespace Voxear.Interop
 			}
 		}
 
+		/// <summary>The Objs with a name, oldest first.</summary>
+		public static ulong[] FindObjs(string name)
+		{
+			var bytes = Encoding.UTF8.GetBytes(name);
+			fixed (byte* text = bytes)
+			{
+				var count = Api->ObjFind(text, bytes.Length, null, 0);
+				var found = new ulong[Math.Max(count, 0)];
+				fixed (ulong* into = found)
+				{
+					Api->ObjFind(text, bytes.Length, into, found.Length);
+				}
+				return found;
+			}
+		}
+
 		public static string ObjName(ulong obj)
 		{
 			var length = Api->ObjName(obj, null, 0);

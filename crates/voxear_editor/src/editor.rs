@@ -34,9 +34,12 @@ use crate::{
     inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
     objs,
+    palette::{Added, Keys, Palette, PaletteAction, PaletteCommand, PaletteKey, Picked, Sources},
     project_view::ProjectView,
     props::{self, Prop},
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
+    settings::{self, Memory, SNAPS, SettingKind, SettingValue, Settings},
+    settings_panel::SettingsPanel,
 };
 
 const MARKUP: &str = include_str!("../ui/Editor.vui");
@@ -45,14 +48,21 @@ const SHEET: &str = include_str!("../ui/Editor.vss");
 /// Hierarchy on the left, the Scene in the middle over the Project and
 /// Console, and the Inspector on the right. The Project sits under the Scene,
 /// as in Unity, because its folders and files need the width.
-const LAYOUT: &str =
-    "row(240, [hierarchy, levels], row(-300, column(66%, [scene, game, cookbook], [project, console]), [inspector]))";
+const LAYOUT: &str = "row(240, [hierarchy, levels], row(-300, column(66%, [scene, game, cookbook], [project, console]), \
+     [inspector, settings]))";
 /// The window's background, which the 3D view's surroundings are cleared to.
 const BACKGROUND: u32 = 0x0c0e10;
 /// How long a message stays in the status bar.
 const NOTICE_SECONDS: f32 = 4.0;
-/// How often the status bar's numbers change.
-const STATUS_INTERVAL: f32 = 0.5;
+/// How often the status bar's numbers change: each is the average over this
+/// long, so they are steady enough to read.
+const STATUS_INTERVAL: f32 = 1.0;
+/// A frame rate within this share of the one shown is not worth changing the
+/// number for, so it holds still while the rate wobbles.
+const FPS_STEADY: f32 = 0.03;
+/// How much each second's frame rate moves the one shown, which follows the
+/// trend rather than each second's swing.
+const FPS_FOLLOW: f32 = 0.35;
 /// The axis gizmo: its middle, how far its axes reach, and their ends' size.
 const GIZMO_MIDDLE: f32 = 15.0;
 const GIZMO_REACH: f32 = 11.0;
@@ -86,7 +96,7 @@ struct Nodes {
 
 /// What a shortcut asks of the editor, done in the next frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Command {
+pub(crate) enum Command {
     Save,
     Undo,
     Redo,
@@ -110,6 +120,18 @@ pub struct Editor {
     console: Console,
     /// The project's own documentation, from its `Docs` folder.
     cookbook: voxear_cookbook::Cookbook,
+    /// The command palette, what its keys asked to run since the last frame,
+    /// and commands added to it by code.
+    palette: Palette,
+    palette_runs: Vec<Picked>,
+    added: Vec<PaletteCommand>,
+    /// The settings and what the palette ran recently, kept per project, and
+    /// the panel that shows the settings.
+    memory: Memory,
+    settings_panel: SettingsPanel,
+    /// The fly camera's speed as last seen, to tell the wheel's changes from
+    /// the setting's.
+    fly_speed: f32,
     /// Every level and loose scene, to open, play or change to.
     levels: LevelsPanel,
     /// The Scene view's own camera, which the Hierarchy leaves out.
@@ -130,6 +152,7 @@ pub struct Editor {
     /// Control, or Command on macOS, is held.
     control: bool,
     shift: bool,
+    alt: bool,
     /// Shortcuts pressed since the last frame.
     commands: Vec<Command>,
     /// Values to keep after play: played Objs, and which of their values.
@@ -148,7 +171,11 @@ pub struct Editor {
     discard_armed: Option<String>,
     /// A message for the status bar, and when it was given.
     notice: Option<(String, Instant)>,
+    /// Frames and seconds counted towards the status bar's next numbers, and
+    /// the frame rate it shows.
     status: (u32, f32),
+    average_fps: f32,
+    shown_fps: f32,
     /// The scripts' description being made from a new build, and when the
     /// last was started and when the sources were last looked at.
     describing: Option<Receiver<Result<ScriptTypes>>>,
@@ -160,6 +187,17 @@ impl Editor {
     /// Opens `project`'s start level in edit mode: its Objs load with their
     /// behaviours as data, and no script runs.
     pub fn open(project: Project, renderer: &mut Renderer, log: LogCapture) -> Result<Self> {
+        let memory = Memory::open(&project.root);
+        Self::open_with(project, renderer, log, memory)
+    }
+
+    /// [`open`](Self::open), remembering nothing: the settings start as
+    /// their defaults and nothing is written, as tests and screenshots want.
+    pub fn open_without_memory(project: Project, renderer: &mut Renderer, log: LogCapture) -> Result<Self> {
+        Self::open_with(project, renderer, log, Memory::forgetful())
+    }
+
+    fn open_with(project: Project, renderer: &mut Renderer, log: LogCapture, memory: Memory) -> Result<Self> {
         let started = Instant::now();
         let root = project.root.clone();
         let mut engine = Engine::new();
@@ -224,19 +262,32 @@ impl Editor {
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let cookbook_panel = find(&ui, "cookbook");
         let cookbook = voxear_cookbook::Cookbook::new(&mut ui, cookbook_panel, &root, game.project.name());
+        let (panel, list, empty) = (find(&ui, "palette"), find(&ui, "palette-list"), find(&ui, "palette-empty"));
+        let palette = Palette::new(&mut ui, nodes.command, panel, list, empty);
+        let (view, filter) = (find(&ui, "settings"), find(&ui, "settings-filter"));
+        let settings_panel = SettingsPanel::new(&mut ui, view, filter, &memory.settings);
+        let mut fly = FlyCamera::default();
+        fly.set_speed(memory.settings.fly_speed);
         ui.set_text(nodes.status_time, &format!("Opened in {:.2} s", started.elapsed().as_secs_f32()));
 
         tracing::info!("opened {} in edit mode", game.project.name());
         Ok(Self {
             game,
             ui,
-            fly: FlyCamera::default(),
+            fly,
+            alt: false,
             nodes,
             hierarchy,
             project,
             inspector,
             console,
             cookbook,
+            palette,
+            palette_runs: Vec::new(),
+            added: Vec::new(),
+            fly_speed: memory.settings.fly_speed.clamp(0.25, 250.0),
+            memory,
+            settings_panel,
             levels,
             camera,
             play: play::Play::new(),
@@ -259,6 +310,8 @@ impl Editor {
             discard_armed: None,
             notice: None,
             status: (0, 0.0),
+            average_fps: 0.0,
+            shown_fps: 0.0,
             describing: None,
             described_from: None,
             scripts_checked: None,
@@ -335,11 +388,13 @@ impl Editor {
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
         }
+        self.update_settings();
         self.update_scene_tools(renderer);
         self.update_script_types();
         self.project.update(&mut self.ui);
         self.console.update(&mut self.ui);
         self.cookbook.update(&mut self.ui);
+        self.update_palette(renderer);
         let action = self.levels.update(&mut self.ui, self.game.levels.current(), self.game.loads.level_in_progress());
         if let Some(action) = action {
             self.level_action(action, renderer);
@@ -373,6 +428,159 @@ impl Editor {
     /// What a click in the Levels panel asked for. Playing, a level is
     /// changed to as the game would change to it; stopped, it is opened to
     /// edit, and Play opens it and plays.
+    /// Opens and narrows the command palette, and runs what it picks.
+    fn update_palette(&mut self, renderer: &mut Renderer) {
+        let (cookbook, game, memory) = (&self.cookbook, &self.game, &self.memory);
+        let added = self.added_commands();
+        let playing = self.is_playing();
+        let sources = || Sources {
+            game,
+            playing,
+            settings: &memory.settings,
+            recent: &memory.recent,
+            docs: cookbook
+                .library()
+                .pages()
+                .map(|(_, page)| (page.title().to_string(), page.reference().to_string()))
+                .collect(),
+            added,
+        };
+        let clicked = self.palette.update(&mut self.ui, sources);
+        for picked in std::mem::take(&mut self.palette_runs).into_iter().chain(clicked) {
+            self.memory.ran(&picked.key);
+            self.run_palette(picked.action, renderer);
+        }
+    }
+
+    /// Commands added by code and the scripts' `[Command]` methods, as the
+    /// palette lists them.
+    fn added_commands(&self) -> Vec<Added> {
+        let added = self.added.iter().map(|command| Added {
+            key: format!("added:{}", command.id),
+            title: command.title.clone(),
+            keys: command.keys.clone(),
+            icon: command.icon,
+            action: PaletteAction::Added(command.id.clone()),
+        });
+        let scripts = self.inspector.types().commands.iter().map(|command| Added {
+            key: format!("script:{}.{}", command.type_name, command.method),
+            title: command.title.clone(),
+            keys: command.keys.clone(),
+            icon: "code",
+            action: PaletteAction::Script { type_name: command.type_name.clone(), method: command.method.clone() },
+        });
+        added.chain(scripts).collect()
+    }
+
+    /// Adds a command to the palette, as code built on the editor does.
+    /// Its keys, if any, run it from anywhere in the editor.
+    pub fn add_command(&mut self, command: PaletteCommand) {
+        self.added.retain(|c| c.id != command.id);
+        self.added.push(command);
+    }
+
+    /// The editor's settings, as the Settings panel shows them.
+    pub fn settings(&self) -> &Settings {
+        &self.memory.settings
+    }
+
+    /// Runs a setting as the palette does: a toggle flips, a choice moves on,
+    /// and a number opens the Settings panel at it, to type.
+    fn run_setting(&mut self, key: &'static str) {
+        let Some(info) = settings::info(key) else { return };
+        let next = match (self.memory.settings.get(key), info.kind) {
+            (Some(SettingValue::Toggle(on)), _) => Some(SettingValue::Toggle(!on)),
+            (Some(SettingValue::Choice(i)), SettingKind::Choice(options)) => {
+                Some(SettingValue::Choice((i + 1) % options.len()))
+            }
+            _ => None,
+        };
+        match next {
+            Some(value) => {
+                self.memory.settings.set(key, value);
+                self.memory.save();
+                self.apply_settings();
+                let now = self.memory.settings.describe(info);
+                self.notify(&format!("{}: {now}", info.title));
+            }
+            None => {
+                self.ui.show_dock_panel(self.nodes.dock, "settings");
+                self.settings_panel.reveal(key);
+            }
+        }
+    }
+
+    /// Puts the settings into effect: the tool strip and its handles, the fly
+    /// camera's speed, and the overlays over the Scene view. Changes from the
+    /// tool strip, the wheel and the Settings panel are kept.
+    fn update_settings(&mut self) {
+        let mut changed = self.settings_panel.update(&mut self.ui, &mut self.memory.settings);
+        changed |= self.update_tool_strip();
+        // The wheel changes the speed while flying; the setting follows it once flying stops.
+        if self.fly.speed() != self.fly_speed && !self.fly.is_looking() {
+            changed |= self.memory.settings.set("fly_speed", SettingValue::Number(self.fly.speed()));
+        } else if self.memory.settings.fly_speed != self.fly_speed && !self.fly.is_looking() {
+            self.fly.set_speed(self.memory.settings.fly_speed);
+        }
+        self.fly_speed = self.fly.speed();
+        if changed {
+            self.memory.save();
+        }
+        self.apply_settings();
+    }
+
+    /// Puts the settings into the tool strip, its handles and the overlays.
+    fn apply_settings(&mut self) {
+        let settings = &self.memory.settings;
+        (self.tools.snap, self.tools.centred, self.tools.local) = (settings.snap, settings.centred, settings.local);
+        let (show_stats, show_gizmo) = (settings.show_stats, settings.show_axis_gizmo);
+        self.ui.set_text(self.nodes.pivot, if self.tools.centred { "Center" } else { "Pivot" });
+        self.ui.set_text(self.nodes.space, if self.tools.local { "Local" } else { "Global" });
+        if let Some(&label) = self.ui.children(self.nodes.snap).last() {
+            self.ui.set_text(label, &format!("{} m", self.tools.snap));
+        }
+        self.ui.set_visible(self.nodes.stats, show_stats);
+        self.ui.set_visible(self.nodes.view_gizmo, show_gizmo);
+    }
+
+    /// Does what a result of the command palette says.
+    fn run_palette(&mut self, action: PaletteAction, renderer: &mut Renderer) {
+        match action {
+            PaletteAction::Setting(key) => self.run_setting(key),
+            PaletteAction::Added(id) => {
+                let run = self.added.iter().find(|c| c.id == id).map(|c| c.run.clone());
+                if let Some(run) = run {
+                    run(self);
+                }
+            }
+            PaletteAction::Script { type_name, method } => self.run_script_command(&type_name, &method),
+            PaletteAction::Command(command) => self.run(command, renderer),
+            PaletteAction::Play if self.is_playing() => self.stop(renderer),
+            PaletteAction::Play => self.play(renderer),
+            PaletteAction::Pause => {
+                let paused = !self.is_paused();
+                self.set_paused(paused);
+            }
+            PaletteAction::Step => self.step(),
+            PaletteAction::Tool(index) => self.ui.set_segment(self.nodes.tool, index),
+            PaletteAction::Create(kind) => self.obj_action(ObjAction::Create { kind, parent: None }, renderer),
+            PaletteAction::ShowPanel(id) => self.ui.show_dock_panel(self.nodes.dock, id),
+            PaletteAction::Select(entity) => {
+                self.ui.show_dock_panel(self.nodes.dock, "hierarchy");
+                self.select(Some(entity));
+            }
+            PaletteAction::OpenLevel(path) => self.level_action(LevelAction::Open(path), renderer),
+            PaletteAction::Reveal(path) => {
+                self.ui.show_dock_panel(self.nodes.dock, "project");
+                self.project.reveal(&mut self.ui, &path);
+            }
+            PaletteAction::OpenDoc(reference) => {
+                self.ui.show_dock_panel(self.nodes.dock, "cookbook");
+                self.cookbook.open_reference(&mut self.ui, &reference);
+            }
+        }
+    }
+
     fn level_action(&mut self, action: LevelAction, renderer: &mut Renderer) {
         let playing = self.is_playing();
         let target = match &action {
@@ -434,7 +642,6 @@ impl Editor {
     /// select, the handles under the pointer, and dragging them.
     fn update_scene_tools(&mut self, renderer: &Renderer) {
         self.tools.tool = Tool::from_index(self.ui.segment(self.nodes.tool));
-        self.update_tool_strip();
         let selected = self.inspector.shown();
         let Some(camera) = self.scene_camera() else {
             self.hovered_handle = None;
@@ -649,25 +856,22 @@ impl Editor {
     }
 
     /// Pivot or Center, Global or Local, and the snap distance, as the
-    /// tool strip's buttons toggle them.
-    fn update_tool_strip(&mut self) {
+    /// tool strip's buttons toggle them: they are settings, so they are kept.
+    fn update_tool_strip(&mut self) -> bool {
+        let settings = &mut self.memory.settings;
+        let mut changed = false;
         if self.ui.clicked(self.nodes.pivot) {
-            self.tools.centred = !self.tools.centred;
-            self.ui.set_text(self.nodes.pivot, if self.tools.centred { "Center" } else { "Pivot" });
+            changed |= settings.set("handle_position", SettingValue::Choice(usize::from(!settings.centred)));
         }
         if self.ui.clicked(self.nodes.space) {
-            self.tools.local = !self.tools.local;
-            self.ui.set_text(self.nodes.space, if self.tools.local { "Local" } else { "Global" });
+            changed |= settings.set("handle_space", SettingValue::Choice(usize::from(!settings.local)));
         }
-        if self.ui.clicked(self.nodes.snap) {
-            let steps = [0.1, 0.25, 0.5, 1.0];
-            let next =
-                steps.iter().position(|s| (*s - self.tools.snap).abs() < 1e-4).map_or(0, |i| (i + 1) % steps.len());
-            self.tools.snap = steps[next];
-            if let Some(&label) = self.ui.children(self.nodes.snap).last() {
-                self.ui.set_text(label, &format!("{} m", self.tools.snap));
-            }
+        if self.ui.clicked(self.nodes.snap)
+            && let Some(SettingValue::Choice(at)) = settings.get("snap")
+        {
+            changed |= settings.set("snap", SettingValue::Choice((at + 1) % SNAPS.len()));
         }
+        changed
     }
 
     /// Saves, undoes or redoes, as a shortcut asked.
@@ -789,6 +993,7 @@ impl Editor {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.control = modifiers.state().control_key() || modifiers.state().super_key();
                 self.shift = modifiers.state().shift_key();
+                self.alt = modifiers.state().alt_key();
             }
             _ => {}
         }
@@ -804,6 +1009,33 @@ impl Editor {
                 self.released_handle = true;
                 return true;
             }
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && self.palette.is_open()
+            && let winit::keyboard::Key::Named(named) = &key.logical_key
+        {
+            use winit::keyboard::NamedKey;
+            let palette_key = match named {
+                NamedKey::ArrowUp => Some(PaletteKey::Up),
+                NamedKey::ArrowDown => Some(PaletteKey::Down),
+                NamedKey::Enter => Some(PaletteKey::Enter),
+                NamedKey::Escape => Some(PaletteKey::Escape),
+                _ => None,
+            };
+            if let Some(palette_key) = palette_key {
+                self.palette_key(palette_key);
+                return true;
+            }
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && !key.repeat
+            && !self.ui.wants_keyboard()
+            && let Some(picked) = self.command_for_keys(&key.logical_key)
+        {
+            self.palette_runs.push(picked);
+            return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
             && key.state == ElementState::Pressed
@@ -847,6 +1079,31 @@ impl Editor {
             }
         }
         voxear_engine::ui_input::handle(&mut self.ui, event)
+    }
+
+    /// A key for the open command palette: Up and Down move through it, Enter
+    /// runs what is highlighted on the next frame, and Escape closes it.
+    pub fn palette_key(&mut self, key: PaletteKey) {
+        if let Some(picked) = self.palette.key(&mut self.ui, key) {
+            self.palette_runs.push(picked);
+        }
+    }
+
+    /// The command added by code, or the scripts' `[Command]`, whose keys
+    /// these are, to run as the palette would.
+    fn command_for_keys(&self, key: &winit::keyboard::Key) -> Option<Picked> {
+        use winit::keyboard::Key;
+        let pressed = match key {
+            Key::Character(text) => text.to_lowercase(),
+            Key::Named(named) => format!("{named:?}").to_lowercase(),
+            _ => return None,
+        };
+        let matches = |keys: &str| {
+            Keys::parse(keys).is_some_and(|k| {
+                k.key == pressed && k.control == self.control && k.shift == self.shift && k.alt == self.alt
+            })
+        };
+        self.added_commands().into_iter().find(|c| matches(&c.keys)).map(|c| Picked { action: c.action, key: c.key })
     }
 
     /// A viewport's rectangle in physical pixels, within `size`; a pixel
@@ -953,9 +1210,15 @@ impl Editor {
         if self.status.1 < STATUS_INTERVAL && self.status.0 > 1 {
             return;
         }
-        let fps = self.status.0 as f32 / self.status.1.max(1e-3);
+        let second = self.status.0 as f32 / self.status.1.max(1e-3);
         self.status = (0, 0.0);
-        self.ui.set_text(self.nodes.status_fps, &format!("{fps:.0} fps"));
+        let fps =
+            if self.average_fps > 0.0 { self.average_fps + (second - self.average_fps) * FPS_FOLLOW } else { second };
+        self.average_fps = fps;
+        if (fps - self.shown_fps).abs() > self.shown_fps * FPS_STEADY {
+            self.shown_fps = fps;
+            self.ui.set_text(self.nodes.status_fps, &format!("{fps:.0} fps"));
+        }
         let memory = resident_megabytes().map(|mb| format!("{mb:.0} MB")).unwrap_or_default();
         self.ui.set_text(self.nodes.status_memory, &memory);
         let stats = renderer.stats();

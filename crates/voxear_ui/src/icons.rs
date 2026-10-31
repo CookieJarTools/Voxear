@@ -65,6 +65,7 @@ pub const NAMES: &[&str] = &[
     "alert",
     "copy",
     "edit",
+    "settings",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -150,6 +151,12 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "alert" => &[("M12 4l9 15.5H3ZM12 10v4.5M12 17.25v.25", STROKE)],
         "copy" => &[("M9 9h10.5v10.5H9ZM15 9V4.5H4.5V15H9", STROKE)],
         "edit" => &[("M4.5 19.5l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3l-10 10ZM13.5 7l3 3", STROKE)],
+        // Two sliders, for settings.
+        "settings" => &[(
+            "M4 7.5h8.5M17.5 7.5H20M4 16.5h2.5M11.5 16.5H20\
+             M15 5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5ZM9 14a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5Z",
+            STROKE,
+        )],
         _ => return None,
     })
 }

@@ -87,6 +87,16 @@ impl Engine {
         self.scripts.as_mut()
     }
 
+    /// Runs a scripts' `[Command]` method against this engine's world, as
+    /// the editor's palette does while playing.
+    pub fn run_command(&mut self, type_name: &str, method: &str) -> anyhow::Result<()> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        let ran = scripts.run_command(&mut self.world, type_name, method);
+        let doomed = scripts.take_obj_destroys();
+        self.destroy_objs(&doomed);
+        ran
+    }
+
     /// Asks the scripts to change level through `Level.LoadAsync`, so its
     /// events fire. False without scripts.
     pub fn switch_level_through_scripts(&mut self, level: &str) -> bool {

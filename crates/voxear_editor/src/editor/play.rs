@@ -61,11 +61,14 @@ pub(super) struct Play {
     ready: bool,
     /// Why the last Play failed, for the status bar.
     pub error: Option<String>,
+    /// A `[Command]` to run once the scripts are built and started, instead
+    /// of playing: its type and method.
+    command: Option<(String, String)>,
 }
 
 impl Play {
     pub fn new() -> Self {
-        Self { mode: Mode::Editing, scripts: None, ready: false, error: None }
+        Self { mode: Mode::Editing, scripts: None, ready: false, error: None, command: None }
     }
 
     /// What the status bar says the editor is doing.
@@ -101,16 +104,79 @@ impl Editor {
             return;
         }
         self.play.error = None;
+        if self.memory.settings.save_before_play && self.unsaved {
+            self.save();
+        }
         if self.play.ready {
             self.start_run(renderer);
             return;
         }
+        self.build_scripts();
+    }
+
+    /// Builds the scripts off the main thread; once built they start, and
+    /// the game plays or the waiting command runs.
+    fn build_scripts(&mut self) {
         let root = self.game.project.root.clone();
         let (done, building) = mpsc::channel();
         std::thread::spawn(move || {
             let _ = done.send(Project::open(&root).and_then(|project| scripts::build(&project)));
         });
         self.play.mode = Mode::Building(building);
+    }
+
+    /// Runs a scripts' `[Command]` method, as the palette asks. While
+    /// editing it runs against the edited level, and what it changes,
+    /// renames, moves or destroys is one step to undo; while playing it runs
+    /// against the game. The first time, the scripts build and start, and it
+    /// runs once they have.
+    pub(super) fn run_script_command(&mut self, type_name: &str, method: &str) {
+        let ran = match &mut self.play.mode {
+            Mode::Playing(_) => self.game.engine.run_command(type_name, method),
+            Mode::Building(_) => return self.notify("Wait for the scripts to finish building"),
+            Mode::Editing if !self.play.ready || self.play.scripts.is_none() => {
+                self.play.command = Some((type_name.to_string(), method.to_string()));
+                return self.build_scripts();
+            }
+            Mode::Editing => self.run_command_on_edits(type_name, method),
+        };
+        if let Err(error) = ran {
+            tracing::error!("{error:#}");
+            self.notify(&format!("{error}"));
+        }
+    }
+
+    /// Runs a command against the edited level, keeping what it changed as
+    /// one step to undo: Objs it changed, and those it destroyed, which undo
+    /// brings back.
+    fn run_command_on_edits(&mut self, type_name: &str, method: &str) -> Result<()> {
+        let world = &self.game.engine.world;
+        let objs: Vec<Entity> =
+            world.query_ref::<(Entity, &Name)>().without::<EditorOnly>().into_iter().map(|(e, _)| e).collect();
+        let before: Vec<(Entity, ObjState)> = objs.iter().filter_map(|&e| Some((e, ObjState::of(world, e)?))).collect();
+        let scripts = self.play.scripts.as_mut().expect("checked by the caller");
+        let ran = scripts.run_command(&mut self.game.engine.world, type_name, method);
+        let doomed = scripts.take_obj_destroys();
+        let world = &self.game.engine.world;
+        let mut edits: Vec<Edit> = before
+            .into_iter()
+            .filter_map(|(entity, before)| {
+                let after = ObjState::of(world, entity)?;
+                (after != before).then_some(Edit::Changed { entity, before, after })
+            })
+            .collect();
+        let alive: Vec<Entity> = doomed.into_iter().filter(|&e| self.game.engine.world.is_alive(e)).collect();
+        for entity in alive {
+            let taken = crate::objs::take(&mut self.game, entity);
+            edits.push(Edit::Exists { root: entity, taken: Some(taken) });
+        }
+        if !edits.is_empty() {
+            self.history.record_step(Edit::Group(edits));
+            self.unsaved = true;
+            let selected = self.selected();
+            self.select(selected.filter(|&e| self.game.engine.world.is_alive(e)));
+        }
+        ran
     }
 
     /// Stops playing, as the Play button does while the game runs, and
@@ -250,7 +316,10 @@ impl Editor {
                 self.play.scripts = scripts;
                 self.play.ready = true;
                 self.play.mode = Mode::Editing;
-                self.start_run(renderer);
+                match self.play.command.take() {
+                    Some((type_name, method)) => self.run_script_command(&type_name, &method),
+                    None => self.start_run(renderer),
+                }
             }
             Err(error) => self.fail("The scripts could not start", error),
         }
@@ -277,7 +346,11 @@ impl Editor {
         let edit = std::mem::replace(&mut self.game.engine, engine);
         let levels = std::mem::replace(&mut self.game.levels, levels);
         self.kept.clear();
-        let run = Run { edit, levels, camera: self.camera, paused: false, step: false };
+        let paused = self.memory.settings.start_paused;
+        if self.memory.settings.clear_console_on_play {
+            self.console.clear(&mut self.ui);
+        }
+        let run = Run { edit, levels, camera: self.camera, paused, step: false };
         self.play.mode = Mode::Playing(Box::new(run));
         self.camera = camera;
         self.after_swap(selected, "game");

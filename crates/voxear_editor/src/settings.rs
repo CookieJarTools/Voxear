@@ -1,0 +1,263 @@
+//! The editor's settings, and what it remembers of a project between runs:
+//! the settings themselves and what the command palette ran recently. Both
+//! are kept in the project's `.voxear/Editor.toml`, beside its builds, so
+//! they stay out of version control. An editor opened without memory, as
+//! tests and screenshots open it, starts from the defaults and writes
+//! nothing.
+//!
+//! Each setting is described once in [`SETTINGS`], which the Settings panel
+//! shows and the command palette searches.
+
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+/// The most items the palette remembers having run.
+const RECENT: usize = 8;
+/// The snap distances the tool strip and Settings offer, in metres.
+pub const SNAPS: [f32; 4] = [0.1, 0.25, 0.5, 1.0];
+
+/// What a setting holds, and so how it is shown and changed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SettingKind {
+    Toggle,
+    /// One of these, by index.
+    Choice(&'static [&'static str]),
+    /// A number from `min` to `max`, with its unit.
+    Number {
+        min: f32,
+        max: f32,
+        unit: &'static str,
+    },
+}
+
+/// One setting: the key it is kept and found by, what it is called, the
+/// group it shows in, and what it holds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SettingInfo {
+    pub key: &'static str,
+    pub title: &'static str,
+    pub group: &'static str,
+    pub kind: SettingKind,
+}
+
+pub const SETTINGS: [SettingInfo; 9] = [
+    SettingInfo {
+        key: "snap",
+        title: "Snap distance",
+        group: "Scene view",
+        kind: SettingKind::Choice(&["0.1 m", "0.25 m", "0.5 m", "1 m"]),
+    },
+    SettingInfo {
+        key: "handle_position",
+        title: "Handle position",
+        group: "Scene view",
+        kind: SettingKind::Choice(&["Pivot", "Center"]),
+    },
+    SettingInfo {
+        key: "handle_space",
+        title: "Handle space",
+        group: "Scene view",
+        kind: SettingKind::Choice(&["Global", "Local"]),
+    },
+    SettingInfo {
+        key: "fly_speed",
+        title: "Fly speed",
+        group: "Scene view",
+        kind: SettingKind::Number { min: 0.25, max: 250.0, unit: "m/s" },
+    },
+    SettingInfo { key: "show_stats", title: "Show stats", group: "Scene view", kind: SettingKind::Toggle },
+    SettingInfo { key: "show_axis_gizmo", title: "Show axis gizmo", group: "Scene view", kind: SettingKind::Toggle },
+    SettingInfo { key: "start_paused", title: "Start paused", group: "Play mode", kind: SettingKind::Toggle },
+    SettingInfo { key: "save_before_play", title: "Save before play", group: "Play mode", kind: SettingKind::Toggle },
+    SettingInfo {
+        key: "clear_console_on_play",
+        title: "Clear Console on play",
+        group: "Play mode",
+        kind: SettingKind::Toggle,
+    },
+];
+
+/// A setting's value, as the panel and palette show and change it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SettingValue {
+    Toggle(bool),
+    Choice(usize),
+    Number(f32),
+}
+
+/// The editor's settings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    /// Metres the handles snap to while Ctrl is held.
+    pub snap: f32,
+    /// Handles at the middle of the Obj's bounds rather than its pivot.
+    pub centred: bool,
+    /// Handles along the Obj's own axes rather than the world's.
+    pub local: bool,
+    /// How fast the Scene view's camera flies, in metres a second; the wheel
+    /// changes it while flying.
+    pub fly_speed: f32,
+    pub show_stats: bool,
+    pub show_axis_gizmo: bool,
+    /// Play starts paused, to step through the first frames.
+    pub start_paused: bool,
+    pub save_before_play: bool,
+    pub clear_console_on_play: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            snap: 0.25,
+            centred: false,
+            local: false,
+            fly_speed: 6.0,
+            show_stats: true,
+            show_axis_gizmo: true,
+            start_paused: false,
+            save_before_play: false,
+            clear_console_on_play: false,
+        }
+    }
+}
+
+impl Settings {
+    pub fn get(&self, key: &str) -> Option<SettingValue> {
+        Some(match key {
+            "snap" => SettingValue::Choice(SNAPS.iter().position(|s| (s - self.snap).abs() < 1e-4).unwrap_or(1)),
+            "handle_position" => SettingValue::Choice(usize::from(self.centred)),
+            "handle_space" => SettingValue::Choice(usize::from(self.local)),
+            "fly_speed" => SettingValue::Number(self.fly_speed),
+            "show_stats" => SettingValue::Toggle(self.show_stats),
+            "show_axis_gizmo" => SettingValue::Toggle(self.show_axis_gizmo),
+            "start_paused" => SettingValue::Toggle(self.start_paused),
+            "save_before_play" => SettingValue::Toggle(self.save_before_play),
+            "clear_console_on_play" => SettingValue::Toggle(self.clear_console_on_play),
+            _ => return None,
+        })
+    }
+
+    /// Sets a setting, keeping a number inside its range. Returns whether it
+    /// changed.
+    pub fn set(&mut self, key: &str, value: SettingValue) -> bool {
+        let before = self.clone();
+        match (key, value) {
+            ("snap", SettingValue::Choice(i)) => self.snap = SNAPS[i.min(SNAPS.len() - 1)],
+            ("handle_position", SettingValue::Choice(i)) => self.centred = i == 1,
+            ("handle_space", SettingValue::Choice(i)) => self.local = i == 1,
+            ("fly_speed", SettingValue::Number(n)) => self.fly_speed = n.clamp(0.25, 250.0),
+            ("show_stats", SettingValue::Toggle(on)) => self.show_stats = on,
+            ("show_axis_gizmo", SettingValue::Toggle(on)) => self.show_axis_gizmo = on,
+            ("start_paused", SettingValue::Toggle(on)) => self.start_paused = on,
+            ("save_before_play", SettingValue::Toggle(on)) => self.save_before_play = on,
+            ("clear_console_on_play", SettingValue::Toggle(on)) => self.clear_console_on_play = on,
+            _ => {}
+        }
+        *self != before
+    }
+
+    /// A setting as words: "On", "0.25 m", "6 m/s".
+    pub fn describe(&self, info: &SettingInfo) -> String {
+        match (self.get(info.key), info.kind) {
+            (Some(SettingValue::Toggle(on)), _) => if on { "On" } else { "Off" }.into(),
+            (Some(SettingValue::Choice(i)), SettingKind::Choice(options)) => {
+                options.get(i).copied().unwrap_or_default().into()
+            }
+            (Some(SettingValue::Number(n)), SettingKind::Number { unit, .. }) => {
+                format!("{} {unit}", (n * 100.0).round() / 100.0)
+            }
+            _ => String::new(),
+        }
+    }
+}
+
+pub fn info(key: &str) -> Option<&'static SettingInfo> {
+    SETTINGS.iter().find(|s| s.key == key)
+}
+
+/// What the editor remembers of a project: its settings, and the keys of
+/// what the palette ran, most recent first.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Memory {
+    pub settings: Settings,
+    pub recent: Vec<String>,
+    /// Where it is kept, or `None` for an editor that remembers nothing.
+    #[serde(skip)]
+    path: Option<PathBuf>,
+}
+
+impl Memory {
+    /// What the editor remembers of the project at `root`, or the defaults
+    /// when it has nothing, or its file cannot be read.
+    pub fn open(root: &Path) -> Self {
+        let path = root.join(".voxear").join("Editor.toml");
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut memory: Memory = toml::from_str(&text).unwrap_or_else(|error| {
+            tracing::warn!("{} could not be read, so the editor starts from its defaults: {error}", path.display());
+            Memory::default()
+        });
+        memory.path = Some(path);
+        memory
+    }
+
+    /// Memory that starts from the defaults and is never written.
+    pub fn forgetful() -> Self {
+        Self::default()
+    }
+
+    /// Notes that the palette ran what `key` names, most recent first.
+    pub fn ran(&mut self, key: &str) {
+        self.recent.retain(|k| k != key);
+        self.recent.insert(0, key.to_string());
+        self.recent.truncate(RECENT);
+        self.save();
+    }
+
+    /// Writes the memory, unless it is forgetful. A failure is logged and
+    /// otherwise ignored: the editor works on without it.
+    pub fn save(&self) {
+        let Some(path) = &self.path else { return };
+        let written = toml::to_string_pretty(self).map_err(anyhow::Error::from).and_then(|text| {
+            if let Some(folder) = path.parent() {
+                std::fs::create_dir_all(folder)?;
+            }
+            Ok(std::fs::write(path, text)?)
+        });
+        if let Err(error) = written {
+            tracing::warn!("could not keep the editor's settings in {}: {error:#}", path.display());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_and_recent_items_are_kept_per_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut memory = Memory::open(dir.path());
+        assert_eq!(memory.settings, Settings::default(), "nothing kept yet");
+        assert!(memory.settings.set("snap", SettingValue::Choice(3)));
+        assert!(!memory.settings.set("snap", SettingValue::Choice(3)), "the same again is no change");
+        assert!(memory.settings.set("fly_speed", SettingValue::Number(1000.0)));
+        assert_eq!(memory.settings.fly_speed, 250.0, "kept inside its range");
+        memory.save();
+        for key in ["command:Save", "obj:Lamp", "command:Save"] {
+            memory.ran(key);
+        }
+
+        let again = Memory::open(dir.path());
+        assert_eq!(again.settings.snap, 1.0);
+        assert_eq!(again.recent, ["command:Save", "obj:Lamp"], "most recent first, once each");
+        assert_eq!(again.settings.describe(info("snap").unwrap()), "1 m");
+        assert_eq!(again.settings.describe(info("show_stats").unwrap()), "On");
+
+        let forgetful = Memory::forgetful();
+        forgetful.save();
+        assert_eq!(forgetful.settings, Settings::default());
+    }
+}

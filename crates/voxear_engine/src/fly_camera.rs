@@ -75,6 +75,15 @@ impl FlyCamera {
         }
     }
 
+    /// How fast it flies, in metres a second.
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
+
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = speed.clamp(SPEED_RANGE.0, SPEED_RANGE.1);
+    }
+
     /// Wheel notches up speed it up; down slows it.
     pub fn scroll(&mut self, notches: f32) {
         if self.looking {

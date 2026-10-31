@@ -34,7 +34,8 @@ fn open() -> Option<(Renderer, voxear_editor::Editor)> {
             return None;
         }
     };
-    let mut editor = voxear_editor::Editor::open(hello(), &mut renderer, LogCapture::default()).unwrap();
+    // Without memory, so what one run sets cannot change the next.
+    let mut editor = voxear_editor::Editor::open_without_memory(hello(), &mut renderer, LogCapture::default()).unwrap();
     editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     Some((renderer, editor))
 }
@@ -152,6 +153,36 @@ fn play_runs_the_scripts_and_stop_brings_the_level_back() {
         editor.update(renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     };
     let spinner = obj(&editor, "Spinner A").expect("Hello has Spinner A");
+
+    // A scripts' [Command] from the palette: the scripts build and start for it, it runs on the edited level,
+    // and what it changed is one step to undo.
+    if !described(&mut editor, &mut renderer) {
+        return;
+    }
+    let other = obj(&editor, "Spinner B").unwrap();
+    let at = |editor: &voxear_editor::Editor, e| editor.game.engine.world.get::<Transform>(e).unwrap().position;
+    let (a_was, b_was) = (at(&editor, spinner), at(&editor, other));
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    editor.ui.focus(field);
+    editor.ui.text_input("swap spin");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(
+        palette_results(&editor.ui).first().map(String::as_str),
+        Some("Swap Spinners"),
+        "Hello's Tools.cs adds it"
+    );
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    let started = std::time::Instant::now();
+    while at(&editor, spinner) == a_was {
+        assert!(started.elapsed().as_secs() < 300, "the command never ran: {:?}", editor.play_error());
+        frame(&mut editor, &mut renderer);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!((at(&editor, spinner), at(&editor, other)), (b_was, a_was), "the spinners swapped places");
+    assert!(!editor.is_playing(), "a command runs on the edited level, without playing");
+    editor.undo(&mut renderer);
+    assert_eq!((at(&editor, spinner), at(&editor, other)), (a_was, b_was), "and one undo swaps them back");
+
     editor.select(Some(spinner));
     let edited = {
         let mut moved = *editor.game.engine.world.get::<Transform>(spinner).unwrap();
@@ -864,4 +895,164 @@ fn references_take_objs_and_assets_dragged_onto_them() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert!(label_starting(&editor.ui, editor.ui.root(), "Lamp.prefab is an asset").is_some(), "an asset is no Obj");
+}
+
+/// The command palette's results showing, top to bottom, by title.
+fn palette_results(ui: &Ui) -> Vec<String> {
+    let list = ui.find(ui.root(), "palette-list").unwrap();
+    let mut rows: Vec<NodeId> =
+        ui.children(list).into_iter().filter(|&r| ui.has_class(r, "list-row") && ui.is_visible(r)).collect();
+    rows.sort_by(|a, b| ui.rect(*a)[1].total_cmp(&ui.rect(*b)[1]));
+    rows.into_iter().filter_map(|row| first_with(ui, row, "palette-title").map(|t| ui.text(t))).collect()
+}
+
+#[test]
+fn the_command_palette_finds_and_runs_things() {
+    use voxear_editor::PaletteKey;
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let root = editor.ui.root();
+    let (field, palette) = (editor.ui.find(root, "command").unwrap(), editor.ui.find(root, "palette").unwrap());
+    assert!(!editor.ui.is_visible(palette), "closed until the command bar has focus");
+
+    editor.ui.focus(field);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.is_visible(palette));
+    assert_eq!(
+        palette_results(&editor.ui).first().map(String::as_str),
+        Some("Play"),
+        "with nothing typed, the commands"
+    );
+    shot(&mut renderer, "palette-commands.png");
+
+    editor.ui.text_input("spin b");
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "palette.png");
+    assert_eq!(
+        palette_results(&editor.ui).first().map(String::as_str),
+        Some("Spinner B"),
+        "{:?}",
+        palette_results(&editor.ui)
+    );
+    editor.palette_key(PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.selected(), obj(&editor, "Spinner B"), "Enter selects the Obj");
+    assert!(!editor.ui.is_visible(palette) && editor.ui.text(field).is_empty(), "and the palette closes, empty");
+
+    // Down moves the highlight; a click runs a result too.
+    editor.ui.focus(field);
+    editor.ui.text_input("tool");
+    frame(&mut editor, &mut renderer);
+    let results = palette_results(&editor.ui);
+    assert!(results.iter().take(4).all(|r| r.ends_with("tool")), "{results:?}");
+    let list = editor.ui.find(root, "palette-list").unwrap();
+    let rotate = results.iter().position(|r| r == "Rotate tool").unwrap();
+    let mut rows: Vec<NodeId> = editor
+        .ui
+        .children(list)
+        .into_iter()
+        .filter(|&r| editor.ui.has_class(r, "list-row") && editor.ui.is_visible(r))
+        .collect();
+    rows.sort_by(|a, b| editor.ui.rect(*a)[1].total_cmp(&editor.ui.rect(*b)[1]));
+    click(&mut editor.ui, rows[rotate]);
+    frame(&mut editor, &mut renderer);
+    let tool = editor.ui.find(root, "tool").unwrap();
+    assert_eq!(editor.ui.segment(tool), 2, "the Rotate tool is picked");
+
+    editor.ui.focus(field);
+    editor.ui.text_input("zzzz");
+    frame(&mut editor, &mut renderer);
+    assert!(palette_results(&editor.ui).is_empty());
+    assert!(editor.ui.is_visible(editor.ui.find(root, "palette-empty").unwrap()), "and says so");
+    editor.palette_key(PaletteKey::Escape);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.ui.is_visible(palette) && editor.ui.focused() != Some(field), "Escape closes it");
+    assert!(editor.ui.text(field).is_empty(), "and empties the bar");
+}
+
+#[test]
+fn settings_and_recent_palette_items_are_kept_per_project() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let open = |renderer: &mut Renderer| {
+        let project = Project::open(dir.path()).unwrap();
+        let mut editor = voxear_editor::Editor::open(project, renderer, LogCapture::default()).unwrap();
+        frame(&mut editor, renderer);
+        editor
+    };
+    let mut editor = open(&mut renderer);
+    let root = editor.ui.root();
+    assert_eq!(editor.settings().snap, 0.25);
+
+    // The tool strip's snap button is the Snap distance setting.
+    let snap = editor.ui.find(root, "snap").unwrap();
+    click(&mut editor.ui, snap);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.settings().snap, 0.5);
+
+    // The palette flips a toggle, and remembers that it ran it.
+    let field = editor.ui.find(root, "command").unwrap();
+    editor.ui.focus(field);
+    editor.ui.text_input("show stats");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(palette_results(&editor.ui).first().map(String::as_str), Some("Show stats"));
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    let stats = editor.ui.find(root, "scene-stats").expect("the stats chip");
+    assert!(!editor.settings().show_stats && !editor.ui.is_visible(stats), "the stats chip goes");
+
+    // A number opens the Settings panel at it, to type.
+    editor.ui.focus(field);
+    editor.ui.text_input("fly speed");
+    frame(&mut editor, &mut renderer);
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    // A frame to bring the Settings tab to the front, and one to show the setting in it.
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let speed = editor.ui.focused().expect("the Fly speed field has focus");
+    type_into(&mut editor.ui, speed, "12");
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "settings.png");
+    editor.ui.blur();
+    assert_eq!(editor.settings().fly_speed, 12.0);
+    assert_eq!(editor.fly.speed(), 12.0, "the Scene camera flies at it");
+    drop(editor);
+
+    // Opened again, all of it is as it was left, and the palette leads with what ran last.
+    let mut editor = open(&mut renderer);
+    let settings = editor.settings();
+    assert!((settings.snap, settings.show_stats, settings.fly_speed) == (0.5, false, 12.0), "{settings:?}");
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    editor.ui.focus(field);
+    frame(&mut editor, &mut renderer);
+    let results = palette_results(&editor.ui);
+    assert_eq!(results[..2], ["Fly speed".to_string(), "Show stats".to_string()], "most recent first: {results:?}");
+}
+
+#[test]
+fn code_built_on_the_editor_adds_palette_commands() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let ran = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counted = ran.clone();
+    editor.add_command(voxear_editor::PaletteCommand {
+        id: "tests.count".into(),
+        title: "Count Runs".into(),
+        keys: "Ctrl+Shift+J".into(),
+        icon: "code",
+        run: std::rc::Rc::new(move |editor: &mut voxear_editor::Editor| {
+            counted.set(counted.get() + 1);
+            editor.select(None);
+        }),
+    });
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    editor.ui.focus(field);
+    editor.ui.text_input("count runs");
+    frame(&mut editor, &mut renderer);
+    let results = palette_results(&editor.ui);
+    assert_eq!(results.first().map(String::as_str), Some("Count Runs"), "{results:?}");
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(ran.get(), 1, "it ran, with the editor to hand");
 }

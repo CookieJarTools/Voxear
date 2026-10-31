@@ -18,5 +18,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<void> Update;
 		public delegate* unmanaged[Cdecl]<byte*, int, int> ContentRoots;
 		public delegate* unmanaged[Cdecl]<byte*, int, void> SwitchLevel;
+		public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> RunCommand;
 	}
 }

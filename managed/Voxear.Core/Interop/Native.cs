@@ -15,6 +15,38 @@ namespace Voxear.Interop
 
 		public static bool IsConnected => Api != null;
 
+		/// <summary>Whether the editor's Profiler is taking samples now.</summary>
+		public static bool ProfilingEnabled => IsConnected && Api->ProfilerEnabled() != 0;
+
+		/// <summary>The profiling marker named this, the same each time.</summary>
+		public static uint ProfilerMarker(string name)
+		{
+			if (!IsConnected)
+			{
+				return 0;
+			}
+
+			var bytes = Encoding.UTF8.GetBytes(name);
+			fixed (byte* text = bytes)
+			{
+				return Api->ProfilerMarker(text, bytes.Length);
+			}
+		}
+
+		/// <summary>Starts a sample, returning whether it was recorded; only one that was is ended.</summary>
+		public static bool ProfilerBegin(uint marker)
+		{
+			return IsConnected && Api->ProfilerBegin(marker) != 0;
+		}
+
+		public static void ProfilerEnd()
+		{
+			if (IsConnected)
+			{
+				Api->ProfilerEnd();
+			}
+		}
+
 		/// <summary>A line for the engine log, with the stack that wrote it and the Obj it is about (0 for none).</summary>
 		public static void Log(LogLevel level, string message, string stack, ulong context)
 		{

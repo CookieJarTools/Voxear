@@ -55,12 +55,26 @@ namespace Voxear.Scripting
 			return handles.Select(Get).OfType<Behaviour>().OrderBy(behaviour => behaviour.Order).ToList();
 		}
 
+		/// <summary>
+		/// Runs a phase's callbacks. While the editor's Profiler takes samples, each is a sample of its own, named for
+		/// its class and method.
+		/// </summary>
 		public static void Invoke(Phase phase, ReadOnlySpan<uint> handles)
 		{
+			var sampled = Native.ProfilingEnabled;
 			foreach (var handle in handles)
 			{
 				var behaviour = behaviours[(int)handle];
-				if (behaviour != null && ShouldRun(behaviour, phase))
+				if (behaviour == null || !ShouldRun(behaviour, phase))
+				{
+					continue;
+				}
+
+				if (sampled)
+				{
+					RunSampled(behaviour, phase);
+				}
+				else
 				{
 					Run(behaviour, phase);
 				}
@@ -194,6 +208,16 @@ namespace Voxear.Scripting
 		{
 			var perFrame = phase == Phase.FixedUpdate || phase == Phase.Update || phase == Phase.LateUpdate;
 			return !perFrame || (behaviour.Enabled && !behaviour.IsDestroyed);
+		}
+
+		private static void RunSampled(Behaviour behaviour, Phase phase)
+		{
+			var recorded = Native.ProfilerBegin(CallbackMarkers.For(behaviour, phase));
+			Run(behaviour, phase);
+			if (recorded)
+			{
+				Native.ProfilerEnd();
+			}
 		}
 
 		public static void Run(Behaviour behaviour, Phase phase)

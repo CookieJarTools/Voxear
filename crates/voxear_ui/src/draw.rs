@@ -205,10 +205,19 @@ impl Draw<'_> {
                     TextAlign::End => Alignment::End,
                 };
                 shaped.align(alignment, AlignmentOptions::default());
+                // Text that does not wrap is laid out at its own width, so its
+                // alignment has nothing to align it in: it is placed in its box
+                // here, and starts at the start when it does not fit.
+                let room = if width.is_none() { (inner * self.scale - shaped.width()).max(0.0) } else { 0.0 };
+                let across = match element.text_style.align {
+                    TextAlign::Start => 0.0,
+                    TextAlign::Center => (room / 2.0).round(),
+                    TextAlign::End => room.round(),
+                };
                 // Centred down a box taller than the text, such as a button
                 // with a set height, as Unity's middle alignment does.
                 let spare = (inner_height * self.scale - shaped.height()).max(0.0);
-                let origin = [origin[0], origin[1] + (spare / 2.0).round()];
+                let origin = [origin[0] + across, origin[1] + (spare / 2.0).round()];
                 let paint = Paint { color, spans: &text.spans, style: &element.text_style, opacity, scale: self.scale };
                 glyph_quads(shaped, origin, &paint, clip, self.atlas, self.quads);
             }

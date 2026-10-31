@@ -1,10 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    time::Instant,
-};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
-use voxear_core::time::Time;
+use voxear_core::{profile_scope, profiling, time::Time};
 use voxear_ecs::{Entity, Schedule, World};
 use voxear_scene::{
     AttachedBehaviour, BehaviourHandle, BehaviourHost, BehaviourSpec, Behaviours, Destroying, InstanceMarker,
@@ -34,8 +31,6 @@ pub struct Engine {
     fixed_accumulator: f32,
     /// The editor's edit mode: behaviours are kept as data, and no script runs.
     edit_mode: bool,
-    /// How long each stage of the last tick took, in milliseconds.
-    stage_times: Vec<(&'static str, f32)>,
 }
 
 /// An Obj's behaviours in edit mode, as data: what the Inspector shows and a
@@ -57,6 +52,15 @@ impl Engine {
         world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");
         world.register_named_component::<FromPrefab>("Voxear.FromPrefab");
         let mut schedule = Schedule::new(STAGES);
+        // Each system is a profiling sample by its name.
+        schedule.set_system_timer(Some((
+            |name| {
+                if profiling::enabled() {
+                    profiling::Marker::new(name).begin();
+                }
+            },
+            profiling::end,
+        )));
         schedule.add_system("PostUpdate", "propagate transforms", propagate_transforms);
         Self {
             world,
@@ -65,7 +69,6 @@ impl Engine {
             scripts: None,
             time: Time::default(),
             fixed_accumulator: 0.0,
-            stage_times: Vec::new(),
             edit_mode: false,
         }
     }
@@ -311,25 +314,27 @@ impl Engine {
     /// 5. Deferred destroys, then `Last` systems.
     ///
     /// Anything created or enabled along the way is initialised before the
-    /// next phase.
+    /// next phase. Each step is a profiling sample (see
+    /// `voxear_core::profiling`), with each behaviour's callback in it.
     pub fn tick(&mut self, unscaled_delta: f32) {
-        let mut times = Vec::with_capacity(6);
-        let mut mark = Instant::now();
         self.time.advance(unscaled_delta);
         self.sync_script_time(self.time.delta);
         if let Some(scripts) = self.scripts.as_mut() {
+            profile_scope!("Script Continuations");
             scripts.update(&mut self.world);
             self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
         }
-        times.push(("Script Sync", lap(&mut mark)));
 
-        self.schedule.run_stage("First", &mut self.world);
-        self.flush();
-        times.push(("First", lap(&mut mark)));
+        {
+            profile_scope!("First");
+            self.schedule.run_stage("First", &mut self.world);
+            self.flush();
+        }
 
         self.fixed_accumulator += self.time.delta;
         let mut steps = 0;
         while self.fixed_accumulator >= self.time.fixed_delta && steps < MAX_FIXED_STEPS {
+            profile_scope!("FixedUpdate");
             self.sync_script_time(self.time.fixed_delta);
             self.run_phase(Phase::FixedUpdate);
             self.schedule.run_stage("FixedUpdate", &mut self.world);
@@ -341,18 +346,22 @@ impl Engine {
             self.fixed_accumulator = 0.0;
         }
         self.sync_script_time(self.time.delta);
-        times.push(("Fixed Update", lap(&mut mark)));
 
-        self.run_phase(Phase::Update);
-        self.schedule.run_stage("Update", &mut self.world);
-        self.flush();
-        times.push(("Update", lap(&mut mark)));
+        {
+            profile_scope!("Update");
+            self.run_phase(Phase::Update);
+            self.schedule.run_stage("Update", &mut self.world);
+            self.flush();
+        }
 
-        self.run_phase(Phase::LateUpdate);
-        self.schedule.run_stage("PostUpdate", &mut self.world);
-        self.flush();
-        times.push(("Late Update", lap(&mut mark)));
+        {
+            profile_scope!("LateUpdate");
+            self.run_phase(Phase::LateUpdate);
+            self.schedule.run_stage("PostUpdate", &mut self.world);
+            self.flush();
+        }
 
+        profile_scope!("End of Frame");
         // Objs destroyed by OnDestroy callbacks below get theirs next frame,
         // so only these are removed now.
         let destroyed: Vec<Entity> = self.world.query_ref::<Entity>().with::<Destroying>().into_iter().collect();
@@ -361,18 +370,11 @@ impl Engine {
             self.world.despawn(entity);
         }
         self.schedule.run_stage("Last", &mut self.world);
-        times.push(("End of Frame", lap(&mut mark)));
-        self.stage_times = times;
     }
 
-    /// How long each stage of the last tick took, in milliseconds, in the
-    /// order they ran: scripts' time and requests, the fixed steps, Update,
-    /// LateUpdate with the transforms, and destroying Objs.
-    pub fn stage_times(&self) -> &[(&'static str, f32)] {
-        &self.stage_times
-    }
-
+    /// Awake, OnEnable, Start, OnDisable and OnDestroy for what changed.
     fn flush(&mut self) {
+        profile_scope!("Lifecycle");
         self.with_host(|lifecycle, host| lifecycle.flush(host));
     }
 
@@ -408,12 +410,4 @@ impl BehaviourHost for NoScripts {
     fn invoke(&mut self, _: Phase, _: &[BehaviourHandle]) {}
 
     fn release(&mut self, _: &[BehaviourHandle]) {}
-}
-
-/// Milliseconds since `mark`, which moves on to now.
-fn lap(mark: &mut Instant) -> f32 {
-    let now = Instant::now();
-    let ms = (now - *mark).as_secs_f32() * 1000.0;
-    *mark = now;
-    ms
 }

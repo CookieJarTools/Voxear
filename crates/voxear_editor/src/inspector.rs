@@ -101,7 +101,9 @@ pub enum RowAction {
     ResetTransform,
     Add(Part),
     Remove(Part),
-    /// Point a reference at what its menu picked.
+    /// Open the object picker for a reference, under its field.
+    Browse(Prop, NodeId),
+    /// Point a reference at what its picker picked.
     Pick(Prop, Pick),
     /// Point a reference at what was dragged onto it, from the Hierarchy or
     /// the Project, if it fits.
@@ -469,13 +471,7 @@ impl Inspector {
             let [x, y, _, height] = ui.rect(button);
             (button, (x, y + height + 4.0))
         } else if let Some((prop, button)) = self.picker_clicked(ui) {
-            let entity = self.shown?;
-            items = props::choices(game, &self.types, entity, &prop)
-                .into_iter()
-                .map(|(label, pick)| (MenuItem::new(&label), Some(RowAction::Pick(prop.clone(), pick))))
-                .collect();
-            let [x, y, _, height] = ui.rect(button);
-            (button, (x, y + height + 4.0))
+            return Some(RowAction::Browse(prop, button));
         } else if let Some((part, header)) = self.headers.iter().find(|(_, h)| ui.context_clicked(*h)) {
             items = match part {
                 None => vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))],

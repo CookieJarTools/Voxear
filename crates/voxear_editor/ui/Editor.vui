@@ -172,6 +172,16 @@
                 </Panel>
             </Panel>
         </Panel>
+        <!-- A reference field's search, under the field it opened from. -->
+        <Panel name="picker" class="palette picker">
+            <Label name="picker-title" class="picker-title" />
+            <Panel class="search picker-search">
+                <Icon icon="search" class="search-icon" />
+                <TextField name="picker-field" class="search-field" placeholder="Search" />
+            </Panel>
+            <ListView name="picker-list" class="palette-list" item-height="28" />
+            <Label name="picker-empty" class="palette-empty">Nothing matches</Label>
+        </Panel>
         <!-- Last, so it is over everything and takes the pointer first. -->
         <Panel name="palette" class="palette">
             <ListView name="palette-list" class="palette-list" item-height="28" />

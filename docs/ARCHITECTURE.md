@@ -1072,7 +1072,8 @@ mid-fade.
   highlighted, with links that `ui.clicked_link` reports. Each span shapes as its own run, so its colour, ground
   and lines are drawn with it; `link-color`, `code-background` and `mark-color` come from the text style, and
   italics and bold are slanted and thickened when a font has no such face. `white-space: nowrap` keeps a line
-  whole, as list rows do.
+  whole, as list rows do, and `text-align` still places it in its box (at the start when it does not fit), so a
+  list's columns of numbers line up on the right.
 - **Icons in tabs and foldouts:** a `DockPanel`'s `icon` (or `add_tab_with_icon`) shows before its title, and
   `set_foldout_icon` before a foldout's; `foldout_header` takes buttons or a switch after the title, which work
   without opening or closing it.
@@ -1244,7 +1245,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   shows the running Obj, its behaviours included.
 - **Components in the Inspector** (`props`): each component is a part, and each value in it a prop, read from the
   world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
-  mesh it has) and its material (the default, or a `.material` in the project); a Light its type, colour (a swatch
+  mesh it has) and its material (the default, or a `.material` in the project, which can also be dragged onto it from
+  the Project) in the object picker; a Light its type, colour (a swatch
   and sRGB channels), intensity, and the range and spot angles its type uses; a Camera its field of view, near plane
   and exposure. **Scripts** show the fields their build has (`voxear_engine::script_types`): when a script changes,
   the editor builds the scripts off its main thread and runs `Voxear.ScriptInfo` on the build, a small .NET tool
@@ -1253,15 +1255,22 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   `.voxear/Scripts/Behaviours.json`, is kept, so a project opens showing its fields at once. Build errors go to the
   Console, and the fields stay as they last built. Fields are labelled as Unity labels them ("Degrees Per Second"):
   numbers, whole numbers, text, toggles, enums (a dropdown) and vectors are edited in place; an Obj or behaviour
-  reference is picked from a menu of the Objs in the same scene (with that behaviour, for a behaviour), and an asset
-  (a `Prefab` or `Ref<Prefab>`) from the project's assets of its kind, or either is dragged onto the field from the
-  Hierarchy or the Project, which takes it if its menu would offer it and otherwise says why in the status bar; a list shows its items, each with a button
+  reference is picked in the object picker from the Objs in the same scene (with that behaviour, for a behaviour),
+  and an asset (a `Prefab` or `Ref<Prefab>`) from the project's assets of its kind, or either is dragged onto the
+  field from the Hierarchy or the Project, which takes it if the picker would offer it and otherwise says why in the
+  status bar; a list shows its items, each with a button
   to take it out and the list's to add one; and a `[Serializable]` table shows its fields indented under it. A field
   the scene does not set shows the script's value, and setting anything in it writes the whole field for the scene.
   While playing, scripts show the values they started with. **Add Component** offers a Mesh Renderer, Light or
   Camera the Obj lacks, and the project's scripts; a context click on a component's header removes it, or moves a
   script up or down among the Obj's scripts, which is the order they run and save in, and on a script field's row
   resets it to the script's value. Every change is a step to undo.
+- **The object picker** (`object_picker`), as Unity's: a click on a reference field opens it under the field, titled
+  for what the field takes ("Select Material", "Select Spinner"), with a search box to type in at once over None and
+  everything the field can take, each with its icon and where it is (an asset's folder, an Obj's scene). Typing
+  narrows it as the command palette does, letters in order and the best match first, by name or by place. Up and
+  Down move the highlight, which starts on what the field points at now; Enter or a click picks, as a step to undo,
+  and Escape or a click elsewhere closes it.
 - **Keeping values after play.** A context click on the name, a Transform row or a component's value opens its menu:
   Reset where there is one, and while playing, **Keep value after play**, whose row is then marked in the accent.
   When play stops, each kept value of an Obj from the edited level (`Levels::counterpart`) is copied into the edited
@@ -1316,14 +1325,28 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   its line in the code editor the settings name (VS Code, Rider, Zed or the system's default;
   `Editor::set_source_opener` replaces it). Selecting a line about an Obj selects the Obj, Copy puts the line and its
   stack on the clipboard, and a context click copies a line or mutes its message until Muted brings them back.
-- **The Profiler** (`profiler`), the Profiling workspace's panel. The top bar's workspaces are layouts of the same
-  panels, each kept as it was left: World for building levels, and Profiling, with the Game view over the Profiler
-  and the Console. The Profiler keeps the last 300 frames as a chart of their CPU and GPU milliseconds, under lines
-  at 60 and 30 frames a second, and breaks one frame down: the editor's own stages (the game's tick, with the
-  engine's stages inside it from `Engine::stage_times`, the panels, the UI's layout, and rendering, which includes
-  waiting for the GPU and the display), the renderer's passes as the GPU timed them (`Renderer::timings`), and what
-  the frame drew and culled, by LOD, with memory and what is loaded. A click on the chart picks a frame, Live goes
-  back to the newest, and Record stops and starts taking frames.
+- **The Profiler** (`profiler`), the Profiling workspace's panel, after Unity's. The top bar's workspaces are
+  layouts of the same panels, each kept as it was left: World for building levels, and Profiling, with the Game
+  view over the Profiler and the Console. The Profiler keeps the last 300 frames as a chart of their CPU and GPU
+  milliseconds, under lines at 60 and 30 frames a second, and breaks one frame down. Its **Hierarchy** is the
+  frame's samples as a tree, each row with its share of the frame with and without what is in it (Total and Self),
+  how many times it ran, and its milliseconds, the slowest first: the editor's stages (Game, Editor with a sample
+  per panel, UI Layout, and Render, which includes waiting for the GPU and the display), the engine's steps inside
+  the game's tick (FixedUpdate, Update, LateUpdate, Lifecycle), each system by name, and **each behaviour's
+  callbacks by class and method** ("Hello.Spinner.Update()", one row for every Spinner, with its calls), with the
+  samples scripts take themselves. Beside it are the renderer's passes as the GPU timed them (`Renderer::timings`)
+  and what the frame drew and culled, by LOD, with memory and what is loaded. A click on the chart picks a frame,
+  Live goes back to the newest, and Record stops and starts taking frames. Samples are taken only while the panel
+  shows and records.
+- **Profiling samples** (`voxear_core::profiling`): named spans of a frame's work, nested as they ran, merged by name
+  under the same parent as Unity's Hierarchy merges them. Sampling is per thread and off until the Profiler turns
+  it on for the main thread, where scripts run too; a sample then costs a clock read and a short search among its
+  siblings. The easy form in Rust is `profile_scope!("Pathfinding")`, which samples the rest of its block; the
+  advanced one a `Marker` made once and begun and ended by hand (`profile_marker!` makes one per call site). The ECS
+  schedule times each system through a hook (`Schedule::set_system_timer`), since `voxear_ecs` depends on nothing.
+  In C#, `using (Profiler.Sample("Pathfinding")) { ... }`, `Profiler.BeginSample` and `EndSample` as in Unity, or
+  a `ProfilerMarker` kept in a static field and `using (marker.Auto())`; each behaviour callback is sampled by
+  `BehaviourTable.Invoke` while the Profiler takes samples, under a marker made once per class and method.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
 The Odin-style inspector attributes come next.
@@ -2087,13 +2110,14 @@ them in a running game.
   - Step through render graph passes inside the editor, with each pass's inputs and outputs.
   - Inspect any texture (mip, slice, channel, exposure) or buffer.
   - See culling results (instances and meshlets culled by frustum and occlusion, the LOD chosen) and pipeline state.
-- **CPU and GPU profiler.**
+- **CPU and GPU profiler.** *(The editor's Profiler has the hierarchy view, cost per system and per behaviour
+  callback, scripts' own samples, and GPU time per pass; see the editor above.)*
   - Timeline and hierarchy views.
   - Cost per system, per job and per behaviour.
   - GPU time per render graph pass, from timestamp queries.
   - Managed allocations per frame.
   - **Tracy** is integrated for deep sessions: zones across Rust systems, jobs and C#
-    (`using (Profiler.Zone("Pathfinding"))`), locks, plots and frame images.
+    (`using (Profiler.Sample("Pathfinding"))`), locks, plots and frame images.
 - **Memory profiler.**
   - Every native allocation is tagged by subsystem: ECS chunks, Content, render, audio, physics and scripts.
   - GPU memory is reported per resource and category. The managed heap comes from the .NET runtime.

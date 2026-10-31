@@ -1,20 +1,31 @@
-//! The Profiler panel, the Profiling workspace's own: the last few hundred
-//! frames as a chart of their CPU and GPU milliseconds, and one frame broken
-//! down, as Unity's Profiler window does. The CPU side is the editor's own
-//! stages, with the game's tick split into the engine's stages; the GPU side
-//! is the renderer's passes, timed on the GPU. Beside them, what the frame
-//! drew and culled and what is loaded. Render's CPU time includes waiting
-//! for the GPU and the display, so with vsync on it fills the frame.
+//! The Profiler panel, the Profiling workspace's own, after Unity's: the
+//! last few hundred frames as a chart of their CPU and GPU milliseconds,
+//! and one frame broken down. Its **Hierarchy** is the frame's samples (see
+//! `voxear_core::profiling`) as a tree: the editor's stages, the game's tick
+//! in the engine's steps, each system, and each behaviour's callbacks by
+//! class and method ("Hello.Spinner.Update()"), with what scripts sample
+//! themselves (`Voxear.Profiler`). Each row has its share of the frame with
+//! and without what is in it, how many times it ran, and its milliseconds,
+//! the slowest first. Beside it are the GPU's passes, timed on the GPU, and
+//! what the frame drew and culled and what is loaded.
 //!
-//! A click on the chart picks a frame to break down; Live goes back to the
-//! newest. Record stops and starts taking frames, so a spike can be looked
-//! at while the game keeps running.
+//! Samples are taken only while the panel shows and Record is on. A click on
+//! the chart picks a frame to break down; Live goes back to the newest.
+//! Render's time includes waiting for the GPU and the display ("Wait for
+//! GPU", "Acquire Image"), so with vsync on it fills the frame.
 
-use std::{collections::VecDeque, time::Instant};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet, VecDeque},
+    hash::{DefaultHasher, Hash, Hasher},
+    rc::Rc,
+    time::Instant,
+};
 
+use voxear_core::profiling::{self, Samples};
 use voxear_engine::Game;
 use voxear_render::{RenderStats, Renderer};
-use voxear_ui::{Color, NodeId, Shape, Style, Ui};
+use voxear_ui::{Color, NodeId, Shape, Style, TreeItems, Ui};
 
 /// How many frames the chart keeps.
 const FRAMES: usize = 300;
@@ -26,49 +37,16 @@ const LEAST_SCALE: f32 = 20.0;
 const DETAIL_INTERVAL: f32 = 0.25;
 /// The milliseconds of 60 and 30 frames a second, drawn across the chart.
 const GUIDES: [(f32, &str); 2] = [(1000.0 / 60.0, "60 fps"), (1000.0 / 30.0, "30 fps")];
+/// The Hierarchy's columns after the sample's name, as its header names them.
+const COLUMNS: [&str; 5] = ["Total", "Self", "Calls", "Time ms", "Self ms"];
+/// Samples opened by themselves the first time they show, as Unity opens the
+/// player loop, so scripts' callbacks show at once.
+const OPENED: [&str; 7] = ["Game", "Editor", "Render", "FixedUpdate", "Update", "LateUpdate", "Lifecycle"];
+const ROW: f32 = 22.0;
 const CPU: u32 = 0x7988ff;
 const GPU: u32 = 0x4cb782;
 const GUIDE: u32 = 0x2e3036;
 const MARKER: u32 = 0xc8ccd1;
-
-/// One stage of a frame on the CPU: its name, milliseconds, and how deep it
-/// is in the stage it is part of.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Stage {
-    pub name: String,
-    pub ms: f32,
-    pub depth: u8,
-}
-
-/// Times a frame's stages one after another.
-pub(crate) struct Laps {
-    mark: Instant,
-    stages: Vec<Stage>,
-}
-
-impl Laps {
-    pub fn start() -> Self {
-        Self { mark: Instant::now(), stages: Vec::new() }
-    }
-
-    /// Ends the stage that ran since the last mark, naming it.
-    pub fn mark(&mut self, name: &str) {
-        let now = Instant::now();
-        let ms = (now - self.mark).as_secs_f32() * 1000.0;
-        self.mark = now;
-        self.stages.push(Stage { name: name.to_string(), ms, depth: 0 });
-    }
-
-    /// Stages that ran inside the one marked last, timed by what ran them.
-    pub fn inside(&mut self, stages: &[(&'static str, f32)]) {
-        let inner = stages.iter().map(|&(name, ms)| Stage { name: name.to_string(), ms, depth: 1 });
-        self.stages.extend(inner);
-    }
-
-    pub fn finish(self) -> Vec<Stage> {
-        self.stages
-    }
-}
 
 /// A frame as the Profiler took it.
 #[derive(Clone, Debug)]
@@ -78,16 +56,16 @@ pub struct Sample {
     pub frame: u64,
     /// Milliseconds since the frame before, as the window saw it.
     pub frame_ms: f32,
-    pub cpu: Vec<Stage>,
+    /// What ran on the main thread, as a tree of samples.
+    pub cpu: Samples,
     /// Milliseconds per render pass, from the latest frame the GPU finished.
     pub gpu: Vec<(String, f32)>,
     pub stats: RenderStats,
 }
 
 impl Sample {
-    /// Milliseconds the CPU spent, counting each stage once.
     pub fn cpu_ms(&self) -> f32 {
-        self.cpu.iter().filter(|s| s.depth == 0).map(|s| s.ms).sum()
+        self.cpu.total_ms(Samples::FRAME)
     }
 
     pub fn gpu_ms(&self) -> f32 {
@@ -103,14 +81,21 @@ pub struct Profiler {
     chart: NodeId,
     guides: Vec<NodeId>,
     picked_label: NodeId,
-    columns: [NodeId; 3],
+    tree: NodeId,
+    calls: Rc<RefCell<CallTree>>,
+    /// The GPU's passes and the frame's counts, beside the Hierarchy.
+    side: [NodeId; 2],
     samples: VecDeque<Sample>,
     recording: bool,
+    /// Whether samples were being taken this frame, so it is kept.
+    sampling: bool,
     frames: u64,
     /// The frame broken down, when not the newest.
     picked: Option<u64>,
     /// The frame the breakdown shows, and when it was last built.
     shown: Option<(u64, Instant)>,
+    /// Rows already opened by themselves once, so one closed stays closed.
+    opened: HashSet<u64>,
 }
 
 impl Profiler {
@@ -127,8 +112,7 @@ impl Profiler {
         ui.set_visible(live, false);
         let summary = ui.add_label(bar, "");
         ui.add_class(summary, "profiler-summary");
-        let line = ui.panel(root, Style::default());
-        ui.add_class(line, "divider");
+        divider(ui, root);
 
         let chart = ui.panel(root, Style::default());
         ui.add_class(chart, "profiler-chart");
@@ -150,14 +134,29 @@ impl Profiler {
         }
         let picked_label = ui.add_label(legend, "");
         ui.add_class(picked_label, "profiler-picked");
-        let line = ui.panel(root, Style::default());
-        ui.add_class(line, "divider");
+        divider(ui, root);
 
-        let details = ui.panel(root, Style::row());
-        ui.add_class(details, "fill");
-        ui.add_class(details, "profiler-details");
-        let columns = ["CPU", "GPU", "Frame"].map(|title| {
-            let column = ui.panel(details, Style::default());
+        let lower = ui.panel(root, Style::row());
+        ui.add_class(lower, "fill");
+        ui.add_class(lower, "profiler-lower");
+        let hierarchy = ui.panel(lower, Style::default());
+        ui.add_class(hierarchy, "profiler-hierarchy");
+        let header = ui.panel(hierarchy, Style::row());
+        ui.add_class(header, "profiler-header");
+        let title = ui.add_label(header, "Hierarchy");
+        ui.add_class(title, "profiler-cell-name");
+        for column in COLUMNS {
+            let cell = ui.add_label(header, column);
+            ui.add_class(cell, "profiler-cell");
+        }
+        let calls: Rc<RefCell<CallTree>> = Rc::default();
+        let tree = ui.tree_view(hierarchy, ROW, CallItems(calls.clone()));
+        ui.add_class(tree, "fill");
+        ui.add_class(tree, "profiler-tree");
+        let side = ui.panel(lower, Style::default());
+        ui.add_class(side, "profiler-side");
+        let side = ["GPU", "Frame"].map(|title| {
+            let column = ui.panel(side, Style::default());
             ui.add_class(column, "profiler-column");
             let heading = ui.add_label(column, title);
             ui.add_class(heading, "profiler-heading");
@@ -171,20 +170,25 @@ impl Profiler {
             chart,
             guides,
             picked_label,
-            columns,
+            tree,
+            calls,
+            side,
             samples: VecDeque::with_capacity(FRAMES),
             recording: true,
+            sampling: false,
             frames: 0,
             picked: None,
             shown: None,
+            opened: HashSet::new(),
         }
     }
 
-    /// Takes a frame: its stages, as `Laps` timed them, and what the
-    /// renderer says of the GPU's latest.
-    pub fn record(&mut self, cpu: Vec<Stage>, frame_ms: f32, renderer: &Renderer) {
+    /// Takes a frame: what was sampled on the main thread, and what the
+    /// renderer says of the GPU's latest. Frames taken while samples were not
+    /// are let go.
+    pub fn record(&mut self, cpu: Samples, frame_ms: f32, renderer: &Renderer) {
         self.frames += 1;
-        if !self.recording {
+        if !self.sampling {
             return;
         }
         if self.samples.len() == FRAMES {
@@ -207,11 +211,14 @@ impl Profiler {
     }
 
     /// The panel's buttons and chart, and, while `shown`, its drawing.
+    /// Samples are taken only while it shows and records.
     pub fn update(&mut self, ui: &mut Ui, shown: bool, game: &Game) {
         if ui.clicked(self.record) {
             self.recording = !self.recording;
             ui.set_checked(self.record, self.recording);
         }
+        self.sampling = shown && self.recording;
+        profiling::set_enabled(self.sampling);
         let picked = self.picked;
         if ui.clicked(self.clear) {
             self.samples.clear();
@@ -292,8 +299,8 @@ impl Profiler {
         ui.set_shapes(self.chart, shapes);
     }
 
-    /// Breaks the frame shown down: its CPU stages and GPU passes, each with
-    /// a bar for its share, and what it drew and culled.
+    /// Breaks the frame shown down: its samples in the Hierarchy, its GPU
+    /// passes, each with a bar for its share, and what it drew and culled.
     fn show_details(&mut self, ui: &mut Ui, game: &Game) {
         let Some(sample) = self.shown_sample().cloned() else { return };
         let (cpu_ms, gpu_ms) = (sample.cpu_ms(), sample.gpu_ms());
@@ -306,16 +313,21 @@ impl Profiler {
             if self.picked.is_some() { format!("Frame {} · {ago} frames ago", sample.frame) } else { "Live".into() };
         ui.set_text(self.picked_label, &picked);
 
-        for column in self.columns {
+        let items = self.calls.borrow_mut().set(sample.cpu.clone());
+        for (item, name) in items {
+            if self.opened.insert(item) && OPENED.contains(&name.as_str()) {
+                ui.set_expanded(self.tree, item, true);
+            }
+        }
+        ui.refresh_list(self.tree);
+
+        for column in self.side {
             for row in ui.children(column).into_iter().skip(1) {
                 ui.remove(row);
             }
         }
-        for stage in &sample.cpu {
-            timing_row(ui, self.columns[0], &stage.name, stage.ms, cpu_ms, stage.depth);
-        }
         for (pass, ms) in &sample.gpu {
-            timing_row(ui, self.columns[1], pass, *ms, gpu_ms, 0);
+            timing_row(ui, self.side[0], pass, *ms, gpu_ms);
         }
         let stats = &sample.stats;
         let usage = game.content.usage();
@@ -335,7 +347,7 @@ impl Profiler {
             ("Materials", usage.materials.to_string()),
         ];
         for (label, value) in counts {
-            let row = ui.panel(self.columns[2], Style::row());
+            let row = ui.panel(self.side[1], Style::row());
             ui.add_class(row, "profiler-row");
             let name = ui.add_label(row, label);
             ui.add_class(name, "profiler-name");
@@ -345,16 +357,95 @@ impl Profiler {
     }
 }
 
-/// A stage or pass: its name, indented by its depth, its milliseconds, and
-/// a bar for its share of `total`.
-fn timing_row(ui: &mut Ui, column: NodeId, name: &str, ms: f32, total: f32, depth: u8) {
+/// The Hierarchy's samples, by item. An item's id is made from the names
+/// on its way down from the frame, so a sample keeps its row, open or
+/// closed, from one frame to the next.
+#[derive(Default)]
+struct CallTree {
+    samples: Samples,
+    nodes: HashMap<u64, usize>,
+    children: HashMap<Option<u64>, Vec<u64>>,
+}
+
+impl CallTree {
+    /// Shows a frame's samples, each sample's children slowest first.
+    /// Returns every item with its name, for opening some by themselves.
+    fn set(&mut self, samples: Samples) -> Vec<(u64, String)> {
+        self.nodes.clear();
+        self.children.clear();
+        let mut items = Vec::new();
+        let mut pending = vec![(Samples::FRAME, None)];
+        while let Some((node, item)) = pending.pop() {
+            let mut inside: Vec<usize> = samples.nodes[node].children.clone();
+            inside.sort_by(|a, b| samples.total_ms(*b).total_cmp(&samples.total_ms(*a)));
+            let mut ids = Vec::with_capacity(inside.len());
+            for child in inside {
+                let mut hasher = DefaultHasher::new();
+                (item, samples.nodes[child].marker.id()).hash(&mut hasher);
+                let id = hasher.finish();
+                self.nodes.insert(id, child);
+                items.push((id, samples.name(child)));
+                pending.push((child, Some(id)));
+                ids.push(id);
+            }
+            self.children.insert(item, ids);
+        }
+        self.samples = samples;
+        items
+    }
+}
+
+struct CallItems(Rc<RefCell<CallTree>>);
+
+impl TreeItems for CallItems {
+    fn children(&self, parent: Option<u64>) -> Vec<u64> {
+        self.0.borrow().children.get(&parent).cloned().unwrap_or_default()
+    }
+
+    fn has_children(&self, item: u64) -> bool {
+        self.0.borrow().children.get(&Some(item)).is_some_and(|c| !c.is_empty())
+    }
+
+    fn make(&mut self, ui: &mut Ui, row: NodeId) {
+        let name = ui.add_label(row, "");
+        ui.add_class(name, "profiler-cell-name");
+        for _ in COLUMNS {
+            let cell = ui.add_label(row, "");
+            ui.add_class(cell, "profiler-cell");
+        }
+    }
+
+    fn bind(&mut self, ui: &mut Ui, row: NodeId, item: u64) {
+        let calls = self.0.borrow();
+        let Some(&node) = calls.nodes.get(&item) else { return };
+        let samples = &calls.samples;
+        let frame = samples.total_ms(Samples::FRAME).max(1e-6);
+        let (total, own) = (samples.total_ms(node), samples.self_ms(node));
+        let texts = [
+            samples.name(node),
+            format!("{:.1}%", total / frame * 100.0),
+            format!("{:.1}%", own / frame * 100.0),
+            samples.nodes[node].calls.to_string(),
+            format!("{total:.2}"),
+            format!("{own:.2}"),
+        ];
+        for (part, text) in ui.children(row).into_iter().zip(texts) {
+            ui.set_text(part, &text);
+        }
+    }
+}
+
+fn divider(ui: &mut Ui, root: NodeId) {
+    let line = ui.panel(root, Style::default());
+    ui.add_class(line, "divider");
+}
+
+/// A pass: its name, its milliseconds, and a bar for its share of `total`.
+fn timing_row(ui: &mut Ui, column: NodeId, name: &str, ms: f32, total: f32) {
     let row = ui.panel(column, Style::row());
     ui.add_class(row, "profiler-row");
     let label = ui.add_label(row, name);
     ui.add_class(label, "profiler-name");
-    if depth > 0 {
-        ui.set_inline_style(label, &format!("padding-left: {}px; color: var(--vx-muted)", u32::from(depth) * 12));
-    }
     let track = ui.panel(row, Style::default());
     ui.add_class(track, "profiler-track");
     let fill = ui.panel(track, Style::default());

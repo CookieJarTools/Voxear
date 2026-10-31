@@ -27,16 +27,26 @@ struct Stage {
     systems: Vec<Box<dyn System>>,
 }
 
+/// What runs around each system, given its name, as a profiler times them:
+/// the first before it, the second after.
+pub type SystemTimer = (fn(&str), fn());
+
 /// Systems grouped into ordered stages. Stages always run in the order they
 /// were declared and systems within a stage in the order they were added, so
 /// execution order is deterministic.
 pub struct Schedule {
     stages: Vec<Stage>,
+    timer: Option<SystemTimer>,
 }
 
 impl Schedule {
     pub fn new(stages: &[&'static str]) -> Self {
-        Self { stages: stages.iter().map(|&label| Stage { label, systems: Vec::new() }).collect() }
+        Self { stages: stages.iter().map(|&label| Stage { label, systems: Vec::new() }).collect(), timer: None }
+    }
+
+    /// Runs `timer` around every system from now on, or nothing with `None`.
+    pub fn set_system_timer(&mut self, timer: Option<SystemTimer>) {
+        self.timer = timer;
     }
 
     pub fn add_system(
@@ -58,13 +68,13 @@ impl Schedule {
 
     pub fn run(&mut self, world: &mut World) {
         for stage in &mut self.stages {
-            run_systems(&mut stage.systems, world);
+            run_systems(&mut stage.systems, world, self.timer);
         }
     }
 
     pub fn run_stage(&mut self, stage: &str, world: &mut World) {
         if let Some(stage) = self.stages.iter_mut().find(|s| s.label == stage) {
-            run_systems(&mut stage.systems, world);
+            run_systems(&mut stage.systems, world, self.timer);
         }
     }
 
@@ -73,9 +83,15 @@ impl Schedule {
     }
 }
 
-fn run_systems(systems: &mut [Box<dyn System>], world: &mut World) {
+fn run_systems(systems: &mut [Box<dyn System>], world: &mut World, timer: Option<SystemTimer>) {
     for system in systems {
+        if let Some((begin, _)) = timer {
+            begin(system.name());
+        }
         system.run(world);
+        if let Some((_, end)) = timer {
+            end();
+        }
         world.advance_tick();
     }
 }

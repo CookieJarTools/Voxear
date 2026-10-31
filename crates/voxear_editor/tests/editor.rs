@@ -221,6 +221,21 @@ fn play_runs_the_scripts_and_stop_brings_the_level_back() {
     }
     let turned = editor.game.engine.world.get::<Transform>(played).unwrap().rotation;
     assert!(turned.angle_between(edited.rotation) > 0.1, "Hello.Spinner ran and turned it");
+
+    // The Profiler, open while playing, has each behaviour's callbacks by class and method.
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.open_dock_panel(dock, "profiler");
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    let sampled = &editor.profiler().samples().back().expect("frames are sampled while the Profiler shows").cpu;
+    let update = sampled.find("Update").unwrap();
+    let spinners =
+        sampled.nodes[update].children.iter().copied().find(|&c| sampled.name(c) == "Hello.Spinner.Update()");
+    let spinners = spinners.expect("Spinner's Update, inside the game's Update");
+    assert_eq!(sampled.nodes[spinners].calls, 3, "Spinner A's, B's and the Pyramid prefab's, as one row");
+    editor.ui.close_dock_panel(dock, "profiler");
+    frame(&mut editor, &mut renderer);
     let root = editor.ui.root();
     let mut names = Vec::new();
     with_class(&editor.ui, root, "obj-name", &mut names);
@@ -718,12 +733,16 @@ fn script_fields_pick_references_and_edit_lists() {
     assert_eq!(editor.ui.text(first_with(&editor.ui, picker, "picker-label").unwrap()), "Spinner A");
     click(&mut editor.ui, picker);
     frame(&mut editor, &mut renderer);
-    shot(&mut renderer, "reference-menu.png");
-    assert!(menu_item(&editor.ui, "Spinner B").is_some(), "Objs with a Spinner are offered");
-    assert!(menu_item(&editor.ui, "Ground").is_none(), "and only those");
-    let target = menu_item(&editor.ui, "None").unwrap();
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "reference-picker.png");
+    let offered = picker_rows(&editor.ui);
+    assert!(offered.iter().any(|(label, _)| label == "Spinner B"), "Objs with a Spinner are offered: {offered:?}");
+    assert!(!offered.iter().any(|(label, _)| label == "Ground"), "and only those");
+    assert_eq!(offered[0].0, "None");
+    let target = picker_row(&editor.ui, "None").unwrap();
     click(&mut editor.ui, target);
     frame(&mut editor, &mut renderer);
+    assert!(!editor.picker_open(), "a click picks, and closes it");
     let leader_value = |editor: &voxear_editor::Editor| {
         let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
         kept.0[0].fields.get("leader").cloned()
@@ -829,22 +848,6 @@ fn the_inspector_edits_components_and_script_fields() {
     assert!(light(&editor).is_none(), "removed");
     editor.undo(&mut renderer);
     assert_eq!(light(&editor).map(|l| l.intensity), Some(2.5), "undo brings it back as it was");
-
-    // The mesh is picked from a menu.
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
-    let mesh_row = prop_row(&editor.ui, "Mesh").unwrap();
-    let mut dropdowns = Vec::new();
-    with_class(&editor.ui, mesh_row, "value-choice", &mut dropdowns);
-    click(&mut editor.ui, dropdowns[0]);
-    frame(&mut editor, &mut renderer);
-    let mut options = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
-    let sphere = options.into_iter().find(|&o| label_starting(&editor.ui, o, "Sphere").is_some()).unwrap();
-    click(&mut editor.ui, sphere);
-    frame(&mut editor, &mut renderer);
-    let mesh = editor.game.engine.world.get::<voxear_render::MeshRenderer>(spinner).unwrap().mesh;
-    assert_eq!(editor.game.content.mesh_ref(mesh).map(|r| r.to_string()).as_deref(), Some("builtin:sphere"));
 }
 
 /// Drags one element onto another with the pointer, as the window would.
@@ -1843,15 +1846,20 @@ fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
     let samples = editor.profiler().samples();
     assert!(samples.len() >= 6, "a sample a frame");
     let last = samples.back().unwrap();
-    let stages = |depth| -> Vec<&str> {
-        last.cpu.iter().filter(|stage| stage.depth == depth).map(|stage| stage.name.as_str()).collect()
-    };
-    assert_eq!(stages(0), ["Game", "Editor", "UI Layout", "Render"]);
-    assert!(stages(1).contains(&"Update"), "the engine's stages inside the game's: {:?}", stages(1));
+    let cpu = &last.cpu;
+    let inside = |node: usize| -> Vec<String> { cpu.nodes[node].children.iter().map(|&c| cpu.name(c)).collect() };
+    assert_eq!(inside(voxear_core::profiling::Samples::FRAME), ["Game", "Editor", "UI Layout", "Render"]);
+    let game = cpu.find("Game").unwrap();
+    assert!(inside(game).contains(&"Update".to_string()), "the engine's steps inside the game's: {:?}", inside(game));
+    let editor_node = cpu.find("Editor").unwrap();
+    assert!(inside(editor_node).contains(&"Inspector".to_string()), "and each panel");
+    assert!(cpu.find("propagate transforms").is_some(), "and each system");
+    let render = cpu.find("Render").unwrap();
+    assert!(cpu.total_ms(render) >= cpu.self_ms(render));
     assert!(!last.gpu.is_empty(), "and the GPU's passes");
     let panel = editor.ui.find(editor.ui.root(), "profiler-panel").unwrap();
     let shown = texts_in(&editor.ui, panel);
-    for text in ["UI Layout", "Objs drawn", "Render"] {
+    for text in ["Hierarchy", "Calls", "Self ms", "UI Layout", "Objs drawn", "Render"] {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
 
@@ -1886,4 +1894,102 @@ fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
     let panels = open_panels(&mut editor);
     assert!(!panels.contains(&"profiler".to_string()) && !panels.contains(&"console".to_string()), "{panels:?}");
     assert!(panels.contains(&"scene".to_string()));
+}
+
+/// The object picker's rows on screen, as label and detail.
+fn picker_rows(ui: &Ui) -> Vec<(String, String)> {
+    let Some(list) = ui.find(ui.root(), "picker-list") else { return Vec::new() };
+    let mut rows: Vec<NodeId> =
+        ui.children(list).into_iter().filter(|&r| ui.has_class(r, "list-row") && ui.is_visible(r)).collect();
+    rows.sort_by(|a, b| ui.rect(*a)[1].total_cmp(&ui.rect(*b)[1]));
+    rows.into_iter().map(|row| (ui.text(ui.children(row)[1]), ui.text(ui.children(row)[2]))).collect()
+}
+
+/// The object picker's row that says `label`.
+fn picker_row(ui: &Ui, label: &str) -> Option<NodeId> {
+    let list = ui.find(ui.root(), "picker-list")?;
+    let rows = ui.children(list).into_iter().filter(|&r| ui.has_class(r, "list-row") && ui.is_visible(r));
+    rows.into_iter().find(|&row| ui.text(ui.children(row)[1]) == label)
+}
+
+#[test]
+fn the_object_picker_searches_what_a_reference_can_take() {
+    use voxear_editor::PaletteKey;
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    for name in ["Brick", "Glass"] {
+        std::fs::write(dir.path().join(format!("Materials/{name}.material")), "color = [0.7, 0.3, 0.2]\n").unwrap();
+    }
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    let renderer_of =
+        |editor: &voxear_editor::Editor| *editor.game.engine.world.get::<voxear_render::MeshRenderer>(spinner).unwrap();
+    let open_picker = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, row: &str| {
+        let picker = first_with(&editor.ui, prop_row(&editor.ui, row).unwrap(), "value-picker").unwrap();
+        click(&mut editor.ui, picker);
+        frame(editor, renderer);
+        frame(editor, renderer);
+        assert!(editor.picker_open(), "{row}");
+    };
+
+    // The material: the default, then the project's, each with its folder.
+    open_picker(&mut editor, &mut renderer, "Material");
+    let title = editor.ui.find(editor.ui.root(), "picker-title").unwrap();
+    assert_eq!(editor.ui.text(title), "Select Material");
+    let offered = picker_rows(&editor.ui);
+    assert_eq!(offered[0].0, "Default");
+    assert!(offered.contains(&("Brick.material".into(), "Materials".into())), "{offered:?}");
+    shot(&mut renderer, "object-picker.png");
+    // Typed letters narrow it, the best match first, and Enter picks it.
+    editor.ui.text_input("gls");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(picker_rows(&editor.ui).first().map(|(label, _)| label.as_str()), Some("Glass.material"));
+    editor.picker_key(PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.picker_open());
+    let material = renderer_of(&editor).material;
+    let source = editor.game.content.material_source(material).cloned();
+    let picked = match source {
+        Some(voxear_engine::MaterialSource::Asset(reference)) => {
+            reference.guid().and_then(|guid| editor.game.content.db().get(guid)).map(|e| e.path.clone())
+        }
+        _ => None,
+    };
+    assert_eq!(picked.as_deref(), Some("Materials/Glass.material"));
+    let shown = first_with(&editor.ui, prop_row(&editor.ui, "Material").unwrap(), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(shown), "Glass.material");
+    editor.undo(&mut renderer);
+    assert_ne!(renderer_of(&editor).material, material, "a pick is a step to undo");
+    frame(&mut editor, &mut renderer);
+
+    // The mesh, with Escape closing it untouched.
+    let mesh = renderer_of(&editor).mesh;
+    open_picker(&mut editor, &mut renderer, "Mesh");
+    assert_eq!(
+        picker_rows(&editor.ui).iter().map(|(label, _)| label.as_str()).collect::<Vec<_>>(),
+        ["Cube", "Sphere", "Plane"]
+    );
+    editor.picker_key(PaletteKey::Escape);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.picker_open());
+    assert_eq!(renderer_of(&editor).mesh, mesh);
+    open_picker(&mut editor, &mut renderer, "Mesh");
+    editor.ui.text_input("sph");
+    frame(&mut editor, &mut renderer);
+    editor.picker_key(PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    let mesh = renderer_of(&editor).mesh;
+    assert_eq!(editor.game.content.mesh_ref(mesh).map(|r| r.to_string()).as_deref(), Some("builtin:sphere"));
+
+    // A click elsewhere closes it.
+    open_picker(&mut editor, &mut renderer, "Mesh");
+    let hierarchy = hierarchy_row(&editor.ui, "Ground").unwrap();
+    click(&mut editor.ui, hierarchy);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.picker_open());
 }

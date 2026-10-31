@@ -14,7 +14,10 @@ use std::{
     ptr,
 };
 
-use voxear_core::time::Time;
+use voxear_core::{
+    profiling::{self, Marker},
+    time::Time,
+};
 use voxear_ecs::{Entity, World};
 use voxear_scene::{
     Adopted, AttachedBehaviour, BehaviourHandle, BehaviourSpec, Behaviours, Callbacks, InstanceMarker, Name, Placement,
@@ -23,7 +26,7 @@ use voxear_scene::{
 
 use crate::services::{ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 12;
+pub(crate) const API_VERSION: u32 = 13;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -67,6 +70,14 @@ pub(crate) struct NativeApi {
     /// Writes the Objs called `name`, oldest first, as many as fit, and
     /// returns how many there are.
     pub obj_find: unsafe extern "C" fn(name: *const u8, len: i32, out: *mut u64, capacity: i32) -> i32,
+    /// Profiling, for `Voxear.Profiler` and each behaviour's callbacks: a
+    /// marker by name, the same each time; a sample begun, 1 when it was
+    /// recorded, as it is not while sampling is off; the last one ended; and
+    /// whether sampling is on.
+    pub profiler_marker: unsafe extern "C" fn(name: *const u8, len: i32) -> u32,
+    pub profiler_begin: unsafe extern "C" fn(marker: u32) -> i32,
+    pub profiler_end: unsafe extern "C" fn(),
+    pub profiler_enabled: unsafe extern "C" fn() -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -222,6 +233,22 @@ unsafe extern "C" fn obj_find(name: *const u8, len: i32, out: *mut u64, capacity
         }
     }
     found.len() as i32
+}
+
+unsafe extern "C" fn profiler_marker(name: *const u8, len: i32) -> u32 {
+    Marker::new(&unsafe { utf8(name, len) }).id()
+}
+
+unsafe extern "C" fn profiler_begin(marker: u32) -> i32 {
+    i32::from(Marker::from_id(marker).begin())
+}
+
+unsafe extern "C" fn profiler_end() {
+    profiling::end();
+}
+
+unsafe extern "C" fn profiler_enabled() -> i32 {
+    i32::from(profiling::enabled())
 }
 
 unsafe extern "C" fn obj_name(entity: u64, buffer: *mut u8, capacity: i32) -> i32 {
@@ -561,5 +588,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         level_load_async,
         level_info,
         obj_find,
+        profiler_marker,
+        profiler_begin,
+        profiler_end,
+        profiler_enabled,
     }
 }

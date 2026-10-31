@@ -29,6 +29,7 @@ mod ui_pass;
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
 
 use anyhow::{Result, ensure};
+use voxear_core::{profile_marker, profile_scope};
 use voxear_ecs::{Entity, World};
 use voxear_rhi::{
     Bindless, Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, GpuInfo, Image, ImageDesc, MemoryLocation, RenderDoc, Retired,
@@ -472,7 +473,10 @@ impl Renderer {
             return Ok(());
         }
 
-        let frame = self.frames.begin(&self.gpu)?;
+        let frame = {
+            profile_scope!("Wait for GPU");
+            self.frames.begin(&self.gpu)?
+        };
         // This slot's previous frame has finished, and with it every frame that could use what was freed before it.
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
@@ -480,6 +484,7 @@ impl Renderer {
         let counters = bytemuck::cast_slice(&self.buffers[frame.slot].stats.read()[..stat::COUNT * 4]);
         let exposure = bytemuck::cast_slice(self.exposure.as_ref().expect("exposure lives until drop").read());
         self.stats = RenderStats::read(counters, exposure);
+        let acquiring = profile_marker!("Acquire Image").scope();
         let acquired = match &self.output {
             Output::Window(swapchain) => match self.frames.acquire(&self.gpu, swapchain)? {
                 Some(acquired) => Some(acquired),
@@ -490,10 +495,12 @@ impl Renderer {
             },
             Output::Offscreen { .. } => None,
         };
+        drop(acquiring);
 
         // The 3D view fills the output, or the rectangle the editor gives it.
         let view = self.view_rect(full);
         let extent = view.extent;
+        let extracting = profile_marker!("Extract").scope();
         let mut extracted = scene::extract(world, extent.width, extent.height, time, self.frame_index, &self.options);
         let delta_time = self.last_time.map_or(0.0, |last| (time - last).clamp(0.0, 0.25));
         self.last_time = Some(time);
@@ -505,7 +512,9 @@ impl Renderer {
         let frame_index = self.frame_index;
         self.frame_index += 1;
         let light_count = extracted.lights.len().min(MAX_LIGHTS as usize);
+        drop(extracting);
 
+        let recording = profile_marker!("Record Passes").scope();
         let (output_image, output_view, output_desc, output_last) = match &self.output {
             Output::Window(swapchain) => {
                 let acquired = acquired.as_ref().expect("acquired above");
@@ -641,7 +650,9 @@ impl Renderer {
             fg.transition(output, ImageAccess::Present);
         }
         fg.execute(gpu, frame.cmd, bindless);
+        drop(recording);
 
+        profile_scope!("Submit");
         let needs_resize = match (&mut self.output, acquired) {
             (Output::Window(swapchain), Some(acquired)) => {
                 self.frames.submit(&self.gpu, frame, Some((swapchain, acquired)))?

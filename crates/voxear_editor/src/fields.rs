@@ -421,6 +421,16 @@ pub fn why_not(game: &Game, entity: Entity, kind: &FieldKind, pick: &Pick) -> St
     }
 }
 
+/// What a reference field takes, by the short name of its type: "Prefab",
+/// "Spinner", or "Obj".
+pub fn takes(kind: &FieldKind) -> &str {
+    match kind {
+        FieldKind::Asset { asset } | FieldKind::Ref { asset } => short(asset),
+        FieldKind::Behaviour { name } => short(name),
+        _ => "Obj",
+    }
+}
+
 fn name_of(world: &World, entity: Entity) -> String {
     world.get::<Name>(entity).map_or_else(|| "That Obj".into(), |n| n.0.clone())
 }

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use voxear_core::profile_scope;
 use voxear_ecs::{Entity, World};
 use voxear_render::Renderer;
 use voxear_scene::Placement;
@@ -201,7 +202,10 @@ impl Game {
     /// Runs one frame, then any level change scripts asked for. A level that
     /// fails to load is logged and the game carries on, as in Unity.
     pub fn tick(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
-        self.reload_changed_scripts();
+        {
+            profile_scope!("Script Reload Check");
+            self.reload_changed_scripts();
+        }
         self.models = ModelWork::for_renderer(renderer.as_deref());
         {
             let renderer = renderer.as_deref_mut();
@@ -218,6 +222,7 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        profile_scope!("Loading");
         for (id, level, options) in self.loads.advance(&mut self.content, renderer.as_deref_mut()) {
             let changed = self.load_level_with(&level, &options, renderer.as_deref_mut());
             self.loads.activated(id, changed);

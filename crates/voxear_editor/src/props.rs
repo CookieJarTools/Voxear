@@ -301,33 +301,21 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     Some(match prop {
         Prop::Mesh => {
             let reference = game.content.mesh_ref(world.get::<MeshRenderer>(entity)?.mesh)?.to_string();
-            let mut options: Vec<String> = BUILTIN_MESHES.iter().map(|(label, _)| label.to_string()).collect();
-            let index = match BUILTIN_MESHES.iter().position(|(_, r)| *r == reference) {
-                Some(index) => index,
-                None => {
-                    options.push(asset_label(game, &reference));
-                    options.len() - 1
-                }
-            };
-            Value::Choice(index, options)
+            match BUILTIN_MESHES.iter().find(|(_, r)| *r == reference) {
+                Some((label, _)) => Value::Asset(label.to_string()),
+                None => Value::Asset(asset_label(game, &reference)),
+            }
         }
         Prop::Material => {
             let source = game.content.material_source(world.get::<MeshRenderer>(entity)?.material)?;
-            let mut options = vec!["Default".to_string()];
-            let assets = material_assets(game);
-            options.extend(assets.iter().map(|path| file_name(path).to_string()));
-            let index = match source {
-                MaterialSource::Inline(data) if *data == default_material() => 0,
-                MaterialSource::Asset(reference) => {
-                    let path = reference.guid().and_then(|guid| game.content.db().get(guid)).map(|e| e.path.clone());
-                    assets.iter().position(|a| Some(a) == path.as_ref()).map_or(0, |i| i + 1)
-                }
-                MaterialSource::Inline(_) => {
-                    options.push("Custom".into());
-                    options.len() - 1
-                }
-            };
-            Value::Choice(index, options)
+            Value::Asset(match source {
+                MaterialSource::Inline(data) if *data == default_material() => "Default".into(),
+                MaterialSource::Asset(reference) => reference
+                    .guid()
+                    .and_then(|guid| game.content.db().get(guid))
+                    .map_or_else(|| reference.to_string(), |e| e.path.clone()),
+                MaterialSource::Inline(_) => "Custom".into(),
+            })
         }
         Prop::LightKind => {
             let index = match light()?.kind {
@@ -365,24 +353,10 @@ pub fn set(
         return false;
     }
     match (prop, value) {
-        (Prop::Mesh, Value::Choice(index, _)) => {
-            let (Some(renderer), Some((_, reference))) = (renderer, BUILTIN_MESHES.get(index)) else { return false };
-            let Ok(mesh) = game.content.parse(reference).and_then(|r| game.content.mesh(renderer, &r)) else {
-                return false;
-            };
-            with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.mesh = mesh)
-        }
-        (Prop::Material, Value::Choice(index, _)) => {
-            let Some(renderer) = renderer else { return false };
-            let source = match index.checked_sub(1) {
-                None => MaterialSource::Inline(default_material()),
-                Some(at) => match material_assets(game).get(at).map(|path| game.content.parse(path)) {
-                    Some(Ok(reference)) => MaterialSource::Asset(reference),
-                    _ => return false,
-                },
-            };
-            let Ok(material) = game.content.material(renderer, &source) else { return false };
-            with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.material = material)
+        // A mesh or material kept after play comes back by its name, as its list has it.
+        (Prop::Mesh | Prop::Material, Value::Asset(label)) => {
+            let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| pick(game, renderer, types, entity, prop, &choice))
         }
         (Prop::Field { behaviour, path }, value) => {
             fields::set(&mut game.engine.world, types, entity, behaviour, path, &value)
@@ -397,14 +371,66 @@ pub fn reset_field(world: &mut World, entity: Entity, prop: &Prop) -> bool {
     fields::reset(world, entity, behaviour, path)
 }
 
-/// Points a reference at what its menu picked.
-pub fn pick(world: &mut World, types: &ScriptTypes, entity: Entity, prop: &Prop, choice: &Pick) -> bool {
-    let Prop::Field { behaviour, path } = prop else { return false };
-    fields::pick(world, types, entity, behaviour, path, choice)
+/// Points a reference at what was picked for it. A mesh or material is
+/// loaded for the renderer.
+pub fn pick(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    types: &ScriptTypes,
+    entity: Entity,
+    prop: &Prop,
+    choice: &Pick,
+) -> bool {
+    match (prop, choice) {
+        (Prop::Mesh, Pick::Asset(Some(reference))) => {
+            let Some(renderer) = renderer else { return false };
+            let Ok(mesh) = game.content.parse(reference).and_then(|r| game.content.mesh(renderer, &r)) else {
+                return false;
+            };
+            with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.mesh = mesh)
+        }
+        (Prop::Material, Pick::Asset(path)) => {
+            let Some(renderer) = renderer else { return false };
+            let source = match path {
+                None => MaterialSource::Inline(default_material()),
+                Some(path) => match game.content.parse(path) {
+                    Ok(reference) => MaterialSource::Asset(reference),
+                    Err(_) => return false,
+                },
+            };
+            let Ok(material) = game.content.material(renderer, &source) else { return false };
+            with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.material = material)
+        }
+        (Prop::Field { behaviour, path }, choice) => {
+            fields::pick(&mut game.engine.world, types, entity, behaviour, path, choice)
+        }
+        _ => false,
+    }
 }
 
-/// What a reference's menu offers.
+/// What a reference can point at, each with what it is called: the built-in
+/// meshes and the one it has for a Mesh, the default and the project's
+/// materials for a Material, and for a script field, the Objs or assets of
+/// its kind. Nothing comes first where a reference can be empty.
 pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Vec<(String, Pick)> {
+    match prop {
+        Prop::Mesh => {
+            let mut found: Vec<(String, Pick)> =
+                BUILTIN_MESHES.iter().map(|(label, r)| (label.to_string(), Pick::Asset(Some(r.to_string())))).collect();
+            let mesh = game.engine.world.get::<MeshRenderer>(entity).map(|r| r.mesh);
+            let reference = mesh.and_then(|mesh| game.content.mesh_ref(mesh)).map(|r| r.to_string());
+            if let Some(reference) = reference.filter(|r| !BUILTIN_MESHES.iter().any(|(_, b)| b == r)) {
+                found.push((asset_label(game, &reference), Pick::Asset(Some(reference))));
+            }
+            return found;
+        }
+        Prop::Material => {
+            let mut found = vec![("Default".to_string(), Pick::Asset(None))];
+            found.extend(material_assets(game).into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
+            return found;
+        }
+        _ => {}
+    }
     let Prop::Field { behaviour, path } = prop else { return Vec::new() };
     match fields::kind_at(types, behaviour, path) {
         Some(
@@ -418,9 +444,23 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
 
 /// Why a reference cannot take what was dropped on it.
 pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, choice: &Pick) -> String {
-    let Prop::Field { behaviour, path } = prop else { return String::new() };
+    let Prop::Field { behaviour, path } = prop else {
+        return format!("The {} takes a {} from its list", label(prop), title(types, prop));
+    };
     let kind = fields::kind_at(types, behaviour, path).unwrap_or(voxear_engine::script_types::FieldKind::Obj);
     fields::why_not(game, entity, &kind, choice)
+}
+
+/// What a reference takes, as its picker's title says: "Material",
+/// "Prefab", "Spinner" or "Obj".
+pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
+    match prop {
+        Prop::Mesh => "Mesh".into(),
+        Prop::Material => "Material".into(),
+        Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
+            .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
+        _ => String::new(),
+    }
 }
 
 /// Adds an item to a list, or takes one out.

@@ -21,6 +21,7 @@ use voxear_assets::AssetKind;
 use voxear_core::{
     logging::LogCapture,
     math::{Quat, Vec3},
+    profile_scope, profiling,
 };
 use voxear_ecs::Entity;
 use voxear_engine::{
@@ -42,9 +43,10 @@ use crate::{
     history::{Edit, History, ObjState},
     inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
+    object_picker::{self, ObjectPicker},
     objs,
     palette::{Added, Keys, Palette, PaletteAction, PaletteCommand, PaletteKey, Picked, Sources},
-    profiler::{self, Laps, Profiler},
+    profiler::{self, Profiler},
     project_view::{ItemKind, ProjectEvent, ProjectItem, ProjectView},
     props::{self, Part, Prop},
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
@@ -218,6 +220,9 @@ pub struct Editor {
     workspace: usize,
     workspace_layouts: [Option<String>; 2],
     profiler: Profiler,
+    /// A reference field's search, and what its keys picked, done next frame.
+    picker: ObjectPicker,
+    picker_picks: Vec<(Entity, Prop, Pick)>,
     /// While one panel fills the dock: the layout from before, and the
     /// panels that were closed then.
     maximized: Option<(String, Vec<String>)>,
@@ -336,6 +341,9 @@ impl Editor {
         let (tabs, view, filter) = (find(&ui, "settings-tabs"), find(&ui, "settings"), find(&ui, "settings-filter"));
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
+        let parts =
+            ["picker", "picker-title", "picker-field", "picker-list", "picker-empty"].map(|name| find(&ui, name));
+        let picker = ObjectPicker::new(&mut ui, parts[0], parts[1], parts[2], parts[3], parts[4]);
         let mut fly = FlyCamera::default();
         fly.set_speed(memory.settings.fly_speed);
         ui.set_text(nodes.status_time, &format!("Opened in {:.2} s", started.elapsed().as_secs_f32()));
@@ -386,6 +394,8 @@ impl Editor {
             workspace: 0,
             workspace_layouts: [None, None],
             profiler,
+            picker,
+            picker_picks: Vec::new(),
             maximized: None,
             status: (0, 0.0),
             frames: 0,
@@ -435,31 +445,62 @@ impl Editor {
     /// (held still while paused), panels, the 3D view's rectangle and
     /// camera, and the render.
     pub fn update(&mut self, renderer: &mut Renderer, size: (u32, u32), scale: f32, delta: f32) -> Result<()> {
-        let mut laps = Laps::start();
         self.scale = scale;
         self.frames += 1;
         voxear_core::logging::set_frame(self.frames);
         self.ui.advance(delta);
-        self.update_play(renderer);
-        if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.camera) {
-            self.fly.update_transform(transform, delta);
+        {
+            profile_scope!("Game");
+            self.update_play(renderer);
+            if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.camera) {
+                self.fly.update_transform(transform, delta);
+            }
+            if let Some(delta) = self.game_delta(delta) {
+                self.game.tick(delta, Some(renderer));
+            }
         }
-        let ticked = self.game_delta(delta).map(|delta| self.game.tick(delta, Some(renderer))).is_some();
-        laps.mark("Game");
-        if ticked {
-            laps.inside(self.game.engine.stage_times());
-        }
+        let view = {
+            profile_scope!("Editor");
+            self.update_panels(renderer, delta)
+        };
+        let frame = {
+            profile_scope!("UI Layout");
+            self.ui.frame(size.0, size.1, scale)
+        };
+        let rendered = {
+            profile_scope!("Render");
+            renderer.set_view_rect(Some(self.viewport_rect(view.map(|(viewport, _)| viewport), size)));
+            {
+                profile_scope!("UI Upload");
+                renderer.set_ui(&frame)?;
+            }
+            renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)
+        };
+        self.profiler.record(profiling::end_frame(), delta * 1000.0, renderer);
+        rendered
+    }
 
-        self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
+    /// The panels' frame, each a profiling sample of its own. Returns the
+    /// view the 3D renders into, with its camera.
+    fn update_panels(&mut self, renderer: &mut Renderer, delta: f32) -> Option<(NodeId, Entity)> {
         let playing = self.is_playing();
-        if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
-            self.inspector.show(&mut self.ui, &self.game, selected, playing);
+        // Before the Inspector, so what is picked shows in this frame.
+        self.update_picker(renderer);
+        {
+            profile_scope!("Hierarchy");
+            self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
+            if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
+                self.inspector.show(&mut self.ui, &self.game, selected, playing);
+            }
         }
-        let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
-        // Edits while playing go with the played world, so there is nothing to undo or save.
-        if let Some(edit) = edit.filter(|_| !self.is_playing()) {
-            self.history.record(edit);
-            self.unsaved = true;
+        {
+            profile_scope!("Inspector");
+            let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
+            // Edits while playing go with the played world, so there is nothing to undo or save.
+            if let Some(edit) = edit.filter(|_| !self.is_playing()) {
+                self.history.record(edit);
+                self.unsaved = true;
+            }
         }
         if let Some(action) = self.hierarchy.action(&mut self.ui) {
             self.obj_action(action, renderer);
@@ -475,21 +516,36 @@ impl Editor {
         }
         self.update_windows();
         self.update_workspaces();
-        let profiler_shown = self.shown(self.nodes.profiler_panel);
-        self.profiler.update(&mut self.ui, profiler_shown, &self.game);
+        {
+            profile_scope!("Profiler");
+            let profiler_shown = self.shown(self.nodes.profiler_panel);
+            self.profiler.update(&mut self.ui, profiler_shown, &self.game);
+        }
         self.update_drawer();
         self.update_prefab_mode(renderer);
         self.update_settings();
-        self.update_scene_tools(renderer);
+        {
+            profile_scope!("Scene Tools");
+            self.update_scene_tools(renderer);
+        }
         self.update_script_types();
-        for event in self.project.update(&mut self.ui) {
-            self.project_event(event, renderer);
+        {
+            profile_scope!("Project");
+            for event in self.project.update(&mut self.ui) {
+                self.project_event(event, renderer);
+            }
+            if let Some(action) = self.inspector.update_asset(&self.ui) {
+                self.asset_action(action, renderer);
+            }
         }
-        if let Some(action) = self.inspector.update_asset(&self.ui) {
-            self.asset_action(action, renderer);
+        {
+            profile_scope!("Console");
+            self.update_console();
         }
-        self.update_console();
-        self.cookbook.update(&mut self.ui);
+        {
+            profile_scope!("Cookbook");
+            self.cookbook.update(&mut self.ui);
+        }
         self.update_palette(renderer);
         let action = self.levels.update(&mut self.ui, self.game.levels.current(), self.game.loads.level_in_progress());
         if let Some(action) = action {
@@ -518,15 +574,7 @@ impl Editor {
             renderer.set_view_options(ViewOptions { camera, debug_view, ..ViewOptions::default() });
             (self.view_camera, self.view_debug) = (camera, debug_view);
         }
-        laps.mark("Editor");
-        let frame = self.ui.frame(size.0, size.1, scale);
-        laps.mark("UI Layout");
-        renderer.set_view_rect(Some(self.viewport_rect(view.map(|(viewport, _)| viewport), size)));
-        renderer.set_ui(&frame)?;
-        let rendered = renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32);
-        laps.mark("Render");
-        self.profiler.record(laps.finish(), delta * 1000.0, renderer);
-        rendered
+        view
     }
 
     /// The Profiler panel, and the frames it has taken.
@@ -972,6 +1020,9 @@ impl Editor {
     /// a component. Each change is a step to undo, except while playing.
     fn row_action(&mut self, action: RowAction, renderer: &mut Renderer) {
         let Some(entity) = self.selected() else { return };
+        if let RowAction::Browse(prop, anchor) = action {
+            return self.browse(entity, prop, anchor);
+        }
         if let RowAction::Keep(field) = action {
             let label = field.label();
             let kept = (entity, field);
@@ -1009,10 +1060,11 @@ impl Editor {
                 }
             }
             RowAction::Remove(part) => props::remove(&mut self.game.engine.world, entity, &part),
+            RowAction::Browse(..) => {}
             RowAction::Pick(prop, pick) => {
-                props::pick(&mut self.game.engine.world, self.inspector.types(), entity, &prop, &pick);
+                props::pick(&mut self.game, Some(renderer), self.inspector.types(), entity, &prop, &pick);
             }
-            RowAction::Dropped(prop, source) => self.drop_reference(entity, &prop, &source),
+            RowAction::Dropped(prop, source) => self.drop_reference(entity, &prop, &source, renderer),
             RowAction::Move(Part::Behaviour(name), by) => {
                 props::move_behaviour(&mut self.game.engine.world, entity, &name, by);
             }
@@ -1032,7 +1084,7 @@ impl Editor {
     /// Points a reference at an Obj dragged from the Hierarchy or an asset
     /// from the Project, if it is one the field's menu offers; otherwise the
     /// status bar says why not.
-    fn drop_reference(&mut self, entity: Entity, prop: &Prop, source: &DragSource) {
+    fn drop_reference(&mut self, entity: Entity, prop: &Prop, source: &DragSource, renderer: &mut Renderer) {
         let pick = match (self.hierarchy.dragged(source), self.project.dragged(source)) {
             (Some(obj), _) => Pick::Obj(Some(obj)),
             (None, Some(path)) => Pick::Asset(Some(path)),
@@ -1040,7 +1092,7 @@ impl Editor {
         };
         let types = self.inspector.types();
         if props::choices(&self.game, types, entity, prop).iter().any(|(_, offered)| *offered == pick) {
-            props::pick(&mut self.game.engine.world, types, entity, prop, &pick);
+            props::pick(&mut self.game, Some(renderer), types, entity, prop, &pick);
         } else {
             let why = props::why_not(&self.game, types, entity, prop, &pick);
             self.notify(&why);
@@ -1306,7 +1358,7 @@ impl Editor {
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
             && key.state == ElementState::Pressed
-            && self.palette.is_open()
+            && (self.palette.is_open() || self.picker.is_open())
             && let winit::keyboard::Key::Named(named) = &key.logical_key
         {
             use winit::keyboard::NamedKey;
@@ -1318,7 +1370,11 @@ impl Editor {
                 _ => None,
             };
             if let Some(palette_key) = palette_key {
-                self.palette_key(palette_key);
+                if self.picker.is_open() {
+                    self.picker_key(palette_key);
+                } else {
+                    self.palette_key(palette_key);
+                }
                 return true;
             }
         }
@@ -1373,6 +1429,42 @@ impl Editor {
             }
         }
         voxear_engine::ui_input::handle(&mut self.ui, event)
+    }
+
+    /// Opens the object picker for a reference of `entity`, under its field.
+    fn browse(&mut self, entity: Entity, prop: Prop, anchor: NodeId) {
+        let types = self.inspector.types();
+        let choices = object_picker::decorate(&self.game, props::choices(&self.game, types, entity, &prop));
+        let title = props::title(types, &prop);
+        let now = match props::get(&self.game, types, entity, &prop) {
+            Some(props::Value::Asset(now) | props::Value::Obj(now)) => now,
+            _ => String::new(),
+        };
+        self.picker.open(&mut self.ui, (entity, prop, anchor), &title, choices, &now);
+    }
+
+    /// The object picker's frame, and what it or its keys picked, for the
+    /// Obj it was opened for if that is still the one selected.
+    fn update_picker(&mut self, renderer: &mut Renderer) {
+        let clicked = self.picker.update(&mut self.ui);
+        for (entity, prop, pick) in std::mem::take(&mut self.picker_picks).into_iter().chain(clicked) {
+            if self.selected() == Some(entity) {
+                self.row_action(RowAction::Pick(prop, pick), renderer);
+            }
+        }
+    }
+
+    /// A key for the open object picker: Up and Down move through it, Enter
+    /// picks what is highlighted on the next frame, and Escape closes it.
+    pub fn picker_key(&mut self, key: PaletteKey) {
+        if let Some(picked) = self.picker.key(&mut self.ui, key) {
+            self.picker_picks.push(picked);
+        }
+    }
+
+    /// Whether the object picker is open.
+    pub fn picker_open(&self) -> bool {
+        self.picker.is_open()
     }
 
     /// A key for the open command palette: Up and Down move through it, Enter

@@ -221,7 +221,8 @@ Done so far:
   Inspector come back into the edited level when play stops.
 - **Components in the Inspector:** Mesh Renderer, Light and Camera values edited in place; script fields described
   from the scripts' build by a .NET tool (`Voxear.ScriptInfo`), rebuilt in the background when a script changes,
-  with their starting values; references picked from menus or dragged from the Hierarchy and the Project, lists
+  with their starting values; references picked in a searchable object picker or dragged from the Hierarchy and
+  the Project, lists
   with items added and taken out, and nested
   `[Serializable]` tables; Add Component and Remove Component; all of it undoable, and component values keepable
   after play.
@@ -259,8 +260,12 @@ Done so far:
 - **Prefabs in the editor:** made by dragging an Obj onto the Project, opened on their own in prefab mode with a
   way back, saved, and reloaded by their instances; components locked for designers with the values they still
   see, and scripts moved up and down.
-- **The Profiler:** the last 300 frames' CPU and GPU times as a chart, and one frame broken down into the editor's
-  and engine's stages, the GPU's passes, and what was drawn, culled and loaded.
+- **The Profiler:** the last 300 frames' CPU and GPU times as a chart, and one frame broken down as Unity's
+  Hierarchy does: samples with their total and self time and calls, from the editor's stages and panels, the
+  engine's steps and systems, each behaviour's callbacks by class and method, and scripts' own
+  (`Profiler.Sample`, `ProfilerMarker`); the GPU's passes, and what was drawn, culled and loaded.
+- **The object picker:** reference fields, the Mesh Renderer's mesh and material among them, open a search of what
+  they can take, with icons and where each is, narrowed as it is typed and picked from the keyboard.
 
 Still to do in M3:
 - UI core:
@@ -281,7 +286,8 @@ Still to do in M3:
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.
 - Debug tools:
-  - the stats overlay's frame-time graph, and Tracy behind the Profiler panel
+  - the stats overlay's frame-time graph; the Profiler's timeline view, worker threads' samples and managed
+    allocations per frame; and Tracy behind it
   - the frame debugger and the ECS inspector
   - the memory profiler with snapshots and diffs
   - debug draw and the dev console

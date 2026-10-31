@@ -34,6 +34,13 @@ namespace Voxear.Scripting
 			}
 		}
 
+		/// <summary>Forgets every instance, as a reload of the scripts does before registering their replacements.</summary>
+		public static void Clear()
+		{
+			instances.Clear();
+			Version++;
+		}
+
 		public static Behaviour? Get(Type type)
 		{
 			return instances.TryGetValue(type, out var behaviour) ? behaviour : null;

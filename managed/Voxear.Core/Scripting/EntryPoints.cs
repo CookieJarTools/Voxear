@@ -27,6 +27,30 @@ namespace Voxear.Scripting
 			}
 		}
 
+		/// <summary>
+		/// Loads a new build of the game scripts in place of the running one (see GameScripts.Reload): 0 when it did, 1
+		/// when the new build could not be loaded and nothing changed, and 2 when the reload failed partway, which is
+		/// logged.
+		/// </summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int ReloadGameAssembly(byte* path, int length, uint* handles, uint* enabled, BehaviourInfo* infos, int count)
+		{
+			try
+			{
+				var reloaded = GameScripts.Reload(
+					Native.Utf8(path, length),
+					new ReadOnlySpan<uint>(handles, count),
+					new ReadOnlySpan<uint>(enabled, count),
+					new Span<BehaviourInfo>(infos, count));
+				return reloaded ? 0 : 1;
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+				return 2;
+			}
+		}
+
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static int CreateBehaviour(byte* typeName, int length, ulong obj, byte* fields, int fieldsLength, BehaviourInfo* info)
 		{
@@ -49,6 +73,7 @@ namespace Voxear.Scripting
 			{
 				Loading.Update();
 				MainThreadContext.Instance.Run();
+				GameScripts.Settle();
 			}
 			catch (Exception exception)
 			{

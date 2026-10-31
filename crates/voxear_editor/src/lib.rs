@@ -16,7 +16,8 @@
 //!   the level's camera
 //! - **play mode**: Play runs a copy of the edited level with its scripts,
 //!   Pause and Step hold it and move it on, and Stop brings the edited level
-//!   back as it was
+//!   back as it was; scripts that change reload, into the running game while
+//!   playing, with what their behaviours hold carried over
 //! - the Scene view's **tools**: click an Obj to select it, and drag the
 //!   move, rotate or scale handles around it (Q, W, E and R pick the tool;
 //!   Ctrl snaps)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.Loader;
 using System.Threading;
 
 namespace Voxear.Scripting
@@ -46,6 +47,15 @@ namespace Voxear.Scripting
 			return this;
 		}
 
+		/// <summary>Drops what is waiting to run that belongs to scripts being reloaded: their awaits never resume.</summary>
+		public void Forget(AssemblyLoadContext old)
+		{
+			lock (gate)
+			{
+				queued.RemoveAll(item => GameCode.Holds(item.Callback, old) || GameCode.Holds(item.State, old));
+			}
+		}
+
 		/// <summary>
 		/// Runs what was posted before this call. Anything posted while it runs waits for the next frame, so a
 		/// continuation that keeps posting cannot hold up the frame.
@@ -57,9 +67,13 @@ namespace Voxear.Scripting
 				(queued, running) = (running, queued);
 			}
 
+			// An await of scripts reloaded since can still finish and post its continuation; it is not run.
 			foreach (var (callback, state) in running)
 			{
-				Invoke(callback, state);
+				if (!GameScripts.IsRetired(callback, state))
+				{
+					Invoke(callback, state);
+				}
 			}
 			running.Clear();
 		}

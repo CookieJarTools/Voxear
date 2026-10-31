@@ -227,6 +227,38 @@ impl Lifecycle {
         self.records.len()
     }
 
+    /// Every behaviour, by execution order, with whether it is enabled and
+    /// not on its way out: what a reload of the scripts gives OnDisable and
+    /// then OnEnable.
+    pub fn live(&self) -> Vec<(BehaviourHandle, bool)> {
+        let mut handles: Vec<BehaviourHandle> = self.records.keys().copied().collect();
+        sort_by_order(&self.records, &mut handles);
+        handles.into_iter().map(|h| (h, self.records.get(&h).is_some_and(|r| r.enabled && !r.destroying))).collect()
+    }
+
+    /// A behaviour's class changed, as a reload of the scripts can change
+    /// it: it may call other callbacks now, or run at another point in the
+    /// order. Where it is in its life does not change.
+    pub fn retype(&mut self, handle: BehaviourHandle, callbacks: Callbacks, order: i32) {
+        let Some(record) = self.records.get_mut(&handle) else { return };
+        record.callbacks = callbacks;
+        record.order = order;
+        self.running_dirty = true;
+    }
+
+    /// Forgets a behaviour at once, with no more callbacks, as when its
+    /// class is gone after a reload of the scripts, which have already let
+    /// it go.
+    pub fn forget(&mut self, handle: BehaviourHandle) {
+        if self.records.remove(&handle).is_none() {
+            return;
+        }
+        for list in [&mut self.pending, &mut self.toggled, &mut self.to_start, &mut self.destroying] {
+            list.retain(|h| *h != handle);
+        }
+        self.running_dirty = true;
+    }
+
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
@@ -437,6 +469,35 @@ mod tests {
             host.log,
             vec![(Phase::Awake, vec![0, 1, 2]), (Phase::OnEnable, vec![0, 1, 2]), (Phase::Start, vec![0, 1, 2])]
         );
+    }
+
+    #[test]
+    fn a_reload_retypes_and_forgets_behaviours_where_they_are_in_their_lives() {
+        let mut lifecycle = Lifecycle::new();
+        let mut host = Recorder::default();
+        for i in 0..3 {
+            lifecycle.register(reg(i, i as i32));
+        }
+        lifecycle.flush(&mut host);
+        lifecycle.set_enabled(BehaviourHandle(1), false);
+        lifecycle.flush(&mut host);
+        let live = lifecycle.live();
+        assert_eq!(live, [(BehaviourHandle(0), true), (BehaviourHandle(1), false), (BehaviourHandle(2), true)]);
+
+        // The new build: 0 now runs last and has no Update, and 2's class is gone.
+        lifecycle.retype(BehaviourHandle(0), Callbacks(Callbacks::ALL.0 & !(1 << Phase::Update as u32)), 10);
+        lifecycle.forget(BehaviourHandle(2));
+        lifecycle.set_enabled(BehaviourHandle(1), true);
+        host.log.clear();
+        lifecycle.flush(&mut host);
+        lifecycle.run(Phase::Update, &mut host);
+        lifecycle.run(Phase::LateUpdate, &mut host);
+        assert_eq!(
+            host.log,
+            vec![(Phase::OnEnable, vec![1]), (Phase::Update, vec![1]), (Phase::LateUpdate, vec![1, 0])],
+            "no Awake or Start again, 0 in its new place and without Update, and 2 gone"
+        );
+        assert_eq!(lifecycle.len(), 2);
     }
 
     #[test]

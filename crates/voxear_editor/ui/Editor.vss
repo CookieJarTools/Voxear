@@ -952,7 +952,6 @@ DockSpace .project-split > .split-divider {
     padding: 4px 8px;
     column-gap: 6px;
     row-gap: 4px;
-    border-bottom: 1px solid var(--vx-line);
 }
 
 .console-button {
@@ -1109,7 +1108,6 @@ DockSpace .project-split > .split-divider {
 
 .console-detail {
     flex-direction: column;
-    border-top: 1px solid var(--vx-line);
 }
 
 .console-detail-bar {

@@ -890,6 +890,7 @@ impl Editor {
                 Ok(Ok(types)) => {
                     self.inspector.set_types(types);
                     self.describing = None;
+                    self.reload_scripts();
                 }
                 Ok(Err(error)) => {
                     tracing::warn!("the scripts could not be described: {error:#}");

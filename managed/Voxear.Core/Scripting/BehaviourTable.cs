@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Voxear.Interop;
 
 namespace Voxear.Scripting
@@ -81,6 +82,96 @@ namespace Voxear.Scripting
 				behaviours[(int)handle] = null;
 				free.Push((int)handle);
 			}
+		}
+
+		/// <summary>
+		/// Puts a behaviour of the same class from the scripts just loaded under each live handle, with the old one's
+		/// fields carried over by transfer, and lets the old ones go. A behaviour whose class is not in the new build,
+		/// or cannot be made, is let go and its handle freed. Returns the classes that were gone.
+		/// </summary>
+		public static List<string> Replace(StateTransfer transfer)
+		{
+			var gone = new List<string>();
+			for (var handle = 0; handle < behaviours.Count; handle++)
+			{
+				if (behaviours[handle] is not { } previous)
+				{
+					continue;
+				}
+
+				var made = Remake(previous);
+				behaviours[handle] = made;
+				if (made != null)
+				{
+					transfer.Replaced[previous] = made;
+					continue;
+				}
+				gone.Add(previous.GetType().FullName!);
+				previous.Detach();
+				free.Push(handle);
+			}
+
+			// Every replacement is made before any field is carried, so references between behaviours find theirs.
+			foreach (var (previous, made) in transfer.Replaced)
+			{
+				Carry(transfer, previous, made);
+			}
+			return gone;
+		}
+
+		/// <summary>What the engine needs to schedule the behaviour under a handle, or the gone flag when there is none.</summary>
+		public static BehaviourInfo Describe(uint handle)
+		{
+			var behaviour = Get(handle);
+			var type = behaviour == null ? null : BehaviourTypes.Find(behaviour.GetType().FullName!);
+			if (behaviour == null || type == null)
+			{
+				return new BehaviourInfo { Flags = BehaviourInfo.GoneFlag };
+			}
+
+			// One still waiting for its Awake has scene values to set then, as when it was made.
+			var awake = behaviour.PendingFields == null ? 0 : 1u << (int)Phase.Awake;
+			var flags = type.IsInstance ? BehaviourInfo.InstanceFlag : 0;
+			return new BehaviourInfo { Callbacks = type.Callbacks | awake, Order = type.Order, Flags = flags };
+		}
+
+		private static Behaviour? Remake(Behaviour previous)
+		{
+			var type = BehaviourTypes.Find(previous.GetType().FullName!);
+			if (type == null)
+			{
+				return null;
+			}
+
+			try
+			{
+				var made = type.Create();
+				made.TakeOver(previous, type.Order);
+				return made;
+			}
+			catch (Exception exception) when (exception is TargetInvocationException or MissingMethodException)
+			{
+				Log.Exception(exception.InnerException ?? exception, previous);
+				return null;
+			}
+		}
+
+		private static void Carry(StateTransfer transfer, Behaviour previous, Behaviour made)
+		{
+			try
+			{
+				transfer.Copy(previous, made, $"{made.GetType().Name} on {made.Obj.Name}");
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception, made);
+			}
+
+			if (BehaviourTypes.Find(made.GetType().FullName!)?.IsInstance == true)
+			{
+				InstanceRegistry.Register(made);
+			}
+			previous.Detach();
 		}
 
 		private static int Allocate(Behaviour behaviour)

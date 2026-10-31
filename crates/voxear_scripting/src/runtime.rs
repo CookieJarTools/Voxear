@@ -1,6 +1,7 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
+    time::SystemTime,
 };
 
 use anyhow::{Context, Result, bail, ensure};
@@ -10,7 +11,7 @@ use voxear_scene::{BehaviourHandle, BehaviourHost, BehaviourSpec, Callbacks, Pha
 
 use crate::{
     hostfxr::{DotnetInstall, Runtime},
-    interop::{self, BehaviourInfo, FLAG_INSTANCE, ManagedApi, NativeApi, WorldScope},
+    interop::{self, BehaviourInfo, FLAG_GONE, FLAG_INSTANCE, ManagedApi, NativeApi, WorldScope},
 };
 
 const BOOTSTRAP_TYPE: &str = "Voxear.Interop.Bootstrap, Voxear.Core";
@@ -25,6 +26,16 @@ pub struct CreatedBehaviour {
     pub is_instance: bool,
 }
 
+/// What became of a behaviour when the scripts reloaded.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Reloaded {
+    /// Made again from its class in the new build, which may call other
+    /// callbacks or have another execution order now.
+    Kept { callbacks: Callbacks, order: i32, is_instance: bool },
+    /// Its class is not in the new build, so it was dropped.
+    Gone,
+}
+
 /// The C# side of the engine. CoreCLR cannot be restarted, so there is at most
 /// one per process.
 pub struct ScriptRuntime {
@@ -32,6 +43,8 @@ pub struct ScriptRuntime {
     // Scripts hold pointers into both of these, so they live on the heap.
     _native: Box<NativeApi>,
     time: Box<Time>,
+    /// The game scripts' assembly, and when the build loaded was written.
+    loaded: Option<(PathBuf, Option<SystemTime>)>,
 }
 
 impl ScriptRuntime {
@@ -64,11 +77,12 @@ impl ScriptRuntime {
                 && managed.invoke.is_some()
                 && managed.release.is_some()
                 && managed.update.is_some()
-                && managed.content_roots.is_some(),
+                && managed.content_roots.is_some()
+                && managed.reload_game_assembly.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(managed.create_behaviour.expect("validated above"));
-        Ok(Self { managed, _native: native, time })
+        Ok(Self { managed, _native: native, time, loaded: None })
     }
 
     /// Loads game scripts into their own unloadable context.
@@ -78,7 +92,58 @@ impl ScriptRuntime {
         let load = self.managed.load_game_assembly.expect("validated at start");
         let status = unsafe { load(path.as_ptr(), path.len() as i32) };
         ensure!(status == 0, "could not load game scripts from {path}");
+        self.loaded = Some((PathBuf::from(path), modified(Path::new(path))));
         Ok(())
+    }
+
+    /// Whether the game scripts were built again since they were loaded.
+    pub fn is_out_of_date(&self) -> bool {
+        let Some((path, loaded)) = &self.loaded else { return false };
+        modified(path).is_some_and(|built| loaded.is_none_or(|loaded| built > loaded))
+    }
+
+    /// Loads the game scripts' new build in place of the running one, as
+    /// hot reload does, keeping the game going: `Voxear.Core` gives every
+    /// enabled behaviour OnDisable, makes each again from its class in the
+    /// new build under the same handle with its fields carried over, and
+    /// gives the enabled ones OnEnable (see `GameScripts.Reload`).
+    /// `behaviours` are the behaviours the engine schedules, each with
+    /// whether it is enabled; what became of each comes back in the same
+    /// order. Fails, with nothing changed, when the build cannot be loaded.
+    pub fn reload_game_assembly(
+        &mut self,
+        world: &mut World,
+        behaviours: &[(BehaviourHandle, bool)],
+    ) -> Result<Vec<Reloaded>> {
+        let (path, _) = self.loaded.as_ref().context("the game scripts were never loaded")?;
+        let path = path.clone();
+        let text = path.to_str().context("assembly path is not valid UTF-8")?;
+        let built = modified(&path);
+        let reload = self.managed.reload_game_assembly.expect("validated at start");
+        let handles: Vec<u32> = behaviours.iter().map(|(handle, _)| handle.0).collect();
+        let enabled: Vec<u32> = behaviours.iter().map(|&(_, enabled)| u32::from(enabled)).collect();
+        let mut infos: Vec<BehaviourInfo> = behaviours.iter().map(|_| BehaviourInfo::default()).collect();
+        let status = {
+            let _scope = WorldScope::enter(world);
+            let count = handles.len() as i32;
+            unsafe {
+                reload(text.as_ptr(), text.len() as i32, handles.as_ptr(), enabled.as_ptr(), infos.as_mut_ptr(), count)
+            }
+        };
+        ensure!(status != 1, "the new build of the scripts could not be loaded; the old one keeps running");
+        ensure!(status == 0, "reloading the scripts failed partway; the Console has what went wrong");
+        self.loaded = Some((path, built));
+        Ok(infos
+            .into_iter()
+            .map(|info| match info.flags & FLAG_GONE {
+                0 => Reloaded::Kept {
+                    callbacks: Callbacks(info.callbacks),
+                    order: info.order,
+                    is_instance: info.flags & FLAG_INSTANCE != 0,
+                },
+                _ => Reloaded::Gone,
+            })
+            .collect())
     }
 
     /// Starts a level change through `Level.LoadAsync`, so its events fire
@@ -204,4 +269,9 @@ impl BehaviourHost for ScriptHost<'_> {
     fn drain_requests(&mut self, out: &mut Vec<Request>) {
         interop::drain_requests(out);
     }
+}
+
+/// When a file was last written.
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
 }

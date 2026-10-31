@@ -45,7 +45,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 15] = [
+pub const SETTINGS: [SettingInfo; 16] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -81,6 +81,12 @@ pub const SETTINGS: [SettingInfo; 15] = [
         kind: SettingKind::Toggle,
     },
     SettingInfo { key: "error_pause", title: "Pause on error", group: "Play mode", kind: SettingKind::Toggle },
+    SettingInfo {
+        key: "reload_while_playing",
+        title: "Reload changed scripts while playing",
+        group: "Play mode",
+        kind: SettingKind::Toggle,
+    },
     SettingInfo {
         key: "console_collapse",
         title: "Collapse identical lines",
@@ -127,6 +133,9 @@ pub struct Settings {
     pub clear_console_on_play: bool,
     /// Play pauses when an error is logged, as Unity's Error Pause does.
     pub error_pause: bool,
+    /// Scripts changed while playing reload into the running game, rather
+    /// than waiting for play to stop.
+    pub reload_while_playing: bool,
     /// The Console shows identical lines once, with how many there were.
     pub console_collapse: bool,
     /// A trace folds away frames that are not the project's own.
@@ -150,6 +159,7 @@ impl Default for Settings {
             save_before_play: false,
             clear_console_on_play: false,
             error_pause: false,
+            reload_while_playing: true,
             console_collapse: false,
             console_mine_only: true,
             console_namespaces: true,
@@ -172,6 +182,7 @@ impl Settings {
             "save_before_play" => SettingValue::Toggle(self.save_before_play),
             "clear_console_on_play" => SettingValue::Toggle(self.clear_console_on_play),
             "error_pause" => SettingValue::Toggle(self.error_pause),
+            "reload_while_playing" => SettingValue::Toggle(self.reload_while_playing),
             "console_collapse" => SettingValue::Toggle(self.console_collapse),
             "console_mine_only" => SettingValue::Toggle(self.console_mine_only),
             "console_namespaces" => SettingValue::Toggle(self.console_namespaces),
@@ -196,6 +207,7 @@ impl Settings {
             ("save_before_play", SettingValue::Toggle(on)) => self.save_before_play = on,
             ("clear_console_on_play", SettingValue::Toggle(on)) => self.clear_console_on_play = on,
             ("error_pause", SettingValue::Toggle(on)) => self.error_pause = on,
+            ("reload_while_playing", SettingValue::Toggle(on)) => self.reload_while_playing = on,
             ("console_collapse", SettingValue::Toggle(on)) => self.console_collapse = on,
             ("console_mine_only", SettingValue::Toggle(on)) => self.console_mine_only = on,
             ("console_namespaces", SettingValue::Toggle(on)) => self.console_namespaces = on,

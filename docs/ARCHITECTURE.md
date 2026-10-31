@@ -297,8 +297,9 @@ and a positive pitch looks down.
     `SwitchFinished` and `SwitchFailed`. `Level.Active` is the level loaded now, including one opened in the editor,
     `Level.ActiveScene` its active scene, and `Level.Current` the change going on. Only one change happens at a
     time; asking for another while one goes on gives back the one going, with a warning. Static events outlive a
-    play-mode run in the editor (scripts are not reloaded between runs yet), so listeners should unsubscribe in
-    OnDestroy.
+    play-mode run in the editor, so listeners should unsubscribe in OnDestroy. When the scripts reload, listeners
+    from their old build are dropped; listeners that subscribe in OnEnable and unsubscribe in OnDisable carry on,
+    since a reload runs both.
 
   - **How it works.** A worker thread with its own reader works from the project folder or from bundles. It reads and
     parses every level, scene, prefab and material file the level needs, and prepares its models: parsing glTF,
@@ -1107,8 +1108,25 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   whether the editor is building scripts, playing or paused.
   - The scripts build (`voxear_engine::scripts`) off the main thread the first time Play is pressed, then .NET
     starts with them. .NET starts only once per process, so the scripts are kept from run to run, and their static
-    state carries over, as in Unity with domain reload turned off. A change to the scripts needs the editor
-    restarted until C# hot reload comes.
+    state carries over, as in Unity with domain reload turned off, until they change.
+  - **C# hot reload.** When a script changes, the editor builds the scripts again in the background (as it does to
+    show their fields), and they reload: while editing at once, and while playing into the running game, which keeps
+    going, unless the settings say to wait for play to stop. Play also builds and reloads scripts changed since the
+    last build. The scripts are read into memory rather than mapped from their files, so a build can write the next
+    version while one runs. A reload (`Engine::reload_scripts`, then `GameScripts.Reload` in Voxear.Core) loads the
+    new build into a new collectible load context, gives every enabled behaviour OnDisable, makes each behaviour
+    again from its class in the new build under the same handle, and gives the enabled ones OnEnable; Awake and
+    Start do not run again, and the lifecycle takes each class's new callbacks and execution order. Every field
+    carries over by name (`StateTransfer`), private ones and those behind auto-properties too, as Unity's reload
+    keeps them: values of the scripts' own types are made again as the new build's types of the same names (classes
+    and structs field by field, enums by name, arrays, lists and dictionaries item by item, references to
+    behaviours as their replacements), shared and circular references stay so, and a number or text whose field
+    changed type is converted. What cannot be carried, such as a delegate into the old code, starts as the new class
+    sets it, and the Console names it. A behaviour whose class is gone is dropped from its Obj, with a warning.
+    Static fields start afresh, listeners the old build added to `Level`'s events are dropped, and awaits it was in
+    the middle of never resume. The old context is then unloaded, and a couple of seconds later the editor checks
+    that it left memory, warning when something (a thread or timer of the old code, say) still holds it. A build
+    that fails to compile leaves the old scripts running, and the compiler's errors in the Console.
 - **The top bar** has the Voxear mark, the workspaces, the command bar (Ctrl+K), play, pause and step in a pill,
   the user's avatar and the Build button. A **rail** of icons runs down the left, with source control at the
   bottom.
@@ -1130,7 +1148,7 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   with `Editor::add_command(PaletteCommand { id, title, keys, icon, run })`, `run` getting the editor.
 - **Settings** (`settings`): the Scene view's snap distance, handle position (pivot or center) and space (global or
   local), fly speed, and whether the stats chip and axis gizmo show; whether Play starts paused, saves first, clears
-  the Console and pauses on an error; and the Console's Collapse and trace toggles, and which code editor opens
+  the Console, pauses on an error, and reloads changed scripts while playing; and the Console's Collapse and trace toggles, and which code editor opens
   files. They are kept per project in `.voxear/Editor.toml` with the palette's recent items, and shown in
   the Settings panel (a tab beside the Inspector, with a filter that matches as the palette does). The tool strip's
   Pivot, Global and snap buttons and the wheel's fly speed are the same settings. From the palette, a toggle flips, a
@@ -1265,8 +1283,9 @@ whose source is in `Dev/CookieJar` (design notes in `Docs/Sifter-Design.md`):
 - Categories come from the messages themselves, with nothing to declare.
 - The list survives a script recompile, which here means C# hot reload.
 
-What is built is described under the editor above. Still to come from Sifter: the lines kept across hot reload,
-category colours agreed per project, hiding chosen assemblies, saved filters, and opening the player's log.
+What is built is described under the editor above. Its lines are kept across hot reload, since the Console is the
+editor's own and nothing of it reloads. Still to come from Sifter: category colours agreed per project, hiding
+chosen assemblies, saved filters, and opening the player's log.
 
 ### The Cookbook
 
@@ -1314,8 +1333,8 @@ engine in its own crate (`crates/voxear_cookbook`). Its source and design are in
 **Core.**
 - Undo and redo for every edit, as commands *(Inspector and handle edits implemented; see "What exists now")*.
 - Play mode with state restore *(implemented; see "What exists now")*.
-- **C# hot reload:** game scripts live in a collectible load context. On change, behaviour state is serialised, the
-  context unloads, the new build loads, and the state is restored.
+- **C# hot reload:** game scripts live in a collectible load context. On change, the new build loads, behaviour state
+  is carried over, and the old context unloads *(implemented in the editor; see "What exists now")*.
 
 **Extending.** Custom inspectors, windows, gizmos and tools are written in C#, using the same Voxear UI.
 

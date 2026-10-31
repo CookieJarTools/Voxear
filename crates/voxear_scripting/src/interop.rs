@@ -17,7 +17,7 @@ use voxear_scene::{
 
 use crate::services::{ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 11;
+pub(crate) const API_VERSION: u32 = 12;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -94,6 +94,21 @@ pub(crate) struct ManagedApi {
     /// 1 when it was not found, 2 when it threw.
     pub run_command:
         Option<unsafe extern "C" fn(ty: *const u8, ty_len: i32, method: *const u8, method_len: i32) -> i32>,
+    /// Loads a new build of the game scripts in place of the running one,
+    /// given each scheduled behaviour's handle and whether it is enabled, and
+    /// fills in each one's info in the new build: 0 when it reloaded, 1 when
+    /// the build could not be loaded and nothing changed, 2 when it failed
+    /// partway.
+    pub reload_game_assembly: Option<
+        unsafe extern "C" fn(
+            path: *const u8,
+            len: i32,
+            handles: *const u32,
+            enabled: *const u32,
+            infos: *mut BehaviourInfo,
+            count: i32,
+        ) -> i32,
+    >,
 }
 
 #[repr(C)]
@@ -105,6 +120,8 @@ pub(crate) struct BehaviourInfo {
 }
 
 pub(crate) const FLAG_INSTANCE: u32 = 1;
+/// After a reload: the behaviour's class is not in the new build.
+pub(crate) const FLAG_GONE: u32 = 2;
 
 thread_local! {
     static WORLD: Cell<*mut World> = const { Cell::new(ptr::null_mut()) };

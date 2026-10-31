@@ -5,14 +5,21 @@
 //!
 //! The project's scripts are built and started the first time Play is
 //! pressed, the build off the main thread. .NET starts only once per
-//! process, so the scripts are kept from run to run: until hot reload comes,
-//! a change to them needs the editor restarted.
+//! process, so the scripts are kept from run to run, and reloaded when they
+//! change: while editing as soon as the editor has built them again, while
+//! playing into the running game (hot reload, unless the settings say to
+//! wait for play to stop), and on Play when they changed since they were
+//! last built.
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use anyhow::Result;
 use voxear_ecs::Entity;
-use voxear_engine::{Engine, Levels, Project, script_types::ScriptTypes, scripts};
+use voxear_engine::{
+    Engine, Levels, Project,
+    script_types::{self, ScriptTypes},
+    scripts,
+};
 use voxear_render::{Camera, Renderer};
 use voxear_scene::{Name, Transform};
 use voxear_scripting::ScriptRuntime;
@@ -107,11 +114,63 @@ impl Editor {
         if self.memory.settings.save_before_play && self.unsaved {
             self.save();
         }
-        if self.play.ready {
+        if self.play.ready && !self.scripts_out_of_date() {
             self.start_run(renderer);
             return;
         }
         self.build_scripts();
+    }
+
+    /// Whether the scripts started are behind their sources: a script
+    /// changed since they were last built, or they were built since they
+    /// were loaded.
+    fn scripts_out_of_date(&self) -> bool {
+        let loaded_behind = self.play.scripts.as_ref().is_some_and(ScriptRuntime::is_out_of_date);
+        loaded_behind || script_types::is_stale(&self.game.project)
+    }
+
+    /// Brings the started scripts up to their latest build, once the editor
+    /// has built them again: while editing at once, and while playing into
+    /// the running game, which keeps going (see `Engine::reload_scripts`),
+    /// unless the settings say to wait for play to stop. Nothing happens
+    /// before the scripts first start.
+    pub(super) fn reload_scripts(&mut self) {
+        match self.play.mode {
+            Mode::Editing => {
+                if let Err(error) = self.reload_edit_scripts() {
+                    tracing::error!("{error:#}");
+                    self.notify("The scripts could not reload; the Console says why");
+                }
+            }
+            Mode::Playing(_) => self.reload_played_scripts(),
+            // Once built, they reload before the game starts.
+            Mode::Building(_) => {}
+        }
+    }
+
+    /// While editing nothing runs, so there is no behaviour to carry over.
+    fn reload_edit_scripts(&mut self) -> Result<()> {
+        let Some(scripts) = self.play.scripts.as_mut().filter(|scripts| scripts.is_out_of_date()) else {
+            return Ok(());
+        };
+        scripts.reload_game_assembly(&mut self.game.engine.world, &[])?;
+        Ok(())
+    }
+
+    fn reload_played_scripts(&mut self) {
+        if !self.game.engine.scripts().is_some_and(ScriptRuntime::is_out_of_date) {
+            return;
+        }
+        if !self.memory.settings.reload_while_playing {
+            return self.notify("The scripts changed; they reload when play stops");
+        }
+        match self.game.engine.reload_scripts() {
+            Ok(()) => self.notify("Reloaded the scripts into the running game"),
+            Err(error) => {
+                tracing::error!("{error:#}");
+                self.notify("The scripts could not reload; the game runs on with the old ones");
+            }
+        }
     }
 
     /// Builds the scripts off the main thread; once built they start, and
@@ -208,6 +267,8 @@ impl Editor {
         self.game.release_unused(Some(renderer));
         self.keep_from_play(kept, renderer);
         self.after_swap(selected, "scene");
+        // Changes left waiting for play to stop.
+        self.reload_scripts();
         tracing::info!("stopped playing; the level is back as it was edited");
     }
 
@@ -310,6 +371,17 @@ impl Editor {
     }
 
     fn scripts_built(&mut self, renderer: &mut Renderer) {
+        // Started before, and built again since.
+        if self.play.scripts.is_some() {
+            self.play.mode = Mode::Editing;
+            if let Err(error) = self.reload_edit_scripts() {
+                return self.fail("The scripts could not reload", error);
+            }
+            return match self.play.command.take() {
+                Some((type_name, method)) => self.run_script_command(&type_name, &method),
+                None => self.start_run(renderer),
+            };
+        }
         let started = Project::open(&self.game.project.root).and_then(|project| scripts::start(&project));
         match started {
             Ok(scripts) => {

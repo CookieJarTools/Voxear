@@ -7,7 +7,7 @@ use voxear_scene::{
     AttachedBehaviour, BehaviourHandle, BehaviourHost, BehaviourSpec, Behaviours, Destroying, InstanceMarker,
     Lifecycle, Name, Parent, Phase, Placement, Transform, propagate_transforms, register_obj_components,
 };
-use voxear_scripting::ScriptRuntime;
+use voxear_scripting::{Reloaded, ScriptRuntime};
 
 use crate::prefab::{FromPrefab, PrefabInstance, Template};
 
@@ -103,6 +103,55 @@ impl Engine {
         let Some(scripts) = self.scripts.as_mut() else { return false };
         scripts.switch_level(&mut self.world, level);
         true
+    }
+
+    /// Loads the scripts' new build in place of the running one, keeping the
+    /// game going, as Unity does when scripts change in play mode: enabled
+    /// behaviours get OnDisable, are made again from their classes in the
+    /// new build with their fields carried over, and get OnEnable; Awake and
+    /// Start do not run again (see `ScriptRuntime::reload_game_assembly`).
+    /// Each behaviour keeps its place in the lifecycle under its new class's
+    /// callbacks and order, and one whose class is gone is dropped from its
+    /// Obj. Does nothing without scripts, and fails, with nothing changed,
+    /// when the new build cannot be loaded.
+    pub fn reload_scripts(&mut self) -> Result<()> {
+        let Some(scripts) = self.scripts.as_mut() else { return Ok(()) };
+        let live = self.lifecycle.live();
+        let reloaded = scripts.reload_game_assembly(&mut self.world, &live)?;
+        let mut instances = HashSet::new();
+        let mut changed = HashSet::new();
+        for (&(handle, _), result) in live.iter().zip(reloaded) {
+            let Some(entity) = self.lifecycle.entity(handle) else { continue };
+            changed.insert(entity);
+            match result {
+                Reloaded::Kept { callbacks, order, is_instance } => {
+                    self.lifecycle.retype(handle, callbacks, order);
+                    if is_instance {
+                        instances.insert(entity);
+                    }
+                }
+                Reloaded::Gone => {
+                    self.lifecycle.forget(handle);
+                    if let Some(behaviours) = self.world.get_mut::<Behaviours>(entity) {
+                        behaviours.0.retain(|b| b.handle != handle);
+                    }
+                }
+            }
+        }
+        // A class may have become an IInstance, or stopped being one.
+        for entity in changed {
+            if !self.world.is_alive(entity) {
+                continue;
+            }
+            if instances.contains(&entity) {
+                self.world.insert(entity, InstanceMarker);
+            } else {
+                self.world.remove::<InstanceMarker>(entity);
+            }
+        }
+        // What OnDisable and OnEnable asked for.
+        self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+        Ok(())
     }
 
     /// Ends the simulation as leaving play mode does: every Obj is

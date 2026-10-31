@@ -89,6 +89,17 @@ namespace Voxear
 			Order = order;
 		}
 
+		/// <summary>Takes the place of the same behaviour from the scripts' last build: its Obj, handle and state.</summary>
+		internal void TakeOver(Behaviour previous, int order)
+		{
+			obj = previous.obj;
+			handle = previous.handle;
+			enabled = previous.enabled;
+			IsDestroyed = previous.IsDestroyed;
+			PendingFields = previous.PendingFields;
+			Order = order;
+		}
+
 		internal void ApplyFields()
 		{
 			if (PendingFields == null)

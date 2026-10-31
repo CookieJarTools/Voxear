@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.Loader;
 using Voxear.Interop;
 using Voxear.Scripting;
 
@@ -36,6 +37,20 @@ namespace Voxear
 
 		/// <summary>A scene that had to load did not, or the level could not be read; the change stopped where it was.</summary>
 		public static event Action<LevelLoad>? SwitchFailed;
+
+		/// <summary>
+		/// Lets go of listeners the scripts added before they were reloaded, which would otherwise run the old code and
+		/// keep it in memory. Listeners subscribe again in OnEnable, which the reload runs.
+		/// </summary>
+		internal static void Forget(AssemblyLoadContext old)
+		{
+			SwitchStarted = GameCode.Without(SwitchStarted, old);
+			SwitchProgressed = GameCode.Without(SwitchProgressed, old);
+			SwitchReady = GameCode.Without(SwitchReady, old);
+			SceneLoaded = GameCode.Without(SceneLoaded, old);
+			SwitchFinished = GameCode.Without(SwitchFinished, old);
+			SwitchFailed = GameCode.Without(SwitchFailed, old);
+		}
 
 		/// <summary>The level loaded now, by its path, including one started from the editor; null before the first.</summary>
 		public static string? Active => Native.LevelInfo(Native.LevelInfoCurrent, -1);

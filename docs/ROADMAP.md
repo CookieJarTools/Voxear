@@ -238,6 +238,10 @@ Done so far:
   toggles with counts, Collapse, Clear, Error Pause and muting; the selected line's stack coloured part by part, the
   engine's frames folded under My code only, each frame opening its file at its line in the code editor the
   settings name, and a line about an Obj selecting it. Scripts' lines carry their .NET stack and Obj.
+- **C# hot reload:** changed scripts build in the background and reload, into the running game while playing: every
+  behaviour is made again from its new class under the same handle with its fields carried over (private ones,
+  script types, references to behaviours), OnDisable and OnEnable but no Awake or Start, and the old build unloads,
+  checked to have left memory.
 
 Still to do in M3:
 - UI core:
@@ -248,9 +252,9 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The editor's next steps, to make it usable for real work: C# hot reload (which play mode will then use to pick up
-  changed scripts, and across which the Console's lines are kept), and the rest of Sifter: colours per category kept
-  for the project, hiding chosen assemblies, saved filters, and the player's log.
+- The rest of Sifter: colours per category kept for the project, hiding chosen assemblies, saved filters, and the
+  player's log.
+- Hot reload in `vox run`, watching the scripts as the editor does.
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.

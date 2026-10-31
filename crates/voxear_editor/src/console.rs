@@ -557,6 +557,8 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
     ui.set_visible(muted, false);
     let chips = ui.panel(bar, Style::row());
     ui.add_class(chips, "console-chips");
+    let line = ui.panel(root, Style::default());
+    ui.add_class(line, "divider");
     let problem = ui.add_label(root, "");
     ui.add_class(problem, "console-problem");
     ui.set_visible(problem, false);
@@ -567,6 +569,8 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
 /// message and the stack, which scroll.
 fn detail(ui: &mut Ui, pane: NodeId, settings: &Settings) -> Detail {
     ui.add_class(pane, "console-detail");
+    let line = ui.panel(pane, Style::default());
+    ui.add_class(line, "divider");
     let bar = ui.panel(pane, Style::row());
     ui.add_class(bar, "console-detail-bar");
     let info = ui.add_label(bar, "");

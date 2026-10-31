@@ -214,6 +214,8 @@ Done so far:
 - **Saving and undo:** Ctrl+S writes the open level's changed scenes back to their files, round-tripping Hello's
   unchanged; undo and redo for Inspector edits; an unsaved marker, and a second click before a level change
   discards edits.
+- **Scene view tools:** click an Obj to select it; move, rotate and scale handles driven by the tool strip (and Q,
+  W, E, R), Pivot or Center, Global or Local, snapping with Ctrl, and each drag one step to undo.
 
 Still to do in M3:
 - UI core:
@@ -224,8 +226,8 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The editor's next steps, to make it usable for real work: viewport picking and transform gizmos (the tool strip),
-  making, duplicating, deleting and reparenting Objs in the Hierarchy, adding and removing components and editing
+- The editor's next steps, to make it usable for real work: making, duplicating, deleting and reparenting Objs in
+  the Hierarchy, adding and removing components and editing
   their fields, undo for all of it, the command palette (Ctrl+K), Hierarchy instance badges, the Console's Sifter
   features, and C# hot reload (which play mode will then use to pick up changed scripts).
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and

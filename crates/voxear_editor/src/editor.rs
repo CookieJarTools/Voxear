@@ -21,10 +21,11 @@ use crate::{
     console::Console,
     hierarchy::EditorOnly,
     hierarchy::Hierarchy,
-    history::History,
+    history::{Edit, History, ObjState},
     inspector::Inspector,
     levels_panel::{LevelAction, LevelsPanel},
     project_view::ProjectView,
+    scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
 };
 
 const MARKUP: &str = include_str!("../ui/Editor.vui");
@@ -55,6 +56,13 @@ struct Nodes {
     frame: NodeId,
     command: NodeId,
     gizmo: NodeId,
+    handles: NodeId,
+    tool: NodeId,
+    tool_strip: NodeId,
+    view_gizmo: NodeId,
+    pivot: NodeId,
+    space: NodeId,
+    snap: NodeId,
     stats: NodeId,
     status_left: NodeId,
     status_time: NodeId,
@@ -106,6 +114,12 @@ pub struct Editor {
     shift: bool,
     /// Save, Undo and Redo pressed since the last frame.
     commands: Vec<Command>,
+    /// The Scene view's tools, the handle under the pointer, and a press on
+    /// one or a release of the one held, since the last frame.
+    tools: SceneTools,
+    hovered_handle: Option<Handle>,
+    pressed_handle: Option<[f32; 2]>,
+    released_handle: bool,
     /// Edits to undo and redo, and whether the open level has edits not saved.
     history: History,
     unsaved: bool,
@@ -148,6 +162,13 @@ impl Editor {
             frame: find(&ui, "viewport-frame"),
             command: find(&ui, "command"),
             gizmo: find(&ui, "gizmo"),
+            handles: find(&ui, "handles"),
+            tool: find(&ui, "tool"),
+            tool_strip: find(&ui, "tool-strip"),
+            view_gizmo: find(&ui, "view-gizmo"),
+            pivot: find(&ui, "pivot"),
+            space: find(&ui, "space"),
+            snap: find(&ui, "snap"),
             stats: find(&ui, "scene-stats"),
             status_left: find(&ui, "status-left"),
             status_time: find(&ui, "status-time"),
@@ -201,6 +222,10 @@ impl Editor {
             control: false,
             shift: false,
             commands: Vec::new(),
+            tools: SceneTools::new(),
+            hovered_handle: None,
+            pressed_handle: None,
+            released_handle: false,
             history: History::default(),
             unsaved: false,
             discard_armed: None,
@@ -215,6 +240,18 @@ impl Editor {
             self.hierarchy.select(&mut self.ui, &self.game.engine.world, entity);
         }
         self.inspector.show(&mut self.ui, &self.game.engine.world, entity);
+    }
+
+    /// The Obj selected, as the Inspector shows it.
+    pub fn selected(&self) -> Option<Entity> {
+        self.inspector.shown()
+    }
+
+    /// The Scene view's camera over its rectangle, when the Scene view is
+    /// showing: where points in the world fall on screen, and back.
+    pub fn scene_camera(&self) -> Option<ViewCamera> {
+        let rect = self.shown(self.nodes.viewport).then(|| self.ui.rect(self.nodes.viewport))?;
+        ViewCamera::new(&self.game.engine.world, self.camera, rect)
     }
 
     /// The first Obj with a mesh, for showing something selected.
@@ -253,6 +290,7 @@ impl Editor {
         for command in std::mem::take(&mut self.commands) {
             self.run(command);
         }
+        self.update_scene_tools(renderer);
         self.project.update(&mut self.ui);
         self.console.update(&mut self.ui);
         self.cookbook.update(&mut self.ui);
@@ -344,6 +382,97 @@ impl Editor {
         self.game.release_unused(Some(renderer));
         self.inspector.show(&mut self.ui, &self.game.engine.world, None);
         tracing::info!("opened {}", self.game.levels.current().unwrap_or("a scene"));
+    }
+
+    /// The Scene view's tools: the tool strip's settings, a click to
+    /// select, the handles under the pointer, and dragging them.
+    fn update_scene_tools(&mut self, renderer: &Renderer) {
+        self.tools.tool = Tool::from_index(self.ui.segment(self.nodes.tool));
+        self.update_tool_strip();
+        let selected = self.inspector.shown();
+        let Some(camera) = self.scene_camera() else {
+            self.hovered_handle = None;
+            self.ui.set_shapes(self.nodes.handles, Vec::new());
+            return;
+        };
+        let point = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
+        let world = &self.game.engine.world;
+        if let (Some(point), Some(entity)) = (self.pressed_handle.take(), selected)
+            && let Some(handle) = self.tools.handle_at(world, renderer, &camera, entity, point)
+        {
+            self.tools.begin(world, renderer, &camera, entity, handle, point);
+        }
+        if self.tools.is_dragging()
+            && let Some(point) = point
+        {
+            self.tools.drag_to(&mut self.game.engine.world, &camera, point, self.control);
+        }
+        if std::mem::take(&mut self.released_handle) {
+            self.end_drag();
+        }
+        if !self.tools.is_dragging() {
+            let over = point.filter(|_| self.over_viewport());
+            let world = &self.game.engine.world;
+            self.hovered_handle =
+                over.zip(selected).and_then(|(p, e)| self.tools.handle_at(world, renderer, &camera, e, p));
+            self.tools.hover(self.hovered_handle);
+            self.click_to_select(renderer, &camera, point);
+        }
+        let shapes = self.tools.shapes(&self.game.engine.world, renderer, &camera, self.selected());
+        self.ui.set_shapes(self.nodes.handles, shapes);
+    }
+
+    /// A click on the 3D view itself, not on what floats over it, selects
+    /// the Obj under it, or nothing.
+    fn click_to_select(&mut self, renderer: &Renderer, camera: &ViewCamera, point: Option<[f32; 2]>) {
+        let (viewport, overlays) =
+            (self.nodes.viewport, [self.nodes.tool_strip, self.nodes.stats, self.nodes.view_gizmo]);
+        if !self.ui.clicked(viewport) || overlays.iter().any(|&o| self.ui.clicked(o)) {
+            return;
+        }
+        let Some(point) = point else { return };
+        let picked = pick(&self.game.engine.world, renderer, camera, point);
+        if picked.is_none() {
+            self.hierarchy.clear(&mut self.ui);
+        }
+        self.select(picked);
+    }
+
+    /// Lets go of a handle; the drag is one step to undo.
+    fn end_drag(&mut self) {
+        let Some((entity, start)) = self.tools.end() else { return };
+        let world = &self.game.engine.world;
+        let (Some(after), Some(name)) = (ObjState::of(world, entity), world.get::<Name>(entity).map(|n| n.0.clone()))
+        else {
+            return;
+        };
+        let before = ObjState { name, transform: start };
+        if before != after && !self.is_playing() {
+            self.history.record_step(Edit { entity, before, after });
+            self.unsaved = true;
+        }
+    }
+
+    /// Pivot or Center, Global or Local, and the snap distance, as the
+    /// tool strip's buttons toggle them.
+    fn update_tool_strip(&mut self) {
+        if self.ui.clicked(self.nodes.pivot) {
+            self.tools.centred = !self.tools.centred;
+            self.ui.set_text(self.nodes.pivot, if self.tools.centred { "Center" } else { "Pivot" });
+        }
+        if self.ui.clicked(self.nodes.space) {
+            self.tools.local = !self.tools.local;
+            self.ui.set_text(self.nodes.space, if self.tools.local { "Local" } else { "Global" });
+        }
+        if self.ui.clicked(self.nodes.snap) {
+            let steps = [0.1, 0.25, 0.5, 1.0];
+            let next =
+                steps.iter().position(|s| (*s - self.tools.snap).abs() < 1e-4).map_or(0, |i| (i + 1) % steps.len());
+            self.tools.snap = steps[next];
+            if let Some(&label) = self.ui.children(self.nodes.snap).last() {
+                self.ui.set_text(label, &format!("{} m", self.tools.snap));
+            }
+        }
     }
 
     /// Saves, undoes or redoes, as a shortcut asked.
@@ -455,6 +584,30 @@ impl Editor {
                 self.shift = modifiers.state().shift_key();
             }
             _ => {}
+        }
+        if let WindowEvent::MouseInput { state, button: winit::event::MouseButton::Left, .. } = event {
+            let pressed = *state == ElementState::Pressed;
+            // A handle takes the press before the UI sees it, so it is not also a click.
+            if pressed && self.hovered_handle.is_some() && self.over_viewport() {
+                self.pressed_handle = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
+                return true;
+            }
+            // A press and release inside one frame still ends the drag the press begins.
+            if !pressed && (self.tools.is_dragging() || self.pressed_handle.is_some()) {
+                self.released_handle = true;
+                return true;
+            }
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && !self.control
+            && !self.ui.wants_keyboard()
+            && let winit::keyboard::Key::Character(text) = &key.logical_key
+            && let Some(index) = ["q", "w", "e", "r"].iter().position(|k| *k == text.to_lowercase())
+        {
+            // Q, W, E and R pick the tool, as in Unity.
+            self.ui.set_segment(self.nodes.tool, index);
+            return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
             && key.state == ElementState::Pressed

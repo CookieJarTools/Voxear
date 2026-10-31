@@ -387,6 +387,12 @@ impl Renderer {
         self.assets.as_mut().expect("assets live until drop").free_texture(texture, frame);
     }
 
+    /// A mesh's box in its own space, min and max corners, for picking. The
+    /// box of its bounding sphere for a mesh uploaded cooked.
+    pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
+        self.assets.as_ref()?.mesh_bounds(mesh)
+    }
+
     /// How much of the GPU asset storage is in use.
     pub fn asset_usage(&self) -> AssetUsage {
         self.assets.as_ref().expect("assets live until drop").usage()

@@ -65,6 +65,13 @@ impl History {
         self.done.push((edit, now));
     }
 
+    /// Notes an edit that is a step of its own, such as a drag of a handle,
+    /// never merged with the one before.
+    pub fn record_step(&mut self, edit: Edit) {
+        self.undone.clear();
+        self.done.push((edit, Instant::now() - MERGE_WITHIN));
+    }
+
     /// Takes back the last edit, and returns the Obj it was on.
     pub fn undo(&mut self, world: &mut World) -> Option<Entity> {
         let (edit, _) = self.done.pop()?;

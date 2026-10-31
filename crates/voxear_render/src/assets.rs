@@ -6,6 +6,7 @@
 //! back to their allocators once no frame in flight can still read them.
 
 use std::collections::HashMap;
+use voxear_core::math::Vec3;
 
 use anyhow::{Context, Result, ensure};
 use ash::nv;
@@ -114,6 +115,9 @@ pub struct Assets {
     mesh_slots: SlotAllocator,
     material_slots: SlotAllocator,
     mesh_ranges: HashMap<MeshHandle, MeshRanges>,
+    /// Each mesh's box in its own space, for picking: exact for meshes
+    /// uploaded from their vertices, the bounding sphere's box for cooked ones.
+    mesh_bounds: HashMap<MeshHandle, (Vec3, Vec3)>,
     textures: HashMap<TextureId, Image>,
     /// Freed resources and the frame from which nothing in flight uses them.
     retiring: Vec<(u64, Retiring)>,
@@ -148,6 +152,7 @@ impl Assets {
             vertex_space: RangeAllocator::new(MAX_VERTICES),
             index_space: RangeAllocator::new(MAX_INDICES),
             mesh_slots: SlotAllocator::new(MAX_MESHES as u32),
+            mesh_bounds: HashMap::new(),
             material_slots: SlotAllocator::new(MAX_MATERIALS as u32),
             mesh_ranges: HashMap::new(),
             textures: HashMap::new(),
@@ -204,7 +209,19 @@ impl Assets {
         gpu.upload_buffer(&self.indices, index_start * 4, bytemuck::cast_slice(&indices))?;
 
         gpu.upload_buffer(&self.meshes, u64::from(slot) * size_of::<GpuMesh>() as u64, bytemuck::bytes_of(&entry))?;
+        let (min, max) = mesh.vertices.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(min, max), v| {
+            let p = Vec3::from(v.position);
+            (min.min(p), max.max(p))
+        });
+        if !mesh.vertices.is_empty() {
+            self.mesh_bounds.insert(handle, (min, max));
+        }
         Ok(handle)
+    }
+
+    /// A mesh's box in its own space, min and max corners.
+    pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<(Vec3, Vec3)> {
+        self.mesh_bounds.get(&mesh).copied()
     }
 
     /// Takes vertex and index space and a mesh table slot, all or nothing.
@@ -268,6 +285,10 @@ impl Assets {
         };
         let entries: Vec<GpuMesh> =
             model.meshes.iter().zip(&meshes).map(|(mesh, (_, ranges))| gpu_mesh(mesh, ranges)).collect();
+        for (mesh, (handle, _)) in model.meshes.iter().zip(&meshes) {
+            let reach = Vec3::splat(mesh.radius);
+            self.mesh_bounds.insert(*handle, (mesh.center - reach, mesh.center + reach));
+        }
         let table = source.len().next_multiple_of(16) as u64;
         let staging_size = table + (entries.len() * size_of::<GpuMesh>()) as u64;
         let staging = gpu.create_buffer(
@@ -352,6 +373,7 @@ impl Assets {
     /// Gives back what [`reserve_mesh`](Self::reserve_mesh) took, for a mesh
     /// no frame has drawn yet.
     fn release_mesh(&mut self, handle: MeshHandle) {
+        self.mesh_bounds.remove(&handle);
         if let Some(ranges) = self.mesh_ranges.remove(&handle) {
             self.vertex_space.free(ranges.vertices.0, ranges.vertices.1);
             self.index_space.free(ranges.indices.0, ranges.indices.1);
@@ -465,6 +487,7 @@ impl Assets {
     fn reclaim(&mut self, gpu: &Gpu, bindless: &mut Bindless, what: Retiring) {
         match what {
             Retiring::Mesh(mesh) => {
+                self.mesh_bounds.remove(&mesh);
                 if let Some(ranges) = self.mesh_ranges.remove(&mesh) {
                     self.vertex_space.free(ranges.vertices.0, ranges.vertices.1);
                     self.index_space.free(ranges.indices.0, ranges.indices.1);

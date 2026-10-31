@@ -95,7 +95,8 @@
                         <Button class="icon-button"><Icon icon="maximize" /></Button>
                     </Panel>
                     <Panel name="viewport" class="viewport">
-                        <Panel class="overlay tools">
+                        <Panel name="handles" class="handles" />
+                        <Panel name="tool-strip" class="overlay tools">
                             <Segmented name="tool" class="tool-modes" value="1">
                                 <Segment icon="select" />
                                 <Segment icon="move" />
@@ -109,7 +110,7 @@
                             <Button name="snap" class="tool-toggle"><Icon icon="grid" /><Label>0.25 m</Label></Button>
                         </Panel>
                         <Label name="scene-stats" class="overlay chip" />
-                        <Panel class="overlay gizmo-box">
+                        <Panel name="view-gizmo" class="overlay gizmo-box">
                             <Panel name="gizmo" class="gizmo" />
                             <Label class="projection">Persp</Label>
                         </Panel>

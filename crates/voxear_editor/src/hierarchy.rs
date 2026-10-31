@@ -80,6 +80,11 @@ impl Hierarchy {
         }
     }
 
+    /// Selects nothing, as clicking empty space in the Scene view does.
+    pub fn clear(&mut self, ui: &mut Ui) {
+        ui.set_selection(self.tree, &[]);
+    }
+
     /// The selected Obj, when the selection changed since the last frame.
     pub fn selection_changed(&self, ui: &Ui) -> Option<Option<Entity>> {
         if !ui.selection_changed(self.tree) {

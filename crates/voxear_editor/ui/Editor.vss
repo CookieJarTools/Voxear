@@ -339,6 +339,16 @@
     box-shadow: 0px 0px 0px 4px var(--vx-bg);
 }
 
+/* The move, rotate and scale handles, drawn as shapes over the 3D view. */
+.handles {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+    pointer-events: none;
+}
+
 .overlay {
     position: absolute;
     border-radius: 7px;

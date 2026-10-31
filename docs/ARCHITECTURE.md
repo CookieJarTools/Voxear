@@ -1114,7 +1114,16 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   around it to the window's background (`Renderer::set_clear_color`), and looks through a chosen camera
   (`ViewOptions::camera`). A frame drawn over its edge rounds its corners to the panel's. Over it float a tool
   strip (select, move, rotate and scale, Pivot, Global and grid snap), a stats chip, and an axis gizmo that turns
-  with the camera. The shading menu, Gizmos, full screen and the tool strip are not wired up yet.
+  with the camera. The shading menu, Gizmos and full screen are not wired up yet.
+- **Scene view tools** (`scene_tools`), as Unity's. A click selects the nearest Obj under the pointer: a ray
+  against each mesh's bounds in the Obj's own space (`Renderer::mesh_bounds`; cooked meshes keep only a sphere,
+  so they use the box around it), or a light or camera close to where it shows; a click on nothing clears the
+  selection. Around the selected Obj, move has an arrow per axis and a middle that moves in the view's plane,
+  rotate a ring per axis, and scale a block per axis and a middle that scales evenly. Handles are Voxear UI shapes
+  projected through the same matrices the renderer uses (`ViewCamera`), stay the same size on screen, and light
+  up under the pointer, which takes a press on one before the UI sees it. The strip picks the tool (or Q, W, E and
+  R), Pivot or Center, Global or Local axes, and the snap distance (0.1, 0.25, 0.5 or 1 m); Ctrl while dragging
+  snaps to it, to 15 degrees, or to tenths of the scale. A drag is one step to undo.
 - **The Inspector** has a header with the Obj's icon, its name and an active switch, then rows for Tag, Layer and
   Static (shown, not yet stored: Objs have no tags or layers yet). The Transform and each component are sections
   divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a menu) on
@@ -1126,15 +1135,15 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   write only what differs from the prefab, and Objs made since the level opened go into its active scene. Hello's
   levels save back unchanged. Edits while playing are not saved, as in Unity. Opening another level with unsaved
   changes asks for a second click first.
-- **Undo and redo** *(Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)* take back and make again Inspector edits to an Obj's name and
-  Transform; typing into one field is one step.
+- **Undo and redo** *(Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)* take back and make again edits to an Obj's name and
+  Transform, from the Inspector or the Scene view's handles; typing into one field is one step, and so is a drag.
 - **The status bar** shows a light, what the editor is doing (ready, building scripts, playing or paused, or that
   there are unsaved changes) and how long the project took to open, then the renderer, frame rate, memory and git
   branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
-Viewport picking, gizmos, making, deleting and reparenting Objs (with undo), adding components, the command palette
-and the Odin-style inspector attributes come next.
+Making, deleting and reparenting Objs (with undo), adding components, the command palette and the Odin-style
+inspector attributes come next.
 
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.
@@ -1202,7 +1211,7 @@ engine in its own crate (`crates/voxear_cookbook`). Its source and design are in
   100,000 Objs scrolls as smoothly as one of 10.
 
 **Core.**
-- Undo and redo for every edit, as commands *(Inspector edits implemented; see "What exists now")*.
+- Undo and redo for every edit, as commands *(Inspector and handle edits implemented; see "What exists now")*.
 - Play mode with state restore *(implemented; see "What exists now")*.
 - **C# hot reload:** game scripts live in a collectible load context. On change, behaviour state is serialised, the
   context unloads, the new build loads, and the state is restored.

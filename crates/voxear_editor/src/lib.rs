@@ -15,6 +15,9 @@
 //! - **play mode**: Play runs a copy of the edited level with its scripts,
 //!   Pause and Step hold it and move it on, and Stop brings the edited level
 //!   back as it was
+//! - the Scene view's **tools**: click an Obj to select it, and drag the
+//!   move, rotate or scale handles around it (Q, W, E and R pick the tool;
+//!   Ctrl snaps)
 //! - the **Inspector**, editing the selected Obj's name and Transform and
 //!   showing its components and behaviours
 //! - the **Console**, showing everything logged
@@ -24,8 +27,7 @@
 //!   scene, to open, play, or while playing, change to
 //! - a status bar: what the editor is doing, frame rate, memory and git
 //!   branch
-//!
-//! Saving, gizmos and undo come next.
+//! - saving with Ctrl+S, and undo and redo of edits with Ctrl+Z and Ctrl+Y
 
 mod console;
 mod editor;
@@ -34,6 +36,7 @@ mod history;
 mod inspector;
 mod levels_panel;
 mod project_view;
+pub mod scene_tools;
 mod window;
 
 use std::path::Path;

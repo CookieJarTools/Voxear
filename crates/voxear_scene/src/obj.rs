@@ -41,6 +41,11 @@ impl Transform {
     pub const fn from_position(position: Vec3) -> Self {
         Self::new(position, Quat::IDENTITY, Vec3::ONE)
     }
+
+    /// Scale, then rotation, then position, as one matrix.
+    pub fn matrix(&self) -> voxear_core::math::Mat4 {
+        voxear_core::math::Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.position)
+    }
 }
 
 /// Where to put a new Obj's root, as Unity's `Instantiate(prefab, position,

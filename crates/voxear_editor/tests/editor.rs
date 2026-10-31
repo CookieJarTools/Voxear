@@ -1,6 +1,9 @@
 //! The editor on the Hello sample, offscreen. Skips itself without a GPU.
 
-use voxear_core::logging::LogCapture;
+use voxear_core::{
+    logging::LogCapture,
+    math::{Vec2, Vec3},
+};
 use voxear_engine::Project;
 use voxear_render::{Renderer, RendererSettings};
 use voxear_scene::{Name, Transform};
@@ -350,4 +353,61 @@ fn edits_undo_redo_and_save_to_the_scene_file() {
     let saved =
         scenes.iter().flat_map(|s| s.objs.iter()).find(|o| o.name == name).expect("the edited Obj is in a scene");
     assert_eq!(saved.position.map(|p| p[0]), Some(7.25), "the edit is in the file");
+}
+
+fn frame(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) {
+    editor.update(renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+}
+
+/// Moves the pointer as the window would tell the editor, so the Scene
+/// view's tools see it as well as the UI.
+fn pointer_to(editor: &mut voxear_editor::Editor, [x, y]: [f32; 2]) {
+    let device_id = winit::event::DeviceId::dummy();
+    let position = winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y));
+    editor.handle(&winit::event::WindowEvent::CursorMoved { device_id, position });
+}
+
+fn left_button(editor: &mut voxear_editor::Editor, pressed: bool) {
+    use winit::event::{ElementState, MouseButton, WindowEvent};
+    let device_id = winit::event::DeviceId::dummy();
+    let state = if pressed { ElementState::Pressed } else { ElementState::Released };
+    editor.handle(&WindowEvent::MouseInput { device_id, state, button: MouseButton::Left });
+}
+
+#[test]
+fn a_click_selects_an_obj_and_its_move_handle_drags_it() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let spinner = obj(&editor, "Spinner B").expect("Hello has Spinner B");
+    let position =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<Transform>(spinner).unwrap().position;
+    let start = position(&editor);
+    let camera = editor.scene_camera().expect("the Scene view shows");
+
+    let centre = camera.project(start).expect("in front of the camera");
+    pointer_to(&mut editor, centre);
+    frame(&mut editor, &mut renderer);
+    left_button(&mut editor, true);
+    left_button(&mut editor, false);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.selected(), Some(spinner), "a click on the cube selects it");
+
+    // Move is the tool the strip starts on. Take the X arrow partway along,
+    // and pull it further out.
+    let along = camera.project(start + Vec3::X * camera.world_size(start, 60.0)).unwrap();
+    pointer_to(&mut editor, along);
+    frame(&mut editor, &mut renderer);
+    left_button(&mut editor, true);
+    frame(&mut editor, &mut renderer);
+    let outwards = Vec2::from(along) + (Vec2::from(along) - Vec2::from(centre)).normalize() * 40.0;
+    pointer_to(&mut editor, outwards.into());
+    frame(&mut editor, &mut renderer);
+    left_button(&mut editor, false);
+    frame(&mut editor, &mut renderer);
+
+    let moved = position(&editor);
+    assert!(moved.x > start.x + 0.1, "dragged along X: {start} to {moved}");
+    assert!((moved.y - start.y).abs() < 1e-4 && (moved.z - start.z).abs() < 1e-4, "and only along X: {moved}");
+    assert!(editor.has_unsaved_changes(), "a drag is an edit");
+    editor.undo();
+    assert_eq!(position(&editor), start, "one undo takes the whole drag back");
 }

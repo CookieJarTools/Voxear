@@ -1,12 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
+	<!--
+		The engine's settings and Voxear.Core come from the engine building the scripts, which the editor and vox name
+		as VoxearHome, or else from the source checkout this sample sits in.
+	-->
+	<PropertyGroup>
+		<VoxearHome Condition="'$(VoxearHome)' == ''">$(VoxearRoot)</VoxearHome>
+	</PropertyGroup>
+	<Import Project="$(VoxearHome)managed/Voxear.Scripts.props" />
 	<PropertyGroup>
 		<RootNamespace>Hello</RootNamespace>
 		<OutputPath>$(MSBuildProjectDirectory)/../.voxear/Scripts/$(Configuration)/</OutputPath>
 		<!-- [SerializeField] fields are set by the engine, which the compiler cannot see. -->
 		<NoWarn>$(NoWarn);CS0649</NoWarn>
 	</PropertyGroup>
-	<ItemGroup>
-		<!-- Voxear.Core is shared from the engine, so the game must not ship its own copy. -->
-		<ProjectReference Include="$(VoxearRoot)managed/Voxear.Core/Voxear.Core.csproj" Private="false" />
-	</ItemGroup>
 </Project>

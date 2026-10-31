@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use voxear_scripting::{DotnetInstall, ScriptRuntime, find_dotnet};
 
-use crate::project::{Project, core_assembly};
+use crate::project::{Project, core_assembly, engine_root};
 
 /// The build configuration scripts are built and loaded in.
 pub const CONFIGURATION: &str = "Debug";
@@ -57,6 +57,16 @@ pub fn start(project: &Project) -> Result<Option<ScriptRuntime>> {
     Ok(Some(scripts))
 }
 
+/// `-p:VoxearHome=<engine>/`: which engine the scripts build against, through
+/// `managed/Voxear.Scripts.props` there, so a project needs no checkout.
+/// MSBuild reads `;` and `,` in a property as separators, so they are escaped.
+fn engine_home_property() -> String {
+    let root = engine_root();
+    let root = root.canonicalize().unwrap_or(root);
+    let escaped = root.display().to_string().replace('%', "%25").replace(';', "%3B").replace(',', "%2C");
+    format!("-p:VoxearHome={escaped}{}", std::path::MAIN_SEPARATOR)
+}
+
 fn dotnet() -> Result<DotnetInstall> {
     find_dotnet().context(".NET is not installed; run `vox doctor` for how to get it")
 }
@@ -66,6 +76,7 @@ fn build_csproj(dotnet: &DotnetInstall, csproj: &Path) -> Result<()> {
     tracing::info!("building {}", csproj.display());
     let output = Command::new(&exe)
         .args(["build", "-c", CONFIGURATION, "--nologo", "-v", "quiet", "-clp:ErrorsOnly;NoSummary"])
+        .arg(engine_home_property())
         .arg(csproj)
         .env("DOTNET_NOLOGO", "1")
         .output()

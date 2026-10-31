@@ -11,6 +11,10 @@ publish.workspace = true
 name = "vox"
 path = "src/main.rs"
 
+[[bin]]
+name = "voxear-editor"
+path = "src/editor_main.rs"
+
 [dependencies]
 voxear_editor.workspace = true
 voxear_core.workspace = true

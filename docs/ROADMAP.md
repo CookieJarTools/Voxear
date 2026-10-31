@@ -238,6 +238,11 @@ Done so far:
   toggles with counts, Collapse, Clear, Error Pause and muting; the selected line's stack coloured part by part, the
   engine's frames folded under My code only, each frame opening its file at its line in the code editor the
   settings name, and a line about an Obj selecting it. Scripts' lines carry their .NET stack and Obj.
+- **Engine installs for the launcher:** an install finds its own files (`VOXEAR_HOME`, or `engine.toml` above
+  `bin/`), game scripts build against the engine running them (`managed/Voxear.Scripts.props`), projects accept the
+  launcher's version pin, `voxear-editor --project` opens one, and `voxear-dist` packages a checkout as a release
+  archive with its `engine.toml`. Scripts' interop reads and writes C#'s values unaligned, which a Release
+  `Voxear.Core` needs.
 - **C# hot reload:** changed scripts build in the background and reload, into the running game while playing: every
   behaviour is made again from its new class under the same handle with its fields carried over (private ones,
   script types, references to behaviours), OnDisable and OnEnable but no Awake or Start, and the old build unloads,
@@ -255,6 +260,8 @@ Still to do in M3:
 - The rest of Sifter: colours per category kept for the project, hiding chosen assemblies, saved filters, and the
   player's log.
 - Hot reload in `vox run`, watching the scripts as the editor does.
+- For the launcher: `vox new` and `vox upgrade`, Windows archives, and a workflow that builds and publishes
+  releases.
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.

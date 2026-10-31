@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 pub const PROJECT_FILE: &str = "voxear.toml";
+/// What an engine install is, at its root: its version, channel and platform.
+pub const ENGINE_FILE: &str = "engine.toml";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,6 +54,8 @@ pub struct ProjectInfo {
     pub scripts: Option<PathBuf>,
     /// The level to load first: a `.level` path or GUID.
     pub start_level: Option<String>,
+    /// The engine version the project uses, as the launcher pins it.
+    pub engine: Option<String>,
 }
 
 pub struct Project {
@@ -67,6 +71,13 @@ impl Project {
             .with_context(|| format!("no Voxear project at {} (expected {PROJECT_FILE})", path.display()))?;
         let file: ProjectFile = toml::from_str(&text).with_context(|| format!("reading {}", manifest.display()))?;
         let root = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
+        if let Some(pinned) = file.project.engine.as_deref().filter(|&pinned| pinned != engine_version()) {
+            tracing::warn!(
+                "{} is pinned to Voxear {pinned}, but this is Voxear {}; the launcher opens it with the version it pins",
+                file.project.name,
+                engine_version()
+            );
+        }
         Ok(Self { root, file })
     }
 
@@ -86,14 +97,58 @@ impl Project {
     }
 }
 
-/// The engine checkout, which holds the managed `Voxear.Core` build. Set
-/// `VOXEAR_HOME` to point a shipped `vox` at an install.
-pub fn engine_root() -> PathBuf {
-    std::env::var_os("VOXEAR_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+/// This engine's version: a release's, as its packaging names it, or the
+/// workspace's for a build from source.
+pub fn engine_version() -> &'static str {
+    option_env!("VOXEAR_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
+/// The engine's own files: an install, or the source checkout a build from
+/// source runs from. `VOXEAR_HOME` names the install, as the launcher sets
+/// it; without it, a program in an install's `bin/` finds the install above
+/// it by its `engine.toml`.
+pub fn engine_root() -> PathBuf {
+    if let Some(home) = std::env::var_os("VOXEAR_HOME") {
+        return PathBuf::from(home);
+    }
+    let exe = std::env::current_exe().ok();
+    let installed = exe.as_deref().and_then(Path::parent).and_then(Path::parent).filter(|home| is_install(home));
+    match installed {
+        Some(home) => home.to_path_buf(),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    }
+}
+
+/// Whether a folder is an engine install, rather than a source checkout.
+pub fn is_install(root: &Path) -> bool {
+    root.join(ENGINE_FILE).is_file()
+}
+
+/// `Voxear.Core.dll`: an install's, in its `managed/` folder, or a checkout's
+/// build of it in this configuration.
 pub fn core_assembly(configuration: &str) -> PathBuf {
-    engine_root().join("target").join("managed").join(configuration).join("Voxear.Core.dll")
+    let root = engine_root();
+    if is_install(&root) {
+        return root.join("managed").join("Voxear.Core.dll");
+    }
+    root.join("target").join("managed").join(configuration).join("Voxear.Core.dll")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_project_pinned_by_the_launcher_opens_and_an_install_is_told_by_its_engine_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let pinned = "[project]\nname = \"Orbit\"\nengine = \"0.1.0-nightly.20261031\"\n";
+        std::fs::write(folder.path().join(PROJECT_FILE), pinned).unwrap();
+        let project = Project::open(folder.path()).unwrap();
+        assert_eq!(project.file.project.engine.as_deref(), Some("0.1.0-nightly.20261031"));
+
+        assert!(!is_install(folder.path()), "a folder without engine.toml is not an install");
+        std::fs::write(folder.path().join(ENGINE_FILE), "format = 1\n").unwrap();
+        assert!(is_install(folder.path()));
+        assert!(!is_install(&engine_root()), "tests run from the source checkout");
+    }
 }

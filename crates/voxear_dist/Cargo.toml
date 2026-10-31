@@ -1,0 +1,18 @@
+[package]
+name = "voxear_dist"
+description = "Packages a Voxear checkout as an engine release the launcher installs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "voxear-dist"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tar.workspace = true
+zstd.workspace = true

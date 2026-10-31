@@ -1,0 +1,25 @@
+<Project>
+	<!--
+		What a game's scripts project needs from the engine it builds against: the settings Voxear.Core is built with,
+		and Voxear.Core itself. The editor and vox pass the engine's folder as VoxearHome when they build scripts, so a
+		project can live anywhere. In an install this file sits beside Voxear.Core.dll and references it; in a source
+		checkout it references the Voxear.Core project instead, so a solution build builds that first. Either way the
+		game does not ship its own copy, since Voxear.Core is shared from the engine.
+	-->
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<LangVersion>latest</LangVersion>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>disable</ImplicitUsings>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+	</PropertyGroup>
+	<ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
+		<Reference Include="Voxear.Core">
+			<HintPath>$(MSBuildThisFileDirectory)Voxear.Core.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+	</ItemGroup>
+	<ItemGroup Condition="!Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
+		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Core/Voxear.Core.csproj" Private="false" />
+	</ItemGroup>
+</Project>

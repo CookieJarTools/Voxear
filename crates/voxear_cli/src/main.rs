@@ -23,7 +23,7 @@ use voxear_scene::{Name, Transform};
 use voxear_scripting::find_dotnet;
 
 #[derive(Parser)]
-#[command(name = "vox", version, about = "The Voxear engine command line")]
+#[command(name = "vox", version = voxear_engine::engine_version(), about = "The Voxear engine command line")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -162,7 +162,7 @@ fn main() -> Result<()> {
         Commands::Editor { project, screenshot, width, height, frames } => {
             let log = log.expect("captured above");
             let project = Project::open(&project)?;
-            let settings = RendererSettings { hot_reload: true, ..renderer_settings(&project, false) };
+            let settings = RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(&project, false) };
             match screenshot {
                 Some(out) => {
                     voxear_editor::screenshot(project, &settings, log, &out, (width, height), frames)?;
@@ -211,7 +211,7 @@ fn main() -> Result<()> {
 
 fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, renderdoc: bool, stats: bool) -> Result<()> {
     let project = Project::open(path)?;
-    let settings = RendererSettings { hot_reload: true, ..renderer_settings(&project, renderdoc) };
+    let settings = RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(&project, renderdoc) };
     let title = format!("{} — Voxear", project.name());
     let mut game = start_game(project, prepare)?;
 
@@ -537,4 +537,10 @@ fn fail(message: &str) -> bool {
 
 fn hint(message: &str) {
     println!("    {message}");
+}
+
+/// Shaders reload on save only in a source checkout: an install has no
+/// shader sources of its own, and must not pick up a checkout's.
+fn shaders_reload() -> bool {
+    !voxear_engine::is_install(&voxear_engine::engine_root())
 }

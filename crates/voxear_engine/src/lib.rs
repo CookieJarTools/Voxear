@@ -26,6 +26,9 @@ pub use levels::{
 };
 pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork};
 pub use prefab::{ObjPath, PrefabId, Template};
-pub use project::{ContentSettings, PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root};
+pub use project::{
+    ContentSettings, ENGINE_FILE, PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root, engine_version,
+    is_install,
+};
 pub use stats_overlay::StatsOverlay;
 pub use windowed::{Setup, run_windowed};

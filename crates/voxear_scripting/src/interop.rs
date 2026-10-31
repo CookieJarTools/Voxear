@@ -1,6 +1,12 @@
 //! The function tables shared with `Voxear.Core`. Every struct here has a
 //! mirror in `managed/Voxear.Core/Interop`; change both together and bump
 //! [`API_VERSION`].
+//!
+//! Values behind pointers C# hands over are read and written unaligned. C#
+//! aligns a struct of floats to 4 bytes, but glam's `Quat` (and so
+//! `Transform`) asks for 16 on x86-64, and an aligned SIMD store to an
+//! address C# placed otherwise crashes; a Release build of `Voxear.Core`
+//! lays out its stack so that it does.
 
 use std::{
     cell::{Cell, RefCell},
@@ -232,7 +238,7 @@ unsafe extern "C" fn transform_get(entity: u64, out: *mut Transform) -> i32 {
     let transform = with_world(|world| world.get::<Transform>(Entity::from_bits(entity)).copied());
     match transform {
         Some(transform) => {
-            unsafe { out.write(transform) };
+            unsafe { out.write_unaligned(transform) };
             1
         }
         None => 0,
@@ -240,7 +246,7 @@ unsafe extern "C" fn transform_get(entity: u64, out: *mut Transform) -> i32 {
 }
 
 unsafe extern "C" fn transform_set(entity: u64, value: *const Transform) -> i32 {
-    let value = unsafe { value.read() };
+    let value = unsafe { value.read_unaligned() };
     let written = with_world(|world| world.get_mut::<Transform>(Entity::from_bits(entity)).map(|t| *t = value));
     i32::from(written.is_some())
 }
@@ -276,7 +282,7 @@ unsafe extern "C" fn load_async(level: i32, reference: *const u8, len: i32) -> i
 
 unsafe extern "C" fn level_load_async(reference: *const u8, len: i32, options: *const LevelLoadOptions) -> i32 {
     let reference = unsafe { utf8(reference, len) };
-    let options = unsafe { options.read() };
+    let options = unsafe { options.read_unaligned() };
     match with_services(|services| services.load_level(&reference, options)) {
         Some(Ok(id)) => id as i32,
         Some(Err(error)) => {
@@ -306,7 +312,7 @@ unsafe extern "C" fn level_info(what: i32, id: i32, buffer: *mut u8, capacity: i
 unsafe extern "C" fn load_status(id: u32, out: *mut LoadProgress) -> i32 {
     match with_services(|services| services.load_status(id)).flatten() {
         Some(status) => {
-            unsafe { out.write(status) };
+            unsafe { out.write_unaligned(status) };
             1
         }
         None => 0,
@@ -330,7 +336,7 @@ unsafe extern "C" fn content_unload_unused() {
 unsafe extern "C" fn content_usage(out: *mut ContentStats) -> i32 {
     match with_services(|services| services.usage()) {
         Some(stats) => {
-            unsafe { out.write(stats) };
+            unsafe { out.write_unaligned(stats) };
             1
         }
         None => 0,
@@ -343,7 +349,7 @@ unsafe extern "C" fn obj_world_transform(entity: u64, out: *mut Transform) -> i3
     let matrix = with_world(|world| world.is_alive(entity).then(|| world_matrix(world, entity)));
     let Some(matrix) = matrix else { return 0 };
     let (scale, rotation, position) = matrix.to_scale_rotation_translation();
-    unsafe { out.write(Transform::new(position, rotation, scale)) };
+    unsafe { out.write_unaligned(Transform::new(position, rotation, scale)) };
     1
 }
 
@@ -398,7 +404,7 @@ unsafe extern "C" fn prefab_instantiate(
     // Generation zero is the null entity, which is Obj.None.
     let parent = (parent >> 32 != 0).then(|| Entity::from_bits(parent));
     let placement = (!placement.is_null()).then(|| {
-        let transform = unsafe { placement.read() };
+        let transform = unsafe { placement.read_unaligned() };
         Placement { position: transform.position, rotation: transform.rotation }
     });
     let spawned = with_services(|services| {
@@ -427,7 +433,7 @@ unsafe extern "C" fn prefab_instantiate(
     let handles: Vec<u32> = objs.iter().flat_map(|(entity, specs)| attach(*entity, specs)).collect();
     let count = handles.len() as i32;
     LAST_BATCH.set(handles);
-    unsafe { out_root.write(root.to_bits()) };
+    unsafe { out_root.write_unaligned(root.to_bits()) };
     count
 }
 

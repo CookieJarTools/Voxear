@@ -78,6 +78,18 @@ run without the engine.
 Set `VOXEAR_LOG=debug` for more logging. Set `VOXEAR_VALIDATION=1` to force Vulkan validation; debug builds use it
 automatically when the `vulkan-validation-layers` package is installed.
 
+## Releases
+
+The [Voxear Launcher](https://github.com/CookieJarTools/VoxearLauncher) installs engine releases from
+[VoxearReleases](https://github.com/CookieJarTools/VoxearReleases). To package this checkout as one:
+
+```bash
+cargo run -p voxear_dist -- --channel nightly
+```
+
+That writes an install folder and its `.tar.zst` to `target/dist`. The launcher's `voxear-release engine add` then
+signs the archive and lists it; "Versions, installs and the launcher" in the architecture has the rest.
+
 ## Layout
 
 ```

@@ -2180,6 +2180,32 @@ through a small contract.
 
 **Launcher self-update.** The launcher updates itself from its own signed manifest, separately from engine versions.
 
+**What exists now.**
+- **Installs find themselves.** `engine_root()` is `VOXEAR_HOME` when it is set, as the launcher sets it; otherwise
+  the folder above the running program's `bin/` when that holds an `engine.toml`; otherwise the source checkout.
+  An install keeps `Voxear.Core` and `Voxear.ScriptInfo` in `managed/` (`core_assembly()`); a checkout keeps
+  them in `target/managed/<configuration>/`.
+- **Scripts build against the engine running them.** `managed/Voxear.Scripts.props` holds what a game's scripts
+  project needs: the framework and language settings, and Voxear.Core (the built library in an install, the
+  project in a checkout). The editor and `vox` pass the engine's folder to every scripts build as `VoxearHome`,
+  and a scripts project imports the props from there, so a project builds wherever it lives. Hello falls back to
+  the checkout it sits in.
+- **Projects can be pinned.** `engine` in `[project]` is the version the launcher pins; a different version warns
+  when the project opens.
+- **`voxear-editor`** opens a project as the launcher asks (`--project <folder>`), handing over to `vox editor`
+  beside it, so an install carries the engine once. `vox --version` gives the release's version.
+- **Packaging** (`voxear-dist`, `cargo run -p voxear_dist -- --channel nightly`): builds `vox` and
+  `voxear-editor` in release (naming the version through `VOXEAR_VERSION`), and Voxear.Core and ScriptInfo in
+  release; lays out the install in `target/dist/voxear-<version>-<platform>/` with `engine.toml`, `bin/`,
+  `managed/` (with the scripts props), `docs/` and the licence; and packs it as a `.tar.zst` with every entry at
+  the root, in name order and without owners or times. A nightly is named for the day (`0.1.0-nightly.20261031`);
+  a beta names its version. The folder is an install too, which `voxup locate` can point the launcher at.
+- **Publishing** is by hand, with the launcher repository's `voxear-release`: `engine add` signs the archive with
+  the engine key and lists it in the site's `engine/releases.toml`, then the archive and its `.minisig` go up as
+  assets of the `engine-v<version>` release in VoxearReleases, and the site goes to its `gh-pages` branch.
+- **Not yet:** `vox new` and `vox upgrade` (so `[supports]` is empty, and the launcher cannot make projects with
+  these builds), Windows archives, and a workflow that builds and publishes them.
+
 ## Platforms and GPU support
 
 **Targets.** Linux (Wayland and X11) and Windows 10/11 on x86-64. These are the only platforms for now.

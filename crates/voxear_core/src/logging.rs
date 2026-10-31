@@ -21,7 +21,21 @@ const DEFAULT_FILTER: &str = "info,winit=error,sctk=error";
 pub fn init() {
     let filter =
         std::env::var("VOXEAR_LOG").or_else(|_| std::env::var("RUST_LOG")).unwrap_or_else(|_| DEFAULT_FILTER.into());
-    let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::new(filter)).with_target(false).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new(filter))
+        .with_target(false)
+        .fmt_fields(printed_fields())
+        .try_init();
+}
+
+/// What the terminal shows of a line's fields: the message and anything
+/// else, but not a script's stack or Obj, which are for the Console.
+fn printed_fields() -> impl for<'writer> tracing_subscriber::fmt::FormatFields<'writer> + 'static {
+    tracing_subscriber::fmt::format::debug_fn(|writer, field, value| match field.name() {
+        "stack" | "context" => Ok(()),
+        "message" => write!(writer, "{value:?}"),
+        name => write!(writer, " {name}={value:?}"),
+    })
 }
 
 /// Log lines kept for the editor's Console, newest last.
@@ -95,7 +109,7 @@ pub fn init_capturing() -> LogCapture {
     let capture = LogCapture::default();
     let _ = tracing_subscriber::registry()
         .with(EnvFilter::new(filter))
-        .with(tracing_subscriber::fmt::layer().with_target(false))
+        .with(tracing_subscriber::fmt::layer().with_target(false).fmt_fields(printed_fields()))
         .with(Capture::new(capture.clone()))
         .try_init();
     capture

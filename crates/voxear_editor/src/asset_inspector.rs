@@ -10,10 +10,10 @@
 
 use voxear_assets::AssetKind;
 use voxear_engine::{Game, MaterialData, script_types::ScriptTypes};
-use voxear_ui::{NodeId, Style, Ui};
+use voxear_ui::{NodeId, PickedColor, Style, Ui};
 
 use crate::{
-    inspector::{number, prop, vector_row},
+    inspector::{color_row, number, prop},
     project_view::{ItemKind, ProjectItem},
 };
 
@@ -39,6 +39,16 @@ struct MaterialFields {
     metallic: NodeId,
     roughness: NodeId,
     emissive: [NodeId; 3],
+    /// The colour's and the emission's swatches, which open the colour picker.
+    swatches: [NodeId; 2],
+}
+
+/// Which of a material's colours: its colour, picked as sRGB, or its
+/// emission, an HDR colour kept as linear light.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaterialColor {
+    Base,
+    Emission,
 }
 
 impl AssetView {
@@ -122,6 +132,39 @@ impl AssetView {
         Some(AssetAction::SaveMaterial(self.item.path.clone(), *data))
     }
 
+    /// The material colour whose swatch was clicked, with the swatch and the
+    /// colour as the picker shows it.
+    pub fn color_clicked(&self, ui: &Ui) -> Option<(MaterialColor, NodeId, PickedColor)> {
+        let fields = self.material.as_ref()?;
+        let which = [MaterialColor::Base, MaterialColor::Emission];
+        let (which, swatch) = which.into_iter().zip(fields.swatches).find(|&(_, swatch)| ui.clicked(swatch))?;
+        Some((which, swatch, fields.picked(which)))
+    }
+
+    /// Sets a material colour from the colour picker, in its fields and
+    /// swatch, and asks for the material to be saved.
+    pub fn set_color(&mut self, ui: &mut Ui, which: MaterialColor, color: PickedColor) -> Option<AssetAction> {
+        let fields = self.material.as_mut()?;
+        let (values, targets) = match which {
+            MaterialColor::Base => (color.srgb, &mut fields.data.color),
+            MaterialColor::Emission => (color.to_linear(), &mut fields.data.emissive),
+        };
+        *targets = values;
+        let shown = if which == MaterialColor::Base { fields.color } else { fields.emissive };
+        for (field, value) in shown.into_iter().zip(values) {
+            ui.set_text(field, &number(value));
+        }
+        fields.show_swatches(ui);
+        Some(AssetAction::SaveMaterial(self.item.path.clone(), fields.data))
+    }
+
+    /// Shows the material's colours in their swatches again, as after typing.
+    pub fn show_swatches(&self, ui: &mut Ui) {
+        if let Some(fields) = &self.material {
+            fields.show_swatches(ui);
+        }
+    }
+
     /// The large preview's frame, which takes drags to turn it, and its
     /// image, for an asset that has one.
     pub fn preview(&self) -> Option<(NodeId, NodeId)> {
@@ -167,8 +210,8 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path) -> Option<Materia
     let text = std::fs::read_to_string(file).ok()?;
     let data: MaterialData = toml::from_str(&text).ok()?;
     let rows = part(ui, root, "Material", "material");
-    let (_, color) = vector_row(ui, rows, "Colour");
-    let (_, emissive) = vector_row(ui, rows, "Emission");
+    let (color, color_swatch) = color_row(ui, rows, "Colour");
+    let (emissive, emission_swatch) = color_row(ui, rows, "Emission");
     let one = |ui: &mut Ui, label: &str, value: f32| {
         let row = prop(ui, rows, label);
         let field = ui.text_field(row, &number(value));
@@ -182,7 +225,27 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path) -> Option<Materia
             ui.set_text(*field, &number(value));
         }
     }
-    Some(MaterialFields { data, color, metallic, roughness, emissive })
+    let fields =
+        MaterialFields { data, color, metallic, roughness, emissive, swatches: [color_swatch, emission_swatch] };
+    fields.show_swatches(ui);
+    Some(fields)
+}
+
+impl MaterialFields {
+    /// A colour as the picker edits it: the colour as it is, the emission
+    /// split into a colour and its intensity.
+    fn picked(&self, which: MaterialColor) -> PickedColor {
+        match which {
+            MaterialColor::Base => PickedColor::srgb(self.data.color),
+            MaterialColor::Emission => PickedColor::from_linear(self.data.emissive),
+        }
+    }
+
+    fn show_swatches(&self, ui: &mut Ui) {
+        for (which, swatch) in [MaterialColor::Base, MaterialColor::Emission].into_iter().zip(self.swatches) {
+            ui.set_inline_style(swatch, &format!("background-color: {}", self.picked(which).hex()));
+        }
+    }
 }
 
 /// The behaviour a script declares, by its file's name, with its fields and

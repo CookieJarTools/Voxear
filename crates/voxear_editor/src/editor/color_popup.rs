@@ -1,0 +1,131 @@
+//! The colour picker, opened from a colour's swatch: a Light's colour in the
+//! Inspector, or a material's Colour or Emission in the asset view, the
+//! emission being HDR, so the picker adds its intensity. It opens under the
+//! swatch, what is picked shows at once, and an Obj's changes over the whole
+//! visit are one step to undo. A press outside it, or Escape, closes it.
+
+use voxear_ecs::Entity;
+use voxear_render::Renderer;
+use voxear_ui::{ColorPicker, NodeId, PickedColor, Ui};
+
+use super::Editor;
+use crate::{
+    asset_inspector::MaterialColor,
+    history::{Edit, ObjState},
+    props::{self, Prop, Value},
+};
+
+/// How far the picker keeps from the window's edges.
+const MARGIN: f32 = 8.0;
+
+/// What the picker is open for.
+enum Target {
+    /// An Obj's colour, and the Obj as it was when the picker opened, for undo.
+    Prop { entity: Entity, prop: Prop, before: Box<ObjState> },
+    /// A colour of the material the Inspector shows.
+    Material(MaterialColor),
+}
+
+pub(super) struct ColorPopup {
+    panel: NodeId,
+    title: NodeId,
+    picker: ColorPicker,
+    /// What it is open for, and the swatch it opened from.
+    open: Option<(Target, NodeId)>,
+}
+
+impl ColorPopup {
+    pub fn new(ui: &mut Ui, panel: NodeId, title: NodeId) -> Self {
+        let picker = ColorPicker::new(ui, panel);
+        ui.set_visible(panel, false);
+        Self { panel, title, picker, open: None }
+    }
+}
+
+impl Editor {
+    /// Opens the picker for an Obj's colour, under its swatch.
+    pub(super) fn edit_color(&mut self, entity: Entity, prop: Prop, swatch: NodeId) {
+        let Some(Value::Color(srgb)) = props::get(&self.game, self.inspector.types(), entity, &prop) else { return };
+        let Some(before) = ObjState::of(&self.game.engine.world, entity) else { return };
+        let title = props::label(&prop);
+        let target = Target::Prop { entity, prop, before: Box::new(before) };
+        self.open_color(target, swatch, &title, (PickedColor::srgb(srgb), false));
+    }
+
+    /// Whether the colour picker is open.
+    pub fn color_picker_open(&self) -> bool {
+        self.color_popup.open.is_some()
+    }
+
+    fn open_color(&mut self, target: Target, swatch: NodeId, title: &str, (color, hdr): (PickedColor, bool)) {
+        self.close_color();
+        let popup = &mut self.color_popup;
+        popup.picker.set(&mut self.ui, color, hdr);
+        let title = if hdr { format!("{title} · HDR") } else { title.to_string() };
+        self.ui.set_text(popup.title, &title);
+        self.ui.set_visible(popup.panel, true);
+        popup.open = Some((target, swatch));
+    }
+
+    /// Opens the picker from a material's swatch, follows it while open, and
+    /// closes it on a press elsewhere.
+    pub(super) fn update_color_popup(&mut self, renderer: &mut Renderer) {
+        let clicked = self.inspector.asset_view().and_then(|view| view.color_clicked(&self.ui));
+        if let Some((which, swatch, color)) = clicked {
+            let title = if which == MaterialColor::Base { "Colour" } else { "Emission" };
+            return self.open_color(Target::Material(which), swatch, title, (color, which == MaterialColor::Emission));
+        }
+        let Some(&(_, swatch)) = self.color_popup.open.as_ref() else { return };
+        let (root, panel) = (self.ui.root(), self.color_popup.panel);
+        if self.ui.is_pressed(root) && !self.ui.is_pressed(panel) && !self.ui.is_pressed(swatch) {
+            return self.close_color();
+        }
+        self.place_color(swatch);
+        let Some(color) = self.color_popup.picker.update(&mut self.ui) else { return };
+        match &self.color_popup.open {
+            Some((Target::Prop { entity, prop, .. }, _)) => {
+                let (entity, prop) = (*entity, prop.clone());
+                props::set(
+                    &mut self.game,
+                    Some(renderer),
+                    self.inspector.types(),
+                    entity,
+                    &prop,
+                    Value::Color(color.srgb),
+                );
+            }
+            Some((Target::Material(which), _)) => {
+                let which = *which;
+                let action = self.inspector.asset_view().and_then(|view| view.set_color(&mut self.ui, which, color));
+                if let Some(action) = action {
+                    self.asset_action(action, renderer);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Closes the picker. What it changed on an Obj is one step to undo.
+    pub(super) fn close_color(&mut self) {
+        let Some((target, _)) = self.color_popup.open.take() else { return };
+        self.ui.set_visible(self.color_popup.panel, false);
+        let Target::Prop { entity, before, .. } = target else { return };
+        let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
+        if after != *before && !self.is_playing() {
+            self.history.record_step(Edit::Changed { entity, before: *before, after });
+            self.unsaved = true;
+        }
+    }
+
+    /// Under the swatch, kept inside the window: above it when there is no
+    /// room below.
+    fn place_color(&mut self, swatch: NodeId) {
+        let [x, y, _, height] = self.ui.rect(swatch);
+        let [_, _, window_width, window_height] = self.ui.rect(self.ui.root());
+        let [_, _, width, own_height] = self.ui.rect(self.color_popup.panel);
+        let left = x.min(window_width - width - MARGIN).max(MARGIN);
+        let below = y + height + 4.0;
+        let top = if below + own_height > window_height - MARGIN { (y - own_height - 4.0).max(MARGIN) } else { below };
+        self.ui.set_inline_style(self.color_popup.panel, &format!("left: {left}px; top: {top}px"));
+    }
+}

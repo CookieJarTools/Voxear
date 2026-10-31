@@ -9,6 +9,7 @@ static const uint UI_GLYPH = 1;
 static const uint UI_SHADOW = 2;
 static const uint UI_LINE = 3;
 static const uint UI_IMAGE = 4;
+static const uint UI_GRADIENT = 5;
 static const uint UI_DASHED = 1;
 static const uint UI_FADES_DOWN = 1;
 static const float3 UI_LUMA = float3(0.2126, 0.7152, 0.0722);
@@ -131,6 +132,17 @@ float4 uiFragment(UiOut i) : SV_Target
         float2 imageHalf = q.rect.zw * 0.5;
         float inside = saturate(0.5 - roundedBox(i.local - imageHalf, imageHalf, min(q.radius, min(imageHalf.x, imageHalf.y))));
         return image * q.color * inside;
+    }
+    if (q.kind == UI_GRADIENT)
+    {
+        // Blended in sRGB, as people see colour, then made linear and premultiplied as the rest are.
+        float2 t = saturate(i.local / q.rect.zw);
+        float4 across = lerp(q.color, q.borderColor, t.x);
+        float4 c = (q.flags & UI_FADES_DOWN) != 0 ? lerp(across, q.uv, t.y) : across;
+        float3 linearColor = select(c.rgb <= 0.04045, c.rgb / 12.92, pow((c.rgb + 0.055) / 1.055, 2.4));
+        float2 boxHalf = q.rect.zw * 0.5;
+        float inside = saturate(0.5 - roundedBox(i.local - boxHalf, boxHalf, min(q.radius, min(boxHalf.x, boxHalf.y))));
+        return float4(linearColor * c.a, c.a) * inside;
     }
 
     float2 halfSize = q.rect.zw * 0.5;

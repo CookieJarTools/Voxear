@@ -34,6 +34,7 @@ mod animation;
 mod atlas;
 mod cascade;
 mod color;
+mod color_picker;
 mod controls;
 mod dock;
 mod drag;
@@ -54,6 +55,7 @@ mod style;
 mod tree;
 
 pub use color::Color;
+pub use color_picker::{ColorPicker, PickedColor, hsv_to_srgb, srgb_to_hsv};
 pub use drag::DragSource;
 pub use draw::Shape;
 pub use icons::NAMES as ICONS;
@@ -65,7 +67,7 @@ pub use pointer::Modifiers;
 pub use rich::{Marks, RichText, Span};
 pub use sheet::StyleSheet;
 pub use style::{Animated, Easing, Family, Overflow, Shadow, Style, TextAlign, TextStyle, Transition};
-pub use tree::ImageRef;
+pub use tree::{Gradient, ImageRef};
 pub use tree::{Kind, NodeId, Ui};
 
 /// The default theme every [`Ui`] starts with: `theme/Default.vss`.
@@ -100,10 +102,11 @@ pub struct Quad {
     pub clip: [f32; 4],
     pub radius: f32,
     pub border: f32,
-    /// [`Quad::SHAPE`], [`Quad::GLYPH`], [`Quad::SHADOW`], [`Quad::LINE`]
-    /// or [`Quad::IMAGE`].
+    /// [`Quad::SHAPE`], [`Quad::GLYPH`], [`Quad::SHADOW`], [`Quad::LINE`],
+    /// [`Quad::IMAGE`] or [`Quad::GRADIENT`].
     pub kind: u32,
-    /// For shapes, [`Quad::DASHED`]; for an image, its texture.
+    /// For shapes, [`Quad::DASHED`]; for an image, its texture; for a
+    /// gradient, [`Quad::FADES_DOWN`].
     pub flags: u32,
 }
 
@@ -121,6 +124,13 @@ impl Quad {
     /// Part of a texture, `uv` of it, in a box rounded by `radius`: `flags`
     /// is the renderer's texture, and `color` tints it.
     pub const IMAGE: u32 = 4;
+    /// A box rounded by `radius` filled from `color` at the left to
+    /// `border_color` at the right, and with [`Quad::FADES_DOWN`], down to
+    /// `uv` at the bottom. These colours are sRGB with straight alpha, and
+    /// blend as people see them.
+    pub const GRADIENT: u32 = 5;
+    /// For a gradient: it fades down to `uv`.
+    pub const FADES_DOWN: u32 = 1;
     /// The border is drawn in dashes.
     pub const DASHED: u32 = 1;
     /// A clip that clips nothing.

@@ -172,6 +172,26 @@ impl Draw<'_> {
                 shadow_quad(shadow, &look, rect, self.scale, opacity, clip, self.quads);
             }
             shape_quad(&look, rect, self.scale, opacity, clip, self.quads);
+            if let Some(gradient) = element.gradient
+                && opacity > 0.0
+            {
+                let straight = |c: crate::Color| [c.r, c.g, c.b].map(|v| f32::from(v) / 255.0);
+                let with_alpha = |c: crate::Color| {
+                    let [r, g, b] = straight(c);
+                    [r, g, b, f32::from(c.a) / 255.0 * opacity]
+                };
+                self.quads.push(Quad {
+                    rect: [x0, y0, x1 - x0, y1 - y0],
+                    uv: gradient.bottom.map_or([0.0; 4], with_alpha),
+                    color: with_alpha(gradient.left),
+                    border_color: with_alpha(gradient.right),
+                    clip,
+                    radius: look.radius * self.scale,
+                    kind: Quad::GRADIENT,
+                    flags: if gradient.bottom.is_some() { Quad::FADES_DOWN } else { 0 },
+                    ..Quad::default()
+                });
+            }
             let content = [origin[0], origin[1], inner * self.scale, inner_height * self.scale];
             shape_quads(&element.shapes, content, self.scale, opacity, clip, self.quads);
             if let Some(icon) = element.icon {

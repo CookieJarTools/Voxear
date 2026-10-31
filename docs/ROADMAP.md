@@ -222,7 +222,7 @@ Done so far:
 - **Components in the Inspector:** Mesh Renderer, Light and Camera values edited in place; script fields described
   from the scripts' build by a .NET tool (`Voxear.ScriptInfo`), rebuilt in the background when a script changes,
   with their starting values; references picked in a searchable object picker or dragged from the Hierarchy and
-  the Project, lists
+  the Project, colours in a colour picker (HDR, with intensity in stops, for emission), lists
   with items added and taken out, and nested
   `[Serializable]` tables; Add Component and Remove Component; all of it undoable, and component values keepable
   after play.

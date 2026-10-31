@@ -92,6 +92,16 @@ pub struct ImageRef {
     pub uv: [f32; 4],
 }
 
+/// A fill from `left` to `right`, and, given `bottom`, down to it as well,
+/// as a colour picker's square runs from white to a hue and down to black.
+/// The colours blend in sRGB, as people see them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gradient {
+    pub left: crate::Color,
+    pub right: crate::Color,
+    pub bottom: Option<crate::Color>,
+}
+
 /// What each taffy node carries besides its layout.
 pub(crate) struct Element {
     pub kind: Kind,
@@ -114,6 +124,8 @@ pub(crate) struct Element {
     pub icon: Option<&'static str>,
     /// For an image: what it shows.
     pub image: Option<ImageRef>,
+    /// A fill over its background; see [`Gradient`].
+    pub gradient: Option<Gradient>,
     /// Lines and circles drawn over its background.
     pub shapes: Vec<crate::Shape>,
     /// How far its children are scrolled, and how far they can be.
@@ -147,6 +159,7 @@ impl Element {
             text: None,
             icon: None,
             image: None,
+            gradient: None,
             shapes: Vec::new(),
             scroll: [0.0; 2],
             scroll_max: [0.0; 2],
@@ -362,6 +375,14 @@ impl Ui {
             ..Element::new(Kind::Image, Style::default())
         };
         self.add(parent, element)
+    }
+
+    /// Fills an element with a gradient over its background, rounded as its
+    /// corners are, or takes it away with `None`.
+    pub fn set_gradient(&mut self, node: NodeId, gradient: Option<Gradient>) {
+        if let Some(element) = self.element_mut(node) {
+            element.gradient = gradient;
+        }
     }
 
     /// What an image shows, or nothing with `None`.

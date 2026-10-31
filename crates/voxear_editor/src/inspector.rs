@@ -103,6 +103,8 @@ pub enum RowAction {
     Remove(Part),
     /// Open the object picker for a reference, under its field.
     Browse(Prop, NodeId),
+    /// Open the colour picker for a colour, under its swatch.
+    EditColor(Prop, NodeId),
     /// Point a reference at what its picker picked.
     Pick(Prop, Pick),
     /// Point a reference at what was dragged onto it, from the Hierarchy or
@@ -269,6 +271,11 @@ impl Inspector {
     /// What the asset shown asks of the editor this frame.
     pub fn update_asset(&mut self, ui: &Ui) -> Option<AssetAction> {
         self.asset.as_mut()?.update(ui)
+    }
+
+    /// The asset view, when the Inspector shows an item of the Project panel.
+    pub fn asset_view(&mut self) -> Option<&mut AssetView> {
+        self.asset.as_mut()
     }
 
     /// The Project panel's item shown, if that is what it shows.
@@ -491,6 +498,8 @@ impl Inspector {
             (button, (x, y + height + 4.0))
         } else if let Some((prop, button)) = self.picker_clicked(ui) {
             return Some(RowAction::Browse(prop, button));
+        } else if let Some((prop, swatch)) = self.swatch_clicked(ui) {
+            return Some(RowAction::EditColor(prop, swatch));
         } else if let Some((part, header)) = self.headers.iter().find(|(_, h)| ui.context_clicked(*h)) {
             items = match part {
                 None => vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))],
@@ -526,6 +535,14 @@ impl Inspector {
     fn picker_clicked(&self, ui: &Ui) -> Option<(Prop, NodeId)> {
         self.rows.iter().find_map(|row| match row.control {
             Control::Picker(button, _) if ui.clicked(button) => Some((row.prop.clone(), button)),
+            _ => None,
+        })
+    }
+
+    /// The colour whose swatch was clicked, and the swatch.
+    fn swatch_clicked(&self, ui: &Ui) -> Option<(Prop, NodeId)> {
+        self.rows.iter().find_map(|row| match row.control {
+            Control::Axes(_, Some(swatch)) if ui.clicked(swatch) => Some((row.prop.clone(), swatch)),
             _ => None,
         })
     }
@@ -778,6 +795,19 @@ fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, No
 
 /// A row of a label and three axis fields, X, Y and Z. Returns the row and
 /// the fields.
+/// A colour's row as the Inspector shows one: a swatch that opens the colour
+/// picker, then its red, green and blue. Returns the fields and the swatch.
+pub(crate) fn color_row(ui: &mut Ui, rows: NodeId, label: &str) -> ([NodeId; 3], NodeId) {
+    let row = prop(ui, rows, label);
+    let vector = ui.panel(row, Style::default());
+    ui.add_class(vector, "vector");
+    ui.add_class(vector, "color");
+    let swatch = ui.panel(vector, Style::default());
+    ui.add_class(swatch, "swatch");
+    let fields = axis_fields(ui, vector, &["r", "g", "b"]);
+    ([fields[0], fields[1], fields[2]], swatch)
+}
+
 pub(crate) fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> (NodeId, [NodeId; 3]) {
     let row = prop(ui, rows, label);
     let vector = ui.panel(row, Style::default());

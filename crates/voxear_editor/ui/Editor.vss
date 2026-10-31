@@ -828,6 +828,19 @@
     border: 1px solid var(--vx-field-line);
 }
 
+/* A click on a swatch opens the colour picker. */
+.swatch:hover {
+    border-color: var(--vx-muted);
+}
+
+/* The colour picker's popup: the palette's look, sized to the picker. */
+.color-popup {
+    flex-direction: column;
+    gap: 6px;
+    width: 250px;
+    padding: 8px;
+}
+
 .axis-r {
     color: var(--vx-x);
 }

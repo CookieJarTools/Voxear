@@ -175,6 +175,10 @@
                 </Panel>
             </Panel>
         </Panel>
+        <!-- The colour picker, under the swatch it opened from; the picker itself is built in code. -->
+        <Panel name="color-popup" class="palette color-popup">
+            <Label name="color-title" class="picker-title" />
+        </Panel>
         <!-- A reference field's search, under the field it opened from. -->
         <Panel name="picker" class="palette picker">
             <Label name="picker-title" class="picker-title" />

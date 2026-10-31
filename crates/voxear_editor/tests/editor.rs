@@ -2099,6 +2099,97 @@ fn assets_show_previews_in_the_project_fields_picker_and_inspector() {
     frame(&mut editor, &mut renderer);
 }
 
+/// Presses at a point, moves to another while held, and lets go, a frame
+/// at each, as a drag in a window does.
+fn drag_between(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, from: [f32; 2], to: [f32; 2]) {
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(editor, renderer);
+    editor.ui.pointer_move(to[0], to[1]);
+    frame(editor, renderer);
+    editor.ui.pointer_button(false);
+    frame(editor, renderer);
+}
+
+#[test]
+fn the_colour_picker_edits_colours_and_hdr_emission() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    std::fs::write(dir.path().join("Materials/Glow.material"), "color = [0.2, 0.2, 0.2]\nemissive = [4.0, 1.0, 2.0]\n")
+        .unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let sun = obj(&editor, "Sun").unwrap();
+    editor.select(Some(sun));
+    frame(&mut editor, &mut renderer);
+    let colour =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<voxear_render::Light>(sun).unwrap().color;
+    let was = colour(&editor);
+
+    // A click on the Light's swatch opens the picker under it.
+    let swatch = first_with(&editor.ui, prop_row(&editor.ui, "Colour").unwrap(), "swatch").unwrap();
+    click(&mut editor.ui, swatch);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.color_picker_open());
+    let find = |editor: &voxear_editor::Editor, class: &str| first_with(&editor.ui, editor.ui.root(), class).unwrap();
+    let title = editor.ui.find(editor.ui.root(), "color-title").unwrap();
+    assert_eq!(editor.ui.text(title), "Colour", "named for the value, with no HDR for a light's colour");
+    assert!(!editor.ui.is_visible(editor.ui.parent(find(&editor, "color-intensity-slider")).unwrap()));
+
+    // The hue bar's last third is blue, and the square's top right is that hue at its fullest.
+    let [x, y, w, h] = editor.ui.rect(find(&editor, "color-hue"));
+    drag_between(&mut editor, &mut renderer, [x + w * 0.66, y + h / 2.0], [x + w * 0.667, y + h / 2.0]);
+    let [x, y, w, _] = editor.ui.rect(find(&editor, "color-square"));
+    drag_between(&mut editor, &mut renderer, [x + w * 0.5, y + 20.0], [x + w + 30.0, y - 30.0]);
+    shot(&mut renderer, "colour-picker.png");
+    let blue = colour(&editor);
+    assert!(blue.z > 0.9 && blue.x < 0.05 && blue.y < 0.05, "dragged past the corner, it holds at pure blue: {blue:?}");
+    assert!(editor.color_picker_open(), "drags inside keep it open");
+
+    // A hex code typed in.
+    let hex = find(&editor, "color-hex");
+    type_into(&mut editor.ui, hex, "#00FF00");
+    frame(&mut editor, &mut renderer);
+    let green = colour(&editor);
+    assert!(green.y > 0.99 && green.x < 0.01 && green.z < 0.01, "{green:?}");
+
+    // A press outside closes it, and the whole visit is one step to undo.
+    let elsewhere = hierarchy_row(&editor.ui, "Ground").unwrap();
+    let [x, y, w, h] = editor.ui.rect(elsewhere);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    assert!(!editor.color_picker_open());
+    editor.undo(&mut renderer);
+    assert_eq!(colour(&editor), was);
+
+    // A material's emission is HDR: its colour, and its intensity in stops.
+    frame(&mut editor, &mut renderer);
+    open_folder(&mut editor, &mut renderer, "Materials");
+    let glow = tile(&editor.ui, "Glow.material").unwrap();
+    click(&mut editor.ui, glow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let emission = first_with(&editor.ui, prop_row(&editor.ui, "Emission").unwrap(), "swatch").unwrap();
+    click(&mut editor.ui, emission);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.ui.text(title), "Emission · HDR");
+    let stops = find(&editor, "color-intensity-input");
+    assert!(editor.ui.is_visible(editor.ui.parent(stops).unwrap()));
+    assert_eq!(editor.ui.text(stops), "2.00", "4 is two stops over white");
+    type_into(&mut editor.ui, stops, "3");
+    frame(&mut editor, &mut renderer);
+    let saved: voxear_engine::MaterialData =
+        toml::from_str(&std::fs::read_to_string(dir.path().join("Materials/Glow.material")).unwrap()).unwrap();
+    let brightest = saved.emissive.into_iter().fold(0.0, f32::max);
+    assert!((brightest - 8.0).abs() < 0.01, "three stops: {:?}", saved.emissive);
+    assert!((saved.emissive[1] / saved.emissive[0] - 0.25).abs() < 0.01, "the same colour, brighter");
+}
+
 /// A program that answers `vox build` as `script` does, for the Build window
 /// to follow. `$2` is the project and `$4` the profile.
 #[cfg(unix)]

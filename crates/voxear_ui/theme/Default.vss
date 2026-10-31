@@ -612,3 +612,105 @@ DockSpace .split-column > .split-divider {
     background-color: var(--vx-accent-soft);
     border: 1px solid var(--vx-accent);
 }
+
+/* The colour picker: a square of saturation and brightness for the hue on
+   the bar under it, the colour before and now, and its values to type. */
+.color-picker {
+    flex-direction: column;
+    gap: 8px;
+    width: 232px;
+}
+
+.color-square {
+    height: 152px;
+    border-radius: 6px;
+}
+
+.color-mark {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    margin-left: -7px;
+    margin-top: -7px;
+    border-radius: 7px;
+    border: 2px solid #ffffff;
+    box-shadow: 0px 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.color-hue {
+    flex-direction: row;
+    align-items: stretch;
+    height: 12px;
+}
+
+.color-hue-segment {
+    flex-grow: 1;
+    flex-basis: 0px;
+}
+
+.color-hue-mark {
+    position: absolute;
+    top: -3px;
+    width: 8px;
+    height: 18px;
+    margin-left: -4px;
+    border-radius: 3px;
+    border: 2px solid #ffffff;
+    box-shadow: 0px 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.color-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
+.color-before, .color-now {
+    flex-grow: 1;
+    flex-basis: 0px;
+    height: 24px;
+    border-radius: 5px;
+    border: 1px solid var(--vx-field-line);
+}
+
+.color-hex {
+    width: 82px;
+    font-family: mono;
+    font-size: 11px;
+}
+
+.color-channel {
+    flex-direction: row;
+    align-items: center;
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    gap: 4px;
+}
+
+.color-channel-letter {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--vx-muted);
+}
+
+.color-channel-input {
+    flex-grow: 1;
+    min-width: 0px;
+    font-family: mono;
+    font-size: 11px;
+}
+
+.color-intensity-label {
+    color: var(--vx-muted);
+}
+
+.color-intensity-slider {
+    flex-grow: 1;
+}
+
+.color-intensity-input {
+    width: 52px;
+    font-family: mono;
+    font-size: 11px;
+}

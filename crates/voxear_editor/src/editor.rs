@@ -2,6 +2,7 @@
 //! view, which looks through the editor's own camera, and the Game view,
 //! which looks through the level's. Play mode is in [`play`].
 
+mod color_popup;
 mod docs_pictures;
 mod drawer;
 mod play;
@@ -230,6 +231,8 @@ pub struct Editor {
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
+    /// The colour picker, opened from a colour's swatch.
+    color_popup: color_popup::ColorPopup,
     picker_picks: Vec<(Entity, Prop, Pick)>,
     /// Previews of assets, of a Mesh Renderer's own mesh and material, and
     /// the Inspector's large one; see `previews`.
@@ -361,6 +364,8 @@ impl Editor {
         let parts =
             ["picker", "picker-title", "picker-field", "picker-list", "picker-empty"].map(|name| find(&ui, name));
         let picker = ObjectPicker::new(&mut ui, parts[0], parts[1], parts[2], parts[3], parts[4]);
+        let (color_panel, color_title) = (find(&ui, "color-popup"), find(&ui, "color-title"));
+        let color_popup = color_popup::ColorPopup::new(&mut ui, color_panel, color_title);
         let mut fly = FlyCamera::default();
         fly.set_speed(memory.settings.fly_speed);
         ui.set_text(nodes.status_time, &format!("Opened in {:.2} s", started.elapsed().as_secs_f32()));
@@ -413,6 +418,7 @@ impl Editor {
             profiler,
             build_window,
             picker,
+            color_popup,
             picker_picks: Vec::new(),
             asset_previews: AssetPreviews::default(),
             field_previews: previews::FieldPreviews::default(),
@@ -511,6 +517,7 @@ impl Editor {
         let playing = self.is_playing();
         // Before the Inspector, so what is picked shows in this frame.
         self.update_picker(renderer);
+        self.update_color_popup(renderer);
         {
             profile_scope!("Hierarchy");
             self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
@@ -717,6 +724,9 @@ impl Editor {
             AssetAction::SaveMaterial(path, data) => {
                 if let Err(error) = self.game.content.save_material(renderer, &path, &data) {
                     self.notify(&format!("Could not save {path}: {error:#}"));
+                }
+                if let Some(view) = self.inspector.asset_view() {
+                    view.show_swatches(&mut self.ui);
                 }
                 self.asset_changed(renderer, &path);
             }
@@ -1071,6 +1081,9 @@ impl Editor {
     /// a component. Each change is a step to undo, except while playing.
     fn row_action(&mut self, action: RowAction, renderer: &mut Renderer) {
         let Some(entity) = self.selected() else { return };
+        if let RowAction::EditColor(prop, swatch) = action {
+            return self.edit_color(entity, prop, swatch);
+        }
         if let RowAction::Browse(prop, anchor) = action {
             return self.browse(entity, prop, anchor);
         }
@@ -1111,7 +1124,7 @@ impl Editor {
                 }
             }
             RowAction::Remove(part) => props::remove(&mut self.game.engine.world, entity, &part),
-            RowAction::Browse(..) => {}
+            RowAction::Browse(..) | RowAction::EditColor(..) => {}
             RowAction::Pick(prop, pick) => {
                 props::pick(&mut self.game, Some(renderer), self.inspector.types(), entity, &prop, &pick);
             }
@@ -1406,6 +1419,14 @@ impl Editor {
                 self.released_handle = true;
                 return true;
             }
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && self.color_picker_open()
+            && key.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape)
+        {
+            self.close_color();
+            return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
             && key.state == ElementState::Pressed

@@ -1098,6 +1098,20 @@ mid-fade.
 - **`z-index`** above 0 draws an element and its children after everything else, higher ones last, as for the
   split handles. The pointer still finds elements in tree order.
 - **Shapes** (`ui.set_shapes`): lines with round ends and circles drawn on any element, for gizmos and graphs.
+- **Gradients** (`ui.set_gradient`): an element filled from one colour at the left to another at the right, and,
+  if asked, down to a third at the bottom, rounded as its corners are. The colours blend in sRGB, as people see
+  them, so a hue bar or a colour picker's square looks even.
+
+**The colour picker** *(implemented)*: `ColorPicker`, a group of ordinary elements built in code and asked each
+frame, as design tools and Unity have it.
+- A square of saturation (across) and brightness (down) for the hue picked on the bar under it, each with a mark
+  that follows a drag, which holds at the edges when the pointer goes past them.
+- The colour before and now side by side, its hex code, and its red, green and blue from 0 to 1 to type. A field
+  being typed in is left alone while the rest follow.
+- **HDR colours** add an Intensity in stops, a slider and a field from -10 to 10, which brightens the colour past
+  white in linear light. `PickedColor::from_linear` splits an HDR colour into a colour and its intensity (the
+  brightest channel above 1 becomes the stops), and `to_linear` puts them back, as Unity's HDR picker does.
+- `update` returns the colour when it changed that frame; the default theme styles it (`color-picker`).
 
 **Menus and dragging** *(implemented)*:
 - **Context clicks**: the secondary button's press and release on one element (`ui.pointer_secondary`,
@@ -1243,7 +1257,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **The Inspector for assets** (`asset_inspector`). Selecting an item in the Project shows it in the Inspector, in
   place of the Obj selected, as in Unity: its icon, name and kind, where it is (path, GUID and size), and what its
   kind holds. A material's colour, metallic, roughness and emission are edited in place and saved to its file,
-  showing at once wherever it is drawn (`Content::save_material`, `Renderer::update_material`); a script shows its
+  showing at once wherever it is drawn (`Content::save_material`, `Renderer::update_material`); its colour and
+  emission have swatches that open the colour picker, the emission's with its HDR intensity; a script shows its
   behaviour's fields with their starting values; a prefab or scene lists its Objs, and a level its scenes. Levels,
   scenes, prefabs and scripts have an Open button.
 - **The Scene view** renders into its panel through the editor's own camera, flown with the right mouse button
@@ -1290,7 +1305,7 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Components in the Inspector** (`props`): each component is a part, and each value in it a prop, read from the
   world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
   mesh it has) and its material (the default, or a `.material` in the project, which can also be dragged onto it from
-  the Project) in the object picker; a Light its type, colour (a swatch
+  the Project) in the object picker; a Light its type, colour (a swatch, which opens the colour picker under it,
   and sRGB channels), intensity, and the range and spot angles its type uses; a Camera its field of view, near plane
   and exposure. **Scripts** show the fields their build has (`voxear_engine::script_types`): when a script changes,
   the editor builds the scripts off its main thread and runs `Voxear.ScriptInfo` on the build, a small .NET tool
@@ -1322,6 +1337,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   the Project shows a large preview in the Inspector, which a drag turns. New previews start four a frame, so a
   folder of models opens without a hitch; saving a material draws its previews again, and files moving makes
   them anew.
+- **Picking colours** (`editor::color_popup`): a click on a colour's swatch opens the colour picker under it, for
+  a Light's colour or a material's Colour and Emission (HDR, with its intensity). What is picked shows at once; an
+  Obj's changes over the whole visit are one step to undo, and a material is saved as it changes. A press outside
+  it, or Escape, closes it.
 - **Keeping values after play.** A context click on the name, a Transform row or a component's value opens its menu:
   Reset where there is one, and while playing, **Keep value after play**, whose row is then marked in the accent.
   When play stops, each kept value of an Obj from the edited level (`Levels::counterpart`) is copied into the edited

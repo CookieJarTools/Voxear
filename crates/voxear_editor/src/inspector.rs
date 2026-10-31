@@ -44,19 +44,19 @@ impl Inspector {
         };
         let name = header(ui, self.root, world, entity);
 
-        let rows = section(ui, self.root, "Transform");
+        let rows = section(ui, self.root, "Transform", "transform", false);
         let position = vector_row(ui, rows, "Position");
         let rotation = vector_row(ui, rows, "Rotation");
         let scale = vector_row(ui, rows, "Scale");
         self.fields = Some(Fields { name, position, rotation, scale });
 
         if let Some(mesh) = world.get::<MeshRenderer>(entity) {
-            let rows = section(ui, self.root, "Mesh Renderer");
+            let rows = section(ui, self.root, "Mesh Renderer", "cube", true);
             pair(ui, rows, "Mesh", &format!("#{}", mesh.mesh.0));
             pair(ui, rows, "Material", &format!("#{}", mesh.material.0));
         }
         if let Some(light) = world.get::<Light>(entity) {
-            let rows = section(ui, self.root, "Light");
+            let rows = section(ui, self.root, "Light", "light", true);
             let kind = match light.kind {
                 LightKind::Directional => "Directional",
                 LightKind::Point => "Point",
@@ -70,13 +70,13 @@ impl Inspector {
             }
         }
         if let Some(camera) = world.get::<Camera>(entity) {
-            let rows = section(ui, self.root, "Camera");
+            let rows = section(ui, self.root, "Camera", "camera", true);
             pair(ui, rows, "Field of view", &format!("{}°", number(camera.fov_y_degrees)));
             pair(ui, rows, "Near", &number(camera.near));
         }
         for behaviour in world.get::<EditBehaviours>(entity).map(|b| b.0.clone()).unwrap_or_default() {
             let title = behaviour.type_name.rsplit('.').next().unwrap_or(&behaviour.type_name).to_string();
-            let rows = section(ui, self.root, &title);
+            let rows = section(ui, self.root, &title, "code", true);
             if behaviour.fields.is_empty() {
                 pair(ui, rows, "Script", &behaviour.type_name);
             }
@@ -122,9 +122,9 @@ impl Inspector {
     }
 }
 
-/// The Obj's icon, its name field, whether it is static and whether it is
-/// active, then its tag and layer. Returns the name field. Static, active,
-/// tag and layer show their defaults until Objs have them.
+/// The Obj's icon, its name field and whether it is active, then rows for
+/// its tag, layer and whether it is static. Returns the name field. Active,
+/// tag, layer and static show their defaults until Objs have them.
 fn header(ui: &mut Ui, root: NodeId, world: &World, entity: Entity) -> NodeId {
     let header = ui.panel(root, Style::column());
     ui.add_class(header, "inspector-header");
@@ -140,17 +140,14 @@ fn header(ui: &mut Ui, root: NodeId, world: &World, entity: Entity) -> NodeId {
     ui.icon(tile, kind);
     let name = ui.text_field(top, &world.get::<Name>(entity).map(|n| n.0.clone()).unwrap_or_default());
     ui.add_class(name, "obj-name");
-    let fixed = ui.toggle(top, "Static", false);
-    ui.add_class(fixed, "checkbox");
     ui.toggle(top, "", true);
-
-    let meta = ui.panel(header, Style::default());
-    ui.add_class(meta, "meta-row");
     for (label, choice) in [("Tag", "Untagged"), ("Layer", "Default")] {
-        let label = ui.add_label(meta, label);
-        ui.add_class(label, "meta-label");
-        ui.dropdown(meta, &[choice], 0);
+        let row = prop(ui, header, label);
+        ui.dropdown(row, &[choice], 0);
     }
+    let row = prop(ui, header, "Static");
+    let fixed = ui.toggle(row, "", false);
+    ui.add_class(fixed, "checkbox");
     name
 }
 
@@ -172,12 +169,22 @@ fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> [NodeId; 3] {
     })
 }
 
-/// A component's section: a line above it, then a foldout holding its rows.
-fn section(ui: &mut Ui, root: NodeId, title: &str) -> NodeId {
+/// A component's section: a line above it, then a foldout headed by its
+/// icon and title, and at the right a switch for whether it is enabled
+/// (shown on, until components can be turned off) or, for the Transform,
+/// which cannot be, a menu button. Returns where its rows go.
+fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, switch: bool) -> NodeId {
     let line = ui.panel(root, Style::default());
     ui.add_class(line, "divider");
     let foldout = ui.foldout(root, title, true);
     ui.add_class(foldout, "section");
+    ui.set_foldout_icon(foldout, icon);
+    let header = ui.foldout_header(foldout).expect("a foldout has a header");
+    if switch {
+        ui.toggle(header, "", true);
+    } else {
+        ui.icon_button(header, "more");
+    }
     ui.foldout_content(foldout).expect("a foldout has content")
 }
 

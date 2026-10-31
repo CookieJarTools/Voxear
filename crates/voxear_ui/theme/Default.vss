@@ -1,24 +1,26 @@
-/* Voxear's default look, Graphite + Abyss: near-black surfaces, thin
-   borders, one indigo accent, compact 28px rows, and shadows only on what
-   floats. Every Ui starts with it on its root. A sheet of your own overrides
-   any of it, and changing the variables is the quickest way to retheme. */
+/* Voxear's default look, after the editor concept: near-black panels on a
+   darker window, thin borders, one periwinkle accent, and compact 24px rows,
+   with shadows only on what floats. Every Ui starts with it on its root. A
+   sheet of your own overrides any of it, and changing the variables is the
+   quickest way to retheme. */
 
 :root {
-    --vx-bg: #08090a;
-    --vx-panel: #0f1011;
-    --vx-overlay: rgba(15, 16, 17, 0.82);
-    --vx-line: #1f2023;
-    --vx-line-2: #2e3035;
-    --vx-field: #141518;
-    --vx-field-line: #24262a;
-    --vx-hover: #17181b;
-    --vx-selected: #1c1e24;
-    --vx-seg-on: #24262c;
-    --vx-text: #f7f8f8;
-    --vx-text-2: #d0d6e0;
-    --vx-muted: #8a8f98;
-    --vx-accent: #5e6ad2;
-    --vx-accent-soft: rgba(94, 106, 210, 0.16);
+    --vx-bg: #0c0e10;
+    --vx-panel: #191a1c;
+    --vx-overlay: rgba(28, 29, 33, 0.92);
+    --vx-line: #25272b;
+    --vx-line-2: #2e3036;
+    --vx-field: #212227;
+    --vx-field-line: #2e3036;
+    --vx-hover: #232428;
+    --vx-selected: #2d3039;
+    --vx-seg-on: #393c45;
+    --vx-text: #eceded;
+    --vx-text-2: #c8ccd1;
+    --vx-muted: #9ea4ae;
+    --vx-accent: #7988ff;
+    --vx-accent-hover: #8a97ff;
+    --vx-accent-soft: rgba(121, 136, 255, 0.2);
     --vx-on-accent: #ffffff;
     --vx-success: #4cb782;
     --vx-x: #eb5757;
@@ -32,11 +34,11 @@
 }
 
 Button {
-    height: 28px;
-    padding: 0px 12px;
+    height: 24px;
+    padding: 0px 10px;
     gap: 6px;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: var(--vx-field);
     border: 1px solid var(--vx-field-line);
     color: var(--vx-text);
@@ -60,7 +62,7 @@ Button:focus {
 
 /* The one call to action on a surface. */
 .primary {
-    border-radius: 10px;
+    border-radius: 6px;
     background-color: var(--vx-accent);
     border-color: var(--vx-accent);
     color: var(--vx-on-accent);
@@ -68,16 +70,16 @@ Button:focus {
 }
 
 .primary:hover {
-    background-color: #6c77da;
-    border-color: #6c77da;
+    background-color: var(--vx-accent-hover);
+    border-color: var(--vx-accent-hover);
 }
 
 /* A square button holding one icon, quiet until the pointer finds it. */
 .icon-button {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     padding: 0px;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: transparent;
     border-color: transparent;
     color: var(--vx-muted);
@@ -99,14 +101,14 @@ Button:disabled, TextField:disabled, Toggle:disabled, Slider:disabled, Dropdown:
 }
 
 TextField {
-    padding: 0px 8px;
-    height: 26px;
+    padding: 0px 7px;
+    height: 24px;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: var(--vx-field);
     border: 1px solid var(--vx-field-line);
     color: var(--vx-text);
-    selection-color: rgba(94, 106, 210, 0.4);
+    selection-color: rgba(121, 136, 255, 0.4);
     transition: border-color var(--vx-fade);
 }
 
@@ -118,7 +120,7 @@ TextField:focus {
     border-color: var(--vx-accent);
 }
 
-/* Toggles are switches: a 28 by 16 pill with a white knob that slides over
+/* Toggles are switches: a 26 by 14 pill with a white knob that slides over
    when on. The `checkbox` class makes one a ticked box instead. */
 
 Toggle {
@@ -126,19 +128,19 @@ Toggle {
 }
 
 .toggle-box {
-    width: 28px;
-    height: 16px;
+    width: 26px;
+    height: 14px;
     padding: 2px;
     justify-content: flex-start;
-    border-radius: 8px;
-    background-color: var(--vx-line-2);
+    border-radius: 7px;
+    background-color: var(--vx-seg-on);
     transition: background-color var(--vx-fade);
 }
 
 .toggle-mark {
-    width: 12px;
-    height: 12px;
-    border-radius: 6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
     background-color: #ffffff;
 }
 
@@ -147,7 +149,7 @@ Toggle {
 }
 
 Toggle:hover .toggle-box {
-    background-color: #3a3c42;
+    background-color: #44474f;
 }
 
 Toggle:checked .toggle-box {
@@ -161,11 +163,11 @@ Toggle:focus .toggle-box {
 }
 
 .checkbox .toggle-box {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     padding: 0px;
     justify-content: center;
-    border-radius: 4px;
+    border-radius: 3px;
     background-color: var(--vx-field);
     border: 1px solid var(--vx-line-2);
 }
@@ -176,8 +178,8 @@ Toggle:focus .toggle-box {
 
 .checkbox .toggle-check {
     display: flex;
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     color: transparent;
 }
 
@@ -195,14 +197,14 @@ Toggle:focus .toggle-box {
 }
 
 Slider {
-    height: 24px;
+    height: 20px;
     gap: 10px;
 }
 
 .slider-track {
     height: 4px;
     border-radius: 2px;
-    background-color: var(--vx-line-2);
+    background-color: var(--vx-seg-on);
 }
 
 .slider-fill {
@@ -220,7 +222,7 @@ Slider {
 }
 
 .slider-value {
-    min-width: 32px;
+    min-width: 30px;
     font-family: mono;
     font-size: 11px;
     color: var(--vx-text-2);
@@ -228,15 +230,22 @@ Slider {
 }
 
 .foldout-header {
-    height: 28px;
+    height: 26px;
     gap: 6px;
 }
 
 .foldout-arrow {
+    width: 12px;
+    height: 12px;
+    color: var(--vx-muted);
+}
+
+.foldout-icon {
     color: var(--vx-muted);
 }
 
 .foldout-title {
+    flex-grow: 1;
     color: var(--vx-text);
     font-weight: 600;
 }
@@ -246,18 +255,18 @@ Foldout:focus .foldout-title {
 }
 
 .foldout-content {
-    padding-left: 20px;
+    padding-left: 18px;
     gap: 4px;
 }
 
-/* Rows: 28px, inset 6px from the list's sides, with a 2px accent bar down
-   the left of a selected one. */
+/* Rows: 24px, inset from the list's sides, with an accent bar down the
+   left of a selected one. */
 
 .list-row {
-    margin: 0px 6px;
-    padding: 0px 8px;
+    margin: 0px 4px;
+    padding: 0px 6px;
     gap: 6px;
-    border-radius: 7px;
+    border-radius: 5px;
     color: var(--vx-text-2);
     transition: background-color var(--vx-fade);
 }
@@ -274,8 +283,8 @@ Foldout:focus .foldout-title {
 .row-bar {
     display: none;
     left: 0px;
-    top: 6px;
-    bottom: 6px;
+    top: 2px;
+    bottom: 2px;
     width: 2px;
     border-radius: 1px;
     background-color: var(--vx-accent);
@@ -286,10 +295,11 @@ Foldout:focus .foldout-title {
 }
 
 .tree-row {
-    padding-left: 4px;
+    padding-left: 2px;
 }
 
 .tree-arrow {
+    height: 12px;
     color: var(--vx-muted);
 }
 
@@ -320,13 +330,19 @@ Foldout:focus .foldout-title {
 }
 
 .tab {
-    height: 28px;
-    padding: 0px 10px;
-    border-radius: 7px;
+    height: 22px;
+    padding: 0px 8px;
+    gap: 5px;
+    border-radius: 5px;
     border: 0px transparent;
     background-color: transparent;
     color: var(--vx-muted);
     font-weight: 500;
+}
+
+.tab > Icon {
+    width: 13px;
+    height: 13px;
 }
 
 .tab:hover {
@@ -340,10 +356,10 @@ Foldout:focus .foldout-title {
 }
 
 Dropdown {
-    height: 26px;
-    padding: 0px 8px;
+    height: 24px;
+    padding: 0px 7px;
     gap: 6px;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: var(--vx-field);
     border: 1px solid var(--vx-field-line);
     color: var(--vx-text);
@@ -368,23 +384,23 @@ Dropdown:focus {
     padding: 4px;
     max-height: 240px;
     overflow: auto;
-    border-radius: 10px;
-    background-color: var(--vx-panel);
+    border-radius: 7px;
+    background-color: var(--vx-field);
     border: 1px solid var(--vx-line-2);
-    box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.4);
+    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.4);
     color: var(--vx-text-2);
 }
 
 .dropdown-option {
-    height: 28px;
-    padding: 0px 8px;
+    height: 24px;
+    padding: 0px 7px;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: 5px;
     transition: background-color var(--vx-fade);
 }
 
 .dropdown-option:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-selected);
     color: var(--vx-text);
 }
 
@@ -392,22 +408,21 @@ Dropdown:focus {
     color: var(--vx-accent);
 }
 
-/* Segmented controls sit in an inset well; the segment that is on is
-   raised a little. */
+/* Segmented controls sit in a field-coloured well; the segment that is on
+   is raised a little. */
 
 Segmented {
-    height: 28px;
+    height: 24px;
     padding: 2px;
     gap: 2px;
-    border-radius: 7px;
-    background-color: var(--vx-bg);
-    border: 1px solid var(--vx-line);
+    border-radius: 6px;
+    background-color: var(--vx-field);
 }
 
 .segment {
-    height: 22px;
+    height: 20px;
     padding: 0px 8px;
-    border-radius: 5px;
+    border-radius: 4px;
     border: 0px transparent;
     background-color: transparent;
     color: var(--vx-muted);
@@ -424,7 +439,7 @@ Segmented {
     color: var(--vx-text);
 }
 
-/* Docking: panels are rounded near-black cards with gaps between them. The
+/* Docking: panels are rounded cards with narrow gaps between them. The
    gaps are the dividers, which light up when the pointer finds them. */
 
 DockSpace {
@@ -433,16 +448,16 @@ DockSpace {
 
 .dock-area {
     overflow: hidden;
-    border-radius: 12px;
+    border-radius: 8px;
     background-color: var(--vx-panel);
     border: 1px solid var(--vx-line);
 }
 
-/* The header: 40px of tabs with a line under it, drawn as a hard shadow
+/* The header: 32px of tabs with a line under it, drawn as a hard shadow
    so it needs no border of its own. */
 .dock-area > .tab-bar {
-    height: 40px;
-    padding: 0px 6px;
+    height: 32px;
+    padding: 0px 5px;
     box-shadow: 0px 1px 0px var(--vx-line);
 }
 
@@ -451,11 +466,11 @@ DockSpace .split-divider {
 }
 
 DockSpace .split-row > .split-divider {
-    width: 10px;
+    width: 6px;
 }
 
 DockSpace .split-column > .split-divider {
-    height: 10px;
+    height: 6px;
 }
 
 DockSpace .split-divider:hover, DockSpace .split-divider:active {
@@ -463,18 +478,18 @@ DockSpace .split-divider:hover, DockSpace .split-divider:active {
 }
 
 .dock-ghost {
-    height: 28px;
-    padding: 0px 10px;
+    height: 22px;
+    padding: 0px 8px;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: var(--vx-selected);
     border: 1px solid var(--vx-accent);
-    box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.4);
+    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.4);
     color: var(--vx-text);
 }
 
 .dock-preview {
-    border-radius: 12px;
+    border-radius: 8px;
     background-color: var(--vx-accent-soft);
     border: 1px solid var(--vx-accent);
 }

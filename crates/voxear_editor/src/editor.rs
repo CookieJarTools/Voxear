@@ -24,15 +24,15 @@ const SHEET: &str = include_str!("../ui/Editor.vss");
 /// Hierarchy on the left, the Scene in the middle over the Project and
 /// Console, and the Inspector on the right. The Project sits under the Scene,
 /// as in Unity, because its folders and files need the width.
-const LAYOUT: &str = "row(244, [hierarchy], row(-304, column(68%, [scene, game], [project, console]), [inspector]))";
+const LAYOUT: &str = "row(240, [hierarchy], row(-300, column(66%, [scene, game], [project, console]), [inspector]))";
 /// The window's background, which the 3D view's surroundings are cleared to.
-const BACKGROUND: u32 = 0x08090a;
+const BACKGROUND: u32 = 0x0c0e10;
 /// How often the status bar's numbers change.
 const STATUS_INTERVAL: f32 = 0.5;
 /// The axis gizmo: its middle, how far its axes reach, and their ends' size.
-const GIZMO_MIDDLE: f32 = 32.0;
-const GIZMO_REACH: f32 = 22.0;
-const GIZMO_END: f32 = 7.0;
+const GIZMO_MIDDLE: f32 = 15.0;
+const GIZMO_REACH: f32 = 11.0;
+const GIZMO_END: f32 = 2.5;
 
 /// Elements the editor reads and writes, found by name in Editor.vui.
 struct Nodes {
@@ -40,11 +40,10 @@ struct Nodes {
     frame: NodeId,
     command: NodeId,
     gizmo: NodeId,
-    letters: [NodeId; 3],
     stats: NodeId,
-    status_left: NodeId,
     status_time: NodeId,
-    status_right: NodeId,
+    status_fps: NodeId,
+    status_memory: NodeId,
     buttons: [(NodeId, &'static str); 4],
 }
 
@@ -70,7 +69,6 @@ pub struct Editor {
     scale: f32,
     /// Control, or Command on macOS, is held.
     control: bool,
-    branch: Option<String>,
     status: (u32, f32),
 }
 
@@ -97,22 +95,15 @@ impl Editor {
         let document =
             ui.load_markup(ui_root, "Editor.vui", MARKUP, &mut load).expect("the editor's markup is built in");
         let find = |ui: &Ui, name: &str| ui.find(document, name).unwrap_or_else(|| panic!("Editor.vui has no {name}"));
-        let gizmo = find(&ui, "gizmo");
-        let letters = ["X", "Y", "Z"].map(|axis| {
-            let letter = ui.add_label(gizmo, axis);
-            ui.add_class(letter, "gizmo-letter");
-            letter
-        });
         let nodes = Nodes {
             viewport: find(&ui, "viewport"),
             frame: find(&ui, "viewport-frame"),
             command: find(&ui, "command"),
-            gizmo,
-            letters,
+            gizmo: find(&ui, "gizmo"),
             stats: find(&ui, "scene-stats"),
-            status_left: find(&ui, "status-left"),
             status_time: find(&ui, "status-time"),
-            status_right: find(&ui, "status-right"),
+            status_fps: find(&ui, "status-fps"),
+            status_memory: find(&ui, "status-memory"),
             buttons: [
                 (find(&ui, "play"), "Play"),
                 (find(&ui, "pause"), "Pause"),
@@ -124,6 +115,11 @@ impl Editor {
         ui.set_checked(rail_scene, true);
         let avatar = find(&ui, "avatar");
         ui.set_text(avatar, &initial());
+        let branch = git_branch(&root);
+        let branch_name = find(&ui, "status-branch-name");
+        ui.set_text(branch_name, branch.as_deref().unwrap_or_default());
+        let branch_shown = find(&ui, "status-branch");
+        ui.set_visible(branch_shown, branch.is_some());
         let dock = find(&ui, "dock");
         ui.set_dock_layout(dock, LAYOUT).expect("the default layout is valid");
         let (tree, filter) = (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"));
@@ -152,7 +148,6 @@ impl Editor {
             pointer: None,
             scale: 1.0,
             control: false,
-            branch: git_branch(&root),
             status: (0, 0.0),
         })
     }
@@ -297,7 +292,8 @@ impl Editor {
     }
 
     /// Turns the axis gizmo with the Scene camera: each world axis drawn
-    /// where the camera sees it, the ones nearer the viewer on top.
+    /// where the camera sees it, the ones nearer the viewer on top, and a
+    /// faint dot where each points away.
     fn update_gizmo(&mut self) {
         let Some(rotation) = self.game.engine.world.get::<Transform>(self.camera).map(|t| t.rotation) else {
             return;
@@ -320,14 +316,12 @@ impl Editor {
         for &(i, [x, y], _) in &axes {
             let back = [middle[0] - x * GIZMO_REACH, middle[1] - y * GIZMO_REACH];
             let faded = colors[i].with_alpha(0x66);
-            shapes.push(Shape::Circle { center: back, radius: GIZMO_END - 3.0, fill: faded, border: None });
+            shapes.push(Shape::Circle { center: back, radius: GIZMO_END - 0.5, fill: faded, border: None });
         }
         for &(i, [x, y], _) in &axes {
             let end = [middle[0] + x * GIZMO_REACH, middle[1] + y * GIZMO_REACH];
-            shapes.push(Shape::Line { from: middle, to: end, width: 1.5, color: colors[i] });
+            shapes.push(Shape::Line { from: middle, to: end, width: 2.0, color: colors[i] });
             shapes.push(Shape::Circle { center: end, radius: GIZMO_END, fill: colors[i], border: None });
-            let style = format!("left: {}px; top: {}px", end[0] - GIZMO_END, end[1] - GIZMO_END);
-            self.ui.set_inline_style(self.nodes.letters[i], &style);
         }
         self.ui.set_shapes(self.nodes.gizmo, shapes);
     }
@@ -340,21 +334,13 @@ impl Editor {
         }
         let fps = self.status.0 as f32 / self.status.1.max(1e-3);
         self.status = (0, 0.0);
-        let level = self.game.levels.current().unwrap_or("no level").to_string();
-        let objs = self.game.engine.world.query_ref::<&Name>().without::<EditorOnly>().into_iter().count();
-        self.ui.set_text(self.nodes.status_left, &format!("Ready  ·  {level}  ·  {objs} Objs"));
-        let mut right = format!("Vulkan  ·  {fps:.0} fps");
-        if let Some(megabytes) = resident_megabytes() {
-            right.push_str(&format!("  ·  {megabytes:.0} MB"));
-        }
-        if let Some(branch) = &self.branch {
-            right.push_str(&format!("  ·  {branch}"));
-        }
-        self.ui.set_text(self.nodes.status_right, &right);
+        self.ui.set_text(self.nodes.status_fps, &format!("{fps:.0} fps"));
+        let memory = resident_megabytes().map(|mb| format!("{mb:.0} MB")).unwrap_or_default();
+        self.ui.set_text(self.nodes.status_memory, &memory);
         let stats = renderer.stats();
         let gpu_ms: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
         let drawn = stats.drawn_early + stats.drawn_late;
-        let chip = format!("{} objs  ·  {drawn} draws  ·  {gpu_ms:.2} ms", stats.instances);
+        let chip = format!("{} objs   {drawn} draws   {gpu_ms:.2} ms GPU", stats.instances);
         self.ui.set_text(self.nodes.stats, &chip);
     }
 }

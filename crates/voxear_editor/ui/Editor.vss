@@ -1,12 +1,13 @@
-/* The editor's look, Graphite + Abyss: near-black panels with 10px gaps,
-   thin borders, one indigo accent, Inter for text and JetBrains Mono for
-   numbers. Tokens and controls come from the default theme; this sheet lays
-   the editor out and dresses its panels. */
+/* The editor's look, after the editor concept: near-black panels with 6px
+   gaps on a darker window, thin borders, one periwinkle accent, Inter for
+   text and JetBrains Mono for numbers, and compact rows. Tokens and
+   controls come from the default theme; this sheet lays the editor out and
+   dresses its panels. */
 
 :root {
-    --ed-logo-top: #9aa2ee;
-    --ed-logo-left: #5e6ad2;
-    --ed-logo-right: #3d4596;
+    --ed-logo-top: #aab3ff;
+    --ed-logo-left: #7988ff;
+    --ed-logo-right: #4c56b8;
     --ed-warn: #e2b340;
 }
 
@@ -39,23 +40,23 @@
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    height: 52px;
-    padding: 0px 10px;
-    column-gap: 10px;
+    height: 40px;
+    padding: 0px 8px;
+    column-gap: 8px;
 }
 
 .topbar-left {
     flex-direction: row;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     min-width: 0px;
     overflow: hidden;
 }
 
 .logo {
-    width: 20px;
-    height: 20px;
-    margin-left: 6px;
+    width: 18px;
+    height: 18px;
+    margin-left: 4px;
     flex-shrink: 0;
 }
 
@@ -63,8 +64,8 @@
     position: absolute;
     left: 0px;
     top: 0px;
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
 }
 
 .logo-top {
@@ -88,14 +89,13 @@
 
 .workspaces {
     padding: 0px;
-    border-width: 0px;
     background-color: transparent;
 }
 
 .workspaces .segment {
-    height: 28px;
-    padding: 0px 10px;
-    border-radius: 7px;
+    height: 24px;
+    padding: 0px 8px;
+    border-radius: 5px;
     font-weight: 500;
 }
 
@@ -107,83 +107,94 @@
 .command {
     flex-direction: row;
     align-items: center;
-    width: 300px;
-    height: 30px;
-    padding: 0px 6px 0px 10px;
-    gap: 8px;
-    margin-left: 4px;
+    width: 260px;
+    height: 26px;
+    padding: 0px 5px 0px 9px;
+    gap: 7px;
+    margin-left: 6px;
     flex-shrink: 1;
-    border-radius: 10px;
+    border-radius: 6px;
     background-color: var(--vx-field);
     border: 1px solid var(--vx-field-line);
 }
 
 .command-icon, .search-icon {
+    width: 13px;
+    height: 13px;
     color: var(--vx-muted);
     flex-shrink: 0;
 }
 
 .command-field, .search-field, .axis-input {
     flex-grow: 1;
-    height: 22px;
+    height: 20px;
     padding: 0px;
     border-width: 0px;
     background-color: transparent;
 }
 
 .kbd {
-    height: 18px;
-    padding: 0px 5px;
+    height: 16px;
+    padding: 0px 4px;
     flex-shrink: 0;
-    border-radius: 5px;
+    border-radius: 4px;
     border: 1px solid var(--vx-line-2);
     font-family: mono;
     font-size: 10px;
+    line-height: 14px;
     color: var(--vx-muted);
 }
 
+/* Play, pause and step in a pill; play is the accent. */
 .play {
     flex-direction: row;
     align-items: center;
-    padding: 3px;
-    gap: 2px;
-    border-radius: 10px;
-    background-color: var(--vx-panel);
-    border: 1px solid var(--vx-line);
+    padding: 2px 4px;
+    gap: 4px;
+    border-radius: 7px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+}
+
+.play > Button {
+    width: 28px;
+    height: 22px;
+}
+
+.play Icon {
+    width: 11px;
+    height: 11px;
 }
 
 .play-button {
-    background-color: var(--vx-accent);
-    color: var(--vx-on-accent);
+    color: var(--vx-accent);
 }
 
 .play-button:hover {
-    background-color: #6c77da;
-    color: var(--vx-on-accent);
+    color: var(--vx-accent-hover);
 }
 
 .topbar-right {
     flex-direction: row;
     align-items: center;
     justify-content: flex-end;
-    gap: 10px;
+    gap: 8px;
 }
 
 .avatar {
-    width: 26px;
-    height: 26px;
-    border-radius: 13px;
-    background-color: var(--vx-seg-on);
-    border: 1px solid var(--vx-line-2);
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background-color: var(--vx-accent-soft);
     color: var(--vx-text);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     text-align: center;
 }
 
 .build {
-    height: 30px;
-    padding: 0px 14px;
+    height: 26px;
+    padding: 0px 12px;
 }
 
 /* The body: the rail, then the dock. */
@@ -192,30 +203,27 @@
     flex-direction: row;
     flex-grow: 1;
     flex-basis: 0px;
-    padding: 0px 10px;
-    gap: 10px;
+    padding: 0px 6px 0px 0px;
+    gap: 2px;
 }
 
 .rail {
-    width: 52px;
-    padding: 6px 0px;
+    width: 44px;
+    padding: 2px 0px 4px 0px;
     gap: 4px;
     align-items: center;
     flex-shrink: 0;
-    border-radius: 12px;
-    background-color: var(--vx-panel);
-    border: 1px solid var(--vx-line);
 }
 
 .rail-button {
-    width: 40px;
-    height: 40px;
-    border-radius: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
 }
 
 .rail-button > Icon {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
 }
 
 .dock {
@@ -223,42 +231,69 @@
 }
 
 .dock-content {
-    padding-top: 8px;
-    gap: 6px;
+    padding-top: 6px;
+    gap: 4px;
 }
 
-/* A panel's own buttons, at the right of its header. */
+/* A panel's own controls, at the right of its header. */
 .panel-actions {
     position: absolute;
-    top: -40px;
-    right: 6px;
-    height: 40px;
+    top: -32px;
+    right: 4px;
+    height: 32px;
     flex-direction: row;
     align-items: center;
     gap: 2px;
 }
 
+.header-button {
+    height: 22px;
+    padding: 0px 7px;
+    border-width: 0px;
+    background-color: transparent;
+    color: var(--vx-text-2);
+    font-weight: 400;
+}
+
+.header-button:hover {
+    background-color: var(--vx-hover);
+}
+
+.shading {
+    height: 22px;
+    padding: 0px 6px;
+    gap: 4px;
+    border-width: 0px;
+    background-color: transparent;
+}
+
+.shading:hover {
+    background-color: var(--vx-hover);
+}
+
 .search {
     flex-direction: row;
     align-items: center;
-    height: 28px;
-    margin: 0px 10px;
-    padding: 0px 8px;
+    height: 24px;
+    margin: 0px 6px;
+    padding: 0px 7px;
     gap: 6px;
     flex-shrink: 0;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: var(--vx-field);
     border: 1px solid var(--vx-field-line);
 }
 
 .placeholder {
     color: var(--vx-muted);
-    padding: 4px 12px;
+    padding: 4px 10px;
 }
 
 /* Rows of the Hierarchy and the Project. */
 
 .row-icon {
+    width: 13px;
+    height: 13px;
     color: var(--vx-muted);
     flex-shrink: 0;
 }
@@ -299,41 +334,45 @@
     position: absolute;
     display: none;
     pointer-events: none;
-    border-radius: 12px;
+    border-radius: 8px;
     border: 1px solid var(--vx-line);
-    box-shadow: 0px 0px 0px 5px var(--vx-bg);
+    box-shadow: 0px 0px 0px 4px var(--vx-bg);
 }
 
 .overlay {
     position: absolute;
-    border-radius: 12px;
+    border-radius: 7px;
     background-color: var(--vx-overlay);
     border: 1px solid var(--vx-line-2);
-    box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.4);
+    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .tools {
-    left: 10px;
-    top: 10px;
+    left: 8px;
+    top: 8px;
     flex-direction: row;
     align-items: center;
-    padding: 4px;
-    gap: 4px;
+    padding: 2px;
+    gap: 2px;
 }
 
 .tool-modes {
-    height: 28px;
+    height: 24px;
     padding: 0px;
     gap: 2px;
-    border-width: 0px;
     background-color: transparent;
 }
 
 .tool-modes .segment {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     padding: 0px;
-    border-radius: 8px;
+    border-radius: 5px;
+}
+
+.tool-modes .segment > Icon {
+    width: 13px;
+    height: 13px;
 }
 
 .tool-modes .segment:checked {
@@ -344,15 +383,16 @@
 
 .tool-divider {
     width: 1px;
-    height: 18px;
-    margin: 0px 2px;
+    height: 14px;
+    margin: 0px 3px;
     background-color: var(--vx-line-2);
 }
 
 .tool-toggle {
-    height: 28px;
-    padding: 0px 8px;
-    border-radius: 8px;
+    height: 24px;
+    padding: 0px 7px;
+    gap: 5px;
+    border-radius: 5px;
     border-width: 0px;
     background-color: transparent;
     color: var(--vx-text-2);
@@ -360,6 +400,8 @@
 }
 
 .tool-toggle > Icon {
+    width: 13px;
+    height: 13px;
     color: var(--vx-muted);
 }
 
@@ -368,70 +410,66 @@
 }
 
 .chip {
-    left: 10px;
-    bottom: 10px;
-    height: 28px;
-    padding: 0px 10px;
-    border-radius: 10px;
+    left: 8px;
+    bottom: 8px;
+    height: 24px;
+    padding: 0px 9px;
+    border-radius: 7px;
     font-family: mono;
     font-size: 11px;
     color: var(--vx-text-2);
 }
 
 .gizmo-box {
-    right: 10px;
-    bottom: 10px;
-    padding: 6px 6px 4px 6px;
+    right: 8px;
+    bottom: 8px;
+    flex-direction: row;
     align-items: center;
+    padding: 3px 10px 3px 4px;
+    gap: 6px;
 }
 
 .gizmo {
-    width: 64px;
-    height: 64px;
-}
-
-.gizmo-letter {
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 14px;
-    text-align: center;
-    color: #08090a;
+    width: 30px;
+    height: 30px;
 }
 
 .projection {
-    font-size: 11px;
-    color: var(--vx-muted);
+    color: var(--vx-text-2);
 }
 
 /* The Inspector. */
 
 .inspector {
-    padding: 12px 12px 16px 12px;
+    padding: 8px 10px 12px 10px;
 }
 
 .inspector-header {
-    gap: 10px;
-    padding-bottom: 12px;
+    gap: 2px;
+    padding-bottom: 8px;
 }
 
 .header-row {
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    margin-bottom: 4px;
 }
 
 .obj-tile {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: var(--vx-accent-soft);
     color: var(--vx-accent);
+}
+
+.obj-tile > Icon {
+    width: 13px;
+    height: 13px;
 }
 
 .obj-name {
@@ -440,19 +478,7 @@
     font-weight: 600;
 }
 
-.meta-row {
-    display: grid;
-    grid-template-columns: auto minmax(0px, 1fr) auto minmax(0px, 1fr);
-    column-gap: 8px;
-    align-items: center;
-}
-
-.meta-row > Dropdown {
-    min-width: 0px;
-    overflow: hidden;
-}
-
-.meta-label, .prop-label {
+.prop-label {
     color: var(--vx-muted);
 }
 
@@ -463,41 +489,46 @@
 }
 
 .section > .foldout-header {
-    height: 36px;
+    height: 30px;
 }
 
 .section > .foldout-content {
     padding-left: 0px;
-    padding-bottom: 10px;
+    padding-bottom: 8px;
     gap: 0px;
 }
 
-.section-icon {
-    color: var(--vx-muted);
+.section .foldout-icon {
+    width: 13px;
+    height: 13px;
 }
 
 .prop {
     display: grid;
-    grid-template-columns: 88px minmax(0px, 1fr);
-    column-gap: 8px;
+    grid-template-columns: 80px minmax(0px, 1fr);
+    column-gap: 6px;
     align-items: center;
-    min-height: 28px;
+    min-height: 26px;
+}
+
+.prop > Dropdown, .prop > TextField {
+    min-width: 0px;
 }
 
 .vector {
     display: grid;
     grid-template-columns: repeat(3, minmax(0px, 1fr));
-    column-gap: 6px;
+    column-gap: 4px;
 }
 
 .axis-field {
     flex-direction: row;
     align-items: center;
-    height: 26px;
-    padding-left: 7px;
-    gap: 5px;
+    height: 22px;
+    padding-left: 6px;
+    gap: 4px;
     min-width: 0px;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: var(--vx-field);
     border: 1px solid var(--vx-field-line);
 }
@@ -533,8 +564,8 @@
 }
 
 .add-component {
-    margin-top: 14px;
-    height: 32px;
+    margin-top: 10px;
+    height: 28px;
     border: 1px dashed var(--vx-line-2);
     background-color: transparent;
     color: var(--vx-muted);
@@ -567,8 +598,8 @@ DockSpace .project-split > .split-divider {
 .breadcrumb {
     flex-direction: row;
     align-items: center;
-    height: 28px;
-    padding: 0px 12px;
+    height: 24px;
+    padding: 0px 10px;
     gap: 6px;
     flex-shrink: 0;
 }
@@ -594,7 +625,7 @@ DockSpace .project-split > .split-divider {
 
 .tile-row {
     padding: 0px 2px;
-    gap: 4px;
+    gap: 2px;
     align-items: stretch;
 }
 
@@ -603,12 +634,12 @@ DockSpace .project-split > .split-divider {
 }
 
 .tile {
-    width: 76px;
-    padding: 8px 4px 6px 4px;
-    gap: 6px;
+    width: 70px;
+    padding: 6px 3px 4px 3px;
+    gap: 4px;
     align-items: center;
     overflow: hidden;
-    border-radius: 8px;
+    border-radius: 6px;
     transition: background-color var(--vx-fade);
 }
 
@@ -621,8 +652,8 @@ DockSpace .project-split > .split-divider {
 }
 
 .tile-icon {
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     color: var(--vx-muted);
 }
 
@@ -639,7 +670,7 @@ DockSpace .project-split > .split-divider {
 /* The Console. */
 
 .console .list-row {
-    padding: 0px 10px;
+    padding: 0px 8px;
 }
 
 .log-line {
@@ -657,14 +688,15 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-x);
 }
 
-/* The status bar: a light, what the editor is doing, and the numbers. */
+/* The status bar: a light and what the editor is doing on the left, the
+   numbers on the right. */
 
 .statusbar {
     flex-direction: row;
     align-items: center;
-    height: 26px;
-    padding: 0px 14px;
-    gap: 8px;
+    height: 22px;
+    padding: 0px 12px;
+    gap: 12px;
     font-size: 11px;
     color: var(--vx-muted);
 }
@@ -672,6 +704,7 @@ DockSpace .project-split > .split-divider {
 .status-dot {
     width: 6px;
     height: 6px;
+    margin-right: -6px;
     border-radius: 3px;
     background-color: var(--vx-success);
 }
@@ -680,6 +713,13 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-text-2);
 }
 
-.status-numbers {
-    font-family: mono;
+.status-branch {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+}
+
+.status-branch > Icon {
+    width: 12px;
+    height: 12px;
 }

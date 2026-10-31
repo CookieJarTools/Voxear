@@ -92,7 +92,7 @@ fn the_project_shows_folders_as_tiles_and_opens_them() {
         ui.pointer_button(false);
     }
     editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
-    assert_eq!(editor.ui.text(path), "Hello  ›  Models", "a double click opens the folder");
+    assert_eq!(editor.ui.text(path), "Hello  /  Models", "a double click opens the folder");
     let folders = editor.ui.find(root, "project-folders").unwrap();
     assert_eq!(editor.ui.selection(folders).len(), 1, "and the tree marks it");
 }

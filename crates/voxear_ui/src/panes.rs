@@ -195,14 +195,27 @@ impl Ui {
 
     /// Adds a tab titled `title`, and returns its page, for what it shows.
     pub fn add_tab(&mut self, tabs: NodeId, title: &str) -> NodeId {
+        self.add_tab_with_icon(tabs, title, None)
+    }
+
+    /// Adds a tab showing an icon before its title, and returns its page.
+    pub fn add_tab_with_icon(&mut self, tabs: NodeId, title: &str, icon: Option<&str>) -> NodeId {
         let Some(Control::Tabs(state)) = self.element(tabs).and_then(|e| e.control.as_ref()) else { return tabs };
         let (bar, pages, index) = (NodeId(state.bar), NodeId(state.pages), state.tabs.len());
-        let header = Element {
-            text: Some(Text::new(title)),
-            control: Some(Control::Tab { tabs: tabs.0, index }),
-            ..Element::new(Kind::Button, Style::default())
+        let control = Some(Control::Tab { tabs: tabs.0, index });
+        let header = match icon {
+            None => {
+                let element =
+                    Element { text: Some(Text::new(title)), control, ..Element::new(Kind::Button, Style::default()) };
+                self.add(bar, element)
+            }
+            Some(icon) => {
+                let header = self.add(bar, Element { control, ..Element::new(Kind::Button, Style::row()) });
+                self.icon(header, icon);
+                self.add_label(header, title);
+                header
+            }
         };
-        let header = self.add(bar, header);
         self.add_class(header, "tab");
         let page = self.panel(pages, Style::column().grow());
         self.add_class(page, "tab-page");

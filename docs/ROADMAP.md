@@ -188,7 +188,8 @@ Done so far:
 - **The editor, first slice** (`vox editor`): edit mode without scripts, the concept's layout with the top bar,
   docked Hierarchy, Project, Scene, Console and Inspector, and the status bar. The Scene view renders into its
   panel through the editor's own fly camera, and the Inspector edits the selected Obj's name and Transform.
-- **The Graphite + Abyss design:** the default theme and the editor follow the design's tokens, type and shapes:
+- **The editor's design:** the default theme and the editor follow the design's tokens, type and shapes (the
+  Graphite + Abyss spec, then the concept's colours and a more compact density):
   the top bar with the mark, workspaces, command bar and play pill, an icon rail, 40px panel headers with their
   own buttons, 28px rows with an accent bar on the selected one, viewport overlays (tool strip, stats chip and an
   axis gizmo that turns with the camera), the Inspector's header, sections and coloured axis fields, and the

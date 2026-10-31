@@ -1009,8 +1009,11 @@ mid-fade.
 - **`border-style: dashed`** (or `dashed` in `border`) dashes a border, for drop targets such as Add Component.
 - **`line-height`** sets the height of each line of text, so 12px text sits on a 16px line as in the design.
 - **Shapes** (`ui.set_shapes`): lines with round ends and circles drawn on any element, for gizmos and graphs.
+- **Icons in tabs and foldouts:** a `DockPanel`'s `icon` (or `add_tab_with_icon`) shows before its title, and
+  `set_foldout_icon` before a foldout's; `foldout_header` takes buttons or a switch after the title, which work
+  without opening or closing it.
 
-**The default theme** (`crates/voxear_ui/theme/Default.vss`) is on every `Ui`'s root: the Graphite + Abyss design
+**The default theme** (`crates/voxear_ui/theme/Default.vss`) is on every `Ui`'s root: the editor's design
 (see the editor's design below), with its tokens as `--vx-*` variables, for buttons, fields, switches and
 checkboxes, sliders, segmented controls, foldouts, list rows, split dividers, tabs, dropdowns and docking, with
 120 ms ease-out transitions on what the pointer touches. Text is 12px Inter on a 16px line. A sheet of your own
@@ -1041,15 +1044,16 @@ surfaces in 3D.
 ## Editor
 
 **What exists now** *(first slice, in `crates/voxear_editor`)*: `vox editor <project>` opens the project's start
-level in **edit mode**, in the Graphite + Abyss design, built in Voxear UI:
+level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Edit mode:** Objs load with their behaviours kept as data (`EditBehaviours`), so no script runs and a project
   opens without its scripts built, as in Unity.
-- **The top bar** has the Voxear mark, the workspaces, the command bar (Ctrl+K), play, pause and step in an inset
-  pill, the user's avatar and the Build button. A **rail** of icons runs down the left, with source control at the
+- **The top bar** has the Voxear mark, the workspaces, the command bar (Ctrl+K), play, pause and step in a pill,
+  the user's avatar and the Build button. A **rail** of icons runs down the left, with source control at the
   bottom.
 - **Docked panels:** the Hierarchy (Objs by parent, with type icons, child counts and a filter), the Scene view and
-  a Game tab, the Project and the Console under them, and the Inspector on the right at 304px. Each panel has a
-  40px header of tabs with its own buttons on the right. They can all be dragged around, as docking allows.
+  a Game tab, the Project and the Console under them, and the Inspector on the right at 300px. Each panel has a
+  32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
+  shading menu, Gizmos and full screen. They can all be dragged around, as docking allows.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
   or more, they show as tiles; narrower, as rows with each file's size. Selecting a folder in the tree opens it,
@@ -1060,14 +1064,15 @@ level in **edit mode**, in the Graphite + Abyss design, built in Voxear UI:
   around it to the window's background (`Renderer::set_clear_color`), and looks through a chosen camera
   (`ViewOptions::camera`). A frame drawn over its edge rounds its corners to the panel's. Over it float a tool
   strip (select, move, rotate and scale, Pivot, Global and grid snap), a stats chip, and an axis gizmo that turns
-  with the camera.
-- **The Inspector** has a header with the Obj's icon, its name, Static and an active switch, then Tag and Layer
-  (shown, not yet stored: Objs have no tags or layers yet). The Transform and each component are sections divided
-  by lines, with an 88px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
+  with the camera. The shading menu, Gizmos, full screen and the tool strip are not wired up yet.
+- **The Inspector** has a header with the Obj's icon, its name and an active switch, then rows for Tag, Layer and
+  Static (shown, not yet stored: Objs have no tags or layers yet). The Transform and each component are sections
+  divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a menu) on
+  the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
   letters, applied as they are typed, and changes made elsewhere show in fields not being edited. A dashed Add
   Component button ends it.
-- **The status bar** shows a ready light, the level, the Obj count and how long the project took to open, then
-  the renderer, frame rate, memory and git branch.
+- **The status bar** shows a ready light and how long the project took to open, then the renderer, frame rate,
+  memory and git branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
 Play mode with state restore, saving scenes, gizmos, undo, the command palette and the Odin-style inspector
@@ -1154,35 +1159,38 @@ reflection, and an analyzer reports a condition that names a missing member as a
 `AttributeDrawer<TAttribute>` for your own attributes. Drawers chain as Odin's do, with each decorator wrapping the
 next, so `[InfoBox]` above a custom drawer still shows.
 
-### The design: Graphite + Abyss
+### The design
 
-The editor's visual specification, which the default theme and the editor's sheet implement.
+The editor's visual specification, which the default theme and the editor's sheet implement. It began as the
+Graphite + Abyss spec and now takes its colours and density from the editor concept: compact, with narrow gaps.
 
 | Token | Value | Token | Value |
 |---|---|---|---|
-| bg | `#08090A` | text | `#F7F8F8` |
-| panel | `#0F1011` | text-2 | `#D0D6E0` |
-| overlay | `rgba(15,16,17,.82)` | muted | `#8A8F98` |
-| line | `#1F2023` | accent | `#5E6AD2` |
-| line-2 | `#2E3035` | accent-soft | `rgba(94,106,210,.16)` |
-| field | `#141518` | on-accent | `#FFFFFF` |
-| field-line | `#24262A` | success | `#4CB782` |
-| hover | `#17181B` | axis X / Y / Z | `#EB5757` / `#4CB782` / `#5E8BF0` |
-| selected | `#1C1E24` | seg-on | `#24262C` |
+| bg (window) | `#0C0E10` | text | `#ECEDED` |
+| panel | `#191A1C` | text-2 | `#C8CCD1` |
+| overlay | `rgba(28,29,33,.92)` | muted | `#9EA4AE` |
+| line | `#25272B` | accent | `#7988FF` |
+| line-2 | `#2E3036` | accent-soft | `rgba(121,136,255,.2)` |
+| field | `#212227` | on-accent | `#FFFFFF` |
+| field-line | `#2E3036` | success | `#4CB782` |
+| hover | `#232428` | axis X / Y / Z | `#EB5757` / `#4CB782` / `#5E8BF0` |
+| selected | `#2D3039` | seg-on | `#393C45` |
 
 - **Type:** Inter 400, 500 and 600 at 12px on a 16px line; titles 12px 600; numbers in JetBrains Mono 11px; small
   labels 11px muted.
-- **Shape:** panels are rounded 12, controls 7, the command bar and primary button 10. Gaps and padding are 10px.
-  Rows are 28px, panel headers 40px, the top bar 52px and the status bar 26px. Icons are 14px with a 1.5px round
-  stroke, 18px in the rail; trees indent 14px.
-- **Principles:** one accent; thin borders and gaps rather than heavy chrome; shadows only on what floats over
-  the viewport; mono for numbers.
+- **Shape and density:** panels are rounded 8 with 6px gaps between them; controls are 24px tall and rounded 5;
+  rows are 24px, panel headers 32px with 22px tabs, the top bar 40px and the status bar 22px. Icons are 13 to
+  14px with a 1.5px round stroke, 16px in the rail; trees indent 14px.
+- **The top bar's play controls** sit in a field-coloured pill, play in the accent and pause and step muted, as
+  icons rather than filled buttons.
+- **Principles:** one accent; thin borders and narrow gaps rather than heavy chrome; shadows only on what floats
+  over the viewport; mono for numbers.
 - **Not yet:** the overlays' backdrop blur (they are translucent without it), and the concept's Voxel Brush panel,
   which is example content.
 
 ### The editor concept
 
-The design target for M3's **look and layout**, whose style the Graphite + Abyss design above now defines. The concept's content is only an example scene: its voxel
+The design target for M3's **look and layout**, whose style the design above now defines. The concept's content is only an example scene: its voxel
 terrain, brush tools and asset names are placeholders, not planned features.
 
 - **Top bar:**

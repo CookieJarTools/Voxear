@@ -1,5 +1,5 @@
 //! The Voxear editor: the engine with docked panels around it, built with
-//! Voxear UI, in the Graphite + Abyss design (docs/ARCHITECTURE.md).
+//! Voxear UI, in the look of the editor concept (docs/ARCHITECTURE.md, "The design").
 //!
 //! This first slice opens a project's start level in **edit mode** (no
 //! script runs), with:

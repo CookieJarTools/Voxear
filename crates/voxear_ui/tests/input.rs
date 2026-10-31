@@ -181,6 +181,6 @@ fn controls_come_from_markup_with_the_default_theme() {
     assert!(ui.is_checked(find("fly")));
     assert_eq!(ui.slider_value(find("speed")), 6.0);
     assert!(ui.is_open(find("movement")));
-    assert!(ui.rect(find("name"))[3] >= 26.0, "the theme's field height");
+    assert_eq!(ui.rect(find("name"))[3], 24.0, "the theme's field height");
     assert!(ui.take_warnings().is_empty(), "the theme and the markup are clean");
 }

@@ -454,16 +454,16 @@ fn controls_draw_with_the_default_theme() {
         let i = ((y as u32 * width + x as u32) * 4) as usize;
         [pixels[i], pixels[i + 1], pixels[i + 2]]
     };
-    let accent = [0x5e, 0x6a, 0xd2];
+    let accent = [0x79, 0x88, 0xff];
     let fly = ui.find(document, "fly").unwrap();
     let pill = ui.children(fly)[0];
     let [x, y, w, h] = ui.rect(pill);
-    assert_eq!((w, h), (28.0, 16.0), "a toggle is a 28 by 16 pill");
-    assert_eq!(at(x + 5.0, y + 8.0), accent, "an on switch fills with the accent");
-    assert_eq!(at(x + 20.0, y + 8.0), [0xff, 0xff, 0xff], "with its knob over on the right");
+    assert_eq!((w, h), (26.0, 14.0), "a toggle is a 26 by 14 pill");
+    assert_eq!(at(x + 5.0, y + 7.0), accent, "an on switch fills with the accent");
+    assert_eq!(at(x + 19.0, y + 7.0), [0xff, 0xff, 0xff], "with its knob over on the right");
     let check_box = ui.children(ui.find(document, "static").unwrap())[0];
     let [x, y, ..] = ui.rect(check_box);
-    assert_eq!(at(x + 2.0, y + 8.0), accent, "a ticked checkbox fills with the accent");
+    assert_eq!(at(x + 2.0, y + 7.0), accent, "a ticked checkbox fills with the accent");
     let [x, y, _, h] = ui.rect(name);
     assert_eq!(at(x, y + h / 2.0), accent, "the focused field's border is the accent");
     let [x, y, w, h] = ui.rect(ui.find(document, "overlay").unwrap());
@@ -529,7 +529,7 @@ fn panes_draw_an_editor_like_layout() {
     let divider = ui.children(split)[1];
     let [x, y, _, h] = ui.rect(divider);
     let i = (((y + h / 2.0) as u32 * width + x as u32 + 1) * 4) as usize;
-    assert_eq!(pixels[i..i + 3], [0x1f, 0x20, 0x23], "the divider between the panes");
+    assert_eq!(pixels[i..i + 3], [0x25, 0x27, 0x2b], "the divider between the panes");
     assert!(ui.take_warnings().is_empty());
 }
 

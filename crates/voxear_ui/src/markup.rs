@@ -18,7 +18,7 @@
 //! `size` in pixels, negative for the second pane's, or a percentage share,
 //! `min`, and two elements for its panes), `Tabs` (of `Tab`s with
 //! `text`, and `selected`), `Dropdown` (of `Option`s, and `value`),
-//! `DockSpace` (of `DockPanel`s with `id` and `title`, and `layout`),
+//! `DockSpace` (of `DockPanel`s with `id`, `title` and `icon`, and `layout`),
 //! `Segmented` (of `Segment`s with `text` and `icon`, and `value`) and
 //! `Icon` (`icon`, one of [`crate::ICONS`]), each taking `name`, `class`
 //! (several, separated by spaces) and `style` (declarations that win over
@@ -236,7 +236,10 @@ impl Ui {
                         let id =
                             panel.attribute("id").ok_or_else(|| builder.error(panel, "a DockPanel needs an id"))?;
                         let content = self.add_dock_panel(node, id, panel.attribute("title").unwrap_or(id));
-                        self.attributes(content, panel, &["name", "class", "style", "id", "title"], builder);
+                        if let Some(icon) = panel.attribute("icon") {
+                            self.set_dock_panel_icon(node, id, icon);
+                        }
+                        self.attributes(content, panel, &["name", "class", "style", "id", "title", "icon"], builder);
                         self.build_children(content, panel, builder)?;
                     }
                     if let Some(layout) = child.attribute("layout") {

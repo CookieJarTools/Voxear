@@ -61,6 +61,8 @@ pub(crate) enum Zone {
 pub(crate) struct DockPanel {
     pub id: String,
     pub title: String,
+    /// Shown before the title on its tab.
+    pub icon: Option<String>,
     pub content: taffy::NodeId,
 }
 
@@ -335,7 +337,7 @@ impl Ui {
         let content = self.add(dock, Element::new(Kind::Panel, Style::column().grow()));
         self.add_class(content, "dock-panel");
         let Some(state) = self.dock_state(dock) else { return content };
-        state.panels.push(DockPanel { id: id.to_string(), title: title.to_string(), content: content.0 });
+        state.panels.push(DockPanel { id: id.to_string(), title: title.to_string(), icon: None, content: content.0 });
         if !state.layout.panels().contains(&id)
             && let DockNode::Area { panels, .. } = state.layout.first_area()
         {
@@ -343,6 +345,15 @@ impl Ui {
         }
         self.rebuild_dock(dock);
         content
+    }
+
+    /// Shows an icon before a panel's title on its tab.
+    pub fn set_dock_panel_icon(&mut self, dock: NodeId, id: &str, icon: &str) {
+        let Some(state) = self.dock_state(dock) else { return };
+        if let Some(panel) = state.panels.iter_mut().find(|p| p.id == id) {
+            panel.icon = Some(icon.to_string());
+        }
+        self.rebuild_dock(dock);
     }
 
     /// Arranges the panels as `layout` says; see the [module](self)
@@ -478,7 +489,7 @@ impl Ui {
                 *element = Some(tabs.0);
                 for id in panels.iter() {
                     let Some(panel) = state.panels.iter().find(|p| &p.id == id) else { continue };
-                    let page = self.add_tab(tabs, &panel.title);
+                    let page = self.add_tab_with_icon(tabs, &panel.title, panel.icon.as_deref());
                     let _ = self.tree.add_child(page.0, panel.content);
                     self.set_visible(NodeId(panel.content), true);
                     let bar = self.children(tabs)[0];

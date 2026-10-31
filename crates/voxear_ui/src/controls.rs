@@ -12,9 +12,10 @@
 //! - **Slider**: a `slider-track` holding a `slider-fill` and a
 //!   `slider-thumb`, then a `slider-value` showing the number. Dragging or
 //!   the arrow keys move it.
-//! - **Foldout**: a `foldout-header` (a `foldout-arrow` and a
-//!   `foldout-title`) that opens and closes its `foldout-content`. It
-//!   matches `:checked` when open.
+//! - **Foldout**: a `foldout-header` (a `foldout-arrow`, a `foldout-icon`
+//!   shown once set, and a `foldout-title`) that opens and closes its
+//!   `foldout-content`. It matches `:checked` when open. Buttons and
+//!   toggles added to its header work without opening or closing it.
 //!
 //! [`Ui::changed`] says when the user changed one; setting a value from
 //! code does not count.
@@ -276,6 +277,9 @@ impl Ui {
         self.add_class(header, "foldout-header");
         let arrow = self.icon(header, "chevron-right");
         self.add_class(arrow, "foldout-arrow");
+        let icon = self.icon(header, "");
+        self.add_class(icon, "foldout-icon");
+        self.set_visible(icon, false);
         let label =
             self.add(header, Element { text: Some(Text::new(title)), ..Element::new(Kind::Label, Style::default()) });
         self.add_class(label, "foldout-title");
@@ -286,6 +290,22 @@ impl Ui {
         }
         self.set_open(foldout, open);
         foldout
+    }
+
+    /// A foldout's header, for buttons or a toggle after its title.
+    pub fn foldout_header(&self, foldout: NodeId) -> Option<NodeId> {
+        match self.element(foldout)?.control.as_ref()? {
+            Control::Foldout { header, .. } => Some(NodeId(*header)),
+            _ => None,
+        }
+    }
+
+    /// Shows an icon between a foldout's arrow and its title.
+    pub fn set_foldout_icon(&mut self, foldout: NodeId, icon: &str) {
+        let Some(header) = self.foldout_header(foldout) else { return };
+        let Some(&slot) = self.children(header).get(1) else { return };
+        self.set_icon(slot, icon);
+        self.set_visible(slot, !icon.is_empty());
     }
 
     /// Where a foldout's contents go.
@@ -495,6 +515,8 @@ impl Ui {
         while let Some(node) = at {
             match self.tree.get_node_context(node).map(|e| (e.kind, &e.control)) {
                 Some((Kind::Toggle, _)) => return self.press_control(NodeId(node)),
+                // A button in a foldout's header is its own.
+                Some((Kind::Button | Kind::Dropdown, _)) => return,
                 Some((Kind::Foldout, Some(Control::Foldout { header, .. }))) => {
                     if self.is_within(NodeId(target), NodeId(*header)) {
                         self.press_control(NodeId(node));

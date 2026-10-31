@@ -10,7 +10,7 @@
                 </Panel>
                 <Label class="brand">Voxear</Label>
                 <Segmented name="workspaces" class="workspaces">
-                    <Segment text="Scene" />
+                    <Segment text="World" />
                     <Segment text="Animation" />
                     <Segment text="Profiling" />
                 </Segmented>
@@ -33,7 +33,7 @@
         <Panel class="body">
             <Panel class="rail">
                 <Button name="rail-scene" class="icon-button rail-button"><Icon icon="cube" /></Button>
-                <Button class="icon-button rail-button"><Icon icon="box" /></Button>
+                <Button class="icon-button rail-button"><Icon icon="level" /></Button>
                 <Button class="icon-button rail-button"><Icon icon="code" /></Button>
                 <Button class="icon-button rail-button"><Icon icon="audio" /></Button>
                 <Button class="icon-button rail-button"><Icon icon="profiler" /></Button>
@@ -50,31 +50,36 @@
                         <Icon icon="search" class="search-icon" />
                         <TextField name="hierarchy-filter" class="search-field" placeholder="Filter" />
                     </Panel>
-                    <TreeView name="hierarchy-tree" class="fill" item-height="28" />
+                    <TreeView name="hierarchy-tree" class="fill" item-height="24" />
                 </DockPanel>
                 <DockPanel id="project" title="Project" class="dock-content">
                     <Panel class="panel-actions">
                         <Button class="icon-button"><Icon icon="plus" /></Button>
                         <Button class="icon-button"><Icon icon="more" /></Button>
                     </Panel>
-                    <SplitView name="project-split" class="fill project-split" size="220">
-                        <TreeView name="project-folders" class="fill folders" item-height="28" />
+                    <SplitView name="project-split" class="fill project-split" size="200">
+                        <TreeView name="project-folders" class="fill folders" item-height="24" />
                         <Panel class="files-pane">
                             <Panel class="breadcrumb">
                                 <Label name="project-path" class="crumbs" />
                                 <Label name="project-count" class="count" />
                             </Panel>
-                            <ListView name="project-files" class="fill files" item-height="28" />
+                            <ListView name="project-files" class="fill files" item-height="24" />
                         </Panel>
                     </SplitView>
                 </DockPanel>
                 <DockPanel id="console" title="Console" class="dock-content">
-                    <ListView name="console-list" class="fill console" item-height="22" />
+                    <ListView name="console-list" class="fill console" item-height="20" />
                 </DockPanel>
-                <DockPanel id="scene" title="Scene">
+                <DockPanel id="scene" title="Scene" icon="cube">
                     <Panel class="panel-actions">
-                        <Button class="icon-button"><Icon icon="eye" /></Button>
-                        <Button class="icon-button"><Icon icon="more" /></Button>
+                        <Dropdown name="shading" class="shading">
+                            <Option>Lit</Option>
+                            <Option>Unlit</Option>
+                            <Option>Wireframe</Option>
+                        </Dropdown>
+                        <Button name="gizmos" class="header-button">Gizmos</Button>
+                        <Button class="icon-button"><Icon icon="maximize" /></Button>
                     </Panel>
                     <Panel name="viewport" class="viewport">
                         <Panel class="overlay tools">
@@ -85,9 +90,10 @@
                                 <Segment icon="scale" />
                             </Segmented>
                             <Panel class="tool-divider" />
-                            <Button name="pivot" class="tool-toggle"><Icon icon="pivot" /><Label>Pivot</Label></Button>
-                            <Button name="space" class="tool-toggle"><Icon icon="globe" /><Label>Global</Label></Button>
-                            <Button name="snap" class="tool-toggle"><Icon icon="grid" /><Label class="mono">0.25</Label></Button>
+                            <Button name="pivot" class="tool-toggle">Pivot</Button>
+                            <Button name="space" class="tool-toggle">Global</Button>
+                            <Panel class="tool-divider" />
+                            <Button name="snap" class="tool-toggle"><Icon icon="grid" /><Label>0.25 m</Label></Button>
                         </Panel>
                         <Label name="scene-stats" class="overlay chip" />
                         <Panel class="overlay gizmo-box">
@@ -96,7 +102,7 @@
                         </Panel>
                     </Panel>
                 </DockPanel>
-                <DockPanel id="game" title="Game" class="dock-content">
+                <DockPanel id="game" title="Game" icon="play" class="dock-content">
                     <Label class="placeholder">The game view shows the game's own camera while playing.</Label>
                 </DockPanel>
                 <DockPanel id="inspector" title="Inspector">
@@ -110,9 +116,15 @@
         <Panel class="statusbar">
             <Panel class="status-dot" />
             <Label name="status-left" class="status-text">Ready</Label>
-            <Label name="status-time" class="status-muted" />
+            <Label name="status-time" />
             <Panel class="spacer" />
-            <Label name="status-right" class="status-numbers" />
+            <Label name="status-renderer">Vulkan</Label>
+            <Label name="status-fps" />
+            <Label name="status-memory" />
+            <Panel name="status-branch" class="status-branch">
+                <Icon icon="branch" />
+                <Label name="status-branch-name" />
+            </Panel>
         </Panel>
         <Panel name="viewport-frame" class="viewport-frame" />
     </Panel>

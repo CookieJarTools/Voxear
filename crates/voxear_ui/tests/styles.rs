@@ -77,7 +77,7 @@ fn text_inherits_and_descendant_rules_reach_it() {
     assert_eq!(text.size, 14.0, "size from the card");
     assert_eq!(text.weight, 600.0, "weight from a descendant rule");
     let plain = ui.text_style(ui.find(document, "plain").unwrap()).unwrap();
-    let theme = TextStyle { size: 12.0, line_height: 16.0, color: Color::hex(0xd0d6e0), ..TextStyle::default() };
+    let theme = TextStyle { size: 12.0, line_height: 16.0, color: Color::hex(0xc8ccd1), ..TextStyle::default() };
     assert_eq!(plain, theme, "nothing set: the default theme's text, from the root");
 }
 
@@ -85,7 +85,7 @@ fn text_inherits_and_descendant_rules_reach_it() {
 fn the_pointer_hovers_presses_and_clicks() {
     let (mut ui, document) = cards();
     let go = ui.find(document, "go").unwrap();
-    assert_eq!(background(&ui, go), Some(Color::hex(0x141518)), "the default theme's button");
+    assert_eq!(background(&ui, go), Some(Color::hex(0x212227)), "the default theme's button");
 
     ui.pointer_move(120.0, 310.0);
     assert!(ui.wants_pointer() && ui.is_hovered(go) && ui.is_hovered(document), "the button and what it is in");

@@ -10,10 +10,10 @@ use voxear_assets::{AssetDb, AssetKind};
 use voxear_ui::{ListItems, NodeId, Style, TreeItems, Ui};
 
 /// A tile's width with the gap after it, and a row of tiles' height.
-const TILE: f32 = 80.0;
-const TILE_ROW: f32 = 88.0;
+const TILE: f32 = 72.0;
+const TILE_ROW: f32 = 76.0;
 /// A file row's height, as `item-height` gives it in Editor.vui.
-const ROW: f32 = 28.0;
+const ROW: f32 = 24.0;
 /// With room for fewer tiles than this, the files show as rows.
 const MIN_COLUMNS: usize = 3;
 
@@ -246,7 +246,7 @@ impl ProjectView {
             ui.set_expanded(self.folder_tree, at as u64, true);
         }
         crumbs.reverse();
-        ui.set_text(self.path, &crumbs.join("  ›  "));
+        ui.set_text(self.path, &crumbs.join("  /  "));
         let items = contents.listing.len();
         ui.set_text(self.count, &format!("{items} {}", if items == 1 { "item" } else { "items" }));
         let rows = contents.rows();

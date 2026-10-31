@@ -58,6 +58,7 @@ pub const NAMES: &[&str] = &[
     "texture",
     "eye",
     "transform",
+    "maximize",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -136,6 +137,7 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
             STROKE,
         )],
         "transform" => &[("M5.5 4v14.5H20M5.5 18.5l10-10M15.5 8.5h-4M15.5 8.5v4", STROKE)],
+        "maximize" => &[("M4.5 9.5v-5h5M14.5 4.5h5v5M19.5 14.5v5h-5M9.5 19.5h-5v-5", STROKE)],
         _ => return None,
     })
 }

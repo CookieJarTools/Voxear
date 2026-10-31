@@ -9,7 +9,7 @@ use voxear_core::logging::LogCapture;
 use voxear_ui::{ItemFns, NodeId, Ui};
 
 /// A line's height, as `item-height` gives it in Editor.vui.
-const ROW: f32 = 22.0;
+const ROW: f32 = 20.0;
 
 pub struct Console {
     list: NodeId,

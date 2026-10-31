@@ -99,6 +99,7 @@ namespace Voxear.Scripting
 				FieldKinds.Write(json, field.FieldType, types);
 				json.WritePropertyName("default");
 				FieldDefaults.Write(json, instance == null ? null : field.GetValue(instance), field.FieldType);
+				InspectorMetadata.Write(json, field);
 				json.WriteEndObject();
 			}
 			json.WriteEndArray();

@@ -9,6 +9,7 @@ mod play;
 mod prefab_mode;
 mod previews;
 mod scene_view;
+mod tooltip;
 mod windows;
 
 pub use drawer::Drawer;
@@ -128,6 +129,8 @@ struct Nodes {
     profiler_panel: NodeId,
     /// The Build window's panel.
     build_panel: NodeId,
+    /// A script field's tooltip, shown under its label.
+    tooltip: NodeId,
     /// The bar over the Scene view while a prefab is open on its own.
     prefab_bar: NodeId,
     prefab_name: NodeId,
@@ -231,6 +234,8 @@ pub struct Editor {
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
+    /// The tooltip the pointer rests on, and for how long, in seconds.
+    hovered_tooltip: Option<(String, f32)>,
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
     picker_picks: Vec<(Entity, Prop, Pick)>,
@@ -330,6 +335,7 @@ impl Editor {
             workspaces: find(&ui, "workspaces"),
             profiler_panel: find(&ui, "profiler-panel"),
             build_panel: find(&ui, "build-panel"),
+            tooltip: find(&ui, "tooltip"),
             prefab_bar: find(&ui, "prefab-bar"),
             prefab_name: find(&ui, "prefab-name"),
             prefab_back: find(&ui, "prefab-back"),
@@ -342,6 +348,7 @@ impl Editor {
         ui.set_dock_layout_closing_rest(nodes.dock, LAYOUT).expect("the default layout is valid");
         ui.set_visible(nodes.drawer, false);
         ui.set_visible(nodes.prefab_bar, false);
+        ui.set_visible(nodes.tooltip, false);
         let (tree, filter, add) =
             (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"), find(&ui, "hierarchy-add"));
         let hierarchy = Hierarchy::new(&mut ui, tree, filter, add);
@@ -419,6 +426,7 @@ impl Editor {
             build_window,
             picker,
             color_popup,
+            hovered_tooltip: None,
             picker_picks: Vec::new(),
             asset_previews: AssetPreviews::default(),
             field_previews: previews::FieldPreviews::default(),
@@ -615,6 +623,7 @@ impl Editor {
         self.mark_viewport_area(view.map(|(viewport, _)| viewport));
         self.update_gizmo();
         self.update_status(renderer, delta);
+        self.update_tooltip(delta);
 
         let camera = view.map(|(_, camera)| camera);
         // The Scene view shades as its menu says; the Game view always lit.
@@ -1256,6 +1265,13 @@ impl Editor {
             let _ = done.send(Project::open(&root).and_then(|project| script_types::describe(&project)));
         });
         self.describing = Some(describing);
+    }
+
+    /// Shows script fields as `types` describes them, as a new build's
+    /// description does: for code that describes scripts its own way, and
+    /// for tests, which need no .NET this way.
+    pub fn set_script_types(&mut self, types: ScriptTypes) {
+        self.inspector.set_types(types);
     }
 
     /// Whether the scripts are described as they are now, with no build of

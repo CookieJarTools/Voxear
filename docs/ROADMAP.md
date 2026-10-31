@@ -298,6 +298,14 @@ Still to do in M3:
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
+  - [x] the first part: groups (foldout, box, horizontal, tabs), titles, order, indent and labels; show, hide,
+    enable and disable on another field's value; read-only and hidden; range sliders, min and max, suffixes,
+    multiline text, progress bars, enum buttons and larger previews; info boxes, required references and
+    tooltips; described by ScriptInfo
+  - [ ] buttons, value-changed callbacks, input validation and value dropdowns, which run the behaviour's code in
+    edit mode
+  - [ ] list and table drawers, colour palettes, the build's check of every scene, the source generator and
+    analyzer, and custom drawers
 - OKLCH theme tokens.
 - The rest of Sifter: a player's log read from a build run on its own, and its settings screen with a live sample.
 - For the launcher: `vox upgrade`, the first-person, third-person, top-down and 2D templates (after an input API

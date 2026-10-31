@@ -110,6 +110,97 @@ pub struct ScriptField {
     /// reference starts.
     #[serde(default, deserialize_with = "toml_value")]
     pub default: Option<toml::Value>,
+    /// What its inspector attributes ask of the Inspector.
+    #[serde(default)]
+    pub inspector: FieldInspector,
+}
+
+/// What a field's inspector attributes ask for, as Odin Inspector's do (see
+/// `Voxear.Core`'s `Inspector` folder); all empty for a field with none.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct FieldInspector {
+    pub group: Option<FieldGroup>,
+    /// A title and line above the field.
+    pub title: Option<String>,
+    /// Lower first; fields without one are 0, in the order declared.
+    pub order: i32,
+    pub indent: u32,
+    /// Words to label it with instead of its name.
+    pub label: Option<String>,
+    pub hide_label: bool,
+    pub show_if: Option<FieldCondition>,
+    pub hide_if: Option<FieldCondition>,
+    pub enable_if: Option<FieldCondition>,
+    pub disable_if: Option<FieldCondition>,
+    pub read_only: bool,
+    /// Kept out of the Inspector.
+    pub hidden: bool,
+    pub range: Option<[f64; 2]>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    /// A unit after the value, such as "m/s".
+    pub suffix: Option<String>,
+    /// Lines a text field shows.
+    pub multiline: Option<u32>,
+    /// A bar from the first value to the second.
+    pub progress: Option<[f64; 2]>,
+    /// An enum as a row of buttons.
+    pub enum_buttons: bool,
+    /// A preview of the referenced asset, this many pixels.
+    pub preview: Option<u32>,
+    /// The field must be set: what the error says, or empty for the usual.
+    pub required: Option<String>,
+    pub info: Vec<InfoBox>,
+    pub tooltip: Option<String>,
+}
+
+/// A group a field shows in, by name: a foldout, a box, a row, or a tab of
+/// the group's tabs.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct FieldGroup {
+    pub kind: GroupKind,
+    pub name: String,
+    #[serde(default)]
+    pub tab: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GroupKind {
+    Foldout,
+    Box,
+    Horizontal,
+    Tab,
+}
+
+/// Another field of the same behaviour, and the value it is compared with:
+/// with none, the condition holds while the field is true, non-zero, not
+/// empty or set.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct FieldCondition {
+    pub member: String,
+    #[serde(default, deserialize_with = "toml_value")]
+    pub value: Option<toml::Value>,
+}
+
+/// A message shown in a box above a field, while `visible_if` holds when it
+/// is given.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct InfoBox {
+    pub message: String,
+    #[serde(rename = "type")]
+    pub kind: InfoKind,
+    #[serde(default)]
+    pub visible_if: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InfoKind {
+    Info,
+    Warning,
+    Error,
 }
 
 /// The kind of value a field takes.

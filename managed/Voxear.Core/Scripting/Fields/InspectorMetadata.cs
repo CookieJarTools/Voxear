@@ -1,0 +1,195 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Text.Json;
+
+namespace Voxear.Scripting
+{
+	/// <summary>
+	/// What a field's inspector attributes ask of the editor, written beside its kind as an "inspector" object holding
+	/// only what is set, so the editor shows a tailored Inspector without reading the assembly itself. Condition
+	/// values are written as a scene writes the field's value, so the editor compares like with like.
+	/// </summary>
+	internal static class InspectorMetadata
+	{
+		public static void Write(Utf8JsonWriter json, FieldInfo field)
+		{
+			var attributes = new List<Attribute>();
+			foreach (var attribute in field.GetCustomAttributes(inherit: true))
+			{
+				if (attribute is Attribute known && known.GetType().Namespace == nameof(Voxear))
+				{
+					attributes.Add(known);
+				}
+			}
+			if (attributes.Count == 0)
+			{
+				return;
+			}
+
+			json.WriteStartObject("inspector");
+			var infos = new List<InfoBoxAttribute>();
+			foreach (var attribute in attributes)
+			{
+				if (attribute is InfoBoxAttribute info)
+				{
+					infos.Add(info);
+				}
+				else
+				{
+					WriteOne(json, attribute);
+				}
+			}
+			WriteInfos(json, infos);
+			json.WriteEndObject();
+		}
+
+		private static void WriteOne(Utf8JsonWriter json, Attribute attribute)
+		{
+			switch (attribute)
+			{
+				case GroupAttribute group:
+					WriteGroup(json, group);
+					break;
+				case ConditionAttribute condition:
+					WriteCondition(json, condition);
+					break;
+				case RangeAttribute range:
+					WritePair(json, "range", range.Min, range.Max);
+					break;
+				case ProgressBarAttribute progress:
+					WritePair(json, "progress", progress.Min, progress.Max);
+					break;
+				default:
+					WriteValue(json, attribute);
+					break;
+			}
+		}
+
+		/// <summary>The attributes that are one value each, or a flag.</summary>
+		private static void WriteValue(Utf8JsonWriter json, Attribute attribute)
+		{
+			switch (attribute)
+			{
+				case TitleAttribute title:
+					json.WriteString("title", title.Title);
+					break;
+				case PropertyOrderAttribute order:
+					json.WriteNumber("order", order.Order);
+					break;
+				case IndentAttribute indent:
+					json.WriteNumber("indent", indent.Levels);
+					break;
+				case LabelTextAttribute label:
+					json.WriteString("label", label.Text);
+					break;
+				case MinValueAttribute min:
+					json.WriteNumber("min", min.Min);
+					break;
+				case MaxValueAttribute max:
+					json.WriteNumber("max", max.Max);
+					break;
+				case SuffixAttribute suffix:
+					json.WriteString("suffix", suffix.Suffix);
+					break;
+				case MultilineAttribute multiline:
+					json.WriteNumber("multiline", multiline.Lines);
+					break;
+				case PreviewFieldAttribute preview:
+					json.WriteNumber("preview", preview.Size);
+					break;
+				case RequiredAttribute required:
+					json.WriteString("required", required.Message ?? string.Empty);
+					break;
+				case TooltipAttribute tooltip:
+					json.WriteString("tooltip", tooltip.Text);
+					break;
+				default:
+					WriteFlag(json, attribute);
+					break;
+			}
+		}
+
+		private static void WriteFlag(Utf8JsonWriter json, Attribute attribute)
+		{
+			var flag = attribute switch
+			{
+				HideLabelAttribute => "hide_label",
+				ReadOnlyAttribute => "read_only",
+				HideInInspectorAttribute => "hidden",
+				EnumToggleButtonsAttribute => "enum_buttons",
+				_ => null,
+			};
+			if (flag != null)
+			{
+				json.WriteBoolean(flag, true);
+			}
+		}
+
+		private static void WriteGroup(Utf8JsonWriter json, GroupAttribute group)
+		{
+			var kind = group switch
+			{
+				FoldoutGroupAttribute => "foldout",
+				BoxGroupAttribute => "box",
+				HorizontalGroupAttribute => "horizontal",
+				TabGroupAttribute => "tab",
+				_ => "foldout",
+			};
+			json.WriteStartObject("group");
+			json.WriteString("kind", kind);
+			json.WriteString("name", group.Name);
+			if (group is TabGroupAttribute tab)
+			{
+				json.WriteString("tab", tab.Tab);
+			}
+			json.WriteEndObject();
+		}
+
+		private static void WriteCondition(Utf8JsonWriter json, ConditionAttribute condition)
+		{
+			var name = condition switch
+			{
+				ShowIfAttribute => "show_if",
+				HideIfAttribute => "hide_if",
+				EnableIfAttribute => "enable_if",
+				_ => "disable_if",
+			};
+			json.WriteStartObject(name);
+			json.WriteString("member", condition.Member);
+			json.WritePropertyName("value");
+			FieldDefaults.Write(json, condition.Value, condition.Value?.GetType() ?? typeof(object));
+			json.WriteEndObject();
+		}
+
+		private static void WritePair(Utf8JsonWriter json, string name, double first, double second)
+		{
+			json.WriteStartArray(name);
+			json.WriteNumberValue(first);
+			json.WriteNumberValue(second);
+			json.WriteEndArray();
+		}
+
+		private static void WriteInfos(Utf8JsonWriter json, List<InfoBoxAttribute> infos)
+		{
+			if (infos.Count == 0)
+			{
+				return;
+			}
+
+			json.WriteStartArray("info");
+			foreach (var info in infos)
+			{
+				json.WriteStartObject();
+				json.WriteString("message", info.Message);
+				json.WriteString("type", info.Type.ToString().ToLowerInvariant());
+				if (info.VisibleIf != null)
+				{
+					json.WriteString("visible_if", info.VisibleIf);
+				}
+				json.WriteEndObject();
+			}
+			json.WriteEndArray();
+		}
+	}
+}

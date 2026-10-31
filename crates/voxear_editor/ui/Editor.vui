@@ -194,5 +194,7 @@
             <ListView name="palette-list" class="palette-list" item-height="28" />
             <Label name="palette-empty" class="palette-empty">Nothing matches</Label>
         </Panel>
+        <!-- A script field's tooltip, under its label. It takes no pointer, so it is after the palette. -->
+        <Label name="tooltip" class="tooltip" />
     </Panel>
 </vui>

@@ -123,6 +123,11 @@ impl Editor {
                 self.ui.set_image(node, image);
                 self.ui.set_visible(node, image.is_some());
             }
+            // [PreviewField]'s larger images, under their fields.
+            for (prop, node, logical) in self.inspector.field_previews().to_vec() {
+                let image = self.field_image(renderer, entity, &prop, size(logical as f32, self.scale), &mut budget);
+                self.ui.set_image(node, image);
+            }
         }
 
         self.update_inspector_preview(renderer);

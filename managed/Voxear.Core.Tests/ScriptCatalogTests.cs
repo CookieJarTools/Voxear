@@ -37,6 +37,33 @@ namespace Voxear.Tests
 			Check.True(tidy.GetProperty("type").GetString() == "Voxear.Tests.TestCommands" && tidy.GetProperty("method").GetString() == "TidyUp", "and where it is");
 		}
 
+		[Test]
+		private static void InspectorAttributesAreWrittenWithTheirFields()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestMover).Assembly));
+			var mover = document.RootElement.GetProperty("behaviours").EnumerateArray()
+				.Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestMover");
+			var fields = mover.GetProperty("fields").EnumerateArray().ToDictionary(f => f.GetProperty("name").GetString()!);
+
+			var speed = fields["speed"].GetProperty("inspector");
+			var group = speed.GetProperty("group");
+			Check.True(group.GetProperty("kind").GetString() == "foldout" && group.GetProperty("name").GetString() == "Movement", "its group");
+			Check.True(speed.GetProperty("range")[1].GetDouble() == 20 && speed.GetProperty("suffix").GetString() == "m/s", "its range and unit");
+			Check.True(speed.GetProperty("tooltip").GetString() == "How fast it walks.", "its tooltip");
+			Check.True(fields["mode"].GetProperty("inspector").GetProperty("enum_buttons").GetBoolean(), "buttons for an enum");
+			var lift = fields["liftForce"].GetProperty("inspector");
+			var showIf = lift.GetProperty("show_if");
+			Check.True(showIf.GetProperty("member").GetString() == "mode" && showIf.GetProperty("value").GetString() == "Fly", "a condition, its value as a scene writes it");
+			Check.True(lift.GetProperty("min").GetDouble() == 0, "a least value");
+			var hit = fields["hitEffect"].GetProperty("inspector");
+			Check.True(hit.GetProperty("required").GetString() == string.Empty && hit.GetProperty("info").GetArrayLength() == 2, "required, with two info boxes");
+			Check.True(hit.GetProperty("info")[1].GetProperty("type").GetString() == "warning", "the second a warning");
+			Check.True(fields["secret"].GetProperty("inspector").GetProperty("hidden").GetBoolean(), "hidden from the Inspector");
+			var title = fields["title"].GetProperty("inspector");
+			Check.True(title.GetProperty("order").GetInt32() == -1 && title.GetProperty("label").GetString() == "Display name", "its order and label");
+			Check.True(!fields["mode"].TryGetProperty("default", out var mode) || mode.GetString() == "Walk", "an enum starts at its first value");
+		}
+
 		private static string? Kind(JsonElement field)
 		{
 			return field.GetProperty("type").GetProperty("kind").GetString();

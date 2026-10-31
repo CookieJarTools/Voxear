@@ -1525,7 +1525,7 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 
 **Extending.** Custom inspectors, windows, gizmos and tools are written in C#, using the same Voxear UI.
 
-### The Inspector and its attributes *(planned, in M3)*
+### The Inspector and its attributes *(first part implemented in M3)*
 
 **Easy.** Every serialized field shows with a fitting control and no code: numbers, vectors, colours, enums,
 `Ref<T>` and Obj pickers, nested `[Serializable]` types as foldouts, and arrays and lists as reorderable,
@@ -1564,6 +1564,32 @@ at runtime.
 Conditions and callbacks name members with `nameof`, so renames carry through and the compiler catches typos.
 A source generator turns the attributes into inspector metadata at compile time, so the editor reads no
 reflection, and an analyzer reports a condition that names a missing member as a compile error.
+
+**What exists now.** The attributes are in `Voxear.Core` (`Inspector/`: Layout, Conditions, Values, Help).
+`Voxear.ScriptInfo`, which already describes each build of the scripts in a process of its own, writes what each
+field's attributes ask for into the description as an `inspector` object (`InspectorMetadata`), so the editor
+still reads no assembly; a source generator can take its place later without the editor noticing
+(`script_types::FieldInspector`). The Inspector (`attributes`) applies:
+- **Grouping and layout:** `[FoldoutGroup]`, `[BoxGroup]`, `[HorizontalGroup]` and `[TabGroup]`, with "A/B"
+  for a group in a group, and the tab picked and the foldouts closed kept while the Inspector builds again;
+  `[Title]`, `[PropertyOrder]` (a field's list items and table fields move with it), `[Indent]`, `[LabelText]`
+  and `[HideLabel]`.
+- **Conditions:** `[ShowIf]`, `[HideIf]`, `[EnableIf]` and `[DisableIf]`, on another field of the same behaviour
+  or table, true, non-zero, not empty or set, or equal to a value given (an enum's by its name), read as the
+  scene sets them, so they work without the game running; the Inspector builds again when one changes.
+  `[ReadOnly]` and `[HideInInspector]`.
+- **Values:** `[Range]` (a slider beside the value), `[MinValue]` and `[MaxValue]`, which hold what is typed
+  within them, `[Suffix]`, `[Multiline]`, `[ProgressBar]` (a bar a drag sets), `[EnumToggleButtons]` and
+  `[PreviewField]` (a larger preview of the asset, under the field).
+- **Help and validation:** `[InfoBox]` (a note, warning or error, shown while a field holds if given),
+  `[Tooltip]` (under the label once the pointer rests on it for half a second), and `[Required]`, an error above
+  an empty reference.
+
+Still to come: `[Button]` and `[OnValueChanged]`, which run a behaviour's code in edit mode, `[ValidateInput]`
+and `[ValueDropdown]`, which ask it for answers, `[ShowInInspector]`, `[ColorPalette]` (once C# has a `Color`),
+the collections' `[ListDrawerSettings]` and `[TableList]`, `[AssetsOnly]` and `[SceneObjectsOnly]` (a Voxear field
+takes one or the other already), the build's check of every scene and prefab, the source generator and analyzer,
+and custom drawers.
 
 **Advanced.** Custom drawers in C#, built with Voxear UI: `ValueDrawer<T>` for a type, and
 `AttributeDrawer<TAttribute>` for your own attributes. Drawers chain as Odin's do, with each decorator wrapping the

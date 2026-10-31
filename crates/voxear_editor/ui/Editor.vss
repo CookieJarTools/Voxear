@@ -1781,3 +1781,198 @@ DockSpace .project-split > .split-divider {
     flex-grow: 1;
     min-width: 0px;
 }
+
+/* Inspector attributes on script fields. */
+
+/* [HideLabel]: the control takes the whole row. */
+.prop.no-label {
+    grid-template-columns: minmax(0px, 1fr);
+}
+
+/* [EnableIf] and [DisableIf] that do not hold. */
+.prop.disabled {
+    opacity: 0.45;
+}
+
+.attr-title {
+    margin-top: 6px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.attr-title-line {
+    height: 1px;
+    flex-shrink: 0;
+    margin-bottom: 2px;
+    background-color: var(--vx-line);
+}
+
+.attr-foldout > .foldout-header {
+    height: 26px;
+    color: var(--vx-text-2);
+}
+
+.attr-box {
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 2px;
+    margin: 4px 0px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--vx-line-2);
+}
+
+.attr-box-title {
+    font-weight: 600;
+    color: var(--vx-text-2);
+}
+
+.attr-horizontal {
+    flex-direction: row;
+    gap: 8px;
+}
+
+.attr-horizontal > .prop {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+}
+
+.attr-tabs {
+    margin: 4px 0px;
+}
+
+.attr-tab-page {
+    flex-direction: column;
+    padding-top: 4px;
+}
+
+.attr-suffix {
+    flex-shrink: 0;
+    color: var(--vx-muted);
+    font-size: 11px;
+}
+
+.attr-range {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-width: 0px;
+}
+
+.prop-value > .attr-range, .prop-value > .attr-buttons, .prop-value > .attr-progress {
+    flex-grow: 1;
+}
+
+.attr-slider {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+/* The field beside it shows the value, and takes typing. */
+.attr-slider > .slider-value {
+    display: none;
+}
+
+.attr-range-input {
+    flex-shrink: 0;
+    width: 58px;
+}
+
+.attr-buttons {
+    min-width: 0px;
+}
+
+.attr-progress {
+    height: 20px;
+    justify-content: center;
+    border-radius: 5px;
+    overflow: hidden;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+}
+
+.attr-progress-fill {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    bottom: 0px;
+    background-color: var(--vx-accent-soft);
+}
+
+.attr-progress-value {
+    text-align: center;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text);
+}
+
+.attr-preview {
+    justify-content: flex-end;
+    padding: 4px 0px;
+}
+
+.attr-preview > Image {
+    border-radius: 6px;
+    background-color: var(--vx-field);
+}
+
+/* [InfoBox] and [Required]: a note, a warning or an error above a field. */
+.info-box {
+    flex-direction: row;
+    align-items: flex-start;
+    flex-shrink: 0;
+    gap: 6px;
+    margin: 3px 0px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background-color: rgba(121, 136, 255, 0.10);
+    border: 1px solid rgba(121, 136, 255, 0.30);
+}
+
+.info-box.warning {
+    background-color: rgba(226, 179, 64, 0.10);
+    border-color: rgba(226, 179, 64, 0.35);
+}
+
+.info-box.error {
+    background-color: rgba(235, 87, 87, 0.10);
+    border-color: rgba(235, 87, 87, 0.40);
+}
+
+.info-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--vx-accent);
+}
+
+.info-box.warning > .info-icon {
+    color: #e2b340;
+}
+
+.info-box.error > .info-icon {
+    color: var(--vx-x);
+}
+
+.info-text {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    color: var(--vx-text-2);
+}
+
+/* [Tooltip], under a field's label. */
+.tooltip {
+    position: absolute;
+    z-index: 30;
+    max-width: 280px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    pointer-events: none;
+    background-color: var(--vx-overlay);
+    border: 1px solid var(--vx-line-2);
+    box-shadow: 0px 6px 16px rgba(0, 0, 0, 0.4);
+    color: var(--vx-text);
+    font-size: 11px;
+}

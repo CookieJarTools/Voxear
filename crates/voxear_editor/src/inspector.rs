@@ -21,7 +21,10 @@
 
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::Entity;
-use voxear_engine::{Game, script_types::ScriptTypes};
+use voxear_engine::{
+    Game,
+    script_types::{FieldInspector, InfoKind, ScriptTypes},
+};
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Name, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
@@ -30,6 +33,7 @@ use voxear_engine::prefab::Locks;
 
 use crate::{
     asset_inspector::{AssetAction, AssetView},
+    attributes,
     fields::Pick,
     history::{Edit, ObjState},
     project_view::ProjectItem,
@@ -127,6 +131,11 @@ struct PropRow {
     /// A list's button that adds an item, and an item's that takes it out.
     add: Option<NodeId>,
     remove: Option<NodeId>,
+    /// What `[Tooltip]` says, shown when the pointer rests on the label.
+    tooltip: Option<String>,
+    /// The least and most a number may be, from `[Range]`, `[MinValue]`,
+    /// `[MaxValue]` or `[ProgressBar]`.
+    limits: (Option<f64>, Option<f64>),
 }
 
 enum Control {
@@ -140,6 +149,13 @@ enum Control {
     Picker(NodeId, NodeId),
     /// A dropdown, and the options it was last given.
     Choice(NodeId, Vec<String>),
+    /// A number with `[Range]`: a slider and its field.
+    Range(NodeId, NodeId),
+    /// An enum with `[EnumToggleButtons]`: a button for each value.
+    Buttons(NodeId, Vec<String>),
+    /// A number with `[ProgressBar]`: the bar, its fill, its value, and the
+    /// numbers it runs between.
+    Progress(NodeId, NodeId, NodeId, [f64; 2]),
     /// A label, for what is shown but not edited here.
     Fixed(NodeId),
 }
@@ -169,6 +185,18 @@ pub struct Inspector {
     menu: Option<(NodeId, Vec<Option<RowAction>>)>,
     /// What is selected in the Project panel, when that is what it shows.
     asset: Option<AssetView>,
+    /// What the attributes' conditions came to when the sections were
+    /// built, to build them again when it changes.
+    conditions: Vec<bool>,
+    /// The attribute groups' tabs and foldouts shown, by name, and the tab
+    /// picked and the foldouts closed, kept while the sections are built
+    /// again.
+    group_tabs: Vec<(String, NodeId)>,
+    group_foldouts: Vec<(String, NodeId)>,
+    tab_choices: std::collections::HashMap<String, usize>,
+    closed_groups: std::collections::HashSet<String>,
+    /// The `[PreviewField]` images shown: the field, the image and its size.
+    previews: Vec<(Prop, NodeId, u32)>,
 }
 
 impl Inspector {
@@ -186,6 +214,12 @@ impl Inspector {
             prefab_mode: false,
             menu: None,
             asset: None,
+            conditions: Vec::new(),
+            group_tabs: Vec::new(),
+            group_foldouts: Vec::new(),
+            tab_choices: std::collections::HashMap::new(),
+            closed_groups: std::collections::HashSet::new(),
+            previews: Vec::new(),
         }
     }
 
@@ -240,6 +274,65 @@ impl Inspector {
     pub fn set_prefab_mode(&mut self, on: bool) {
         self.prefab_mode = on;
         self.built.0.clear();
+    }
+
+    /// Above a row: its `[Title]`, its `[InfoBox]`es that show, and an error
+    /// when a `[Required]` field is empty.
+    fn decorate(
+        &self,
+        ui: &mut Ui,
+        container: NodeId,
+        game: &Game,
+        (entity, value): (Entity, &Prop),
+        (meta, label): (&FieldInspector, &str),
+    ) {
+        if let Some(title) = &meta.title {
+            let heading = ui.add_label(container, title);
+            ui.add_class(heading, "attr-title");
+            let line = ui.panel(container, Style::default());
+            ui.add_class(line, "attr-title-line");
+        }
+        for info in &meta.info {
+            if attributes::info_shows(game, &self.types, entity, value, info.visible_if.as_deref()) {
+                info_box(ui, container, info.kind, &info.message);
+            }
+        }
+        if attributes::missing(game, &self.types, entity, value) {
+            let message = meta.required.as_deref().filter(|m| !m.is_empty());
+            let message = message.map_or_else(|| format!("{label} is required"), str::to_string);
+            info_box(ui, container, InfoKind::Error, &message);
+        }
+    }
+
+    /// Keeps which tab each group of tabs shows and which foldouts are
+    /// closed, for when the sections are built again.
+    fn remember_groups(&mut self, ui: &Ui) {
+        for (name, tabs) in &self.group_tabs {
+            self.tab_choices.insert(name.clone(), ui.selected_tab(*tabs));
+        }
+        for (name, foldout) in &self.group_foldouts {
+            if ui.is_open(*foldout) {
+                self.closed_groups.remove(name);
+            } else {
+                self.closed_groups.insert(name.clone());
+            }
+        }
+    }
+
+    /// The `[Tooltip]` of the field whose label the pointer is on, and the
+    /// label.
+    pub fn hovered_tooltip(&self, ui: &Ui) -> Option<(String, NodeId)> {
+        self.rows.iter().find_map(|row| {
+            let tooltip = row.tooltip.as_ref()?;
+            let label = *ui.children(row.row).first()?;
+            ui.is_hovered(label).then(|| (tooltip.clone(), label))
+        })
+    }
+
+    /// The `[PreviewField]` images shown, with the field each previews and
+    /// its size in logical pixels.
+    pub fn field_previews(&self) -> &[(Prop, NodeId, u32)] {
+        &self.previews
     }
 
     /// The asset fields shown, each with the image before its name that
@@ -301,6 +394,9 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
+        self.previews.clear();
+        self.group_tabs.clear();
+        self.group_foldouts.clear();
         let Some(entity) = self.shown else {
             let hint = ui.add_label(self.root, "Select an Obj in the Hierarchy to see it here.");
             ui.add_class(hint, "placeholder");
@@ -344,30 +440,49 @@ impl Inspector {
                 let label = ui.add_label(row, name);
                 ui.add_class(label, "value");
             }
-            for value in values {
+            let values = attributes::ordered(&self.types, values);
+            let mut groups = attributes::Groups::new(rows);
+            for value in &values {
                 if !self.prefab_mode && !designers_see(value) {
                     continue;
                 }
-                let row = prop(ui, rows, &props::label(value));
+                if !attributes::shows(game, &self.types, entity, value) {
+                    continue;
+                }
+                let meta = attributes::of(&self.types, value).clone();
+                let container = groups.container(ui, attributes::top(&self.types, value).group.as_ref());
+                let label = meta.label.clone().unwrap_or_else(|| props::label(value));
+                self.decorate(ui, container, game, (entity, value), (&meta, &label));
+                let row = prop(ui, container, &label);
                 ui.set_class(row, "hidden-from-designers", !designers_see(value));
-                let depth = props::depth(value);
-                if depth > 0 {
-                    let label = ui.children(row)[0];
-                    ui.set_inline_style(label, &format!("padding-left: {}px", depth * 12));
+                let label_node = ui.children(row)[0];
+                let indent = props::depth(value) + meta.indent as usize;
+                if indent > 0 {
+                    ui.set_inline_style(label_node, &format!("padding-left: {}px", indent * 12));
+                }
+                if meta.hide_label {
+                    ui.add_class(row, "no-label");
+                    ui.set_visible(label_node, false);
                 }
                 let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
-                let editable = !(playing && matches!(value, Prop::Field { .. }));
-                // An item of a list, or a list, gets its button beside its value.
+                let enabled = attributes::enabled(game, &self.types, entity, value);
+                ui.set_class(row, "disabled", !enabled && !meta.read_only);
+                let editable = !(playing && matches!(value, Prop::Field { .. })) && enabled;
+                // An item of a list, or a list, gets its button beside its value, as a unit does.
                 let item = editable && props::is_item(value);
                 let list = editable && matches!(shown, Value::List(_));
-                let holder = if item || list {
+                let holder = if item || list || meta.suffix.is_some() {
                     let holder = ui.panel(row, Style::row());
                     ui.add_class(holder, "prop-value");
                     holder
                 } else {
                     row
                 };
-                let control = control(ui, holder, &shown, editable);
+                let control = control(ui, holder, &shown, editable, &meta);
+                if let Some(suffix) = &meta.suffix {
+                    let unit = ui.add_label(holder, suffix);
+                    ui.add_class(unit, "attr-suffix");
+                }
                 let button = |ui: &mut Ui, icon: &str, class: &str| {
                     let button = ui.icon_button(holder, icon);
                     ui.add_class(button, class);
@@ -375,12 +490,37 @@ impl Inspector {
                 };
                 let add = list.then(|| button(ui, "plus", "list-add"));
                 let remove = item.then(|| button(ui, "close", "list-remove"));
-                self.rows.push(PropRow { prop: value.clone(), row, control, add, remove });
+                if let (Some(size), Value::Asset(_)) = (meta.preview, &shown) {
+                    let frame = ui.panel(container, Style::row());
+                    ui.add_class(frame, "attr-preview");
+                    let image = ui.image(frame);
+                    ui.set_inline_style(image, &format!("width: {size}px; height: {size}px"));
+                    self.previews.push((value.clone(), image, size));
+                }
+                let limits = limits(&meta);
+                let tooltip = meta.tooltip.clone();
+                self.rows.push(PropRow { prop: value.clone(), row, control, add, remove, tooltip, limits });
+            }
+            let prefix = part.lock_key();
+            for (name, tabs) in groups.tabs {
+                let name = format!("{prefix}/{name}");
+                if let Some(&tab) = self.tab_choices.get(&name) {
+                    ui.set_selected_tab(tabs, tab);
+                }
+                self.group_tabs.push((name, tabs));
+            }
+            for (name, foldout) in groups.foldouts {
+                let name = format!("{prefix}/{name}");
+                if self.closed_groups.contains(&name) {
+                    ui.set_open(foldout, false);
+                }
+                self.group_foldouts.push((name, foldout));
             }
         }
         let add = ui.button(self.root, "Add Component");
         ui.add_class(add, "add-component");
         self.add = Some(add);
+        self.conditions = attributes::key(game, &self.types, entity, &layout);
         self.built = (layout, playing, locks);
     }
 
@@ -399,7 +539,10 @@ impl Inspector {
             return None;
         };
         let locks = game.engine.world.get::<Locks>(entity).cloned();
-        if layout(game, entity, &self.types) != self.built.0 || playing != self.built.1 || locks != self.built.2 {
+        self.remember_groups(ui);
+        let layout = layout(game, entity, &self.types);
+        let conditions = attributes::key(game, &self.types, entity, &layout);
+        if layout != self.built.0 || playing != self.built.1 || locks != self.built.2 || conditions != self.conditions {
             self.show(ui, game, Some(entity), playing);
             return None;
         }
@@ -417,6 +560,7 @@ impl Inspector {
         for row in &mut self.rows {
             let Some(current) = props::get(game, &self.types, entity, &row.prop) else { continue };
             if let Some(picked) = read_control(ui, &row.control, &current) {
+                let picked = clamp(picked, row.limits);
                 props::set(game, renderer.as_deref_mut(), &self.types, entity, &row.prop, picked);
             }
             if let Some(now) = props::get(game, &self.types, entity, &row.prop) {
@@ -601,17 +745,25 @@ fn layout(game: &Game, entity: Entity, types: &ScriptTypes) -> Vec<(Part, Vec<Pr
 
 /// The control for a value: a field, a toggle, three fields, a dropdown, or
 /// a label when it is not edited here.
-fn control(ui: &mut Ui, row: NodeId, value: &Value, editable: bool) -> Control {
+fn control(ui: &mut Ui, row: NodeId, value: &Value, editable: bool, meta: &FieldInspector) -> Control {
     if !editable {
         let label = ui.add_label(row, &display(value));
         ui.add_class(label, "value");
         return Control::Fixed(label);
+    }
+    if let Some(control) = attribute_control(ui, row, value, meta) {
+        return control;
     }
     match value {
         Value::Number(_) | Value::Whole(_) | Value::Text(_) => {
             let field = ui.text_field(row, &display(value));
             ui.add_class(field, "value-input");
             ui.set_class(field, "number-input", !matches!(value, Value::Text(_)));
+            if let (Some(lines), Value::Text(_)) = (meta.multiline, value) {
+                ui.set_multiline(field, true);
+                ui.add_class(field, "attr-multiline");
+                ui.set_inline_style(field, &format!("height: {}px", lines.max(1) * 16 + 10));
+            }
             Control::Text(field)
         }
         Value::Toggle(on) => {
@@ -686,8 +838,117 @@ fn read_control(ui: &Ui, control: &Control, current: &Value) -> Option<Value> {
         (Control::Choice(dropdown, options), _) if ui.changed(*dropdown) => {
             Some(Value::Choice(ui.selected_option(*dropdown), options.clone()))
         }
+        (Control::Buttons(buttons, options), _) if ui.changed(*buttons) => {
+            Some(Value::Choice(ui.segment(*buttons), options.clone()))
+        }
+        (Control::Range(slider, _), value) if ui.changed(*slider) => {
+            Some(numeric(value, ui.slider_value(*slider) as f64))
+        }
+        (Control::Range(_, field), value) if ui.changed(*field) => {
+            ui.text(*field).trim().parse::<f64>().ok().map(|n| numeric(value, n))
+        }
+        (Control::Progress(bar, _, _, [min, max]), value) if ui.is_pressed(*bar) => {
+            let (x, _) = ui.pointer_position()?;
+            let [left, _, width, _] = ui.rect(*bar);
+            let share = f64::from(((x - left) / width.max(1.0)).clamp(0.0, 1.0));
+            Some(numeric(value, min + share * (max - min)))
+        }
         _ => None,
     }
+}
+
+/// A number as the value it replaces is: a whole number rounded.
+fn numeric(current: &Value, n: f64) -> Value {
+    match current {
+        Value::Whole(_) => Value::Whole(n.round() as i64),
+        _ => Value::Number(n as f32),
+    }
+}
+
+/// The controls attributes ask for in place of the usual: a bar for
+/// `[ProgressBar]`, a slider for `[Range]`, and buttons for
+/// `[EnumToggleButtons]`.
+fn attribute_control(ui: &mut Ui, row: NodeId, value: &Value, meta: &FieldInspector) -> Option<Control> {
+    let number = match value {
+        Value::Number(n) => Some(f64::from(*n)),
+        Value::Whole(n) => Some(*n as f64),
+        _ => None,
+    };
+    if let (Some(n), Some([min, max])) = (number, meta.progress) {
+        let bar = ui.panel(row, Style::default());
+        ui.add_class(bar, "attr-progress");
+        let fill = ui.panel(bar, Style::default());
+        ui.add_class(fill, "attr-progress-fill");
+        let label = ui.add_label(bar, "");
+        ui.add_class(label, "attr-progress-value");
+        let mut control = Control::Progress(bar, fill, label, [min, max]);
+        refresh_control(ui, &mut control, &numeric(value, n));
+        return Some(control);
+    }
+    if let (Some(n), Some([min, max])) = (number, meta.range) {
+        let holder = ui.panel(row, Style::row());
+        ui.add_class(holder, "attr-range");
+        let slider = ui.slider(holder, min as f32, max as f32, n as f32);
+        ui.add_class(slider, "attr-slider");
+        if matches!(value, Value::Whole(_)) {
+            ui.set_slider_step(slider, 1.0);
+        }
+        let field = ui.text_field(holder, &display(value));
+        ui.add_class(field, "value-input");
+        ui.add_class(field, "number-input");
+        ui.add_class(field, "attr-range-input");
+        return Some(Control::Range(slider, field));
+    }
+    if let (Value::Choice(index, options), true) = (value, meta.enum_buttons) {
+        let buttons = ui.segmented(row);
+        ui.add_class(buttons, "attr-buttons");
+        for option in options {
+            ui.add_segment(buttons, option, None);
+        }
+        ui.set_segment(buttons, *index);
+        return Some(Control::Buttons(buttons, options.clone()));
+    }
+    None
+}
+
+/// The least and most a number may be, as its attributes say.
+fn limits(meta: &FieldInspector) -> (Option<f64>, Option<f64>) {
+    let [low, high] = meta.range.or(meta.progress).map_or([None, None], |[a, b]| [Some(a), Some(b)]);
+    let low = match (low, meta.min) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    };
+    let high = match (high, meta.max) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    (low, high)
+}
+
+/// A number held within its limits; anything else as it is.
+fn clamp(value: Value, (low, high): (Option<f64>, Option<f64>)) -> Value {
+    let hold = |n: f64| n.max(low.unwrap_or(f64::MIN)).min(high.unwrap_or(f64::MAX));
+    match value {
+        Value::Number(n) => Value::Number(hold(f64::from(n)) as f32),
+        Value::Whole(n) => Value::Whole(hold(n as f64).round() as i64),
+        other => other,
+    }
+}
+
+/// A message in a box: a note, a warning or an error.
+fn info_box(ui: &mut Ui, container: NodeId, kind: InfoKind, message: &str) {
+    let frame = ui.panel(container, Style::row());
+    ui.add_class(frame, "info-box");
+    let (class, icon) = match kind {
+        InfoKind::Info => ("info", "info"),
+        InfoKind::Warning => ("warning", "alert"),
+        InfoKind::Error => ("error", "alert"),
+    };
+    ui.add_class(frame, class);
+    let mark = ui.icon(frame, icon);
+    ui.add_class(mark, "info-icon");
+    let text = ui.add_label(frame, message);
+    ui.add_class(text, "info-text");
 }
 
 /// Shows a value in its control, except in a field being typed in.
@@ -733,7 +994,37 @@ fn refresh_control(ui: &mut Ui, control: &mut Control, value: &Value) {
                 ui.set_text(*label, &text);
             }
         }
+        (Control::Buttons(buttons, _), Value::Choice(index, _)) => {
+            if ui.segment(*buttons) != *index {
+                ui.set_segment(*buttons, *index);
+            }
+        }
+        (Control::Range(slider, field), value) => {
+            let n = number_of(value);
+            if (ui.slider_value(*slider) - n).abs() > f32::EPSILON {
+                ui.set_slider_value(*slider, n);
+            }
+            let text = display(value);
+            if ui.focused() != Some(*field) && ui.text(*field) != text {
+                ui.set_text(*field, &text);
+            }
+        }
+        (Control::Progress(_, fill, label, [min, max]), value) => {
+            let n = f64::from(number_of(value));
+            let share = if max > min { ((n - *min) / (*max - *min)).clamp(0.0, 1.0) } else { 0.0 };
+            ui.set_inline_style(*fill, &format!("width: {:.2}%", share * 100.0));
+            ui.set_text(*label, &display(value));
+        }
         _ => {}
+    }
+}
+
+/// A number's value, or a whole number's, as a float.
+fn number_of(value: &Value) -> f32 {
+    match value {
+        Value::Number(n) => *n,
+        Value::Whole(n) => *n as f32,
+        _ => 0.0,
     }
 }
 

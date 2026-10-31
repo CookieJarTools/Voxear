@@ -2457,3 +2457,105 @@ fn the_console_saves_filters_hides_assemblies_and_colours_categories() {
     let kept = std::fs::read_to_string(dir.path().join("Settings/Console.toml")).unwrap();
     assert!(kept.contains("\"Hello\" = \"#6aa8ff\""), "{kept}");
 }
+
+/// Hello's Spinner as a build with inspector attributes on it describes it.
+const SPINNER_WITH_ATTRIBUTES: &str = r#"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
+  {"name": "degreesPerSecond", "type": {"kind": "number"}, "default": 90.0,
+   "inspector": {"group": {"kind": "foldout", "name": "Motion"}, "range": [0, 720], "suffix": "°/s", "tooltip": "How fast it turns."}},
+  {"name": "mode", "type": {"kind": "enum", "names": ["Steady", "Wobble"]}, "default": "Steady",
+   "inspector": {"group": {"kind": "foldout", "name": "Motion"}, "enum_buttons": true}},
+  {"name": "wobble", "type": {"kind": "number"}, "default": 0.25,
+   "inspector": {"group": {"kind": "foldout", "name": "Motion"}, "show_if": {"member": "mode", "value": "Wobble"}, "progress": [0, 1]}},
+  {"name": "leader", "type": {"kind": "behaviour", "name": "Hello.Spinner"}, "default": null,
+   "inspector": {"required": "", "info": [{"message": "Spins the other way at the leader's speed.", "type": "info"}]}},
+  {"name": "notes", "type": {"kind": "text"}, "default": "", "inspector": {"order": -1, "label": "Notes", "multiline": 3}},
+  {"name": "secret", "type": {"kind": "whole"}, "default": 7, "inspector": {"hidden": true}}
+]}], "types": {}, "commands": []}"#;
+
+#[test]
+fn inspector_attributes_shape_how_script_fields_show() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(SPINNER_WITH_ATTRIBUTES).unwrap());
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let field = |editor: &voxear_editor::Editor, name: &str| {
+        let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+        kept.0[0].fields.get(name).cloned()
+    };
+    let top = |editor: &voxear_editor::Editor, label: &str| editor.ui.rect(prop_row(&editor.ui, label).unwrap())[1];
+    let within = |editor: &voxear_editor::Editor, node: NodeId, class: &str| {
+        let mut at = Some(node);
+        while let Some(n) = at {
+            if editor.ui.has_class(n, class) {
+                return true;
+            }
+            at = editor.ui.parent(n);
+        }
+        false
+    };
+    shot(&mut renderer, "inspector-attributes.png");
+
+    // [PropertyOrder], [LabelText], [Multiline], [HideInInspector] and [FoldoutGroup].
+    assert!(top(&editor, "Notes") < top(&editor, "Degrees Per Second"), "Notes comes first");
+    let notes = first_with(&editor.ui, prop_row(&editor.ui, "Notes").unwrap(), "attr-multiline");
+    assert!(notes.is_some(), "a multiline field");
+    assert!(prop_row(&editor.ui, "Secret").is_none(), "a hidden field does not show");
+    let speed = prop_row(&editor.ui, "Degrees Per Second").unwrap();
+    assert!(within(&editor, speed, "attr-foldout"), "in the Motion foldout");
+
+    // [Range] clamps what is typed, with its slider; [Suffix] shows the unit.
+    assert!(first_with(&editor.ui, speed, "attr-slider").is_some());
+    assert_eq!(editor.ui.text(first_with(&editor.ui, speed, "attr-suffix").unwrap()), "°/s");
+    let typed = first_with(&editor.ui, speed, "attr-range-input").unwrap();
+    type_into(&mut editor.ui, typed, "800");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    assert_eq!(field(&editor, "degreesPerSecond"), Some(toml::Value::Float(720.0)), "held to the range");
+
+    // [Required] and [InfoBox] above the leader.
+    let mut boxes = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "info-text", &mut boxes);
+    let messages: Vec<String> = boxes.iter().map(|&b| editor.ui.text(b)).collect();
+    assert!(messages.contains(&"Leader is required".to_string()), "{messages:?}");
+    assert!(messages.contains(&"Spins the other way at the leader's speed.".to_string()));
+
+    // [EnumToggleButtons], and [ShowIf] following the enum, with a [ProgressBar] dragged.
+    assert!(prop_row(&editor.ui, "Wobble").is_none(), "shown only while the mode is Wobble");
+    let buttons = first_with(&editor.ui, prop_row(&editor.ui, "Mode").unwrap(), "attr-buttons").unwrap();
+    let segments = editor.ui.children(buttons);
+    click(&mut editor.ui, segments[1]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(field(&editor, "mode"), Some(toml::Value::String("Wobble".into())));
+    let wobble = prop_row(&editor.ui, "Wobble").expect("shown now");
+    let bar = first_with(&editor.ui, wobble, "attr-progress").unwrap();
+    let [x, y, w, h] = editor.ui.rect(bar);
+    editor.ui.pointer_move(x + w * 0.75, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let wobbled = field(&editor, "wobble").and_then(|v| v.as_float()).unwrap();
+    assert!((wobbled - 0.75).abs() < 0.02, "the bar sets it: {wobbled}");
+    let opened = prop_row(&editor.ui, "Degrees Per Second").unwrap();
+    assert!(within(&editor, opened, "attr-foldout"), "built again, still in its foldout");
+
+    // [Tooltip], once the pointer rests on the label.
+    let label = editor.ui.children(prop_row(&editor.ui, "Degrees Per Second").unwrap())[0];
+    let [x, y, w, h] = editor.ui.rect(label);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    let tooltip = editor.ui.find(editor.ui.root(), "tooltip").unwrap();
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.ui.is_visible(tooltip), "not at once");
+    for _ in 0..40 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(editor.ui.is_visible(tooltip));
+    assert_eq!(editor.ui.text(tooltip), "How fast it turns.");
+    shot(&mut renderer, "inspector-attributes-wobble.png");
+}

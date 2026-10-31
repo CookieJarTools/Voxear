@@ -250,6 +250,16 @@ struct UiQuad
     uint flags;
 };
 
+// A line of debug draw. Mirrors `GpuDebugLine` in src/gpu.rs.
+struct DebugLine
+{
+    float3 from;
+    uint flags;
+    float3 to;
+    float pad;
+    float4 color;
+};
+
 struct Buffers
 {
     Instance* instances;
@@ -266,6 +276,7 @@ struct Buffers
     uint* lodState;
     float* exposure;
     UiQuad* uiQuads;
+    DebugLine* debugLines;
 };
 
 struct Push

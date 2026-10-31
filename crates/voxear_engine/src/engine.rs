@@ -327,6 +327,8 @@ impl Engine {
     /// `voxear_core::profiling`), with each behaviour's callback in it.
     pub fn tick(&mut self, unscaled_delta: f32) {
         self.time.advance(unscaled_delta);
+        // Last frame's debug draw has been seen; its shapes count down.
+        voxear_core::debug_draw::advance(self.time.delta);
         self.sync_script_time(self.time.delta);
         if let Some(scripts) = self.scripts.as_mut() {
             profile_scope!("Script Continuations");

@@ -143,6 +143,8 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
     let settings = PlayerSettings::read(data)?;
     let version = settings.version.as_deref().map(|v| format!(" {v}")).unwrap_or_default();
     let kind = if settings.development { "a development build" } else { "built" };
+    // Debug draw is for development builds; a release draws none of it.
+    voxear_core::debug_draw::set_enabled(settings.development);
     tracing::info!("{}{version}, {kind} with Voxear {} ({})", settings.product_name, settings.engine, settings.profile);
 
     let mut engine = Engine::new();

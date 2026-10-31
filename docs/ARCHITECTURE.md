@@ -2318,10 +2318,18 @@ them in a running game.
   - Live archetypes, chunks and entities, with editable component values.
   - The system schedule, with timings and order.
   - A query tester.
-- **Debug draw.**
-  - `Debug.Line`, `Box`, `Sphere`, `Arrow` and `Text`, each with a duration, from C# and Rust.
-  - Works in the game and the editor, depth-tested or drawn on top.
-  - Compiled out of release builds.
+- **Debug draw** *(implemented)*.
+  - `Debug.Line`, `Arrow`, `Box`, `Sphere` and `Text` from C#, each with a duration and a `Color` (sRGB, with
+    `Color.Hex("#ff8800")`), and the same from Rust in `voxear_core::debug_draw`, which keeps one list for the process
+    so code needs no world or renderer to hand.
+  - A shape lasts its duration in game time, counted down at the start of each game frame, so a paused game keeps
+    showing what was drawn; with none, it shows for the frame it was drawn in. The editor counts down itself while not
+    playing, and clears it all when play stops.
+  - The renderer draws the lines after post-processing, so their colours are exactly as asked, as quads a pixel and a
+    half wide with soft edges (`debug_pass.rs`, `debug.slang`). It reads the scene's depth to hide them behind the
+    scene, unless drawn on top. Texts are labels the editor places at their points over the 3D view.
+  - Calls are `[Conditional("DEBUG")]`, so scripts built for a release leave them out, and a release build of the
+    player turns debug draw off.
 - **Debug views.**
   - Albedo, normals, roughness and overdraw.
   - LOD and meshlet colouring, light complexity, GI voxels and shadow cascades.

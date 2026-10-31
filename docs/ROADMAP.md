@@ -334,7 +334,9 @@ Still to do in M3:
     allocations per frame; and Tracy behind it
   - the frame debugger and the ECS inspector
   - the memory profiler with snapshots and diffs
-  - debug draw and the dev console
+  - [x] debug draw: lines, arrows, boxes, spheres and text, from C# and Rust, hidden behind the scene or on top
+  - [ ] the dev console
+  - [ ] debug draw's texts in the player, and a C# `Color` field in the Inspector
 - **C# ECS API**, the advanced path beside Behaviours (see "ECS and the Obj model" in the architecture):
   - [x] C# components as `unmanaged` structs, registered by name and layout, living in the same chunk memory as Rust
     components

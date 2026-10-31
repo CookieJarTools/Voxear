@@ -43,6 +43,8 @@ pub struct Pipelines {
     pub composite: vk::Pipeline,
     pub finish: vk::Pipeline,
     pub ui: vk::Pipeline,
+    /// Debug draw's lines, over the finished frame.
+    pub debug: vk::Pipeline,
     /// An object on its own, for its preview, and its resolve into the
     /// preview atlas.
     pub preview: vk::Pipeline,
@@ -64,8 +66,9 @@ impl Pipelines {
             module("exposure")?,
             module("ui")?,
             module("preview")?,
+            module("debug")?,
         ];
-        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview] = &modules;
+        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview, debug] = &modules;
 
         let graphics = |desc: &GraphicsPipelineDesc| create_graphics_pipeline(gpu, layout, desc);
         let fullscreen = |name, entry, formats, blend| {
@@ -131,6 +134,12 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("UI", ui, c"uiVertex", c"uiFragment")
             })?,
+            debug: graphics(&GraphicsPipelineDesc {
+                color_formats: output,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Debug draw", debug, c"debugVertex", c"debugFragment")
+            })?,
             preview: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
                 depth_format: Some(DEPTH_FORMAT),
@@ -172,6 +181,7 @@ impl Pipelines {
             self.composite,
             self.finish,
             self.ui,
+            self.debug,
             self.preview,
             self.preview_resolve,
         ];

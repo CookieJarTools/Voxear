@@ -10,6 +10,7 @@
 mod alloc;
 mod assets;
 mod cooked;
+mod debug_pass;
 mod gltf_import;
 mod gpu;
 mod graph;
@@ -155,6 +156,7 @@ struct FrameBuffers {
     clusters: Buffer,
     pointers: Buffer,
     ui: Buffer,
+    debug_lines: Buffer,
 }
 
 pub struct Renderer {
@@ -657,6 +659,7 @@ impl Renderer {
                 lod_state: lod_state.address,
                 exposure: exposure.address,
                 ui_quads: buffers.ui.address,
+                debug_lines: buffers.debug_lines.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -711,6 +714,7 @@ impl Renderer {
             history: (frame_index % 2) as usize,
         };
         post_passes::record(&mut fg, gpu, bindless, &post)?;
+        debug_pass::record(&mut fg, pipelines.debug, push, &buffers.debug_lines, (output, view), depth);
         let preview_atlas = previews.record(&mut fg, (gpu, bindless), (pipelines, assets), frame.slot)?;
         ui.record(&mut fg, pipelines.ui, push, &buffers.ui, (output, full), preview_atlas);
         if acquired.is_some() {
@@ -802,8 +806,10 @@ impl Drop for Renderer {
                 clusters,
                 pointers,
                 ui,
+                debug_lines,
             } = buffers;
-            for buffer in [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers, ui] {
+            let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers, ui];
+            for buffer in all.into_iter().chain([debug_lines]) {
                 self.frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -889,6 +895,12 @@ fn create_frame_buffers(gpu: &Gpu, slot: usize) -> Result<FrameBuffers> {
         ui: gpu.create_buffer(
             &format!("ui quads {slot}"),
             ui_pass::MAX_UI_QUADS * size_of::<voxear_ui::Quad>() as u64,
+            storage,
+            host,
+        )?,
+        debug_lines: gpu.create_buffer(
+            &format!("debug lines {slot}"),
+            debug_pass::MAX_DEBUG_LINES * size_of::<gpu::GpuDebugLine>() as u64,
             storage,
             host,
         )?,

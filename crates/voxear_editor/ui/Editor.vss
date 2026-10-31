@@ -2021,3 +2021,23 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-text);
     font-size: 11px;
 }
+
+/* Debug draw's texts (Debug.Text), over the 3D view; each places itself. */
+.debug-texts {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+    pointer-events: none;
+}
+
+.debug-text {
+    position: absolute;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background-color: rgba(0, 0, 0, 0.45);
+    font-family: mono;
+    font-size: 11px;
+    pointer-events: none;
+}

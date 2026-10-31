@@ -25,6 +25,7 @@ use voxear_scene::{
     Registration, Request, SceneComponents, Transform, world_matrix,
 };
 
+use crate::debug::{debug_box, debug_line, debug_sphere, debug_text};
 use crate::ecs::{
     self, CURRENT_WORLD, QueryDesc, change_tick, chunk_written, commands_defer, component_add, component_get,
     component_has, component_register, component_remove, component_set, entity_alive, entity_create, entity_destroy,
@@ -35,7 +36,7 @@ use crate::services::{
     SpawnedPrefab, with_services,
 };
 
-pub(crate) const API_VERSION: u32 = 16;
+pub(crate) const API_VERSION: u32 = 17;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -116,6 +117,12 @@ pub(crate) struct NativeApi {
     pub component_remove: unsafe extern "C" fn(entity: u64, component: u32) -> i32,
     pub commands_defer: unsafe extern "C" fn(begin: i32),
     pub change_tick: unsafe extern "C" fn(advance: i32) -> u32,
+    /// Debug draw, for `Voxear.Debug` (see [`crate::debug`]): a line or an
+    /// arrow, a box, a sphere and text.
+    pub debug_line: unsafe extern "C" fn(*const [f32; 3], *const [f32; 3], *const [f32; 4], f32, i32),
+    pub debug_box: unsafe extern "C" fn(*const [f32; 3], *const [f32; 3], *const [f32; 4], *const [f32; 4], f32, i32),
+    pub debug_sphere: unsafe extern "C" fn(*const [f32; 3], f32, *const [f32; 4], f32, i32),
+    pub debug_text: unsafe extern "C" fn(*const [f32; 3], *const u8, i32, *const [f32; 4], f32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -736,6 +743,10 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         component_remove,
         commands_defer,
         change_tick,
+        debug_line,
+        debug_box,
+        debug_sphere,
+        debug_text,
     }
 }
 

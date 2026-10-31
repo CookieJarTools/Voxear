@@ -3,6 +3,7 @@
 //! which looks through the level's. Play mode is in [`play`].
 
 mod color_popup;
+mod debug_texts;
 mod docs_pictures;
 mod drawer;
 mod play;
@@ -131,6 +132,8 @@ struct Nodes {
     build_panel: NodeId,
     /// A script field's tooltip, shown under its label.
     tooltip: NodeId,
+    /// Over the window, where debug draw's texts show.
+    debug_texts: NodeId,
     /// The bar over the Scene view while a prefab is open on its own.
     prefab_bar: NodeId,
     prefab_name: NodeId,
@@ -236,6 +239,8 @@ pub struct Editor {
     picker: ObjectPicker,
     /// The tooltip the pointer rests on, and for how long, in seconds.
     hovered_tooltip: Option<(String, f32)>,
+    /// Labels for debug draw's texts, kept and reused frame to frame.
+    debug_texts: Vec<NodeId>,
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
     picker_picks: Vec<(Entity, Prop, Pick)>,
@@ -338,6 +343,7 @@ impl Editor {
             profiler_panel: find(&ui, "profiler-panel"),
             build_panel: find(&ui, "build-panel"),
             tooltip: find(&ui, "tooltip"),
+            debug_texts: find(&ui, "debug-texts"),
             prefab_bar: find(&ui, "prefab-bar"),
             prefab_name: find(&ui, "prefab-name"),
             prefab_back: find(&ui, "prefab-back"),
@@ -429,6 +435,7 @@ impl Editor {
             picker,
             color_popup,
             hovered_tooltip: None,
+            debug_texts: Vec::new(),
             picker_picks: Vec::new(),
             asset_previews: AssetPreviews::default(),
             live_assets: Vec::new(),
@@ -632,6 +639,7 @@ impl Editor {
         self.update_gizmo();
         self.update_status(renderer, delta);
         self.update_tooltip(delta);
+        self.update_debug_draw(view, delta);
 
         let camera = view.map(|(_, camera)| camera);
         // The Scene view shades as its menu says; the Game view always lit.

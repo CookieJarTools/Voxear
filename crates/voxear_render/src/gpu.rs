@@ -234,7 +234,23 @@ pub struct GpuBuffers {
     /// Auto exposure's adapted EV, carried between frames.
     pub exposure: u64,
     pub ui_quads: u64,
+    pub debug_lines: u64,
 }
+
+/// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuDebugLine {
+    pub from: [f32; 3],
+    /// `DEBUG_ON_TOP`.
+    pub flags: u32,
+    pub to: [f32; 3],
+    pub _pad: f32,
+    pub color: [f32; 4],
+}
+
+/// Drawn over the scene rather than hidden behind it.
+pub const DEBUG_ON_TOP: u32 = 1;
 
 /// `VkDrawIndexedIndirectCommand`.
 pub const DRAW_COMMAND_SIZE: u64 = 20;
@@ -299,7 +315,8 @@ mod tests {
         let post = 16 * 11;
         assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 14 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 15 * 8);
+        assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }
 }

@@ -14,7 +14,7 @@ use voxear_scene::{Name, Transform};
 /// writes one component from another; ForEach on an Obj's Transform;
 /// commands made mid-walk; Changed filters; and an entity's Get and Set.
 /// Spin also has a reference to an Obj, which a scene sets.
-const SYSTEMS: &str = r#"using System.Numerics;
+const SYSTEMS: &str = r##"using System.Numerics;
 using Voxear;
 
 namespace EcsCheck
@@ -93,6 +93,17 @@ namespace EcsCheck
 		}
 	}
 
+	// Debug draw from C#, each frame.
+	public sealed class DrawSystem : SystemBase
+	{
+		protected override void Update()
+		{
+			Debug.Line(Vector3.Zero, Vector3.UnitY, Color.Red);
+			Debug.Sphere(Vector3.One, 0.5f, Color.Hex("#00ff00"), 0f, true);
+			Debug.Text(Vector3.UnitY, "spun", Color.Yellow);
+		}
+	}
+
 	[UpdateIn(Stage.Last)]
 	public sealed class TallySystem : SystemBase
 	{
@@ -117,7 +128,7 @@ namespace EcsCheck
 		}
 	}
 }
-"#;
+"##;
 
 /// A copy of Hello, inside the repository, where its scripts find the
 /// engine to build against.
@@ -236,4 +247,16 @@ fn csharp_systems_work_on_the_engines_own_chunks() {
     assert_eq!(speed, FRAMES as f32, "Get and Set on the Obj's component");
     assert_eq!(changed_spots, 500);
     assert_eq!(changed_drifts, 0, "nothing wrote a Drift since the tally last ran");
+
+    // Debug draw: this frame's shapes, last frame's gone.
+    let lines = voxear_core::debug_draw::lines();
+    assert_eq!(lines.len(), 1 + 72, "a line and a sphere's three circles");
+    assert_eq!(
+        (lines[0].to, lines[0].color, lines[0].on_top),
+        (voxear_core::math::Vec3::Y, [1.0, 0.0, 0.0, 1.0], false)
+    );
+    assert!(lines[1..].iter().all(|l| l.on_top && l.color == [0.0, 1.0, 0.0, 1.0]));
+    let texts = voxear_core::debug_draw::texts();
+    assert_eq!(texts.len(), 1);
+    assert_eq!(texts[0].text, "spun");
 }

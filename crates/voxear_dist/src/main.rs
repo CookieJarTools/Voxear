@@ -14,6 +14,7 @@
 
 use std::{
     fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -30,6 +31,9 @@ const COMPRESSION: i32 = 19;
 const PLATFORM: &str = "linux-x86_64";
 #[cfg(all(windows, target_arch = "x86_64"))]
 const PLATFORM: &str = "windows-x86_64";
+
+/// What an install is, at its root.
+const ENGINE_FILE: &str = "engine.toml";
 
 /// The programs an install carries in `bin/`.
 const PROGRAMS: [&str; 2] = ["vox", "voxear-editor"];
@@ -82,9 +86,11 @@ fn main() -> Result<()> {
     build_managed(&root)?;
     let out = root.join(&args.out);
     let install = out.join(&name);
-    stage(&root, &install, &engine_file(&version, args.channel, &commit))?;
+    let files = gather(&root, &engine_file(&version, args.channel, &commit))?;
+    stage(&install, &files)?;
     let archive = out.join(format!("{name}.tar.zst"));
-    pack(&install, &archive)?;
+    pack(&archive, &files)?;
+    check(&archive, &files)?;
 
     let size = fs::metadata(&archive)?.len() as f64 / 1_048_576.0;
     println!("Install folder: {}", install.display());
@@ -183,40 +189,49 @@ fn engine_file(version: &str, channel: Channel, commit: &str) -> String {
     )
 }
 
-/// Lays out the install folder afresh.
-fn stage(root: &Path, install: &Path, engine: &str) -> Result<()> {
-    if install.exists() {
-        fs::remove_dir_all(install).with_context(|| format!("clearing {}", install.display()))?;
-    }
-    for folder in ["bin", "managed", "docs"] {
-        fs::create_dir_all(install.join(folder))?;
-    }
-    fs::write(install.join("engine.toml"), engine)?;
-    copy(&root.join("LICENSE.md"), &install.join("LICENSE.md"))?;
+/// One file of the install: where it goes, what it holds, and whether it is
+/// a program to run.
+struct Packed {
+    path: PathBuf,
+    bytes: Vec<u8>,
+    program: bool,
+}
 
-    let release = root.join("target/release");
+/// Every file of the install, read into memory once. The install folder and
+/// the archive are both written from these bytes, so nothing just written is
+/// read back: on an NTFS drive (Linux's ntfs3), small files freshly written
+/// sometimes read back as zeros, which is also why a file that reads as
+/// nothing but zeros is refused here.
+fn gather(root: &Path, engine: &str) -> Result<Vec<Packed>> {
+    let mut files = vec![Packed { path: ENGINE_FILE.into(), bytes: engine.as_bytes().to_vec(), program: false }];
+    let mut add = |source: &Path, path: PathBuf, program: bool| -> Result<()> {
+        let bytes = fs::read(source).with_context(|| format!("reading {}", source.display()))?;
+        ensure!(bytes.is_empty() || bytes.iter().any(|&b| b != 0), "{} read as zeros; package again", source.display());
+        files.push(Packed { path, bytes, program });
+        Ok(())
+    };
+    add(&root.join("LICENSE.md"), "LICENSE.md".into(), false)?;
     for program in PROGRAMS {
         let file = format!("{program}{}", std::env::consts::EXE_SUFFIX);
-        copy(&release.join(&file), &install.join("bin").join(&file))?;
+        add(&root.join("target/release").join(&file), Path::new("bin").join(&file), true)?;
     }
-
     let managed = root.join("target/managed/Release");
     for entry in fs::read_dir(&managed).with_context(|| format!("reading {}", managed.display()))? {
-        let path = entry?.path();
-        if is_shipped_assembly_file(&path) {
-            copy(&path, &install.join("managed").join(path.file_name().unwrap_or_default()))?;
+        let source = entry?.path();
+        if is_shipped_assembly_file(&source) {
+            add(&source, Path::new("managed").join(source.file_name().unwrap_or_default()), false)?;
         }
     }
-    copy(&root.join("managed/Voxear.Scripts.props"), &install.join("managed/Voxear.Scripts.props"))?;
-
-    copy(&root.join("README.md"), &install.join("docs/README.md"))?;
+    add(&root.join("managed/Voxear.Scripts.props"), "managed/Voxear.Scripts.props".into(), false)?;
+    add(&root.join("README.md"), "docs/README.md".into(), false)?;
     for entry in fs::read_dir(root.join("docs"))? {
-        let path = entry?.path();
-        if path.extension().is_some_and(|extension| extension == "md") {
-            copy(&path, &install.join("docs").join(path.file_name().unwrap_or_default()))?;
+        let source = entry?.path();
+        if source.extension().is_some_and(|extension| extension == "md") {
+            add(&source, Path::new("docs").join(source.file_name().unwrap_or_default()), false)?;
         }
     }
-    Ok(())
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
 }
 
 /// One of the shipped assemblies' files: the library, its symbols and
@@ -228,38 +243,78 @@ fn is_shipped_assembly_file(path: &Path) -> bool {
     shipped && ASSEMBLIES.iter().any(|assembly| name.starts_with(&format!("{assembly}.")))
 }
 
-fn copy(from: &Path, to: &Path) -> Result<()> {
-    fs::copy(from, to).with_context(|| format!("copying {} to {}", from.display(), to.display()))?;
+/// Lays out the install folder afresh.
+fn stage(install: &Path, files: &[Packed]) -> Result<()> {
+    if install.exists() {
+        fs::remove_dir_all(install).with_context(|| format!("clearing {}", install.display()))?;
+    }
+    for file in files {
+        let path = install.join(&file.path);
+        fs::create_dir_all(path.parent().unwrap_or(install))?;
+        fs::write(&path, &file.bytes).with_context(|| format!("writing {}", path.display()))?;
+        #[cfg(unix)]
+        if file.program {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+        }
+    }
     Ok(())
 }
 
-/// The install folder as a `.tar.zst` with every entry at the root, folders
-/// and files only, in name order and without owners or times, so packaging the
+/// The install as a `.tar.zst` with every entry at the root, folders and
+/// files only, in name order and without owners or times, so packaging the
 /// same files twice gives the same archive.
-fn pack(install: &Path, archive: &Path) -> Result<()> {
+fn pack(archive: &Path, files: &[Packed]) -> Result<()> {
     let file = File::create(archive).with_context(|| format!("creating {}", archive.display()))?;
     let mut encoder = zstd::Encoder::new(file, COMPRESSION)?;
     encoder.long_distance_matching(true)?;
     let mut builder = tar::Builder::new(encoder);
-    builder.mode(tar::HeaderMode::Deterministic);
-    add_folder(&mut builder, install, Path::new(""))?;
+    let mut folders: Vec<&Path> = Vec::new();
+    for file in files {
+        let folder = file.path.parent().filter(|folder| !folder.as_os_str().is_empty());
+        if let Some(folder) = folder.filter(|folder| !folders.contains(folder)) {
+            builder.append_data(&mut header(tar::EntryType::Directory, 0o755, 0), folder, std::io::empty())?;
+            folders.push(folder);
+        }
+        let mode = if file.program { 0o755 } else { 0o644 };
+        let mut header = header(tar::EntryType::Regular, mode, file.bytes.len() as u64);
+        builder.append_data(&mut header, &file.path, file.bytes.as_slice())?;
+    }
     builder.into_inner()?.finish()?;
     Ok(())
 }
 
-fn add_folder<W: std::io::Write>(builder: &mut tar::Builder<W>, root: &Path, folder: &Path) -> Result<()> {
-    let mut entries: Vec<PathBuf> =
-        fs::read_dir(root.join(folder))?.map(|entry| Ok(entry?.path())).collect::<Result<_>>()?;
-    entries.sort();
-    for path in entries {
-        let name = folder.join(path.file_name().unwrap_or_default());
-        if path.is_dir() {
-            builder.append_dir(&name, &path)?;
-            add_folder(builder, root, &name)?;
-        } else {
-            builder.append_path_with_name(&path, &name)?;
+/// An entry's header with no owner or time, so it depends only on the file.
+fn header(kind: tar::EntryType, mode: u32, size: u64) -> tar::Header {
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(kind);
+    header.set_mode(mode);
+    header.set_size(size);
+    header.set_mtime(0);
+    header.set_uid(0);
+    header.set_gid(0);
+    header
+}
+
+/// Reads the archive back and compares every file in it with what went in,
+/// byte for byte: a bad archive is signed for good once published.
+fn check(archive: &Path, files: &[Packed]) -> Result<()> {
+    let mut tar = tar::Archive::new(zstd::Decoder::new(File::open(archive)?)?);
+    let mut checked = 0;
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        if entry.header().entry_type().is_dir() {
+            continue;
         }
+        let path = entry.path()?.into_owned();
+        let mut packed = Vec::new();
+        entry.read_to_end(&mut packed)?;
+        let expected = files.iter().find(|file| file.path == path).map(|file| file.bytes.as_slice());
+        ensure!(expected == Some(packed.as_slice()), "{} in the archive is not what was packed", path.display());
+        checked += 1;
     }
+    ensure!(checked == files.len(), "the archive holds {checked} files, not {}", files.len());
+    println!("Checked the archive's {checked} files against what was packed");
     Ok(())
 }
 

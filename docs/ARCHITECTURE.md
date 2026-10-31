@@ -2541,6 +2541,13 @@ through a small contract.
   Modding and a Steam App ID are reported as not there yet. Every scripts build writes the project's
   `.voxear/Engine.props`, naming the engine it built with, which a scripts project imports when nothing else
   names one, so an IDE builds it too.
+- **`vox upgrade <folder> [--from <version>] [--json]`** moves a project onto this version, as the launcher asks
+  once it has backed the project up (`voxear_engine::upgrade`; `[supports] upgrade = 1`). It stops before changing
+  anything if a level, scene or prefab was saved by a newer Voxear; then it pins `voxear.toml` to this version,
+  keeping the rest of the file, writes `.voxear/Engine.props`, adds the default build profiles to a project without
+  any, and gives new assets their `.meta` files. Each change is said in plain words (`{"event":"change"}` lines
+  with `--json`, ending in `done`, or `error` and a failing exit), and logs go to stderr. Later versions add their
+  conversions there.
 - **`voxear-editor`** opens a project as the launcher asks (`--project <folder>`), handing over to `vox editor`
   beside it, so an install carries the engine once. `vox --version` gives the release's version.
 - **Packaging** (`voxear-dist`, `cargo run -p voxear_dist -- --channel nightly`): builds `vox`, `voxear-editor`
@@ -2552,8 +2559,7 @@ through a small contract.
 - **Publishing** is by hand, with the launcher repository's `voxear-release`: `engine add` signs the archive with
   the engine key and lists it in the site's `engine/releases.toml`, then the archive and its `.minisig` go up as
   assets of the `engine-v<version>` release in VoxearReleases, and the site goes to its `gh-pages` branch.
-- **Not yet:** `vox upgrade` (so `[supports]` lists only `new`), Windows archives, and a workflow that builds and
-  publishes them.
+- **Not yet:** Windows archives, and a workflow that builds and publishes them.
 
 ## Platforms and GPU support
 

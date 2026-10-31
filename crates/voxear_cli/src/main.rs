@@ -81,6 +81,18 @@ enum Commands {
         #[arg(long)]
         steam_app_id: Option<u64>,
     },
+    /// Move a project onto this version of Voxear, as the launcher asks once it has backed it up.
+    Upgrade {
+        /// Project folder or its voxear.toml.
+        #[arg(default_value = ".")]
+        project: PathBuf,
+        /// The version the project was pinned to, if it was.
+        #[arg(long)]
+        from: Option<String>,
+        /// Report as JSON, one line per step and change, as the launcher reads it.
+        #[arg(long)]
+        json: bool,
+    },
     /// List a project's assets, giving new ones a GUID (`.meta` file).
     Assets {
         /// Project folder or its voxear.toml.
@@ -207,6 +219,11 @@ fn main() -> Result<()> {
     // sends each as JSON.
     let log = match &cli.command {
         Commands::Editor { .. } => Some(voxear_core::logging::init_capturing()),
+        // The launcher reads these commands' stdout, so their logs go to stderr.
+        Commands::New { json: true, .. } | Commands::Upgrade { json: true, .. } => {
+            voxear_core::logging::init_stderr();
+            None
+        }
         Commands::Build { progress, .. } if progress == "json" => {
             voxear_core::logging::init_forwarding(|line| {
                 let level = line.level.as_str().to_lowercase();
@@ -254,6 +271,7 @@ fn main() -> Result<()> {
             new_project(&request, json)
         }
         Commands::Assets { project } => assets(&project),
+        Commands::Upgrade { project, from, json } => upgrade(&project, from.as_deref(), json),
         Commands::Build { project, profile, progress, list } => build(&project, profile, progress == "json", list),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
         Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays, stats } => {
@@ -718,6 +736,31 @@ fn hint(message: &str) {
 /// shader sources of its own, and must not pick up a checkout's.
 fn shaders_reload() -> bool {
     !voxear_engine::is_install(&voxear_engine::engine_root())
+}
+
+/// `vox upgrade`: reports each step and change as it goes, as a line of
+/// JSON for the launcher when asked, and ends with `done` or what went
+/// wrong. With JSON, a failure is reported on stdout as well as by the exit
+/// code.
+fn upgrade(project: &Path, from: Option<&str>, json: bool) -> Result<()> {
+    use voxear_engine::upgrade::Event;
+    let line = |event: serde_json::Value| println!("{event}");
+    let mut report = |event: Event| match (event, json) {
+        (Event::Step(message), true) => line(serde_json::json!({ "event": "step", "message": message })),
+        (Event::Change(message), true) => line(serde_json::json!({ "event": "change", "message": message })),
+        (Event::Step(message), false) => println!("{message}"),
+        (Event::Change(message), false) => println!("  · {message}"),
+    };
+    match voxear_engine::upgrade::upgrade(project, from, &mut report) {
+        Ok(()) if json => line(serde_json::json!({ "event": "done" })),
+        Ok(()) => println!("Upgraded to Voxear {}", voxear_engine::engine_version()),
+        Err(error) if json => {
+            line(serde_json::json!({ "event": "error", "message": format!("{error:#}") }));
+            std::process::exit(1);
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }
 
 /// `vox new`: reports each step as it starts, as a line of JSON for the

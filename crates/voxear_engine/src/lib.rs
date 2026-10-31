@@ -20,6 +20,7 @@ pub mod script_types;
 pub mod scripts;
 mod stats_overlay;
 pub mod ui_input;
+pub mod upgrade;
 mod windowed;
 
 pub use content::{Content, ContentUsage, MaterialData, MaterialSource, Released, linear, srgb};

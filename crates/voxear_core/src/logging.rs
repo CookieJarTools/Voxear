@@ -28,6 +28,20 @@ pub fn init() {
         .try_init();
 }
 
+/// Installs the global log subscriber as [`init`] does, writing to stderr,
+/// for a command whose stdout is read by another program, as the launcher
+/// reads `vox new --json` and `vox upgrade --json`.
+pub fn init_stderr() {
+    let filter =
+        std::env::var("VOXEAR_LOG").or_else(|_| std::env::var("RUST_LOG")).unwrap_or_else(|_| DEFAULT_FILTER.into());
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new(filter))
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .fmt_fields(printed_fields())
+        .try_init();
+}
+
 /// Installs the global log subscriber as [`init`] does, and also writes
 /// every line to `file`, without the terminal's colours, as a built game
 /// keeps its log.

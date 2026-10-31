@@ -245,3 +245,41 @@ fn sliders_show_their_value_to_their_step() {
     ui.set_slider_step(slider, 1.0);
     assert_eq!(shown(&ui), "3", "and whole numbers for a whole step");
 }
+
+#[test]
+fn a_dividers_handle_lights_its_middle_over_everything() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let split = ui.split_view(root, true, 200.0);
+    ui.set_style(split, {
+        let mut style = Style::row().at(0.0, 0.0).width(600.0).height(300.0);
+        style.layout.align_items = taffy::AlignItems::STRETCH;
+        style
+    });
+    // The second pane is drawn after the divider, and would cover a handle drawn in place.
+    let (_, second) = ui.split_panes(split).unwrap();
+    ui.set_inline_style(second, "background-color: #333333; margin-left: -8px; pointer-events: none");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let divider = ui.children(split)[1];
+    let handle = ui.children(divider)[0];
+    let lit = |ui: &Ui| ui.style(handle).unwrap().background.is_some_and(|c| c.a > 0);
+    assert!(!lit(&ui), "unlit until the pointer finds it");
+
+    let [x, y, w, h] = ui.rect(divider);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(lit(&ui), "lit while hovered");
+    let [hx, hy, hw, hh] = ui.rect(handle);
+    assert!(hh < h * 0.5 && hy > y && hy + hh < y + h, "across the middle, short of the ends: {hy} {hh} of {h}");
+    assert_eq!(hx + hw / 2.0, x + w / 2.0, "centred on the divider");
+    let last = frame.quads.last().unwrap();
+    assert_eq!(last.rect[1], hy, "drawn after everything else, the pane over the divider included");
+
+    ui.pointer_button(true);
+    ui.pointer_move(x + 300.0, y + h + 50.0);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(lit(&ui), "still lit while dragged, wherever the pointer goes");
+    ui.pointer_button(false);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(!lit(&ui), "and unlit once let go");
+}

@@ -2,7 +2,9 @@
 //! the editor's docking, panels and toolbars are made from.
 //!
 //! - **SplitView**: two panes either side of a divider (`split-divider`)
-//!   that the pointer drags. The first pane keeps its size and the second
+//!   that the pointer drags, holding a `split-handle` centred on it, which
+//!   the default theme lights over everything while the divider is hovered
+//!   or dragged. The first pane keeps its size and the second
 //!   takes the rest, as in Unity's TwoPaneSplitView; a negative size keeps
 //!   the second pane's size instead, for a panel on the right or bottom.
 //! - **Tabs**: a `tab-bar` of `tab` buttons over `tab-page`s, showing the
@@ -19,6 +21,7 @@ use crate::{
     NodeId, Overflow, Style, Ui,
     controls::Control,
     input::Key,
+    selector::States,
     tree::{Element, Kind, Text},
 };
 
@@ -71,8 +74,14 @@ impl Ui {
         let first = self.panel(split, Style { overflow: Overflow::Hidden, ..Style::column() });
         let mut divider = Style::default();
         divider.layout.flex_shrink = 0.0;
+        divider.layout.align_items = AlignItems::CENTER;
+        divider.layout.justify_content = taffy::JustifyContent::CENTER;
         let divider = self.panel(split, divider);
         self.add_class(divider, "split-divider");
+        let mut handle = Style { pickable: false, ..Style::default() };
+        handle.layout.flex_shrink = 0.0;
+        let handle = self.panel(divider, handle);
+        self.add_class(handle, "split-handle");
         let mut second = Style { overflow: Overflow::Hidden, ..Style::column().grow() };
         second.layout.flex_basis = Dimension::length(0.0);
         let second = self.panel(split, second);
@@ -443,6 +452,9 @@ impl Ui {
             state.grab = if state.row { point.0 - x } else { point.1 - y };
         }
         self.input.dragging = Some(split);
+        // Active until let go, so its handle stays lit however far the pointer strays.
+        self.set_state(NodeId(divider), States::ACTIVE, true);
+        self.pointer.pressed = vec![divider];
         true
     }
 

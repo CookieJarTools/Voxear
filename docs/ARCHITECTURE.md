@@ -965,7 +965,9 @@ every part:
 - **SplitView**: two panes either side of a divider the pointer drags. The first pane keeps its size and the
   second takes the rest, each kept above a minimum, as in Unity's TwoPaneSplitView. A negative size keeps the
   second pane's size instead (a panel on the right, such as the Inspector), and `split_view_fraction` (or a
-  percentage `size` in markup) keeps the first pane's share as the window resizes.
+  percentage `size` in markup) keeps the first pane's share as the window resizes. While a divider is hovered or
+  dragged, the default theme lights a short handle across its middle (`split-handle`), drawn over everything so
+  no panel's edge hides it.
 - **Tabs**: a row of tab buttons over pages, showing the selected one (`:checked` on its tab).
 - **Dropdown**: opens its options in a **popup layer** that is always drawn above everything and takes the
   dropdown's text style. A choice, Escape or a press anywhere else closes it, and that press goes no further.
@@ -1008,6 +1010,8 @@ mid-fade.
   hairline under a header.
 - **`border-style: dashed`** (or `dashed` in `border`) dashes a border, for drop targets such as Add Component.
 - **`line-height`** sets the height of each line of text, so 12px text sits on a 16px line as in the design.
+- **`z-index`** above 0 draws an element and its children after everything else, higher ones last, as for the
+  split handles. The pointer still finds elements in tree order.
 - **Shapes** (`ui.set_shapes`): lines with round ends and circles drawn on any element, for gizmos and graphs.
 - **Icons in tabs and foldouts:** a `DockPanel`'s `icon` (or `add_tab_with_icon`) shows before its title, and
   `set_foldout_icon` before a foldout's; `foldout_header` takes buttons or a switch after the title, which work

@@ -96,7 +96,12 @@ pub(crate) fn measure(
 const FIELD_WIDTH: f32 = 160.0;
 const FIELD_MIN_WIDTH: f32 = 40.0;
 
-/// Walks the laid-out tree into quads, parents before children.
+/// An element put off to be drawn over everything: its `z-index`, then
+/// where, how faded and how clipped it would have been drawn.
+pub(crate) type Raised = (i32, taffy::NodeId, (f32, f32), f32, [f32; 4]);
+
+/// Walks the laid-out tree into quads, parents before children, then the
+/// elements raised with `z-index` over everything.
 pub(crate) struct Draw<'a> {
     pub tree: &'a mut TaffyTree<Element>,
     pub atlas: &'a mut GlyphAtlas,
@@ -107,13 +112,35 @@ pub(crate) struct Draw<'a> {
     pub caret_on: bool,
     /// The UI's clock, for transitions.
     pub time: f32,
+    /// Raised elements met on the way, to draw last.
+    pub raised: Vec<Raised>,
+    /// Drawing the raised elements now, so they are not put off again.
+    pub lifting: bool,
 }
 
 impl Draw<'_> {
+    /// Draws the whole tree from `root`, then what is raised over it, the
+    /// lowest `z-index` first.
+    pub fn all(&mut self, root: taffy::NodeId) {
+        self.node(root, (0.0, 0.0), 1.0, Quad::UNCLIPPED);
+        let mut raised = std::mem::take(&mut self.raised);
+        raised.sort_by_key(|(z, ..)| *z);
+        self.lifting = true;
+        for (_, node, parent, opacity, clip) in raised {
+            self.node(node, parent, opacity, clip);
+        }
+        self.lifting = false;
+    }
+
     /// Draws `node` at `parent`'s position, faded by the opacity of the
     /// elements it is in and kept within `clip` (physical pixels).
     pub fn node(&mut self, node: taffy::NodeId, parent: (f32, f32), opacity: f32, clip: [f32; 4]) {
         if self.tree.style(node).is_ok_and(|s| s.display == Display::None) {
+            return;
+        }
+        let z = self.tree.get_node_context(node).map_or(0, |e| e.computed.z_index);
+        if z > 0 && !self.lifting {
+            self.raised.push((z, node, parent, opacity, clip));
             return;
         }
         let layout = *self.tree.layout(node).expect("laid out");

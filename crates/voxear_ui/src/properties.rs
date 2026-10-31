@@ -10,7 +10,8 @@
 //! `minmax(...)`, `span 2`, `1 / 3`), read by taffy itself. Motion:
 //! `transition` (`background-color 150ms ease-out, opacity 0.1s`). Look: `background-color`, `border`, `border-width`,
 //! `border-color`, `border-style` (`solid` or `dashed`), `border-radius`, `box-shadow` (`0 16px 40px #0006`,
-//! with an optional spread, or `none`), `opacity`, `pointer-events`, `overflow`
+//! with an optional spread, or `none`), `opacity`, `z-index` (above 0 draws over everything), `pointer-events`,
+//! `overflow`
 //! (`visible`, `hidden`, or `scroll`/`auto`), `scrollbar-color`, and for
 //! text fields `selection-color` and `caret-color`. Text,
 //! which children inherit: `color`, `font-size`, `font-weight`,
@@ -187,6 +188,11 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         }
         "border-radius" => style.radius = pixels(input)?,
         "opacity" => style.opacity = number(input)?.clamp(0.0, 1.0),
+        "z-index" => {
+            style.z_index = input
+                .try_parse(|i| i.expect_ident_matching("auto").map(|_| 0))
+                .or_else(|_| input.expect_integer().map_err(|_| "expected a whole number or auto".to_string()))?;
+        }
         "pointer-events" => style.pickable = keyword(input, &[("auto", true), ("none", false)])?,
         "overflow" => {
             let modes = [

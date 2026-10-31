@@ -20,6 +20,10 @@ pub struct Style {
     pub shadow: Option<Shadow>,
     /// Multiplies this element's and its children's alpha.
     pub opacity: f32,
+    /// Above 0, the element and its children are drawn over everything
+    /// else, higher ones last, as CSS's `z-index` does. The pointer still
+    /// finds elements in tree order.
+    pub z_index: i32,
     /// Whether the pointer can hover and press it. Its children decide for
     /// themselves.
     pub pickable: bool,
@@ -131,6 +135,7 @@ impl Default for Style {
             dashed: false,
             radius: 0.0,
             shadow: None,
+            z_index: 0,
             opacity: 1.0,
             pickable: true,
             overflow: Overflow::Visible,

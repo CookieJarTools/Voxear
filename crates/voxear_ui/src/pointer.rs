@@ -18,7 +18,7 @@ pub(crate) struct Pointer {
     /// The element under the pointer and everything it is in.
     hovered: Vec<taffy::NodeId>,
     /// What the primary button went down on, and everything it is in.
-    pressed: Vec<taffy::NodeId>,
+    pub(crate) pressed: Vec<taffy::NodeId>,
     /// Elements clicked since the last frame.
     pub clicks: Vec<taffy::NodeId>,
     /// Elements clicked twice in quick succession since the last frame.

@@ -8,7 +8,7 @@ use parley::{FontContext, FontWeight, Layout, LayoutContext, StyleProperty};
 use taffy::{AvailableSpace, Dimension, Display, Size, TaffyTree};
 
 use crate::{
-    Quad, Style, TextStyle, UiFrame,
+    Style, TextStyle, UiFrame,
     atlas::GlyphAtlas,
     draw::{Draw, measure},
     selector::States,
@@ -642,8 +642,10 @@ impl Ui {
                 focused,
                 caret_on,
                 time,
+                raised: Vec::new(),
+                lifting: false,
             };
-            draw.node(self.root, (0.0, 0.0), 1.0, Quad::UNCLIPPED);
+            draw.all(self.root);
             if !self.atlas.restarted {
                 break;
             }

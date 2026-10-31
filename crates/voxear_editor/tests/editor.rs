@@ -96,3 +96,36 @@ fn the_project_shows_folders_as_tiles_and_opens_them() {
     let folders = editor.ui.find(root, "project-folders").unwrap();
     assert_eq!(editor.ui.selection(folders).len(), 1, "and the tree marks it");
 }
+
+#[test]
+fn a_hovered_divider_shows_its_handle_over_the_scene_frame() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let root = editor.ui.root();
+    let mut dividers = Vec::new();
+    with_class(&editor.ui, root, "split-divider", &mut dividers);
+    // The divider beside the Inspector, on the Scene panel's frame.
+    let ui = &editor.ui;
+    let divider = dividers
+        .into_iter()
+        .filter(|&d| ui.rect(d)[2] < ui.rect(d)[3])
+        .max_by(|a, b| ui.rect(*a)[0].total_cmp(&ui.rect(*b)[0]))
+        .unwrap();
+    let [x, y, w, h] = ui.rect(divider);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    // A frame to start the handle's fade, and one long enough to finish it.
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    editor.update(&mut renderer, SIZE, 1.0, 0.5).unwrap();
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("divider.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, SIZE.0, SIZE.1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+    let at = |px: f32, py: f32| {
+        let i = ((py as u32 * width + px as u32) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    assert_eq!(at(x + w / 2.0, y + h / 2.0), [0x79, 0x88, 0xff], "the handle, over the frame around the Scene");
+    assert_eq!(at(x + w / 2.0, y + 4.0), [0x0c, 0x0e, 0x10], "short of the divider's ends");
+}

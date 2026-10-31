@@ -5,6 +5,7 @@
 //! is loaded again from a new build when they change (hot reload), and talks to them through two function tables: one
 //! for engine calls scripts make, one for script calls the engine makes.
 
+mod ecs;
 mod hostfxr;
 mod interop;
 mod runtime;

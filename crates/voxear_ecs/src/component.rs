@@ -17,6 +17,12 @@ impl ComponentId {
     pub const fn index(self) -> usize {
         self.0 as usize
     }
+
+    /// The id with this index in a world's registry, as scripts hand it
+    /// back; check it against [`ComponentRegistry::len`] before use.
+    pub const fn from_index(index: u32) -> Self {
+        Self(index)
+    }
 }
 
 pub(crate) type DropFn = unsafe fn(*mut u8);
@@ -45,6 +51,12 @@ impl ComponentInfo {
 
     pub(crate) fn drop_fn(&self) -> Option<DropFn> {
         self.drop
+    }
+
+    /// Whether the value owns something, as a `String` does, so its bytes
+    /// cannot be copied or read as plain data.
+    pub fn needs_drop(&self) -> bool {
+        self.drop.is_some()
     }
 }
 

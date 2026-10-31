@@ -140,7 +140,9 @@ public sealed class Spinner : Behaviour
 	}
 }
 
-// Advanced: a C# system over chunk spans, no per-object calls (planned for M3).
+// Advanced: a C# system over chunk spans, no per-object calls.
+public struct Spin : IComponent { public float Speed; }
+
 public sealed class SpinSystem : SystemBase
 {
 	protected override void Update()
@@ -154,6 +156,41 @@ public sealed class SpinSystem : SystemBase
 	}
 }
 ```
+
+### The ECS from C# *(implemented in M3)*
+
+The advanced path beside behaviours, for things there are hundreds or thousands of. It is in `Voxear.Core`
+(`Entities/`), and the engine side is `crates/voxear_scripting/src/ecs.rs`.
+
+- **Components** are `unmanaged` structs marked `IComponent`. Each is registered by its full name, size and
+  alignment the first time it is used, and lives in the chunks beside Rust's components. `Transform` is one too, as
+  the engine lays it out, so systems move Objs. Scripts may read any component that is plain data, write their own
+  and `Transform`, and add or remove only their own: the engine's other components keep rules scripts cannot see.
+- **Entities.** `Entity.Create()` makes one at once, even inside a system. An entity has `Has`, `Get`, `TryGet`,
+  `Set`, `Add` (which chains), `Remove` and `Destroy`. An Obj has the same, through `obj.Entity`, so a behaviour can
+  hand an Obj to a system with `Obj.Add(new Spin { Speed = 90f })`. Destroying an entity that is an Obj destroys it
+  as `Obj.Destroy` does. Plain entities do not belong to a scene, so a level change leaves them.
+- **Systems** derive from `SystemBase`. The engine makes one of each class in the game's scripts and runs its
+  `Update` once a frame in its stage (`[UpdateIn(Stage.FixedUpdate)]`; Update by default), ordered by
+  `[ExecutionOrder]` and then by name. Each stage's C# systems run after the behaviours' callbacks there and before
+  the engine's own systems, so a Transform written in `PostUpdate` shows the same frame. Each system is a sample in
+  the Profiler. They are made again, with `OnCreate`, each time play mode starts (the world is new) and each time
+  the scripts reload, after `OnDestroy`.
+- **Queries.** `Query<Transform, Spin>()` in a system, or `World.Query<…>()` elsewhere, fetches up to eight
+  components, with `With`, `Without` and `Changed` (per chunk, since the system last ran). Walking it hands out each
+  chunk, with `Count`, `Entities`, `Read<T>()` (a `ReadOnlySpan`) and `Write<T>()` (a `Span`, which marks the chunk
+  changed). The engine writes the chunks' places into a pooled buffer once per walk, so the walk itself makes no
+  calls into the engine, and building a query allocates nothing. `ForEach((ref Transform t, ref Spin s) => …)` is
+  the short way, for up to three components. Objs the editor makes for itself, and Objs being destroyed, are never
+  matched.
+- **Commands.** Adding, removing and destroying move rows between chunks, which would leave a span pointing at the
+  wrong row, so while a system runs or a query is walked they wait, and apply in order once it is done. Reading and
+  writing a value in place happens at once.
+- **Worlds.** Component ids belong to one world, and play mode makes a new one each time. The engine shares the id
+  of the world it lends with scripts, which they read in place, so each component type registers again in a new
+  world for the cost of one comparison per use.
+
+Still to come: components written in scenes and prefabs and shown in the Inspector, and parallel jobs over chunks.
 
 ### Lifecycle guarantees *(implemented)*
 

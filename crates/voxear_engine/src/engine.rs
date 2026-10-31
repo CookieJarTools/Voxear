@@ -313,6 +313,7 @@ impl Engine {
     /// 4. LateUpdate behaviours, then `PostUpdate` systems.
     /// 5. Deferred destroys, then `Last` systems.
     ///
+    /// A stage's systems are the scripts' C# systems, then the engine's.
     /// Anything created or enabled along the way is initialised before the
     /// next phase. Each step is a profiling sample (see
     /// `voxear_core::profiling`), with each behaviour's callback in it.
@@ -327,7 +328,7 @@ impl Engine {
 
         {
             profile_scope!("First");
-            self.schedule.run_stage("First", &mut self.world);
+            self.run_stage("First");
             self.flush();
         }
 
@@ -337,7 +338,7 @@ impl Engine {
             profile_scope!("FixedUpdate");
             self.sync_script_time(self.time.fixed_delta);
             self.run_phase(Phase::FixedUpdate);
-            self.schedule.run_stage("FixedUpdate", &mut self.world);
+            self.run_stage("FixedUpdate");
             self.flush();
             self.fixed_accumulator -= self.time.fixed_delta;
             steps += 1;
@@ -350,14 +351,14 @@ impl Engine {
         {
             profile_scope!("Update");
             self.run_phase(Phase::Update);
-            self.schedule.run_stage("Update", &mut self.world);
+            self.run_stage("Update");
             self.flush();
         }
 
         {
             profile_scope!("LateUpdate");
             self.run_phase(Phase::LateUpdate);
-            self.schedule.run_stage("PostUpdate", &mut self.world);
+            self.run_stage("PostUpdate");
             self.flush();
         }
 
@@ -369,7 +370,21 @@ impl Engine {
         for entity in destroyed {
             self.world.despawn(entity);
         }
-        self.schedule.run_stage("Last", &mut self.world);
+        self.run_stage("Last");
+    }
+
+    /// A stage's systems: the scripts' C# systems first, then the engine's,
+    /// so what C# writes in `PostUpdate` is in this frame's transforms.
+    fn run_stage(&mut self, stage: &'static str) {
+        if let Some(scripts) = self.scripts.as_mut() {
+            let index = STAGES.iter().position(|&s| s == stage).expect("one of the engine's stages");
+            scripts.run_systems(&mut self.world, index);
+            let doomed = scripts.take_obj_destroys();
+            if !doomed.is_empty() {
+                self.destroy_objs(&doomed);
+            }
+        }
+        self.schedule.run_stage(stage, &mut self.world);
     }
 
     /// Awake, OnEnable, Start, OnDisable and OnDestroy for what changed.

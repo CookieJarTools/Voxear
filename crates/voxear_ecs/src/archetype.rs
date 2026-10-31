@@ -153,6 +153,16 @@ impl Archetype {
         Some(self.chunks.get(chunk)?.versions[column].load(Ordering::Relaxed))
     }
 
+    /// Stamps `id` in `chunk` as written at `tick`, for code that writes
+    /// through [`column_ptr`](Self::column_ptr), as scripts do.
+    pub fn mark_written(&self, chunk: usize, id: ComponentId, tick: u32) {
+        if let Some(column) = self.column_index(id)
+            && chunk < self.chunks.len()
+        {
+            self.mark_changed(chunk, column, tick);
+        }
+    }
+
     pub(crate) fn mark_changed(&self, chunk: usize, column: usize, tick: u32) {
         self.chunks[chunk].versions[column].store(tick, Ordering::Relaxed);
     }

@@ -32,6 +32,7 @@ namespace Voxear.Scripting
 		{
 			context ??= new GameLoadContext(path);
 			assemblies.Add(LoadInto(context, path));
+			Systems.Forget();
 			BehaviourTypes.Clear();
 			BehaviourFields.Clear();
 			Log.Info($"Loaded game scripts from {path}");
@@ -66,6 +67,7 @@ namespace Voxear.Scripting
 
 			var live = Enabled(handles, enabled);
 			Dispatch(live, Phase.OnDisable);
+			Systems.Destroy();
 			Swap(next, loaded);
 			var transfer = new StateTransfer(previous ?? next, assemblies);
 			var gone = BehaviourTable.Replace(transfer);

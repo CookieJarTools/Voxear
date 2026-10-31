@@ -66,6 +66,9 @@ namespace Voxear
 		/// <summary>The Obj's rotation in the world, through all its parents. Like Unity's rotation.</summary>
 		public Quaternion WorldRotation => Native.GetWorldTransform(Id).Rotation;
 
+		/// <summary>The engine entity the Obj is, for the ECS: the same handle, with its components.</summary>
+		public Entity Entity => new Entity(Id);
+
 		/// <summary>The direction the Obj faces in the world: its +Z, as Unity's transform.forward.</summary>
 		public Vector3 Forward => WorldRotation.Forward;
 
@@ -144,6 +147,51 @@ namespace Voxear
 		{
 			behaviour = GetBehaviour<T>();
 			return behaviour != null;
+		}
+
+		/// <summary>
+		/// Gives the Obj a component, the data systems work on, so a behaviour can hand an Obj to a system:
+		/// <c>Obj.Add(new Spin { Speed = 90f })</c>. Returns the Obj, so adds chain.
+		/// </summary>
+		public Obj Add<T>(T value) where T : unmanaged, IComponent
+		{
+			Entity.Add(value);
+			return this;
+		}
+
+		/// <summary>Gives the Obj the component with every field zero.</summary>
+		public Obj Add<T>() where T : unmanaged, IComponent
+		{
+			Entity.Add<T>();
+			return this;
+		}
+
+		public bool Has<T>() where T : unmanaged, IComponent
+		{
+			return Entity.Has<T>();
+		}
+
+		/// <summary>A copy of the component's value. Throws when the Obj has none; TryGet does not.</summary>
+		public T Get<T>() where T : unmanaged, IComponent
+		{
+			return Entity.Get<T>();
+		}
+
+		public bool TryGet<T>(out T value) where T : unmanaged, IComponent
+		{
+			return Entity.TryGet(out value);
+		}
+
+		/// <summary>Writes the component's value in place.</summary>
+		public void Set<T>(T value) where T : unmanaged, IComponent
+		{
+			Entity.Set(value);
+		}
+
+		public Obj Remove<T>() where T : unmanaged, IComponent
+		{
+			Entity.Remove<T>();
+			return this;
 		}
 
 		public static bool operator ==(Obj left, Obj right)

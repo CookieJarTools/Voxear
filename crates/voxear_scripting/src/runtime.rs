@@ -78,7 +78,8 @@ impl ScriptRuntime {
                 && managed.release.is_some()
                 && managed.update.is_some()
                 && managed.content_roots.is_some()
-                && managed.reload_game_assembly.is_some(),
+                && managed.reload_game_assembly.is_some()
+                && managed.run_systems.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(managed.create_behaviour.expect("validated above"));
@@ -214,6 +215,16 @@ impl ScriptRuntime {
             },
             is_instance: info.flags & FLAG_INSTANCE != 0,
         })
+    }
+
+    /// Runs the C# systems (`SystemBase`) of the engine stage at `stage` in
+    /// its stages, in their order; the entity commands they made wait until
+    /// each one ends, and anything left waiting applies before this returns.
+    pub fn run_systems(&mut self, world: &mut World, stage: usize) {
+        let run = self.managed.run_systems.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        unsafe { run(stage as i32) };
+        interop::systems_ran();
     }
 
     /// The once-per-frame script step: finished loads resume their awaits,

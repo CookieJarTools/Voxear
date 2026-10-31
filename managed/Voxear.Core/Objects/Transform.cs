@@ -5,10 +5,11 @@ namespace Voxear
 {
 	/// <summary>
 	/// Position, rotation and scale of an Obj. The layout is explicit because it must match the
-	/// engine's Transform byte for byte, including the padding glam adds for SIMD.
+	/// engine's Transform byte for byte, including the padding glam adds for SIMD. It is also a component, so
+	/// systems read and write Objs' transforms in place: <c>Query&lt;Transform, Spin&gt;()</c>.
 	/// </summary>
 	[StructLayout(LayoutKind.Explicit, Size = 48)]
-	public struct Transform
+	public struct Transform : IComponent
 	{
 		public static readonly Transform Identity = new Transform
 		{

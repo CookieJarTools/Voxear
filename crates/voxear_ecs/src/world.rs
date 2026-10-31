@@ -4,6 +4,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     ptr::{self, NonNull},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::{
@@ -14,8 +15,12 @@ use crate::{
     query::{Query, QueryData, ReadOnlyQueryData},
 };
 
+/// Hands each world an id of its own.
+static NEXT_WORLD: AtomicU64 = AtomicU64::new(1);
+
 /// Owns every entity, component and resource.
 pub struct World {
+    id: u64,
     entities: Entities,
     components: ComponentRegistry,
     archetypes: Vec<Archetype>,
@@ -35,6 +40,7 @@ impl World {
         let components = ComponentRegistry::default();
         let empty = Archetype::new(ArchetypeId::EMPTY, &[], &components);
         Self {
+            id: NEXT_WORLD.fetch_add(1, Ordering::Relaxed),
             entities: Entities::default(),
             components,
             archetypes: vec![empty],
@@ -42,6 +48,13 @@ impl World {
             resources: HashMap::new(),
             change_tick: 1,
         }
+    }
+
+    /// Unique to this world in the process, so code that keeps component
+    /// ids or entities, as scripts do, can tell when the world it kept them
+    /// for has gone.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn spawn<B: Bundle>(&mut self, bundle: B) -> Entity {

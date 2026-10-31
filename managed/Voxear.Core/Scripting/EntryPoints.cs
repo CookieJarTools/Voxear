@@ -137,6 +137,20 @@ namespace Voxear.Scripting
 			}
 		}
 
+		/// <summary>Runs the game's systems of one stage, each guarded on its own, so one that throws stops no other.</summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static void RunSystems(int stage)
+		{
+			try
+			{
+				Systems.Run((Stage)stage);
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+			}
+		}
+
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static void Invoke(int phase, uint* handles, int count)
 		{

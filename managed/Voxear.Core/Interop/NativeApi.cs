@@ -44,5 +44,19 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<int, PreviewStateData*, int> PreviewState;
 		public delegate* unmanaged[Cdecl]<int, byte*, int, int> PreviewSave;
 		public delegate* unmanaged[Cdecl]<int, void> PreviewFree;
+		public ulong* WorldId;
+		public delegate* unmanaged[Cdecl]<byte*, int, int, int, int> ComponentRegister;
+		public delegate* unmanaged[Cdecl]<QueryDesc*, nint*, int, int> QueryChunks;
+		public delegate* unmanaged[Cdecl]<ulong, uint, void> ChunkWritten;
+		public delegate* unmanaged[Cdecl]<ulong> EntityCreate;
+		public delegate* unmanaged[Cdecl]<ulong, void> EntityDestroy;
+		public delegate* unmanaged[Cdecl]<ulong, int> EntityAlive;
+		public delegate* unmanaged[Cdecl]<ulong, uint, int> ComponentHas;
+		public delegate* unmanaged[Cdecl]<ulong, uint, byte*, int, int> ComponentGet;
+		public delegate* unmanaged[Cdecl]<ulong, uint, byte*, int, int> ComponentSet;
+		public delegate* unmanaged[Cdecl]<ulong, uint, byte*, int, int> ComponentAdd;
+		public delegate* unmanaged[Cdecl]<ulong, uint, int> ComponentRemove;
+		public delegate* unmanaged[Cdecl]<int, void> CommandsDefer;
+		public delegate* unmanaged[Cdecl]<int, uint> ChangeTick;
 	}
 }

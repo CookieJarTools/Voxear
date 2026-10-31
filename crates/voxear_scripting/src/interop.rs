@@ -12,6 +12,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     ptr,
+    sync::atomic::Ordering,
 };
 
 use voxear_core::{
@@ -24,12 +25,17 @@ use voxear_scene::{
     Registration, Request, Transform, world_matrix,
 };
 
+use crate::ecs::{
+    self, CURRENT_WORLD, QueryDesc, change_tick, chunk_written, commands_defer, component_add, component_get,
+    component_has, component_register, component_remove, component_set, entity_alive, entity_create, entity_destroy,
+    query_chunks,
+};
 use crate::services::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
     SpawnedPrefab, with_services,
 };
 
-pub(crate) const API_VERSION: u32 = 14;
+pub(crate) const API_VERSION: u32 = 15;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -91,6 +97,25 @@ pub(crate) struct NativeApi {
     pub preview_state: unsafe extern "C" fn(preview: i32, out: *mut PreviewState) -> i32,
     pub preview_save: unsafe extern "C" fn(preview: i32, path: *const u8, len: i32) -> i32,
     pub preview_free: unsafe extern "C" fn(preview: i32),
+    /// The ECS, for `Voxear.Entity`, `SystemBase` and queries (see
+    /// [`crate::ecs`]): the id of the world lent to scripts now, read in
+    /// place; components by name and layout; chunks a query matches; a
+    /// fetched column marked written; entities and their components; the
+    /// commands' wait; and the change tick.
+    pub world_id: *const u64,
+    pub component_register: unsafe extern "C" fn(name: *const u8, len: i32, size: i32, align: i32) -> i32,
+    pub query_chunks: unsafe extern "C" fn(query: *const QueryDesc, out: *mut isize, capacity: i32) -> i32,
+    pub chunk_written: unsafe extern "C" fn(place: u64, component: u32),
+    pub entity_create: unsafe extern "C" fn() -> u64,
+    pub entity_destroy: unsafe extern "C" fn(entity: u64),
+    pub entity_alive: unsafe extern "C" fn(entity: u64) -> i32,
+    pub component_has: unsafe extern "C" fn(entity: u64, component: u32) -> i32,
+    pub component_get: unsafe extern "C" fn(entity: u64, component: u32, out: *mut u8, size: i32) -> i32,
+    pub component_set: unsafe extern "C" fn(entity: u64, component: u32, value: *const u8, size: i32) -> i32,
+    pub component_add: unsafe extern "C" fn(entity: u64, component: u32, value: *const u8, size: i32) -> i32,
+    pub component_remove: unsafe extern "C" fn(entity: u64, component: u32) -> i32,
+    pub commands_defer: unsafe extern "C" fn(begin: i32),
+    pub change_tick: unsafe extern "C" fn(advance: i32) -> u32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -139,6 +164,9 @@ pub(crate) struct ManagedApi {
             count: i32,
         ) -> i32,
     >,
+    /// Runs the C# systems of one stage, by its index in the engine's
+    /// stages, in order.
+    pub run_systems: Option<unsafe extern "C" fn(stage: i32)>,
 }
 
 #[repr(C)]
@@ -176,17 +204,19 @@ pub(crate) fn take_obj_destroys() -> Vec<Entity> {
 }
 
 /// Lends the world to native callbacks for the duration of a script call.
-pub(crate) struct WorldScope(*mut World);
+pub(crate) struct WorldScope(*mut World, u64);
 
 impl WorldScope {
     pub fn enter(world: &mut World) -> Self {
-        Self(WORLD.replace(world))
+        let id = CURRENT_WORLD.swap(world.id(), Ordering::Relaxed);
+        Self(WORLD.replace(world), id)
     }
 }
 
 impl Drop for WorldScope {
     fn drop(&mut self) {
         WORLD.set(self.0);
+        CURRENT_WORLD.store(self.1, Ordering::Relaxed);
     }
 }
 
@@ -198,7 +228,7 @@ pub(crate) fn take_level_requests() -> Vec<String> {
     LEVEL_REQUESTS.take()
 }
 
-fn with_world<R>(f: impl FnOnce(&mut World) -> Option<R>) -> Option<R> {
+pub(crate) fn with_world<R>(f: impl FnOnce(&mut World) -> Option<R>) -> Option<R> {
     let world = WORLD.get();
     if world.is_null() {
         return None;
@@ -206,7 +236,7 @@ fn with_world<R>(f: impl FnOnce(&mut World) -> Option<R>) -> Option<R> {
     f(unsafe { &mut *world })
 }
 
-unsafe fn utf8<'a>(ptr: *const u8, len: i32) -> std::borrow::Cow<'a, str> {
+pub(crate) unsafe fn utf8<'a>(ptr: *const u8, len: i32) -> std::borrow::Cow<'a, str> {
     if ptr.is_null() || len <= 0 {
         return "".into();
     }
@@ -440,7 +470,13 @@ unsafe extern "C" fn obj_world_transform(entity: u64, out: *mut Transform) -> i3
 }
 
 unsafe extern "C" fn obj_destroy(entity: u64) {
-    OBJ_DESTROYS.with_borrow_mut(|d| d.push(Entity::from_bits(entity)));
+    push_obj_destroy(Entity::from_bits(entity));
+}
+
+/// Destroys an Obj, with its children and behaviours, once the script call
+/// returns.
+pub(crate) fn push_obj_destroy(entity: Entity) {
+    OBJ_DESTROYS.with_borrow_mut(|d| d.push(entity));
 }
 
 unsafe extern "C" fn obj_behaviours(entity: u64, out: *mut u32, capacity: i32) -> i32 {
@@ -655,5 +691,24 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         preview_state,
         preview_save,
         preview_free,
+        world_id: CURRENT_WORLD.as_ptr(),
+        component_register,
+        query_chunks,
+        chunk_written,
+        entity_create,
+        entity_destroy,
+        entity_alive,
+        component_has,
+        component_get,
+        component_set,
+        component_add,
+        component_remove,
+        commands_defer,
+        change_tick,
     }
+}
+
+/// After the systems of a stage ran: what they left waiting applies.
+pub(crate) fn systems_ran() {
+    ecs::settle_commands();
 }

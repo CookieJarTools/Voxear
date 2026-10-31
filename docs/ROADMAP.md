@@ -328,13 +328,13 @@ Still to do in M3:
   - the memory profiler with snapshots and diffs
   - debug draw and the dev console
 - **C# ECS API**, the advanced path beside Behaviours (see "ECS and the Obj model" in the architecture):
-  - C# components as `unmanaged` structs, registered by name and layout, living in the same chunk memory as Rust
+  - [x] C# components as `unmanaged` structs, registered by name and layout, living in the same chunk memory as Rust
     components
-  - `SystemBase` systems placed in schedule stages, with queries over chunks that hand out `Span<T>` reads and
-    writes with no copies, plus `With`, `Without` and `Changed` filters
-  - entity commands from C#: create, destroy, and add or remove components, applied at sync points
-  - a bridge to Objs (`obj.Add<Spin>()`, `obj.Get<Spin>()`), so Behaviours and systems can mix
-  - components written in scenes and prefabs, and shown in the inspector
+  - [x] `SystemBase` systems placed in schedule stages, with queries over chunks that hand out `Span<T>` reads and
+    writes with no copies, plus `With`, `Without` and `Changed` filters, and `ForEach` for the short way
+  - [x] entity commands from C#: create, destroy, and add or remove components, applied at sync points
+  - [x] a bridge to Objs (`obj.Add<Spin>()`, `obj.Get<Spin>()`), so Behaviours and systems can mix
+  - [ ] components written in scenes and prefabs, and shown in the inspector
   - Later: parallel jobs over chunks.
 - The Animation workspace, once there is animation.
 - **Builds, next:** bundle compression (LZ4 or Zstd), and a click on a log line selecting the asset it names.

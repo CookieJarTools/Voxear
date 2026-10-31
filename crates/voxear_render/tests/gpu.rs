@@ -100,6 +100,28 @@ fn lod_changes_fade_then_settle() {
     assert_eq!(done.fade_draws, 0, "{done:?}");
 }
 
+#[test]
+fn an_obj_new_to_its_place_in_the_list_does_not_fade_in() {
+    let Some(mut renderer) = renderer() else { return };
+    // A small sphere far off, drawn at a coarse LOD, until it settles.
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -4.0))));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let far =
+        world.spawn((MeshRenderer { mesh: sphere, material }, Transform::from_position(Vec3::new(0.0, 0.0, 80.0))));
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 4);
+
+    // Another, close up, takes its place in the list, as when a scene opens
+    // in place of another: it shows at once, not fading in from the old LOD.
+    world.despawn(far);
+    world
+        .spawn((MeshRenderer { mesh: sphere, material }, Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(3.0))));
+    let swapped = run(&mut renderer, &world, &mut time, 1);
+    assert_eq!(swapped.fade_draws, 0, "{swapped:?}");
+}
+
 /// A camera-facing quad, two-sided so winding never hides it, with a base
 /// colour texture and a flat normal map, embedded as PNGs.
 fn textured_quad() -> Vec<u8> {

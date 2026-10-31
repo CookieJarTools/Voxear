@@ -229,24 +229,38 @@ Done so far:
   matched fuzzily, run from the keyboard or with a click, with what ran recently first. Scripts add commands with
   `[Command]` (run in edit mode against the edited level, undoable, with their own keys), and Rust code with
   `Editor::add_command`.
-- **Settings:** the Scene view's and play mode's settings in a Settings panel and the palette, kept per project with
-  the palette's recent items.
+- **Settings:** the Scene view's and play mode's settings in the rail's Settings drawer, a tab per group with a
+  search over all of them, and in the palette, kept per project with the palette's recent items.
 - **Hierarchy order:** scene headers, Objs in their scene's order (saved as shown), dragging before, after or into a
   row or onto a scene, undo putting Objs back at their places, `IInstance` badges and tinted prefab instances.
 - **The Console, after Sifter:** one line per row in columns, categories nobody declared (a `[Tag]`, the scripts'
-  namespace, the engine's crate, the compiler) as chips, a search with words, `tag:`, `-tag:` and `/regex/`, level
+  namespace, the engine's crate, the compiler) in a Categories menu, a search with words, `tag:`, `-tag:` and `/regex/`, level
   toggles with counts, Collapse, Clear, Error Pause and muting; the selected line's stack coloured part by part, the
   engine's frames folded under My code only, each frame opening its file at its line in the code editor the
   settings name, and a line about an Obj selecting it. Scripts' lines carry their .NET stack and Obj.
 - **Engine installs for the launcher:** an install finds its own files (`VOXEAR_HOME`, or `engine.toml` above
   `bin/`), game scripts build against the engine running them (`managed/Voxear.Scripts.props`), projects accept the
   launcher's version pin, `voxear-editor --project` opens one, `vox new` makes one (Empty or 3D) for the launcher's
-  form, and `voxear-dist` packages a checkout as a release archive with its `engine.toml`. Scripts' interop reads and writes C#'s values unaligned, which a Release
-  `Voxear.Core` needs.
+  form, and `voxear-dist` packages a checkout as a release archive with its `engine.toml`. Signed nightly releases
+  are published with the manifest the launcher reads (CookieJarTools/VoxearReleases). Scripts' interop reads and
+  writes C#'s values unaligned, which a Release `Voxear.Core` needs.
 - **C# hot reload:** changed scripts build in the background and reload, into the running game while playing: every
   behaviour is made again from its new class under the same handle with its fields carried over (private ones,
   script types, references to behaviours), OnDisable and OnEnable but no Awake or Start, and the old build unloads,
   checked to have left memory. `vox run`'s window reloads them too. A build that hangs is stopped.
+- **Windows, drawers and workspaces:** a context menu on panel tabs (Close, Close Other Tabs, Reset Layout), a
+  Window button listing every panel, the rail opening Levels and Settings as a drawer, the World and Profiling
+  workspaces each keeping its layout, and dropdowns as wide as their options and kept on screen.
+- **The Scene view's header:** Lit, Unlit and Wireframe shading, gizmos for lights and cameras with the selected
+  one's reach or frustum, and full screen.
+- **The Project's files:** context menus to open, show, copy the path, rename (with the `.meta`, and a script's
+  class), duplicate, delete into `.voxear/Trash`, and make folders, scenes, levels, materials and scripts; and the
+  Inspector for what is selected there, editing materials in place.
+- **Prefabs in the editor:** made by dragging an Obj onto the Project, opened on their own in prefab mode with a
+  way back, saved, and reloaded by their instances; components locked for designers with the values they still
+  see, and scripts moved up and down.
+- **The Profiler:** the last 300 frames' CPU and GPU times as a chart, and one frame broken down into the editor's
+  and engine's stages, the GPU's passes, and what was drawn, culled and loaded.
 
 Still to do in M3:
 - UI core:
@@ -261,11 +275,13 @@ Still to do in M3:
   player's log.
 - For the launcher: `vox upgrade`, the first-person, third-person, top-down and 2D templates (after an input API
   and 2D rendering), Windows archives, and a workflow that builds and publishes releases.
+- **The Cookbook is not usable yet:** editing a page does not work, and most of the CookieJarTools Cookbook's
+  features are missing. It needs a pass of its own, editing first, before its next parts.
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.
 - Debug tools:
-  - the stats overlay's frame-time graph, and the profiler panel (with Tracy)
+  - the stats overlay's frame-time graph, and Tracy behind the Profiler panel
   - the frame debugger and the ECS inspector
   - the memory profiler with snapshots and diffs
   - debug draw and the dev console
@@ -278,8 +294,8 @@ Still to do in M3:
   - a bridge to Objs (`obj.Add<Spin>()`, `obj.Get<Spin>()`), so Behaviours and systems can mix
   - components written in scenes and prefabs, and shown in the inspector
   - Later: parallel jobs over chunks.
-- `vox new` with project templates and default setups, and versioned engine builds with a release manifest, which
-  together are the contract the launcher needs.
+- The editor's layout, and each workspace's, kept between sessions; the Animation workspace once there is
+  animation.
 - **Build profiles and the Build window:**
   - `.buildprofile` assets that inherit from a base, with a Release and a Development profile per platform in new
     projects

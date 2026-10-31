@@ -2,7 +2,13 @@
 //! view, which looks through the editor's own camera, and the Game view,
 //! which looks through the level's. Play mode is in [`play`].
 
+mod drawer;
 mod play;
+mod prefab_mode;
+mod scene_view;
+mod windows;
+
+pub use drawer::Drawer;
 
 use std::{
     path::Path,
@@ -11,6 +17,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use voxear_assets::AssetKind;
 use voxear_core::{
     logging::LogCapture,
     math::{Quat, Vec3},
@@ -25,8 +32,10 @@ use voxear_scene::{Name, Transform};
 use voxear_ui::{Color, DragSource, NodeId, Shape, Ui};
 
 use crate::{
+    asset_inspector::AssetAction,
     console::Console,
     fields::Pick,
+    gizmos,
     hierarchy::EditorOnly,
     hierarchy::Hierarchy,
     hierarchy::ObjAction,
@@ -35,8 +44,9 @@ use crate::{
     levels_panel::{LevelAction, LevelsPanel},
     objs,
     palette::{Added, Keys, Palette, PaletteAction, PaletteCommand, PaletteKey, Picked, Sources},
-    project_view::ProjectView,
-    props::{self, Prop},
+    profiler::{self, Laps, Profiler},
+    project_view::{ItemKind, ProjectEvent, ProjectItem, ProjectView},
+    props::{self, Part, Prop},
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
     settings::{self, Memory, SNAPS, SettingKind, SettingValue, Settings},
     settings_panel::SettingsPanel,
@@ -48,8 +58,8 @@ const SHEET: &str = include_str!("../ui/Editor.vss");
 /// Hierarchy on the left, the Scene in the middle over the Project and
 /// Console, and the Inspector on the right. The Project sits under the Scene,
 /// as in Unity, because its folders and files need the width.
-const LAYOUT: &str = "row(240, [hierarchy, levels], row(-300, column(66%, [scene, game, cookbook], [project, console]), \
-     [inspector, settings]))";
+const LAYOUT: &str =
+    "row(240, [hierarchy], row(-300, column(66%, [scene, game, cookbook], [project, console]), [inspector]))";
 /// The window's background, which the 3D view's surroundings are cleared to.
 const BACKGROUND: u32 = 0x0c0e10;
 /// How long a message stays in the status bar.
@@ -92,6 +102,28 @@ struct Nodes {
     /// Play, Pause and Step.
     play_buttons: [NodeId; 3],
     build: NodeId,
+    /// The top bar's Window menu button.
+    windows: NodeId,
+    /// The rail's buttons, and the drawer they open with its title, close
+    /// button and pages.
+    rail_levels: NodeId,
+    rail_settings: NodeId,
+    drawer: NodeId,
+    drawer_title: NodeId,
+    drawer_close: NodeId,
+    drawer_levels: NodeId,
+    drawer_settings: NodeId,
+    /// The Scene view's shading menu, Gizmos button and full screen button.
+    shading: NodeId,
+    gizmos: NodeId,
+    scene_maximize: NodeId,
+    /// The top bar's workspaces, and the Profiler's panel.
+    workspaces: NodeId,
+    profiler_panel: NodeId,
+    /// The bar over the Scene view while a prefab is open on its own.
+    prefab_bar: NodeId,
+    prefab_name: NodeId,
+    prefab_back: NodeId,
 }
 
 /// What a shortcut asks of the editor, done in the next frame.
@@ -141,8 +173,10 @@ pub struct Editor {
     camera: Entity,
     /// Play mode, and the scripts it keeps between runs.
     play: play::Play,
-    /// The camera the renderer was last told to look through.
+    /// The camera the renderer was last told to look through, and the debug
+    /// view it was told to show.
     view_camera: Option<Entity>,
+    view_debug: u32,
     /// The dock area showing the 3D view, made see-through, and where the
     /// frame over its edge was last put.
     viewport_area: Option<NodeId>,
@@ -174,6 +208,19 @@ pub struct Editor {
     discard_armed: Option<String>,
     /// A message for the status bar, and when it was given.
     notice: Option<(String, Instant)>,
+    /// The panel whose tab's menu is open.
+    tab_menu: Option<String>,
+    /// What the rail's drawer shows, if it is open.
+    drawer: Option<Drawer>,
+    /// The prefab open on its own to edit, if one is.
+    prefab: Option<prefab_mode::OpenPrefab>,
+    /// The workspace showing, and the layout each was last left in.
+    workspace: usize,
+    workspace_layouts: [Option<String>; 2],
+    profiler: Profiler,
+    /// While one panel fills the dock: the layout from before, and the
+    /// panels that were closed then.
+    maximized: Option<(String, Vec<String>)>,
     /// Frames run, which each log line notes, and what opens a stack frame's
     /// file, when not the code editor the settings name.
     frames: u64,
@@ -246,21 +293,36 @@ impl Editor {
             status_memory: find(&ui, "status-memory"),
             play_buttons: [find(&ui, "play"), find(&ui, "pause"), find(&ui, "step")],
             build: find(&ui, "build"),
+            windows: find(&ui, "windows"),
+            rail_levels: find(&ui, "rail-levels"),
+            rail_settings: find(&ui, "rail-settings"),
+            drawer: find(&ui, "drawer"),
+            drawer_title: find(&ui, "drawer-title"),
+            drawer_close: find(&ui, "drawer-close"),
+            drawer_levels: find(&ui, "drawer-levels"),
+            drawer_settings: find(&ui, "drawer-settings"),
+            shading: find(&ui, "shading"),
+            gizmos: find(&ui, "gizmos"),
+            scene_maximize: find(&ui, "scene-maximize"),
+            workspaces: find(&ui, "workspaces"),
+            profiler_panel: find(&ui, "profiler-panel"),
+            prefab_bar: find(&ui, "prefab-bar"),
+            prefab_name: find(&ui, "prefab-name"),
+            prefab_back: find(&ui, "prefab-back"),
         };
-        let rail_scene = find(&ui, "rail-scene");
-        ui.set_checked(rail_scene, true);
-        let avatar = find(&ui, "avatar");
-        ui.set_text(avatar, &initial());
         let branch = git_branch(&root);
         let branch_name = find(&ui, "status-branch-name");
         ui.set_text(branch_name, branch.as_deref().unwrap_or_default());
         let branch_shown = find(&ui, "status-branch");
         ui.set_visible(branch_shown, branch.is_some());
-        ui.set_dock_layout(nodes.dock, LAYOUT).expect("the default layout is valid");
+        ui.set_dock_layout_closing_rest(nodes.dock, LAYOUT).expect("the default layout is valid");
+        ui.set_visible(nodes.drawer, false);
+        ui.set_visible(nodes.prefab_bar, false);
         let (tree, filter, add) =
             (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"), find(&ui, "hierarchy-add"));
         let hierarchy = Hierarchy::new(&mut ui, tree, filter, add);
-        let project = ProjectView::new(&mut ui, document, game.project.name(), &root, game.content.db());
+        let namespace = script_namespace(&game.project);
+        let project = ProjectView::new(&mut ui, document, game.project.name(), &root, game.content.db(), &namespace);
         let console_panel = find(&ui, "console-panel");
         let console = Console::new(&mut ui, console_panel, log, &root, &memory.settings);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
@@ -271,8 +333,9 @@ impl Editor {
         let cookbook = voxear_cookbook::Cookbook::new(&mut ui, cookbook_panel, &root, game.project.name());
         let (panel, list, empty) = (find(&ui, "palette"), find(&ui, "palette-list"), find(&ui, "palette-empty"));
         let palette = Palette::new(&mut ui, nodes.command, panel, list, empty);
-        let (view, filter) = (find(&ui, "settings"), find(&ui, "settings-filter"));
-        let settings_panel = SettingsPanel::new(&mut ui, view, filter, &memory.settings);
+        let (tabs, view, filter) = (find(&ui, "settings-tabs"), find(&ui, "settings"), find(&ui, "settings-filter"));
+        let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
+        let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
         let mut fly = FlyCamera::default();
         fly.set_speed(memory.settings.fly_speed);
         ui.set_text(nodes.status_time, &format!("Opened in {:.2} s", started.elapsed().as_secs_f32()));
@@ -299,6 +362,7 @@ impl Editor {
             camera,
             play: play::Play::new(),
             view_camera: Some(camera),
+            view_debug: 0,
             viewport_area: None,
             framed: None,
             gizmo_shows: None,
@@ -316,6 +380,13 @@ impl Editor {
             unsaved: false,
             discard_armed: None,
             notice: None,
+            tab_menu: None,
+            drawer: None,
+            prefab: None,
+            workspace: 0,
+            workspace_layouts: [None, None],
+            profiler,
+            maximized: None,
             status: (0, 0.0),
             frames: 0,
             source_opener: None,
@@ -364,6 +435,7 @@ impl Editor {
     /// (held still while paused), panels, the 3D view's rectangle and
     /// camera, and the render.
     pub fn update(&mut self, renderer: &mut Renderer, size: (u32, u32), scale: f32, delta: f32) -> Result<()> {
+        let mut laps = Laps::start();
         self.scale = scale;
         self.frames += 1;
         voxear_core::logging::set_frame(self.frames);
@@ -372,8 +444,10 @@ impl Editor {
         if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.camera) {
             self.fly.update_transform(transform, delta);
         }
-        if let Some(delta) = self.game_delta(delta) {
-            self.game.tick(delta, Some(renderer));
+        let ticked = self.game_delta(delta).map(|delta| self.game.tick(delta, Some(renderer))).is_some();
+        laps.mark("Game");
+        if ticked {
+            laps.inside(self.game.engine.stage_times());
         }
 
         self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
@@ -399,10 +473,21 @@ impl Editor {
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
         }
+        self.update_windows();
+        self.update_workspaces();
+        let profiler_shown = self.shown(self.nodes.profiler_panel);
+        self.profiler.update(&mut self.ui, profiler_shown, &self.game);
+        self.update_drawer();
+        self.update_prefab_mode(renderer);
         self.update_settings();
         self.update_scene_tools(renderer);
         self.update_script_types();
-        self.project.update(&mut self.ui);
+        for event in self.project.update(&mut self.ui) {
+            self.project_event(event, renderer);
+        }
+        if let Some(action) = self.inspector.update_asset(&self.ui) {
+            self.asset_action(action, renderer);
+        }
         self.update_console();
         self.cookbook.update(&mut self.ui);
         self.update_palette(renderer);
@@ -412,7 +497,7 @@ impl Editor {
         }
         if let Some(path) = self.cookbook.take_file_request() {
             // A link to a file in the project shows it in the Project panel.
-            self.ui.show_dock_panel(self.nodes.dock, "project");
+            self.show_panel("project");
             self.project.reveal(&mut self.ui, &path);
         }
         if self.ui.clicked(self.nodes.build) {
@@ -426,14 +511,117 @@ impl Editor {
         self.update_status(renderer, delta);
 
         let camera = view.map(|(_, camera)| camera);
-        if camera.is_some() && camera != self.view_camera {
-            renderer.set_view_options(ViewOptions { camera, ..ViewOptions::default() });
-            self.view_camera = camera;
+        // The Scene view shades as its menu says; the Game view always lit.
+        let in_scene = view.is_some_and(|(viewport, _)| viewport == self.nodes.viewport);
+        let debug_view = if in_scene { self.scene_debug_view() } else { 0 };
+        if camera.is_some() && (camera != self.view_camera || debug_view != self.view_debug) {
+            renderer.set_view_options(ViewOptions { camera, debug_view, ..ViewOptions::default() });
+            (self.view_camera, self.view_debug) = (camera, debug_view);
         }
+        laps.mark("Editor");
         let frame = self.ui.frame(size.0, size.1, scale);
+        laps.mark("UI Layout");
         renderer.set_view_rect(Some(self.viewport_rect(view.map(|(viewport, _)| viewport), size)));
         renderer.set_ui(&frame)?;
-        renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)
+        let rendered = renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32);
+        laps.mark("Render");
+        self.profiler.record(laps.finish(), delta * 1000.0, renderer);
+        rendered
+    }
+
+    /// The Profiler panel, and the frames it has taken.
+    pub fn profiler(&self) -> &Profiler {
+        &self.profiler
+    }
+
+    /// What the Project panel asked for: an item shown in the Inspector, a
+    /// file opened, or the files looked at again after it changed them.
+    fn project_event(&mut self, event: ProjectEvent, renderer: &mut Renderer) {
+        match event {
+            ProjectEvent::Selected(item) => self.inspect_asset(&item),
+            ProjectEvent::Open(item) => self.open_item(&item, renderer),
+            ProjectEvent::Changed { select, rename } => {
+                if let Err(error) = self.game.content.rescan() {
+                    tracing::warn!("could not look at the project's files again: {error:#}");
+                }
+                self.project.refresh(&mut self.ui, self.game.content.db(), select.as_deref());
+                if let Some(item) = select.and_then(|path| self.project.item(&path)) {
+                    self.inspect_asset(&item);
+                }
+                if rename {
+                    self.project.start_rename(&mut self.ui);
+                }
+            }
+            ProjectEvent::Notice(text) => self.notify(&text),
+            ProjectEvent::Dropped { source, folder } => {
+                if let Some(entity) = self.hierarchy.dragged(&source) {
+                    self.make_prefab(entity, &folder, renderer);
+                }
+            }
+        }
+    }
+
+    /// Makes a prefab of an Obj dragged onto the Project panel, in `folder`,
+    /// and puts an instance of it in the Obj's place, as one step to undo.
+    fn make_prefab(&mut self, entity: Entity, folder: &str, renderer: &mut Renderer) {
+        if self.is_playing() {
+            return self.notify("Prefabs are made from the edited level, not while playing");
+        }
+        let name = self.game.engine.world.get::<Name>(entity).map(|n| n.0.clone()).unwrap_or_else(|| "Obj".into());
+        let stem: String = name.chars().filter(|c| !r#"/\:*?"<>|"#.contains(*c)).collect();
+        let root = self.game.project.root.clone();
+        let path = crate::project_files::free_path(&root, folder, stem.trim(), ".prefab");
+        match objs::make_prefab(&mut self.game, Some(renderer), entity, &root.join(&path), &path) {
+            Ok((instance, taken)) => {
+                let made = Edit::Exists { root: instance, taken: None };
+                let replaced = Edit::Exists { root: entity, taken: Some(taken) };
+                self.history.record_step(Edit::Group(vec![made, replaced]));
+                self.unsaved = true;
+                self.select(Some(instance));
+                self.project.refresh(&mut self.ui, self.game.content.db(), Some(&path));
+                self.notify(&format!("Made the prefab {path}"));
+            }
+            Err(error) => self.notify(&format!("Could not make a prefab of {name}: {error:#}")),
+        }
+    }
+
+    /// The Project panel's item the Inspector shows, if it shows one.
+    pub fn inspected_asset(&self) -> Option<&ProjectItem> {
+        self.inspector.shown_asset()
+    }
+
+    /// Shows an item of the Project panel in the Inspector, in place of the
+    /// Obj selected, as selecting one in Unity's Project window does.
+    fn inspect_asset(&mut self, item: &ProjectItem) {
+        self.select(None);
+        self.inspector.show_asset(&mut self.ui, &self.game, item);
+    }
+
+    /// Opens a file: a level or scene to edit, a prefab on its own, a script
+    /// in the code editor, and anything else in the Inspector.
+    fn open_item(&mut self, item: &ProjectItem, renderer: &mut Renderer) {
+        match item.kind {
+            ItemKind::Asset(AssetKind::Level) => self.level_action(LevelAction::Open(item.path.clone()), renderer),
+            ItemKind::Asset(AssetKind::Scene) => self.level_action(LevelAction::OpenScene(item.path.clone()), renderer),
+            ItemKind::Asset(AssetKind::Prefab) => self.open_prefab(&item.path.clone(), renderer),
+            ItemKind::Script => {
+                let file = self.game.project.root.join(&item.path);
+                self.open_source(&file, 1);
+            }
+            _ => self.inspect_asset(item),
+        }
+    }
+
+    /// What the Inspector's asset view asked for.
+    fn asset_action(&mut self, action: AssetAction, renderer: &mut Renderer) {
+        match action {
+            AssetAction::Open(item) => self.open_item(&item, renderer),
+            AssetAction::SaveMaterial(path, data) => {
+                if let Err(error) = self.game.content.save_material(renderer, &path, &data) {
+                    self.notify(&format!("Could not save {path}: {error:#}"));
+                }
+            }
+        }
     }
 
     /// What a click in the Levels panel asked for. Playing, a level is
@@ -515,7 +703,7 @@ impl Editor {
                 self.notify(&format!("{}: {now}", info.title));
             }
             None => {
-                self.ui.show_dock_panel(self.nodes.dock, "settings");
+                self.show_panel("settings");
                 self.settings_panel.reveal(key);
             }
         }
@@ -527,6 +715,7 @@ impl Editor {
     fn update_settings(&mut self) {
         let mut changed = self.settings_panel.update(&mut self.ui, &mut self.memory.settings);
         changed |= self.update_tool_strip();
+        changed |= self.update_scene_view();
         // The wheel changes the speed while flying; the setting follows it once flying stops.
         if self.fly.speed() != self.fly_speed && !self.fly.is_looking() {
             changed |= self.memory.settings.set("fly_speed", SettingValue::Number(self.fly.speed()));
@@ -552,6 +741,10 @@ impl Editor {
         }
         self.ui.set_visible(self.nodes.stats, show_stats);
         self.ui.set_visible(self.nodes.view_gizmo, show_gizmo);
+        self.ui.set_checked(self.nodes.gizmos, settings.show_gizmos);
+        if self.ui.selected_option(self.nodes.shading) != settings.scene_shading {
+            self.ui.set_selected_option(self.nodes.shading, settings.scene_shading);
+        }
     }
 
     /// Does what a result of the command palette says.
@@ -577,18 +770,18 @@ impl Editor {
             PaletteAction::Create(kind) => {
                 self.obj_action(ObjAction::Create { kind, parent: None, scene: None }, renderer)
             }
-            PaletteAction::ShowPanel(id) => self.ui.show_dock_panel(self.nodes.dock, id),
+            PaletteAction::ShowPanel(id) => self.show_panel(id),
             PaletteAction::Select(entity) => {
-                self.ui.show_dock_panel(self.nodes.dock, "hierarchy");
+                self.show_panel("hierarchy");
                 self.select(Some(entity));
             }
             PaletteAction::OpenLevel(path) => self.level_action(LevelAction::Open(path), renderer),
             PaletteAction::Reveal(path) => {
-                self.ui.show_dock_panel(self.nodes.dock, "project");
+                self.show_panel("project");
                 self.project.reveal(&mut self.ui, &path);
             }
             PaletteAction::OpenDoc(reference) => {
-                self.ui.show_dock_panel(self.nodes.dock, "cookbook");
+                self.show_panel("cookbook");
                 self.cookbook.open_reference(&mut self.ui, &reference);
             }
         }
@@ -599,9 +792,7 @@ impl Editor {
         let target = match &action {
             LevelAction::Open(path) | LevelAction::OpenScene(path) | LevelAction::Play(path) => path.clone(),
         };
-        if !playing && self.unsaved && self.discard_armed.as_deref() != Some(target.as_str()) {
-            self.notify("Unsaved changes: Ctrl+S keeps them, or click again to open without them");
-            self.discard_armed = Some(target);
+        if !playing && !self.may_discard(&target) {
             return;
         }
         match action {
@@ -614,14 +805,7 @@ impl Editor {
             LevelAction::OpenScene(scene) if playing => {
                 tracing::info!("{scene} is in no level; stop playing to open it on its own");
             }
-            LevelAction::OpenScene(scene) => {
-                let game = &mut self.game;
-                let opened = game.levels.open_scene(&mut game.engine, &mut game.content, Some(&mut *renderer), &scene);
-                match opened {
-                    Ok(_) => self.opened(renderer),
-                    Err(error) => tracing::error!("could not open {scene}: {error:#}"),
-                }
-            }
+            LevelAction::OpenScene(scene) => self.open_scene(&scene, renderer),
             LevelAction::Play(level) => {
                 if playing {
                     self.stop(renderer);
@@ -629,6 +813,27 @@ impl Editor {
                 self.open_level(&level, renderer);
                 self.play(renderer);
             }
+        }
+    }
+
+    /// Whether something may open in place of what is open now, losing its
+    /// edits not saved: the first time, the status bar warns and it is held
+    /// back; asked again for the same `target`, it goes ahead.
+    fn may_discard(&mut self, target: &str) -> bool {
+        if self.unsaved && self.discard_armed.as_deref() != Some(target) {
+            self.notify("Unsaved changes: Ctrl+S keeps them, or click again to open without them");
+            self.discard_armed = Some(target.to_string());
+            return false;
+        }
+        true
+    }
+
+    /// Opens a scene to edit on its own, in place of the level.
+    fn open_scene(&mut self, scene: &str, renderer: &mut Renderer) {
+        let game = &mut self.game;
+        match game.levels.open_scene(&mut game.engine, &mut game.content, Some(&mut *renderer), scene) {
+            Ok(_) => self.opened(renderer),
+            Err(error) => tracing::error!("could not open {scene}: {error:#}"),
         }
     }
 
@@ -643,6 +848,7 @@ impl Editor {
     /// After another level or scene opened: nothing is selected, and what
     /// it no longer uses is let go.
     fn opened(&mut self, renderer: &mut Renderer) {
+        self.leave_prefab_mode();
         self.history.clear();
         self.unsaved = false;
         self.discard_armed = None;
@@ -684,7 +890,11 @@ impl Editor {
             self.tools.hover(self.hovered_handle);
             self.click_to_select(renderer, &camera, point);
         }
-        let shapes = self.tools.shapes(&self.game.engine.world, renderer, &camera, self.selected());
+        // Gizmos go under the handles, which are drawn last.
+        let world = &self.game.engine.world;
+        let mut shapes =
+            if self.memory.settings.show_gizmos { gizmos::shapes(world, &camera, self.selected()) } else { Vec::new() };
+        shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
         self.ui.set_shapes(self.nodes.handles, shapes);
     }
 
@@ -716,6 +926,9 @@ impl Editor {
     /// Each is a step to undo, except while playing, when only the played
     /// world changes.
     fn obj_action(&mut self, action: ObjAction, renderer: &mut Renderer) {
+        if let ObjAction::OpenPrefab(entity) = action {
+            return self.open_prefab_of(entity, renderer);
+        }
         let position = self.new_obj_position();
         let game = &mut self.game;
         let (edit, selected) = match action {
@@ -737,6 +950,7 @@ impl Editor {
                 Some((before, after)) => (Edit::Moved { entity, before, after }, Some(entity)),
                 None => return,
             },
+            ObjAction::OpenPrefab(_) => return,
         };
         if !self.is_playing() {
             self.history.record_step(edit);
@@ -799,6 +1013,14 @@ impl Editor {
                 props::pick(&mut self.game.engine.world, self.inspector.types(), entity, &prop, &pick);
             }
             RowAction::Dropped(prop, source) => self.drop_reference(entity, &prop, &source),
+            RowAction::Move(Part::Behaviour(name), by) => {
+                props::move_behaviour(&mut self.game.engine.world, entity, &name, by);
+            }
+            RowAction::Move(..) => {}
+            RowAction::Lock(part, locked) => props::set_locked(&mut self.game.engine.world, entity, &part, locked),
+            RowAction::ShowToDesigners(prop, shown) => {
+                props::show_to_designers(&mut self.game.engine.world, entity, &prop, shown);
+            }
         }
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
         if before != after && !self.is_playing() {
@@ -989,6 +1211,7 @@ impl Editor {
         match saved {
             Ok(written) if written.is_empty() => self.notify("Nothing to save: the scenes are as they are on disk"),
             Ok(written) => {
+                self.prefab_saved();
                 tracing::info!("saved {}", written.join(", "));
                 let names: Vec<&str> = written.iter().map(|path| path.rsplit('/').next().unwrap_or(path)).collect();
                 self.notify(&format!("Saved {}", names.join(", ")));
@@ -1290,7 +1513,7 @@ impl Editor {
             self.shown_fps = fps;
             self.ui.set_text(self.nodes.status_fps, &format!("{fps:.0} fps"));
         }
-        let memory = resident_megabytes().map(|mb| format!("{mb:.0} MB")).unwrap_or_default();
+        let memory = profiler::resident_megabytes().map(|mb| format!("{mb:.0} MB")).unwrap_or_default();
         self.ui.set_text(self.nodes.status_memory, &memory);
         let stats = renderer.stats();
         let gpu_ms: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
@@ -1324,15 +1547,13 @@ fn git_branch(root: &Path) -> Option<String> {
     None
 }
 
-/// The first letter of the user's name, for the avatar.
-fn initial() -> String {
-    let user = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_default();
-    user.chars().next().map_or_else(|| "?".to_string(), |c| c.to_uppercase().collect())
-}
-
-/// How much memory the editor holds, from Linux's /proc.
-fn resident_megabytes() -> Option<f32> {
-    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
-    let pages: f32 = statm.split_whitespace().nth(1)?.parse().ok()?;
-    Some(pages * 4096.0 / 1_048_576.0)
+/// The namespace the project's scripts declare, from their project's
+/// `RootNamespace`, or else made from the project's name.
+fn script_namespace(project: &Project) -> String {
+    let declared = project.scripts_project().and_then(|csproj| std::fs::read_to_string(csproj).ok()).and_then(|text| {
+        let start = text.find("<RootNamespace>")? + "<RootNamespace>".len();
+        let end = start + text[start..].find("</RootNamespace>")?;
+        Some(text[start..end].trim().to_string())
+    });
+    declared.unwrap_or_else(|| voxear_engine::new_project::namespace(project.name()))
 }

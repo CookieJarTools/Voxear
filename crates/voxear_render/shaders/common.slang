@@ -40,6 +40,8 @@ static const uint DEBUG_VIEW_LOD = 1;
 static const uint DEBUG_VIEW_CASCADES = 2;
 static const uint DEBUG_VIEW_LIGHT_COMPLEXITY = 3;
 static const uint DEBUG_VIEW_NORMALS = 4;
+static const uint DEBUG_VIEW_UNLIT = 5;
+static const uint DEBUG_VIEW_WIREFRAME = 6;
 
 // A draw's instance index, with its LOD and fade role packed in the top byte.
 static const uint DRAW_INSTANCE_MASK = 0xFFFFFF;
@@ -114,8 +116,12 @@ struct Instance
     float4 normal2;
     uint mesh;
     uint material;
-    uint2 pad;
+    uint flags;
+    uint pad;
 };
+
+// An instance whose place in the list another Obj held last frame.
+static const uint INSTANCE_NEW = 1;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;

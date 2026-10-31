@@ -126,6 +126,12 @@ pub struct ObjData {
     /// Changes to Objs inside a prefab instance, by path (`"2"`, `"3/2"`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, toml::Table>,
+    /// Components a prefab locks, so its instances show designers only some
+    /// fields: by component (a behaviour's type, or `renderer`, `light` or
+    /// `camera`), each with the fields still shown. Only a prefab's own file
+    /// sets them; an instance cannot change them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub locks: BTreeMap<String, Vec<String>>,
 }
 
 impl ObjData {
@@ -145,6 +151,7 @@ impl ObjData {
             light: None,
             renderer: None,
             overrides: BTreeMap::new(),
+            locks: BTreeMap::new(),
         }
     }
 
@@ -600,6 +607,7 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
     }
     obj.parent = world.get::<Parent>(entity).and_then(|p| ids.get(&p.0).copied());
     obj.persistent = world.has::<ScenePersistence>(entity);
+    obj.locks = world.get::<crate::prefab::Locks>(entity).map(|locks| locks.0.clone()).unwrap_or_default();
     // Running behaviours, or in edit mode the same as data.
     let specs: Vec<&BehaviourSpec> = match (world.get::<Behaviours>(entity), world.get::<EditBehaviours>(entity)) {
         (Some(behaviours), _) => behaviours.0.iter().map(|b| &b.spec).collect(),

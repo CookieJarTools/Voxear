@@ -4,11 +4,73 @@
 //! narrower, it shows rows with each file's size. Selecting a folder in the
 //! tree opens it, as does double-clicking one on the right. Assets on the
 //! right can be dragged onto the Inspector's asset fields.
+//!
+//! Selecting an item shows it in the Inspector, and double-clicking a file
+//! opens it, through [`ProjectEvent`]s. A context click on an item, on the
+//! space around them, or on a folder in the tree offers Open, Show in Files,
+//! Copy Path, Rename, Duplicate and Delete, and new folders, scenes, levels,
+//! materials and C# scripts (see `project_files`). Rename, and anything new,
+//! opens a bar over the files to type the name in: Enter keeps it, and going
+//! elsewhere leaves the old one.
 
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use voxear_assets::{AssetDb, AssetKind};
-use voxear_ui::{DragSource, ListItems, NodeId, Style, TreeItems, Ui};
+use voxear_ui::{DragSource, ListItems, MenuItem, NodeId, Style, TreeItems, Ui};
+
+use crate::project_files::{self, NewFile};
+
+/// An item of the project, as the panel tells the editor about it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectItem {
+    /// From the project's folder; empty for the project's own folder.
+    pub path: String,
+    pub name: String,
+    pub kind: ItemKind,
+    /// In bytes; 0 for a folder.
+    pub size: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ItemKind {
+    Folder,
+    Script,
+    Asset(AssetKind),
+}
+
+/// What the panel asks of the editor.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProjectEvent {
+    /// An item was selected, to show in the Inspector.
+    Selected(ProjectItem),
+    /// A file was opened: double-clicked, or Open from its menu.
+    Open(ProjectItem),
+    /// Files changed on disk: the editor looks at the assets again and calls
+    /// [`ProjectView::refresh`], selecting `select`, and with `rename`,
+    /// starting to rename it.
+    Changed { select: Option<String>, rename: bool },
+    /// Something to say in the status bar.
+    Notice(String),
+    /// Something was dropped on the files, such as an Obj from the Hierarchy
+    /// to make a prefab of, here: in `folder` (from the project's folder).
+    Dropped { source: DragSource, folder: String },
+}
+
+/// What a context menu's item does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MenuAction {
+    Open,
+    Reveal,
+    CopyPath,
+    Rename,
+    Duplicate,
+    Delete,
+    New(NewFile),
+}
 
 /// A tile's width with the gap after it, and a row of tiles' height.
 const TILE: f32 = 72.0;
@@ -26,6 +88,8 @@ enum FileKind {
 
 struct Folder {
     name: String,
+    /// From the project's folder; empty for the project's own.
+    path: String,
     parent: Option<usize>,
     folders: Vec<usize>,
     files: Vec<usize>,
@@ -78,6 +142,23 @@ impl Contents {
         match entry {
             Entry::Folder(folder) => &self.folders[folder].name,
             Entry::File(file) => &self.files[file].name,
+        }
+    }
+
+    fn item(&self, entry: Entry) -> ProjectItem {
+        match entry {
+            Entry::Folder(at) => {
+                let folder = &self.folders[at];
+                ProjectItem { path: folder.path.clone(), name: folder.name.clone(), kind: ItemKind::Folder, size: 0 }
+            }
+            Entry::File(at) => {
+                let file = &self.files[at];
+                let kind = match file.kind {
+                    FileKind::Script => ItemKind::Script,
+                    FileKind::Asset(kind) => ItemKind::Asset(kind),
+                };
+                ProjectItem { path: file.path.clone(), name: file.name.clone(), kind, size: file.size }
+            }
         }
     }
 
@@ -191,41 +272,270 @@ pub struct ProjectView {
     count: NodeId,
     contents: Shared,
     open: usize,
+    /// The project's folder and name, for its files and the tree's top, and
+    /// the namespace new scripts go in.
+    root: PathBuf,
+    name: String,
+    namespace: String,
+    /// The rename bar and its field, and what is being renamed.
+    rename_bar: NodeId,
+    rename_field: NodeId,
+    renaming: Option<String>,
+    /// The rename bar was just shown; its field takes focus once it can.
+    focus_rename: bool,
+    /// The open context menu: what it was opened on (nothing for the open
+    /// folder), and what each of its items does.
+    menu: Option<(NodeId, Option<Entry>, Vec<Option<MenuAction>>)>,
 }
 
 impl ProjectView {
     /// Fills the Project panel in `document` with the assets in `db` and the
     /// scripts under `root`, opening the top folder, named `name`.
-    pub fn new(ui: &mut Ui, document: NodeId, name: &str, root: &Path, db: &AssetDb) -> Self {
+    pub fn new(ui: &mut Ui, document: NodeId, name: &str, root: &Path, db: &AssetDb, namespace: &str) -> Self {
         let find = |ui: &Ui, part: &str| ui.find(document, part).unwrap_or_else(|| panic!("Editor.vui has no {part}"));
         let (folder_tree, files) = (find(ui, "project-folders"), find(ui, "project-files"));
         let (path, count) = (find(ui, "project-path"), find(ui, "project-count"));
+        let (rename_bar, rename_field) = (find(ui, "project-rename"), find(ui, "project-rename-field"));
+        ui.set_visible(rename_bar, false);
         let contents = Rc::new(RefCell::new(scan(name, root, db)));
         ui.bind_tree(folder_tree, FolderItems(contents.clone()));
         ui.set_expanded(folder_tree, 0, true);
         ui.bind_list(files, 0, FileRows(contents.clone()));
         ui.set_rows_draggable(files, true);
-        let mut view = Self { folder_tree, files, path, count, contents, open: usize::MAX };
+        ui.accept_drops(files, true);
+        let mut view = Self {
+            folder_tree,
+            files,
+            path,
+            count,
+            contents,
+            open: usize::MAX,
+            root: root.to_path_buf(),
+            name: name.to_string(),
+            namespace: namespace.to_string(),
+            rename_bar,
+            rename_field,
+            renaming: None,
+            focus_rename: false,
+            menu: None,
+        };
         view.open(ui, 0);
         view
     }
 
-    /// Follows clicks, and shows tiles or rows for the room there is.
-    pub fn update(&mut self, ui: &mut Ui) {
+    /// Follows clicks and menus, and shows tiles or rows for the room there
+    /// is. Returns what the editor is asked to do.
+    pub fn update(&mut self, ui: &mut Ui) -> Vec<ProjectEvent> {
+        let mut events = Vec::new();
+        // The panel picks folders itself, opening them; only another one
+        // picked in the tree is shown in the Inspector.
         if ui.selection_changed(self.folder_tree)
             && let Some(&folder) = ui.selected_items(self.folder_tree).first()
+            && folder as usize != self.open
         {
             self.open(ui, folder as usize);
+            events.push(ProjectEvent::Selected(self.contents.borrow().item(Entry::Folder(folder as usize))));
         }
         self.fit(ui);
         let columns = self.contents.borrow().columns;
         let picked = if columns == 0 { self.row_clicks(ui) } else { self.tile_clicks(ui) };
         if let Some((entry, twice)) = picked {
-            if let (true, Entry::Folder(folder)) = (twice, entry) {
-                self.open(ui, folder);
-            } else if self.contents.borrow().selected != Some(entry) {
-                self.contents.borrow_mut().selected = Some(entry);
-                ui.refresh_list(self.files);
+            match (twice, entry) {
+                (true, Entry::Folder(folder)) => self.open(ui, folder),
+                (true, Entry::File(_)) => events.push(ProjectEvent::Open(self.contents.borrow().item(entry))),
+                _ if self.contents.borrow().selected != Some(entry) => {
+                    self.contents.borrow_mut().selected = Some(entry);
+                    ui.refresh_list(self.files);
+                    events.push(ProjectEvent::Selected(self.contents.borrow().item(entry)));
+                }
+                _ => {}
+            }
+        }
+        self.open_menus(ui);
+        events.extend(self.menu_choice(ui));
+        if let Some(source) = ui.dropped_onto(self.files) {
+            let folder = self.contents.borrow().folders[self.open].path.clone();
+            events.push(ProjectEvent::Dropped { source, folder });
+        }
+        if let Some(event) = self.update_rename(ui) {
+            events.push(event);
+        }
+        events
+    }
+
+    /// Reads the project's files again, as they are after something changed
+    /// them, keeping the open folder, and selects `select` when given.
+    pub fn refresh(&mut self, ui: &mut Ui, db: &AssetDb, select: Option<&str>) {
+        let open = self.contents.borrow().folders.get(self.open).map(|f| f.path.clone()).unwrap_or_default();
+        let mut contents = scan(&self.name, &self.root, db);
+        // So the rows are made again for the new contents, whichever kind fits.
+        contents.columns = usize::MAX;
+        *self.contents.borrow_mut() = contents;
+        let folder = self.contents.borrow().folders.iter().position(|f| f.path == open).unwrap_or(0);
+        ui.refresh_list(self.folder_tree);
+        self.fit(ui);
+        self.open = usize::MAX;
+        self.open(ui, folder);
+        if let Some(path) = select {
+            self.reveal(ui, path);
+        }
+    }
+
+    /// The file or folder at a path, from the project's folder.
+    pub fn item(&self, path: &str) -> Option<ProjectItem> {
+        let contents = self.contents.borrow();
+        let file = contents.files.iter().position(|f| f.path == path).map(Entry::File);
+        let entry = file.or_else(|| contents.folders.iter().position(|f| f.path == path).map(Entry::Folder))?;
+        Some(contents.item(entry))
+    }
+
+    /// Opens the rename bar on the selected item.
+    pub fn start_rename(&mut self, ui: &mut Ui) {
+        let Some(entry) = self.contents.borrow().selected else { return };
+        let item = self.contents.borrow().item(entry);
+        if item.path.is_empty() {
+            return;
+        }
+        ui.set_visible(self.rename_bar, true);
+        ui.set_text(self.rename_field, &item.name);
+        self.renaming = Some(item.path);
+        self.focus_rename = true;
+    }
+
+    /// The rename bar: Enter renames, and leaving the field gives up.
+    fn update_rename(&mut self, ui: &mut Ui) -> Option<ProjectEvent> {
+        let path = self.renaming.clone()?;
+        // Shown last frame, so it can take focus now, with its name selected to type over.
+        if std::mem::take(&mut self.focus_rename) {
+            ui.focus(self.rename_field);
+            ui.select_all_text(self.rename_field);
+            return None;
+        }
+        if ui.submitted(self.rename_field) {
+            self.end_rename(ui);
+            let name = ui.text(self.rename_field);
+            return Some(match project_files::rename(&self.root, &path, &name) {
+                Ok(renamed) => ProjectEvent::Changed { select: Some(renamed), rename: false },
+                Err(error) => ProjectEvent::Notice(format!("{error:#}")),
+            });
+        }
+        if ui.focused() != Some(self.rename_field) {
+            self.end_rename(ui);
+        }
+        None
+    }
+
+    fn end_rename(&mut self, ui: &mut Ui) {
+        self.renaming = None;
+        ui.set_visible(self.rename_bar, false);
+    }
+
+    /// Opens a context menu on what was context-clicked: a tile or row, the
+    /// space around them, or a folder in the tree.
+    fn open_menus(&mut self, ui: &mut Ui) {
+        let tile = {
+            let contents = self.contents.borrow();
+            let clicked = contents.tiles.iter().find(|(tile, at)| at.is_some() && ui.context_clicked(*tile));
+            clicked.and_then(|(_, at)| contents.listing.get((*at)?).copied())
+        };
+        let target = if let Some(entry) = tile {
+            self.contents.borrow_mut().selected = Some(entry);
+            ui.refresh_list(self.files);
+            Some((self.files, Some(entry)))
+        } else if ui.context_clicked(self.files) {
+            let contents = self.contents.borrow();
+            let row = ui.selection(self.files).first().and_then(|&at| contents.listing.get(at).copied());
+            let row = row.filter(|_| contents.columns == 0);
+            drop(contents);
+            self.contents.borrow_mut().selected = row;
+            Some((self.files, row))
+        } else if ui.context_clicked(self.folder_tree) {
+            let folder = ui.selected_items(self.folder_tree).first().map(|&f| f as usize).unwrap_or(self.open);
+            Some((self.folder_tree, Some(Entry::Folder(folder))))
+        } else {
+            None
+        };
+        let Some((owner, entry)) = target else { return };
+        let mut items = Vec::new();
+        let mut actions = Vec::new();
+        let mut add = |item: MenuItem, action: Option<MenuAction>| {
+            items.push(item);
+            actions.push(action);
+        };
+        let is_root = entry == Some(Entry::Folder(0));
+        if let Some(entry) = entry {
+            add(MenuItem::new("Open"), Some(MenuAction::Open));
+            add(MenuItem::new("Show in Files"), Some(MenuAction::Reveal));
+            add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
+            add(MenuItem::separator(), None);
+            add(MenuItem::new("Rename").enabled(!is_root), Some(MenuAction::Rename));
+            add(MenuItem::new("Duplicate").enabled(matches!(entry, Entry::File(_))), Some(MenuAction::Duplicate));
+            add(MenuItem::new("Delete").enabled(!is_root), Some(MenuAction::Delete));
+        } else {
+            add(MenuItem::new("Show in Files"), Some(MenuAction::Reveal));
+            add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
+        }
+        add(MenuItem::separator(), None);
+        for kind in NewFile::ALL {
+            add(MenuItem::new(kind.label()), Some(MenuAction::New(kind)));
+        }
+        let at = ui.pointer_position().unwrap_or_default();
+        ui.open_menu(owner, at, &items);
+        self.menu = Some((owner, entry, actions));
+    }
+
+    /// Does what was chosen in a context menu.
+    fn menu_choice(&mut self, ui: &mut Ui) -> Vec<ProjectEvent> {
+        let Some((owner, entry, actions)) = self.menu.as_ref() else { return Vec::new() };
+        let Some(choice) = ui.menu_choice(*owner) else { return Vec::new() };
+        let (entry, action) = (*entry, actions.get(choice).copied().flatten());
+        self.menu = None;
+        // Nothing chosen on an item means the open folder.
+        let item = self.contents.borrow().item(entry.unwrap_or(Entry::Folder(self.open)));
+        let folder = match entry {
+            Some(Entry::Folder(folder)) => folder,
+            _ => self.open,
+        };
+        let failed = |error: anyhow::Error| vec![ProjectEvent::Notice(format!("{error:#}"))];
+        let Some(action) = action else { return Vec::new() };
+        match action {
+            MenuAction::Open => match entry {
+                Some(Entry::Folder(folder)) => {
+                    self.open(ui, folder);
+                    Vec::new()
+                }
+                _ => vec![ProjectEvent::Open(item)],
+            },
+            MenuAction::Reveal => {
+                let shown = if item.kind == ItemKind::Folder { item.path.as_str() } else { parent(&item.path) };
+                show_in_files(&self.root.join(shown));
+                Vec::new()
+            }
+            MenuAction::CopyPath => {
+                ui.copy_text(&item.path);
+                vec![ProjectEvent::Notice(format!("Copied {}", item.path))]
+            }
+            MenuAction::Rename => {
+                self.start_rename(ui);
+                Vec::new()
+            }
+            MenuAction::Duplicate => match project_files::duplicate(&self.root, &item.path) {
+                Ok(copy) => vec![ProjectEvent::Changed { select: Some(copy), rename: false }],
+                Err(error) => failed(error),
+            },
+            MenuAction::Delete => match project_files::trash(&self.root, &item.path) {
+                Ok(_) => vec![
+                    ProjectEvent::Changed { select: None, rename: false },
+                    ProjectEvent::Notice(format!("Moved {} to the project's .voxear/Trash", item.name)),
+                ],
+                Err(error) => failed(error),
+            },
+            MenuAction::New(kind) => {
+                let at = self.contents.borrow().folders[folder].path.clone();
+                match project_files::create(&self.root, &at, kind, &self.namespace) {
+                    Ok(made) => vec![ProjectEvent::Changed { select: Some(made), rename: true }],
+                    Err(error) => failed(error),
+                }
             }
         }
     }
@@ -353,10 +663,14 @@ impl ProjectView {
     }
 }
 
-/// The project's folders and files: its assets, and its C# scripts.
+/// The project's folders and files: its assets, its C# scripts, and every
+/// folder, empty ones too, leaving out build output and hidden folders such
+/// as `.voxear`.
 fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
+    let top =
+        Folder { name: name.to_string(), path: String::new(), parent: None, folders: Vec::new(), files: Vec::new() };
     let mut contents = Contents {
-        folders: vec![Folder { name: name.to_string(), parent: None, folders: Vec::new(), files: Vec::new() }],
+        folders: vec![top],
         files: Vec::new(),
         listing: Vec::new(),
         columns: 0,
@@ -364,7 +678,15 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         tiles: Vec::new(),
     };
     let mut paths: Vec<(String, FileKind)> = db.entries().map(|e| (e.path.clone(), FileKind::Asset(e.kind))).collect();
-    scripts(root, root, &mut paths);
+    let mut folders = Vec::new();
+    scripts(root, root, &mut paths, &mut folders);
+    folders.sort_by_key(|path| path.to_lowercase());
+    for path in folders {
+        let mut folder = 0;
+        for part in path.split('/') {
+            folder = child_folder(&mut contents, folder, part);
+        }
+    }
     paths.sort_by_key(|(path, _)| path.to_lowercase());
     for (path, kind) in paths {
         let size = std::fs::metadata(root.join(&path)).map_or(0, |m| m.len());
@@ -385,8 +707,11 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
 fn child_folder(contents: &mut Contents, parent: usize, name: &str) -> usize {
     let found = contents.folders[parent].folders.iter().copied().find(|&f| contents.folders[f].name == name);
     found.unwrap_or_else(|| {
+        let at = &contents.folders[parent].path;
+        let path = if at.is_empty() { name.to_string() } else { format!("{at}/{name}") };
         contents.folders.push(Folder {
             name: name.to_string(),
+            path,
             parent: Some(parent),
             folders: Vec::new(),
             files: Vec::new(),
@@ -397,16 +722,19 @@ fn child_folder(contents: &mut Contents, parent: usize, name: &str) -> usize {
     })
 }
 
-/// C# scripts under `dir`, relative to `root`, leaving out build output and
-/// hidden folders such as `.voxear`.
-fn scripts(root: &Path, dir: &Path, found: &mut Vec<(String, FileKind)>) {
+/// C# scripts and folders under `dir`, relative to `root`, leaving out build
+/// output and hidden folders such as `.voxear`.
+fn scripts(root: &Path, dir: &Path, found: &mut Vec<(String, FileKind)>, folders: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
             if !name.starts_with('.') && name != "bin" && name != "obj" {
-                scripts(root, &path, found);
+                if let Ok(relative) = path.strip_prefix(root) {
+                    folders.push(relative.to_string_lossy().replace('\\', "/"));
+                }
+                scripts(root, &path, found, folders);
             }
         } else if name.ends_with(".cs")
             && let Ok(relative) = path.strip_prefix(root)
@@ -422,5 +750,26 @@ fn file_size(bytes: u64) -> String {
         0..1024 => format!("{bytes} B"),
         1024..1_048_576 => format!("{:.1} KB", bytes as f64 / 1024.0),
         _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
+    }
+}
+
+/// The folder a path is in, from the project's folder.
+fn parent(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(folder, _)| folder)
+}
+
+/// Opens a folder in the system's file manager.
+fn show_in_files(folder: &Path) {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    match std::process::Command::new(program).arg(folder).spawn() {
+        // Waited on elsewhere, so it does not linger once it ends.
+        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+        Err(error) => tracing::warn!("could not open {}: {error}", folder.display()),
     }
 }

@@ -5,8 +5,9 @@
 //!   editor started), the message, and where it came from. Monospaced
 //!   throughout, as nearly all of it is code; warnings and errors take their
 //!   own colour.
-//! - **Categories nobody declared** (see `entry`), as chips in the toolbar
-//!   with how many lines each has; a click hides or shows a category.
+//! - **Categories nobody declared** (see `entry`), in the toolbar's
+//!   Categories menu with how many lines each has; choosing one hides or
+//!   shows it, and the menu stays open for the next.
 //! - **Search** (see `query`): words, `tag:` and `-tag:`, and `/regex/`; a bad
 //!   expression says why under the toolbar.
 //! - **Log, Warning and Error** toggles with their counts, **Collapse** to
@@ -53,8 +54,6 @@ const METHOD: u32 = 0xe8c37e;
 const PARAMETERS: u32 = 0x6b7385;
 const FILE: u32 = 0xc3a6ff;
 const FOLDED: u32 = 0x8b93a7;
-/// Categories' colours, given out by name so a category keeps its own.
-const CATEGORY_COLORS: [u32; 8] = [0x7cc4fa, 0x4cb782, 0xe8c37e, 0xc3a6ff, 0xf2a65a, 0x5ec4c4, 0xeb7f9b, 0xa3c46b];
 
 /// A row: the line it shows, and how many identical ones it stands for.
 #[derive(Clone, Copy, Debug)]
@@ -82,7 +81,7 @@ struct Toolbar {
     clear: NodeId,
     collapse: NodeId,
     pause: NodeId,
-    chips: NodeId,
+    categories: NodeId,
     muted: NodeId,
     search_box: NodeId,
     search: NodeId,
@@ -122,8 +121,10 @@ pub struct Console {
     hidden: [bool; 3],
     hidden_categories: HashSet<String>,
     muted: HashSet<String>,
-    /// Each category's chip, as last built.
-    chips: Vec<(String, NodeId)>,
+    /// Each category with how many lines it has, by name, and where its
+    /// menu opens.
+    categories: Vec<(String, usize)>,
+    categories_at: (f32, f32),
     selected: Option<usize>,
     /// The selected line's frames that are not the project's own are shown.
     unfolded: bool,
@@ -184,7 +185,8 @@ impl Console {
             hidden: [false; 3],
             hidden_categories: HashSet::new(),
             muted: HashSet::new(),
-            chips: Vec::new(),
+            categories: Vec::new(),
+            categories_at: (0.0, 0.0),
             selected: None,
             unfolded: false,
             drawn: None,
@@ -220,7 +222,7 @@ impl Console {
         self.shown.borrow_mut().clear();
         ui.set_list_count(self.list, 0);
         ui.refresh_list(self.list);
-        self.rebuild_chips(ui);
+        self.count_categories(ui);
     }
 
     /// Reads the lines logged since it last looked. Returns how many were
@@ -270,14 +272,12 @@ impl Console {
                 refilter = true;
             }
         }
-        let clicked: Vec<String> =
-            self.chips.iter().filter(|(_, chip)| ui.clicked(*chip)).map(|(n, _)| n.clone()).collect();
-        for name in clicked {
-            if !self.hidden_categories.remove(&name) {
-                self.hidden_categories.insert(name);
-            }
-            refilter = true;
+        if ui.clicked(self.toolbar.categories) {
+            let [x, y, _, height] = ui.rect(self.toolbar.categories);
+            self.categories_at = (x, y + height + 4.0);
+            self.open_categories(ui);
         }
+        refilter |= self.category_choice(ui);
         if ui.clicked(self.toolbar.muted) {
             self.muted.clear();
             refilter = true;
@@ -367,12 +367,12 @@ impl Console {
         }
         ui.set_visible(self.toolbar.muted, !self.muted.is_empty());
         ui.set_text(self.toolbar.muted, &format!("Muted {}", self.muted.len()));
-        self.rebuild_chips(ui);
+        self.count_categories(ui);
     }
 
-    /// A chip for each category, with how many lines it has, built again
-    /// when the categories change.
-    fn rebuild_chips(&mut self, ui: &mut Ui) {
+    /// Counts each category's lines, for its menu, and says on the
+    /// Categories button how many are hidden.
+    fn count_categories(&mut self, ui: &mut Ui) {
         let mut counts: Vec<(String, usize)> = Vec::new();
         for category in self.entries.borrow().iter().flat_map(|e| e.categories.iter()) {
             match counts.iter_mut().find(|(name, _)| name == category) {
@@ -381,27 +381,43 @@ impl Console {
             }
         }
         counts.sort_by(|a, b| a.0.cmp(&b.0));
-        let same = counts.len() == self.chips.len() && counts.iter().zip(&self.chips).all(|((a, _), (b, _))| a == b);
-        if !same {
-            for (_, chip) in self.chips.drain(..) {
-                ui.remove(chip);
-            }
-            for (name, _) in &counts {
-                let chip = ui.panel(self.toolbar.chips, Style::row());
-                ui.add_class(chip, "console-chip");
-                let dot = ui.panel(chip, Style::default());
-                ui.add_class(dot, "chip-dot");
-                let [r, g, b] = category_color(name).to_be_bytes()[1..].try_into().unwrap_or([0; 3]);
-                ui.set_inline_style(dot, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
-                ui.add_label(chip, "");
-                self.chips.push((name.clone(), chip));
-            }
+        self.categories = counts;
+        let hidden = self.categories.iter().filter(|(name, _)| self.hidden_categories.contains(name)).count();
+        let label = if hidden == 0 { "Categories".to_string() } else { format!("Categories · {hidden} hidden") };
+        ui.set_text(self.toolbar.categories, &label);
+        ui.set_checked(self.toolbar.categories, hidden > 0);
+    }
+
+    /// The Categories menu: Show all, then each category, ticked while
+    /// shown, with how many lines it has.
+    fn open_categories(&self, ui: &mut Ui) {
+        let mut items =
+            vec![MenuItem::new("Show all").enabled(!self.hidden_categories.is_empty()), MenuItem::separator()];
+        for (name, count) in &self.categories {
+            let shown = !self.hidden_categories.contains(name);
+            items.push(MenuItem::new(name).checked(shown).shortcut(&count.to_string()));
         }
-        for ((name, count), (_, chip)) in counts.iter().zip(&self.chips) {
-            let label = ui.children(*chip)[1];
-            ui.set_text(label, &format!("{name} {count}"));
-            ui.set_checked(*chip, !self.hidden_categories.contains(name));
+        if self.categories.is_empty() {
+            items.push(MenuItem::new("No categories yet").enabled(false));
         }
+        ui.open_menu(self.toolbar.categories, self.categories_at, &items);
+    }
+
+    /// A category chosen in its menu is shown or hidden, and the menu opens
+    /// again where it was, so several can be changed in a row. Returns whether
+    /// the list needs filtering again.
+    fn category_choice(&mut self, ui: &mut Ui) -> bool {
+        let Some(choice) = ui.menu_choice(self.toolbar.categories) else { return false };
+        match choice.checked_sub(2).and_then(|at| self.categories.get(at)) {
+            Some((name, _)) if !self.hidden_categories.remove(name) => {
+                self.hidden_categories.insert(name.clone());
+            }
+            Some(_) => {}
+            None => self.hidden_categories.clear(),
+        }
+        self.count_categories(ui);
+        self.open_categories(ui);
+        true
     }
 
     /// A line picked in the list becomes the one the trace pane shows; one
@@ -526,8 +542,8 @@ impl Console {
 }
 
 /// The toolbar: Clear, Collapse and Error Pause, the search, the levels with
-/// their counts, Muted, and the categories' chips, last so they are what
-/// wraps; under it, the line that says what is wrong with a search.
+/// their counts, the Categories menu and Muted; under it, the line that says
+/// what is wrong with a search.
 fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
     let bar = ui.panel(root, Style::row());
     ui.add_class(bar, "console-toolbar");
@@ -553,16 +569,15 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
         ui.add_class(icon, "console-level-icon");
         (level, ui.add_label(level, "0"))
     });
+    let categories = button(ui, "Categories");
     let muted = button(ui, "Muted");
     ui.set_visible(muted, false);
-    let chips = ui.panel(bar, Style::row());
-    ui.add_class(chips, "console-chips");
     let line = ui.panel(root, Style::default());
     ui.add_class(line, "divider");
     let problem = ui.add_label(root, "");
     ui.add_class(problem, "console-problem");
     ui.set_visible(problem, false);
-    Toolbar { clear, collapse, pause, chips, muted, search_box, search, problem, levels }
+    Toolbar { clear, collapse, pause, categories, muted, search_box, search, problem, levels }
 }
 
 /// The trace pane: a bar of what the line is and the toggles, then the
@@ -674,10 +689,4 @@ fn level_slot(level: Level) -> usize {
 fn time(seconds: f64) -> String {
     let minutes = (seconds / 60.0).floor();
     format!("{:02}:{:06.3}", minutes as u64, seconds - minutes * 60.0)
-}
-
-/// A category's colour, the same every time for the same name.
-fn category_color(name: &str) -> u32 {
-    let hash = name.bytes().fold(0usize, |hash, b| hash.wrapping_mul(31).wrapping_add(b as usize));
-    CATEGORY_COLORS[hash % CATEGORY_COLORS.len()]
 }

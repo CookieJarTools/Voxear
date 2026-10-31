@@ -427,6 +427,15 @@ impl Assets {
 
     pub fn add_material(&mut self, gpu: &Gpu, desc: &MaterialDesc) -> Result<MaterialHandle> {
         let slot = self.material_slots.alloc().context("too many materials")?;
+        let handle = MaterialHandle(slot);
+        self.set_material(gpu, handle, desc)?;
+        Ok(handle)
+    }
+
+    /// Writes a material's values over what its slot held, so what it is
+    /// drawn on changes from the next frame.
+    pub fn set_material(&mut self, gpu: &Gpu, handle: MaterialHandle, desc: &MaterialDesc) -> Result<()> {
+        let slot = handle.0;
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
         let material = GpuMaterial {
             base_color: desc.base_color,
@@ -441,10 +450,9 @@ impl Assets {
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),
         };
-        let handle = MaterialHandle(slot);
         let offset = u64::from(slot) * size_of::<GpuMaterial>() as u64;
         gpu.upload_buffer(&self.materials, offset, bytemuck::bytes_of(&material))?;
-        Ok(handle)
+        Ok(())
     }
 
     /// Frees a mesh once frames in flight are done with it. Built-in meshes

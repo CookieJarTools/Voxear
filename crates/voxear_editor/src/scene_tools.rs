@@ -481,7 +481,7 @@ fn block(tip: Vec2, along: Vec2, color: Color) -> Vec<Shape> {
 
 /// A circle in the world around `middle` in the plane across `axis`, as
 /// points on screen; points behind the camera are left out.
-fn ring(camera: &ViewCamera, middle: Vec3, axis: Vec3, radius: f32) -> Vec<[f32; 2]> {
+pub(crate) fn ring(camera: &ViewCamera, middle: Vec3, axis: Vec3, radius: f32) -> Vec<[f32; 2]> {
     let across = axis.any_orthonormal_vector();
     let other = axis.cross(across);
     (0..=RING_SEGMENTS)

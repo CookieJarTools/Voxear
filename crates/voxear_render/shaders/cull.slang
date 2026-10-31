@@ -96,14 +96,17 @@ void count(uint stat)
 }
 
 // Per-instance LOD history: bits 0-3 the current LOD, 4-7 the previous one,
-// 8-23 fade progress, 31 set once the instance has been seen.
+// 8-23 fade progress, 31 set once the instance has been seen. The history is
+// kept by place in the list, so an Obj new to its place starts afresh rather
+// than fading from the LOD another Obj was drawn at there.
 uint advanceLod(Frame* frame, uint instance, uint selected, out uint previous, out float fade)
 {
     uint state = buffers()->lodState[instance];
     uint current = state & 0xF;
     previous = (state >> 4) & 0xF;
     fade = float((state >> 8) & 0xFFFF) / 65535.0;
-    if ((state >> 31) == 0)
+    bool fresh = (buffers()->instances[instance].flags & INSTANCE_NEW) != 0;
+    if ((state >> 31) == 0 || fresh)
     {
         current = selected;
         previous = selected;

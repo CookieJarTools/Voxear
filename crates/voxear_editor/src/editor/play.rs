@@ -110,6 +110,9 @@ impl Editor {
         if !matches!(self.play.mode, Mode::Editing) {
             return;
         }
+        if self.prefab.is_some() {
+            return self.notify("A prefab open on its own does not play: go Back to its level first");
+        }
         self.play.error = None;
         if self.memory.settings.save_before_play && self.unsaved {
             self.save();
@@ -436,7 +439,7 @@ impl Editor {
         self.view_camera = None;
         self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
         self.select(selected);
-        self.ui.show_dock_panel(self.nodes.dock, panel);
+        self.show_panel(panel);
     }
 
     fn fail(&mut self, what: &str, error: anyhow::Error) {

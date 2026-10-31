@@ -15,6 +15,7 @@ use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game, ObjPath, Tracked,
+    prefab::{PREFAB_FORMAT, PrefabFile},
     scene_file::{self, SceneFile},
 };
 use voxear_render::Renderer;
@@ -181,6 +182,59 @@ pub fn duplicate(game: &mut Game, renderer: Option<&mut Renderer>, root: Entity)
         game.levels.move_objs(&ordered, scene, after);
     }
     Ok(copy)
+}
+
+/// Makes a prefab of an Obj and everything under it, written to `file`
+/// (`path` from the project's folder): the Obj as its root, at the origin,
+/// keeping its rotation and scale. Then, as in Unity, the Obj becomes an
+/// instance of it: an instance goes where it stood, with its parent,
+/// Transform, name and place in the scene, and it is taken away. Returns the
+/// instance and what was taken, for one step to undo.
+pub fn make_prefab(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    root: Entity,
+    file: &std::path::Path,
+    path: &str,
+) -> Result<(Entity, Taken)> {
+    let objs: Vec<(ObjPath, Entity)> =
+        family(&game.engine.world, root).into_iter().map(|entity| (ObjPath::default(), entity)).collect();
+    let (mut scene, ids) = scene_file::capture_scene_with_ids(&game.engine.world, &mut game.content, &objs);
+    let id = ids.get(&root).copied().context("the Obj can be captured")?;
+    if let Some(top) = scene.objs.iter_mut().find(|obj| obj.id == id) {
+        (top.parent, top.position) = (None, None);
+    }
+    let prefab = PrefabFile { format: PREFAB_FORMAT, objs: scene.objs };
+    let text = format!("# Voxear prefab\n{}", toml::to_string(&prefab)?);
+    std::fs::write(file, text).with_context(|| format!("writing {}", file.display()))?;
+    game.content.rescan()?;
+
+    let world = &game.engine.world;
+    let (parent, transform) = (world.get::<Parent>(root).map(|p| p.0), world.get::<Transform>(root).copied());
+    let name = world.get::<Name>(root).map(|n| n.0.clone()).unwrap_or_default();
+    let reference = toml::Value::String(path.to_string());
+    let one = scene_file::parse(&format!("format = 1\n\n[[obj]]\nid = 1\nprefab = {reference}\n"), path)?;
+    let spawned = scene_file::spawn(&mut game.engine, &mut game.content, renderer, &one, &HashSet::new())?;
+    let scene_of = game.levels.scene_of(root);
+    game.levels.track_new(scene_of, &spawned);
+    let instance = spawned.iter().find(|(at, _)| *at == ObjPath::new(1)).map(|(_, e)| *e);
+    let instance = instance.context("the instance was made")?;
+    let world = &mut game.engine.world;
+    if let Some(parent) = parent {
+        world.insert(instance, Parent(parent));
+    }
+    if let Some(transform) = transform {
+        world.insert(instance, transform);
+    }
+    world.insert(instance, Name(name));
+    // Where the Obj was in its scene, then without it.
+    if let Some(scene) = game.levels.scene_of(instance) {
+        let made = family(&game.engine.world, instance);
+        let after = next_sibling(game, root, scene, &made);
+        let ordered: Vec<Entity> = game.levels.tracked(&made).into_iter().map(|t| t.entity).collect();
+        game.levels.move_objs(&ordered, scene, after);
+    }
+    Ok((instance, take(game, root)))
 }
 
 /// Takes an Obj and everything under it out of the world and the level's

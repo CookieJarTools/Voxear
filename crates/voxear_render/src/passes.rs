@@ -51,6 +51,8 @@ pub struct Frame {
     pub push: Push,
     pub instance_count: u32,
     pub extent: vk::Extent2D,
+    /// Opaque meshes are drawn as their edges.
+    pub wireframe: bool,
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -130,6 +132,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images
     };
     let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..push };
+    let forward = if frame.wireframe { pipelines.wireframe } else { pipelines.forward };
     let (hdr, velocity, depth) = (targets.hdr, targets.velocity, targets.depth);
     let scene = SceneTargets { hdr, velocity, depth };
 
@@ -137,7 +140,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         cull(ctx, pipelines.cull, &push, LIST_EARLY, instances, 1);
     });
     fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
-        opaque(ctx, pipelines.forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, true);
+        opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, true);
     });
 
     let pyramid = targets.pyramid;
@@ -157,7 +160,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         cull(ctx, pipelines.cull, &push, LIST_LATE, instances, 1);
     });
     fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
-        opaque(ctx, pipelines.forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, false);
+        opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, false);
     });
     fg.sync_buffer(draws.stats, BufferAccess::HostRead);
 

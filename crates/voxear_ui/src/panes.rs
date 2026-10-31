@@ -60,6 +60,8 @@ pub(crate) struct Dropdown {
     pub options: Vec<String>,
     pub selected: usize,
     pub popup: Option<taffy::NodeId>,
+    /// The list's width when set, instead of as wide as its longest option.
+    pub popup_width: Option<f32>,
 }
 
 impl Ui {
@@ -262,7 +264,7 @@ impl Ui {
         self.add_class(label, "dropdown-label");
         let arrow = self.icon(dropdown, "chevron-down");
         self.add_class(arrow, "dropdown-arrow");
-        let state = Dropdown { label: label.0, options: Vec::new(), selected: 0, popup: None };
+        let state = Dropdown { label: label.0, options: Vec::new(), selected: 0, popup: None, popup_width: None };
         if let Some(element) = self.element_mut(dropdown) {
             element.control = Some(Control::Dropdown(state));
         }
@@ -298,23 +300,37 @@ impl Ui {
         self.set_text(label, &text);
     }
 
+    /// Fixes how wide a dropdown's list is, or with `None` lets it be as wide
+    /// as its longest option, and never narrower than the dropdown.
+    pub fn set_dropdown_popup_width(&mut self, dropdown: NodeId, width: Option<f32>) {
+        if let Some(Control::Dropdown(state)) = self.element_mut(dropdown).and_then(|e| e.control.as_mut()) {
+            state.popup_width = width;
+        }
+    }
+
     /// Whether a dropdown's list is open.
     pub fn is_dropdown_open(&self, dropdown: NodeId) -> bool {
         matches!(self.element(dropdown).and_then(|e| e.control.as_ref()), Some(Control::Dropdown(state)) if state.popup.is_some())
     }
 
-    /// Opens a dropdown's list under it, in the layer above everything.
+    /// Opens a dropdown's list under it, in the layer above everything: as
+    /// wide as its longest option and at least as wide as the dropdown, or as
+    /// [`set_dropdown_popup_width`](Self::set_dropdown_popup_width) says, and
+    /// above the dropdown when there is no room below (see `place_menu`).
     pub fn open_dropdown(&mut self, dropdown: NodeId) {
         self.close_popup();
         let Some(Control::Dropdown(state)) = self.element(dropdown).and_then(|e| e.control.as_ref()) else { return };
-        let (options, selected) = (state.options.clone(), state.selected);
+        let (options, selected, fixed) = (state.options.clone(), state.selected, state.popup_width);
         let [x, y, width, height] = self.rect(dropdown);
         let layer = self.popup_layer();
         let mut style = Style::column();
         style.layout.position = Position::Absolute;
         style.layout.inset.left = LengthPercentageAuto::length(x);
         style.layout.inset.top = LengthPercentageAuto::length(y + height + 4.0);
-        style.layout.size.width = Dimension::length(width);
+        match fixed {
+            Some(fixed) => style.layout.size.width = Dimension::length(fixed),
+            None => style.layout.min_size.width = LengthPercentageAuto::length(width),
+        }
         let popup = self.panel(layer, style);
         self.add_class(popup, "dropdown-popup");
         // It lives in the top layer, so it takes the dropdown's text rather than the screen's.
@@ -335,6 +351,7 @@ impl Ui {
             state.popup = Some(popup.0);
         }
         self.open_popup = Some((dropdown.0, popup.0));
+        self.placing_menu = Some((popup.0, y - 4.0));
     }
 
     /// Closes whatever popup is open.

@@ -273,7 +273,8 @@ pub fn extract(
                 normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
                 mesh: renderer.mesh.0,
                 material: renderer.material.0,
-                _pad: [0; 2],
+                flags: 0,
+                _pad: 0,
             }
         })
         .collect();

@@ -1,7 +1,9 @@
-//! The Settings panel: the editor's settings (see `settings`) in their
-//! groups, each changed in place, with a filter that matches as the command
-//! palette does. A setting the palette opens is scrolled to and marked
-//! (`found`) for a moment.
+//! The Settings page, in the rail's drawer: the editor's settings (see
+//! `settings`), a tab down the left for each group showing that group's
+//! settings, each changed in place. Searching shows the settings from every
+//! group whose names match, as the command palette matches. A setting the
+//! palette opens is shown in its group, scrolled to and marked (`found`) for
+//! a moment.
 
 use std::time::{Duration, Instant};
 
@@ -18,6 +20,7 @@ const MARKED: Duration = Duration::from_secs(2);
 struct Row {
     key: &'static str,
     title: &'static str,
+    group: &'static str,
     row: NodeId,
     /// The heading of the setting's group, hidden when the filter leaves
     /// none of its settings.
@@ -35,6 +38,9 @@ enum Control {
 pub struct SettingsPanel {
     view: NodeId,
     filter: NodeId,
+    /// Each group's tab, and the group shown when not searching.
+    tabs: Vec<(&'static str, NodeId)>,
+    group: &'static str,
     rows: Vec<Row>,
     marked: Option<(NodeId, Instant)>,
     /// A setting to show once the panel is on screen, as it is not until its
@@ -43,8 +49,17 @@ pub struct SettingsPanel {
 }
 
 impl SettingsPanel {
-    /// Builds every setting into `view`, showing `settings`.
-    pub fn new(ui: &mut Ui, view: NodeId, filter: NodeId, settings: &Settings) -> Self {
+    /// Builds a tab for each group into `tab_bar` and every setting into
+    /// `view`, showing `settings`, with the first group's showing.
+    pub fn new(ui: &mut Ui, tab_bar: NodeId, view: NodeId, filter: NodeId, settings: &Settings) -> Self {
+        let mut tabs: Vec<(&'static str, NodeId)> = Vec::new();
+        for info in &SETTINGS {
+            if !tabs.iter().any(|(group, _)| *group == info.group) {
+                let tab = ui.button(tab_bar, info.group);
+                ui.add_class(tab, "settings-tab");
+                tabs.push((info.group, tab));
+            }
+        }
         let body = ui.panel(view, Style::column());
         ui.add_class(body, "settings-body");
         let mut rows = Vec::new();
@@ -65,14 +80,22 @@ impl SettingsPanel {
             let label = ui.add_label(row, info.title);
             ui.add_class(label, "prop-label");
             let control = control(ui, row, info.kind, settings.get(info.key));
-            rows.push(Row { key: info.key, title: info.title, row, heading, control });
+            rows.push(Row { key: info.key, title: info.title, group: info.group, row, heading, control });
         }
-        Self { view, filter, rows, marked: None, revealing: None }
+        let group = SETTINGS[0].group;
+        let mut panel = Self { view, filter, tabs, group, rows, marked: None, revealing: None };
+        panel.apply_filter(ui);
+        panel
     }
 
     /// Applies what was changed in the panel to `settings`, and shows
     /// changes made elsewhere. Returns whether the settings changed.
     pub fn update(&mut self, ui: &mut Ui, settings: &mut Settings) -> bool {
+        if let Some(&(group, _)) = self.tabs.iter().find(|(_, tab)| ui.clicked(*tab)) {
+            self.group = group;
+            ui.set_text(self.filter, "");
+            self.apply_filter(ui);
+        }
         if ui.changed(self.filter) {
             self.apply_filter(ui);
         }
@@ -106,10 +129,10 @@ impl SettingsPanel {
     }
 
     fn show_setting(&mut self, ui: &mut Ui, key: &str) {
-        if !ui.text(self.filter).is_empty() {
-            ui.set_text(self.filter, "");
-            self.apply_filter(ui);
-        }
+        let Some(group) = self.rows.iter().find(|r| r.key == key).map(|r| r.group) else { return };
+        self.group = group;
+        ui.set_text(self.filter, "");
+        self.apply_filter(ui);
         let Some(row) = self.rows.iter().find(|r| r.key == key) else { return };
         if let Some((old, _)) = self.marked.take() {
             ui.set_class(old, "found", false);
@@ -129,14 +152,17 @@ impl SettingsPanel {
         }
     }
 
-    /// Shows only settings whose names match the filter, and the headings
-    /// of their groups.
+    /// Shows the chosen group's settings, or while searching, the settings
+    /// from every group whose names match, under their groups' headings.
     fn apply_filter(&mut self, ui: &mut Ui) {
         let query = ui.text(self.filter);
         let query = query.trim();
+        for (group, tab) in &self.tabs {
+            ui.set_checked(*tab, query.is_empty() && *group == self.group);
+        }
         let mut headings: Vec<(NodeId, bool)> = Vec::new();
         for row in &self.rows {
-            let shown = query.is_empty() || score(query, row.title).is_some();
+            let shown = if query.is_empty() { row.group == self.group } else { score(query, row.title).is_some() };
             ui.set_visible(row.row, shown);
             match headings.iter_mut().find(|(h, _)| *h == row.heading) {
                 Some((_, any)) => *any |= shown,

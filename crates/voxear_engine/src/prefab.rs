@@ -363,7 +363,17 @@ pub struct TemplateObj {
     pub renderer: Option<MeshRenderer>,
     /// Set on the root of each prefab instance.
     pub prefab: Option<AssetGuid>,
+    /// Components the prefab locks (see [`Locks`]).
+    pub locks: BTreeMap<String, Vec<String>>,
 }
+
+/// Components a prefab locks, as its file's `locks` says: by component (a
+/// behaviour's type, or `renderer`, `light` or `camera`), each with the
+/// fields designers still see in the Inspector. Only the prefab, opened on
+/// its own, changes them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Locks(pub BTreeMap<String, Vec<String>>);
+impl Component for Locks {}
 
 /// Marks the root of a prefab instance, so scenes save it as an instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -450,6 +460,9 @@ impl Template {
             }
             if let Some(prefab) = obj.prefab {
                 world.insert(entity, PrefabInstance(prefab));
+            }
+            if !obj.locks.is_empty() {
+                world.insert(entity, Locks(obj.locks.clone()));
             }
             entities.push(entity);
         }
@@ -555,6 +568,7 @@ fn resolve_obj(
         light: data.light.map(light_component),
         renderer,
         prefab: obj.prefab,
+        locks: data.locks.clone(),
     })
 }
 

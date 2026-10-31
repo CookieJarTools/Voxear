@@ -104,7 +104,7 @@ impl Ui {
             }
         }
         self.open_popup = Some((owner.0, popup.0));
-        self.placing_menu = Some(popup.0);
+        self.placing_menu = Some((popup.0, at.1));
     }
 
     /// Whether the menu opened for `owner` is still open.
@@ -124,12 +124,13 @@ impl Ui {
         self.close_popup();
     }
 
-    /// Moves a menu opened since the last layout back inside the screen,
-    /// now its size is known: left of the pointer at the right edge, and
-    /// above it at the bottom. Returns whether it moved, which then needs
-    /// laying out again.
+    /// Moves a popup opened since the last layout back inside the screen, now
+    /// its size is known: a menu or a dropdown's list goes left at the right
+    /// edge, and above the pointer or the dropdown when it has no room below,
+    /// or else as low as the screen lets it. Returns whether it moved, which
+    /// then needs laying out again.
     pub(crate) fn place_menu(&mut self) -> bool {
-        let Some(popup) = self.placing_menu.take() else { return false };
+        let Some((popup, above)) = self.placing_menu.take() else { return false };
         if self.open_popup.map(|(_, open)| open) != Some(popup) {
             return false;
         }
@@ -137,7 +138,13 @@ impl Ui {
         let [x, y, width, height] = self.rect(popup);
         let (screen_width, screen_height) = (self.viewport.0, self.viewport.1);
         let left = x.min(screen_width - width - MARGIN).max(MARGIN);
-        let top = if y + height + MARGIN > screen_height { (y - height).max(MARGIN) } else { y };
+        let top = if y + height + MARGIN <= screen_height {
+            y
+        } else if above - height >= MARGIN {
+            above - height
+        } else {
+            (screen_height - height - MARGIN).max(MARGIN)
+        };
         if (left, top) == (x, y) {
             return false;
         }

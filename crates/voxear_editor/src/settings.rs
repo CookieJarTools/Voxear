@@ -45,7 +45,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 16] = [
+pub const SETTINGS: [SettingInfo; 18] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -72,6 +72,13 @@ pub const SETTINGS: [SettingInfo; 16] = [
     },
     SettingInfo { key: "show_stats", title: "Show stats", group: "Scene view", kind: SettingKind::Toggle },
     SettingInfo { key: "show_axis_gizmo", title: "Show axis gizmo", group: "Scene view", kind: SettingKind::Toggle },
+    SettingInfo { key: "show_gizmos", title: "Show gizmos", group: "Scene view", kind: SettingKind::Toggle },
+    SettingInfo {
+        key: "scene_shading",
+        title: "Shading",
+        group: "Scene view",
+        kind: SettingKind::Choice(&["Lit", "Unlit", "Wireframe"]),
+    },
     SettingInfo { key: "start_paused", title: "Start paused", group: "Play mode", kind: SettingKind::Toggle },
     SettingInfo { key: "save_before_play", title: "Save before play", group: "Play mode", kind: SettingKind::Toggle },
     SettingInfo {
@@ -127,6 +134,11 @@ pub struct Settings {
     pub fly_speed: f32,
     pub show_stats: bool,
     pub show_axis_gizmo: bool,
+    /// Lights and cameras are drawn in the Scene view, and what the selected
+    /// one reaches.
+    pub show_gizmos: bool,
+    /// How the Scene view shades: lit, unlit, or as wireframe.
+    pub scene_shading: usize,
     /// Play starts paused, to step through the first frames.
     pub start_paused: bool,
     pub save_before_play: bool,
@@ -155,6 +167,8 @@ impl Default for Settings {
             fly_speed: 6.0,
             show_stats: true,
             show_axis_gizmo: true,
+            show_gizmos: true,
+            scene_shading: 0,
             start_paused: false,
             save_before_play: false,
             clear_console_on_play: false,
@@ -178,6 +192,8 @@ impl Settings {
             "fly_speed" => SettingValue::Number(self.fly_speed),
             "show_stats" => SettingValue::Toggle(self.show_stats),
             "show_axis_gizmo" => SettingValue::Toggle(self.show_axis_gizmo),
+            "show_gizmos" => SettingValue::Toggle(self.show_gizmos),
+            "scene_shading" => SettingValue::Choice(self.scene_shading),
             "start_paused" => SettingValue::Toggle(self.start_paused),
             "save_before_play" => SettingValue::Toggle(self.save_before_play),
             "clear_console_on_play" => SettingValue::Toggle(self.clear_console_on_play),
@@ -203,6 +219,8 @@ impl Settings {
             ("fly_speed", SettingValue::Number(n)) => self.fly_speed = n.clamp(0.25, 250.0),
             ("show_stats", SettingValue::Toggle(on)) => self.show_stats = on,
             ("show_axis_gizmo", SettingValue::Toggle(on)) => self.show_axis_gizmo = on,
+            ("show_gizmos", SettingValue::Toggle(on)) => self.show_gizmos = on,
+            ("scene_shading", SettingValue::Choice(i)) => self.scene_shading = i.min(2),
             ("start_paused", SettingValue::Toggle(on)) => self.start_paused = on,
             ("save_before_play", SettingValue::Toggle(on)) => self.save_before_play = on,
             ("clear_console_on_play", SettingValue::Toggle(on)) => self.clear_console_on_play = on,

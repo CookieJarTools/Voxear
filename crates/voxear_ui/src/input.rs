@@ -123,7 +123,15 @@ impl Ui {
         self.focused().is_some_and(|node| self.kind(node) == Some(Kind::TextField))
     }
 
-    /// Gives `node` focus, if it is a control that takes it.
+    /// Selects all of a text field's text, so typing replaces it.
+    pub fn select_all_text(&mut self, field: NodeId) {
+        if self.kind(field) == Some(Kind::TextField) {
+            self.edit(field, |driver| driver.select_all());
+        }
+    }
+
+    /// Gives `node` focus, if it is a control that takes it. A control shown
+    /// this frame takes it only once restyled, from the next frame.
     pub fn focus(&mut self, node: NodeId) {
         if !self.focusable(node.0) || self.input.focused == Some(node.0) {
             return;

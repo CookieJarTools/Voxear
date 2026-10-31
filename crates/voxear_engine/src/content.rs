@@ -288,6 +288,47 @@ impl Content {
         &self.db
     }
 
+    /// Forgets what was read of an asset, so it is read from its file again
+    /// when next used, as after a prefab opened on its own is saved: new
+    /// instances, and the level reopened, show the change.
+    pub fn forget(&mut self, path: &str) {
+        let Some(guid) = self.db.guid_of(path) else { return };
+        self.texts.remove(&guid);
+        self.prefabs.files.remove(&guid);
+        if let Some(&id) = self.prefabs.ids.get(&guid)
+            && let Some(template) = self.prefabs.templates.get_mut(id.0 as usize)
+        {
+            *template = None;
+        }
+    }
+
+    /// Looks at the project's folder again after files came or went, as the
+    /// editor's Project panel makes and removes them, giving new ones their
+    /// GUIDs. Content read from bundles does not change.
+    pub fn rescan(&mut self) -> Result<()> {
+        let Source::Folder(_, root) = &self.source else { return Ok(()) };
+        let (db, report) = AssetDb::scan(root)?;
+        for path in &report.created {
+            tracing::info!("new asset: {path}");
+        }
+        self.db = Arc::new(db);
+        Ok(())
+    }
+
+    /// Saves a `.material` asset, and shows the change at once wherever it is
+    /// drawn.
+    pub fn save_material(&mut self, renderer: &mut Renderer, path: &str, data: &MaterialData) -> Result<()> {
+        let Source::Folder(_, root) = &self.source else { bail!("materials in built content cannot change") };
+        let file = root.join(path);
+        std::fs::write(&file, toml::to_string(data)?).with_context(|| format!("writing {}", file.display()))?;
+        let Some(guid) = self.db.guid_of(path) else { return Ok(()) };
+        self.texts.remove(&guid);
+        if let Some(&handle) = self.asset_materials.get(&AssetRef::asset(guid, None)) {
+            renderer.update_material(handle, &data.desc())?;
+        }
+        Ok(())
+    }
+
     pub fn parse(&self, reference: &str) -> Result<AssetRef> {
         AssetRef::parse(reference, &self.db)
     }

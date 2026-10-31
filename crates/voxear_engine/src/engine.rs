@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use anyhow::{Context, Result, bail};
 use voxear_core::time::Time;
@@ -31,6 +34,8 @@ pub struct Engine {
     fixed_accumulator: f32,
     /// The editor's edit mode: behaviours are kept as data, and no script runs.
     edit_mode: bool,
+    /// How long each stage of the last tick took, in milliseconds.
+    stage_times: Vec<(&'static str, f32)>,
 }
 
 /// An Obj's behaviours in edit mode, as data: what the Inspector shows and a
@@ -60,6 +65,7 @@ impl Engine {
             scripts: None,
             time: Time::default(),
             fixed_accumulator: 0.0,
+            stage_times: Vec::new(),
             edit_mode: false,
         }
     }
@@ -307,15 +313,19 @@ impl Engine {
     /// Anything created or enabled along the way is initialised before the
     /// next phase.
     pub fn tick(&mut self, unscaled_delta: f32) {
+        let mut times = Vec::with_capacity(6);
+        let mut mark = Instant::now();
         self.time.advance(unscaled_delta);
         self.sync_script_time(self.time.delta);
         if let Some(scripts) = self.scripts.as_mut() {
             scripts.update(&mut self.world);
             self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
         }
+        times.push(("Script Sync", lap(&mut mark)));
 
         self.schedule.run_stage("First", &mut self.world);
         self.flush();
+        times.push(("First", lap(&mut mark)));
 
         self.fixed_accumulator += self.time.delta;
         let mut steps = 0;
@@ -331,14 +341,17 @@ impl Engine {
             self.fixed_accumulator = 0.0;
         }
         self.sync_script_time(self.time.delta);
+        times.push(("Fixed Update", lap(&mut mark)));
 
         self.run_phase(Phase::Update);
         self.schedule.run_stage("Update", &mut self.world);
         self.flush();
+        times.push(("Update", lap(&mut mark)));
 
         self.run_phase(Phase::LateUpdate);
         self.schedule.run_stage("PostUpdate", &mut self.world);
         self.flush();
+        times.push(("Late Update", lap(&mut mark)));
 
         // Objs destroyed by OnDestroy callbacks below get theirs next frame,
         // so only these are removed now.
@@ -348,6 +361,15 @@ impl Engine {
             self.world.despawn(entity);
         }
         self.schedule.run_stage("Last", &mut self.world);
+        times.push(("End of Frame", lap(&mut mark)));
+        self.stage_times = times;
+    }
+
+    /// How long each stage of the last tick took, in milliseconds, in the
+    /// order they ran: scripts' time and requests, the fixed steps, Update,
+    /// LateUpdate with the transforms, and destroying Objs.
+    pub fn stage_times(&self) -> &[(&'static str, f32)] {
+        &self.stage_times
     }
 
     fn flush(&mut self) {
@@ -386,4 +408,12 @@ impl BehaviourHost for NoScripts {
     fn invoke(&mut self, _: Phase, _: &[BehaviourHandle]) {}
 
     fn release(&mut self, _: &[BehaviourHandle]) {}
+}
+
+/// Milliseconds since `mark`, which moves on to now.
+fn lap(mark: &mut Instant) -> f32 {
+    let now = Instant::now();
+    let ms = (now - *mark).as_secs_f32() * 1000.0;
+    *mark = now;
+    ms
 }

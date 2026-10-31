@@ -331,3 +331,34 @@ fn menus_open_at_the_pointer_choose_and_stay_on_screen() {
     ui.key_down(Key::Escape);
     assert!(!ui.is_menu_open(owner), "Escape closes it");
 }
+
+#[test]
+fn a_dropdowns_list_fits_its_options_and_the_screen() {
+    let mut ui = Ui::new();
+    let document = load(
+        &mut ui,
+        r#"<vui>
+            <Panel style="position: absolute; left: 20px; top: 560px; width: 60px">
+                <Dropdown name="narrow">
+                    <Option>Lit</Option><Option>A much longer option than the field</Option>
+                </Dropdown>
+            </Panel>
+        </vui>"#,
+    );
+    let narrow = ui.find(document, "narrow").unwrap();
+    click(&mut ui, narrow);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let layer = *ui.children(ui.root()).last().unwrap();
+    let popup = ui.children(layer)[0];
+    let ([_, field_top, field_width, _], [_, top, width, height]) = (ui.rect(narrow), ui.rect(popup));
+    assert!(width > field_width + 40.0, "as wide as its longest option: {width} for a field of {field_width}");
+    assert!(top + height <= field_top, "above the field, since there is no room below: {top} + {height}");
+
+    ui.close_popup();
+    ui.set_dropdown_popup_width(narrow, Some(90.0));
+    click(&mut ui, narrow);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let layer = *ui.children(ui.root()).last().unwrap();
+    assert_eq!(ui.rect(ui.children(layer)[0])[2], 90.0, "unless its width is set");
+}

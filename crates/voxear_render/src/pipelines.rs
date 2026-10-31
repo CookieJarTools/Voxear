@@ -27,6 +27,8 @@ pub struct Pipelines {
     pub pyramid: vk::Pipeline,
     pub shadow: vk::Pipeline,
     pub forward: vk::Pipeline,
+    /// The forward pass's meshes as their edges, for the wireframe view.
+    pub wireframe: vk::Pipeline,
     pub sky: vk::Pipeline,
     pub fog: vk::Pipeline,
     pub taa: vk::Pipeline,
@@ -92,6 +94,15 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::new("Opaque", forward, c"vertexMain", c"fragmentMain")
             })?,
+            wireframe: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                polygon_mode: vk::PolygonMode::LINE,
+                ..GraphicsPipelineDesc::new("Wireframe", forward, c"vertexMain", c"fragmentMain")
+            })?,
             sky: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
                 depth_format: Some(DEPTH_FORMAT),
@@ -129,6 +140,7 @@ impl Pipelines {
             self.pyramid,
             self.shadow,
             self.forward,
+            self.wireframe,
             self.sky,
             self.fog,
             self.taa,

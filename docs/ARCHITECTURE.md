@@ -314,6 +314,8 @@ and a positive pitch looks down.
   - **No duplicates on reload, unlike Unity.** Reloading the scene a persistent Obj came from does not create a
     second copy. The engine remembers which scene and id the survivor came from and skips it, so there is no "destroy
     myself if a copy exists" boilerplate.
+  - **Only a running game keeps them.** In edit mode (`Engine::set_edit_mode`) persistent Objs unload with their
+    scene like any other, so the editor opening another level, scene or prefab does not carry them along.
 - From C#, `Level.Load("Levels/Night.level")` changes level after the current frame. Unloaded Objs stop rendering
   at once, and their behaviours get OnDisable and OnDestroy at the end of the next frame.
 - Loading a scene is one lifecycle batch, so ordering guarantee 2 holds across the whole scene.
@@ -687,7 +689,10 @@ cost nothing. The CPU never touches visibility.
   Far LODs use more aggressive simplification. Every LOD is meshletised.
 - **Selected on the GPU by screen-space error**, not by distance. The same mesh picks the right LOD at any FOV or
   resolution.
-- **Transitions are dithered cross-fades**, smoothed by TAA, so LOD changes do not pop.
+- **Transitions are dithered cross-fades**, smoothed by TAA, so LOD changes do not pop. Each instance's LOD
+  history is kept by its place in the frame's list of instances, so an Obj new to its place (`INSTANCE_NEW`, set
+  when another Obj had the place last frame, as when a scene opens in place of another) starts afresh rather than
+  fading in from the LOD another Obj was drawn at there.
 - **HLOD:** distant groups of objects merge into one proxy mesh, generated per level.
 - **Impostors:** octahedral impostors for foliage and far props, generated automatically.
 
@@ -1000,8 +1005,10 @@ every part:
   no panel's edge hides it.
 - **Tabs**: a row of tab buttons over pages, showing the selected one (`:checked` on its tab).
 - **Dropdown**: opens its options in a **popup layer** that is always drawn above everything and takes the
-  dropdown's text style. A choice, Escape or a press anywhere else closes it, and that press goes no further.
-  The arrow keys change the choice while it is focused.
+  dropdown's text style. The list is at least as wide as the field and as wide as its longest option needs, unless
+  `set_dropdown_popup_width` fixes it, and opens below the field, or above it when there is no room below, kept
+  inside the window either way (as context menus are). A choice, Escape or a press anywhere else closes it, and
+  that press goes no further. The arrow keys change the choice while it is focused.
 
 **Docking** *(implemented)*, the editor's layout: a `DockSpace` is a tree of split panes whose leaves are
 tabbed areas of panels.
@@ -1012,7 +1019,12 @@ tabbed areas of panels.
 - The layout reads and writes as text, for workspace presets and saving between sessions:
   `row(240, [hierarchy, project], column(420, [scene, game*], [console]))`, where `row` and `column` give the
   first part's size in pixels (or the second's, negative, or the first's share, as `57%`) and `*` marks the
-  showing tab. Divider moves and tab choices are part of it.
+  showing tab. Divider moves and tab choices are part of it. Panels a layout leaves out join its first area, or,
+  with `set_dock_layout_closing_rest`, are closed.
+- **Closing and opening panels.** `close_dock_panel` takes a panel's tab away, folding an area left empty, and its
+  elements stay alive out of sight; `open_dock_panel` brings it back as a tab beside a panel it shared an area
+  with, or in the first area. `dock_panels` lists every panel with whether it is open, and
+  `dock_tab_context_clicked` says whose tab was context-clicked, for a menu.
 
   ```xml
   <DockSpace layout="row(240, [hierarchy], [scene, inspector])">
@@ -1130,9 +1142,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
     window reloads changed scripts the same way (`Game::watch_scripts`, which builds them off the main thread as
     they change). A build of the scripts that runs past ten minutes, or describing one past two, is taken as stuck
     and stopped, so it cannot hold Play up for good.
-- **The top bar** has the Voxear mark, the workspaces, the command bar (Ctrl+K), play, pause and step in a pill,
-  the user's avatar and the Build button. A **rail** of icons runs down the left, with source control at the
-  bottom.
+- **The top bar** has the Voxear mark, the workspaces (World and Profiling; see the Profiler below), the command
+  bar (Ctrl+K), play, pause and step in a pill, the **Window** button and the Build button. Window lists every
+  panel, ticked while open, to open or close, and resets the layout.
+- **The rail** down the left opens a **drawer** over the left third of the dock: Levels from the top, Settings
+  from the bottom. Its button again, or the drawer's close button, closes it. The palette's commands that show the
+  Levels or Settings open it there.
 - **The command palette** (`palette`) opens under the command bar when it has focus (Ctrl+K). It holds the editor's
   commands with their shortcuts (play, save, undo, duplicate, the Scene view's tools, new Objs, showing each panel),
   commands added by code, the settings, every Obj (selecting it), the levels (opening them), the project's assets
@@ -1151,11 +1166,13 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   with `Editor::add_command(PaletteCommand { id, title, keys, icon, run })`, `run` getting the editor.
 - **Settings** (`settings`): the Scene view's snap distance, handle position (pivot or center) and space (global or
   local), fly speed, and whether the stats chip and axis gizmo show; whether Play starts paused, saves first, clears
-  the Console, pauses on an error, and reloads changed scripts while playing; and the Console's Collapse and trace toggles, and which code editor opens
-  files. They are kept per project in `.voxear/Editor.toml` with the palette's recent items, and shown in
-  the Settings panel (a tab beside the Inspector, with a filter that matches as the palette does). The tool strip's
-  Pivot, Global and snap buttons and the wheel's fly speed are the same settings. From the palette, a toggle flips, a
-  choice moves to the next, and a number opens the Settings panel at it, focused to type. Tests and screenshots open
+  the Console, pauses on an error, and reloads changed scripts while playing; the Scene view's shading and gizmos;
+  and the Console's Collapse and trace toggles, and which code editor opens files. They are kept per project in
+  `.voxear/Editor.toml` with the palette's recent items, and shown in the rail's Settings drawer, with a tab for
+  each group down its left and a search over all of them that matches as the palette does. The tool strip's
+  Pivot, Global and snap buttons, the Scene view's header and the wheel's fly speed are the same settings. From the
+  palette, a toggle flips, a choice moves to the next, and a number opens the Settings drawer at it, focused to
+  type. Tests and screenshots open
   the editor without memory (`Editor::open_without_memory`), so nothing carries from one run to the next.
 - **Docked panels:** the Hierarchy (each open scene under its own header, its Objs by parent in the scene's order,
   with type icons, child counts, a badge on Objs with an `IInstance` behaviour, prefab instances tinted, and a
@@ -1163,18 +1180,37 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   the Game view (through the level's first camera, and the one drawn while playing when both show), the Project and
   the Console under them, and the Inspector on the right at 300px. Each panel has a
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
-  shading menu, Gizmos and full screen. They can all be dragged around, as docking allows.
+  shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. A context click on a
+  tab offers Close, Close Other Tabs and Reset Layout; a closed panel keeps its state, and opens again from the
+  Window button beside a panel it shared an area with.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
   or more, they show as tiles; narrower, as rows with each file's size. Selecting a folder in the tree opens it,
   as does double-clicking one on the right. The Project sits under the Scene by default, because its two columns
   need the width; dragged under the Hierarchy, it turns to rows.
+- **Working with the project's files** (`project_files`). A context click on an item offers Open, Show in Files,
+  Copy Path, Rename, Duplicate and Delete, and on the empty space or a folder, a new folder, scene, level, material
+  or C# script, named so as not to clash ("New Scene 1"). Renaming takes the item's `.meta` along, so its GUID and
+  every reference to it hold, and renaming a script renames the class it declares; renaming is typed into a bar
+  over the files. Duplicating copies a file without its `.meta`, so the copy gets a GUID of its own, and deleting
+  moves a file and its `.meta` into the project's `.voxear/Trash` rather than destroying it. The panel looks at
+  the folder again after each (`Content::rescan`).
+- **The Inspector for assets** (`asset_inspector`). Selecting an item in the Project shows it in the Inspector, in
+  place of the Obj selected, as in Unity: its icon, name and kind, where it is (path, GUID and size), and what its
+  kind holds. A material's colour, metallic, roughness and emission are edited in place and saved to its file,
+  showing at once wherever it is drawn (`Content::save_material`, `Renderer::update_material`); a script shows its
+  behaviour's fields with their starting values; a prefab or scene lists its Objs, and a level its scenes. Levels,
+  scenes, prefabs and scripts have an Open button.
 - **The Scene view** renders into its panel through the editor's own camera, flown with the right mouse button
   as in Unity. The renderer draws the 3D view into a rectangle of the window (`Renderer::set_view_rect`), clears
   around it to the window's background (`Renderer::set_clear_color`), and looks through a chosen camera
   (`ViewOptions::camera`). A frame drawn over its edge rounds its corners to the panel's. Over it float a tool
   strip (select, move, rotate and scale, Pivot, Global and grid snap), a stats chip, and an axis gizmo that turns
-  with the camera. The shading menu, Gizmos and full screen are not wired up yet.
+  with the camera. The header's **shading** menu draws it Lit, Unlit (base colours only) or as a Wireframe (the
+  renderer's debug views; the Game view is always lit). **Gizmos** (`gizmos`) draws a sun for each light and a
+  camera body for each camera, which a click selects, and for the one selected, a light's reach (its range, or its
+  spot's cone) and a camera's frustum; the button shows or hides them. **Full screen** gives the dock to the Scene
+  view alone until it is pressed again.
 - **Scene view tools** (`scene_tools`), as Unity's. A click selects the nearest Obj under the pointer: a ray
   against each mesh's bounds in the Obj's own space (`Renderer::mesh_bounds`; cooked meshes keep only a sphere,
   so they use the box around it), or a light or camera close to where it shows; a click on nothing clears the
@@ -1187,7 +1223,7 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Making, duplicating, deleting and reparenting Objs** (`objs`), from the Hierarchy. Its + button makes an Empty,
   a Cube, Sphere or Plane, a directional, point or spot light, or a camera, in front of the Scene camera on the snap
   grid. A context click on an Obj offers Duplicate *(Ctrl+D)*, Delete *(Delete)* and the same new Objs made inside
-  it; on a scene's header or the space below the rows, new Objs at the top of that scene. Dragging an Obj keeps
+  it, and Open Prefab first on a prefab instance or an Obj in one; on a scene's header or the space below the rows, new Objs at the top of that scene. Dragging an Obj keeps
   where it is in the world, and lands by where the pointer is on the row under it: on the middle, inside it, last;
   near its top or bottom edge, beside it, before or after (a line shows which); on a scene's header, at the top of
   that scene; and below the rows, at the top of its own scene. Copies are named as Unity names them ("Cube (1)")
@@ -1223,8 +1259,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   to take it out and the list's to add one; and a `[Serializable]` table shows its fields indented under it. A field
   the scene does not set shows the script's value, and setting anything in it writes the whole field for the scene.
   While playing, scripts show the values they started with. **Add Component** offers a Mesh Renderer, Light or
-  Camera the Obj lacks, and the project's scripts; a context click on a component's header removes it, and on a
-  script field's row resets it to the script's value. Every change is a step to undo.
+  Camera the Obj lacks, and the project's scripts; a context click on a component's header removes it, or moves a
+  script up or down among the Obj's scripts, which is the order they run and save in, and on a script field's row
+  resets it to the script's value. Every change is a step to undo.
 - **Keeping values after play.** A context click on the name, a Transform row or a component's value opens its menu:
   Reset where there is one, and while playing, **Keep value after play**, whose row is then marked in the accent.
   When play stops, each kept value of an Obj from the edited level (`Levels::counterpart`) is copied into the edited
@@ -1234,6 +1271,22 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   write only what differs from the prefab, and Objs made since the level opened go into its active scene. Hello's
   levels save back unchanged. Edits while playing are not saved, as in Unity. Opening another level with unsaved
   changes asks for a second click first.
+- **Making prefabs.** Dragging an Obj from the Hierarchy onto the Project panel writes it, with what is under it,
+  to a `.prefab` in the folder shown (`objs::make_prefab`), and puts an instance of the new prefab in its place, as
+  one step to undo.
+- **Prefab mode** (`editor::prefab_mode`), as in Unity: a prefab opens on its own to edit from the Project (a double
+  click, or the Inspector's Open), or from the Hierarchy's Open Prefab on an instance. Its Objs load as a scene's
+  would, in place of the level (`Levels::open_scene` takes prefabs), a bar over the Scene view names it, and Back
+  opens again the level or scene it was opened from. Save writes the prefab, and what was read of it is then
+  forgotten (`Content::forget`), so the level's instances show the change when it opens again. A prefab does not
+  play on its own: Play asks to go Back first.
+- **Locking components for designers.** In prefab mode, a component's menu has Lock for Designers. A locked
+  component shows a padlock, and in the prefab every value of it still shows, those designers do not see dimmed;
+  a value's menu has Show to Designers. On the prefab's instances, outside prefab mode, a locked component shows
+  only the values chosen and cannot be removed, so a programmer can fix how a component is set up and leave
+  designers the values meant for them. Locks are saved in the prefab's file, by component (a behaviour's type, or
+  `renderer`, `light` or `camera`) with the fields still shown (`[obj.locks]`, the `Locks` component); they are the
+  prefab's alone, never an instance's overrides, and changing them is a step to undo.
 - **Undo and redo** *(Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)* take back and make again edits to an Obj's name, Transform
   and components, from the Inspector or the Scene view's handles, values kept from play, and Objs made, duplicated,
   deleted or reparented; typing into one field is one step, and so is a drag. Objs brought back are new entities,
@@ -1248,9 +1301,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   worker thread, and for scripts, the stack .NET wrote and the Obj it is about (`LogLine`; scripts' `Log` sends both
   through `log` in the native API). A line is in categories nobody declared (`console::entry`): a message starting
   `[Combat]` is in Combat, a script's line in its code's root namespace (from its first frame of the project's own),
-  an engine line in its crate (Engine, Render, RHI, UI), and the C# compiler's lines in Compiler. Each category is a
-  chip in the toolbar with its count, which hides or shows it; the toolbar wraps, so in a narrow Console the chips
-  move onto their own line. The search (`console::query`) takes words, `tag:name` and `-tag:name`, and a regular
+  an engine line in its crate (Engine, Render, RHI, UI), and the C# compiler's lines in Compiler. The toolbar's
+  Categories button lists each category with its count, ticked while shown, to hide or show it, with Show All; the
+  menu stays open while categories are picked. The toolbar wraps, so in a narrow Console every control stays on
+  screen. The search (`console::query`) takes words, `tag:name` and `-tag:name`, and a regular
   expression between slashes; a bad one says why under the toolbar. Log, Warning and Error toggles count what the
   search and categories pass. Collapse, Clear and Error Pause (which pauses play on an error) are settings, as are
   the trace's toggles. Below the list, the selected line shows when, in which frame and on which thread it was
@@ -1262,6 +1316,14 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   its line in the code editor the settings name (VS Code, Rider, Zed or the system's default;
   `Editor::set_source_opener` replaces it). Selecting a line about an Obj selects the Obj, Copy puts the line and its
   stack on the clipboard, and a context click copies a line or mutes its message until Muted brings them back.
+- **The Profiler** (`profiler`), the Profiling workspace's panel. The top bar's workspaces are layouts of the same
+  panels, each kept as it was left: World for building levels, and Profiling, with the Game view over the Profiler
+  and the Console. The Profiler keeps the last 300 frames as a chart of their CPU and GPU milliseconds, under lines
+  at 60 and 30 frames a second, and breaks one frame down: the editor's own stages (the game's tick, with the
+  engine's stages inside it from `Engine::stage_times`, the panels, the UI's layout, and rendering, which includes
+  waiting for the GPU and the display), the renderer's passes as the GPU timed them (`Renderer::timings`), and what
+  the frame drew and culled, by LOD, with memory and what is loaded. A click on the chart picks a frame, Live goes
+  back to the newest, and Record stops and starts taking frames.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
 The Odin-style inspector attributes come next.
@@ -1277,7 +1339,8 @@ The Odin-style inspector attributes come next.
 **Layout.**
 - Dockable tabbed panels: Hierarchy (with instance badges), Inspector, Project, Scene, Game, Console, Profiler and
   Lighting.
-- Workspace presets along the top (World Building, Animation, Lighting, Profiling), as in the concept.
+- Workspace presets along the top, as in the concept: World and Profiling now, Animation and Lighting when those
+  systems are built.
 - Floating tool overlays in the viewport, like the Paint Texture panel in the concept.
 
 **Console.** Modelled on CookieJarTools' [Sifter](https://github.com/CookieJarTools/Sifter), a Unity console
@@ -1424,9 +1487,10 @@ terrain, brush tools and asset names are placeholders, not planned features.
   - workspace tabs (World, Animation, Profiling)
   - a command bar ("Search or run a command", Ctrl+K)
   - play, pause and step in the centre
-  - the user's avatar, and an accent **Build** button that opens the Build window
-- **Left rail.** Icons for the main areas (World, Layers, Code, Audio, Animation), with source control at the
-  bottom.
+  - an accent **Build** button that opens the Build window; the concept's avatar is left out
+- **Left rail.** In the concept, icons for the main areas (World, Layers, Code, Audio, Animation), with source
+  control at the bottom. The editor's rail opens the Levels and Settings drawers for now; the other areas join it
+  as they are built.
 - **Hierarchy:**
   - a filter box
   - folders that group Objs

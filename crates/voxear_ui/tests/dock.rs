@@ -143,3 +143,43 @@ fn shares_and_right_hand_panels_keep_their_size_as_the_window_resizes() {
     assert_eq!(area(&ui, "Hierarchy")[3], 200.0, "and the share stays a share");
     assert_eq!(ui.dock_layout(dock), layout, "both write back as they were read");
 }
+
+#[test]
+fn panels_close_and_open_again_beside_where_they_were() {
+    let (mut ui, dock) = editor();
+    ui.close_dock_panel(dock, "project");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.dock_layout(dock), "row(240, [hierarchy], column(380, [scene], [inspector]))");
+    let open: Vec<(String, bool)> = ui.dock_panels(dock).into_iter().map(|(id, _, open)| (id, open)).collect();
+    assert!(open.contains(&("project".into(), false)), "listed as closed: {open:?}");
+
+    ui.open_dock_panel(dock, "project");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(
+        ui.dock_layout(dock),
+        "row(240, [hierarchy, project*], column(380, [scene], [inspector]))",
+        "back beside the Hierarchy, showing"
+    );
+
+    // A whole area closes, folding away; its panel comes back to the first area.
+    ui.close_dock_panel(dock, "inspector");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.dock_layout(dock), "row(240, [hierarchy, project*], [scene])");
+    ui.open_dock_panel(dock, "inspector");
+    assert!(ui.dock_layout(dock).contains("inspector"));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+
+    let (x, y) = centre(&ui, tab(&ui, dock, "Scene"));
+    ui.pointer_move(x, y);
+    ui.pointer_secondary(true);
+    ui.pointer_secondary(false);
+    assert_eq!(ui.dock_tab_context_clicked(dock).map(|(panel, _)| panel), Some("scene".to_string()), "a tab's menu");
+
+    // A layout that leaves panels out can close them rather than gather them in the first area.
+    ui.set_dock_layout_closing_rest(dock, "row(240, [hierarchy], [scene])").unwrap();
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let open: Vec<String> = ui.dock_panels(dock).into_iter().filter(|(.., open)| *open).map(|(id, ..)| id).collect();
+    assert_eq!(open, ["hierarchy", "scene"]);
+    ui.open_dock_panel(dock, "inspector");
+    assert!(ui.dock_layout(dock).contains("inspector"), "and they open again");
+}

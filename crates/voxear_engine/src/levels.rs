@@ -203,7 +203,9 @@ impl Levels {
     }
 
     /// Opens one scene on its own, as the editor does for a scene that is in
-    /// no level: everything else unloads and it is the active scene.
+    /// no level: everything else unloads and it is the active scene. A prefab
+    /// opens the same way, to edit, its Objs as a scene's, and saves back as
+    /// a prefab.
     pub fn open_scene(
         &mut self,
         engine: &mut Engine,
@@ -237,7 +239,9 @@ impl Levels {
                 change.kept.push(scene.path.clone());
                 kept.push(scene);
             } else {
-                for (id, entity) in unload(engine, &scene) {
+                // In edit mode persistent Objs unload like any other: only a running game keeps them.
+                let keep_persistent = !engine.is_edit_mode();
+                for (id, entity) in unload(engine, &scene, keep_persistent) {
                     self.persistent.insert((scene.guid, id), entity);
                 }
                 change.unloaded.push(scene.path);
@@ -282,7 +286,10 @@ impl Levels {
         renderer: Option<&mut Renderer>,
         target: &Target,
     ) -> Result<LoadedScene> {
-        let (text, path) = content.asset_text(target.guid, AssetKind::Scene)?;
+        // A prefab opened on its own reads as a scene: both are a list of Objs.
+        let prefab = content.db().get(target.guid).is_some_and(|entry| entry.kind == AssetKind::Prefab);
+        let kind = if prefab { AssetKind::Prefab } else { AssetKind::Scene };
+        let (text, path) = content.asset_text(target.guid, kind)?;
         let scene = scene_file::parse(&text, &path)?;
         self.persistent.retain(|_, entity| engine.world.is_alive(*entity));
         let survivors: HashSet<ObjPath> =
@@ -629,15 +636,17 @@ fn read_chain(
 fn find_scene(content: &Content, reference: &str) -> Result<(AssetGuid, String)> {
     let guid = content.parse(reference)?.guid().with_context(|| format!("`{reference}` is not a scene"))?;
     let entry = content.db().get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
-    if entry.kind != AssetKind::Scene {
-        bail!("{} is not a .scene file", entry.path);
+    if !matches!(entry.kind, AssetKind::Scene | AssetKind::Prefab) {
+        bail!("{} is not a .scene or .prefab file", entry.path);
     }
     Ok((guid, entry.path.clone()))
 }
 
 /// Destroys a scene's Objs, except persistent ones and their children, which
 /// are detached from any doomed parent and kept. Returns the kept Objs.
-fn unload(engine: &mut Engine, scene: &LoadedScene) -> Vec<(ObjPath, Entity)> {
+/// Destroys a scene's Objs, but for persistent ones while `keep_persistent`,
+/// which are returned.
+fn unload(engine: &mut Engine, scene: &LoadedScene, keep_persistent: bool) -> Vec<(ObjPath, Entity)> {
     let world = &engine.world;
     let alive: Vec<Entity> = scene.objs.iter().map(|(_, e)| *e).filter(|e| world.is_alive(*e)).collect();
     let persistent = |entity: Entity| {
@@ -655,7 +664,7 @@ fn unload(engine: &mut Engine, scene: &LoadedScene) -> Vec<(ObjPath, Entity)> {
         }
         false
     };
-    let kept: HashSet<Entity> = alive.iter().copied().filter(|e| persistent(*e)).collect();
+    let kept: HashSet<Entity> = alive.iter().copied().filter(|e| keep_persistent && persistent(*e)).collect();
     let detach: Vec<Entity> =
         kept.iter().copied().filter(|e| world.get::<Parent>(*e).is_some_and(|p| !kept.contains(&p.0))).collect();
     for entity in detach {

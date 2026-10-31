@@ -141,6 +141,8 @@ pub enum ObjAction {
     Delete(Entity),
     /// Move an Obj, keeping where it is in the world.
     Move(Entity, Destination),
+    /// Open the prefab an Obj is an instance of, or part of one, on its own.
+    OpenPrefab(Entity),
 }
 
 pub struct Hierarchy {
@@ -208,13 +210,19 @@ impl Hierarchy {
         let mut items = Vec::new();
         self.menu.clear();
         let shown = self.shown.borrow();
-        let name = on.and_then(|item| shown.rows.get(&item)).map(|row| row.name.clone()).unwrap_or_default();
+        let row = on.and_then(|item| shown.rows.get(&item));
+        let name = row.map(|row| row.name.clone()).unwrap_or_default();
+        let in_prefab = row.is_some_and(|row| row.prefab.is_some());
         let (parent, scene) = match on {
             Some(item) if is_header(item) => (None, shown.scenes.get(&item).copied()),
             Some(item) => (Some(Entity::from_bits(item)), None),
             None => (None, None),
         };
         drop(shown);
+        if let Some(entity) = parent.filter(|_| in_prefab) {
+            items.extend([MenuItem::new("Open Prefab"), MenuItem::separator()]);
+            self.menu.extend([Some(ObjAction::OpenPrefab(entity)), None]);
+        }
         if let Some(entity) = parent {
             let entries = [
                 (MenuItem::new("Duplicate").shortcut("Ctrl+D"), Some(ObjAction::Duplicate(entity))),

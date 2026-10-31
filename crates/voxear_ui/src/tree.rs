@@ -208,9 +208,10 @@ pub struct Ui {
     /// A dock tab pressed, and maybe being dragged.
     pub(crate) dock_drag: Option<crate::dock::DockDrag>,
     /// Menu items chosen since the last frame, by the element each menu was
-    /// for, and a menu just opened, to keep on screen once laid out.
+    /// for, and a popup just opened, to keep on screen once laid out, with
+    /// where its bottom goes when it has no room below.
     pub(crate) menu_choices: Vec<(taffy::NodeId, usize)>,
-    pub(crate) placing_menu: Option<taffy::NodeId>,
+    pub(crate) placing_menu: Option<(taffy::NodeId, f32)>,
     /// Something pressed, and maybe being dragged; rows let go of in their
     /// lists and drops onto elements since the last frame; and the elements
     /// that drag and that take drops.

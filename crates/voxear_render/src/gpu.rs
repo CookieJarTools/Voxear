@@ -68,8 +68,14 @@ pub struct GpuInstance {
     pub normal: [[f32; 4]; 3],
     pub mesh: u32,
     pub material: u32,
-    pub _pad: [u32; 2],
+    /// `INSTANCE_NEW` when another Obj had this place in the list last frame.
+    pub flags: u32,
+    pub _pad: u32,
 }
+
+/// An instance whose place in the list another Obj held last frame, so the
+/// LOD history kept for that place is not its own.
+pub const INSTANCE_NEW: u32 = 1;
 
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;
@@ -93,6 +99,10 @@ pub const DEBUG_VIEW_LOD: u32 = 1;
 pub const DEBUG_VIEW_CASCADES: u32 = 2;
 pub const DEBUG_VIEW_LIGHT_COMPLEXITY: u32 = 3;
 pub const DEBUG_VIEW_NORMALS: u32 = 4;
+/// Each surface's own colour, without light or shadow.
+pub const DEBUG_VIEW_UNLIT: u32 = 5;
+/// The meshes' edges, drawn as lines.
+pub const DEBUG_VIEW_WIREFRAME: u32 = 6;
 
 /// Froxel grid for clustered lighting: screen tiles by depth slices.
 pub const CLUSTER_GRID: [u32; 3] = [16, 9, 24];

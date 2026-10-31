@@ -41,7 +41,10 @@ pub use cooked::{COOKED_VERSION, CookedModel};
 pub use gltf_import::{
     ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
 };
-pub use gpu::{DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS};
+pub use gpu::{
+    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS,
+    DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
+};
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::MAX_LODS;
 pub use mesh::{MeshData, Primitive, Vertex};
@@ -170,6 +173,8 @@ pub struct Renderer {
     exposure: Option<Buffer>,
     /// Last frame's model matrices and camera, for motion vectors.
     prev_models: HashMap<Entity, Mat4Cols>,
+    /// Last frame's Objs in their instances' order.
+    prev_entities: Vec<Entity>,
     prev_view_proj: Option<Mat4Cols>,
     /// The size TAA's history was rendered at; `None` when it is stale.
     taa_history: Option<vk::Extent2D>,
@@ -248,6 +253,7 @@ impl Renderer {
             lod_state: Some(lod_state),
             exposure: Some(exposure),
             prev_models: HashMap::new(),
+            prev_entities: Vec::new(),
             prev_view_proj: None,
             taa_history: None,
             frame_index: 0,
@@ -330,6 +336,12 @@ impl Renderer {
 
     pub fn add_material(&mut self, desc: &MaterialDesc) -> Result<MaterialHandle> {
         self.assets.as_mut().expect("assets live until drop").add_material(&self.gpu, desc)
+    }
+
+    /// Changes a material in place, as editing a material asset does, so
+    /// everything drawn with it changes from the next frame.
+    pub fn update_material(&mut self, handle: MaterialHandle, desc: &MaterialDesc) -> Result<()> {
+        self.assets.as_mut().expect("assets live until drop").set_material(&self.gpu, handle, desc)
     }
 
     /// Loads a `.gltf` or `.glb` file and returns its drawable pieces. `path`
@@ -605,7 +617,9 @@ impl Renderer {
             stats_handle: buffers.stats.handle,
             index_buffer: assets.indices.handle,
         };
-        let frame_setup = passes::Frame { pipelines: *pipelines, push, instance_count: instance_count as u32, extent };
+        let wireframe = self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME;
+        let frame_setup =
+            passes::Frame { pipelines: *pipelines, push, instance_count: instance_count as u32, extent, wireframe };
         passes::record(&mut fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {
             pipelines: *pipelines,
@@ -652,13 +666,18 @@ impl Renderer {
 
     /// Gives each instance last frame's model matrix and the frame last
     /// frame's camera, so shaders can work out how far each pixel moved.
-    /// Objs seen for the first time count as still.
+    /// Objs seen for the first time count as still. An Obj in a place in the
+    /// list another held last frame is marked new there.
     fn track_motion(&mut self, extracted: &mut scene::ExtractedFrame) {
-        for (instance, entity) in extracted.instances.iter_mut().zip(&extracted.entities) {
+        for (index, (instance, entity)) in extracted.instances.iter_mut().zip(&extracted.entities).enumerate() {
             if let Some(previous) = self.prev_models.get(entity) {
                 instance.prev_model = *previous;
             }
+            if self.prev_entities.get(index) != Some(entity) {
+                instance.flags |= gpu::INSTANCE_NEW;
+            }
         }
+        self.prev_entities.clone_from(&extracted.entities);
         self.prev_models.clear();
         self.prev_models.extend(extracted.entities.iter().zip(&extracted.instances).map(|(e, i)| (*e, i.model)));
         let current = extracted.frame.unjittered_view_proj;

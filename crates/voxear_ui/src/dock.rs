@@ -69,6 +69,9 @@ pub(crate) struct DockPanel {
 pub(crate) struct DockState {
     pub layout: DockNode,
     pub panels: Vec<DockPanel>,
+    /// Panels closed, each with one it shared an area with, to go back
+    /// beside when opened again.
+    pub closed: Vec<(String, Option<String>)>,
     /// Each tab button, and the panel it shows.
     pub headers: Vec<(taffy::NodeId, String)>,
     /// What was built for the layout, replaced whenever it changes.
@@ -320,6 +323,7 @@ impl Ui {
         let state = DockState {
             layout: DockNode::area(1, Vec::new(), 0),
             panels: Vec::new(),
+            closed: Vec::new(),
             headers: Vec::new(),
             structure: None,
             next_area: 1,
@@ -359,12 +363,26 @@ impl Ui {
     /// Arranges the panels as `layout` says; see the [module](self)
     /// documentation for its form. Panels it leaves out join the first area.
     pub fn set_dock_layout(&mut self, dock: NodeId, layout: &str) -> Result<(), UiError> {
+        self.arrange_dock(dock, layout, false)
+    }
+
+    /// Arranges the panels as `layout` says, closing those it leaves out, as
+    /// a workspace that shows only some panels does. They open again in the
+    /// first area.
+    pub fn set_dock_layout_closing_rest(&mut self, dock: NodeId, layout: &str) -> Result<(), UiError> {
+        self.arrange_dock(dock, layout, true)
+    }
+
+    fn arrange_dock(&mut self, dock: NodeId, layout: &str, close_rest: bool) -> Result<(), UiError> {
         let Some(state) = self.dock_state(dock) else { return Err(UiError("not a dock space".into())) };
         let mut next = state.next_area;
         let mut node = parse_layout(layout, &mut next).map_err(|e| UiError(format!("dock layout: {e}")))?;
         let named: Vec<String> = node.panels().iter().map(|p| p.to_string()).collect();
+        state.closed.clear();
         for panel in state.panels.iter().filter(|p| !named.contains(&p.id)) {
-            if let DockNode::Area { panels, .. } = node.first_area() {
+            if close_rest {
+                state.closed.push((panel.id.clone(), None));
+            } else if let DockNode::Area { panels, .. } = node.first_area() {
                 panels.push(panel.id.clone());
             }
         }
@@ -372,6 +390,61 @@ impl Ui {
         state.next_area = next;
         self.rebuild_dock(dock);
         Ok(())
+    }
+
+    /// Closes a panel: its tab goes, an area left empty folds away, and its
+    /// elements stay alive out of sight until it opens again. The last panel
+    /// placed stays.
+    pub fn close_dock_panel(&mut self, dock: NodeId, id: &str) {
+        let Some(state) = self.dock_state(dock) else { return };
+        let placed = state.layout.panels();
+        if !placed.contains(&id) || placed.len() == 1 {
+            return;
+        }
+        let neighbour = area_with(&state.layout, id).and_then(|area| area.into_iter().find(|p| p != id));
+        state.layout.remove(id);
+        state.closed.push((id.to_string(), neighbour));
+        self.rebuild_dock(dock);
+    }
+
+    /// Opens a panel, as a tab beside one it shared an area with when it
+    /// closed, or else in the first area, and shows it. One already open is
+    /// just shown.
+    pub fn open_dock_panel(&mut self, dock: NodeId, id: &str) {
+        let Some(state) = self.dock_state(dock) else { return };
+        if !state.layout.panels().contains(&id) && state.panels.iter().any(|p| p.id == id) {
+            let neighbour = state.closed.iter().find(|(closed, _)| closed == id).and_then(|(_, n)| n.clone());
+            state.closed.retain(|(closed, _)| closed != id);
+            let target = neighbour.and_then(|n| area_id_with(&state.layout, &n));
+            let target = target.unwrap_or_else(|| match state.layout.first_area() {
+                DockNode::Area { id, .. } => *id,
+                DockNode::Split { .. } => 0,
+            });
+            state.layout.insert(target, Zone::Center, id, 0.0, 0);
+            self.rebuild_dock(dock);
+        }
+        self.show_dock_panel(dock, id);
+    }
+
+    /// Every panel, in the order added: its id, title, and whether it is open.
+    pub fn dock_panels(&mut self, dock: NodeId) -> Vec<(String, String, bool)> {
+        let Some(state) = self.dock_state(dock) else { return Vec::new() };
+        let placed: Vec<String> = state.layout.panels().iter().map(|p| p.to_string()).collect();
+        state.panels.iter().map(|p| (p.id.clone(), p.title.clone(), placed.contains(&p.id))).collect()
+    }
+
+    /// The panel whose tab was context-clicked since the last frame, for its
+    /// menu, with where the pointer was.
+    pub fn dock_tab_context_clicked(&mut self, dock: NodeId) -> Option<(String, (f32, f32))> {
+        let headers = self.dock_state(dock)?.headers.clone();
+        let (_, panel) = headers.into_iter().find(|(header, _)| self.context_clicked(NodeId(*header)))?;
+        Some((panel, self.pointer_position().unwrap_or_default()))
+    }
+
+    /// The other panels in the area a panel is in.
+    pub fn dock_panel_neighbours(&mut self, dock: NodeId, id: &str) -> Vec<String> {
+        let Some(state) = self.dock_state(dock) else { return Vec::new() };
+        area_with(&state.layout, id).unwrap_or_default().into_iter().filter(|p| p != id).collect()
     }
 
     /// The layout as it is now, with any divider moves and tab choices, in
@@ -651,6 +724,22 @@ impl Ui {
         let element = areas.iter().find(|(id, ..)| *id == area).map(|(_, e, _)| NodeId(*e));
         let [_, _, w, h] = element.map_or([0.0; 4], |e| self.rect(e));
         if matches!(zone, Zone::Left | Zone::Right) { w / 2.0 } else { h / 2.0 }
+    }
+}
+
+/// The panels of the area a panel is in.
+fn area_with(node: &DockNode, panel: &str) -> Option<Vec<String>> {
+    match node {
+        DockNode::Area { panels, .. } => panels.iter().any(|p| p == panel).then(|| panels.clone()),
+        DockNode::Split { first, second, .. } => area_with(first, panel).or_else(|| area_with(second, panel)),
+    }
+}
+
+/// The id of the area a panel is in.
+fn area_id_with(node: &DockNode, panel: &str) -> Option<u32> {
+    match node {
+        DockNode::Area { id, panels, .. } => panels.iter().any(|p| p == panel).then_some(*id),
+        DockNode::Split { first, second, .. } => area_id_with(first, panel).or_else(|| area_id_with(second, panel)),
     }
 }
 

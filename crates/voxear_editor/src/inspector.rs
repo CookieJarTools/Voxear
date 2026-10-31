@@ -26,9 +26,13 @@ use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Name, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
+use voxear_engine::prefab::Locks;
+
 use crate::{
+    asset_inspector::{AssetAction, AssetView},
     fields::Pick,
     history::{Edit, ObjState},
+    project_view::ProjectItem,
     props::{self, Part, Prop, Value},
 };
 
@@ -102,6 +106,13 @@ pub enum RowAction {
     /// Point a reference at what was dragged onto it, from the Hierarchy or
     /// the Project, if it fits.
     Dropped(Prop, DragSource),
+    /// Move a script up (-1) or down (1) among the Obj's scripts.
+    Move(Part, isize),
+    /// Lock a component for designers, or unlock it: only in a prefab opened
+    /// on its own.
+    Lock(Part, bool),
+    /// Show a locked component's value to designers, or hide it from them.
+    ShowToDesigners(Prop, bool),
 }
 
 /// A component value's row and the control that edits it.
@@ -129,6 +140,10 @@ enum Control {
     Fixed(NodeId),
 }
 
+/// What the sections shown were built from: the components and their
+/// values, whether the game was playing, and the Obj's locks.
+type Built = (Vec<(Part, Vec<Prop>)>, bool, Option<Locks>);
+
 pub struct Inspector {
     root: NodeId,
     shown: Option<Entity>,
@@ -141,11 +156,15 @@ pub struct Inspector {
     add: Option<NodeId>,
     /// The project's scripts, as their last build describes them.
     types: ScriptTypes,
-    /// The components and values shown, and whether the game was playing,
-    /// to build again when either changes.
-    built: (Vec<(Part, Vec<Prop>)>, bool),
+    /// To build again when any of it changes.
+    built: Built,
+    /// A prefab is open on its own, so locks can be set, and every value of
+    /// a locked component shows, marked for whether designers see it.
+    prefab_mode: bool,
     /// The element whose menu is open, and what each of its items does.
     menu: Option<(NodeId, Vec<Option<RowAction>>)>,
+    /// What is selected in the Project panel, when that is what it shows.
+    asset: Option<AssetView>,
 }
 
 impl Inspector {
@@ -159,14 +178,51 @@ impl Inspector {
             rows: Vec::new(),
             add: None,
             types: ScriptTypes::default(),
-            built: (Vec::new(), false),
+            built: (Vec::new(), false, None),
+            prefab_mode: false,
             menu: None,
+            asset: None,
         }
     }
 
     /// The Obj showing, if any.
     pub fn shown(&self) -> Option<Entity> {
         self.shown
+    }
+
+    /// The values of a locked component that designers see, or `None` when
+    /// it is not locked.
+    fn designer_fields(&self, game: &Game, entity: Entity, part: &Part) -> Option<Vec<String>> {
+        game.engine.world.get::<Locks>(entity)?.0.get(&part.lock_key()).cloned()
+    }
+
+    /// A component's menu: moving a script among the Obj's scripts, locking
+    /// it for designers when its prefab is open, and removing it, which a
+    /// locked component outside its prefab cannot be.
+    fn header_items(&self, game: &Game, part: &Part, playing: bool) -> Vec<(MenuItem, Option<RowAction>)> {
+        let Some(entity) = self.shown else { return Vec::new() };
+        let locked = self.designer_fields(game, entity, part).is_some();
+        let fixed = locked && !self.prefab_mode;
+        let mut items = Vec::new();
+        if let Part::Behaviour(_) = part {
+            let scripts: Vec<&Part> =
+                self.built.0.iter().map(|(p, _)| p).filter(|p| matches!(p, Part::Behaviour(_))).collect();
+            let at = scripts.iter().position(|p| *p == part).unwrap_or_default();
+            let movable = !playing && !fixed;
+            let up = MenuItem::new("Move Up").enabled(movable && at > 0);
+            let down = MenuItem::new("Move Down").enabled(movable && at + 1 < scripts.len());
+            items.push((up, Some(RowAction::Move(part.clone(), -1))));
+            items.push((down, Some(RowAction::Move(part.clone(), 1))));
+            items.push((MenuItem::separator(), None));
+        }
+        if self.prefab_mode {
+            let label = if locked { "Unlock for Designers" } else { "Lock for Designers" };
+            items.push((MenuItem::new(label), Some(RowAction::Lock(part.clone(), !locked))));
+            items.push((MenuItem::separator(), None));
+        }
+        let removable = !(playing && matches!(part, Part::Behaviour(_))) && !fixed;
+        items.push((MenuItem::new("Remove Component").enabled(removable), Some(RowAction::Remove(part.clone()))));
+        items
     }
 
     /// The project's scripts as a new build describes them. What is showing
@@ -176,13 +232,39 @@ impl Inspector {
         self.built.0.clear();
     }
 
+    /// Whether a prefab is open on its own: see `prefab_mode`.
+    pub fn set_prefab_mode(&mut self, on: bool) {
+        self.prefab_mode = on;
+        self.built.0.clear();
+    }
+
     pub fn types(&self) -> &ScriptTypes {
         &self.types
     }
 
     /// Shows `entity`, or a hint when nothing is selected. While `playing`,
     /// scripts show the values they started with, which cannot be edited.
+    /// Shows what is selected in the Project panel instead of an Obj.
+    pub fn show_asset(&mut self, ui: &mut Ui, game: &Game, item: &ProjectItem) {
+        self.shown = None;
+        (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
+        self.headers.clear();
+        self.rows.clear();
+        self.asset = Some(AssetView::build(ui, self.root, item, game, &self.types));
+    }
+
+    /// What the asset shown asks of the editor this frame.
+    pub fn update_asset(&mut self, ui: &Ui) -> Option<AssetAction> {
+        self.asset.as_mut()?.update(ui)
+    }
+
+    /// The Project panel's item shown, if that is what it shows.
+    pub fn shown_asset(&self) -> Option<&ProjectItem> {
+        self.asset.as_ref().map(AssetView::item)
+    }
+
     pub fn show(&mut self, ui: &mut Ui, game: &Game, entity: Option<Entity>, playing: bool) {
+        self.asset = None;
         for child in ui.children(self.root) {
             ui.remove(child);
         }
@@ -213,9 +295,20 @@ impl Inspector {
         self.headers.push((None, transform));
 
         let layout = layout(game, entity, &self.types);
+        let locks = world.get::<Locks>(entity).cloned();
         for (part, values) in &layout {
             let (header, rows, _) = section(ui, self.root, part.title(), part.icon(), true);
             self.headers.push((Some(part.clone()), header));
+            // A locked component shows designers only its chosen values; in its
+            // prefab, every value shows, those designers do not see dimmed.
+            let shown_to_designers = locks.as_ref().and_then(|l| l.0.get(&part.lock_key())).cloned();
+            if shown_to_designers.is_some() {
+                ui.add_class(header, "locked");
+                let mark = ui.icon(header, "lock");
+                ui.add_class(mark, "lock-mark");
+            }
+            let designers_see =
+                |value: &Prop| shown_to_designers.as_ref().is_none_or(|s| s.contains(&value.lock_key()));
             if values.is_empty()
                 && let Part::Behaviour(name) = part
             {
@@ -224,7 +317,11 @@ impl Inspector {
                 ui.add_class(label, "value");
             }
             for value in values {
+                if !self.prefab_mode && !designers_see(value) {
+                    continue;
+                }
                 let row = prop(ui, rows, &props::label(value));
+                ui.set_class(row, "hidden-from-designers", !designers_see(value));
                 let depth = props::depth(value);
                 if depth > 0 {
                     let label = ui.children(row)[0];
@@ -256,7 +353,7 @@ impl Inspector {
         let add = ui.button(self.root, "Add Component");
         ui.add_class(add, "add-component");
         self.add = Some(add);
-        self.built = (layout, playing);
+        self.built = (layout, playing, locks);
     }
 
     /// Applies what was typed or picked, and shows changes made elsewhere.
@@ -273,7 +370,8 @@ impl Inspector {
             self.show(ui, game, None, playing);
             return None;
         };
-        if layout(game, entity, &self.types) != self.built.0 || playing != self.built.1 {
+        let locks = game.engine.world.get::<Locks>(entity).cloned();
+        if layout(game, entity, &self.types) != self.built.0 || playing != self.built.1 || locks != self.built.2 {
             self.show(ui, game, Some(entity), playing);
             return None;
         }
@@ -361,7 +459,7 @@ impl Inspector {
             return Some(RowAction::Dropped(prop, source));
         }
         let at = ui.pointer_position().unwrap_or_default();
-        let items: Vec<(MenuItem, Option<RowAction>)>;
+        let mut items: Vec<(MenuItem, Option<RowAction>)>;
         let (owner, at) = if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
             items = self.add_items(playing);
             let [x, y, _, height] = ui.rect(add);
@@ -381,14 +479,21 @@ impl Inspector {
         } else if let Some((part, header)) = self.headers.iter().find(|(_, h)| ui.context_clicked(*h)) {
             items = match part {
                 None => vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))],
-                Some(part) => {
-                    let removable = !(playing && matches!(part, Part::Behaviour(_)));
-                    vec![(MenuItem::new("Remove Component").enabled(removable), Some(RowAction::Remove(part.clone())))]
-                }
+                Some(part) => self.header_items(game, part, playing),
             };
             (*header, at)
         } else if let Some((field, row)) = rows.iter().find(|(_, row)| ui.context_clicked(*row)) {
             items = row_items(field, playing, can_keep, kept.contains(field));
+            if let (true, Field::Prop(prop)) = (self.prefab_mode, field)
+                && let Some(shown) = self.shown.and_then(|e| self.designer_fields(game, e, &prop.part()))
+            {
+                if !items.is_empty() {
+                    items.push((MenuItem::separator(), None));
+                }
+                let seen = shown.contains(&prop.lock_key());
+                let toggle = MenuItem::new("Show to Designers").checked(seen);
+                items.push((toggle, Some(RowAction::ShowToDesigners(prop.clone(), !seen))));
+            }
             (*row, at)
         } else {
             return None;
@@ -652,7 +757,7 @@ fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, No
 
 /// A row of a label and three axis fields, X, Y and Z. Returns the row and
 /// the fields.
-fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> (NodeId, [NodeId; 3]) {
+pub(crate) fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> (NodeId, [NodeId; 3]) {
     let row = prop(ui, rows, label);
     let vector = ui.panel(row, Style::default());
     ui.add_class(vector, "vector");
@@ -699,7 +804,7 @@ fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, switch: bool) -> 
 }
 
 /// A property's row: its label in the first 88 pixels, the value after.
-fn prop(ui: &mut Ui, rows: NodeId, label: &str) -> NodeId {
+pub(crate) fn prop(ui: &mut Ui, rows: NodeId, label: &str) -> NodeId {
     let row = ui.panel(rows, Style::default());
     ui.add_class(row, "prop");
     let name = ui.add_label(row, label);
@@ -708,7 +813,7 @@ fn prop(ui: &mut Ui, rows: NodeId, label: &str) -> NodeId {
 }
 
 /// A number as the Inspector writes it: up to three decimals, no trailing zeros.
-fn number(value: f32) -> String {
+pub(crate) fn number(value: f32) -> String {
     let text = format!("{value:.3}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
     if text == "-0" { "0".into() } else { text.to_string() }

@@ -11,7 +11,7 @@ use std::{
 };
 
 use voxear_ecs::{Component, Entity, World};
-use voxear_engine::{EditBehaviours, Game};
+use voxear_engine::{EditBehaviours, Game, prefab::Locks};
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Name, Transform};
 
@@ -31,6 +31,8 @@ pub struct ObjState {
     pub light: Option<Light>,
     pub camera: Option<Camera>,
     pub behaviours: Option<EditBehaviours>,
+    /// Components locked for designers, when this is a prefab's Obj.
+    pub locks: Option<Locks>,
 }
 
 impl ObjState {
@@ -42,6 +44,7 @@ impl ObjState {
             light: world.get::<Light>(entity).copied(),
             camera: world.get::<Camera>(entity).copied(),
             behaviours: world.get::<EditBehaviours>(entity).cloned(),
+            locks: world.get::<Locks>(entity).cloned(),
         })
     }
 
@@ -56,6 +59,7 @@ impl ObjState {
         put(world, entity, self.light);
         put(world, entity, self.camera);
         put(world, entity, self.behaviours.clone());
+        put(world, entity, self.locks.clone());
     }
 }
 

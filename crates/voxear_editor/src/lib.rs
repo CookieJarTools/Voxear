@@ -38,15 +38,19 @@
 //! - saving with Ctrl+S, and undo and redo of every edit with Ctrl+Z and Ctrl+Y
 //! - **Settings**, kept per project with what the palette ran recently
 
+mod asset_inspector;
 mod console;
 mod editor;
 mod fields;
+mod gizmos;
 mod hierarchy;
 mod history;
 mod inspector;
 mod levels_panel;
 mod objs;
 mod palette;
+mod profiler;
+mod project_files;
 mod project_view;
 mod props;
 pub mod scene_tools;
@@ -61,9 +65,11 @@ use voxear_core::logging::LogCapture;
 use voxear_engine::Project;
 use voxear_render::{Renderer, RendererSettings};
 
-pub use editor::{Editor, SourceOpener};
+pub use editor::{Drawer, Editor, SourceOpener};
 pub use hierarchy::EditorOnly;
 pub use palette::{PaletteCommand, PaletteKey};
+pub use profiler::{Profiler, Sample, Stage};
+pub use project_view::{ItemKind, ProjectItem};
 pub use settings::{SETTINGS, SettingInfo, SettingKind, SettingValue, Settings};
 pub use window::run_editor;
 

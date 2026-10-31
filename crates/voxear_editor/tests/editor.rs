@@ -373,8 +373,11 @@ fn the_cookbook_reads_the_projects_docs() {
 fn the_levels_panel_lists_levels_and_opens_them() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let root = editor.ui.root();
-    let dock = editor.ui.find(root, "dock").unwrap();
-    editor.ui.show_dock_panel(dock, "levels");
+    // The rail's Levels button opens it in the drawer.
+    let rail = editor.ui.find(root, "rail-levels").unwrap();
+    click(&mut editor.ui, rail);
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Levels));
     editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     let list = editor.ui.find(root, "levels-list").unwrap();
@@ -1203,7 +1206,8 @@ fn console_lines(ui: &Ui) -> Vec<String> {
 /// A Console button, in its toolbar or over its trace, that says `label`.
 fn console_button(ui: &Ui, label: &str) -> Option<NodeId> {
     let mut buttons = Vec::new();
-    with_class(ui, ui.root(), "console-button", &mut buttons);
+    let console = ui.find(ui.root(), "console-panel")?;
+    with_class(ui, console, "console-button", &mut buttons);
     buttons.into_iter().find(|&b| ui.text(b) == label || ui.children(b).iter().any(|&c| ui.text(c) == label))
 }
 
@@ -1227,6 +1231,18 @@ fn search_console(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, t
     editor.ui.text_input(text);
     frame(editor, renderer);
     frame(editor, renderer);
+}
+
+/// The open menu's items, each as its label and then any shortcut or count.
+fn menu_texts(ui: &Ui) -> Vec<String> {
+    let mut items = Vec::new();
+    with_class(ui, ui.root(), "menu-item", &mut items);
+    items
+        .into_iter()
+        .map(|item| {
+            ui.children(item).iter().map(|&part| ui.text(part)).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ")
+        })
+        .collect()
 }
 
 /// Clicks a link in a rich label, where it is drawn.
@@ -1293,18 +1309,32 @@ fn the_console_sifts_searches_and_opens_stacks() {
 
     // The Console given room, as dragging the divider over it up does.
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
-    let roomy = "row(240, [hierarchy, levels], row(-300, column(45%, [scene, game, cookbook], [console, project]), \
-                 [inspector, settings]))";
+    let roomy =
+        "row(240, [hierarchy], row(-300, column(45%, [scene, game, cookbook], [console, project]), [inspector]))";
     editor.ui.set_dock_layout(dock, roomy).unwrap();
     editor.ui.show_dock_panel(dock, "console");
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert_eq!(second_texts(&editor.ui, "console-level"), ["4", "1", "2"], "Log, Warning and Error counts");
+    let categories = console_button(&editor.ui, "Categories").unwrap();
+    click(&mut editor.ui, categories);
+    frame(&mut editor, &mut renderer);
     assert_eq!(
-        second_texts(&editor.ui, "console-chip"),
-        ["Combat 3", "Compiler 1", "Engine 1", "Hello 4", "Render 1"],
+        menu_texts(&editor.ui),
+        ["Show all", "Combat 3", "Compiler 1", "Engine 1", "Hello 4", "Render 1"],
         "categories nobody declared: a [tag], the scripts' namespace, the crate, the compiler"
     );
+    // Hiding one keeps the menu open for the next; Show all brings them back.
+    let render = menu_item(&editor.ui, "Render").unwrap();
+    click(&mut editor.ui, render);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.is_menu_open(categories), "the menu stays open");
+    assert!(console_button(&editor.ui, "Categories · 1 hidden").is_some());
+    let all = menu_item(&editor.ui, "Show all").unwrap();
+    click(&mut editor.ui, all);
+    frame(&mut editor, &mut renderer);
+    editor.ui.close_popup();
+    assert!(console_button(&editor.ui, "Categories").is_some());
     assert_eq!(console_lines(&editor.ui).last().map(String::as_str), Some(compiler.as_str()), "it follows the end");
 
     // Search: a tag, then leaving one out, then a level hidden; a bad
@@ -1398,4 +1428,462 @@ fn the_console_sifts_searches_and_opens_stacks() {
     click(&mut editor.ui, clear);
     frame(&mut editor, &mut renderer);
     assert!(console_lines(&editor.ui).is_empty());
+}
+
+/// The dock tab that says `title`.
+fn dock_tab(ui: &Ui, title: &str) -> Option<NodeId> {
+    let mut tabs = Vec::new();
+    with_class(ui, ui.root(), "tab", &mut tabs);
+    // A tab with an icon has its title in a label beside it.
+    let says = |tab: NodeId| ui.text(tab) == title || ui.children(tab).iter().any(|&part| ui.text(part) == title);
+    tabs.into_iter().find(|&tab| ui.is_visible(tab) && says(tab))
+}
+
+#[test]
+fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let tab = dock_tab(&editor.ui, "Console").expect("the Console has a tab");
+    context_click(&mut editor.ui, tab);
+    frame(&mut editor, &mut renderer);
+    let close = menu_item(&editor.ui, "Close").expect("its tab has a menu");
+    click(&mut editor.ui, close);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(dock_tab(&editor.ui, "Console").is_none(), "closed");
+
+    let windows = editor.ui.find(editor.ui.root(), "windows").unwrap();
+    click(&mut editor.ui, windows);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_texts(&editor.ui).iter().any(|item| item == "Console"), "{:?}", menu_texts(&editor.ui));
+    let console = menu_item(&editor.ui, "Console").unwrap();
+    click(&mut editor.ui, console);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let tab = dock_tab(&editor.ui, "Console").expect("open again");
+    assert!(editor.ui.is_checked(tab), "and showing");
+}
+
+/// The settings rows on screen, by their labels.
+fn shown_settings(ui: &Ui) -> Vec<String> {
+    let mut rows = Vec::new();
+    with_class(ui, ui.root(), "setting", &mut rows);
+    rows.into_iter().filter(|&row| ui.is_visible(row)).map(|row| ui.text(ui.children(row)[0])).collect()
+}
+
+#[test]
+fn settings_open_in_the_drawer_with_a_tab_for_each_group() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let rail = editor.ui.find(editor.ui.root(), "rail-settings").unwrap();
+    click(&mut editor.ui, rail);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Settings));
+    let mut tabs = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "settings-tab", &mut tabs);
+    let names: Vec<String> = tabs.iter().map(|&t| editor.ui.text(t)).collect();
+    assert_eq!(names, ["Scene view", "Play mode", "Console"]);
+    assert!(shown_settings(&editor.ui).contains(&"Snap distance".to_string()), "the first group shows");
+    assert!(!shown_settings(&editor.ui).contains(&"Pause on error".to_string()), "and only it");
+
+    click(&mut editor.ui, tabs[1]);
+    frame(&mut editor, &mut renderer);
+    assert!(shown_settings(&editor.ui).contains(&"Pause on error".to_string()), "a tab shows its group");
+    assert!(editor.ui.is_checked(tabs[1]) && !editor.ui.is_checked(tabs[0]), "and is the tab marked");
+    for _ in 0..10 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "settings.png");
+
+    let filter = editor.ui.find(editor.ui.root(), "settings-filter").unwrap();
+    editor.ui.focus(filter);
+    editor.ui.text_input("collapse");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(shown_settings(&editor.ui), ["Collapse identical lines"], "a search reaches every group");
+
+    click(&mut editor.ui, rail);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.drawer(), None, "the same button closes it");
+}
+
+/// Picks an option of a dropdown, as the pointer would.
+fn choose(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, dropdown: NodeId, option: usize) {
+    click(&mut editor.ui, dropdown);
+    frame(editor, renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    click(&mut editor.ui, options[option]);
+    frame(editor, renderer);
+}
+
+#[test]
+fn the_scene_views_shading_gizmos_and_full_screen_work() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let find = |editor: &voxear_editor::Editor, name| editor.ui.find(editor.ui.root(), name).unwrap();
+    let (shading, gizmos, maximize) =
+        (find(&editor, "shading"), find(&editor, "gizmos"), find(&editor, "scene-maximize"));
+
+    choose(&mut editor, &mut renderer, shading, 2);
+    assert_eq!(editor.settings().scene_shading, 2, "Wireframe");
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "wireframe.png");
+    choose(&mut editor, &mut renderer, shading, 1);
+    assert_eq!(editor.settings().scene_shading, 1, "Unlit");
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "unlit.png");
+    choose(&mut editor, &mut renderer, shading, 0);
+
+    // Gizmos are on to start with; the selected light shows which way it shines.
+    assert!(editor.settings().show_gizmos && editor.ui.is_checked(gizmos));
+    let sun = obj(&editor, "Sun").expect("Hello has a sun");
+    editor.select(Some(sun));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "gizmos.png");
+    click(&mut editor.ui, gizmos);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.settings().show_gizmos && !editor.ui.is_checked(gizmos), "the button hides them");
+
+    click(&mut editor.ui, maximize);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(
+        dock_tab(&editor.ui, "Hierarchy").is_none() && dock_tab(&editor.ui, "Scene").is_some(),
+        "the Scene fills the dock"
+    );
+    let maximize = find(&editor, "scene-maximize");
+    click(&mut editor.ui, maximize);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(dock_tab(&editor.ui, "Hierarchy").is_some(), "and gives it back");
+}
+
+#[test]
+fn the_project_panel_shows_assets_and_makes_renames_and_deletes_files() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let scenes = tile(&editor.ui, "Scenes").expect("the Scenes folder");
+    click(&mut editor.ui, scenes);
+    click(&mut editor.ui, scenes);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    // A scene selected shows in the Inspector, with its Objs.
+    let day = tile(&editor.ui, "Day.scene").expect("Day.scene in Scenes");
+    click(&mut editor.ui, day);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Scenes/Day.scene"));
+    fn texts(ui: &Ui, node: NodeId, out: &mut Vec<String>) {
+        out.push(ui.text(node));
+        for child in ui.children(node) {
+            texts(ui, child, out);
+        }
+    }
+    let mut shown = Vec::new();
+    texts(&editor.ui, editor.ui.find(editor.ui.root(), "inspector").unwrap(), &mut shown);
+    assert!(shown.iter().any(|t| t.starts_with("Objs ·")) && shown.contains(&"Sun".to_string()), "{shown:?}");
+
+    // A new material from the menu, named in the rename bar.
+    context_click(&mut editor.ui, day);
+    frame(&mut editor, &mut renderer);
+    let new = menu_item(&editor.ui, "New Material").expect("the menu makes materials");
+    click(&mut editor.ui, new);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Scenes/New Material.material").is_file());
+    let field = editor.ui.find(editor.ui.root(), "project-rename-field").unwrap();
+    assert!(editor.ui.is_visible(field) && editor.ui.focused() == Some(field), "naming it straight away");
+    type_into(&mut editor.ui, field, "Rock.material");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(
+        dir.path().join("Scenes/Rock.material").is_file() && dir.path().join("Scenes/Rock.material.meta").is_file()
+    );
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Scenes/Rock.material"));
+
+    // Its roughness, edited in the Inspector, is saved.
+    let roughness = prop_field(&editor.ui, "Roughness").expect("a material's roughness");
+    type_into(&mut editor.ui, roughness, "0.2");
+    frame(&mut editor, &mut renderer);
+    let saved = std::fs::read_to_string(dir.path().join("Scenes/Rock.material")).unwrap();
+    assert!(saved.contains("roughness = 0.2"), "{saved}");
+
+    // Deleted, it goes to the project's trash.
+    let rock = tile(&editor.ui, "Rock.material").expect("the renamed tile");
+    context_click(&mut editor.ui, rock);
+    frame(&mut editor, &mut renderer);
+    let delete = menu_item(&editor.ui, "Delete").unwrap();
+    click(&mut editor.ui, delete);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!dir.path().join("Scenes/Rock.material").exists());
+    assert!(dir.path().join(".voxear/Trash/Rock.material").is_file());
+    assert!(tile(&editor.ui, "Rock.material").is_none(), "and leaves the panel");
+}
+
+#[test]
+fn dragging_an_obj_onto_the_project_panel_makes_a_prefab_of_it() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let original = obj(&editor, "Spinner B").unwrap();
+    let row = hierarchy_row(&editor.ui, "Spinner B").expect("Spinner B in the Hierarchy");
+    let files = editor.ui.find(editor.ui.root(), "project-files").unwrap();
+    drag(&mut editor.ui, row, files);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    let file = dir.path().join("Spinner B.prefab");
+    let text = std::fs::read_to_string(&file).expect("the prefab was written");
+    assert!(text.contains("name = \"Spinner B\"") && text.contains("Hello.Spinner"), "{text}");
+    let instance = obj(&editor, "Spinner B").expect("an Obj of that name");
+    assert_ne!(instance, original, "the Obj is now an instance of the prefab");
+    assert!(editor.game.engine.world.has::<voxear_engine::prefab::PrefabInstance>(instance));
+    assert_eq!(editor.selected(), Some(instance));
+    assert!(tile(&editor.ui, "Spinner B.prefab").is_some(), "and the panel shows the prefab");
+
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    let back = obj(&editor, "Spinner B").unwrap();
+    assert!(!editor.game.engine.world.has::<voxear_engine::prefab::PrefabInstance>(back), "undo brings the Obj back");
+}
+
+/// The Inspector section header titled `title`.
+fn section_header(ui: &Ui, title: &str) -> Option<NodeId> {
+    let mut headers = Vec::new();
+    with_class(ui, ui.root(), "foldout-header", &mut headers);
+    headers.into_iter().find(|&h| ui.children(h).iter().any(|&part| ui.text(part) == title))
+}
+
+/// Opens a menu by a right-click on `node` and picks `label` from it.
+fn context_choose(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: NodeId, label: &str) {
+    context_click(&mut editor.ui, node);
+    frame(editor, renderer);
+    let item = menu_item(&editor.ui, label).unwrap_or_else(|| panic!("no {label} in {:?}", menu_texts(&editor.ui)));
+    click(&mut editor.ui, item);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+#[test]
+fn scripts_move_up_and_down_among_an_objs_scripts() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let day = dir.path().join("Scenes/Day.scene");
+    let text = std::fs::read_to_string(&day).unwrap();
+    let text =
+        text.replacen(r#"behaviours = ["Hello.Spinner"]"#, r#"behaviours = ["Hello.Spinner", "Hello.Pulse"]"#, 1);
+    std::fs::write(&day, text).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    let order = |editor: &voxear_editor::Editor| -> Vec<String> {
+        let behaviours = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+        behaviours.0.iter().map(|spec| spec.type_name.clone()).collect()
+    };
+    assert_eq!(order(&editor), ["Hello.Spinner", "Hello.Pulse"]);
+
+    let header = section_header(&editor.ui, "Spinner").expect("the Spinner's section");
+    context_click(&mut editor.ui, header);
+    frame(&mut editor, &mut renderer);
+    let up = menu_item(&editor.ui, "Move Up").unwrap();
+    click(&mut editor.ui, up);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(order(&editor), ["Hello.Spinner", "Hello.Pulse"], "the first script cannot move up");
+
+    let header = section_header(&editor.ui, "Spinner").unwrap();
+    context_choose(&mut editor, &mut renderer, header, "Move Down");
+    assert_eq!(order(&editor), ["Hello.Pulse", "Hello.Spinner"]);
+    let headers: Vec<f32> = ["Pulse", "Spinner"]
+        .iter()
+        .map(|title| editor.ui.rect(section_header(&editor.ui, title).unwrap())[1])
+        .collect();
+    assert!(headers[0] < headers[1], "and the Inspector shows them in their new order");
+    editor.undo(&mut renderer);
+    assert_eq!(order(&editor), ["Hello.Spinner", "Hello.Pulse"], "undo moves it back");
+    editor.redo(&mut renderer);
+    editor.save();
+    let saved = voxear_engine::scene_file::read(&day).unwrap();
+    let saved = saved.objs.iter().find(|o| o.name == "Spinner A").unwrap();
+    assert_eq!(saved.behaviours, ["Hello.Pulse", "Hello.Spinner"], "the order saves");
+}
+
+#[test]
+fn a_prefab_opens_on_its_own_to_lock_components_for_designers() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let row = hierarchy_row(&editor.ui, "Spinner B").unwrap();
+    let files = editor.ui.find(editor.ui.root(), "project-files").unwrap();
+    drag(&mut editor.ui, row, files);
+    frame(&mut editor, &mut renderer);
+    editor.save();
+    frame(&mut editor, &mut renderer);
+
+    // The Hierarchy's menu opens an instance's prefab, in place of the level.
+    let row = hierarchy_row(&editor.ui, "Spinner B").unwrap();
+    context_choose(&mut editor, &mut renderer, row, "Open Prefab");
+    assert_eq!(editor.open_prefab_path(), Some("Spinner B.prefab"));
+    let bar = editor.ui.find(editor.ui.root(), "prefab-bar").unwrap();
+    assert!(editor.ui.is_visible(bar), "a bar over the Scene view says so");
+    assert!(obj(&editor, "Spinner A").is_none(), "the level's other Objs are gone");
+    assert!(obj(&editor, "Game Manager").is_none(), "persistent ones too: only a running game keeps them");
+    let root = obj(&editor, "Spinner B").unwrap();
+    assert_eq!(editor.selected(), Some(root), "the prefab's root is selected");
+    let locks = |editor: &voxear_editor::Editor, entity| {
+        editor.game.engine.world.get::<voxear_engine::prefab::Locks>(entity).map(|locks| locks.0.clone())
+    };
+
+    // Locked, the Mesh Renderer shows designers nothing until a value is shown to them.
+    let header = section_header(&editor.ui, "Mesh Renderer").unwrap();
+    context_choose(&mut editor, &mut renderer, header, "Lock for Designers");
+    assert_eq!(locks(&editor, root), Some([("renderer".to_string(), Vec::new())].into()));
+    let mesh = prop_row(&editor.ui, "Mesh").expect("in its prefab, every value still shows");
+    assert!(editor.ui.has_class(mesh, "hidden-from-designers"));
+    let material = prop_row(&editor.ui, "Material").unwrap();
+    context_choose(&mut editor, &mut renderer, material, "Show to Designers");
+    let shown = Some([("renderer".to_string(), vec!["material".to_string()])].into());
+    assert_eq!(locks(&editor, root), shown);
+    let material = prop_row(&editor.ui, "Material").unwrap();
+    assert!(!editor.ui.has_class(material, "hidden-from-designers"));
+    editor.undo(&mut renderer);
+    assert_eq!(locks(&editor, root), Some([("renderer".to_string(), Vec::new())].into()), "undo takes it back");
+    editor.redo(&mut renderer);
+    editor.save();
+    let saved = voxear_engine::scene_file::read(&dir.path().join("Spinner B.prefab")).unwrap();
+    assert_eq!(saved.objs.len(), 1, "the prefab's file has only its own Obj");
+    assert_eq!(Some(saved.objs[0].locks.clone()), shown, "and keeps its locks");
+
+    // Back opens the level again, whose instance shows designers only what the prefab chose.
+    let back = editor.ui.find(editor.ui.root(), "prefab-back").unwrap();
+    click(&mut editor.ui, back);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.open_prefab_path(), None);
+    assert!(!editor.ui.is_visible(bar));
+    assert!(obj(&editor, "Spinner A").is_some(), "the level is back");
+    assert_eq!(editor.game.engine.world.query_ref::<&Name>().into_iter().filter(|n| n.0 == "Game Manager").count(), 1);
+    let instance = obj(&editor, "Spinner B").unwrap();
+    assert_eq!(locks(&editor, instance), shown, "its instance takes the locks saved");
+    editor.select(Some(instance));
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "Mesh").is_none(), "a value designers do not see is not shown");
+    assert!(prop_row(&editor.ui, "Material").is_some(), "one they do is");
+    let header = section_header(&editor.ui, "Mesh Renderer").unwrap();
+    context_click(&mut editor.ui, header);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_item(&editor.ui, "Lock for Designers").is_none(), "locks change only in the prefab");
+    let remove = menu_item(&editor.ui, "Remove Component").unwrap();
+    click(&mut editor.ui, remove);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.game.engine.world.has::<voxear_render::MeshRenderer>(instance), "nor can it be removed");
+
+    // A prefab's Open in the Inspector opens it too.
+    editor.open_prefab("Spinner B.prefab", &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "prefab-mode.png");
+    assert_eq!(editor.open_prefab_path(), Some("Spinner B.prefab"));
+}
+
+/// Every text in `node`, depth first.
+fn texts_in(ui: &Ui, node: NodeId) -> Vec<String> {
+    let mut out = vec![ui.text(node)];
+    for child in ui.children(node) {
+        out.extend(texts_in(ui, child));
+    }
+    out.retain(|text| !text.is_empty());
+    out
+}
+
+#[test]
+fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let open_panels = |editor: &mut voxear_editor::Editor| -> Vec<String> {
+        editor.ui.dock_panels(dock).into_iter().filter(|(.., open)| *open).map(|(id, ..)| id).collect()
+    };
+    frame(&mut editor, &mut renderer);
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let hint = ["Select an Obj in the Hierarchy to see it here."];
+    assert_eq!(texts_in(&editor.ui, inspector), hint, "nothing picked in the Project panel shows either");
+    assert!(!open_panels(&mut editor).contains(&"profiler".to_string()), "World has no Profiler");
+    // Left with the Console closed, World is kept that way.
+    editor.ui.close_dock_panel(dock, "console");
+    frame(&mut editor, &mut renderer);
+
+    let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();
+    let segments = editor.ui.children(workspaces);
+    assert_eq!(segments.len(), 2, "World and Profiling; Animation waits until there is animation");
+    click(&mut editor.ui, segments[1]);
+    for _ in 0..6 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(editor.workspace(), 1);
+    let panels = open_panels(&mut editor);
+    for id in ["profiler", "game", "console", "inspector"] {
+        assert!(panels.contains(&id.to_string()), "{id} in {panels:?}");
+    }
+    shot(&mut renderer, "profiler.png");
+
+    let samples = editor.profiler().samples();
+    assert!(samples.len() >= 6, "a sample a frame");
+    let last = samples.back().unwrap();
+    let stages = |depth| -> Vec<&str> {
+        last.cpu.iter().filter(|stage| stage.depth == depth).map(|stage| stage.name.as_str()).collect()
+    };
+    assert_eq!(stages(0), ["Game", "Editor", "UI Layout", "Render"]);
+    assert!(stages(1).contains(&"Update"), "the engine's stages inside the game's: {:?}", stages(1));
+    assert!(!last.gpu.is_empty(), "and the GPU's passes");
+    let panel = editor.ui.find(editor.ui.root(), "profiler-panel").unwrap();
+    let shown = texts_in(&editor.ui, panel);
+    for text in ["UI Layout", "Objs drawn", "Render"] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+
+    // A click on the chart picks a frame to break down, until Live.
+    let toolbar = editor.ui.children(first_with(&editor.ui, panel, "console-toolbar").unwrap());
+    let (record, live) = (toolbar[0], toolbar[2]);
+    let picked = first_with(&editor.ui, panel, "profiler-picked").unwrap();
+    assert_eq!(editor.ui.text(picked), "Live");
+    assert!(!editor.ui.is_visible(live));
+    let chart = first_with(&editor.ui, panel, "profiler-chart").unwrap();
+    click(&mut editor.ui, chart);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.text(picked).starts_with("Frame "), "{}", editor.ui.text(picked));
+    assert!(editor.ui.is_visible(live), "a Live button goes back to the newest");
+    click(&mut editor.ui, live);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.ui.text(picked), "Live");
+
+    // Record stops taking frames.
+    click(&mut editor.ui, record);
+    frame(&mut editor, &mut renderer);
+    let count = editor.profiler().samples().len();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.profiler().samples().len(), count);
+
+    click(&mut editor.ui, segments[0]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.workspace(), 0);
+    let panels = open_panels(&mut editor);
+    assert!(!panels.contains(&"profiler".to_string()) && !panels.contains(&"console".to_string()), "{panels:?}");
+    assert!(panels.contains(&"scene".to_string()));
 }

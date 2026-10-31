@@ -9,6 +9,7 @@ use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource, linear,
+    prefab::Locks,
     scene_file::{default_light, default_material},
     script_types::ScriptTypes,
     srgb,
@@ -34,6 +35,17 @@ pub enum Part {
 }
 
 impl Part {
+    /// The component as a prefab's locks name it: a behaviour by its type, or
+    /// `renderer`, `light` or `camera`.
+    pub fn lock_key(&self) -> String {
+        match self {
+            Part::Renderer => "renderer".into(),
+            Part::Light => "light".into(),
+            Part::Camera => "camera".into(),
+            Part::Behaviour(name) => name.clone(),
+        }
+    }
+
     pub fn title(&self) -> &str {
         match self {
             Part::Renderer => "Mesh Renderer",
@@ -73,6 +85,43 @@ pub enum Prop {
         behaviour: String,
         path: Vec<Step>,
     },
+}
+
+impl Prop {
+    /// The component the value belongs to.
+    pub fn part(&self) -> Part {
+        match self {
+            Prop::Mesh | Prop::Material => Part::Renderer,
+            Prop::LightKind | Prop::LightColor | Prop::Intensity | Prop::Range | Prop::SpotInner | Prop::SpotOuter => {
+                Part::Light
+            }
+            Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
+            Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
+        }
+    }
+
+    /// The value as a prefab's locks name the fields shown to designers: a
+    /// script value by its field, and the rest by a name of their own.
+    pub fn lock_key(&self) -> String {
+        let name = match self {
+            Prop::Mesh => "mesh",
+            Prop::Material => "material",
+            Prop::LightKind => "type",
+            Prop::LightColor => "color",
+            Prop::Intensity => "intensity",
+            Prop::Range => "range",
+            Prop::SpotInner => "spot_inner",
+            Prop::SpotOuter => "spot_outer",
+            Prop::FieldOfView => "fov",
+            Prop::Near => "near",
+            Prop::Exposure => "exposure",
+            Prop::Field { path, .. } => match path.first() {
+                Some(crate::fields::Step::Key(field)) => return field.clone(),
+                _ => "",
+            },
+        };
+        name.to_string()
+    }
 }
 
 /// A value as the Inspector shows and edits it.
@@ -484,6 +533,50 @@ pub fn nice_name(name: &str) -> String {
 
 fn round3(value: f32) -> f32 {
     (value * 1000.0).round() / 1000.0
+}
+
+/// Moves a script `by` places among the Obj's scripts, as their order runs
+/// and saves. In edit mode only: running behaviours keep their order.
+pub fn move_behaviour(world: &mut World, entity: Entity, type_name: &str, by: isize) {
+    let Some(behaviours) = world.get_mut::<EditBehaviours>(entity) else { return };
+    let Some(at) = behaviours.0.iter().position(|spec| spec.type_name == type_name) else { return };
+    let to = at as isize + by;
+    if (0..behaviours.0.len() as isize).contains(&to) {
+        behaviours.0.swap(at, to as usize);
+    }
+}
+
+/// Locks a component for designers, showing them none of its values until
+/// some are chosen, or unlocks it.
+pub fn set_locked(world: &mut World, entity: Entity, part: &Part, locked: bool) {
+    let mut locks = world.get::<Locks>(entity).cloned().unwrap_or_default();
+    if locked {
+        locks.0.entry(part.lock_key()).or_default();
+    } else {
+        locks.0.remove(&part.lock_key());
+    }
+    put_locks(world, entity, locks);
+}
+
+/// Shows one of a locked component's values to designers, or hides it.
+pub fn show_to_designers(world: &mut World, entity: Entity, prop: &Prop, shown: bool) {
+    let mut locks = world.get::<Locks>(entity).cloned().unwrap_or_default();
+    let Some(fields) = locks.0.get_mut(&prop.part().lock_key()) else { return };
+    let key = prop.lock_key();
+    fields.retain(|field| *field != key);
+    if shown {
+        fields.push(key);
+        fields.sort();
+    }
+    put_locks(world, entity, locks);
+}
+
+fn put_locks(world: &mut World, entity: Entity, locks: Locks) {
+    if locks.0.is_empty() {
+        world.remove::<Locks>(entity);
+    } else {
+        world.insert(entity, locks);
+    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,6 @@
                 <Label class="brand">Voxear</Label>
                 <Segmented name="workspaces" class="workspaces">
                     <Segment text="World" />
-                    <Segment text="Animation" />
                     <Segment text="Profiling" />
                 </Segmented>
                 <Panel class="command">
@@ -26,19 +25,15 @@
                 <Button name="step" class="icon-button"><Icon icon="step" /></Button>
             </Panel>
             <Panel class="topbar-right">
-                <Label name="avatar" class="avatar" />
+                <Button name="windows" class="icon-button"><Icon icon="panels" /></Button>
                 <Button name="build" class="primary build"><Label>Build</Label></Button>
             </Panel>
         </Panel>
         <Panel class="body">
             <Panel class="rail">
-                <Button name="rail-scene" class="icon-button rail-button"><Icon icon="cube" /></Button>
-                <Button class="icon-button rail-button"><Icon icon="level" /></Button>
-                <Button class="icon-button rail-button"><Icon icon="code" /></Button>
-                <Button class="icon-button rail-button"><Icon icon="audio" /></Button>
-                <Button class="icon-button rail-button"><Icon icon="profiler" /></Button>
+                <Button name="rail-levels" class="icon-button rail-button"><Icon icon="level" /></Button>
                 <Panel class="spacer" />
-                <Button class="icon-button rail-button"><Icon icon="branch" /></Button>
+                <Button name="rail-settings" class="icon-button rail-button"><Icon icon="settings" /></Button>
             </Panel>
             <DockSpace name="dock" class="dock">
                 <DockPanel id="hierarchy" title="Hierarchy" class="dock-content">
@@ -52,19 +47,6 @@
                     </Panel>
                     <TreeView name="hierarchy-tree" class="fill" item-height="24" />
                 </DockPanel>
-                <DockPanel id="levels" title="Levels" icon="level" class="dock-content">
-                    <Panel class="search">
-                        <Icon icon="search" class="search-icon" />
-                        <TextField name="levels-filter" class="search-field" placeholder="Find a level or scene" />
-                    </Panel>
-                    <ListView name="levels-list" class="fill levels" item-height="24" />
-                    <Panel name="levels-progress" class="level-progress">
-                        <Label name="levels-progress-text" class="level-progress-text" />
-                        <Panel class="level-progress-track">
-                            <Panel name="levels-progress-fill" class="level-progress-fill" />
-                        </Panel>
-                    </Panel>
-                </DockPanel>
                 <DockPanel id="project" title="Project" class="dock-content">
                     <Panel class="panel-actions">
                         <Button class="icon-button"><Icon icon="plus" /></Button>
@@ -76,6 +58,10 @@
                             <Panel class="breadcrumb">
                                 <Label name="project-path" class="crumbs" />
                                 <Label name="project-count" class="count" />
+                            </Panel>
+                            <Panel name="project-rename" class="project-rename">
+                                <Label class="project-rename-label">Rename</Label>
+                                <TextField name="project-rename-field" class="search-field project-rename-field" />
                             </Panel>
                             <ListView name="project-files" class="fill files" item-height="24" />
                         </Panel>
@@ -92,7 +78,14 @@
                             <Option>Wireframe</Option>
                         </Dropdown>
                         <Button name="gizmos" class="header-button">Gizmos</Button>
-                        <Button class="icon-button"><Icon icon="maximize" /></Button>
+                        <Button name="scene-maximize" class="icon-button"><Icon icon="maximize" /></Button>
+                    </Panel>
+                    <!-- Over the view while a prefab is open on its own, as Unity's prefab mode. -->
+                    <Panel name="prefab-bar" class="prefab-bar">
+                        <Button name="prefab-back" class="header-button prefab-back"><Icon icon="chevron-left" /><Label>Back</Label></Button>
+                        <Icon icon="cube" class="prefab-icon" />
+                        <Label name="prefab-name" class="prefab-name" />
+                        <Label class="prefab-hint">Lock a component for designers from its menu</Label>
                     </Panel>
                     <Panel name="viewport" class="viewport">
                         <Panel name="handles" class="handles" />
@@ -122,12 +115,8 @@
                     </Panel>
                 </DockPanel>
                 <DockPanel id="cookbook" title="Cookbook" icon="book" name="cookbook" />
-                <DockPanel id="settings" title="Settings" icon="settings" class="dock-content">
-                    <Panel class="search">
-                        <Icon icon="search" class="search-icon" />
-                        <TextField name="settings-filter" class="search-field" placeholder="Search settings" />
-                    </Panel>
-                    <ScrollView name="settings" class="fill settings" />
+                <DockPanel id="profiler" title="Profiler" class="dock-content">
+                    <Panel name="profiler-panel" class="fill profiler-panel" />
                 </DockPanel>
                 <DockPanel id="inspector" title="Inspector">
                     <Panel class="panel-actions">
@@ -151,6 +140,38 @@
             </Panel>
         </Panel>
         <Panel name="viewport-frame" class="viewport-frame" />
+        <!-- Opens from the rail over the dock's left side: Levels, or Settings. After the viewport's frame, so over it. -->
+        <Panel name="drawer" class="drawer">
+            <Panel class="drawer-header">
+                <Label name="drawer-title" class="drawer-title">Levels</Label>
+                <Button name="drawer-close" class="icon-button"><Icon icon="close" /></Button>
+            </Panel>
+            <Panel name="drawer-levels" class="fill drawer-page">
+                <Panel class="search">
+                    <Icon icon="search" class="search-icon" />
+                    <TextField name="levels-filter" class="search-field" placeholder="Find a level or scene" />
+                </Panel>
+                <ListView name="levels-list" class="fill levels" item-height="24" />
+                <Panel name="levels-progress" class="level-progress">
+                    <Label name="levels-progress-text" class="level-progress-text" />
+                    <Panel class="level-progress-track">
+                        <Panel name="levels-progress-fill" class="level-progress-fill" />
+                    </Panel>
+                </Panel>
+            </Panel>
+            <Panel name="drawer-settings" class="fill drawer-page">
+                <Panel class="fill settings-root">
+                    <Panel name="settings-tabs" class="settings-tabs" />
+                    <Panel class="settings-main">
+                        <Panel class="search">
+                            <Icon icon="search" class="search-icon" />
+                            <TextField name="settings-filter" class="search-field" placeholder="Search settings" />
+                        </Panel>
+                        <ScrollView name="settings" class="fill settings" />
+                    </Panel>
+                </Panel>
+            </Panel>
+        </Panel>
         <!-- Last, so it is over everything and takes the pointer first. -->
         <Panel name="palette" class="palette">
             <ListView name="palette-list" class="palette-list" item-height="28" />

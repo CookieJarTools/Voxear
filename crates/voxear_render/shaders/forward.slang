@@ -280,6 +280,15 @@ FragmentOut fragmentMain(VertexOut input)
     {
         color = s.normal * 0.5 + 0.5;
     }
+    else if (frame->debugView == DEBUG_VIEW_UNLIT)
+    {
+        color = base.rgb + material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+    }
+    else if (frame->debugView == DEBUG_VIEW_WIREFRAME)
+    {
+        // Drawn as lines by the wireframe pipeline, in one colour.
+        color = float3(0.78, 0.80, 0.86);
+    }
     FragmentOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);

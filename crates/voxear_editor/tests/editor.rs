@@ -2651,3 +2651,39 @@ fn csharp_components_are_added_edited_and_saved_like_scripts() {
     assert!(ball.behaviours.is_empty());
     assert_eq!(ball.fields["Hello.Spin"]["Speed"], toml::Value::Float(45.0));
 }
+
+#[test]
+fn voxdocs_shows_prefabs_and_materials_live() {
+    let dir = hello_copy();
+    let page = "Hello's lamp, as it is now:\n\n![The lamp](Prefabs/Lamp.prefab)\n";
+    std::fs::write(dir.path().join("Docs/The Lamp.md"), page).unwrap();
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let root = editor.ui.root();
+    let dock = editor.ui.find(root, "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "docs");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut rows = Vec::new();
+    with_class(&editor.ui, root, "cb-row-title", &mut rows);
+    let lamp = rows.into_iter().find(|&row| editor.ui.text(row) == "The Lamp").expect("the page's row");
+    click(&mut editor.ui, lamp);
+    let mut pictures = Vec::new();
+    for _ in 0..60 {
+        frame(&mut editor, &mut renderer);
+        pictures.clear();
+        with_class(&editor.ui, root, "md-picture", &mut pictures);
+        if !pictures.is_empty() {
+            break;
+        }
+    }
+    let &[picture] = pictures.as_slice() else { panic!("the lamp's preview shows") };
+    frame(&mut editor, &mut renderer);
+    let [_, _, width, height] = editor.ui.rect(picture);
+    assert!(width > 100.0 && (width - height).abs() < 1.0, "a square preview, {width} by {height}");
+    shot(&mut renderer, "docs-live.png");
+}

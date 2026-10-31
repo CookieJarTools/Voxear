@@ -1548,7 +1548,9 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   `images` folder beside it) or the project's. A page shows its PNG and JPEG pictures at their own size, or
   narrower to fit, keeping their shape; the editor reads them a couple a frame, shrinks any over 2048 pixels, and
   keeps them for the session. Until then, and for one that is not there, its name shows instead. A picture in a
-  list or quote shows as its name for now.
+  list or quote shows as its name for now. **Live assets**: a picture naming a prefab, model or material
+  (`![The lamp](Prefabs/Lamp.prefab)`) shows its preview, as the Project panel draws it, changing when the asset
+  does.
 - **Writing a page**, as the Cookbook does: **Edit** shows its title and tags over its Markdown, with the page
   as it will read beside it, drawn again a moment after each change, and the cursor at the end of the text. The
   status says whether it is saved. **Save** or Ctrl+S writes it with today's date, and so do **Done** and opening
@@ -1565,8 +1567,8 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   open a panel, run a menu item), as links a page runs and ticks, with each person's progress kept.
 - **Docs Health**'s checks of the code, once there is a Code Reference: code with no page yet and notes left for
   code that is gone; and git's last change on a page.
-- **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and **live
-  assets** shown in a page.
+- **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and a live
+  asset's fields to change on the page.
 - A box to find a tag among many.
 - While writing: tags as chips with suggestions, and Image…, Link… and Action… to put them in at the cursor.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine

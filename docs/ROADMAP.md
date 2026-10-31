@@ -291,6 +291,7 @@ Done so far:
   assemblies in traces, and the player's log from Run in the Build window.
 - **VoxDocs Docs Health and home:** pages out of date, links that go nowhere, missing pictures, and pictures no page
   shows, each a link to its page or file; and home lists the pages updated lately and how healthy the docs are.
+- **Live assets in VoxDocs:** a page's picture naming a prefab, model or material shows its preview, kept up to date.
 - **`vox upgrade`** for the launcher: a project moved onto this version, pinned and given what this version's
   projects have, each change said in plain words, refused before any change for files from a newer Voxear.
 - **The player's log kept:** a built game writes its log to the user's data folder, the run before's beside it, and
@@ -323,7 +324,7 @@ Still to do in M3:
   rendering), Windows archives, and a workflow that builds and publishes releases.
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures dropped
-  in or captured and GIF recordings, and live assets.
+  in or captured and GIF recordings, and live assets' fields on the page.
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
   with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
   person explains things: clear and short, plain words, each term explained where it first appears, an example

@@ -1,8 +1,14 @@
 //! Pictures in VoxDocs pages: each file a page shows is read, made smaller
 //! if it is very large, and uploaded once for the rest of the session, a
 //! couple a frame so a page full of them does not stall the editor.
+//!
+//! **Live assets**: a picture that names a prefab, model or material shows
+//! its preview, as the Project panel draws them, and changes when the asset
+//! does. Previews share an atlas whose cells go to whichever were asked for
+//! lately, so each live picture is asked for every frame, and handed to the
+//! page again should it be drawn somewhere else.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use image::imageops::FilterType;
@@ -13,12 +19,31 @@ use super::Editor;
 
 /// Pictures read in one frame.
 const PER_FRAME: usize = 2;
+/// A live asset's preview's size in pixels, and how many frames it may take
+/// to draw before it is taken to have nothing to show.
+const LIVE_SIZE: u32 = 256;
+const LIVE_PATIENCE: u32 = 240;
+/// The kinds of asset a page can show live, by their extensions.
+const LIVE_KINDS: [&str; 4] = ["prefab", "material", "gltf", "glb"];
+
+/// A live asset a page shows: its file, the asset, the preview last handed
+/// to the page, and how many frames it has waited for one.
+pub(super) struct LiveAsset {
+    path: PathBuf,
+    reference: String,
+    shown: Option<ImageRef>,
+    waited: u32,
+}
 /// The longest side a picture is uploaded at; a page never shows it larger.
 const MAX_SIDE: u32 = 2048;
 
 impl Editor {
     pub(super) fn update_docs_pictures(&mut self, renderer: &mut Renderer) {
         for path in self.docs.wanted_pictures(PER_FRAME) {
+            if let Some(reference) = live_reference(&path, &self.game.project.root) {
+                self.live_assets.push(LiveAsset { path, reference, shown: None, waited: 0 });
+                continue;
+            }
             let uploaded = read_picture(&path).and_then(|(size, rgba)| {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
                 let source = TextureSource { name: &name, width: size[0], height: size[1], rgba: &rgba, srgb: true };
@@ -33,7 +58,42 @@ impl Editor {
             };
             self.docs.set_picture(&path, shown);
         }
+        self.update_live_assets(renderer);
     }
+
+    /// Asks for each live asset's preview, so it stays drawn, and hands it to
+    /// the page when it first is, or moves.
+    fn update_live_assets(&mut self, renderer: &mut Renderer) {
+        let Editor { live_assets, asset_previews, game, docs, .. } = self;
+        for live in live_assets.iter_mut() {
+            let image = asset_previews.image(&mut game.content, renderer, &live.reference, LIVE_SIZE);
+            let image = image.map(|image| ImageRef { texture: image.texture.0, uv: image.uv });
+            match image {
+                Some(image) if live.shown != Some(image) => {
+                    live.shown = Some(image);
+                    docs.set_picture(&live.path, Some((image, [LIVE_SIZE; 2])));
+                }
+                None if live.shown.is_none() => {
+                    live.waited += 1;
+                    if live.waited == LIVE_PATIENCE {
+                        docs.set_picture(&live.path, None);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The asset a picture shows live, by its path in the project, when the
+/// file is a prefab, model or material in it.
+fn live_reference(path: &Path, root: &Path) -> Option<String> {
+    let extension = path.extension()?.to_string_lossy().to_lowercase();
+    if !LIVE_KINDS.contains(&extension.as_str()) {
+        return None;
+    }
+    let within = path.strip_prefix(root).ok()?;
+    Some(within.to_string_lossy().replace('\\', "/"))
 }
 
 /// A picture file as premultiplied RGBA, as the UI draws images, with its

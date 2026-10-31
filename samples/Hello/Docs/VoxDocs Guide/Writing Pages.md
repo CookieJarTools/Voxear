@@ -55,7 +55,7 @@ public sealed class Enemy : Behaviour
 
 ## Pictures
 
-Put a picture in the page with `![what it shows](images/Day.png)`. Its path is from the page's folder, as for pictures kept in an `images` folder beside the page, or from the project's folder. It shows at its own size, or narrower to fit the page. PNG and JPEG pictures show; [[The Day and Night Cycle]] has one.
+Put a picture in the page with `![what it shows](images/Day.png)`. Its path is from the page's folder, as for pictures kept in an `images` folder beside the page, or from the project's folder. It shows at its own size, or narrower to fit the page. PNG and JPEG pictures show; [[The Day and Night Cycle]] has one. Name a prefab, model or material instead, as `![](Prefabs/Lamp.prefab)`, and the page shows its preview, as the Project panel does.
 
 ## Getting around
 

@@ -287,6 +287,8 @@ Done so far:
   images.
 - **VoxDocs tags and headings:** tags over the page tree filter the pages, and "On this page" lists a long page's
   headings beside it, following the reading.
+- **More of Sifter in the Console:** category colours kept with the project, saved filters, hiding chosen
+  assemblies in traces, and the player's log from Run in the Build window.
 
 Still to do in M3:
 - UI core:
@@ -297,8 +299,7 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The rest of Sifter: colours per category kept for the project, hiding chosen assemblies, saved filters, and the
-  player's log.
+- The rest of Sifter: a player's log read from a build run on its own, and its settings screen with a live sample.
 - For the launcher: `vox upgrade`, the first-person, third-person, top-down and 2D templates (after an input API
   and 2D rendering), Windows archives, and a workflow that builds and publishes releases.
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): `[Documentation]` links from code and

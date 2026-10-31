@@ -22,6 +22,17 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// The assembly a frame is from, as the Console can hide them: its root
+    /// namespace (`Voxear`, `System`, the game's), or for the engine's own
+    /// frames, its crate (`voxear_engine`). `None` when it cannot tell.
+    pub fn assembly(&self) -> Option<&str> {
+        if let Some(root) = self.namespace.split('.').next().filter(|root| !root.is_empty()) {
+            return Some(root);
+        }
+        let file = self.file.as_deref()?;
+        file.strip_prefix("crates/").and_then(|rest| rest.split('/').next())
+    }
+
     /// A frame of a .NET stack trace: `at Hello.Spinner.Update() in
     /// /path/Spinner.cs:line 42`. `None` for a line that is no frame, such
     /// as the note between an async method's parts.

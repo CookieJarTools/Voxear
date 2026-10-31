@@ -21,7 +21,15 @@
 //!   line opens where it came from. Selecting a line about an Obj selects the
 //!   Obj; Copy puts the line and its stack on the clipboard.
 //! - A context click on a line copies it or mutes it: muted messages stay
-//!   hidden until the toolbar's Muted button brings them back.
+//!   hidden until the toolbar's Muted button brings them back. It also
+//!   colours the line's category, a colour kept with the project in
+//!   `Settings/Console.toml`, since a team should agree on them; each line
+//!   shows its category in it.
+//! - **Filters** saves the search, levels and categories hidden under a
+//!   name, to pick again, kept per user.
+//! - **Hide…** in the trace pane folds away the frames of chosen assemblies
+//!   (a frame's root namespace, such as `Voxear`, or an engine crate), for
+//!   the one library that fills every trace.
 
 mod entry;
 mod frame;
@@ -40,7 +48,7 @@ use voxear_ecs::Entity;
 use voxear_ui::{Color, ItemFns, MenuItem, NodeId, RichText, Style, Ui};
 
 use self::{entry::Entry, frame::Frame, query::Query};
-use crate::settings::Settings;
+use crate::settings::{SavedFilter, Settings};
 
 /// A line's height, and the list's share of the Console over the trace pane.
 const ROW: f32 = 20.0;
@@ -54,6 +62,20 @@ const METHOD: u32 = 0xe8c37e;
 const PARAMETERS: u32 = 0x6b7385;
 const FILE: u32 = 0xc3a6ff;
 const FOLDED: u32 = 0x8b93a7;
+/// Where a project keeps its category colours.
+const COLOURS_FILE: &str = "Settings/Console.toml";
+/// The colours a category can take, by name.
+const PALETTE: [(&str, u32); 9] = [
+    ("Red", 0xf26d6d),
+    ("Orange", 0xf0a35e),
+    ("Yellow", 0xe2c94a),
+    ("Green", 0x6fcf7f),
+    ("Teal", 0x4fc8c0),
+    ("Blue", 0x6aa8ff),
+    ("Purple", 0xb48cff),
+    ("Pink", 0xf27ac0),
+    ("Grey", 0x9aa1ad),
+];
 
 /// A row: the line it shows, and how many identical ones it stands for.
 #[derive(Clone, Copy, Debug)]
@@ -82,6 +104,9 @@ struct Toolbar {
     collapse: NodeId,
     pause: NodeId,
     categories: NodeId,
+    filters: NodeId,
+    /// Where a filter being saved is named.
+    filter_name: NodeId,
     muted: NodeId,
     search_box: NodeId,
     search: NodeId,
@@ -98,6 +123,7 @@ struct Detail {
     mine_only: NodeId,
     namespaces: NodeId,
     parameters: NodeId,
+    hide: NodeId,
     copy: NodeId,
 }
 
@@ -130,6 +156,15 @@ pub struct Console {
     unfolded: bool,
     /// What the toggles showed last, to build the stack again when they change.
     drawn: Option<(usize, bool, bool, bool, bool)>,
+    /// A filter is being named, and its field is to take focus.
+    naming: bool,
+    focus_name: bool,
+    /// The assemblies the Hide menu lists, in its order.
+    hide_menu: Vec<String>,
+    /// Each category's colour, kept with the project, and the category whose
+    /// colour is being picked from a line's menu.
+    colours: Rc<RefCell<HashMap<String, u32>>>,
+    colouring: Option<String>,
 }
 
 impl Console {
@@ -141,12 +176,14 @@ impl Console {
         let (top, bottom) = ui.split_panes(split).expect("a split view has two panes");
         let entries: Rc<RefCell<Vec<Entry>>> = Rc::default();
         let shown: Rc<RefCell<Vec<Shown>>> = Rc::default();
-        let (read, rows) = (entries.clone(), shown.clone());
+        let colours = Rc::new(RefCell::new(read_colours(project)));
+        let (read, rows, painted) = (entries.clone(), shown.clone(), colours.clone());
         let items = ItemFns {
             make: |ui: &mut Ui, row: NodeId| {
                 for (part, class) in [
                     ("", "console-icon"),
                     ("", "console-time"),
+                    ("", "console-category"),
                     ("", "console-message"),
                     ("", "console-count"),
                     ("", "console-source"),
@@ -159,7 +196,7 @@ impl Console {
                 let (entries, rows) = (read.borrow(), rows.borrow());
                 let Some(shown) = rows.get(index) else { return };
                 let Some(entry) = entries.get(shown.entry) else { return };
-                bind_row(ui, row, entry, shown.count);
+                bind_row(ui, row, entry, shown.count, &painted.borrow());
             },
         };
         let list = ui.list_view(top, ROW, 0, items);
@@ -190,6 +227,11 @@ impl Console {
             selected: None,
             unfolded: false,
             drawn: None,
+            naming: false,
+            focus_name: false,
+            hide_menu: Vec::new(),
+            colours,
+            colouring: None,
         };
         console.show_toggles(ui, settings);
         console
@@ -278,40 +320,174 @@ impl Console {
             self.open_categories(ui);
         }
         refilter |= self.category_choice(ui);
+        if ui.clicked(self.toolbar.filters) {
+            self.open_filters(ui, settings);
+        }
+        refilter |= self.filter_choice(ui, settings, update);
+        self.name_filter(ui, settings, update);
         if ui.clicked(self.toolbar.muted) {
             self.muted.clear();
             refilter = true;
         }
         if ui.changed(self.toolbar.search) {
-            self.query = Query::parse(&ui.text(self.toolbar.search));
-            let problem = self.query.error.clone().unwrap_or_default();
-            ui.set_text(self.toolbar.problem, &problem);
-            ui.set_visible(self.toolbar.problem, !problem.is_empty());
-            ui.set_class(self.toolbar.search_box, "bad", !problem.is_empty());
+            self.read_search(ui);
             refilter = true;
         }
         refilter
+    }
+
+    /// Reads the search box into the query, saying what is wrong with it.
+    fn read_search(&mut self, ui: &mut Ui) {
+        self.query = Query::parse(&ui.text(self.toolbar.search));
+        let problem = self.query.error.clone().unwrap_or_default();
+        ui.set_text(self.toolbar.problem, &problem);
+        ui.set_visible(self.toolbar.problem, !problem.is_empty());
+        ui.set_class(self.toolbar.search_box, "bad", !problem.is_empty());
+    }
+
+    /// The search, levels and categories as they are now, as a filter to
+    /// save or compare.
+    fn current_filter(&self, ui: &Ui) -> SavedFilter {
+        let mut hidden_categories: Vec<String> = self.hidden_categories.iter().cloned().collect();
+        hidden_categories.sort();
+        SavedFilter {
+            name: String::new(),
+            search: ui.text(self.toolbar.search),
+            hidden_levels: self.hidden,
+            hidden_categories,
+        }
+    }
+
+    /// The Filters menu: each saved filter, ticked while it is the one in
+    /// use, then Save this filter and Forget.
+    fn open_filters(&self, ui: &mut Ui, settings: &Settings) {
+        let now = self.current_filter(ui);
+        let mut items: Vec<MenuItem> =
+            settings.console_filters.iter().map(|f| MenuItem::new(&f.name).checked(same_filter(f, &now))).collect();
+        if items.is_empty() {
+            items.push(MenuItem::new("No saved filters yet").enabled(false));
+        }
+        items.push(MenuItem::separator());
+        items.push(MenuItem::new("Save this filter…"));
+        let active = settings.console_filters.iter().find(|f| same_filter(f, &now));
+        let forget = active.map_or("Forget this filter".to_string(), |f| format!("Forget “{}”", f.name));
+        items.push(MenuItem::new(&forget).enabled(active.is_some()));
+        let [x, y, _, height] = ui.rect(self.toolbar.filters);
+        ui.open_menu(self.toolbar.filters, (x, y + height + 4.0), &items);
+    }
+
+    /// A choice from the Filters menu: a filter to use, or to save the one
+    /// in use, or to forget it. Returns whether the list needs filtering again.
+    fn filter_choice(&mut self, ui: &mut Ui, settings: &mut Settings, update: &mut ConsoleUpdate) -> bool {
+        let Some(choice) = ui.menu_choice(self.toolbar.filters) else { return false };
+        let saved = settings.console_filters.len().max(1);
+        if let Some(filter) = settings.console_filters.get(choice).filter(|_| choice < saved).cloned() {
+            ui.set_text(self.toolbar.search, &filter.search);
+            self.read_search(ui);
+            self.hidden = filter.hidden_levels;
+            self.hidden_categories = filter.hidden_categories.into_iter().collect();
+            self.count_categories(ui);
+            return true;
+        }
+        if choice == saved + 1 {
+            self.naming = true;
+            self.focus_name = true;
+            ui.set_text(self.toolbar.filter_name, "");
+            ui.set_visible(self.toolbar.filter_name, true);
+        } else if choice == saved + 2 {
+            let now = self.current_filter(ui);
+            settings.console_filters.retain(|f| !same_filter(f, &now));
+            update.settings_changed = true;
+        }
+        false
+    }
+
+    /// The field naming a filter being saved: Enter saves it, replacing one
+    /// of the same name, and leaving it, or Escape, puts it away.
+    fn name_filter(&mut self, ui: &mut Ui, settings: &mut Settings, update: &mut ConsoleUpdate) {
+        if !self.naming {
+            return;
+        }
+        let field = self.toolbar.filter_name;
+        if self.focus_name {
+            ui.focus(field);
+            self.focus_name = ui.focused() != Some(field);
+            return;
+        }
+        let name = ui.text(field).trim().to_string();
+        if ui.submitted(field) && !name.is_empty() {
+            let filter = SavedFilter { name: name.clone(), ..self.current_filter(ui) };
+            match settings.console_filters.iter_mut().find(|f| f.name == name) {
+                Some(kept) => *kept = filter,
+                None => settings.console_filters.push(filter),
+            }
+            update.settings_changed = true;
+            ui.blur();
+        }
+        if ui.focused() != Some(field) {
+            self.naming = false;
+            ui.set_visible(field, false);
+        }
     }
 
     /// A context click on a line: Copy, or Mute this message. Returns
     /// whether the list needs filtering again.
     fn menu(&mut self, ui: &mut Ui) -> bool {
         if let Some(choice) = ui.menu_choice(self.list) {
+            if let Some(category) = self.colouring.take() {
+                self.set_colour(ui, &category, PALETTE.get(choice).map(|(_, colour)| *colour));
+                return false;
+            }
             let entries = self.entries.borrow();
             let Some(entry) = self.selected.and_then(|at| entries.get(at)) else { return false };
             match choice {
                 0 => ui.copy_text(&entry.as_text()),
-                _ => {
+                1 => {
                     self.muted.insert(entry.message.clone());
                     return true;
+                }
+                _ => {
+                    // Its category's colour, from a second menu where the first was.
+                    let category = entry.categories.first().cloned();
+                    drop(entries);
+                    if let Some(category) = category {
+                        let mut items: Vec<MenuItem> = PALETTE.iter().map(|(name, _)| MenuItem::new(name)).collect();
+                        items.extend([MenuItem::separator(), MenuItem::new("No colour")]);
+                        let at = ui.pointer_position().unwrap_or_default();
+                        ui.open_menu(self.list, at, &items);
+                        self.colouring = Some(category);
+                    }
                 }
             }
         }
         if ui.context_clicked(self.list) && !ui.selection(self.list).is_empty() {
             let at = ui.pointer_position().unwrap_or_default();
-            ui.open_menu(self.list, at, &[MenuItem::new("Copy"), MenuItem::new("Mute this message")]);
+            let entries = self.entries.borrow();
+            let category = self.selected.and_then(|at| entries.get(at)).and_then(|e| e.categories.first().cloned());
+            let mut items = vec![MenuItem::new("Copy"), MenuItem::new("Mute this message")];
+            if let Some(category) = category {
+                items.push(MenuItem::new(&format!("Colour “{category}”…")));
+            }
+            drop(entries);
+            self.colouring = None;
+            ui.open_menu(self.list, at, &items);
         }
         false
+    }
+
+    /// Gives a category a colour, or takes it away, and keeps it with the
+    /// project.
+    fn set_colour(&mut self, ui: &mut Ui, category: &str, colour: Option<u32>) {
+        let mut colours = self.colours.borrow_mut();
+        match colour {
+            Some(colour) => colours.insert(category.to_string(), colour),
+            None => colours.remove(category),
+        };
+        if let Err(error) = write_colours(&self.project, &colours) {
+            tracing::warn!("could not keep the Console's colours in {COLOURS_FILE}: {error:#}");
+        }
+        drop(colours);
+        ui.refresh_list(self.list);
     }
 
     /// Whether a line passes the categories, the muted messages and the
@@ -460,6 +636,21 @@ impl Console {
                 changed = true;
             }
         }
+        if let Some(choice) = ui.menu_choice(detail.hide)
+            && let Some(assembly) = self.hide_menu.get(choice).cloned()
+        {
+            let hidden = &mut settings.console_hidden_assemblies;
+            match hidden.iter().position(|h| *h == assembly) {
+                Some(at) => drop(hidden.remove(at)),
+                None => hidden.push(assembly),
+            }
+            changed = true;
+            self.drawn = None;
+            self.open_hide(ui, settings);
+        } else if ui.clicked(self.detail.hide) {
+            self.open_hide(ui, settings);
+        }
+        let detail = &self.detail;
         let entries = self.entries.borrow();
         let entry = self.selected.and_then(|at| entries.get(at));
         if let (true, Some(entry)) = (ui.clicked(detail.copy), entry) {
@@ -481,6 +672,35 @@ impl Console {
             _ => {}
         }
         changed
+    }
+
+    /// The Hide menu: the assemblies in the selected line's stack, ticked
+    /// while their frames are hidden.
+    fn open_hide(&mut self, ui: &mut Ui, settings: &Settings) {
+        let entries = self.entries.borrow();
+        let mut assemblies: Vec<String> = Vec::new();
+        for frame in self.selected.and_then(|at| entries.get(at)).iter().flat_map(|e| e.frames.iter()) {
+            if let Some(assembly) = frame.assembly().filter(|a| !assemblies.iter().any(|known| known == a)) {
+                assemblies.push(assembly.to_string());
+            }
+        }
+        drop(entries);
+        // Hidden ones not in this stack still show, so they can be let go of.
+        for hidden in &settings.console_hidden_assemblies {
+            if !assemblies.contains(hidden) {
+                assemblies.push(hidden.clone());
+            }
+        }
+        let mut items: Vec<MenuItem> = assemblies
+            .iter()
+            .map(|a| MenuItem::new(a).checked(settings.console_hidden_assemblies.contains(a)))
+            .collect();
+        if items.is_empty() {
+            items.push(MenuItem::new("No assemblies in this stack").enabled(false));
+        }
+        self.hide_menu = assemblies;
+        let [x, y, _, height] = ui.rect(self.detail.hide);
+        ui.open_menu(self.detail.hide, (x, y + height + 4.0), &items);
     }
 
     /// A frame's file on disk, and its line: the file as it is when
@@ -570,6 +790,11 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
         (level, ui.add_label(level, "0"))
     });
     let categories = button(ui, "Categories");
+    let filters = button(ui, "Filters");
+    let filter_name = ui.text_field(bar, "");
+    ui.add_class(filter_name, "console-filter-name");
+    ui.set_placeholder(filter_name, "Name this filter, then Enter");
+    ui.set_visible(filter_name, false);
     let muted = button(ui, "Muted");
     ui.set_visible(muted, false);
     let line = ui.panel(root, Style::default());
@@ -577,7 +802,7 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
     let problem = ui.add_label(root, "");
     ui.add_class(problem, "console-problem");
     ui.set_visible(problem, false);
-    Toolbar { clear, collapse, pause, categories, muted, search_box, search, problem, levels }
+    Toolbar { clear, collapse, pause, categories, filters, filter_name, muted, search_box, search, problem, levels }
 }
 
 /// The trace pane: a bar of what the line is and the toggles, then the
@@ -599,6 +824,7 @@ fn detail(ui: &mut Ui, pane: NodeId, settings: &Settings) -> Detail {
     let mine_only = button(ui, "My code only", settings.console_mine_only);
     let namespaces = button(ui, "Namespaces", settings.console_namespaces);
     let parameters = button(ui, "Parameters", settings.console_parameters);
+    let hide = button(ui, "Hide…", false);
     let copy = button(ui, "Copy", false);
     let body = ui.panel(pane, Style::column().scroll());
     ui.add_class(body, "fill");
@@ -607,12 +833,13 @@ fn detail(ui: &mut Ui, pane: NodeId, settings: &Settings) -> Detail {
     ui.add_class(message, "console-detail-message");
     let trace = ui.rich_label(body, &RichText::new());
     ui.add_class(trace, "console-trace");
-    Detail { info, message, trace, mine_only, namespaces, parameters, copy }
+    Detail { info, message, trace, mine_only, namespaces, parameters, hide, copy }
 }
 
-/// Fills a row: the level's icon, when, the message's first line, how many
-/// identical lines it stands for, and where it came from.
-fn bind_row(ui: &mut Ui, row: NodeId, entry: &Entry, count: usize) {
+/// Fills a row: the level's icon, when, its category in its colour, the
+/// message's first line, how many identical lines it stands for, and where
+/// it came from.
+fn bind_row(ui: &mut Ui, row: NodeId, entry: &Entry, count: usize, colours: &HashMap<String, u32>) {
     let parts = ui.children(row);
     let warn = entry.level == Level::WARN;
     let error = entry.level == Level::ERROR;
@@ -620,11 +847,15 @@ fn bind_row(ui: &mut Ui, row: NodeId, entry: &Entry, count: usize) {
     ui.set_class(row, "log-warn", warn);
     ui.set_class(row, "log-error", error);
     ui.set_text(parts[1], &time(entry.seconds));
-    ui.set_text(parts[2], entry.message.lines().next().unwrap_or_default());
-    ui.set_text(parts[3], &if count > 1 { count.to_string() } else { String::new() });
-    ui.set_visible(parts[3], count > 1);
+    let category = entry.categories.first().map_or("", String::as_str);
+    ui.set_text(parts[2], category);
+    let colour = colours.get(category).map(|c| format!("color: #{c:06x}")).unwrap_or_default();
+    ui.set_inline_style(parts[2], &colour);
+    ui.set_text(parts[3], entry.message.lines().next().unwrap_or_default());
+    ui.set_text(parts[4], &if count > 1 { count.to_string() } else { String::new() });
+    ui.set_visible(parts[4], count > 1);
     let source = entry.source().and_then(|f| Some(format!("{}:{}", f.file_name()?, f.line.unwrap_or_default())));
-    ui.set_text(parts[4], &source.unwrap_or_default());
+    ui.set_text(parts[5], &source.unwrap_or_default());
 }
 
 /// A line's stack as rich text: each frame's parts in their colours, the
@@ -636,13 +867,19 @@ fn trace(entry: &Entry, settings: &Settings, unfolded: bool) -> RichText {
         text.push_colored("No stack: this line did not say where it came from.", Color::hex(FOLDED));
         return text;
     }
-    let fold = settings.console_mine_only && !unfolded && entry.mine.iter().any(|m| *m);
+    let fold_mine = settings.console_mine_only && !unfolded && entry.mine.iter().any(|m| *m);
+    let hidden = |at: usize| {
+        let assembly = entry.frames[at].assembly();
+        !unfolded && assembly.is_some_and(|a| settings.console_hidden_assemblies.iter().any(|h| h == a))
+    };
+    let folded = |at: usize| (fold_mine && !entry.mine[at]) || hidden(at);
     let mut index = 0;
     while index < entry.frames.len() {
-        if fold && !entry.mine[index] {
-            let run = entry.mine[index..].iter().take_while(|m| !**m).count();
+        if folded(index) {
+            let run = (index..entry.frames.len()).take_while(|&at| folded(at)).count();
             let frames = if run == 1 { "frame".to_string() } else { format!("{run} frames") };
-            text.push_link_colored(&format!("… {frames} not the project's own\n"), "unfold", Color::hex(FOLDED));
+            let why = if (index..index + run).all(hidden) { "from hidden assemblies" } else { "not the project's own" };
+            text.push_link_colored(&format!("… {frames} {why}\n"), "unfold", Color::hex(FOLDED));
             index += run;
             continue;
         }
@@ -674,6 +911,46 @@ fn push_frame(text: &mut RichText, entry: &Entry, index: usize, settings: &Setti
         text.push_link_colored(&format!("{name}:{line}"), &format!("frame:{index}"), Color::hex(FILE));
     }
     text.push("\n", Default::default());
+}
+
+/// Whether two filters show the same: their search, levels and categories.
+fn same_filter(a: &SavedFilter, b: &SavedFilter) -> bool {
+    let sorted = |f: &SavedFilter| {
+        let mut categories = f.hidden_categories.clone();
+        categories.sort();
+        categories
+    };
+    a.search == b.search && a.hidden_levels == b.hidden_levels && sorted(a) == sorted(b)
+}
+
+/// The project's category colours, from `Settings/Console.toml`: a table of
+/// category names and `#rrggbb` colours.
+fn read_colours(project: &Path) -> HashMap<String, u32> {
+    let text = std::fs::read_to_string(project.join(COLOURS_FILE)).unwrap_or_default();
+    let table: toml::Table = toml::from_str(&text).unwrap_or_default();
+    let colours = table.get("colours").and_then(|c| c.as_table()).cloned().unwrap_or_default();
+    colours
+        .into_iter()
+        .filter_map(|(name, colour)| {
+            let hex = colour.as_str()?.strip_prefix('#')?;
+            Some((name, u32::from_str_radix(hex, 16).ok()?))
+        })
+        .collect()
+}
+
+fn write_colours(project: &Path, colours: &HashMap<String, u32>) -> anyhow::Result<()> {
+    let mut names: Vec<&String> = colours.keys().collect();
+    names.sort();
+    let mut text = String::from(
+        "# The Console's category colours, kept with the project so the whole team sees the same.\n[colours]\n",
+    );
+    for name in names {
+        text.push_str(&format!("{} = \"#{:06x}\"\n", toml::Value::String(name.clone()), colours[name]));
+    }
+    let path = project.join(COLOURS_FILE);
+    std::fs::create_dir_all(path.parent().unwrap_or(project))?;
+    std::fs::write(&path, text)?;
+    Ok(())
 }
 
 /// Which of the toolbar's three levels a line counts under.

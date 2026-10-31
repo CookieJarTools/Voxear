@@ -9,6 +9,8 @@
 //! with its time, the current stage's progress, and the build's log. Cancel
 //! asks the build to stop at its next step, and stops the process if it has
 //! not within ten seconds. A finished build offers Run and Show in Files.
+//! Run starts the built game, and its log comes into the Console as the
+//! Player category, as Sifter shows a player's log.
 
 use std::{
     cell::RefCell,
@@ -21,6 +23,7 @@ use std::{
 };
 
 use serde_json::Value;
+use tracing::Level;
 use voxear_engine::{build_profile, player_build::sibling_program};
 use voxear_ui::{ItemFns, NodeId, Style, Ui};
 
@@ -413,12 +416,9 @@ impl BuildWindow {
         }
         if ui.clicked(self.run)
             && let Some((program, output)) = &self.built
+            && let Err(error) = run_player(program, output)
         {
-            match Command::new(program).current_dir(output).spawn() {
-                // Waited on elsewhere, so it does not linger once it ends.
-                Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
-                Err(error) => self.add_log("error", format!("could not run {}: {error}", program.display())),
-            }
+            self.add_log("error", format!("could not run {}: {error}", program.display()));
         }
         if ui.clicked(self.reveal)
             && let Some((_, output)) = &self.built
@@ -584,6 +584,86 @@ impl Drop for BuildWindow {
     }
 }
 
+/// Starts a built game, its log going into the editor's own, as the Player
+/// category in the Console, until it closes.
+fn run_player(program: &Path, folder: &Path) -> std::io::Result<()> {
+    let mut child = Command::new(program)
+        .current_dir(folder)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let name = program.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    tracing::info!(target: "player", "Running {name}");
+    let pipes = [(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), false)]
+        .into_iter()
+        .chain([(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>), true)]);
+    for (pipe, errors) in pipes {
+        let Some(pipe) = pipe else { continue };
+        std::thread::spawn(move || {
+            for text in BufReader::new(pipe).lines().map_while(Result::ok) {
+                log_player_line(&text, errors);
+            }
+        });
+    }
+    std::thread::spawn(move || {
+        let status = child.wait().map(|s| s.to_string()).unwrap_or_default();
+        tracing::info!(target: "player", "{name} closed ({status})");
+    });
+    Ok(())
+}
+
+/// A line the game printed, into the editor's log at its level.
+fn log_player_line(text: &str, errors: bool) {
+    let Some((level, message)) = player_line(text, errors) else { return };
+    match level {
+        Level::ERROR => tracing::error!(target: "player", "{message}"),
+        Level::WARN => tracing::warn!(target: "player", "{message}"),
+        Level::INFO => tracing::info!(target: "player", "{message}"),
+        _ => tracing::debug!(target: "player", "{message}"),
+    }
+}
+
+/// A line the game printed, as its level and message. The player's log lines
+/// start with a time and a level, which are read off, as are any terminal
+/// colours; what the game wrote to its errors is an error unless it says
+/// otherwise. `None` for a blank line.
+fn player_line(text: &str, errors: bool) -> Option<(Level, String)> {
+    let plain = without_colours(text);
+    let plain = plain.trim();
+    if plain.is_empty() {
+        return None;
+    }
+    let mut words = plain.split_whitespace();
+    let stamp = words.next().unwrap_or_default();
+    let named = words.next().and_then(|level| level.parse::<Level>().ok().map(|parsed| (level, parsed)));
+    if let Some((word, level)) = named.filter(|_| stamp.ends_with('Z'))
+        && let Some((_, message)) = plain.split_once(word)
+    {
+        return Some((level, message.trim().to_string()));
+    }
+    Some((if errors { Level::ERROR } else { Level::INFO }, plain.to_string()))
+}
+
+/// Text with a terminal's colour codes (`ESC [ ... m`) taken out.
+fn without_colours(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Reads a pipe line by line on a thread of its own, sending each as
 /// `line` makes it.
 fn read_lines(pipe: Option<impl Read + Send + 'static>, send: Sender<Line>, line: fn(&str) -> Line) {
@@ -621,5 +701,22 @@ fn parse(text: &str) -> Line {
             size: value["size"].as_u64().unwrap_or_default(),
         }),
         _ => Line::Log { level: "info".into(), message: text.to_string() },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_players_lines_keep_their_level() {
+        let info =
+            "\u{1b}[2m2026-10-31T22:04:40.486699Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m level Levels/Day.level: loaded";
+        assert_eq!(player_line(info, false), Some((Level::INFO, "level Levels/Day.level: loaded".into())));
+        let warn = "2026-10-31T22:04:41Z  WARN no camera renders this level";
+        assert_eq!(player_line(warn, false), Some((Level::WARN, "no camera renders this level".into())));
+        assert_eq!(player_line("Unhandled exception.", true), Some((Level::ERROR, "Unhandled exception.".into())));
+        assert_eq!(player_line("plain words", false), Some((Level::INFO, "plain words".into())));
+        assert_eq!(player_line("   ", false), None);
     }
 }

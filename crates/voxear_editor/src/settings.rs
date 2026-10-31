@@ -156,6 +156,23 @@ pub struct Settings {
     pub console_parameters: bool,
     /// Which of [`CODE_EDITORS`] opens a frame's file.
     pub code_editor: usize,
+    /// Frames from these assemblies (a frame's root namespace, such as
+    /// `Voxear`, or an engine crate) fold away in the Console's traces.
+    pub console_hidden_assemblies: Vec<String>,
+    /// The Console's filters, saved by name.
+    pub console_filters: Vec<SavedFilter>,
+}
+
+/// A Console filter saved by name, as Sifter keeps them: a search, and the
+/// levels and categories it hides.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedFilter {
+    pub name: String,
+    pub search: String,
+    /// Log, Warning and Error.
+    pub hidden_levels: [bool; 3],
+    pub hidden_categories: Vec<String>,
 }
 
 impl Default for Settings {
@@ -179,6 +196,8 @@ impl Default for Settings {
             console_namespaces: true,
             console_parameters: true,
             code_editor: 0,
+            console_hidden_assemblies: Vec::new(),
+            console_filters: Vec::new(),
         }
     }
 }

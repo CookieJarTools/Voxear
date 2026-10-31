@@ -1395,6 +1395,16 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   its line in the code editor the settings name (VS Code, Rider, Zed or the system's default;
   `Editor::set_source_opener` replaces it). Selecting a line about an Obj selects the Obj, Copy puts the line and its
   stack on the clipboard, and a context click copies a line or mutes its message until Muted brings them back.
+  - **Category colours**: each row shows its first category, in the colour the project gave it. A context click on
+    a line colours its category from a palette; the colours are kept in the project's `Settings/Console.toml`, since
+    a team should agree on them.
+  - **Filters** saves the search, the levels hidden and the categories hidden under a name, ticked while in use, to
+    pick again or forget; they are kept per user with the settings.
+  - **Hide…** over the trace lists the assemblies in the selected line's stack (a frame's root namespace, such as
+    `Voxear` or `System`, or an engine crate), ticked while hidden; their frames fold into a line that unfolds them,
+    as My code only does, for the one library that fills every trace.
+  - **The player's log**: Run in the Build window starts the built game with its output piped back, and each line
+    comes into the Console at its level, in the Player category, ending with how the game closed.
 - **The Profiler** (`profiler`), the Profiling workspace's panel, after Unity's. The top bar's workspaces are
   layouts of the same panels, each kept as it was left: World for building levels, and Profiling, with the Game
   view over the Profiler and the Console. The Profiler keeps the last 300 frames as a chart of their CPU and GPU
@@ -1443,8 +1453,8 @@ whose source is in `Dev/CookieJar` (design notes in `Docs/Sifter-Design.md`):
 - The list survives a script recompile, which here means C# hot reload.
 
 What is built is described under the editor above. Its lines are kept across hot reload, since the Console is the
-editor's own and nothing of it reloads. Still to come from Sifter: category colours agreed per project, hiding
-chosen assemblies, saved filters, and opening the player's log.
+editor's own and nothing of it reloads. Still to come from Sifter: a player's log read from a build run on its own
+(its log written to a file), and the settings screen with a live sample of a row.
 
 ### VoxDocs
 

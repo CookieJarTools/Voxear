@@ -1203,7 +1203,7 @@ fn console_rows(ui: &Ui) -> Vec<NodeId> {
 
 /// The messages of the Console's rows on screen, top to bottom.
 fn console_lines(ui: &Ui) -> Vec<String> {
-    console_rows(ui).into_iter().map(|row| ui.text(ui.children(row)[2])).collect()
+    console_rows(ui).into_iter().map(|row| ui.text(ui.children(row)[3])).collect()
 }
 
 /// A Console button, in its toolbar or over its trace, that says `label`.
@@ -1348,7 +1348,7 @@ fn the_console_sifts_searches_and_opens_stacks() {
     frame(&mut editor, &mut renderer);
     let rows = console_rows(&editor.ui);
     assert_eq!(rows.len(), 1, "collapsed, the same line shows once");
-    assert_eq!(editor.ui.text(editor.ui.children(rows[0])[3]), "3", "with how many there were");
+    assert_eq!(editor.ui.text(editor.ui.children(rows[0])[4]), "3", "with how many there were");
     search_console(&mut editor, &mut renderer, "-tag:hello");
     assert_eq!(console_lines(&editor.ui), ["Level Main loaded", "Rock has no albedo", compiler.as_str()]);
     let mut levels = Vec::new();
@@ -2363,4 +2363,97 @@ fn voxdocs_shows_a_pages_pictures() {
     assert!(width > 100.0 && (width / height - 16.0 / 9.0).abs() < 0.02, "fits the page, keeping its shape");
     assert!(!dir.path().join("Docs/How Hello Works/images/Day.png.meta").exists(), "a page's picture is not an asset");
     shot(&mut renderer, "docs-picture.png");
+}
+
+#[test]
+fn the_console_saves_filters_hides_assemblies_and_colours_categories() {
+    use tracing::Level;
+    use voxear_core::logging::LogLine;
+    let dir = hello_copy();
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let log = LogCapture::default();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, log.clone()).unwrap();
+    let root = editor.game.project.root.canonicalize().unwrap();
+    let engine = LogLine { target: "voxear_engine::levels".into(), ..LogLine::new(Level::INFO, "Level Main loaded") };
+    log_line(&log, engine);
+    let stack = format!(
+        "   at Voxear.Log.Info(String message)\n   at Hello.Spinner.Start() in {}:line 33",
+        root.join("Scripts/Spinner.cs").display()
+    );
+    let script =
+        LogLine { target: "script".into(), stack: Some(stack), ..LogLine::new(Level::INFO, "Spinner started") };
+    log_line(&log, script);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let roomy = "row(240, [hierarchy], row(-300, column(45%, [scene, game, docs], [console, project]), [inspector]))";
+    editor.ui.set_dock_layout(dock, roomy).unwrap();
+    editor.ui.show_dock_panel(dock, "console");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let categories: Vec<String> =
+        console_rows(&editor.ui).into_iter().map(|row| editor.ui.text(editor.ui.children(row)[2])).collect();
+    assert_eq!(categories, ["Engine", "Hello"], "each line shows its category");
+
+    // A search saved as a filter comes back by name.
+    search_console(&mut editor, &mut renderer, "spinner");
+    let filters = console_button(&editor.ui, "Filters").unwrap();
+    click(&mut editor.ui, filters);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(menu_texts(&editor.ui), ["No saved filters yet", "Save this filter…", "Forget this filter"]);
+    let save = menu_item(&editor.ui, "Save this filter…").unwrap();
+    click(&mut editor.ui, save);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    editor.ui.text_input("Spinners");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    search_console(&mut editor, &mut renderer, "");
+    assert_eq!(console_lines(&editor.ui).len(), 2);
+    click(&mut editor.ui, filters);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(menu_texts(&editor.ui)[0], "Spinners");
+    let spinners = menu_item(&editor.ui, "Spinners").unwrap();
+    click(&mut editor.ui, spinners);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(console_lines(&editor.ui), ["Spinner started"], "the filter's search is back");
+
+    // Hiding an assembly folds its frames away in the trace.
+    let row = console_rows(&editor.ui)[0];
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    let mine_only = console_button(&editor.ui, "My code only").unwrap();
+    click(&mut editor.ui, mine_only);
+    frame(&mut editor, &mut renderer);
+    let hide = console_button(&editor.ui, "Hide…").unwrap();
+    click(&mut editor.ui, hide);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(menu_texts(&editor.ui), ["Voxear", "Hello"], "the assemblies in this stack");
+    let voxear = menu_item(&editor.ui, "Voxear").unwrap();
+    click(&mut editor.ui, voxear);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut traces = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-trace", &mut traces);
+    let trace = editor.ui.text(traces[0]);
+    assert!(trace.starts_with("… frame from hidden assemblies"), "{trace}");
+    assert!(trace.contains("Hello.Spinner.Start()"), "{trace}");
+
+    // A category's colour is kept with the project. The Hide menu stays open
+    // for the next choice, so Escape puts it away first.
+    editor.ui.key_down(Key::Escape);
+    frame(&mut editor, &mut renderer);
+    context_click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    let colour = menu_item(&editor.ui, "Colour “Hello”…").unwrap();
+    click(&mut editor.ui, colour);
+    frame(&mut editor, &mut renderer);
+    let blue = menu_item(&editor.ui, "Blue").unwrap();
+    click(&mut editor.ui, blue);
+    frame(&mut editor, &mut renderer);
+    let kept = std::fs::read_to_string(dir.path().join("Settings/Console.toml")).unwrap();
+    assert!(kept.contains("\"Hello\" = \"#6aa8ff\""), "{kept}");
 }

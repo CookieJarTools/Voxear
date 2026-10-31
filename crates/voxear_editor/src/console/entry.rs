@@ -107,6 +107,7 @@ fn categories(line: &LogLine, frames: &[Frame], mine: &[bool]) -> Vec<String> {
     }
     let from = match line.target.as_str() {
         "compiler" => "Compiler".to_string(),
+        "player" => "Player".to_string(),
         "script" => {
             let own = frames.iter().zip(mine).find(|(f, mine)| **mine && f.has_call()).map(|(f, _)| f);
             let root = own.map(|f| f.namespace.split('.').next().unwrap_or_default().to_string());

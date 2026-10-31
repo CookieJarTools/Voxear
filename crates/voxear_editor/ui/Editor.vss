@@ -1261,6 +1261,20 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-muted);
 }
 
+/* A line's category, in the colour the project gave it. */
+.console-category {
+    width: 76px;
+    flex-shrink: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    color: var(--vx-muted);
+}
+
+.console-filter-name {
+    flex-basis: 180px;
+    flex-shrink: 0;
+}
+
 .console-message {
     flex-grow: 1;
     flex-basis: 0px;

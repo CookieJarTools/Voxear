@@ -153,7 +153,7 @@ pub fn build_with(
     let mut reports = Vec::with_capacity(planned.len());
     let mut bundle_of = HashMap::new();
     for (index, Planned { roots, assets, .. }) in planned.into_iter().enumerate() {
-        let mut writer = BundleWriter::default();
+        let mut writer = BundleWriter::new(settings.compression);
         for &guid in &assets {
             let entry = db.get(guid).expect("from the database");
             catalog.assets.push(CatalogAsset {

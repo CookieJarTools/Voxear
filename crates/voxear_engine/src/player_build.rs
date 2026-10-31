@@ -21,7 +21,7 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
-use voxear_assets::{AssetDb, AssetKind};
+use voxear_assets::{AssetDb, AssetKind, bundle::Compression};
 
 use crate::{
     ContentSettings, Project,
@@ -75,6 +75,8 @@ pub struct Report {
     pub program: PathBuf,
     pub start_level: String,
     pub levels: Vec<String>,
+    /// How the bundles were compressed.
+    pub compression: Compression,
     pub bundles: Vec<BundleSize>,
     /// The size of everything in the build's folder, in bytes.
     pub size: u64,
@@ -143,6 +145,7 @@ pub fn build(
     let stage = Instant::now();
     events(BuildEvent::Stage { stage: "content", index: 1 })?;
     let (settings, levels) = content_settings(project, &profile, &start_level)?;
+    let compression = settings.compression;
     let bundles = data.join(BUNDLES_FOLDER);
     let content =
         content_build::build_with(&project.root, &bundles, &settings, &code_roots, &mut |done, total, item| {
@@ -192,6 +195,7 @@ pub fn build(
         program: program.strip_prefix(&project.root).unwrap_or(&program).to_path_buf(),
         start_level,
         levels,
+        compression,
         bundles: content
             .bundles
             .iter()
@@ -221,6 +225,7 @@ fn content_settings(
         exclude: own.exclude.clone(),
         merge_below_kb: own.merge_below_kb,
         split_above_mb: own.split_above_mb,
+        compression: profile.content.compression.unwrap_or(own.compression),
     };
     let (db, _) = AssetDb::scan(&project.root)?;
     let start = db.guid_of(start_level).or_else(|| start_level.parse().ok()).and_then(|guid| db.get(guid));

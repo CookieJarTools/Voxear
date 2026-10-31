@@ -610,7 +610,9 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
    - *Planned:* large streamable data such as texture mip tails and audio streams in bundles of their own, so they
      stream independently.
 5. **Write bundles and a catalog.**
-   - A bundle is a header followed by each file, LZ4-compressed when that saves space. Cooked models are stored as
+   - A bundle is a header followed by each file, compressed when that saves space: with LZ4, quick to load, by
+     default, or Zstd, smaller, or not at all (`[content] compression`, which a build profile can change; the
+     catalog notes each file's codec). Cooked models are stored as
      they are, since they compress their own GPU data (below). A bundle is named after a hash of
      its bytes, so a rebuild that changes nothing writes nothing, and bundles no longer listed are deleted.
    - The **catalog** (`catalog.toml`, readable on purpose) maps each asset's GUID and path to its bundle, offsets
@@ -640,7 +642,7 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
      - Hello renders from cooked bundles within 13 levels of its source files, the difference being BC7.
      - *Planned:* the other BC7 modes for sharper colour, BC6H for HDR textures, and cooking for other asset
        kinds.
-   - Other assets (levels, scenes, prefabs, materials) ship as their source text, LZ4-compressed.
+   - Other assets (levels, scenes, prefabs, materials) ship as their source text, compressed as the build asks.
 
 **Runtime** *(implemented: reading through a catalog, opening bundles on first use, batched async IO, GPU
 decompression, background loading, unloading)*.
@@ -2377,6 +2379,9 @@ height = 900
 [version]
 version = "1.2.0"
 
+[content]
+compression = "zstd"         # or "lz4", quick to load, or "none"; the project's own when not set
+
 [output]
 folder = "Builds/Demo"       # default: Builds/<profile>
 ```
@@ -2393,7 +2398,7 @@ The full set of options a profile is meant to carry, with what is still to come:
 | Levels | Start level and which levels ship. Later: by default, what the start level can reach. |
 | Development | Debug scripts and the tools, and Vulkan validation. Later: assertions, the debug panels and console, profiler autoconnect, remote attach, script debugging and deep profiling. |
 | Scripting | Extra C# defines. Later: the backend, CoreCLR (fast builds, allows script mods) or NativeAOT (fast start-up, smaller, harder to reverse, no script mods), IL trimming, and shader defines. |
-| Content | Later: bundle compression (LZ4 for load speed, Zstd for size), texture quality caps, which quality tiers' shader variants ship, and asset stripping rules. |
+| Content | Bundle compression: LZ4 for load speed, Zstd for size, or none. Later: texture quality caps, which quality tiers' shader variants ship, and asset stripping rules. |
 | Player | Product and company name, window mode and size. Later: icon, splash, vsync, run in background, and the crash reporter. |
 | Version | The version string, and the git commit stamped into the player and the report. Later: an auto-incremented build number. |
 | Graphics | Later: defaults per quality tier, including the post-processing preset. |

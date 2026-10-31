@@ -3,7 +3,8 @@
 //! folder, through the same [`AssetReader`] calls.
 //!
 //! A bundle is `VXBUNDLE`, a format number, then each file's bytes,
-//! compressed with LZ4 where that makes them smaller. `catalog.toml` says
+//! compressed where that makes them smaller: with LZ4, quick to load, or
+//! Zstd, smaller, as the build asks ([`Compression`]). `catalog.toml` says
 //! which bundle holds each asset, where its files sit, and which roots
 //! (levels, prefabs) need each bundle. A bundle is named after a hash of its
 //! contents, so a rebuild that changes nothing rewrites nothing.
@@ -74,7 +75,41 @@ pub struct PackedFile {
     pub size: u64,
     /// Bytes in the bundle; smaller than `size` when compressed.
     pub stored: u64,
+    /// How it was compressed, when it was: LZ4 unless the catalog says.
+    #[serde(default, skip_serializing_if = "Codec::is_lz4")]
+    pub codec: Codec,
 }
+
+/// How a build compresses what it packs into bundles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Compression {
+    /// Quick to unpack, for loading speed.
+    #[default]
+    Lz4,
+    /// Smaller, for downloads, and slower to build.
+    Zstd,
+    /// Stored as they are.
+    None,
+}
+
+/// How one packed file was compressed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Codec {
+    #[default]
+    Lz4,
+    Zstd,
+}
+
+impl Codec {
+    fn is_lz4(&self) -> bool {
+        *self == Codec::Lz4
+    }
+}
+
+/// Zstd's level for bundles: near its smallest, still quick to unpack.
+const ZSTD_LEVEL: i32 = 19;
 
 impl Catalog {
     pub fn read(dir: &Path) -> Result<Self> {
@@ -105,30 +140,45 @@ impl Catalog {
 /// Packs files into one bundle in memory.
 pub struct BundleWriter {
     bytes: Vec<u8>,
+    compression: Compression,
 }
 
 impl Default for BundleWriter {
     fn default() -> Self {
-        let mut bytes = MAGIC.to_vec();
-        bytes.extend_from_slice(&BUNDLE_FORMAT.to_le_bytes());
-        Self { bytes }
+        Self::new(Compression::default())
     }
 }
 
 impl BundleWriter {
+    /// A bundle whose files are compressed as `compression` says.
+    pub fn new(compression: Compression) -> Self {
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&BUNDLE_FORMAT.to_le_bytes());
+        Self { bytes, compression }
+    }
+
+    /// Adds a file, compressed when that makes it smaller.
     pub fn add(&mut self, path: &str, data: &[u8]) -> PackedFile {
-        let compressed = lz4_flex::block::compress(data);
-        let stored = if compressed.len() < data.len() { compressed.as_slice() } else { data };
+        let (compressed, codec) = match self.compression {
+            Compression::Lz4 => (Some(lz4_flex::block::compress(data)), Codec::Lz4),
+            // Compressing in memory cannot fail but for running out of it, when storing it as it is will do.
+            Compression::Zstd => (zstd::bulk::compress(data, ZSTD_LEVEL).ok(), Codec::Zstd),
+            Compression::None => (None, Codec::Lz4),
+        };
+        let smaller = compressed.filter(|bytes| bytes.len() < data.len());
+        let stored = smaller.as_deref().unwrap_or(data);
         let offset = self.bytes.len() as u64;
         self.bytes.extend_from_slice(stored);
-        PackedFile { path: path.to_string(), offset, size: data.len() as u64, stored: stored.len() as u64 }
+        let (size, stored) = (data.len() as u64, stored.len() as u64);
+        PackedFile { path: path.to_string(), offset, size, stored, codec }
     }
 
     /// Stores a file without compressing it, for data that compressed itself.
     pub fn add_as_is(&mut self, path: &str, data: &[u8]) -> PackedFile {
         let offset = self.bytes.len() as u64;
         self.bytes.extend_from_slice(data);
-        PackedFile { path: path.to_string(), offset, size: data.len() as u64, stored: data.len() as u64 }
+        let size = data.len() as u64;
+        PackedFile { path: path.to_string(), offset, size, stored: size, codec: Codec::Lz4 }
     }
 
     pub fn finish(self) -> Vec<u8> {
@@ -229,7 +279,13 @@ impl AssetReader for BundleReader {
             if packed.stored == packed.size {
                 return Ok(bytes);
             }
-            lz4_flex::block::decompress(&bytes, packed.size as usize).with_context(|| format!("decompressing {path}"))
+            let size = packed.size as usize;
+            match packed.codec {
+                Codec::Lz4 => {
+                    lz4_flex::block::decompress(&bytes, size).with_context(|| format!("decompressing {path}"))
+                }
+                Codec::Zstd => zstd::bulk::decompress(&bytes, size).with_context(|| format!("decompressing {path}")),
+            }
         };
         stored.into_iter().zip(&found).zip(paths).map(unpack).collect()
     }
@@ -246,4 +302,42 @@ pub fn content_hash(parts: &[&[u8]]) -> String {
             .fold(basis, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3))
     };
     format!("{:016x}{:016x}", fnv(0xcbf29ce484222325), fnv(0x6c62272e07bb0142))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_come_back_however_they_were_compressed() {
+        let level = "a level that says the same thing again and again ".repeat(200);
+        let mut stored = Vec::new();
+        for compression in [Compression::Lz4, Compression::Zstd, Compression::None] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut writer = BundleWriter::new(compression);
+            let packed = writer.add("Levels/Main.level", level.as_bytes());
+            let tiny = writer.add("tiny.txt", b"x");
+            let bytes = writer.finish();
+            std::fs::write(dir.path().join("one.bundle"), &bytes).unwrap();
+            let bundle =
+                BundleInfo { file: "one.bundle".into(), size: bytes.len() as u64, roots: vec![], dependencies: vec![] };
+            let asset = CatalogAsset {
+                guid: "0".into(),
+                path: "Levels/Main.level".into(),
+                kind: AssetKind::Level,
+                bundle: 0,
+                files: vec![packed.clone(), tiny.clone()],
+                cooked: false,
+            };
+            // Through the catalog's own text, as a player reads it.
+            Catalog { format: CATALOG_FORMAT, bundles: vec![bundle], assets: vec![asset] }.write(dir.path()).unwrap();
+            let mut reader = BundleReader::new(dir.path(), &Catalog::read(dir.path()).unwrap());
+            assert_eq!(reader.read("Levels/Main.level").unwrap(), level.as_bytes(), "{compression:?}");
+            assert_eq!(reader.read("tiny.txt").unwrap(), b"x");
+            assert_eq!(tiny.stored, 1, "nothing is compressed bigger");
+            stored.push(packed.stored);
+        }
+        let [lz4, zstd, none] = stored[..] else { unreachable!() };
+        assert!(zstd < lz4 && lz4 < none, "Zstd packs smallest: {zstd} {lz4} {none}");
+    }
 }

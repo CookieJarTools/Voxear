@@ -35,11 +35,11 @@ fn a_profile_builds_a_player_that_runs_the_game() {
     }
     let dir = hello_copy();
     build_profile::write_default_profiles(dir.path()).unwrap();
-    // A demo: Release's settings, with one level, its own name, and the development tools.
+    // A demo: Release's settings, with one level, its own name, the development tools, and smaller bundles.
     let base = if cfg!(windows) { "Windows Release" } else { "Linux Release" };
     let demo = format!(
         "format = 1\nbase = \"{base}\"\n[levels]\ninclude = [\"Levels/Day.level\"]\n[player]\nproduct_name = \"Hello Demo\"\n\
-         [development]\nenabled = true\n"
+         [development]\nenabled = true\n[content]\ncompression = \"zstd\"\n"
     );
     std::fs::write(build_profile::profile_path(dir.path(), "Demo"), demo).unwrap();
 
@@ -69,6 +69,7 @@ fn a_profile_builds_a_player_that_runs_the_game() {
         serde_json::from_str(&std::fs::read_to_string(output.join("build-report.json")).unwrap()).unwrap();
     assert_eq!(report["levels"], serde_json::json!(["Levels/Day.level"]), "only the level the profile ships");
     assert_eq!(report["development"], true);
+    assert_eq!(report["compression"], "zstd", "the profile's compression, over the project's");
 
     let ran = Command::new(program).args(["--headless", "--frames", "5"]).output().unwrap();
     let log = String::from_utf8_lossy(&ran.stdout);

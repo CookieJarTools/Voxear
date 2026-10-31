@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use voxear_assets::bundle::Compression;
 
 pub const PROJECT_FILE: &str = "voxear.toml";
 /// What an engine install is, at its root: its version, channel and platform.
@@ -21,6 +22,7 @@ pub struct ProjectFile {
 /// [content]
 /// include = ["Textures/Icons/**"]   # loaded by paths the build cannot see
 /// exclude = ["Prefabs/Debug/**"]    # not shipped unless something shipped uses them
+/// compression = "lz4"               # or "zstd", smaller, or "none"
 /// ```
 ///
 /// Excluding only stops an asset being a root of its own: one that a shipped
@@ -38,11 +40,19 @@ pub struct ContentSettings {
     pub merge_below_kb: u64,
     /// Bundles larger than this split, so patches and downloads stay small.
     pub split_above_mb: u64,
+    /// How bundles are compressed: LZ4, quick to load, by default.
+    pub compression: Compression,
 }
 
 impl Default for ContentSettings {
     fn default() -> Self {
-        Self { include: Vec::new(), exclude: Vec::new(), merge_below_kb: 16, split_above_mb: 64 }
+        Self {
+            include: Vec::new(),
+            exclude: Vec::new(),
+            merge_below_kb: 16,
+            split_above_mb: 64,
+            compression: Compression::default(),
+        }
     }
 }
 

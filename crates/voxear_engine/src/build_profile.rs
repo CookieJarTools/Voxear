@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use voxear_assets::bundle::Compression;
 
 /// Where a project keeps its build profiles, and their extension.
 pub const PROFILES_FOLDER: &str = "Settings/BuildProfiles";
@@ -48,6 +49,7 @@ pub struct BuildProfile {
     pub levels: Levels,
     pub development: Development,
     pub scripting: Scripting,
+    pub content: Packing,
     pub player: Player,
     pub version: Version,
     pub output: Output,
@@ -80,6 +82,15 @@ pub struct Development {
 pub struct Scripting {
     /// Extra symbols for C#'s `#if`, such as `DEMO`.
     pub defines: Vec<String>,
+}
+
+/// How the content ships.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Packing {
+    /// How bundles are compressed: `lz4`, quick to load, `zstd`, smaller,
+    /// or `none`; the project's `[content]` setting when not set.
+    pub compression: Option<Compression>,
 }
 
 /// How the game looks to its players: its name and window.

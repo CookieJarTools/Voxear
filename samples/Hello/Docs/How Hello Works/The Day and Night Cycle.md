@@ -6,6 +6,8 @@ updated: 2026-10-31
 
 Hello moves between two levels, **Day** and **Night**. Both stand on the **Environment** scene, which stays loaded as one level gives way to the other.
 
+![The Day level](images/Day.png)
+
 ## Who drives it
 
 The `GameManager` keeps the score and walks through the levels its scene lists in `cycle`, each a level and how many seconds to wait first. It loads the next one in the background with `Level.LoadAsync` and carries on once it is in.

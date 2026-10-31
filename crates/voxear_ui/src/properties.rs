@@ -1,7 +1,7 @@
 //! The properties a style sheet can set, with CSS's names and values.
 //!
 //! Layout: `display` (`flex`, `grid`, `block`, `none`), `position`, `left`/`top`/`right`/`bottom`, `width`,
-//! `height` and their `min-`/`max-` forms, `margin`, `padding`, `gap`,
+//! `height` and their `min-`/`max-` forms, `aspect-ratio` (`16 / 9` or `1.5`), `margin`, `padding`, `gap`,
 //! `flex`, `flex-direction`, `flex-grow`, `flex-shrink`, `flex-basis`,
 //! `flex-wrap`, `align-items`, `align-self`, `align-content` and
 //! `justify-content`. Grid: `grid-template-columns`, `grid-template-rows`,
@@ -136,6 +136,14 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "min-height" => layout.min_size.height = length_auto(input)?,
         "max-width" => layout.max_size.width = length_auto(input)?,
         "max-height" => layout.max_size.height = length_auto(input)?,
+        "aspect-ratio" => {
+            let width = number(input)?;
+            let height = match input.try_parse(|i| i.expect_delim('/')) {
+                Ok(()) => number(input)?,
+                Err(_) => 1.0,
+            };
+            layout.aspect_ratio = (width > 0.0 && height > 0.0).then(|| width / height);
+        }
         "margin" => layout.margin = sides(input, length_auto)?,
         "margin-left" => layout.margin.left = length_auto(input)?,
         "margin-top" => layout.margin.top = length_auto(input)?,

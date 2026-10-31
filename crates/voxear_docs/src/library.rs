@@ -196,6 +196,19 @@ impl Library {
         Target::Missing(target.strip_suffix(EXTENSION).unwrap_or(&target).to_string())
     }
 
+    /// The file a picture in page `from` shows: a path from the page's
+    /// folder, as pictures saved with a page are, or else from the project's
+    /// folder. `None` for one not there, or on the web, which VoxDocs does
+    /// not fetch.
+    pub fn picture_path(&self, url: &str, from: PageId) -> Option<PathBuf> {
+        if url.contains("://") {
+            return None;
+        }
+        let url = unescape(url);
+        let beside = combine(self.page(from).directory(), &url).map(|path| self.root.join(path));
+        beside.filter(|path| path.is_file()).or_else(|| Some(self.project.join(&url)).filter(|path| path.is_file()))
+    }
+
     /// Whether a link goes somewhere: false for a page not written yet.
     pub fn works(&self, url: &str, from: PageId) -> bool {
         !matches!(self.resolve(url, from), Target::Missing(_))

@@ -2,6 +2,7 @@
 //! view, which looks through the editor's own camera, and the Game view,
 //! which looks through the level's. Play mode is in [`play`].
 
+mod docs_pictures;
 mod drawer;
 mod play;
 mod prefab_mode;
@@ -570,6 +571,7 @@ impl Editor {
         {
             profile_scope!("VoxDocs");
             self.docs.update(&mut self.ui);
+            self.update_docs_pictures(renderer);
         }
         self.update_palette(renderer);
         let action = self.levels.update(&mut self.ui, self.game.levels.current(), self.game.loads.level_in_progress());

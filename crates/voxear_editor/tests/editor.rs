@@ -2234,3 +2234,42 @@ fn the_layout_and_workspace_are_kept_between_sessions() {
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.ui.dock_layout(dock), world, "and the other workspace's as it was left");
 }
+
+#[test]
+fn voxdocs_shows_a_pages_pictures() {
+    let dir = hello_copy();
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let root = editor.ui.root();
+    let dock = editor.ui.find(root, "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "docs");
+    let tree = editor.ui.find(root, "cb-tree").unwrap();
+    for item in 0..12 {
+        editor.ui.set_expanded(tree, item, true);
+    }
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut rows = Vec::new();
+    with_class(&editor.ui, root, "cb-row-title", &mut rows);
+    let page = rows.into_iter().find(|&row| editor.ui.text(row) == "The Day and Night Cycle").expect("the page's row");
+    click(&mut editor.ui, page);
+    let mut pictures = Vec::new();
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+        pictures.clear();
+        with_class(&editor.ui, root, "md-picture", &mut pictures);
+        if !pictures.is_empty() {
+            break;
+        }
+    }
+    let &[picture] = pictures.as_slice() else { panic!("the Day level's picture shows: {pictures:?}") };
+    frame(&mut editor, &mut renderer);
+    let [_, _, width, height] = editor.ui.rect(picture);
+    assert!(width > 100.0 && (width / height - 16.0 / 9.0).abs() < 0.02, "fits the page, keeping its shape");
+    assert!(!dir.path().join("Docs/How Hello Works/images/Day.png.meta").exists(), "a page's picture is not an asset");
+    shot(&mut renderer, "docs-picture.png");
+}

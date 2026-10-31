@@ -2,12 +2,31 @@
 //! a class for the VoxDocs sheet to style: `md-h1` to `md-h6`, `md-p`,
 //! `md-list` of `md-item`s (each a `md-bullet` or a `md-task` box, then its
 //! `md-item-body`), `md-quote`, `md-callout` with `md-note`, `md-tip` and
-//! the rest, `md-code`, `md-table` of `md-th` and `md-td` cells, `md-rule`
-//! and `md-image`.
+//! the rest, `md-code`, `md-table` of `md-th` and `md-td` cells, `md-rule`,
+//! and `md-picture`, or `md-image` with its name until it is read.
 
-use voxear_ui::{NodeId, RichText, Style, Ui};
+use voxear_ui::{ImageRef, NodeId, RichText, Style, Ui};
 
 use crate::markdown::{Align, Block, Callout, Item, Task};
+
+/// How a page's picture shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Picture {
+    /// Drawn from a texture, with the picture's size in pixels.
+    Shown(ImageRef, [u32; 2]),
+    /// Being read: its name shows until it is.
+    Loading,
+    /// Not there, or not a picture that can be read: its name shows.
+    Missing,
+}
+
+/// What a page needs to know as it is drawn: whether a link goes
+/// somewhere, as one that does not is drawn as broken, and how a picture
+/// shows, from its address.
+pub struct Lookups<'a> {
+    pub works: &'a dyn Fn(&str) -> bool,
+    pub pictures: &'a dyn Fn(&str) -> Picture,
+}
 
 /// What a drawn page holds that its panel answers: checklist boxes to save
 /// when ticked, headings to jump to, and Copy buttons with their code.
@@ -18,14 +37,36 @@ pub struct Rendered {
     pub copies: Vec<(NodeId, String)>,
 }
 
-/// Draws `blocks` into `parent`. `works` says whether a link goes
-/// somewhere; one that does not is drawn as broken.
-pub fn render(ui: &mut Ui, parent: NodeId, blocks: &[Block], works: &dyn Fn(&str) -> bool) -> Rendered {
+/// Draws `blocks` into `parent`.
+pub fn render(ui: &mut Ui, parent: NodeId, blocks: &[Block], lookups: &Lookups) -> Rendered {
     let mut rendered = Rendered::default();
     for block in blocks {
-        block_into(ui, parent, block, works, &mut rendered);
+        if let Block::Image { alt, url } = block {
+            picture(ui, parent, alt, url, lookups);
+            continue;
+        }
+        block_into(ui, parent, block, lookups.works, &mut rendered);
     }
     rendered
+}
+
+/// A picture at its own size, or narrower to fit the page, keeping its
+/// shape; or, until it is read or when it cannot be, its name.
+fn picture(ui: &mut Ui, parent: NodeId, alt: &str, url: &str, lookups: &Lookups) {
+    let picture = (lookups.pictures)(url);
+    if let Picture::Shown(image, [width, height]) = picture {
+        let node = ui.image(parent);
+        ui.set_image(node, Some(image));
+        ui.add_class(node, "md-picture");
+        ui.set_inline_style(node, &format!("width: {width}px; max-width: 100%; aspect-ratio: {width} / {height}"));
+        return;
+    }
+    let holder = classed(ui, parent, Style::row(), "md-image");
+    ui.set_class(holder, "md-loading", picture == Picture::Loading);
+    ui.icon(holder, "texture");
+    let mut text = RichText::new();
+    text.push_link(if alt.is_empty() { url } else { alt }, url, Default::default());
+    rich(ui, holder, &text, lookups.works, "md-image-name");
 }
 
 fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -> bool, out: &mut Rendered) {
@@ -84,8 +125,8 @@ fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -
                 }
             }
         }
+        // Drawn by `render`, which knows how pictures show; one in a list or quote shows as its name.
         Block::Image { alt, url } => {
-            // Pictures are drawn once Voxear UI shows images; until then, what and where.
             let image = classed(ui, parent, Style::row(), "md-image");
             ui.icon(image, "texture");
             let mut text = RichText::new();

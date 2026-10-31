@@ -2825,6 +2825,7 @@ name = "voxear_editor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "image",
  "png",
  "raw-window-handle",
  "regex",

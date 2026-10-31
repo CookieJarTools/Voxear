@@ -9,19 +9,29 @@
 //! as it will read beside it, drawn again a moment after each change. Save
 //! or Ctrl+S writes it to its file, and so does Done, or opening another
 //! page, so nothing written is lost. A new title renames the page's file.
+//!
+//! **Pictures** are files beside a page, or anywhere in the project. The
+//! panel cannot read them into textures itself: [`wanted_pictures`] lists
+//! the files a page needs, and [`set_picture`] hands each back once the
+//! editor has loaded it, which draws the page again.
+//!
+//! [`wanted_pictures`]: VoxDocs::wanted_pictures
+//! [`set_picture`]: VoxDocs::set_picture
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
+    path::{Path, PathBuf},
     rc::Rc,
     time::{Duration, Instant},
 };
 
-use voxear_ui::{ItemFns, NodeId, TreeItems, Ui};
+use voxear_ui::{ImageRef, ItemFns, NodeId, TreeItems, Ui};
 
 use crate::{
     library::{Library, PageId, Target},
     markdown::{self, PAGE_SCHEME},
-    view::{self, Rendered},
+    view::{self, Lookups, Picture, Rendered},
 };
 
 const MARKUP: &str = include_str!("../ui/VoxDocs.vui");
@@ -105,6 +115,12 @@ pub struct VoxDocs {
     focus_source: bool,
     /// When the preview is to be drawn again.
     preview_due: Option<Instant>,
+    /// Each picture file asked for, and how it shows; and the ones drawn as
+    /// loading that are still to be asked for.
+    pictures: HashMap<PathBuf, Picture>,
+    wanted: RefCell<Vec<PathBuf>>,
+    /// A picture came in, so the page is drawn again.
+    redraw: bool,
     /// A heading to scroll to once the page has been laid out.
     pending_anchor: Option<String>,
     results: Rc<RefCell<Vec<PageId>>>,
@@ -180,6 +196,9 @@ impl VoxDocs {
             dirty: false,
             focus_source: false,
             preview_due: None,
+            pictures: HashMap::new(),
+            wanted: RefCell::default(),
+            redraw: false,
             pending_anchor: None,
             results,
             file_request: None,
@@ -209,6 +228,41 @@ impl VoxDocs {
     pub fn has_keyboard(&self, ui: &Ui) -> bool {
         let fields = [self.nodes.title, self.nodes.tags, self.nodes.source];
         self.editing && ui.focused().is_some_and(|focused| fields.contains(&focused))
+    }
+
+    /// Up to `limit` picture files the page shows that are not read yet, for
+    /// the editor to load and hand back with [`set_picture`](Self::set_picture).
+    pub fn wanted_pictures(&mut self, limit: usize) -> Vec<PathBuf> {
+        let mut wanted = self.wanted.borrow_mut();
+        let count = limit.min(wanted.len());
+        let taken: Vec<PathBuf> = wanted.drain(..count).collect();
+        drop(wanted);
+        for path in &taken {
+            self.pictures.insert(path.clone(), Picture::Loading);
+        }
+        taken
+    }
+
+    /// A picture file read into a texture, with its size in pixels, or
+    /// `None` when it could not be. The page showing it is drawn again.
+    pub fn set_picture(&mut self, path: &Path, picture: Option<(ImageRef, [u32; 2])>) {
+        let shown = picture.map_or(Picture::Missing, |(image, size)| Picture::Shown(image, size));
+        self.pictures.insert(path.to_path_buf(), shown);
+        self.redraw = true;
+    }
+
+    /// How a picture in the open page shows: once read, or else as loading,
+    /// noting it to be read, or as missing.
+    fn picture(&self, library: &Library, url: &str) -> Picture {
+        let Some(path) = library.picture_path(url, self.open) else { return Picture::Missing };
+        if let Some(picture) = self.pictures.get(&path) {
+            return *picture;
+        }
+        let mut wanted = self.wanted.borrow_mut();
+        if !wanted.contains(&path) {
+            wanted.push(path);
+        }
+        Picture::Loading
     }
 
     /// Saves the page being written, as Save and Ctrl+S do.
@@ -256,6 +310,13 @@ impl VoxDocs {
     pub fn update(&mut self, ui: &mut Ui) {
         self.scroll_to_pending(ui);
         self.update_writing(ui);
+        if std::mem::take(&mut self.redraw) {
+            if self.editing {
+                self.render_preview(ui);
+            } else {
+                self.render(ui);
+            }
+        }
         let nodes = &self.nodes;
         if ui.selection_changed(nodes.tree)
             && let Some(&id) = ui.selected_items(nodes.tree).first()
@@ -482,7 +543,8 @@ impl VoxDocs {
         let blocks = markdown::parse(&ui.text(self.nodes.source));
         let open = self.open;
         let works = |url: &str| library.works(url, open);
-        view::render(ui, self.nodes.preview, &blocks, &works);
+        let pictures = |url: &str| self.picture(&library, url);
+        view::render(ui, self.nodes.preview, &blocks, &Lookups { works: &works, pictures: &pictures });
     }
 
     /// The folders the open page is in, and whether Back and Forward go anywhere.
@@ -529,7 +591,9 @@ impl VoxDocs {
         let blocks = markdown::parse(body);
         let open = self.open;
         let works = |url: &str| library.works(url, open);
-        self.rendered = view::render(ui, self.nodes.page, &blocks, &works);
+        let pictures = |url: &str| self.picture(&library, url);
+        let rendered = view::render(ui, self.nodes.page, &blocks, &Lookups { works: &works, pictures: &pictures });
+        self.rendered = rendered;
 
         if page.is_folder && !page.children.is_empty() {
             let heading = ui.add_label(self.nodes.page, "In this folder");

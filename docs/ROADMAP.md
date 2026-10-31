@@ -282,6 +282,9 @@ Done so far:
 - **VoxDocs editing:** a page's title, tags and Markdown with the page as it will read beside it, saved by Save,
   Ctrl+S, Done or opening another page, and renamed by its title. Multiline text fields scroll to the caret and
   with the wheel, and every text field undoes and redoes.
+- **Pictures in VoxDocs:** PNG and JPEG pictures beside a page or in the project, shown at their size or fitted to
+  the page; the project's `Docs` are no longer scanned as assets. Voxear UI gained `aspect-ratio` and mip-mapped
+  images.
 
 Still to do in M3:
 - UI core:
@@ -297,8 +300,8 @@ Still to do in M3:
 - For the launcher: `vox upgrade`, the first-person, third-person, top-down and 2D templates (after an input API
   and 2D rendering), Windows archives, and a workflow that builds and publishes releases.
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): `[Documentation]` links from code and
-  the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
-  recordings (with images in Voxear UI), live assets, tags and quick open.
+  the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures dropped
+  in or captured and GIF recordings, live assets, tags and quick open.
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
   with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
   person explains things: clear and short, plain words, each term explained where it first appears, an example

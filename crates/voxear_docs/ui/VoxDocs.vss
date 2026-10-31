@@ -389,3 +389,15 @@
     width: 16px;
     height: 16px;
 }
+
+/* A picture, at its own size or narrower to fit, keeping its shape. */
+.md-picture {
+    flex-shrink: 0;
+    border-radius: 6px;
+}
+
+/* A picture still being read keeps its place with its name, quieter. */
+.md-image.md-loading {
+    border-style: solid;
+    opacity: 0.6;
+}

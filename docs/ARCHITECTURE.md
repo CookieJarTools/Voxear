@@ -504,6 +504,8 @@ This is the only way to load assets. It replaces Addressables and fixes the buil
 **Authoring.**
 - Every asset has a stable GUID in a sidecar `.meta` file, for example `Ship.glb.meta`. Moving a file together with
   its `.meta` keeps its GUID, and a copied file and `.meta` get a fresh one *(implemented in `voxear_assets`)*.
+  The project's own `Docs` folder, VoxDocs' pages and their pictures, is documentation rather than content, so
+  its files are not assets and never ship.
 - Files reference assets by GUID, optionally with a part inside the asset: `9f2c…#mesh0.0` is a mesh inside a model.
   Hand-written files may use project paths instead, which are resolved on load.
 - In code, a field of type `Ref<Mesh>`, `Ref<Material>`, `Ref<Level>` and so on is all a developer writes. The
@@ -1084,8 +1086,10 @@ mid-fade.
   `ui.icon_button(parent, "plus")`; a Button in markup may hold an icon and a label.
 - **Images** show part of a texture the renderer holds, such as a preview: `<Image />` or `ui.image(parent)`,
   then `ui.set_image(node, Some(ImageRef { texture, uv }))`. The UI holds no textures itself; `texture` is the
-  renderer's bindless index, `uv` the part of it. An image fills its box, its corners round with `border-radius`,
-  and the pointer passes through it. Text that does not wrap still takes its `text-align`.
+  renderer's bindless index, `uv` the part of it, and `Renderer::add_texture` uploads a picture for one. An image
+  fills its box, its corners round with `border-radius`, and the pointer passes through it; drawn smaller than
+  its texture, it samples the mip that suits its size. `aspect-ratio` (`16 / 9`) keeps an image's shape as its
+  width changes. Text that does not wrap still takes its `text-align`.
 - **`box-shadow`** (`0 16px 40px rgba(0,0,0,.4)`, with an optional spread) draws a Gaussian-blurred copy of the
   box under it, cut out of the box as CSS's is. A spread with no blur makes a crisp ring, and a 1px offset a
   hairline under a header.
@@ -1443,6 +1447,11 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **The panel:** the pages down the side as a tree, a box that finds pages by every word typed, back and
   forward, the page with its title, tags and date, and for a folder what is in it. Ticking a checklist box saves
   the page. Code blocks have a Copy button.
+- **Pictures**: `![what it shows](images/Day.png)`, from the page's folder (pictures kept with a page sit in an
+  `images` folder beside it) or the project's. A page shows its PNG and JPEG pictures at their own size, or
+  narrower to fit, keeping their shape; the editor reads them a couple a frame, shrinks any over 2048 pixels, and
+  keeps them for the session. Until then, and for one that is not there, its name shows instead. A picture in a
+  list or quote shows as its name for now.
 - **Writing a page**, as the Cookbook does: **Edit** shows its title and tags over its Markdown, with the page
   as it will read beside it, drawn again a moment after each change, and the cursor at the end of the text. The
   status says whether it is saved. **Save** or Ctrl+S writes it with today's date, and so do **Done** and opening
@@ -1458,8 +1467,8 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **Step-by-step guides**: `[DocsAction]` and `[DocsCheck]` methods, and built-in steps (make an asset,
   open a panel, run a menu item), as links a page runs and ticks, with each person's progress kept.
 - **Docs Health**: out-of-date pages, broken links, and code with no page yet; and git's last change on a page.
-- **Pictures**, once Voxear UI draws images: dropped in, captured from the Scene view, or recorded as GIFs of the
-  Scene or Game; and **live assets** shown in a page.
+- **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and **live
+  assets** shown in a page.
 - Tags to filter by, "On this page", a home page with recent pages, and quick open from the command bar (Ctrl+K).
 - While writing: tags as chips with suggestions, and Image…, Link… and Action… to put them in at the cursor.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine

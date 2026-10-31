@@ -121,9 +121,13 @@ float4 uiFragment(UiOut i) : SV_Target
     }
     if (q.kind == UI_IMAGE)
     {
-        // The texture is premultiplied already, as previews are; its box's corners are rounded.
+        // The texture is premultiplied already, as previews are; its box's corners are rounded. Its mip is
+        // picked from how far the picture moves a pixel, worked out from the quad rather than from neighbouring
+        // pixels, which may belong to another quad.
         float2 uv = lerp(q.uv.xy, q.uv.zw, i.local / q.rect.zw);
-        float4 image = textures[NonUniformResourceIndex(q.flags)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
+        float2 step = (q.uv.zw - q.uv.xy) / max(q.rect.zw, 1.0);
+        float4 image = textures[NonUniformResourceIndex(q.flags)].SampleGrad(
+            samplers[SAMPLER_LINEAR_CLAMP], uv, float2(step.x, 0.0), float2(0.0, step.y));
         float2 imageHalf = q.rect.zw * 0.5;
         float inside = saturate(0.5 - roundedBox(i.local - imageHalf, imageHalf, min(q.radius, min(imageHalf.x, imageHalf.y))));
         return image * q.color * inside;

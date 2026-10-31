@@ -38,7 +38,7 @@ use voxear_rhi::{
 };
 
 pub use assets::AssetUsage;
-pub use assets::{MaterialDesc, MaterialHandle, MeshHandle};
+pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use cooked::{COOKED_VERSION, CookedModel};
 pub use gltf_import::{
     ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
@@ -399,6 +399,14 @@ impl Renderer {
     pub fn free_material(&mut self, material: MaterialHandle) {
         let frame = self.frame_index;
         self.assets.as_mut().expect("assets live until drop").free_material(material, frame);
+    }
+
+    /// Uploads a picture as a texture with its mips, for the UI to show (see
+    /// `voxear_ui::ImageRef`), which expects its colour premultiplied by its
+    /// alpha. Freed with [`free_texture`](Self::free_texture).
+    pub fn add_texture(&mut self, source: &TextureSource) -> Result<TextureId> {
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        assets.add_texture(&self.gpu, &mut self.bindless, source)
     }
 
     pub fn free_texture(&mut self, texture: TextureId) {

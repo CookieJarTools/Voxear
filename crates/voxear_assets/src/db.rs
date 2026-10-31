@@ -13,6 +13,9 @@ pub const META_EXTENSION: &str = "meta";
 /// Folders a scan never enters: engine caches, version control and C# build
 /// output.
 const SKIPPED_FOLDERS: &[&str] = &["bin", "obj", "target", "node_modules"];
+/// The project's own documentation, VoxDocs' pages and their pictures, at
+/// its top: not the game's content, so never given GUIDs or built.
+const DOCS_FOLDER: &str = "Docs";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -76,7 +79,7 @@ impl AssetDb {
         let mut db = Self { root: root.to_path_buf(), by_guid: HashMap::new(), by_path: HashMap::new() };
         let mut report = ScanReport::default();
         let mut files = Vec::new();
-        collect(root, &mut files)?;
+        collect(root, &mut files, true)?;
         // Sorted, so which of two duplicates keeps its GUID does not depend on the file system.
         files.sort();
         for file in files {
@@ -159,7 +162,7 @@ impl AssetDb {
     }
 }
 
-fn collect(folder: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+fn collect(folder: &Path, files: &mut Vec<PathBuf>, top: bool) -> Result<()> {
     for entry in std::fs::read_dir(folder).with_context(|| format!("reading {}", folder.display()))? {
         let path = entry?.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
@@ -167,8 +170,8 @@ fn collect(folder: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
             continue;
         }
         if path.is_dir() {
-            if !SKIPPED_FOLDERS.contains(&name) {
-                collect(&path, files)?;
+            if !SKIPPED_FOLDERS.contains(&name) && !(top && name == DOCS_FOLDER) {
+                collect(&path, files, false)?;
             }
             continue;
         }
@@ -217,10 +220,13 @@ mod tests {
         touch(dir.path(), "Scenes/Main.scene");
         touch(dir.path(), "notes.txt");
         touch(dir.path(), ".voxear/Cache/Ignored.scene");
+        touch(dir.path(), "Docs/Guide/images/Shot.png");
+        touch(dir.path(), "Textures/Docs/Plate.png");
 
         let (db, report) = AssetDb::scan(dir.path()).unwrap();
-        assert_eq!(db.len(), 2);
-        assert_eq!(report.created.len(), 2);
+        assert_eq!(db.len(), 3, "the project's Docs are its documentation, not its content");
+        assert!(db.guid_of("Textures/Docs/Plate.png").is_some(), "a Docs folder further in is content");
+        assert_eq!(report.created.len(), 3);
         assert!(dir.path().join("Models/Ship.glb.meta").is_file());
         let ship = db.guid_of("Models/Ship.glb").unwrap();
         assert_eq!(db.get(ship).unwrap().kind, AssetKind::Model);

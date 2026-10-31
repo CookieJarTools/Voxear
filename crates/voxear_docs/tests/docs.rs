@@ -203,3 +203,51 @@ fn edit_writes_the_title_tags_and_markdown_and_leaving_saves() {
     frame(&mut ui, &mut docs);
     assert_eq!(docs.library().page(docs.open_page()).title(), "Writing Guide", "Back finds the renamed page");
 }
+
+#[test]
+fn pictures_show_once_the_editor_has_read_them() {
+    let dir = project();
+    let page =
+        "Pictures beside the page:\n\n![A shot](images/shot.png)\n\n![](images/wide.png)\n\n![Gone](images/gone.png)\n";
+    std::fs::write(dir.path().join("Docs/Combat/Pictures.md"), page).unwrap();
+    std::fs::create_dir_all(dir.path().join("Docs/Combat/images")).unwrap();
+    for name in ["shot.png", "wide.png"] {
+        std::fs::write(dir.path().join("Docs/Combat/images").join(name), "not read by the panel").unwrap();
+    }
+    let (mut ui, mut docs, host) = panel(dir.path());
+    assert!(docs.open_reference(&mut ui, "Pictures"));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let mut placeholders = Vec::new();
+    with_class(&ui, host, "md-image", &mut placeholders);
+    assert_eq!(placeholders.len(), 3, "each shows its name until it is read");
+    let loading: Vec<bool> = placeholders.iter().map(|&p| ui.has_class(p, "md-loading")).collect();
+    assert_eq!(loading, [true, true, false], "the one that is not there is not waited for");
+
+    let wanted = docs.wanted_pictures(8);
+    let images = dir.path().join("Docs/Combat/images");
+    assert_eq!(wanted, [images.join("shot.png"), images.join("wide.png")]);
+    assert!(docs.wanted_pictures(8).is_empty(), "each is asked for once");
+    let image = |texture| voxear_ui::ImageRef { texture, uv: [0.0, 0.0, 1.0, 1.0] };
+    docs.set_picture(&images.join("shot.png"), Some((image(3), [200, 100])));
+    docs.set_picture(&images.join("wide.png"), Some((image(4), [4000, 1000])));
+    frame(&mut ui, &mut docs);
+    let mut pictures = Vec::new();
+    with_class(&ui, host, "md-picture", &mut pictures);
+    assert_eq!(pictures.len(), 2);
+    let [_, _, width, height] = ui.rect(pictures[0]);
+    assert_eq!((width, height), (200.0, 100.0), "at its own size");
+    let [_, _, width, height] = ui.rect(pictures[1]);
+    let [_, _, page_width, _] = ui.rect(ui.find(host, "cb-page").unwrap());
+    assert!(width < page_width, "narrower to fit the page");
+    assert!((width / height - 4.0).abs() < 0.05, "keeping its shape: {width} by {height}");
+}
+
+/// Every element in `node` with `class`, in tree order.
+fn with_class(ui: &Ui, node: NodeId, class: &str, found: &mut Vec<NodeId>) {
+    if ui.has_class(node, class) {
+        found.push(node);
+    }
+    for child in ui.children(node) {
+        with_class(ui, child, class, found);
+    }
+}

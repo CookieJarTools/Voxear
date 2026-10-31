@@ -366,12 +366,46 @@ Still to do in M3:
 ## M5 — Lighting
 
 - Per-meshlet culling (frustum, cone, Hi-Z) on mesh shaders with a compute fallback, including shadow passes.
-- Area and tube lights, IES profiles, sky and atmosphere.
-- Volumetric fog.
-- Virtual shadow maps.
+- Area and tube lights, IES profiles and light cookies, sky and atmosphere.
+- Volumetric fog: a froxel volume lit by every light, with the sun casting volumetric shadows, so light shafts show.
+- Soft shadows (PCSS, with a softness per light) and contact shadows, then virtual shadow maps.
 - Upscalers (FSR built in, DLSS and XeSS optional), colour grading LUTs, and local post volumes.
 - **Real-time voxel GI** (clipmaps, then injection, gathering and the radiance cache).
-- Baked lightmapper and probes.
+- Baked lightmapper, light probes and reflection probes.
+- Ambient occlusion (GTAO), with a strength and an optional tint.
+- Reflections: screen-space reflections, falling back to reflection probes.
+- Stylised shading: shadows tinted a colour, and foliage shading (wrap lighting, light through the leaves, and a
+  rim light tinted by the sun).
+- **Lighting looks, as presets.** A scene picks a look, which sets the sky, sun, shadows, fog, reflections and
+  post-processing together, and any part of it can be changed.
+  - **Soft Overcast**, the engine's default look: hazy, bright and calm, like daylight through big windows on a
+    cloudy day.
+    - The sky is the main light, cool at about 6500–8000K. The sun is weaker and warm, about 5000–5500K, giving
+      2 to 4 times the sky's light rather than 10, with soft shadows.
+    - Thin, slightly blue height fog, and volumetric fog with the sun's shadows in it, so light shafts show
+      (strong forward scattering: a Henyey-Greenstein g of about 0.6–0.75).
+    - Auto exposure with a narrow range, set for interiors, so bright windows blow out and bloom into the frame.
+    - Ambient occlusion at moderate strength, so contacts stay soft and clean; reflections on surfaces of low to
+      mid roughness by default; and GI that brings sky light indoors, without which interiors go flat and dark.
+    - A soft filmic finish: AgX or ACES with a gentle highlight rolloff, low, wide bloom with no threshold,
+      saturation around 0.9, shadows graded slightly toward teal and highlights slightly warm, and a light
+      vignette.
+  - **Storybook**, a stylised look: a warm sun breaking through a canopy into a cool forest, with rich colour and
+    soft shapes, as in It Takes Two, Kena or Ori. Art-directed rather than physically accurate.
+    - A fairly strong, warm sun, about 3500–4500K and pushed toward yellow-green, against a teal sky light: a
+      gradient with teal above and warm brown below.
+    - Shadows that are never black or grey, but tinted warm brown, olive or purple, with soft edges, and a dappled
+      canopy pattern on the sunlight.
+    - Foliage lit from inside: wrap lighting, light through the leaves, and a rim light tinted by the sun.
+    - Teal-cyan fog that separates the scene into two or three depth layers; volumetric light only faintly, if at
+      all.
+    - Stronger, tinted ambient occlusion; rough surfaces by default (0.6–0.8) with less specular.
+    - Moderate, wide, slightly warm bloom, saturation about 1.1–1.2, a gentle vignette, optional depth of field
+      on the near foreground, and grading that lifts shadows toward teal or purple and pushes highlights toward
+      gold.
+  - What they need: the voxel GI, probes, volumetric fog, soft shadows, ambient occlusion, reflections, light
+    cookies and stylised shading above. Most of their post-processing exists already (AgX, ACES, bloom with no
+    threshold, auto exposure, grading, vignette and depth of field); bloom still needs a tint.
 - **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
   Audio, with baked reverb probes as the fallback.
 - **HDR colour, end to end.** Rendering is HDR already: a float target, emissive and lights above 1, exposure and

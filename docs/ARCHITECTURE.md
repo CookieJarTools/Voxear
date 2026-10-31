@@ -748,6 +748,13 @@ every light type and by GI, with temporal reprojection, local fog volumes and he
      glossy ones.
   5. Quality tiers scale cascade count, brick resolution and probe density, from integrated GPUs up to high end.
 
+**Lighting looks** *(planned, M5)*. A scene picks a look, a preset for its sky, sun, shadows, fog, reflections and
+post-processing together, as `[post]` picks one for post-processing today, and changes any part of it.
+**Soft Overcast** is the default: the sky as the main light, a weaker warm sun with soft shadows, haze and sun
+shafts, exposure set for interiors, and a soft filmic finish. **Storybook** is stylised: a warm sun through a
+canopy into a cool teal forest, tinted shadows, glowing foliage and rich colour. The roadmap's M5 has each one's
+settings and what it needs.
+
 ### Previews *(implemented)*
 
 A preview is an object drawn on its own into a small image: the editor's Project panel, reference fields, object

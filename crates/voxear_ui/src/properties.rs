@@ -9,11 +9,13 @@
 //! and `grid-row`, in CSS's syntax (`120px 1fr`, `repeat(3, 40px)`,
 //! `minmax(...)`, `span 2`, `1 / 3`), read by taffy itself. Motion:
 //! `transition` (`background-color 150ms ease-out, opacity 0.1s`). Look: `background-color`, `border`, `border-width`,
-//! `border-color`, `border-radius`, `opacity`, `pointer-events`, `overflow`
+//! `border-color`, `border-style` (`solid` or `dashed`), `border-radius`, `box-shadow` (`0 16px 40px #0006`,
+//! with an optional spread, or `none`), `opacity`, `pointer-events`, `overflow`
 //! (`visible`, `hidden`, or `scroll`/`auto`), `scrollbar-color`, and for
 //! text fields `selection-color` and `caret-color`. Text,
 //! which children inherit: `color`, `font-size`, `font-weight`,
-//! `font-family` (`sans` or `mono`) and `text-align`.
+//! `font-family` (`sans` or `mono`), `line-height` (`16px` or `normal`) and
+//! `text-align`.
 //!
 //! Lengths are `px` or `%`, colours are `#rgb`, `#rrggbb`, `#rrggbbaa`,
 //! `rgb()`, `rgba()`, `oklch()` or a few names, and `var(--name)` or
@@ -29,7 +31,7 @@ use taffy::{
 
 use taffy::{GridAutoTracks, GridPlacement, GridTemplateComponent, GridTemplateTracks, Line};
 
-use crate::{Animated, Color, Easing, Family, Overflow, Style, TextAlign, TextStyle, Transition};
+use crate::{Animated, Color, Easing, Family, Overflow, Shadow, Style, TextAlign, TextStyle, Transition};
 
 /// Applies one declaration, after replacing its variables. Errors say what
 /// was wrong, for the caller to report with the declaration's place.
@@ -169,10 +171,15 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "background-color" => style.background = Some(color(input)?),
         "border" => {
             let width = pixels(input)?;
-            // `solid` and the like are accepted and mean nothing: borders are solid.
-            let _ = input.try_parse(|i| i.expect_ident_matching("solid"));
+            if let Ok(dashed) =
+                input.try_parse(|i| keyword(i, BORDER_STYLES).map_err(|_| i.new_error_for_next_token::<()>()))
+            {
+                style.dashed = dashed;
+            }
             border(style, width, Some(color(input)?));
         }
+        "border-style" => style.dashed = keyword(input, BORDER_STYLES)?,
+        "box-shadow" => style.shadow = shadow(input)?,
         "border-width" => border(style, pixels(input)?, None),
         "border-color" => {
             let width = style.border.map_or(1.0, |(w, _)| w);
@@ -195,6 +202,10 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "caret-color" => style.caret = Some(color(input)?),
         "color" => text.color = color(input)?,
         "font-size" => text.size = pixels(input)?,
+        "line-height" => {
+            text.line_height =
+                input.try_parse(|i| i.expect_ident_matching("normal").map(|_| 0.0)).or_else(|_| pixels(input))?;
+        }
         "font-weight" => {
             let named = [("normal", 400.0), ("medium", 500.0), ("semibold", 600.0), ("bold", 700.0)];
             text.weight = input
@@ -223,6 +234,27 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         _ => return Ok(false),
     }
     Ok(true)
+}
+
+/// Whether a border style is dashed: the others draw solid.
+const BORDER_STYLES: &[(&str, bool)] = &[("solid", false), ("dashed", true)];
+
+/// `none`, or `x y [blur [spread]] colour`, as in CSS without `inset` or
+/// several shadows.
+fn shadow(input: &mut Parser) -> Parsed<Option<Shadow>> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Ok(None);
+    }
+    let (x, y) = (pixels(input)?, pixels(input)?);
+    let mut lengths = Vec::new();
+    while lengths.len() < 2 {
+        let Ok(length) = input.try_parse(|i| pixels(i).map_err(|_| i.new_error_for_next_token::<()>())) else { break };
+        lengths.push(length);
+    }
+    let color = color(input)?;
+    let blur = lengths.first().copied().unwrap_or(0.0);
+    let spread = lengths.get(1).copied().unwrap_or(0.0);
+    Ok(Some(Shadow { x, y, blur, spread, color }))
 }
 
 const ALIGN_ITEMS: &[(&str, AlignItems)] = &[
@@ -543,6 +575,21 @@ mod tests {
         assert_eq!(text.weight, 600.0);
         let (_, text) = applied("font-family", "mono").unwrap();
         assert_eq!(text.family, Family::Mono);
+        let (_, text) = applied("line-height", "16px").unwrap();
+        assert_eq!(text.line_height, 16.0);
+    }
+
+    #[test]
+    fn shadows_and_dashes() {
+        let (style, _) = applied("box-shadow", "0 16px 40px rgba(0, 0, 0, 0.4)").unwrap();
+        let shadow = style.shadow.unwrap();
+        assert_eq!((shadow.x, shadow.y, shadow.blur, shadow.spread), (0.0, 16.0, 40.0, 0.0));
+        assert_eq!(shadow.color, Color::rgba(0, 0, 0, 102));
+        assert!(applied("box-shadow", "none").unwrap().0.shadow.is_none());
+        let (style, _) = applied("border", "1px dashed #2e3035").unwrap();
+        assert!(style.dashed);
+        assert_eq!(style.border, Some((1.0, Color::hex(0x2e3035))));
+        assert!(!applied("border-style", "solid").unwrap().0.dashed);
     }
 
     #[test]

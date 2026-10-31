@@ -931,8 +931,9 @@ how they look, as UXML and USS do in Unity:
 
   Markup can declare one (`<ListView name="log" item-height="18" />`), and code then gives it items with
   `bind_list`, as Unity does with `itemsSource`.
-- **TreeView** is a list of the open items of a tree, by `u64` id: rows indent by depth, an arrow opens and
-  closes them, and selection follows items rather than rows. The Hierarchy and Project views are tree views.
+- **TreeView** is a list of the open items of a tree, by `u64` id: rows indent by depth, a chevron opens and
+  closes them, and selection follows items rather than rows. The Hierarchy and the Project's folders are tree
+  views. Every row ends in a `row-bar`, which the default theme shows as an accent bar down a selected row.
 - **The editor is built from these.** Every long list in the editor (Hierarchy, Project, Console, inspector
   arrays) is a virtualized list or tree view, never one element per item.
 
@@ -942,14 +943,19 @@ every part:
   selection by drag, double click (a word) and triple click (a line), Ctrl+A/C/X/V, Ctrl+Backspace and Delete
   by word, a placeholder while empty, and input-method composition with `ime_area` for the candidate list. A
   long line scrolls to keep the caret in view, and the text is clipped to the field.
-- **Toggle**, **Slider** (dragged, or moved by the arrow keys, with an optional step) and **Foldout** (a header
-  that opens and closes its content; markup children go inside it).
+- **Toggle** (a switch: a 28 by 16 pill with a sliding knob, or a ticked box with the `checkbox` class),
+  **Slider** (dragged, or moved by the arrow keys, with an optional step, and its value shown in mono to as many
+  decimals as the step has) and **Foldout** (a header with a chevron that opens and closes its content; markup
+  children go inside it).
+- **Segmented**: a row of segments, each text, an icon or both, exactly one on, for modes such as the transform
+  tool or the pivot (`<Segmented value="1"><Segment icon="move" />...</Segmented>`).
 - **Focus and the keyboard:** clicking a control focuses it, Tab and Shift+Tab walk the controls in tree order
   (skipping hidden and disabled ones), and the focused one matches `:focus`. Enter and Space press a focused
   button or toggle, and Escape lets go. While a text field has focus, keys belong to it (`wants_keyboard`),
   so typing a W never moves the camera.
 - **Events**, read during the frame like clicks: `ui.changed(node)` when the user changed a value,
-  `ui.submitted(field)` for Enter. Setting a value from code is not a change.
+  `ui.submitted(field)` for Enter, and `ui.double_clicked(node)` for a second click in quick succession. Setting
+  a value from code is not a change.
 - **The clipboard** is a trait the window provides (`voxear_engine::ui_input::SystemClipboard` wraps the
   system's, through arboard), so `voxear_ui` holds no platform code and tests use an in-memory one.
 - `voxear_engine::ui_input::handle` turns every winit event into the UI's calls, and returns whether the UI used
@@ -957,7 +963,9 @@ every part:
 
 **Split views, tabs and dropdowns** *(implemented)*, which docking and the editor's panels are made from:
 - **SplitView**: two panes either side of a divider the pointer drags. The first pane keeps its size and the
-  second takes the rest, each kept above a minimum, as in Unity's TwoPaneSplitView.
+  second takes the rest, each kept above a minimum, as in Unity's TwoPaneSplitView. A negative size keeps the
+  second pane's size instead (a panel on the right, such as the Inspector), and `split_view_fraction` (or a
+  percentage `size` in markup) keeps the first pane's share as the window resizes.
 - **Tabs**: a row of tab buttons over pages, showing the selected one (`:checked` on its tab).
 - **Dropdown**: opens its options in a **popup layer** that is always drawn above everything and takes the
   dropdown's text style. A choice, Escape or a press anywhere else closes it, and that press goes no further.
@@ -971,7 +979,8 @@ tabbed areas of panels.
 - A panel keeps its own elements wherever it goes, so a half-typed field or a scrolled list survives a move.
 - The layout reads and writes as text, for workspace presets and saving between sessions:
   `row(240, [hierarchy, project], column(420, [scene, game*], [console]))`, where `row` and `column` give the
-  first part's size in pixels and `*` marks the showing tab. Divider moves and tab choices are part of it.
+  first part's size in pixels (or the second's, negative, or the first's share, as `57%`) and `*` marks the
+  showing tab. Divider moves and tab choices are part of it.
 
   ```xml
   <DockSpace layout="row(240, [hierarchy], [scene, inspector])">
@@ -988,10 +997,25 @@ the first time an element is styled. Transitions run on the UI's clock, which `u
 frame; until it is first called, styles change at once, so a caller without a clock never sees a colour stuck
 mid-fade.
 
-**The default theme** (`crates/voxear_ui/theme/Default.vss`) is on every `Ui`'s root: the editor concept's
-near-black surfaces, one periwinkle accent and compact rows, for buttons, fields, toggles, sliders, foldouts,
-list rows, split dividers, tabs and dropdowns, with 120 ms ease-out transitions on what the pointer touches. A sheet of your own overrides any of it, and redefining its `--vx-*` variables is the quickest way to
-retheme. `Ui::bare()` starts without it.
+**Icons and shapes** *(implemented)*:
+- **Icons** are Voxear's own line icons (`voxear_ui::ICONS`: chevrons, play controls, tools, object and asset
+  kinds, the Voxear mark), drawn on a 24-unit grid as SVG path data. Each is rasterised by swash's zeno into the
+  glyph atlas at its exact pixel size, its lines 1.5 physical pixels wide at any size, so it is as crisp as text,
+  and drawn in its element's text colour. `<Icon icon="move" />`, `ui.icon(parent, "move")` or
+  `ui.icon_button(parent, "plus")`; a Button in markup may hold an icon and a label.
+- **`box-shadow`** (`0 16px 40px rgba(0,0,0,.4)`, with an optional spread) draws a Gaussian-blurred copy of the
+  box under it, cut out of the box as CSS's is. A spread with no blur makes a crisp ring, and a 1px offset a
+  hairline under a header.
+- **`border-style: dashed`** (or `dashed` in `border`) dashes a border, for drop targets such as Add Component.
+- **`line-height`** sets the height of each line of text, so 12px text sits on a 16px line as in the design.
+- **Shapes** (`ui.set_shapes`): lines with round ends and circles drawn on any element, for gizmos and graphs.
+
+**The default theme** (`crates/voxear_ui/theme/Default.vss`) is on every `Ui`'s root: the Graphite + Abyss design
+(see the editor's design below), with its tokens as `--vx-*` variables, for buttons, fields, switches and
+checkboxes, sliders, segmented controls, foldouts, list rows, split dividers, tabs, dropdowns and docking, with
+120 ms ease-out transitions on what the pointer touches. Text is 12px Inter on a 16px line. A sheet of your own
+overrides any of it, and redefining the `--vx-*` variables is the quickest way to retheme. `Ui::bare()` starts
+without it.
 
 **Still to come.**
 - Keyframe animations, beyond transitions.
@@ -1017,20 +1041,33 @@ surfaces in 3D.
 ## Editor
 
 **What exists now** *(first slice, in `crates/voxear_editor`)*: `vox editor <project>` opens the project's start
-level in **edit mode**, laid out as the editor concept is, in Voxear UI:
+level in **edit mode**, in the Graphite + Abyss design, built in Voxear UI:
 - **Edit mode:** Objs load with their behaviours kept as data (`EditBehaviours`), so no script runs and a project
   opens without its scripts built, as in Unity.
-- **The top bar** has the workspaces, the command bar (Ctrl+K), play, pause and step, and the Build button.
-- **Docked panels:** the Hierarchy (Objs by parent, with type icons and a filter), the Project's assets, the
-  Scene view, a Game tab, the Console (every log line, warnings and errors coloured, following new lines) and
-  the Inspector. They can all be dragged around, as docking allows.
+- **The top bar** has the Voxear mark, the workspaces, the command bar (Ctrl+K), play, pause and step in an inset
+  pill, the user's avatar and the Build button. A **rail** of icons runs down the left, with source control at the
+  bottom.
+- **Docked panels:** the Hierarchy (Objs by parent, with type icons, child counts and a filter), the Scene view and
+  a Game tab, the Project and the Console under them, and the Inspector on the right at 304px. Each panel has a
+  40px header of tabs with its own buttons on the right. They can all be dragged around, as docking allows.
+- **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
+  folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
+  or more, they show as tiles; narrower, as rows with each file's size. Selecting a folder in the tree opens it,
+  as does double-clicking one on the right. The Project sits under the Scene by default, because its two columns
+  need the width; dragged under the Hierarchy, it turns to rows.
 - **The Scene view** renders into its panel through the editor's own camera, flown with the right mouse button
-  as in Unity. The renderer draws the 3D view into a rectangle of the window (`Renderer::set_view_rect`) and looks
-  through a chosen camera (`ViewOptions::camera`).
-- **The Inspector** edits the selected Obj's name, position, rotation (in degrees) and scale as they are typed,
-  shows changes made elsewhere in fields not being edited, and lists its mesh, light, camera and behaviours with
-  their fields.
-- **The status bar** shows the level, the Obj count, the GPU, the frame rate, GPU time and the git branch.
+  as in Unity. The renderer draws the 3D view into a rectangle of the window (`Renderer::set_view_rect`), clears
+  around it to the window's background (`Renderer::set_clear_color`), and looks through a chosen camera
+  (`ViewOptions::camera`). A frame drawn over its edge rounds its corners to the panel's. Over it float a tool
+  strip (select, move, rotate and scale, Pivot, Global and grid snap), a stats chip, and an axis gizmo that turns
+  with the camera.
+- **The Inspector** has a header with the Obj's icon, its name, Static and an active switch, then Tag and Layer
+  (shown, not yet stored: Objs have no tags or layers yet). The Transform and each component are sections divided
+  by lines, with an 88px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
+  letters, applied as they are typed, and changes made elsewhere show in fields not being edited. A dashed Add
+  Component button ends it.
+- **The status bar** shows a ready light, the level, the Obj count and how long the project took to open, then
+  the renderer, frame rate, memory and git branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
 Play mode with state restore, saving scenes, gizmos, undo, the command palette and the Odin-style inspector
@@ -1117,9 +1154,35 @@ reflection, and an analyzer reports a condition that names a missing member as a
 `AttributeDrawer<TAttribute>` for your own attributes. Drawers chain as Odin's do, with each decorator wrapping the
 next, so `[InfoBox]` above a custom drawer still shows.
 
+### The design: Graphite + Abyss
+
+The editor's visual specification, which the default theme and the editor's sheet implement.
+
+| Token | Value | Token | Value |
+|---|---|---|---|
+| bg | `#08090A` | text | `#F7F8F8` |
+| panel | `#0F1011` | text-2 | `#D0D6E0` |
+| overlay | `rgba(15,16,17,.82)` | muted | `#8A8F98` |
+| line | `#1F2023` | accent | `#5E6AD2` |
+| line-2 | `#2E3035` | accent-soft | `rgba(94,106,210,.16)` |
+| field | `#141518` | on-accent | `#FFFFFF` |
+| field-line | `#24262A` | success | `#4CB782` |
+| hover | `#17181B` | axis X / Y / Z | `#EB5757` / `#4CB782` / `#5E8BF0` |
+| selected | `#1C1E24` | seg-on | `#24262C` |
+
+- **Type:** Inter 400, 500 and 600 at 12px on a 16px line; titles 12px 600; numbers in JetBrains Mono 11px; small
+  labels 11px muted.
+- **Shape:** panels are rounded 12, controls 7, the command bar and primary button 10. Gaps and padding are 10px.
+  Rows are 28px, panel headers 40px, the top bar 52px and the status bar 26px. Icons are 14px with a 1.5px round
+  stroke, 18px in the rail; trees indent 14px.
+- **Principles:** one accent; thin borders and gaps rather than heavy chrome; shadows only on what floats over
+  the viewport; mono for numbers.
+- **Not yet:** the overlays' backdrop blur (they are translucent without it), and the concept's Voxel Brush panel,
+  which is example content.
+
 ### The editor concept
 
-The design target for M3's **look and layout**. The concept's content is only an example scene: its voxel
+The design target for M3's **look and layout**, whose style the Graphite + Abyss design above now defines. The concept's content is only an example scene: its voxel
 terrain, brush tools and asset names are placeholders, not planned features.
 
 - **Top bar:**
@@ -1156,7 +1219,7 @@ terrain, brush tools and asset names are placeholders, not planned features.
   - on the right, the graphics API, FPS, memory and the git branch
 - **Style:**
   - near-black panels with rounded corners, separated by gaps
-  - one periwinkle accent for selection, toggles and primary buttons
+  - one accent for selection, toggles and primary buttons (indigo, in the design above)
   - Inter for text, and a monospaced face for numbers
   - compact rows, as in Linear
 

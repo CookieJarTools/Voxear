@@ -6,10 +6,12 @@
 //! - **TextField**: one line, or several with `multiline`. Editing is
 //!   parley's: caret and word movement, selection by click, drag, double and
 //!   triple click, clipboard, and input methods.
-//! - **Toggle**: a `toggle-box` holding a `toggle-mark`, then a
-//!   `toggle-label`. It matches `:checked` when on.
+//! - **Toggle**: a `toggle-box` holding a `toggle-mark` (the default
+//!   theme's switch knob) and a `toggle-check` icon (shown instead with the
+//!   `checkbox` class), then a `toggle-label`. It matches `:checked` when on.
 //! - **Slider**: a `slider-track` holding a `slider-fill` and a
-//!   `slider-thumb`. Dragging or the arrow keys move it.
+//!   `slider-thumb`, then a `slider-value` showing the number. Dragging or
+//!   the arrow keys move it.
 //! - **Foldout**: a `foldout-header` (a `foldout-arrow` and a
 //!   `foldout-title`) that opens and closes its `foldout-content`. It
 //!   matches `:checked` when open.
@@ -45,6 +47,12 @@ pub(crate) enum Control {
         index: usize,
     },
     Dropdown(crate::panes::Dropdown),
+    Segmented(crate::panes::Segmented),
+    /// One segment's button: its segmented control, and which segment it is.
+    Segment {
+        segmented: taffy::NodeId,
+        index: usize,
+    },
     /// One choice in an open dropdown's popup.
     Option {
         dropdown: taffy::NodeId,
@@ -82,6 +90,7 @@ impl Editing {
         styles.insert(StyleProperty::FontSize(style.size));
         styles.insert(StyleProperty::FontWeight(FontWeight::new(style.weight)));
         styles.insert(StyleProperty::FontFamily(style.family.source().into()));
+        styles.insert(StyleProperty::LineHeight(style.parley_line_height()));
         self.editor.set_scale(scale);
         self.editor.set_width(width);
         let faded = Color { a: (style.color.a as f32 * 0.45) as u8, ..style.color };
@@ -119,6 +128,7 @@ pub(crate) struct Slider {
     pub track: taffy::NodeId,
     pub fill: taffy::NodeId,
     pub thumb: taffy::NodeId,
+    pub label: taffy::NodeId,
 }
 
 impl Slider {
@@ -128,6 +138,16 @@ impl Slider {
 
     fn fraction(&self) -> f32 {
         if self.max > self.min { ((self.value - self.min) / (self.max - self.min)).clamp(0.0, 1.0) } else { 0.0 }
+    }
+
+    /// The value as shown: as many decimals as the step has, or two.
+    fn shown(&self) -> String {
+        let decimals = if self.step > 0.0 {
+            (0..4).find(|&d| (self.step * 10f32.powi(d)).fract().abs() < 1e-3).unwrap_or(3) as usize
+        } else {
+            2
+        };
+        format!("{:.*}", decimals, self.value)
     }
 
     fn clamp(&self, value: f32) -> f32 {
@@ -178,11 +198,14 @@ impl Ui {
         box_style.layout.flex_shrink = 0.0;
         let check_box = self.panel(toggle, box_style);
         self.add_class(check_box, "toggle-box");
-        let mark = self.panel(check_box, Style::default());
+        let mark = self.panel(check_box, Style { pickable: false, ..Style::default() });
         self.add_class(mark, "toggle-mark");
+        let check = self.icon(check_box, "check");
+        self.add_class(check, "toggle-check");
         let label =
             self.add(toggle, Element { text: Some(Text::new(text)), ..Element::new(Kind::Label, Style::default()) });
         self.add_class(label, "toggle-label");
+        self.set_visible(label, !text.is_empty());
         self.set_checked(toggle, checked);
         toggle
     }
@@ -203,7 +226,10 @@ impl Ui {
         thumb.layout.position = Position::Absolute;
         let thumb = self.panel(track, thumb);
         self.add_class(thumb, "slider-thumb");
-        let state = Slider { min, max, value: min, step: 0.0, track: track.0, fill: fill.0, thumb: thumb.0 };
+        let label = self.add_label(slider, "");
+        self.add_class(label, "slider-value");
+        let state =
+            Slider { min, max, value: min, step: 0.0, track: track.0, fill: fill.0, thumb: thumb.0, label: label.0 };
         if let Some(element) = self.element_mut(slider) {
             element.control = Some(Control::Slider(state));
         }
@@ -222,7 +248,9 @@ impl Ui {
     pub fn set_slider_value(&mut self, slider: NodeId, value: f32) {
         let Some(Control::Slider(state)) = self.element_mut(slider).and_then(|e| e.control.as_mut()) else { return };
         state.value = state.clamp(value);
-        let (fraction, fill, thumb) = (state.fraction(), state.fill, state.thumb);
+        let (fraction, fill, thumb, label, shown) =
+            (state.fraction(), state.fill, state.thumb, state.label, state.shown());
+        self.set_text(NodeId(label), &shown);
         let mut style = self.element(NodeId(fill)).map(|e| e.base.clone()).unwrap_or_default();
         style.layout.size.width = Dimension::percent(fraction);
         self.set_style(NodeId(fill), style);
@@ -236,6 +264,8 @@ impl Ui {
         if let Some(Control::Slider(state)) = self.element_mut(slider).and_then(|e| e.control.as_mut()) {
             state.step = step.max(0.0);
         }
+        let value = self.slider_value(slider);
+        self.set_slider_value(slider, value);
     }
 
     /// A titled section that opens and closes. Put what it holds in
@@ -244,8 +274,7 @@ impl Ui {
         let foldout = self.add(parent, Element::new(Kind::Foldout, Style::column()));
         let header = self.panel(foldout, Style::row());
         self.add_class(header, "foldout-header");
-        let arrow =
-            self.add(header, Element { text: Some(Text::new("▸")), ..Element::new(Kind::Label, Style::default()) });
+        let arrow = self.icon(header, "chevron-right");
         self.add_class(arrow, "foldout-arrow");
         let label =
             self.add(header, Element { text: Some(Text::new(title)), ..Element::new(Kind::Label, Style::default()) });
@@ -279,7 +308,7 @@ impl Ui {
         let (arrow, content) = (NodeId(*arrow), NodeId(*content));
         self.set_checked(foldout, open);
         self.set_visible(content, open);
-        self.set_text(arrow, if open { "▾" } else { "▸" });
+        self.set_icon(arrow, if open { "chevron-down" } else { "chevron-right" });
     }
 
     /// Whether a toggle is on or a foldout open, or anything else matches `:checked`.

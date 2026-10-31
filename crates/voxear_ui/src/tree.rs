@@ -50,6 +50,10 @@ pub enum Kind {
     Dropdown,
     /// Tabbed areas of panels in split panes, rearranged by dragging tabs.
     DockSpace,
+    /// One of Voxear's line icons, in its text colour; see [`crate::ICONS`].
+    Icon,
+    /// A row of choices, exactly one on.
+    Segmented,
 }
 
 impl Kind {
@@ -69,6 +73,8 @@ impl Kind {
             Kind::Tabs => "Tabs",
             Kind::Dropdown => "Dropdown",
             Kind::DockSpace => "DockSpace",
+            Kind::Icon => "Icon",
+            Kind::Segmented => "Segmented",
         }
     }
 }
@@ -91,6 +97,10 @@ pub(crate) struct Element {
     pub computed: Style,
     pub text_style: TextStyle,
     pub text: Option<Text>,
+    /// For an icon: which.
+    pub icon: Option<&'static str>,
+    /// Lines and circles drawn over its background.
+    pub shapes: Vec<crate::Shape>,
     /// How far its children are scrolled, and how far they can be.
     pub scroll: [f32; 2],
     pub scroll_max: [f32; 2],
@@ -120,6 +130,8 @@ impl Element {
             inline: Vec::new(),
             text_style: TextStyle::default(),
             text: None,
+            icon: None,
+            shapes: Vec::new(),
             scroll: [0.0; 2],
             scroll_max: [0.0; 2],
             list: None,
@@ -152,6 +164,7 @@ impl Text {
             builder.push_default(StyleProperty::FontSize(self.style.size));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(self.style.weight)));
             builder.push_default(StyleProperty::FontFamily(self.style.family.source().into()));
+            builder.push_default(StyleProperty::LineHeight(self.style.parley_line_height()));
             self.shaped = Some((scale, builder.build(&self.content)));
         }
         &mut self.shaped.as_mut().expect("shaped above").1
@@ -270,6 +283,54 @@ impl Ui {
     /// style comes from sheets and its parent.
     pub fn button(&mut self, parent: NodeId, text: &str) -> NodeId {
         self.add(parent, Element { text: Some(Text::new(text)), ..Element::new(Kind::Button, Style::default()) })
+    }
+
+    /// An icon from [`crate::ICONS`], 14 pixels square unless sheets size it,
+    /// drawn in its text colour. The pointer passes through it to what it is in.
+    pub fn icon(&mut self, parent: NodeId, name: &str) -> NodeId {
+        let element = Element {
+            base: Style { pickable: false, ..Style::default() },
+            ..Element::new(Kind::Icon, Style::default())
+        };
+        let node = self.add(parent, element);
+        self.set_icon(node, name);
+        node
+    }
+
+    /// Which icon an icon element shows: an empty name shows none, and an
+    /// unknown one shows none with a warning.
+    pub fn set_icon(&mut self, node: NodeId, name: &str) {
+        let found = crate::icons::parts(name).map(|(known, _)| known);
+        if found.is_none() && !name.is_empty() {
+            self.warn(vec![format!("there is no icon '{name}'")]);
+        }
+        if let Some(element) = self.element_mut(node) {
+            element.icon = found;
+        }
+    }
+
+    /// An icon the pointer can press, such as a tree's or foldout's arrow.
+    pub(crate) fn pressable_icon(&mut self, parent: NodeId, name: &str, style: Style) -> NodeId {
+        let node = self.add(parent, Element::new(Kind::Icon, style));
+        self.set_icon(node, name);
+        node
+    }
+
+    /// Lines and circles to draw on an element, over its background and
+    /// under its children, in logical pixels from its content box's top
+    /// left: for gizmos, graphs and the like. Replaces what was there.
+    pub fn set_shapes(&mut self, node: NodeId, shapes: Vec<crate::Shape>) {
+        if let Some(element) = self.element_mut(node) {
+            element.shapes = shapes;
+        }
+    }
+
+    /// A button showing only an icon, with the class `icon-button`.
+    pub fn icon_button(&mut self, parent: NodeId, icon: &str) -> NodeId {
+        let node = self.add(parent, Element::new(Kind::Button, Style::row()));
+        self.add_class(node, "icon-button");
+        self.icon(node, icon);
+        node
     }
 
     pub(crate) fn add(&mut self, parent: NodeId, element: Element) -> NodeId {
@@ -588,6 +649,7 @@ impl Ui {
             }
         }
         self.pointer.clicks.clear();
+        self.pointer.double_clicks.clear();
         self.clear_selection_changes();
         self.clear_input_events();
         UiFrame { quads, atlas: self.atlas.snapshot() }

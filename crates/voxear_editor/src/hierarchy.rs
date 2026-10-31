@@ -1,5 +1,6 @@
 //! The Hierarchy panel: every Obj in the open level, as a tree by parent,
-//! with an icon for what it is. A filter narrows it to Objs whose names match.
+//! with an icon for what it is and how many Objs are in it. A filter
+//! narrows it to Objs whose names match.
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -19,8 +20,8 @@ impl Component for EditorOnly {}
 struct Snapshot {
     roots: Vec<u64>,
     children: HashMap<u64, Vec<u64>>,
-    /// Each Obj's name, icon and icon class.
-    rows: HashMap<u64, (String, &'static str, &'static str)>,
+    /// Each Obj's name and icon.
+    rows: HashMap<u64, (String, &'static str)>,
 }
 
 struct Items(Rc<RefCell<Snapshot>>);
@@ -39,20 +40,22 @@ impl TreeItems for Items {
     }
 
     fn make(&mut self, ui: &mut Ui, row: NodeId) {
-        let icon = ui.add_label(row, "");
-        ui.add_class(icon, "obj-icon");
-        ui.add_label(row, "");
+        let icon = ui.icon(row, "obj");
+        ui.add_class(icon, "row-icon");
+        let name = ui.add_label(row, "");
+        ui.add_class(name, "row-name");
+        let count = ui.add_label(row, "");
+        ui.add_class(count, "row-count");
     }
 
     fn bind(&mut self, ui: &mut Ui, row: NodeId, item: u64) {
         let snapshot = self.0.borrow();
-        let Some((name, icon, class)) = snapshot.rows.get(&item) else { return };
+        let Some((name, icon)) = snapshot.rows.get(&item) else { return };
         let parts = ui.children(row);
-        ui.set_text(parts[0], icon);
-        for kind in ["icon-camera", "icon-light", "icon-mesh"] {
-            ui.set_class(parts[0], kind, kind == *class);
-        }
+        ui.set_icon(parts[0], icon);
         ui.set_text(parts[1], name);
+        let inside = snapshot.children.get(&item).map_or(0, Vec::len);
+        ui.set_text(parts[2], &if inside > 0 { inside.to_string() } else { String::new() });
     }
 }
 
@@ -98,6 +101,16 @@ impl Hierarchy {
     }
 }
 
+/// The icon for an Obj with a camera, a light or a mesh, in that order.
+pub fn icon(camera: bool, light: bool, mesh: bool) -> &'static str {
+    match (camera, light, mesh) {
+        (true, _, _) => "camera",
+        (_, true, _) => "light",
+        (_, _, true) => "cube",
+        _ => "obj",
+    }
+}
+
 /// The Objs as a tree, or with a filter, those whose names contain it as a
 /// flat list.
 fn snapshot(world: &World, filter: &str) -> Snapshot {
@@ -107,16 +120,11 @@ fn snapshot(world: &World, filter: &str) -> Snapshot {
         .without::<EditorOnly>();
     let mut all: Vec<(Entity, Option<Entity>)> = Vec::new();
     for (entity, name, parent, camera, light, mesh) in objs {
-        let (icon, class) = match (camera, light, mesh) {
-            (Some(_), _, _) => ("◉", "icon-camera"),
-            (_, Some(_), _) => ("✦", "icon-light"),
-            (_, _, Some(_)) => ("◆", "icon-mesh"),
-            _ => ("○", ""),
-        };
+        let icon = icon(camera.is_some(), light.is_some(), mesh.is_some());
         if !filter.is_empty() && !name.0.to_lowercase().contains(filter) {
             continue;
         }
-        snapshot.rows.insert(entity.to_bits(), (name.0.clone(), icon, class));
+        snapshot.rows.insert(entity.to_bits(), (name.0.clone(), icon));
         all.push((entity, parent.map(|p| p.0)));
     }
     all.sort_by_key(|(entity, _)| entity.index());

@@ -1,112 +1,208 @@
-/* Voxear's default look for controls, as in the editor concept: near-black
-   surfaces, one periwinkle accent and compact rows. Every Ui starts with
-   it on its root. A sheet of your own overrides any of it, and changing the
-   variables is the quickest way to retheme. */
+/* Voxear's default look, Graphite + Abyss: near-black surfaces, thin
+   borders, one indigo accent, compact 28px rows, and shadows only on what
+   floats. Every Ui starts with it on its root. A sheet of your own overrides
+   any of it, and changing the variables is the quickest way to retheme. */
 
 :root {
-    --vx-surface: #1a1b20;
-    --vx-surface-hover: #22232a;
-    --vx-field: #0e0f12;
-    --vx-edge: #2a2b30;
-    --vx-edge-hover: #3a3b42;
-    --vx-text: #e8e8ec;
-    --vx-muted: #8b8c96;
-    --vx-accent: #8b93ff;
-    --vx-on-accent: #0e0f12;
-    --vx-selected: #2b2f55;
-    --vx-panel: #111216;
+    --vx-bg: #08090a;
+    --vx-panel: #0f1011;
+    --vx-overlay: rgba(15, 16, 17, 0.82);
+    --vx-line: #1f2023;
+    --vx-line-2: #2e3035;
+    --vx-field: #141518;
+    --vx-field-line: #24262a;
+    --vx-hover: #17181b;
+    --vx-selected: #1c1e24;
+    --vx-seg-on: #24262c;
+    --vx-text: #f7f8f8;
+    --vx-text-2: #d0d6e0;
+    --vx-muted: #8a8f98;
+    --vx-accent: #5e6ad2;
+    --vx-accent-soft: rgba(94, 106, 210, 0.16);
+    --vx-on-accent: #ffffff;
+    --vx-success: #4cb782;
+    --vx-x: #eb5757;
+    --vx-y: #4cb782;
+    --vx-z: #5e8bf0;
     --vx-fade: 120ms ease-out;
+
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--vx-text-2);
 }
 
 Button {
-    padding: 5px 12px;
-    border-radius: 6px;
-    background-color: var(--vx-surface);
-    border: 1px solid var(--vx-edge);
+    height: 28px;
+    padding: 0px 12px;
+    gap: 6px;
+    justify-content: center;
+    border-radius: 7px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
     color: var(--vx-text);
+    font-weight: 500;
     text-align: center;
     transition: background-color var(--vx-fade), border-color var(--vx-fade), color var(--vx-fade);
 }
 
 Button:hover {
-    background-color: var(--vx-surface-hover);
-    border-color: var(--vx-edge-hover);
+    background-color: var(--vx-hover);
+    border-color: var(--vx-line-2);
 }
 
 Button:active {
-    background-color: var(--vx-edge);
+    background-color: var(--vx-selected);
 }
 
 Button:focus {
     border-color: var(--vx-accent);
 }
 
-Button:disabled, TextField:disabled, Toggle:disabled, Slider:disabled {
+/* The one call to action on a surface. */
+.primary {
+    border-radius: 10px;
+    background-color: var(--vx-accent);
+    border-color: var(--vx-accent);
+    color: var(--vx-on-accent);
+    font-weight: 600;
+}
+
+.primary:hover {
+    background-color: #6c77da;
+    border-color: #6c77da;
+}
+
+/* A square button holding one icon, quiet until the pointer finds it. */
+.icon-button {
+    width: 28px;
+    height: 28px;
+    padding: 0px;
+    border-radius: 7px;
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--vx-muted);
+}
+
+.icon-button:hover {
+    background-color: var(--vx-hover);
+    border-color: transparent;
+    color: var(--vx-text);
+}
+
+.icon-button:checked {
+    background-color: var(--vx-accent-soft);
+    color: var(--vx-accent);
+}
+
+Button:disabled, TextField:disabled, Toggle:disabled, Slider:disabled, Dropdown:disabled {
     opacity: 0.45;
 }
 
 TextField {
-    padding: 4px 8px;
-    min-height: 26px;
-    border-radius: 6px;
+    padding: 0px 8px;
+    height: 26px;
+    justify-content: center;
+    border-radius: 7px;
     background-color: var(--vx-field);
-    border: 1px solid var(--vx-edge);
+    border: 1px solid var(--vx-field-line);
     color: var(--vx-text);
+    selection-color: rgba(94, 106, 210, 0.4);
     transition: border-color var(--vx-fade);
 }
 
 TextField:hover {
-    border-color: var(--vx-edge-hover);
+    border-color: var(--vx-line-2);
 }
 
 TextField:focus {
     border-color: var(--vx-accent);
 }
 
+/* Toggles are switches: a 28 by 16 pill with a white knob that slides over
+   when on. The `checkbox` class makes one a ticked box instead. */
+
 Toggle {
     gap: 8px;
 }
 
 .toggle-box {
-    width: 14px;
-    height: 14px;
-    border-radius: 4px;
-    border: 1px solid var(--vx-edge-hover);
-    background-color: var(--vx-field);
-    align-items: center;
+    width: 28px;
+    height: 16px;
+    padding: 2px;
+    justify-content: flex-start;
+    border-radius: 8px;
+    background-color: var(--vx-line-2);
+    transition: background-color var(--vx-fade);
 }
 
 .toggle-mark {
-    width: 6px;
-    height: 6px;
-    border-radius: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    background-color: #ffffff;
+}
+
+.toggle-check {
+    display: none;
 }
 
 Toggle:hover .toggle-box {
-    border-color: var(--vx-muted);
+    background-color: #3a3c42;
 }
 
 Toggle:checked .toggle-box {
+    justify-content: flex-end;
+    background-color: var(--vx-accent);
+}
+
+Toggle:focus .toggle-box {
+    border: 1px solid var(--vx-accent);
+    padding: 1px;
+}
+
+.checkbox .toggle-box {
+    width: 16px;
+    height: 16px;
+    padding: 0px;
+    justify-content: center;
+    border-radius: 4px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-line-2);
+}
+
+.checkbox .toggle-mark {
+    display: none;
+}
+
+.checkbox .toggle-check {
+    display: flex;
+    width: 12px;
+    height: 12px;
+    color: transparent;
+}
+
+.checkbox:hover .toggle-box {
+    background-color: var(--vx-hover);
+}
+
+.checkbox:checked .toggle-box {
     background-color: var(--vx-accent);
     border-color: var(--vx-accent);
 }
 
-Toggle:checked .toggle-mark {
-    background-color: var(--vx-on-accent);
-}
-
-Toggle:focus .toggle-box {
-    border-color: var(--vx-accent);
+.checkbox:checked .toggle-check {
+    color: var(--vx-on-accent);
 }
 
 Slider {
-    height: 18px;
+    height: 24px;
+    gap: 10px;
 }
 
 .slider-track {
     height: 4px;
     border-radius: 2px;
-    background-color: var(--vx-edge);
+    background-color: var(--vx-line-2);
 }
 
 .slider-fill {
@@ -120,20 +216,23 @@ Slider {
     top: -4px;
     margin-left: -6px;
     border-radius: 6px;
-    background-color: var(--vx-text);
-}
-
-Slider:hover .slider-thumb, Slider:focus .slider-thumb {
     background-color: #ffffff;
 }
 
+.slider-value {
+    min-width: 32px;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text-2);
+    text-align: right;
+}
+
 .foldout-header {
+    height: 28px;
     gap: 6px;
-    padding: 3px 0px;
 }
 
 .foldout-arrow {
-    width: 10px;
     color: var(--vx-muted);
 }
 
@@ -147,31 +246,59 @@ Foldout:focus .foldout-title {
 }
 
 .foldout-content {
-    padding-left: 16px;
+    padding-left: 20px;
     gap: 4px;
 }
 
+/* Rows: 28px, inset 6px from the list's sides, with a 2px accent bar down
+   the left of a selected one. */
+
 .list-row {
+    margin: 0px 6px;
     padding: 0px 8px;
-    border-radius: 6px;
+    gap: 6px;
+    border-radius: 7px;
+    color: var(--vx-text-2);
     transition: background-color var(--vx-fade);
 }
 
 .list-row:hover {
-    background-color: var(--vx-surface);
+    background-color: var(--vx-hover);
 }
 
 .list-row:selected {
     background-color: var(--vx-selected);
-    color: #ffffff;
+    color: var(--vx-text);
+}
+
+.row-bar {
+    display: none;
+    left: 0px;
+    top: 6px;
+    bottom: 6px;
+    width: 2px;
+    border-radius: 1px;
+    background-color: var(--vx-accent);
+}
+
+.list-row:selected > .row-bar {
+    display: flex;
+}
+
+.tree-row {
+    padding-left: 4px;
 }
 
 .tree-arrow {
     color: var(--vx-muted);
 }
 
+.tree-content {
+    gap: 6px;
+}
+
 .split-divider {
-    background-color: var(--vx-edge);
+    background-color: var(--vx-line);
     transition: background-color var(--vx-fade);
 }
 
@@ -189,39 +316,42 @@ Foldout:focus .foldout-title {
 
 .tab-bar {
     gap: 2px;
-    padding: 0px 0px 6px 0px;
+    align-items: center;
 }
 
 .tab {
-    padding: 4px 10px;
+    height: 28px;
+    padding: 0px 10px;
+    border-radius: 7px;
     border: 0px transparent;
     background-color: transparent;
     color: var(--vx-muted);
+    font-weight: 500;
 }
 
 .tab:hover {
-    background-color: var(--vx-surface);
-    color: var(--vx-text);
+    background-color: var(--vx-hover);
+    color: var(--vx-text-2);
 }
 
 .tab:checked {
-    background-color: var(--vx-surface-hover);
+    background-color: var(--vx-selected);
     color: var(--vx-text);
 }
 
 Dropdown {
-    padding: 4px 8px;
-    min-height: 26px;
+    height: 26px;
+    padding: 0px 8px;
     gap: 6px;
-    border-radius: 6px;
-    background-color: var(--vx-surface);
-    border: 1px solid var(--vx-edge);
+    border-radius: 7px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
     color: var(--vx-text);
     transition: background-color var(--vx-fade), border-color var(--vx-fade);
 }
 
 Dropdown:hover {
-    border-color: var(--vx-edge-hover);
+    border-color: var(--vx-line-2);
 }
 
 Dropdown:focus {
@@ -229,6 +359,8 @@ Dropdown:focus {
 }
 
 .dropdown-arrow {
+    width: 12px;
+    height: 12px;
     color: var(--vx-muted);
 }
 
@@ -236,54 +368,113 @@ Dropdown:focus {
     padding: 4px;
     max-height: 240px;
     overflow: auto;
-    border-radius: 8px;
-    background-color: var(--vx-surface);
-    border: 1px solid var(--vx-edge-hover);
-    color: var(--vx-text);
+    border-radius: 10px;
+    background-color: var(--vx-panel);
+    border: 1px solid var(--vx-line-2);
+    box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.4);
+    color: var(--vx-text-2);
 }
 
 .dropdown-option {
-    padding: 4px 8px;
-    border-radius: 5px;
+    height: 28px;
+    padding: 0px 8px;
+    justify-content: center;
+    border-radius: 7px;
     transition: background-color var(--vx-fade);
 }
 
 .dropdown-option:hover {
-    background-color: var(--vx-surface-hover);
+    background-color: var(--vx-hover);
+    color: var(--vx-text);
 }
 
 .dropdown-option:checked {
     color: var(--vx-accent);
 }
 
-/* Docking: near-black rounded areas with gaps between them, as in the editor
-   concept. The gaps are the dividers, which light up when the pointer finds them. */
+/* Segmented controls sit in an inset well; the segment that is on is
+   raised a little. */
+
+Segmented {
+    height: 28px;
+    padding: 2px;
+    gap: 2px;
+    border-radius: 7px;
+    background-color: var(--vx-bg);
+    border: 1px solid var(--vx-line);
+}
+
+.segment {
+    height: 22px;
+    padding: 0px 8px;
+    border-radius: 5px;
+    border: 0px transparent;
+    background-color: transparent;
+    color: var(--vx-muted);
+}
+
+.segment:hover {
+    background-color: var(--vx-hover);
+    color: var(--vx-text-2);
+}
+
+.segment:checked {
+    background-color: var(--vx-seg-on);
+    box-shadow: 0px 1px 2px rgba(0, 0, 0, 0.4);
+    color: var(--vx-text);
+}
+
+/* Docking: panels are rounded near-black cards with gaps between them. The
+   gaps are the dividers, which light up when the pointer finds them. */
+
+DockSpace {
+    padding: 0px;
+}
 
 .dock-area {
-    padding: 6px;
     overflow: hidden;
-    border-radius: 10px;
+    border-radius: 12px;
     background-color: var(--vx-panel);
+    border: 1px solid var(--vx-line);
+}
+
+/* The header: 40px of tabs with a line under it, drawn as a hard shadow
+   so it needs no border of its own. */
+.dock-area > .tab-bar {
+    height: 40px;
+    padding: 0px 6px;
+    box-shadow: 0px 1px 0px var(--vx-line);
 }
 
 DockSpace .split-divider {
     background-color: transparent;
 }
 
+DockSpace .split-row > .split-divider {
+    width: 10px;
+}
+
+DockSpace .split-column > .split-divider {
+    height: 10px;
+}
+
 DockSpace .split-divider:hover, DockSpace .split-divider:active {
-    background-color: var(--vx-accent);
+    background-color: var(--vx-accent-soft);
 }
 
 .dock-ghost {
-    padding: 4px 10px;
-    border-radius: 6px;
-    background-color: var(--vx-surface-hover);
+    height: 28px;
+    padding: 0px 10px;
+    justify-content: center;
+    border-radius: 7px;
+    background-color: var(--vx-selected);
     border: 1px solid var(--vx-accent);
+    box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.4);
     color: var(--vx-text);
 }
 
 .dock-preview {
-    border-radius: 10px;
-    background-color: #8b93ff26;
+    border-radius: 12px;
+    background-color: var(--vx-accent-soft);
     border: 1px solid var(--vx-accent);
 }

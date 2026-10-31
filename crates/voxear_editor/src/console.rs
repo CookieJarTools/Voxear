@@ -9,7 +9,7 @@ use voxear_core::logging::LogCapture;
 use voxear_ui::{ItemFns, NodeId, Ui};
 
 /// A line's height, as `item-height` gives it in Editor.vui.
-const ROW: f32 = 20.0;
+const ROW: f32 = 22.0;
 
 pub struct Console {
     list: NodeId,
@@ -24,7 +24,8 @@ impl Console {
         let shown = lines.clone();
         let items = ItemFns {
             make: |ui: &mut Ui, row: NodeId| {
-                ui.add_label(row, "");
+                let line = ui.add_label(row, "");
+                ui.add_class(line, "log-line");
             },
             bind: move |ui: &mut Ui, row: NodeId, index: usize| {
                 let lines = shown.borrow();

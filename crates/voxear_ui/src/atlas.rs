@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use swash::{
     FontRef,
     scale::{Render, ScaleContext, Source},
-    zeno::Format,
+    zeno::{Cap, Fill, Format, Join, Mask, Stroke, Transform},
 };
 
 use std::sync::Arc;
@@ -31,10 +31,13 @@ pub(crate) struct AtlasGlyph {
 
 /// A font, a glyph in it, and the size in 1/64 pixels.
 type Key = (u64, u32, u16, u32);
+/// An icon's name, its size in pixels, and its stroke in 1/64 pixels.
+type IconKey = (&'static str, u32, u32);
 
 pub(crate) struct GlyphAtlas {
     pixels: Vec<u8>,
     glyphs: HashMap<Key, Option<AtlasGlyph>>,
+    icons: HashMap<IconKey, Option<AtlasGlyph>>,
     shelves: Vec<(u32, u32, u32)>,
     scaler: ScaleContext,
     dirty: bool,
@@ -49,6 +52,7 @@ impl GlyphAtlas {
         Self {
             pixels: vec![0; (SIZE * SIZE) as usize],
             glyphs: HashMap::new(),
+            icons: HashMap::new(),
             shelves: Vec::new(),
             scaler: ScaleContext::new(),
             dirty: true,
@@ -70,21 +74,61 @@ impl GlyphAtlas {
         }
         let rasterised = self.rasterise(font, glyph, size, coords);
         let packed = rasterised.and_then(|(left, top, width, height, coverage)| {
-            let (x, y) = self.place(width, height).or_else(|| {
-                // Full: start again, keeping only what is drawn from now on.
-                self.clear();
-                self.place(width, height)
-            })?;
-            for row in 0..height {
-                let from = (row * width) as usize;
-                let to = ((y + row) * SIZE + x) as usize;
-                self.pixels[to..to + width as usize].copy_from_slice(&coverage[from..from + width as usize]);
-            }
-            self.dirty = true;
+            let (x, y) = self.pack(width, height, &coverage)?;
             Some(AtlasGlyph { left, top, width, height, x, y })
         });
         self.glyphs.insert(key, packed);
         packed
+    }
+
+    /// The icon `name` drawn `px` pixels square, its lines `stroke` pixels
+    /// wide, rasterised and packed on first use. `None` for no such icon.
+    pub fn icon(&mut self, name: &str, px: u32, stroke: f32) -> Option<AtlasGlyph> {
+        let (name, parts) = crate::icons::parts(name)?;
+        let key = (name, px, (stroke * 64.0) as u32);
+        if let Some(found) = self.icons.get(&key) {
+            return *found;
+        }
+        let scale = px as f32 / crate::icons::GRID;
+        let mut coverage = vec![0u8; (px * px) as usize];
+        for &(path, filled) in parts {
+            let mut mask = Mask::new(path);
+            if filled {
+                mask.style(Fill::NonZero);
+            } else {
+                let mut line = Stroke::new(stroke);
+                line.cap(Cap::Round).join(Join::Round).scale(false);
+                mask.style(line);
+            }
+            let (part, _) = mask.transform(Some(Transform::scale(scale, scale))).size(px, px).render();
+            coverage.iter_mut().zip(part).for_each(|(into, from)| *into = (*into).max(from));
+        }
+        let packed = (px > 0).then(|| self.pack(px, px, &coverage)).flatten().map(|(x, y)| AtlasGlyph {
+            left: 0,
+            top: 0,
+            width: px,
+            height: px,
+            x,
+            y,
+        });
+        self.icons.insert(key, packed);
+        packed
+    }
+
+    /// Copies coverage into a free place, starting the atlas again when it
+    /// is full, keeping only what is drawn from then on.
+    fn pack(&mut self, width: u32, height: u32, coverage: &[u8]) -> Option<(u32, u32)> {
+        let (x, y) = self.place(width, height).or_else(|| {
+            self.clear();
+            self.place(width, height)
+        })?;
+        for row in 0..height {
+            let from = (row * width) as usize;
+            let to = ((y + row) * SIZE + x) as usize;
+            self.pixels[to..to + width as usize].copy_from_slice(&coverage[from..from + width as usize]);
+        }
+        self.dirty = true;
+        Some((x, y))
     }
 
     fn rasterise(
@@ -120,6 +164,7 @@ impl GlyphAtlas {
     fn clear(&mut self) {
         self.pixels.fill(0);
         self.glyphs.clear();
+        self.icons.clear();
         self.shelves.clear();
         self.dirty = true;
         self.restarted = true;
@@ -128,7 +173,7 @@ impl GlyphAtlas {
     /// The atlas as it is now: the same shared image until glyphs are added,
     /// then a copy with the next version. `None` until a glyph is drawn.
     pub fn snapshot(&mut self) -> Option<Arc<AtlasImage>> {
-        if std::mem::take(&mut self.dirty) && !self.glyphs.is_empty() {
+        if std::mem::take(&mut self.dirty) && !(self.glyphs.is_empty() && self.icons.is_empty()) {
             let version = self.snapshot.as_ref().map_or(1, |s| s.version + 1);
             let image = AtlasImage { width: SIZE, height: SIZE, pixels: self.pixels.clone(), version };
             self.snapshot = Some(Arc::new(image));

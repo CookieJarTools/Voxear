@@ -42,6 +42,8 @@ pub struct PostInput {
     /// Where in the output the view goes, when not all of it. Anything
     /// outside it is cleared.
     pub output_rect: Option<vk::Rect2D>,
+    /// What lies outside `output_rect` is cleared to, linear.
+    pub clear: [f32; 4],
     /// Auto exposure's adapted EV, which persists between frames.
     pub exposure: BufferId,
     /// Which of the two TAA history images this frame writes; the other
@@ -147,8 +149,10 @@ pub fn record(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless, input
     let composite = if finish { pipelines.composite_ldr } else { pipelines.composite };
     let rect = input.output_rect;
     if rect.is_some() {
-        let output = input.output;
-        fg.add_pass("Clear output", &[(output, ImageAccess::ColorAttachment)], &[], move |ctx| clear(ctx, output));
+        let (output, color) = (input.output, input.clear);
+        fg.add_pass("Clear output", &[(output, ImageAccess::ColorAttachment)], &[], move |ctx| {
+            clear(ctx, output, color)
+        });
     }
     let composite_rect = if composited == input.output { rect } else { None };
     let origin = |rect: Option<vk::Rect2D>| rect.map_or([0, 0], |r| [r.offset.x as u32, r.offset.y as u32]);
@@ -191,13 +195,13 @@ fn draw_into(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: Ima
     fullscreen(ctx, pipeline, push);
 }
 
-/// Clears all of `target` to black, before a view drawn into part of it.
-fn clear(ctx: &PassContext, target: ImageId) {
+/// Clears all of `target` to `color`, before a view drawn into part of it.
+fn clear(ctx: &PassContext, target: ImageId, color: [f32; 4]) {
     let color = [vk::RenderingAttachmentInfo::default()
         .image_view(ctx.view(target))
         .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
         .load_op(vk::AttachmentLoadOp::CLEAR)
-        .clear_value(vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } })
+        .clear_value(vk::ClearValue { color: vk::ClearColorValue { float32: color } })
         .store_op(vk::AttachmentStoreOp::STORE)];
     begin_rendering(ctx, ctx.extent(target), &color, None);
     unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };

@@ -4,12 +4,27 @@ use parley::{Alignment, AlignmentOptions, FontContext, Layout, LayoutContext, Po
 use taffy::{AvailableSpace, Display, LayoutInput, LayoutOutput, Size, TaffyTree};
 
 use crate::{
-    Animated, Overflow, Quad, Style, TextAlign, animation,
+    Animated, Color, Overflow, Quad, Style, TextAlign, animation,
     atlas::GlyphAtlas,
     controls::Control,
     scroll::{BAR, BAR_INSET, thumb},
-    tree::Element,
+    tree::{Element, Kind},
 };
+
+/// Something drawn on an element with [`Ui::set_shapes`](crate::Ui::set_shapes),
+/// in logical pixels from the top left of its content box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Shape {
+    /// A straight line with round ends.
+    Line { from: [f32; 2], to: [f32; 2], width: f32, color: Color },
+    /// A filled circle, maybe with a border inside its edge.
+    Circle { center: [f32; 2], radius: f32, fill: Color, border: Option<(f32, Color)> },
+}
+
+/// How big an icon is when nothing sizes it.
+const ICON: f32 = 14.0;
+/// How wide an icon's lines are, whatever its size.
+const ICON_STROKE: f32 = 1.5;
 
 /// How big a leaf is: its text, broken to fit, or nothing.
 pub(crate) fn measure(
@@ -24,6 +39,14 @@ pub(crate) fn measure(
         return taffy::compute_leaf_layout(input, style, |_, _| 0.0, |_, _| Size::ZERO);
     };
     let text_style = element.text_style;
+    if element.kind == Kind::Icon {
+        return taffy::compute_leaf_layout(
+            input,
+            style,
+            |_, _| 0.0,
+            |known, _| Size { width: known.width.unwrap_or(ICON), height: known.height.unwrap_or(ICON) },
+        );
+    }
     if let Some(Control::TextField(edit)) = &mut element.control {
         return taffy::compute_leaf_layout(
             input,
@@ -100,6 +123,7 @@ impl Draw<'_> {
         let inset = (layout.border.left + layout.padding.left, layout.border.top + layout.padding.top);
         let origin = self.snap(at.0 + inset.0, at.1 + inset.1);
         let inner = layout.size.width - inset.0 - layout.border.right - layout.padding.right;
+        let inner_height = layout.size.height - inset.1 - layout.border.bottom - layout.padding.bottom;
         let outside = x1 <= clip[0] || y1 <= clip[1] || x0 >= clip[2] || y0 >= clip[3];
         let Some(element) = self.tree.get_node_context_mut(node) else { return };
         let mut look = Look::of(&element.computed);
@@ -116,9 +140,18 @@ impl Draw<'_> {
         let (overflow, scroll, scroll_max, bar) =
             (element.computed.overflow, element.scroll, element.scroll_max, element.computed.scrollbar);
         if !outside {
-            shape_quad(&look, [x0, y0, x1 - x0, y1 - y0], self.scale, opacity, clip, self.quads);
+            let rect = [x0, y0, x1 - x0, y1 - y0];
+            if let Some(shadow) = &element.computed.shadow {
+                shadow_quad(shadow, &look, rect, self.scale, opacity, clip, self.quads);
+            }
+            shape_quad(&look, rect, self.scale, opacity, clip, self.quads);
+            let content = [origin[0], origin[1], inner * self.scale, inner_height * self.scale];
+            shape_quads(&element.shapes, content, self.scale, opacity, clip, self.quads);
+            if let Some(icon) = element.icon {
+                let color = text_color.map(|c| c * opacity);
+                icon_quad(icon, content, self.scale, color, clip, (self.atlas, self.quads));
+            }
             if let Some(Control::TextField(_)) = &element.control {
-                let inner_height = layout.size.height - inset.1 - layout.border.bottom - layout.padding.bottom;
                 let content =
                     [origin[0], origin[1], origin[0] + inner * self.scale, origin[1] + inner_height * self.scale];
                 let clip = [
@@ -144,6 +177,10 @@ impl Draw<'_> {
                     TextAlign::End => Alignment::End,
                 };
                 shaped.align(alignment, AlignmentOptions::default());
+                // Centred down a box taller than the text, such as a button
+                // with a set height, as Unity's middle alignment does.
+                let spare = (inner_height * self.scale - shaped.height()).max(0.0);
+                let origin = [origin[0], origin[1] + (spare / 2.0).round()];
                 glyph_quads(shaped, origin, color, clip, self.atlas, self.quads);
             }
         }
@@ -192,6 +229,7 @@ struct Look {
     background: [f32; 4],
     border: f32,
     border_color: [f32; 4],
+    dashed: bool,
     radius: f32,
 }
 
@@ -202,9 +240,112 @@ impl Look {
             background: style.background.map_or([0.0; 4], |c| c.linear_premultiplied()),
             border,
             border_color,
+            dashed: style.dashed,
             radius: style.radius,
         }
     }
+}
+
+/// A box's shadow: its rounded box moved, grown and blurred, outside it.
+fn shadow_quad(
+    shadow: &crate::Shadow,
+    look: &Look,
+    rect: [f32; 4],
+    scale: f32,
+    opacity: f32,
+    clip: [f32; 4],
+    quads: &mut Vec<Quad>,
+) {
+    let color = shadow.color.linear_premultiplied().map(|c| c * opacity);
+    if color[3] <= 0.0 {
+        return;
+    }
+    let spread = shadow.spread * scale;
+    let caster = [
+        rect[0] + shadow.x * scale - spread,
+        rect[1] + shadow.y * scale - spread,
+        rect[2] + spread * 2.0,
+        rect[3] + spread * 2.0,
+    ];
+    let sigma = shadow.blur * scale / 2.0;
+    // Three deviations out, a Gaussian has nothing left to show.
+    let reach = (sigma * 3.0).ceil();
+    quads.push(Quad {
+        rect: [caster[0] - reach, caster[1] - reach, caster[2] + reach * 2.0, caster[3] + reach * 2.0],
+        uv: caster,
+        color,
+        border_color: rect,
+        clip,
+        radius: (look.radius * scale + spread).max(0.0),
+        border: sigma,
+        kind: Quad::SHADOW,
+        ..Quad::default()
+    });
+}
+
+/// Lines and circles in a content box (physical pixels: left, top, width
+/// and height), their coordinates scaled from logical ones.
+fn shape_quads(shapes: &[Shape], content: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
+    let at = |p: [f32; 2]| [content[0] + p[0] * scale, content[1] + p[1] * scale];
+    for shape in shapes {
+        match *shape {
+            Shape::Line { from, to, width, color } => {
+                let (a, b, width) = (at(from), at(to), width * scale);
+                let pad = width / 2.0 + 1.0;
+                let (left, top) = (a[0].min(b[0]) - pad, a[1].min(b[1]) - pad);
+                let (right, bottom) = (a[0].max(b[0]) + pad, a[1].max(b[1]) + pad);
+                quads.push(Quad {
+                    rect: [left, top, right - left, bottom - top],
+                    uv: [a[0], a[1], b[0], b[1]],
+                    color: color.linear_premultiplied().map(|c| c * opacity),
+                    clip,
+                    border: width,
+                    kind: Quad::LINE,
+                    ..Quad::default()
+                });
+            }
+            Shape::Circle { center, radius, fill, border } => {
+                let (c, r) = (at(center), radius * scale);
+                let look = Look {
+                    background: fill.linear_premultiplied(),
+                    border: border.map_or(0.0, |(w, _)| w),
+                    border_color: border.map_or([0.0; 4], |(_, c)| c.linear_premultiplied()),
+                    dashed: false,
+                    radius,
+                };
+                shape_quad(&look, [c[0] - r, c[1] - r, r * 2.0, r * 2.0], scale, opacity, clip, quads);
+            }
+        }
+    }
+}
+
+/// An icon centred in a content box, as big as fits, on whole pixels.
+fn icon_quad(
+    name: &str,
+    content: [f32; 4],
+    scale: f32,
+    color: [f32; 4],
+    clip: [f32; 4],
+    draw: (&mut GlyphAtlas, &mut Vec<Quad>),
+) {
+    let (atlas, quads) = draw;
+    let px = content[2].min(content[3]).round();
+    if color[3] <= 0.0 || px < 1.0 {
+        return;
+    }
+    let Some(found) = atlas.icon(name, px as u32, ICON_STROKE * scale) else { return };
+    let size = atlas.size() as f32;
+    let left = (content[0] + (content[2] - px) / 2.0).round();
+    let top = (content[1] + (content[3] - px) / 2.0).round();
+    let (x, y) = (found.x as f32, found.y as f32);
+    quads.push(Quad {
+        rect: [left, top, px, px],
+        uv: [x / size, y / size, (x + px) / size, (y + px) / size],
+        color,
+        clip,
+        kind: Quad::GLYPH,
+        ..Quad::default()
+    });
 }
 
 fn shape_quad(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
@@ -221,6 +362,7 @@ fn shape_quad(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32;
         radius: look.radius * scale,
         border,
         kind: Quad::SHAPE,
+        flags: if look.dashed { Quad::DASHED } else { 0 },
         ..Quad::default()
     });
 }

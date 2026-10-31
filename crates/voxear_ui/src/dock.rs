@@ -11,8 +11,10 @@
 //! ```
 //!
 //! `row` and `column` split side by side or one above the other, with the
-//! first part's size in logical pixels; `[...]` is an area's panels, by id,
-//! with `*` on the one showing when it is not the first.
+//! first part's size in logical pixels, or the second's as a negative
+//! number, or the first's share of the whole as a percentage (`57%`), which
+//! it keeps as the window resizes; `[...]` is an area's panels, by id, with
+//! `*` on the one showing when it is not the first.
 
 use crate::{
     NodeId, Style, Ui, UiError,
@@ -30,6 +32,8 @@ pub(crate) enum DockNode {
     Split {
         row: bool,
         size: f32,
+        /// `size` is the first part's share, from 0 to 1, not pixels.
+        fraction: bool,
         first: Box<DockNode>,
         second: Box<DockNode>,
         /// The split view built for it, to read its size back from.
@@ -146,7 +150,8 @@ impl DockNode {
                     _ => (old, new),
                 };
                 let row = matches!(zone, Zone::Left | Zone::Right);
-                *self = DockNode::Split { row, size, first: Box::new(first), second: Box::new(second), element: None };
+                let (first, second) = (Box::new(first), Box::new(second));
+                *self = DockNode::Split { row, size, fraction: false, first, second, element: None };
                 true
             }
             DockNode::Split { first, second, .. } => {
@@ -181,9 +186,13 @@ impl DockNode {
     /// The text form; see the module documentation.
     fn write(&self, out: &mut String) {
         match self {
-            DockNode::Split { row, size, first, second, .. } => {
+            DockNode::Split { row, size, fraction, first, second, .. } => {
                 out.push_str(if *row { "row(" } else { "column(" });
-                out.push_str(&format!("{}, ", size.round()));
+                if *fraction {
+                    out.push_str(&format!("{}%, ", (size * 100.0).round()));
+                } else {
+                    out.push_str(&format!("{}, ", size.round()));
+                }
                 first.write(out);
                 out.push_str(", ");
                 second.write(out);
@@ -284,12 +293,17 @@ impl Reader<'_> {
         };
         self.expect(b'(')?;
         let size = self.word().parse::<f32>().map_err(|_| format!("{kind} needs a size first"))?;
+        let fraction = self.text.get(self.at) == Some(&b'%');
+        if fraction {
+            self.at += 1;
+        }
+        let size = if fraction { (size / 100.0).clamp(0.0, 1.0) } else { size };
         self.expect(b',')?;
-        let first = self.node(next_area)?;
+        let first = Box::new(self.node(next_area)?);
         self.expect(b',')?;
-        let second = self.node(next_area)?;
+        let second = Box::new(self.node(next_area)?);
         self.expect(b')')?;
-        Ok(DockNode::Split { row, size, first: Box::new(first), second: Box::new(second), element: None })
+        Ok(DockNode::Split { row, size, fraction, first, second, element: None })
     }
 }
 
@@ -384,9 +398,11 @@ impl Ui {
 
     fn sync_node(&self, node: &mut DockNode) {
         match node {
-            DockNode::Split { size, first, second, element, .. } => {
+            DockNode::Split { size, fraction, first, second, element, .. } => {
                 if let Some(element) = element {
-                    *size = self.split_size(NodeId(*element));
+                    let split = NodeId(*element);
+                    *size =
+                        if *fraction { self.split_fraction(split).unwrap_or(*size) } else { self.split_size(split) };
                 }
                 self.sync_node(first);
                 self.sync_node(second);
@@ -444,8 +460,12 @@ impl Ui {
 
     fn build_dock(&mut self, parent: NodeId, node: &mut DockNode, state: &mut DockState) -> NodeId {
         let built = match node {
-            DockNode::Split { row, size, first, second, element } => {
-                let split = self.split_view(parent, *row, *size);
+            DockNode::Split { row, size, fraction, first, second, element } => {
+                let split = if *fraction {
+                    self.split_view_fraction(parent, *row, *size)
+                } else {
+                    self.split_view(parent, *row, *size)
+                };
                 *element = Some(split.0);
                 let (a, b) = self.split_panes(split).expect("a split view has panes");
                 self.build_dock(a, first, state);

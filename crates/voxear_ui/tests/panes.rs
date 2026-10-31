@@ -187,3 +187,61 @@ fn dropdowns_open_choose_and_close() {
     assert!(ui.key_down(Key::Escape));
     assert!(!ui.is_dropdown_open(shading));
 }
+
+#[test]
+fn segmented_controls_keep_one_segment_on() {
+    let mut ui = Ui::new();
+    let document = load(
+        &mut ui,
+        r#"<vui><Segmented name="tools" value="1" style="position: absolute; left: 0px; top: 0px">
+            <Segment icon="select" /><Segment icon="move" /><Segment text="Pivot" icon="pivot" />
+        </Segmented></vui>"#,
+    );
+    let tools = ui.find(document, "tools").unwrap();
+    let segments = ui.children(tools);
+    assert_eq!(ui.segment(tools), 1);
+    assert!(ui.is_checked(segments[1]) && !ui.is_checked(segments[0]));
+    click(&mut ui, segments[2]);
+    assert!(ui.changed(tools), "a click on another segment is a change");
+    assert_eq!(ui.segment(tools), 2);
+    assert!(ui.is_checked(segments[2]) && !ui.is_checked(segments[1]), "only one is on");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    click(&mut ui, segments[2]);
+    assert!(!ui.changed(tools), "clicking the one on changes nothing");
+}
+
+#[test]
+fn clicks_in_quick_succession_are_a_double_click() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let button = ui.button(root, "Open");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.advance(0.0);
+    click(&mut ui, button);
+    assert!(ui.clicked(button) && !ui.double_clicked(button));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.advance(0.1);
+    click(&mut ui, button);
+    assert!(ui.double_clicked(button), "a second click soon after");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.advance(0.1);
+    click(&mut ui, button);
+    assert!(!ui.double_clicked(button), "a third starts again");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.advance(1.0);
+    click(&mut ui, button);
+    assert!(!ui.double_clicked(button), "nor is one long after");
+}
+
+#[test]
+fn sliders_show_their_value_to_their_step() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let slider = ui.slider(root, 0.0, 10.0, 2.5);
+    let shown = |ui: &Ui| ui.text(*ui.children(slider).last().unwrap());
+    assert_eq!(shown(&ui), "2.50", "two decimals without a step");
+    ui.set_slider_step(slider, 0.5);
+    assert_eq!(shown(&ui), "2.5", "as many as the step has");
+    ui.set_slider_step(slider, 1.0);
+    assert_eq!(shown(&ui), "3", "and whole numbers for a whole step");
+}

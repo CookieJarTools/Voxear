@@ -182,6 +182,8 @@ pub struct Renderer {
     gpu_decompression: bool,
     /// Where in the output the 3D view goes; all of it when `None`.
     view: Option<[u32; 4]>,
+    /// What the output is cleared to outside the view, linear.
+    clear: [f32; 4],
 }
 
 impl Renderer {
@@ -256,6 +258,7 @@ impl Renderer {
             ui: ui_pass::UiGpu::default(),
             gpu_decompression: true,
             view: None,
+            clear: [0.0, 0.0, 0.0, 1.0],
         })
     }
 
@@ -396,6 +399,12 @@ impl Renderer {
         if rect != self.view {
             self.view = rect;
         }
+    }
+
+    /// The colour around a view drawn into part of the output, as linear
+    /// RGBA: the UI's background, so its gaps match what it paints.
+    pub fn set_clear_color(&mut self, color: [f32; 4]) {
+        self.clear = color;
     }
 
     /// The view rectangle within an output of `full`, at least a pixel each way.
@@ -602,6 +611,7 @@ impl Renderer {
             depth,
             output,
             output_rect: (view.extent != full).then_some(view),
+            clear: self.clear,
             exposure: fg.import_buffer(exposure),
             history: (frame_index % 2) as usize,
         };

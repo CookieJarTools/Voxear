@@ -380,7 +380,7 @@ fn lists_and_trees_draw_clipped_and_selected() {
 /// `VOXEAR_TEST_OUTPUT` to keep the image.
 #[test]
 fn controls_draw_with_the_default_theme() {
-    use voxear_ui::{Key, Modifiers, Ui};
+    use voxear_ui::{Key, Modifiers, Shape, Ui};
 
     let Some(mut renderer) = renderer() else { return };
     let mut world = World::new();
@@ -389,21 +389,49 @@ fn controls_draw_with_the_default_theme() {
     let root = ui.root();
     let markup = r#"
         <vui>
-            <Panel style="position: absolute; left: 16px; top: 16px; width: 280px; padding: 12px; gap: 10px;
-                          background-color: #111216; border-radius: 10px; font-size: 12px; color: #c8c9d0">
+            <Panel style="position: absolute; left: 16px; top: 16px; width: 280px; padding: 12px; gap: 8px;
+                          background-color: #0f1011; border-radius: 12px; border: 1px solid #1f2023">
                 <TextField name="name" placeholder="Name" value="Firefly spawner" />
-                <TextField placeholder="Search assets" />
                 <Toggle name="fly" value="true">Can fly</Toggle>
-                <Toggle>Snap to grid</Toggle>
-                <Slider name="speed" min="0" max="20" value="6" />
-                <Foldout text="Movement">
+                <Toggle name="static" class="checkbox" value="true">Static</Toggle>
+                <Slider name="speed" min="0" max="20" value="6" step="0.5" />
+                <Segmented value="1">
+                    <Segment icon="select" />
+                    <Segment icon="move" />
+                    <Segment icon="rotate" />
+                    <Segment icon="scale" />
+                    <Segment text="Pivot" icon="pivot" />
+                </Segmented>
+                <Foldout text="Movement" open="false">
                     <Label>Speed</Label>
-                    <Label>Lift force</Label>
                 </Foldout>
                 <Button>Bake path</Button>
+                <Button style="border: 1px dashed #2e3035; background-color: transparent; color: #8a8f98">
+                    <Icon icon="plus" />
+                    <Label>Add Component</Label>
+                </Button>
             </Panel>
+            <Panel name="overlay" style="position: absolute; left: 340px; top: 40px; width: 200px; height: 120px;
+                          border-radius: 12px; background-color: rgba(15, 16, 17, 0.82);
+                          border: 1px solid #2e3035; box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.4)" />
+            <Panel name="canvas" style="position: absolute; left: 340px; top: 200px; width: 120px; height: 120px" />
         </vui>"#;
     let document = ui.load_markup(root, "Form.vui", markup, &mut |_| Err("no files".into())).unwrap();
+    let canvas = ui.find(document, "canvas").unwrap();
+    let red = voxear_ui::Color::hex(0xeb5757);
+    ui.set_shapes(
+        canvas,
+        vec![
+            Shape::Line { from: [60.0, 60.0], to: [100.0, 60.0], width: 2.0, color: red },
+            Shape::Circle { center: [100.0, 60.0], radius: 9.0, fill: red, border: None },
+            Shape::Circle {
+                center: [60.0, 60.0],
+                radius: 40.0,
+                fill: voxear_ui::Color::TRANSPARENT,
+                border: Some((1.0, voxear_ui::Color::hex(0x2e3035))),
+            },
+        ],
+    );
     let (width, height) = (640, 360);
     ui.frame(width, height, 1.0);
     let name = ui.find(document, "name").unwrap();
@@ -426,13 +454,25 @@ fn controls_draw_with_the_default_theme() {
         let i = ((y as u32 * width + x as u32) * 4) as usize;
         [pixels[i], pixels[i + 1], pixels[i + 2]]
     };
+    let accent = [0x5e, 0x6a, 0xd2];
     let fly = ui.find(document, "fly").unwrap();
-    let check_box = ui.children(fly)[0];
-    let [x, y, w, _] = ui.rect(check_box);
-    assert_eq!(at(x + 2.0, y + 2.0), [0x8b, 0x93, 0xff], "a ticked toggle fills with the accent");
+    let pill = ui.children(fly)[0];
+    let [x, y, w, h] = ui.rect(pill);
+    assert_eq!((w, h), (28.0, 16.0), "a toggle is a 28 by 16 pill");
+    assert_eq!(at(x + 5.0, y + 8.0), accent, "an on switch fills with the accent");
+    assert_eq!(at(x + 20.0, y + 8.0), [0xff, 0xff, 0xff], "with its knob over on the right");
+    let check_box = ui.children(ui.find(document, "static").unwrap())[0];
+    let [x, y, ..] = ui.rect(check_box);
+    assert_eq!(at(x + 2.0, y + 8.0), accent, "a ticked checkbox fills with the accent");
     let [x, y, _, h] = ui.rect(name);
-    assert_eq!(at(x, y + h / 2.0)[2], 0xff, "the focused field's border is the accent");
-    assert!(w > 0.0 && ui.take_warnings().is_empty());
+    assert_eq!(at(x, y + h / 2.0), accent, "the focused field's border is the accent");
+    let [x, y, w, h] = ui.rect(ui.find(document, "overlay").unwrap());
+    let (below, beside) = (at(x + w / 2.0, y + h + 10.0), at(x + w + 90.0, y + h + 10.0));
+    assert!(below[0] + 8 < beside[0], "the overlay's shadow darkens what is under it: {below:?} {beside:?}");
+    let [x, y, ..] = ui.rect(canvas);
+    assert_eq!(at(x + 100.0, y + 60.0), [0xeb, 0x57, 0x57], "a circle drawn on a canvas");
+    assert_eq!(at(x + 80.0, y + 60.0), [0xeb, 0x57, 0x57], "and the line to it");
+    assert!(ui.take_warnings().is_empty());
 }
 
 /// A split view, tabs, a grid-laid inspector and an open dropdown, as the
@@ -489,7 +529,7 @@ fn panes_draw_an_editor_like_layout() {
     let divider = ui.children(split)[1];
     let [x, y, _, h] = ui.rect(divider);
     let i = (((y + h / 2.0) as u32 * width + x as u32 + 1) * 4) as usize;
-    assert_eq!(pixels[i..i + 3], [0x2a, 0x2b, 0x30], "the divider between the panes");
+    assert_eq!(pixels[i..i + 3], [0x1f, 0x20, 0x23], "the divider between the panes");
     assert!(ui.take_warnings().is_empty());
 }
 

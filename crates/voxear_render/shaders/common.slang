@@ -241,7 +241,7 @@ struct UiQuad
     float radius;
     float border;
     uint kind;
-    uint pad;
+    uint flags;
 };
 
 struct Buffers

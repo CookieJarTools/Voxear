@@ -126,3 +126,20 @@ fn dividers_move_and_the_layout_remembers() {
     assert_eq!(other.dock_layout(other_dock), layout, "a saved layout restores");
     assert!(other.set_dock_layout(other_dock, "row(10, [a]").is_err());
 }
+
+#[test]
+fn shares_and_right_hand_panels_keep_their_size_as_the_window_resizes() {
+    let (mut ui, dock) = editor();
+    let layout = "row(-300, column(40%, [hierarchy], [project]), [scene, inspector])";
+    ui.set_dock_layout(dock, layout).unwrap();
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let area = |ui: &Ui, title: &str| ui.rect(ui.parent(ui.parent(tab(ui, dock, title)).unwrap()).unwrap());
+    assert_eq!(area(&ui, "Scene")[2], 300.0, "a negative size is the second part's");
+    assert_eq!(area(&ui, "Hierarchy")[3], 240.0, "a percentage is the first part's share");
+
+    ui.set_inline_style(dock, "position: absolute; left: 0px; top: 0px; width: 800px; height: 500px");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(area(&ui, "Scene")[2], 300.0, "the right-hand part keeps its size");
+    assert_eq!(area(&ui, "Hierarchy")[3], 200.0, "and the share stays a share");
+    assert_eq!(ui.dock_layout(dock), layout, "both write back as they were read");
+}

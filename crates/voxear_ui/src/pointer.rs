@@ -21,6 +21,10 @@ pub(crate) struct Pointer {
     pressed: Vec<taffy::NodeId>,
     /// Elements clicked since the last frame.
     pub clicks: Vec<taffy::NodeId>,
+    /// Elements clicked twice in quick succession since the last frame.
+    pub double_clicks: Vec<taffy::NodeId>,
+    /// The last click: on what, and when, to tell a double click.
+    last_click: Option<(taffy::NodeId, f32)>,
     /// A scrollbar being dragged: its element, and where on the thumb it was
     /// grabbed.
     dragging: Option<(NodeId, f32)>,
@@ -29,7 +33,7 @@ pub(crate) struct Pointer {
 impl Pointer {
     /// Drops a removed element from everything that refers to it.
     pub fn forget(&mut self, node: taffy::NodeId) {
-        for list in [&mut self.hovered, &mut self.pressed, &mut self.clicks] {
+        for list in [&mut self.hovered, &mut self.pressed, &mut self.clicks, &mut self.double_clicks] {
             list.retain(|&n| n != node);
         }
     }
@@ -109,6 +113,15 @@ impl Ui {
                 && !self.disabled(&pressed)
             {
                 self.pointer.clicks.push(target);
+                let time = self.input.time;
+                let twice = self
+                    .pointer
+                    .last_click
+                    .is_some_and(|(at, when)| at == target && time - when <= crate::input::MULTI_CLICK);
+                if twice {
+                    self.pointer.double_clicks.push(target);
+                }
+                self.pointer.last_click = (!twice).then_some((target, time));
                 self.row_clicked(target);
                 self.click_controls(target);
                 self.click_panes(target);
@@ -136,6 +149,12 @@ impl Ui {
     /// Whether `node`, or anything in it, was clicked since the last frame.
     pub fn clicked(&self, node: NodeId) -> bool {
         self.pointer.clicks.iter().any(|&target| self.is_within(NodeId(target), node))
+    }
+
+    /// Whether `node`, or anything in it, was clicked a second time in
+    /// quick succession since the last frame, as opening a folder takes.
+    pub fn double_clicked(&self, node: NodeId) -> bool {
+        self.pointer.double_clicks.iter().any(|&target| self.is_within(NodeId(target), node))
     }
 
     pub(crate) fn update_hover(&mut self) {

@@ -77,14 +77,15 @@ fn text_inherits_and_descendant_rules_reach_it() {
     assert_eq!(text.size, 14.0, "size from the card");
     assert_eq!(text.weight, 600.0, "weight from a descendant rule");
     let plain = ui.text_style(ui.find(document, "plain").unwrap()).unwrap();
-    assert_eq!(plain, TextStyle::default(), "nothing set, nothing inherited");
+    let theme = TextStyle { size: 12.0, line_height: 16.0, color: Color::hex(0xd0d6e0), ..TextStyle::default() };
+    assert_eq!(plain, theme, "nothing set: the default theme's text, from the root");
 }
 
 #[test]
 fn the_pointer_hovers_presses_and_clicks() {
     let (mut ui, document) = cards();
     let go = ui.find(document, "go").unwrap();
-    assert_eq!(background(&ui, go), Some(Color::hex(0x1a1b20)), "the default theme's button");
+    assert_eq!(background(&ui, go), Some(Color::hex(0x141518)), "the default theme's button");
 
     ui.pointer_move(120.0, 310.0);
     assert!(ui.wants_pointer() && ui.is_hovered(go) && ui.is_hovered(document), "the button and what it is in");
@@ -149,7 +150,7 @@ fn mistakes_are_reported_with_their_place() {
     let error = load(&mut ui, "<vui>\n  <Lable>Hi</Lable>\n</vui>", &[]).unwrap_err();
     assert_eq!(
         error.0,
-        "Test.vui:2:3: unknown element <Lable>; expected Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, TextField, Toggle, Slider, Foldout, Dropdown or Style"
+        "Test.vui:2:3: unknown element <Lable>; expected Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, Icon, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style"
     );
     let error = load(&mut ui, "<vui><Style src=\"Missing.vss\" /></vui>", &[]).unwrap_err();
     assert!(error.0.contains("could not read Missing.vss"), "{error}");

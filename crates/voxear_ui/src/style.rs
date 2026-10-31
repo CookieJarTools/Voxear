@@ -13,7 +13,11 @@ pub struct Style {
     pub background: Option<Color>,
     /// Width in logical pixels, and colour.
     pub border: Option<(f32, Color)>,
+    /// The border is drawn in dashes rather than a solid line.
+    pub dashed: bool,
     pub radius: f32,
+    /// A soft shadow drawn under it, outside its edge.
+    pub shadow: Option<Shadow>,
     /// Multiplies this element's and its children's alpha.
     pub opacity: f32,
     /// Whether the pointer can hover and press it. Its children decide for
@@ -29,6 +33,20 @@ pub struct Style {
     pub caret: Option<Color>,
     /// Which changes animate rather than jump, and how.
     pub transitions: Vec<Transition>,
+}
+
+/// A blurred copy of an element's box, drawn under it, as CSS's
+/// `box-shadow` is. Lengths are logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    pub x: f32,
+    pub y: f32,
+    /// How far the edge blurs: CSS's blur radius, twice the Gaussian's
+    /// standard deviation.
+    pub blur: f32,
+    /// Grows the box before it is blurred.
+    pub spread: f32,
+    pub color: Color,
 }
 
 /// A property that eases from its old value to its new one when the cascade
@@ -110,7 +128,9 @@ impl Default for Style {
             layout: taffy::Style { position: Position::Relative, ..taffy::Style::default() },
             background: None,
             border: None,
+            dashed: false,
             radius: 0.0,
+            shadow: None,
             opacity: 1.0,
             pickable: true,
             overflow: Overflow::Visible,
@@ -240,6 +260,8 @@ pub struct TextStyle {
     pub color: Color,
     pub family: Family,
     pub align: TextAlign,
+    /// The height of each line in logical pixels, or 0 for the font's own.
+    pub line_height: f32,
 }
 
 /// Where lines of text sit across their element.
@@ -254,7 +276,14 @@ pub enum TextAlign {
 
 impl Default for TextStyle {
     fn default() -> Self {
-        Self { size: 13.0, weight: 400.0, color: Color::WHITE, family: Family::Sans, align: TextAlign::Start }
+        Self {
+            size: 13.0,
+            weight: 400.0,
+            color: Color::WHITE,
+            family: Family::Sans,
+            align: TextAlign::Start,
+            line_height: 0.0,
+        }
     }
 }
 
@@ -273,5 +302,13 @@ impl TextStyle {
 
     pub fn mono(self) -> Self {
         Self { family: Family::Mono, ..self }
+    }
+
+    pub(crate) fn parley_line_height(self) -> parley::LineHeight {
+        if self.line_height > 0.0 {
+            parley::LineHeight::Absolute(self.line_height)
+        } else {
+            parley::LineHeight::default()
+        }
     }
 }

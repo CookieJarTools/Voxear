@@ -6,9 +6,13 @@
 //! matches `:selected` when selected, for sheets to style.
 //!
 //! A tree view is a list of the items that are open. Each row holds a
-//! spacer that indents it by depth (`tree-indent`), an arrow that opens and
-//! closes it (`tree-arrow`, with `expanded` when open), and then what `make`
-//! builds (in `tree-content`). The editor's Hierarchy and Project views are tree views.
+//! spacer that indents it by depth (`tree-indent`), a chevron icon that
+//! opens and closes it (`tree-arrow`, with `expanded` when open), and then
+//! what `make` builds (in `tree-content`). The editor's Hierarchy and
+//! Project views are tree views.
+//!
+//! Every row also ends in a `row-bar`, which the default theme shows as an
+//! accent bar down the left of a selected row.
 
 use std::collections::HashSet;
 
@@ -17,7 +21,7 @@ use taffy::{Dimension, LengthPercentageAuto, Position, Rect};
 use crate::{
     NodeId, Style, Ui,
     selector::States,
-    tree::{Element, Kind, Text},
+    tree::{Element, Kind},
 };
 
 /// Builds and fills a list's rows.
@@ -445,8 +449,8 @@ impl ListState {
                 ui.add_class(indent, "tree-indent");
                 let mut arrow_style = Style::default();
                 arrow_style.layout.size.width = Dimension::length(INDENT);
-                let arrow =
-                    ui.add(row, Element { text: Some(Text::new("")), ..Element::new(Kind::Label, arrow_style) });
+                arrow_style.layout.flex_shrink = 0.0;
+                let arrow = ui.pressable_icon(row, "", arrow_style);
                 ui.add_class(arrow, "tree-arrow");
                 let content = ui.panel(row, Style::row().grow());
                 ui.add_class(content, "tree-content");
@@ -459,6 +463,10 @@ impl ListState {
             Source::Tree(tree) => tree.items.make(ui, content),
             Source::Empty => {}
         }
+        let mut bar = Style { pickable: false, ..Style::default() };
+        bar.layout.position = Position::Absolute;
+        let bar = ui.panel(row, bar);
+        ui.add_class(bar, "row-bar");
         Row { node: row.0, content: content.0, indent, arrow, index: None }
     }
 
@@ -489,16 +497,12 @@ impl ListState {
                 let (item, _, has_children) = tree.open[index];
                 let expanded = tree.expanded.contains(&item);
                 if let Some(arrow) = arrow {
-                    ui.set_text(
-                        NodeId(arrow),
-                        if !has_children {
-                            ""
-                        } else if expanded {
-                            "▾"
-                        } else {
-                            "▸"
-                        },
-                    );
+                    let icon = match (has_children, expanded) {
+                        (false, _) => "",
+                        (true, true) => "chevron-down",
+                        (true, false) => "chevron-right",
+                    };
+                    ui.set_icon(NodeId(arrow), icon);
                     ui.set_class(NodeId(arrow), "expanded", expanded);
                 }
                 tree.items.bind(ui, content, item);

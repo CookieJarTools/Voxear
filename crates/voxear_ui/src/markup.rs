@@ -15,13 +15,15 @@
 //! `Button`, `TextField` (`placeholder`, `multiline`, `value` or content),
 //! `Toggle` (`value`), `Slider` (`min`, `max`, `value`, `step`) and `Foldout`
 //! (`text`, `open`, children as its content), `SplitView` (`direction`,
-//! `size`, `min`, and two elements for its panes), `Tabs` (of `Tab`s with
-//! `text`, and `selected`), `Dropdown` (of `Option`s, and `value`) and
-//! `DockSpace` (of `DockPanel`s with `id` and `title`, and `layout`), each
-//! taking `name`, `class`
+//! `size` in pixels, negative for the second pane's, or a percentage share,
+//! `min`, and two elements for its panes), `Tabs` (of `Tab`s with
+//! `text`, and `selected`), `Dropdown` (of `Option`s, and `value`),
+//! `DockSpace` (of `DockPanel`s with `id` and `title`, and `layout`),
+//! `Segmented` (of `Segment`s with `text` and `icon`, and `value`) and
+//! `Icon` (`icon`, one of [`crate::ICONS`]), each taking `name`, `class`
 //! (several, separated by spaces) and `style` (declarations that win over
 //! sheets). A label's or button's text is its content, or its `text`
-//! attribute. A list or tree view takes `item-height`, and gets its rows
+//! attribute; a button may instead hold elements, such as an icon and a label. A list or tree view takes `item-height`, and gets its rows
 //! from code with [`Ui::bind_list`] or [`Ui::bind_tree`]. `<Style src>`
 //! attaches a sheet to the element it is in, so it styles that element and
 //! everything in it.
@@ -181,8 +183,14 @@ impl Ui {
                 }
                 "SplitView" => {
                     let row = child.attribute("direction") != Some("column");
-                    let size = number(child, "size", 240.0, builder)?;
-                    let node = self.split_view(parent, row, size);
+                    let node = match child.attribute("size").and_then(|size| size.trim().strip_suffix('%')) {
+                        Some(share) => {
+                            let share = share.trim().parse::<f32>();
+                            let share = share.map_err(|_| builder.error(child, "size is pixels or a percentage"))?;
+                            self.split_view_fraction(parent, row, share / 100.0)
+                        }
+                        None => self.split_view(parent, row, number(child, "size", 240.0, builder)?),
+                    };
                     self.set_split_min(node, number(child, "min", 40.0, builder)?);
                     self.attributes(node, child, &["name", "class", "style", "direction", "size", "min"], builder);
                     let panes = self.split_panes(node).expect("a split view has panes");
@@ -235,6 +243,33 @@ impl Ui {
                         self.set_dock_layout(node, layout).map_err(|e| builder.error(child, e))?;
                     }
                 }
+                "Icon" => {
+                    let icon = child.attribute("icon").ok_or_else(|| builder.error(child, "<Icon> needs icon"))?;
+                    if crate::icons::parts(icon).is_none() {
+                        builder.warnings.push(format!("{}: there is no icon '{icon}'", builder.place(child)));
+                    }
+                    let node = self.icon(parent, icon);
+                    self.attributes(node, child, &["name", "class", "style", "icon"], builder);
+                }
+                "Segmented" => {
+                    let node = self.segmented(parent);
+                    self.attributes(node, child, &["name", "class", "style", "value"], builder);
+                    for segment in child.children().filter(Node::is_element) {
+                        if segment.tag_name().name() != "Segment" {
+                            return Err(builder.error(segment, "Segmented holds Segment elements"));
+                        }
+                        let text = segment.attribute("text").unwrap_or_default();
+                        let made = self.add_segment(node, text, segment.attribute("icon"));
+                        self.attributes(made, segment, &["name", "class", "style", "text", "icon"], builder);
+                    }
+                    self.set_segment(node, number(child, "value", 0.0, builder)? as usize);
+                }
+                "Button" if child.children().any(|n| n.is_element()) => {
+                    let element = Element::new(Kind::Button, Style::row());
+                    let node = self.add(parent, element);
+                    self.attributes(node, child, &["name", "class", "style"], builder);
+                    self.build_children(node, child, builder)?;
+                }
                 tag @ ("Label" | "Button") => {
                     if let Some(inner) = child.children().find(Node::is_element) {
                         return Err(builder.error(inner, format!("a {tag} holds only text")));
@@ -248,7 +283,7 @@ impl Ui {
                 }
                 other => {
                     let known = "Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, \
-                                 TextField, Toggle, Slider, Foldout, Dropdown or Style";
+                                 Icon, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style";
                     return Err(builder.error(child, format!("unknown element <{other}>; expected {known}")));
                 }
             }

@@ -1,16 +1,20 @@
 //! The Voxear editor: the engine with docked panels around it, built with
-//! Voxear UI, in the look of the editor concept (docs/ARCHITECTURE.md).
+//! Voxear UI, in the Graphite + Abyss design (docs/ARCHITECTURE.md).
 //!
 //! This first slice opens a project's start level in **edit mode** (no
 //! script runs), with:
-//! - a top bar: workspaces, the command bar (Ctrl+K), play controls, Build
-//! - the **Hierarchy** of Objs, filterable, and the **Project**'s assets
+//! - a top bar: the mark, workspaces, the command bar (Ctrl+K), play
+//!   controls, the account and Build; and a rail of tool icons
+//! - the **Hierarchy** of Objs, filterable, and the **Project**: folders on
+//!   the left and the open folder's assets and scripts on the right, as in
+//!   Unity's two-column Project window
 //! - the **Scene** view, rendered into its panel through the editor's own
-//!   camera, flown with the right mouse button
+//!   camera, flown with the right mouse button, with a tool strip, a stats
+//!   chip and an axis gizmo floating over it
 //! - the **Inspector**, editing the selected Obj's name and Transform and
 //!   showing its components and behaviours
 //! - the **Console**, showing everything logged
-//! - a status bar: the level, frame rate, GPU time and git branch
+//! - a status bar: the level, frame rate, memory and git branch
 //!
 //! Play mode, saving, gizmos and undo come next.
 

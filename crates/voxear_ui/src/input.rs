@@ -57,7 +57,7 @@ impl Clipboard for LocalClipboard {
 const BLINK: f32 = 0.53;
 /// Presses this close together, on the same element, count as one double
 /// or triple click.
-const MULTI_CLICK: f32 = 0.4;
+pub(crate) const MULTI_CLICK: f32 = 0.4;
 
 pub(crate) struct Input {
     pub focused: Option<taffy::NodeId>,

@@ -3,12 +3,15 @@
 //!
 //! - **SplitView**: two panes either side of a divider (`split-divider`)
 //!   that the pointer drags. The first pane keeps its size and the second
-//!   takes the rest, as in Unity's TwoPaneSplitView.
+//!   takes the rest, as in Unity's TwoPaneSplitView; a negative size keeps
+//!   the second pane's size instead, for a panel on the right or bottom.
 //! - **Tabs**: a `tab-bar` of `tab` buttons over `tab-page`s, showing the
 //!   selected one. The selected tab matches `:checked`.
 //! - **Dropdown**: the chosen option with an arrow; it opens a
 //!   `dropdown-popup` of `dropdown-option`s in a layer above everything else,
 //!   which closes on a choice, Escape or a press elsewhere.
+//! - **Segmented**: a row of `segment` buttons, each text, an icon or both,
+//!   exactly one of them on (`:checked`), for modes such as a tool or a pivot.
 
 use taffy::{AlignItems, Dimension, LengthPercentageAuto, Position};
 
@@ -25,9 +28,13 @@ pub(crate) struct Split {
     pub second: taffy::NodeId,
     /// Side by side, rather than one above the other.
     pub row: bool,
-    /// The first pane's size, and the least either pane may have.
+    /// The fixed pane's size, and the least either pane may have.
     pub size: f32,
     pub min: f32,
+    /// The second pane keeps its size rather than the first.
+    pub second_fixed: bool,
+    /// `size` is the first pane's share of the whole, from 0 to 1.
+    pub fraction: bool,
     /// Where on the divider it was grabbed.
     pub grab: f32,
 }
@@ -40,6 +47,11 @@ pub(crate) struct Tabs {
     pub selected: usize,
 }
 
+pub(crate) struct Segmented {
+    pub segments: Vec<taffy::NodeId>,
+    pub selected: usize,
+}
+
 pub(crate) struct Dropdown {
     pub label: taffy::NodeId,
     pub options: Vec<String>,
@@ -49,7 +61,8 @@ pub(crate) struct Dropdown {
 
 impl Ui {
     /// Two panes side by side (`row`) or one above the other, the first
-    /// `size` logical pixels across. Fill them through [`split_panes`](Self::split_panes).
+    /// `size` logical pixels across, or with a negative size, the second
+    /// `-size` across. Fill them through [`split_panes`](Self::split_panes).
     pub fn split_view(&mut self, parent: NodeId, row: bool, size: f32) -> NodeId {
         let mut style = if row { Style::row() } else { Style::column() };
         style.layout.align_items = AlignItems::STRETCH;
@@ -66,11 +79,13 @@ impl Ui {
         if let Some(element) = self.element_mut(divider) {
             element.control = Some(Control::Divider(split.0));
         }
-        let state = Split { first: first.0, second: second.0, row, size, min: 40.0, grab: 0.0 };
+        let second_fixed = size < 0.0;
+        let state =
+            Split { first: first.0, second: second.0, row, size, min: 40.0, second_fixed, fraction: false, grab: 0.0 };
         if let Some(element) = self.element_mut(split) {
             element.control = Some(Control::Split(state));
         }
-        self.set_split(split, size);
+        self.set_split(split, size.abs());
         split
     }
 
@@ -82,32 +97,77 @@ impl Ui {
         }
     }
 
+    /// Two panes whose first takes `fraction` (from 0 to 1) of the room,
+    /// keeping that share as the split view resizes.
+    pub fn split_view_fraction(&mut self, parent: NodeId, row: bool, fraction: f32) -> NodeId {
+        let split = self.split_view(parent, row, 0.0);
+        if let Some(Control::Split(state)) = self.element_mut(split).and_then(|e| e.control.as_mut()) {
+            (state.fraction, state.size) = (true, fraction.clamp(0.0, 1.0));
+        }
+        self.apply_split(split);
+        split
+    }
+
+    /// The first pane's share, for a split made with
+    /// [`split_view_fraction`](Self::split_view_fraction).
+    pub fn split_fraction(&self, split: NodeId) -> Option<f32> {
+        match self.element(split).and_then(|e| e.control.as_ref()) {
+            Some(Control::Split(state)) if state.fraction => Some(state.size),
+            _ => None,
+        }
+    }
+
+    /// The fixed pane's size: the first's, or minus the second's when that
+    /// is the one kept, as [`split_view`](Self::split_view) takes it.
     pub fn split_size(&self, split: NodeId) -> f32 {
         match self.element(split).and_then(|e| e.control.as_ref()) {
+            Some(Control::Split(state)) if state.fraction => {
+                let [_, _, width, height] = self.content_box(split);
+                state.size * if state.row { width } else { height }
+            }
+            Some(Control::Split(state)) if state.second_fixed => -state.size,
             Some(Control::Split(state)) => state.size,
             _ => 0.0,
         }
     }
 
-    /// Sets the first pane's size, keeping both panes at least their minimum
-    /// as far as the last layout allows.
+    /// Sets the fixed pane's size in pixels, keeping both panes at least
+    /// their minimum as far as the last layout allows. A split that keeps a
+    /// share keeps this size's share.
     pub fn set_split(&mut self, split: NodeId, size: f32) {
         let [_, _, width, height] = self.content_box(split);
         let Some(Control::Split(state)) = self.element_mut(split).and_then(|e| e.control.as_mut()) else { return };
         let total = if state.row { width } else { height };
         let room = total - state.min - 4.0;
-        state.size = if room > state.min { size.clamp(state.min, room) } else { size.max(state.min) };
-        let (first, row, size) = (NodeId(state.first), state.row, state.size);
-        let mut style = self.element(first).map(|e| e.base.clone()).unwrap_or_default();
-        style.layout.flex_basis = Dimension::length(size);
-        style.layout.flex_shrink = 0.0;
-        style.layout.flex_grow = 0.0;
-        if row {
-            style.layout.min_size.width = LengthPercentageAuto::length(0.0);
-        } else {
-            style.layout.min_size.height = LengthPercentageAuto::length(0.0);
-        }
-        self.set_style(first, style);
+        let size = if room > state.min { size.clamp(state.min, room) } else { size.max(state.min) };
+        state.size = match state.fraction {
+            true if total > 0.0 => size / total,
+            true => state.size,
+            false => size,
+        };
+        self.apply_split(split);
+    }
+
+    /// Sizes the panes as the split's state says.
+    fn apply_split(&mut self, split: NodeId) {
+        let Some(Control::Split(state)) = self.element(split).and_then(|e| e.control.as_ref()) else { return };
+        let row = state.row;
+        let size = if state.fraction { Dimension::percent(state.size) } else { Dimension::length(state.size) };
+        let (fixed, free) = if state.second_fixed { (state.second, state.first) } else { (state.first, state.second) };
+        let pane = |ui: &Ui, node: taffy::NodeId, basis: Dimension, grow: f32| {
+            let mut style = ui.element(NodeId(node)).map(|e| e.base.clone()).unwrap_or_default();
+            (style.layout.flex_basis, style.layout.flex_grow, style.layout.flex_shrink) = (basis, grow, grow);
+            if row {
+                style.layout.min_size.width = LengthPercentageAuto::length(0.0);
+            } else {
+                style.layout.min_size.height = LengthPercentageAuto::length(0.0);
+            }
+            style
+        };
+        let fixed_style = pane(self, fixed, size, 0.0);
+        let free_style = pane(self, free, Dimension::length(0.0), 1.0);
+        self.set_style(NodeId(fixed), fixed_style);
+        self.set_style(NodeId(free), free_style);
     }
 
     /// The least size either pane can be dragged to.
@@ -178,8 +238,7 @@ impl Ui {
         let label = self
             .add(dropdown, Element { text: Some(Text::new("")), ..Element::new(Kind::Label, Style::default().grow()) });
         self.add_class(label, "dropdown-label");
-        let arrow =
-            self.add(dropdown, Element { text: Some(Text::new("▾")), ..Element::new(Kind::Label, Style::default()) });
+        let arrow = self.icon(dropdown, "chevron-down");
         self.add_class(arrow, "dropdown-arrow");
         let state = Dropdown { label: label.0, options: Vec::new(), selected: 0, popup: None };
         if let Some(element) = self.element_mut(dropdown) {
@@ -301,6 +360,14 @@ impl Ui {
         while let Some(node) = at {
             let control = self.tree.get_node_context(node).and_then(|e| e.control.as_ref());
             match control {
+                Some(Control::Segment { segmented, index }) => {
+                    let (segmented, index) = (NodeId(*segmented), *index);
+                    if self.segment(segmented) != index {
+                        self.set_segment(segmented, index);
+                        self.mark_changed(segmented);
+                    }
+                    return;
+                }
                 Some(Control::Tab { tabs, index }) => {
                     let (tabs, index) = (NodeId(*tabs), *index);
                     if self.selected_tab(tabs) != index {
@@ -368,12 +435,75 @@ impl Ui {
 
     pub(crate) fn drag_divider(&mut self, split: NodeId, point: (f32, f32)) {
         let Some(Control::Split(state)) = self.element(split).and_then(|e| e.control.as_ref()) else { return };
-        let (row, grab) = (state.row, state.grab);
-        let [x, y, ..] = self.content_box(split);
-        let size = if row { point.0 - x - grab } else { point.1 - y - grab };
-        if (size - self.split_size(split)).abs() > 0.01 {
+        let (row, grab, second_fixed, old) = (state.row, state.grab, state.second_fixed, self.split_size(split).abs());
+        let (first, second) = (self.rect(NodeId(state.first)), self.rect(NodeId(state.second)));
+        let axis = if row { 0 } else { 1 };
+        // How far the divider's leading edge moves, from where the last layout put it.
+        let moved = point.0 * (1 - axis) as f32 + point.1 * axis as f32 - grab - (first[axis] + first[axis + 2]);
+        let size = if second_fixed { second[axis + 2] - moved } else { first[axis + 2] + moved };
+        if (size - old).abs() > 0.01 {
             self.set_split(split, size);
             self.mark_changed(split);
+        }
+    }
+
+    /// A row of segments, exactly one on. Add them with
+    /// [`add_segment`](Self::add_segment).
+    pub fn segmented(&mut self, parent: NodeId) -> NodeId {
+        let element = Element {
+            control: Some(Control::Segmented(Segmented { segments: Vec::new(), selected: 0 })),
+            ..Element::new(Kind::Segmented, Style::row())
+        };
+        self.add(parent, element)
+    }
+
+    /// A segment showing `text`, an icon, or both; empty text shows the icon alone.
+    pub fn add_segment(&mut self, segmented: NodeId, text: &str, icon: Option<&str>) -> NodeId {
+        let Some(Control::Segmented(state)) = self.element(segmented).and_then(|e| e.control.as_ref()) else {
+            return segmented;
+        };
+        let index = state.segments.len();
+        let control = Some(Control::Segment { segmented: segmented.0, index });
+        let segment = match icon {
+            None => {
+                let element =
+                    Element { text: Some(Text::new(text)), control, ..Element::new(Kind::Button, Style::row()) };
+                self.add(segmented, element)
+            }
+            Some(icon) => {
+                let segment = self.add(segmented, Element { control, ..Element::new(Kind::Button, Style::row()) });
+                self.icon(segment, icon);
+                if !text.is_empty() {
+                    self.add_label(segment, text);
+                }
+                segment
+            }
+        };
+        self.add_class(segment, "segment");
+        if let Some(Control::Segmented(state)) = self.element_mut(segmented).and_then(|e| e.control.as_mut()) {
+            state.segments.push(segment.0);
+        }
+        let selected = self.segment(segmented);
+        self.set_segment(segmented, selected);
+        segment
+    }
+
+    /// Which segment is on.
+    pub fn segment(&self, segmented: NodeId) -> usize {
+        match self.element(segmented).and_then(|e| e.control.as_ref()) {
+            Some(Control::Segmented(state)) => state.selected,
+            _ => 0,
+        }
+    }
+
+    pub fn set_segment(&mut self, segmented: NodeId, index: usize) {
+        let Some(Control::Segmented(state)) = self.element_mut(segmented).and_then(|e| e.control.as_mut()) else {
+            return;
+        };
+        state.selected = index.min(state.segments.len().saturating_sub(1));
+        let (segments, selected) = (state.segments.clone(), state.selected);
+        for (i, segment) in segments.into_iter().enumerate() {
+            self.set_checked(NodeId(segment), i == selected);
         }
     }
 }

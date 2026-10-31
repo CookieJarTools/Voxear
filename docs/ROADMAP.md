@@ -188,10 +188,20 @@ Done so far:
 - **The editor, first slice** (`vox editor`): edit mode without scripts, the concept's layout with the top bar,
   docked Hierarchy, Project, Scene, Console and Inspector, and the status bar. The Scene view renders into its
   panel through the editor's own fly camera, and the Inspector edits the selected Obj's name and Transform.
+- **The Graphite + Abyss design:** the default theme and the editor follow the design's tokens, type and shapes:
+  the top bar with the mark, workspaces, command bar and play pill, an icon rail, 40px panel headers with their
+  own buttons, 28px rows with an accent bar on the selected one, viewport overlays (tool strip, stats chip and an
+  axis gizmo that turns with the camera), the Inspector's header, sections and coloured axis fields, and the
+  status bar. Voxear UI gained line icons, `box-shadow`, dashed borders, `line-height`, shapes, a switch and
+  checkbox, segmented controls, slider values, double clicks, and splits that keep the second pane's size or the
+  first's share.
+- **A Unity-style Project panel:** folders as a tree on the left, and the open folder's contents on the right as
+  tiles or, when narrow, as rows with sizes, with a breadcrumb; double-clicking a folder opens it.
 
 Still to do in M3:
 - UI core:
   - keyframe animations and floating windows
+  - backdrop blur behind the viewport overlays
   - the C# UI API
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus

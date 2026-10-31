@@ -32,6 +32,7 @@ mod color;
 mod controls;
 mod dock;
 mod draw;
+mod icons;
 mod input;
 mod list;
 pub mod markup;
@@ -45,12 +46,14 @@ mod style;
 mod tree;
 
 pub use color::Color;
+pub use draw::Shape;
+pub use icons::NAMES as ICONS;
 pub use input::{Clipboard, Key, LocalClipboard};
 pub use list::{ItemFns, ListItems, TreeItems};
 pub use markup::LoadFile;
 pub use pointer::Modifiers;
 pub use sheet::StyleSheet;
-pub use style::{Animated, Easing, Family, Overflow, Style, TextAlign, TextStyle, Transition};
+pub use style::{Animated, Easing, Family, Overflow, Shadow, Style, TextAlign, TextStyle, Transition};
 pub use tree::{Kind, NodeId, Ui};
 
 /// The default theme every [`Ui`] starts with: `theme/Default.vss`.
@@ -68,10 +71,10 @@ impl std::fmt::Display for UiError {
 
 impl std::error::Error for UiError {}
 
-/// One thing to draw: a rounded, bordered rectangle, or a glyph from the
-/// atlas. Coordinates are physical pixels from the top left; colours are
-/// linear and premultiplied. The layout matches `UiQuad` in the renderer's
-/// shaders.
+/// One thing to draw: a rounded, bordered rectangle, a glyph or icon from
+/// the atlas, a soft shadow or a line. Coordinates are physical pixels from
+/// the top left; colours are linear and premultiplied. The layout matches
+/// `UiQuad` in the renderer's shaders.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Quad {
@@ -85,14 +88,25 @@ pub struct Quad {
     pub clip: [f32; 4],
     pub radius: f32,
     pub border: f32,
-    /// [`Quad::SHAPE`] or [`Quad::GLYPH`].
+    /// [`Quad::SHAPE`], [`Quad::GLYPH`], [`Quad::SHADOW`] or [`Quad::LINE`].
     pub kind: u32,
-    pub _pad: u32,
+    /// For shapes, [`Quad::DASHED`].
+    pub flags: u32,
 }
 
 impl Quad {
     pub const SHAPE: u32 = 0;
     pub const GLYPH: u32 = 1;
+    /// A blurred rounded box: `uv` is the box (left, top, width and height),
+    /// `border` the blur's standard deviation, and `border_color` the
+    /// element's own box (the same way round), which the shadow is cut out
+    /// of, as CSS's are.
+    pub const SHADOW: u32 = 2;
+    /// A line with round ends from `uv`'s first point to its second,
+    /// `border` pixels wide.
+    pub const LINE: u32 = 3;
+    /// The border is drawn in dashes.
+    pub const DASHED: u32 = 1;
     /// A clip that clips nothing.
     pub const UNCLIPPED: [f32; 4] = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
 }
@@ -108,7 +122,7 @@ impl Default for Quad {
             radius: 0.0,
             border: 0.0,
             kind: Self::SHAPE,
-            _pad: 0,
+            flags: 0,
         }
     }
 }

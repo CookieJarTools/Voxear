@@ -2687,3 +2687,52 @@ fn voxdocs_shows_prefabs_and_materials_live() {
     assert!(width > 100.0 && (width - height).abs() < 1.0, "a square preview, {width} by {height}");
     shot(&mut renderer, "docs-live.png");
 }
+
+#[test]
+fn the_entities_panel_lists_archetypes_entities_and_their_components() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();
+    editor.ui.set_segment(workspaces, 1);
+    frame(&mut editor, &mut renderer);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "entities");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let panel = editor.entities_panel();
+    let (filter, archetypes, entities, details) =
+        (panel.filter(), panel.archetypes(), panel.entities(), panel.details());
+    let rows = |editor: &voxear_editor::Editor, list: NodeId| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, list, "entities-row-name", &mut rows);
+        // Rows past the list's end are kept, hidden, for when it grows.
+        let shown = |r: &NodeId| editor.ui.parent(*r).is_some_and(|row| editor.ui.is_visible(row));
+        rows.into_iter().filter(shown).map(|r| editor.ui.text(r)).filter(|t| !t.is_empty()).collect::<Vec<_>>()
+    };
+    assert!(!rows(&editor, archetypes).is_empty(), "Hello's Objs make archetypes");
+
+    // A filter of component names keeps the archetypes with them all.
+    type_into(&mut editor.ui, filter, "MeshRenderer, Transform");
+    frame(&mut editor, &mut renderer);
+    let kept = rows(&editor, archetypes);
+    assert!(!kept.is_empty() && kept.iter().all(|r| r.contains("MeshRenderer") && r.contains("Transform")), "{kept:?}");
+
+    // An archetype's entities, and a picked one's components with their values.
+    editor.ui.set_selection(archetypes, &[0]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let named = rows(&editor, entities);
+    assert!(!named.is_empty(), "the archetype's entities are listed");
+    editor.ui.set_selection(entities, &[0]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut cards = Vec::new();
+    with_class(&editor.ui, details, "entities-component-name", &mut cards);
+    let cards: Vec<String> = cards.into_iter().map(|c| editor.ui.text(c)).collect();
+    assert!(cards.contains(&"Transform".to_string()) && cards.contains(&"MeshRenderer".to_string()), "{cards:?}");
+    let mut values = Vec::new();
+    with_class(&editor.ui, details, "entities-value-name", &mut values);
+    assert!(values.iter().any(|&v| editor.ui.text(v) == "Position"), "the Transform's values show");
+    let selected = editor.selected().expect("an Obj picked there is selected");
+    assert_eq!(editor.game.engine.world.get::<Name>(selected).unwrap().0, named[0]);
+    shot(&mut renderer, "entities-panel.png");
+}

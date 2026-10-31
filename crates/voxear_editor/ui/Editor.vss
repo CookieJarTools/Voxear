@@ -2041,3 +2041,96 @@ DockSpace .project-split > .split-divider {
     font-size: 11px;
     pointer-events: none;
 }
+
+/* The Entities panel, the ECS inspector: archetypes, their entities, the picked one's components, and the systems. */
+.entities-summary {
+    flex-grow: 1;
+    color: var(--vx-text-2);
+}
+
+.entities-search {
+    width: 280px;
+}
+
+.entities-columns {
+    flex-direction: row;
+    align-items: stretch;
+}
+
+.entities-column {
+    flex-direction: column;
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    padding: 6px 8px;
+    border-left: 1px solid var(--vx-line);
+}
+
+.entities-archetypes {
+    flex-grow: 1.4;
+    border-left: 0px solid var(--vx-line);
+}
+
+.entities-details, .entities-schedule {
+    gap: 2px;
+    overflow: scroll;
+}
+
+.entities-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 0px 6px;
+}
+
+.entities-row-name {
+    flex-grow: 1;
+    min-width: 0px;
+    white-space: nowrap;
+}
+
+.entities-archetype-count {
+    width: 92px;
+}
+
+.entities-row-count, .entities-value-text {
+    flex-shrink: 0;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.entities-component {
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0px;
+}
+
+.entities-component-name, .entities-stage {
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.entities-stage {
+    margin-top: 6px;
+}
+
+.entities-value {
+    flex-direction: row;
+    gap: 8px;
+}
+
+.entities-value-name {
+    flex-grow: 1;
+    min-width: 0px;
+    color: var(--vx-muted);
+}
+
+.entities-script {
+    color: var(--vx-accent);
+}
+
+.entities-hint {
+    color: var(--vx-muted);
+}
+

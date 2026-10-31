@@ -48,6 +48,10 @@ namespace Voxear.Tests
 			var offsets = fields.Values.Select(f => f.GetProperty("layout").GetProperty("offset").GetInt32()).ToList();
 			Check.True(offsets.SequenceEqual(new[] { 0, 12, 16 }), string.Join(", ", offsets));
 			Check.True(fields["Anchor"].GetProperty("layout").GetProperty("size").GetInt32() == 8, "an Obj is eight bytes");
+
+			var system = document.RootElement.GetProperty("systems").EnumerateArray()
+				.Single(s => s.GetProperty("name").GetString() == "Voxear.Tests.TestDriftSystem");
+			Check.True(system.GetProperty("stage").GetString() == "FixedUpdate" && system.GetProperty("order").GetInt32() == 5, "systems with their stage and order");
 		}
 
 		[Test]

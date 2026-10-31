@@ -43,6 +43,7 @@ mod attributes;
 mod build_window;
 mod console;
 mod editor;
+pub mod entities_panel;
 mod fields;
 mod gizmos;
 mod hierarchy;

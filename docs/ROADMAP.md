@@ -332,7 +332,10 @@ Still to do in M3:
 - Debug tools:
   - the stats overlay's frame-time graph; the Profiler's timeline view, worker threads' samples and managed
     allocations per frame; and Tracy behind it
-  - the frame debugger and the ECS inspector
+  - the frame debugger
+  - [x] the ECS inspector: archetypes, entities and their components, the system schedule with timings, and a filter
+    by components
+  - [ ] the ECS inspector's editing of plain entities' values, and chunk occupancy
   - the memory profiler with snapshots and diffs
   - [x] debug draw: lines, arrows, boxes, spheres and text, from C# and Rust, hidden behind the scene or on top
   - [ ] the dev console

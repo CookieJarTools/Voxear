@@ -118,6 +118,9 @@
                 <DockPanel id="profiler" title="Profiler" class="dock-content">
                     <Panel name="profiler-panel" class="fill profiler-panel" />
                 </DockPanel>
+                <DockPanel id="entities" title="Entities" class="dock-content">
+                    <Panel name="entities-panel" class="fill entities-panel" />
+                </DockPanel>
                 <DockPanel id="build" title="Build" class="dock-content">
                     <Panel name="build-panel" class="fill build-panel" />
                 </DockPanel>

@@ -2317,10 +2317,16 @@ them in a running game.
   - Snapshots can be diffed, for example before and after a level change to find leaks.
   - "Who holds this asset" shows the reference chain behind Content's refcounts.
   - A bundle view shows what is resident and why.
-- **ECS inspector.**
-  - Live archetypes, chunks and entities, with editable component values.
-  - The system schedule, with timings and order.
-  - A query tester.
+- **ECS inspector** *(first part implemented: the Entities panel, `entities_panel.rs`)*.
+  - Live archetypes, with how many entities and chunks each has, the busiest first; the picked one's entities; and
+    the picked entity's components with their values (the Transform, a Name, and C# components by their layout).
+    Picking an entity that is an Obj selects it, so the Inspector shows and edits it.
+  - The system schedule: each stage's C# systems (which ScriptInfo lists, with their stage and order) and then the
+    engine's, with their milliseconds when the Profiler is recording.
+  - A filter of component names, as "Transform, Spin", keeps the archetypes that have them all: what a query over
+    them would walk.
+  - It reads the world a few times a second while it shows, in the Profiling workspace beside the Profiler.
+  - Still to come: editing a plain entity's values in the panel, and chunk occupancy.
 - **Debug draw** *(implemented)*.
   - `Debug.Line`, `Arrow`, `Box`, `Sphere` and `Text` from C#, each with a duration and a `Color` (sRGB, with
     `Color.Hex("#ff8800")`), and the same from Rust in `voxear_core::debug_draw`, which keeps one list for the process

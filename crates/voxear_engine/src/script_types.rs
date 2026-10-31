@@ -36,11 +36,24 @@ pub struct ScriptTypes {
     /// `IComponent` structs, described as behaviours are, with no bases.
     #[serde(default)]
     pub components: Vec<BehaviourType>,
+    /// `SystemBase` classes, as the engine will run them.
+    #[serde(default)]
+    pub systems: Vec<ScriptSystem>,
     /// Each `[Serializable]` type's fields, by full name.
     #[serde(rename = "types")]
     pub structs: BTreeMap<String, NestedType>,
     #[serde(default)]
     pub commands: Vec<ScriptCommand>,
+}
+
+/// A C# system: its full name, the engine stage it runs in ("Update"),
+/// and its `[ExecutionOrder]`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptSystem {
+    pub name: String,
+    pub stage: String,
+    #[serde(default)]
+    pub order: i32,
 }
 
 /// A static method marked `[Command]`: what the palette calls it, keys that

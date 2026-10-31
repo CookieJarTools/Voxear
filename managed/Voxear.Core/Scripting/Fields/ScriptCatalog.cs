@@ -38,6 +38,7 @@ namespace Voxear.Scripting
 					WriteComponent(json, component, types);
 				}
 				json.WriteEndArray();
+				WriteSystems(json, assembly);
 				WriteNestedTypes(json, types, nested);
 				WriteCommands(json, assembly);
 				json.WriteEndObject();
@@ -90,6 +91,30 @@ namespace Voxear.Scripting
 			json.WriteEndArray();
 			WriteFields(json, type, Activator.CreateInstance(type), types, ComponentLayout.Of(type));
 			json.WriteEndObject();
+		}
+
+		/// <summary>Each system the engine will run: its stage and order, as the editor's Entities panel lists them.</summary>
+		private static void WriteSystems(Utf8JsonWriter json, Assembly assembly)
+		{
+			var systems = new List<Type>();
+			foreach (var type in Loadable(assembly))
+			{
+				if (type != null && type.IsSubclassOf(typeof(SystemBase)) && !type.IsAbstract)
+				{
+					systems.Add(type);
+				}
+			}
+			systems.Sort((a, b) => string.CompareOrdinal(a.FullName, b.FullName));
+			json.WriteStartArray("systems");
+			foreach (var system in systems)
+			{
+				json.WriteStartObject();
+				json.WriteString("name", system.FullName);
+				json.WriteString("stage", (system.GetCustomAttribute<UpdateInAttribute>()?.Stage ?? Stage.Update).ToString());
+				json.WriteNumber("order", system.GetCustomAttribute<ExecutionOrderAttribute>()?.Order ?? 0);
+				json.WriteEndObject();
+			}
+			json.WriteEndArray();
 		}
 
 		/// <summary>The assembly's types, leaving out any that cannot load rather than failing for all of them.</summary>

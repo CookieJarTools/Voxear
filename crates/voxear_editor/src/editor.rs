@@ -41,6 +41,7 @@ use crate::{
     asset_inspector::AssetAction,
     build_window::BuildWindow,
     console::Console,
+    entities_panel::EntitiesPanel,
     fields::Pick,
     gizmos,
     hierarchy::EditorOnly,
@@ -128,6 +129,8 @@ struct Nodes {
     /// The top bar's workspaces, and the Profiler's panel.
     workspaces: NodeId,
     profiler_panel: NodeId,
+    /// The Entities panel's content, the ECS inspector.
+    entities_panel: NodeId,
     /// The Build window's panel.
     build_panel: NodeId,
     /// A script field's tooltip, shown under its label.
@@ -234,6 +237,7 @@ pub struct Editor {
     /// When the layout was last looked at, to keep it in the memory.
     layout_checked: Instant,
     profiler: Profiler,
+    entities: EntitiesPanel,
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
@@ -341,6 +345,7 @@ impl Editor {
             scene_maximize: find(&ui, "scene-maximize"),
             workspaces: find(&ui, "workspaces"),
             profiler_panel: find(&ui, "profiler-panel"),
+            entities_panel: find(&ui, "entities-panel"),
             build_panel: find(&ui, "build-panel"),
             tooltip: find(&ui, "tooltip"),
             debug_texts: find(&ui, "debug-texts"),
@@ -375,6 +380,7 @@ impl Editor {
         let (tabs, view, filter) = (find(&ui, "settings-tabs"), find(&ui, "settings"), find(&ui, "settings-filter"));
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
+        let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
         let parts =
             ["picker", "picker-title", "picker-field", "picker-list", "picker-empty"].map(|name| find(&ui, name));
@@ -431,6 +437,7 @@ impl Editor {
             workspace: 0,
             workspace_layouts: [None, None],
             profiler,
+            entities,
             build_window,
             picker,
             color_popup,
@@ -571,6 +578,12 @@ impl Editor {
             profile_scope!("Profiler");
             let profiler_shown = self.shown(self.nodes.profiler_panel);
             self.profiler.update(&mut self.ui, profiler_shown, &self.game);
+            let entities_shown = self.shown(self.nodes.entities_panel);
+            let frame = self.profiler.shown_sample().map(|sample| &sample.cpu);
+            let types = self.inspector.types();
+            if let Some(picked) = self.entities.update(&mut self.ui, entities_shown, &self.game, types, frame) {
+                self.select(Some(picked));
+            }
         }
         self.update_drawer();
         self.update_prefab_mode(renderer);
@@ -655,6 +668,11 @@ impl Editor {
     /// The Profiler panel, and the frames it has taken.
     pub fn profiler(&self) -> &Profiler {
         &self.profiler
+    }
+
+    /// The Entities panel, the ECS inspector.
+    pub fn entities_panel(&self) -> &EntitiesPanel {
+        &self.entities
     }
 
     /// The Build window, and the build it runs.

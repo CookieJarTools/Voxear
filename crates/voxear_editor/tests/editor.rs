@@ -246,3 +246,41 @@ fn the_cookbook_reads_the_projects_docs() {
         encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
     }
 }
+
+#[test]
+fn the_levels_panel_lists_levels_and_opens_them() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let root = editor.ui.root();
+    let dock = editor.ui.find(root, "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "levels");
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    let list = editor.ui.find(root, "levels-list").unwrap();
+    let mut names = Vec::new();
+    with_class(&editor.ui, list, "row-name", &mut names);
+    let titles: Vec<String> = names
+        .iter()
+        .filter(|&&n| editor.ui.is_visible(editor.ui.parent(n).unwrap()))
+        .map(|&n| editor.ui.text(n))
+        .collect();
+    assert!(titles.starts_with(&["Levels".into(), "Day".into(), "Night".into(), "World".into()]), "{titles:?}");
+    let night = names.into_iter().find(|&n| editor.ui.text(n) == "Night").unwrap();
+
+    let [x, y, w, h] = editor.ui.rect(night);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    assert_eq!(editor.game.levels.current(), Some("Levels/Night.level"), "a click opens the level to edit");
+    assert!(obj(&editor, "Lamp").is_some(), "with Night's Objs");
+    assert!(obj(&editor, "Scene Camera").is_some(), "and the editor's own camera left alone");
+    assert_eq!(editor.game.levels.active_scene(), Some("Scenes/Night.scene"));
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("levels.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+}

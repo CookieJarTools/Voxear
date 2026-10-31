@@ -60,6 +60,20 @@ namespace Voxear.Scripting
 		/// Writes the game scripts' content roots as UTF-8 into the buffer when they fit, and returns their length
 		/// in bytes either way, so the engine can call again with a buffer large enough.
 		/// </summary>
+		/// <summary>A level change the editor asks for, made as a script would make it so every Level event fires.</summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static void SwitchLevel(byte* level, int length)
+		{
+			try
+			{
+				Level.LoadAsync(Native.Utf8(level, length));
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+			}
+		}
+
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static int ContentRoots(byte* buffer, int capacity)
 		{

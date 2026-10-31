@@ -4,16 +4,14 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use voxear_ecs::{Component, Entity, World};
+use voxear_ecs::{Entity, World};
 use voxear_render::{Camera, Light, MeshRenderer};
 use voxear_scene::{Name, Parent};
 use voxear_ui::{NodeId, TreeItems, Ui};
 
-/// Marks Objs the editor made for itself, such as its Scene camera, which the
-/// Hierarchy leaves out.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct EditorOnly;
-impl Component for EditorOnly {}
+/// Objs the editor made for itself, such as its Scene camera, which the
+/// Hierarchy leaves out and level changes leave alone.
+pub use voxear_scene::EditorOnly;
 
 /// What the tree shows, rebuilt from the world when it changes.
 #[derive(Default, PartialEq)]

@@ -20,7 +20,7 @@ pub use content::{Content, ContentUsage, MaterialData, MaterialSource, Released}
 pub use engine::{EditBehaviours, Engine, STAGES};
 pub use fly_camera::FlyCamera;
 pub use game::Game;
-pub use levels::{LEVEL_FORMAT, LevelChange, LevelFile, LevelScene, Levels};
+pub use levels::{LEVEL_FORMAT, LevelChange, LevelFile, LevelOptions, LevelScene, LevelSummary, Levels, summarise};
 pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork};
 pub use prefab::{ObjPath, PrefabId, Template};
 pub use project::{ContentSettings, PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root};

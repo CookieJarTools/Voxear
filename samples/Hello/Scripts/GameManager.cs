@@ -5,7 +5,8 @@ namespace Hello
 {
 	/// <summary>
 	/// Keeps score and moves through the levels its scene lists in cycle, loading each in the background with
-	/// Level.LoadAsync and carrying on once it is in. It is an IInstance,
+	/// Level.LoadAsync and carrying on once it is in. Day and Night both stand on the World level, so the Environment
+	/// scene stays loaded between them. It is an IInstance,
 	/// so any script reaches it through Instance&lt;GameManager&gt;.Current, and its Obj is persistent, so it
 	/// survives every level change while the scenes around it come and go.
 	/// </summary>
@@ -56,8 +57,16 @@ namespace Hello
 		private async void SwitchLevel(string level)
 		{
 			loading = Level.LoadAsync(level);
-			await loading;
-			Log.Info($"{level} is in after loading in the background{(loading.Error == null ? "" : $", but: {loading.Error}")}");
+			try
+			{
+				await loading;
+				Log.Info($"{level} is in after loading in the background, bringing in {string.Join(", ", loading.Scenes)}");
+			}
+			catch (LevelLoadException exception)
+			{
+				Log.Error(exception.Message);
+			}
+
 			Log.Info($"Loaded now: {Content.Usage}");
 			loading = null;
 		}

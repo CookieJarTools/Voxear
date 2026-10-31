@@ -247,7 +247,17 @@ pub fn spawn(
     scene: &SceneFile,
     skip: &HashSet<ObjPath>,
 ) -> Result<Vec<(ObjPath, Entity)>> {
-    if let Some(sky) = scene.sky {
+    apply_environment(engine, scene.sky, scene.post.as_ref())?;
+    let objs = without(prefab::expand(content, &scene.objs)?, skip);
+    let template = Template::resolve(content, renderer, &objs)?;
+    let entities = engine.spawn_template(&template, None, None)?;
+    Ok(template.objs.iter().map(|o| o.path.clone()).zip(entities).collect())
+}
+
+/// Sets the level's sky and post-processing from a scene that has them.
+/// What a scene leaves out stays as it was.
+pub fn apply_environment(engine: &mut Engine, sky: Option<SkyData>, post: Option<&toml::Table>) -> Result<()> {
+    if let Some(sky) = sky {
         engine.world.insert_resource(Sky {
             zenith: Vec3::from(linear(sky.zenith)),
             horizon: Vec3::from(linear(sky.horizon)),
@@ -255,15 +265,11 @@ pub fn spawn(
             ambient: sky.ambient,
         });
     }
-    if let Some(table) = &scene.post {
+    if let Some(table) = post {
         engine.world.insert_resource(PostProcess::from_toml(table)?);
         engine.world.insert_resource(PostTable(table.clone()));
     }
-
-    let objs = without(prefab::expand(content, &scene.objs)?, skip);
-    let template = Template::resolve(content, renderer, &objs)?;
-    let entities = engine.spawn_template(&template, None, None)?;
-    Ok(template.objs.iter().map(|o| o.path.clone()).zip(entities).collect())
+    Ok(())
 }
 
 /// Leaves out the Objs in `skip` and everything parented under them.

@@ -6,6 +6,11 @@ namespace Voxear.Interop
 	/// <summary>Thin managed wrappers over the engine's function table.</summary>
 	internal static unsafe class Native
 	{
+		public const int LevelInfoCurrent = 0;
+		public const int LevelInfoActiveScene = 1;
+		public const int LevelInfoScenes = 2;
+		public const int LevelInfoError = 3;
+
 		public static NativeApi* Api;
 
 		public static bool IsConnected => Api != null;
@@ -150,6 +155,41 @@ namespace Voxear.Interop
 			{
 				return Api->LoadAsync(level ? 1 : 0, text, bytes.Length);
 			}
+		}
+
+		/// <summary>Starts a level change in the background as the options say, and returns its id, or -1.</summary>
+		public static int LevelLoadAsync(string reference, LevelLoadOptions options)
+		{
+			var data = new LevelLoadOptionsData
+			{
+				Hold = options.Hold ? 1 : 0,
+				LeastTime = options.LeastTime,
+				UnloadRest = options.UnloadRest ? 1 : 0,
+				SetActive = options.SetActive ? 1 : 0,
+				TidyUp = options.TidyUp ? 1 : 0,
+			};
+			var bytes = Encoding.UTF8.GetBytes(reference);
+			fixed (byte* text = bytes)
+			{
+				return Api->LevelLoadAsync(text, bytes.Length, &data);
+			}
+		}
+
+		/// <summary>What the engine says about levels: one of the LevelInfo kinds, for a load where it is about one.</summary>
+		public static string? LevelInfo(int what, int id)
+		{
+			var length = Api->LevelInfo(what, id, null, 0);
+			if (length < 0)
+			{
+				return null;
+			}
+
+			var bytes = new byte[length];
+			fixed (byte* buffer = bytes)
+			{
+				Api->LevelInfo(what, id, buffer, length);
+			}
+			return Encoding.UTF8.GetString(bytes);
 		}
 
 		public static bool LoadStatus(int id, out LoadProgress status)

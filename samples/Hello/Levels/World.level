@@ -1,0 +1,5 @@
+# Voxear level: the scenes every Hello level stands on, loaded once and kept as Day gives way to Night.
+format = 1
+
+[[scene]]
+scene = "c97199385e09412abd30f4d33fa28537"  # Scenes/Environment.scene

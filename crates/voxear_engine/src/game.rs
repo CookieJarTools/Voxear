@@ -2,12 +2,14 @@ use anyhow::{Context, Result};
 use voxear_ecs::{Entity, World};
 use voxear_render::Renderer;
 use voxear_scene::Placement;
-use voxear_scripting::{ContentStats, LoadProgress, ScriptServices, ServicesScope, SpawnedPrefab};
+use voxear_scripting::{
+    ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, ScriptServices, ServicesScope, SpawnedPrefab,
+};
 
 use crate::{
     content::{Content, Released},
     engine::Engine,
-    levels::{LevelChange, Levels},
+    levels::{LevelChange, LevelOptions, Levels},
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
     prefab::PrefabId,
     project::Project,
@@ -62,11 +64,24 @@ impl Game {
 
     /// Changes level now, then frees what the old one used and the new one
     /// does not.
-    pub fn load_level(&mut self, level: &str, mut renderer: Option<&mut Renderer>) -> Result<()> {
-        let change = self.levels.load(&mut self.engine, &mut self.content, renderer.as_deref_mut(), level)?;
+    pub fn load_level(&mut self, level: &str, renderer: Option<&mut Renderer>) -> Result<()> {
+        self.load_level_with(level, &LevelOptions::default(), renderer).map(|_| ())
+    }
+
+    /// Changes level now, as `options` say, and returns what changed.
+    pub fn load_level_with(
+        &mut self,
+        level: &str,
+        options: &LevelOptions,
+        mut renderer: Option<&mut Renderer>,
+    ) -> Result<LevelChange> {
+        let change =
+            self.levels.load_with(&mut self.engine, &mut self.content, renderer.as_deref_mut(), level, options)?;
         log_change(level, &change);
-        self.release_unused(renderer);
-        Ok(())
+        if options.tidy_up {
+            self.release_unused(renderer);
+        }
+        Ok(change)
     }
 
     /// Frees what nothing uses any more (see [`Content::release_unused`]).
@@ -88,7 +103,35 @@ impl Game {
     /// once loaded, at the end of a frame, unless activation is held back
     /// with [`Loads::set_allow_activation`].
     pub fn load_level_async(&mut self, level: &str) -> Result<LoadId> {
-        self.loads.start(&self.content, LoadTarget::Level(level.to_string()), self.models)
+        self.load_level_async_with(level, LevelOptions::default())
+    }
+
+    /// Starts loading a level in the background that changes over as
+    /// `options` say: held for a loading screen, or taking a least time.
+    pub fn load_level_async_with(&mut self, level: &str, options: LevelOptions) -> Result<LoadId> {
+        self.loads.start_with(&self.content, LoadTarget::Level(level.to_string()), options, self.models)
+    }
+
+    /// Changes level in the background as a running game would, as the
+    /// editor's Levels panel does: through the scripts' `Level.LoadAsync`,
+    /// so every event fires, or straight to the loader without scripts.
+    pub fn switch_level(&mut self, level: &str, renderer: Option<&mut Renderer>) -> Result<()> {
+        if self.engine.scripts().is_none() {
+            return self.load_level_async(level).map(|_| ());
+        }
+        let models = self.models;
+        let unload_requested = &mut self.unload_requested;
+        let mut services = GameServices {
+            content: &mut self.content,
+            loads: &mut self.loads,
+            levels: &self.levels,
+            renderer,
+            models,
+            unload_requested,
+        };
+        let _scope = ServicesScope::enter(&mut services);
+        self.engine.switch_level_through_scripts(level);
+        Ok(())
     }
 
     /// Starts loading a prefab in the background; its status gives the
@@ -115,8 +158,14 @@ impl Game {
         let template = self.content.loaded_template(renderer.as_deref_mut(), id)?;
         let models = self.models;
         let unload_requested = &mut self.unload_requested;
-        let mut services =
-            GameServices { content: &mut self.content, loads: &mut self.loads, renderer, models, unload_requested };
+        let mut services = GameServices {
+            content: &mut self.content,
+            loads: &mut self.loads,
+            levels: &self.levels,
+            renderer,
+            models,
+            unload_requested,
+        };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.instantiate(&template, parent, placement)
     }
@@ -129,13 +178,19 @@ impl Game {
             let renderer = renderer.as_deref_mut();
             let models = self.models;
             let unload_requested = &mut self.unload_requested;
-            let mut services =
-                GameServices { content: &mut self.content, loads: &mut self.loads, renderer, models, unload_requested };
+            let mut services = GameServices {
+                content: &mut self.content,
+                loads: &mut self.loads,
+                levels: &self.levels,
+                renderer,
+                models,
+                unload_requested,
+            };
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
-        for (id, level) in self.loads.advance(&mut self.content, renderer.as_deref_mut()) {
-            let changed = self.load_level(&level, renderer.as_deref_mut());
+        for (id, level, options) in self.loads.advance(&mut self.content, renderer.as_deref_mut()) {
+            let changed = self.load_level_with(&level, &options, renderer.as_deref_mut());
             self.loads.activated(id, changed);
         }
         let requested = self.engine.scripts_mut().and_then(|scripts| scripts.take_level_requests().pop());
@@ -155,6 +210,7 @@ impl Game {
 struct GameServices<'a> {
     content: &'a mut Content,
     loads: &'a mut Loads,
+    levels: &'a Levels,
     renderer: Option<&'a mut Renderer>,
     models: ModelWork,
     unload_requested: &'a mut bool,
@@ -178,6 +234,30 @@ impl ScriptServices for GameServices<'_> {
         let objs =
             entities.iter().enumerate().map(|(i, &entity)| (entity, template.behaviours(i, &entities))).collect();
         Ok(SpawnedPrefab { root: entities[root], objs })
+    }
+
+    fn load_level(&mut self, reference: &str, options: LevelLoadOptions) -> Result<u32> {
+        let options = LevelOptions {
+            hold: options.hold != 0,
+            least_time: options.least_time.max(0.0),
+            unload_rest: options.unload_rest != 0,
+            set_active: options.set_active != 0,
+            tidy_up: options.tidy_up != 0,
+        };
+        let target = LoadTarget::Level(reference.to_string());
+        Ok(self.loads.start_with(self.content, target, options, self.models)?.0)
+    }
+
+    fn level_info(&self, what: LevelInfo, id: u32) -> Option<String> {
+        match what {
+            LevelInfo::Current => self.levels.current().map(str::to_string),
+            LevelInfo::ActiveScene => self.levels.active_scene().map(str::to_string),
+            LevelInfo::Scenes => self.loads.status(LoadId(id)).map(|status| status.scenes.join("\n")),
+            LevelInfo::Error => match self.loads.status(LoadId(id))?.state {
+                LoadState::Failed(error) => Some(error),
+                _ => None,
+            },
+        }
     }
 
     fn load_async(&mut self, level: bool, reference: &str) -> Result<u32> {

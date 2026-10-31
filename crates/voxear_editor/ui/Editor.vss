@@ -667,6 +667,62 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-text-2);
 }
 
+/* The Levels panel. */
+
+.level-heading {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--vx-muted);
+}
+
+.level-heading:hover, .level-heading:selected {
+    background-color: transparent;
+}
+
+.level-current .row-name {
+    color: var(--vx-text);
+    font-weight: 600;
+}
+
+.level-current .row-icon {
+    color: var(--vx-accent);
+}
+
+.level-play {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.level-play > Icon {
+    width: 10px;
+    height: 10px;
+}
+
+.level-progress {
+    margin: 0px 8px 8px 8px;
+    gap: 5px;
+    flex-shrink: 0;
+}
+
+.level-progress-text {
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.level-progress-track {
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--vx-seg-on);
+}
+
+.level-progress-fill {
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--vx-accent);
+    transition: background-color var(--vx-fade);
+}
+
 /* The Console. */
 
 .console .list-row {

@@ -1,8 +1,6 @@
 # Voxear level
 format = 1
-
-[[scene]]
-scene = "c97199385e09412abd30f4d33fa28537"  # Scenes/Environment.scene
+stands_on = "Levels/World.level"
 
 [[scene]]
 scene = "87bbd040bd984a5385450d55e4c79663"  # Scenes/Night.scene

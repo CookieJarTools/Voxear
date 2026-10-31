@@ -81,6 +81,15 @@ impl ScriptRuntime {
         Ok(())
     }
 
+    /// Starts a level change through `Level.LoadAsync`, so its events fire
+    /// as for a change scripts start, as the editor's Levels panel does
+    /// while playing. Needs the engine's services lent, as while ticking.
+    pub fn switch_level(&mut self, world: &mut World, level: &str) {
+        let Some(switch) = self.managed.switch_level else { return };
+        let _scope = WorldScope::enter(world);
+        unsafe { switch(level.as_ptr(), level.len() as i32) };
+    }
+
     /// Every `[ContentRoot]` pattern in the game scripts, with the type or
     /// member that declares it.
     pub fn content_roots(&self) -> Result<Vec<(String, String)>> {

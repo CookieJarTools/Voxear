@@ -77,13 +77,15 @@ fn project() -> tempfile::TempDir {
     write("Scenes/Environment.scene", ENVIRONMENT);
     write("Scenes/Day.scene", DAY);
     write("Scenes/Night.scene", NIGHT);
+    // Day and Night stand on World, as LayerCake's sets stand on a base: its Environment stays loaded.
+    write("Levels/World.level", "format = 1\n[[scene]]\nscene = \"Scenes/Environment.scene\"\n");
     write(
         "Levels/Day.level",
-        "format = 1\n[[scene]]\nscene = \"Scenes/Environment.scene\"\n[[scene]]\nscene = \"Scenes/Day.scene\"\n",
+        "format = 1\nstands_on = \"Levels/World.level\"\n[[scene]]\nscene = \"Scenes/Day.scene\"\n",
     );
     write(
         "Levels/Night.level",
-        "format = 1\n[[scene]]\nscene = \"Scenes/Environment.scene\"\n[[scene]]\nscene = \"Scenes/Night.scene\"\n",
+        "format = 1\nstands_on = \"Levels/World.level\"\n[[scene]]\nscene = \"Scenes/Night.scene\"\n",
     );
     dir
 }
@@ -246,4 +248,45 @@ fn play_copies_the_level_as_edited_and_leaves_it_alone() {
     play.shutdown();
     assert_eq!(play.world.entity_count(), 0, "stopping clears the play world");
     assert_eq!(edit.world.get::<Transform>(sun).unwrap().position.y, 7.5, "the edited level is as it was");
+}
+
+#[test]
+fn levels_mark_an_active_scene_pass_over_optional_ones_and_keep_what_they_are_told() {
+    let dir = project();
+    let write = |path: &str, text: &str| std::fs::write(dir.path().join(path), text).unwrap();
+    write("Scenes/Broken.scene", "this is not a scene");
+    write(
+        "Levels/Both.level",
+        "format = 1\nstands_on = \"Levels/World.level\"\n\
+         [[scene]]\nscene = \"Scenes/Day.scene\"\n\
+         [[scene]]\nscene = \"Scenes/Night.scene\"\nactive = true\n\
+         [[scene]]\nscene = \"Scenes/Broken.scene\"\nrequired = false\n\
+         [[scene]]\nscene = \"Scenes/Gone.scene\"\nrequired = false\n",
+    );
+    write("Levels/Loop.level", "format = 1\nstands_on = \"Levels/Loop.level\"\n");
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    let mut levels = Levels::default();
+
+    let change = levels.load(&mut engine, &mut content, None, "Levels/Both.level").unwrap();
+    assert_eq!(change.loaded, ["Scenes/Environment.scene", "Scenes/Day.scene", "Scenes/Night.scene"], "the base first");
+    assert_eq!(change.skipped, ["Scenes/Broken.scene"], "a scene that is not required is passed over");
+    assert_eq!(levels.active_scene(), Some("Scenes/Night.scene"), "the scene the level marks");
+    assert!(engine.world.resource::<voxear_render::Sky>().is_some(), "the last sky, as the active scene has none");
+    engine.spawn_obj("Firefly", Transform::IDENTITY, &[]).unwrap();
+
+    let change = levels.load(&mut engine, &mut content, None, "Levels/Day.level").unwrap();
+    assert_eq!(change.kept, ["Scenes/Environment.scene", "Scenes/Day.scene"]);
+    assert_eq!(change.unloaded, ["Scenes/Night.scene"]);
+    engine.tick(1.0 / 60.0);
+    assert!(!names(&engine).contains(&"Firefly".to_string()), "runtime Objs went with the active scene");
+    assert_eq!(levels.active_scene(), Some("Scenes/Day.scene"), "a level's own first scene, not its base's");
+
+    let keep = voxear_engine::LevelOptions { unload_rest: false, set_active: false, ..Default::default() };
+    let change = levels.load_with(&mut engine, &mut content, None, "Levels/Night.level", &keep).unwrap();
+    assert!(change.unloaded.is_empty() && change.kept.contains(&"Scenes/Day.scene".to_string()), "{change:?}");
+    assert_eq!(levels.active_scene(), Some("Scenes/Day.scene"), "the scene active before stays so");
+
+    let error = levels.load(&mut engine, &mut content, None, "Levels/Loop.level").unwrap_err();
+    assert!(format!("{error:#}").contains("stands on itself"), "{error:#}");
 }

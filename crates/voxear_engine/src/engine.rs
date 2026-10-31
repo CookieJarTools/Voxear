@@ -87,6 +87,14 @@ impl Engine {
         self.scripts.as_mut()
     }
 
+    /// Asks the scripts to change level through `Level.LoadAsync`, so its
+    /// events fire. False without scripts.
+    pub fn switch_level_through_scripts(&mut self, level: &str) -> bool {
+        let Some(scripts) = self.scripts.as_mut() else { return false };
+        scripts.switch_level(&mut self.world, level);
+        true
+    }
+
     /// Ends the simulation as leaving play mode does: every Obj is
     /// destroyed, so its behaviours get OnDisable and OnDestroy and the
     /// scripts let go of them. Returns the scripts, for the next run, since

@@ -18,7 +18,12 @@ use voxear_scene::{Name, Transform};
 use voxear_ui::{Color, NodeId, Shape, Ui};
 
 use crate::{
-    console::Console, hierarchy::EditorOnly, hierarchy::Hierarchy, inspector::Inspector, project_view::ProjectView,
+    console::Console,
+    hierarchy::EditorOnly,
+    hierarchy::Hierarchy,
+    inspector::Inspector,
+    levels_panel::{LevelAction, LevelsPanel},
+    project_view::ProjectView,
 };
 
 const MARKUP: &str = include_str!("../ui/Editor.vui");
@@ -28,7 +33,7 @@ const SHEET: &str = include_str!("../ui/Editor.vss");
 /// Console, and the Inspector on the right. The Project sits under the Scene,
 /// as in Unity, because its folders and files need the width.
 const LAYOUT: &str =
-    "row(240, [hierarchy], row(-300, column(66%, [scene, game, cookbook], [project, console]), [inspector]))";
+    "row(240, [hierarchy, levels], row(-300, column(66%, [scene, game, cookbook], [project, console]), [inspector]))";
 /// The window's background, which the 3D view's surroundings are cleared to.
 const BACKGROUND: u32 = 0x0c0e10;
 /// How often the status bar's numbers change.
@@ -68,6 +73,8 @@ pub struct Editor {
     console: Console,
     /// The project's own documentation, from its `Docs` folder.
     cookbook: voxear_cookbook::Cookbook,
+    /// Every level and loose scene, to open, play or change to.
+    levels: LevelsPanel,
     /// The Scene view's own camera, which the Hierarchy leaves out.
     camera: Entity,
     /// Play mode, and the scripts it keeps between runs.
@@ -144,6 +151,7 @@ impl Editor {
         let console = Console::new(&mut ui, console_list, log);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
         inspector.show(&mut ui, &game.engine.world, None);
+        let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let cookbook_panel = find(&ui, "cookbook");
         let cookbook = voxear_cookbook::Cookbook::new(&mut ui, cookbook_panel, &root, game.project.name());
         ui.set_text(nodes.status_time, &format!("Opened in {:.2} s", started.elapsed().as_secs_f32()));
@@ -159,6 +167,7 @@ impl Editor {
             inspector,
             console,
             cookbook,
+            levels,
             camera,
             play: play::Play::new(),
             view_camera: Some(camera),
@@ -211,6 +220,10 @@ impl Editor {
         self.project.update(&mut self.ui);
         self.console.update(&mut self.ui);
         self.cookbook.update(&mut self.ui);
+        let action = self.levels.update(&mut self.ui, self.game.levels.current(), self.game.loads.level_in_progress());
+        if let Some(action) = action {
+            self.level_action(action, renderer);
+        }
         if let Some(path) = self.cookbook.take_file_request() {
             // A link to a file in the project shows it in the Project panel.
             self.ui.show_dock_panel(self.nodes.dock, "project");
@@ -235,6 +248,55 @@ impl Editor {
         renderer.set_view_rect(Some(self.viewport_rect(view.map(|(viewport, _)| viewport), size)));
         renderer.set_ui(&frame)?;
         renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)
+    }
+
+    /// What a click in the Levels panel asked for. Playing, a level is
+    /// changed to as the game would change to it; stopped, it is opened to
+    /// edit, and Play opens it and plays.
+    fn level_action(&mut self, action: LevelAction, renderer: &mut Renderer) {
+        let playing = self.is_playing();
+        match action {
+            LevelAction::Open(level) if playing => {
+                if let Err(error) = self.game.switch_level(&level, Some(renderer)) {
+                    tracing::error!("could not change to {level}: {error:#}");
+                }
+            }
+            LevelAction::Open(level) => self.open_level(&level, renderer),
+            LevelAction::OpenScene(scene) if playing => {
+                tracing::info!("{scene} is in no level; stop playing to open it on its own");
+            }
+            LevelAction::OpenScene(scene) => {
+                let game = &mut self.game;
+                let opened = game.levels.open_scene(&mut game.engine, &mut game.content, Some(&mut *renderer), &scene);
+                match opened {
+                    Ok(_) => self.opened(renderer),
+                    Err(error) => tracing::error!("could not open {scene}: {error:#}"),
+                }
+            }
+            LevelAction::Play(level) => {
+                if playing {
+                    self.stop(renderer);
+                }
+                self.open_level(&level, renderer);
+                self.play(renderer);
+            }
+        }
+    }
+
+    /// Opens a level to edit in place of the one open now.
+    fn open_level(&mut self, level: &str, renderer: &mut Renderer) {
+        match self.game.load_level(level, Some(&mut *renderer)) {
+            Ok(()) => self.opened(renderer),
+            Err(error) => tracing::error!("could not open {level}: {error:#}"),
+        }
+    }
+
+    /// After another level or scene opened: nothing is selected, and what
+    /// it no longer uses is let go.
+    fn opened(&mut self, renderer: &mut Renderer) {
+        self.game.release_unused(Some(renderer));
+        self.inspector.show(&mut self.ui, &self.game.engine.world, None);
+        tracing::info!("opened {}", self.game.levels.current().unwrap_or("a scene"));
     }
 
     /// Whether a physical point is over the Scene view, where the right

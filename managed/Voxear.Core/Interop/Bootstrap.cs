@@ -10,7 +10,7 @@ namespace Voxear.Interop
 	/// </summary>
 	internal static unsafe class Bootstrap
 	{
-		public const uint ApiVersion = 8;
+		public const uint ApiVersion = 9;
 
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static int Initialize(NativeApi* native, ManagedApi* managed)
@@ -29,6 +29,7 @@ namespace Voxear.Interop
 			managed->Release = &EntryPoints.Release;
 			managed->Update = &EntryPoints.Update;
 			managed->ContentRoots = &EntryPoints.ContentRoots;
+			managed->SwitchLevel = &EntryPoints.SwitchLevel;
 			MainThreadContext.Instance.Install();
 			return 0;
 		}

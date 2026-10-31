@@ -7,13 +7,16 @@
 //! per step down the dependency graph (the level, then its scenes, then what
 //! they use), so the IO system works on each wave's reads together. The main thread then uploads
 //! the models a few at a time within a per-frame budget, and finishes. A
-//! level waits as **ready** until activation is allowed, then changes over
-//! at the end of a frame, like `Level.Load`.
+//! level waits as **ready** until activation is allowed (and, with
+//! [`LevelOptions::least_time`], until enough time has passed), then changes
+//! over at the end of a frame, like `Level.Load`. A level's progress counts
+//! each of its scenes for its `weight`, as LayerCake's does, and scenes
+//! already loaded count as done.
 
 use std::{
     collections::{HashMap, HashSet},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU32, Ordering},
     },
     thread::JoinHandle,
@@ -21,10 +24,15 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use voxear_assets::{AssetDb, AssetGuid, AssetKind, AssetReader};
+use voxear_assets::{AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef};
 use voxear_render::{CookedModel, PreparedModel, Renderer};
 
-use crate::{content::Content, content_build::direct_needs, prefab::PrefabId};
+use crate::{
+    content::Content,
+    content_build::direct_needs,
+    levels::{LevelChange, LevelOptions},
+    prefab::PrefabId,
+};
 
 /// How long uploads may take per frame, across all loads. At least one model
 /// uploads each frame, however long it takes.
@@ -57,6 +65,8 @@ pub struct LoadStatus {
     pub progress: f32,
     /// The loaded prefab, once a prefab load is done.
     pub prefab: Option<PrefabId>,
+    /// The scenes a level change brought in, once it is done.
+    pub scenes: Vec<String>,
 }
 
 /// What a background load does with models.
@@ -96,6 +106,31 @@ struct Prepared {
 struct Progress {
     found: AtomicU32,
     done: AtomicU32,
+    /// For a level: each scene's weight, and the files found and done for it.
+    scenes: Mutex<HashMap<AssetGuid, (f32, u32, u32)>>,
+}
+
+impl Progress {
+    /// How much has been read, from 0 to 1: each scene for its weight, or
+    /// for a prefab, every file alike.
+    fn reading(&self) -> f32 {
+        let scenes = self.scenes.lock().expect("never poisoned");
+        let total: f32 = scenes.values().map(|(weight, ..)| weight).sum();
+        if total > 0.0 {
+            let part = |found: u32, done: u32| if found == 0 { 1.0 } else { done as f32 / found as f32 };
+            return scenes.values().map(|&(weight, found, done)| weight * part(found, done)).sum::<f32>() / total;
+        }
+        self.done.load(Ordering::Relaxed) as f32 / self.found.load(Ordering::Relaxed).max(1) as f32
+    }
+
+    fn count(&self, owner: Option<AssetGuid>, done: bool) {
+        let counter = if done { &self.done } else { &self.found };
+        counter.fetch_add(1, Ordering::Relaxed);
+        let Some(owner) = owner else { return };
+        if let Some(scene) = self.scenes.lock().expect("never poisoned").get_mut(&owner) {
+            if done { scene.2 += 1 } else { scene.1 += 1 }
+        }
+    }
 }
 
 struct Load {
@@ -108,6 +143,9 @@ struct Load {
     /// Models this load uploaded, which sweeps leave alone until it is done.
     uploaded: Vec<AssetGuid>,
     allow_activation: bool,
+    /// How a level changes over, and when it started, for its least time.
+    options: LevelOptions,
+    started: Instant,
     status: LoadStatus,
 }
 
@@ -122,6 +160,17 @@ pub struct Loads {
 impl Loads {
     /// Starts loading a level or prefab on a worker thread.
     pub fn start(&mut self, content: &Content, target: LoadTarget, models: ModelWork) -> Result<LoadId> {
+        self.start_with(content, target, LevelOptions::default(), models)
+    }
+
+    /// Starts loading a level that changes over as `options` say.
+    pub fn start_with(
+        &mut self,
+        content: &Content,
+        target: LoadTarget,
+        options: LevelOptions,
+        models: ModelWork,
+    ) -> Result<LoadId> {
         let reference = match &target {
             LoadTarget::Level(path) | LoadTarget::Prefab(path) => path,
         };
@@ -147,8 +196,10 @@ impl Loads {
             prepared: None,
             uploads: 0,
             uploaded: Vec::new(),
-            allow_activation: true,
-            status: LoadStatus { state: LoadState::Loading, progress: 0.0, prefab: None },
+            allow_activation: !options.hold,
+            options,
+            started: Instant::now(),
+            status: LoadStatus { state: LoadState::Loading, progress: 0.0, prefab: None, scenes: Vec::new() },
         });
         Ok(id)
     }
@@ -170,21 +221,34 @@ impl Loads {
         self.active.is_empty()
     }
 
+    /// The level change under way, if any, and how far along it is: what a
+    /// progress bar follows, whoever started it.
+    pub fn level_in_progress(&self) -> Option<(&str, &LoadStatus)> {
+        self.active.iter().find_map(|load| match &load.target {
+            LoadTarget::Level(level) => Some((level.as_str(), &load.status)),
+            LoadTarget::Prefab(_) => None,
+        })
+    }
+
     /// Models that loads still in progress have uploaded.
     pub fn uploaded_models(&self) -> HashSet<AssetGuid> {
         self.active.iter().flat_map(|l| l.uploaded.iter().copied()).collect()
     }
 
     /// Moves every load along: collects finished workers, uploads within the
-    /// frame budget, and returns the levels that may now change over. Call
-    /// once per frame, after the engine ticks.
-    pub fn advance(&mut self, content: &mut Content, mut renderer: Option<&mut Renderer>) -> Vec<(LoadId, String)> {
+    /// frame budget, and returns the levels that may now change over, with
+    /// how. Call once per frame, after the engine ticks.
+    pub fn advance(
+        &mut self,
+        content: &mut Content,
+        mut renderer: Option<&mut Renderer>,
+    ) -> Vec<(LoadId, String, LevelOptions)> {
         let started = Instant::now();
         let mut activate = Vec::new();
         for load in &mut self.active {
             let step = advance_one(load, content, renderer.as_deref_mut(), started);
             match step {
-                Ok(Some(level)) => activate.push((load.id, level)),
+                Ok(Some(level)) => activate.push((load.id, level, load.options)),
                 Ok(None) => {}
                 Err(error) => load.status.state = LoadState::Failed(format!("{error:#}")),
             }
@@ -194,10 +258,13 @@ impl Loads {
     }
 
     /// Records the outcome of a level change [`advance`](Self::advance) asked for.
-    pub fn activated(&mut self, id: LoadId, result: Result<()>) {
+    pub fn activated(&mut self, id: LoadId, result: Result<LevelChange>) {
         if let Some(load) = self.active.iter_mut().find(|l| l.id == id) {
             load.status.state = match result {
-                Ok(()) => LoadState::Done,
+                Ok(change) => {
+                    load.status.scenes = change.loaded;
+                    LoadState::Done
+                }
                 Err(error) => LoadState::Failed(format!("{error:#}")),
             };
             load.status.progress = 1.0;
@@ -232,9 +299,7 @@ fn advance_one(
         load.prepared = Some(prepared);
     }
     let Some(prepared) = &mut load.prepared else {
-        let found = load.progress.found.load(Ordering::Relaxed).max(1);
-        let reading = load.progress.done.load(Ordering::Relaxed) as f32 / found as f32;
-        load.status.progress = load.status.progress.max(reading * 0.8);
+        load.status.progress = load.status.progress.max(load.progress.reading() * 0.8);
         return Ok(None);
     };
 
@@ -263,7 +328,8 @@ fn advance_one(
         LoadTarget::Level(path) => {
             load.status.state = LoadState::Ready;
             load.status.progress = 0.9;
-            if !load.allow_activation {
+            let early = load.started.elapsed().as_secs_f32() < load.options.least_time;
+            if !load.allow_activation || early {
                 return Ok(None);
             }
             content.adopt_texts(std::mem::take(&mut prepared.texts));
@@ -279,6 +345,18 @@ struct Models<'a> {
     cooked: &'a HashSet<AssetGuid>,
 }
 
+/// The weight a level file gives each of its scenes.
+fn note_weights(db: &AssetDb, level: &toml::Table, progress: &Progress) {
+    let Some(scenes) = level.get("scene").and_then(toml::Value::as_array) else { return };
+    let mut weights = progress.scenes.lock().expect("never poisoned");
+    for scene in scenes {
+        let Some(reference) = scene.get("scene").and_then(toml::Value::as_str) else { continue };
+        let Some(guid) = AssetRef::parse(reference, db).ok().and_then(|r| r.guid()) else { continue };
+        let weight = scene.get("weight").and_then(|w| w.as_float().or(w.as_integer().map(|i| i as f64))).unwrap_or(1.0);
+        weights.entry(guid).or_insert((0.0, 0, 0)).0 = weight.max(0.0) as f32;
+    }
+}
+
 /// Runs on the worker: everything `root` needs that is not loaded already.
 fn gather(
     db: &AssetDb,
@@ -290,11 +368,20 @@ fn gather(
 ) -> Result<Prepared> {
     let mut prepared = Prepared::default();
     let mut seen = HashSet::new();
-    let mut wave = vec![root];
+    // Each file with the scene it is read for, so a level's progress can
+    // count each scene for its weight.
+    let mut wave: Vec<(AssetGuid, Option<AssetGuid>)> = vec![(root, None)];
     while !wave.is_empty() {
         let mut reads = Vec::new();
-        for guid in wave.drain(..) {
-            if !seen.insert(guid) || loaded.contains(&guid) {
+        for (guid, owner) in std::mem::take(&mut wave) {
+            if !seen.insert(guid) {
+                continue;
+            }
+            if loaded.contains(&guid) {
+                // A scene already loaded counts as done: nothing found, nothing to do.
+                if owner == Some(guid) {
+                    progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));
+                }
                 continue;
             }
             let entry = db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
@@ -304,12 +391,15 @@ fn gather(
                 AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
                 AssetKind::Texture => false,
             };
-            progress.found.fetch_add(1, Ordering::Relaxed);
-            reads.push((guid, entry, read));
+            if owner == Some(guid) {
+                progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));
+            }
+            progress.count(owner, false);
+            reads.push((guid, owner, entry, read));
         }
-        let paths: Vec<&str> = reads.iter().filter(|(.., read)| *read).map(|(_, e, _)| e.path.as_str()).collect();
+        let paths: Vec<&str> = reads.iter().filter(|(.., read)| *read).map(|(_, _, e, _)| e.path.as_str()).collect();
         let mut bytes = reader.read_many(&paths)?.into_iter();
-        for (guid, entry, read) in reads {
+        for (guid, owner, entry, read) in reads {
             let data = if read { bytes.next() } else { None };
             match (entry.kind, data) {
                 (AssetKind::Model, Some(data)) => {
@@ -327,13 +417,38 @@ fn gather(
                     let text = String::from_utf8(data).with_context(|| format!("{} is not UTF-8 text", entry.path))?;
                     let table: toml::Table =
                         toml::from_str(&text).with_context(|| format!("reading {}", entry.path))?;
-                    wave.extend(direct_needs(db, &table));
+                    if entry.kind == AssetKind::Level {
+                        note_weights(db, &table, progress);
+                    }
+                    for need in direct_needs(db, &table) {
+                        let scene = db.get(need).is_some_and(|e| e.kind == AssetKind::Scene);
+                        wave.push((need, owner.or(scene.then_some(need))));
+                    }
                     prepared.texts.insert(guid, text.into());
                 }
                 (_, None) => {}
             }
-            progress.done.fetch_add(1, Ordering::Relaxed);
+            progress.count(owner, true);
         }
     }
     Ok(prepared)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_levels_progress_counts_each_scene_for_its_weight() {
+        let progress = Progress::default();
+        let (big, small, kept) = (AssetGuid::new_random(), AssetGuid::new_random(), AssetGuid::new_random());
+        progress.scenes.lock().unwrap().extend([(big, (3.0, 4, 2)), (small, (1.0, 2, 2)), (kept, (1.0, 0, 0))]);
+        // Half of a scene worth 3, and two whole scenes worth 1: (1.5 + 1 + 1) / 5.
+        assert!((progress.reading() - 0.7).abs() < 1e-6, "{}", progress.reading());
+
+        let prefab = Progress::default();
+        prefab.found.store(4, Ordering::Relaxed);
+        prefab.done.store(1, Ordering::Relaxed);
+        assert_eq!(prefab.reading(), 0.25, "without scenes, every file counts alike");
+    }
 }

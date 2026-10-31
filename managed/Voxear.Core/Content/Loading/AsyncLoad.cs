@@ -18,7 +18,9 @@ namespace Voxear
 			Id = id;
 			if (id < 0)
 			{
-				Finish("It could not start; the log says why.");
+				// Too early to tell anyone: the derived load is not built yet, so whoever started it reports it.
+				Error = "It could not start; the log says why.";
+				IsDone = true;
 			}
 		}
 
@@ -59,7 +61,7 @@ namespace Voxear
 			}
 			else if (status.State == LoadProgress.Failed)
 			{
-				Finish("Loading failed; the log says why.");
+				Finish(Failure());
 			}
 			return IsDone;
 		}
@@ -69,11 +71,23 @@ namespace Voxear
 		{
 		}
 
+		/// <summary>What Error says when the load failed.</summary>
+		internal virtual string Failure()
+		{
+			return "Loading failed; the log says why.";
+		}
+
+		/// <summary>Called once the load is over, before anything awaiting it carries on.</summary>
+		internal virtual void Finished()
+		{
+		}
+
 		private void Finish(string? error)
 		{
 			Error = error;
 			IsDone = true;
 			Progress = error == null ? 1f : Progress;
+			Finished();
 			var waiting = continuations.ToArray();
 			continuations.Clear();
 			foreach (var continuation in waiting)

@@ -79,6 +79,13 @@ pub struct AttachedBehaviour {
     pub spec: BehaviourSpec,
 }
 
+/// Marks Objs the editor or a tool made for itself, such as the Scene
+/// view's camera. No scene holds them, so level changes leave them alone,
+/// and they are never saved or shown in the Hierarchy.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EditorOnly;
+impl voxear_ecs::Component for EditorOnly {}
+
 /// Script behaviours attached to an Obj, in attach order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Behaviours(pub Vec<AttachedBehaviour>);

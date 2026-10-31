@@ -1,17 +1,56 @@
+using System;
 using Voxear.Interop;
 using Voxear.Scripting;
 
 namespace Voxear
 {
 	/// <summary>
-	/// Loads levels. A level is a list of scenes: scenes the current and next level share stay loaded,
-	/// the rest unload, and Objs marked persistent survive every change.
+	/// Loads levels, as CookieJarTools' LayerCake does. A level is a list of scenes, and may stand on another whose
+	/// scenes are always there: scenes the current and next level share stay loaded, the rest unload, and Objs marked
+	/// persistent survive every change.
+	/// <code>
+	/// await Level.LoadAsync("Levels/Night.level");
+	/// </code>
+	/// <para>
+	/// The events are static, so anything can hear about a change without being handed anything: pause a simulation on
+	/// SwitchStarted, move a bar on SwitchProgressed, begin playing on SwitchFinished. Only one change happens at a
+	/// time; asking for another while one is going gives back the one already going, and says so in the log.
+	/// </para>
 	/// </summary>
 	public static class Level
 	{
+		/// <summary>A change has begun: the level being left and the one coming.</summary>
+		public static event Action<LevelSwitch>? SwitchStarted;
+
+		/// <summary>Raised every frame while the new level is read in.</summary>
+		public static event Action<LevelLoad>? SwitchProgressed;
+
+		/// <summary>Everything is read in and waiting to be let in; only for a change asked to hold.</summary>
+		public static event Action<LevelLoad>? SwitchReady;
+
+		/// <summary>One scene of the new level is in, by its path.</summary>
+		public static event Action<string>? SceneLoaded;
+
+		/// <summary>The change is over and the new level is there.</summary>
+		public static event Action<LevelSwitch>? SwitchFinished;
+
+		/// <summary>A scene that had to load did not, or the level could not be read; the change stopped where it was.</summary>
+		public static event Action<LevelLoad>? SwitchFailed;
+
+		/// <summary>The level loaded now, by its path, including one started from the editor; null before the first.</summary>
+		public static string? Active => Native.LevelInfo(Native.LevelInfoCurrent, -1);
+
+		/// <summary>The scene new Objs go into and whose sky and post-processing are used, by its path.</summary>
+		public static string? ActiveScene => Native.LevelInfo(Native.LevelInfoActiveScene, -1);
+
+		/// <summary>The change going on now, or the last one there was.</summary>
+		public static LevelLoad? Current { get; private set; }
+
+		public static bool IsSwitching => Current != null && !Current.IsDone;
+
 		/// <summary>
-		/// Loads a level by project path or GUID, for example "Levels/Night.level". The change happens
-		/// after the current frame, so everything in this frame finishes first.
+		/// Loads a level by project path or GUID, for example "Levels/Night.level". The change happens after the current
+		/// frame, so everything in this frame finishes first. The events are not raised for it; use LoadAsync to hear.
 		/// </summary>
 		public static void Load(string level)
 		{
@@ -19,18 +58,85 @@ namespace Voxear
 		}
 
 		/// <summary>
-		/// Loads a level in the background while the game carries on. It changes over at the end of the frame it
-		/// finishes in; pass activate false to hold it at IsReady until AllowActivation is set, for a loading screen.
-		/// Await it to continue once the new level is in.
+		/// Loads a level in the background while the game carries on, as the options say: straight through when left
+		/// out. Await it to carry on once the new level is in; it throws LevelLoadException if the change failed.
 		/// </summary>
-		public static LevelLoad LoadAsync(string level, bool activate = true)
+		public static LevelLoad LoadAsync(string level, LevelLoadOptions? options = null)
 		{
-			var load = new LevelLoad(Native.LoadAsync(true, level));
-			if (!activate)
+			if (Current != null && !Current.IsDone)
 			{
-				load.AllowActivation = false;
+				Log.Warning($"Level.LoadAsync(\"{level}\") while {Current.Level} is still coming in; that change goes on instead.");
+				return Current;
 			}
+
+			options ??= LevelLoadOptions.Straight;
+			var load = new LevelLoad(Native.LevelLoadAsync(level, options), level, options, Active);
+			Current = load;
+			Raise(SwitchStarted, new LevelSwitch(load.Leaving, load));
+			if (load.IsDone)
+			{
+				Raise(SwitchFailed, load);
+				return load;
+			}
+
 			return Loading.Track(load);
+		}
+
+		/// <summary>Loads a level in the background; pass activate false to hold it at IsReady until it is let in.</summary>
+		public static LevelLoad LoadAsync(string level, bool activate)
+		{
+			return LoadAsync(level, activate ? LevelLoadOptions.Straight : LevelLoadOptions.Held);
+		}
+
+		internal static void Progressed(LevelLoad load)
+		{
+			Raise(SwitchProgressed, load);
+		}
+
+		internal static void WentReady(LevelLoad load)
+		{
+			Raise(SwitchReady, load);
+		}
+
+		internal static void Finished(LevelLoad load)
+		{
+			foreach (var scene in load.Scenes)
+			{
+				Raise(SceneLoaded, scene);
+			}
+
+			Raise(SwitchFinished, new LevelSwitch(load.Leaving, load));
+		}
+
+		internal static void Failed(LevelLoad load)
+		{
+			Raise(SwitchFailed, load);
+		}
+
+		/// <summary>A listener that throws is logged, so the rest still hear and the change goes on.</summary>
+		private static void Raise<T>(Action<T>? listeners, T value)
+		{
+			if (listeners == null)
+			{
+				return;
+			}
+
+			foreach (var listener in listeners.GetInvocationList())
+			{
+				Hear((Action<T>)listener, value);
+			}
+		}
+
+		private static void Hear<T>(Action<T> listener, T value)
+		{
+			try
+			{
+				listener(value);
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+			}
 		}
 	}
 }

@@ -24,6 +24,14 @@ pub trait ScriptServices {
         placement: Option<Placement>,
     ) -> Result<SpawnedPrefab>;
 
+    /// Starts loading a level in the background that changes over as
+    /// `options` say.
+    fn load_level(&mut self, reference: &str, options: LevelLoadOptions) -> Result<u32>;
+
+    /// What scripts can ask about levels: see [`LevelInfo`]. `id` names a
+    /// background load for the kinds that are about one.
+    fn level_info(&self, what: LevelInfo, id: u32) -> Option<String>;
+
     /// Starts loading a level (`level` true) or a prefab in the background.
     fn load_async(&mut self, level: bool, reference: &str) -> Result<u32>;
 
@@ -64,6 +72,43 @@ pub struct LoadProgress {
     pub progress: f32,
     /// The loaded prefab once a prefab load is done, or -1.
     pub prefab: i32,
+}
+
+/// How a level change is made, as scripts ask for it. Mirrors
+/// `LevelLoadOptions` in Voxear.Core.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct LevelLoadOptions {
+    pub hold: i32,
+    pub least_time: f32,
+    pub unload_rest: i32,
+    pub set_active: i32,
+    pub tidy_up: i32,
+}
+
+/// What [`ScriptServices::level_info`] answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LevelInfo {
+    /// The level loaded now.
+    Current,
+    /// The scene runtime Objs go into.
+    ActiveScene,
+    /// The scenes a finished change brought in, one per line.
+    Scenes,
+    /// Why a change failed.
+    Error,
+}
+
+impl LevelInfo {
+    pub fn from_code(code: i32) -> Option<Self> {
+        Some(match code {
+            0 => LevelInfo::Current,
+            1 => LevelInfo::ActiveScene,
+            2 => LevelInfo::Scenes,
+            3 => LevelInfo::Error,
+            _ => return None,
+        })
+    }
 }
 
 /// What [`ScriptServices::spawn_prefab`] created.

@@ -20,6 +20,8 @@
 //! - the **Console**, showing everything logged
 //! - the **Cookbook**: the project's own documentation, Markdown pages from its
 //!   `Docs` folder (see `voxear_cookbook`)
+//! - the **Levels** panel, as LayerCake's window: every level and loose
+//!   scene, to open, play, or while playing, change to
 //! - a status bar: what the editor is doing, frame rate, memory and git
 //!   branch
 //!
@@ -29,6 +31,7 @@ mod console;
 mod editor;
 mod hierarchy;
 mod inspector;
+mod levels_panel;
 mod project_view;
 mod window;
 

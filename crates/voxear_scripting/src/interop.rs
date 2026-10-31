@@ -15,9 +15,9 @@ use voxear_scene::{
     Registration, Request, Transform, world_matrix,
 };
 
-use crate::services::{ContentStats, LoadProgress, SpawnedPrefab, with_services};
+use crate::services::{ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 8;
+pub(crate) const API_VERSION: u32 = 9;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -53,6 +53,8 @@ pub(crate) struct NativeApi {
     pub prefab_keep: unsafe extern "C" fn(prefab: i32, keep: i32),
     pub content_unload_unused: unsafe extern "C" fn(),
     pub content_usage: unsafe extern "C" fn(out: *mut ContentStats) -> i32,
+    pub level_load_async: unsafe extern "C" fn(reference: *const u8, len: i32, options: *const LevelLoadOptions) -> i32,
+    pub level_info: unsafe extern "C" fn(what: i32, id: i32, buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -79,6 +81,9 @@ pub(crate) struct ManagedApi {
     /// Writes the `[ContentRoot]` patterns into a buffer when they fit, and
     /// returns their length either way, or -1 on failure.
     pub content_roots: Option<unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32>,
+    /// Starts a level change as `Level.LoadAsync` does, for the editor, so
+    /// scripts hear about it as they would about their own.
+    pub switch_level: Option<unsafe extern "C" fn(level: *const u8, len: i32)>,
 }
 
 #[repr(C)]
@@ -215,6 +220,35 @@ unsafe extern "C" fn load_async(level: i32, reference: *const u8, len: i32) -> i
             -1
         }
     }
+}
+
+unsafe extern "C" fn level_load_async(reference: *const u8, len: i32, options: *const LevelLoadOptions) -> i32 {
+    let reference = unsafe { utf8(reference, len) };
+    let options = unsafe { options.read() };
+    match with_services(|services| services.load_level(&reference, options)) {
+        Some(Ok(id)) => id as i32,
+        Some(Err(error)) => {
+            tracing::error!(target: "script", "Level.LoadAsync(\"{reference}\"): {error:#}");
+            -1
+        }
+        None => {
+            tracing::error!(target: "script", "Level.LoadAsync(\"{reference}\"): levels are not available here");
+            -1
+        }
+    }
+}
+
+/// Writes what was asked into the buffer when it fits, and returns its
+/// length in bytes either way, or -1 for nothing to say.
+unsafe extern "C" fn level_info(what: i32, id: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let Some(what) = LevelInfo::from_code(what) else { return -1 };
+    let Some(text) = with_services(|services| services.level_info(what, id.max(0) as u32)).flatten() else {
+        return -1;
+    };
+    if !buffer.is_null() && text.len() <= capacity.max(0) as usize {
+        unsafe { ptr::copy_nonoverlapping(text.as_ptr(), buffer, text.len()) };
+    }
+    text.len() as i32
 }
 
 unsafe extern "C" fn load_status(id: u32, out: *mut LoadProgress) -> i32 {
@@ -466,5 +500,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         prefab_keep,
         content_unload_unused,
         content_usage,
+        level_load_async,
+        level_info,
     }
 }

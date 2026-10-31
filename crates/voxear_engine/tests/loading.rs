@@ -211,3 +211,32 @@ fn cooked_models_load_from_bundles_now_and_in_the_background() {
     assert!(tree_drawn(&game), "and in the background");
     renderer.render(&game.engine.world, 0.0).unwrap();
 }
+
+#[test]
+fn a_held_change_waits_its_least_time_and_says_what_came_in() {
+    let dir = project();
+    std::fs::write(
+        dir.path().join("Levels/Both.level"),
+        "format = 1\n[[scene]]\nscene = \"Scenes/Start.scene\"\n[[scene]]\nscene = \"Scenes/Forest.scene\"\nweight = 4\nactive = true\n",
+    )
+    .unwrap();
+    let mut game = game(&dir);
+    game.start(None).unwrap();
+    let options = voxear_engine::LevelOptions { hold: true, least_time: 0.4, ..Default::default() };
+    let started = std::time::Instant::now();
+    let id = game.load_level_async_with("Levels/Both.level", options).unwrap();
+    tick_while(&mut game, None, id, LoadState::Loading);
+    for _ in 0..5 {
+        game.tick(1.0 / 60.0, None);
+    }
+    assert_eq!(game.load_status(id).unwrap().state, LoadState::Ready, "held until let in");
+    assert_eq!(names(&game), ["Start"]);
+
+    game.loads.set_allow_activation(id, true);
+    tick_while(&mut game, None, id, LoadState::Ready);
+    assert!(started.elapsed().as_secs_f32() >= 0.4, "and not before its least time");
+    let status = game.load_status(id).unwrap();
+    assert_eq!(status.state, LoadState::Done);
+    assert_eq!(status.scenes, ["Scenes/Forest.scene"], "Start was kept, so only Forest came in");
+    assert_eq!(game.levels.active_scene(), Some("Scenes/Forest.scene"));
+}

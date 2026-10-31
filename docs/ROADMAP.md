@@ -206,6 +206,11 @@ Done so far:
   the project's `Docs` folder, read and written in a Cookbook tab, with the page tree, search, back and forward,
   links to pages, headings, files and the web, missing pages written from their links, checklists that save,
   callouts, tables and code. Voxear UI gained rich text with clickable links, and `white-space: nowrap`.
+- **LayerCake as level loading** (after the CookieJarTools scene switcher): scenes in a level marked `active`,
+  `required = false` or with a `weight`, levels that stand on a base level, background changes with weighted
+  progress, held activation, a least time and options to keep the rest or the active scene, `Level.LoadAsync` with
+  `LevelLoadOptions`, `Ready`, `Activate`, a throwing await and static switch events, and a Levels panel in the
+  editor that opens, plays and switches levels.
 
 Still to do in M3:
 - UI core:
@@ -222,9 +227,6 @@ Still to do in M3:
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.
-- **LayerCake**, the CookieJarTools scene switcher, as Voxear's level loading: per-scene `active`, `required` and
-  `weight` in levels, levels that stand on a base level, a `SceneLoader`-style C# API with progress, held
-  activation, options and events, and a Levels panel in the editor.
 - Debug tools:
   - the stats overlay's frame-time graph, and the profiler panel (with Tracy)
   - the frame debugger and the ECS inspector

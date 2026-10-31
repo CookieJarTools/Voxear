@@ -253,29 +253,52 @@ and a positive pitch looks down.
   - `persistent = true`
   - a scene-level `[sky]`
   See `crates/voxear_engine/src/scene_file.rs`. Builds will use a binary form made by the content build.
-- A **Level** is a `.level` file listing the Scenes it needs, each optionally marked `reload = true`. Later it may
-  list "additive on demand" scenes too.
+- A **Level** is a `.level` file listing the Scenes it needs, as CookieJarTools' **LayerCake** loads them
+  *(implemented)*. Its source and guide are in `Dev/CookieJar` (`Assets/CookieJarTools/LayerCake`,
+  `Docs/LayerCake.md`). Each scene may be marked:
+  - `active = true`: where new Objs go, and whose sky and post-processing the level uses. Unmarked, a level's first
+    own scene is active; only a level with none of its own takes its base's.
+  - `required = false`: a scene that fails to load is passed over rather than stopping the change.
+  - `weight = 3.0`: what it counts for in a background load's progress, against the others.
+  - `reload = true`: reloaded even when the previous level had it too.
+
+  A level can **stand on** another (`stands_on = "Levels/World.level"`) for the scenes that are always there:
+  managers, audio, the persistent UI. The base's scenes come first and stay loaded while the levels standing on it
+  give way to each other, so nothing in them is torn down and built again. Hello's Day and Night stand on World,
+  which holds the Environment.
 - `vox assets` lists a project's assets and gives new ones a GUID.
-- `Levels.Load(level)` diffs the scenes loaded now against the scenes the level needs:
-  - Scenes shared between the two levels **stay loaded** unless marked `ReloadOnLevelChange`.
+- `Levels::load(level)` diffs the scenes loaded now against the scenes the level needs:
+  - Scenes shared between the two levels **stay loaded** unless marked `reload`.
   - Missing scenes load.
-  - Scenes the new level does not need unload, and their content refcounts release.
+  - Scenes the new level does not need unload (unless `LevelOptions::unload_rest` is off), and their content
+    refcounts release.
 - Sync and async are a choice per call *(implemented)*:
   - `Level.Load(level)` changes level at the end of the frame, reading everything then.
-  - `Level.LoadAsync(level)` loads in the background while the game runs, then changes over at the end of the frame
-    it finishes in. It returns a `LevelLoad`:
-    - `Progress`, which reaches 0.9 when loaded and 1 when changed over, as in Unity
-    - `IsReady`, `IsDone` and `Error`
-    - `AllowActivation`
-    - `LoadAsync(level, activate: false)` holds the change at `IsReady` until `AllowActivation` is set, which is
-      what a loading screen wants.
+  - `Level.LoadAsync(level, options)` loads in the background while the game runs, then changes over at the end of
+    the frame it finishes in, as LayerCake's `SceneLoader.Load`. It returns a `LevelLoad`, the change as it happens:
+    - `Progress`, from 0 to 1 across every scene, each counting for its weight and scenes already loaded counting as
+      done; it reaches 0.9 when loaded and 1 when changed over, as in Unity
+    - `IsReady`, `IsDone`, `Error`, and the `Scenes` it brought in
+    - awaiting it carries on once the level is in, and throws `LevelLoadException` if the change failed
+    - `LevelLoadOptions`: `Straight` or `Held` (wait at `IsReady` until `Activate()`), `LeastTime` (a change takes at
+      least this long, so a loading screen is seen), `UnloadRest`, `SetActive` and `TidyUp` (free what nothing uses
+      once it is over); `LoadAsync(level, activate: false)` is the same as `Held`
 
     ```csharp
-    var load = Level.LoadAsync("Levels/Night.level", activate: false);
-    while (!load.IsReady) { bar.Fill = load.Progress; await Task.Yield(); }
-    load.AllowActivation = true;
-    await load;                       // continues on the main thread once Night is in
+    var switching = Level.LoadAsync("Levels/Night.level", LevelLoadOptions.Held);
+    await switching.Ready;            // everything is read in and waiting
+    await FadeOut();
+    switching.Activate();             // let it in
+    await switching;                  // and it's there
     ```
+
+  - **Events**, static so anything can listen without being handed anything: `Level.SwitchStarted`,
+    `SwitchProgressed` (every frame while reading), `SwitchReady` (for a held change), `SceneLoaded`,
+    `SwitchFinished` and `SwitchFailed`. `Level.Active` is the level loaded now, including one opened in the editor,
+    `Level.ActiveScene` its active scene, and `Level.Current` the change going on. Only one change happens at a
+    time; asking for another while one goes on gives back the one going, with a warning. Static events outlive a
+    play-mode run in the editor (scripts are not reloaded between runs yet), so listeners should unsubscribe in
+    OnDestroy.
 
   - **How it works.** A worker thread with its own reader works from the project folder or from bundles. It reads and
     parses every level, scene, prefab and material file the level needs, and prepares its models: parsing glTF,
@@ -293,8 +316,14 @@ and a positive pitch looks down.
 - From C#, `Level.Load("Levels/Night.level")` changes level after the current frame. Unloaded Objs stop rendering
   at once, and their behaviours get OnDisable and OnDestroy at the end of the next frame.
 - Loading a scene is one lifecycle batch, so ordering guarantee 2 holds across the whole scene.
-- **Objs created at runtime**, such as instantiated prefabs, belong to the level's last scene (Unity's active scene)
-  and unload with it, unless they are persistent.
+- **Objs created at runtime**, such as instantiated prefabs, belong to the level's active scene and unload with
+  it, unless they are persistent. Objs marked `EditorOnly`, such as the editor's Scene camera, belong to no scene
+  and level changes leave them alone.
+- **The Levels panel** in the editor is LayerCake's window: every level (with its scene count and the level it
+  stands on) and every scene in no level, to find by name. Stopped, clicking a level opens it to edit (a loose scene
+  opens on its own) and its play button opens it and plays. Playing, clicking a level changes to it through the
+  scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in a build; the bar at the
+  bottom follows any level change, whoever started it.
 
 ### Prefabs *(implemented: nesting, variants, overrides, Instantiate; inspector editing planned)*
 

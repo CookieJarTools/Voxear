@@ -29,8 +29,8 @@
 //! - the **Console**, after Sifter: categories nobody declared, a search with
 //!   tags and regular expressions, and each line's stack coloured and folded,
 //!   its frames opening their files
-//! - the **Cookbook**: the project's own documentation, Markdown pages from its
-//!   `Docs` folder (see `voxear_cookbook`)
+//! - the **VoxDocs**: the project's own documentation, Markdown pages from its
+//!   `Docs` folder (see `voxear_docs`)
 //! - the **Levels** panel, as LayerCake's window: every level and loose
 //!   scene, to open, play, or while playing, change to
 //! - a status bar: what the editor is doing, frame rate, memory and git

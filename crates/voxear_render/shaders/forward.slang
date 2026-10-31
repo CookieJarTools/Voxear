@@ -57,53 +57,6 @@ VertexOut vertexMain(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex)
     return o;
 }
 
-float distributionGgx(float nh, float a)
-{
-    float a2 = a * a;
-    float d = nh * nh * (a2 - 1.0) + 1.0;
-    return a2 / (PI * d * d);
-}
-
-float visibilitySmithGgx(float nv, float nl, float a)
-{
-    float a2 = a * a;
-    float gv = nl * sqrt(nv * nv * (1.0 - a2) + a2);
-    float gl = nv * sqrt(nl * nl * (1.0 - a2) + a2);
-    return 0.5 / max(gv + gl, 1e-5);
-}
-
-float3 fresnelSchlick(float3 f0, float vh)
-{
-    return f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
-}
-
-struct Surface
-{
-    float3 normal;
-    float3 view;
-    float3 diffuse;
-    float3 f0;
-    float roughness;
-};
-
-float3 shade(Surface s, float3 toLight, float3 radiance)
-{
-    float nl = dot(s.normal, toLight);
-    if (nl <= 0.0)
-    {
-        return 0.0;
-    }
-    float3 h = normalize(s.view + toLight);
-    float nv = max(dot(s.normal, s.view), 1e-4);
-    float nh = saturate(dot(s.normal, h));
-    float vh = saturate(dot(s.view, h));
-    float a = s.roughness * s.roughness;
-    float3 f = fresnelSchlick(s.f0, vh);
-    float3 specular = distributionGgx(nh, a) * visibilitySmithGgx(nv, nl, a) * f;
-    float3 diffuse = s.diffuse * (1.0 - f) / PI;
-    return (diffuse + specular) * radiance * nl;
-}
-
 // Which froxel a pixel falls in: screen tile by logarithmic depth slice.
 uint clusterAt(Frame* frame, float2 pixel, float viewDepth)
 {

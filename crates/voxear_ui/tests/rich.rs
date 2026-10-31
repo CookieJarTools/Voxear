@@ -15,7 +15,7 @@ fn links_in_rich_text_report_their_clicks() {
     text.push("Read ", Marks::default())
         .push("the guide", Marks { strong: true, ..Marks::default() })
         .push(" or open ", Marks::default())
-        .push_link("Writing Pages", "cookbook:Writing Pages", Marks::default())
+        .push_link("Writing Pages", "docs:Writing Pages", Marks::default())
         .push(" now.", Marks::default());
     let label = ui.rich_label(box_, &text);
     let frame = ui.frame(WIDTH, HEIGHT, 1.0);
@@ -28,7 +28,7 @@ fn links_in_rich_text_report_their_clicks() {
     ui.pointer_move(x + w * middle, y + h / 2.0);
     ui.pointer_button(true);
     ui.pointer_button(false);
-    assert_eq!(ui.clicked_link(box_), Some("cookbook:Writing Pages"), "the link and what it is in report it");
+    assert_eq!(ui.clicked_link(box_), Some("docs:Writing Pages"), "the link and what it is in report it");
     ui.frame(WIDTH, HEIGHT, 1.0);
     assert_eq!(ui.clicked_link(label), None, "a frame forgets it");
 

@@ -52,6 +52,9 @@ pub enum Kind {
     DockSpace,
     /// One of Voxear's line icons, in its text colour; see [`crate::ICONS`].
     Icon,
+    /// Part of a texture the renderer holds, such as a preview; see
+    /// [`ImageRef`].
+    Image,
     /// A row of choices, exactly one on.
     Segmented,
 }
@@ -74,9 +77,19 @@ impl Kind {
             Kind::Dropdown => "Dropdown",
             Kind::DockSpace => "DockSpace",
             Kind::Icon => "Icon",
+            Kind::Image => "Image",
             Kind::Segmented => "Segmented",
         }
     }
+}
+
+/// Part of a texture for an image to show. The UI does not hold textures:
+/// `texture` is the renderer's index for one (a preview's, say), and `uv`
+/// the part of it, as fractions: left, top, right, bottom.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageRef {
+    pub texture: u32,
+    pub uv: [f32; 4],
 }
 
 /// What each taffy node carries besides its layout.
@@ -99,6 +112,8 @@ pub(crate) struct Element {
     pub text: Option<Text>,
     /// For an icon: which.
     pub icon: Option<&'static str>,
+    /// For an image: what it shows.
+    pub image: Option<ImageRef>,
     /// Lines and circles drawn over its background.
     pub shapes: Vec<crate::Shape>,
     /// How far its children are scrolled, and how far they can be.
@@ -131,6 +146,7 @@ impl Element {
             text_style: TextStyle::default(),
             text: None,
             icon: None,
+            image: None,
             shapes: Vec::new(),
             scroll: [0.0; 2],
             scroll_max: [0.0; 2],
@@ -334,6 +350,24 @@ impl Ui {
         }
         if let Some(element) = self.element_mut(node) {
             element.icon = found;
+        }
+    }
+
+    /// An image, empty until [`set_image`](Self::set_image) gives it one,
+    /// filling its box unless sheets size it. Its corners round with
+    /// `border-radius`, and the pointer passes through it to what it is in.
+    pub fn image(&mut self, parent: NodeId) -> NodeId {
+        let element = Element {
+            base: Style { pickable: false, ..Style::default() },
+            ..Element::new(Kind::Image, Style::default())
+        };
+        self.add(parent, element)
+    }
+
+    /// What an image shows, or nothing with `None`.
+    pub fn set_image(&mut self, node: NodeId, image: Option<ImageRef>) {
+        if let Some(element) = self.element_mut(node) {
+            element.image = image;
         }
     }
 

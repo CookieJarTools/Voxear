@@ -240,6 +240,17 @@ impl Inspector {
         self.built.0.clear();
     }
 
+    /// The asset fields shown, each with the image before its name that
+    /// shows a preview of what it points at.
+    pub fn field_thumbs(&self, ui: &Ui) -> Vec<(Prop, NodeId)> {
+        let thumb = |picker: NodeId| ui.children(picker).into_iter().find(|&n| ui.has_class(n, "field-thumb"));
+        let pickers = self.rows.iter().filter_map(|row| match row.control {
+            Control::Picker(picker, _) => Some((row.prop.clone(), thumb(picker)?)),
+            _ => None,
+        });
+        pickers.collect()
+    }
+
     pub fn types(&self) -> &ScriptTypes {
         &self.types
     }
@@ -263,6 +274,14 @@ impl Inspector {
     /// The Project panel's item shown, if that is what it shows.
     pub fn shown_asset(&self) -> Option<&ProjectItem> {
         self.asset.as_ref().map(AssetView::item)
+    }
+
+    /// The asset shown's large preview: its path, the frame that takes drags
+    /// to turn it, and the image.
+    pub fn asset_preview(&self) -> Option<(String, NodeId, NodeId)> {
+        let view = self.asset.as_ref()?;
+        let (frame, image) = view.preview()?;
+        Some((view.item().path.clone(), frame, image))
     }
 
     pub fn show(&mut self, ui: &mut Ui, game: &Game, entity: Option<Entity>, playing: bool) {
@@ -605,6 +624,12 @@ fn control(ui: &mut Ui, row: NodeId, value: &Value, editable: bool) -> Control {
             let picker = ui.panel(row, Style::row());
             ui.add_class(picker, "value-picker");
             ui.accept_drops(picker, true);
+            if matches!(value, Value::Asset(_)) {
+                // The asset's preview, before its name, once the editor has one drawn.
+                let thumb = ui.image(picker);
+                ui.add_class(thumb, "field-thumb");
+                ui.set_visible(thumb, false);
+            }
             let label = ui.add_label(picker, &display(value));
             ui.add_class(label, "picker-label");
             let arrow = ui.icon(picker, "chevron-down");

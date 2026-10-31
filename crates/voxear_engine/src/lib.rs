@@ -10,6 +10,7 @@ mod levels;
 mod loading;
 pub mod new_project;
 pub mod prefab;
+pub mod previews;
 mod project;
 pub mod scene_file;
 pub mod script_types;
@@ -27,6 +28,7 @@ pub use levels::{
 };
 pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork};
 pub use prefab::{ObjPath, PrefabId, Template};
+pub use previews::{AssetPreviews, ScriptPreviews, preview_parts};
 pub use project::{
     ContentSettings, ENGINE_FILE, PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root, engine_version,
     is_install,

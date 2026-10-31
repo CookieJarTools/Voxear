@@ -157,7 +157,7 @@ fn mistakes_are_reported_with_their_place() {
     let error = load(&mut ui, "<vui>\n  <Lable>Hi</Lable>\n</vui>", &[]).unwrap_err();
     assert_eq!(
         error.0,
-        "Test.vui:2:3: unknown element <Lable>; expected Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, Icon, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style"
+        "Test.vui:2:3: unknown element <Lable>; expected Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, Icon, Image, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style"
     );
     let error = load(&mut ui, "<vui><Style src=\"Missing.vss\" /></vui>", &[]).unwrap_err();
     assert!(error.0.contains("could not read Missing.vss"), "{error}");

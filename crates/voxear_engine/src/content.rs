@@ -454,6 +454,11 @@ impl Content {
         Ok(id)
     }
 
+    /// The asset a loaded prefab came from, by its id.
+    pub fn prefab_guid(&self, prefab: PrefabId) -> Option<AssetGuid> {
+        self.prefabs.guids.get(prefab.0 as usize).copied()
+    }
+
     /// A loaded prefab's template, or `None` once it has been released.
     pub fn template(&self, prefab: PrefabId) -> Option<&Arc<Template>> {
         self.prefabs.templates.get(prefab.0 as usize)?.as_ref()

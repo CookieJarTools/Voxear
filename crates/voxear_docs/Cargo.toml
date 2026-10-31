@@ -1,6 +1,6 @@
 [package]
-name = "voxear_cookbook"
-description = "The Cookbook: a project's own documentation, written as Markdown pages and read in the editor"
+name = "voxear_docs"
+description = "The VoxDocs: a project's own documentation, written as Markdown pages and read in the editor"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -178,6 +178,21 @@ impl Draw<'_> {
                 let color = text_color.map(|c| c * opacity);
                 icon_quad(icon, content, self.scale, color, clip, (self.atlas, self.quads));
             }
+            if let Some(image) = element.image
+                && opacity > 0.0
+            {
+                let rect = [x0, y0, x1 - x0, y1 - y0];
+                self.quads.push(Quad {
+                    rect,
+                    uv: image.uv,
+                    color: [opacity; 4],
+                    clip,
+                    radius: look.radius * self.scale,
+                    kind: Quad::IMAGE,
+                    flags: image.texture,
+                    ..Quad::default()
+                });
+            }
             if let Some(Control::TextField(_)) = &element.control {
                 let content =
                     [origin[0], origin[1], origin[0] + inner * self.scale, origin[1] + inner_height * self.scale];

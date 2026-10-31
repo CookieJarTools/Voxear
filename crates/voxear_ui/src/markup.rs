@@ -19,8 +19,9 @@
 //! `min`, and two elements for its panes), `Tabs` (of `Tab`s with
 //! `text`, and `selected`), `Dropdown` (of `Option`s, and `value`),
 //! `DockSpace` (of `DockPanel`s with `id`, `title` and `icon`, and `layout`),
-//! `Segmented` (of `Segment`s with `text` and `icon`, and `value`) and
-//! `Icon` (`icon`, one of [`crate::ICONS`]), each taking `name`, `class`
+//! `Segmented` (of `Segment`s with `text` and `icon`, and `value`), `Icon`
+//! (`icon`, one of [`crate::ICONS`]) and `Image` (given a texture from code
+//! with [`Ui::set_image`]), each taking `name`, `class`
 //! (several, separated by spaces) and `style` (declarations that win over
 //! sheets). A label's or button's text is its content, or its `text`
 //! attribute; a button may instead hold elements, such as an icon and a label. A list or tree view takes `item-height`, and gets its rows
@@ -254,6 +255,10 @@ impl Ui {
                     let node = self.icon(parent, icon);
                     self.attributes(node, child, &["name", "class", "style", "icon"], builder);
                 }
+                "Image" => {
+                    let node = self.image(parent);
+                    self.attributes(node, child, &["name", "class", "style"], builder);
+                }
                 "Segmented" => {
                     let node = self.segmented(parent);
                     self.attributes(node, child, &["name", "class", "style", "value"], builder);
@@ -286,7 +291,7 @@ impl Ui {
                 }
                 other => {
                     let known = "Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, \
-                                 Icon, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style";
+                                 Icon, Image, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style";
                     return Err(builder.error(child, format!("unknown element <{other}>; expected {known}")));
                 }
             }

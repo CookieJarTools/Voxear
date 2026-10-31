@@ -91,11 +91,14 @@ pub struct AssetUsage {
     pub decompressed_on_gpu: u64,
 }
 
-/// Where a mesh's data sits in the shared buffers.
+/// Where a mesh's data sits in the shared buffers, how many indices its
+/// most detailed LOD, which comes first, has, and its bounding sphere.
 #[derive(Clone, Copy)]
 struct MeshRanges {
     vertices: (u64, u64),
     indices: (u64, u64),
+    first_lod: u32,
+    sphere: (Vec3, f32),
 }
 
 #[derive(Clone, Copy)]
@@ -179,6 +182,10 @@ impl Assets {
         let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
         let (handle, ranges) = self.reserve_mesh(mesh.vertices.len() as u64, index_count)?;
         let (vertex_offset, index_start, slot) = (ranges.vertices.0, ranges.indices.0, handle.0);
+        if let (Some(ranges), Some(lod)) = (self.mesh_ranges.get_mut(&handle), lods.first()) {
+            ranges.first_lod = lod.indices.len() as u32;
+            ranges.sphere = mesh.bounds();
+        }
 
         gpu.upload_buffer(
             &self.vertices,
@@ -224,6 +231,19 @@ impl Assets {
         self.mesh_bounds.get(&mesh).copied()
     }
 
+    /// The first index and index count of a mesh's most detailed LOD, for
+    /// drawing it directly rather than through culling.
+    pub fn first_lod(&self, mesh: MeshHandle) -> Option<(u32, u32)> {
+        let ranges = self.mesh_ranges.get(&mesh)?;
+        Some((ranges.indices.0 as u32, ranges.first_lod))
+    }
+
+    /// A mesh's bounding sphere in its own space, centre and radius, for
+    /// framing it in a preview.
+    pub fn mesh_sphere(&self, mesh: MeshHandle) -> Option<(Vec3, f32)> {
+        Some(self.mesh_ranges.get(&mesh)?.sphere)
+    }
+
     /// Takes vertex and index space and a mesh table slot, all or nothing.
     fn reserve_mesh(&mut self, vertex_count: u64, index_count: u64) -> Result<(MeshHandle, MeshRanges)> {
         let vertex_offset = self.vertex_space.alloc(vertex_count).context("out of vertex space")?;
@@ -236,7 +256,12 @@ impl Assets {
             self.index_space.free(index_start, index_count);
             anyhow::bail!("too many meshes");
         };
-        let ranges = MeshRanges { vertices: (vertex_offset, vertex_count), indices: (index_start, index_count) };
+        let ranges = MeshRanges {
+            vertices: (vertex_offset, vertex_count),
+            indices: (index_start, index_count),
+            first_lod: 0,
+            sphere: (Vec3::ZERO, 0.0),
+        };
         self.mesh_ranges.insert(MeshHandle(slot), ranges);
         Ok((MeshHandle(slot), ranges))
     }
@@ -288,6 +313,9 @@ impl Assets {
         for (mesh, (handle, _)) in model.meshes.iter().zip(&meshes) {
             let reach = Vec3::splat(mesh.radius);
             self.mesh_bounds.insert(*handle, (mesh.center - reach, mesh.center + reach));
+            if let (Some(ranges), Some(&(_, count))) = (self.mesh_ranges.get_mut(handle), mesh.lods.first()) {
+                (ranges.first_lod, ranges.sphere) = (count, (mesh.center, mesh.radius));
+            }
         }
         let table = source.len().next_multiple_of(16) as u64;
         let staging_size = table + (entries.len() * size_of::<GpuMesh>()) as u64;

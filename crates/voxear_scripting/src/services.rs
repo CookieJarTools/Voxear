@@ -46,7 +46,68 @@ pub trait ScriptServices {
     fn unload_unused(&mut self);
 
     fn usage(&self) -> ContentStats;
+
+    /// Asks for a preview of an asset, by GUID or project path, or of a
+    /// loaded prefab, drawn as `options` say. It is drawn over the next
+    /// frames.
+    fn create_preview(&mut self, source: PreviewSource<'_>, options: &PreviewOptions) -> Result<u32>;
+
+    /// Where a preview is drawn, once it is; `None` for one that does not
+    /// exist.
+    fn preview_state(&mut self, preview: u32) -> Option<PreviewState>;
+
+    /// Writes a preview to a PNG file at `path` once it is drawn and read
+    /// back, a few frames from now.
+    fn save_preview(&mut self, preview: u32, path: &str) -> Result<()>;
+
+    fn free_preview(&mut self, preview: u32);
 }
+
+/// What a script asks for a preview of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviewSource<'a> {
+    /// An asset by GUID or project path, or a mesh such as `builtin:cube`.
+    Asset(&'a str),
+    /// A loaded prefab, by the id [`ScriptServices::load_prefab`] gave it.
+    Prefab(u32),
+}
+
+/// How a preview looks, as scripts ask for it. Mirrors `PreviewOptionsData`
+/// in Voxear.Core, and the renderer's `PreviewOptions`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
+pub struct PreviewOptions {
+    pub size: u32,
+    /// sRGB colour and alpha.
+    pub background: [f32; 4],
+    /// x, y, z, w.
+    pub rotation: [f32; 4],
+    pub offset: [f32; 2],
+    pub zoom: f32,
+    pub fov_degrees: f32,
+    pub light_from: [f32; 3],
+    pub light_color: [f32; 3],
+    pub light_intensity: f32,
+    pub ambient: f32,
+    pub exposure: f32,
+}
+
+const _: () = assert!(size_of::<PreviewOptions>() == 88, "PreviewOptionsData in Voxear.Core is 88 bytes");
+
+/// Where a preview is, as scripts see it. Mirrors `PreviewStateData` in
+/// Voxear.Core.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[repr(C)]
+pub struct PreviewState {
+    /// 1 once it is drawn.
+    pub ready: u32,
+    /// The renderer's texture holding it, and its rectangle there as
+    /// fractions: left, top, right, bottom.
+    pub texture: u32,
+    pub region: [f32; 4],
+}
+
+const _: () = assert!(size_of::<PreviewState>() == 24, "PreviewStateData in Voxear.Core is 24 bytes");
 
 /// What is loaded, as scripts see it. Mirrors `ContentUsage` in Voxear.Core.
 #[derive(Clone, Copy, Debug, Default)]

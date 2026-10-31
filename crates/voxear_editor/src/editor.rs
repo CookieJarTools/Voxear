@@ -5,6 +5,7 @@
 mod drawer;
 mod play;
 mod prefab_mode;
+mod previews;
 mod scene_view;
 mod windows;
 
@@ -25,7 +26,7 @@ use voxear_core::{
 };
 use voxear_ecs::Entity;
 use voxear_engine::{
-    Engine, FlyCamera, Game, Project,
+    AssetPreviews, Engine, FlyCamera, Game, Project,
     script_types::{self, ScriptTypes},
 };
 use voxear_render::{Camera, MeshRenderer, Renderer, ViewOptions};
@@ -61,7 +62,7 @@ const SHEET: &str = include_str!("../ui/Editor.vss");
 /// Console, and the Inspector on the right. The Project sits under the Scene,
 /// as in Unity, because its folders and files need the width.
 const LAYOUT: &str =
-    "row(240, [hierarchy], row(-300, column(66%, [scene, game, cookbook], [project, console]), [inspector]))";
+    "row(240, [hierarchy], row(-300, column(66%, [scene, game, docs], [project, console]), [inspector]))";
 /// The window's background, which the 3D view's surroundings are cleared to.
 const BACKGROUND: u32 = 0x0c0e10;
 /// How long a message stays in the status bar.
@@ -156,7 +157,7 @@ pub struct Editor {
     inspector: Inspector,
     console: Console,
     /// The project's own documentation, from its `Docs` folder.
-    cookbook: voxear_cookbook::Cookbook,
+    docs: voxear_docs::VoxDocs,
     /// The command palette, what its keys asked to run since the last frame,
     /// and commands added to it by code.
     palette: Palette,
@@ -223,6 +224,13 @@ pub struct Editor {
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
     picker_picks: Vec<(Entity, Prop, Pick)>,
+    /// Previews of assets, of a Mesh Renderer's own mesh and material, and
+    /// the Inspector's large one; see `previews`.
+    asset_previews: AssetPreviews,
+    field_previews: previews::FieldPreviews,
+    inspector_preview: Option<previews::InspectorPreview>,
+    /// A material changed, so field previews are drawn again.
+    redraw_field_previews: bool,
     /// While one panel fills the dock: the layout from before, and the
     /// panels that were closed then.
     maximized: Option<(String, Vec<String>)>,
@@ -334,8 +342,8 @@ impl Editor {
         inspector.set_types(script_types::cached(&game.project).unwrap_or_default());
         inspector.show(&mut ui, &game, None, false);
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
-        let cookbook_panel = find(&ui, "cookbook");
-        let cookbook = voxear_cookbook::Cookbook::new(&mut ui, cookbook_panel, &root, game.project.name());
+        let docs_panel = find(&ui, "docs");
+        let docs = voxear_docs::VoxDocs::new(&mut ui, docs_panel, &root, game.project.name());
         let (panel, list, empty) = (find(&ui, "palette"), find(&ui, "palette-list"), find(&ui, "palette-empty"));
         let palette = Palette::new(&mut ui, nodes.command, panel, list, empty);
         let (tabs, view, filter) = (find(&ui, "settings-tabs"), find(&ui, "settings"), find(&ui, "settings-filter"));
@@ -359,7 +367,7 @@ impl Editor {
             project,
             inspector,
             console,
-            cookbook,
+            docs,
             palette,
             palette_runs: Vec::new(),
             added: Vec::new(),
@@ -396,6 +404,10 @@ impl Editor {
             profiler,
             picker,
             picker_picks: Vec::new(),
+            asset_previews: AssetPreviews::default(),
+            field_previews: previews::FieldPreviews::default(),
+            inspector_preview: None,
+            redraw_field_previews: false,
             maximized: None,
             status: (0, 0.0),
             frames: 0,
@@ -543,21 +555,25 @@ impl Editor {
             self.update_console();
         }
         {
-            profile_scope!("Cookbook");
-            self.cookbook.update(&mut self.ui);
+            profile_scope!("VoxDocs");
+            self.docs.update(&mut self.ui);
         }
         self.update_palette(renderer);
         let action = self.levels.update(&mut self.ui, self.game.levels.current(), self.game.loads.level_in_progress());
         if let Some(action) = action {
             self.level_action(action, renderer);
         }
-        if let Some(path) = self.cookbook.take_file_request() {
+        if let Some(path) = self.docs.take_file_request() {
             // A link to a file in the project shows it in the Project panel.
             self.show_panel("project");
             self.project.reveal(&mut self.ui, &path);
         }
         if self.ui.clicked(self.nodes.build) {
             tracing::info!("Build comes with build profiles, later in M3");
+        }
+        {
+            profile_scope!("Previews");
+            self.update_previews(renderer);
         }
         let view = self.active_view();
         let game_camera = self.game_camera();
@@ -592,6 +608,8 @@ impl Editor {
                 if let Err(error) = self.game.content.rescan() {
                     tracing::warn!("could not look at the project's files again: {error:#}");
                 }
+                // Files moved or went, so previews are made again for the paths they have now.
+                self.asset_previews.clear(renderer);
                 self.project.refresh(&mut self.ui, self.game.content.db(), select.as_deref());
                 if let Some(item) = select.and_then(|path| self.project.item(&path)) {
                     self.inspect_asset(&item);
@@ -668,6 +686,7 @@ impl Editor {
                 if let Err(error) = self.game.content.save_material(renderer, &path, &data) {
                     self.notify(&format!("Could not save {path}: {error:#}"));
                 }
+                self.asset_changed(renderer, &path);
             }
         }
     }
@@ -677,7 +696,7 @@ impl Editor {
     /// edit, and Play opens it and plays.
     /// Opens and narrows the command palette, and runs what it picks.
     fn update_palette(&mut self, renderer: &mut Renderer) {
-        let (cookbook, game, memory) = (&self.cookbook, &self.game, &self.memory);
+        let (docs, game, memory) = (&self.docs, &self.game, &self.memory);
         let added = self.added_commands();
         let playing = self.is_playing();
         let sources = || Sources {
@@ -685,7 +704,7 @@ impl Editor {
             playing,
             settings: &memory.settings,
             recent: &memory.recent,
-            docs: cookbook
+            docs: docs
                 .library()
                 .pages()
                 .map(|(_, page)| (page.title().to_string(), page.reference().to_string()))
@@ -829,8 +848,8 @@ impl Editor {
                 self.project.reveal(&mut self.ui, &path);
             }
             PaletteAction::OpenDoc(reference) => {
-                self.show_panel("cookbook");
-                self.cookbook.open_reference(&mut self.ui, &reference);
+                self.show_panel("docs");
+                self.docs.open_reference(&mut self.ui, &reference);
             }
         }
     }

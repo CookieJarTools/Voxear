@@ -24,9 +24,12 @@ use voxear_scene::{
     Registration, Request, Transform, world_matrix,
 };
 
-use crate::services::{ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, SpawnedPrefab, with_services};
+use crate::services::{
+    ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
+    SpawnedPrefab, with_services,
+};
 
-pub(crate) const API_VERSION: u32 = 13;
+pub(crate) const API_VERSION: u32 = 14;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -78,6 +81,16 @@ pub(crate) struct NativeApi {
     pub profiler_begin: unsafe extern "C" fn(marker: u32) -> i32,
     pub profiler_end: unsafe extern "C" fn(),
     pub profiler_enabled: unsafe extern "C" fn() -> i32,
+    /// Previews, for `Voxear.Preview`: one asked for of a loaded prefab (0
+    /// or more) or else of an asset by reference, returning its id or -1;
+    /// where one is drawn (1 when drawn, 0 while waiting, -1 for none); one
+    /// saved to a PNG file once drawn (0 when it will be, -1 when not); and
+    /// one let go.
+    pub preview_create:
+        unsafe extern "C" fn(prefab: i32, reference: *const u8, len: i32, options: *const PreviewOptions) -> i32,
+    pub preview_state: unsafe extern "C" fn(preview: i32, out: *mut PreviewState) -> i32,
+    pub preview_save: unsafe extern "C" fn(preview: i32, path: *const u8, len: i32) -> i32,
+    pub preview_free: unsafe extern "C" fn(preview: i32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -233,6 +246,52 @@ unsafe extern "C" fn obj_find(name: *const u8, len: i32, out: *mut u64, capacity
         }
     }
     found.len() as i32
+}
+
+unsafe extern "C" fn preview_create(
+    prefab: i32,
+    reference: *const u8,
+    len: i32,
+    options: *const PreviewOptions,
+) -> i32 {
+    let reference = unsafe { utf8(reference, len) };
+    let source = if prefab >= 0 { PreviewSource::Prefab(prefab as u32) } else { PreviewSource::Asset(&reference) };
+    let Some(options) = (unsafe { options.as_ref() }).map(|o| unsafe { ptr::read_unaligned(o) }) else { return -1 };
+    match with_services(|services| services.create_preview(source, &options)) {
+        Some(Ok(id)) => id as i32,
+        Some(Err(error)) => {
+            tracing::error!(target: "script", "Preview.Of({source:?}): {error:#}");
+            -1
+        }
+        None => {
+            tracing::error!(target: "script", "Preview.Of({source:?}): previews are not available here");
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn preview_state(preview: i32, out: *mut PreviewState) -> i32 {
+    let Some(state) = with_services(|services| services.preview_state(preview as u32)).flatten() else { return -1 };
+    if !out.is_null() {
+        unsafe { ptr::write_unaligned(out, state) };
+    }
+    state.ready as i32
+}
+
+unsafe extern "C" fn preview_save(preview: i32, path: *const u8, len: i32) -> i32 {
+    let path = unsafe { utf8(path, len) };
+    match with_services(|services| services.save_preview(preview as u32, &path)) {
+        Some(Ok(())) => 0,
+        Some(Err(error)) => {
+            tracing::error!(target: "script", "Preview.Save(\"{path}\"): {error:#}");
+            -1
+        }
+        None => -1,
+    }
+}
+
+unsafe extern "C" fn preview_free(preview: i32) {
+    with_services(|services| services.free_preview(preview as u32));
 }
 
 unsafe extern "C" fn profiler_marker(name: *const u8, len: i32) -> u32 {
@@ -592,5 +651,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         profiler_begin,
         profiler_end,
         profiler_enabled,
+        preview_create,
+        preview_state,
+        preview_save,
+        preview_free,
     }
 }

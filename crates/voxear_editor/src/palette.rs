@@ -3,7 +3,7 @@
 //! a few letters are typed. It holds the editor's commands with their
 //! shortcuts, commands added by code (see [`PaletteCommand`] and the
 //! scripts' `[Command]` methods), the settings, every Obj, the levels to
-//! open, the project's assets to show in the Project, and the Cookbook's
+//! open, the project's assets to show in the Project, and the VoxDocs
 //! pages.
 //!
 //! Matching is fuzzy: the letters typed need only come in order, and a
@@ -43,7 +43,7 @@ const PANELS: [(&str, &str); 9] = [
     ("Levels", "levels"),
     ("Scene", "scene"),
     ("Game", "game"),
-    ("Cookbook", "cookbook"),
+    ("VoxDocs", "docs"),
     ("Project", "project"),
     ("Console", "console"),
     ("Inspector", "inspector"),
@@ -80,7 +80,7 @@ pub enum PaletteAction {
     OpenLevel(String),
     /// Show an asset or script in the Project, by its path.
     Reveal(String),
-    /// Open a Cookbook page, by its reference.
+    /// Open a VoxDocs page, by its reference.
     OpenDoc(String),
     /// A setting, by its key: a toggle flips, a choice moves to the next,
     /// and a number opens the Settings panel to type it.
@@ -117,7 +117,7 @@ pub struct Sources<'a> {
     pub settings: &'a Settings,
     /// Keys of what was run recently, most recent first.
     pub recent: &'a [String],
-    /// The Cookbook's pages, as titles and references.
+    /// The VoxDocs pages, as titles and references.
     pub docs: Vec<(String, String)>,
     pub added: Vec<Added>,
 }
@@ -316,7 +316,7 @@ pub enum PaletteKey {
 }
 
 /// Everything the palette offers: the commands first, those added by code,
-/// the settings, then Objs, levels, assets, and the Cookbook's pages.
+/// the settings, then Objs, levels, assets, and the VoxDocs pages.
 fn gather(sources: &Sources) -> Vec<Entry> {
     let mut every = commands(sources.playing);
     every.extend(sources.added.iter().map(|added| Entry {

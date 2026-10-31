@@ -12,15 +12,19 @@
 //! materials and C# scripts (see `project_files`). Rename, and anything new,
 //! opens a bar over the files to type the name in: Enter keeps it, and going
 //! elsewhere leaves the old one.
+//!
+//! Materials, prefabs and models show previews of themselves in place of
+//! their icons once the editor has them drawn (see [`ProjectView::set_previews`]).
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 use voxear_assets::{AssetDb, AssetKind};
-use voxear_ui::{DragSource, ListItems, MenuItem, NodeId, Style, TreeItems, Ui};
+use voxear_ui::{DragSource, ImageRef, ListItems, MenuItem, NodeId, Style, TreeItems, Ui};
 
 use crate::project_files::{self, NewFile};
 
@@ -79,6 +83,10 @@ const TILE_ROW: f32 = 76.0;
 const ROW: f32 = 24.0;
 /// With room for fewer tiles than this, the files show as rows.
 const MIN_COLUMNS: usize = 3;
+/// How big a preview shows in a tile and in a row, as Editor.vss sizes
+/// `tile-thumb` and `row-thumb`.
+const TILE_PREVIEW: f32 = 44.0;
+const ROW_PREVIEW: f32 = 16.0;
 
 #[derive(Clone, Copy, PartialEq)]
 enum FileKind {
@@ -120,6 +128,8 @@ struct Contents {
     selected: Option<Entry>,
     /// Each tile made, with the place in `listing` it shows, for clicks.
     tiles: Vec<(NodeId, Option<usize>)>,
+    /// Previews drawn so far, by path, shown in place of icons.
+    previews: HashMap<String, ImageRef>,
 }
 
 impl Contents {
@@ -136,6 +146,20 @@ impl Contents {
                 FileKind::Asset(AssetKind::Texture) => "texture",
             },
         }
+    }
+
+    /// What an entry shows in its thumbnail: its preview once drawn, or
+    /// else its icon.
+    fn show_thumb(&self, ui: &mut Ui, thumb: NodeId, entry: Entry) {
+        let parts = ui.children(thumb);
+        let preview = match entry {
+            Entry::File(file) => self.previews.get(&self.files[file].path).copied(),
+            Entry::Folder(_) => None,
+        };
+        ui.set_icon(parts[0], self.icon(entry));
+        ui.set_visible(parts[0], preview.is_none());
+        ui.set_image(parts[1], preview);
+        ui.set_visible(parts[1], preview.is_some());
     }
 
     fn name(&self, entry: Entry) -> &str {
@@ -200,13 +224,24 @@ impl TreeItems for FolderItems {
     }
 }
 
-/// The open folder's entries as rows: an icon, the name, and a file's size.
+/// An icon, or the preview in its place, in a box of its own.
+fn thumb(ui: &mut Ui, parent: NodeId, class: &str, icon_class: &str) {
+    let thumb = ui.panel(parent, Style::default());
+    ui.add_class(thumb, class);
+    let icon = ui.icon(thumb, "file");
+    ui.add_class(icon, icon_class);
+    let image = ui.image(thumb);
+    ui.add_class(image, "thumb-image");
+    ui.set_visible(image, false);
+}
+
+/// The open folder's entries as rows: an icon or preview, the name, and a
+/// file's size.
 struct FileRows(Shared);
 
 impl ListItems for FileRows {
     fn make(&mut self, ui: &mut Ui, row: NodeId) {
-        let icon = ui.icon(row, "file");
-        ui.add_class(icon, "row-icon");
+        thumb(ui, row, "row-thumb", "row-icon");
         let name = ui.add_label(row, "");
         ui.add_class(name, "row-name");
         let size = ui.add_label(row, "");
@@ -217,7 +252,7 @@ impl ListItems for FileRows {
         let contents = self.0.borrow();
         let Some(&entry) = contents.listing.get(index) else { return };
         let parts = ui.children(row);
-        ui.set_icon(parts[0], contents.icon(entry));
+        contents.show_thumb(ui, parts[0], entry);
         ui.set_text(parts[1], contents.name(entry));
         let size = match entry {
             Entry::Folder(_) => String::new(),
@@ -227,7 +262,8 @@ impl ListItems for FileRows {
     }
 }
 
-/// The open folder's entries as rows of tiles: a big icon over the name.
+/// The open folder's entries as rows of tiles: a big icon or preview over
+/// the name.
 struct TileRows(Shared);
 
 impl ListItems for TileRows {
@@ -238,8 +274,7 @@ impl ListItems for TileRows {
             let tile = ui.panel(row, Style::column());
             ui.add_class(tile, "tile");
             ui.set_draggable(tile, true);
-            let icon = ui.icon(tile, "file");
-            ui.add_class(icon, "tile-icon");
+            thumb(ui, tile, "tile-thumb", "tile-icon");
             let name = ui.add_label(tile, "");
             ui.add_class(name, "tile-name");
             self.0.borrow_mut().tiles.push((tile, None));
@@ -258,7 +293,7 @@ impl ListItems for TileRows {
             ui.set_visible(tile, entry.is_some());
             let Some(entry) = entry else { continue };
             let parts = ui.children(tile);
-            ui.set_icon(parts[0], contents.icon(entry));
+            contents.show_thumb(ui, parts[0], entry);
             ui.set_text(parts[1], contents.name(entry));
             ui.set_checked(tile, contents.selected == Some(entry));
         }
@@ -387,6 +422,44 @@ impl ProjectView {
         let file = contents.files.iter().position(|f| f.path == path).map(Entry::File);
         let entry = file.or_else(|| contents.folders.iter().position(|f| f.path == path).map(Entry::Folder))?;
         Some(contents.item(entry))
+    }
+
+    /// The open folder's materials, prefabs and models, by path: what can
+    /// show a preview, at [`preview_size`](Self::preview_size). As tiles,
+    /// only those on screen, so a big folder asks for a screenful at a time.
+    pub fn previewable(&self, ui: &Ui) -> Vec<String> {
+        let contents = self.contents.borrow();
+        let kinds = |kind| matches!(kind, AssetKind::Material | AssetKind::Prefab | AssetKind::Model);
+        let shown: Vec<Entry> = if contents.columns == 0 {
+            contents.listing.clone()
+        } else {
+            let on_screen = contents.tiles.iter().filter(|(tile, _)| ui.is_visible(*tile));
+            on_screen.filter_map(|(_, at)| contents.listing.get((*at)?).copied()).collect()
+        };
+        shown
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Entry::File(file) => Some(&contents.files[file]),
+                Entry::Folder(_) => None,
+            })
+            .filter(|file| matches!(file.kind, FileKind::Asset(kind) if kinds(kind)))
+            .map(|file| file.path.clone())
+            .collect()
+    }
+
+    /// How big a preview shows, in logical pixels: a tile's, or a row's.
+    pub fn preview_size(&self) -> f32 {
+        if self.contents.borrow().columns == 0 { ROW_PREVIEW } else { TILE_PREVIEW }
+    }
+
+    /// Shows these previews, by path, in place of icons; anything not among
+    /// them shows its icon.
+    pub fn set_previews(&mut self, ui: &mut Ui, previews: HashMap<String, ImageRef>) {
+        if self.contents.borrow().previews == previews {
+            return;
+        }
+        self.contents.borrow_mut().previews = previews;
+        ui.refresh_list(self.files);
     }
 
     /// Opens the rename bar on the selected item.
@@ -541,7 +614,7 @@ impl ProjectView {
     }
 
     /// Opens the folder a file is in and selects the file, as a link to it
-    /// from the Cookbook does. `path` is from the project's folder.
+    /// from VoxDocs does. `path` is from the project's folder.
     pub fn reveal(&mut self, ui: &mut Ui, path: &str) {
         let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         let name = parts.pop().unwrap_or_default();
@@ -676,6 +749,7 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         columns: 0,
         selected: None,
         tiles: Vec::new(),
+        previews: HashMap::new(),
     };
     let mut paths: Vec<(String, FileKind)> = db.entries().map(|e| (e.path.clone(), FileKind::Asset(e.kind))).collect();
     let mut folders = Vec::new();

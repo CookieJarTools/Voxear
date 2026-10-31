@@ -353,14 +353,14 @@ fn label_starting(ui: &Ui, node: NodeId, words: &str) -> Option<NodeId> {
 }
 
 #[test]
-fn the_cookbook_reads_the_projects_docs() {
+fn voxdocs_reads_the_projects_docs() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let root = editor.ui.root();
     let dock = editor.ui.find(root, "dock").unwrap();
-    editor.ui.show_dock_panel(dock, "cookbook");
+    editor.ui.show_dock_panel(dock, "docs");
     editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
-    let intro = label_starting(&editor.ui, root, "Hello's own notes").expect("the Cookbook opens on Hello's Docs");
+    let intro = label_starting(&editor.ui, root, "Hello's own notes").expect("VoxDocs opens on Hello's Docs");
     assert!(editor.ui.is_visible(intro));
 
     // Open the How Hello Works folder from the page tree.
@@ -377,7 +377,7 @@ fn the_cookbook_reads_the_projects_docs() {
     assert!(label_starting(&editor.ui, root, "In this folder").is_some(), "with what is in it");
     if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
         let (width, height, pixels) = renderer.read_pixels().unwrap();
-        let file = std::fs::File::create(std::path::Path::new(&dir).join("cookbook.png")).unwrap();
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("docs.png")).unwrap();
         let mut encoder = png::Encoder::new(file, width, height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
@@ -1312,8 +1312,7 @@ fn the_console_sifts_searches_and_opens_stacks() {
 
     // The Console given room, as dragging the divider over it up does.
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
-    let roomy =
-        "row(240, [hierarchy], row(-300, column(45%, [scene, game, cookbook], [console, project]), [inspector]))";
+    let roomy = "row(240, [hierarchy], row(-300, column(45%, [scene, game, docs], [console, project]), [inspector]))";
     editor.ui.set_dock_layout(dock, roomy).unwrap();
     editor.ui.show_dock_panel(dock, "console");
     frame(&mut editor, &mut renderer);
@@ -1992,4 +1991,110 @@ fn the_object_picker_searches_what_a_reference_can_take() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert!(!editor.picker_open());
+}
+
+/// Opens a folder of the Project panel, as a double click on its tile does.
+fn open_folder(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name: &str) {
+    let folder = tile(&editor.ui, name).unwrap_or_else(|| panic!("a tile for {name}"));
+    let [x, y, w, h] = editor.ui.rect(folder);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    for _ in 0..2 {
+        editor.ui.pointer_button(true);
+        editor.ui.pointer_button(false);
+    }
+    frame(editor, renderer);
+}
+
+/// What a tile's thumbnail shows: its preview's image when there is one.
+fn tile_preview(ui: &Ui, name: &str) -> Option<NodeId> {
+    let thumb = ui.children(tile(ui, name)?)[0];
+    let image = ui.children(thumb)[1];
+    ui.is_visible(image).then_some(image)
+}
+
+#[test]
+fn assets_show_previews_in_the_project_fields_picker_and_inspector() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    for (name, color) in [("Brick", "[0.7, 0.3, 0.2]"), ("Moss", "[0.2, 0.6, 0.25]")] {
+        std::fs::write(dir.path().join(format!("Materials/{name}.material")), format!("color = {color}\n")).unwrap();
+    }
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    // The Project's tiles: a material's preview in place of its icon, drawn a frame or two after it shows.
+    open_folder(&mut editor, &mut renderer, "Materials");
+    assert!(tile_preview(&editor.ui, "Brick.material").is_none(), "drawn over the next frames");
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(tile_preview(&editor.ui, "Brick.material").is_some(), "the material on a sphere");
+    assert!(tile_preview(&editor.ui, "Moss.material").is_some());
+
+    // Selected, it shows large in the Inspector, and a drag turns it.
+    let brick = tile(&editor.ui, "Brick.material").unwrap();
+    click(&mut editor.ui, brick);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let preview =
+        editor.ui.find(editor.ui.root(), "inspector").and_then(|i| first_with(&editor.ui, i, "asset-preview"));
+    let preview = preview.expect("a large preview");
+    let image = first_with(&editor.ui, preview, "asset-preview-image").unwrap();
+    assert!(editor.ui.is_visible(image), "drawn");
+    assert_eq!(editor.inspector_preview_turn(), Some(voxear_core::math::Vec2::ZERO));
+    let [x, y, w, h] = editor.ui.rect(preview);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(x + w / 2.0 + 40.0, y + h / 2.0 + 10.0);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let turn = editor.inspector_preview_turn().unwrap();
+    assert!(turn.x > 0.3 && turn.y > 0.05, "dragged right and down, it turns: {turn:?}");
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "previews-material.png");
+
+    // Prefabs show their Objs, a few new previews a frame.
+    let folders = editor.ui.find(editor.ui.root(), "project-folders").unwrap();
+    let mut names = Vec::new();
+    with_class(&editor.ui, folders, "row-name", &mut names);
+    let top = names.into_iter().find(|&n| editor.ui.text(n) == "Hello").unwrap();
+    click(&mut editor.ui, top);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    open_folder(&mut editor, &mut renderer, "Prefabs");
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    for prefab in ["Lamp.prefab", "Firefly.prefab"] {
+        assert!(tile_preview(&editor.ui, prefab).is_some(), "{prefab} shows a preview");
+    }
+    shot(&mut renderer, "previews-prefabs.png");
+
+    // A Mesh Renderer's fields show its mesh and material, and its picker's rows the materials.
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    for row in ["Mesh", "Material"] {
+        let thumb = first_with(&editor.ui, prop_row(&editor.ui, row).unwrap(), "field-thumb").unwrap();
+        assert!(editor.ui.is_visible(thumb), "{row}'s field shows a preview");
+    }
+    let picker = first_with(&editor.ui, prop_row(&editor.ui, "Material").unwrap(), "value-picker").unwrap();
+    click(&mut editor.ui, picker);
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "previews-picker.png");
+    let brick_row = picker_row(&editor.ui, "Brick.material").expect("a row for Brick");
+    let thumb = editor.ui.children(editor.ui.children(brick_row)[0]);
+    assert!(editor.ui.is_visible(thumb[1]) && !editor.ui.is_visible(thumb[0]), "its preview in place of its icon");
+    editor.picker_key(voxear_editor::PaletteKey::Escape);
+    frame(&mut editor, &mut renderer);
 }

@@ -1,10 +1,14 @@
 use anyhow::{Context, Result};
-use voxear_core::profile_scope;
+use voxear_core::{
+    math::{Quat, Vec2, Vec3},
+    profile_scope,
+};
 use voxear_ecs::{Entity, World};
-use voxear_render::Renderer;
+use voxear_render::{MAX_PREVIEW_SIZE, PreviewId, PreviewOptions, Renderer};
 use voxear_scene::Placement;
 use voxear_scripting::{
-    ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, ScriptServices, ServicesScope, SpawnedPrefab,
+    ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions, PreviewSource,
+    PreviewState, ScriptServices, ServicesScope, SpawnedPrefab,
 };
 
 use crate::{
@@ -13,6 +17,7 @@ use crate::{
     levels::{LevelChange, LevelOptions, Levels},
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
     prefab::PrefabId,
+    previews::ScriptPreviews,
     project::Project,
     scripts::ScriptWatcher,
 };
@@ -31,6 +36,8 @@ pub struct Game {
     unload_requested: bool,
     /// Rebuilds the scripts as they change, when the game reloads them itself.
     watcher: Option<ScriptWatcher>,
+    /// Previews scripts asked for.
+    previews: ScriptPreviews,
 }
 
 impl Game {
@@ -51,6 +58,7 @@ impl Game {
             models: ModelWork::Skip,
             unload_requested: false,
             watcher: None,
+            previews: ScriptPreviews::default(),
         }
     }
 
@@ -157,6 +165,7 @@ impl Game {
             renderer,
             models,
             unload_requested,
+            previews: &mut self.previews,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.switch_level_through_scripts(level);
@@ -194,6 +203,7 @@ impl Game {
             renderer,
             models,
             unload_requested,
+            previews: &mut self.previews,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.instantiate(&template, parent, placement)
@@ -218,6 +228,7 @@ impl Game {
                 renderer,
                 models,
                 unload_requested,
+                previews: &mut self.previews,
             };
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
@@ -232,6 +243,9 @@ impl Game {
             && let Err(error) = self.load_level(&level, renderer.as_deref_mut())
         {
             tracing::error!("could not load level {level}: {error:#}");
+        }
+        if let Some(renderer) = renderer.as_deref_mut() {
+            self.previews.finish_saves(renderer);
         }
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);
@@ -248,6 +262,7 @@ struct GameServices<'a> {
     renderer: Option<&'a mut Renderer>,
     models: ModelWork,
     unload_requested: &'a mut bool,
+    previews: &'a mut ScriptPreviews,
 }
 
 impl ScriptServices for GameServices<'_> {
@@ -335,6 +350,51 @@ impl ScriptServices for GameServices<'_> {
             gpu_materials: gpu.materials,
             gpu_textures: gpu.textures,
             gpu_retiring: gpu.retiring,
+        }
+    }
+
+    fn create_preview(&mut self, source: PreviewSource<'_>, options: &ScriptPreviewOptions) -> Result<u32> {
+        let renderer = self.renderer.as_deref_mut().context("previews need the renderer")?;
+        let reference = match source {
+            PreviewSource::Asset(reference) => reference.to_string(),
+            PreviewSource::Prefab(prefab) => {
+                self.content.prefab_guid(PrefabId(prefab)).context("no such prefab is loaded")?.to_string()
+            }
+        };
+        let options = PreviewOptions {
+            size: options.size.clamp(1, MAX_PREVIEW_SIZE),
+            background: options.background,
+            rotation: Quat::from_array(options.rotation).normalize(),
+            offset: Vec2::from(options.offset),
+            zoom: options.zoom,
+            fov_degrees: options.fov_degrees,
+            light_from: Vec3::from(options.light_from),
+            light_color: Vec3::from(options.light_color),
+            light_intensity: options.light_intensity,
+            ambient: options.ambient,
+            exposure: options.exposure,
+        };
+        Ok(self.previews.create(self.content, renderer, &reference, options)?.0)
+    }
+
+    fn preview_state(&mut self, preview: u32) -> Option<PreviewState> {
+        let renderer = self.renderer.as_deref_mut()?;
+        let image = self.previews.image(renderer, PreviewId(preview))?;
+        Some(image.map_or_else(PreviewState::default, |image| PreviewState {
+            ready: 1,
+            texture: image.texture.0,
+            region: image.uv,
+        }))
+    }
+
+    fn save_preview(&mut self, preview: u32, path: &str) -> Result<()> {
+        let renderer = self.renderer.as_deref_mut().context("previews need the renderer")?;
+        self.previews.save(renderer, PreviewId(preview), std::path::Path::new(path))
+    }
+
+    fn free_preview(&mut self, preview: u32) {
+        if let Some(renderer) = self.renderer.as_deref_mut() {
+            self.previews.free(renderer, PreviewId(preview));
         }
     }
 }

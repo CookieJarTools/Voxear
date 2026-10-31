@@ -905,6 +905,41 @@
     font-size: 11px;
 }
 
+/* An asset field's preview, before its name. */
+.field-thumb {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-left: -4px;
+    border-radius: 3px;
+}
+
+/* The Inspector's large preview of an asset, which a drag turns. */
+.asset-preview {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+    height: 208px;
+    margin: 4px 0px 8px 0px;
+    border-radius: 8px;
+    background-color: var(--vx-bg);
+}
+
+.asset-preview-image {
+    width: 200px;
+    height: 200px;
+    border-radius: 8px;
+}
+
+.asset-preview-hint {
+    position: absolute;
+    right: 8px;
+    bottom: 6px;
+    font-size: 10px;
+    color: var(--vx-muted);
+}
+
 .value {
     font-family: mono;
     font-size: 11px;
@@ -1007,6 +1042,38 @@ DockSpace .project-split > .split-divider {
 
 .tile:checked .tile-icon {
     color: var(--vx-accent);
+}
+
+/* A tile's or row's icon, or the preview in its place. */
+.tile-thumb, .row-thumb, .picker-thumb {
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.tile-thumb {
+    width: 44px;
+    height: 44px;
+}
+
+.row-thumb {
+    width: 16px;
+    height: 16px;
+}
+
+.picker-thumb {
+    width: 22px;
+    height: 22px;
+}
+
+.thumb-image {
+    width: 100%;
+    height: 100%;
+    border-radius: 4px;
+}
+
+.tile-thumb > .thumb-image {
+    border-radius: 6px;
 }
 
 .tile-name {

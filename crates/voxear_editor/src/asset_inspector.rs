@@ -5,7 +5,8 @@
 //! the fields of the behaviour it declares, with their starting values, as
 //! its last build describes them. A prefab and a scene list their Objs, and
 //! a level its scenes. Levels, scenes, prefabs and scripts have an Open
-//! button; a prefab opens on its own, to edit.
+//! button; a prefab opens on its own, to edit. A material, prefab or model
+//! shows a large preview of itself under its name, which a drag turns.
 
 use voxear_assets::AssetKind;
 use voxear_engine::{Game, MaterialData, script_types::ScriptTypes};
@@ -27,6 +28,8 @@ pub struct AssetView {
     item: ProjectItem,
     open: Option<NodeId>,
     material: Option<MaterialFields>,
+    /// The preview's frame, which takes drags, and its image.
+    preview: Option<(NodeId, NodeId)>,
 }
 
 /// A material's fields, and the values they were last saved with.
@@ -45,6 +48,18 @@ impl AssetView {
             ui.remove(child);
         }
         header(ui, root, item);
+        let previewed =
+            matches!(item.kind, ItemKind::Asset(AssetKind::Material | AssetKind::Prefab | AssetKind::Model));
+        let preview = previewed.then(|| {
+            let frame = ui.panel(root, Style::default());
+            ui.add_class(frame, "asset-preview");
+            let image = ui.image(frame);
+            ui.add_class(image, "asset-preview-image");
+            ui.set_visible(image, false);
+            let hint = ui.add_label(frame, "Drag to turn");
+            ui.add_class(hint, "asset-preview-hint");
+            (frame, image)
+        });
         let rows = part(ui, root, "Asset", "info");
         let guid = game.content.db().guid_of(&item.path).map(|g| g.to_string());
         let mut info = vec![("Kind", kind_name(item.kind).to_string())];
@@ -62,7 +77,7 @@ impl AssetView {
         }
 
         let file = game.project.root.join(&item.path);
-        let mut view = Self { item: item.clone(), open: None, material: None };
+        let mut view = Self { item: item.clone(), open: None, material: None, preview };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file),
             ItemKind::Script => script(ui, root, item, types),
@@ -105,6 +120,12 @@ impl AssetView {
         data.metallic = read(fields.metallic, data.metallic).clamp(0.0, 1.0);
         data.roughness = read(fields.roughness, data.roughness).clamp(0.0, 1.0);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), *data))
+    }
+
+    /// The large preview's frame, which takes drags to turn it, and its
+    /// image, for an asset that has one.
+    pub fn preview(&self) -> Option<(NodeId, NodeId)> {
+        self.preview
     }
 
     pub fn item(&self) -> &ProjectItem {

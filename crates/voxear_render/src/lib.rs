@@ -21,6 +21,7 @@ mod payload;
 mod pipelines;
 mod post;
 mod post_passes;
+mod previews;
 mod scene;
 mod shadows;
 mod texture_codec;
@@ -52,6 +53,9 @@ pub use mesh::{MeshData, Primitive, Vertex};
 pub use post::{
     AntiAliasing, AntiAliasingMode, Bloom, DepthOfField, Exposure, Fog, Grading, Grain, MotionBlur, PostProcess,
     Tonemap, Tonemapper, Vignette,
+};
+pub use previews::{
+    MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
 };
 pub use scene::{Camera, Light, LightKind, MeshRenderer, Sky, ViewOptions};
 pub use voxear_rhi::TextureId;
@@ -185,6 +189,7 @@ pub struct Renderer {
     stats: RenderStats,
     pending_size: Option<(u32, u32)>,
     ui: ui_pass::UiGpu,
+    previews: previews::Previews,
     gpu_decompression: bool,
     /// Where in the output the 3D view goes; all of it when `None`.
     view: Option<[u32; 4]>,
@@ -263,6 +268,7 @@ impl Renderer {
             stats: RenderStats::default(),
             pending_size: None,
             ui: ui_pass::UiGpu::default(),
+            previews: previews::Previews::default(),
             gpu_decompression: true,
             view: None,
             clear: [0.0, 0.0, 0.0, 1.0],
@@ -406,6 +412,45 @@ impl Renderer {
         self.assets.as_ref()?.mesh_bounds(mesh)
     }
 
+    /// Asks for a preview of an object, its parts drawn as `options` say.
+    /// It is drawn over the next frames, a few a frame; [`preview`](Self::preview)
+    /// says where it is once drawn. The meshes and materials need only live
+    /// until then.
+    pub fn add_preview(&mut self, parts: Vec<PreviewPart>, options: PreviewOptions) -> PreviewId {
+        self.previews.add(parts, options)
+    }
+
+    /// Draws a preview again, as `options` now say, with new parts if given:
+    /// turned by a drag, or after its object changed.
+    pub fn set_preview(&mut self, id: PreviewId, parts: Option<Vec<PreviewPart>>, options: PreviewOptions) {
+        self.previews.set(id, parts, options);
+    }
+
+    /// Where a preview is drawn, to show it, or `None` while it waits.
+    /// Asking keeps it in the atlas; one let go of to make room is drawn
+    /// again.
+    pub fn preview(&mut self, id: PreviewId) -> Option<PreviewImage> {
+        self.previews.image(id)
+    }
+
+    /// Lets a preview go, freeing its place in the atlas.
+    pub fn free_preview(&mut self, id: PreviewId) {
+        self.previews.remove(id);
+    }
+
+    /// Asks for a preview's pixels, to save or use elsewhere: they are
+    /// copied back once it is drawn, and [`preview_pixels`](Self::preview_pixels)
+    /// hands them over a few frames later.
+    pub fn read_preview(&mut self, id: PreviewId) {
+        self.previews.read(id);
+    }
+
+    /// A preview's pixels asked for with [`read_preview`](Self::read_preview),
+    /// once they are back, or `None` until then. Handed over once.
+    pub fn preview_pixels(&mut self, id: PreviewId) -> Option<PreviewPixels> {
+        self.previews.pixels(id)
+    }
+
     /// How much of the GPU asset storage is in use.
     pub fn asset_usage(&self) -> AssetUsage {
         self.assets.as_ref().expect("assets live until drop").usage()
@@ -525,7 +570,20 @@ impl Renderer {
             Output::Offscreen { image, last } => (image.handle, image.view, image.desc, *last),
         };
 
-        let Self { gpu, graph, bindless, pipelines, buffers, assets, visibility, lod_state, exposure, ui, .. } = self;
+        let Self {
+            gpu,
+            graph,
+            bindless,
+            pipelines,
+            buffers,
+            assets,
+            visibility,
+            lod_state,
+            exposure,
+            ui,
+            previews,
+            ..
+        } = self;
         let assets = assets.as_ref().expect("assets live until drop");
         let visibility = visibility.as_ref().expect("visibility lives until drop");
         let lod_state = lod_state.as_ref().expect("LOD state lives until drop");
@@ -645,7 +703,8 @@ impl Renderer {
             history: (frame_index % 2) as usize,
         };
         post_passes::record(&mut fg, gpu, bindless, &post)?;
-        ui.record(&mut fg, pipelines.ui, push, &buffers.ui, (output, full));
+        let preview_atlas = previews.record(&mut fg, (gpu, bindless), (pipelines, assets), frame.slot)?;
+        ui.record(&mut fg, pipelines.ui, push, &buffers.ui, (output, full), preview_atlas);
         if acquired.is_some() {
             fg.transition(output, ImageAccess::Present);
         }
@@ -741,6 +800,9 @@ impl Drop for Renderer {
             }
         }
         for buffer in [self.visibility.take(), self.lod_state.take(), self.exposure.take()].into_iter().flatten() {
+            self.frames.retire(Retired::Buffer(buffer));
+        }
+        for buffer in self.previews.take_buffers() {
             self.frames.retire(Retired::Buffer(buffer));
         }
         self.graph.destroy(gpu, &mut self.bindless);

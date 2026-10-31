@@ -1,6 +1,6 @@
 <vui>
-    <Style src="Cookbook.vss" />
-    <SplitView name="cookbook" class="cookbook" size="200" min="120">
+    <Style src="VoxDocs.vss" />
+    <SplitView name="docs" class="docs" size="200" min="120">
         <Panel class="cb-side">
             <Panel class="cb-find">
                 <Icon icon="search" class="cb-find-icon" />

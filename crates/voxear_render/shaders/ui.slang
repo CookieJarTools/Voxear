@@ -8,7 +8,9 @@
 static const uint UI_GLYPH = 1;
 static const uint UI_SHADOW = 2;
 static const uint UI_LINE = 3;
+static const uint UI_IMAGE = 4;
 static const uint UI_DASHED = 1;
+static const uint UI_FADES_DOWN = 1;
 static const float3 UI_LUMA = float3(0.2126, 0.7152, 0.0722);
 static const float2 UI_CORNERS[6] = {
     float2(0, 0), float2(1, 0), float2(0, 1),
@@ -116,6 +118,15 @@ float4 uiFragment(UiOut i) : SV_Target
     {
         float d = segment(pixel, q.uv.xy, q.uv.zw) - q.border * 0.5;
         return q.color * saturate(0.5 - d);
+    }
+    if (q.kind == UI_IMAGE)
+    {
+        // The texture is premultiplied already, as previews are; its box's corners are rounded.
+        float2 uv = lerp(q.uv.xy, q.uv.zw, i.local / q.rect.zw);
+        float4 image = textures[NonUniformResourceIndex(q.flags)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
+        float2 imageHalf = q.rect.zw * 0.5;
+        float inside = saturate(0.5 - roundedBox(i.local - imageHalf, imageHalf, min(q.radius, min(imageHalf.x, imageHalf.y))));
+        return image * q.color * inside;
     }
 
     float2 halfSize = q.rect.zw * 0.5;

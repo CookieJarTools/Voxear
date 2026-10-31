@@ -66,6 +66,7 @@ impl UiGpu {
         push: Push,
         buffer: &Buffer,
         output: (ImageId, vk::Extent2D),
+        previews: Option<ImageId>,
     ) {
         if self.quads.is_empty() {
             return;
@@ -75,7 +76,10 @@ impl UiGpu {
         let texture = self.atlas.as_ref().map_or(NO_TEXTURE, |(_, texture)| texture.0);
         let push = Push { texture, size: [extent.width, extent.height], ..push };
         let vertices = self.quads.len() as u32 * 6;
-        fg.add_pass("UI", &[(output, ImageAccess::ColorAttachment)], &[], move |ctx| {
+        // Images in the UI sample the preview atlas, which previews drew into this frame.
+        let mut images = vec![(output, ImageAccess::ColorAttachment)];
+        images.extend(previews.map(|atlas| (atlas, ImageAccess::Sampled)));
+        fg.add_pass("UI", &images, &[], move |ctx| {
             let color = [vk::RenderingAttachmentInfo::default()
                 .image_view(ctx.view(output))
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)

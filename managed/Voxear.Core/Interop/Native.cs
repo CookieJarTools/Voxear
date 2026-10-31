@@ -166,6 +166,58 @@ namespace Voxear.Interop
 			}
 		}
 
+		/// <summary>Asks for a preview of a loaded prefab (0 or more) or else of an asset; its id, or -1.</summary>
+		public static int CreatePreview(int prefab, string asset, PreviewOptionsData options)
+		{
+			if (!IsConnected)
+			{
+				return -1;
+			}
+
+			var bytes = Encoding.UTF8.GetBytes(asset);
+			fixed (byte* text = bytes)
+			{
+				return Api->PreviewCreate(prefab, text, bytes.Length, &options);
+			}
+		}
+
+		/// <summary>1 when the preview is drawn, filling in where; 0 while it waits; -1 for none.</summary>
+		public static int PreviewState(int preview, out PreviewStateData state)
+		{
+			state = default;
+			if (!IsConnected)
+			{
+				return -1;
+			}
+
+			fixed (PreviewStateData* into = &state)
+			{
+				return Api->PreviewState(preview, into);
+			}
+		}
+
+		public static bool SavePreview(int preview, string path)
+		{
+			if (!IsConnected)
+			{
+				return false;
+			}
+
+			var bytes = Encoding.UTF8.GetBytes(path);
+			fixed (byte* text = bytes)
+			{
+				return Api->PreviewSave(preview, text, bytes.Length) == 0;
+			}
+		}
+
+		public static void FreePreview(int preview)
+		{
+			if (IsConnected)
+			{
+				Api->PreviewFree(preview);
+			}
+		}
+
 		public static int LoadPrefab(string reference)
 		{
 			var bytes = Encoding.UTF8.GetBytes(reference);

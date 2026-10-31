@@ -56,6 +56,7 @@ mod tree;
 pub use color::Color;
 pub use drag::DragSource;
 pub use draw::Shape;
+pub use tree::ImageRef;
 pub use icons::NAMES as ICONS;
 pub use input::{Clipboard, Key, LocalClipboard};
 pub use list::{DropPlace, ItemFns, ListItems, TreeItems};
@@ -99,9 +100,10 @@ pub struct Quad {
     pub clip: [f32; 4],
     pub radius: f32,
     pub border: f32,
-    /// [`Quad::SHAPE`], [`Quad::GLYPH`], [`Quad::SHADOW`] or [`Quad::LINE`].
+    /// [`Quad::SHAPE`], [`Quad::GLYPH`], [`Quad::SHADOW`], [`Quad::LINE`]
+    /// or [`Quad::IMAGE`].
     pub kind: u32,
-    /// For shapes, [`Quad::DASHED`].
+    /// For shapes, [`Quad::DASHED`]; for an image, its texture.
     pub flags: u32,
 }
 
@@ -116,6 +118,9 @@ impl Quad {
     /// A line with round ends from `uv`'s first point to its second,
     /// `border` pixels wide.
     pub const LINE: u32 = 3;
+    /// Part of a texture, `uv` of it, in a box rounded by `radius`: `flags`
+    /// is the renderer's texture, and `color` tints it.
+    pub const IMAGE: u32 = 4;
     /// The border is drawn in dashes.
     pub const DASHED: u32 = 1;
     /// A clip that clips nothing.

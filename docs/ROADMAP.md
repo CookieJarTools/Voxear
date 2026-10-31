@@ -202,8 +202,8 @@ Done so far:
   started on the first Play, then kept, since .NET starts once per process) and shows the Game view; Stop
   destroys the played world and brings the edited level back as it was. Pause and Step, and the selection
   follows between the two.
-- **The Cookbook, first slice** (`crates/voxear_cookbook`, after the CookieJarTools Cookbook): Markdown pages in
-  the project's `Docs` folder, read and written in a Cookbook tab, with the page tree, search, back and forward,
+- **VoxDocs, first slice** (`crates/voxear_docs`, after the CookieJarTools Cookbook, and called the Cookbook at
+  first): Markdown pages in the project's `Docs` folder, read and written in a VoxDocs tab, with the page tree, search, back and forward,
   links to pages, headings, files and the web, missing pages written from their links, checklists that save,
   callouts, tables and code. Voxear UI gained rich text with clickable links, and `white-space: nowrap`.
 - **LayerCake as level loading** (after the CookieJarTools scene switcher): scenes in a level marked `active`,
@@ -226,7 +226,7 @@ Done so far:
   with items added and taken out, and nested
   `[Serializable]` tables; Add Component and Remove Component; all of it undoable, and component values keepable
   after play.
-- **Command palette** (Ctrl+K): commands with their shortcuts, Objs, levels, assets, settings and Cookbook pages,
+- **Command palette** (Ctrl+K): commands with their shortcuts, Objs, levels, assets, settings and VoxDocs pages,
   matched fuzzily, run from the keyboard or with a click, with what ran recently first. Scripts add commands with
   `[Command]` (run in edit mode against the edited level, undoable, with their own keys), and Rust code with
   `Editor::add_command`.
@@ -266,6 +266,10 @@ Done so far:
   (`Profiler.Sample`, `ProfilerMarker`); the GPU's passes, and what was drawn, culled and loaded.
 - **The object picker:** reference fields, the Mesh Renderer's mesh and material among them, open a search of what
   they can take, with icons and where each is, narrowed as it is typed and picked from the keyboard.
+- **Previews:** materials, prefabs, models and meshes drawn on their own into a shared atlas, a few a frame, and
+  shown in the Project panel, reference fields, the object picker and a large Inspector preview a drag turns. Any
+  size, background, rotation, offset, zoom, field of view and light, from Rust (`Renderer::add_preview`,
+  `AssetPreviews`) and C# (`Preview.Of`), read back and saved as PNG. Voxear UI gained images.
 
 Still to do in M3:
 - UI core:
@@ -280,11 +284,15 @@ Still to do in M3:
   player's log.
 - For the launcher: `vox upgrade`, the first-person, third-person, top-down and 2D templates (after an input API
   and 2D rendering), Windows archives, and a workflow that builds and publishes releases.
-- **The Cookbook is not usable yet:** editing a page does not work, and most of the CookieJarTools Cookbook's
+- **VoxDocs is not usable yet:** editing a page does not work, and most of the CookieJarTools Cookbook's
   features are missing. It needs a pass of its own, editing first, before its next parts.
-- **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
+- **VoxDocs' next parts** (see "VoxDocs" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.
+- **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
+  with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
+  person explains things: clear and short, plain words, each term explained where it first appears, an example
+  before the details, and nothing that sounds generated.
 - Debug tools:
   - the stats overlay's frame-time graph; the Profiler's timeline view, worker threads' samples and managed
     allocations per frame; and Tracy behind it
@@ -329,6 +337,13 @@ Still to do in M3:
 - Audio mixer, 2D/3D sources, and Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5,
   once the ray-tracing acceleration structures exist.
 - Jolt integration (bodies, joints, character controller, queries, events) and Box2D v3.
+- **Built-in vehicle physics**, on Jolt's vehicle constraints *(later, once the physics above is in)*:
+  - wheeled vehicles (cars, trucks, motorbikes) with suspension, tyre friction curves, engine and gearbox, and
+    differentials
+  - tracked vehicles (tanks)
+  - a `Vehicle` component with presets as the easy path, and every part (wheels, engine torque curve, gears,
+    anti-roll) open to tune or drive from code as the advanced one
+  - input bindings for driving, and a debug view of wheel contacts, slip and suspension
 
 ## M5 — Lighting
 
@@ -372,6 +387,15 @@ Still to do in M3:
 - Stamps and brushes, then GPU erosion.
 - Auto-material and scatter layers.
 - Holes, collision and the runtime delta layer with its API.
+- **Built-in terrain generation** *(later)*: generators that make a terrain to start from, chosen and tuned in the
+  editor or run from code, each feeding the layer stack so it can be painted and stamped over afterwards:
+  - noise-based heightfields (fractal, ridged, billow, domain-warped) with seeds
+  - biomes and climate (height, moisture, temperature) choosing materials and scatter
+  - island and continent masks, mountains, plateaus and canyons
+  - rivers and lakes carved by flow, alongside the GPU erosion above
+  - roads and paths that flatten the ground along a spline
+  - generation at runtime, in chunks, for endless or procedural worlds, as well as baked in the editor
+  - Later still: voxel terrain with caves and overhangs.
 
 ## M9 — Navigation, cameras and Timeline
 

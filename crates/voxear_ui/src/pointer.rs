@@ -202,6 +202,12 @@ impl Ui {
         self.pointer.hovered.contains(&node.0)
     }
 
+    /// Whether the primary button is held down on `node`, or on anything in
+    /// it, as for dragging on an element to turn what it shows.
+    pub fn is_pressed(&self, node: NodeId) -> bool {
+        self.pointer.pressed.iter().any(|&target| self.is_within(NodeId(target), node))
+    }
+
     /// Whether `node`, or anything in it, was clicked since the last frame.
     pub fn clicked(&self, node: NodeId) -> bool {
         self.pointer.clicks.iter().any(|&target| self.is_within(NodeId(target), node))

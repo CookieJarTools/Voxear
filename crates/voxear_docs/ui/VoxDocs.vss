@@ -1,7 +1,7 @@
-/* The Cookbook's look: the pages down the side, the page to the right,
+/* The VoxDocs look: the pages down the side, the page to the right,
    written in the editor's tokens so it follows the theme. */
 
-.cookbook {
+.docs {
     position: absolute;
     left: 0px;
     top: 0px;
@@ -11,7 +11,7 @@
 
 /* A hairline between the tree and the page, also when docked, where the
    dock's own gaps would otherwise make it wide. */
-.cookbook > .split-divider, DockSpace .cookbook > .split-divider {
+.docs > .split-divider, DockSpace .docs > .split-divider {
     width: 1px;
     background-color: var(--vx-line);
 }

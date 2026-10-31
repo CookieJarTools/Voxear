@@ -114,7 +114,7 @@
                         <Label name="game-empty" class="placeholder">No camera renders this level.</Label>
                     </Panel>
                 </DockPanel>
-                <DockPanel id="cookbook" title="Cookbook" icon="book" name="cookbook" />
+                <DockPanel id="docs" title="VoxDocs" icon="book" name="docs" />
                 <DockPanel id="profiler" title="Profiler" class="dock-content">
                     <Panel name="profiler-panel" class="fill profiler-panel" />
                 </DockPanel>

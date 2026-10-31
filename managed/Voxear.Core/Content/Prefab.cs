@@ -24,6 +24,9 @@ namespace Voxear
 
 		public bool IsValid => id > 0;
 
+		/// <summary>The engine's id for the prefab, or -1 for None.</summary>
+		internal int EngineId => id - 1;
+
 		internal static Prefab FromEngine(int engineId)
 		{
 			return new Prefab(engineId);

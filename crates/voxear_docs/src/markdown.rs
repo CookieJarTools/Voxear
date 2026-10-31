@@ -1,16 +1,16 @@
-//! The Markdown the Cookbook reads: CommonMark's everyday parts (headings,
+//! The Markdown VoxDocs reads: CommonMark's everyday parts (headings,
 //! paragraphs, emphasis, code, links, lists, quotes, rules), plus tables,
 //! checklists, bare web links, `~~strikethrough~~` and `==highlights==`,
 //! GitHub-style callouts (`> [!NOTE]`), heading anchors, and `[[Page]]` and
 //! `[[Page|words]]` links, as the CookieJarTools Cookbook reads it.
 //!
 //! Paragraphs come out as [`RichText`], ready to draw. A `[[Page]]` link
-//! becomes a link to `cookbook:Page`; other links keep their address.
+//! becomes a link to `docs:Page`; other links keep their address.
 
 use voxear_ui::{Marks, RichText};
 
-/// Where `[[Page]]` links point: `cookbook:` and the page's title, id or path.
-pub const PAGE_SCHEME: &str = "cookbook:";
+/// Where `[[Page]]` links point: `docs:` and the page's title, id or path.
+pub const PAGE_SCHEME: &str = "docs:";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Block {
@@ -856,8 +856,8 @@ mod tests {
 
         let text = inline("See [[Recipe-Design]], [[Icing-Design|the Icing design]] and [jump](#checklists).");
         assert_eq!(text.text, "See Recipe-Design, the Icing design and jump.");
-        assert_eq!(link_of(&text, "Recipe-Design").as_deref(), Some("cookbook:Recipe-Design"));
-        assert_eq!(link_of(&text, "the Icing design").as_deref(), Some("cookbook:Icing-Design"));
+        assert_eq!(link_of(&text, "Recipe-Design").as_deref(), Some("docs:Recipe-Design"));
+        assert_eq!(link_of(&text, "the Icing design").as_deref(), Some("docs:Icing-Design"));
         assert_eq!(link_of(&text, "jump").as_deref(), Some("#checklists"));
 
         let text = inline("Go to https://docs.example.com. Or <https://voxear.dev>, and **[bold link](Docs/A.md)**.");

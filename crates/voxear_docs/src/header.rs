@@ -11,7 +11,7 @@
 //! ```
 //!
 //! A page without a header is fine; it gets one the first time the
-//! Cookbook saves it. Lines the Cookbook does not know are kept as they were.
+//! VoxDocs saves it. Lines VoxDocs does not know are kept as they were.
 
 const FENCE: &str = "---";
 
@@ -23,7 +23,7 @@ pub struct Header {
     pub updated: String,
     pub banner: String,
     pub order: i32,
-    /// Lines the Cookbook does not read, written back as they were.
+    /// Lines VoxDocs does not read, written back as they were.
     other: Vec<String>,
 }
 
@@ -145,10 +145,10 @@ mod tests {
 
     #[test]
     fn headers_read_and_write_back() {
-        let file = "---\nid: a4f08c3e91b2\ntags: [cookbook, guide]\nupdated: 2026-09-19\nauthor: Jo\n---\n\nPages are plain Markdown.\n";
+        let file = "---\nid: a4f08c3e91b2\ntags: [docs, guide]\nupdated: 2026-09-19\nauthor: Jo\n---\n\nPages are plain Markdown.\n";
         let (header, body) = Header::split(file);
         assert_eq!(header.id, "a4f08c3e91b2");
-        assert_eq!(header.tags, ["cookbook", "guide"]);
+        assert_eq!(header.tags, ["docs", "guide"]);
         assert_eq!(header.updated, "2026-09-19");
         assert_eq!(body, "Pages are plain Markdown.\n");
         assert_eq!(header.join(&body), file, "unknown lines are kept, and the file comes back as it was");

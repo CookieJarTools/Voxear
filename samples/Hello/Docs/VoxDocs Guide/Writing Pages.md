@@ -1,6 +1,6 @@
 ---
 id: a4f08c3e91b2
-tags: [cookbook, guide]
+tags: [docs, guide]
 updated: 2026-10-31
 ---
 

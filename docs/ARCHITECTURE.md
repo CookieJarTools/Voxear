@@ -746,6 +746,36 @@ every light type and by GI, with temporal reprojection, local fog volumes and he
      glossy ones.
   5. Quality tiers scale cascade count, brick resolution and probe density, from integrated GPUs up to high end.
 
+### Previews *(implemented)*
+
+A preview is an object drawn on its own into a small image: the editor's Project panel, reference fields, object
+picker and Inspector show them, and games ask for them for inventory icons, shop items and the like.
+
+- **What shows** (`voxear_engine::preview_parts`): a material on a sphere; a prefab as all its Objs' meshes where
+  they sit in it; a model as all its nodes; a mesh such as `builtin:cube` on its own. A scene or a sound has none.
+- **How it looks** (`PreviewOptions`): its size (up to 512 pixels), the background (any sRGB colour, or clear),
+  the object's rotation, an offset across the frame, zoom, the field of view (small looks flat, like an icon), the
+  key light's direction, colour and strength, the sky's ambient, and exposure. The defaults suit an icon: a
+  three-quarter view from a little above, framed to fit its bounding sphere, on a clear background.
+- **Drawing** (`voxear_render::previews`, `shaders/preview.slang`): previews are drawn a few a frame, in the frame's
+  own graph before the UI, each into its own image at two to four times its size with its own depth, lit as in a
+  studio (the key light, a fill from the camera's side, the sky's ambient), then averaged down, tonemapped and laid
+  over its background into a cell of one atlas texture, sRGB and premultiplied. The atlas starts at 1024 pixels
+  square, splits into power-of-two cells as a quadtree, grows once to 2048 when it fills, and after that gives the
+  cell of the preview looked at longest ago to a new one; a preview that lost its cell is drawn again when next
+  looked at. Its meshes and materials need only live until it is drawn.
+- **Using one**: `Renderer::add_preview(parts, options)` asks for one, `preview(id)` says where it is once drawn
+  (the atlas's texture and the preview's rectangle in it, for a UI `Image`), `set_preview` draws it again turned or
+  changed, and `free_preview` lets it go. `read_preview` copies its pixels back from the GPU, which
+  `preview_pixels` hands over a few frames later, straight alpha, and `PreviewPixels::save_png` writes them.
+- **Easy and advanced**: `AssetPreviews::image(content, renderer, "Prefabs/Lamp.prefab", 64)` keeps one per asset
+  and size, as the editor uses them; `preview_parts` and `add_preview` take any options.
+- **From C#**: `Preview.Of(prefab)`, `Preview.Of("Materials/Gold.material")` or `Preview.Of(someRef)`, with an
+  optional `PreviewOptions { Size, Background, Rotation, Offset, Zoom, FieldOfView, LightFrom, LightColor,
+  LightIntensity, Ambient, Exposure }`. `IsReady` says when it is drawn, `Save("icon.png")` writes it a few frames
+  later, `Texture` and `Region` are for the C# UI to come, and `Release` lets it go (`ScriptPreviews` in the
+  engine).
+
 ### Post-processing and the Voxear Look *(implemented; upscalers, LUTs, volumes and the C# API planned)*
 
 Every project starts with a finished look, so nothing has to be set up for a scene to look good. Each effect is a
@@ -1047,6 +1077,10 @@ mid-fade.
   glyph atlas at its exact pixel size, its lines 1.5 physical pixels wide at any size, so it is as crisp as text,
   and drawn in its element's text colour. `<Icon icon="move" />`, `ui.icon(parent, "move")` or
   `ui.icon_button(parent, "plus")`; a Button in markup may hold an icon and a label.
+- **Images** show part of a texture the renderer holds, such as a preview: `<Image />` or `ui.image(parent)`,
+  then `ui.set_image(node, Some(ImageRef { texture, uv }))`. The UI holds no textures itself; `texture` is the
+  renderer's bindless index, `uv` the part of it. An image fills its box, its corners round with `border-radius`,
+  and the pointer passes through it. Text that does not wrap still takes its `text-align`.
 - **`box-shadow`** (`0 16px 40px rgba(0,0,0,.4)`, with an optional spread) draws a Gaussian-blurred copy of the
   box under it, cut out of the box as CSS's is. A spread with no blur makes a crisp ring, and a 1px offset a
   hairline under a header.
@@ -1152,7 +1186,7 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **The command palette** (`palette`) opens under the command bar when it has focus (Ctrl+K). It holds the editor's
   commands with their shortcuts (play, save, undo, duplicate, the Scene view's tools, new Objs, showing each panel),
   commands added by code, the settings, every Obj (selecting it), the levels (opening them), the project's assets
-  (showing them in the Project) and the Cookbook's pages. Matching is fuzzy: the letters typed need only come in
+  (showing them in the Project) and the VoxDocs pages. Matching is fuzzy: the letters typed need only come in
   order, and a result ranks higher the more of them start words or follow one another, then the shorter it is. What
   was run is remembered per project, by a key that stays the same from run to run (an Obj by its scene and its place
   there): with nothing typed the recent come first, then the commands, and typed for they rank higher. Up and Down
@@ -1271,6 +1305,13 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   narrows it as the command palette does, letters in order and the best match first, by name or by place. Up and
   Down move the highlight, which starts on what the field points at now; Enter or a click picks, as a step to undo,
   and Escape or a click elsewhere closes it.
+- **Previews in the editor** (`editor::previews`): materials, prefabs and models show previews of themselves in
+  place of their icons in the Project panel's tiles and rows (only the tiles on screen are asked for) and in the
+  object picker's rows; an asset field shows a thumbnail of what it points at before its name, and a Mesh
+  Renderer's Mesh and Material fields show its own mesh and material. Selecting a material, prefab or model in
+  the Project shows a large preview in the Inspector, which a drag turns. New previews start four a frame, so a
+  folder of models opens without a hitch; saving a material draws its previews again, and files moving makes
+  them anew.
 - **Keeping values after play.** A context click on the name, a Transform row or a component's value opens its menu:
   Reset where there is one, and while playing, **Keep value after play**, whose row is then marked in the accent.
   When play stops, each kept value of an Obj from the edited level (`Levels::counterpart`) is copied into the edited
@@ -1376,16 +1417,16 @@ What is built is described under the editor above. Its lines are kept across hot
 editor's own and nothing of it reloads. Still to come from Sifter: category colours agreed per project, hiding
 chosen assemblies, saved filters, and opening the player's log.
 
-### The Cookbook
+### VoxDocs
 
-A project's own documentation, in the editor: the CookieJarTools Cookbook for Unity, rebuilt as part of the
-engine in its own crate (`crates/voxear_cookbook`). Its source and design are in `Dev/CookieJar`
-(`Assets/CookieJarTools/Cookbook`, and the guide in `Docs/Cookbook Guide`).
+A project's own documentation, in the editor and part of the engine, in its own crate (`crates/voxear_docs`). It
+began as the CookieJarTools Cookbook for Unity, rebuilt here and renamed for Voxear; that tool's source and design
+are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs/Cookbook Guide`).
 
-**What exists now** *(first slice)*: a **Cookbook** tab beside the Scene and Game.
+**What exists now** *(first slice)*: a **VoxDocs** tab beside the Scene and Game.
 - **Pages are plain Markdown files** in the project's `Docs` folder, so they can be written in any editor and
   shared with git. A folder's own words are in its `_folder.md`. A page's header holds its id, title, tags, when
-  it was updated and where it sorts; lines the Cookbook does not know are kept.
+  it was updated and where it sorts; lines VoxDocs does not know are kept.
 - **The Markdown** is CommonMark's everyday parts plus tables, checklists, bare links, `~~strikethrough~~`,
   `==highlights==`, GitHub-style callouts (`> [!NOTE]`, `[!TIP]`, `[!WARNING]` and the rest), heading anchors,
   and `[[Page]]` and `[[Page|words]]` links. It is read by hand, not by a library, into blocks of rich text.
@@ -1404,13 +1445,17 @@ engine in its own crate (`crates/voxear_cookbook`). Its source and design are in
   page shown in it.
 - The **Code Reference**: a page for every public type, from its `///` comments, with notes kept in
   `Docs/.code-notes`, and `[[code:Type]]` links.
-- **Step-by-step guides**: `[CookbookAction]` and `[CookbookCheck]` methods, and built-in steps (make an asset,
+- **Step-by-step guides**: `[DocsAction]` and `[DocsCheck]` methods, and built-in steps (make an asset,
   open a panel, run a menu item), as links a page runs and ticks, with each person's progress kept.
 - **Docs Health**: out-of-date pages, broken links, and code with no page yet; and git's last change on a page.
 - **Pictures**, once Voxear UI draws images: dropped in, captured from the Scene view, or recorded as GIFs of the
   Scene or Game; and **live assets** shown in a page.
 - Tags to filter by, "On this page", a home page with recent pages, quick open from the command bar (Ctrl+K), and
   an editor with the page beside its Markdown.
+- **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine
+  version: how to use each part of Voxear, from first steps to the advanced paths. It is written for people to
+  read: plain words and short sentences, each term explained where it first appears, an example before the
+  details, and nothing that sounds generated.
 
 **Speed.**
 - A **command palette** on Ctrl+K reaches every action, asset and setting *(implemented; see "What exists now")*.

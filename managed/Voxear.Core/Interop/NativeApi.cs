@@ -40,5 +40,9 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<uint, int> ProfilerBegin;
 		public delegate* unmanaged[Cdecl]<void> ProfilerEnd;
 		public delegate* unmanaged[Cdecl]<int> ProfilerEnabled;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, PreviewOptionsData*, int> PreviewCreate;
+		public delegate* unmanaged[Cdecl]<int, PreviewStateData*, int> PreviewState;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, int> PreviewSave;
+		public delegate* unmanaged[Cdecl]<int, void> PreviewFree;
 	}
 }

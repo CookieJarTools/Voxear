@@ -2781,20 +2781,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "voxear_cookbook"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "png",
- "tempfile",
- "tracing",
- "voxear_ecs",
- "voxear_render",
- "voxear_scene",
- "voxear_ui",
-]
-
-[[package]]
 name = "voxear_core"
 version = "0.1.0"
 dependencies = [
@@ -2816,6 +2802,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxear_docs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "png",
+ "tempfile",
+ "tracing",
+ "voxear_ecs",
+ "voxear_render",
+ "voxear_scene",
+ "voxear_ui",
+]
+
+[[package]]
 name = "voxear_ecs"
 version = "0.1.0"
 
@@ -2832,8 +2832,8 @@ dependencies = [
  "toml",
  "tracing",
  "voxear_assets",
- "voxear_cookbook",
  "voxear_core",
+ "voxear_docs",
  "voxear_ecs",
  "voxear_engine",
  "voxear_render",

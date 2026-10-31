@@ -1,5 +1,5 @@
 //! A page's Markdown drawn as Voxear UI elements, block by block, each with
-//! a class for the Cookbook's sheet to style: `md-h1` to `md-h6`, `md-p`,
+//! a class for the VoxDocs sheet to style: `md-h1` to `md-h6`, `md-p`,
 //! `md-list` of `md-item`s (each a `md-bullet` or a `md-task` box, then its
 //! `md-item-body`), `md-quote`, `md-callout` with `md-note`, `md-tip` and
 //! the rest, `md-code`, `md-table` of `md-th` and `md-td` cells, `md-rule`

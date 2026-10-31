@@ -43,6 +43,10 @@ pub struct Pipelines {
     pub composite: vk::Pipeline,
     pub finish: vk::Pipeline,
     pub ui: vk::Pipeline,
+    /// An object on its own, for its preview, and its resolve into the
+    /// preview atlas.
+    pub preview: vk::Pipeline,
+    pub preview_resolve: vk::Pipeline,
 }
 
 impl Pipelines {
@@ -59,8 +63,9 @@ impl Pipelines {
             module("post")?,
             module("exposure")?,
             module("ui")?,
+            module("preview")?,
         ];
-        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui] = &modules;
+        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview] = &modules;
 
         let graphics = |desc: &GraphicsPipelineDesc| create_graphics_pipeline(gpu, layout, desc);
         let fullscreen = |name, entry, formats, blend| {
@@ -126,6 +131,20 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("UI", ui, c"uiVertex", c"uiFragment")
             })?,
+            preview: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                // Planes and open meshes show from either side.
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Preview", preview, c"previewVertex", c"previewFragment")
+            })?,
+            preview_resolve: graphics(&GraphicsPipelineDesc {
+                color_formats: &[crate::previews::PREVIEW_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Preview resolve", preview, c"resolveVertex", c"resolveFragment")
+            })?,
         };
         for module in modules {
             module.destroy(gpu);
@@ -153,6 +172,8 @@ impl Pipelines {
             self.composite,
             self.finish,
             self.ui,
+            self.preview,
+            self.preview_resolve,
         ];
         for pipeline in all {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };

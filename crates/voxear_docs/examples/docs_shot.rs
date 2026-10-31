@@ -1,10 +1,10 @@
-//! Renders the Cookbook panel for a project's `Docs` to a PNG, without the
-//! editor: `cargo run -p voxear_cookbook --example cookbook_shot -- <project> <page> <out.png>`.
+//! Renders the VoxDocs panel for a project's `Docs` to a PNG, without the
+//! editor: `cargo run -p voxear_docs --example docs_shot -- <project> <page> <out.png>`.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use voxear_cookbook::Cookbook;
+use voxear_docs::VoxDocs;
 use voxear_ecs::World;
 use voxear_render::{Camera, Renderer, RendererSettings};
 use voxear_scene::Transform;
@@ -14,7 +14,7 @@ fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let project = PathBuf::from(args.next().context("a project folder")?);
     let page = args.next().unwrap_or_default();
-    let out = PathBuf::from(args.next().unwrap_or_else(|| "cookbook.png".into()));
+    let out = PathBuf::from(args.next().unwrap_or_else(|| "docs.png".into()));
     let (width, height) = (1100, 760);
     let mut renderer = Renderer::new_offscreen(width, height, &RendererSettings::default())?;
     renderer.set_clear_color([0.004, 0.004, 0.005, 1.0]);
@@ -28,13 +28,13 @@ fn main() -> Result<()> {
         host,
         "border-radius: 8px; background-color: #191a1c; border: 1px solid #25272b; overflow: hidden",
     );
-    let mut cookbook = Cookbook::new(&mut ui, host, &project, "Hello");
+    let mut docs = VoxDocs::new(&mut ui, host, &project, "Hello");
     if !page.is_empty() {
-        cookbook.open_reference(&mut ui, &page);
+        docs.open_reference(&mut ui, &page);
     }
     for _ in 0..3 {
         ui.advance(0.5);
-        cookbook.update(&mut ui);
+        docs.update(&mut ui);
         let frame = ui.frame(width, height, 1.0);
         renderer.set_ui(&frame)?;
         renderer.render(&world, 0.0)?;

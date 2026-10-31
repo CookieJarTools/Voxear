@@ -6,15 +6,17 @@
 //! (an asset's folder, an Obj's scene). Typing narrows the list as the
 //! command palette does, letters in order and the best first. Up and Down
 //! move the highlight, which starts on what the field points at now; Enter
-//! or a click picks, and Escape or a click elsewhere closes it.
+//! or a click picks, and Escape or a click elsewhere closes it. Materials,
+//! prefabs, models and meshes show previews in place of their icons once
+//! the editor has them drawn.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use voxear_assets::AssetKind;
 use voxear_ecs::Entity;
-use voxear_engine::Game;
+use voxear_engine::{AssetPreviews, Game};
 use voxear_render::{Camera, Light, MeshRenderer};
-use voxear_ui::{ItemFns, NodeId, Ui};
+use voxear_ui::{ImageRef, ItemFns, NodeId, Style, Ui};
 
 use crate::{fields::Pick, hierarchy, palette::PaletteKey, palette::score, props::Prop};
 
@@ -26,6 +28,8 @@ const TALLEST: f32 = 308.0;
 /// window's edges.
 const WIDTH: f32 = 340.0;
 const MARGIN: f32 = 8.0;
+/// How big a row's preview shows, as Editor.vss sizes `picker-thumb`.
+pub const PREVIEW: f32 = 22.0;
 
 /// One thing a field can point at.
 #[derive(Clone, Debug, PartialEq)]
@@ -35,6 +39,9 @@ pub struct Choice {
     pub detail: String,
     pub icon: &'static str,
     pub pick: Pick,
+    /// What to show a preview of in place of the icon, when it has one: an
+    /// asset's path, or a built-in mesh.
+    pub preview: Option<String>,
 }
 
 /// What the picker is open for: the Obj and value it picks for, and the
@@ -53,6 +60,8 @@ pub struct ObjectPicker {
     empty: NodeId,
     every: Vec<Choice>,
     shown: Rc<RefCell<Vec<Choice>>>,
+    /// Previews drawn so far, by what they show.
+    previews: Rc<RefCell<HashMap<String, ImageRef>>>,
     current: usize,
     opened: Option<Opened>,
     /// The search box can take focus only once it has been laid out, a
@@ -64,11 +73,16 @@ pub struct ObjectPicker {
 impl ObjectPicker {
     pub fn new(ui: &mut Ui, panel: NodeId, title: NodeId, field: NodeId, list: NodeId, empty: NodeId) -> Self {
         let shown: Rc<RefCell<Vec<Choice>>> = Rc::default();
-        let bound = shown.clone();
+        let previews: Rc<RefCell<HashMap<String, ImageRef>>> = Rc::default();
+        let (bound, drawn) = (shown.clone(), previews.clone());
         let items = ItemFns {
             make: |ui: &mut Ui, row: NodeId| {
-                let icon = ui.icon(row, "obj");
+                let thumb = ui.panel(row, Style::default());
+                ui.add_class(thumb, "picker-thumb");
+                let icon = ui.icon(thumb, "obj");
                 ui.add_class(icon, "palette-icon");
+                let image = ui.image(thumb);
+                ui.add_class(image, "thumb-image");
                 let label = ui.add_label(row, "");
                 ui.add_class(label, "palette-title");
                 let detail = ui.add_label(row, "");
@@ -78,18 +92,49 @@ impl ObjectPicker {
                 let shown = bound.borrow();
                 let Some(choice) = shown.get(index) else { return };
                 let parts = ui.children(row);
-                ui.set_icon(parts[0], choice.icon);
+                let thumb = ui.children(parts[0]);
+                let preview = choice.preview.as_ref().and_then(|reference| drawn.borrow().get(reference).copied());
+                ui.set_icon(thumb[0], choice.icon);
+                ui.set_visible(thumb[0], preview.is_none());
+                ui.set_image(thumb[1], preview);
+                ui.set_visible(thumb[1], preview.is_some());
                 ui.set_text(parts[1], &choice.label);
                 ui.set_text(parts[2], &choice.detail);
             },
         };
         ui.bind_list(list, 0, items);
         ui.set_visible(panel, false);
-        Self { panel, title, field, list, empty, every: Vec::new(), shown, current: 0, opened: None, focusing: false }
+        Self {
+            panel,
+            title,
+            field,
+            list,
+            empty,
+            every: Vec::new(),
+            shown,
+            previews,
+            current: 0,
+            opened: None,
+            focusing: false,
+        }
     }
 
     pub fn is_open(&self) -> bool {
         self.opened.is_some()
+    }
+
+    /// What the rows listed now can show previews of.
+    pub fn previewable(&self) -> Vec<String> {
+        self.shown.borrow().iter().filter_map(|choice| choice.preview.clone()).collect()
+    }
+
+    /// Shows these previews in place of icons, by what they show.
+    pub fn set_previews(&mut self, ui: &mut Ui, previews: HashMap<String, ImageRef>) {
+        if *self.previews.borrow() == previews {
+            return;
+        }
+        *self.previews.borrow_mut() = previews;
+        ui.refresh_list(self.list);
     }
 
     /// Opens under `anchor` for `prop` of `entity`, offering `choices`, with
@@ -238,7 +283,16 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 Pick::Asset(Some(path)) if !path.starts_with("builtin:") => file_name(&label).to_string(),
                 _ => label,
             };
-            Choice { label, detail, icon, pick }
+            let preview = match &pick {
+                Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => Some(reference.clone()),
+                Pick::Asset(Some(path)) => {
+                    let db = game.content.db();
+                    let kind = db.guid_of(path).and_then(|guid| db.get(guid)).map(|e| e.kind);
+                    kind.filter(|&kind| AssetPreviews::shows(kind)).map(|_| path.clone())
+                }
+                _ => None,
+            };
+            Choice { label, detail, icon, pick, preview }
         })
         .collect()
 }

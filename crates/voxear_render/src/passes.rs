@@ -323,7 +323,21 @@ pub(crate) fn begin_rendering(
 /// Begins rendering into `rect` of the colour attachments, with the viewport
 /// and scissor on it, so a fullscreen pass fills just that rectangle.
 pub(crate) fn begin_rendering_in(ctx: &PassContext, rect: vk::Rect2D, color: &[vk::RenderingAttachmentInfo]) {
-    let info = vk::RenderingInfo::default().render_area(rect).layer_count(1).color_attachments(color);
+    begin_rendering_rect(ctx, rect, color, None);
+}
+
+/// Begins rendering into `rect` of the attachments, depth too, with the
+/// viewport and scissor on it; clears touch only the rectangle.
+pub(crate) fn begin_rendering_rect(
+    ctx: &PassContext,
+    rect: vk::Rect2D,
+    color: &[vk::RenderingAttachmentInfo],
+    depth: Option<&vk::RenderingAttachmentInfo>,
+) {
+    let mut info = vk::RenderingInfo::default().render_area(rect).layer_count(1).color_attachments(color);
+    if let Some(depth) = depth {
+        info = info.depth_attachment(depth);
+    }
     unsafe { ctx.gpu.device.cmd_begin_rendering(ctx.cmd, &info) };
     set_viewport(ctx, rect.offset, rect.extent);
 }

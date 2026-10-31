@@ -647,3 +647,121 @@ fn the_view_draws_into_a_rect_through_a_chosen_camera() {
     let sky = at(325, 45);
     assert!(sky[2] > sky[0], "the view's corner shows sky: {sky:?}");
 }
+
+#[test]
+fn a_preview_draws_an_object_on_its_background_for_the_ui_to_show() {
+    use voxear_render::{PreviewOptions, PreviewPart};
+    use voxear_ui::{ImageRef, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let red =
+        renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    let part = PreviewPart { mesh: cube, material: red, transform: voxear_core::math::Mat4::IDENTITY };
+    let options = PreviewOptions { size: 128, background: [0.0, 0.0, 1.0, 1.0], ..PreviewOptions::default() };
+    let id = renderer.add_preview(vec![part], options);
+    assert!(renderer.preview(id).is_none(), "drawn with the next frame");
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 1);
+    let image = renderer.preview(id).expect("drawn");
+    assert_eq!(image.size, 128);
+
+    // Shown at its own size by an image in the UI.
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let shown = ui.image(root);
+    ui.set_inline_style(shown, "position: absolute; left: 20px; top: 20px; width: 128px; height: 128px");
+    ui.set_image(shown, Some(ImageRef { texture: image.texture.0, uv: image.uv }));
+    let _ = Style::default();
+    let (width, height) = (640, 360);
+    renderer.set_ui(&ui.frame(width, height, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut time, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let at = |x: u32, y: u32| {
+        let i = ((y * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+    };
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("preview.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+    let middle = at(20 + 64, 20 + 64);
+    assert!(middle[0] > 80 && middle[0] > middle[1] * 2 && middle[0] > middle[2] * 2, "the red cube, got {middle:?}");
+    let corner = at(22, 22);
+    assert!(corner[2] > 200 && corner[0] < 40, "the blue background, got {corner:?}");
+
+    // Asked again with a clear background, the cube's edges are smooth and the rest shows what is behind.
+    renderer.set_preview(id, None, PreviewOptions { background: [0.0; 4], ..options });
+    run(&mut renderer, &world, &mut time, 1);
+    run(&mut renderer, &world, &mut time, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let i = ((22 * width + 22) * 4) as usize;
+    assert!(pixels[i + 2] < 200, "no blue once the background is clear, got {:?}", &pixels[i..i + 4]);
+    renderer.free_preview(id);
+    assert!(renderer.preview(id).is_none());
+}
+
+#[test]
+fn a_previews_pixels_read_back_and_save_as_a_png() {
+    use voxear_render::{PreviewOptions, PreviewPart};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let green =
+        renderer.add_material(&MaterialDesc { base_color: [0.1, 0.8, 0.2, 1.0], ..MaterialDesc::default() }).unwrap();
+    let part = PreviewPart { mesh: sphere, material: green, transform: voxear_core::math::Mat4::IDENTITY };
+    let id = renderer.add_preview(vec![part], PreviewOptions { size: 64, ..PreviewOptions::default() });
+    renderer.read_preview(id);
+    let mut time = 0.0;
+    let mut pixels = None;
+    for _ in 0..6 {
+        run(&mut renderer, &world, &mut time, 0);
+        pixels = pixels.or_else(|| renderer.preview_pixels(id));
+    }
+    let pixels = pixels.expect("read back within a few frames");
+    assert_eq!((pixels.size, pixels.rgba.len()), (64, 64 * 64 * 4));
+    let at = |x: usize, y: usize| &pixels.rgba[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4];
+    let middle = at(32, 32);
+    assert!(middle[3] == 255 && middle[1] > middle[0] && middle[1] > middle[2], "a green ball, got {middle:?}");
+    assert_eq!(at(1, 1)[3], 0, "on a clear background");
+    assert!(renderer.preview_pixels(id).is_none(), "handed over once");
+
+    let file = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("preview-ball.png");
+    pixels.save_png(&file).unwrap();
+    let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(&file).unwrap()));
+    let info = decoder.read_info().unwrap().info().clone();
+    assert_eq!((info.width, info.height, info.color_type), (64, 64, png::ColorType::Rgba));
+}
+
+#[test]
+fn a_full_preview_atlas_grows_and_draws_everything_again() {
+    use voxear_render::{PreviewOptions, PreviewPart};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let part = PreviewPart { mesh: cube, material, transform: voxear_core::math::Mat4::IDENTITY };
+    // The first atlas holds sixteen of these; the twentieth makes it grow.
+    let ids: Vec<_> = (0..20)
+        .map(|_| renderer.add_preview(vec![part], PreviewOptions { size: 256, ..PreviewOptions::default() }))
+        .collect();
+    let mut time = 0.0;
+    for _ in 0..8 {
+        run(&mut renderer, &world, &mut time, 0);
+        for &id in &ids {
+            renderer.preview(id);
+        }
+    }
+    let images: Vec<_> = ids.iter().map(|&id| renderer.preview(id).expect("every preview is drawn")).collect();
+    let far = images.iter().map(|image| image.uv[2].max(image.uv[3])).fold(0.0, f32::max);
+    assert!(far <= 1.0 && far > 0.5, "in a bigger atlas, where 256 pixels is an eighth: {far}");
+    assert!(images.iter().all(|image| image.uv[2] - image.uv[0] == 0.125), "each a 256-pixel cell of 2048");
+}

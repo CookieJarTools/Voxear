@@ -1,4 +1,4 @@
-//! The Cookbook panel: the pages down the side and the page beside them,
+//! The VoxDocs panel: the pages down the side and the page beside them,
 //! as in the CookieJarTools Cookbook. Click a page to read it; links go to
 //! other pages, headings, files and the web, and a link to a page not
 //! written yet makes it. Ticking a checklist box saves the page. Back and
@@ -15,10 +15,10 @@ use crate::{
     view::{self, Rendered},
 };
 
-const MARKUP: &str = include_str!("../ui/Cookbook.vui");
-const SHEET: &str = include_str!("../ui/Cookbook.vss");
+const MARKUP: &str = include_str!("../ui/VoxDocs.vui");
+const SHEET: &str = include_str!("../ui/VoxDocs.vss");
 
-/// What an empty Cookbook says, as Markdown, so its link makes the first page.
+/// What an empty VoxDocs says, as Markdown, so its link makes the first page.
 const EMPTY: &str = "This project has no pages yet. Pages are Markdown files in its `Docs` folder, \
                      so they can be written here or in any editor and shared with git.\n\n\
                      Start with [[Welcome]], or link to a page that does not exist yet and click the link to write it.";
@@ -56,7 +56,7 @@ impl TreeItems for PageTree {
     }
 }
 
-/// Elements the panel reads and writes, by name in Cookbook.vui.
+/// Elements the panel reads and writes, by name in VoxDocs.vui.
 struct Nodes {
     tree: NodeId,
     results: NodeId,
@@ -71,7 +71,7 @@ struct Nodes {
     source: NodeId,
 }
 
-pub struct Cookbook {
+pub struct VoxDocs {
     library: Shared,
     nodes: Nodes,
     open: PageId,
@@ -86,18 +86,17 @@ pub struct Cookbook {
     file_request: Option<String>,
 }
 
-impl Cookbook {
+impl VoxDocs {
     /// Builds the panel in `parent` for the pages in `project/Docs`; `name`
     /// titles the top folder, as the project's name does.
     pub fn new(ui: &mut Ui, parent: NodeId, project: &std::path::Path, name: &str) -> Self {
         let mut load = |path: &str| match path {
-            "Cookbook.vss" => Ok(SHEET.to_string()),
+            "VoxDocs.vss" => Ok(SHEET.to_string()),
             other => Err(format!("{other} is not built in")),
         };
         let document =
-            ui.load_markup(parent, "Cookbook.vui", MARKUP, &mut load).expect("the Cookbook's markup is built in");
-        let find =
-            |ui: &Ui, name: &str| ui.find(document, name).unwrap_or_else(|| panic!("Cookbook.vui has no {name}"));
+            ui.load_markup(parent, "VoxDocs.vui", MARKUP, &mut load).expect("the VoxDocs markup is built in");
+        let find = |ui: &Ui, name: &str| ui.find(document, name).unwrap_or_else(|| panic!("VoxDocs.vui has no {name}"));
         let nodes = Nodes {
             tree: find(ui, "cb-tree"),
             results: find(ui, "cb-results"),
@@ -138,7 +137,7 @@ impl Cookbook {
         };
         ui.bind_list(nodes.results, 0, rows);
         ui.set_visible(nodes.results, false);
-        let mut cookbook = Self {
+        let mut docs = Self {
             library,
             nodes,
             open: PageId(0),
@@ -150,9 +149,9 @@ impl Cookbook {
             results,
             file_request: None,
         };
-        cookbook.show_editing(ui, false);
-        cookbook.render(ui);
-        cookbook
+        docs.show_editing(ui, false);
+        docs.render(ui);
+        docs
     }
 
     /// The pages, to read or find one.
@@ -228,7 +227,7 @@ impl Cookbook {
         if ui.clicked(self.nodes.save) {
             let body = ui.text(self.nodes.source);
             if let Err(error) = self.library.borrow_mut().save(self.open, &body) {
-                tracing::error!("Cookbook: could not save the page: {error:#}");
+                tracing::error!("VoxDocs: could not save the page: {error:#}");
             }
             self.show_editing(ui, false);
             self.render(ui);
@@ -284,7 +283,7 @@ impl Cookbook {
                 self.show_editing(ui, true);
                 ui.focus(self.nodes.source);
             }
-            Err(error) => tracing::error!("Cookbook: could not make {name}: {error:#}"),
+            Err(error) => tracing::error!("VoxDocs: could not make {name}: {error:#}"),
         }
     }
 
@@ -294,7 +293,7 @@ impl Cookbook {
         let Some((node, task)) = ticked else { return };
         let done = ui.is_checked(node);
         if let Err(error) = self.library.borrow_mut().set_task(self.open, task, done) {
-            tracing::error!("Cookbook: {error:#}");
+            tracing::error!("VoxDocs: {error:#}");
         }
         self.render(ui);
     }
@@ -416,6 +415,6 @@ fn open_in_browser(url: &str) {
         std::process::Command::new("xdg-open").arg(url).spawn()
     };
     if let Err(error) = opener {
-        tracing::warn!("Cookbook: could not open {url}: {error}");
+        tracing::warn!("VoxDocs: could not open {url}: {error}");
     }
 }

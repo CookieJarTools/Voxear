@@ -96,7 +96,7 @@ pub struct Library {
 
 impl Library {
     /// The pages in `project/Docs`. A project with no `Docs` folder has an
-    /// empty Cookbook, whose first page makes the folder.
+    /// empty VoxDocs, whose first page makes the folder.
     pub fn open(project: &Path, name: &str) -> Self {
         let mut library = Self {
             root: project.join("Docs"),

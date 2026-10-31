@@ -1154,11 +1154,17 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
   mesh it has) and its material (the default, or a `.material` in the project); a Light its type, colour (a swatch
   and sRGB channels), intensity, and the range and spot angles its type uses; a Camera its field of view, near plane
-  and exposure. **Scripts** show the fields their source declares (`voxear_engine::script_types`, which reads the
-  project's C# without building it: classes deriving from `Behaviour`, and their public or `[SerializeField]`
-  fields with the values they start with), labelled as Unity labels them ("Degrees Per Second"). Numbers, whole
-  numbers, text, toggles and Vector3s are edited; references show the Obj they point at, and anything else as the
-  scene writes it. A field the scene does not set shows the script's value, and setting it writes it for the scene.
+  and exposure. **Scripts** show the fields their build has (`voxear_engine::script_types`): when a script changes,
+  the editor builds the scripts off its main thread and runs `Voxear.ScriptInfo` on the build, a small .NET tool
+  beside Voxear.Core that reads the assembly with reflection, under the same rules that set fields when the game
+  runs (`BehaviourFields`), and makes each behaviour to read the values its fields start with. Its description,
+  `.voxear/Scripts/Behaviours.json`, is kept, so a project opens showing its fields at once. Build errors go to the
+  Console, and the fields stay as they last built. Fields are labelled as Unity labels them ("Degrees Per Second"):
+  numbers, whole numbers, text, toggles, enums (a dropdown) and vectors are edited in place; an Obj or behaviour
+  reference is picked from a menu of the Objs in the same scene (with that behaviour, for a behaviour), and an asset
+  (a `Prefab` or `Ref<Prefab>`) from the project's assets of its kind; a list shows its items, each with a button
+  to take it out and the list's to add one; and a `[Serializable]` table shows its fields indented under it. A field
+  the scene does not set shows the script's value, and setting anything in it writes the whole field for the scene.
   While playing, scripts show the values they started with. **Add Component** offers a Mesh Renderer, Light or
   Camera the Obj lacks, and the project's scripts; a context click on a component's header removes it, and on a
   script field's row resets it to the script's value. Every change is a step to undo.
@@ -1180,8 +1186,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
-Choosing references and editing lists in script fields, the command palette and the Odin-style inspector
-attributes come next.
+Dragging Objs and assets onto reference fields, the command palette and the Odin-style inspector attributes come
+next.
 
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.

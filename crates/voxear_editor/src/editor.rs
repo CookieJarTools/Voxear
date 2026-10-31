@@ -4,7 +4,11 @@
 
 mod play;
 
-use std::{path::Path, time::Instant};
+use std::{
+    path::Path,
+    sync::mpsc::{self, Receiver, TryRecvError},
+    time::{Duration, Instant, SystemTime},
+};
 
 use anyhow::{Context, Result};
 use voxear_core::{
@@ -12,7 +16,10 @@ use voxear_core::{
     math::{Quat, Vec3},
 };
 use voxear_ecs::Entity;
-use voxear_engine::{Engine, FlyCamera, Game, Project};
+use voxear_engine::{
+    Engine, FlyCamera, Game, Project,
+    script_types::{self, ScriptTypes},
+};
 use voxear_render::{Camera, MeshRenderer, Renderer, ViewOptions};
 use voxear_scene::{Name, Transform};
 use voxear_ui::{Color, NodeId, Shape, Ui};
@@ -88,6 +95,8 @@ enum Command {
 
 /// How far in front of the Scene camera a new Obj goes.
 const NEW_OBJ_DISTANCE: f32 = 8.0;
+/// How often the scripts are looked at for changes, to describe them again.
+const SCRIPTS_CHECK: Duration = Duration::from_secs(2);
 
 pub struct Editor {
     pub game: Game,
@@ -139,6 +148,11 @@ pub struct Editor {
     /// A message for the status bar, and when it was given.
     notice: Option<(String, Instant)>,
     status: (u32, f32),
+    /// The scripts' description being made from a new build, and when the
+    /// last was started and when the sources were last looked at.
+    describing: Option<Receiver<Result<ScriptTypes>>>,
+    described_from: Option<SystemTime>,
+    scripts_checked: Option<Instant>,
 }
 
 impl Editor {
@@ -204,6 +218,7 @@ impl Editor {
         let console_list = find(&ui, "console-list");
         let console = Console::new(&mut ui, console_list, log);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
+        inspector.set_types(script_types::cached(&game.project).unwrap_or_default());
         inspector.show(&mut ui, &game, None, false);
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let cookbook_panel = find(&ui, "cookbook");
@@ -243,6 +258,9 @@ impl Editor {
             discard_armed: None,
             notice: None,
             status: (0, 0.0),
+            describing: None,
+            described_from: None,
+            scripts_checked: None,
         })
     }
 
@@ -310,13 +328,14 @@ impl Editor {
         let shown = self.selected();
         let can_keep = shown.is_some_and(|entity| self.edited_counterpart(entity).is_some());
         let kept: Vec<Field> = self.kept.iter().filter(|(e, _)| Some(*e) == shown).map(|(_, f)| f.clone()).collect();
-        if let Some(action) = self.inspector.menus(&mut self.ui, playing, can_keep, &kept) {
+        if let Some(action) = self.inspector.menus(&mut self.ui, &self.game, playing, can_keep, &kept) {
             self.row_action(action, renderer);
         }
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
         }
         self.update_scene_tools(renderer);
+        self.update_script_types();
         self.project.update(&mut self.ui);
         self.console.update(&mut self.ui);
         self.cookbook.update(&mut self.ui);
@@ -553,12 +572,60 @@ impl Editor {
                 }
             }
             RowAction::Remove(part) => props::remove(&mut self.game.engine.world, entity, &part),
+            RowAction::Pick(prop, pick) => {
+                props::pick(&mut self.game.engine.world, self.inspector.types(), entity, &prop, &pick);
+            }
         }
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
         if before != after && !self.is_playing() {
             self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
         }
+    }
+
+    /// Keeps the scripts' description as their last build: when a script
+    /// changes, they build off the main thread and are described again, and
+    /// the Inspector shows the new fields. A build that fails is tried again
+    /// only once a script changes again.
+    fn update_script_types(&mut self) {
+        if let Some(describing) = &self.describing {
+            match describing.try_recv() {
+                Ok(Ok(types)) => {
+                    self.inspector.set_types(types);
+                    self.describing = None;
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!("the scripts could not be described: {error:#}");
+                    self.notify("The scripts failed to build; their fields show as they last built");
+                    self.describing = None;
+                }
+                Err(TryRecvError::Disconnected) => self.describing = None,
+                Err(TryRecvError::Empty) => {}
+            }
+            return;
+        }
+        if self.scripts_checked.is_some_and(|at| at.elapsed() < SCRIPTS_CHECK) {
+            return;
+        }
+        self.scripts_checked = Some(Instant::now());
+        let project = &self.game.project;
+        let changed = self.described_from.is_none_or(|from| script_types::changed_since(project, from));
+        if !changed || !script_types::is_stale(project) {
+            return;
+        }
+        self.described_from = Some(SystemTime::now());
+        let root = project.root.clone();
+        let (done, describing) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(Project::open(&root).and_then(|project| script_types::describe(&project)));
+        });
+        self.describing = Some(describing);
+    }
+
+    /// Whether the scripts are described as they are now, with no build of
+    /// them under way.
+    pub fn scripts_described(&self) -> bool {
+        self.describing.is_none() && !script_types::is_stale(&self.game.project)
     }
 
     /// Pivot or Center, Global or Local, and the snap distance, as the

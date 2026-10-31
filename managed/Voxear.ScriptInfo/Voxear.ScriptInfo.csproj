@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<!--
+		Describes a built game assembly's behaviours for the editor, which runs it after each build of the scripts.
+		It sits beside Voxear.Core, so it loads the same engine the game was built against.
+	-->
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<RootNamespace>Voxear.ScriptInfo</RootNamespace>
+		<RollForward>LatestMajor</RollForward>
+		<OutputPath>$(VoxearRoot)target/managed/$(Configuration)/</OutputPath>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="../Voxear.Core/Voxear.Core.csproj" />
+	</ItemGroup>
+</Project>

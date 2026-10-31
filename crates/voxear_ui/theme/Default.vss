@@ -440,6 +440,8 @@ Dropdown:focus {
 
 .menu-popup {
     min-width: 180px;
+    max-height: 360px;
+    overflow: auto;
     padding: 4px;
     border-radius: 7px;
     background-color: var(--vx-field);

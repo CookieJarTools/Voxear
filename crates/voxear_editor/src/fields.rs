@@ -1,0 +1,439 @@
+//! Script fields in the Inspector: the values a scene sets on a behaviour,
+//! each found by a path from its field (a list's item, a `[Serializable]`
+//! table's field), typed by the scripts' description (`script_types`), and
+//! read and written as the scene's TOML. A value the scene does not set
+//! reads as the script starts it; writing one sets the whole field for the
+//! scene, as it is now, with that value changed.
+
+use std::sync::Arc;
+
+use voxear_assets::AssetKind;
+use voxear_core::math::{EulerRot, Quat};
+use voxear_ecs::{Entity, World};
+use voxear_engine::{
+    EditBehaviours, Game,
+    script_types::{FieldKind, ScriptTypes, same_field},
+};
+use voxear_scene::{Destroying, EditorOnly, Name};
+
+use crate::props::{Value, specs};
+
+/// One step into a field's value: a table's field, or a list's item.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Step {
+    Key(String),
+    Item(usize),
+}
+
+/// What a reference is set to from its menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Obj(Option<Entity>),
+    /// An asset by its project path.
+    Asset(Option<String>),
+}
+
+/// The kind of value at a path, as the scripts' description says.
+pub fn kind_at(types: &ScriptTypes, behaviour: &str, path: &[Step]) -> Option<FieldKind> {
+    let (Step::Key(first), rest) = path.split_first()? else { return None };
+    let mut kind = types.behaviour(behaviour)?.field(first)?.kind.clone();
+    for step in rest {
+        kind = match (kind, step) {
+            (FieldKind::List { element }, Step::Item(_)) => *element,
+            (FieldKind::Struct { name }, Step::Key(key)) => {
+                types.fields_of(&name).iter().find(|f| same_field(&f.name, key))?.kind.clone()
+            }
+            _ => return None,
+        };
+    }
+    Some(kind)
+}
+
+/// The rows a field shows: its own, then each item of a list or each field
+/// of a table, and theirs in turn.
+pub fn expand(
+    world: &World,
+    types: &ScriptTypes,
+    entity: Entity,
+    behaviour: &str,
+    path: Vec<Step>,
+    rows: &mut Vec<Vec<Step>>,
+) {
+    let kind = kind_at(types, behaviour, &path);
+    rows.push(path.clone());
+    match kind {
+        Some(FieldKind::List { .. }) => {
+            let items = value_at(world, types, entity, behaviour, &path).and_then(|v| v.as_array().map(Vec::len));
+            for item in 0..items.unwrap_or_default() {
+                expand(world, types, entity, behaviour, with(&path, Step::Item(item)), rows);
+            }
+        }
+        Some(FieldKind::Struct { name }) => {
+            for field in types.fields_of(&name) {
+                expand(world, types, entity, behaviour, with(&path, Step::Key(field.name.clone())), rows);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn with(path: &[Step], step: Step) -> Vec<Step> {
+    let mut path = path.to_vec();
+    path.push(step);
+    path
+}
+
+/// The value at a path as it is now: what the scene set, or what the script
+/// starts it as. `None` for nothing, as a reference starts.
+pub fn value_at(
+    world: &World,
+    types: &ScriptTypes,
+    entity: Entity,
+    behaviour: &str,
+    path: &[Step],
+) -> Option<toml::Value> {
+    let (Step::Key(first), rest) = path.split_first()? else { return None };
+    let spec = specs(world, entity).into_iter().find(|s| s.type_name == behaviour)?;
+    let declared = types.behaviour(behaviour).and_then(|b| b.field(first));
+    let set = spec.fields.iter().find(|(key, _)| same_field(key, first)).map(|(_, v)| v.clone());
+    let top = set.or_else(|| declared.and_then(|f| f.default.clone()))?;
+    descend(types, top, declared.map(|f| f.kind.clone()), rest)
+}
+
+fn descend(types: &ScriptTypes, value: toml::Value, kind: Option<FieldKind>, steps: &[Step]) -> Option<toml::Value> {
+    let Some((step, rest)) = steps.split_first() else { return Some(value) };
+    match step {
+        Step::Item(index) => {
+            let element = match kind {
+                Some(FieldKind::List { element }) => Some(*element),
+                _ => None,
+            };
+            descend(types, value.as_array()?.get(*index)?.clone(), element, rest)
+        }
+        Step::Key(key) => {
+            let field = struct_field(types, kind.as_ref(), key);
+            let set = value.as_table()?.iter().find(|(k, _)| same_field(k, key)).map(|(_, v)| v.clone());
+            let found = set.or_else(|| field.and_then(|f| f.default.clone()))?;
+            descend(types, found, field.map(|f| f.kind.clone()), rest)
+        }
+    }
+}
+
+fn struct_field<'a>(
+    types: &'a ScriptTypes,
+    kind: Option<&FieldKind>,
+    key: &str,
+) -> Option<&'a voxear_engine::script_types::ScriptField> {
+    let Some(FieldKind::Struct { name }) = kind else { return None };
+    types.fields_of(name).iter().find(|f| same_field(&f.name, key))
+}
+
+/// The value at a path as the Inspector shows it.
+pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, behaviour: &str, path: &[Step]) -> Value {
+    let world = &game.engine.world;
+    let value = value_at(world, types, entity, behaviour, path);
+    match kind_at(types, behaviour, path) {
+        Some(kind) => typed(world, &kind, value.as_ref()),
+        None => untyped(world, value.as_ref()),
+    }
+}
+
+/// A value shown as its field's kind says.
+fn typed(world: &World, kind: &FieldKind, value: Option<&toml::Value>) -> Value {
+    match kind {
+        FieldKind::Number => Value::Number(value.and_then(number).unwrap_or_default() as f32),
+        FieldKind::Whole => {
+            Value::Whole(value.and_then(|v| v.as_integer().or_else(|| number(v).map(|f| f as i64))).unwrap_or_default())
+        }
+        FieldKind::Bool => Value::Toggle(value.and_then(toml::Value::as_bool).unwrap_or_default()),
+        FieldKind::Text => Value::Text(value.and_then(toml::Value::as_str).unwrap_or_default().to_string()),
+        FieldKind::Enum { names } => {
+            let index = match value {
+                Some(toml::Value::Integer(i)) => usize::try_from(*i).ok(),
+                Some(v) => v.as_str().and_then(|name| names.iter().position(|n| same_field(n, name))),
+                None => None,
+            };
+            Value::Choice(index.unwrap_or_default(), names.clone())
+        }
+        FieldKind::Vector { size } => {
+            Value::Vector(floats(value).filter(|v| v.len() == *size).unwrap_or(vec![0.0; *size]))
+        }
+        FieldKind::Rotation => Value::Vector(euler(value)),
+        FieldKind::Obj | FieldKind::Behaviour { .. } => Value::Obj(reference(world, value)),
+        FieldKind::Asset { .. } | FieldKind::Ref { .. } => {
+            Value::Asset(value.and_then(toml::Value::as_str).filter(|p| !p.is_empty()).unwrap_or("None").to_string())
+        }
+        FieldKind::List { .. } => Value::List(value.and_then(toml::Value::as_array).map_or(0, Vec::len)),
+        FieldKind::Struct { .. } => Value::Group,
+        FieldKind::Unsupported { name } => Value::Fixed(value.map_or_else(|| name.clone(), |v| summary(world, v))),
+    }
+}
+
+/// A value whose script was not found, shown as what the scene wrote.
+fn untyped(world: &World, value: Option<&toml::Value>) -> Value {
+    match value {
+        Some(toml::Value::Float(f)) => Value::Number(*f as f32),
+        Some(toml::Value::Integer(i)) => Value::Whole(*i),
+        Some(toml::Value::Boolean(b)) => Value::Toggle(*b),
+        Some(toml::Value::String(s)) => Value::Text(s.clone()),
+        Some(v) if v.as_table().is_some_and(|t| t.contains_key("entity")) => Value::Obj(reference(world, Some(v))),
+        Some(v) => match floats(Some(v)).filter(|f| (2..=4).contains(&f.len())) {
+            Some(values) => Value::Vector(values),
+            None => Value::Fixed(summary(world, v)),
+        },
+        None => Value::Fixed("None".into()),
+    }
+}
+
+/// Sets the value at a path. Returns whether it changed.
+pub fn set(
+    world: &mut World,
+    types: &ScriptTypes,
+    entity: Entity,
+    behaviour: &str,
+    path: &[Step],
+    value: &Value,
+) -> bool {
+    let new = match (value, kind_at(types, behaviour, path)) {
+        (Value::Choice(index, names), _) => toml::Value::String(names.get(*index).cloned().unwrap_or_default()),
+        (Value::Number(n), _) => toml::Value::Float(f64::from(*n)),
+        (Value::Whole(n), _) => toml::Value::Integer(*n),
+        (Value::Toggle(b), _) => toml::Value::Boolean(*b),
+        (Value::Text(text), _) => toml::Value::String(text.clone()),
+        (Value::Vector(values), _) => {
+            toml::Value::Array(values.iter().map(|&v| toml::Value::Float(f64::from(v))).collect())
+        }
+        _ => return false,
+    };
+    if value_at(world, types, entity, behaviour, path).as_ref() == Some(&new) {
+        return false;
+    }
+    change(world, types, entity, behaviour, path, |slot| *slot = new)
+}
+
+/// Points a reference at what its menu picked. A top-level asset set to
+/// nothing goes back to what the script starts it as, which is nothing.
+pub fn pick(
+    world: &mut World,
+    types: &ScriptTypes,
+    entity: Entity,
+    behaviour: &str,
+    path: &[Step],
+    pick: &Pick,
+) -> bool {
+    let new = match pick {
+        Pick::Obj(Some(target)) => toml::Value::Table(toml::Table::from_iter([(
+            "entity".to_string(),
+            toml::Value::Integer(target.to_bits() as i64),
+        )])),
+        Pick::Obj(None) => toml::Value::Table(toml::Table::new()),
+        Pick::Asset(Some(asset)) => toml::Value::String(asset.clone()),
+        Pick::Asset(None) if path.len() == 1 => return reset(world, entity, behaviour, path),
+        Pick::Asset(None) => toml::Value::String(String::new()),
+    };
+    change(world, types, entity, behaviour, path, |slot| *slot = new)
+}
+
+/// Adds an item to the end of a list, as a new one of its kind starts.
+pub fn add_item(world: &mut World, types: &ScriptTypes, entity: Entity, behaviour: &str, list: &[Step]) -> bool {
+    let Some(FieldKind::List { element }) = kind_at(types, behaviour, list) else { return false };
+    let item = blank(types, &element);
+    change(world, types, entity, behaviour, list, |slot| match slot.as_array_mut() {
+        Some(items) => items.push(item),
+        None => *slot = toml::Value::Array(vec![item]),
+    })
+}
+
+/// Takes an item out of its list.
+pub fn remove_item(world: &mut World, types: &ScriptTypes, entity: Entity, behaviour: &str, item: &[Step]) -> bool {
+    let Some((Step::Item(index), list)) = item.split_last() else { return false };
+    let index = *index;
+    change(world, types, entity, behaviour, list, |slot| {
+        if let Some(items) = slot.as_array_mut().filter(|items| index < items.len()) {
+            items.remove(index);
+        }
+    })
+}
+
+/// Takes a field back to what the script starts it as: the scene no longer
+/// sets it. Only whole fields can be, not values inside them.
+pub fn reset(world: &mut World, entity: Entity, behaviour: &str, path: &[Step]) -> bool {
+    let [Step::Key(name)] = path else { return false };
+    let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return false };
+    let Some(spec) = kept.0.iter_mut().find(|s| s.type_name == behaviour) else { return false };
+    let Some(key) = spec.fields.keys().find(|key| same_field(key, name)).cloned() else { return false };
+    Arc::make_mut(&mut spec.fields).remove(&key);
+    true
+}
+
+/// Changes the value at a path in place, first setting the whole field for
+/// the scene as it is now, if the scene does not set it yet.
+fn change(
+    world: &mut World,
+    types: &ScriptTypes,
+    entity: Entity,
+    behaviour: &str,
+    path: &[Step],
+    change: impl FnOnce(&mut toml::Value),
+) -> bool {
+    let Some((Step::Key(first), rest)) = path.split_first() else { return false };
+    let now = value_at(world, types, entity, behaviour, &path[..1]);
+    let kind = kind_at(types, behaviour, &path[..1]);
+    let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return false };
+    let Some(spec) = kept.0.iter_mut().find(|s| s.type_name == behaviour) else { return false };
+    let fields = Arc::make_mut(&mut spec.fields);
+    let key = fields.keys().find(|key| same_field(key, first)).cloned().unwrap_or_else(|| first.clone());
+    let blank_top = || kind.as_ref().map_or_else(|| toml::Value::Table(toml::Table::new()), |k| blank(types, k));
+    let top = fields.entry(key).or_insert_with(|| now.unwrap_or_else(blank_top));
+    let Some(slot) = descend_mut(types, top, kind, rest) else { return false };
+    change(slot);
+    true
+}
+
+/// [`descend`], for changing: a table's field the scene left out is set to
+/// what the script starts it as on the way.
+fn descend_mut<'a>(
+    types: &ScriptTypes,
+    value: &'a mut toml::Value,
+    kind: Option<FieldKind>,
+    steps: &[Step],
+) -> Option<&'a mut toml::Value> {
+    let Some((step, rest)) = steps.split_first() else { return Some(value) };
+    match step {
+        Step::Item(index) => {
+            let element = match kind {
+                Some(FieldKind::List { element }) => Some(*element),
+                _ => None,
+            };
+            descend_mut(types, value.as_array_mut()?.get_mut(*index)?, element, rest)
+        }
+        Step::Key(key) => {
+            let field = struct_field(types, kind.as_ref(), key).cloned();
+            let table = value.as_table_mut()?;
+            let name = table.keys().find(|k| same_field(k, key)).cloned().unwrap_or_else(|| key.clone());
+            let starts = || {
+                field.as_ref().map_or_else(
+                    || toml::Value::Table(toml::Table::new()),
+                    |f| f.default.clone().unwrap_or_else(|| blank(types, &f.kind)),
+                )
+            };
+            let slot = table.entry(name).or_insert_with(starts);
+            descend_mut(types, slot, field.map(|f| f.kind), rest)
+        }
+    }
+}
+
+/// A new value of a kind, as an item added to a list starts.
+fn blank(types: &ScriptTypes, kind: &FieldKind) -> toml::Value {
+    match kind {
+        FieldKind::Number => toml::Value::Float(0.0),
+        FieldKind::Whole => toml::Value::Integer(0),
+        FieldKind::Bool => toml::Value::Boolean(false),
+        FieldKind::Text | FieldKind::Asset { .. } | FieldKind::Ref { .. } => toml::Value::String(String::new()),
+        FieldKind::Enum { names } => toml::Value::String(names.first().cloned().unwrap_or_default()),
+        FieldKind::Vector { size } => toml::Value::Array(vec![toml::Value::Float(0.0); *size]),
+        FieldKind::Rotation => toml::Value::Array(vec![toml::Value::Float(0.0); 3]),
+        FieldKind::List { .. } => toml::Value::Array(Vec::new()),
+        FieldKind::Struct { name } => toml::Value::Table(
+            types
+                .fields_of(name)
+                .iter()
+                .map(|f| (f.name.clone(), f.default.clone().unwrap_or_else(|| blank(types, &f.kind))))
+                .collect(),
+        ),
+        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Unsupported { .. } => {
+            toml::Value::Table(toml::Table::new())
+        }
+    }
+}
+
+/// What an Obj or behaviour reference can point at: Objs in the same scene
+/// as the Obj it is on, as a scene can only save those, and for a
+/// behaviour, those with a behaviour of its type. Nothing comes first.
+pub fn obj_choices(game: &Game, types: &ScriptTypes, entity: Entity, kind: &FieldKind) -> Vec<(String, Pick)> {
+    let world = &game.engine.world;
+    let scene = game.levels.scene_of(entity);
+    let fits = |target: Entity| match kind {
+        FieldKind::Behaviour { name } => specs(world, target)
+            .iter()
+            .any(|s| s.type_name == *name || types.behaviour(&s.type_name).is_some_and(|b| b.is_a(name))),
+        _ => true,
+    };
+    let mut found: Vec<(String, Pick)> = world
+        .query_ref::<(Entity, &Name)>()
+        .without::<EditorOnly>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(target, _)| game.levels.scene_of(*target) == scene && fits(*target))
+        .map(|(target, name)| (name.0.clone(), Pick::Obj(Some(target))))
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found.insert(0, ("None".into(), Pick::Obj(None)));
+    found
+}
+
+/// The project's assets an asset field can take, by path, with nothing
+/// first.
+pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
+    let (FieldKind::Asset { asset } | FieldKind::Ref { asset }) = kind else { return Vec::new() };
+    let wanted = match asset.rsplit('.').next() {
+        Some("Prefab") => Some(AssetKind::Prefab),
+        Some("Material") => Some(AssetKind::Material),
+        Some("Texture") => Some(AssetKind::Texture),
+        Some("Model") => Some(AssetKind::Model),
+        Some("Scene") => Some(AssetKind::Scene),
+        Some("Level") => Some(AssetKind::Level),
+        _ => None,
+    };
+    let mut paths: Vec<String> = game
+        .content
+        .db()
+        .entries()
+        .filter(|e| wanted.is_none_or(|kind| e.kind == kind))
+        .map(|e| e.path.clone())
+        .collect();
+    paths.sort();
+    let mut found = vec![("None".to_string(), Pick::Asset(None))];
+    found.extend(paths.into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
+    found
+}
+
+fn number(value: &toml::Value) -> Option<f64> {
+    value.as_float().or_else(|| value.as_integer().map(|i| i as f64))
+}
+
+fn floats(value: Option<&toml::Value>) -> Option<Vec<f32>> {
+    let items = value?.as_array()?;
+    let numbers: Vec<f32> = items.iter().filter_map(number).map(|f| f as f32).collect();
+    (numbers.len() == items.len()).then_some(numbers)
+}
+
+/// A rotation as Euler degrees, as scenes write one; four numbers are a
+/// quaternion, turned into degrees in the same order.
+fn euler(value: Option<&toml::Value>) -> Vec<f32> {
+    match floats(value).as_deref() {
+        Some([x, y, z]) => vec![*x, *y, *z],
+        Some([x, y, z, w]) => {
+            let (y, x, z) = Quat::from_xyzw(*x, *y, *z, *w).normalize().to_euler(EulerRot::YXZ);
+            [x, y, z].iter().map(|a| a.to_degrees()).collect()
+        }
+        _ => vec![0.0; 3],
+    }
+}
+
+/// A reference by the name of the Obj it points at.
+fn reference(world: &World, value: Option<&toml::Value>) -> String {
+    match value.and_then(|v| v.as_table()).and_then(|t| t.get("entity")).and_then(toml::Value::as_integer) {
+        None | Some(0) => "None".into(),
+        Some(bits) => world.get::<Name>(Entity::from_bits(bits as u64)).map_or("Missing".into(), |n| n.0.clone()),
+    }
+}
+
+/// A value shown rather than edited, as the scene would write it.
+fn summary(world: &World, value: &toml::Value) -> String {
+    match value {
+        toml::Value::Table(table) if table.contains_key("entity") || table.is_empty() => reference(world, Some(value)),
+        toml::Value::Array(items) => format!("{} items", items.len()),
+        other => other.to_string(),
+    }
+}

@@ -90,6 +90,26 @@ namespace Voxear.Scripting
 			return found;
 		}
 
+		/// <summary>
+		/// The fields scenes can set on a type, base classes' first and each in the order declared, as the editor shows
+		/// them.
+		/// </summary>
+		public static List<FieldInfo> Settable(Type type)
+		{
+			var levels = new List<Type>();
+			for (var current = type; current != null && !IsBase(current); current = current.BaseType)
+			{
+				levels.Insert(0, current);
+			}
+
+			var fields = new List<FieldInfo>();
+			foreach (var level in levels)
+			{
+				fields.AddRange(Array.FindAll(level.GetFields(Declared), IsSettable));
+			}
+			return fields;
+		}
+
 		/// <summary>Private fields of base classes are only visible from their own type, so each level is read in turn.</summary>
 		private static void AddSettable(Type type, Dictionary<string, FieldInfo> found)
 		{

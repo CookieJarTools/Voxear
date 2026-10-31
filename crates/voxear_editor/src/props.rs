@@ -1,8 +1,8 @@
 //! The components the Inspector shows below the Transform, and the values
 //! in each that it edits. A component is a [`Part`]; each value in it is
 //! named by a [`Prop`], read from the world as a [`Value`] and written
-//! back. Script fields are props too, typed by what the script declares
-//! (`script_types`), or when it is not found, by the value the scene gave.
+//! back. Script fields, and the values inside them, are props too (see
+//! `fields`).
 
 use voxear_assets::AssetKind;
 use voxear_core::math::Vec3;
@@ -10,11 +10,13 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource, linear,
     scene_file::{default_light, default_material},
-    script_types::{BehaviourType, same_field},
+    script_types::ScriptTypes,
     srgb,
 };
 use voxear_render::{Camera, Light, LightKind, MeshRenderer, Renderer};
-use voxear_scene::{BehaviourSpec, Behaviours, Name};
+use voxear_scene::{BehaviourSpec, Behaviours};
+
+use crate::fields::{self, Pick, Step};
 
 /// The meshes every project has, as the Mesh menu lists them first.
 const BUILTIN_MESHES: [(&str, &str); 3] =
@@ -65,12 +67,11 @@ pub enum Prop {
     FieldOfView,
     Near,
     Exposure,
-    /// A script field: its behaviour's type name, the field's name, and its
-    /// C# type when the script was found.
+    /// A script field, or a value inside one: its behaviour's type name,
+    /// and the path to it from the field.
     Field {
         behaviour: String,
-        name: String,
-        type_name: Option<String>,
+        path: Vec<Step>,
     },
 }
 
@@ -81,12 +82,22 @@ pub enum Value {
     Whole(i64),
     Toggle(bool),
     Text(String),
-    Vector([f32; 3]),
+    /// Two to four numbers.
+    Vector(Vec<f32>),
     /// A colour as people pick them, in sRGB from 0 to 1.
     Color([f32; 3]),
     /// One of a list, by index.
     Choice(usize, Vec<String>),
-    /// Shown, but not edited here, such as a reference to another Obj.
+    /// A reference to an Obj or a behaviour on one, by the Obj's name, picked
+    /// from a menu.
+    Obj(String),
+    /// An asset, by its path, picked from a menu.
+    Asset(String),
+    /// A list's header: how many items it has. Its items follow as props.
+    List(usize),
+    /// A `[Serializable]` table's header. Its fields follow as props.
+    Group,
+    /// Shown, but not edited here.
     Fixed(String),
 }
 
@@ -119,7 +130,7 @@ pub fn specs(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
 
 /// The values a component shows. A light shows only what its kind uses; a
 /// script, the fields it declares, then any others its scene sets.
-pub fn props(world: &World, entity: Entity, part: &Part, types: &[BehaviourType]) -> Vec<Prop> {
+pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) -> Vec<Prop> {
     match part {
         Part::Renderer => vec![Prop::Mesh, Prop::Material],
         Part::Light => {
@@ -135,26 +146,17 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &[BehaviourType]
         }
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure],
         Part::Behaviour(behaviour) => {
-            let declared = types.iter().find(|t| t.name == *behaviour);
+            let mut rows = Vec::new();
+            let declared = types.behaviour(behaviour);
+            for field in declared.into_iter().flat_map(|b| b.fields.iter()) {
+                fields::expand(world, types, entity, behaviour, vec![Step::Key(field.name.clone())], &mut rows);
+            }
+            // Values the scene sets that the script does not declare, or before it is described.
             let spec = specs(world, entity).into_iter().find(|s| s.type_name == *behaviour);
-            let field = |name: &str, type_name: Option<String>| Prop::Field {
-                behaviour: behaviour.clone(),
-                name: name.to_string(),
-                type_name,
-            };
-            let mut props: Vec<Prop> = declared
-                .into_iter()
-                .flat_map(|t| t.fields.iter())
-                .map(|f| field(&f.name, Some(f.type_name.clone())))
-                .collect();
-            let unknown: Vec<String> = spec
-                .iter()
-                .flat_map(|s| s.fields.keys())
-                .filter(|key| declared.is_none_or(|t| t.field(key).is_none()))
-                .cloned()
-                .collect();
-            props.extend(unknown.iter().map(|key| field(key, None)));
-            props
+            let unknown =
+                spec.iter().flat_map(|s| s.fields.keys()).filter(|key| declared.is_none_or(|b| b.field(key).is_none()));
+            rows.extend(unknown.map(|key| vec![Step::Key(key.clone())]).collect::<Vec<_>>());
+            rows.into_iter().map(|path| Prop::Field { behaviour: behaviour.clone(), path }).collect()
         }
     }
 }
@@ -173,9 +175,23 @@ pub fn label(prop: &Prop) -> String {
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
-        Prop::Field { name, .. } => return nice_name(name),
+        Prop::Field { path, .. } => {
+            return match path.last() {
+                Some(Step::Key(name)) => nice_name(name),
+                Some(Step::Item(index)) => format!("Element {index}"),
+                None => String::new(),
+            };
+        }
     };
     label.to_string()
+}
+
+/// How deep a value sits inside its script field: 0 for a field itself.
+pub fn depth(prop: &Prop) -> usize {
+    match prop {
+        Prop::Field { path, .. } => path.len().saturating_sub(1),
+        _ => 0,
+    }
 }
 
 /// A component as an Obj gets it from Add Component: a grey cube, a point
@@ -228,8 +244,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
 }
 
 /// A prop's value now, or `None` when the Obj no longer has it. `types`
-/// give script fields the values they start as.
-pub fn get(game: &Game, types: &[BehaviourType], entity: Entity, prop: &Prop) -> Option<Value> {
+/// say what script fields hold and start as.
+pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Option<Value> {
     let world = &game.engine.world;
     let light = || world.get::<Light>(entity);
     let camera = || world.get::<Camera>(entity);
@@ -280,11 +296,9 @@ pub fn get(game: &Game, types: &[BehaviourType], entity: Entity, prop: &Prop) ->
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
-        Prop::Field { behaviour, name, type_name } => {
-            let spec = specs(world, entity).into_iter().find(|s| s.type_name == *behaviour)?;
-            let set = spec.fields.iter().find(|(key, _)| same_field(key, name)).map(|(_, v)| v.clone());
-            let declared = types.iter().find(|t| t.name == *behaviour).and_then(|t| t.field(name));
-            field_value(world, set.as_ref(), type_name.as_deref(), declared.and_then(|f| f.default.clone()))
+        Prop::Field { behaviour, path } => {
+            specs(world, entity).iter().find(|s| s.type_name == *behaviour)?;
+            fields::get(game, types, entity, behaviour, path)
         }
     })
 }
@@ -293,7 +307,7 @@ pub fn get(game: &Game, types: &[BehaviourType], entity: Entity, prop: &Prop) ->
 pub fn set(
     game: &mut Game,
     renderer: Option<&mut Renderer>,
-    types: &[BehaviourType],
+    types: &ScriptTypes,
     entity: Entity,
     prop: &Prop,
     value: Value,
@@ -321,14 +335,8 @@ pub fn set(
             let Ok(material) = game.content.material(renderer, &source) else { return false };
             with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.material = material)
         }
-        (Prop::Field { behaviour, name, .. }, value) => {
-            let Some(value) = toml_value(&value) else { return false };
-            let Some(kept) = game.engine.world.get_mut::<EditBehaviours>(entity) else { return false };
-            let Some(spec) = kept.0.iter_mut().find(|s| s.type_name == *behaviour) else { return false };
-            let fields = std::sync::Arc::make_mut(&mut spec.fields);
-            let key = fields.keys().find(|key| same_field(key, name)).cloned().unwrap_or_else(|| name.clone());
-            fields.insert(key, value);
-            true
+        (Prop::Field { behaviour, path }, value) => {
+            fields::set(&mut game.engine.world, types, entity, behaviour, path, &value)
         }
         (prop, value) => set_component(&mut game.engine.world, entity, prop, value),
     }
@@ -336,12 +344,43 @@ pub fn set(
 
 /// Takes a script field back to what the script starts it as.
 pub fn reset_field(world: &mut World, entity: Entity, prop: &Prop) -> bool {
-    let Prop::Field { behaviour, name, .. } = prop else { return false };
-    let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return false };
-    let Some(spec) = kept.0.iter_mut().find(|s| s.type_name == *behaviour) else { return false };
-    let Some(key) = spec.fields.keys().find(|key| same_field(key, name)).cloned() else { return false };
-    std::sync::Arc::make_mut(&mut spec.fields).remove(&key);
-    true
+    let Prop::Field { behaviour, path } = prop else { return false };
+    fields::reset(world, entity, behaviour, path)
+}
+
+/// Points a reference at what its menu picked.
+pub fn pick(world: &mut World, types: &ScriptTypes, entity: Entity, prop: &Prop, choice: &Pick) -> bool {
+    let Prop::Field { behaviour, path } = prop else { return false };
+    fields::pick(world, types, entity, behaviour, path, choice)
+}
+
+/// What a reference's menu offers.
+pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Vec<(String, Pick)> {
+    let Prop::Field { behaviour, path } = prop else { return Vec::new() };
+    match fields::kind_at(types, behaviour, path) {
+        Some(
+            kind @ (voxear_engine::script_types::FieldKind::Asset { .. }
+            | voxear_engine::script_types::FieldKind::Ref { .. }),
+        ) => fields::asset_choices(game, &kind),
+        Some(kind) => fields::obj_choices(game, types, entity, &kind),
+        None => fields::obj_choices(game, types, entity, &voxear_engine::script_types::FieldKind::Obj),
+    }
+}
+
+/// Adds an item to a list, or takes one out.
+pub fn add_item(world: &mut World, types: &ScriptTypes, entity: Entity, list: &Prop) -> bool {
+    let Prop::Field { behaviour, path } = list else { return false };
+    fields::add_item(world, types, entity, behaviour, path)
+}
+
+pub fn remove_item(world: &mut World, types: &ScriptTypes, entity: Entity, item: &Prop) -> bool {
+    let Prop::Field { behaviour, path } = item else { return false };
+    fields::remove_item(world, types, entity, behaviour, path)
+}
+
+/// Whether a prop is an item of a list, which can be taken out.
+pub fn is_item(prop: &Prop) -> bool {
+    matches!(prop, Prop::Field { path, .. } if matches!(path.last(), Some(Step::Item(_))))
 }
 
 /// Lights and cameras, whose values are plain numbers on the component.
@@ -385,79 +424,6 @@ fn with<T: voxear_ecs::Component>(world: &mut World, entity: Entity, change: imp
     let Some(component) = world.get_mut::<T>(entity) else { return false };
     change(component);
     true
-}
-
-/// A script field's value as the Inspector shows it: what the scene set,
-/// or else what the script starts it as, typed by the field's C# type.
-fn field_value(
-    world: &World,
-    set: Option<&toml::Value>,
-    type_name: Option<&str>,
-    default: Option<toml::Value>,
-) -> Value {
-    let value = set.cloned().or(default);
-    let number = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
-    match (type_name.map(|t| t.trim_end_matches('?')), value.as_ref()) {
-        (Some("float" | "double" | "decimal"), v) => Value::Number(v.and_then(number).unwrap_or_default() as f32),
-        (Some("int" | "long" | "short" | "byte" | "uint" | "ulong" | "ushort" | "sbyte"), v) => {
-            Value::Whole(v.and_then(|v| v.as_integer().or_else(|| v.as_float().map(|f| f as i64))).unwrap_or_default())
-        }
-        (Some("bool"), v) => Value::Toggle(v.and_then(toml::Value::as_bool).unwrap_or_default()),
-        (Some("string"), v) => Value::Text(v.and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()),
-        (Some("Vector3" | "System.Numerics.Vector3"), v) => Value::Vector(vector(v).unwrap_or_default()),
-        (Some(_), v) => Value::Fixed(v.map_or("None".into(), |v| summary(world, v))),
-        (None, Some(toml::Value::Float(f))) => Value::Number(*f as f32),
-        (None, Some(toml::Value::Integer(i))) => Value::Whole(*i),
-        (None, Some(toml::Value::Boolean(b))) => Value::Toggle(*b),
-        (None, Some(toml::Value::String(s))) => Value::Text(s.clone()),
-        (None, Some(v)) => match vector(Some(v)) {
-            Some(xyz) => Value::Vector(xyz),
-            None => Value::Fixed(summary(world, v)),
-        },
-        (None, None) => Value::Fixed("None".into()),
-    }
-}
-
-/// A value as a scene writes it.
-fn toml_value(value: &Value) -> Option<toml::Value> {
-    Some(match value {
-        Value::Number(n) => toml::Value::Float(f64::from(*n)),
-        Value::Whole(n) => toml::Value::Integer(*n),
-        Value::Toggle(b) => toml::Value::Boolean(*b),
-        Value::Text(text) => toml::Value::String(text.clone()),
-        Value::Vector(xyz) | Value::Color(xyz) => {
-            toml::Value::Array(xyz.iter().map(|&c| toml::Value::Float(f64::from(c))).collect())
-        }
-        Value::Choice(..) | Value::Fixed(_) => return None,
-    })
-}
-
-/// Three numbers in a list, as scenes write a Vector3.
-fn vector(value: Option<&toml::Value>) -> Option<[f32; 3]> {
-    let items = value?.as_array()?;
-    let numbers: Vec<f32> = items
-        .iter()
-        .filter_map(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-        .map(|f| f as f32)
-        .collect();
-    (items.len() == 3 && numbers.len() == 3).then(|| [numbers[0], numbers[1], numbers[2]])
-}
-
-/// A value that is shown rather than edited: a reference by the name of
-/// the Obj it points at, anything else as the scene would write it.
-fn summary(world: &World, value: &toml::Value) -> String {
-    match value.as_table().and_then(|t| t.get("entity")).and_then(toml::Value::as_integer) {
-        Some(0) => "None".into(),
-        Some(bits) => {
-            let entity = Entity::from_bits(bits as u64);
-            world.get::<Name>(entity).map_or("Missing".into(), |n| n.0.clone())
-        }
-        None => match value {
-            toml::Value::Array(items) => format!("{} items", items.len()),
-            toml::Value::Table(table) if table.is_empty() => "None".into(),
-            other => other.to_string(),
-        },
-    }
 }
 
 /// Every `.material` asset in the project, by path.

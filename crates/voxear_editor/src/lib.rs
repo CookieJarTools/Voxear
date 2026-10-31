@@ -34,6 +34,7 @@
 
 mod console;
 mod editor;
+mod fields;
 mod hierarchy;
 mod history;
 mod inspector;

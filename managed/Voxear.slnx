@@ -1,5 +1,6 @@
 <Solution>
 	<Project Path="Voxear.Core/Voxear.Core.csproj" />
 	<Project Path="Voxear.Core.Tests/Voxear.Core.Tests.csproj" />
+	<Project Path="Voxear.ScriptInfo/Voxear.ScriptInfo.csproj" />
 	<Project Path="../samples/Hello/Scripts/Hello.Scripts.csproj" />
 </Solution>

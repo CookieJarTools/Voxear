@@ -11,5 +11,7 @@
 	<ItemGroup>
 		<!-- The tests reach the field reader directly, without the engine. -->
 		<InternalsVisibleTo Include="Voxear.Core.Tests" />
+		<!-- The editor's tool that describes a game's behaviours from its build. -->
+		<InternalsVisibleTo Include="Voxear.ScriptInfo" />
 	</ItemGroup>
 </Project>

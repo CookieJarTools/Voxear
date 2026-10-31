@@ -604,6 +604,56 @@
     font-family: mono;
 }
 
+.vector.vector-2 {
+    grid-template-columns: repeat(2, minmax(0px, 1fr));
+}
+
+.vector.vector-4 {
+    grid-template-columns: repeat(4, minmax(0px, 1fr));
+}
+
+/* A value with a button beside it: a list's add, or an item's remove. */
+.prop-value {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    min-width: 0px;
+}
+
+.prop-value > .value-input, .prop-value > .value-picker, .prop-value > .vector, .prop-value > .value {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.list-add, .list-remove {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+/* A reference: what it points at, opening a menu to pick another. */
+.value-picker {
+    height: 22px;
+    padding: 0px 6px 0px 8px;
+    gap: 6px;
+    align-items: center;
+    min-width: 0px;
+    border-radius: 5px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+    transition: border-color var(--vx-fade);
+}
+
+.value-picker:hover {
+    border-color: var(--vx-line-2);
+}
+
+.picker-label {
+    flex-grow: 1;
+    min-width: 0px;
+    font-size: 11px;
+}
+
 .value {
     font-family: mono;
     font-size: 11px;

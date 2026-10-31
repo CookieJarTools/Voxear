@@ -13,18 +13,21 @@
 //! click on a component's header offers Remove Component, and the
 //! Transform's menu button Reset. Add Component lists the components and
 //! the project's scripts (`script_types`) the Obj does not have yet.
+//!
+//! Script fields show as their kind says: a list as its items, each with a
+//! button to take it out and the list's to add one; a `[Serializable]`
+//! table as its fields, indented under it; and a reference to an Obj, a
+//! behaviour or an asset as what it points at, picked from a menu.
 
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::Entity;
-use voxear_engine::{
-    Game,
-    script_types::{BehaviourType, behaviour_types},
-};
+use voxear_engine::{Game, script_types::ScriptTypes};
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Name, Transform};
 use voxear_ui::{MenuItem, NodeId, Style, Ui};
 
 use crate::{
+    fields::Pick,
     history::{Edit, ObjState},
     props::{self, Part, Prop, Value},
 };
@@ -94,6 +97,8 @@ pub enum RowAction {
     ResetTransform,
     Add(Part),
     Remove(Part),
+    /// Point a reference at what its menu picked.
+    Pick(Prop, Pick),
 }
 
 /// A component value's row and the control that edits it.
@@ -101,14 +106,20 @@ struct PropRow {
     prop: Prop,
     row: NodeId,
     control: Control,
+    /// A list's button that adds an item, and an item's that takes it out.
+    add: Option<NodeId>,
+    remove: Option<NodeId>,
 }
 
 enum Control {
     /// A field typed in: a number, a whole number or text.
     Text(NodeId),
     Toggle(NodeId),
-    /// Three fields, for a vector or a colour, with the colour's swatch.
-    Axes([NodeId; 3], Option<NodeId>),
+    /// A field for each number, for a vector or a colour, with the
+    /// colour's swatch.
+    Axes(Vec<NodeId>, Option<NodeId>),
+    /// A reference: a button showing what it points at, which opens a menu.
+    Picker(NodeId, NodeId),
     /// A dropdown, and the options it was last given.
     Choice(NodeId, Vec<String>),
     /// A label, for what is shown but not edited here.
@@ -125,8 +136,8 @@ pub struct Inspector {
     headers: Vec<(Option<Part>, NodeId)>,
     rows: Vec<PropRow>,
     add: Option<NodeId>,
-    /// The project's scripts, as their sources were when last shown.
-    types: Vec<BehaviourType>,
+    /// The project's scripts, as their last build describes them.
+    types: ScriptTypes,
     /// The components and values shown, and whether the game was playing,
     /// to build again when either changes.
     built: (Vec<(Part, Vec<Prop>)>, bool),
@@ -144,7 +155,7 @@ impl Inspector {
             headers: Vec::new(),
             rows: Vec::new(),
             add: None,
-            types: Vec::new(),
+            types: ScriptTypes::default(),
             built: (Vec::new(), false),
             menu: None,
         }
@@ -153,6 +164,17 @@ impl Inspector {
     /// The Obj showing, if any.
     pub fn shown(&self) -> Option<Entity> {
         self.shown
+    }
+
+    /// The project's scripts as a new build describes them. What is showing
+    /// is built again on the next update.
+    pub fn set_types(&mut self, types: ScriptTypes) {
+        self.types = types;
+        self.built.0.clear();
+    }
+
+    pub fn types(&self) -> &ScriptTypes {
+        &self.types
     }
 
     /// Shows `entity`, or a hint when nothing is selected. While `playing`,
@@ -171,7 +193,6 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
-        self.types = behaviour_types(&game.project);
         let (name_row, name) = header(ui, self.root, game, entity);
 
         let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", false);
@@ -201,10 +222,32 @@ impl Inspector {
             }
             for value in values {
                 let row = prop(ui, rows, &props::label(value));
+                let depth = props::depth(value);
+                if depth > 0 {
+                    let label = ui.children(row)[0];
+                    ui.set_inline_style(label, &format!("padding-left: {}px", depth * 12));
+                }
                 let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
                 let editable = !(playing && matches!(value, Prop::Field { .. }));
-                let control = control(ui, row, &shown, editable);
-                self.rows.push(PropRow { prop: value.clone(), row, control });
+                // An item of a list, or a list, gets its button beside its value.
+                let item = editable && props::is_item(value);
+                let list = editable && matches!(shown, Value::List(_));
+                let holder = if item || list {
+                    let holder = ui.panel(row, Style::row());
+                    ui.add_class(holder, "prop-value");
+                    holder
+                } else {
+                    row
+                };
+                let control = control(ui, holder, &shown, editable);
+                let button = |ui: &mut Ui, icon: &str, class: &str| {
+                    let button = ui.icon_button(holder, icon);
+                    ui.add_class(button, class);
+                    button
+                };
+                let add = list.then(|| button(ui, "plus", "list-add"));
+                let remove = item.then(|| button(ui, "close", "list-remove"));
+                self.rows.push(PropRow { prop: value.clone(), row, control, add, remove });
             }
         }
         let add = ui.button(self.root, "Add Component");
@@ -233,6 +276,15 @@ impl Inspector {
         }
         let before = ObjState::of(&game.engine.world, entity);
         self.update_transform(ui, game, entity, transform);
+        for row in &self.rows {
+            // Adding or taking out an item changes the rows, which are built again next frame.
+            if row.add.is_some_and(|b| ui.clicked(b)) {
+                props::add_item(&mut game.engine.world, &self.types, entity, &row.prop);
+            }
+            if row.remove.is_some_and(|b| ui.clicked(b)) {
+                props::remove_item(&mut game.engine.world, &self.types, entity, &row.prop);
+            }
+        }
         for row in &mut self.rows {
             let Some(current) = props::get(game, &self.types, entity, &row.prop) else { continue };
             if let Some(picked) = read_control(ui, &row.control, &current) {
@@ -279,7 +331,14 @@ impl Inspector {
     /// Inspector's menus: a row's (while `playing`, whether to keep its
     /// value, offered when `can_keep` as the Obj is in the edited level),
     /// a section's, and Add Component's. Returns what was chosen.
-    pub fn menus(&mut self, ui: &mut Ui, playing: bool, can_keep: bool, kept: &[Field]) -> Option<RowAction> {
+    pub fn menus(
+        &mut self,
+        ui: &mut Ui,
+        game: &Game,
+        playing: bool,
+        can_keep: bool,
+        kept: &[Field],
+    ) -> Option<RowAction> {
         let fields = self.fields.as_ref()?;
         let rows: Vec<(Field, NodeId)> =
             fields.rows.iter().cloned().chain(self.rows.iter().map(|r| (Field::Prop(r.prop.clone()), r.row))).collect();
@@ -299,6 +358,14 @@ impl Inspector {
             (add, (x, y + height + 4.0))
         } else if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {
             items = vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))];
+            let [x, y, _, height] = ui.rect(button);
+            (button, (x, y + height + 4.0))
+        } else if let Some((prop, button)) = self.picker_clicked(ui) {
+            let entity = self.shown?;
+            items = props::choices(game, &self.types, entity, &prop)
+                .into_iter()
+                .map(|(label, pick)| (MenuItem::new(&label), Some(RowAction::Pick(prop.clone(), pick))))
+                .collect();
             let [x, y, _, height] = ui.rect(button);
             (button, (x, y + height + 4.0))
         } else if let Some((part, header)) = self.headers.iter().find(|(_, h)| ui.context_clicked(*h)) {
@@ -325,6 +392,14 @@ impl Inspector {
         None
     }
 
+    /// The reference whose button was clicked, and the button.
+    fn picker_clicked(&self, ui: &Ui) -> Option<(Prop, NodeId)> {
+        self.rows.iter().find_map(|row| match row.control {
+            Control::Picker(button, _) if ui.clicked(button) => Some((row.prop.clone(), button)),
+            _ => None,
+        })
+    }
+
     /// What Add Component offers: the components the Obj has not got, then
     /// the project's scripts, which are added in edit mode.
     fn add_items(&self, playing: bool) -> Vec<(MenuItem, Option<RowAction>)> {
@@ -333,10 +408,10 @@ impl Inspector {
             .into_iter()
             .map(|part| (MenuItem::new(part.title()).enabled(!has(&part)), Some(RowAction::Add(part))))
             .collect();
-        if !self.types.is_empty() {
+        if !self.types.behaviours.is_empty() {
             items.push((MenuItem::separator(), None));
         }
-        for script in &self.types {
+        for script in &self.types.behaviours {
             let part = Part::Behaviour(script.name.clone());
             let item = MenuItem::new(script.short_name()).enabled(!playing && !has(&part));
             items.push((item, Some(RowAction::Add(part))));
@@ -355,7 +430,9 @@ fn row_items(field: &Field, playing: bool, can_keep: bool, kept: bool) -> Vec<(M
         let keep = MenuItem::new("Keep value after play").checked(kept).enabled(can_keep);
         items.push((keep, Some(RowAction::Keep(field.clone()))));
     }
-    let resets = matches!(field, Field::Position | Field::Rotation | Field::Scale) || (script && !playing);
+    let whole_field = matches!(field, Field::Prop(prop) if props::depth(prop) == 0);
+    let resets =
+        matches!(field, Field::Position | Field::Rotation | Field::Scale) || (script && whole_field && !playing);
     if resets {
         if !items.is_empty() {
             items.push((MenuItem::separator(), None));
@@ -367,7 +444,7 @@ fn row_items(field: &Field, playing: bool, can_keep: bool, kept: bool) -> Vec<(M
 }
 
 /// The components an Obj has and the values each shows.
-fn layout(game: &Game, entity: Entity, types: &[BehaviourType]) -> Vec<(Part, Vec<Prop>)> {
+fn layout(game: &Game, entity: Entity, types: &ScriptTypes) -> Vec<(Part, Vec<Prop>)> {
     let world = &game.engine.world;
     props::parts(world, entity)
         .into_iter()
@@ -395,22 +472,32 @@ fn control(ui: &mut Ui, row: NodeId, value: &Value, editable: bool) -> Control {
             ui.add_class(toggle, "checkbox");
             Control::Toggle(toggle)
         }
-        Value::Vector(xyz) | Value::Color(xyz) => {
+        Value::Vector(_) | Value::Color(_) => {
             let colour = matches!(value, Value::Color(_));
-            let letters = if colour { ["r", "g", "b"] } else { ["x", "y", "z"] };
+            let count = numbers(value).len();
+            let letters = if colour { &["r", "g", "b"][..] } else { &["x", "y", "z", "w"][..count.min(4)] };
             let vector = ui.panel(row, Style::default());
             ui.add_class(vector, "vector");
             ui.set_class(vector, "color", colour);
+            ui.set_class(vector, &format!("vector-{count}"), !colour);
             let swatch = colour.then(|| {
                 let swatch = ui.panel(vector, Style::default());
                 ui.add_class(swatch, "swatch");
                 swatch
             });
             let fields = axis_fields(ui, vector, letters);
-            write(ui, &fields, Vec3::from(*xyz));
             let mut control = Control::Axes(fields, swatch);
             refresh_control(ui, &mut control, value);
             control
+        }
+        Value::Obj(_) | Value::Asset(_) => {
+            let picker = ui.panel(row, Style::row());
+            ui.add_class(picker, "value-picker");
+            let label = ui.add_label(picker, &display(value));
+            ui.add_class(label, "picker-label");
+            let arrow = ui.icon(picker, "chevron-down");
+            ui.add_class(arrow, "dropdown-arrow");
+            Control::Picker(picker, label)
         }
         Value::Choice(index, options) => {
             let labels: Vec<&str> = options.iter().map(String::as_str).collect();
@@ -418,8 +505,8 @@ fn control(ui: &mut Ui, row: NodeId, value: &Value, editable: bool) -> Control {
             ui.add_class(dropdown, "value-choice");
             Control::Choice(dropdown, options.clone())
         }
-        Value::Fixed(text) => {
-            let label = ui.add_label(row, text);
+        Value::Fixed(_) | Value::List(_) | Value::Group => {
+            let label = ui.add_label(row, &display(value));
             ui.add_class(label, "value");
             Control::Fixed(label)
         }
@@ -435,11 +522,12 @@ fn read_control(ui: &Ui, control: &Control, current: &Value) -> Option<Value> {
         (Control::Text(field), Value::Whole(_)) => ui.text(*field).trim().parse().ok().map(Value::Whole),
         (Control::Text(field), Value::Text(_)) => Some(Value::Text(ui.text(*field))),
         (Control::Toggle(toggle), _) if ui.changed(*toggle) => Some(Value::Toggle(ui.is_checked(*toggle))),
-        (Control::Axes(fields, _), Value::Vector(xyz)) if fields.iter().any(|&f| ui.changed(f)) => {
-            Some(Value::Vector(read(ui, fields, Vec3::from(*xyz)).to_array()))
+        (Control::Axes(fields, _), Value::Vector(values)) if fields.iter().any(|&f| ui.changed(f)) => {
+            Some(Value::Vector(read_numbers(ui, fields, values)))
         }
         (Control::Axes(fields, _), Value::Color(rgb)) if fields.iter().any(|&f| ui.changed(f)) => {
-            Some(Value::Color(read(ui, fields, Vec3::from(*rgb)).to_array()))
+            let rgb = read_numbers(ui, fields, rgb);
+            Some(Value::Color([rgb[0], rgb[1], rgb[2]]))
         }
         (Control::Choice(dropdown, options), _) if ui.changed(*dropdown) => {
             Some(Value::Choice(ui.selected_option(*dropdown), options.clone()))
@@ -462,11 +550,17 @@ fn refresh_control(ui: &mut Ui, control: &mut Control, value: &Value) {
                 ui.set_checked(*toggle, *on);
             }
         }
-        (Control::Axes(fields, swatch), Value::Vector(xyz) | Value::Color(xyz)) => {
-            write(ui, fields, Vec3::from(*xyz));
-            if let Some(swatch) = swatch {
-                let [r, g, b] = xyz.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+        (Control::Axes(fields, swatch), Value::Vector(_) | Value::Color(_)) => {
+            write_numbers(ui, fields, &numbers(value));
+            if let (Some(swatch), Value::Color(rgb)) = (swatch, value) {
+                let [r, g, b] = rgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
                 ui.set_inline_style(*swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
+            }
+        }
+        (Control::Picker(_, label), value) => {
+            let text = display(value);
+            if ui.text(*label) != text {
+                ui.set_text(*label, &text);
             }
         }
         (Control::Choice(dropdown, shown), Value::Choice(index, options)) => {
@@ -495,9 +589,22 @@ fn display(value: &Value) -> String {
         Value::Number(n) => number(*n),
         Value::Whole(n) => n.to_string(),
         Value::Toggle(on) => if *on { "On" } else { "Off" }.into(),
-        Value::Text(text) | Value::Fixed(text) => text.clone(),
-        Value::Vector(xyz) | Value::Color(xyz) => xyz.map(number).join(", "),
+        Value::Text(text) | Value::Fixed(text) | Value::Obj(text) => text.clone(),
+        Value::Asset(path) => path.rsplit('/').next().unwrap_or(path).to_string(),
+        Value::Vector(_) | Value::Color(_) => numbers(value).into_iter().map(number).collect::<Vec<_>>().join(", "),
         Value::Choice(index, options) => options.get(*index).cloned().unwrap_or_default(),
+        Value::List(1) => "1 item".into(),
+        Value::List(count) => format!("{count} items"),
+        Value::Group => String::new(),
+    }
+}
+
+/// A vector's or colour's numbers.
+fn numbers(value: &Value) -> Vec<f32> {
+    match value {
+        Value::Vector(values) => values.clone(),
+        Value::Color(rgb) => rgb.to_vec(),
+        _ => Vec::new(),
     }
 }
 
@@ -538,21 +645,25 @@ fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> (NodeId, [NodeId; 3]) {
     let row = prop(ui, rows, label);
     let vector = ui.panel(row, Style::default());
     ui.add_class(vector, "vector");
-    (row, axis_fields(ui, vector, ["x", "y", "z"]))
+    let fields = axis_fields(ui, vector, &["x", "y", "z"]);
+    (row, [fields[0], fields[1], fields[2]])
 }
 
-/// Three fields, each with its coloured letter inside.
-fn axis_fields(ui: &mut Ui, vector: NodeId, letters: [&str; 3]) -> [NodeId; 3] {
-    letters.map(|axis| {
-        let cell = ui.panel(vector, Style::row());
-        ui.add_class(cell, "axis-field");
-        let letter = ui.add_label(cell, &axis.to_uppercase());
-        ui.add_class(letter, "axis-letter");
-        ui.add_class(letter, &format!("axis-{axis}"));
-        let field = ui.text_field(cell, "");
-        ui.add_class(field, "axis-input");
-        field
-    })
+/// A field for each letter, each with its coloured letter inside.
+fn axis_fields(ui: &mut Ui, vector: NodeId, letters: &[&str]) -> Vec<NodeId> {
+    letters
+        .iter()
+        .map(|axis| {
+            let cell = ui.panel(vector, Style::row());
+            ui.add_class(cell, "axis-field");
+            let letter = ui.add_label(cell, &axis.to_uppercase());
+            ui.add_class(letter, "axis-letter");
+            ui.add_class(letter, &format!("axis-{axis}"));
+            let field = ui.text_field(cell, "");
+            ui.add_class(field, "axis-input");
+            field
+        })
+        .collect()
 }
 
 /// A component's section: a line above it, then a foldout headed by its
@@ -595,21 +706,33 @@ fn number(value: f32) -> String {
 /// What three axis fields say, keeping `current` for any that is not a number
 /// or that the user has not changed.
 fn read(ui: &Ui, fields: &[NodeId; 3], current: Vec3) -> Vec3 {
-    let mut value = current.to_array();
-    for (axis, field) in fields.iter().enumerate() {
-        if ui.changed(*field)
-            && let Ok(number) = ui.text(*field).trim().parse::<f32>()
-        {
-            value[axis] = number;
-        }
-    }
-    Vec3::from_array(value)
+    let read = read_numbers(ui, fields, &current.to_array());
+    Vec3::new(read[0], read[1], read[2])
 }
 
 /// Shows `value` in fields the user is not editing.
 fn write(ui: &mut Ui, fields: &[NodeId; 3], value: Vec3) {
-    for (field, value) in fields.iter().zip(value.to_array()) {
-        let text = number(value);
+    write_numbers(ui, fields, &value.to_array());
+}
+
+/// What a row of number fields says, keeping `current` for any that is not
+/// a number or that the user has not changed.
+fn read_numbers(ui: &Ui, fields: &[NodeId], current: &[f32]) -> Vec<f32> {
+    let mut values = current.to_vec();
+    for (value, field) in values.iter_mut().zip(fields) {
+        if ui.changed(*field)
+            && let Ok(number) = ui.text(*field).trim().parse::<f32>()
+        {
+            *value = number;
+        }
+    }
+    values
+}
+
+/// Shows numbers in fields the user is not editing.
+fn write_numbers(ui: &mut Ui, fields: &[NodeId], values: &[f32]) {
+    for (field, value) in fields.iter().zip(values) {
+        let text = number(*value);
         if ui.focused() != Some(*field) && ui.text(*field) != text {
             ui.set_text(*field, &text);
         }

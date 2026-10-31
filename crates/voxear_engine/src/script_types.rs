@@ -1,24 +1,58 @@
-//! What a project's behaviours are, read from their C# sources without
-//! building them, for the editor: each class deriving from `Behaviour`,
-//! directly or through another, with the fields a scene can set (public, or
-//! private with `[SerializeField]`, and neither `static`, `const`,
-//! `readonly` nor `[NonSerialized]`), their C# types, and the values they
-//! start with when those are plain literals.
+//! What a project's behaviours are, as the C# compiler built them, for the
+//! editor: each behaviour a scene can add, the types it derives from and
+//! implements, and the fields a scene can set on it, with the kind of value
+//! each takes and the value a new instance starts with.
 //!
-//! It reads the code as text, which is quick and needs no build, but is a
-//! good guess rather than the compiler's word: a field declared together
-//! with another on one line is missed, and so are generic and nested
-//! classes, which scenes cannot name anyway.
+//! [`describe`] builds the scripts and runs the engine's `Voxear.ScriptInfo`
+//! tool on the build. The tool reads it with reflection, under the same
+//! rules that set fields when the game runs (`BehaviourFields`), and writes
+//! `.voxear/Scripts/Behaviours.json`. [`cached`] reads the last one, and
+//! [`is_stale`] says whether a script changed since it was written.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    process::Command,
+    time::SystemTime,
+};
 
-use crate::Project;
+use anyhow::{Context, Result, ensure};
+use serde::Deserialize;
+
+use crate::{Project, core_assembly, scripts};
+
+/// The description's file, beside the scripts' build.
+const DESCRIPTION: &str = "Behaviours.json";
+
+/// The project's behaviours, and the `[Serializable]` types their fields use.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct ScriptTypes {
+    pub behaviours: Vec<BehaviourType>,
+    /// Each `[Serializable]` type's fields, by full name.
+    #[serde(rename = "types")]
+    pub structs: BTreeMap<String, NestedType>,
+}
+
+impl ScriptTypes {
+    pub fn behaviour(&self, name: &str) -> Option<&BehaviourType> {
+        self.behaviours.iter().find(|b| b.name == name)
+    }
+
+    pub fn fields_of(&self, structure: &str) -> &[ScriptField] {
+        self.structs.get(structure).map_or(&[], |s| s.fields.as_slice())
+    }
+}
 
 /// A behaviour class, and the fields a scene can set on it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct BehaviourType {
     /// The full name, as scenes write it: `Hello.Spinner`.
     pub name: String,
+    /// The classes it derives from, nearest first, up to `Behaviour`.
+    #[serde(default)]
+    pub bases: Vec<String>,
+    #[serde(default)]
+    pub interfaces: Vec<String>,
     /// Base classes' fields first, then its own, in the order declared.
     pub fields: Vec<ScriptField>,
 }
@@ -26,7 +60,7 @@ pub struct BehaviourType {
 impl BehaviourType {
     /// The class name without its namespace.
     pub fn short_name(&self) -> &str {
-        self.name.rsplit('.').next().unwrap_or(&self.name)
+        self.name.rsplit(['.', '+']).next().unwrap_or(&self.name)
     }
 
     /// The field a scene's key names: keys match ignoring case and
@@ -34,16 +68,75 @@ impl BehaviourType {
     pub fn field(&self, key: &str) -> Option<&ScriptField> {
         self.fields.iter().find(|f| same_field(&f.name, key))
     }
+
+    /// Whether a field of type `name` can point at this behaviour: it is
+    /// that class, derives from it, or implements it.
+    pub fn is_a(&self, name: &str) -> bool {
+        self.name == name || self.bases.iter().any(|b| b == name) || self.interfaces.iter().any(|i| i == name)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct NestedType {
+    pub fields: Vec<ScriptField>,
 }
 
 /// One field a scene can set.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct ScriptField {
     pub name: String,
-    /// The C# type as written, such as `float`, `Vector3` or `Spinner?`.
-    pub type_name: String,
-    /// What it starts as, when that is a number, string or bool literal.
+    #[serde(rename = "type")]
+    pub kind: FieldKind,
+    /// What it starts as, as a scene writes it; `None` for nothing, as a
+    /// reference starts.
+    #[serde(default, deserialize_with = "toml_value")]
     pub default: Option<toml::Value>,
+}
+
+/// The kind of value a field takes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum FieldKind {
+    /// A `float` or `double`.
+    Number,
+    /// An integer of any size.
+    Whole,
+    Bool,
+    Text,
+    Enum {
+        names: Vec<String>,
+    },
+    /// A `Vector2`, `Vector3` or `Vector4`.
+    Vector {
+        size: usize,
+    },
+    /// A `Quaternion`, which scenes write as Euler degrees.
+    Rotation,
+    Obj,
+    /// A behaviour on another Obj, of this type or one deriving from or
+    /// implementing it.
+    Behaviour {
+        name: String,
+    },
+    /// An asset loaded with the scene, such as a `Prefab`, by its type.
+    Asset {
+        asset: String,
+    },
+    /// A `Ref<T>`: an asset's path, loaded when the script asks.
+    Ref {
+        asset: String,
+    },
+    List {
+        element: Box<FieldKind>,
+    },
+    /// A `[Serializable]` type, written as a table of its fields.
+    Struct {
+        name: String,
+    },
+    /// A type scenes cannot set.
+    Unsupported {
+        name: String,
+    },
 }
 
 /// Whether two field names are the same to a scene: ignoring case and
@@ -53,392 +146,178 @@ pub fn same_field(a: &str, b: &str) -> bool {
     plain(a) == plain(b)
 }
 
-/// Every behaviour the project's scripts declare that a scene can add,
-/// sorted by name. Empty for a project without scripts.
-pub fn behaviour_types(project: &Project) -> Vec<BehaviourType> {
-    let Some(folder) = project.scripts_project().and_then(|csproj| csproj.parent().map(Path::to_path_buf)) else {
-        return Vec::new();
-    };
-    let mut files = Vec::new();
-    sources(&folder, &mut files);
-    let texts: Vec<String> = files.iter().filter_map(|file| std::fs::read_to_string(file).ok()).collect();
-    scan(&texts.iter().map(String::as_str).collect::<Vec<_>>())
+/// Where the description of the project's scripts is kept.
+pub fn description_path(project: &Project) -> Option<PathBuf> {
+    Some(project.scripts_assembly(scripts::CONFIGURATION)?.parent()?.join(DESCRIPTION))
+}
+
+/// The scripts as last described, if they have been.
+pub fn cached(project: &Project) -> Option<ScriptTypes> {
+    let text = std::fs::read_to_string(description_path(project)?).ok()?;
+    parse(&text).ok()
+}
+
+/// Whether a script or the scripts project changed since the description
+/// was written, or there is none. A project without scripts never is.
+pub fn is_stale(project: &Project) -> bool {
+    if project.scripts_project().is_none() {
+        return false;
+    }
+    let written = description_path(project).and_then(|path| modified(&path));
+    match (written, newest_source(project)) {
+        (Some(written), Some(newest)) => newest > written,
+        _ => true,
+    }
+}
+
+/// Whether a script or the scripts project changed after `time`.
+pub fn changed_since(project: &Project, time: SystemTime) -> bool {
+    newest_source(project).is_some_and(|newest| newest > time)
+}
+
+fn newest_source(project: &Project) -> Option<SystemTime> {
+    let csproj = project.scripts_project()?;
+    let mut sources = vec![csproj.clone()];
+    if let Some(folder) = csproj.parent() {
+        source_files(folder, &mut sources);
+    }
+    sources.iter().filter_map(|path| modified(path)).max()
+}
+
+/// Builds the scripts and describes what the build holds. Takes seconds, so
+/// the editor runs it off its main thread. Empty for a project without
+/// scripts.
+pub fn describe(project: &Project) -> Result<ScriptTypes> {
+    if project.scripts_project().is_none() {
+        return Ok(ScriptTypes::default());
+    }
+    // Held until the description is written, so two at once cannot mix their files.
+    let _building = scripts::lock();
+    scripts::build_unlocked(project)?;
+    let assembly = project.scripts_assembly(scripts::CONFIGURATION).context("scripts project has no file name")?;
+    let tool = core_assembly(scripts::CONFIGURATION).with_file_name("Voxear.ScriptInfo.dll");
+    ensure!(tool.is_file(), "{} is missing; build managed/Voxear.slnx first", tool.display());
+    let out = description_path(project).context("scripts project has no file name")?;
+    let dotnet = scripts::dotnet_exe()?;
+    let output = Command::new(&dotnet)
+        .arg(&tool)
+        .arg(&assembly)
+        .arg(&out)
+        .env("DOTNET_NOLOGO", "1")
+        .output()
+        .with_context(|| format!("running {}", dotnet.display()))?;
+    if !output.status.success() {
+        for line in String::from_utf8_lossy(&output.stderr).lines().filter(|l| !l.trim().is_empty()) {
+            tracing::error!("{line}");
+        }
+    }
+    ensure!(output.status.success(), "describing the scripts failed");
+    let text = std::fs::read_to_string(&out).with_context(|| format!("reading {}", out.display()))?;
+    parse(&text)
+}
+
+pub fn parse(text: &str) -> Result<ScriptTypes> {
+    serde_json::from_str(text).context("reading the scripts' description")
 }
 
 /// The `.cs` files in a folder and those inside it, leaving out build output.
-fn sources(folder: &Path, files: &mut Vec<PathBuf>) {
+fn source_files(folder: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(folder) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() && !matches!(name.as_str(), "bin" | "obj") && !name.starts_with('.') {
-            sources(&path, files);
+            source_files(&path, files);
         } else if name.ends_with(".cs") {
             files.push(path);
         }
     }
 }
 
-/// A class as declared: its full name, the first type it derives from, and
-/// its own fields.
-struct Declared {
-    name: String,
-    namespace: String,
-    base: Option<String>,
-    is_abstract: bool,
-    fields: Vec<ScriptField>,
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// Reads the behaviour types out of C# source texts.
-pub fn scan(texts: &[&str]) -> Vec<BehaviourType> {
-    let mut declared = Vec::new();
-    for text in texts {
-        declared.extend(Reader::default().read(&strip_comments(text)));
-    }
-    let short = |name: &str| name.rsplit('.').next().unwrap_or(name).to_string();
-    // A class's base, found among the declared ones by its short name.
-    let base_of = |class: &Declared| {
-        let base = short(class.base.as_deref()?);
-        declared
-            .iter()
-            .find(|d| short(&d.name) == base && d.namespace == class.namespace)
-            .or_else(|| declared.iter().find(|d| short(&d.name) == base))
-    };
-    let mut types = Vec::new();
-    for class in declared.iter().filter(|c| !c.is_abstract) {
-        let mut chain = vec![class];
-        let mut is_behaviour = false;
-        while let Some(&at) = chain.last() {
-            if at.base.as_deref().is_some_and(|b| matches!(b, "Behaviour" | "Voxear.Behaviour")) {
-                is_behaviour = true;
-                break;
-            }
-            match base_of(at).filter(|b| !chain.iter().any(|c| std::ptr::eq(*c, *b))) {
-                Some(base) => chain.push(base),
-                None => break,
-            }
-        }
-        if !is_behaviour {
-            continue;
-        }
-        let fields = chain.iter().rev().flat_map(|c| c.fields.iter().cloned()).collect();
-        types.push(BehaviourType { name: class.name.clone(), fields });
-    }
-    types.sort_by(|a, b| a.name.cmp(&b.name));
-    types
+/// A JSON value as TOML, which has no null: `null` is `None`, and inside a
+/// list it is an empty table, which reads as no Obj.
+fn toml_value<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<toml::Value>, D::Error> {
+    let json = serde_json::Value::deserialize(deserializer)?;
+    Ok(from_json(&json))
 }
 
-/// The text without `//` and `/* */` comments, keeping strings whole.
-fn strip_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    let mut string: Option<char> = None;
-    while let Some(c) = chars.next() {
-        if let Some(quote) = string {
-            out.push(c);
-            if c == '\\' {
-                out.extend(chars.next());
-            } else if c == quote {
-                string = None;
-            }
-            continue;
+fn from_json(json: &serde_json::Value) -> Option<toml::Value> {
+    use serde_json::Value as Json;
+    Some(match json {
+        Json::Null => return None,
+        Json::Bool(b) => toml::Value::Boolean(*b),
+        Json::Number(n) => match n.as_i64() {
+            Some(i) if !n.to_string().contains(['.', 'e', 'E']) => toml::Value::Integer(i),
+            _ => toml::Value::Float(n.as_f64()?),
+        },
+        Json::String(s) => toml::Value::String(s.clone()),
+        Json::Array(items) => toml::Value::Array(
+            items
+                .iter()
+                .map(|item| from_json(item).unwrap_or_else(|| toml::Value::Table(toml::Table::new())))
+                .collect(),
+        ),
+        Json::Object(table) => {
+            toml::Value::Table(table.iter().filter_map(|(k, v)| Some((k.clone(), from_json(v)?))).collect())
         }
-        match (c, chars.peek()) {
-            ('/', Some('/')) => {
-                for skipped in chars.by_ref() {
-                    if skipped == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-            }
-            ('/', Some('*')) => {
-                chars.next();
-                let mut last = ' ';
-                for skipped in chars.by_ref() {
-                    if last == '*' && skipped == '/' {
-                        break;
-                    }
-                    last = skipped;
-                }
-                out.push(' ');
-            }
-            ('"' | '\'', _) => {
-                string = Some(c);
-                out.push(c);
-            }
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// What a pair of braces holds.
-enum Scope {
-    Namespace(String),
-    /// A class or struct: its index in what was read, or `None` for one
-    /// that is not read (nested, generic, or not a class).
-    Type(Option<usize>),
-    Other,
-}
-
-/// Reads declarations statement by statement, tracking what each brace
-/// opens.
-#[derive(Default)]
-struct Reader {
-    scopes: Vec<Scope>,
-    /// A file-scoped namespace (`namespace Hello;`).
-    file_namespace: String,
-    statement: String,
-    read: Vec<Declared>,
-}
-
-impl Reader {
-    fn read(mut self, text: &str) -> Vec<Declared> {
-        let mut string: Option<char> = None;
-        let mut chars = text.chars();
-        while let Some(c) = chars.next() {
-            if let Some(quote) = string {
-                self.statement.push(c);
-                if c == '\\' {
-                    self.statement.extend(chars.next());
-                } else if c == quote {
-                    string = None;
-                }
-                continue;
-            }
-            match c {
-                '"' | '\'' => {
-                    string = Some(c);
-                    self.statement.push(c);
-                }
-                '{' => self.open(),
-                '}' => {
-                    self.scopes.pop();
-                    self.statement.clear();
-                }
-                ';' => self.end_statement(),
-                _ => self.statement.push(c),
-            }
-        }
-        self.read
-    }
-
-    fn namespace(&self) -> String {
-        let named: Vec<&str> = self
-            .scopes
-            .iter()
-            .filter_map(|s| match s {
-                Scope::Namespace(name) => Some(name.as_str()),
-                _ => None,
-            })
-            .collect();
-        if named.is_empty() { self.file_namespace.clone() } else { named.join(".") }
-    }
-
-    /// A brace opens a namespace, a type, or anything else.
-    fn open(&mut self) {
-        let header = without_attributes(&std::mem::take(&mut self.statement)).0;
-        let words: Vec<&str> = header.split_whitespace().collect();
-        let scope = if let Some(at) = words.iter().position(|w| *w == "namespace") {
-            Scope::Namespace(words.get(at + 1).copied().unwrap_or_default().to_string())
-        } else if let Some(at) =
-            words.iter().position(|w| matches!(*w, "class" | "struct" | "record" | "interface" | "enum"))
-        {
-            let inside_type = self.scopes.iter().any(|s| matches!(s, Scope::Type(_)));
-            let readable = words[at] == "class" && !inside_type && !header.contains('<');
-            Scope::Type(readable.then(|| self.declare(&header, &words, at)))
-        } else {
-            Scope::Other
-        };
-        self.scopes.push(scope);
-    }
-
-    fn declare(&mut self, header: &str, words: &[&str], at: usize) -> usize {
-        let name = words.get(at + 1).map(|w| w.trim_end_matches(':')).unwrap_or_default();
-        let base = header.split_once(':').and_then(|(_, bases)| {
-            let first = bases.split([',', ' ', '\n', '\t']).find(|part| !part.is_empty())?;
-            Some(first.trim().to_string())
-        });
-        let namespace = self.namespace();
-        let full = if namespace.is_empty() { name.to_string() } else { format!("{namespace}.{name}") };
-        let is_abstract = words[..at].contains(&"abstract");
-        self.read.push(Declared { name: full, namespace, base, is_abstract, fields: Vec::new() });
-        self.read.len() - 1
-    }
-
-    fn end_statement(&mut self) {
-        let statement = std::mem::take(&mut self.statement);
-        match self.scopes.last() {
-            None if statement.trim_start().starts_with("namespace ") => {
-                self.file_namespace = statement.trim().trim_start_matches("namespace").trim().to_string();
-            }
-            Some(Scope::Type(Some(index))) => {
-                let index = *index;
-                if let Some(field) = field(&statement) {
-                    self.read[index].fields.push(field);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// A statement without its leading `[...]` attributes, and their names.
-fn without_attributes(statement: &str) -> (String, Vec<String>) {
-    let mut rest = statement.trim();
-    let mut names = Vec::new();
-    while let Some(inner) = rest.strip_prefix('[') {
-        let Some(end) = inner.find(']') else { break };
-        for attribute in inner[..end].split(',') {
-            let name = attribute.split('(').next().unwrap_or_default().trim();
-            names.push(name.trim_end_matches("Attribute").to_string());
-        }
-        rest = inner[end + 1..].trim_start();
-    }
-    (rest.to_string(), names)
-}
-
-/// The field a member statement declares, if it is one a scene can set.
-fn field(statement: &str) -> Option<ScriptField> {
-    let (declaration, attributes) = without_attributes(statement);
-    let (left, value) = match declaration.split_once('=') {
-        Some((left, value)) => (left, Some(value.trim())),
-        None => (declaration.as_str(), None),
-    };
-    // Methods, delegates, events, indexers and several fields at once are not single fields.
-    if left.contains('(') || left.contains(',') || value.is_some_and(|v| v.starts_with('>')) {
-        return None;
-    }
-    let words: Vec<&str> = left.split_whitespace().collect();
-    let (&name, before) = words.split_last()?;
-    const MODIFIERS: [&str; 9] =
-        ["public", "private", "protected", "internal", "new", "required", "volatile", "unsafe", "override"];
-    let modifiers: Vec<&str> = before.iter().copied().take_while(|w| MODIFIERS.contains(w) || is_excluded(w)).collect();
-    let type_name = before[modifiers.len()..].join(" ");
-    let settable = modifiers.contains(&"public") || attributes.iter().any(|a| a == "SerializeField");
-    let excluded = modifiers.iter().any(|w| is_excluded(w)) || attributes.iter().any(|a| a == "NonSerialized");
-    if !settable || excluded || type_name.is_empty() || matches!(type_name.as_str(), "event" | "delegate") {
-        return None;
-    }
-    let is_name = |w: &str| w.chars().all(|c| c.is_alphanumeric() || c == '_');
-    is_name(name).then(|| ScriptField {
-        name: name.to_string(),
-        type_name: type_name.clone(),
-        default: value.and_then(|v| literal(v, &type_name)),
     })
-}
-
-fn is_excluded(word: &str) -> bool {
-    matches!(word, "static" | "const" | "readonly" | "event" | "abstract")
-}
-
-/// A literal as a scene would write it: `90f` is 90.0, `"text"` is text.
-fn literal(text: &str, type_name: &str) -> Option<toml::Value> {
-    let text = text.trim();
-    match text {
-        "true" => return Some(toml::Value::Boolean(true)),
-        "false" => return Some(toml::Value::Boolean(false)),
-        _ => {}
-    }
-    if let Some(inner) = text.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
-        return Some(toml::Value::String(inner.replace("\\\"", "\"")));
-    }
-    let number = text.trim_end_matches(['f', 'F', 'd', 'D', 'm', 'M']).replace('_', "");
-    match type_name.trim_end_matches('?') {
-        "int" | "long" | "short" | "byte" | "uint" | "ulong" | "ushort" | "sbyte" => {
-            number.parse::<i64>().ok().map(toml::Value::Integer)
-        }
-        "float" | "double" | "decimal" => number.parse::<f64>().ok().map(toml::Value::Float),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const SPINNER: &str = r#"
-using Voxear;
+    #[test]
+    fn descriptions_read_with_kinds_and_starting_values() {
+        let text = r#"{
+            "behaviours": [{
+                "name": "Hello.Boss", "bases": ["Hello.Enemy"], "interfaces": ["Hello.IHurt"],
+                "fields": [
+                    { "name": "health", "type": { "kind": "whole" }, "default": 10 },
+                    { "name": "rage", "type": { "kind": "number" }, "default": 0.5 },
+                    { "name": "lamps", "type": { "kind": "list", "element": { "kind": "obj" } }, "default": [null] },
+                    { "name": "wave", "type": { "kind": "struct", "name": "Hello.Wave" }, "default": { "count": 2, "who": null } },
+                    { "name": "mood", "type": { "kind": "enum", "names": ["Calm", "Angry"] }, "default": "Calm" }
+                ]
+            }],
+            "types": { "Hello.Wave": { "fields": [{ "name": "count", "type": { "kind": "whole" }, "default": 0 }] } }
+        }"#;
+        let types = parse(text).unwrap();
+        let boss = types.behaviour("Hello.Boss").unwrap();
+        assert!(boss.is_a("Hello.Enemy") && boss.is_a("Hello.IHurt") && !boss.is_a("Hello.Spinner"));
+        assert_eq!(boss.field("Health").unwrap().default, Some(toml::Value::Integer(10)));
+        assert_eq!(boss.fields[1].default, Some(toml::Value::Float(0.5)));
+        let lamps = &boss.fields[2];
+        assert_eq!(lamps.kind, FieldKind::List { element: Box::new(FieldKind::Obj) });
+        assert_eq!(lamps.default, Some(toml::Value::Array(vec![toml::Value::Table(toml::Table::new())])));
+        let wave = boss.fields[3].default.as_ref().unwrap().as_table().unwrap();
+        assert!(wave.contains_key("count") && !wave.contains_key("who"), "nothing is left out");
+        assert_eq!(types.fields_of("Hello.Wave")[0].name, "count");
+    }
 
-namespace Hello
-{
-    /// <summary>Spins { its Obj }.</summary>
-    public sealed class Spinner : Behaviour
-    {
-        [SerializeField] private float degreesPerSecond = 90f; // turns { per second
-        [SerializeField] private Spinner? leader;
-        public string Label = "a \"spinner\" {";
-        public bool Loud;
-        [NonSerialized] public int Hidden = 3;
-        public static int Count;
-        private float timer;
-        public float Speed => degreesPerSecond;
-        public int Score { get; private set; }
-
-        protected override void Update()
-        {
-            var x = "}";
-            timer += 1f;
+    /// Needs .NET and the managed build, as play mode does.
+    #[test]
+    fn hellos_behaviours_are_described_from_their_build() {
+        if voxear_scripting::find_dotnet().is_none() || !core_assembly(scripts::CONFIGURATION).is_file() {
+            return eprintln!("skipping: needs .NET and the managed build");
         }
-    }
-
-    public abstract class Enemy : Behaviour
-    {
-        public int Health = 10;
-    }
-
-    public class Boss : Enemy
-    {
-        [SerializeField, Tooltip("how hard")] private float rage = 0.5f;
-    }
-
-    [Serializable]
-    public struct LevelStop
-    {
-        public string Level;
-    }
-
-    public class Helper
-    {
-        public int Value;
-    }
-}
-"#;
-
-    #[test]
-    fn behaviours_and_their_settable_fields_are_read_from_source() {
-        let types =
-            scan(&[SPINNER, "namespace Other;\npublic class Plain : Voxear.Behaviour { public long Big = 1_000; }"]);
-        let names: Vec<&str> = types.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, ["Hello.Boss", "Hello.Spinner", "Other.Plain"], "not abstract classes, structs or helpers");
-
-        let spinner = &types[1];
-        let fields: Vec<(&str, &str)> =
-            spinner.fields.iter().map(|f| (f.name.as_str(), f.type_name.as_str())).collect();
-        assert_eq!(
-            fields,
-            [("degreesPerSecond", "float"), ("leader", "Spinner?"), ("Label", "string"), ("Loud", "bool")]
-        );
-        assert_eq!(spinner.fields[0].default, Some(toml::Value::Float(90.0)));
-        assert_eq!(spinner.fields[2].default, Some(toml::Value::String("a \"spinner\" {".into())));
-        assert_eq!(spinner.field("degrees_per_second").map(|f| f.name.as_str()), Some("degreesPerSecond"));
-
-        let boss: Vec<&str> = types[0].fields.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(boss, ["Health", "rage"], "the base class's fields come first");
-        assert_eq!(types[2].fields[0].default, Some(toml::Value::Integer(1000)));
-    }
-
-    #[test]
-    fn hellos_behaviours_are_found() {
         let hello = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello");
-        let types = behaviour_types(&Project::open(&hello).unwrap());
-        let names: Vec<&str> = types.iter().map(BehaviourType::short_name).collect();
-        for expected in ["FireflySpawner", "GameManager", "Pulse", "Spinner"] {
-            assert!(names.contains(&expected), "{expected} in {names:?}");
-        }
-        let spawner = types.iter().find(|t| t.short_name() == "FireflySpawner").unwrap();
+        let types = describe(&Project::open(&hello).unwrap()).unwrap();
+        let spawner = types.behaviour("Hello.FireflySpawner").expect("FireflySpawner is described");
         let fields: Vec<&str> = spawner.fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(fields, ["firefly", "rareFirefly", "lamps", "interval", "spread", "rareChance"]);
+        assert_eq!(spawner.fields[0].kind, FieldKind::Asset { asset: "Voxear.Prefab".into() });
+        assert_eq!(spawner.fields[3].default, Some(toml::Value::Float(0.25)));
+        let manager = types.behaviour("Hello.GameManager").unwrap();
+        assert_eq!(
+            manager.fields[0].kind,
+            FieldKind::List { element: Box::new(FieldKind::Struct { name: "Hello.LevelStop".into() }) }
+        );
+        assert_eq!(types.fields_of("Hello.LevelStop").len(), 2);
+        assert!(cached(&Project::open(&hello).unwrap()).is_some(), "and the description is kept");
     }
 }

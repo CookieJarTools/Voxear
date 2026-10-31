@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use anyhow::Result;
 use voxear_ecs::Entity;
-use voxear_engine::{Engine, Levels, Project, scripts};
+use voxear_engine::{Engine, Levels, Project, script_types::ScriptTypes, scripts};
 use voxear_render::{Camera, Renderer};
 use voxear_scene::{Name, Transform};
 use voxear_scripting::ScriptRuntime;
@@ -124,7 +124,7 @@ impl Editor {
             .into_iter()
             .filter_map(|(played, field)| {
                 let value = match &field {
-                    Field::Prop(prop) => Kept::Value(props::get(&self.game, &[], played, prop)?),
+                    Field::Prop(prop) => Kept::Value(props::get(&self.game, &ScriptTypes::default(), played, prop)?),
                     _ => Kept::State(ObjState::of(&self.game.engine.world, played)?),
                 };
                 Some((self.game.levels.counterpart(played, &levels)?, field, value))
@@ -160,7 +160,7 @@ impl Editor {
             let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
             match (&field, played) {
                 (Field::Prop(prop), Kept::Value(value)) => {
-                    props::set(&mut self.game, Some(renderer), &[], entity, prop, value);
+                    props::set(&mut self.game, Some(renderer), &ScriptTypes::default(), entity, prop, value);
                 }
                 (_, Kept::State(played)) => {
                     let mut after = before.clone();

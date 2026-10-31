@@ -594,9 +594,110 @@ fn type_into(ui: &mut Ui, field: NodeId, text: &str) {
     ui.text_input(text);
 }
 
+/// Frames until the scripts are described from their build. `false`
+/// without .NET and the managed build, which describing them needs.
+fn described(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) -> bool {
+    if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
+        eprintln!("skipping: needs .NET and the managed build");
+        return false;
+    }
+    let started = std::time::Instant::now();
+    while !editor.scripts_described() {
+        assert!(started.elapsed().as_secs() < 300, "the scripts take too long to build");
+        frame(editor, renderer);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    frame(editor, renderer);
+    true
+}
+
+/// Every Inspector row labelled `label`, top to bottom.
+fn prop_rows(ui: &Ui, label: &str) -> Vec<NodeId> {
+    let mut rows = Vec::new();
+    with_class(ui, ui.root(), "prop", &mut rows);
+    rows.into_iter().filter(|&row| ui.children(row).first().is_some_and(|&first| ui.text(first) == label)).collect()
+}
+
+/// The first element with `class` inside `node`.
+fn first_with(ui: &Ui, node: NodeId, class: &str) -> Option<NodeId> {
+    let mut found = Vec::new();
+    with_class(ui, node, class, &mut found);
+    found.first().copied()
+}
+
+#[test]
+fn script_fields_pick_references_and_edit_lists() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    if !described(&mut editor, &mut renderer) {
+        return;
+    }
+    let spinner = obj(&editor, "Spinner B").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    let picker =
+        first_with(&editor.ui, prop_row(&editor.ui, "Leader").unwrap(), "value-picker").expect("a reference picker");
+    assert_eq!(editor.ui.text(first_with(&editor.ui, picker, "picker-label").unwrap()), "Spinner A");
+    click(&mut editor.ui, picker);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "reference-menu.png");
+    assert!(menu_item(&editor.ui, "Spinner B").is_some(), "Objs with a Spinner are offered");
+    assert!(menu_item(&editor.ui, "Ground").is_none(), "and only those");
+    let target = menu_item(&editor.ui, "None").unwrap();
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    let leader_value = |editor: &voxear_editor::Editor| {
+        let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+        kept.0[0].fields.get("leader").cloned()
+    };
+    assert_eq!(leader_value(&editor), Some(toml::Value::Table(toml::Table::new())), "picked as None");
+    frame(&mut editor, &mut renderer);
+    let picker = first_with(&editor.ui, prop_row(&editor.ui, "Leader").unwrap(), "value-picker").unwrap();
+    assert_eq!(editor.ui.text(first_with(&editor.ui, picker, "picker-label").unwrap()), "None");
+
+    // The GameManager's cycle: a list of LevelStop tables.
+    let manager = obj(&editor, "Game Manager").unwrap();
+    editor.select(Some(manager));
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "inspector-list.png");
+    let cycle = prop_row(&editor.ui, "Cycle").expect("the list shows");
+    let count = |editor: &voxear_editor::Editor| {
+        let row = prop_row(&editor.ui, "Cycle").unwrap();
+        editor.ui.text(first_with(&editor.ui, row, "value").unwrap())
+    };
+    assert_eq!(count(&editor), "2 items");
+    assert_eq!(prop_rows(&editor.ui, "Seconds").len(), 2, "each item's fields show");
+    let cycle_now = |editor: &voxear_editor::Editor| {
+        let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(manager).unwrap();
+        kept.0[0].fields.get("cycle").and_then(|c| c.as_array().cloned()).unwrap()
+    };
+    let field = first_with(&editor.ui, prop_rows(&editor.ui, "Seconds")[1], "value-input").unwrap();
+    type_into(&mut editor.ui, field, "7");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    assert_eq!(cycle_now(&editor)[1].get("seconds"), Some(&toml::Value::Float(7.0)), "a value inside an item");
+
+    let add = first_with(&editor.ui, cycle, "list-add").expect("the list can grow");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(count(&editor), "3 items");
+    assert_eq!(cycle_now(&editor).len(), 3);
+    let last = prop_row(&editor.ui, "Element 2").expect("the new item shows");
+    let remove = first_with(&editor.ui, last, "list-remove").unwrap();
+    click(&mut editor.ui, remove);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(count(&editor), "2 items", "and shrink");
+    editor.undo(&mut renderer);
+    assert_eq!(cycle_now(&editor)[1].get("seconds"), Some(&toml::Value::Float(5.0)), "undo takes the edits back");
+}
+
 #[test]
 fn the_inspector_edits_components_and_script_fields() {
     let Some((mut renderer, mut editor)) = open() else { return };
+    if !described(&mut editor, &mut renderer) {
+        return;
+    }
     let spinner = obj(&editor, "Spinner B").unwrap();
     editor.select(Some(spinner));
     frame(&mut editor, &mut renderer);
@@ -614,9 +715,8 @@ fn the_inspector_edits_components_and_script_fields() {
     };
     assert_eq!(fields(&editor), Some(toml::Value::Float(45.0)), "typing sets the field for the scene");
     let leader = prop_row(&editor.ui, "Leader").expect("a reference shows");
-    let mut values = Vec::new();
-    with_class(&editor.ui, leader, "value", &mut values);
-    assert_eq!(editor.ui.text(values[0]), "Spinner A", "by the name of the Obj it points at");
+    let label = first_with(&editor.ui, leader, "picker-label").unwrap();
+    assert_eq!(editor.ui.text(label), "Spinner A", "by the name of the Obj it points at");
     editor.undo(&mut renderer);
     assert_eq!(fields(&editor), None, "undo takes the field back to the script's value");
 

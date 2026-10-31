@@ -97,7 +97,7 @@ namespace Voxear.Scripting
 			{
 				return ReadBehaviour(value, type);
 			}
-			if (type.Attributes.HasFlag(TypeAttributes.Serializable))
+			if (IsSerializable(type))
 			{
 				return ReadNested(value, type, path);
 			}
@@ -219,13 +219,24 @@ namespace Voxear.Scripting
 			return floats;
 		}
 
-		private static bool IsInteger(Type type)
+		internal static bool IsInteger(Type type)
 		{
 			return type == typeof(int) || type == typeof(uint) || type == typeof(long) || type == typeof(ulong)
 				|| type == typeof(short) || type == typeof(ushort) || type == typeof(byte) || type == typeof(sbyte);
 		}
 
-		private static bool IsGeneric(Type type, Type definition)
+		/// <summary>
+		/// Whether the type is marked [Serializable], as Unity marks types whose fields scenes fill. Only formatter
+		/// serialization is obsolete, not the mark, so the warning about reading it does not apply.
+		/// </summary>
+		internal static bool IsSerializable(Type type)
+		{
+#pragma warning disable SYSLIB0050
+			return type.Attributes.HasFlag(TypeAttributes.Serializable) && !type.IsPrimitive;
+#pragma warning restore SYSLIB0050
+		}
+
+		internal static bool IsGeneric(Type type, Type definition)
 		{
 			return type.IsGenericType && type.GetGenericTypeDefinition() == definition;
 		}
@@ -234,7 +245,7 @@ namespace Voxear.Scripting
 		/// Whether the type is an IAsset of itself. Asking through its interfaces, rather than MakeGenericType, does not
 		/// throw for the many structs that fail IAsset's constraint.
 		/// </summary>
-		private static bool IsAsset(Type type)
+		internal static bool IsAsset(Type type)
 		{
 			foreach (var contract in type.GetInterfaces())
 			{

@@ -2806,6 +2806,7 @@ dependencies = [
  "arboard",
  "raw-window-handle",
  "serde",
+ "serde_json",
  "tempfile",
  "toml",
  "tracing",

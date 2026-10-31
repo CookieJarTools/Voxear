@@ -13,7 +13,9 @@
 //! Player category, as Sifter shows a player's log.
 //!
 //! The picked profile's settings are edited in place, each written to the
-//! profile's file as it changes (see `build_profile::set_setting`). Buttons
+//! profile's file as it changes (see `build_profile::set_setting`). A log
+//! line that names a file in the project, picked, shows it in the Project
+//! panel. Buttons
 //! over the log show or hide its info, warnings and errors, and a build that
 //! finishes while the editor is not the window in front says so on the
 //! desktop.
@@ -172,6 +174,9 @@ pub struct BuildWindow {
     /// Whether the editor's window is in front, so a finished build is
     /// told on the desktop only when it is not.
     window_focused: bool,
+    /// A file in the project a picked log line names, for the editor to
+    /// show in the Project panel.
+    file_request: Option<String>,
     picked: Option<String>,
     checked: Option<Instant>,
     running: Option<Running>,
@@ -357,6 +362,7 @@ impl BuildWindow {
             log_levels,
             log_hidden: [false; 3],
             window_focused: true,
+            file_request: None,
             picked: None,
             checked: None,
             running: None,
@@ -529,6 +535,13 @@ impl BuildWindow {
     /// What the window's buttons and list ask for.
     fn respond(&mut self, ui: &mut Ui, root: &Path) {
         self.respond_settings(ui, root);
+        if ui.selection_changed(self.log_list) {
+            let log = self.log.borrow();
+            let picked = ui.selection(self.log_list).first().and_then(|&row| self.log_rows.borrow().get(row).copied());
+            let named = picked.and_then(|at| log.get(at)).and_then(|(_, message)| named_file(message, root));
+            drop(log);
+            self.file_request = named.or(self.file_request.take());
+        }
         if ui.selection_changed(self.list) {
             let picked = ui.selection(self.list).first().and_then(|&i| self.names.borrow().get(i).cloned());
             if picked.is_some() {
@@ -676,6 +689,11 @@ impl BuildWindow {
         self.log.borrow_mut().push((level.to_string(), message));
     }
 
+    /// A file in the project that a picked log line names, once.
+    pub fn take_file_request(&mut self) -> Option<String> {
+        self.file_request.take()
+    }
+
     /// Notes whether the editor's window is in front.
     pub fn set_window_focused(&mut self, focused: bool) {
         self.window_focused = focused;
@@ -753,6 +771,22 @@ impl Drop for BuildWindow {
             let _ = running.child.wait();
         }
     }
+}
+
+/// The first file in the project a log line names, by its path from the
+/// project's folder, as `cooking Models/Rock.gltf` or an absolute path in it
+/// do.
+fn named_file(line: &str, root: &Path) -> Option<String> {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    line.split(|c: char| c.is_whitespace() || "\"'()[]{},;`".contains(c))
+        .map(|word| word.trim_end_matches([':', '.']))
+        .filter(|word| word.contains('.') && !word.is_empty())
+        .find_map(|word| {
+            let path = Path::new(word);
+            let within =
+                if path.is_absolute() { path.strip_prefix(&root).ok()?.to_path_buf() } else { path.to_path_buf() };
+            root.join(&within).is_file().then(|| within.to_string_lossy().replace('\\', "/"))
+        })
 }
 
 /// Which level button a log line counts under: info, warnings or errors.
@@ -911,5 +945,18 @@ mod tests {
         assert_eq!(player_line("Unhandled exception.", true), Some((Level::ERROR, "Unhandled exception.".into())));
         assert_eq!(player_line("plain words", false), Some((Level::INFO, "plain words".into())));
         assert_eq!(player_line("   ", false), None);
+    }
+
+    #[test]
+    fn a_log_line_names_the_project_file_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Models")).unwrap();
+        std::fs::write(dir.path().join("Models/Rock.gltf"), "{}").unwrap();
+        let root = dir.path();
+        assert_eq!(named_file("cooking Models/Rock.gltf: no buffers", root).as_deref(), Some("Models/Rock.gltf"));
+        let absolute = format!("could not read {}.", root.canonicalize().unwrap().join("Models/Rock.gltf").display());
+        assert_eq!(named_file(&absolute, root).as_deref(), Some("Models/Rock.gltf"));
+        assert_eq!(named_file("[ContentRoot(\"Icons/*\")] on Hud matches no asset", root), None);
+        assert_eq!(named_file("building Linux Release", root), None);
     }
 }

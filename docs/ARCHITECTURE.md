@@ -2467,7 +2467,8 @@ numbers once Enter is pressed or the field is left, toggles and choices at once,
 file (`build_profile::set_setting`, keeping its comments). A value its base already has is taken out again, so a
 profile lists only what differs. Buttons over the log show or hide its info, warnings and errors, with their counts,
 and a build that finishes while the editor is not the window in front says so on the desktop (`notify-send` on
-Linux). Still to come: a click on a log line selecting the asset it names.
+Linux). Picking a log line that names a file in the project, as `cooking Models/Rock.gltf` does, shows it in the
+Project panel.
 
 **The build report** comes with every build: the project, profile, platform, engine version and git commit, the
 levels shipped, each bundle's size and roots, the build's size, and each stage's time. Later it gains:

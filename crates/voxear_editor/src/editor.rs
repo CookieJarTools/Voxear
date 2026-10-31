@@ -605,6 +605,11 @@ impl Editor {
             profile_scope!("Build");
             let shown = self.shown(self.nodes.build_panel);
             let root = self.game.project.root.clone();
+            if let Some(path) = self.build_window.take_file_request() {
+                // A log line naming a file in the project shows it in the Project panel.
+                self.show_panel("project");
+                self.project.reveal(&mut self.ui, &path);
+            }
             if let Some(finished) = self.build_window.update(&mut self.ui, &root, shown) {
                 match finished.succeeded {
                     true => tracing::info!("{}", finished.text),

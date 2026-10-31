@@ -2208,6 +2208,7 @@ fn the_build_window_lists_profiles_and_follows_a_build_and_a_cancel() {
 echo "{\"event\":\"log\",\"level\":\"info\",\"message\":\"building $4\"}"
 echo '{"event":"stage","stage":"content","index":2,"of":3}'
 echo '{"event":"progress","stage":"content","done":1,"total":2,"item":"Levels/Day.level"}'
+echo '{"event":"log","level":"info","message":"cooking Models/Pyramid.gltf"}'
 echo '{"event":"log","level":"warn","message":"a warning"}'
 echo '{"event":"stage","stage":"player","index":3,"of":3}'
 echo "{\"event\":\"finished\",\"result\":\"succeeded\",\"seconds\":1.5,\"output\":\"$2/Builds/X\",\"program\":\"$2/Builds/X/Hello\",\"size\":1048576}"
@@ -2278,7 +2279,7 @@ echo "{\"event\":\"finished\",\"result\":\"cancelled\",\"seconds\":0.2,\"message
     frames_until(&mut editor, &mut renderer, &|editor| !editor.ui.text(find(editor, "build-result")).is_empty());
     assert_eq!(editor.ui.text(find(&editor, "build-result")), "Built in 1.5 s · 1.0 MB");
     let log = editor.build_window().log();
-    let expected = [("info", "building Linux Release"), ("warn", "a warning")];
+    let expected = [("info", "building Linux Release"), ("info", "cooking Models/Pyramid.gltf"), ("warn", "a warning")];
     assert_eq!(log, expected.map(|(level, message)| (level.to_string(), message.to_string())));
     frame(&mut editor, &mut renderer);
     assert!(editor.ui.is_visible(find(&editor, "build-run")), "a built game can be run");
@@ -2295,6 +2296,17 @@ echo "{\"event\":\"finished\",\"result\":\"cancelled\",\"seconds\":0.2,\"message
     assert_eq!(log_lines(&editor), ["a warning"], "info hidden, warnings shown");
     click_named(&mut editor, "build-log-info");
     frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // A line naming a file in the project shows it in the Project panel.
+    assert!(tile(&editor.ui, "Pyramid.gltf").is_none(), "the Project shows the top folder");
+    let mut rows = Vec::new();
+    with_class(&editor.ui, find(&editor, "build-log"), "list-row", &mut rows);
+    let cooking =
+        rows.into_iter().find(|&row| editor.ui.text(editor.ui.children(row)[0]).starts_with("cooking")).unwrap();
+    click(&mut editor.ui, cooking);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(tile(&editor.ui, "Pyramid.gltf").is_some(), "the Project opened at Models");
     let mut done = Vec::new();
     with_class(&editor.ui, find(&editor, "build-panel"), "done", &mut done);
     assert_eq!(done.len(), 3, "every stage is done");

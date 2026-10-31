@@ -292,7 +292,8 @@ Done so far:
 - **VoxDocs Docs Health and home:** pages out of date, links that go nowhere, missing pictures, and pictures no page
   shows, each a link to its page or file; and home lists the pages updated lately and how healthy the docs are.
 - **Bundle compression:** LZ4, quick to load, Zstd, smaller, or none, from the project's `[content]` or a build
-  profile, chosen in the Build window too, and recorded in the build report.
+  profile, chosen in the Build window too, and recorded in the build report. A build log line naming a file shows it
+  in the Project panel when picked.
 - **Editing build profiles:** the Build window edits the picked profile in place, writing only what differs from
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 
@@ -339,7 +340,6 @@ Still to do in M3:
   - [ ] components written in scenes and prefabs, and shown in the inspector
   - Later: parallel jobs over chunks.
 - The Animation workspace, once there is animation.
-- **Builds, next:** a click on a log line selecting the asset it names.
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
 

@@ -307,6 +307,16 @@ pub fn capture(world: &World, content: &mut Content, entities: &[Entity]) -> Sce
 /// needs for persistent Objs to be recognised. Objs without one, such as
 /// those created at runtime, get ids after the highest.
 pub fn capture_scene(world: &World, content: &mut Content, objs: &[(ObjPath, Entity)]) -> SceneFile {
+    capture_scene_with_ids(world, content, objs).0
+}
+
+/// [`capture_scene`], and the id each Obj that is not inside a prefab
+/// instance was given, for keeping track of Objs that had none.
+pub fn capture_scene_with_ids(
+    world: &World,
+    content: &mut Content,
+    objs: &[(ObjPath, Entity)],
+) -> (SceneFile, HashMap<Entity, u32>) {
     let alive: Vec<Entity> = objs.iter().map(|(_, e)| *e).filter(|e| world.is_alive(*e)).collect();
     let captured: HashSet<Entity> = alive.iter().copied().collect();
     // Objs inside a captured instance are saved as its overrides, not on their own.
@@ -356,7 +366,7 @@ pub fn capture_scene(world: &World, content: &mut Content, objs: &[(ObjPath, Ent
         ambient: sky.ambient,
     });
     let post = world.resource::<PostTable>().map(|table| table.0.clone());
-    SceneFile { format: SCENE_FORMAT, sky, post, objs }
+    (SceneFile { format: SCENE_FORMAT, sky, post, objs }, ids)
 }
 
 /// An instance of `guid` whose root was captured as `root`, with everything
@@ -375,7 +385,9 @@ fn capture_instance(
         prefab::map_refs(&mut obj.data.fields, &|target| ObjPath::new(root.id).join(target))?;
     }
     let mut instance = ObjData::new(root.id, "");
-    instance.prefab = Some(AssetRef::asset(guid, None).to_string());
+    // By path, as scenes are written by hand; the GUID only when the asset is not in the database.
+    let prefab_path = content.db().get(guid).map(|entry| entry.path.clone());
+    instance.prefab = Some(prefab_path.unwrap_or_else(|| AssetRef::asset(guid, None).to_string()));
     instance.parent = root.parent;
     let changed = |actual: [f32; 3], expected: [f32; 3]| Some(actual).filter(|a| !nearly_equal(*a, expected));
 
@@ -448,9 +460,38 @@ fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Resul
         put("light", toml::Value::try_from(light)?);
     }
     if actual.renderer.is_some() && !same_renderer(content, &actual.renderer, &expected.renderer) {
-        put("renderer", toml::Value::try_from(&actual.renderer)?);
+        put("renderer", renderer_changes(content, &actual.renderer, &expected.renderer)?);
     }
     Ok(changes)
+}
+
+/// What differs between a renderer and the prefab's, as an override merges
+/// it: only the mesh if it changed, and only the material values that did.
+fn renderer_changes(
+    content: &Content,
+    actual: &Option<RendererData>,
+    expected: &Option<RendererData>,
+) -> Result<toml::Value> {
+    let actual_value = toml::Value::try_from(actual)?;
+    let (Some(actual), Some(expected)) = (actual, expected) else { return Ok(actual_value) };
+    let (toml::Value::Table(mut changes), toml::Value::Table(before)) =
+        (actual_value, toml::Value::try_from(expected)?)
+    else {
+        return Ok(toml::Value::try_from(actual)?);
+    };
+    let parse = |text: &str| content.parse(text).ok();
+    if parse(&actual.mesh) == parse(&expected.mesh) {
+        changes.remove("mesh");
+    }
+    if let (Some(toml::Value::Table(material)), Some(toml::Value::Table(was))) =
+        (changes.get_mut("material"), before.get("material"))
+    {
+        material.retain(|key, value| was.get(key) != Some(value));
+    }
+    if changes.get("material").and_then(toml::Value::as_table).is_some_and(toml::Table::is_empty) {
+        changes.remove("material");
+    }
+    Ok(toml::Value::Table(changes))
 }
 
 /// A copy of behaviour fields with each `{ entity = n }` written back as a

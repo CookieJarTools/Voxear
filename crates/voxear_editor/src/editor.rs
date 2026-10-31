@@ -21,6 +21,7 @@ use crate::{
     console::Console,
     hierarchy::EditorOnly,
     hierarchy::Hierarchy,
+    history::History,
     inspector::Inspector,
     levels_panel::{LevelAction, LevelsPanel},
     project_view::ProjectView,
@@ -36,6 +37,8 @@ const LAYOUT: &str =
     "row(240, [hierarchy, levels], row(-300, column(66%, [scene, game, cookbook], [project, console]), [inspector]))";
 /// The window's background, which the 3D view's surroundings are cleared to.
 const BACKGROUND: u32 = 0x0c0e10;
+/// How long a message stays in the status bar.
+const NOTICE_SECONDS: f32 = 4.0;
 /// How often the status bar's numbers change.
 const STATUS_INTERVAL: f32 = 0.5;
 /// The axis gizmo: its middle, how far its axes reach, and their ends' size.
@@ -60,6 +63,14 @@ struct Nodes {
     /// Play, Pause and Step.
     play_buttons: [NodeId; 3],
     build: NodeId,
+}
+
+/// What a shortcut asks of the editor, done in the next frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Command {
+    Save,
+    Undo,
+    Redo,
 }
 
 pub struct Editor {
@@ -92,6 +103,17 @@ pub struct Editor {
     scale: f32,
     /// Control, or Command on macOS, is held.
     control: bool,
+    shift: bool,
+    /// Save, Undo and Redo pressed since the last frame.
+    commands: Vec<Command>,
+    /// Edits to undo and redo, and whether the open level has edits not saved.
+    history: History,
+    unsaved: bool,
+    /// A level whose opening was held back because edits would be lost; a
+    /// second click on it opens it anyway.
+    discard_armed: Option<String>,
+    /// A message for the status bar, and when it was given.
+    notice: Option<(String, Instant)>,
     status: (u32, f32),
 }
 
@@ -177,6 +199,12 @@ impl Editor {
             pointer: None,
             scale: 1.0,
             control: false,
+            shift: false,
+            commands: Vec::new(),
+            history: History::default(),
+            unsaved: false,
+            discard_armed: None,
+            notice: None,
             status: (0, 0.0),
         })
     }
@@ -216,7 +244,15 @@ impl Editor {
         if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
             self.inspector.show(&mut self.ui, &self.game.engine.world, selected);
         }
-        self.inspector.update(&mut self.ui, &mut self.game.engine.world);
+        let edit = self.inspector.update(&mut self.ui, &mut self.game.engine.world);
+        // Edits while playing go with the played world, so there is nothing to undo or save.
+        if let Some(edit) = edit.filter(|_| !self.is_playing()) {
+            self.history.record(edit);
+            self.unsaved = true;
+        }
+        for command in std::mem::take(&mut self.commands) {
+            self.run(command);
+        }
         self.project.update(&mut self.ui);
         self.console.update(&mut self.ui);
         self.cookbook.update(&mut self.ui);
@@ -255,6 +291,14 @@ impl Editor {
     /// edit, and Play opens it and plays.
     fn level_action(&mut self, action: LevelAction, renderer: &mut Renderer) {
         let playing = self.is_playing();
+        let target = match &action {
+            LevelAction::Open(path) | LevelAction::OpenScene(path) | LevelAction::Play(path) => path.clone(),
+        };
+        if !playing && self.unsaved && self.discard_armed.as_deref() != Some(target.as_str()) {
+            self.notify("Unsaved changes: Ctrl+S keeps them, or click again to open without them");
+            self.discard_armed = Some(target);
+            return;
+        }
         match action {
             LevelAction::Open(level) if playing => {
                 if let Err(error) = self.game.switch_level(&level, Some(renderer)) {
@@ -294,9 +338,78 @@ impl Editor {
     /// After another level or scene opened: nothing is selected, and what
     /// it no longer uses is let go.
     fn opened(&mut self, renderer: &mut Renderer) {
+        self.history.clear();
+        self.unsaved = false;
+        self.discard_armed = None;
         self.game.release_unused(Some(renderer));
         self.inspector.show(&mut self.ui, &self.game.engine.world, None);
         tracing::info!("opened {}", self.game.levels.current().unwrap_or("a scene"));
+    }
+
+    /// Saves, undoes or redoes, as a shortcut asked.
+    fn run(&mut self, command: Command) {
+        if self.is_playing() {
+            self.notify("Stop playing to save or undo; edits while playing are not kept");
+            return;
+        }
+        match command {
+            Command::Save => self.save(),
+            Command::Undo | Command::Redo => {
+                // A field being typed in would keep its text over the undone value.
+                self.ui.blur();
+                let world = &mut self.game.engine.world;
+                let changed =
+                    if command == Command::Undo { self.history.undo(world) } else { self.history.redo(world) };
+                match changed {
+                    Some(entity) => {
+                        self.select(Some(entity));
+                        self.unsaved = true;
+                    }
+                    None => self.notify(if command == Command::Undo { "Nothing to undo" } else { "Nothing to redo" }),
+                }
+            }
+        }
+    }
+
+    /// Writes the open level's scenes that changed back to their files.
+    pub fn save(&mut self) {
+        let game = &mut self.game;
+        let saved = game.levels.save(&game.engine, &mut game.content, &game.project.root);
+        match saved {
+            Ok(written) if written.is_empty() => self.notify("Nothing to save: the scenes are as they are on disk"),
+            Ok(written) => {
+                tracing::info!("saved {}", written.join(", "));
+                let names: Vec<&str> = written.iter().map(|path| path.rsplit('/').next().unwrap_or(path)).collect();
+                self.notify(&format!("Saved {}", names.join(", ")));
+            }
+            Err(error) => {
+                tracing::error!("could not save: {error:#}");
+                self.notify("Could not save; the Console says why");
+                return;
+            }
+        }
+        self.unsaved = false;
+        self.discard_armed = None;
+    }
+
+    /// Takes back the last edit, as Ctrl+Z does.
+    pub fn undo(&mut self) {
+        self.run(Command::Undo);
+    }
+
+    /// Makes the last undone edit again, as Ctrl+Shift+Z does.
+    pub fn redo(&mut self) {
+        self.run(Command::Redo);
+    }
+
+    /// Whether the open level has edits not saved.
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.unsaved
+    }
+
+    /// Shows a message in the status bar for a few seconds.
+    fn notify(&mut self, text: &str) {
+        self.notice = Some((text.to_string(), Instant::now()));
     }
 
     /// Whether a physical point is over the Scene view, where the right
@@ -339,17 +452,30 @@ impl Editor {
             WindowEvent::CursorMoved { position, .. } => self.pointer = Some((position.x as f32, position.y as f32)),
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.control = modifiers.state().control_key() || modifiers.state().super_key();
+                self.shift = modifiers.state().shift_key();
             }
             _ => {}
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
             && key.state == ElementState::Pressed
-            && key.logical_key == winit::keyboard::Key::Character("k".into())
             && self.control
+            && let winit::keyboard::Key::Character(text) = &key.logical_key
         {
-            self.ui.focus(self.nodes.command);
-            self.ui.key_down(voxear_ui::Key::Char('a'));
-            return true;
+            let command = match (text.to_lowercase().as_str(), self.shift) {
+                ("s", _) => Some(Command::Save),
+                ("z", false) => Some(Command::Undo),
+                ("z", true) | ("y", _) => Some(Command::Redo),
+                ("k", _) => {
+                    self.ui.focus(self.nodes.command);
+                    self.ui.key_down(voxear_ui::Key::Char('a'));
+                    return true;
+                }
+                _ => None,
+            };
+            if let Some(command) = command {
+                self.commands.push(command);
+                return true;
+            }
         }
         voxear_engine::ui_input::handle(&mut self.ui, event)
     }
@@ -446,7 +572,13 @@ impl Editor {
     }
 
     fn update_status(&mut self, renderer: &Renderer, delta: f32) {
-        self.ui.set_text(self.nodes.status_left, self.play.status());
+        let notice = self.notice.as_ref().filter(|(_, at)| at.elapsed().as_secs_f32() < NOTICE_SECONDS);
+        let status = match notice {
+            Some((text, _)) => text.clone(),
+            None if self.unsaved && !self.is_playing() => "Unsaved changes · Ctrl+S".to_string(),
+            None => self.play.status().to_string(),
+        };
+        self.ui.set_text(self.nodes.status_left, &status);
         self.status.0 += 1;
         self.status.1 += delta;
         if self.status.1 < STATUS_INTERVAL && self.status.0 > 1 {

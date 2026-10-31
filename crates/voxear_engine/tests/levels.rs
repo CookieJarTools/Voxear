@@ -290,3 +290,76 @@ fn levels_mark_an_active_scene_pass_over_optional_ones_and_keep_what_they_are_to
     let error = levels.load(&mut engine, &mut content, None, "Levels/Loop.level").unwrap_err();
     assert!(format!("{error:#}").contains("stands on itself"), "{error:#}");
 }
+
+#[test]
+fn saving_writes_only_the_scenes_that_changed() {
+    let dir = project();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    engine.set_edit_mode(true);
+    let mut levels = Levels::default();
+    levels.load(&mut engine, &mut content, None, "Levels/Day.level").unwrap();
+    let environment = std::fs::read_to_string(dir.path().join("Scenes/Environment.scene")).unwrap();
+    assert!(levels.save(&engine, &mut content, dir.path()).unwrap().is_empty(), "nothing changed, nothing written");
+
+    let tree =
+        engine.world.query_ref::<(voxear_ecs::Entity, &Name)>().into_iter().find(|(_, n)| n.0 == "Tree").unwrap().0;
+    engine.world.get_mut::<Transform>(tree).unwrap().position.x = 9.5;
+    engine.spawn_obj("Bench", Transform::IDENTITY, &[]).unwrap();
+    let written = levels.save(&engine, &mut content, dir.path()).unwrap();
+    assert_eq!(written, ["Scenes/Day.scene"], "the new Obj goes into the active scene, with the edit");
+    assert_eq!(std::fs::read_to_string(dir.path().join("Scenes/Environment.scene")).unwrap(), environment);
+    assert!(levels.save(&engine, &mut content, dir.path()).unwrap().is_empty(), "and saving again writes nothing");
+
+    let mut fresh = Engine::new();
+    let mut reloaded = Levels::default();
+    reloaded.load(&mut fresh, &mut content, None, "Levels/Day.level").unwrap();
+    let saved = scene_file::read(&dir.path().join("Scenes/Day.scene")).unwrap();
+    assert!(saved.sky.is_some(), "Day keeps its own sky");
+    let tree = saved.objs.iter().find(|o| o.name == "Tree").unwrap();
+    assert_eq!(tree.position.map(|p| p[0]), Some(9.5));
+    assert!(saved.objs.iter().any(|o| o.name == "Bench"));
+    assert!(names(&fresh).contains(&"Bench".to_string()));
+}
+
+/// A copy of the Hello sample's assets, without its build output.
+fn hello_copy() -> tempfile::TempDir {
+    fn copy(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "bin" || name == "obj" {
+                continue;
+            }
+            if entry.path().is_dir() {
+                copy(&entry.path(), &to.join(&name));
+            } else {
+                std::fs::copy(entry.path(), to.join(&name)).unwrap();
+            }
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    copy(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello"), dir.path());
+    dir
+}
+
+/// Saving needs the renderer the editor has: without one no meshes load,
+/// so there would be no renderers to write back.
+#[test]
+fn hellos_levels_save_back_unchanged() {
+    let mut renderer = match voxear_render::Renderer::new_offscreen(64, 64, &voxear_render::RendererSettings::default())
+    {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let mut content = Content::open(dir.path()).unwrap();
+    for level in ["Levels/Day.level", "Levels/Night.level"] {
+        let mut engine = Engine::new();
+        engine.set_edit_mode(true);
+        let mut levels = Levels::default();
+        levels.load(&mut engine, &mut content, Some(&mut renderer), level).unwrap();
+        let written = levels.save(&engine, &mut content, dir.path()).unwrap();
+        assert!(written.is_empty(), "{level}: an unedited level writes nothing, but wrote {written:?}");
+    }
+}

@@ -1121,11 +1121,20 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
   letters, applied as they are typed, and changes made elsewhere show in fields not being edited. A dashed Add
   Component button ends it. While playing it shows the running Obj, its behaviours included.
-- **The status bar** shows a light, what the editor is doing (ready, building scripts, playing or paused) and how
-  long the project took to open, then the renderer, frame rate, memory and git branch.
+- **Saving** *(Ctrl+S)* writes the open level's scenes back to their files (`Levels::save`). Only scenes that changed
+  are written, so untouched ones keep their comments; each keeps its own sky, prefab instances keep their paths and
+  write only what differs from the prefab, and Objs made since the level opened go into its active scene. Hello's
+  levels save back unchanged. Edits while playing are not saved, as in Unity. Opening another level with unsaved
+  changes asks for a second click first.
+- **Undo and redo** *(Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)* take back and make again Inspector edits to an Obj's name and
+  Transform; typing into one field is one step.
+- **The status bar** shows a light, what the editor is doing (ready, building scripts, playing or paused, or that
+  there are unsaved changes) and how long the project took to open, then the renderer, frame rate, memory and git
+  branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
-Saving scenes, gizmos, undo, the command palette and the Odin-style inspector attributes come next.
+Viewport picking, gizmos, making, deleting and reparenting Objs (with undo), adding components, the command palette
+and the Odin-style inspector attributes come next.
 
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.
@@ -1193,7 +1202,7 @@ engine in its own crate (`crates/voxear_cookbook`). Its source and design are in
   100,000 Objs scrolls as smoothly as one of 10.
 
 **Core.**
-- Undo and redo for every edit, as commands.
+- Undo and redo for every edit, as commands *(Inspector edits implemented; see "What exists now")*.
 - Play mode with state restore *(implemented; see "What exists now")*.
 - **C# hot reload:** game scripts live in a collectible load context. On change, behaviour state is serialised, the
   context unloads, the new build loads, and the state is restored.

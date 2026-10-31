@@ -35,7 +35,10 @@
 //! Objs created at runtime, such as instantiated prefabs, belong to the
 //! level's active scene and unload with it.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -301,6 +304,36 @@ impl Levels {
 }
 
 impl Levels {
+    /// Writes every loaded scene whose Objs changed back to its file in
+    /// `project`, as the editor's Save does. Objs made since the level
+    /// loaded go into the active scene. Scenes that are as they are on disk
+    /// are left alone, comments and all. Returns the scenes written.
+    pub fn save(&mut self, engine: &Engine, content: &mut Content, project: &Path) -> Result<Vec<String>> {
+        self.adopt_runtime_objs(engine);
+        let mut written = Vec::new();
+        for scene in &mut self.scenes {
+            let (mut captured, ids) = scene_file::capture_scene_with_ids(&engine.world, content, &scene.objs);
+            // The world's sky is the level's; each scene keeps its own.
+            (captured.sky, captured.post) = (scene.sky, scene.post.clone());
+            let file = project.join(&scene.path);
+            let on_disk = scene_file::read(&file).ok().and_then(|s| toml::to_string(&s).ok());
+            if on_disk.is_some() && on_disk == toml::to_string(&captured).ok() {
+                continue;
+            }
+            scene_file::write(&file, &captured).with_context(|| format!("saving {}", scene.path))?;
+            // Objs that had no id have one now, which the next save keeps.
+            for (path, entity) in &mut scene.objs {
+                if path.ids().is_empty()
+                    && let Some(&id) = ids.get(entity)
+                {
+                    *path = ObjPath::new(id);
+                }
+            }
+            written.push(scene.path.clone());
+        }
+        Ok(written)
+    }
+
     /// The loaded level copied into `play` from `edit`'s Objs as they are
     /// now, edits included, rather than from its files, as entering play
     /// mode does. Each scene's Objs are captured and spawned again with the

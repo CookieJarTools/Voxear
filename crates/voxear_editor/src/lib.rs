@@ -30,6 +30,7 @@
 mod console;
 mod editor;
 mod hierarchy;
+mod history;
 mod inspector;
 mod levels_panel;
 mod project_view;

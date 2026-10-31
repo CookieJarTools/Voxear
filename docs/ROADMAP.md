@@ -211,6 +211,9 @@ Done so far:
   progress, held activation, a least time and options to keep the rest or the active scene, `Level.LoadAsync` with
   `LevelLoadOptions`, `Ready`, `Activate`, a throwing await and static switch events, and a Levels panel in the
   editor that opens, plays and switches levels.
+- **Saving and undo:** Ctrl+S writes the open level's changed scenes back to their files, round-tripping Hello's
+  unchanged; undo and redo for Inspector edits; an unsaved marker, and a second click before a level change
+  discards edits.
 
 Still to do in M3:
 - UI core:
@@ -221,9 +224,10 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The editor's next steps: saving scenes, Hierarchy instance badges and drag-to-reparent, the Console's Sifter
+- The editor's next steps, to make it usable for real work: viewport picking and transform gizmos (the tool strip),
+  making, duplicating, deleting and reparenting Objs in the Hierarchy, adding and removing components and editing
+  their fields, undo for all of it, the command palette (Ctrl+K), Hierarchy instance badges, the Console's Sifter
   features, and C# hot reload (which play mode will then use to pick up changed scripts).
-- Command palette (Ctrl+K), gizmos, viewport picking, and undo/redo.
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.

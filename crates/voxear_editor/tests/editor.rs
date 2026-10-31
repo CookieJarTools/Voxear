@@ -284,3 +284,70 @@ fn the_levels_panel_lists_levels_and_opens_them() {
         encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
     }
 }
+
+/// A copy of the Hello sample's assets, for tests that save, so the sample
+/// itself is never written.
+fn hello_copy() -> tempfile::TempDir {
+    fn copy(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "bin" || name == "obj" {
+                continue;
+            }
+            if entry.path().is_dir() {
+                copy(&entry.path(), &to.join(&name));
+            } else {
+                std::fs::copy(entry.path(), to.join(&name)).unwrap();
+            }
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    copy(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello"), dir.path());
+    dir
+}
+
+#[test]
+fn edits_undo_redo_and_save_to_the_scene_file() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    let selected = editor.first_mesh().unwrap();
+    let name = editor.game.engine.world.get::<Name>(selected).unwrap().0.clone();
+    let start = editor.game.engine.world.get::<Transform>(selected).unwrap().position.x;
+    editor.select(Some(selected));
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    editor.save();
+    assert!(!editor.has_unsaved_changes());
+
+    let mut numbers = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "axis-input", &mut numbers);
+    let ui = &mut editor.ui;
+    ui.focus(numbers[0]);
+    ui.set_modifiers(Modifiers { shift: false, control: true });
+    ui.key_down(Key::Char('a'));
+    ui.set_modifiers(Modifiers::default());
+    ui.text_input("7.25");
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    let x = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<Transform>(selected).unwrap().position.x;
+    assert_eq!(x(&editor), 7.25);
+    assert!(editor.has_unsaved_changes(), "an edit is unsaved");
+
+    editor.undo();
+    assert_eq!(x(&editor), start, "undo takes typing back as one step");
+    editor.redo();
+    assert_eq!(x(&editor), 7.25, "and redo makes it again");
+
+    editor.save();
+    assert!(!editor.has_unsaved_changes(), "saved");
+    let scenes = ["Scenes/Environment.scene", "Scenes/Day.scene"]
+        .map(|p| voxear_engine::scene_file::read(&dir.path().join(p)).unwrap());
+    let saved =
+        scenes.iter().flat_map(|s| s.objs.iter()).find(|o| o.name == name).expect("the edited Obj is in a scene");
+    assert_eq!(saved.position.map(|p| p[0]), Some(7.25), "the edit is in the file");
+}

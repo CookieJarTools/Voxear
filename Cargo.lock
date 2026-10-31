@@ -2782,6 +2782,7 @@ dependencies = [
  "anyhow",
  "png",
  "raw-window-handle",
+ "tempfile",
  "tracing",
  "voxear_assets",
  "voxear_cookbook",

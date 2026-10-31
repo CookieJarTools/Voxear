@@ -11,6 +11,8 @@ use voxear_render::{Camera, Light, LightKind, MeshRenderer};
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Transform};
 use voxear_ui::{NodeId, Style, Ui};
 
+use crate::history::{Edit, ObjState};
+
 /// The fields showing an Obj's name and Transform, by what they edit.
 struct Fields {
     name: NodeId,
@@ -94,12 +96,14 @@ impl Inspector {
     }
 
     /// Applies what was typed, and shows changes made elsewhere.
-    pub fn update(&mut self, ui: &mut Ui, world: &mut World) {
-        let (Some(entity), Some(fields)) = (self.shown, &self.fields) else { return };
+    /// Returns what was edited this frame, for undo.
+    pub fn update(&mut self, ui: &mut Ui, world: &mut World) -> Option<Edit> {
+        let (Some(entity), Some(fields)) = (self.shown, &self.fields) else { return None };
         let Some(&transform) = world.get::<Transform>(entity) else {
             self.show(ui, world, None);
-            return;
+            return None;
         };
+        let before = ObjState::of(world, entity);
         if ui.changed(fields.name) {
             let name = ui.text(fields.name);
             if let Some(current) = world.get_mut::<Name>(entity) {
@@ -124,6 +128,8 @@ impl Inspector {
         write(ui, &fields.position, edited.position);
         write(ui, &fields.rotation, if rotation != euler { rotation } else { euler });
         write(ui, &fields.scale, edited.scale);
+        let (before, after) = (before?, ObjState::of(world, entity)?);
+        (before != after).then_some(Edit { entity, before, after })
     }
 }
 

@@ -74,7 +74,7 @@ fn build_csproj(dotnet: &DotnetInstall, csproj: &Path) -> Result<()> {
     if !output.status.success() {
         let printed = [output.stdout, output.stderr].concat();
         for line in String::from_utf8_lossy(&printed).lines().map(str::trim).filter(|l| !l.is_empty()) {
-            tracing::error!("{line}");
+            tracing::error!(target: "compiler", "{line}");
         }
     }
     ensure!(output.status.success(), "the C# scripts failed to build");

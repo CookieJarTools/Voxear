@@ -82,7 +82,7 @@
                     </SplitView>
                 </DockPanel>
                 <DockPanel id="console" title="Console" class="dock-content">
-                    <ListView name="console-list" class="fill console" item-height="20" />
+                    <Panel name="console-panel" class="fill console-panel" />
                 </DockPanel>
                 <DockPanel id="scene" title="Scene" icon="cube">
                     <Panel class="panel-actions">

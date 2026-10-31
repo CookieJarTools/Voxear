@@ -17,7 +17,7 @@ use voxear_scene::{
 
 use crate::services::{ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, SpawnedPrefab, with_services};
 
-pub(crate) const API_VERSION: u32 = 10;
+pub(crate) const API_VERSION: u32 = 11;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -25,7 +25,10 @@ pub(crate) struct NativeApi {
     pub size: u32,
     pub version: u32,
     pub time: *const Time,
-    pub log: unsafe extern "C" fn(level: i32, message: *const u8, len: i32),
+    /// A script's line, with its stack (a frame to a line) and the Obj it is
+    /// about (0 for none).
+    pub log:
+        unsafe extern "C" fn(level: i32, message: *const u8, len: i32, stack: *const u8, stack_len: i32, context: u64),
     pub obj_name: unsafe extern "C" fn(entity: u64, buffer: *mut u8, capacity: i32) -> i32,
     pub transform_get: unsafe extern "C" fn(entity: u64, out: *mut Transform) -> i32,
     pub transform_set: unsafe extern "C" fn(entity: u64, value: *const Transform) -> i32,
@@ -163,13 +166,15 @@ unsafe fn utf8<'a>(ptr: *const u8, len: i32) -> std::borrow::Cow<'a, str> {
     String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len as usize) })
 }
 
-unsafe extern "C" fn log(level: i32, message: *const u8, len: i32) {
+unsafe extern "C" fn log(level: i32, message: *const u8, len: i32, stack: *const u8, stack_len: i32, context: u64) {
     let text = unsafe { utf8(message, len) };
+    let stack = if stack.is_null() { Default::default() } else { unsafe { utf8(stack, stack_len) } };
+    let stack: &str = &stack;
     match level {
-        0 => tracing::debug!(target: "script", "{text}"),
-        1 => tracing::info!(target: "script", "{text}"),
-        2 => tracing::warn!(target: "script", "{text}"),
-        _ => tracing::error!(target: "script", "{text}"),
+        0 => tracing::debug!(target: "script", stack, context, "{text}"),
+        1 => tracing::info!(target: "script", stack, context, "{text}"),
+        2 => tracing::warn!(target: "script", stack, context, "{text}"),
+        _ => tracing::error!(target: "script", stack, context, "{text}"),
     }
 }
 

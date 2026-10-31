@@ -15,7 +15,8 @@ namespace Voxear.Interop
 
 		public static bool IsConnected => Api != null;
 
-		public static void Log(LogLevel level, string message)
+		/// <summary>A line for the engine log, with the stack that wrote it and the Obj it is about (0 for none).</summary>
+		public static void Log(LogLevel level, string message, string stack, ulong context)
 		{
 			if (!IsConnected)
 			{
@@ -24,9 +25,11 @@ namespace Voxear.Interop
 			}
 
 			var bytes = Encoding.UTF8.GetBytes(message);
+			var trace = Encoding.UTF8.GetBytes(stack);
 			fixed (byte* text = bytes)
+			fixed (byte* frames = trace)
 			{
-				Api->Log((int)level, text, bytes.Length);
+				Api->Log((int)level, text, bytes.Length, frames, trace.Length, context);
 			}
 		}
 

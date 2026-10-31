@@ -60,7 +60,9 @@ impl App {
         let handles =
             WindowHandles { display: window.display_handle()?.as_raw(), window: window.window_handle()?.as_raw() };
         let mut renderer = unsafe { Renderer::new(handles, size.width, size.height, &self.settings)? };
-        let editor = Editor::open(project, &mut renderer, self.log.clone())?;
+        let mut editor = Editor::open(project, &mut renderer, self.log.clone())?;
+        // Copying and pasting reach the desktop's clipboard, not only the editor's own.
+        editor.ui.set_clipboard(Box::new(voxear_engine::ui_input::SystemClipboard::default()));
         window.set_ime_allowed(true);
         self.editor = Some(editor);
         self.renderer = Some(renderer);

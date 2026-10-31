@@ -17,6 +17,10 @@ const RECENT: usize = 8;
 /// The snap distances the tool strip and Settings offer, in metres.
 pub const SNAPS: [f32; 4] = [0.1, 0.25, 0.5, 1.0];
 
+/// The editors a stack frame can open in, as the Code editor setting lists
+/// them; the last opens the file as the desktop does, without its line.
+pub const CODE_EDITORS: [&str; 4] = ["VS Code", "Rider", "Zed", "System default"];
+
 /// What a setting holds, and so how it is shown and changed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SettingKind {
@@ -41,7 +45,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 9] = [
+pub const SETTINGS: [SettingInfo; 15] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -76,6 +80,22 @@ pub const SETTINGS: [SettingInfo; 9] = [
         group: "Play mode",
         kind: SettingKind::Toggle,
     },
+    SettingInfo { key: "error_pause", title: "Pause on error", group: "Play mode", kind: SettingKind::Toggle },
+    SettingInfo {
+        key: "console_collapse",
+        title: "Collapse identical lines",
+        group: "Console",
+        kind: SettingKind::Toggle,
+    },
+    SettingInfo { key: "console_mine_only", title: "My code only", group: "Console", kind: SettingKind::Toggle },
+    SettingInfo { key: "console_namespaces", title: "Show namespaces", group: "Console", kind: SettingKind::Toggle },
+    SettingInfo { key: "console_parameters", title: "Show parameters", group: "Console", kind: SettingKind::Toggle },
+    SettingInfo {
+        key: "code_editor",
+        title: "Code editor",
+        group: "Console",
+        kind: SettingKind::Choice(&CODE_EDITORS),
+    },
 ];
 
 /// A setting's value, as the panel and palette show and change it.
@@ -105,6 +125,16 @@ pub struct Settings {
     pub start_paused: bool,
     pub save_before_play: bool,
     pub clear_console_on_play: bool,
+    /// Play pauses when an error is logged, as Unity's Error Pause does.
+    pub error_pause: bool,
+    /// The Console shows identical lines once, with how many there were.
+    pub console_collapse: bool,
+    /// A trace folds away frames that are not the project's own.
+    pub console_mine_only: bool,
+    pub console_namespaces: bool,
+    pub console_parameters: bool,
+    /// Which of [`CODE_EDITORS`] opens a frame's file.
+    pub code_editor: usize,
 }
 
 impl Default for Settings {
@@ -119,6 +149,12 @@ impl Default for Settings {
             start_paused: false,
             save_before_play: false,
             clear_console_on_play: false,
+            error_pause: false,
+            console_collapse: false,
+            console_mine_only: true,
+            console_namespaces: true,
+            console_parameters: true,
+            code_editor: 0,
         }
     }
 }
@@ -135,6 +171,12 @@ impl Settings {
             "start_paused" => SettingValue::Toggle(self.start_paused),
             "save_before_play" => SettingValue::Toggle(self.save_before_play),
             "clear_console_on_play" => SettingValue::Toggle(self.clear_console_on_play),
+            "error_pause" => SettingValue::Toggle(self.error_pause),
+            "console_collapse" => SettingValue::Toggle(self.console_collapse),
+            "console_mine_only" => SettingValue::Toggle(self.console_mine_only),
+            "console_namespaces" => SettingValue::Toggle(self.console_namespaces),
+            "console_parameters" => SettingValue::Toggle(self.console_parameters),
+            "code_editor" => SettingValue::Choice(self.code_editor),
             _ => return None,
         })
     }
@@ -153,6 +195,12 @@ impl Settings {
             ("start_paused", SettingValue::Toggle(on)) => self.start_paused = on,
             ("save_before_play", SettingValue::Toggle(on)) => self.save_before_play = on,
             ("clear_console_on_play", SettingValue::Toggle(on)) => self.clear_console_on_play = on,
+            ("error_pause", SettingValue::Toggle(on)) => self.error_pause = on,
+            ("console_collapse", SettingValue::Toggle(on)) => self.console_collapse = on,
+            ("console_mine_only", SettingValue::Toggle(on)) => self.console_mine_only = on,
+            ("console_namespaces", SettingValue::Toggle(on)) => self.console_namespaces = on,
+            ("console_parameters", SettingValue::Toggle(on)) => self.console_parameters = on,
+            ("code_editor", SettingValue::Choice(i)) => self.code_editor = i.min(CODE_EDITORS.len() - 1),
             _ => {}
         }
         *self != before

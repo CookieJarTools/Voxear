@@ -3,7 +3,8 @@
 //! string; spans over parts of it say how those parts differ. Colours for
 //! links, inline code and highlights come from the label's text style
 //! (`link-color`, `code-background` and `mark-color` in sheets), so a theme
-//! sets them once.
+//! sets them once; a span may also have a colour of its own, as each part of
+//! a stack frame does in the Console.
 
 use std::ops::Range;
 
@@ -39,6 +40,8 @@ pub struct Span {
     pub range: Range<usize>,
     pub marks: Marks,
     pub link: Option<String>,
+    /// Its own colour, over the label's and a link's.
+    pub color: Option<crate::Color>,
 }
 
 /// Text with spans over it; build it with [`push`](Self::push) and
@@ -59,8 +62,30 @@ impl RichText {
         let start = self.text.len();
         self.text.push_str(text);
         if marks != Marks::default() {
-            self.spans.push(Span { range: start..self.text.len(), marks, link: None });
+            self.spans.push(Span { range: start..self.text.len(), marks, link: None, color: None });
         }
+        self
+    }
+
+    /// Adds `text` in a colour of its own.
+    pub fn push_colored(&mut self, text: &str, color: crate::Color) -> &mut Self {
+        let start = self.text.len();
+        self.text.push_str(text);
+        self.spans.push(Span {
+            range: start..self.text.len(),
+            marks: Marks::default(),
+            link: None,
+            color: Some(color),
+        });
+        self
+    }
+
+    /// Adds `text` in a colour of its own, as a link to `url`.
+    pub fn push_link_colored(&mut self, text: &str, url: &str, color: crate::Color) -> &mut Self {
+        let start = self.text.len();
+        self.text.push_str(text);
+        let link = Some(url.to_string());
+        self.spans.push(Span { range: start..self.text.len(), marks: Marks::default(), link, color: Some(color) });
         self
     }
 
@@ -68,7 +93,7 @@ impl RichText {
     pub fn push_link(&mut self, text: &str, url: &str, marks: Marks) -> &mut Self {
         let start = self.text.len();
         self.text.push_str(text);
-        self.spans.push(Span { range: start..self.text.len(), marks, link: Some(url.to_string()) });
+        self.spans.push(Span { range: start..self.text.len(), marks, link: Some(url.to_string()), color: None });
         self
     }
 
@@ -139,6 +164,23 @@ impl Ui {
             .iter()
             .find(|(target, _)| self.is_within(NodeId(*target), node))
             .map(|(_, url)| url.as_str())
+    }
+
+    /// Where a link's first letter is drawn in a rich label, from its last
+    /// layout, as `[x, y, width, height]`: so a test, or a tour, can point at
+    /// the link to click it.
+    pub fn link_rect(&self, node: NodeId, url: &str) -> Option<[f32; 4]> {
+        let text = self.element(node)?.text.as_ref()?;
+        let span = text.spans.iter().find(|span| span.link.as_deref() == Some(url))?;
+        let (scale, layout) = text.shaped.as_ref()?;
+        let [x, y, _, height] = self.content_box(node);
+        let spare = ((height * scale - layout.height()).max(0.0) / 2.0).round();
+        let cluster = Cluster::from_byte_index(layout, span.range.start)?;
+        let line = *cluster.line().metrics();
+        let left = cluster.visual_offset()?;
+        let top = line.block_min_coord + spare;
+        let size = [cluster.advance(), line.block_max_coord - line.block_min_coord];
+        Some([x + left / scale, y + top / scale, size[0] / scale, size[1] / scale])
     }
 
     /// The link under a point in a rich label, from its last layout.

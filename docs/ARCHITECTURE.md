@@ -1129,8 +1129,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   command finds none; while playing, a command runs against the game. Rust code built on the editor adds commands
   with `Editor::add_command(PaletteCommand { id, title, keys, icon, run })`, `run` getting the editor.
 - **Settings** (`settings`): the Scene view's snap distance, handle position (pivot or center) and space (global or
-  local), fly speed, and whether the stats chip and axis gizmo show; and whether Play starts paused, saves first, and
-  clears the Console. They are kept per project in `.voxear/Editor.toml` with the palette's recent items, and shown in
+  local), fly speed, and whether the stats chip and axis gizmo show; whether Play starts paused, saves first, clears
+  the Console and pauses on an error; and the Console's Collapse and trace toggles, and which code editor opens
+  files. They are kept per project in `.voxear/Editor.toml` with the palette's recent items, and shown in
   the Settings panel (a tab beside the Inspector, with a filter that matches as the palette does). The tool strip's
   Pivot, Global and snap buttons and the wheel's fly speed are the same settings. From the palette, a toggle flips, a
   choice moves to the next, and a number opens the Settings panel at it, focused to type. Tests and screenshots open
@@ -1220,6 +1221,26 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   there are unsaved changes) and how long the project took to open, then the renderer, frame rate, memory and git
   branch. The numbers are in figures of one width and change at most once a second; the frame rate follows the trend
   and holds still within 3% of what it shows, so it can be read.
+- **The Console** (`console`), after Sifter. Each line is a row in columns: when (minutes and seconds since the
+  editor started), the message's first line, how many it stands for when collapsed, and where it came from, in mono.
+  Each log line carries its level, target, Rust file and line, the frame it was logged in, whether it came from a
+  worker thread, and for scripts, the stack .NET wrote and the Obj it is about (`LogLine`; scripts' `Log` sends both
+  through `log` in the native API). A line is in categories nobody declared (`console::entry`): a message starting
+  `[Combat]` is in Combat, a script's line in its code's root namespace (from its first frame of the project's own),
+  an engine line in its crate (Engine, Render, RHI, UI), and the C# compiler's lines in Compiler. Each category is a
+  chip in the toolbar with its count, which hides or shows it; the toolbar wraps, so in a narrow Console the chips
+  move onto their own line. The search (`console::query`) takes words, `tag:name` and `-tag:name`, and a regular
+  expression between slashes; a bad one says why under the toolbar. Log, Warning and Error toggles count what the
+  search and categories pass. Collapse, Clear and Error Pause (which pauses play on an error) are settings, as are
+  the trace's toggles. Below the list, the selected line shows when, in which frame and on which thread it was
+  logged, its message in its level's colour, and its stack (`console::frame`), each frame parsed from the end, as
+  Sifter learned to (the place, then the parameters by counting brackets back, then the method and type; async
+  state machines read as the method they are), and coloured by part: namespace, class, method, parameters, file
+  and line. My code only folds runs of frames not in the project's folder into a line that unfolds them;
+  Namespaces and Parameters can be hidden. A frame's file and line, or a double click on a line, open the file at
+  its line in the code editor the settings name (VS Code, Rider, Zed or the system's default;
+  `Editor::set_source_opener` replaces it). Selecting a line about an Obj selects the Obj, Copy puts the line and its
+  stack on the clipboard, and a context click copies a line or mutes its message until Muted brings them back.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
 The Odin-style inspector attributes come next.
@@ -1244,7 +1265,8 @@ whose source is in `Dev/CookieJar` (design notes in `Docs/Sifter-Design.md`):
 - Categories come from the messages themselves, with nothing to declare.
 - The list survives a script recompile, which here means C# hot reload.
 
-Read Sifter's design before building it.
+What is built is described under the editor above. Still to come from Sifter: the lines kept across hot reload,
+category colours agreed per project, hiding chosen assemblies, saved filters, and opening the player's log.
 
 ### The Cookbook
 

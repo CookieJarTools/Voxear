@@ -109,6 +109,9 @@ const NEW_OBJ_DISTANCE: f32 = 8.0;
 /// How often the scripts are looked at for changes, to describe them again.
 const SCRIPTS_CHECK: Duration = Duration::from_secs(2);
 
+/// Opens a file at a line, as clicking a stack frame in the Console does.
+pub type SourceOpener = Box<dyn FnMut(&Path, u32)>;
+
 pub struct Editor {
     pub game: Game,
     pub ui: Ui,
@@ -171,6 +174,10 @@ pub struct Editor {
     discard_armed: Option<String>,
     /// A message for the status bar, and when it was given.
     notice: Option<(String, Instant)>,
+    /// Frames run, which each log line notes, and what opens a stack frame's
+    /// file, when not the code editor the settings name.
+    frames: u64,
+    source_opener: Option<SourceOpener>,
     /// Frames and seconds counted towards the status bar's next numbers, and
     /// the frame rate it shows.
     status: (u32, f32),
@@ -254,8 +261,8 @@ impl Editor {
             (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"), find(&ui, "hierarchy-add"));
         let hierarchy = Hierarchy::new(&mut ui, tree, filter, add);
         let project = ProjectView::new(&mut ui, document, game.project.name(), &root, game.content.db());
-        let console_list = find(&ui, "console-list");
-        let console = Console::new(&mut ui, console_list, log);
+        let console_panel = find(&ui, "console-panel");
+        let console = Console::new(&mut ui, console_panel, log, &root, &memory.settings);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
         inspector.set_types(script_types::cached(&game.project).unwrap_or_default());
         inspector.show(&mut ui, &game, None, false);
@@ -310,6 +317,8 @@ impl Editor {
             discard_armed: None,
             notice: None,
             status: (0, 0.0),
+            frames: 0,
+            source_opener: None,
             average_fps: 0.0,
             shown_fps: 0.0,
             describing: None,
@@ -356,6 +365,8 @@ impl Editor {
     /// camera, and the render.
     pub fn update(&mut self, renderer: &mut Renderer, size: (u32, u32), scale: f32, delta: f32) -> Result<()> {
         self.scale = scale;
+        self.frames += 1;
+        voxear_core::logging::set_frame(self.frames);
         self.ui.advance(delta);
         self.update_play(renderer);
         if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.camera) {
@@ -392,7 +403,7 @@ impl Editor {
         self.update_scene_tools(renderer);
         self.update_script_types();
         self.project.update(&mut self.ui);
-        self.console.update(&mut self.ui);
+        self.update_console();
         self.cookbook.update(&mut self.ui);
         self.update_palette(renderer);
         let action = self.levels.update(&mut self.ui, self.game.levels.current(), self.game.loads.level_in_progress());
@@ -812,6 +823,61 @@ impl Editor {
             let why = props::why_not(&self.game, types, entity, prop, &pick);
             self.notify(&why);
         }
+    }
+
+    /// The Console's frame: what it changed of the settings, Error Pause,
+    /// a frame to open, and the Obj a line is about.
+    fn update_console(&mut self) {
+        let result = self.console.update(&mut self.ui, &mut self.memory.settings);
+        if result.settings_changed {
+            self.memory.save();
+            self.apply_settings();
+        }
+        if result.errors > 0 && self.memory.settings.error_pause && self.is_playing() && !self.is_paused() {
+            self.set_paused(true);
+            self.notify("Paused on an error, as Error Pause asks");
+        }
+        if let Some((file, line)) = result.open {
+            self.open_source(&file, line);
+        }
+        if let Some(entity) = result.ping.filter(|&e| self.game.engine.world.is_alive(e)) {
+            self.select(Some(entity));
+        }
+    }
+
+    /// Opens a file at a line in the code editor the settings name, as a
+    /// stack frame clicked in the Console asks.
+    pub fn open_source(&mut self, file: &Path, line: u32) {
+        if let Some(opener) = &mut self.source_opener {
+            return opener(file, line);
+        }
+        let path = file.display().to_string();
+        let (program, args): (&str, Vec<String>) = match self.memory.settings.code_editor {
+            0 => ("code", vec!["--goto".into(), format!("{path}:{line}")]),
+            1 => ("rider", vec!["--line".into(), line.to_string(), path]),
+            2 => ("zed", vec![format!("{path}:{line}")]),
+            _ if cfg!(target_os = "macos") => ("open", vec![path]),
+            _ if cfg!(windows) => ("explorer", vec![path]),
+            _ => ("xdg-open", vec![path]),
+        };
+        match std::process::Command::new(program).args(&args).spawn() {
+            Ok(mut child) => {
+                // Waited on elsewhere, so it does not linger once it exits.
+                std::thread::spawn(move || child.wait());
+            }
+            Err(error) => {
+                let editor = settings::CODE_EDITORS[self.memory.settings.code_editor.min(3)];
+                self.notify(&format!(
+                    "Could not open it with {editor} ({error}); pick another in Settings, Code editor"
+                ));
+            }
+        }
+    }
+
+    /// Opens stack frames' files some other way than the code editor the
+    /// settings name, as tests and tools built on the editor do.
+    pub fn set_source_opener(&mut self, opener: SourceOpener) {
+        self.source_opener = Some(opener);
     }
 
     /// Keeps the scripts' description as their last build: when a script

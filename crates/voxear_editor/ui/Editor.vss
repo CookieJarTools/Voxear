@@ -933,23 +933,223 @@ DockSpace .project-split > .split-divider {
 
 /* The Console. */
 
-.console .list-row {
-    padding: 0px 8px;
-}
-
-.log-line {
-    flex-grow: 1;
-    flex-basis: 0px;
+/* The Console, after Sifter: a toolbar, one line per row in columns, and
+   the selected line's stack under them. Monospaced throughout. */
+.console-panel {
+    flex-direction: column;
     font-family: mono;
     font-size: 11px;
 }
 
-.log-warn {
+/* It wraps, so when the Console is narrow the categories' chips, which come
+   last, move onto a line of their own rather than being cut off. */
+.console-toolbar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    flex-shrink: 0;
+    min-height: 30px;
+    padding: 4px 8px;
+    column-gap: 6px;
+    row-gap: 4px;
+    border-bottom: 1px solid var(--vx-line);
+}
+
+.console-button {
+    height: 22px;
+    padding: 0px 8px;
+    flex-shrink: 0;
+    border-radius: 5px;
+    font-family: sans;
+    color: var(--vx-muted);
+    background-color: transparent;
+}
+
+.console-button:hover {
+    color: var(--vx-text);
+    background-color: var(--vx-field);
+}
+
+.console-button:checked {
+    color: var(--vx-text);
+    background-color: var(--vx-selected);
+}
+
+.console-chips {
+    flex-direction: row;
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    min-width: 0px;
+    gap: 4px;
+}
+
+.console-chip {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    height: 20px;
+    padding: 0px 7px;
+    gap: 5px;
+    border-radius: 10px;
+    color: var(--vx-muted);
+    border: 1px solid var(--vx-line-2);
+    opacity: 0.55;
+}
+
+.console-chip:checked {
+    color: var(--vx-text-2);
+    opacity: 1;
+}
+
+.chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.console-search {
+    flex-basis: 180px;
+    flex-grow: 1;
+    max-width: 320px;
+    flex-shrink: 0;
+}
+
+.console-search.bad {
+    border-color: var(--vx-x);
+}
+
+.console-level {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    height: 22px;
+    padding: 0px 6px;
+    gap: 4px;
+    border-radius: 5px;
+    color: var(--vx-muted);
+    opacity: 0.5;
+}
+
+.console-level:checked {
+    opacity: 1;
+    background-color: var(--vx-field);
+}
+
+.console-level-icon {
+    width: 12px;
+    height: 12px;
+}
+
+.level-warning .console-level-icon {
     color: var(--ed-warn);
 }
 
-.log-error {
+.level-error .console-level-icon {
     color: var(--vx-x);
+}
+
+.console-problem {
+    flex-shrink: 0;
+    padding: 3px 10px;
+    color: var(--vx-x);
+}
+
+.console .list-row {
+    flex-direction: row;
+    align-items: center;
+    padding: 0px 8px;
+    gap: 8px;
+    color: var(--vx-text-2);
+}
+
+.console-icon {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+.console-time {
+    width: 62px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+.console-message {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.console-count {
+    flex-shrink: 0;
+    padding: 0px 5px;
+    border-radius: 7px;
+    font-size: 10px;
+    color: var(--vx-text);
+    background-color: var(--vx-selected);
+}
+
+.console-source {
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+/* Warnings and errors take their own colour, which the eye lands on. */
+.list-row.log-warn, .list-row.log-warn .console-icon {
+    color: var(--ed-warn);
+}
+
+.list-row.log-error, .list-row.log-error .console-icon {
+    color: var(--vx-x);
+}
+
+.console-detail {
+    flex-direction: column;
+    border-top: 1px solid var(--vx-line);
+}
+
+.console-detail-bar {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    height: 28px;
+    padding: 0px 8px;
+    gap: 6px;
+}
+
+.console-info {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    white-space: nowrap;
+    overflow: hidden;
+    color: var(--vx-muted);
+}
+
+.console-detail-body {
+    padding: 4px 12px 10px 12px;
+    gap: 6px;
+}
+
+.console-detail-message {
+    color: var(--vx-text);
+}
+
+.console-detail-message.log-warn {
+    color: var(--ed-warn);
+}
+
+.console-detail-message.log-error {
+    color: var(--vx-x);
+}
+
+.console-trace {
+    line-height: 17px;
+    link-color: #c3a6ff;
 }
 
 /* The status bar: a light and what the editor is doing on the left, the

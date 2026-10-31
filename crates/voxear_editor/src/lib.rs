@@ -25,7 +25,9 @@
 //! - the **Inspector**, editing the selected Obj's name, Transform and
 //!   components, its scripts' fields included, with Add and Remove
 //!   Component; while playing, a row's menu can keep its value after play
-//! - the **Console**, showing everything logged
+//! - the **Console**, after Sifter: categories nobody declared, a search with
+//!   tags and regular expressions, and each line's stack coloured and folded,
+//!   its frames opening their files
 //! - the **Cookbook**: the project's own documentation, Markdown pages from its
 //!   `Docs` folder (see `voxear_cookbook`)
 //! - the **Levels** panel, as LayerCake's window: every level and loose
@@ -58,7 +60,7 @@ use voxear_core::logging::LogCapture;
 use voxear_engine::Project;
 use voxear_render::{Renderer, RendererSettings};
 
-pub use editor::Editor;
+pub use editor::{Editor, SourceOpener};
 pub use hierarchy::EditorOnly;
 pub use palette::{PaletteCommand, PaletteKey};
 pub use settings::{SETTINGS, SettingInfo, SettingKind, SettingValue, Settings};

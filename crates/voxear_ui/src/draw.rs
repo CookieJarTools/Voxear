@@ -420,6 +420,7 @@ impl Paint<'_> {
     /// A span's text colour.
     fn color(&self, span: Option<&crate::Span>) -> [f32; 4] {
         match span {
+            Some(crate::Span { color: Some(color), .. }) => self.fade(*color),
             Some(span) if span.marks.broken => self.color.map(|c| c * 0.6),
             Some(span) if span.link.is_some() => self.fade(self.style.link_color),
             _ => self.color,

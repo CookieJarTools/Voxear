@@ -27,6 +27,11 @@ fn with_class(ui: &Ui, node: NodeId, class: &str, found: &mut Vec<NodeId>) {
 
 /// The editor open on Hello, a frame in, or `None` without a GPU.
 fn open() -> Option<(Renderer, voxear_editor::Editor)> {
+    open_logging(LogCapture::default())
+}
+
+/// The same, its Console showing what is put in `log`.
+fn open_logging(log: LogCapture) -> Option<(Renderer, voxear_editor::Editor)> {
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,
         Err(error) => {
@@ -35,7 +40,7 @@ fn open() -> Option<(Renderer, voxear_editor::Editor)> {
         }
     };
     // Without memory, so what one run sets cannot change the next.
-    let mut editor = voxear_editor::Editor::open_without_memory(hello(), &mut renderer, LogCapture::default()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(hello(), &mut renderer, log).unwrap();
     editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     Some((renderer, editor))
 }
@@ -148,7 +153,10 @@ fn play_runs_the_scripts_and_stop_brings_the_level_back() {
     if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
         return eprintln!("skipping: needs .NET and the managed build");
     }
-    let Some((mut renderer, mut editor)) = open() else { return };
+    // The scripts' own lines too, which come through tracing from C#.
+    let log = LogCapture::default();
+    let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
+    let Some((mut renderer, mut editor)) = open_logging(log.clone()) else { return };
     let frame = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer| {
         editor.update(renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     };
@@ -227,6 +235,37 @@ fn play_runs_the_scripts_and_stop_brings_the_level_back() {
     frame(&mut editor, &mut renderer);
     assert_ne!(editor.game.engine.world.get::<Transform>(played).unwrap().rotation, held, "a step moves it a frame");
     assert!(editor.is_paused(), "and leaves it paused");
+
+    // Error Pause, from the Console's toolbar: an error logged in play pauses it.
+    editor.set_paused(false);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "console");
+    frame(&mut editor, &mut renderer);
+    let pause = console_button(&editor.ui, "Error Pause").unwrap();
+    click(&mut editor.ui, pause);
+    frame(&mut editor, &mut renderer);
+    log_line(&log, voxear_core::logging::LogLine::new(tracing::Level::WARN, "only a warning"));
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.is_paused(), "a warning plays on");
+    log_line(&log, voxear_core::logging::LogLine::new(tracing::Level::ERROR, "it broke"));
+    frame(&mut editor, &mut renderer);
+    assert!(editor.is_paused(), "an error pauses play");
+
+    // A script's line, with the stack .NET wrote for it, read into frames:
+    // its own first, with its file and line, then the engine's folded.
+    search_console(&mut editor, &mut renderer, "awake (spinner)");
+    let lines = console_lines(&editor.ui);
+    assert!(lines.iter().any(|l| l == "Awake    Spinner A (Spinner)"), "Hello's Spinner logs as it wakes: {lines:?}");
+    let row = console_rows(&editor.ui)[0];
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut traces = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-trace", &mut traces);
+    let trace = editor.ui.text(traces[0]);
+    assert!(trace.starts_with("Hello.Spinner.Awake()  Spinner.cs:19\n"), "{trace}");
+    assert!(trace.contains("not the project's own"), "the engine's frames fold: {trace}");
+    shot(&mut renderer, "console_play.png");
 
     editor.stop(&mut renderer);
     frame(&mut editor, &mut renderer);
@@ -1111,4 +1150,246 @@ fn the_hierarchy_shows_scenes_in_their_order_and_reorders_them() {
     let badge = first_with(&editor.ui, manager, "row-badge").unwrap();
     assert!(editor.ui.is_visible(badge) && editor.ui.text(badge) == "Instance");
     shot(&mut renderer, "hierarchy-scenes.png");
+}
+
+/// Logs a line as the engine would, for the Console to take in.
+fn log_line(log: &LogCapture, line: voxear_core::logging::LogLine) {
+    let mut log = log.lock().unwrap();
+    log.lines.push_back(line);
+    log.total += 1;
+}
+
+/// A clipboard the test can read back.
+#[derive(Clone, Default)]
+struct SharedClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+impl voxear_ui::Clipboard for SharedClipboard {
+    fn read(&mut self) -> Option<String> {
+        self.0.borrow().clone()
+    }
+
+    fn write(&mut self, text: &str) {
+        *self.0.borrow_mut() = Some(text.to_string());
+    }
+}
+
+/// The Console's list of lines.
+fn console_list(ui: &Ui) -> NodeId {
+    let mut lists = Vec::new();
+    with_class(ui, ui.root(), "console", &mut lists);
+    lists[0]
+}
+
+/// The Console's rows on screen, top to bottom.
+fn console_rows(ui: &Ui) -> Vec<NodeId> {
+    let mut rows = Vec::new();
+    with_class(ui, console_list(ui), "list-row", &mut rows);
+    rows.retain(|&row| ui.is_visible(row));
+    rows.sort_by(|a, b| ui.rect(*a)[1].total_cmp(&ui.rect(*b)[1]));
+    rows
+}
+
+/// The messages of the Console's rows on screen, top to bottom.
+fn console_lines(ui: &Ui) -> Vec<String> {
+    console_rows(ui).into_iter().map(|row| ui.text(ui.children(row)[2])).collect()
+}
+
+/// A Console button, in its toolbar or over its trace, that says `label`.
+fn console_button(ui: &Ui, label: &str) -> Option<NodeId> {
+    let mut buttons = Vec::new();
+    with_class(ui, ui.root(), "console-button", &mut buttons);
+    buttons.into_iter().find(|&b| ui.text(b) == label || ui.children(b).iter().any(|&c| ui.text(c) == label))
+}
+
+/// Each of a class's elements' second child's text: the Console's level
+/// counts, or its chips.
+fn second_texts(ui: &Ui, class: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    with_class(ui, ui.root(), class, &mut found);
+    found.into_iter().map(|node| ui.text(ui.children(node)[1])).collect()
+}
+
+fn search_console(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, text: &str) {
+    let mut fields = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-search", &mut fields);
+    let field = editor.ui.children(fields[0])[1];
+    editor.ui.focus(field);
+    editor.ui.set_modifiers(Modifiers { shift: false, control: true });
+    editor.ui.key_down(Key::Char('a'));
+    editor.ui.set_modifiers(Modifiers::default());
+    editor.ui.key_down(Key::Backspace);
+    editor.ui.text_input(text);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+/// Clicks a link in a rich label, where it is drawn.
+fn click_link(ui: &mut Ui, label: NodeId, url: &str) {
+    let [x, y, w, h] = ui.link_rect(label, url).unwrap_or_else(|| panic!("{url} is drawn in {:?}", ui.text(label)));
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_button(true);
+    ui.pointer_button(false);
+}
+
+#[test]
+fn the_console_sifts_searches_and_opens_stacks() {
+    use tracing::Level;
+    use voxear_core::logging::LogLine;
+    let log = LogCapture::default();
+    let Some((mut renderer, mut editor)) = open_logging(log.clone()) else { return };
+    let clipboard = SharedClipboard::default();
+    editor.ui.set_clipboard(Box::new(clipboard.clone()));
+    let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let opens = opened.clone();
+    editor.set_source_opener(Box::new(move |file, line| opens.borrow_mut().push((file.to_path_buf(), line))));
+    // Real paths, as .NET writes them.
+    let root = editor.game.project.root.canonicalize().unwrap();
+    let spinner = obj(&editor, "Spinner A").unwrap();
+
+    // An engine line, a script's line three times over about Spinner A, a
+    // render warning, a script's exception, and a compiler error.
+    let at = |seconds: f64, frame: u64, line: LogLine| LogLine { seconds, frame, ..line };
+    let engine = LogLine {
+        target: "voxear_engine::levels".into(),
+        file: Some("crates/voxear_engine/src/levels.rs".into()),
+        line: Some(120),
+        ..LogLine::new(Level::INFO, "Level Main loaded")
+    };
+    log_line(&log, at(0.5, 1, engine));
+    let spinner_file = root.join("Scripts/Spinner.cs");
+    let stack = format!(
+        "   at Hello.Spinner.Update() in {}:line 33\n   at Voxear.Scripting.Behaviours.Tick(Single dt)\n   at Voxear.Scripting.Host.Update(Single dt)",
+        spinner_file.display()
+    );
+    for seconds in [2.0, 2.5, 3.0] {
+        let hit = LogLine {
+            target: "script".into(),
+            stack: Some(stack.clone()),
+            context: Some(spinner.to_bits()),
+            ..LogLine::new(Level::INFO, "[Combat] Spinner A hit for 12")
+        };
+        log_line(&log, at(seconds, 7, hit));
+    }
+    let warning =
+        LogLine { target: "voxear_render::materials".into(), ..LogLine::new(Level::WARN, "Rock has no albedo") };
+    log_line(&log, at(4.0, 9, warning));
+    let thrown = LogLine {
+        target: "script".into(),
+        stack: Some(format!(
+            "   at System.Collections.Generic.List`1.get_Item(Int32 index)\n   at Hello.Pulse.Update() in {}:line 18",
+            root.join("Scripts/Pulse.cs").display()
+        )),
+        ..LogLine::new(Level::ERROR, "NullReferenceException: Object reference not set")
+    };
+    log_line(&log, at(5.0, 11, thrown));
+    let compiler = format!("{}(12,5): error CS1002: ; expected", root.join("Scripts/Pulse.cs").display());
+    log_line(&log, at(6.0, 0, LogLine { target: "compiler".into(), ..LogLine::new(Level::ERROR, &compiler) }));
+
+    // The Console given room, as dragging the divider over it up does.
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let roomy = "row(240, [hierarchy, levels], row(-300, column(45%, [scene, game, cookbook], [console, project]), \
+                 [inspector, settings]))";
+    editor.ui.set_dock_layout(dock, roomy).unwrap();
+    editor.ui.show_dock_panel(dock, "console");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(second_texts(&editor.ui, "console-level"), ["4", "1", "2"], "Log, Warning and Error counts");
+    assert_eq!(
+        second_texts(&editor.ui, "console-chip"),
+        ["Combat 3", "Compiler 1", "Engine 1", "Hello 4", "Render 1"],
+        "categories nobody declared: a [tag], the scripts' namespace, the crate, the compiler"
+    );
+    assert_eq!(console_lines(&editor.ui).last().map(String::as_str), Some(compiler.as_str()), "it follows the end");
+
+    // Search: a tag, then leaving one out, then a level hidden; a bad
+    // expression says why.
+    search_console(&mut editor, &mut renderer, "tag:combat");
+    assert_eq!(console_lines(&editor.ui), ["[Combat] Spinner A hit for 12"; 3]);
+    let collapse = console_button(&editor.ui, "Collapse").unwrap();
+    click(&mut editor.ui, collapse);
+    frame(&mut editor, &mut renderer);
+    let rows = console_rows(&editor.ui);
+    assert_eq!(rows.len(), 1, "collapsed, the same line shows once");
+    assert_eq!(editor.ui.text(editor.ui.children(rows[0])[3]), "3", "with how many there were");
+    search_console(&mut editor, &mut renderer, "-tag:hello");
+    assert_eq!(console_lines(&editor.ui), ["Level Main loaded", "Rock has no albedo", compiler.as_str()]);
+    let mut levels = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "level-error", &mut levels);
+    click(&mut editor.ui, levels[0]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(console_lines(&editor.ui), ["Level Main loaded", "Rock has no albedo"], "errors hidden");
+    click(&mut editor.ui, levels[0]);
+    search_console(&mut editor, &mut renderer, "/[bad/");
+    let mut problems = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-problem", &mut problems);
+    assert!(editor.ui.is_visible(problems[0]));
+    assert!(
+        editor.ui.text(problems[0]).starts_with("/[bad/ is not a regular expression"),
+        "{}",
+        editor.ui.text(problems[0])
+    );
+
+    // The line about Spinner A: selecting it selects the Obj, and its stack
+    // shows below, the engine's frames folded.
+    search_console(&mut editor, &mut renderer, "spinner a hit");
+    assert!(!editor.ui.is_visible(problems[0]), "a good search clears the complaint");
+    let row = console_rows(&editor.ui)[0];
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.selected(), Some(spinner), "the line's Obj is selected");
+    let mut infos = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-info", &mut infos);
+    assert_eq!(editor.ui.text(infos[0]), "00:03.000 · frame 7 · main thread · Combat, Hello");
+    let mut traces = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-trace", &mut traces);
+    let trace = traces[0];
+    assert_eq!(editor.ui.text(trace), "Hello.Spinner.Update()  Spinner.cs:33\n… 2 frames not the project's own\n");
+    shot(&mut renderer, "console.png");
+
+    // A frame's file opens at its line, as does a double click on the line.
+    click_link(&mut editor.ui, trace, "frame:0");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(opened.borrow().last(), Some(&(spinner_file.clone(), 33)));
+    click(&mut editor.ui, row);
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(opened.borrow().len(), 2, "a double click opens where the line came from");
+
+    // Unfolded, then without namespaces or parameters.
+    click_link(&mut editor.ui, trace, "unfold");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.text(trace).contains("Voxear.Scripting.Behaviours.Tick(Single dt)"), "{}", editor.ui.text(trace));
+    for toggle in ["Namespaces", "Parameters"] {
+        let button = console_button(&editor.ui, toggle).unwrap();
+        click(&mut editor.ui, button);
+        frame(&mut editor, &mut renderer);
+    }
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.text(trace).contains("\nBehaviours.Tick()\n"), "{}", editor.ui.text(trace));
+
+    // Copy, then muting it from its menu.
+    let copy = console_button(&editor.ui, "Copy").unwrap();
+    click(&mut editor.ui, copy);
+    frame(&mut editor, &mut renderer);
+    let copied = clipboard.0.borrow().clone().unwrap_or_default();
+    assert!(copied.starts_with("INFO [Combat] Spinner A hit for 12\n  at Hello.Spinner.Update()"), "{copied}");
+    context_click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    let mute = menu_item(&editor.ui, "Mute this message").unwrap();
+    click(&mut editor.ui, mute);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(console_lines(&editor.ui).is_empty(), "muted");
+    let muted = console_button(&editor.ui, "Muted 1").expect("Muted says how many");
+    click(&mut editor.ui, muted);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(console_lines(&editor.ui), ["[Combat] Spinner A hit for 12"], "and brings them back");
+
+    // Clear hides it all.
+    let clear = console_button(&editor.ui, "Clear").unwrap();
+    click(&mut editor.ui, clear);
+    frame(&mut editor, &mut renderer);
+    assert!(console_lines(&editor.ui).is_empty());
 }

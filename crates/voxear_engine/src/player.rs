@@ -5,6 +5,11 @@
 //!   [`PlayerSettings`]
 //! - `Bundles/`: the built content
 //! - `Managed/`: `Voxear.Core` and the game's scripts, for .NET to run
+//!
+//! A player keeps its log as Unity's `Player.log` is kept, in the user's data
+//! folder under the company's and the game's names ([`log_path`]), the run
+//! before's beside it, so it can be read after the game has closed: the
+//! editor's Console opens it.
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +31,9 @@ pub const BUNDLES_FOLDER: &str = "Bundles";
 pub const MANAGED_FOLDER: &str = "Managed";
 /// The format of `player.toml`.
 pub const PLAYER_FORMAT: u32 = 1;
+/// A player's log, and the one of the run before.
+pub const PLAYER_LOG: &str = "player.log";
+pub const PREVIOUS_LOG: &str = "player-prev.log";
 
 /// `Data/player.toml`: what the player runs, and how, from the build profile
 /// it was built with.
@@ -76,6 +84,43 @@ impl PlayerSettings {
         std::fs::write(&path, format!("# Written by vox build: what this player runs.\n{text}"))
             .with_context(|| format!("writing {}", path.display()))
     }
+}
+
+/// Where a built game keeps its log: in the user's data folder, under its
+/// company's name and its own, as `player.log`. Linux: `$XDG_DATA_HOME`, or
+/// `~/.local/share`; Windows: `%LOCALAPPDATA%`. `None` without a home.
+pub fn log_path(company: Option<&str>, product: &str) -> Option<PathBuf> {
+    let data = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else {
+        let xdg = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from);
+        xdg.or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share")))
+    };
+    let mut path = data?;
+    if let Some(company) = company.filter(|c| !c.trim().is_empty()) {
+        path.push(file_name(company));
+    }
+    path.push(file_name(product));
+    Some(path.join(PLAYER_LOG))
+}
+
+/// Opens a new log for the game in `data`, keeping the last run's as
+/// `player-prev.log`. `None` when there is nowhere to keep it, so the game
+/// still runs.
+pub fn open_log(data: &Path) -> Option<std::fs::File> {
+    let settings = PlayerSettings::read(data).ok()?;
+    let path = log_path(settings.company_name.as_deref(), &settings.product_name)?;
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    let _ = std::fs::rename(&path, path.with_file_name(PREVIOUS_LOG));
+    std::fs::File::create(&path).ok()
+}
+
+/// A name as a file name on Linux and Windows.
+pub(crate) fn file_name(name: &str) -> String {
+    let name: String =
+        name.chars().map(|c| if r#"/\:*?"<>|"#.contains(c) || c.is_control() { '_' } else { c }).collect();
+    let name = name.trim().trim_end_matches('.');
+    if name.is_empty() { "Game".into() } else { name.to_string() }
 }
 
 /// How the player was asked to run, from its command line.

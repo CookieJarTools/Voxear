@@ -190,7 +190,16 @@ The advanced path beside behaviours, for things there are hundreds or thousands 
   of the world it lends with scripts, which they read in place, so each component type registers again in a new
   world for the cost of one comparison per use.
 
-Still to come: components written in scenes and prefabs and shown in the Inspector, and parallel jobs over chunks.
+- **Scenes, prefabs and the Inspector.** A scene or prefab gives an Obj components by type name, beside its
+  behaviours, with their values in the same `fields` tables: `components = ["Game.Spin"]` and
+  `[obj.fields."Game.Spin"] speed = 90.0`. They are kept and edited as behaviours are (a spec with a `component`
+  flag), so prefab overrides, locks and undo work for them too, and ScriptInfo describes `IComponent` structs as
+  `components` beside the behaviours, so the Inspector shows their fields, and Add Component lists them after the
+  behaviours. When the game runs, each Obj's components are made from their values before any of its behaviours
+  wakes, Obj references in them included, and `SceneComponents` keeps what was given for the Inspector and saving.
+  While playing, the Inspector shows the values the scene gave, as it does for behaviours.
+
+Still to come: live values in the Inspector while playing, and parallel jobs over chunks.
 
 ### Lifecycle guarantees *(implemented)*
 
@@ -286,7 +295,7 @@ and a positive pitch looks down.
   applies them. Components are subtables:
   - `[obj.camera]`, `[obj.light]` and `[obj.renderer]`, the last with a mesh reference and a material reference or
     inline material
-  - `behaviours = ["Game.Spinner"]`
+  - `behaviours = ["Game.Spinner"]`, and `components = ["Game.Spin"]` for C# components
   - `persistent = true`
   - a scene-level `[sky]`
   See `crates/voxear_engine/src/scene_file.rs`. Builds will use a binary form made by the content build.
@@ -1450,7 +1459,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
     `Voxear` or `System`, or an engine crate), ticked while hidden; their frames fold into a line that unfolds them,
     as My code only does, for the one library that fills every trace.
   - **The player's log**: Run in the Build window starts the built game with its output piped back, and each line
-    comes into the Console at its level, in the Player category, ending with how the game closed.
+    comes into the Console at its level, in the Player category, ending with how the game closed. A game run on its
+    own keeps its log in a file (see "The player"), and **Player Log** in the toolbar lists each build that has
+    run, its last run and the one before, to read into the Console the same way.
 - **The Profiler** (`profiler`), the Profiling workspace's panel, after Unity's. The top bar's workspaces are
   layouts of the same panels, each kept as it was left: World for building levels, and Profiling, with the Game
   view over the Profiler and the Console. The Profiler keeps the last 300 frames as a chart of their CPU and GPU
@@ -1499,8 +1510,7 @@ whose source is in `Dev/CookieJar` (design notes in `Docs/Sifter-Design.md`):
 - The list survives a script recompile, which here means C# hot reload.
 
 What is built is described under the editor above. Its lines are kept across hot reload, since the Console is the
-editor's own and nothing of it reloads. Still to come from Sifter: a player's log read from a build run on its own
-(its log written to a file), and the settings screen with a live sample of a row.
+editor's own and nothing of it reloads. Still to come from Sifter: the settings screen with a live sample of a row.
 
 ### VoxDocs
 
@@ -2432,7 +2442,10 @@ Builds/Linux Release/
 The player (`voxear_engine::player`) opens the bundles, starts .NET with the game's scripts, and runs the start
 level in a window of the profile's size, or full screen. A development build has the tools `vox run` has: the stats
 overlay on F1, the debug views and the fly camera; a release build has none of them. `--headless --frames <n>` runs
-it without a window, to check a build. The player uses the .NET installed on the machine for now; shipping the
+it without a window, to check a build. It keeps its log as Unity's `Player.log` is kept, without the terminal's
+colours, in the user's data folder under the company's name and the game's (`$XDG_DATA_HOME` or `~/.local/share`
+on Linux, `%LOCALAPPDATA%` on Windows), with the run before's as `player-prev.log`, so the log outlives the game
+and the editor's Console can read it. The player uses the .NET installed on the machine for now; shipping the
 runtime with it, or NativeAOT, comes with M12.
 
 ### Builds run in their own process

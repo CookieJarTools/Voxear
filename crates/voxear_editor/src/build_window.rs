@@ -842,7 +842,7 @@ fn run_player(program: &Path, folder: &Path) -> std::io::Result<()> {
 }
 
 /// A line the game printed, into the editor's log at its level.
-fn log_player_line(text: &str, errors: bool) {
+pub(crate) fn log_player_line(text: &str, errors: bool) {
     let Some((level, message)) = player_line(text, errors) else { return };
     match level {
         Level::ERROR => tracing::error!(target: "player", "{message}"),

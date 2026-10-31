@@ -291,6 +291,8 @@ Done so far:
   assemblies in traces, and the player's log from Run in the Build window.
 - **VoxDocs Docs Health and home:** pages out of date, links that go nowhere, missing pictures, and pictures no page
   shows, each a link to its page or file; and home lists the pages updated lately and how healthy the docs are.
+- **The player's log kept:** a built game writes its log to the user's data folder, the run before's beside it, and
+  the Console's Player Log reads either in.
 - **Bundle compression:** LZ4, quick to load, Zstd, smaller, or none, from the project's `[content]` or a build
   profile, chosen in the Build window too, and recorded in the build report. A build log line naming a file shows it
   in the Project panel when picked.
@@ -314,7 +316,7 @@ Still to do in M3:
   - [ ] list and table drawers, colour palettes, the build's check of every scene, the source generator and
     analyzer, and custom drawers
 - OKLCH theme tokens.
-- The rest of Sifter: a player's log read from a build run on its own, and its settings screen with a live sample.
+- The rest of Sifter: its settings screen with a live sample of a row.
 - For the launcher: `vox upgrade`, the first-person, third-person, top-down and 2D templates (after an input API
   and 2D rendering), Windows archives, and a workflow that builds and publishes releases.
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): `[Documentation]` links from code and
@@ -337,7 +339,8 @@ Still to do in M3:
     writes with no copies, plus `With`, `Without` and `Changed` filters, and `ForEach` for the short way
   - [x] entity commands from C#: create, destroy, and add or remove components, applied at sync points
   - [x] a bridge to Objs (`obj.Add<Spin>()`, `obj.Get<Spin>()`), so Behaviours and systems can mix
-  - [ ] components written in scenes and prefabs, and shown in the inspector
+  - [x] components written in scenes and prefabs, and shown in the inspector
+  - [ ] live component values in the Inspector while playing
   - Later: parallel jobs over chunks.
 - The Animation workspace, once there is animation.
 

@@ -27,6 +27,9 @@
 //!   shows its category in it.
 //! - **Filters** saves the search, levels and categories hidden under a
 //!   name, to pick again, kept per user.
+//! - **Player Log** opens the log a built game kept the last time it ran
+//!   (or the time before), each line coming in at its level, in the Player
+//!   category, as Sifter reads a player's log.
 //! - **Hide…** in the trace pane folds away the frames of chosen assemblies
 //!   (a frame's root namespace, such as `Voxear`, or an engine crate), for
 //!   the one library that fills every trace.
@@ -45,6 +48,7 @@ use std::{
 use tracing::Level;
 use voxear_core::logging::LogCapture;
 use voxear_ecs::Entity;
+use voxear_engine::{build_profile, player};
 use voxear_ui::{Color, ItemFns, MenuItem, NodeId, RichText, Style, Ui};
 
 use self::{entry::Entry, frame::Frame, query::Query};
@@ -105,6 +109,7 @@ struct Toolbar {
     pause: NodeId,
     categories: NodeId,
     filters: NodeId,
+    player_log: NodeId,
     /// Where a filter being saved is named.
     filter_name: NodeId,
     muted: NodeId,
@@ -159,8 +164,10 @@ pub struct Console {
     /// A filter is being named, and its field is to take focus.
     naming: bool,
     focus_name: bool,
-    /// The assemblies the Hide menu lists, in its order.
+    /// The assemblies the Hide menu lists, in its order, and the logs the
+    /// Player Log menu does.
     hide_menu: Vec<String>,
+    log_menu: Vec<(String, PathBuf)>,
     /// Each category's colour, kept with the project, and the category whose
     /// colour is being picked from a line's menu.
     colours: Rc<RefCell<HashMap<String, u32>>>,
@@ -230,6 +237,7 @@ impl Console {
             naming: false,
             focus_name: false,
             hide_menu: Vec::new(),
+            log_menu: Vec::new(),
             colours,
             colouring: None,
         };
@@ -324,6 +332,13 @@ impl Console {
             self.open_filters(ui, settings);
         }
         refilter |= self.filter_choice(ui, settings, update);
+        if ui.clicked(self.toolbar.player_log) {
+            self.open_player_logs(ui);
+        }
+        if let Some((name, path)) = ui.menu_choice(self.toolbar.player_log).and_then(|i| self.log_menu.get(i).cloned())
+        {
+            read_player_log(&name, &path);
+        }
         self.name_filter(ui, settings, update);
         if ui.clicked(self.toolbar.muted) {
             self.muted.clear();
@@ -473,6 +488,18 @@ impl Console {
             ui.open_menu(self.list, at, &items);
         }
         false
+    }
+
+    /// The Player Log menu: each of the project's builds, its log from the
+    /// last run and the one before, where the game has kept them.
+    fn open_player_logs(&mut self, ui: &mut Ui) {
+        self.log_menu = player_logs(&self.project, player::log_path);
+        let mut items: Vec<MenuItem> = self.log_menu.iter().map(|(label, _)| MenuItem::new(label)).collect();
+        if items.is_empty() {
+            items.push(MenuItem::new("No build has run yet").enabled(false));
+        }
+        let [x, y, _, height] = ui.rect(self.toolbar.player_log);
+        ui.open_menu(self.toolbar.player_log, (x, y + height + 4.0), &items);
     }
 
     /// Gives a category a colour, or takes it away, and keeps it with the
@@ -791,6 +818,7 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
     });
     let categories = button(ui, "Categories");
     let filters = button(ui, "Filters");
+    let player_log = button(ui, "Player Log");
     let filter_name = ui.text_field(bar, "");
     ui.add_class(filter_name, "console-filter-name");
     ui.set_placeholder(filter_name, "Name this filter, then Enter");
@@ -802,7 +830,20 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
     let problem = ui.add_label(root, "");
     ui.add_class(problem, "console-problem");
     ui.set_visible(problem, false);
-    Toolbar { clear, collapse, pause, categories, filters, filter_name, muted, search_box, search, problem, levels }
+    Toolbar {
+        clear,
+        collapse,
+        pause,
+        categories,
+        filters,
+        player_log,
+        filter_name,
+        muted,
+        search_box,
+        search,
+        problem,
+        levels,
+    }
 }
 
 /// The trace pane: a bar of what the line is and the toggles, then the
@@ -913,6 +954,38 @@ fn push_frame(text: &mut RichText, entry: &Entry, index: usize, settings: &Setti
     text.push("\n", Default::default());
 }
 
+/// The logs the project's builds have kept: each profile's build that has
+/// run, its last run's log and the one before, as labels and files.
+/// `log_of` finds a game's log by its company and name.
+fn player_logs(project: &Path, log_of: impl Fn(Option<&str>, &str) -> Option<PathBuf>) -> Vec<(String, PathBuf)> {
+    let mut logs = Vec::new();
+    for profile in build_profile::profile_names(project) {
+        let Ok(settings) = build_profile::load_profile(project, &profile) else { continue };
+        let data = settings.output_dir(project, &profile).join(player::DATA_FOLDER);
+        let Ok(built) = player::PlayerSettings::read(&data) else { continue };
+        let Some(log) = log_of(built.company_name.as_deref(), &built.product_name) else { continue };
+        let before = log.with_file_name(player::PREVIOUS_LOG);
+        for (label, path) in [(profile.clone(), log), (format!("{profile}, the run before"), before)] {
+            if path.is_file() {
+                logs.push((label, path));
+            }
+        }
+    }
+    logs
+}
+
+/// Reads a built game's log into the editor's, each line at its level in
+/// the Player category, after a line saying whose and where it is.
+fn read_player_log(name: &str, path: &Path) {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            tracing::info!(target: "player", "The player's log of {name}, from {}", path.display());
+            text.lines().for_each(|line| crate::build_window::log_player_line(line, false));
+        }
+        Err(error) => tracing::warn!(target: "player", "could not read {}: {error}", path.display()),
+    }
+}
+
 /// Whether two filters show the same: their search, levels and categories.
 fn same_filter(a: &SavedFilter, b: &SavedFilter) -> bool {
     let sorted = |f: &SavedFilter| {
@@ -966,4 +1039,29 @@ fn level_slot(level: Level) -> usize {
 fn time(seconds: f64) -> String {
     let minutes = (seconds / 60.0).floor();
     format!("{:02}:{:06.3}", minutes as u64, seconds - minutes * 60.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_player_log_menu_lists_the_builds_that_ran() {
+        let project = tempfile::tempdir().unwrap();
+        let logs = tempfile::tempdir().unwrap();
+        build_profile::write_default_profiles(project.path()).unwrap();
+        let data = project.path().join("Builds/Linux Release").join(player::DATA_FOLDER);
+        std::fs::create_dir_all(&data).unwrap();
+        let built = "format = 1\nproduct_name = \"Orbit\"\nstart_level = \"Levels/Main.level\"\ndevelopment = false\n\
+                     validation_layers = false\nfullscreen = false\nwidth = 1600\nheight = 900\nengine = \"0.1.0\"\n\
+                     profile = \"Linux Release\"\n";
+        std::fs::write(data.join(player::PLAYER_FILE), built).unwrap();
+        let log_of = |_: Option<&str>, product: &str| Some(logs.path().join(product).join(player::PLAYER_LOG));
+        assert!(player_logs(project.path(), log_of).is_empty(), "built, but not run yet");
+        std::fs::create_dir_all(logs.path().join("Orbit")).unwrap();
+        std::fs::write(logs.path().join("Orbit").join(player::PLAYER_LOG), "a line").unwrap();
+        std::fs::write(logs.path().join("Orbit").join(player::PREVIOUS_LOG), "an older line").unwrap();
+        let labels: Vec<String> = player_logs(project.path(), log_of).into_iter().map(|(label, _)| label).collect();
+        assert_eq!(labels, ["Linux Release", "Linux Release, the run before"]);
+    }
 }

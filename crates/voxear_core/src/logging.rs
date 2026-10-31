@@ -28,6 +28,21 @@ pub fn init() {
         .try_init();
 }
 
+/// Installs the global log subscriber as [`init`] does, and also writes
+/// every line to `file`, without the terminal's colours, as a built game
+/// keeps its log.
+pub fn init_with_file(file: std::fs::File) {
+    let filter =
+        std::env::var("VOXEAR_LOG").or_else(|_| std::env::var("RUST_LOG")).unwrap_or_else(|_| DEFAULT_FILTER.into());
+    let terminal = tracing_subscriber::fmt::layer().with_target(false).fmt_fields(printed_fields());
+    let kept = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_ansi(false)
+        .fmt_fields(printed_fields())
+        .with_writer(std::sync::Mutex::new(file));
+    let _ = tracing_subscriber::registry().with(EnvFilter::new(filter)).with(terminal).with(kept).try_init();
+}
+
 /// What the terminal shows of a line's fields: the message and anything
 /// else, but not a script's stack or Obj, which are for the Console.
 fn printed_fields() -> impl for<'writer> tracing_subscriber::fmt::FormatFields<'writer> + 'static {

@@ -10,7 +10,10 @@ use voxear_engine::player::{self, PlayerArgs};
 fn main() -> Result<()> {
     let data = player::data_folder()?;
     player::choose_validation(&data);
-    voxear_core::logging::init();
+    match player::open_log(&data) {
+        Some(log) => voxear_core::logging::init_with_file(log),
+        None => voxear_core::logging::init(),
+    }
     let mut args = PlayerArgs::default();
     let mut given = std::env::args().skip(1);
     while let Some(arg) = given.next() {

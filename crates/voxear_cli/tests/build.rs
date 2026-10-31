@@ -71,9 +71,19 @@ fn a_profile_builds_a_player_that_runs_the_game() {
     assert_eq!(report["development"], true);
     assert_eq!(report["compression"], "zstd", "the profile's compression, over the project's");
 
-    let ran = Command::new(program).args(["--headless", "--frames", "5"]).output().unwrap();
+    // The game keeps its log in the user's data folder, here a throwaway one, the run before's beside it.
+    let data = tempfile::tempdir().unwrap();
+    let run = || Command::new(program).args(["--headless", "--frames", "5"]).env("XDG_DATA_HOME", data.path()).output();
+    let ran = run().unwrap();
     let log = String::from_utf8_lossy(&ran.stdout);
     assert!(ran.status.success(), "{log}{}", String::from_utf8_lossy(&ran.stderr));
     assert!(log.contains("Start    Spinner A (Spinner)"), "the scripts run: {log}");
     assert!(log.contains("ran 5 frames"), "{log}");
+    if cfg!(target_os = "linux") {
+        assert!(run().unwrap().status.success());
+        let kept = data.path().join("Hello Demo");
+        let text = std::fs::read_to_string(kept.join("player.log")).unwrap();
+        assert!(text.contains("ran 5 frames") && !text.contains("\u{1b}["), "kept without colours: {text}");
+        assert!(kept.join("player-prev.log").is_file(), "the run before's is kept beside it");
+    }
 }

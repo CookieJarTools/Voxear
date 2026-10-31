@@ -28,7 +28,7 @@ use crate::{
     build_profile::{self, BuildProfile},
     content_build::{self, CodeRoot, glob},
     core_assembly, engine_version,
-    player::{BUNDLES_FOLDER, DATA_FOLDER, MANAGED_FOLDER, PLAYER_FORMAT, PlayerSettings},
+    player::{BUNDLES_FOLDER, DATA_FOLDER, MANAGED_FOLDER, PLAYER_FORMAT, PlayerSettings, file_name},
     scripts,
 };
 
@@ -277,14 +277,6 @@ fn copy_managed(project: &Project, configuration: &str, symbols: bool, managed: 
 fn copy(from: &Path, to: &Path) -> Result<()> {
     std::fs::copy(from, to).with_context(|| format!("copying {}", from.display()))?;
     Ok(())
-}
-
-/// A game's name as a file name on Linux and Windows.
-fn file_name(name: &str) -> String {
-    let name: String =
-        name.chars().map(|c| if r#"/\:*?"<>|"#.contains(c) || c.is_control() { '_' } else { c }).collect();
-    let name = name.trim().trim_end_matches('.');
-    if name.is_empty() { "Game".into() } else { name.to_string() }
 }
 
 /// The commit the project is at, when it is a git repository.

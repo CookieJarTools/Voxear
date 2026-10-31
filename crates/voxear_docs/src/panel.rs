@@ -3,9 +3,18 @@
 //! other pages, headings, files and the web, and a link to a page not
 //! written yet makes it. Ticking a checklist box saves the page. Back and
 //! forward go through the pages read, and the box at the top finds pages by
-//! their words. Edit shows the page's Markdown to change and save.
+//! their words.
+//!
+//! **Edit** writes the page: its title and tags, its Markdown, and the page
+//! as it will read beside it, drawn again a moment after each change. Save
+//! or Ctrl+S writes it to its file, and so does Done, or opening another
+//! page, so nothing written is lost. A new title renames the page's file.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use voxear_ui::{ItemFns, NodeId, TreeItems, Ui};
 
@@ -17,6 +26,9 @@ use crate::{
 
 const MARKUP: &str = include_str!("../ui/VoxDocs.vui");
 const SHEET: &str = include_str!("../ui/VoxDocs.vss");
+
+/// How long after a change the preview is drawn again, so typing stays quick.
+const PREVIEW_DELAY: Duration = Duration::from_millis(250);
 
 /// What an empty VoxDocs says, as Markdown, so its link makes the first page.
 const EMPTY: &str = "This project has no pages yet. Pages are Markdown files in its `Docs` folder, \
@@ -65,20 +77,34 @@ struct Nodes {
     forward: NodeId,
     path: NodeId,
     edit: NodeId,
-    save: NodeId,
-    cancel: NodeId,
+    edit_icon: NodeId,
+    edit_label: NodeId,
     page: NodeId,
+    editor: NodeId,
+    title: NodeId,
+    tags: NodeId,
+    status: NodeId,
+    save: NodeId,
     source: NodeId,
+    preview: NodeId,
 }
 
 pub struct VoxDocs {
     library: Shared,
     nodes: Nodes,
     open: PageId,
-    back: Vec<PageId>,
-    forward: Vec<PageId>,
+    /// The pages read before and after this one, by id or path, which stay
+    /// true when pages are added or renamed.
+    back: Vec<String>,
+    forward: Vec<String>,
     rendered: Rendered,
     editing: bool,
+    /// Something written has not been saved.
+    dirty: bool,
+    /// The Markdown takes focus once it shows, a frame after Edit.
+    focus_source: bool,
+    /// When the preview is to be drawn again.
+    preview_due: Option<Instant>,
     /// A heading to scroll to once the page has been laid out.
     pending_anchor: Option<String>,
     results: Rc<RefCell<Vec<PageId>>>,
@@ -105,10 +131,16 @@ impl VoxDocs {
             forward: find(ui, "cb-forward"),
             path: find(ui, "cb-path"),
             edit: find(ui, "cb-edit"),
-            save: find(ui, "cb-save"),
-            cancel: find(ui, "cb-cancel"),
+            edit_icon: find(ui, "cb-edit-icon"),
+            edit_label: find(ui, "cb-edit-label"),
             page: find(ui, "cb-page"),
+            editor: find(ui, "cb-editor"),
+            title: find(ui, "cb-title-field"),
+            tags: find(ui, "cb-tags-field"),
+            status: find(ui, "cb-status"),
+            save: find(ui, "cb-save"),
             source: find(ui, "cb-source"),
+            preview: find(ui, "cb-preview"),
         };
         let library = Rc::new(RefCell::new(Library::open(project, name)));
         ui.bind_tree(nodes.tree, PageTree(library.clone()));
@@ -145,6 +177,9 @@ impl VoxDocs {
             forward: Vec::new(),
             rendered: Rendered::default(),
             editing: false,
+            dirty: false,
+            focus_source: false,
+            preview_due: None,
             pending_anchor: None,
             results,
             file_request: None,
@@ -162,6 +197,40 @@ impl VoxDocs {
     /// The page being read.
     pub fn open_page(&self) -> PageId {
         self.open
+    }
+
+    /// Whether the page is being written.
+    pub fn is_editing(&self) -> bool {
+        self.editing
+    }
+
+    /// Whether the page is being written with the keyboard in it, so Ctrl+S
+    /// is for the page rather than the scene.
+    pub fn has_keyboard(&self, ui: &Ui) -> bool {
+        let fields = [self.nodes.title, self.nodes.tags, self.nodes.source];
+        self.editing && ui.focused().is_some_and(|focused| fields.contains(&focused))
+    }
+
+    /// Saves the page being written, as Save and Ctrl+S do.
+    pub fn save(&mut self, ui: &mut Ui) {
+        if !self.editing || !self.dirty {
+            return;
+        }
+        let title = ui.text(self.nodes.title);
+        let tags: Vec<String> = ui.text(self.nodes.tags).split(',').map(str::to_string).collect();
+        let body = ui.text(self.nodes.source);
+        let saved = self.library.borrow_mut().save_page(self.open, &title, &tags, &body);
+        match saved {
+            Ok(page) => {
+                self.open = page;
+                self.dirty = false;
+                ui.refresh_list(self.nodes.tree);
+                self.select_in_tree(ui);
+                self.show_path(ui);
+            }
+            Err(error) => tracing::error!("VoxDocs: could not save the page: {error:#}"),
+        }
+        self.show_status(ui);
     }
 
     /// Opens a page by its id, path or title, as code's `[Documentation]`
@@ -186,6 +255,7 @@ impl VoxDocs {
     /// Answers what was clicked and typed since the last frame.
     pub fn update(&mut self, ui: &mut Ui) {
         self.scroll_to_pending(ui);
+        self.update_writing(ui);
         let nodes = &self.nodes;
         if ui.selection_changed(nodes.tree)
             && let Some(&id) = ui.selected_items(nodes.tree).first()
@@ -210,39 +280,97 @@ impl VoxDocs {
         if let Some(url) = ui.clicked_link(self.nodes.page).map(str::to_string) {
             self.follow(ui, &url);
         }
-        self.tick_tasks(ui);
+        if !self.editing {
+            self.tick_tasks(ui);
+        }
         let copied = self.rendered.copies.iter().find(|(button, _)| ui.clicked(*button)).map(|(_, code)| code.clone());
         if let Some(code) = copied {
             ui.copy_text(&code);
         }
         if ui.clicked(self.nodes.edit) {
-            let body = self.library.borrow().page(self.open).body.clone();
-            ui.set_text(self.nodes.source, &body);
-            self.show_editing(ui, true);
-            ui.focus(self.nodes.source);
-        }
-        if ui.clicked(self.nodes.cancel) {
-            self.show_editing(ui, false);
+            if self.editing {
+                self.finish_editing(ui);
+            } else {
+                self.start_editing(ui);
+            }
         }
         if ui.clicked(self.nodes.save) {
-            let body = ui.text(self.nodes.source);
-            if let Err(error) = self.library.borrow_mut().save(self.open, &body) {
-                tracing::error!("VoxDocs: could not save the page: {error:#}");
-            }
-            self.show_editing(ui, false);
-            self.render(ui);
+            self.save(ui);
         }
     }
 
+    /// While writing: the Markdown takes focus once it shows, a change marks
+    /// the page unsaved, and the preview follows a moment later.
+    fn update_writing(&mut self, ui: &mut Ui) {
+        if !self.editing {
+            return;
+        }
+        if self.focus_source {
+            ui.focus(self.nodes.source);
+            if ui.focused() == Some(self.nodes.source) {
+                ui.caret_to_end(self.nodes.source);
+                self.focus_source = false;
+            }
+        }
+        if ui.changed(self.nodes.source) {
+            self.preview_due = Some(Instant::now() + PREVIEW_DELAY);
+        }
+        if [self.nodes.source, self.nodes.title, self.nodes.tags].iter().any(|&field| ui.changed(field)) && !self.dirty
+        {
+            self.dirty = true;
+            self.show_status(ui);
+        }
+        if self.preview_due.is_some_and(|due| Instant::now() >= due) {
+            self.preview_due = None;
+            self.render_preview(ui);
+        }
+    }
+
+    /// Writes the open page: its title, tags and Markdown in fields, and how
+    /// it reads beside them.
+    fn start_editing(&mut self, ui: &mut Ui) {
+        let library = self.library.borrow();
+        let page = library.page(self.open);
+        let is_root = self.open == library.root();
+        ui.set_text(self.nodes.title, if is_root { "" } else { page.title() });
+        ui.set_enabled(self.nodes.title, !is_root);
+        ui.set_text(self.nodes.tags, &page.header.tags.join(", "));
+        ui.set_text(self.nodes.source, &page.body);
+        drop(library);
+        self.dirty = false;
+        self.show_editing(ui, true);
+        self.show_status(ui);
+        self.render_preview(ui);
+        self.focus_source = true;
+    }
+
+    /// Stops writing, saving what was written, and shows the page.
+    fn finish_editing(&mut self, ui: &mut Ui) {
+        if !self.editing {
+            return;
+        }
+        self.save(ui);
+        self.show_editing(ui, false);
+        self.render(ui);
+    }
+
+    /// How a page is remembered for Back and Forward: its id, or its path.
+    fn key(&self, page: PageId) -> String {
+        let library = self.library.borrow();
+        let page = library.page(page);
+        if page.header.id.is_empty() { page.reference().to_string() } else { page.header.id.clone() }
+    }
+
     /// Opens a page, remembering the one left for Back when `record` is set.
+    /// A page being written is saved first.
     fn go(&mut self, ui: &mut Ui, page: PageId, anchor: Option<String>, record: bool) {
         if page != self.open {
+            self.finish_editing(ui);
             if record {
-                self.back.push(self.open);
+                self.back.push(self.key(self.open));
                 self.forward.clear();
             }
             self.open = page;
-            self.show_editing(ui, false);
             self.render(ui);
             ui.set_scroll(self.nodes.page, [0.0, 0.0]);
             self.select_in_tree(ui);
@@ -251,11 +379,15 @@ impl VoxDocs {
     }
 
     fn step_history(&mut self, ui: &mut Ui, backwards: bool) {
+        let here = self.key(self.open);
         let (from, to) =
             if backwards { (&mut self.back, &mut self.forward) } else { (&mut self.forward, &mut self.back) };
-        let Some(page) = from.pop() else { return };
-        to.push(self.open);
-        self.go(ui, page, None, false);
+        let Some(key) = from.pop() else { return };
+        to.push(here);
+        let found = self.library.borrow().find(&key);
+        if let Some(page) = found {
+            self.go(ui, page, None, false);
+        }
     }
 
     /// Where a link in the open page goes.
@@ -279,9 +411,11 @@ impl VoxDocs {
             Ok(page) => {
                 ui.refresh_list(self.nodes.tree);
                 self.go(ui, page, None, true);
+                self.start_editing(ui);
                 ui.set_text(self.nodes.source, &format!("# {name}\n\n"));
-                self.show_editing(ui, true);
-                ui.focus(self.nodes.source);
+                self.dirty = true;
+                self.show_status(ui);
+                self.render_preview(ui);
             }
             Err(error) => tracing::error!("VoxDocs: could not make {name}: {error:#}"),
         }
@@ -324,23 +458,38 @@ impl VoxDocs {
 
     fn show_editing(&mut self, ui: &mut Ui, editing: bool) {
         self.editing = editing;
+        self.focus_source &= editing;
+        if !editing {
+            self.preview_due = None;
+        }
         ui.set_visible(self.nodes.page, !editing);
-        ui.set_visible(self.nodes.source, editing);
-        ui.set_visible(self.nodes.edit, !editing);
-        ui.set_visible(self.nodes.save, editing);
-        ui.set_visible(self.nodes.cancel, editing);
+        ui.set_visible(self.nodes.editor, editing);
+        ui.set_text(self.nodes.edit_label, if editing { "Done" } else { "Edit" });
+        ui.set_icon(self.nodes.edit_icon, if editing { "check" } else { "edit" });
     }
 
-    /// Draws the open page: its title, tags and date, its words, and for a
-    /// folder, what is in it.
-    fn render(&mut self, ui: &mut Ui) {
-        for child in ui.children(self.nodes.page) {
+    fn show_status(&mut self, ui: &mut Ui) {
+        ui.set_text(self.nodes.status, if self.dirty { "Unsaved changes" } else { "Saved" });
+        ui.set_class(self.nodes.status, "dirty", self.dirty);
+    }
+
+    /// The Markdown being written, as it will read.
+    fn render_preview(&mut self, ui: &mut Ui) {
+        for child in ui.children(self.nodes.preview) {
             ui.remove(child);
         }
         let library = self.library.borrow();
-        let page = library.page(self.open);
+        let blocks = markdown::parse(&ui.text(self.nodes.source));
+        let open = self.open;
+        let works = |url: &str| library.works(url, open);
+        view::render(ui, self.nodes.preview, &blocks, &works);
+    }
+
+    /// The folders the open page is in, and whether Back and Forward go anywhere.
+    fn show_path(&mut self, ui: &mut Ui) {
+        let library = self.library.borrow();
         let mut crumbs = Vec::new();
-        let mut at = page.parent;
+        let mut at = library.page(self.open).parent;
         while let Some(folder) = at {
             crumbs.push(library.page(folder).title().to_string());
             at = library.page(folder).parent;
@@ -349,6 +498,17 @@ impl VoxDocs {
         ui.set_text(self.nodes.path, &crumbs.join("  /  "));
         ui.set_enabled(self.nodes.back, !self.back.is_empty());
         ui.set_enabled(self.nodes.forward, !self.forward.is_empty());
+    }
+
+    /// Draws the open page: its title, tags and date, its words, and for a
+    /// folder, what is in it.
+    fn render(&mut self, ui: &mut Ui) {
+        for child in ui.children(self.nodes.page) {
+            ui.remove(child);
+        }
+        self.show_path(ui);
+        let library = self.library.borrow();
+        let page = library.page(self.open);
 
         let title = ui.add_label(self.nodes.page, page.title());
         ui.add_class(title, "cb-title");

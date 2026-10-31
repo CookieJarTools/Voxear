@@ -5,7 +5,10 @@
 //!
 //! - **TextField**: one line, or several with `multiline`. Editing is
 //!   parley's: caret and word movement, selection by click, drag, double and
-//!   triple click, clipboard, and input methods.
+//!   triple click, clipboard, and input methods. Ctrl+Z undoes, a word typed
+//!   at a time, and Ctrl+Shift+Z or Ctrl+Y redoes. A multiline field
+//!   scrolls to keep the caret in view, and with the wheel, showing a thumb
+//!   as a scroll view does.
 //! - **Toggle**: a `toggle-box` holding a `toggle-mark` (the default
 //!   theme's switch knob) and a `toggle-check` icon (shown instead with the
 //!   `checkbox` class), then a `toggle-label`. It matches `:checked` when on.
@@ -67,23 +70,103 @@ pub(crate) enum Control {
     Dock(Box<crate::dock::DockState>),
 }
 
+/// How long a pause in typing ends one step of undo, in seconds.
+const UNDO_PAUSE: f32 = 1.0;
+/// How many steps a field can undo.
+const UNDO_STEPS: usize = 200;
+
 /// A text field's editor and how its text sits in the field.
 pub(crate) struct Editing {
     pub editor: PlainEditor<u16>,
     pub placeholder: Text,
     pub multiline: bool,
     /// How far the text is scrolled left to keep the caret in view, and how
-    /// far down a single line sits to be centred, in physical pixels.
+    /// far down a single line sits to be centred, or up a multiline field's
+    /// text is scrolled, in physical pixels.
     pub scroll: f32,
     pub top: f32,
+    /// How far a multiline field's text is scrolled up, in physical pixels.
+    pub scroll_y: f32,
+    /// The text and caret before each change, to undo, and what undoing took
+    /// back, to redo.
+    undo: Vec<(String, usize)>,
+    redo: Vec<(String, usize)>,
+    /// When the field last changed, and where the caret ended if that was a
+    /// word being typed, which the next letters join in one step of undo.
+    changed_at: f32,
+    typing_at: Option<usize>,
     synced: Option<(TextStyle, f32, Option<f32>)>,
+}
+
+/// What an edit is, for undo: letters typed, which join the word before
+/// them, or anything else, which is a step of its own.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Step {
+    /// Typed text; `true` when it ends a word, as a space does.
+    Typing(bool),
+    Other,
+    /// Undoing or redoing, which keeps the history as it is.
+    History,
 }
 
 impl Editing {
     fn new(text: &str) -> Self {
         let mut editor = PlainEditor::new(TextStyle::default().size);
         editor.set_text(text);
-        Self { editor, placeholder: Text::new(""), multiline: false, scroll: 0.0, top: 0.0, synced: None }
+        Self {
+            editor,
+            placeholder: Text::new(""),
+            multiline: false,
+            scroll: 0.0,
+            top: 0.0,
+            scroll_y: 0.0,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            changed_at: 0.0,
+            typing_at: None,
+            synced: None,
+        }
+    }
+
+    /// Where the caret is, as a byte in the text.
+    fn caret(&self) -> usize {
+        self.editor.raw_selection().focus().index()
+    }
+
+    /// Text set from code starts the field's history again.
+    pub fn forget_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.typing_at = None;
+    }
+
+    /// Notes a change from `before`, joining the last step when it carries on
+    /// a word being typed.
+    fn record(&mut self, before: (String, usize), step: Step, now: f32) {
+        if step == Step::History {
+            return;
+        }
+        let joins = matches!(step, Step::Typing(_))
+            && self.typing_at == Some(before.1)
+            && now - self.changed_at < UNDO_PAUSE
+            && !self.undo.is_empty();
+        if !joins {
+            self.undo.push(before);
+            if self.undo.len() > UNDO_STEPS {
+                self.undo.remove(0);
+            }
+        }
+        self.redo.clear();
+        self.changed_at = now;
+        self.typing_at = matches!(step, Step::Typing(false)).then(|| self.caret());
+    }
+
+    /// Keeps a multiline field's scroll within its text, `height` pixels of
+    /// which show.
+    fn clamp_scroll(&mut self, height: f32) {
+        let text_height = self.editor.try_layout().map_or(0.0, |layout| layout.height());
+        self.scroll_y = self.scroll_y.clamp(0.0, (text_height - height).max(0.0));
+        self.top = -self.scroll_y.round();
     }
 
     /// Brings the editor's font, scale and wrapping width up to date.
@@ -105,11 +188,25 @@ impl Editing {
         self.synced = Some((style, scale, width));
     }
 
-    /// Scrolls a single line so the caret stays inside `width` pixels.
-    fn keep_caret_visible(&mut self, width: f32) {
+    /// Scrolls a single line so the caret stays inside `width` pixels, or
+    /// several lines so it stays inside `height`.
+    fn keep_caret_visible(&mut self, width: f32, height: f32) {
+        if self.multiline {
+            self.scroll = 0.0;
+            if let Some(caret) = self.editor.cursor_geometry(1.0) {
+                let (top, bottom) = (caret.y0 as f32, caret.y1 as f32);
+                if bottom - self.scroll_y > height {
+                    self.scroll_y = bottom - height;
+                } else if top < self.scroll_y {
+                    self.scroll_y = top;
+                }
+            }
+            self.clamp_scroll(height);
+            return;
+        }
         let Some(layout) = self.editor.try_layout() else { return };
         let text_width = layout.width();
-        if self.multiline || text_width <= width {
+        if text_width <= width {
             self.scroll = 0.0;
             return;
         }
@@ -361,19 +458,36 @@ impl Ui {
     /// Runs editor commands on a text field, then notes a change, keeps the
     /// caret in view and restarts its blink.
     pub(crate) fn edit(&mut self, field: NodeId, command: impl FnOnce(&mut PlainEditorDriver<'_, u16>)) {
+        self.edit_step(field, Step::Other, command);
+    }
+
+    /// [`edit`](Self::edit), noting for undo what kind of edit it is.
+    pub(crate) fn edit_step(
+        &mut self,
+        field: NodeId,
+        step: Step,
+        command: impl FnOnce(&mut PlainEditorDriver<'_, u16>),
+    ) {
         let scale = self.viewport.2.max(0.25);
-        let [_, _, width, _] = self.content_box(field);
+        let now = self.input.time;
+        let [_, _, width, height] = self.content_box(field);
         let Ui { tree, fonts, layouts, .. } = self;
         let Some(element) = tree.get_node_context_mut(field.0) else { return };
         let style = element.text_style;
         let Some(Control::TextField(edit)) = &mut element.control else { return };
         edit.sync(style, scale, Some(width * scale));
-        let before = edit.editor.raw_text().to_string();
+        let before = (edit.editor.raw_text().to_string(), edit.caret());
         let mut driver = edit.editor.driver(fonts, layouts);
         command(&mut driver);
         driver.refresh_layout();
-        let changed = edit.editor.raw_text() != before;
-        edit.keep_caret_visible(width * scale);
+        let changed = edit.editor.raw_text() != before.0;
+        if changed {
+            edit.record(before, step, now);
+        } else if step != Step::History && edit.caret() != before.1 {
+            // The caret moved on its own: typing there starts a step of its own.
+            edit.typing_at = None;
+        }
+        edit.keep_caret_visible(width * scale, height * scale);
         self.input.blink_from = self.input.time;
         if changed {
             self.mark_changed(field);
@@ -398,8 +512,35 @@ impl Ui {
             }),
             Key::Up => self.edit(field, |d| if shift { d.select_up() } else { d.move_up() }),
             Key::Down => self.edit(field, |d| if shift { d.select_down() } else { d.move_down() }),
-            Key::Home => self.edit(field, |d| if shift { d.select_to_line_start() } else { d.move_to_line_start() }),
-            Key::End => self.edit(field, |d| if shift { d.select_to_line_end() } else { d.move_to_line_end() }),
+            Key::Home => self.edit(field, |d| match (shift, word) {
+                (false, false) => d.move_to_line_start(),
+                (true, false) => d.select_to_line_start(),
+                (false, true) => d.move_to_text_start(),
+                (true, true) => d.select_to_text_start(),
+            }),
+            Key::End => self.edit(field, |d| match (shift, word) {
+                (false, false) => d.move_to_line_end(),
+                (true, false) => d.select_to_line_end(),
+                (false, true) => d.move_to_text_end(),
+                (true, true) => d.select_to_text_end(),
+            }),
+            Key::PageUp | Key::PageDown if self.is_multiline(field) => {
+                let lines = self.lines_shown(field);
+                let down = key == Key::PageDown;
+                self.edit(field, |d| {
+                    for _ in 0..lines {
+                        match (down, shift) {
+                            (true, false) => d.move_down(),
+                            (true, true) => d.select_down(),
+                            (false, false) => d.move_up(),
+                            (false, true) => d.select_up(),
+                        }
+                    }
+                });
+            }
+            Key::Char('z') if word && shift => self.step_history(field, true),
+            Key::Char('z') if word => self.step_history(field, false),
+            Key::Char('y') if word => self.step_history(field, true),
             Key::Backspace => self.edit(field, |d| if word { d.backdelete_word() } else { d.backdelete() }),
             Key::Delete => self.edit(field, |d| if word { d.delete_word() } else { d.delete() }),
             Key::Enter if self.is_multiline(field) && !word => {
@@ -428,6 +569,43 @@ impl Ui {
             }
             _ => {}
         }
+    }
+
+    /// Undoes the field's last step, or redoes the last one undone.
+    fn step_history(&mut self, field: NodeId, redo: bool) {
+        let Some(edit) = self.editing(field) else { return };
+        let (from, to) = if redo { (&mut edit.redo, &mut edit.undo) } else { (&mut edit.undo, &mut edit.redo) };
+        let Some((text, caret)) = from.pop() else { return };
+        let now = (edit.editor.raw_text().to_string(), edit.editor.raw_selection().focus().index());
+        to.push(now);
+        edit.typing_at = None;
+        self.edit_step(field, Step::History, |d| {
+            d.select_all();
+            d.insert_or_replace_selection(&text);
+            d.move_to_byte(caret);
+        });
+    }
+
+    /// About how many lines of a multiline field show at once, for Page Up
+    /// and Page Down.
+    fn lines_shown(&mut self, field: NodeId) -> usize {
+        let scale = self.viewport.2.max(0.25);
+        let [_, _, _, height] = self.content_box(field);
+        let Some(edit) = self.editing(field) else { return 1 };
+        let line = edit.editor.cursor_geometry(1.0).map_or(16.0, |caret| (caret.y1 - caret.y0) as f32);
+        ((height * scale / line.max(1.0)) as usize).saturating_sub(1).max(1)
+    }
+
+    /// Scrolls a multiline text field by `dy` logical pixels, as the wheel
+    /// does. Returns whether it moved.
+    pub(crate) fn scroll_field(&mut self, field: NodeId, dy: f32) -> bool {
+        let scale = self.viewport.2.max(0.25);
+        let [_, _, _, height] = self.content_box(field);
+        let Some(edit) = self.editing(field).filter(|edit| edit.multiline) else { return false };
+        let before = edit.scroll_y;
+        edit.scroll_y += dy * scale;
+        edit.clamp_scroll(height * scale);
+        edit.scroll_y != before
     }
 
     pub(crate) fn slider_key(&mut self, slider: NodeId, key: Key) -> bool {
@@ -579,8 +757,13 @@ impl Ui {
             let Some(Control::TextField(edit)) = &mut element.control else { continue };
             edit.sync(style, scale, Some(width * scale));
             let text_height = edit.editor.layout(fonts, layouts).height();
-            edit.top = if edit.multiline { 0.0 } else { ((height * scale - text_height) / 2.0).max(0.0).floor() };
-            edit.keep_caret_visible(width * scale);
+            // A multiline field keeps where it was scrolled to, so the wheel can leave the caret.
+            if edit.multiline {
+                edit.clamp_scroll(height * scale);
+            } else {
+                edit.top = ((height * scale - text_height) / 2.0).max(0.0).floor();
+                edit.keep_caret_visible(width * scale, height * scale);
+            }
             if !edit.placeholder.content.is_empty() {
                 let layout = edit.placeholder.shaped(fonts, layouts, scale);
                 layout.break_all_lines(None);

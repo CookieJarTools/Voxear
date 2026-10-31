@@ -78,6 +78,7 @@
 .cb-main {
     flex-grow: 1;
     min-width: 0px;
+    min-height: 0px;
 }
 
 .cb-toolbar {
@@ -154,9 +155,62 @@
     height: 22px;
 }
 
-.cb-source {
+/* Writing a page: the title and tags over the Markdown, and the page as it
+   will read beside it, drawn again a moment after each change. */
+
+/* Each held to the panel's height rather than the text's, so the Markdown
+   scrolls inside its field. */
+.cb-editor {
     flex-grow: 1;
     flex-basis: 0px;
+    min-height: 0px;
+}
+
+.cb-editor-head {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 6px;
+    padding: 8px 8px 0px 8px;
+}
+
+.cb-title-field {
+    flex-grow: 2;
+    flex-basis: 0px;
+    min-width: 80px;
+}
+
+.cb-tags-field {
+    flex-grow: 3;
+    flex-basis: 0px;
+    min-width: 80px;
+}
+
+.cb-status {
+    flex-shrink: 0;
+    margin: 0px 4px;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.cb-status.dirty {
+    color: var(--vx-accent);
+}
+
+.cb-edit-split {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-height: 0px;
+}
+
+.cb-edit-split > .split-divider {
+    width: 1px;
+    background-color: var(--vx-line);
+}
+
+.cb-source {
+    height: auto;
+    min-height: 0px;
     margin: 8px;
     padding: 8px 10px;
     justify-content: flex-start;

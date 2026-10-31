@@ -279,6 +279,9 @@ Done so far:
   Run and Show in Files.
 - **The layout kept:** the editor opens with the panels and workspace it was closed with, each workspace's layout
   kept in `.voxear/Editor.toml`.
+- **VoxDocs editing:** a page's title, tags and Markdown with the page as it will read beside it, saved by Save,
+  Ctrl+S, Done or opening another page, and renamed by its title. Multiline text fields scroll to the caret and
+  with the wheel, and every text field undoes and redoes.
 
 Still to do in M3:
 - UI core:
@@ -293,8 +296,6 @@ Still to do in M3:
   player's log.
 - For the launcher: `vox upgrade`, the first-person, third-person, top-down and 2D templates (after an input API
   and 2D rendering), Windows archives, and a workflow that builds and publishes releases.
-- **VoxDocs is not usable yet:** editing a page does not work, and most of the CookieJarTools Cookbook's
-  features are missing. It needs a pass of its own, editing first, before its next parts.
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.

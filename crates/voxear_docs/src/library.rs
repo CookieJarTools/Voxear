@@ -236,6 +236,42 @@ impl Library {
         Ok(())
     }
 
+    /// Writes a page as its editor left it: its title, tags and Markdown. A
+    /// new title renames its file, or a folder's folder, unless its header
+    /// holds the title, which then changes there; the top folder keeps its
+    /// name. Returns the page as it now is, since a rename moves it.
+    pub fn save_page(&mut self, id: PageId, title: &str, tags: &[String], body: &str) -> Result<PageId> {
+        let mut kept: Vec<String> = Vec::new();
+        for tag in tags.iter().map(|tag| tag.trim()).filter(|tag| !tag.is_empty()) {
+            if !kept.iter().any(|k| k.eq_ignore_ascii_case(tag)) {
+                kept.push(tag.to_string());
+            }
+        }
+        self.pages[id.0].header.tags = kept;
+        let title = title.trim().replace(['/', '\\'], "-");
+        let page = self.page(id);
+        if title.is_empty() || id == self.root() || title == page.title() {
+            self.save(id, body)?;
+            return Ok(id);
+        }
+        if !page.header.title.is_empty() {
+            self.pages[id.0].header.title = title;
+            self.save(id, body)?;
+            return Ok(id);
+        }
+        let name = if page.is_folder { title.clone() } else { format!("{title}{EXTENSION}") };
+        let parent = page.parent.map_or(String::new(), |parent| self.page(parent).path.clone());
+        let (from, to) = (self.root.join(&page.path), self.root.join(join(&parent, &name)));
+        if to.exists() && !same_file(&from, &to) {
+            bail!("there is already a page called {title} in this folder");
+        }
+        self.save(id, body)?;
+        let saved = self.page(id).header.id.clone();
+        std::fs::rename(&from, &to).with_context(|| format!("renaming {} to {title}", self.page(id).title()))?;
+        self.reload();
+        self.by_id.get(&saved).copied().context("the page was not found after renaming it")
+    }
+
     /// Ticks or unticks a checklist box, and saves the page.
     pub fn set_task(&mut self, id: PageId, task: Task, done: bool) -> Result<()> {
         let mut body = self.page(id).body.clone();
@@ -357,6 +393,12 @@ impl Library {
         }
         self.pages[id.0].words = words;
     }
+}
+
+/// Whether two paths are one file, as a rename that only changes the case of
+/// a name finds on Windows.
+fn same_file(a: &Path, b: &Path) -> bool {
+    matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
 fn join(folder: &str, name: &str) -> String {

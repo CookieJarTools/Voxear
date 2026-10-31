@@ -30,6 +30,9 @@ impl Ui {
     pub fn pointer_scroll(&mut self, dx: f32, dy: f32) -> bool {
         let path = self.hit_path();
         for &node in path.iter().rev() {
+            if self.scroll_field(NodeId(node), dy) {
+                return true;
+            }
             let Some(element) = self.element(NodeId(node)) else { continue };
             if element.computed.overflow != Overflow::Scroll {
                 continue;

@@ -1460,7 +1460,15 @@ impl Editor {
             && self.control
             && let winit::keyboard::Key::Character(text) = &key.logical_key
         {
+            // In a text field, undo, redo and duplicate are the field's; Ctrl+S
+            // saves the VoxDocs page being written, or else the scene.
+            let typing = self.ui.wants_keyboard();
             let command = match (text.to_lowercase().as_str(), self.shift) {
+                ("s", _) if self.docs.has_keyboard(&self.ui) => {
+                    self.docs.save(&mut self.ui);
+                    return true;
+                }
+                ("z" | "y" | "d", _) if typing => None,
                 ("s", _) => Some(Command::Save),
                 ("d", _) => Some(Command::Duplicate),
                 ("z", false) => Some(Command::Undo),

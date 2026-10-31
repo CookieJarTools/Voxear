@@ -14,12 +14,22 @@
                 <Button name="cb-back" class="icon-button"><Icon icon="chevron-left" /></Button>
                 <Button name="cb-forward" class="icon-button"><Icon icon="chevron-right" /></Button>
                 <Label name="cb-path" class="cb-path" />
-                <Button name="cb-edit" class="cb-button"><Icon icon="edit" /><Label>Edit</Label></Button>
-                <Button name="cb-cancel" class="cb-button">Cancel</Button>
-                <Button name="cb-save" class="cb-button primary">Save</Button>
+                <Button name="cb-edit" class="cb-button"><Icon name="cb-edit-icon" icon="edit" /><Label name="cb-edit-label">Edit</Label></Button>
             </Panel>
             <ScrollView name="cb-page" class="cb-page" />
-            <TextField name="cb-source" class="cb-source" multiline="true" />
+            <!-- Writing a page: its title and tags, the Markdown, and how it will read beside it. -->
+            <Panel name="cb-editor" class="cb-editor">
+                <Panel class="cb-editor-head">
+                    <TextField name="cb-title-field" class="cb-title-field" placeholder="Title" />
+                    <TextField name="cb-tags-field" class="cb-tags-field" placeholder="Tags, separated by commas" />
+                    <Label name="cb-status" class="cb-status" />
+                    <Button name="cb-save" class="cb-button primary">Save</Button>
+                </Panel>
+                <SplitView name="cb-edit-split" class="cb-edit-split" size="50%" min="160">
+                    <TextField name="cb-source" class="cb-source" multiline="true" />
+                    <ScrollView name="cb-preview" class="cb-page cb-preview" />
+                </SplitView>
+            </Panel>
         </Panel>
     </SplitView>
 </vui>

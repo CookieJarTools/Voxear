@@ -196,6 +196,8 @@ impl Draw<'_> {
             if let Some(Control::TextField(_)) = &element.control {
                 let content =
                     [origin[0], origin[1], origin[0] + inner * self.scale, origin[1] + inner_height * self.scale];
+                // Its thumb runs in its padding, outside its text's clip.
+                let outer = clip;
                 let clip = [
                     clip[0].max(content[0]),
                     clip[1].max(content[1]),
@@ -203,7 +205,12 @@ impl Draw<'_> {
                     clip[3].min(content[3]),
                 ];
                 let focused = self.focused == Some(node);
-                let field = Field { focused, caret: focused && self.caret_on, opacity, clip };
+                let size = [inner * self.scale, inner_height * self.scale];
+                // Its thumb runs inside its border, as a scroll view's does.
+                let edge = x1 - look.border * self.scale;
+                let bar = (edge, outer);
+                let field =
+                    Field { focused, caret: focused && self.caret_on, opacity, clip, size, bar, scale: self.scale };
                 draw_field(element, origin, field, self.atlas, self.quads);
             }
             let color = text_color.map(|c| c * opacity);
@@ -538,6 +545,11 @@ struct Field {
     opacity: f32,
     /// Its content box, within whatever clips it.
     clip: [f32; 4],
+    /// Its content box's size, in physical pixels, and where its thumb can
+    /// show: its right edge inside its border, and what clips the field.
+    size: [f32; 2],
+    bar: (f32, [f32; 4]),
+    scale: f32,
 }
 
 /// A text field's selection, text (or placeholder) and caret, from the top
@@ -579,5 +591,16 @@ fn draw_field(element: &mut Element, origin: [f32; 2], field: Field, atlas: &mut
             (bounds.y1 - bounds.y0) as f32,
         ];
         quads.push(solid(rect, fade(caret)));
+    }
+    // Text taller than the field has a thumb, as a scroll view does.
+    if edit.multiline
+        && let Some(layout) = edit.editor.try_layout()
+        && let Some((top, length)) = thumb(field.size[1], layout.height() - field.size[1], edit.scroll_y)
+    {
+        let (width, inset) = (BAR * field.scale, BAR_INSET * field.scale);
+        let (edge, clip) = field.bar;
+        let rect = [(edge - width - inset).round(), (origin[1] + top).round(), width, length];
+        let look = Look { background: style.scrollbar.linear_premultiplied(), radius: BAR / 2.0, ..Look::default() };
+        shape_quad(&look, rect, field.scale, field.opacity, clip, quads);
     }
 }

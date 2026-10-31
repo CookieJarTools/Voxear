@@ -416,6 +416,7 @@ impl Ui {
         if let Some(edit) = self.editing(node) {
             if edit.editor.raw_text() != text {
                 edit.editor.set_text(text);
+                edit.forget_history();
                 let _ = self.tree.mark_dirty(node.0);
             }
             return;

@@ -184,3 +184,78 @@ fn controls_come_from_markup_with_the_default_theme() {
     assert_eq!(ui.rect(find("name"))[3], 24.0, "the theme's field height");
     assert!(ui.take_warnings().is_empty(), "the theme and the markup are clean");
 }
+
+#[test]
+fn a_multiline_field_scrolls_to_its_caret_and_with_the_wheel() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let field = ui.text_field(root, "");
+    ui.set_style(field, Style::column().at(10.0, 10.0).width(300.0));
+    // Inline, since the theme gives text fields a line's height.
+    ui.set_inline_style(field, "height: 100px");
+    ui.set_multiline(field, true);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    click(&mut ui, field);
+    for line in 0..30 {
+        ui.text_input(&format!("line {line}"));
+        ui.key_down(Key::Enter);
+    }
+    let caret = |quads: &[Quad]| {
+        let caret = quads.iter().find(|q| q.kind == Quad::SHAPE && q.rect[2] <= 2.0 && q.rect[3] > 8.0);
+        caret.map(|q| q.rect)
+    };
+    let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+    let [fx, fy, fw, fh] = ui.rect(field);
+    let [_, top, _, height] = caret(&frame.quads).expect("the focused field draws its caret");
+    assert!(top >= fy && top + height <= fy + fh + 1.0, "the text scrolled to keep the caret in the field");
+    let thumb = |q: &&Quad| q.kind == Quad::SHAPE && q.rect[2] > 3.0 && q.rect[2] < 10.0 && q.rect[0] > fx + fw - 12.0;
+    assert!(frame.quads.iter().any(|q| thumb(&q)), "a thumb shows there is more above");
+
+    // The wheel goes back to the top, leaving the caret where it is.
+    ui.pointer_move(fx + 40.0, fy + 40.0);
+    assert!(ui.pointer_scroll(0.0, -10_000.0), "the field took the wheel");
+    assert!(!ui.pointer_scroll(0.0, -10.0), "and can go no further up");
+    let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(caret(&frame.quads).is_none_or(|[_, top, ..]| top >= fy + fh), "the caret is out of sight below");
+    let first = frame.quads.iter().filter(|q| q.kind == Quad::GLYPH).map(|q| q.rect[1]).fold(f32::MAX, f32::min);
+    assert!(first < fy + 20.0, "the first line shows at the top");
+
+    // Page Up from the end climbs a field's height, and Ctrl+Home goes to the very start.
+    with(&mut ui, false, true, Key::End);
+    with(&mut ui, false, false, Key::PageUp);
+    with(&mut ui, false, true, Key::Home);
+    ui.text_input("Top. ");
+    assert!(ui.text(field).starts_with("Top. line 0"));
+}
+
+#[test]
+fn text_fields_undo_a_word_at_a_time_and_redo() {
+    let (mut ui, field, ..) = form();
+    click(&mut ui, field);
+    for letter in "one two".chars() {
+        ui.text_input(&letter.to_string());
+    }
+    with(&mut ui, false, false, Key::Backspace);
+    assert_eq!(ui.text(field), "one tw");
+    let undo = |ui: &mut Ui| with(ui, false, true, Key::Char('z'));
+    undo(&mut ui);
+    assert_eq!(ui.text(field), "one two", "the deletion first");
+    undo(&mut ui);
+    assert_eq!(ui.text(field), "one ", "then the last word");
+    undo(&mut ui);
+    assert_eq!(ui.text(field), "", "then the first, with its space");
+    undo(&mut ui);
+    assert_eq!(ui.text(field), "", "and nothing more");
+
+    with(&mut ui, true, true, Key::Char('z'));
+    assert_eq!(ui.text(field), "one ");
+    with(&mut ui, false, true, Key::Char('y'));
+    assert_eq!(ui.text(field), "one two");
+    ui.text_input("!");
+    with(&mut ui, false, true, Key::Char('y'));
+    assert_eq!(ui.text(field), "one two!", "typing after an undo leaves nothing to redo");
+
+    ui.set_text(field, "set from code");
+    undo(&mut ui);
+    assert_eq!(ui.text(field), "set from code", "text set from code starts the history again");
+}

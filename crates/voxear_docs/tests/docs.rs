@@ -134,3 +134,72 @@ fn the_panel_follows_links_and_writes_missing_pages() {
     assert!(dir.path().join("Docs/Guide/Level Streaming.md").is_file(), "a link to a missing page writes it");
     assert_eq!(docs.library().page(docs.open_page()).title(), "Level Streaming");
 }
+
+fn click(ui: &mut Ui, node: NodeId) {
+    let [x, y, w, h] = ui.rect(node);
+    click_at(ui, x + w / 2.0, y + h / 2.0);
+}
+
+/// An update and a frame, as the editor gives the panel each frame.
+fn frame(ui: &mut Ui, docs: &mut VoxDocs) {
+    docs.update(ui);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+}
+
+#[test]
+fn edit_writes_the_title_tags_and_markdown_and_leaving_saves() {
+    let dir = project();
+    let (mut ui, mut docs, host) = panel(dir.path());
+    assert!(docs.open_reference(&mut ui, "Writing Pages"));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let named = |ui: &Ui, name: &str| ui.find(host, name).unwrap();
+    let edit = named(&ui, "cb-edit");
+    click(&mut ui, edit);
+    frame(&mut ui, &mut docs);
+    assert!(docs.is_editing());
+    assert_eq!(ui.text(named(&ui, "cb-edit-label")), "Done");
+    assert_eq!(ui.text(named(&ui, "cb-title-field")), "Writing Pages");
+    assert_eq!(ui.text(named(&ui, "cb-tags-field")), "docs, guide");
+    assert_eq!(ui.text(named(&ui, "cb-status")), "Saved");
+    frame(&mut ui, &mut docs);
+    let source = named(&ui, "cb-source");
+    assert_eq!(ui.focused(), Some(source), "the Markdown takes the keyboard once it shows");
+    assert!(docs.has_keyboard(&ui));
+
+    ui.text_input("\nA new paragraph.");
+    frame(&mut ui, &mut docs);
+    assert_eq!(ui.text(named(&ui, "cb-status")), "Unsaved changes");
+    assert!(ui.text(source).ends_with("https://voxear.dev.\n\nA new paragraph."), "typed at the end");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    frame(&mut ui, &mut docs);
+    assert!(label(&ui, named(&ui, "cb-preview"), "A new paragraph").is_some(), "the preview follows");
+
+    ui.set_text(named(&ui, "cb-title-field"), "Writing Guide");
+    ui.set_text(named(&ui, "cb-tags-field"), "docs, Guide, new, docs");
+    // Set from code, so the field reports no change: what is typed would.
+    ui.focus(named(&ui, "cb-title-field"));
+    ui.text_input(" ");
+    frame(&mut ui, &mut docs);
+    docs.save(&mut ui);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.text(named(&ui, "cb-status")), "Saved");
+    assert!(!dir.path().join("Docs/Guide/Writing Pages.md").exists(), "a new title renames the file");
+    let saved = std::fs::read_to_string(dir.path().join("Docs/Guide/Writing Guide.md")).unwrap();
+    assert!(saved.contains("tags: [docs, Guide, new]"), "tags kept once each: {saved}");
+    assert!(saved.contains("id: a4f08c3e91b2"), "the page keeps its id");
+    assert!(saved.ends_with("A new paragraph."));
+
+    // Opening another page saves what was written.
+    ui.focus(source);
+    ui.text_input(" More.");
+    frame(&mut ui, &mut docs);
+    assert!(docs.open_reference(&mut ui, "Damage"));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(!docs.is_editing());
+    let saved = std::fs::read_to_string(dir.path().join("Docs/Guide/Writing Guide.md")).unwrap();
+    assert!(saved.ends_with("A new paragraph. More."), "{saved}");
+    let back = named(&ui, "cb-back");
+    click(&mut ui, back);
+    frame(&mut ui, &mut docs);
+    assert_eq!(docs.library().page(docs.open_page()).title(), "Writing Guide", "Back finds the renamed page");
+}

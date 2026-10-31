@@ -7,7 +7,12 @@
 //! The UI never touches the system clipboard itself: it reads and writes
 //! through [`Clipboard`], which the window provides.
 
-use crate::{NodeId, Ui, controls::Control, selector::States, tree::Kind};
+use crate::{
+    NodeId, Ui,
+    controls::{Control, Step},
+    selector::States,
+    tree::Kind,
+};
 
 /// A key the UI acts on. Typed text arrives separately, through
 /// [`Ui::text_input`], so keyboard layouts and dead keys work.
@@ -130,6 +135,13 @@ impl Ui {
         }
     }
 
+    /// Puts a text field's caret after its last character.
+    pub fn caret_to_end(&mut self, field: NodeId) {
+        if self.kind(field) == Some(Kind::TextField) {
+            self.edit(field, |driver| driver.move_to_text_end());
+        }
+    }
+
     /// Gives `node` focus, if it is a control that takes it. A control shown
     /// this frame takes it only once restyled, from the next frame.
     pub fn focus(&mut self, node: NodeId) {
@@ -201,7 +213,8 @@ impl Ui {
         let multiline = self.is_multiline(field);
         let text: String = text.chars().filter(|c| !c.is_control() || (multiline && *c == '\n')).collect();
         if !text.is_empty() {
-            self.edit(field, |driver| driver.insert_or_replace_selection(&text));
+            let ends_word = text.chars().any(|c| c.is_whitespace() || c.is_ascii_punctuation());
+            self.edit_step(field, Step::Typing(ends_word), |driver| driver.insert_or_replace_selection(&text));
         }
         true
     }

@@ -1007,7 +1007,11 @@ every part:
 - **TextField**: one line, or several with `multiline`. Editing is parley's own: the caret and word movement,
   selection by drag, double click (a word) and triple click (a line), Ctrl+A/C/X/V, Ctrl+Backspace and Delete
   by word, a placeholder while empty, and input-method composition with `ime_area` for the candidate list. A
-  long line scrolls to keep the caret in view, and the text is clipped to the field.
+  long line scrolls to keep the caret in view, and the text is clipped to the field. A multiline field scrolls
+  down to keep the caret in view too, and with the wheel, showing a thumb as a scroll view does; Page Up and Page
+  Down move by a field's height, and Ctrl+Home and Ctrl+End go to the start and end. **Undo**: Ctrl+Z undoes a
+  word typed at a time, or each other change, and Ctrl+Shift+Z or Ctrl+Y redoes; text set from code starts the
+  history again.
 - **Toggle** (a switch: a 28 by 16 pill with a sliding knob, or a ticked box with the `checkbox` class),
   **Slider** (dragged, or moved by the arrow keys, with an optional step, and its value shown in mono to as many
   decimals as the step has) and **Foldout** (a header with a chevron that opens and closes its content; markup
@@ -1017,7 +1021,8 @@ every part:
 - **Focus and the keyboard:** clicking a control focuses it, Tab and Shift+Tab walk the controls in tree order
   (skipping hidden and disabled ones), and the focused one matches `:focus`. Enter and Space press a focused
   button or toggle, and Escape lets go. While a text field has focus, keys belong to it (`wants_keyboard`),
-  so typing a W never moves the camera.
+  so typing a W never moves the camera, and in the editor Ctrl+Z, Ctrl+Y and Ctrl+D are the field's, not the
+  scene's.
 - **Events**, read during the frame like clicks: `ui.changed(node)` when the user changed a value,
   `ui.submitted(field)` for Enter, and `ui.double_clicked(node)` for a second click in quick succession. Setting
   a value from code is not a change.
@@ -1437,8 +1442,12 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   page beside the one it is in and opens it to write.
 - **The panel:** the pages down the side as a tree, a box that finds pages by every word typed, back and
   forward, the page with its title, tags and date, and for a folder what is in it. Ticking a checklist box saves
-  the page. Code blocks have a Copy button. **Edit** shows the page's Markdown to change and **Save** writes it,
-  with today's date.
+  the page. Code blocks have a Copy button.
+- **Writing a page**, as the Cookbook does: **Edit** shows its title and tags over its Markdown, with the page
+  as it will read beside it, drawn again a moment after each change, and the cursor at the end of the text. The
+  status says whether it is saved. **Save** or Ctrl+S writes it with today's date, and so do **Done** and opening
+  another page, so nothing written is lost. A new title renames its file, or its folder, keeping its id, so links
+  by id and Back and Forward still find it; tags are kept once each.
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
 **Still to come**, as the Unity Cookbook has them:
@@ -1451,8 +1460,8 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **Docs Health**: out-of-date pages, broken links, and code with no page yet; and git's last change on a page.
 - **Pictures**, once Voxear UI draws images: dropped in, captured from the Scene view, or recorded as GIFs of the
   Scene or Game; and **live assets** shown in a page.
-- Tags to filter by, "On this page", a home page with recent pages, quick open from the command bar (Ctrl+K), and
-  an editor with the page beside its Markdown.
+- Tags to filter by, "On this page", a home page with recent pages, and quick open from the command bar (Ctrl+K).
+- While writing: tags as chips with suggestions, and Image…, Link… and Action… to put them in at the cursor.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine
   version: how to use each part of Voxear, from first steps to the advanced paths. It is written for people to
   read: plain words and short sentences, each term explained where it first appears, an example before the

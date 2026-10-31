@@ -62,19 +62,50 @@ impl Placement {
     }
 }
 
-/// A behaviour to create: its C# type, and field values to set before its
-/// Awake.
+/// A script to attach: a behaviour, with field values to set before its
+/// Awake, or, when `component` is set, a C# component (an `IComponent`
+/// struct) made with those values. Both are saved, loaded and edited the
+/// same way; only attaching them differs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BehaviourSpec {
     /// The full C# type name, which scenes save.
     pub type_name: String,
     /// Field values as the scene or prefab wrote them, by field name.
     pub fields: Arc<toml::Table>,
+    pub component: bool,
 }
 
 impl BehaviourSpec {
     pub fn new(type_name: &str) -> Self {
-        Self { type_name: type_name.to_string(), fields: Arc::default() }
+        Self { type_name: type_name.to_string(), ..Self::default() }
+    }
+
+    /// A C# component of this type, with every field as the struct starts.
+    pub fn component(type_name: &str) -> Self {
+        Self { component: true, ..Self::new(type_name) }
+    }
+}
+
+/// While playing, the C# components an Obj was given by its scene or
+/// prefab, as they were given, for the Inspector and saving; their values
+/// are in components of their own.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SceneComponents(pub Vec<BehaviourSpec>);
+impl Component for SceneComponents {}
+
+impl SceneComponents {
+    /// Notes that `entity` was given these components.
+    pub fn record(world: &mut World, entity: voxear_ecs::Entity, made: impl IntoIterator<Item = BehaviourSpec>) {
+        let mut made = made.into_iter().peekable();
+        if made.peek().is_none() {
+            return;
+        }
+        match world.get_mut::<SceneComponents>(entity) {
+            Some(kept) => kept.0.extend(made),
+            None => {
+                world.insert(entity, SceneComponents(made.collect()));
+            }
+        }
     }
 }
 

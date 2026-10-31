@@ -326,6 +326,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.scale = instance.scale.or(root.scale);
     root.persistent |= instance.persistent;
     root.behaviours.extend(instance.behaviours.iter().cloned());
+    root.components.extend(instance.components.iter().cloned());
     for (behaviour, values) in &instance.fields {
         merge(root.fields.entry(behaviour.clone()).or_default(), values.clone());
     }
@@ -429,7 +430,7 @@ impl Template {
             .behaviours
             .iter()
             .map(|spec| match bind_refs(&spec.fields, &lookup) {
-                Some(fields) => BehaviourSpec { type_name: spec.type_name.clone(), fields: Arc::new(fields) },
+                Some(fields) => BehaviourSpec { fields: Arc::new(fields), ..spec.clone() },
                 None => spec.clone(),
             })
             .collect()
@@ -563,7 +564,7 @@ fn resolve_obj(
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },
         transform: Transform::new(Vec3::from(data.position()), rotation, Vec3::from(data.scale())),
         persistent: data.persistent,
-        behaviours: behaviour_specs(&data.behaviours, &data.fields)?,
+        behaviours: behaviour_specs(&data.behaviours, &data.components, &data.fields)?,
         camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
         light: data.light.map(light_component),
         renderer,
@@ -572,16 +573,23 @@ fn resolve_obj(
     })
 }
 
-/// Pairs each behaviour with its field values. Values for a behaviour the Obj
-/// does not have are an error, since they would otherwise vanish unnoticed.
-fn behaviour_specs(types: &[String], fields: &BTreeMap<String, toml::Table>) -> Result<Vec<BehaviourSpec>> {
-    if let Some(stray) = fields.keys().find(|t| !types.contains(t)) {
-        bail!("it has fields for {stray}, which is not one of its behaviours");
+/// Pairs each behaviour, then each C# component, with its field values.
+/// Values for a script the Obj does not have are an error, since they would
+/// otherwise vanish unnoticed.
+fn behaviour_specs(
+    behaviours: &[String],
+    components: &[String],
+    fields: &BTreeMap<String, toml::Table>,
+) -> Result<Vec<BehaviourSpec>> {
+    if let Some(stray) = fields.keys().find(|t| !behaviours.contains(t) && !components.contains(t)) {
+        bail!("it has fields for {stray}, which is not one of its behaviours or components");
     }
-    Ok(types
-        .iter()
-        .map(|t| BehaviourSpec { type_name: t.clone(), fields: Arc::new(fields.get(t).cloned().unwrap_or_default()) })
-        .collect())
+    let spec = |type_name: &String, component: bool| BehaviourSpec {
+        type_name: type_name.clone(),
+        fields: Arc::new(fields.get(type_name).cloned().unwrap_or_default()),
+        component,
+    };
+    Ok(behaviours.iter().map(|t| spec(t, false)).chain(components.iter().map(|t| spec(t, true))).collect())
 }
 
 /// A loaded prefab, by the id scripts hold.

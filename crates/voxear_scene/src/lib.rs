@@ -12,5 +12,5 @@ pub use hierarchy::{Parent, WorldTransform, propagate_transforms, world_matrix};
 pub use lifecycle::{Adopted, BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};
 pub use obj::{
     AttachedBehaviour, BehaviourSpec, Behaviours, Destroying, EditorOnly, InstanceMarker, Name, Placement,
-    ScenePersistence, Transform, register_obj_components,
+    SceneComponents, ScenePersistence, Transform, register_obj_components,
 };

@@ -13,6 +13,7 @@ use voxear_scene::{Name, Transform};
 /// and added in OnCreate, on new entities and on an Obj; a chunk walk that
 /// writes one component from another; ForEach on an Obj's Transform;
 /// commands made mid-walk; Changed filters; and an entity's Get and Set.
+/// Spin also has a reference to an Obj, which a scene sets.
 const SYSTEMS: &str = r#"using System.Numerics;
 using Voxear;
 
@@ -20,7 +21,7 @@ namespace EcsCheck
 {
 	public struct Spot : IComponent { public Vector3 Position; }
 	public struct Drift : IComponent { public Vector3 Velocity; }
-	public struct Spin : IComponent { public float Speed; }
+	public struct Spin : IComponent { public float Speed; public Obj Leader; }
 	public struct Gone : IComponent { }
 	public struct Tally : IComponent { public int Frames; public int ChangedSpots; public int ChangedDrifts; }
 
@@ -156,6 +157,19 @@ fn read<T: Copy, const N: usize>(world: &World, entity: Entity, id: ComponentId)
     unsafe { value.cast::<[T; N]>().read_unaligned() }
 }
 
+/// Spinner B gets a Spin from its scene, following Spinner A.
+fn give_spinner_b_a_spin(scene: &str) -> String {
+    let block = "behaviours = [\"Hello.Spinner\"]\n# Follows Spinner A the other way round, through a behaviour reference.\n\
+                 [obj.fields.\"Hello.Spinner\"]\nleader = { obj = 2 }\n";
+    assert!(scene.contains(block), "Day.scene still gives Spinner B its leader");
+    let spun = format!(
+        "{}components = [\"EcsCheck.Spin\"]\n{}[obj.fields.\"EcsCheck.Spin\"]\nspeed = 7.0\nleader = {{ obj = 2 }}\n",
+        &block[..block.find('#').unwrap()],
+        &block[block.find('#').unwrap()..]
+    );
+    scene.replace(block, &spun)
+}
+
 #[test]
 fn csharp_systems_work_on_the_engines_own_chunks() {
     if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
@@ -165,6 +179,8 @@ fn csharp_systems_work_on_the_engines_own_chunks() {
     let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
     let dir = hello_copy();
     std::fs::write(dir.path().join("Scripts/EcsCheck.cs"), SYSTEMS).unwrap();
+    let day = dir.path().join("Scenes/Day.scene");
+    std::fs::write(&day, give_spinner_b_a_spin(&std::fs::read_to_string(&day).unwrap())).unwrap();
     let project = Project::open(dir.path()).unwrap();
     scripts::build(&project).unwrap();
     let mut engine = Engine::new();
@@ -198,9 +214,20 @@ fn csharp_systems_work_on_the_engines_own_chunks() {
     }
 
     // The Obj got a component from C#, and a system wrote its Transform.
-    let spinner = world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, name)| name.0 == "Spinner A").unwrap().0;
+    let named = |wanted: &str| world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, n)| n.0 == wanted).unwrap().0;
+    let (spinner, spinner_b, spin) = (named("Spinner A"), named("Spinner B"), component(world, "EcsCheck.Spin"));
     assert_eq!(world.get::<Transform>(spinner).unwrap().scale.x, 2.0);
-    let [speed]: [f32; 1] = read(world, spinner, component(world, "EcsCheck.Spin"));
+    let [speed]: [f32; 1] = read(world, spinner, spin);
+
+    // Spinner B's came from its scene, with its values and its reference
+    // to Spinner A, which C# lays out after four bytes of padding.
+    assert_eq!(world.components().info(spin).layout().size(), 16);
+    let [speed_b, _, leader_low, leader_high]: [u32; 4] = read(world, spinner_b, spin);
+    assert_eq!(f32::from_bits(speed_b), 7.0);
+    assert_eq!(u64::from(leader_low) | u64::from(leader_high) << 32, spinner.to_bits());
+    assert_eq!(world.get::<Transform>(spinner_b).unwrap().scale.x, 2.0, "systems see it as any other");
+    let given = world.get::<voxear_scene::SceneComponents>(spinner_b).expect("kept for the Inspector and saving");
+    assert_eq!(given.0[0].type_name, "EcsCheck.Spin");
 
     // Spots are written every frame; Drifts only when they were made.
     let tally = with(world, component(world, "EcsCheck.Tally"));

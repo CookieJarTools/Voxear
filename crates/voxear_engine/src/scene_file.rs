@@ -17,8 +17,11 @@
 //! name = "Crate"
 //! parent = 1
 //! behaviours = ["Game.Spinner"]
+//! components = ["Game.Spin"]     # C# IComponent structs, which systems work on
 //! [obj.fields."Game.Spinner"]
 //! degrees_per_second = 45.0
+//! [obj.fields."Game.Spin"]
+//! speed = 90.0
 //! [obj.renderer]
 //! mesh = "builtin:cube"          # or "<model guid>#mesh0.0", or a project path
 //! material = { color = [0.5, 0.3, 0.9] }
@@ -41,7 +44,7 @@ use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{Camera, Light, LightKind, MeshRenderer, PostProcess, Renderer, Sky};
-use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, ScenePersistence, Transform};
+use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, ScenePersistence, Transform};
 
 use crate::{
     content::{Content, MaterialData, MaterialSource, linear, srgb},
@@ -113,8 +116,11 @@ pub struct ObjData {
     /// Full C# type names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behaviours: Vec<String>,
-    /// Values for the behaviours' serialized fields, by behaviour type and
-    /// then field name. Field names may be written in snake_case.
+    /// C# components (`IComponent` structs), by full type name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
+    /// Values for the behaviours' and components' serialized fields, by type
+    /// and then field name. Field names may be written in snake_case.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fields: BTreeMap<String, toml::Table>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,6 +152,7 @@ impl ObjData {
             scale: None,
             persistent: false,
             behaviours: Vec::new(),
+            components: Vec::new(),
             fields: BTreeMap::new(),
             camera: None,
             light: None,
@@ -413,6 +420,10 @@ fn capture_instance(
         Some(added) => instance.behaviours = added.to_vec(),
         None => tracing::warn!("{}: behaviours removed from a prefab root are not saved yet", root.name),
     }
+    match root.components.strip_prefix(prefab_root.components.as_slice()) {
+        Some(added) => instance.components = added.to_vec(),
+        None => tracing::warn!("{}: components removed from a prefab root are not saved yet", root.name),
+    }
     instance.fields = changed_fields(&prefab_root.fields, &root.fields);
     if root.camera.is_some() && root.camera != prefab_root.camera {
         instance.camera = root.camera;
@@ -458,6 +469,9 @@ fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Resul
     }
     if actual.behaviours != expected.behaviours {
         put("behaviours", toml::Value::try_from(&actual.behaviours)?);
+    }
+    if actual.components != expected.components {
+        put("components", toml::Value::try_from(&actual.components)?);
     }
     let fields = changed_fields(&expected.fields, &actual.fields);
     if !fields.is_empty() {
@@ -608,13 +622,17 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
     obj.parent = world.get::<Parent>(entity).and_then(|p| ids.get(&p.0).copied());
     obj.persistent = world.has::<ScenePersistence>(entity);
     obj.locks = world.get::<crate::prefab::Locks>(entity).map(|locks| locks.0.clone()).unwrap_or_default();
-    // Running behaviours, or in edit mode the same as data.
-    let specs: Vec<&BehaviourSpec> = match (world.get::<Behaviours>(entity), world.get::<EditBehaviours>(entity)) {
+    // Running behaviours and the components made from the scene, or in edit
+    // mode the same as data.
+    let mut specs: Vec<&BehaviourSpec> = match (world.get::<Behaviours>(entity), world.get::<EditBehaviours>(entity)) {
         (Some(behaviours), _) => behaviours.0.iter().map(|b| &b.spec).collect(),
         (None, Some(kept)) => kept.0.iter().collect(),
         (None, None) => Vec::new(),
     };
-    obj.behaviours = specs.iter().map(|spec| spec.type_name.clone()).collect();
+    specs.extend(world.get::<SceneComponents>(entity).into_iter().flat_map(|made| &made.0));
+    let names = |component: bool| specs.iter().filter(move |s| s.component == component).map(|s| s.type_name.clone());
+    obj.behaviours = names(false).collect();
+    obj.components = names(true).collect();
     // Saved as loaded: values scripts change at runtime are not written back.
     obj.fields = specs
         .iter()

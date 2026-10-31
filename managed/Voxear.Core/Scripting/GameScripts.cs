@@ -33,6 +33,7 @@ namespace Voxear.Scripting
 			context ??= new GameLoadContext(path);
 			assemblies.Add(LoadInto(context, path));
 			Systems.Forget();
+			SceneComponentTypes.Clear();
 			BehaviourTypes.Clear();
 			BehaviourFields.Clear();
 			Log.Info($"Loaded game scripts from {path}");
@@ -162,6 +163,7 @@ namespace Voxear.Scripting
 			assemblies.Add(loaded);
 			BehaviourTypes.Clear();
 			BehaviourFields.Clear();
+			SceneComponentTypes.Clear();
 			InstanceRegistry.Clear();
 		}
 

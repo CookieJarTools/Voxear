@@ -312,7 +312,7 @@ fn behaviour_fields_are_saved_as_loaded() {
     // Headless runs have no scripts, so the behaviour is attached by hand.
     let turret = spawned[0].1;
     let fields: toml::Table = toml::from_str("range = 12.0").unwrap();
-    let spec = BehaviourSpec { type_name: "Game.Turret".into(), fields: std::sync::Arc::new(fields) };
+    let spec = BehaviourSpec { fields: std::sync::Arc::new(fields), ..BehaviourSpec::new("Game.Turret") };
     engine.world.insert(turret, Behaviours(vec![AttachedBehaviour { handle: BehaviourHandle(0), spec }]));
 
     let saved = scene_file::capture(&engine.world, &mut content, &[turret]);
@@ -320,6 +320,51 @@ fn behaviour_fields_are_saved_as_loaded() {
     assert!(text.contains("behaviours = [\"Game.Turret\"]"), "{text}");
     let reloaded: scene_file::SceneFile = toml::from_str(&text).unwrap();
     assert_eq!(reloaded.objs[0].fields["Game.Turret"]["range"], toml::Value::Float(12.0));
+}
+
+#[test]
+fn csharp_components_load_in_edit_mode_and_save_as_they_came() {
+    let dir = project(&[("Turret.prefab", TURRET)]);
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    engine.set_edit_mode(true);
+    // An instance that adds a component to the prefab's root, and an Obj
+    // with a behaviour and a component of its own.
+    let scene: scene_file::SceneFile = toml::from_str(
+        r#"
+format = 1
+[[obj]]
+id = 1
+prefab = "Turret.prefab"
+components = ["Game.Spin"]
+fields."Game.Spin" = { speed = 3.0 }
+
+[[obj]]
+id = 2
+name = "Mill"
+behaviours = ["Game.Creak"]
+components = ["Game.Spin", "Game.Windy"]
+fields."Game.Spin" = { speed = 90.0 }
+"#,
+    )
+    .unwrap();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    let mill = find(&engine, "Mill");
+    let kept = &engine.world.get::<voxear_engine::EditBehaviours>(mill).unwrap().0;
+    let kinds: Vec<(&str, bool)> = kept.iter().map(|s| (s.type_name.as_str(), s.component)).collect();
+    assert_eq!(kinds, [("Game.Creak", false), ("Game.Spin", true), ("Game.Windy", true)]);
+    assert_eq!(kept[1].fields["speed"], toml::Value::Float(90.0));
+
+    let entities: Vec<Entity> = spawned.iter().map(|(_, entity)| *entity).collect();
+    let saved = scene_file::capture(&engine.world, &mut content, &entities);
+    let instance = saved.objs.iter().find(|o| o.prefab.is_some()).unwrap();
+    assert_eq!(instance.components, ["Game.Spin"]);
+    assert!(instance.behaviours.is_empty(), "the prefab's own behaviour is not written again");
+    assert_eq!(instance.fields["Game.Spin"]["speed"], toml::Value::Float(3.0));
+    let saved_mill = saved.objs.iter().find(|o| o.name == "Mill").unwrap();
+    assert_eq!(saved_mill.behaviours, ["Game.Creak"]);
+    assert_eq!(saved_mill.components, ["Game.Spin", "Game.Windy"]);
+    assert_eq!(saved_mill.fields["Game.Spin"]["speed"], toml::Value::Float(90.0));
 }
 
 const PULSING_LAMP: &str = r#"
@@ -406,7 +451,7 @@ fn obj_references_stay_inside_their_file_and_save_as_paths() {
     let watcher = spawned[0].1;
     let glow = spawned.iter().find(|(path, _)| path.to_string() == "8/2").unwrap().1;
     let fields: toml::Table = toml::from_str(&format!("glow = {{ entity = {} }}", glow.to_bits() as i64)).unwrap();
-    let spec = BehaviourSpec { type_name: "Game.Watch".into(), fields: std::sync::Arc::new(fields) };
+    let spec = BehaviourSpec { fields: std::sync::Arc::new(fields), ..BehaviourSpec::new("Game.Watch") };
     engine.world.insert(watcher, Behaviours(vec![AttachedBehaviour { handle: BehaviourHandle(0), spec }]));
 
     let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();

@@ -2603,3 +2603,51 @@ fn inspector_attributes_shape_how_script_fields_show() {
     assert_eq!(editor.ui.text(tooltip), "How fast it turns.");
     shot(&mut renderer, "inspector-attributes-wobble.png");
 }
+
+/// Hello's build with a C# component in it, as ScriptInfo describes one.
+const WITH_A_COMPONENT: &str = r#"{"behaviours": [], "components": [{"name": "Hello.Spin", "bases": [],
+  "interfaces": ["Voxear.IComponent"], "fields": [
+  {"name": "Speed", "type": {"kind": "number"}, "default": 0.0, "inspector": {"suffix": "°/s"}},
+  {"name": "Axis", "type": {"kind": "vector", "size": 3}, "default": [0.0, 0.0, 0.0]}
+]}], "types": {}, "commands": []}"#;
+
+#[test]
+fn csharp_components_are_added_edited_and_saved_like_scripts() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(WITH_A_COMPONENT).unwrap());
+    let chrome = obj(&editor, "Chrome Ball").unwrap();
+    editor.select(Some(chrome));
+    frame(&mut editor, &mut renderer);
+
+    let mut add = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "add-component", &mut add);
+    click(&mut editor.ui, add[0]);
+    frame(&mut editor, &mut renderer);
+    let spin = menu_item(&editor.ui, "Spin").expect("Add Component offers the project's components");
+    click(&mut editor.ui, spin);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(chrome).unwrap();
+    assert_eq!((kept.0[0].type_name.as_str(), kept.0[0].component), ("Hello.Spin", true));
+
+    // Its fields show as a script's do, and edit the same way.
+    let speed = prop_row(&editor.ui, "Speed").expect("its fields show");
+    let input = first_with(&editor.ui, speed, "value-input").unwrap();
+    type_into(&mut editor.ui, input, "45");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(chrome).unwrap();
+    assert_eq!(kept.0[0].fields.get("Speed"), Some(&toml::Value::Float(45.0)));
+    shot(&mut renderer, "inspector-component.png");
+
+    editor.save();
+    let day = std::fs::read_to_string(dir.path().join("Scenes/Day.scene")).unwrap();
+    let saved: voxear_engine::scene_file::SceneFile = toml::from_str(&day).unwrap();
+    let ball = saved.objs.iter().find(|o| o.name == "Chrome Ball").unwrap();
+    assert_eq!(ball.components, ["Hello.Spin"]);
+    assert!(ball.behaviours.is_empty());
+    assert_eq!(ball.fields["Hello.Spin"]["Speed"], toml::Value::Float(45.0));
+}

@@ -1133,7 +1133,7 @@ impl Editor {
                 after.apply(&mut self.game.engine.world, entity);
             }
             RowAction::Add(part) => {
-                if let Err(error) = props::add(&mut self.game, Some(renderer), entity, &part) {
+                if let Err(error) = props::add(&mut self.game, Some(renderer), entity, &part, self.inspector.types()) {
                     tracing::error!("could not add {}: {error:#}", part.title());
                 }
             }

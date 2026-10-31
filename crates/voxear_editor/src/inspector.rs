@@ -421,7 +421,12 @@ impl Inspector {
         let layout = layout(game, entity, &self.types);
         let locks = world.get::<Locks>(entity).cloned();
         for (part, values) in &layout {
-            let (header, rows, _) = section(ui, self.root, part.title(), part.icon(), true);
+            // A C# component is shown as a box of data, apart from behaviours' code.
+            let icon = match part {
+                Part::Behaviour(name) if self.types.is_component(name) => "box",
+                _ => part.icon(),
+            };
+            let (header, rows, _) = section(ui, self.root, part.title(), icon, true);
             self.headers.push((Some(part.clone()), header));
             // A locked component shows designers only its chosen values; in its
             // prefab, every value shows, those designers do not see dimmed.
@@ -692,20 +697,23 @@ impl Inspector {
     }
 
     /// What Add Component offers: the components the Obj has not got, then
-    /// the project's scripts, which are added in edit mode.
+    /// the project's behaviours and its C# components, which are added in
+    /// edit mode.
     fn add_items(&self, playing: bool) -> Vec<(MenuItem, Option<RowAction>)> {
         let has = |part: &Part| self.built.0.iter().any(|(p, _)| p == part);
         let mut items: Vec<(MenuItem, Option<RowAction>)> = [Part::Renderer, Part::Light, Part::Camera]
             .into_iter()
             .map(|part| (MenuItem::new(part.title()).enabled(!has(&part)), Some(RowAction::Add(part))))
             .collect();
-        if !self.types.behaviours.is_empty() {
-            items.push((MenuItem::separator(), None));
-        }
-        for script in &self.types.behaviours {
-            let part = Part::Behaviour(script.name.clone());
-            let item = MenuItem::new(script.short_name()).enabled(!playing && !has(&part));
-            items.push((item, Some(RowAction::Add(part))));
+        for scripts in [&self.types.behaviours, &self.types.components] {
+            if !scripts.is_empty() {
+                items.push((MenuItem::separator(), None));
+            }
+            for script in scripts {
+                let part = Part::Behaviour(script.name.clone());
+                let item = MenuItem::new(script.short_name()).enabled(!playing && !has(&part));
+                items.push((item, Some(RowAction::Add(part))));
+            }
         }
         items
     }

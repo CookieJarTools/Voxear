@@ -15,7 +15,7 @@ use voxear_engine::{
     srgb,
 };
 use voxear_render::{Camera, Light, LightKind, MeshRenderer, Renderer};
-use voxear_scene::{BehaviourSpec, Behaviours};
+use voxear_scene::{BehaviourSpec, Behaviours, SceneComponents};
 
 use crate::fields::{self, Pick, Step};
 
@@ -167,14 +167,16 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     parts
 }
 
-/// An Obj's scripts: the running ones while playing, or in edit mode the
-/// same kept as data.
+/// An Obj's scripts, behaviours and C# components: the running ones while
+/// playing, or in edit mode the same kept as data.
 pub fn specs(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
-    match (world.get::<Behaviours>(entity), world.get::<EditBehaviours>(entity)) {
+    let mut specs = match (world.get::<Behaviours>(entity), world.get::<EditBehaviours>(entity)) {
         (Some(running), _) => running.0.iter().map(|b| b.spec.clone()).collect(),
         (None, Some(kept)) => kept.0.clone(),
         (None, None) => Vec::new(),
-    }
+    };
+    specs.extend(world.get::<SceneComponents>(entity).into_iter().flat_map(|made| made.0.iter().cloned()));
+    specs
 }
 
 /// The values a component shows. A light shows only what its kind uses; a
@@ -244,8 +246,15 @@ pub fn depth(prop: &Prop) -> usize {
 }
 
 /// A component as an Obj gets it from Add Component: a grey cube, a point
-/// light, a camera, or a script with every field as it starts.
-pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, part: &Part) -> anyhow::Result<()> {
+/// light, a camera, or a script (a behaviour or, as `types` tell, a C#
+/// component) with every field as it starts.
+pub fn add(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    part: &Part,
+    types: &ScriptTypes,
+) -> anyhow::Result<()> {
     if *part == Part::Renderer {
         let renderer = renderer.ok_or_else(|| anyhow::anyhow!("meshes need the renderer"))?;
         let cube = game.content.parse(BUILTIN_MESHES[0].1)?;
@@ -264,7 +273,7 @@ pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, par
             world.insert(entity, Camera::default());
         }
         Part::Behaviour(name) => {
-            let spec = BehaviourSpec::new(name);
+            let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
                 Some(kept) => kept.0.push(spec),
                 None => {

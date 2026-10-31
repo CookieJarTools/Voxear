@@ -22,7 +22,7 @@ use voxear_core::{
 use voxear_ecs::{Entity, World};
 use voxear_scene::{
     Adopted, AttachedBehaviour, BehaviourHandle, BehaviourSpec, Behaviours, Callbacks, InstanceMarker, Name, Placement,
-    Registration, Request, Transform, world_matrix,
+    Registration, Request, SceneComponents, Transform, world_matrix,
 };
 
 use crate::ecs::{
@@ -35,7 +35,7 @@ use crate::services::{
     SpawnedPrefab, with_services,
 };
 
-pub(crate) const API_VERSION: u32 = 15;
+pub(crate) const API_VERSION: u32 = 16;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -126,6 +126,9 @@ const ADOPT_DESTROYED: u32 = 4;
 /// Type name, entity, field values as JSON (or null), and the info to fill.
 pub(crate) type CreateBehaviour = unsafe extern "C" fn(*const u8, i32, u64, *const u8, i32, *mut BehaviourInfo) -> i32;
 
+/// Type name, entity, and field values as JSON (or null).
+pub(crate) type AddComponent = unsafe extern "C" fn(*const u8, i32, u64, *const u8, i32) -> i32;
+
 /// Script functions the engine calls; filled in by `Bootstrap.Initialize`.
 #[repr(C)]
 #[derive(Default)]
@@ -167,6 +170,9 @@ pub(crate) struct ManagedApi {
     /// Runs the C# systems of one stage, by its index in the engine's
     /// stages, in order.
     pub run_systems: Option<unsafe extern "C" fn(stage: i32)>,
+    /// Gives an entity a C# component by type name, with field values as
+    /// JSON (or null): 0 when it did, -1 when it could not.
+    pub add_component: Option<AddComponent>,
 }
 
 #[repr(C)]
@@ -186,8 +192,9 @@ thread_local! {
     static REQUESTS: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
     static LEVEL_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static OBJ_DESTROYS: RefCell<Vec<Entity>> = const { RefCell::new(Vec::new()) };
-    /// Managed `CreateBehaviour`, for behaviours created during script calls.
-    static CREATE: Cell<Option<CreateBehaviour>> = const { Cell::new(None) };
+    /// Managed `CreateBehaviour` and `AddComponent`, for behaviours and
+    /// components made during script calls.
+    static CREATE: Cell<Option<(CreateBehaviour, AddComponent)>> = const { Cell::new(None) };
     /// Behaviours created during script calls that scripts are still
     /// activating, until `behaviours_adopt` hands them to the lifecycle.
     static ACTIVATING: RefCell<HashMap<u32, Registration>> = RefCell::new(HashMap::new());
@@ -195,8 +202,8 @@ thread_local! {
     static LAST_BATCH: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
 }
 
-pub(crate) fn set_create_behaviour(create: CreateBehaviour) {
-    CREATE.set(Some(create));
+pub(crate) fn set_create_behaviour(create: CreateBehaviour, add: AddComponent) {
+    CREATE.set(Some((create, add)));
 }
 
 pub(crate) fn take_obj_destroys() -> Vec<Entity> {
@@ -590,10 +597,24 @@ unsafe extern "C" fn behaviours_adopt(handles: *const u32, states: *const u32, c
     REQUESTS.with_borrow_mut(|requests| requests.extend(adopted));
 }
 
-/// Creates behaviours on an Obj during a script call. Scripts then run their
-/// Awake and OnEnable and hand them back through `behaviours_adopt`.
+/// Creates behaviours on an Obj during a script call, after its C#
+/// components. Scripts then run their Awake and OnEnable and hand them back
+/// through `behaviours_adopt`.
 fn attach(entity: Entity, specs: &[BehaviourSpec]) -> Vec<u32> {
-    let Some(create) = CREATE.get() else { return Vec::new() };
+    let Some((create, add)) = CREATE.get() else { return Vec::new() };
+    let (components, specs): (Vec<&BehaviourSpec>, Vec<&BehaviourSpec>) = specs.iter().partition(|s| s.component);
+    for spec in &components {
+        let added = call_with_fields(spec, |name, len, fields, fields_len| unsafe {
+            add(name, len, entity.to_bits(), fields, fields_len)
+        });
+        if added != 0 {
+            tracing::error!(target: "script", "could not add component `{}`; is it an IComponent struct?", spec.type_name);
+        }
+    }
+    with_world(|world| {
+        SceneComponents::record(world, entity, components.into_iter().cloned());
+        Some(())
+    });
     let mut attached = Vec::with_capacity(specs.len());
     let mut is_instance = false;
     for spec in specs {
@@ -610,7 +631,10 @@ fn attach(entity: Entity, specs: &[BehaviourSpec]) -> Vec<u32> {
             Registration { handle, entity, callbacks: Callbacks(info.callbacks), order: info.order, enabled: true };
         ACTIVATING.with_borrow_mut(|activating| activating.insert(handle.0, registration));
         is_instance |= info.flags & FLAG_INSTANCE != 0;
-        attached.push(AttachedBehaviour { handle, spec: spec.clone() });
+        attached.push(AttachedBehaviour { handle, spec: (*spec).clone() });
+    }
+    if attached.is_empty() {
+        return Vec::new();
     }
     let handles = attached.iter().map(|b| b.handle.0).collect();
     with_world(|world| {
@@ -636,11 +660,18 @@ pub(crate) fn call_create(
     entity: Entity,
     info: &mut BehaviourInfo,
 ) -> Option<BehaviourHandle> {
+    let handle = call_with_fields(spec, |name, len, fields, fields_len| unsafe {
+        create(name, len, entity.to_bits(), fields, fields_len, info)
+    });
+    (handle >= 0).then_some(BehaviourHandle(handle as u32))
+}
+
+/// Calls `call` with the spec's type name and its field values as JSON, or
+/// null for none.
+pub(crate) fn call_with_fields(spec: &BehaviourSpec, call: impl FnOnce(*const u8, i32, *const u8, i32) -> i32) -> i32 {
     let fields = if spec.fields.is_empty() { None } else { serde_json::to_string(&*spec.fields).ok() };
     let (fields_ptr, fields_len) = fields.as_deref().map_or((ptr::null(), 0), |f| (f.as_ptr(), f.len() as i32));
-    let name = &spec.type_name;
-    let handle = unsafe { create(name.as_ptr(), name.len() as i32, entity.to_bits(), fields_ptr, fields_len, info) };
-    (handle >= 0).then_some(BehaviourHandle(handle as u32))
+    call(spec.type_name.as_ptr(), spec.type_name.len() as i32, fields_ptr, fields_len)
 }
 
 /// A world-space placement made relative to `parent`, as of now. Like

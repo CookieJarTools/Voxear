@@ -28,11 +28,14 @@ const DESCRIBE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2 * 6
 /// The description's file, beside the scripts' build.
 const DESCRIPTION: &str = "Behaviours.json";
 
-/// The project's behaviours, the `[Serializable]` types their fields use,
-/// and the `[Command]` methods for the editor's palette.
+/// The project's behaviours and C# components, the `[Serializable]` types
+/// their fields use, and the `[Command]` methods for the editor's palette.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct ScriptTypes {
     pub behaviours: Vec<BehaviourType>,
+    /// `IComponent` structs, described as behaviours are, with no bases.
+    #[serde(default)]
+    pub components: Vec<BehaviourType>,
     /// Each `[Serializable]` type's fields, by full name.
     #[serde(rename = "types")]
     pub structs: BTreeMap<String, NestedType>,
@@ -53,8 +56,14 @@ pub struct ScriptCommand {
 }
 
 impl ScriptTypes {
+    /// The behaviour or C# component of this name, which the Inspector shows
+    /// the same way.
     pub fn behaviour(&self, name: &str) -> Option<&BehaviourType> {
-        self.behaviours.iter().find(|b| b.name == name)
+        self.behaviours.iter().chain(&self.components).find(|b| b.name == name)
+    }
+
+    pub fn is_component(&self, name: &str) -> bool {
+        self.components.iter().any(|c| c.name == name)
     }
 
     pub fn fields_of(&self, structure: &str) -> &[ScriptField] {

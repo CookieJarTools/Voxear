@@ -5,7 +5,8 @@ use voxear_core::{profile_scope, profiling, time::Time};
 use voxear_ecs::{Entity, Schedule, World};
 use voxear_scene::{
     AttachedBehaviour, BehaviourHandle, BehaviourHost, BehaviourSpec, Behaviours, Destroying, InstanceMarker,
-    Lifecycle, Name, Parent, Phase, Placement, Transform, propagate_transforms, register_obj_components,
+    Lifecycle, Name, Parent, Phase, Placement, SceneComponents, Transform, propagate_transforms,
+    register_obj_components,
 };
 use voxear_scripting::{Reloaded, ScriptRuntime};
 
@@ -33,8 +34,8 @@ pub struct Engine {
     edit_mode: bool,
 }
 
-/// An Obj's behaviours in edit mode, as data: what the Inspector shows and a
-/// save writes, with no C# instance behind them.
+/// An Obj's behaviours and C# components in edit mode, as data: what the
+/// Inspector shows and a save writes, with no C# instance behind them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EditBehaviours(pub Vec<BehaviourSpec>);
 impl voxear_ecs::Component for EditBehaviours {}
@@ -254,6 +255,13 @@ impl Engine {
             let name = self.world.get::<Name>(entity).map_or("An Obj", |n| n.0.as_str());
             bail!("{name} has behaviours but the project has no scripts");
         };
+
+        // Components first, so every behaviour's Awake can read them.
+        let (components, specs): (Vec<&BehaviourSpec>, Vec<&BehaviourSpec>) = specs.iter().partition(|s| s.component);
+        for spec in &components {
+            scripts.add_component(&mut self.world, spec, entity)?;
+        }
+        SceneComponents::record(&mut self.world, entity, components.into_iter().cloned());
 
         let mut attached = Vec::with_capacity(specs.len());
         let mut is_instance = false;

@@ -137,6 +137,22 @@ namespace Voxear.Scripting
 			}
 		}
 
+		/// <summary>Gives an entity a component a scene or prefab names, with its field values: 0 when it did, -1 when not.</summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int AddComponent(byte* typeName, int length, ulong entity, byte* fields, int fieldsLength)
+		{
+			try
+			{
+				var json = fields == null ? null : Native.Utf8(fields, fieldsLength);
+				return SceneComponentTypes.Add(Native.Utf8(typeName, length), new Entity(entity), json) ? 0 : -1;
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+				return -1;
+			}
+		}
+
 		/// <summary>Runs the game's systems of one stage, each guarded on its own, so one that throws stops no other.</summary>
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static void RunSystems(int stage)

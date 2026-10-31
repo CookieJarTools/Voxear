@@ -79,10 +79,14 @@ impl ScriptRuntime {
                 && managed.update.is_some()
                 && managed.content_roots.is_some()
                 && managed.reload_game_assembly.is_some()
-                && managed.run_systems.is_some(),
+                && managed.run_systems.is_some()
+                && managed.add_component.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
-        interop::set_create_behaviour(managed.create_behaviour.expect("validated above"));
+        interop::set_create_behaviour(
+            managed.create_behaviour.expect("validated above"),
+            managed.add_component.expect("validated above"),
+        );
         Ok(Self { managed, _native: native, time, loaded: None })
     }
 
@@ -225,6 +229,24 @@ impl ScriptRuntime {
         let _scope = WorldScope::enter(world);
         unsafe { run(stage as i32) };
         interop::systems_ran();
+    }
+
+    /// Gives an Obj a C# component (an `IComponent` struct, e.g.
+    /// `Hello.Spin`) with the spec's field values, as a scene or prefab does.
+    pub fn add_component(&mut self, world: &mut World, spec: &BehaviourSpec, entity: Entity) -> Result<()> {
+        let add = self.managed.add_component.expect("validated at start");
+        let added = {
+            let _scope = WorldScope::enter(world);
+            interop::call_with_fields(spec, |name, len, fields, fields_len| unsafe {
+                add(name, len, entity.to_bits(), fields, fields_len)
+            })
+        };
+        ensure!(
+            added == 0,
+            "could not add component `{}`; is it an IComponent struct in the game assembly?",
+            spec.type_name
+        );
+        Ok(())
     }
 
     /// The once-per-frame script step: finished loads resume their awaits,

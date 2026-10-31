@@ -27,6 +27,25 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void ComponentsAreDescribedAsBehavioursAreButApart()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestDrift).Assembly));
+			var components = document.RootElement.GetProperty("components").EnumerateArray().ToList();
+			var names = components.Select(c => c.GetProperty("name").GetString()).ToList();
+			Check.True(names.Contains("Voxear.Tests.TestDrift"), string.Join(", ", names));
+			Check.True(!names.Contains("Voxear.Tests.TestHolder"), "a struct holding a reference is not a component");
+			var behaviours = document.RootElement.GetProperty("behaviours").EnumerateArray().Select(b => b.GetProperty("name").GetString());
+			Check.True(!behaviours.Contains("Voxear.Tests.TestDrift"), "components are not behaviours");
+
+			var drift = components.Single(c => c.GetProperty("name").GetString() == "Voxear.Tests.TestDrift");
+			var fields = drift.GetProperty("fields").EnumerateArray().ToDictionary(f => f.GetProperty("name").GetString()!);
+			Check.True(fields.Keys.SequenceEqual(new[] { "Velocity", "Wobble", "Anchor" }), string.Join(", ", fields.Keys));
+			Check.True(Kind(fields["Velocity"]) == "vector" && Kind(fields["Anchor"]) == "obj", "vectors and Obj references");
+			Check.True(fields["Wobble"].GetProperty("inspector").GetProperty("range")[1].GetDouble() == 10, "with their attributes");
+			Check.True(fields["Wobble"].GetProperty("default").GetDouble() == 0, "starting at zero");
+		}
+
+		[Test]
 		private static void CommandsThatTakeAndGiveNothingAreListed()
 		{
 			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestCommands).Assembly));

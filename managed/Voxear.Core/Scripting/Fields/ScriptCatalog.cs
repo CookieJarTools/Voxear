@@ -10,7 +10,7 @@ namespace Voxear.Scripting
 	/// <summary>
 	/// Describes the behaviours of a built game assembly for the editor, as JSON: each behaviour a scene can add, the
 	/// types it derives from and implements, and the fields BehaviourFields can set on it, with the kind of value each
-	/// takes and the value a new instance starts with. The editor reads this rather than the source, so what it shows
+	/// takes and the value a new instance starts with. IComponent structs are described the same way, as components. The editor reads this rather than the source, so what it shows
 	/// is what the compiler made. [Serializable] types those fields use are described once each, by name, and every
 	/// [Command] method is listed for the palette.
 	/// </summary>
@@ -30,6 +30,12 @@ namespace Voxear.Scripting
 				foreach (var behaviour in Behaviours(assembly))
 				{
 					WriteBehaviour(json, behaviour, types);
+				}
+				json.WriteEndArray();
+				json.WriteStartArray("components");
+				foreach (var component in Components(assembly))
+				{
+					WriteComponent(json, component, types);
 				}
 				json.WriteEndArray();
 				WriteNestedTypes(json, types, nested);
@@ -52,6 +58,38 @@ namespace Voxear.Scripting
 			}
 			found.Sort((a, b) => string.CompareOrdinal(a.FullName, b.FullName));
 			return found;
+		}
+
+		/// <summary>Every component a scene can give an Obj: an unmanaged struct marked IComponent.</summary>
+		private static List<Type> Components(Assembly assembly)
+		{
+			var found = new List<Type>();
+			foreach (var type in Loadable(assembly))
+			{
+				if (type != null && SceneComponentTypes.IsComponent(type))
+				{
+					found.Add(type);
+				}
+			}
+			found.Sort((a, b) => string.CompareOrdinal(a.FullName, b.FullName));
+			return found;
+		}
+
+		/// <summary>A component, as a behaviour is described but with no bases: its fields start as the struct's zero value.</summary>
+		private static void WriteComponent(Utf8JsonWriter json, Type type, Dictionary<string, Type> types)
+		{
+			json.WriteStartObject();
+			json.WriteString("name", type.FullName);
+			json.WriteStartArray("bases");
+			json.WriteEndArray();
+			json.WriteStartArray("interfaces");
+			foreach (var contract in type.GetInterfaces())
+			{
+				json.WriteStringValue(contract.FullName);
+			}
+			json.WriteEndArray();
+			WriteFields(json, type, Activator.CreateInstance(type), types);
+			json.WriteEndObject();
 		}
 
 		/// <summary>The assembly's types, leaving out any that cannot load rather than failing for all of them.</summary>

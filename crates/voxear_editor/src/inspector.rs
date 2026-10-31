@@ -472,7 +472,11 @@ impl Inspector {
                 let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
                 let enabled = attributes::enabled(game, &self.types, entity, value);
                 ui.set_class(row, "disabled", !enabled && !meta.read_only);
-                let editable = !(playing && matches!(value, Prop::Field { .. })) && enabled;
+                // While playing, a script's values are those it started with, but a C#
+                // component's are read and written in the running game.
+                let live = matches!(value, Prop::Field { behaviour, path }
+                    if crate::live::is_live(&game.engine.world, &self.types, entity, behaviour, path));
+                let editable = !(playing && matches!(value, Prop::Field { .. }) && !live) && enabled;
                 // An item of a list, or a list, gets its button beside its value, as a unit does.
                 let item = editable && props::is_item(value);
                 let list = editable && matches!(shown, Value::List(_));

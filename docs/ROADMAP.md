@@ -345,7 +345,7 @@ Still to do in M3:
   - [x] entity commands from C#: create, destroy, and add or remove components, applied at sync points
   - [x] a bridge to Objs (`obj.Add<Spin>()`, `obj.Get<Spin>()`), so Behaviours and systems can mix
   - [x] components written in scenes and prefabs, and shown in the inspector
-  - [ ] live component values in the Inspector while playing
+  - [x] live component values in the Inspector while playing
   - Later: parallel jobs over chunks.
 - The Animation workspace, once there is animation.
 

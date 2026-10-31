@@ -88,7 +88,7 @@ namespace Voxear.Scripting
 				json.WriteStringValue(contract.FullName);
 			}
 			json.WriteEndArray();
-			WriteFields(json, type, Activator.CreateInstance(type), types);
+			WriteFields(json, type, Activator.CreateInstance(type), types, ComponentLayout.Of(type));
 			json.WriteEndObject();
 		}
 
@@ -125,8 +125,11 @@ namespace Voxear.Scripting
 			json.WriteEndObject();
 		}
 
-		/// <summary>The fields scenes can set, each with its kind and the value it starts with in instance.</summary>
-		public static void WriteFields(Utf8JsonWriter json, Type type, object? instance, Dictionary<string, Type> types)
+		/// <summary>
+		/// The fields scenes can set, each with its kind and the value it starts with in instance, and, for a component
+		/// whose layout is known, where it lies in its bytes.
+		/// </summary>
+		public static void WriteFields(Utf8JsonWriter json, Type type, object? instance, Dictionary<string, Type> types, Dictionary<FieldInfo, int>? layout = null)
 		{
 			json.WriteStartArray("fields");
 			foreach (var field in BehaviourFields.Settable(type))
@@ -138,9 +141,24 @@ namespace Voxear.Scripting
 				json.WritePropertyName("default");
 				FieldDefaults.Write(json, instance == null ? null : field.GetValue(instance), field.FieldType);
 				InspectorMetadata.Write(json, field);
+				if (layout != null && layout.TryGetValue(field, out var offset))
+				{
+					WriteLayout(json, field, offset);
+				}
 				json.WriteEndObject();
 			}
 			json.WriteEndArray();
+		}
+
+		/// <summary>Where a component's field lies: its offset and size in bytes, and whether a whole number is signed.</summary>
+		private static void WriteLayout(Utf8JsonWriter json, FieldInfo field, int offset)
+		{
+			var (size, signed) = ComponentLayout.Value(field.FieldType);
+			json.WriteStartObject("layout");
+			json.WriteNumber("offset", offset);
+			json.WriteNumber("size", size);
+			json.WriteBoolean("signed", signed);
+			json.WriteEndObject();
 		}
 
 		/// <summary>

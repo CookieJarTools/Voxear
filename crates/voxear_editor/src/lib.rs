@@ -49,6 +49,7 @@ mod hierarchy;
 mod history;
 mod inspector;
 mod levels_panel;
+mod live;
 mod object_picker;
 mod objs;
 mod palette;

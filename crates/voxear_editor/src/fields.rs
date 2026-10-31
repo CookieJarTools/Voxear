@@ -131,6 +131,9 @@ fn struct_field<'a>(
 /// The value at a path as the Inspector shows it.
 pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, behaviour: &str, path: &[Step]) -> Value {
     let world = &game.engine.world;
+    if let Some(live) = crate::live::get(world, types, entity, behaviour, path) {
+        return live;
+    }
     let value = value_at(world, types, entity, behaviour, path);
     match kind_at(types, behaviour, path) {
         Some(kind) => typed(world, &kind, value.as_ref()),
@@ -194,6 +197,9 @@ pub fn set(
     path: &[Step],
     value: &Value,
 ) -> bool {
+    if crate::live::is_live(world, types, entity, behaviour, path) {
+        return crate::live::set(world, types, entity, behaviour, path, value);
+    }
     let new = match (value, kind_at(types, behaviour, path)) {
         (Value::Choice(index, names), _) => toml::Value::String(names.get(*index).cloned().unwrap_or_default()),
         (Value::Number(n), _) => toml::Value::Float(f64::from(*n)),

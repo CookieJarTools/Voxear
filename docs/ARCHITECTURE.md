@@ -197,9 +197,12 @@ The advanced path beside behaviours, for things there are hundreds or thousands 
   `components` beside the behaviours, so the Inspector shows their fields, and Add Component lists them after the
   behaviours. When the game runs, each Obj's components are made from their values before any of its behaviours
   wakes, Obj references in them included, and `SceneComponents` keeps what was given for the Inspector and saving.
-  While playing, the Inspector shows the values the scene gave, as it does for behaviours.
+- **Live values.** While playing, the Inspector shows a component's values as the game has them now, and edits
+  write into the game, where a behaviour's show what it started with. ScriptInfo works out where each field lies in
+  the struct's bytes, as the runtime lays out a sequential struct, and gives the layout (offset, size and sign)
+  only when it comes to the struct's real size; the editor reads and writes those bytes in place (`live.rs`).
 
-Still to come: live values in the Inspector while playing, and parallel jobs over chunks.
+Still to come: parallel jobs over chunks.
 
 ### Lifecycle guarantees *(implemented)*
 

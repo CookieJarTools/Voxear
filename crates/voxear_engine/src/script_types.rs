@@ -122,6 +122,20 @@ pub struct ScriptField {
     /// What its inspector attributes ask of the Inspector.
     #[serde(default)]
     pub inspector: FieldInspector,
+    /// For a C# component's field, where it lies in the struct's bytes, so
+    /// the editor can read and write it in a running game.
+    #[serde(default)]
+    pub layout: Option<FieldLayout>,
+}
+
+/// Where a component's field lies: its offset and size in bytes, and
+/// whether a whole number (or an enum's value) is signed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct FieldLayout {
+    pub offset: u32,
+    pub size: u32,
+    #[serde(default)]
+    pub signed: bool,
 }
 
 /// What a field's inspector attributes ask for, as Odin Inspector's do (see

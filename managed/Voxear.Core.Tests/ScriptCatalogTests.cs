@@ -43,6 +43,11 @@ namespace Voxear.Tests
 			Check.True(Kind(fields["Velocity"]) == "vector" && Kind(fields["Anchor"]) == "obj", "vectors and Obj references");
 			Check.True(fields["Wobble"].GetProperty("inspector").GetProperty("range")[1].GetDouble() == 10, "with their attributes");
 			Check.True(fields["Wobble"].GetProperty("default").GetDouble() == 0, "starting at zero");
+
+			// Where each lies in the struct's bytes: a Vector3, a float, then an Obj aligned to eight.
+			var offsets = fields.Values.Select(f => f.GetProperty("layout").GetProperty("offset").GetInt32()).ToList();
+			Check.True(offsets.SequenceEqual(new[] { 0, 12, 16 }), string.Join(", ", offsets));
+			Check.True(fields["Anchor"].GetProperty("layout").GetProperty("size").GetInt32() == 8, "an Obj is eight bytes");
 		}
 
 		[Test]

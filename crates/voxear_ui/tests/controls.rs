@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use voxear_ui::{ItemFns, Modifiers, NodeId, Quad, Style, TextStyle, TreeItems, Ui};
+use voxear_ui::{DropPlace, ItemFns, Modifiers, NodeId, Quad, Style, TextStyle, TreeItems, Ui};
 
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
@@ -190,8 +190,8 @@ fn tree_rows_drag_onto_one_another_and_context_clicks_select() {
     assert!(ui.has_class(tree, "dragging-rows"));
     assert!(ui.has_class(rows[0], "drop-target"), "the row it would land on is marked");
     assert!(ui.pointer_button(false));
-    assert_eq!(ui.dropped_item(tree), Some((3, Some(1))));
-    assert_eq!(ui.dropped(tree), Some((2, Some(0))));
+    assert_eq!(ui.dropped_item(tree), Some((3, Some((1, DropPlace::Onto)))));
+    assert_eq!(ui.dropped(tree), Some((2, Some((0, DropPlace::Onto)))));
     assert!(ui.selected_items(tree).is_empty(), "a drag is no click, so nothing was selected");
     assert!(!ui.has_class(rows[0], "drop-target") && !ui.has_class(tree, "dragging-rows"));
     ui.frame(WIDTH, HEIGHT, 1.0);
@@ -204,6 +204,19 @@ fn tree_rows_drag_onto_one_another_and_context_clicks_select() {
     ui.pointer_move(x, 300.0);
     ui.pointer_button(false);
     assert_eq!(ui.dropped_item(tree), Some((2, None)));
+
+    // Near a row's top or bottom edge, it lands before or after the row, which shows a line there.
+    for (edge, place, class) in [(0.1, DropPlace::Before, "drop-before"), (0.9, DropPlace::After, "drop-after")] {
+        ui.frame(WIDTH, HEIGHT, 1.0);
+        let (x, y) = centre(&ui, rows[2]);
+        let [_, top, _, height] = ui.rect(rows[0]);
+        ui.pointer_move(x, y);
+        ui.pointer_button(true);
+        ui.pointer_move(x, top + height * edge);
+        assert!(ui.has_class(rows[0], class), "{class}");
+        ui.pointer_button(false);
+        assert_eq!(ui.dropped_item(tree), Some((3, Some((1, place)))));
+    }
 
     // A context click selects the row under it first.
     let (x, y) = centre(&ui, rows[1]);

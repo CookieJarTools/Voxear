@@ -377,65 +377,97 @@ impl Levels {
 
     /// Where Objs are kept, in the order their scenes keep them.
     pub fn tracked(&self, entities: &[Entity]) -> Vec<Tracked> {
-        let kept = self.scenes.iter().flat_map(|scene| scene.objs.iter().map(move |(path, e)| (scene.guid, path, *e)));
-        kept.filter(|(_, _, entity)| entities.contains(entity))
-            .map(|(scene, path, entity)| Tracked { scene, path: path.clone(), entity })
-            .collect()
-    }
-
-    /// Stops keeping Objs in their scenes, as when the editor deletes them
-    /// or moves them to another scene, and returns where each was, to put
-    /// back with [`track`](Self::track).
-    pub fn untrack(&mut self, entities: &[Entity]) -> Vec<Tracked> {
         let mut found = Vec::new();
-        for scene in &mut self.scenes {
-            let guid = scene.guid;
-            scene.objs.retain(|(path, entity)| {
-                let leaving = entities.contains(entity);
-                if leaving {
-                    found.push(Tracked { scene: guid, path: path.clone(), entity: *entity });
+        for scene in &self.scenes {
+            for (index, (path, entity)) in scene.objs.iter().enumerate() {
+                if entities.contains(entity) {
+                    found.push(Tracked { scene: scene.guid, path: path.clone(), entity: *entity, index });
                 }
-                !leaving
-            });
+            }
         }
         found
     }
 
-    /// Keeps Objs in scenes again, where [`untrack`](Self::untrack) found
-    /// them; any whose scene is no longer open go to the active scene.
+    /// Each open scene, in the order they loaded, by GUID and path, with its
+    /// Objs in the order it keeps them, which is the order its file writes
+    /// them and the order the Hierarchy shows them in.
+    pub fn scene_order(&self) -> Vec<(AssetGuid, &str, Vec<Entity>)> {
+        self.scenes.iter().map(|s| (s.guid, s.path.as_str(), s.objs.iter().map(|(_, e)| *e).collect())).collect()
+    }
+
+    /// The scene Objs no scene loaded go into: the active one.
+    pub fn active_scene_guid(&self) -> Option<AssetGuid> {
+        self.active_index().map(|i| self.scenes[i].guid)
+    }
+
+    /// Stops keeping Objs in their scenes, as when the editor deletes them
+    /// or moves them, and returns where each was, to put back with
+    /// [`track`](Self::track).
+    pub fn untrack(&mut self, entities: &[Entity]) -> Vec<Tracked> {
+        let found = self.tracked(entities);
+        for scene in &mut self.scenes {
+            scene.objs.retain(|(_, entity)| !entities.contains(entity));
+        }
+        found
+    }
+
+    /// Keeps Objs in scenes again, each at the place [`untrack`] found it,
+    /// so a scene's order is as it was; any whose scene is no longer open
+    /// go to the end of the active scene.
+    ///
+    /// [`untrack`]: Self::untrack
     pub fn track(&mut self, objs: &[Tracked]) {
+        let mut objs = objs.to_vec();
+        objs.sort_by_key(|obj| obj.index);
         for obj in objs {
             let index = self.scenes.iter().position(|s| s.guid == obj.scene).or_else(|| self.active_index());
             if let Some(scene) = index.map(|i| &mut self.scenes[i]) {
-                scene.objs.push((obj.path.clone(), obj.entity));
+                let at = obj.index.min(scene.objs.len());
+                scene.objs.insert(at, (obj.path, obj.entity));
             }
         }
     }
 
-    /// Keeps new Objs in `scene`, or the active scene, as made from a scene
-    /// file: each with its path from the file, whose first id is replaced by
-    /// one after the highest in that scene, so prefab members stay under
-    /// their instance. Returns where each is now kept.
+    /// Keeps new Objs at the end of `scene`, or the active scene, as made
+    /// from a scene file: each with its path from the file, whose first id
+    /// is replaced by one after the highest in that scene, so prefab members
+    /// stay under their instance. Returns where each is now kept.
     pub fn track_new(&mut self, scene: Option<AssetGuid>, objs: &[(ObjPath, Entity)]) -> Vec<Tracked> {
         let index =
             scene.and_then(|guid| self.scenes.iter().position(|s| s.guid == guid)).or_else(|| self.active_index());
         let Some(scene) = index.map(|i| &mut self.scenes[i]) else { return Vec::new() };
-        let mut next = scene.objs.iter().filter_map(|(path, _)| path.ids().first().copied()).max().unwrap_or_default();
-        let mut renumbered: HashMap<u32, u32> = HashMap::new();
+        let renumbered = renumber(&scene.objs, objs);
         let mut tracked = Vec::with_capacity(objs.len());
-        for (path, entity) in objs {
-            let first = path.ids().first().copied();
-            let id = match first.map(|first| *renumbered.entry(first).or_insert_with(|| next + 1)) {
-                Some(id) => id,
-                None => next + 1,
-            };
-            next = next.max(id);
-            let rest = first.and_then(|first| path.strip(&ObjPath::new(first))).unwrap_or_default();
-            let path = ObjPath::new(id).join(&rest);
-            scene.objs.push((path.clone(), *entity));
-            tracked.push(Tracked { scene: scene.guid, path, entity: *entity });
+        for (path, entity) in renumbered {
+            tracked.push(Tracked { scene: scene.guid, path: path.clone(), entity, index: scene.objs.len() });
+            scene.objs.push((path, entity));
         }
         tracked
+    }
+
+    /// Moves Objs, kept together in the order given, to just before
+    /// `before` in `scene`, or to its end. Those from another scene get new
+    /// ids in this one. Returns where each is kept now.
+    pub fn move_objs(&mut self, entities: &[Entity], scene: AssetGuid, before: Option<Entity>) -> Vec<Tracked> {
+        let mut leaving = self.untrack(entities);
+        leaving.sort_by_key(|t| entities.iter().position(|e| *e == t.entity));
+        let Some(at) = self.scenes.iter().position(|s| s.guid == scene) else {
+            self.track(&leaving);
+            return leaving;
+        };
+        let (staying, moving): (Vec<Tracked>, Vec<Tracked>) = leaving.into_iter().partition(|t| t.scene == scene);
+        let moving: Vec<(ObjPath, Entity)> = moving.into_iter().map(|t| (t.path, t.entity)).collect();
+        let target = &mut self.scenes[at];
+        let mut arriving: Vec<(ObjPath, Entity)> = staying.into_iter().map(|t| (t.path, t.entity)).collect();
+        arriving.extend(renumber(&target.objs, &moving));
+        arriving.sort_by_key(|(_, e)| entities.iter().position(|x| x == e));
+        let first = before.and_then(|b| target.objs.iter().position(|(_, e)| *e == b)).unwrap_or(target.objs.len());
+        let mut placed = Vec::with_capacity(arriving.len());
+        for (place, (path, entity)) in (first..).zip(arriving) {
+            placed.push(Tracked { scene, path: path.clone(), entity, index: place });
+            target.objs.insert(place, (path, entity));
+        }
+        placed
     }
 
     fn active_index(&self) -> Option<usize> {
@@ -443,12 +475,34 @@ impl Levels {
     }
 }
 
-/// Where an Obj is kept in the open level: its scene, and its path there.
+/// Where an Obj is kept in the open level: its scene, its path there, and
+/// its place in the scene's order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tracked {
     pub scene: AssetGuid,
     pub path: ObjPath,
     pub entity: Entity,
+    pub index: usize,
+}
+
+/// New Objs' paths for a scene that has `existing`: each first id replaced
+/// by one after the highest there, the same for every Obj that shared it, so
+/// prefab members stay under their instance.
+fn renumber(existing: &[(ObjPath, Entity)], objs: &[(ObjPath, Entity)]) -> Vec<(ObjPath, Entity)> {
+    let mut next = existing.iter().filter_map(|(path, _)| path.ids().first().copied()).max().unwrap_or_default();
+    let mut renumbered: HashMap<u32, u32> = HashMap::new();
+    objs.iter()
+        .map(|(path, entity)| {
+            let first = path.ids().first().copied();
+            let id = match first.map(|first| *renumbered.entry(first).or_insert_with(|| next + 1)) {
+                Some(id) => id,
+                None => next + 1,
+            };
+            next = next.max(id);
+            let rest = first.and_then(|first| path.strip(&ObjPath::new(first))).unwrap_or_default();
+            (ObjPath::new(id).join(&rest), *entity)
+        })
+        .collect()
 }
 
 impl Levels {

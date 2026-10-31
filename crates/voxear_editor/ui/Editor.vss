@@ -389,6 +389,36 @@
     flex-shrink: 0;
 }
 
+/* A scene's header in the Hierarchy, as Unity heads each open scene. */
+.scene-header .row-name {
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.scene-header .row-icon {
+    color: var(--vx-text-2);
+}
+
+/* An Obj with an IInstance behaviour: a small pill after its name. */
+.row-badge {
+    flex-shrink: 0;
+    padding: 0px 5px;
+    margin-right: 4px;
+    border-radius: 4px;
+    font-size: 10px;
+    color: var(--vx-accent);
+    background-color: var(--vx-selected);
+}
+
+/* Prefab instances are tinted, as Unity tints them: the root, and lighter what is inside. */
+.row-name.prefab-root {
+    color: #7cb1ff;
+}
+
+.row-name.prefab-member {
+    color: #a3c6f5;
+}
+
 /* The Scene panel: its area lets the 3D view show through, and its
    overlays float over it. The frame is drawn over the view's edge, in the
    window's layer, so the view's corners follow the panel's. */

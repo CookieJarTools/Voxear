@@ -38,7 +38,7 @@ pub(crate) struct Drag {
     source: DragSource,
     from: (f32, f32),
     moving: bool,
-    over_row: Option<taffy::NodeId>,
+    over_row: Option<(taffy::NodeId, crate::list::DropPlace)>,
     over_target: Option<taffy::NodeId>,
     ghost: Option<taffy::NodeId>,
 }
@@ -117,7 +117,7 @@ impl Ui {
             _ => None,
         };
         let (old_row, old_target) = self.drag.as_ref().map_or((None, None), |d| (d.over_row, d.over_target));
-        self.mark(old_row, row, "drop-target");
+        self.mark_row(old_row, row);
         self.mark(old_target, target, "drop-hover");
         if let Some(drag) = &mut self.drag {
             (drag.over_row, drag.over_target) = (row, target);
@@ -129,7 +129,7 @@ impl Ui {
     /// whether it was being dragged, as the release is then used up.
     pub(crate) fn release_drag(&mut self) -> bool {
         let Some(drag) = self.drag.take() else { return false };
-        self.mark(drag.over_row, None, "drop-target");
+        self.mark_row(drag.over_row, None);
         self.mark(drag.over_target, None, "drop-hover");
         if let Some(ghost) = drag.ghost {
             self.remove(NodeId(ghost));
@@ -155,6 +155,23 @@ impl Ui {
     /// The innermost element taking drops under the pointer.
     fn target_under_pointer(&self) -> Option<taffy::NodeId> {
         self.hit_path().into_iter().rev().find(|n| self.drop_targets.contains(n))
+    }
+
+    /// Moves the mark of where a row would land from one row to another.
+    fn mark_row(
+        &mut self,
+        from: Option<(taffy::NodeId, crate::list::DropPlace)>,
+        to: Option<(taffy::NodeId, crate::list::DropPlace)>,
+    ) {
+        if from == to {
+            return;
+        }
+        if let Some((row, place)) = from {
+            self.set_class(NodeId(row), place.class(), false);
+        }
+        if let Some((row, place)) = to {
+            self.set_class(NodeId(row), place.class(), true);
+        }
     }
 
     /// Moves a class from one element to another.

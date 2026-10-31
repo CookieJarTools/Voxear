@@ -1135,7 +1135,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   Pivot, Global and snap buttons and the wheel's fly speed are the same settings. From the palette, a toggle flips, a
   choice moves to the next, and a number opens the Settings panel at it, focused to type. Tests and screenshots open
   the editor without memory (`Editor::open_without_memory`), so nothing carries from one run to the next.
-- **Docked panels:** the Hierarchy (Objs by parent, with type icons, child counts and a filter), the Scene view and
+- **Docked panels:** the Hierarchy (each open scene under its own header, its Objs by parent in the scene's order,
+  with type icons, child counts, a badge on Objs with an `IInstance` behaviour, prefab instances tinted, and a
+  filter), the Scene view and
   the Game view (through the level's first camera, and the one drawn while playing when both show), the Project and
   the Console under them, and the Inspector on the right at 300px. Each panel has a
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
@@ -1163,13 +1165,19 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Making, duplicating, deleting and reparenting Objs** (`objs`), from the Hierarchy. Its + button makes an Empty,
   a Cube, Sphere or Plane, a directional, point or spot light, or a camera, in front of the Scene camera on the snap
   grid. A context click on an Obj offers Duplicate *(Ctrl+D)*, Delete *(Delete)* and the same new Objs made inside
-  it; on the space below the rows, new Objs at the top. Dragging an Obj onto another puts it inside, keeping where
-  it is in the world, and below the rows takes it out to the top. Copies are named as Unity names them ("Cube
-  (1)"). Objs are copied, and brought back by undo, through scene files of them (`scene_file::capture_scene` and
-  `spawn`), so everything a scene holds comes back, prefab instances included. They keep their place in the
-  level's scenes (`Levels::untrack`, `track` and `track_new`): new Objs go into the active scene, or their parent's,
-  with ids after the highest there, Objs moved under a parent in another scene move into it, and deleted Objs come
-  back with the ids they had. While playing, these change only the played world.
+  it; on a scene's header or the space below the rows, new Objs at the top of that scene. Dragging an Obj keeps
+  where it is in the world, and lands by where the pointer is on the row under it: on the middle, inside it, last;
+  near its top or bottom edge, beside it, before or after (a line shows which); on a scene's header, at the top of
+  that scene; and below the rows, at the top of its own scene. Copies are named as Unity names them ("Cube (1)")
+  and go just after the original. Objs are copied, and brought back by undo, through scene files of them
+  (`scene_file::capture_scene` and `spawn`), so everything a scene holds comes back, prefab instances included.
+- **Sibling order is the scene's order.** A scene keeps its Objs in a list (`Levels::scene_order`), which its file
+  writes in that order and the Hierarchy shows in that order, so reordering needs nothing more in the format and
+  saves as shown. Each Obj's place there is kept with it (`Tracked::index`): Objs moved (`Levels::move_objs`) go
+  to their new place as a block with what is under them, and Objs untracked and tracked again, as when a delete or
+  a move is undone, go back to the places they had. New Objs go to the end of the active scene, or their parent's,
+  with ids after the highest there; Objs moved into another scene move into its list with new ids; deleted Objs
+  come back with the ids they had. While playing, these change only the played world.
 - **The Inspector** has a header with the Obj's icon, its name and an active switch, then rows for Tag, Layer and
   Static (shown, not yet stored: Objs have no tags or layers yet). The Transform and each component are sections
   divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a menu) on

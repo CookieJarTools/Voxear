@@ -3,7 +3,9 @@
 //! (`scene_file::capture_scene` and `spawn`), so everything a scene holds
 //! comes back, prefab instances included. They keep their place in the
 //! level's scenes (`Levels::untrack` and `track`), so a save writes them
-//! where they were, with the ids they had.
+//! where they were, with the ids they had. A scene's order is its Objs'
+//! order in the Hierarchy, so Objs moved or brought back keep their places
+//! in it too.
 
 use std::collections::{HashMap, HashSet};
 
@@ -41,11 +43,11 @@ pub struct Taken {
 }
 
 /// The taken Objs one scene kept (`None` for any no scene kept): each with
-/// its path there, and all of them as a scene file.
+/// its path and its place there, and all of them as a scene file.
 #[derive(Debug)]
 struct Part {
     scene: Option<AssetGuid>,
-    paths: Vec<(ObjPath, Entity)>,
+    paths: Vec<(ObjPath, Entity, usize)>,
     file: SceneFile,
 }
 
@@ -59,7 +61,7 @@ impl Taken {
             follow(parent);
         }
         for part in &mut self.parts {
-            part.paths.iter_mut().for_each(|(_, entity)| follow(entity));
+            part.paths.iter_mut().for_each(|(_, entity, _)| follow(entity));
         }
     }
 }
@@ -128,12 +130,14 @@ pub fn family(world: &World, root: Entity) -> Vec<Entity> {
 }
 
 /// Makes one of [`NEW_OBJS`]: under `parent` at its middle, or at the top
-/// at `position`, in the parent's scene or the active one. Returns it.
+/// at `position`, last in the parent's scene, or `scene`, or the active one.
+/// Returns it.
 pub fn create(
     game: &mut Game,
     renderer: Option<&mut Renderer>,
     kind: usize,
     parent: Option<Entity>,
+    scene: Option<AssetGuid>,
     position: Vec3,
 ) -> Result<Entity> {
     let (_, name, rest) = NEW_OBJS[kind.min(NEW_OBJS.len() - 1)];
@@ -142,7 +146,7 @@ pub fn create(
         file.objs[0].position = Some(position.to_array());
     }
     let spawned = scene_file::spawn(&mut game.engine, &mut game.content, renderer, &file, &HashSet::new())?;
-    game.levels.track_new(parent.and_then(|p| game.levels.scene_of(p)), &spawned);
+    game.levels.track_new(parent.and_then(|p| game.levels.scene_of(p)).or(scene), &spawned);
     let made = spawned.first().map(|(_, entity)| *entity).context("the new Obj was made")?;
     if let Some(parent) = parent {
         game.engine.world.insert(made, Parent(parent));
@@ -169,6 +173,13 @@ pub fn duplicate(game: &mut Game, renderer: Option<&mut Renderer>, root: Entity)
     if let Some(parent) = game.engine.world.get::<Parent>(root).map(|p| p.0) {
         game.engine.world.insert(copy, Parent(parent));
     }
+    // Just after the original, as Unity puts a copy.
+    if let Some(scene) = game.levels.scene_of(copy) {
+        let copied = family(&game.engine.world, copy);
+        let after = next_sibling(game, root, scene, &copied);
+        let ordered: Vec<Entity> = game.levels.tracked(&copied).into_iter().map(|t| t.entity).collect();
+        game.levels.move_objs(&ordered, scene, after);
+    }
     Ok(copy)
 }
 
@@ -182,17 +193,19 @@ pub fn take(game: &mut Game, root: Entity) -> Taken {
     let mut parts: Vec<Part> = Vec::new();
     for &entity in &family {
         let found = tracked.iter().find(|t| t.entity == entity);
-        let (scene, path) = found.map_or((None, ObjPath::default()), |t| (Some(t.scene), t.path.clone()));
+        let (scene, path, at) =
+            found.map_or((None, ObjPath::default(), usize::MAX), |t| (Some(t.scene), t.path.clone(), t.index));
         match parts.iter_mut().find(|part| part.scene == scene) {
-            Some(part) => part.paths.push((path, entity)),
-            None => parts.push(Part { scene, paths: vec![(path, entity)], file: SceneFile::default() }),
+            Some(part) => part.paths.push((path, entity, at)),
+            None => parts.push(Part { scene, paths: vec![(path, entity, at)], file: SceneFile::default() }),
         }
     }
     for part in &mut parts {
-        let (file, ids) = scene_file::capture_scene_with_ids(&game.engine.world, &mut game.content, &part.paths);
+        let objs: Vec<(ObjPath, Entity)> = part.paths.iter().map(|(path, entity, _)| (path.clone(), *entity)).collect();
+        let (file, ids) = scene_file::capture_scene_with_ids(&game.engine.world, &mut game.content, &objs);
         part.file = SceneFile { sky: None, post: None, ..file };
         // Objs no scene kept are known by the ids the file gave them.
-        for (path, entity) in &mut part.paths {
+        for (path, entity, _) in &mut part.paths {
             if let (true, Some(&id)) = (path.is_root(), ids.get(entity)) {
                 *path = ObjPath::new(id);
             }
@@ -214,15 +227,18 @@ pub fn bring_back(
         let renderer = renderer.as_deref_mut();
         let spawned = scene_file::spawn(&mut game.engine, &mut game.content, renderer, &part.file, &HashSet::new())?;
         for (path, entity) in &spawned {
-            if let Some((_, old)) = part.paths.iter().find(|(p, _)| p == path) {
+            if let Some((_, old, _)) = part.paths.iter().find(|(p, ..)| p == path) {
                 renamed.insert(*old, *entity);
             }
         }
         match part.scene {
             Some(scene) => {
+                // Back at the places they had, so the scene's order is as it was.
+                let place =
+                    |path: &ObjPath| part.paths.iter().find(|(p, ..)| p == path).map_or(usize::MAX, |(.., at)| *at);
                 let tracked: Vec<Tracked> = spawned
                     .iter()
-                    .map(|(path, entity)| Tracked { scene, path: path.clone(), entity: *entity })
+                    .map(|(path, entity)| Tracked { scene, path: path.clone(), entity: *entity, index: place(path) })
                     .collect();
                 game.levels.track(&tracked);
             }
@@ -245,33 +261,74 @@ pub fn bring_back(
     Ok(renamed)
 }
 
-/// Moves an Obj under `parent`, or to the top, keeping where it is in the
-/// world, as Unity does; it and everything under it move into the
-/// parent's scene. Returns where it was and is now, or `None` if it is
-/// there already or that would put it inside itself.
-pub fn reparent(game: &mut Game, entity: Entity, parent: Option<Entity>) -> Option<(Placing, Placing)> {
+/// Where an Obj is moved to in the Hierarchy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Destination {
+    /// Inside another Obj, after the Objs already there.
+    Into(Entity),
+    /// Beside another Obj, under the same parent: just before it, or just
+    /// after it.
+    Before(Entity),
+    After(Entity),
+    /// At the top of a scene, after the Objs already there.
+    SceneEnd(AssetGuid),
+}
+
+/// Moves an Obj, and everything under it, keeping where it is in the world,
+/// as Unity does. It goes into the scene of where it lands, and to its place
+/// in that scene's order. Returns where it was and is now, or `None` when
+/// nothing changed or it would go inside itself.
+pub fn move_obj(game: &mut Game, entity: Entity, to: Destination) -> Option<(Placing, Placing)> {
     let world = &game.engine.world;
     let family = family(world, entity);
-    if world.get::<Parent>(entity).map(|p| p.0) == parent || parent.is_some_and(|p| family.contains(&p)) {
+    let target = match to {
+        Destination::Into(t) | Destination::Before(t) | Destination::After(t) => Some(t),
+        Destination::SceneEnd(_) => None,
+    };
+    if target.is_some_and(|t| family.contains(&t)) {
         return None;
     }
+    let parent = match to {
+        Destination::Into(t) => Some(t),
+        Destination::Before(t) | Destination::After(t) => world.get::<Parent>(t).map(|p| p.0),
+        Destination::SceneEnd(_) => None,
+    };
+    let scene = match (to, target) {
+        (Destination::SceneEnd(scene), _) => Some(scene),
+        (_, Some(t)) => game.levels.scene_of(t),
+        _ => None,
+    };
+    let scene = scene.or_else(|| game.levels.scene_of(entity)).or_else(|| game.levels.active_scene_guid())?;
+    let anchor = match to {
+        Destination::Before(t) => Some(t),
+        Destination::After(t) => next_sibling(game, t, scene, &family),
+        Destination::Into(_) | Destination::SceneEnd(_) => None,
+    };
     let before = Placing::of(game, entity)?;
     let world = &game.engine.world;
     let inside = parent.map_or(Mat4::IDENTITY, |p| world_matrix(world, p));
     let (scale, rotation, position) = (inside.inverse() * world_matrix(world, entity)).to_scale_rotation_translation();
     let transform = Transform::new(position, rotation.normalize(), scale);
-    let scene = parent.and_then(|p| game.levels.scene_of(p));
-    let tracked = match scene {
-        Some(scene) if Some(scene) != game.levels.scene_of(entity) => {
-            let old = game.levels.untrack(&family);
-            let objs: Vec<(ObjPath, Entity)> = old.iter().map(|t| (t.path.clone(), t.entity)).collect();
-            game.levels.track_new(Some(scene), &objs)
-        }
-        _ => before.tracked.clone(),
-    };
+    // In the order the scenes keep them, so it moves as a block.
+    let ordered: Vec<Entity> = game.levels.tracked(&family).into_iter().map(|t| t.entity).collect();
+    let tracked = game.levels.move_objs(&ordered, scene, anchor);
     let after = Placing { parent, transform, tracked };
     after.apply(game, entity);
-    Some((before, after))
+    let moved = after.parent != before.parent || after.tracked != before.tracked;
+    moved.then_some((before, after))
+}
+
+/// The next Obj under the same parent as `of` in its scene's order, leaving
+/// out the Objs being moved.
+fn next_sibling(game: &Game, of: Entity, scene: AssetGuid, moving: &[Entity]) -> Option<Entity> {
+    let world = &game.engine.world;
+    let parent = world.get::<Parent>(of).map(|p| p.0);
+    let order = game.levels.scene_order().into_iter().find(|(guid, ..)| *guid == scene)?.2;
+    let at = order.iter().position(|e| *e == of)?;
+    order[at + 1..]
+        .iter()
+        .copied()
+        .find(|&e| !moving.contains(&e) && world.get::<Parent>(e).map(|p| p.0) == parent && !world.has::<Destroying>(e))
 }
 
 /// An Obj's place in the world, from its own Transform and its parents'.
@@ -371,13 +428,47 @@ pub(crate) mod tests {
         assert_eq!(game.engine.world.get::<Name>(copy).unwrap().0, "Crate (1)");
         let again = duplicate(&mut game, None, copy).unwrap();
         assert_eq!(game.engine.world.get::<Name>(again).unwrap().0, "Crate (2)");
-        let lamp = create(&mut game, None, 5, None, Vec3::new(1.0, 2.0, 3.0)).unwrap();
+        let lamp = create(&mut game, None, 5, None, None, Vec3::new(1.0, 2.0, 3.0)).unwrap();
         assert_eq!(game.engine.world.get::<Transform>(lamp).unwrap().position, Vec3::new(1.0, 2.0, 3.0));
         let text = saved(&dir, &mut game);
         for id in 1..=6 {
             assert_eq!(text.matches(&format!("id = {id}\n")).count(), 1, "one Obj has id {id}:\n{text}");
         }
         assert!(text.contains("name = \"Point Light\""));
+    }
+
+    /// The Objs' names in their scene's order.
+    fn order(game: &Game) -> Vec<String> {
+        let (_, _, entities) = game.levels.scene_order().into_iter().next().unwrap();
+        entities.iter().map(|&e| game.engine.world.get::<Name>(e).unwrap().0.clone()).collect()
+    }
+
+    #[test]
+    fn objs_move_to_their_places_and_come_back_to_them() {
+        let (dir, mut game) = game();
+        let (box_, lid, crate_) =
+            (named(&game, "Box").unwrap(), named(&game, "Lid").unwrap(), named(&game, "Crate").unwrap());
+        move_obj(&mut game, crate_, Destination::Before(box_)).unwrap();
+        assert_eq!(order(&game), ["Crate", "Box", "Lid"]);
+        let (before, after) = move_obj(&mut game, lid, Destination::After(crate_)).unwrap();
+        assert_eq!(order(&game), ["Crate", "Lid", "Box"], "out of the Box, beside the Crate");
+        assert_eq!(game.engine.world.get::<Parent>(lid), None);
+        before.apply(&mut game, lid);
+        assert_eq!(order(&game), ["Crate", "Box", "Lid"], "undone, back where it was");
+        assert_eq!(game.engine.world.get::<Parent>(lid).map(|p| p.0), Some(box_));
+        after.apply(&mut game, lid);
+        assert!(move_obj(&mut game, lid, Destination::After(crate_)).is_none(), "already there");
+
+        let taken = take(&mut game, box_);
+        assert_eq!(order(&game), ["Crate", "Lid"]);
+        bring_back(&mut game, None, &taken).unwrap();
+        assert_eq!(order(&game), ["Crate", "Lid", "Box"], "brought back at its place");
+        let text = saved(&dir, &mut game);
+        let at = |name: &str| text.find(&format!("name = \"{name}\"")).unwrap();
+        assert!(at("Crate") < at("Lid") && at("Lid") < at("Box"), "and saved in that order:\n{text}");
+        let copy = duplicate(&mut game, None, crate_).unwrap();
+        assert_eq!(order(&game)[..2], ["Crate".to_string(), "Crate (1)".to_string()], "a copy goes just after");
+        let _ = copy;
     }
 
     #[test]
@@ -387,10 +478,10 @@ pub(crate) mod tests {
         let world_position = |game: &Game, e: Entity| world_matrix(&game.engine.world, e).w_axis.truncate();
         let at = world_position(&game, lid);
         assert_eq!(at, Vec3::new(2.0, 1.0, 0.0));
-        let (before, after) = reparent(&mut game, lid, Some(crate_)).unwrap();
+        let (before, after) = move_obj(&mut game, lid, Destination::Into(crate_)).unwrap();
         assert_eq!(game.engine.world.get::<Parent>(lid).map(|p| p.0), Some(crate_));
         assert!(world_position(&game, lid).distance(at) < 1e-5, "it stays put in the world");
-        assert!(reparent(&mut game, crate_, Some(lid)).is_none(), "not inside itself");
+        assert!(move_obj(&mut game, crate_, Destination::Into(lid)).is_none(), "not inside itself");
         before.apply(&mut game, lid);
         assert_eq!(game.engine.world.get::<Transform>(lid).unwrap().position, Vec3::new(0.0, 1.0, 0.0));
         after.apply(&mut game, lid);

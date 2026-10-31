@@ -362,7 +362,7 @@ impl Editor {
     fn after_swap(&mut self, selected: Option<Entity>, panel: &str) {
         self.gizmo_shows = None;
         self.view_camera = None;
-        self.hierarchy.update(&mut self.ui, &self.game.engine.world);
+        self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
         self.select(selected);
         self.ui.show_dock_panel(self.nodes.dock, panel);
     }

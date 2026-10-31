@@ -58,7 +58,7 @@ pub use drag::DragSource;
 pub use draw::Shape;
 pub use icons::NAMES as ICONS;
 pub use input::{Clipboard, Key, LocalClipboard};
-pub use list::{ItemFns, ListItems, TreeItems};
+pub use list::{DropPlace, ItemFns, ListItems, TreeItems};
 pub use markup::LoadFile;
 pub use menu::MenuItem;
 pub use pointer::Modifiers;

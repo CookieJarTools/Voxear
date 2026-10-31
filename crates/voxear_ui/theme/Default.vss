@@ -501,6 +501,30 @@ Dropdown:focus {
     color: var(--vx-text);
 }
 
+/* A row dragged lands before or after the row marked so: a short bar on that
+   edge, as the split handles show, over the rows either side. */
+.drop-line {
+    display: none;
+    z-index: 10;
+    left: 30%;
+    width: 40%;
+    min-width: 24px;
+    max-width: 160px;
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--vx-accent);
+}
+
+.list-row.drop-before > .drop-line {
+    display: flex;
+    top: -2px;
+}
+
+.list-row.drop-after > .drop-line {
+    display: flex;
+    bottom: -2px;
+}
+
 .list-row.drop-target {
     background-color: var(--vx-selected);
     border: 1px solid var(--vx-accent);

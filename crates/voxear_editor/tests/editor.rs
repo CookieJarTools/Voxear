@@ -1056,3 +1056,59 @@ fn code_built_on_the_editor_adds_palette_commands() {
     frame(&mut editor, &mut renderer);
     assert_eq!(ran.get(), 1, "it ran, with the editor to hand");
 }
+
+/// The Hierarchy's rows showing, top to bottom, by name.
+fn hierarchy_names(ui: &Ui) -> Vec<String> {
+    let tree = ui.find(ui.root(), "hierarchy-tree").unwrap();
+    let mut rows: Vec<NodeId> =
+        ui.children(tree).into_iter().filter(|&r| ui.has_class(r, "list-row") && ui.is_visible(r)).collect();
+    rows.sort_by(|a, b| ui.rect(*a)[1].total_cmp(&ui.rect(*b)[1]));
+    rows.into_iter().filter_map(|row| first_with(ui, row, "row-name").map(|n| ui.text(n))).collect()
+}
+
+#[test]
+fn the_hierarchy_shows_scenes_in_their_order_and_reorders_them() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    frame(&mut editor, &mut renderer);
+    let names = hierarchy_names(&editor.ui);
+    assert_eq!(names[..3], ["Environment".to_string(), "Main Camera".into(), "Ground".into()], "{names:?}");
+    let day = names.iter().position(|n| n == "Day").expect("each scene has a header");
+    assert_eq!(names[day + 1..day + 4], ["Sun".to_string(), "Spinner A".into(), "Spinner B".into()], "{names:?}");
+    let header = hierarchy_row(&editor.ui, "Day").unwrap();
+    assert!(
+        first_with(&editor.ui, header, "scene-header").is_some()
+            || editor.ui.has_class(editor.ui.children(header)[2], "scene-header")
+    );
+
+    // Spinner B dragged to the top edge of Sun goes before it.
+    let (from, onto) = (hierarchy_row(&editor.ui, "Spinner B").unwrap(), hierarchy_row(&editor.ui, "Sun").unwrap());
+    let ([fx, fy, fw, fh], [ox, oy, ow, oh]) = (editor.ui.rect(from), editor.ui.rect(onto));
+    editor.ui.pointer_move(fx + fw / 2.0, fy + fh / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_move(ox + ow / 2.0, oy + oh * 0.1);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "hierarchy-before.png");
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let names = hierarchy_names(&editor.ui);
+    let day = names.iter().position(|n| n == "Day").unwrap();
+    assert_eq!(names[day + 1..day + 4], ["Spinner B".to_string(), "Sun".into(), "Spinner A".into()], "{names:?}");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    let names = hierarchy_names(&editor.ui);
+    assert_eq!(
+        names[day + 1..day + 4],
+        ["Sun".to_string(), "Spinner A".into(), "Spinner B".into()],
+        "undone: {names:?}"
+    );
+
+    // The GameManager is an IInstance, so its row has a badge, once the scripts are described.
+    if !described(&mut editor, &mut renderer) {
+        return;
+    }
+    frame(&mut editor, &mut renderer);
+    let manager = hierarchy_row(&editor.ui, "Game Manager").unwrap();
+    let badge = first_with(&editor.ui, manager, "row-badge").unwrap();
+    assert!(editor.ui.is_visible(badge) && editor.ui.text(badge) == "Instance");
+    shot(&mut renderer, "hierarchy-scenes.png");
+}

@@ -15,10 +15,13 @@
 //! accent bar down the left of a selected row.
 //!
 //! Rows can be dragged ([`Ui::set_rows_draggable`], and see `drag`): while
-//! one is, its list has `dragging-rows` and the row under the pointer
-//! `drop-target`. Letting go on another row, or below the rows, is a drop in
-//! the list, which [`Ui::dropped`] reports for the owner to act on, as the
-//! Hierarchy reparents Objs.
+//! one is, its list has `dragging-rows`, and the row under the pointer is
+//! marked where it would land: in the top quarter of the row, before it
+//! (`drop-before`); in the bottom quarter, after it (`drop-after`); and
+//! otherwise onto it (`drop-target`). Every row holds a `drop-line`, which
+//! the default theme shows on the edge something would land on. Letting go on another row, or below
+//! the rows, is a drop in the list, which [`Ui::dropped`] reports with that
+//! place for the owner to act on, as the Hierarchy moves Objs.
 
 use std::collections::HashSet;
 
@@ -77,8 +80,27 @@ const INDENT: f32 = 14.0;
 pub(crate) struct RowDrop {
     list: taffy::NodeId,
     index: usize,
-    onto: Option<usize>,
-    items: Option<(u64, Option<u64>)>,
+    onto: Option<(usize, DropPlace)>,
+    items: Option<(u64, Option<(u64, DropPlace)>)>,
+}
+
+/// Where on a row something dragged lands: before it, onto it, or after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropPlace {
+    Before,
+    Onto,
+    After,
+}
+
+impl DropPlace {
+    /// The class that marks a row while something would land there.
+    pub(crate) fn class(self) -> &'static str {
+        match self {
+            DropPlace::Before => "drop-before",
+            DropPlace::Onto => "drop-target",
+            DropPlace::After => "drop-after",
+        }
+    }
 }
 
 pub(crate) struct ListState {
@@ -302,7 +324,7 @@ impl Ui {
 
     /// A row dragged and let go of in `list` since the last frame: its
     /// index, and the index of the row it landed on, or `None` below the rows.
-    pub fn dropped(&self, list: NodeId) -> Option<(usize, Option<usize>)> {
+    pub fn dropped(&self, list: NodeId) -> Option<(usize, Option<(usize, DropPlace)>)> {
         self.row_drops.iter().find(|d| d.list == list.0).map(|d| (d.index, d.onto))
     }
 
@@ -320,7 +342,7 @@ impl Ui {
     }
 
     /// [`dropped`](Self::dropped) for a tree, by item.
-    pub fn dropped_item(&self, tree: NodeId) -> Option<(u64, Option<u64>)> {
+    pub fn dropped_item(&self, tree: NodeId) -> Option<(u64, Option<(u64, DropPlace)>)> {
         self.row_drops.iter().find(|d| d.list == tree.0).and_then(|d| d.items)
     }
 
@@ -438,21 +460,34 @@ impl Ui {
 
     /// Where a row dragged in its own list would land: another row under the
     /// pointer, and its index.
-    pub(crate) fn landing_row(&mut self, list: NodeId, index: usize) -> Option<taffy::NodeId> {
-        self.drop_row(list).filter(|&(_, i)| i != index).map(|(row, _)| row)
+    pub(crate) fn landing_row(&mut self, list: NodeId, index: usize) -> Option<(taffy::NodeId, DropPlace)> {
+        let (row, _) = self.drop_row(list).filter(|&(_, i)| i != index)?;
+        Some((row, self.place_on(row)))
+    }
+
+    /// Where on a row the pointer is: its top quarter is before it, its
+    /// bottom quarter after it, and between them onto it.
+    fn place_on(&self, row: taffy::NodeId) -> DropPlace {
+        let [_, top, _, height] = self.rect(NodeId(row));
+        let y = self.pointer_position().map_or(top + height / 2.0, |(_, y)| y);
+        match (y - top) / height.max(1.0) {
+            at if at < 0.25 => DropPlace::Before,
+            at if at > 0.75 => DropPlace::After,
+            _ => DropPlace::Onto,
+        }
     }
 
     /// A row let go of inside its own list: a drop on the row under the
     /// pointer, or below the rows.
     pub(crate) fn drop_in_list(&mut self, list: NodeId, index: usize) {
-        let onto = self.drop_row(list).map(|(_, at)| at);
-        if onto == Some(index) {
+        let onto = self.drop_row(list).map(|(row, at)| (at, self.place_on(row)));
+        if onto.is_some_and(|(at, _)| at == index) {
             return;
         }
         let items = match self.element(list).and_then(|e| e.list.as_ref()).map(|state| &state.source) {
             Some(Source::Tree(tree)) => {
                 let item = |at: usize| tree.open.get(at).map(|o| o.0);
-                item(index).map(|from| (from, onto.and_then(item)))
+                item(index).map(|from| (from, onto.and_then(|(at, place)| Some((item(at)?, place)))))
             }
             _ => None,
         };
@@ -577,10 +612,12 @@ impl ListState {
             Source::Tree(tree) => tree.items.make(ui, content),
             Source::Empty => {}
         }
-        let mut bar = Style { pickable: false, ..Style::default() };
-        bar.layout.position = Position::Absolute;
-        let bar = ui.panel(row, bar);
+        let mut marker = Style { pickable: false, ..Style::default() };
+        marker.layout.position = Position::Absolute;
+        let bar = ui.panel(row, marker.clone());
         ui.add_class(bar, "row-bar");
+        let line = ui.panel(row, marker);
+        ui.add_class(line, "drop-line");
         Row { node: row.0, content: content.0, indent, arrow, index: None }
     }
 

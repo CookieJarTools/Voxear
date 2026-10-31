@@ -231,6 +231,8 @@ Done so far:
   `Editor::add_command`.
 - **Settings:** the Scene view's and play mode's settings in a Settings panel and the palette, kept per project with
   the palette's recent items.
+- **Hierarchy order:** scene headers, Objs in their scene's order (saved as shown), dragging before, after or into a
+  row or onto a scene, undo putting Objs back at their places, `IInstance` badges and tinted prefab instances.
 
 Still to do in M3:
 - UI core:
@@ -241,8 +243,7 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The editor's next steps, to make it usable for real work: Hierarchy instance badges and sibling order, the
-  Console's Sifter features, and C# hot reload (which play mode will then use to pick up changed scripts).
+- The editor's next steps, to make it usable for real work: the Console's Sifter features, and C# hot reload (which play mode will then use to pick up changed scripts).
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.

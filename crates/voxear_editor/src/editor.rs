@@ -321,7 +321,7 @@ impl Editor {
     /// Selects an Obj, as a click in the Hierarchy does, or nothing.
     pub fn select(&mut self, entity: Option<Entity>) {
         // An Obj made this frame is in the Hierarchy once it has looked again.
-        self.hierarchy.update(&mut self.ui, &self.game.engine.world);
+        self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
         match entity {
             Some(entity) => self.hierarchy.select(&mut self.ui, &self.game.engine.world, entity),
             None => self.hierarchy.clear(&mut self.ui),
@@ -365,7 +365,7 @@ impl Editor {
             self.game.tick(delta, Some(renderer));
         }
 
-        self.hierarchy.update(&mut self.ui, &self.game.engine.world);
+        self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
         let playing = self.is_playing();
         if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
             self.inspector.show(&mut self.ui, &self.game, selected, playing);
@@ -563,7 +563,9 @@ impl Editor {
             }
             PaletteAction::Step => self.step(),
             PaletteAction::Tool(index) => self.ui.set_segment(self.nodes.tool, index),
-            PaletteAction::Create(kind) => self.obj_action(ObjAction::Create { kind, parent: None }, renderer),
+            PaletteAction::Create(kind) => {
+                self.obj_action(ObjAction::Create { kind, parent: None, scene: None }, renderer)
+            }
             PaletteAction::ShowPanel(id) => self.ui.show_dock_panel(self.nodes.dock, id),
             PaletteAction::Select(entity) => {
                 self.ui.show_dock_panel(self.nodes.dock, "hierarchy");
@@ -706,10 +708,12 @@ impl Editor {
         let position = self.new_obj_position();
         let game = &mut self.game;
         let (edit, selected) = match action {
-            ObjAction::Create { kind, parent } => match objs::create(game, Some(renderer), kind, parent, position) {
-                Ok(made) => (Edit::Exists { root: made, taken: None }, Some(made)),
-                Err(error) => return tracing::error!("could not make the Obj: {error:#}"),
-            },
+            ObjAction::Create { kind, parent, scene } => {
+                match objs::create(game, Some(renderer), kind, parent, scene, position) {
+                    Ok(made) => (Edit::Exists { root: made, taken: None }, Some(made)),
+                    Err(error) => return tracing::error!("could not make the Obj: {error:#}"),
+                }
+            }
             ObjAction::Duplicate(entity) => match objs::duplicate(game, Some(renderer), entity) {
                 Ok(copy) => (Edit::Exists { root: copy, taken: None }, Some(copy)),
                 Err(error) => return tracing::error!("could not duplicate the Obj: {error:#}"),
@@ -718,7 +722,7 @@ impl Editor {
                 let taken = objs::take(game, entity);
                 (Edit::Exists { root: entity, taken: Some(taken) }, None)
             }
-            ObjAction::Reparent(entity, parent) => match objs::reparent(game, entity, parent) {
+            ObjAction::Move(entity, to) => match objs::move_obj(game, entity, to) {
                 Some((before, after)) => (Edit::Moved { entity, before, after }, Some(entity)),
                 None => return,
             },

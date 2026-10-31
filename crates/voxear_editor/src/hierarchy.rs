@@ -1,33 +1,87 @@
-//! The Hierarchy panel: every Obj in the open level, as a tree by parent,
-//! with an icon for what it is and how many Objs are in it. A filter
-//! narrows it to Objs whose names match.
+//! The Hierarchy panel: each open scene under a header of its own, as in
+//! Unity, with its Objs in the scene's order, as a tree by parent. A scene's
+//! order is the order its file keeps its Objs, so it is saved as it is
+//! shown. Each row has an icon for what the Obj is and how many Objs are in
+//! it; an Obj with a behaviour that is an `IInstance` has a badge, and the
+//! names of prefab instances are tinted. A filter narrows it to Objs whose
+//! names match, as a flat list.
 //!
 //! Its + button makes new Objs, as Unity's GameObject menu does. A context
 //! click on an Obj offers to duplicate or delete it, or make an Obj inside
-//! it, and on the space below them, to make one at the top. Dragging an
-//! Obj onto another puts it inside, and below the rest takes it out to the
-//! top. The editor carries these out (see [`ObjAction`]).
+//! it; on a scene's header or the space below, to make one at the top.
+//! Dragging an Obj onto the middle of another puts it inside; near another's
+//! top or bottom edge, beside it, before or after; onto a scene's header, at
+//! the top of that scene; and below the rest, at the top of its own scene.
+//! The editor carries these out (see [`ObjAction`]).
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
+use voxear_assets::AssetGuid;
 use voxear_ecs::{Entity, World};
+use voxear_engine::{
+    EditBehaviours, Levels,
+    prefab::{FromPrefab, PrefabInstance},
+    script_types::ScriptTypes,
+};
 use voxear_render::{Camera, Light, MeshRenderer};
-use voxear_scene::{Destroying, Name, Parent};
-use voxear_ui::{DragSource, MenuItem, NodeId, TreeItems, Ui};
+use voxear_scene::{Destroying, InstanceMarker, Name, Parent};
+use voxear_ui::{DragSource, DropPlace, MenuItem, NodeId, TreeItems, Ui};
 
-use crate::objs::NEW_OBJS;
+use crate::objs::{Destination, NEW_OBJS};
 
 /// Objs the editor made for itself, such as its Scene camera, which the
 /// Hierarchy leaves out and level changes leave alone.
 pub use voxear_scene::EditorOnly;
+
+/// The interface whose behaviours an Obj's badge marks.
+const INSTANCE: &str = "Voxear.IInstance";
+
+/// A scene's header is an item of its own: its place among the open scenes,
+/// counted from 1. An Obj's item is its entity, whose bits are never this
+/// small, as a live entity's generation is never 0.
+fn is_header(item: u64) -> bool {
+    item < 1 << 32
+}
+
+/// What a row shows.
+#[derive(Clone, Debug, PartialEq)]
+struct Row {
+    name: String,
+    icon: &'static str,
+    header: bool,
+    /// "Instance" for an Obj with an `IInstance` behaviour.
+    badge: &'static str,
+    /// A prefab instance's root, or an Obj inside one.
+    prefab: Option<bool>,
+}
 
 /// What the tree shows, rebuilt from the world when it changes.
 #[derive(Default, PartialEq)]
 struct Snapshot {
     roots: Vec<u64>,
     children: HashMap<u64, Vec<u64>>,
-    /// Each Obj's name and icon.
-    rows: HashMap<u64, (String, &'static str)>,
+    rows: HashMap<u64, Row>,
+    /// Each header's scene.
+    scenes: HashMap<u64, AssetGuid>,
+}
+
+impl Snapshot {
+    /// The header an Obj shows under, through its parents.
+    fn header_of(&self, item: u64) -> Option<u64> {
+        let mut at = item;
+        for _ in 0..1024 {
+            let (parent, _) = self.children.iter().find(|(_, kids)| kids.contains(&at))?;
+            if is_header(*parent) {
+                return Some(*parent);
+            }
+            at = *parent;
+        }
+        None
+    }
 }
 
 struct Items(Rc<RefCell<Snapshot>>);
@@ -50,33 +104,43 @@ impl TreeItems for Items {
         ui.add_class(icon, "row-icon");
         let name = ui.add_label(row, "");
         ui.add_class(name, "row-name");
+        let badge = ui.add_label(row, "");
+        ui.add_class(badge, "row-badge");
         let count = ui.add_label(row, "");
         ui.add_class(count, "row-count");
     }
 
     fn bind(&mut self, ui: &mut Ui, row: NodeId, item: u64) {
         let snapshot = self.0.borrow();
-        let Some((name, icon)) = snapshot.rows.get(&item) else { return };
+        let Some(shown) = snapshot.rows.get(&item) else { return };
         let parts = ui.children(row);
-        ui.set_icon(parts[0], icon);
-        ui.set_text(parts[1], name);
+        ui.set_class(row, "scene-header", shown.header);
+        ui.set_icon(parts[0], shown.icon);
+        ui.set_text(parts[1], &shown.name);
+        ui.set_class(parts[1], "prefab-root", shown.prefab == Some(true));
+        ui.set_class(parts[1], "prefab-member", shown.prefab == Some(false));
+        ui.set_text(parts[2], shown.badge);
+        ui.set_visible(parts[2], !shown.badge.is_empty());
         let inside = snapshot.children.get(&item).map_or(0, Vec::len);
-        ui.set_text(parts[2], &if inside > 0 { inside.to_string() } else { String::new() });
+        let count = if inside > 0 && !shown.header { inside.to_string() } else { String::new() };
+        ui.set_text(parts[3], &count);
     }
 }
 
 /// What the Hierarchy asks the editor to do to Objs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjAction {
-    /// Make one of `NEW_OBJS`, inside an Obj or at the top.
+    /// Make one of `NEW_OBJS`, inside an Obj, or at the top of a scene (the
+    /// parent's, or the given one, or the active one).
     Create {
         kind: usize,
         parent: Option<Entity>,
+        scene: Option<AssetGuid>,
     },
     Duplicate(Entity),
     Delete(Entity),
-    /// Move an Obj inside another, or out to the top.
-    Reparent(Entity, Option<Entity>),
+    /// Move an Obj, keeping where it is in the world.
+    Move(Entity, Destination),
 }
 
 pub struct Hierarchy {
@@ -84,6 +148,8 @@ pub struct Hierarchy {
     filter: NodeId,
     add: NodeId,
     shown: Rc<RefCell<Snapshot>>,
+    /// Headers opened once, so a scene starts open but can be closed.
+    opened: HashSet<u64>,
     /// What each item of the menu open now does.
     menu: Vec<Option<ObjAction>>,
 }
@@ -93,13 +159,13 @@ impl Hierarchy {
         let shown = Rc::new(RefCell::new(Snapshot::default()));
         ui.bind_tree(tree, Items(shown.clone()));
         ui.set_rows_draggable(tree, true);
-        Self { tree, filter, add, shown, menu: Vec::new() }
+        Self { tree, filter, add, shown, opened: HashSet::new(), menu: Vec::new() }
     }
 
     /// What the + button, a context click or a dropped row asks for.
     pub fn action(&mut self, ui: &mut Ui) -> Option<ObjAction> {
         if let Some((item, onto)) = ui.dropped_item(self.tree) {
-            return Some(ObjAction::Reparent(Entity::from_bits(item), onto.map(Entity::from_bits)));
+            return self.dropped(item, onto);
         }
         if let Some(index) = ui.menu_choice(self.add).or_else(|| ui.menu_choice(self.tree)) {
             return self.menu.get(index).copied().flatten();
@@ -108,8 +174,8 @@ impl Hierarchy {
             let [x, y, _, height] = ui.rect(self.add);
             self.open_menu(ui, self.add, (x, y + height + 4.0), None);
         } else if ui.context_clicked(self.tree) {
-            let on = ui.item_at_pointer(self.tree).map(Entity::from_bits);
-            if on.is_none() {
+            let on = ui.item_at_pointer(self.tree);
+            if on.is_none_or(is_header) {
                 self.clear(ui);
             }
             let at = ui.pointer_position().unwrap_or_default();
@@ -118,46 +184,84 @@ impl Hierarchy {
         None
     }
 
-    /// The menu of what can be done to `on`, or made at the top.
-    fn open_menu(&mut self, ui: &mut Ui, owner: NodeId, at: (f32, f32), on: Option<Entity>) {
+    /// Where a row let go of takes its Obj. A scene's header is not moved.
+    fn dropped(&self, item: u64, onto: Option<(u64, DropPlace)>) -> Option<ObjAction> {
+        if is_header(item) {
+            return None;
+        }
+        let entity = Entity::from_bits(item);
+        let shown = self.shown.borrow();
+        let to = match onto {
+            Some((target, _)) if is_header(target) => Destination::SceneEnd(*shown.scenes.get(&target)?),
+            Some((target, DropPlace::Onto)) => Destination::Into(Entity::from_bits(target)),
+            Some((target, DropPlace::Before)) => Destination::Before(Entity::from_bits(target)),
+            Some((target, DropPlace::After)) => Destination::After(Entity::from_bits(target)),
+            // Below the rows: at the top of its own scene.
+            None => Destination::SceneEnd(*shown.scenes.get(&shown.header_of(item)?)?),
+        };
+        Some(ObjAction::Move(entity, to))
+    }
+
+    /// The menu of what can be done to the Obj or scene `on`, or made at
+    /// the top.
+    fn open_menu(&mut self, ui: &mut Ui, owner: NodeId, at: (f32, f32), on: Option<u64>) {
         let mut items = Vec::new();
         self.menu.clear();
-        if let Some(entity) = on {
-            let name =
-                self.shown.borrow().rows.get(&entity.to_bits()).map(|(name, _)| name.clone()).unwrap_or_default();
+        let shown = self.shown.borrow();
+        let name = on.and_then(|item| shown.rows.get(&item)).map(|row| row.name.clone()).unwrap_or_default();
+        let (parent, scene) = match on {
+            Some(item) if is_header(item) => (None, shown.scenes.get(&item).copied()),
+            Some(item) => (Some(Entity::from_bits(item)), None),
+            None => (None, None),
+        };
+        drop(shown);
+        if let Some(entity) = parent {
             let entries = [
                 (MenuItem::new("Duplicate").shortcut("Ctrl+D"), Some(ObjAction::Duplicate(entity))),
                 (MenuItem::new("Delete").shortcut("Delete"), Some(ObjAction::Delete(entity))),
                 (MenuItem::separator(), None),
-                (MenuItem::new(&format!("New inside {name}")).enabled(false), None),
             ];
             for (item, action) in entries {
                 items.push(item);
                 self.menu.push(action);
             }
         }
+        if on.is_some() {
+            items.push(MenuItem::new(&format!("New in {name}")).enabled(false));
+            self.menu.push(None);
+        }
         for (kind, (label, ..)) in NEW_OBJS.iter().enumerate() {
             items.push(MenuItem::new(label));
-            self.menu.push(Some(ObjAction::Create { kind, parent: on }));
+            self.menu.push(Some(ObjAction::Create { kind, parent, scene }));
         }
         ui.open_menu(owner, at, &items);
     }
 
-    /// Shows the world as it is now, if anything changed.
-    pub fn update(&mut self, ui: &mut Ui, world: &World) {
+    /// Shows the world as it is now, if anything changed. `types` say which
+    /// scripts are `IInstance`s while their behaviours are not running.
+    pub fn update(&mut self, ui: &mut Ui, world: &World, levels: &Levels, types: &ScriptTypes) {
         let filter = ui.text(self.filter).to_lowercase();
-        let snapshot = snapshot(world, &filter);
-        if *self.shown.borrow() != snapshot {
-            *self.shown.borrow_mut() = snapshot;
-            ui.refresh_list(self.tree);
+        let snapshot = snapshot(world, levels, types, &filter);
+        if *self.shown.borrow() == snapshot {
+            return;
         }
+        let headers: Vec<u64> = snapshot.scenes.keys().copied().collect();
+        *self.shown.borrow_mut() = snapshot;
+        for header in headers {
+            if self.opened.insert(header) {
+                ui.set_expanded(self.tree, header, true);
+            }
+        }
+        ui.refresh_list(self.tree);
     }
 
     /// The Obj being dragged, when it is a row of this tree, as the
     /// Inspector's reference fields take it.
     pub fn dragged(&self, source: &DragSource) -> Option<Entity> {
         match *source {
-            DragSource::Row { list, item: Some(item), .. } if list == self.tree => Some(Entity::from_bits(item)),
+            DragSource::Row { list, item: Some(item), .. } if list == self.tree && !is_header(item) => {
+                Some(Entity::from_bits(item))
+            }
             _ => None,
         }
     }
@@ -168,19 +272,24 @@ impl Hierarchy {
     }
 
     /// The selected Obj, when the selection changed since the last frame.
+    /// A scene's header selects no Obj.
     pub fn selection_changed(&self, ui: &Ui) -> Option<Option<Entity>> {
         if !ui.selection_changed(self.tree) {
             return None;
         }
-        Some(ui.selected_items(self.tree).first().map(|&bits| Entity::from_bits(bits)))
+        let item = ui.selected_items(self.tree).first().copied().filter(|&item| !is_header(item));
+        Some(item.map(Entity::from_bits))
     }
 
-    /// Selects the Obj, opening the Objs it is in.
+    /// Selects the Obj, opening its scene and the Objs it is in.
     pub fn select(&mut self, ui: &mut Ui, world: &World, entity: Entity) {
         let mut parent = world.get::<Parent>(entity).map(|p| p.0);
         while let Some(at) = parent {
             ui.set_expanded(self.tree, at.to_bits(), true);
             parent = world.get::<Parent>(at).map(|p| p.0);
+        }
+        if let Some(header) = self.shown.borrow().header_of(entity.to_bits()) {
+            ui.set_expanded(self.tree, header, true);
         }
         ui.select_item(self.tree, entity.to_bits());
     }
@@ -196,29 +305,85 @@ pub fn icon(camera: bool, light: bool, mesh: bool) -> &'static str {
     }
 }
 
-/// The Objs as a tree, or with a filter, those whose names contain it as a
-/// flat list.
-fn snapshot(world: &World, filter: &str) -> Snapshot {
+/// The scenes and their Objs as a tree, or with a filter, the Objs whose
+/// names contain it as a flat list, in the scenes' order either way.
+fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -> Snapshot {
     let mut snapshot = Snapshot::default();
+    let scenes = levels.scene_order();
+    // Each Obj's place: its scene, then its place there. Objs no scene keeps
+    // show at the end of the active scene, where a save would put them.
+    let active = levels.active_scene_guid().and_then(|guid| scenes.iter().position(|(g, ..)| *g == guid)).unwrap_or(0);
+    let mut places: HashMap<Entity, (usize, usize)> = HashMap::new();
+    for (scene, (_, _, entities)) in scenes.iter().enumerate() {
+        places.extend(entities.iter().enumerate().map(|(at, entity)| (*entity, (scene, at))));
+    }
     let objs = world
         .query_ref::<(Entity, &Name, Option<&Parent>, Option<&Camera>, Option<&Light>, Option<&MeshRenderer>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
-    let mut all: Vec<(Entity, Option<Entity>)> = Vec::new();
+    let mut all: Vec<(Entity, Option<Entity>, Place)> = Vec::new();
     for (entity, name, parent, camera, light, mesh) in objs {
-        let icon = icon(camera.is_some(), light.is_some(), mesh.is_some());
         if !filter.is_empty() && !name.0.to_lowercase().contains(filter) {
             continue;
         }
-        snapshot.rows.insert(entity.to_bits(), (name.0.clone(), icon));
-        all.push((entity, parent.map(|p| p.0)));
+        let row = Row {
+            name: name.0.clone(),
+            icon: icon(camera.is_some(), light.is_some(), mesh.is_some()),
+            header: false,
+            badge: if is_instance(world, types, entity) { "Instance" } else { "" },
+            prefab: prefab(world, entity),
+        };
+        snapshot.rows.insert(entity.to_bits(), row);
+        let (scene, at) = places.get(&entity).copied().unwrap_or((active, usize::MAX));
+        all.push((entity, parent.map(|p| p.0), (scene, at, entity.index())));
     }
-    all.sort_by_key(|(entity, _)| entity.index());
-    for (entity, parent) in all {
-        match parent.filter(|p| filter.is_empty() && snapshot.rows.contains_key(&p.to_bits())) {
-            Some(parent) => snapshot.children.entry(parent.to_bits()).or_default().push(entity.to_bits()),
-            None => snapshot.roots.push(entity.to_bits()),
-        }
+    all.sort_by_key(|(.., place)| *place);
+    if !filter.is_empty() {
+        snapshot.roots = all.iter().map(|(entity, ..)| entity.to_bits()).collect();
+        return snapshot;
+    }
+    for (index, (guid, path, _)) in scenes.iter().enumerate() {
+        let header = index as u64 + 1;
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let name = name.rsplit_once('.').map_or(name, |(stem, _)| stem).to_string();
+        snapshot.rows.insert(header, Row { name, icon: "scene", header: true, badge: "", prefab: None });
+        snapshot.scenes.insert(header, *guid);
+        snapshot.roots.push(header);
+        snapshot.children.insert(header, Vec::new());
+    }
+    for (entity, parent, (scene, ..)) in all {
+        let under = match parent.filter(|p| snapshot.rows.contains_key(&p.to_bits())) {
+            Some(parent) => parent.to_bits(),
+            None if scenes.is_empty() => {
+                snapshot.roots.push(entity.to_bits());
+                continue;
+            }
+            None => scene as u64 + 1,
+        };
+        snapshot.children.entry(under).or_default().push(entity.to_bits());
     }
     snapshot
+}
+
+/// Where an Obj shows: its scene's place among the open scenes, its place in
+/// that scene, and its entity's index for Objs no scene keeps.
+type Place = (usize, usize, u32);
+
+/// Whether an Obj has a behaviour that is an `IInstance`: marked so while
+/// it runs, or in edit mode, of a type the scripts' description says is one.
+fn is_instance(world: &World, types: &ScriptTypes, entity: Entity) -> bool {
+    if world.has::<InstanceMarker>(entity) {
+        return true;
+    }
+    let Some(kept) = world.get::<EditBehaviours>(entity) else { return false };
+    kept.0.iter().any(|spec| types.behaviour(&spec.type_name).is_some_and(|b| b.is_a(INSTANCE)))
+}
+
+/// `Some(true)` for a prefab instance's root, `Some(false)` for an Obj
+/// inside one.
+fn prefab(world: &World, entity: Entity) -> Option<bool> {
+    if world.has::<PrefabInstance>(entity) {
+        return Some(true);
+    }
+    world.has::<FromPrefab>(entity).then_some(false)
 }

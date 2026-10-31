@@ -223,19 +223,40 @@ fn play_runs_the_scripts_and_stop_brings_the_level_back() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert!(editor.ui.has_class(prop_row(&editor.ui, "Position").unwrap(), "kept"), "the row is marked");
+    // A component's value can be kept too: the Lamp's intensity, typed in while playing.
+    let lamp = obj(&editor, "Lamp").unwrap();
+    let intensity =
+        |editor: &voxear_editor::Editor, e| editor.game.engine.world.get::<voxear_render::Light>(e).unwrap().intensity;
+    let lamp_was = intensity(&editor, lamp);
+    editor.select(Some(lamp));
+    frame(&mut editor, &mut renderer);
+    let field = prop_field(&editor.ui, "Intensity").expect("the light's values show while playing");
+    type_into(&mut editor.ui, field, "3.5");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    let target = prop_row(&editor.ui, "Intensity").unwrap();
+    context_click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    let target = menu_item(&editor.ui, "Keep value after play").unwrap();
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+
     editor.stop(&mut renderer);
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.play_error(), None);
     let back = *editor.game.engine.world.get::<Transform>(spinner).unwrap();
     assert_eq!(back.position, kept_at, "the kept position came back from play");
     assert_eq!(back.rotation, edited.rotation, "and nothing else did");
+    let lamp = obj(&editor, "Lamp").unwrap();
+    assert_eq!(intensity(&editor, lamp), 3.5, "and so did the Lamp's intensity");
     assert!(editor.has_unsaved_changes());
     editor.undo(&mut renderer);
     assert_eq!(
         editor.game.engine.world.get::<Transform>(spinner).unwrap().position,
         edited.position,
-        "undo takes it back"
+        "undo takes them back"
     );
+    assert_eq!(intensity(&editor, lamp), lamp_was, "both, as one step");
 }
 
 /// The first label anywhere in `node` whose text starts with `words`.
@@ -554,4 +575,95 @@ fn the_hierarchy_makes_duplicates_deletes_and_reparents_objs() {
     assert!(obj(&editor, "Cube").is_none(), "then the Cube");
     editor.redo(&mut renderer);
     assert!(obj(&editor, "Cube").is_some(), "and redo makes it again");
+}
+
+/// The Inspector field in the row labelled `label`: its first text field.
+fn prop_field(ui: &Ui, label: &str) -> Option<NodeId> {
+    let row = prop_row(ui, label)?;
+    let mut fields = Vec::new();
+    with_class(ui, row, "value-input", &mut fields);
+    with_class(ui, row, "axis-input", &mut fields);
+    fields.first().copied()
+}
+
+fn type_into(ui: &mut Ui, field: NodeId, text: &str) {
+    ui.focus(field);
+    ui.set_modifiers(Modifiers { shift: false, control: true });
+    ui.key_down(Key::Char('a'));
+    ui.set_modifiers(Modifiers::default());
+    ui.text_input(text);
+}
+
+#[test]
+fn the_inspector_edits_components_and_script_fields() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let spinner = obj(&editor, "Spinner B").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "inspector-script.png");
+
+    // Spinner B's scene sets only its leader; its speed shows as the script starts it.
+    let speed = prop_field(&editor.ui, "Degrees Per Second").expect("the script's fields show");
+    assert_eq!(editor.ui.text(speed), "90", "as Spinner.cs starts it");
+    type_into(&mut editor.ui, speed, "45");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    let fields = |editor: &voxear_editor::Editor| {
+        let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+        kept.0[0].fields.get("degreesPerSecond").cloned()
+    };
+    assert_eq!(fields(&editor), Some(toml::Value::Float(45.0)), "typing sets the field for the scene");
+    let leader = prop_row(&editor.ui, "Leader").expect("a reference shows");
+    let mut values = Vec::new();
+    with_class(&editor.ui, leader, "value", &mut values);
+    assert_eq!(editor.ui.text(values[0]), "Spinner A", "by the name of the Obj it points at");
+    editor.undo(&mut renderer);
+    assert_eq!(fields(&editor), None, "undo takes the field back to the script's value");
+
+    // Add Component: a light, whose intensity is then edited, then removed.
+    frame(&mut editor, &mut renderer);
+    let mut add = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "add-component", &mut add);
+    click(&mut editor.ui, add[0]);
+    frame(&mut editor, &mut renderer);
+    let target = menu_item(&editor.ui, "Light").expect("Add Component offers a light");
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let light = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<voxear_render::Light>(spinner).copied();
+    assert!(light(&editor).is_some(), "the light was added");
+    let intensity = prop_field(&editor.ui, "Intensity").expect("and shows its values");
+    type_into(&mut editor.ui, intensity, "2.5");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    assert_eq!(light(&editor).unwrap().intensity, 2.5);
+    shot(&mut renderer, "inspector-light.png");
+
+    let mut headers = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "foldout-header", &mut headers);
+    let header = headers.into_iter().find(|&h| label_starting(&editor.ui, h, "Light").is_some()).unwrap();
+    context_click(&mut editor.ui, header);
+    frame(&mut editor, &mut renderer);
+    let target = menu_item(&editor.ui, "Remove Component").unwrap();
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    assert!(light(&editor).is_none(), "removed");
+    editor.undo(&mut renderer);
+    assert_eq!(light(&editor).map(|l| l.intensity), Some(2.5), "undo brings it back as it was");
+
+    // The mesh is picked from a menu.
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mesh_row = prop_row(&editor.ui, "Mesh").unwrap();
+    let mut dropdowns = Vec::new();
+    with_class(&editor.ui, mesh_row, "value-choice", &mut dropdowns);
+    click(&mut editor.ui, dropdowns[0]);
+    frame(&mut editor, &mut renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    let sphere = options.into_iter().find(|&o| label_starting(&editor.ui, o, "Sphere").is_some()).unwrap();
+    click(&mut editor.ui, sphere);
+    frame(&mut editor, &mut renderer);
+    let mesh = editor.game.engine.world.get::<voxear_render::MeshRenderer>(spinner).unwrap().mesh;
+    assert_eq!(editor.game.content.mesh_ref(mesh).map(|r| r.to_string()).as_deref(), Some("builtin:sphere"));
 }

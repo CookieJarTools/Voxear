@@ -1148,19 +1148,31 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   Static (shown, not yet stored: Objs have no tags or layers yet). The Transform and each component are sections
   divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a menu) on
   the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
-  letters, applied as they are typed, and changes made elsewhere show in fields not being edited. A dashed Add
-  Component button ends it. While playing it shows the running Obj, its behaviours included.
-- **Keeping values after play.** A context click on the name or a Transform row opens its menu: Reset, and while
-  playing, **Keep value after play**, whose row is then marked in the accent. When play stops, each kept value of
-  an Obj from the edited level (`Levels::counterpart`) is copied into the edited Obj, as one step to undo, and the
-  status bar says how many were kept.
+  letters, applied as they are typed, and changes made elsewhere show in fields not being edited. While playing it
+  shows the running Obj, its behaviours included.
+- **Components in the Inspector** (`props`): each component is a part, and each value in it a prop, read from the
+  world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
+  mesh it has) and its material (the default, or a `.material` in the project); a Light its type, colour (a swatch
+  and sRGB channels), intensity, and the range and spot angles its type uses; a Camera its field of view, near plane
+  and exposure. **Scripts** show the fields their source declares (`voxear_engine::script_types`, which reads the
+  project's C# without building it: classes deriving from `Behaviour`, and their public or `[SerializeField]`
+  fields with the values they start with), labelled as Unity labels them ("Degrees Per Second"). Numbers, whole
+  numbers, text, toggles and Vector3s are edited; references show the Obj they point at, and anything else as the
+  scene writes it. A field the scene does not set shows the script's value, and setting it writes it for the scene.
+  While playing, scripts show the values they started with. **Add Component** offers a Mesh Renderer, Light or
+  Camera the Obj lacks, and the project's scripts; a context click on a component's header removes it, and on a
+  script field's row resets it to the script's value. Every change is a step to undo.
+- **Keeping values after play.** A context click on the name, a Transform row or a component's value opens its menu:
+  Reset where there is one, and while playing, **Keep value after play**, whose row is then marked in the accent.
+  When play stops, each kept value of an Obj from the edited level (`Levels::counterpart`) is copied into the edited
+  Obj, as one step to undo, and the status bar says how many were kept.
 - **Saving** *(Ctrl+S)* writes the open level's scenes back to their files (`Levels::save`). Only scenes that changed
   are written, so untouched ones keep their comments; each keeps its own sky, prefab instances keep their paths and
   write only what differs from the prefab, and Objs made since the level opened go into its active scene. Hello's
   levels save back unchanged. Edits while playing are not saved, as in Unity. Opening another level with unsaved
   changes asks for a second click first.
-- **Undo and redo** *(Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)* take back and make again edits to an Obj's name and
-  Transform, from the Inspector or the Scene view's handles, values kept from play, and Objs made, duplicated,
+- **Undo and redo** *(Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)* take back and make again edits to an Obj's name, Transform
+  and components, from the Inspector or the Scene view's handles, values kept from play, and Objs made, duplicated,
   deleted or reparented; typing into one field is one step, and so is a drag. Objs brought back are new entities,
   so every step naming them is pointed at the new ones.
 - **The status bar** shows a light, what the editor is doing (ready, building scripts, playing or paused, or that
@@ -1168,8 +1180,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
-Adding and removing components, editing their fields, the command palette and the Odin-style inspector attributes
-come next.
+Choosing references and editing lists in script fields, the command palette and the Odin-style inspector
+attributes come next.
 
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.

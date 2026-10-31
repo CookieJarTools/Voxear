@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// Renders the scene from this Obj, looking along its +Z like Unity.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
     pub fov_y_degrees: f32,
     pub near: f32,
@@ -39,7 +39,7 @@ pub enum LightKind {
     Spot,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Light {
     pub kind: LightKind,
     pub color: Vec3,
@@ -78,7 +78,7 @@ impl Light {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshRenderer {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,

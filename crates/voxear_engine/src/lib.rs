@@ -11,12 +11,13 @@ mod loading;
 pub mod prefab;
 mod project;
 pub mod scene_file;
+pub mod script_types;
 pub mod scripts;
 mod stats_overlay;
 pub mod ui_input;
 mod windowed;
 
-pub use content::{Content, ContentUsage, MaterialData, MaterialSource, Released};
+pub use content::{Content, ContentUsage, MaterialData, MaterialSource, Released, linear, srgb};
 pub use engine::{EditBehaviours, Engine, STAGES};
 pub use fly_camera::FlyCamera;
 pub use game::Game;

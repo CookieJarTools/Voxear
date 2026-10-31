@@ -572,6 +572,38 @@
     color: var(--vx-z);
 }
 
+/* A colour: its swatch, then red, green and blue. */
+.vector.color {
+    grid-template-columns: 22px repeat(3, minmax(0px, 1fr));
+}
+
+.swatch {
+    height: 22px;
+    border-radius: 5px;
+    border: 1px solid var(--vx-field-line);
+}
+
+.axis-r {
+    color: var(--vx-x);
+}
+
+.axis-g {
+    color: var(--vx-y);
+}
+
+.axis-b {
+    color: var(--vx-z);
+}
+
+.value-input {
+    height: 22px;
+    font-size: 11px;
+}
+
+.number-input {
+    font-family: mono;
+}
+
 .value {
     font-family: mono;
     font-size: 11px;

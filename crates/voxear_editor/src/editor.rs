@@ -27,6 +27,7 @@ use crate::{
     levels_panel::{LevelAction, LevelsPanel},
     objs,
     project_view::ProjectView,
+    props,
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
 };
 
@@ -203,7 +204,7 @@ impl Editor {
         let console_list = find(&ui, "console-list");
         let console = Console::new(&mut ui, console_list, log);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
-        inspector.show(&mut ui, &game.engine.world, None);
+        inspector.show(&mut ui, &game, None, false);
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let cookbook_panel = find(&ui, "cookbook");
         let cookbook = voxear_cookbook::Cookbook::new(&mut ui, cookbook_panel, &root, game.project.name());
@@ -253,7 +254,8 @@ impl Editor {
             Some(entity) => self.hierarchy.select(&mut self.ui, &self.game.engine.world, entity),
             None => self.hierarchy.clear(&mut self.ui),
         }
-        self.inspector.show(&mut self.ui, &self.game.engine.world, entity);
+        let playing = self.is_playing();
+        self.inspector.show(&mut self.ui, &self.game, entity, playing);
     }
 
     /// The Obj selected, as the Inspector shows it.
@@ -292,10 +294,11 @@ impl Editor {
         }
 
         self.hierarchy.update(&mut self.ui, &self.game.engine.world);
+        let playing = self.is_playing();
         if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
-            self.inspector.show(&mut self.ui, &self.game.engine.world, selected);
+            self.inspector.show(&mut self.ui, &self.game, selected, playing);
         }
-        let edit = self.inspector.update(&mut self.ui, &mut self.game.engine.world);
+        let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
         // Edits while playing go with the played world, so there is nothing to undo or save.
         if let Some(edit) = edit.filter(|_| !self.is_playing()) {
             self.history.record(edit);
@@ -304,12 +307,11 @@ impl Editor {
         if let Some(action) = self.hierarchy.action(&mut self.ui) {
             self.obj_action(action, renderer);
         }
-        let playing = self.is_playing();
         let shown = self.selected();
         let can_keep = shown.is_some_and(|entity| self.edited_counterpart(entity).is_some());
-        let kept: Vec<Field> = self.kept.iter().filter(|(e, _)| Some(*e) == shown).map(|&(_, field)| field).collect();
-        if let Some(action) = self.inspector.row_menus(&mut self.ui, playing, can_keep, &kept) {
-            self.row_action(action);
+        let kept: Vec<Field> = self.kept.iter().filter(|(e, _)| Some(*e) == shown).map(|(_, f)| f.clone()).collect();
+        if let Some(action) = self.inspector.menus(&mut self.ui, playing, can_keep, &kept) {
+            self.row_action(action, renderer);
         }
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
@@ -404,7 +406,7 @@ impl Editor {
         self.unsaved = false;
         self.discard_armed = None;
         self.game.release_unused(Some(renderer));
-        self.inspector.show(&mut self.ui, &self.game.engine.world, None);
+        self.inspector.show(&mut self.ui, &self.game, None, false);
         tracing::info!("opened {}", self.game.levels.current().unwrap_or("a scene"));
     }
 
@@ -462,12 +464,8 @@ impl Editor {
     /// Lets go of a handle; the drag is one step to undo.
     fn end_drag(&mut self) {
         let Some((entity, start)) = self.tools.end() else { return };
-        let world = &self.game.engine.world;
-        let (Some(after), Some(name)) = (ObjState::of(world, entity), world.get::<Name>(entity).map(|n| n.0.clone()))
-        else {
-            return;
-        };
-        let before = ObjState { name, transform: start };
+        let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
+        let before = ObjState { transform: start, ..after.clone() };
         if before != after && !self.is_playing() {
             self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
@@ -513,35 +511,53 @@ impl Editor {
         (at / self.tools.snap).round() * self.tools.snap
     }
 
-    /// Keeps a value after play, or stops keeping it, or resets it, as a
-    /// row's menu in the Inspector asks.
-    fn row_action(&mut self, action: RowAction) {
+    /// Does what a menu in the Inspector asks: keeps a value after play or
+    /// stops keeping it, resets a value or the Transform, or adds or removes
+    /// a component. Each change is a step to undo, except while playing.
+    fn row_action(&mut self, action: RowAction, renderer: &mut Renderer) {
         let Some(entity) = self.selected() else { return };
-        match action {
-            RowAction::Keep(field) => {
-                let label = field.label();
-                match self.kept.iter().position(|kept| *kept == (entity, field)) {
-                    Some(at) => {
-                        self.kept.remove(at);
-                        self.notify(&format!("{label} will not be kept after play"));
-                    }
-                    None => {
-                        self.kept.push((entity, field));
-                        self.notify(&format!("{label} will be kept when play stops"));
-                    }
+        if let RowAction::Keep(field) = action {
+            let label = field.label();
+            let kept = (entity, field);
+            match self.kept.iter().position(|k| *k == kept) {
+                Some(at) => {
+                    self.kept.remove(at);
+                    self.notify(&format!("{label} will not be kept after play"));
                 }
+                None => {
+                    self.kept.push(kept);
+                    self.notify(&format!("{label} will be kept when play stops"));
+                }
+            }
+            return;
+        }
+        let Some(before) = ObjState::of(&self.game.engine.world, entity) else { return };
+        match action {
+            RowAction::Keep(_) => {}
+            RowAction::Reset(Field::Prop(prop)) => {
+                props::reset_field(&mut self.game.engine.world, entity, &prop);
             }
             RowAction::Reset(field) => {
-                let world = &mut self.game.engine.world;
-                let Some(before) = ObjState::of(world, entity) else { return };
                 let mut after = before.clone();
                 field.reset(&mut after);
-                after.apply(world, entity);
-                if before != after && !self.is_playing() {
-                    self.history.record_step(Edit::Changed { entity, before, after });
-                    self.unsaved = true;
+                after.apply(&mut self.game.engine.world, entity);
+            }
+            RowAction::ResetTransform => {
+                let mut after = before.clone();
+                after.transform = Transform::IDENTITY;
+                after.apply(&mut self.game.engine.world, entity);
+            }
+            RowAction::Add(part) => {
+                if let Err(error) = props::add(&mut self.game, Some(renderer), entity, &part) {
+                    tracing::error!("could not add {}: {error:#}", part.title());
                 }
             }
+            RowAction::Remove(part) => props::remove(&mut self.game.engine.world, entity, &part),
+        }
+        let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
+        if before != after && !self.is_playing() {
+            self.history.record_step(Edit::Changed { entity, before, after });
+            self.unsaved = true;
         }
     }
 

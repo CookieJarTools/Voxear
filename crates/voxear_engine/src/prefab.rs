@@ -551,7 +551,7 @@ fn resolve_obj(
         transform: Transform::new(Vec3::from(data.position()), rotation, Vec3::from(data.scale())),
         persistent: data.persistent,
         behaviours: behaviour_specs(&data.behaviours, &data.fields)?,
-        camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, ..Camera::default() }),
+        camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
         light: data.light.map(light_component),
         renderer,
         prefab: obj.prefab,

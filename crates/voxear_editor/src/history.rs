@@ -1,5 +1,6 @@
-//! Undo and redo for edits made in the editor: an Obj's name and Transform
-//! changed, Objs made or deleted, and Objs moved to another parent. Typing
+//! Undo and redo for edits made in the editor: an Obj's name, Transform or
+//! components changed, Objs made or deleted, and Objs moved to another
+//! parent. Typing
 //! into one field records one step, not one per key, as changes to the
 //! same Obj close together merge. Objs that undo or redo bring back are new
 //! entities, so every step naming them is pointed at the new ones.
@@ -9,9 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use voxear_ecs::{Entity, World};
-use voxear_engine::Game;
-use voxear_render::Renderer;
+use voxear_ecs::{Component, Entity, World};
+use voxear_engine::{EditBehaviours, Game};
+use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Name, Transform};
 
 use crate::objs::{self, Placing, Taken};
@@ -19,18 +20,29 @@ use crate::objs::{self, Placing, Taken};
 /// Edits to the same Obj closer together than this are one step.
 const MERGE_WITHIN: Duration = Duration::from_millis(800);
 
-/// What a change edits about an Obj.
+/// What a change edits about an Obj: its name, its Transform, and the
+/// components the Inspector edits, each there or not. Its scripts are
+/// kept as data in edit mode; while playing nothing is undone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjState {
     pub name: String,
     pub transform: Transform,
+    pub renderer: Option<MeshRenderer>,
+    pub light: Option<Light>,
+    pub camera: Option<Camera>,
+    pub behaviours: Option<EditBehaviours>,
 }
 
 impl ObjState {
     pub fn of(world: &World, entity: Entity) -> Option<Self> {
-        let name = world.get::<Name>(entity)?.0.clone();
-        let transform = *world.get::<Transform>(entity)?;
-        Some(Self { name, transform })
+        Some(Self {
+            name: world.get::<Name>(entity)?.0.clone(),
+            transform: *world.get::<Transform>(entity)?,
+            renderer: world.get::<MeshRenderer>(entity).copied(),
+            light: world.get::<Light>(entity).copied(),
+            camera: world.get::<Camera>(entity).copied(),
+            behaviours: world.get::<EditBehaviours>(entity).cloned(),
+        })
     }
 
     pub fn apply(&self, world: &mut World, entity: Entity) {
@@ -39,6 +51,25 @@ impl ObjState {
         }
         if let Some(transform) = world.get_mut::<Transform>(entity) {
             *transform = self.transform;
+        }
+        put(world, entity, self.renderer);
+        put(world, entity, self.light);
+        put(world, entity, self.camera);
+        put(world, entity, self.behaviours.clone());
+    }
+}
+
+/// Gives the Obj the component, or takes it away, unless that is how it is.
+fn put<T: Component + PartialEq>(world: &mut World, entity: Entity, component: Option<T>) {
+    if world.get::<T>(entity) == component.as_ref() {
+        return;
+    }
+    match component {
+        Some(component) => {
+            world.insert(entity, component);
+        }
+        None => {
+            world.remove::<T>(entity);
         }
     }
 }

@@ -168,6 +168,9 @@ pub struct CameraData {
     pub fov: f32,
     #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
     pub exposure: f32,
+    /// How near the camera sees, in metres.
+    #[serde(default = "default_near", skip_serializing_if = "is_default_near")]
+    pub near: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -610,7 +613,8 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
         .filter(|spec| !spec.fields.is_empty())
         .map(|spec| (spec.type_name.clone(), unbind_refs(world, ids, &spec.fields)))
         .collect();
-    obj.camera = world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure });
+    obj.camera =
+        world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure, near: c.near });
     obj.light = world.get::<Light>(entity).map(light_data);
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {
         let mesh = content.mesh_ref(r.mesh)?.to_string();
@@ -623,6 +627,16 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
         Some(RendererData { mesh, material })
     });
     obj
+}
+
+/// A light of `kind` as a scene makes one when it says nothing more about it.
+pub fn default_light(kind: LightKind) -> Light {
+    let name = match kind {
+        LightKind::Directional => "directional",
+        LightKind::Point => "point",
+        LightKind::Spot => "spot",
+    };
+    light_component(toml::from_str(&format!("type = \"{name}\"")).expect("every light field has a default"))
 }
 
 pub(crate) fn light_component(light: LightData) -> Light {
@@ -651,7 +665,8 @@ fn light_data(light: &Light) -> LightData {
     }
 }
 
-pub(crate) fn default_material() -> MaterialData {
+/// The material an Obj gets when its scene names none.
+pub fn default_material() -> MaterialData {
     toml::from_str("").expect("every material field has a default")
 }
 
@@ -689,6 +704,14 @@ fn white() -> [f32; 3] {
 
 fn default_fov() -> f32 {
     60.0
+}
+
+fn default_near() -> f32 {
+    Camera::default().near
+}
+
+fn is_default_near(near: &f32) -> bool {
+    *near == default_near()
 }
 
 fn default_sun() -> f32 {

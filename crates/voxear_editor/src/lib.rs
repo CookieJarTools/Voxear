@@ -20,9 +20,9 @@
 //!   Ctrl snaps)
 //! - **editing Objs** in the Hierarchy: its + button and context menus make,
 //!   duplicate and delete them, and dragging one onto another reparents it
-//! - the **Inspector**, editing the selected Obj's name and Transform and
-//!   showing its components and behaviours; while playing, a row's menu can
-//!   keep its value after play
+//! - the **Inspector**, editing the selected Obj's name, Transform and
+//!   components, its scripts' fields included, with Add and Remove
+//!   Component; while playing, a row's menu can keep its value after play
 //! - the **Console**, showing everything logged
 //! - the **Cookbook**: the project's own documentation, Markdown pages from its
 //!   `Docs` folder (see `voxear_cookbook`)
@@ -40,6 +40,7 @@ mod inspector;
 mod levels_panel;
 mod objs;
 mod project_view;
+mod props;
 pub mod scene_tools;
 mod window;
 

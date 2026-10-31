@@ -22,7 +22,15 @@ use crate::{
     hierarchy::EditorOnly,
     history::{Edit, ObjState},
     inspector::Field,
+    props::{self, Value},
 };
+
+/// A value kept from play, as the played Obj had it when play stopped: its
+/// whole state, for its name or Transform, or one component's value.
+enum Kept {
+    State(ObjState),
+    Value(Value),
+}
 
 /// How far Step moves a paused game.
 const STEP: f32 = 1.0 / 60.0;
@@ -112,11 +120,14 @@ impl Editor {
         let Run { edit, levels, camera, .. } = *run;
         let selected = self.inspector.shown().and_then(|entity| self.game.levels.counterpart(entity, &levels));
         // The values to keep, read before the played world goes.
-        let kept: Vec<(Entity, Field, ObjState)> = std::mem::take(&mut self.kept)
+        let kept: Vec<(Entity, Field, Kept)> = std::mem::take(&mut self.kept)
             .into_iter()
             .filter_map(|(played, field)| {
-                let state = ObjState::of(&self.game.engine.world, played)?;
-                Some((self.game.levels.counterpart(played, &levels)?, field, state))
+                let value = match &field {
+                    Field::Prop(prop) => Kept::Value(props::get(&self.game, &[], played, prop)?),
+                    _ => Kept::State(ObjState::of(&self.game.engine.world, played)?),
+                };
+                Some((self.game.levels.counterpart(played, &levels)?, field, value))
             })
             .collect();
         let view = self.game.engine.world.get::<Transform>(self.camera).copied();
@@ -129,7 +140,7 @@ impl Editor {
         }
         self.camera = camera;
         self.game.release_unused(Some(renderer));
-        self.keep_from_play(&kept);
+        self.keep_from_play(kept, renderer);
         self.after_swap(selected, "scene");
         tracing::info!("stopped playing; the level is back as it was edited");
     }
@@ -143,16 +154,24 @@ impl Editor {
 
     /// Brings values kept from play into the edited level, as one step to
     /// undo.
-    fn keep_from_play(&mut self, kept: &[(Entity, Field, ObjState)]) {
-        let world = &mut self.game.engine.world;
+    fn keep_from_play(&mut self, kept: Vec<(Entity, Field, Kept)>, renderer: &mut Renderer) {
         let mut edits = Vec::new();
         for (entity, field, played) in kept {
-            let Some(before) = ObjState::of(world, *entity) else { continue };
-            let mut after = before.clone();
-            field.copy(played, &mut after);
-            after.apply(world, *entity);
+            let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
+            match (&field, played) {
+                (Field::Prop(prop), Kept::Value(value)) => {
+                    props::set(&mut self.game, Some(renderer), &[], entity, prop, value);
+                }
+                (_, Kept::State(played)) => {
+                    let mut after = before.clone();
+                    field.copy(&played, &mut after);
+                    after.apply(&mut self.game.engine.world, entity);
+                }
+                (_, Kept::Value(_)) => {}
+            }
+            let Some(after) = ObjState::of(&self.game.engine.world, entity) else { continue };
             if before != after {
-                edits.push(Edit::Changed { entity: *entity, before, after });
+                edits.push(Edit::Changed { entity, before, after });
             }
         }
         if edits.is_empty() {

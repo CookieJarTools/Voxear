@@ -1,22 +1,33 @@
 //! The Inspector: the selected Obj's header (its kind, name, and the
 //! active, tag, layer and static settings to come), then a section for its
-//! Transform and for each component, divided by lines. Typed values apply
-//! as they are typed, and values that change elsewhere show here, except in
-//! the field being edited.
+//! Transform and for each component (see `props`), divided by lines. Values
+//! apply as they are typed or picked, and values that change elsewhere show
+//! here, except in the field being edited. When an Obj's components, or what
+//! they show, change (a light of another kind, a component added or undone),
+//! the Inspector is built again.
 //!
-//! A context click on the name or a Transform row opens its menu: Reset,
-//! and while playing, "Keep value after play", which brings the value the
-//! played Obj has when play stops back into the edited level, as one step
-//! to undo. Kept rows are marked (`kept`).
+//! Menus: a context click on a value's row offers Reset for the Transform
+//! and script fields, and while playing, "Keep value after play", which
+//! brings the value the played Obj has when play stops back into the edited
+//! level, as one step to undo; kept rows are marked (`kept`). A context
+//! click on a component's header offers Remove Component, and the
+//! Transform's menu button Reset. Add Component lists the components and
+//! the project's scripts (`script_types`) the Obj does not have yet.
 
 use voxear_core::math::{EulerRot, Quat, Vec3};
-use voxear_ecs::{Entity, World};
-use voxear_engine::EditBehaviours;
-use voxear_render::{Camera, Light, LightKind, MeshRenderer};
-use voxear_scene::{BehaviourSpec, Behaviours, Name, Transform};
+use voxear_ecs::Entity;
+use voxear_engine::{
+    Game,
+    script_types::{BehaviourType, behaviour_types},
+};
+use voxear_render::{Camera, Light, MeshRenderer, Renderer};
+use voxear_scene::{Name, Transform};
 use voxear_ui::{MenuItem, NodeId, Style, Ui};
 
-use crate::history::{Edit, ObjState};
+use crate::{
+    history::{Edit, ObjState},
+    props::{self, Part, Prop, Value},
+};
 
 /// The fields showing an Obj's name and Transform, by what they edit, and
 /// the row each is on.
@@ -28,66 +39,115 @@ struct Fields {
     rows: [(Field, NodeId); 4],
 }
 
-/// A value whose row has a menu: to keep it from play, or reset it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// A value the menus can keep after play or reset: the name, a Transform
+/// row, or a component's value.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Field {
     Name,
     Position,
     Rotation,
     Scale,
+    Prop(Prop),
 }
 
 impl Field {
-    pub fn label(self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
-            Field::Name => "Name",
-            Field::Position => "Position",
-            Field::Rotation => "Rotation",
-            Field::Scale => "Scale",
+            Field::Name => "Name".into(),
+            Field::Position => "Position".into(),
+            Field::Rotation => "Rotation".into(),
+            Field::Scale => "Scale".into(),
+            Field::Prop(prop) => props::label(prop),
         }
     }
 
-    /// Copies this value from one state of an Obj into another.
-    pub fn copy(self, from: &ObjState, to: &mut ObjState) {
+    /// Copies the name or a Transform value from one state of an Obj into
+    /// another. A component's value goes through `props` instead.
+    pub fn copy(&self, from: &ObjState, to: &mut ObjState) {
         match self {
             Field::Name => to.name.clone_from(&from.name),
             Field::Position => to.transform.position = from.transform.position,
             Field::Rotation => to.transform.rotation = from.transform.rotation,
             Field::Scale => to.transform.scale = from.transform.scale,
+            Field::Prop(_) => {}
         }
     }
 
-    /// Sets the value as Unity's Reset leaves a Transform. A name has no
-    /// such value, so it is left as it is.
-    pub fn reset(self, state: &mut ObjState) {
+    /// Sets a Transform value as Unity's Reset leaves it. Others are left as
+    /// they are.
+    pub fn reset(&self, state: &mut ObjState) {
         match self {
-            Field::Name => {}
             Field::Position => state.transform.position = Vec3::ZERO,
             Field::Rotation => state.transform.rotation = Quat::IDENTITY,
             Field::Scale => state.transform.scale = Vec3::ONE,
+            Field::Name | Field::Prop(_) => {}
         }
     }
 }
 
-/// What a row's menu asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a menu in the Inspector asks for.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RowAction {
     /// Keep the value after play, or stop keeping it.
     Keep(Field),
     Reset(Field),
+    ResetTransform,
+    Add(Part),
+    Remove(Part),
+}
+
+/// A component value's row and the control that edits it.
+struct PropRow {
+    prop: Prop,
+    row: NodeId,
+    control: Control,
+}
+
+enum Control {
+    /// A field typed in: a number, a whole number or text.
+    Text(NodeId),
+    Toggle(NodeId),
+    /// Three fields, for a vector or a colour, with the colour's swatch.
+    Axes([NodeId; 3], Option<NodeId>),
+    /// A dropdown, and the options it was last given.
+    Choice(NodeId, Vec<String>),
+    /// A label, for what is shown but not edited here.
+    Fixed(NodeId),
 }
 
 pub struct Inspector {
     root: NodeId,
     shown: Option<Entity>,
     fields: Option<Fields>,
-    /// The row whose menu is open, and what each of its items does.
+    /// The Transform's menu button, and each section's header with its
+    /// component (`None` for the Transform).
+    transform_menu: Option<NodeId>,
+    headers: Vec<(Option<Part>, NodeId)>,
+    rows: Vec<PropRow>,
+    add: Option<NodeId>,
+    /// The project's scripts, as their sources were when last shown.
+    types: Vec<BehaviourType>,
+    /// The components and values shown, and whether the game was playing,
+    /// to build again when either changes.
+    built: (Vec<(Part, Vec<Prop>)>, bool),
+    /// The element whose menu is open, and what each of its items does.
     menu: Option<(NodeId, Vec<Option<RowAction>>)>,
 }
 
 impl Inspector {
     pub fn new(root: NodeId) -> Self {
-        Self { root, shown: None, fields: None, menu: None }
+        Self {
+            root,
+            shown: None,
+            fields: None,
+            transform_menu: None,
+            headers: Vec::new(),
+            rows: Vec::new(),
+            add: None,
+            types: Vec::new(),
+            built: (Vec::new(), false),
+            menu: None,
+        }
     }
 
     /// The Obj showing, if any.
@@ -95,21 +155,26 @@ impl Inspector {
         self.shown
     }
 
-    /// Shows `entity`, or a hint when nothing is selected.
-    pub fn show(&mut self, ui: &mut Ui, world: &World, entity: Option<Entity>) {
+    /// Shows `entity`, or a hint when nothing is selected. While `playing`,
+    /// scripts show the values they started with, which cannot be edited.
+    pub fn show(&mut self, ui: &mut Ui, game: &Game, entity: Option<Entity>, playing: bool) {
         for child in ui.children(self.root) {
             ui.remove(child);
         }
+        let world = &game.engine.world;
         self.shown = entity.filter(|&e| world.get::<Transform>(e).is_some());
-        self.fields = None;
+        (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
+        self.headers.clear();
+        self.rows.clear();
         let Some(entity) = self.shown else {
             let hint = ui.add_label(self.root, "Select an Obj in the Hierarchy to see it here.");
             ui.add_class(hint, "placeholder");
             return;
         };
-        let (name_row, name) = header(ui, self.root, world, entity);
+        self.types = behaviour_types(&game.project);
+        let (name_row, name) = header(ui, self.root, game, entity);
 
-        let rows = section(ui, self.root, "Transform", "transform", false);
+        let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", false);
         let (position_row, position) = vector_row(ui, rows, "Position");
         let (rotation_row, rotation) = vector_row(ui, rows, "Rotation");
         let (scale_row, scale) = vector_row(ui, rows, "Scale");
@@ -120,54 +185,70 @@ impl Inspector {
             (Field::Scale, scale_row),
         ];
         self.fields = Some(Fields { name, position, rotation, scale, rows });
+        self.transform_menu = menu;
+        self.headers.push((None, transform));
 
-        if let Some(mesh) = world.get::<MeshRenderer>(entity) {
-            let rows = section(ui, self.root, "Mesh Renderer", "cube", true);
-            pair(ui, rows, "Mesh", &format!("#{}", mesh.mesh.0));
-            pair(ui, rows, "Material", &format!("#{}", mesh.material.0));
-        }
-        if let Some(light) = world.get::<Light>(entity) {
-            let rows = section(ui, self.root, "Light", "light", true);
-            let kind = match light.kind {
-                LightKind::Directional => "Directional",
-                LightKind::Point => "Point",
-                LightKind::Spot => "Spot",
-            };
-            pair(ui, rows, "Type", kind);
-            pair(ui, rows, "Colour", &format!("{:.2}, {:.2}, {:.2}", light.color.x, light.color.y, light.color.z));
-            pair(ui, rows, "Intensity", &number(light.intensity));
-            if light.kind != LightKind::Directional {
-                pair(ui, rows, "Range", &number(light.range));
+        let layout = layout(game, entity, &self.types);
+        for (part, values) in &layout {
+            let (header, rows, _) = section(ui, self.root, part.title(), part.icon(), true);
+            self.headers.push((Some(part.clone()), header));
+            if values.is_empty()
+                && let Part::Behaviour(name) = part
+            {
+                let row = prop(ui, rows, "Script");
+                let label = ui.add_label(row, name);
+                ui.add_class(label, "value");
             }
-        }
-        if let Some(camera) = world.get::<Camera>(entity) {
-            let rows = section(ui, self.root, "Camera", "camera", true);
-            pair(ui, rows, "Field of view", &format!("{}°", number(camera.fov_y_degrees)));
-            pair(ui, rows, "Near", &number(camera.near));
-        }
-        for behaviour in behaviours(world, entity) {
-            let title = behaviour.type_name.rsplit('.').next().unwrap_or(&behaviour.type_name).to_string();
-            let rows = section(ui, self.root, &title, "code", true);
-            if behaviour.fields.is_empty() {
-                pair(ui, rows, "Script", &behaviour.type_name);
-            }
-            for (field, value) in behaviour.fields.iter() {
-                pair(ui, rows, field, &value.to_string());
+            for value in values {
+                let row = prop(ui, rows, &props::label(value));
+                let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
+                let editable = !(playing && matches!(value, Prop::Field { .. }));
+                let control = control(ui, row, &shown, editable);
+                self.rows.push(PropRow { prop: value.clone(), row, control });
             }
         }
         let add = ui.button(self.root, "Add Component");
         ui.add_class(add, "add-component");
+        self.add = Some(add);
+        self.built = (layout, playing);
     }
 
-    /// Applies what was typed, and shows changes made elsewhere.
+    /// Applies what was typed or picked, and shows changes made elsewhere.
     /// Returns what was edited this frame, for undo.
-    pub fn update(&mut self, ui: &mut Ui, world: &mut World) -> Option<Edit> {
-        let (Some(entity), Some(fields)) = (self.shown, &self.fields) else { return None };
-        let Some(&transform) = world.get::<Transform>(entity) else {
-            self.show(ui, world, None);
+    pub fn update(
+        &mut self,
+        ui: &mut Ui,
+        game: &mut Game,
+        mut renderer: Option<&mut Renderer>,
+        playing: bool,
+    ) -> Option<Edit> {
+        let entity = self.shown?;
+        let Some(&transform) = game.engine.world.get::<Transform>(entity) else {
+            self.show(ui, game, None, playing);
             return None;
         };
-        let before = ObjState::of(world, entity);
+        if layout(game, entity, &self.types) != self.built.0 || playing != self.built.1 {
+            self.show(ui, game, Some(entity), playing);
+            return None;
+        }
+        let before = ObjState::of(&game.engine.world, entity);
+        self.update_transform(ui, game, entity, transform);
+        for row in &mut self.rows {
+            let Some(current) = props::get(game, &self.types, entity, &row.prop) else { continue };
+            if let Some(picked) = read_control(ui, &row.control, &current) {
+                props::set(game, renderer.as_deref_mut(), &self.types, entity, &row.prop, picked);
+            }
+            if let Some(now) = props::get(game, &self.types, entity, &row.prop) {
+                refresh_control(ui, &mut row.control, &now);
+            }
+        }
+        let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);
+        (before != after).then_some(Edit::Changed { entity, before, after })
+    }
+
+    fn update_transform(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, transform: Transform) {
+        let Some(fields) = &self.fields else { return };
+        let world = &mut game.engine.world;
         if ui.changed(fields.name) {
             let name = ui.text(fields.name);
             if let Some(current) = world.get_mut::<Name>(entity) {
@@ -192,47 +273,231 @@ impl Inspector {
         write(ui, &fields.position, edited.position);
         write(ui, &fields.rotation, if rotation != euler { rotation } else { euler });
         write(ui, &fields.scale, edited.scale);
-        let (before, after) = (before?, ObjState::of(world, entity)?);
-        (before != after).then_some(Edit::Changed { entity, before, after })
     }
 
-    /// Marks the rows whose values are `kept`, and opens a row's menu on a
-    /// context click: while `playing`, whether to keep the value after play
-    /// (offered when `can_keep`, as the Obj is in the edited level), and
-    /// Reset. Returns what was chosen.
-    pub fn row_menus(&mut self, ui: &mut Ui, playing: bool, can_keep: bool, kept: &[Field]) -> Option<RowAction> {
-        let rows = self.fields.as_ref()?.rows;
-        for (field, row) in rows {
-            ui.set_class(row, "kept", kept.contains(&field));
+    /// Marks the rows whose values are `kept`, and opens and answers the
+    /// Inspector's menus: a row's (while `playing`, whether to keep its
+    /// value, offered when `can_keep` as the Obj is in the edited level),
+    /// a section's, and Add Component's. Returns what was chosen.
+    pub fn menus(&mut self, ui: &mut Ui, playing: bool, can_keep: bool, kept: &[Field]) -> Option<RowAction> {
+        let fields = self.fields.as_ref()?;
+        let rows: Vec<(Field, NodeId)> =
+            fields.rows.iter().cloned().chain(self.rows.iter().map(|r| (Field::Prop(r.prop.clone()), r.row))).collect();
+        for (field, row) in &rows {
+            ui.set_class(*row, "kept", kept.contains(field));
         }
         if let Some((owner, actions)) = &self.menu
             && let Some(index) = ui.menu_choice(*owner)
         {
-            return actions.get(index).copied().flatten();
+            return actions.get(index).cloned().flatten();
         }
-        let (field, row) = rows.into_iter().find(|(_, row)| ui.context_clicked(*row))?;
-        let mut items = Vec::new();
-        let mut actions = Vec::new();
-        if playing {
-            let keep = MenuItem::new("Keep value after play").checked(kept.contains(&field)).enabled(can_keep);
-            items.extend([keep, MenuItem::separator()]);
-            actions.extend([Some(RowAction::Keep(field)), None]);
+        let at = ui.pointer_position().unwrap_or_default();
+        let items: Vec<(MenuItem, Option<RowAction>)>;
+        let (owner, at) = if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
+            items = self.add_items(playing);
+            let [x, y, _, height] = ui.rect(add);
+            (add, (x, y + height + 4.0))
+        } else if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {
+            items = vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))];
+            let [x, y, _, height] = ui.rect(button);
+            (button, (x, y + height + 4.0))
+        } else if let Some((part, header)) = self.headers.iter().find(|(_, h)| ui.context_clicked(*h)) {
+            items = match part {
+                None => vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))],
+                Some(part) => {
+                    let removable = !(playing && matches!(part, Part::Behaviour(_)));
+                    vec![(MenuItem::new("Remove Component").enabled(removable), Some(RowAction::Remove(part.clone())))]
+                }
+            };
+            (*header, at)
+        } else if let Some((field, row)) = rows.iter().find(|(_, row)| ui.context_clicked(*row)) {
+            items = row_items(field, playing, can_keep, kept.contains(field));
+            (*row, at)
+        } else {
+            return None;
+        };
+        if items.is_empty() {
+            return None;
         }
-        items.push(MenuItem::new("Reset").enabled(field != Field::Name));
-        actions.push(Some(RowAction::Reset(field)));
-        ui.open_menu(row, ui.pointer_position().unwrap_or_default(), &items);
-        self.menu = Some((row, actions));
+        let (items, actions): (Vec<MenuItem>, Vec<Option<RowAction>>) = items.into_iter().unzip();
+        ui.open_menu(owner, at, &items);
+        self.menu = Some((owner, actions));
         None
+    }
+
+    /// What Add Component offers: the components the Obj has not got, then
+    /// the project's scripts, which are added in edit mode.
+    fn add_items(&self, playing: bool) -> Vec<(MenuItem, Option<RowAction>)> {
+        let has = |part: &Part| self.built.0.iter().any(|(p, _)| p == part);
+        let mut items: Vec<(MenuItem, Option<RowAction>)> = [Part::Renderer, Part::Light, Part::Camera]
+            .into_iter()
+            .map(|part| (MenuItem::new(part.title()).enabled(!has(&part)), Some(RowAction::Add(part))))
+            .collect();
+        if !self.types.is_empty() {
+            items.push((MenuItem::separator(), None));
+        }
+        for script in &self.types {
+            let part = Part::Behaviour(script.name.clone());
+            let item = MenuItem::new(script.short_name()).enabled(!playing && !has(&part));
+            items.push((item, Some(RowAction::Add(part))));
+        }
+        items
     }
 }
 
-/// An Obj's behaviours: running ones while playing, or in edit mode the
-/// same kept as data. Fields show as the scene set them.
-fn behaviours(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
-    match (world.get::<Behaviours>(entity), world.get::<EditBehaviours>(entity)) {
-        (Some(running), _) => running.0.iter().map(|b| b.spec.clone()).collect(),
-        (None, Some(kept)) => kept.0.clone(),
-        (None, None) => Vec::new(),
+/// A row's menu: while playing, keeping its value, for any but a script's
+/// (those are the values it started with); in edit mode, Reset, for the
+/// Transform and script fields.
+fn row_items(field: &Field, playing: bool, can_keep: bool, kept: bool) -> Vec<(MenuItem, Option<RowAction>)> {
+    let script = matches!(field, Field::Prop(Prop::Field { .. }));
+    let mut items = Vec::new();
+    if playing && !script {
+        let keep = MenuItem::new("Keep value after play").checked(kept).enabled(can_keep);
+        items.push((keep, Some(RowAction::Keep(field.clone()))));
+    }
+    let resets = matches!(field, Field::Position | Field::Rotation | Field::Scale) || (script && !playing);
+    if resets {
+        if !items.is_empty() {
+            items.push((MenuItem::separator(), None));
+        }
+        let label = if script { "Reset to the script's value" } else { "Reset" };
+        items.push((MenuItem::new(label), Some(RowAction::Reset(field.clone()))));
+    }
+    items
+}
+
+/// The components an Obj has and the values each shows.
+fn layout(game: &Game, entity: Entity, types: &[BehaviourType]) -> Vec<(Part, Vec<Prop>)> {
+    let world = &game.engine.world;
+    props::parts(world, entity)
+        .into_iter()
+        .map(|part| (part.clone(), props::props(world, entity, &part, types)))
+        .collect()
+}
+
+/// The control for a value: a field, a toggle, three fields, a dropdown, or
+/// a label when it is not edited here.
+fn control(ui: &mut Ui, row: NodeId, value: &Value, editable: bool) -> Control {
+    if !editable {
+        let label = ui.add_label(row, &display(value));
+        ui.add_class(label, "value");
+        return Control::Fixed(label);
+    }
+    match value {
+        Value::Number(_) | Value::Whole(_) | Value::Text(_) => {
+            let field = ui.text_field(row, &display(value));
+            ui.add_class(field, "value-input");
+            ui.set_class(field, "number-input", !matches!(value, Value::Text(_)));
+            Control::Text(field)
+        }
+        Value::Toggle(on) => {
+            let toggle = ui.toggle(row, "", *on);
+            ui.add_class(toggle, "checkbox");
+            Control::Toggle(toggle)
+        }
+        Value::Vector(xyz) | Value::Color(xyz) => {
+            let colour = matches!(value, Value::Color(_));
+            let letters = if colour { ["r", "g", "b"] } else { ["x", "y", "z"] };
+            let vector = ui.panel(row, Style::default());
+            ui.add_class(vector, "vector");
+            ui.set_class(vector, "color", colour);
+            let swatch = colour.then(|| {
+                let swatch = ui.panel(vector, Style::default());
+                ui.add_class(swatch, "swatch");
+                swatch
+            });
+            let fields = axis_fields(ui, vector, letters);
+            write(ui, &fields, Vec3::from(*xyz));
+            let mut control = Control::Axes(fields, swatch);
+            refresh_control(ui, &mut control, value);
+            control
+        }
+        Value::Choice(index, options) => {
+            let labels: Vec<&str> = options.iter().map(String::as_str).collect();
+            let dropdown = ui.dropdown(row, &labels, *index);
+            ui.add_class(dropdown, "value-choice");
+            Control::Choice(dropdown, options.clone())
+        }
+        Value::Fixed(text) => {
+            let label = ui.add_label(row, text);
+            ui.add_class(label, "value");
+            Control::Fixed(label)
+        }
+    }
+}
+
+/// What the user changed in a control this frame, as a value of the same
+/// kind as `current`.
+fn read_control(ui: &Ui, control: &Control, current: &Value) -> Option<Value> {
+    match (control, current) {
+        (Control::Text(field), _) if !ui.changed(*field) => None,
+        (Control::Text(field), Value::Number(_)) => ui.text(*field).trim().parse().ok().map(Value::Number),
+        (Control::Text(field), Value::Whole(_)) => ui.text(*field).trim().parse().ok().map(Value::Whole),
+        (Control::Text(field), Value::Text(_)) => Some(Value::Text(ui.text(*field))),
+        (Control::Toggle(toggle), _) if ui.changed(*toggle) => Some(Value::Toggle(ui.is_checked(*toggle))),
+        (Control::Axes(fields, _), Value::Vector(xyz)) if fields.iter().any(|&f| ui.changed(f)) => {
+            Some(Value::Vector(read(ui, fields, Vec3::from(*xyz)).to_array()))
+        }
+        (Control::Axes(fields, _), Value::Color(rgb)) if fields.iter().any(|&f| ui.changed(f)) => {
+            Some(Value::Color(read(ui, fields, Vec3::from(*rgb)).to_array()))
+        }
+        (Control::Choice(dropdown, options), _) if ui.changed(*dropdown) => {
+            Some(Value::Choice(ui.selected_option(*dropdown), options.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Shows a value in its control, except in a field being typed in.
+fn refresh_control(ui: &mut Ui, control: &mut Control, value: &Value) {
+    match (control, value) {
+        (Control::Text(field), value) => {
+            let text = display(value);
+            if ui.focused() != Some(*field) && ui.text(*field) != text {
+                ui.set_text(*field, &text);
+            }
+        }
+        (Control::Toggle(toggle), Value::Toggle(on)) => {
+            if ui.is_checked(*toggle) != *on {
+                ui.set_checked(*toggle, *on);
+            }
+        }
+        (Control::Axes(fields, swatch), Value::Vector(xyz) | Value::Color(xyz)) => {
+            write(ui, fields, Vec3::from(*xyz));
+            if let Some(swatch) = swatch {
+                let [r, g, b] = xyz.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+                ui.set_inline_style(*swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
+            }
+        }
+        (Control::Choice(dropdown, shown), Value::Choice(index, options)) => {
+            if shown != options {
+                let labels: Vec<&str> = options.iter().map(String::as_str).collect();
+                ui.set_options(*dropdown, &labels);
+                shown.clone_from(options);
+            }
+            if ui.selected_option(*dropdown) != *index {
+                ui.set_selected_option(*dropdown, *index);
+            }
+        }
+        (Control::Fixed(label), value) => {
+            let text = display(value);
+            if ui.text(*label) != text {
+                ui.set_text(*label, &text);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A value as text, for a field or a label.
+fn display(value: &Value) -> String {
+    match value {
+        Value::Number(n) => number(*n),
+        Value::Whole(n) => n.to_string(),
+        Value::Toggle(on) => if *on { "On" } else { "Off" }.into(),
+        Value::Text(text) | Value::Fixed(text) => text.clone(),
+        Value::Vector(xyz) | Value::Color(xyz) => xyz.map(number).join(", "),
+        Value::Choice(index, options) => options.get(*index).cloned().unwrap_or_default(),
     }
 }
 
@@ -240,7 +505,8 @@ fn behaviours(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
 /// its tag, layer and whether it is static. Returns the top row and the
 /// name field. Active, tag, layer and static show their defaults until
 /// Objs have them.
-fn header(ui: &mut Ui, root: NodeId, world: &World, entity: Entity) -> (NodeId, NodeId) {
+fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, NodeId) {
+    let world = &game.engine.world;
     let header = ui.panel(root, Style::column());
     ui.add_class(header, "inspector-header");
     let top = ui.panel(header, Style::row());
@@ -266,13 +532,18 @@ fn header(ui: &mut Ui, root: NodeId, world: &World, entity: Entity) -> (NodeId, 
     (top, name)
 }
 
-/// A row of a label and three axis fields, X, Y and Z, each a field with
-/// its coloured letter inside. Returns the row and the fields.
+/// A row of a label and three axis fields, X, Y and Z. Returns the row and
+/// the fields.
 fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> (NodeId, [NodeId; 3]) {
     let row = prop(ui, rows, label);
     let vector = ui.panel(row, Style::default());
     ui.add_class(vector, "vector");
-    let fields = ["x", "y", "z"].map(|axis| {
+    (row, axis_fields(ui, vector, ["x", "y", "z"]))
+}
+
+/// Three fields, each with its coloured letter inside.
+fn axis_fields(ui: &mut Ui, vector: NodeId, letters: [&str; 3]) -> [NodeId; 3] {
+    letters.map(|axis| {
         let cell = ui.panel(vector, Style::row());
         ui.add_class(cell, "axis-field");
         let letter = ui.add_label(cell, &axis.to_uppercase());
@@ -281,27 +552,28 @@ fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> (NodeId, [NodeId; 3]) {
         let field = ui.text_field(cell, "");
         ui.add_class(field, "axis-input");
         field
-    });
-    (row, fields)
+    })
 }
 
 /// A component's section: a line above it, then a foldout headed by its
 /// icon and title, and at the right a switch for whether it is enabled
 /// (shown on, until components can be turned off) or, for the Transform,
-/// which cannot be, a menu button. Returns where its rows go.
-fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, switch: bool) -> NodeId {
+/// which cannot be, a menu button. Returns its header, where its rows go,
+/// and the menu button.
+fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, switch: bool) -> (NodeId, NodeId, Option<NodeId>) {
     let line = ui.panel(root, Style::default());
     ui.add_class(line, "divider");
     let foldout = ui.foldout(root, title, true);
     ui.add_class(foldout, "section");
     ui.set_foldout_icon(foldout, icon);
     let header = ui.foldout_header(foldout).expect("a foldout has a header");
-    if switch {
+    let menu = if switch {
         ui.toggle(header, "", true);
+        None
     } else {
-        ui.icon_button(header, "more");
-    }
-    ui.foldout_content(foldout).expect("a foldout has content")
+        Some(ui.icon_button(header, "more"))
+    };
+    (header, ui.foldout_content(foldout).expect("a foldout has content"), menu)
 }
 
 /// A property's row: its label in the first 88 pixels, the value after.
@@ -311,12 +583,6 @@ fn prop(ui: &mut Ui, rows: NodeId, label: &str) -> NodeId {
     let name = ui.add_label(row, label);
     ui.add_class(name, "prop-label");
     row
-}
-
-fn pair(ui: &mut Ui, rows: NodeId, label: &str, value: &str) {
-    let row = prop(ui, rows, label);
-    let value = ui.add_label(row, value);
-    ui.add_class(value, "value");
 }
 
 /// A number as the Inspector writes it: up to three decimals, no trailing zeros.

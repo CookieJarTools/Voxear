@@ -367,6 +367,13 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
     }
 }
 
+/// Why a reference cannot take what was dropped on it.
+pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, choice: &Pick) -> String {
+    let Prop::Field { behaviour, path } = prop else { return String::new() };
+    let kind = fields::kind_at(types, behaviour, path).unwrap_or(voxear_engine::script_types::FieldKind::Obj);
+    fields::why_not(game, entity, &kind, choice)
+}
+
 /// Adds an item to a list, or takes one out.
 pub fn add_item(world: &mut World, types: &ScriptTypes, entity: Entity, list: &Prop) -> bool {
     let Prop::Field { behaviour, path } = list else { return false };

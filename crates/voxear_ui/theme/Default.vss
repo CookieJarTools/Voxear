@@ -491,6 +491,16 @@ Dropdown:focus {
 
 /* A row dragged in a list lands on the row marked here. */
 
+/* What is being dragged, following the pointer. */
+.drag-ghost {
+    padding: 3px 9px;
+    border-radius: 6px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-accent);
+    box-shadow: 0px 6px 18px rgba(0, 0, 0, 0.4);
+    color: var(--vx-text);
+}
+
 .list-row.drop-target {
     background-color: var(--vx-selected);
     border: 1px solid var(--vx-accent);

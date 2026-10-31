@@ -13,7 +13,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use voxear_ecs::{Entity, World};
 use voxear_render::{Camera, Light, MeshRenderer};
 use voxear_scene::{Destroying, Name, Parent};
-use voxear_ui::{MenuItem, NodeId, TreeItems, Ui};
+use voxear_ui::{DragSource, MenuItem, NodeId, TreeItems, Ui};
 
 use crate::objs::NEW_OBJS;
 
@@ -150,6 +150,15 @@ impl Hierarchy {
         if *self.shown.borrow() != snapshot {
             *self.shown.borrow_mut() = snapshot;
             ui.refresh_list(self.tree);
+        }
+    }
+
+    /// The Obj being dragged, when it is a row of this tree, as the
+    /// Inspector's reference fields take it.
+    pub fn dragged(&self, source: &DragSource) -> Option<Entity> {
+        match *source {
+            DragSource::Row { list, item: Some(item), .. } if list == self.tree => Some(Entity::from_bits(item)),
+            _ => None,
         }
     }
 

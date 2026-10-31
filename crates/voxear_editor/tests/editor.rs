@@ -767,3 +767,101 @@ fn the_inspector_edits_components_and_script_fields() {
     let mesh = editor.game.engine.world.get::<voxear_render::MeshRenderer>(spinner).unwrap().mesh;
     assert_eq!(editor.game.content.mesh_ref(mesh).map(|r| r.to_string()).as_deref(), Some("builtin:sphere"));
 }
+
+/// Drags one element onto another with the pointer, as the window would.
+fn drag(ui: &mut Ui, from: NodeId, to: NodeId) {
+    let ([fx, fy, fw, fh], [tx, ty, tw, th]) = (ui.rect(from), ui.rect(to));
+    ui.pointer_move(fx + fw / 2.0, fy + fh / 2.0);
+    ui.pointer_button(true);
+    ui.pointer_move(fx + fw / 2.0 + 20.0, fy + fh / 2.0 + 20.0);
+    ui.pointer_move(tx + tw / 2.0, ty + th / 2.0);
+    ui.pointer_button(false);
+}
+
+/// The Project tile named `name`, among those showing.
+fn tile(ui: &Ui, name: &str) -> Option<NodeId> {
+    let mut tiles = Vec::new();
+    with_class(ui, ui.root(), "tile", &mut tiles);
+    tiles.into_iter().find(|&t| ui.is_visible(t) && ui.children(t).get(1).is_some_and(|&n| ui.text(n) == name))
+}
+
+#[test]
+fn references_take_objs_and_assets_dragged_onto_them() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    if !described(&mut editor, &mut renderer) {
+        return;
+    }
+    let spinner = obj(&editor, "Spinner B").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    let field = |editor: &voxear_editor::Editor, name: &str| {
+        let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+        kept.0.iter().find_map(|spec| spec.fields.get(name).cloned())
+    };
+    let picker = |ui: &Ui, label: &str| first_with(ui, prop_row(ui, label).unwrap(), "value-picker").unwrap();
+    let leader_was = field(&editor, "leader");
+
+    // The Leader takes neither an Obj in another scene nor one with no Spinner, and the status bar says why.
+    for (name, why) in [("Ground", "Ground is in another scene"), ("Chrome Ball", "Chrome Ball has no Spinner")] {
+        let (from, to) = (hierarchy_row(&editor.ui, name).unwrap(), picker(&editor.ui, "Leader"));
+        drag(&mut editor.ui, from, to);
+        frame(&mut editor, &mut renderer);
+        assert_eq!(field(&editor, "leader"), leader_was, "unchanged by {name}");
+        frame(&mut editor, &mut renderer);
+        assert!(label_starting(&editor.ui, editor.ui.root(), why).is_some(), "says: {why}");
+    }
+    assert_eq!(editor.selected(), Some(spinner), "a drag selects nothing");
+
+    let (from, to) = (hierarchy_row(&editor.ui, "Spinner A").unwrap(), picker(&editor.ui, "Leader"));
+    let spinner_a = obj(&editor, "Spinner A").unwrap();
+    // Held over the field for a frame: it lights up, and the ghost names what is dragged.
+    let ([fx, fy, fw, fh], [tx, ty, tw, th]) = (editor.ui.rect(from), editor.ui.rect(to));
+    editor.ui.pointer_move(fx + fw / 2.0, fy + fh / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_move(tx + tw / 2.0, ty + th / 2.0);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.has_class(to, "drop-hover"));
+    // Long enough for the border's fade to finish.
+    editor.update(&mut renderer, SIZE, 1.0, 0.5).unwrap();
+    shot(&mut renderer, "drag-over.png");
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let leader = field(&editor, "leader").unwrap();
+    assert_eq!(leader.get("entity").and_then(toml::Value::as_integer), Some(spinner_a.to_bits() as i64));
+    drag(&mut editor.ui, from, to);
+    frame(&mut editor, &mut renderer);
+    let leader = field(&editor, "leader").unwrap();
+    assert_eq!(leader.get("entity").and_then(toml::Value::as_integer), Some(spinner_a.to_bits() as i64));
+
+    // A FireflySpawner's prefab, dragged from the Project's Prefabs folder.
+    let mut add = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "add-component", &mut add);
+    click(&mut editor.ui, add[0]);
+    frame(&mut editor, &mut renderer);
+    let target = menu_item(&editor.ui, "FireflySpawner").expect("the project's scripts are offered");
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let folder = tile(&editor.ui, "Prefabs").expect("the Project shows its folders as tiles");
+    let [x, y, w, h] = editor.ui.rect(folder);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    for _ in 0..2 {
+        editor.ui.pointer_button(true);
+        editor.ui.pointer_button(false);
+    }
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let (from, to) = (tile(&editor.ui, "Firefly.prefab").expect("the prefabs show"), picker(&editor.ui, "Firefly"));
+    drag(&mut editor.ui, from, to);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(field(&editor, "firefly"), Some(toml::Value::String("Prefabs/Firefly.prefab".into())));
+    frame(&mut editor, &mut renderer);
+    let label = first_with(&editor.ui, picker(&editor.ui, "Firefly"), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(label), "Firefly.prefab");
+
+    let (from, to) = (tile(&editor.ui, "Lamp.prefab").unwrap(), picker(&editor.ui, "Leader"));
+    drag(&mut editor.ui, from, to);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(label_starting(&editor.ui, editor.ui.root(), "Lamp.prefab is an asset").is_some(), "an asset is no Obj");
+}

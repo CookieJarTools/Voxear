@@ -2,12 +2,13 @@
 //! project's folders as a tree on the left, and what is in the open folder
 //! on the right, its folders first. With room, the right side shows tiles;
 //! narrower, it shows rows with each file's size. Selecting a folder in the
-//! tree opens it, as does double-clicking one on the right.
+//! tree opens it, as does double-clicking one on the right. Assets on the
+//! right can be dragged onto the Inspector's asset fields.
 
 use std::{cell::RefCell, path::Path, rc::Rc};
 
 use voxear_assets::{AssetDb, AssetKind};
-use voxear_ui::{ListItems, NodeId, Style, TreeItems, Ui};
+use voxear_ui::{DragSource, ListItems, NodeId, Style, TreeItems, Ui};
 
 /// A tile's width with the gap after it, and a row of tiles' height.
 const TILE: f32 = 72.0;
@@ -32,6 +33,8 @@ struct Folder {
 
 struct File {
     name: String,
+    /// From the project's folder, as the asset database names it.
+    path: String,
     kind: FileKind,
     size: u64,
 }
@@ -153,6 +156,7 @@ impl ListItems for TileRows {
         for _ in 0..columns {
             let tile = ui.panel(row, Style::column());
             ui.add_class(tile, "tile");
+            ui.set_draggable(tile, true);
             let icon = ui.icon(tile, "file");
             ui.add_class(icon, "tile-icon");
             let name = ui.add_label(tile, "");
@@ -200,6 +204,7 @@ impl ProjectView {
         ui.bind_tree(folder_tree, FolderItems(contents.clone()));
         ui.set_expanded(folder_tree, 0, true);
         ui.bind_list(files, 0, FileRows(contents.clone()));
+        ui.set_rows_draggable(files, true);
         let mut view = Self { folder_tree, files, path, count, contents, open: usize::MAX };
         view.open(ui, 0);
         view
@@ -305,6 +310,8 @@ impl ProjectView {
             contents.tiles.clear();
         }
         let rows = self.contents.borrow().rows();
+        // Rows of files drag one by one; a row of tiles does not, its tiles do.
+        ui.set_rows_draggable(self.files, columns == 0);
         if columns == 0 {
             ui.set_item_height(self.files, ROW);
             ui.bind_list(self.files, rows, FileRows(self.contents.clone()));
@@ -312,6 +319,21 @@ impl ProjectView {
             ui.set_item_height(self.files, TILE_ROW);
             ui.bind_list(self.files, rows, TileRows(self.contents.clone()));
         }
+    }
+
+    /// The project path of the asset being dragged, when it is one of this
+    /// view's: a tile or a row of the open folder's files. Not a folder or a
+    /// script, which no field takes.
+    pub fn dragged(&self, source: &DragSource) -> Option<String> {
+        let contents = self.contents.borrow();
+        let at = match *source {
+            DragSource::Row { list, index, .. } if list == self.files && contents.columns == 0 => index,
+            DragSource::Element(tile) => contents.tiles.iter().find(|(node, _)| *node == tile)?.1?,
+            _ => return None,
+        };
+        let Entry::File(file) = *contents.listing.get(at)? else { return None };
+        let file = &contents.files[file];
+        matches!(file.kind, FileKind::Asset(_)).then(|| file.path.clone())
     }
 
     /// A row picked in the list, and whether it was a double click.
@@ -352,7 +374,7 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         for part in parts {
             folder = child_folder(&mut contents, folder, part);
         }
-        contents.files.push(File { name: file_name, kind, size });
+        contents.files.push(File { name: file_name, path: path.clone(), kind, size });
         let file = contents.files.len() - 1;
         contents.folders[folder].files.push(file);
     }

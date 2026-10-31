@@ -211,10 +211,14 @@ pub struct Ui {
     /// for, and a menu just opened, to keep on screen once laid out.
     pub(crate) menu_choices: Vec<(taffy::NodeId, usize)>,
     pub(crate) placing_menu: Option<taffy::NodeId>,
-    /// A list row pressed, and maybe being dragged, and rows let go of
-    /// since the last frame.
-    pub(crate) row_drag: Option<crate::list::RowDrag>,
+    /// Something pressed, and maybe being dragged; rows let go of in their
+    /// lists and drops onto elements since the last frame; and the elements
+    /// that drag and that take drops.
+    pub(crate) drag: Option<crate::drag::Drag>,
     pub(crate) row_drops: Vec<crate::list::RowDrop>,
+    pub(crate) element_drops: Vec<(taffy::NodeId, crate::drag::DragSource)>,
+    pub(crate) draggables: std::collections::HashSet<taffy::NodeId>,
+    pub(crate) drop_targets: std::collections::HashSet<taffy::NodeId>,
 }
 
 impl Default for Ui {
@@ -254,8 +258,11 @@ impl Ui {
             dock_drag: None,
             menu_choices: Vec::new(),
             placing_menu: None,
-            row_drag: None,
+            drag: None,
             row_drops: Vec::new(),
+            element_drops: Vec::new(),
+            draggables: Default::default(),
+            drop_targets: Default::default(),
         }
         .with_theme()
     }
@@ -563,6 +570,8 @@ impl Ui {
         }
         let _ = self.tree.remove(node.0);
         self.pointer.forget(node.0);
+        self.draggables.remove(&node.0);
+        self.drop_targets.remove(&node.0);
         self.lists.retain(|&n| n != node.0);
         self.scrollers.retain(|&n| n != node.0);
         self.fields.retain(|&n| n != node.0);
@@ -683,6 +692,7 @@ impl Ui {
         self.pointer.context_clicks.clear();
         self.menu_choices.clear();
         self.row_drops.clear();
+        self.element_drops.clear();
         self.clear_selection_changes();
         self.clear_input_events();
         UiFrame { quads, atlas: self.atlas.snapshot() }

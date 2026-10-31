@@ -14,11 +14,11 @@
 //! Every row also ends in a `row-bar`, which the default theme shows as an
 //! accent bar down the left of a selected row.
 //!
-//! Rows can be dragged ([`Ui::set_rows_draggable`]): a press that moves a
-//! few pixels picks the row up, and the list then has `dragging-rows` and
-//! the row under the pointer `drop-target`. Letting go on another row, or
-//! below the rows, is a drop, which [`Ui::dropped`] reports for the owner to
-//! act on, as the Hierarchy reparents Objs.
+//! Rows can be dragged ([`Ui::set_rows_draggable`], and see `drag`): while
+//! one is, its list has `dragging-rows` and the row under the pointer
+//! `drop-target`. Letting go on another row, or below the rows, is a drop in
+//! the list, which [`Ui::dropped`] reports for the owner to act on, as the
+//! Hierarchy reparents Objs.
 
 use std::collections::HashSet;
 
@@ -26,6 +26,7 @@ use taffy::{Dimension, LengthPercentageAuto, Position, Rect};
 
 use crate::{
     NodeId, Style, Ui,
+    drag::DragSource,
     selector::States,
     tree::{Element, Kind},
 };
@@ -71,20 +72,6 @@ pub trait TreeItems {
 pub(crate) const ITEM_HEIGHT: f32 = 24.0;
 /// How far each level of a tree indents.
 const INDENT: f32 = 14.0;
-/// How far a pressed row must move to be dragged rather than clicked.
-const DRAG_START: f32 = 4.0;
-
-/// A row pressed in a list whose rows drag: the list, the row's index, where
-/// it was pressed, whether it has moved far enough to be dragged, and the
-/// row marked as where it would land.
-pub(crate) struct RowDrag {
-    list: taffy::NodeId,
-    index: usize,
-    from: (f32, f32),
-    moving: bool,
-    over: Option<taffy::NodeId>,
-}
-
 /// A row let go of: in which list, which row, and on which row, if any. In
 /// a tree, the same as items.
 pub(crate) struct RowDrop {
@@ -431,70 +418,45 @@ impl Ui {
         }
     }
 
-    /// A press on a row of a list whose rows drag, which may become a drag.
-    pub(crate) fn press_rows(&mut self, path: &[taffy::NodeId], point: (f32, f32)) {
-        let Some((list, index)) = path.last().and_then(|&target| self.row_index_at(target)) else { return };
-        if self.list_state(list).is_some_and(|state| state.draggable) {
-            self.row_drag = Some(RowDrag { list: list.0, index, from: point, moving: false, over: None });
-        }
+    /// The row `target` is in, when its list's rows drag: the list, the
+    /// row's index and, in a tree, its item.
+    pub(crate) fn draggable_row(&mut self, target: taffy::NodeId) -> Option<DragSource> {
+        let (list, index) = self.row_index_at(target)?;
+        let state = self.list_state(list).filter(|state| state.draggable)?;
+        let item = match &state.source {
+            Source::Tree(tree) => tree.open.get(index).map(|o| o.0),
+            _ => None,
+        };
+        Some(DragSource::Row { list, index, item })
     }
 
-    /// The pointer moved with a row pressed: past a few pixels it is picked
-    /// up, and the row under the pointer is marked as where it would land.
-    pub(crate) fn drag_rows(&mut self, point: (f32, f32)) {
-        let Some(drag) = &self.row_drag else { return };
-        let (list, index, from, moving, over) = (NodeId(drag.list), drag.index, drag.from, drag.moving, drag.over);
-        if !moving && (point.0 - from.0).hypot(point.1 - from.1) < DRAG_START {
+    /// The row element showing item `index`, if it is on screen.
+    pub(crate) fn row_node(&self, list: NodeId, index: usize) -> Option<taffy::NodeId> {
+        let state = self.element(list)?.list.as_ref()?;
+        state.rows.iter().find(|r| r.index == Some(index)).map(|r| r.node)
+    }
+
+    /// Where a row dragged in its own list would land: another row under the
+    /// pointer, and its index.
+    pub(crate) fn landing_row(&mut self, list: NodeId, index: usize) -> Option<taffy::NodeId> {
+        self.drop_row(list).filter(|&(_, i)| i != index).map(|(row, _)| row)
+    }
+
+    /// A row let go of inside its own list: a drop on the row under the
+    /// pointer, or below the rows.
+    pub(crate) fn drop_in_list(&mut self, list: NodeId, index: usize) {
+        let onto = self.drop_row(list).map(|(_, at)| at);
+        if onto == Some(index) {
             return;
-        }
-        if !moving {
-            // Letting go is a drop now, not a click.
-            self.pointer_cancel();
-            self.set_class(list, "dragging-rows", true);
-        }
-        let target = self.drop_row(list).filter(|&(_, i)| i != index).map(|(row, _)| row);
-        if target != over {
-            if let Some(row) = over {
-                self.set_class(NodeId(row), "drop-target", false);
-            }
-            if let Some(row) = target {
-                self.set_class(NodeId(row), "drop-target", true);
-            }
-        }
-        if let Some(drag) = &mut self.row_drag {
-            (drag.moving, drag.over) = (true, target);
-        }
-    }
-
-    /// Lets go of a pressed row. A row being dragged lands where the pointer
-    /// is, if that is inside its list; returns whether one was, as the
-    /// release is then used up.
-    pub(crate) fn release_rows(&mut self) -> bool {
-        let Some(drag) = self.row_drag.take() else { return false };
-        let list = NodeId(drag.list);
-        if let Some(row) = drag.over {
-            self.set_class(NodeId(row), "drop-target", false);
-        }
-        if !drag.moving {
-            return false;
-        }
-        self.set_class(list, "dragging-rows", false);
-        if !self.hit_path().contains(&drag.list) {
-            return true;
-        }
-        let onto = self.drop_row(list).map(|(_, index)| index);
-        if onto == Some(drag.index) {
-            return true;
         }
         let items = match self.element(list).and_then(|e| e.list.as_ref()).map(|state| &state.source) {
             Some(Source::Tree(tree)) => {
-                let item = |index: usize| tree.open.get(index).map(|o| o.0);
-                item(drag.index).map(|from| (from, onto.and_then(item)))
+                let item = |at: usize| tree.open.get(at).map(|o| o.0);
+                item(index).map(|from| (from, onto.and_then(item)))
             }
             _ => None,
         };
-        self.row_drops.push(RowDrop { list: drag.list, index: drag.index, onto, items });
-        true
+        self.row_drops.push(RowDrop { list: list.0, index, onto, items });
     }
 
     /// The row of `list` under the pointer, and its index.

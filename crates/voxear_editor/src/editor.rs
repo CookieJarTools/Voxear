@@ -22,10 +22,11 @@ use voxear_engine::{
 };
 use voxear_render::{Camera, MeshRenderer, Renderer, ViewOptions};
 use voxear_scene::{Name, Transform};
-use voxear_ui::{Color, NodeId, Shape, Ui};
+use voxear_ui::{Color, DragSource, NodeId, Shape, Ui};
 
 use crate::{
     console::Console,
+    fields::Pick,
     hierarchy::EditorOnly,
     hierarchy::Hierarchy,
     hierarchy::ObjAction,
@@ -34,7 +35,7 @@ use crate::{
     levels_panel::{LevelAction, LevelsPanel},
     objs,
     project_view::ProjectView,
-    props,
+    props::{self, Prop},
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
 };
 
@@ -575,11 +576,30 @@ impl Editor {
             RowAction::Pick(prop, pick) => {
                 props::pick(&mut self.game.engine.world, self.inspector.types(), entity, &prop, &pick);
             }
+            RowAction::Dropped(prop, source) => self.drop_reference(entity, &prop, &source),
         }
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
         if before != after && !self.is_playing() {
             self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
+        }
+    }
+
+    /// Points a reference at an Obj dragged from the Hierarchy or an asset
+    /// from the Project, if it is one the field's menu offers; otherwise the
+    /// status bar says why not.
+    fn drop_reference(&mut self, entity: Entity, prop: &Prop, source: &DragSource) {
+        let pick = match (self.hierarchy.dragged(source), self.project.dragged(source)) {
+            (Some(obj), _) => Pick::Obj(Some(obj)),
+            (None, Some(path)) => Pick::Asset(Some(path)),
+            (None, None) => return,
+        };
+        let types = self.inspector.types();
+        if props::choices(&self.game, types, entity, prop).iter().any(|(_, offered)| *offered == pick) {
+            props::pick(&mut self.game.engine.world, types, entity, prop, &pick);
+        } else {
+            let why = props::why_not(&self.game, types, entity, prop, &pick);
+            self.notify(&why);
         }
     }
 

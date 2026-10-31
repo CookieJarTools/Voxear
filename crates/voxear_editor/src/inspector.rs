@@ -24,7 +24,7 @@ use voxear_ecs::Entity;
 use voxear_engine::{Game, script_types::ScriptTypes};
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Name, Transform};
-use voxear_ui::{MenuItem, NodeId, Style, Ui};
+use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
 use crate::{
     fields::Pick,
@@ -99,6 +99,9 @@ pub enum RowAction {
     Remove(Part),
     /// Point a reference at what its menu picked.
     Pick(Prop, Pick),
+    /// Point a reference at what was dragged onto it, from the Hierarchy or
+    /// the Project, if it fits.
+    Dropped(Prop, DragSource),
 }
 
 /// A component value's row and the control that edits it.
@@ -350,6 +353,13 @@ impl Inspector {
         {
             return actions.get(index).cloned().flatten();
         }
+        let dropped = self.rows.iter().find_map(|row| match row.control {
+            Control::Picker(picker, _) => ui.dropped_onto(picker).map(|source| (row.prop.clone(), source)),
+            _ => None,
+        });
+        if let Some((prop, source)) = dropped {
+            return Some(RowAction::Dropped(prop, source));
+        }
         let at = ui.pointer_position().unwrap_or_default();
         let items: Vec<(MenuItem, Option<RowAction>)>;
         let (owner, at) = if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
@@ -493,6 +503,7 @@ fn control(ui: &mut Ui, row: NodeId, value: &Value, editable: bool) -> Control {
         Value::Obj(_) | Value::Asset(_) => {
             let picker = ui.panel(row, Style::row());
             ui.add_class(picker, "value-picker");
+            ui.accept_drops(picker, true);
             let label = ui.add_label(picker, &display(value));
             ui.add_class(label, "picker-label");
             let arrow = ui.icon(picker, "chevron-down");

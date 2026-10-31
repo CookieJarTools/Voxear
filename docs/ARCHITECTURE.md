@@ -1043,15 +1043,18 @@ mid-fade.
   split handles. The pointer still finds elements in tree order.
 - **Shapes** (`ui.set_shapes`): lines with round ends and circles drawn on any element, for gizmos and graphs.
 
-**Menus and dragging rows** *(implemented)*:
+**Menus and dragging** *(implemented)*:
 - **Context clicks**: the secondary button's press and release on one element (`ui.pointer_secondary`,
   `ui.context_clicked`). On a list or tree row that is not selected, it selects the row first, as file managers do.
 - **Menus** (`ui.open_menu(owner, at, &[MenuItem])`): a `menu-popup` of items at a point, in the popup layer, moved
   back inside the screen once laid out. Items can be checked (with a tick), disabled, carry a shortcut shown at the
   right, or be separators. A choice comes back through `ui.menu_choice(owner)`; Escape or a press elsewhere closes it.
-- **Dragging rows** (`ui.set_rows_draggable`): a press that moves four pixels picks a row up; the list gets
-  `dragging-rows` and the row under the pointer `drop-target`. Letting go on another row, or below the rows, is a
-  drop (`ui.dropped`, or `ui.dropped_item` for a tree), and no click.
+- **Dragging** (`drag`): a press that moves four pixels picks up what was pressed, the innermost of a row of a list
+  whose rows drag (`ui.set_rows_draggable`) and an element made draggable (`ui.set_draggable`), and a `drag-ghost`
+  with its text follows the pointer. An element that takes drops (`ui.accept_drops`) is marked `drop-hover` while
+  it is under the pointer, and letting go on it is a drop onto it (`ui.dropped_onto`, with a `DragSource` saying
+  what was dragged). Letting go elsewhere in a row's own list is a drop in the list, the row under the pointer
+  marked `drop-target` (`ui.dropped`, or `ui.dropped_item` for a tree). Either way the release is no click.
 - **Rich text** (`RichText`, `ui.rich_label`): a label whose words are bold, italic, code, struck out or
   highlighted, with links that `ui.clicked_link` reports. Each span shapes as its own run, so its colour, ground
   and lines are drawn with it; `link-color`, `code-background` and `mark-color` come from the text style, and
@@ -1162,7 +1165,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   Console, and the fields stay as they last built. Fields are labelled as Unity labels them ("Degrees Per Second"):
   numbers, whole numbers, text, toggles, enums (a dropdown) and vectors are edited in place; an Obj or behaviour
   reference is picked from a menu of the Objs in the same scene (with that behaviour, for a behaviour), and an asset
-  (a `Prefab` or `Ref<Prefab>`) from the project's assets of its kind; a list shows its items, each with a button
+  (a `Prefab` or `Ref<Prefab>`) from the project's assets of its kind, or either is dragged onto the field from the
+  Hierarchy or the Project, which takes it if its menu would offer it and otherwise says why in the status bar; a list shows its items, each with a button
   to take it out and the list's to add one; and a `[Serializable]` table shows its fields indented under it. A field
   the scene does not set shows the script's value, and setting anything in it writes the whole field for the scene.
   While playing, scripts show the values they started with. **Add Component** offers a Mesh Renderer, Light or
@@ -1186,8 +1190,7 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
-Dragging Objs and assets onto reference fields, the command palette and the Odin-style inspector attributes come
-next.
+The command palette and the Odin-style inspector attributes come next.
 
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.

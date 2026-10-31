@@ -66,7 +66,7 @@ impl Ui {
         }
         self.drag_controls(point);
         self.drag_dock(point);
-        self.drag_rows(point);
+        self.move_drag(point);
         self.update_hover();
     }
 
@@ -90,7 +90,7 @@ impl Ui {
         }
         if !pressed {
             self.input.dragging = None;
-            if self.release_dock() || self.release_rows() {
+            if self.release_dock() || self.release_drag() {
                 return true;
             }
         }
@@ -120,7 +120,7 @@ impl Ui {
             if let Some(point) = self.pointer.position {
                 self.press_controls(&path, point);
                 self.press_dock(&path, point);
-                self.press_rows(&path, point);
+                self.press_drag(&path, point);
             }
         } else {
             let pressed = std::mem::take(&mut self.pointer.pressed);

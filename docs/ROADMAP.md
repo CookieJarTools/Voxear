@@ -221,7 +221,8 @@ Done so far:
   Inspector come back into the edited level when play stops.
 - **Components in the Inspector:** Mesh Renderer, Light and Camera values edited in place; script fields described
   from the scripts' build by a .NET tool (`Voxear.ScriptInfo`), rebuilt in the background when a script changes,
-  with their starting values; references picked from menus, lists with items added and taken out, and nested
+  with their starting values; references picked from menus or dragged from the Hierarchy and the Project, lists
+  with items added and taken out, and nested
   `[Serializable]` tables; Add Component and Remove Component; all of it undoable, and component values keepable
   after play.
 
@@ -234,8 +235,7 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The editor's next steps, to make it usable for real work: dragging Objs and assets onto reference fields, the
-  command palette (Ctrl+K), Hierarchy instance badges and sibling order, the Console's
+- The editor's next steps, to make it usable for real work: the command palette (Ctrl+K), Hierarchy instance badges and sibling order, the Console's
   Sifter features, and C# hot reload (which play mode will then use to pick up changed scripts).
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF

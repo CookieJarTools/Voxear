@@ -398,6 +398,37 @@ pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
     found
 }
 
+/// Why a reference cannot take what was dropped on it, for the status bar.
+pub fn why_not(game: &Game, entity: Entity, kind: &FieldKind, pick: &Pick) -> String {
+    let world = &game.engine.world;
+    match (pick, kind) {
+        (Pick::Obj(Some(target)), FieldKind::Asset { asset } | FieldKind::Ref { asset }) => {
+            format!("{} is an Obj; the field takes a {}", name_of(world, *target), short(asset))
+        }
+        (Pick::Obj(Some(target)), _) if game.levels.scene_of(*target) != game.levels.scene_of(entity) => {
+            format!("{} is in another scene, which this scene cannot point into", name_of(world, *target))
+        }
+        (Pick::Obj(Some(target)), FieldKind::Behaviour { name }) => {
+            format!("{} has no {}", name_of(world, *target), short(name))
+        }
+        (Pick::Asset(Some(path)), FieldKind::Asset { asset } | FieldKind::Ref { asset }) => {
+            format!("{} is not a {}", path.rsplit('/').next().unwrap_or(path), short(asset))
+        }
+        (Pick::Asset(Some(path)), _) => {
+            format!("{} is an asset; the field takes an Obj", path.rsplit('/').next().unwrap_or(path))
+        }
+        _ => "That does not fit the field".into(),
+    }
+}
+
+fn name_of(world: &World, entity: Entity) -> String {
+    world.get::<Name>(entity).map_or_else(|| "That Obj".into(), |n| n.0.clone())
+}
+
+fn short(name: &str) -> &str {
+    name.rsplit(['.', '+']).next().unwrap_or(name)
+}
+
 fn number(value: &toml::Value) -> Option<f64> {
     value.as_float().or_else(|| value.as_integer().map(|i| i as f64))
 }

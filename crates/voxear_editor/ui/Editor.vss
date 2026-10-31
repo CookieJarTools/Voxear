@@ -648,6 +648,12 @@
     border-color: var(--vx-line-2);
 }
 
+/* Something dragged over a reference, ready to drop. */
+.value-picker.drop-hover {
+    border-color: var(--vx-accent);
+    background-color: var(--vx-selected);
+}
+
 .picker-label {
     flex-grow: 1;
     min-width: 0px;

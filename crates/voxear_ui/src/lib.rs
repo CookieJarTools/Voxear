@@ -21,7 +21,8 @@
 //!   split views, tabs and dropdowns, and docking: areas of tabbed panels
 //!   rearranged by dragging tabs.
 //! - **Context menus** ([`MenuItem`]), opened on the secondary button's
-//!   clicks, and rows dragged onto one another in lists and trees.
+//!   clicks, and **dragging**: rows onto one another in lists and trees, and
+//!   rows and elements onto elements that take drops ([`DragSource`]).
 //! - **Rich text** ([`RichText`]): labels with bold, italic, code,
 //!   struck-out and highlighted words, and links to click.
 //! - **Transitions** ease colours and opacity between styles.
@@ -35,6 +36,7 @@ mod cascade;
 mod color;
 mod controls;
 mod dock;
+mod drag;
 mod draw;
 mod icons;
 mod input;
@@ -52,6 +54,7 @@ mod style;
 mod tree;
 
 pub use color::Color;
+pub use drag::DragSource;
 pub use draw::Shape;
 pub use icons::NAMES as ICONS;
 pub use input::{Clipboard, Key, LocalClipboard};

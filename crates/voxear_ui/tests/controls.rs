@@ -215,6 +215,57 @@ fn tree_rows_drag_onto_one_another_and_context_clicks_select() {
 }
 
 #[test]
+fn rows_and_elements_drop_onto_elements_that_take_them() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let host = ui.panel(root, Style::column().at(0.0, 0.0).width(300.0).height(200.0));
+    let tree = ui.tree_view(host, 20.0, Folders);
+    ui.set_style(tree, Style::column().scroll().grow());
+    ui.set_rows_draggable(tree, true);
+    let card = ui.panel(root, Style::default().at(0.0, 300.0).width(100.0).height(40.0));
+    ui.label(card, "Card", TextStyle::default());
+    ui.set_draggable(card, true);
+    let field = ui.panel(root, Style::default().at(400.0, 100.0).width(200.0).height(40.0));
+    ui.accept_drops(field, true);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let centre = |ui: &Ui, node: NodeId| {
+        let [x, y, w, h] = ui.rect(node);
+        (x + w / 2.0, y + h / 2.0)
+    };
+
+    // A tree's row, dragged over the field: it is marked, and a ghost of the row follows.
+    let row = shown_rows(&ui, tree)[1];
+    let (x, y) = centre(&ui, row);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    let (fx, fy) = centre(&ui, field);
+    ui.pointer_move(fx, fy);
+    assert!(ui.has_class(field, "drop-hover"));
+    assert!(matches!(ui.dragging(), Some(voxear_ui::DragSource::Row { item: Some(2), .. })));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let layer = *ui.children(ui.root()).last().unwrap();
+    let ghost = ui.children(layer)[0];
+    assert!(
+        ui.has_class(ghost, "drag-ghost") && ui.text(ui.children(ghost)[0]) == "2",
+        "the ghost says what is dragged"
+    );
+    assert!(ui.pointer_button(false));
+    assert_eq!(ui.dropped_onto(field), Some(voxear_ui::DragSource::Row { list: tree, index: 1, item: Some(2) }));
+    assert_eq!(ui.dropped(tree), None, "a drop onto the field is not one in the list");
+    assert!(!ui.has_class(field, "drop-hover") && ui.dragging().is_none());
+
+    // An element made draggable drops the same way.
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let (x, y) = centre(&ui, card);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    ui.pointer_move(fx, fy);
+    ui.pointer_button(false);
+    assert_eq!(ui.dropped_onto(field), Some(voxear_ui::DragSource::Element(card)));
+    assert!(!ui.clicked(card), "a drag is no click");
+}
+
+#[test]
 fn lists_declared_in_markup_get_their_items_from_code() {
     let mut ui = Ui::new();
     let root = ui.root();

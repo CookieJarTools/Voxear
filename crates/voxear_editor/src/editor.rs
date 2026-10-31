@@ -21,9 +21,11 @@ use crate::{
     console::Console,
     hierarchy::EditorOnly,
     hierarchy::Hierarchy,
+    hierarchy::ObjAction,
     history::{Edit, History, ObjState},
-    inspector::Inspector,
+    inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
+    objs,
     project_view::ProjectView,
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
 };
@@ -79,7 +81,12 @@ enum Command {
     Save,
     Undo,
     Redo,
+    Duplicate,
+    Delete,
 }
+
+/// How far in front of the Scene camera a new Obj goes.
+const NEW_OBJ_DISTANCE: f32 = 8.0;
 
 pub struct Editor {
     pub game: Game,
@@ -112,8 +119,10 @@ pub struct Editor {
     /// Control, or Command on macOS, is held.
     control: bool,
     shift: bool,
-    /// Save, Undo and Redo pressed since the last frame.
+    /// Shortcuts pressed since the last frame.
     commands: Vec<Command>,
+    /// Values to keep after play: played Objs, and which of their values.
+    kept: Vec<(Entity, Field)>,
     /// The Scene view's tools, the handle under the pointer, and a press on
     /// one or a release of the one held, since the last frame.
     tools: SceneTools,
@@ -187,8 +196,9 @@ impl Editor {
         let branch_shown = find(&ui, "status-branch");
         ui.set_visible(branch_shown, branch.is_some());
         ui.set_dock_layout(nodes.dock, LAYOUT).expect("the default layout is valid");
-        let (tree, filter) = (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"));
-        let hierarchy = Hierarchy::new(&mut ui, tree, filter);
+        let (tree, filter, add) =
+            (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"), find(&ui, "hierarchy-add"));
+        let hierarchy = Hierarchy::new(&mut ui, tree, filter, add);
         let project = ProjectView::new(&mut ui, document, game.project.name(), &root, game.content.db());
         let console_list = find(&ui, "console-list");
         let console = Console::new(&mut ui, console_list, log);
@@ -222,6 +232,7 @@ impl Editor {
             control: false,
             shift: false,
             commands: Vec::new(),
+            kept: Vec::new(),
             tools: SceneTools::new(),
             hovered_handle: None,
             pressed_handle: None,
@@ -234,10 +245,13 @@ impl Editor {
         })
     }
 
-    /// Selects an Obj, as a click in the Hierarchy does.
+    /// Selects an Obj, as a click in the Hierarchy does, or nothing.
     pub fn select(&mut self, entity: Option<Entity>) {
-        if let Some(entity) = entity {
-            self.hierarchy.select(&mut self.ui, &self.game.engine.world, entity);
+        // An Obj made this frame is in the Hierarchy once it has looked again.
+        self.hierarchy.update(&mut self.ui, &self.game.engine.world);
+        match entity {
+            Some(entity) => self.hierarchy.select(&mut self.ui, &self.game.engine.world, entity),
+            None => self.hierarchy.clear(&mut self.ui),
         }
         self.inspector.show(&mut self.ui, &self.game.engine.world, entity);
     }
@@ -287,8 +301,18 @@ impl Editor {
             self.history.record(edit);
             self.unsaved = true;
         }
+        if let Some(action) = self.hierarchy.action(&mut self.ui) {
+            self.obj_action(action, renderer);
+        }
+        let playing = self.is_playing();
+        let shown = self.selected();
+        let can_keep = shown.is_some_and(|entity| self.edited_counterpart(entity).is_some());
+        let kept: Vec<Field> = self.kept.iter().filter(|(e, _)| Some(*e) == shown).map(|&(_, field)| field).collect();
+        if let Some(action) = self.inspector.row_menus(&mut self.ui, playing, can_keep, &kept) {
+            self.row_action(action);
+        }
         for command in std::mem::take(&mut self.commands) {
-            self.run(command);
+            self.run(command, renderer);
         }
         self.update_scene_tools(renderer);
         self.project.update(&mut self.ui);
@@ -432,9 +456,6 @@ impl Editor {
         }
         let Some(point) = point else { return };
         let picked = pick(&self.game.engine.world, renderer, camera, point);
-        if picked.is_none() {
-            self.hierarchy.clear(&mut self.ui);
-        }
         self.select(picked);
     }
 
@@ -448,8 +469,79 @@ impl Editor {
         };
         let before = ObjState { name, transform: start };
         if before != after && !self.is_playing() {
-            self.history.record_step(Edit { entity, before, after });
+            self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
+        }
+    }
+
+    /// Makes, duplicates, deletes or reparents Objs, as the Hierarchy asks.
+    /// Each is a step to undo, except while playing, when only the played
+    /// world changes.
+    fn obj_action(&mut self, action: ObjAction, renderer: &mut Renderer) {
+        let position = self.new_obj_position();
+        let game = &mut self.game;
+        let (edit, selected) = match action {
+            ObjAction::Create { kind, parent } => match objs::create(game, Some(renderer), kind, parent, position) {
+                Ok(made) => (Edit::Exists { root: made, taken: None }, Some(made)),
+                Err(error) => return tracing::error!("could not make the Obj: {error:#}"),
+            },
+            ObjAction::Duplicate(entity) => match objs::duplicate(game, Some(renderer), entity) {
+                Ok(copy) => (Edit::Exists { root: copy, taken: None }, Some(copy)),
+                Err(error) => return tracing::error!("could not duplicate the Obj: {error:#}"),
+            },
+            ObjAction::Delete(entity) => {
+                let taken = objs::take(game, entity);
+                (Edit::Exists { root: entity, taken: Some(taken) }, None)
+            }
+            ObjAction::Reparent(entity, parent) => match objs::reparent(game, entity, parent) {
+                Some((before, after)) => (Edit::Moved { entity, before, after }, Some(entity)),
+                None => return,
+            },
+        };
+        if !self.is_playing() {
+            self.history.record_step(edit);
+            self.unsaved = true;
+        }
+        self.select(selected);
+    }
+
+    /// Where a new Obj goes: a little in front of the Scene camera, on the
+    /// snap grid.
+    fn new_obj_position(&self) -> Vec3 {
+        let Some(view) = self.game.engine.world.get::<Transform>(self.camera) else { return Vec3::ZERO };
+        let at = view.position + view.rotation * Vec3::Z * NEW_OBJ_DISTANCE;
+        (at / self.tools.snap).round() * self.tools.snap
+    }
+
+    /// Keeps a value after play, or stops keeping it, or resets it, as a
+    /// row's menu in the Inspector asks.
+    fn row_action(&mut self, action: RowAction) {
+        let Some(entity) = self.selected() else { return };
+        match action {
+            RowAction::Keep(field) => {
+                let label = field.label();
+                match self.kept.iter().position(|kept| *kept == (entity, field)) {
+                    Some(at) => {
+                        self.kept.remove(at);
+                        self.notify(&format!("{label} will not be kept after play"));
+                    }
+                    None => {
+                        self.kept.push((entity, field));
+                        self.notify(&format!("{label} will be kept when play stops"));
+                    }
+                }
+            }
+            RowAction::Reset(field) => {
+                let world = &mut self.game.engine.world;
+                let Some(before) = ObjState::of(world, entity) else { return };
+                let mut after = before.clone();
+                field.reset(&mut after);
+                after.apply(world, entity);
+                if before != after && !self.is_playing() {
+                    self.history.record_step(Edit::Changed { entity, before, after });
+                    self.unsaved = true;
+                }
+            }
         }
     }
 
@@ -476,22 +568,34 @@ impl Editor {
     }
 
     /// Saves, undoes or redoes, as a shortcut asked.
-    fn run(&mut self, command: Command) {
-        if self.is_playing() {
-            self.notify("Stop playing to save or undo; edits while playing are not kept");
-            return;
-        }
+    fn run(&mut self, command: Command, renderer: &mut Renderer) {
+        let selected = self.selected();
         match command {
+            Command::Duplicate => {
+                if let Some(entity) = selected {
+                    self.obj_action(ObjAction::Duplicate(entity), renderer);
+                }
+            }
+            Command::Delete => {
+                if let Some(entity) = selected {
+                    self.obj_action(ObjAction::Delete(entity), renderer);
+                }
+            }
+            _ if self.is_playing() => {
+                self.notify("Stop playing to save or undo; edits while playing are not kept");
+            }
             Command::Save => self.save(),
             Command::Undo | Command::Redo => {
                 // A field being typed in would keep its text over the undone value.
                 self.ui.blur();
-                let world = &mut self.game.engine.world;
-                let changed =
-                    if command == Command::Undo { self.history.undo(world) } else { self.history.redo(world) };
-                match changed {
-                    Some(entity) => {
-                        self.select(Some(entity));
+                let game = &mut self.game;
+                let step = match command {
+                    Command::Undo => self.history.undo(game, Some(renderer)),
+                    _ => self.history.redo(game, Some(renderer)),
+                };
+                match step {
+                    Some(selected) => {
+                        self.select(selected);
                         self.unsaved = true;
                     }
                     None => self.notify(if command == Command::Undo { "Nothing to undo" } else { "Nothing to redo" }),
@@ -522,13 +626,13 @@ impl Editor {
     }
 
     /// Takes back the last edit, as Ctrl+Z does.
-    pub fn undo(&mut self) {
-        self.run(Command::Undo);
+    pub fn undo(&mut self, renderer: &mut Renderer) {
+        self.run(Command::Undo, renderer);
     }
 
     /// Makes the last undone edit again, as Ctrl+Shift+Z does.
-    pub fn redo(&mut self) {
-        self.run(Command::Redo);
+    pub fn redo(&mut self, renderer: &mut Renderer) {
+        self.run(Command::Redo, renderer);
     }
 
     /// Whether the open level has edits not saved.
@@ -600,6 +704,14 @@ impl Editor {
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
             && key.state == ElementState::Pressed
+            && !self.ui.wants_keyboard()
+            && key.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Delete)
+        {
+            self.commands.push(Command::Delete);
+            return true;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
             && !self.control
             && !self.ui.wants_keyboard()
             && let winit::keyboard::Key::Character(text) = &key.logical_key
@@ -616,6 +728,7 @@ impl Editor {
         {
             let command = match (text.to_lowercase().as_str(), self.shift) {
                 ("s", _) => Some(Command::Save),
+                ("d", _) => Some(Command::Duplicate),
                 ("z", false) => Some(Command::Undo),
                 ("z", true) | ("y", _) => Some(Command::Redo),
                 ("k", _) => {

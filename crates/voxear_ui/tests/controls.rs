@@ -165,6 +165,56 @@ fn trees_open_and_close_and_keep_their_selection() {
 }
 
 #[test]
+fn tree_rows_drag_onto_one_another_and_context_clicks_select() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let host = ui.panel(root, Style::column().at(0.0, 0.0).width(300.0).height(400.0));
+    let tree = ui.tree_view(host, 20.0, Folders);
+    ui.set_style(tree, Style::column().scroll().grow());
+    ui.set_rows_draggable(tree, true);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let rows = shown_rows(&ui, tree);
+    let centre = |ui: &Ui, row: NodeId| {
+        let [x, y, w, h] = ui.rect(row);
+        (x + w / 2.0, y + h / 2.0)
+    };
+
+    // Pressed on the third folder, moved a little, then onto the first.
+    let (x, y) = centre(&ui, rows[2]);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    ui.pointer_move(x + 2.0, y);
+    assert!(!ui.has_class(tree, "dragging-rows"), "a small move is still a click");
+    let (to_x, to_y) = centre(&ui, rows[0]);
+    ui.pointer_move(to_x, to_y);
+    assert!(ui.has_class(tree, "dragging-rows"));
+    assert!(ui.has_class(rows[0], "drop-target"), "the row it would land on is marked");
+    assert!(ui.pointer_button(false));
+    assert_eq!(ui.dropped_item(tree), Some((3, Some(1))));
+    assert_eq!(ui.dropped(tree), Some((2, Some(0))));
+    assert!(ui.selected_items(tree).is_empty(), "a drag is no click, so nothing was selected");
+    assert!(!ui.has_class(rows[0], "drop-target") && !ui.has_class(tree, "dragging-rows"));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.dropped(tree), None, "drops last a frame");
+
+    // Let go below the rows, it lands on nothing.
+    let (x, y) = centre(&ui, rows[1]);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    ui.pointer_move(x, 300.0);
+    ui.pointer_button(false);
+    assert_eq!(ui.dropped_item(tree), Some((2, None)));
+
+    // A context click selects the row under it first.
+    let (x, y) = centre(&ui, rows[1]);
+    ui.pointer_move(x, y);
+    ui.pointer_secondary(true);
+    ui.pointer_secondary(false);
+    assert!(ui.context_clicked(rows[1]) && ui.context_clicked(tree));
+    assert_eq!(ui.selected_items(tree), [2]);
+}
+
+#[test]
 fn lists_declared_in_markup_get_their_items_from_code() {
     let mut ui = Ui::new();
     let root = ui.root();

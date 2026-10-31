@@ -408,6 +408,11 @@ impl Ui {
                     self.open_dropdown(NodeId(node));
                     return;
                 }
+                Some(Control::MenuItem { owner, index }) => {
+                    let (owner, index) = (*owner, *index);
+                    self.choose_menu_item(owner, index);
+                    return;
+                }
                 _ => {}
             }
             at = self.tree.parent(node);

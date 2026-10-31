@@ -1,6 +1,6 @@
 //! Grid layout, transitions, split views, tabs and dropdowns, without a GPU.
 
-use voxear_ui::{Color, Key, NodeId, Quad, Style, StyleSheet, TextStyle, Ui};
+use voxear_ui::{Color, Key, MenuItem, NodeId, Quad, Style, StyleSheet, TextStyle, Ui};
 
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
@@ -282,4 +282,52 @@ fn a_dividers_handle_lights_its_middle_over_everything() {
     ui.pointer_button(false);
     ui.frame(WIDTH, HEIGHT, 1.0);
     assert!(!lit(&ui), "and unlit once let go");
+}
+
+#[test]
+fn menus_open_at_the_pointer_choose_and_stay_on_screen() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let owner = ui.panel(root, Style::default().at(0.0, 0.0).width(WIDTH as f32).height(HEIGHT as f32));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.pointer_move(100.0, 120.0);
+    ui.pointer_secondary(true);
+    ui.pointer_secondary(false);
+    assert!(ui.context_clicked(owner));
+    let at = ui.pointer_position().unwrap();
+    let items = [
+        MenuItem::new("Keep"),
+        MenuItem::separator(),
+        MenuItem::new("Reset").checked(true),
+        MenuItem::new("Paste").enabled(false),
+    ];
+    ui.open_menu(owner, at, &items);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(ui.is_menu_open(owner));
+    let layer = *ui.children(ui.root()).last().unwrap();
+    let menu = ui.children(layer)[0];
+    assert_eq!(ui.rect(menu)[..2], [100.0, 120.0], "it opens at the pointer");
+    let rows = ui.children(menu);
+    assert_eq!(rows.len(), 4);
+    assert!(ui.has_class(rows[1], "menu-separator"));
+    assert!(ui.is_checked(rows[2]));
+
+    click(&mut ui, rows[3]);
+    assert_eq!(ui.menu_choice(owner), None, "a disabled item cannot be chosen");
+    assert!(ui.is_menu_open(owner));
+    click(&mut ui, rows[2]);
+    assert_eq!(ui.menu_choice(owner), Some(2));
+    assert!(!ui.is_menu_open(owner), "a choice closes it");
+    assert!(!ui.clicked(owner), "the item took the click, not what was under it");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.menu_choice(owner), None, "choices last a frame");
+
+    // Opened at the bottom right corner, it moves back inside the screen.
+    ui.open_menu(owner, (WIDTH as f32 - 10.0, HEIGHT as f32 - 10.0), &items);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let layer = *ui.children(ui.root()).last().unwrap();
+    let [x, y, w, h] = ui.rect(ui.children(layer)[0]);
+    assert!(x + w <= WIDTH as f32 && y + h <= HEIGHT as f32, "on screen: {x}, {y}, {w} by {h}");
+    ui.key_down(Key::Escape);
+    assert!(!ui.is_menu_open(owner), "Escape closes it");
 }

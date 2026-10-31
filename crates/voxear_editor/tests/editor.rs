@@ -133,10 +133,12 @@ fn a_hovered_divider_shows_its_handle_over_the_scene_frame() {
     assert_eq!(at(x + w / 2.0, y + 4.0), [0x0c, 0x0e, 0x10], "short of the divider's ends");
 }
 
-/// The Obj called `name` in the editor's world as it is now.
+/// The Obj called `name` in the editor's world as it is now, leaving out
+/// Objs being destroyed, which go at the end of the frame.
 fn obj(editor: &voxear_editor::Editor, name: &str) -> Option<voxear_ecs::Entity> {
     let world = &editor.game.engine.world;
-    world.query_ref::<(voxear_ecs::Entity, &Name)>().into_iter().find(|(_, n)| n.0 == name).map(|(e, _)| e)
+    let objs = world.query_ref::<(voxear_ecs::Entity, &Name)>().without::<voxear_scene::Destroying>();
+    objs.into_iter().find(|(_, n)| n.0 == name).map(|(e, _)| e)
 }
 
 /// The only test that starts .NET, which can start once per process.
@@ -202,12 +204,38 @@ fn play_runs_the_scripts_and_stop_brings_the_level_back() {
     assert_eq!(*editor.game.engine.world.get::<Transform>(spinner).unwrap(), edited, "as it was edited");
     assert!(editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).is_some(), "with no script running");
 
-    // A second run reuses the scripts, since .NET starts only once.
+    // A second run reuses the scripts, since .NET starts only once. A value
+    // marked to keep comes back into the edited level when play stops.
     editor.play(&mut renderer);
     assert!(editor.is_playing(), "plays at once, with the scripts already built");
     frame(&mut editor, &mut renderer);
+    let played = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(played));
+    frame(&mut editor, &mut renderer);
+    let kept_at = voxear_core::math::Vec3::new(-3.0, 2.0, 1.0);
+    editor.game.engine.world.get_mut::<Transform>(played).unwrap().position = kept_at;
+    let position_row = prop_row(&editor.ui, "Position").expect("the Inspector shows Position");
+    context_click(&mut editor.ui, position_row);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "keep-menu.png");
+    let target = menu_item(&editor.ui, "Keep value after play").expect("offered while playing");
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.has_class(prop_row(&editor.ui, "Position").unwrap(), "kept"), "the row is marked");
     editor.stop(&mut renderer);
+    frame(&mut editor, &mut renderer);
     assert_eq!(editor.play_error(), None);
+    let back = *editor.game.engine.world.get::<Transform>(spinner).unwrap();
+    assert_eq!(back.position, kept_at, "the kept position came back from play");
+    assert_eq!(back.rotation, edited.rotation, "and nothing else did");
+    assert!(editor.has_unsaved_changes());
+    editor.undo(&mut renderer);
+    assert_eq!(
+        editor.game.engine.world.get::<Transform>(spinner).unwrap().position,
+        edited.position,
+        "undo takes it back"
+    );
 }
 
 /// The first label anywhere in `node` whose text starts with `words`.
@@ -275,7 +303,8 @@ fn the_levels_panel_lists_levels_and_opens_them() {
     editor.ui.pointer_button(false);
     editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     assert_eq!(editor.game.levels.current(), Some("Levels/Night.level"), "a click opens the level to edit");
-    assert!(obj(&editor, "Lamp").is_some(), "with Night's Objs");
+    assert!(obj(&editor, "Monolith").is_some(), "with Night's Objs");
+    assert!(obj(&editor, "Lamp").is_none(), "and Day's gone");
     assert!(obj(&editor, "Scene Camera").is_some(), "and the editor's own camera left alone");
     assert_eq!(editor.game.levels.active_scene(), Some("Scenes/Night.scene"));
     if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
@@ -341,9 +370,9 @@ fn edits_undo_redo_and_save_to_the_scene_file() {
     assert_eq!(x(&editor), 7.25);
     assert!(editor.has_unsaved_changes(), "an edit is unsaved");
 
-    editor.undo();
+    editor.undo(&mut renderer);
     assert_eq!(x(&editor), start, "undo takes typing back as one step");
-    editor.redo();
+    editor.redo(&mut renderer);
     assert_eq!(x(&editor), 7.25, "and redo makes it again");
 
     editor.save();
@@ -408,6 +437,121 @@ fn a_click_selects_an_obj_and_its_move_handle_drags_it() {
     assert!(moved.x > start.x + 0.1, "dragged along X: {start} to {moved}");
     assert!((moved.y - start.y).abs() < 1e-4 && (moved.z - start.z).abs() < 1e-4, "and only along X: {moved}");
     assert!(editor.has_unsaved_changes(), "a drag is an edit");
-    editor.undo();
+    editor.undo(&mut renderer);
     assert_eq!(position(&editor), start, "one undo takes the whole drag back");
+}
+
+/// Writes what the renderer last drew to `name` in `VOXEAR_TEST_OUTPUT`, when set.
+fn shot(renderer: &mut Renderer, name: &str) {
+    let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") else { return };
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+    let mut encoder = png::Encoder::new(file, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+}
+
+fn click(ui: &mut Ui, node: NodeId) {
+    let [x, y, w, h] = ui.rect(node);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_button(true);
+    ui.pointer_button(false);
+}
+
+fn context_click(ui: &mut Ui, node: NodeId) {
+    let [x, y, w, h] = ui.rect(node);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_secondary(true);
+    ui.pointer_secondary(false);
+}
+
+/// The open menu's item that says `label`.
+fn menu_item(ui: &Ui, label: &str) -> Option<NodeId> {
+    let mut items = Vec::new();
+    with_class(ui, ui.root(), "menu-item", &mut items);
+    items.into_iter().find(|&item| ui.children(item).iter().any(|&part| ui.text(part) == label))
+}
+
+/// The Inspector row labelled `label`.
+fn prop_row(ui: &Ui, label: &str) -> Option<NodeId> {
+    let mut rows = Vec::new();
+    with_class(ui, ui.root(), "prop", &mut rows);
+    rows.into_iter().find(|&row| ui.children(row).first().is_some_and(|&first| ui.text(first) == label))
+}
+
+/// The Hierarchy row showing the Obj called `name`.
+fn hierarchy_row(ui: &Ui, name: &str) -> Option<NodeId> {
+    let tree = ui.find(ui.root(), "hierarchy-tree")?;
+    let mut names = Vec::new();
+    with_class(ui, tree, "row-name", &mut names);
+    let label = names.into_iter().find(|&n| ui.is_visible(n) && ui.text(n) == name)?;
+    let mut at = Some(label);
+    while let Some(node) = at {
+        if ui.has_class(node, "list-row") {
+            return Some(node);
+        }
+        at = ui.parent(node);
+    }
+    None
+}
+
+#[test]
+fn the_hierarchy_makes_duplicates_deletes_and_reparents_objs() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let parent = |editor: &voxear_editor::Editor, e: voxear_ecs::Entity| {
+        editor.game.engine.world.get::<voxear_scene::Parent>(e).map(|p| p.0)
+    };
+    let add = editor.ui.find(editor.ui.root(), "hierarchy-add").unwrap();
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let target = menu_item(&editor.ui, "Cube").expect("the + menu offers a Cube");
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    let cube = obj(&editor, "Cube").expect("a Cube was made");
+    assert_eq!(editor.selected(), Some(cube), "and selected");
+    assert!(editor.game.engine.world.get::<voxear_render::MeshRenderer>(cube).is_some(), "with a mesh");
+    assert!(editor.has_unsaved_changes());
+
+    let target = hierarchy_row(&editor.ui, "Cube").expect("the Cube is in the Hierarchy");
+    context_click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "hierarchy-menu.png");
+    let target = menu_item(&editor.ui, "Duplicate").unwrap();
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    let copy = obj(&editor, "Cube (1)").expect("the copy is numbered");
+    assert_eq!(editor.selected(), Some(copy));
+
+    // Dragged onto the Cube, the copy goes inside it.
+    let (from, onto) = (hierarchy_row(&editor.ui, "Cube (1)").unwrap(), hierarchy_row(&editor.ui, "Cube").unwrap());
+    let ([fx, fy, fw, fh], [ox, oy, ow, oh]) = (editor.ui.rect(from), editor.ui.rect(onto));
+    editor.ui.pointer_move(fx + fw / 2.0, fy + fh / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_move(ox + ow / 2.0, oy + oh / 2.0);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(parent(&editor, copy), Some(cube), "dropped into the Cube");
+
+    // Deleting the Cube takes the copy with it; undo brings both back.
+    let target = hierarchy_row(&editor.ui, "Cube").unwrap();
+    context_click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    let target = menu_item(&editor.ui, "Delete").unwrap();
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    assert!(obj(&editor, "Cube").is_none() && obj(&editor, "Cube (1)").is_none(), "both went");
+    assert_eq!(editor.selected(), None);
+    frame(&mut editor, &mut renderer);
+    editor.undo(&mut renderer);
+    let (cube, copy) = (obj(&editor, "Cube").expect("back"), obj(&editor, "Cube (1)").expect("both"));
+    assert_eq!(editor.selected(), Some(cube));
+    assert_eq!(parent(&editor, copy), Some(cube), "the copy is inside again");
+    editor.undo(&mut renderer);
+    assert_eq!(parent(&editor, copy), None, "the move undoes");
+    editor.undo(&mut renderer);
+    assert!(obj(&editor, "Cube (1)").is_none(), "then the copy");
+    editor.undo(&mut renderer);
+    assert!(obj(&editor, "Cube").is_none(), "then the Cube");
+    editor.redo(&mut renderer);
+    assert!(obj(&editor, "Cube").is_some(), "and redo makes it again");
 }

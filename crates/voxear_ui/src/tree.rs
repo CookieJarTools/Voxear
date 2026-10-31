@@ -207,6 +207,14 @@ pub struct Ui {
     pub(crate) open_popup: Option<(taffy::NodeId, taffy::NodeId)>,
     /// A dock tab pressed, and maybe being dragged.
     pub(crate) dock_drag: Option<crate::dock::DockDrag>,
+    /// Menu items chosen since the last frame, by the element each menu was
+    /// for, and a menu just opened, to keep on screen once laid out.
+    pub(crate) menu_choices: Vec<(taffy::NodeId, usize)>,
+    pub(crate) placing_menu: Option<taffy::NodeId>,
+    /// A list row pressed, and maybe being dragged, and rows let go of
+    /// since the last frame.
+    pub(crate) row_drag: Option<crate::list::RowDrag>,
+    pub(crate) row_drops: Vec<crate::list::RowDrop>,
 }
 
 impl Default for Ui {
@@ -244,6 +252,10 @@ impl Ui {
             popups: None,
             open_popup: None,
             dock_drag: None,
+            menu_choices: Vec::new(),
+            placing_menu: None,
+            row_drag: None,
+            row_drops: Vec::new(),
         }
         .with_theme()
     }
@@ -634,6 +646,12 @@ impl Ui {
             self.layout(width, height, scale);
             self.update_scroll_limits();
         }
+        if self.place_menu() {
+            if std::mem::take(&mut self.restyle) {
+                self.cascade();
+            }
+            self.layout(width, height, scale);
+        }
         self.refresh_fields();
         let scale = self.viewport.2;
         let (focused, caret_on, time) = (self.input.focused, self.caret_on(), self.input.time);
@@ -662,6 +680,9 @@ impl Ui {
         self.pointer.clicks.clear();
         self.pointer.double_clicks.clear();
         self.pointer.link_clicks.clear();
+        self.pointer.context_clicks.clear();
+        self.menu_choices.clear();
+        self.row_drops.clear();
         self.clear_selection_changes();
         self.clear_input_events();
         UiFrame { quads, atlas: self.atlas.snapshot() }

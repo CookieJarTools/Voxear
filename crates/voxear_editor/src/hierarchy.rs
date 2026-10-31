@@ -1,13 +1,21 @@
 //! The Hierarchy panel: every Obj in the open level, as a tree by parent,
 //! with an icon for what it is and how many Objs are in it. A filter
 //! narrows it to Objs whose names match.
+//!
+//! Its + button makes new Objs, as Unity's GameObject menu does. A context
+//! click on an Obj offers to duplicate or delete it, or make an Obj inside
+//! it, and on the space below them, to make one at the top. Dragging an
+//! Obj onto another puts it inside, and below the rest takes it out to the
+//! top. The editor carries these out (see [`ObjAction`]).
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use voxear_ecs::{Entity, World};
 use voxear_render::{Camera, Light, MeshRenderer};
-use voxear_scene::{Name, Parent};
-use voxear_ui::{NodeId, TreeItems, Ui};
+use voxear_scene::{Destroying, Name, Parent};
+use voxear_ui::{MenuItem, NodeId, TreeItems, Ui};
+
+use crate::objs::NEW_OBJS;
 
 /// Objs the editor made for itself, such as its Scene camera, which the
 /// Hierarchy leaves out and level changes leave alone.
@@ -57,17 +65,82 @@ impl TreeItems for Items {
     }
 }
 
+/// What the Hierarchy asks the editor to do to Objs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjAction {
+    /// Make one of `NEW_OBJS`, inside an Obj or at the top.
+    Create {
+        kind: usize,
+        parent: Option<Entity>,
+    },
+    Duplicate(Entity),
+    Delete(Entity),
+    /// Move an Obj inside another, or out to the top.
+    Reparent(Entity, Option<Entity>),
+}
+
 pub struct Hierarchy {
     tree: NodeId,
     filter: NodeId,
+    add: NodeId,
     shown: Rc<RefCell<Snapshot>>,
+    /// What each item of the menu open now does.
+    menu: Vec<Option<ObjAction>>,
 }
 
 impl Hierarchy {
-    pub fn new(ui: &mut Ui, tree: NodeId, filter: NodeId) -> Self {
+    pub fn new(ui: &mut Ui, tree: NodeId, filter: NodeId, add: NodeId) -> Self {
         let shown = Rc::new(RefCell::new(Snapshot::default()));
         ui.bind_tree(tree, Items(shown.clone()));
-        Self { tree, filter, shown }
+        ui.set_rows_draggable(tree, true);
+        Self { tree, filter, add, shown, menu: Vec::new() }
+    }
+
+    /// What the + button, a context click or a dropped row asks for.
+    pub fn action(&mut self, ui: &mut Ui) -> Option<ObjAction> {
+        if let Some((item, onto)) = ui.dropped_item(self.tree) {
+            return Some(ObjAction::Reparent(Entity::from_bits(item), onto.map(Entity::from_bits)));
+        }
+        if let Some(index) = ui.menu_choice(self.add).or_else(|| ui.menu_choice(self.tree)) {
+            return self.menu.get(index).copied().flatten();
+        }
+        if ui.clicked(self.add) {
+            let [x, y, _, height] = ui.rect(self.add);
+            self.open_menu(ui, self.add, (x, y + height + 4.0), None);
+        } else if ui.context_clicked(self.tree) {
+            let on = ui.item_at_pointer(self.tree).map(Entity::from_bits);
+            if on.is_none() {
+                self.clear(ui);
+            }
+            let at = ui.pointer_position().unwrap_or_default();
+            self.open_menu(ui, self.tree, at, on);
+        }
+        None
+    }
+
+    /// The menu of what can be done to `on`, or made at the top.
+    fn open_menu(&mut self, ui: &mut Ui, owner: NodeId, at: (f32, f32), on: Option<Entity>) {
+        let mut items = Vec::new();
+        self.menu.clear();
+        if let Some(entity) = on {
+            let name =
+                self.shown.borrow().rows.get(&entity.to_bits()).map(|(name, _)| name.clone()).unwrap_or_default();
+            let entries = [
+                (MenuItem::new("Duplicate").shortcut("Ctrl+D"), Some(ObjAction::Duplicate(entity))),
+                (MenuItem::new("Delete").shortcut("Delete"), Some(ObjAction::Delete(entity))),
+                (MenuItem::separator(), None),
+                (MenuItem::new(&format!("New inside {name}")).enabled(false), None),
+            ];
+            for (item, action) in entries {
+                items.push(item);
+                self.menu.push(action);
+            }
+        }
+        for (kind, (label, ..)) in NEW_OBJS.iter().enumerate() {
+            items.push(MenuItem::new(label));
+            self.menu.push(Some(ObjAction::Create { kind, parent: on }));
+        }
+        ui.open_menu(owner, at, &items);
     }
 
     /// Shows the world as it is now, if anything changed.
@@ -120,7 +193,8 @@ fn snapshot(world: &World, filter: &str) -> Snapshot {
     let mut snapshot = Snapshot::default();
     let objs = world
         .query_ref::<(Entity, &Name, Option<&Parent>, Option<&Camera>, Option<&Light>, Option<&MeshRenderer>)>()
-        .without::<EditorOnly>();
+        .without::<EditorOnly>()
+        .without::<Destroying>();
     let mut all: Vec<(Entity, Option<Entity>)> = Vec::new();
     for (entity, name, parent, camera, light, mesh) in objs {
         let icon = icon(camera.is_some(), light.is_some(), mesh.is_some());

@@ -216,6 +216,9 @@ Done so far:
   discards edits.
 - **Scene view tools:** click an Obj to select it; move, rotate and scale handles driven by the tool strip (and Q,
   W, E, R), Pivot or Center, Global or Local, snapping with Ctrl, and each drag one step to undo.
+- **Editing Objs:** context menus and dragging rows in Voxear UI; the Hierarchy makes, duplicates, deletes and
+  reparents Objs, with undo, keeping each in its scene with its id; values marked "Keep value after play" in the
+  Inspector come back into the edited level when play stops.
 
 Still to do in M3:
 - UI core:
@@ -226,10 +229,9 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The editor's next steps, to make it usable for real work: making, duplicating, deleting and reparenting Objs in
-  the Hierarchy, adding and removing components and editing
-  their fields, undo for all of it, the command palette (Ctrl+K), Hierarchy instance badges, the Console's Sifter
-  features, and C# hot reload (which play mode will then use to pick up changed scripts).
+- The editor's next steps, to make it usable for real work: adding and removing components and editing their
+  fields, with undo, the command palette (Ctrl+K), Hierarchy instance badges and sibling order, the Console's
+  Sifter features, and C# hot reload (which play mode will then use to pick up changed scripts).
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
   recordings (with images in Voxear UI), live assets, tags and quick open.

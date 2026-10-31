@@ -436,6 +436,65 @@ Dropdown:focus {
     color: var(--vx-accent);
 }
 
+/* Context menus float like a dropdown's list, with a column for ticks. */
+
+.menu-popup {
+    min-width: 180px;
+    padding: 4px;
+    border-radius: 7px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-line-2);
+    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.4);
+    color: var(--vx-text-2);
+}
+
+.menu-item {
+    height: 24px;
+    padding: 0px 12px 0px 6px;
+    gap: 6px;
+    align-items: center;
+    border-radius: 5px;
+    transition: background-color var(--vx-fade);
+}
+
+.menu-item:hover {
+    background-color: var(--vx-selected);
+    color: var(--vx-text);
+}
+
+.menu-item:disabled {
+    background-color: transparent;
+    color: var(--vx-muted);
+    opacity: 0.6;
+}
+
+.menu-check {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--vx-accent);
+}
+
+.menu-shortcut {
+    margin-left: auto;
+    padding-left: 24px;
+    color: var(--vx-muted);
+}
+
+.menu-separator {
+    height: 1px;
+    margin: 4px 2px;
+    background-color: var(--vx-line-2);
+}
+
+/* A row dragged in a list lands on the row marked here. */
+
+.list-row.drop-target {
+    background-color: var(--vx-selected);
+    border: 1px solid var(--vx-accent);
+    border-radius: 5px;
+}
+
 /* Segmented controls sit in a field-coloured well; the segment that is on
    is raised a little. */
 

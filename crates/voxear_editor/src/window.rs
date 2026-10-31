@@ -120,12 +120,12 @@ impl ApplicationHandler for App {
                 }
                 return;
             }
-            WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
-                let over = self.editor.as_ref().is_some_and(Editor::over_viewport);
-                let pressed = *state == ElementState::Pressed;
-                if !pressed || over {
-                    self.set_flying(pressed);
-                }
+            // The right button flies the Scene view from inside it; anywhere
+            // else it is the UI's, for context menus.
+            WindowEvent::MouseInput { state, button: MouseButton::Right, .. }
+                if flying || self.editor.as_ref().is_some_and(Editor::over_viewport) =>
+            {
+                self.set_flying(*state == ElementState::Pressed);
                 return;
             }
             WindowEvent::KeyboardInput { event: key, .. } if flying => {

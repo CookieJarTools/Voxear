@@ -492,6 +492,11 @@
     color: var(--vx-muted);
 }
 
+/* A value kept after play: its label in the accent, as a reminder. */
+.kept > .prop-label, .kept > .obj-tile {
+    color: var(--vx-accent);
+}
+
 .divider {
     height: 1px;
     flex-shrink: 0;

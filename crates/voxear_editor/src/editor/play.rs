@@ -18,7 +18,11 @@ use voxear_scene::{Name, Transform};
 use voxear_scripting::ScriptRuntime;
 
 use super::Editor;
-use crate::hierarchy::EditorOnly;
+use crate::{
+    hierarchy::EditorOnly,
+    history::{Edit, ObjState},
+    inspector::Field,
+};
 
 /// How far Step moves a paused game.
 const STEP: f32 = 1.0 / 60.0;
@@ -107,6 +111,14 @@ impl Editor {
         let Mode::Playing(run) = std::mem::replace(&mut self.play.mode, Mode::Editing) else { return };
         let Run { edit, levels, camera, .. } = *run;
         let selected = self.inspector.shown().and_then(|entity| self.game.levels.counterpart(entity, &levels));
+        // The values to keep, read before the played world goes.
+        let kept: Vec<(Entity, Field, ObjState)> = std::mem::take(&mut self.kept)
+            .into_iter()
+            .filter_map(|(played, field)| {
+                let state = ObjState::of(&self.game.engine.world, played)?;
+                Some((self.game.levels.counterpart(played, &levels)?, field, state))
+            })
+            .collect();
         let view = self.game.engine.world.get::<Transform>(self.camera).copied();
         let mut played = std::mem::replace(&mut self.game.engine, edit);
         self.game.levels = levels;
@@ -117,8 +129,39 @@ impl Editor {
         }
         self.camera = camera;
         self.game.release_unused(Some(renderer));
+        self.keep_from_play(&kept);
         self.after_swap(selected, "scene");
         tracing::info!("stopped playing; the level is back as it was edited");
+    }
+
+    /// The edited Obj a played one was copied from, while playing: what a
+    /// value kept after play goes back into.
+    pub(super) fn edited_counterpart(&self, played: Entity) -> Option<Entity> {
+        let Mode::Playing(run) = &self.play.mode else { return None };
+        self.game.levels.counterpart(played, &run.levels)
+    }
+
+    /// Brings values kept from play into the edited level, as one step to
+    /// undo.
+    fn keep_from_play(&mut self, kept: &[(Entity, Field, ObjState)]) {
+        let world = &mut self.game.engine.world;
+        let mut edits = Vec::new();
+        for (entity, field, played) in kept {
+            let Some(before) = ObjState::of(world, *entity) else { continue };
+            let mut after = before.clone();
+            field.copy(played, &mut after);
+            after.apply(world, *entity);
+            if before != after {
+                edits.push(Edit::Changed { entity: *entity, before, after });
+            }
+        }
+        if edits.is_empty() {
+            return;
+        }
+        let count = edits.len();
+        self.history.record_step(Edit::Group(edits));
+        self.unsaved = true;
+        self.notify(&format!("Kept {count} {} from play", if count == 1 { "value" } else { "values" }));
     }
 
     /// Pauses or resumes the running game.
@@ -214,6 +257,7 @@ impl Editor {
         let selected = self.inspector.shown().and_then(|entity| self.game.levels.counterpart(entity, &levels));
         let edit = std::mem::replace(&mut self.game.engine, engine);
         let levels = std::mem::replace(&mut self.game.levels, levels);
+        self.kept.clear();
         let run = Run { edit, levels, camera: self.camera, paused: false, step: false };
         self.play.mode = Mode::Playing(Box::new(run));
         self.camera = camera;

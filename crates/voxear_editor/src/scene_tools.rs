@@ -13,7 +13,7 @@
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Entity, World};
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
-use voxear_scene::{EditorOnly, Parent, Transform, WorldTransform};
+use voxear_scene::{Destroying, EditorOnly, Parent, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
 /// How long the handles are on screen, in logical pixels.
@@ -125,8 +125,10 @@ pub fn pick(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32
             best = Some((distance, entity));
         }
     };
-    let meshes =
-        world.query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>().without::<EditorOnly>();
+    let meshes = world
+        .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
+        .without::<EditorOnly>()
+        .without::<Destroying>();
     for (entity, renderer_of, transform, placed) in meshes {
         let Some((min, max)) = renderer.mesh_bounds(renderer_of.mesh) else { continue };
         let matrix = placed.map_or_else(|| transform.matrix(), |w| w.0);
@@ -139,7 +141,8 @@ pub fn pick(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32
     }
     let marked = world
         .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>)>()
-        .without::<EditorOnly>();
+        .without::<EditorOnly>()
+        .without::<Destroying>();
     for (entity, transform, placed, light, lens) in marked {
         if light.is_none() && lens.is_none() {
             continue;

@@ -27,6 +27,9 @@ pub fn handle(ui: &mut Ui, event: &WindowEvent) -> bool {
         WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
             ui.pointer_button(*state == ElementState::Pressed)
         }
+        WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
+            ui.pointer_secondary(*state == ElementState::Pressed)
+        }
         WindowEvent::MouseWheel { delta, .. } => {
             let (dx, dy) = match delta {
                 MouseScrollDelta::LineDelta(x, y) => (-x * NOTCH, -y * NOTCH),

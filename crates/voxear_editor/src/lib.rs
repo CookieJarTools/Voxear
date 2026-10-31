@@ -18,8 +18,11 @@
 //! - the Scene view's **tools**: click an Obj to select it, and drag the
 //!   move, rotate or scale handles around it (Q, W, E and R pick the tool;
 //!   Ctrl snaps)
+//! - **editing Objs** in the Hierarchy: its + button and context menus make,
+//!   duplicate and delete them, and dragging one onto another reparents it
 //! - the **Inspector**, editing the selected Obj's name and Transform and
-//!   showing its components and behaviours
+//!   showing its components and behaviours; while playing, a row's menu can
+//!   keep its value after play
 //! - the **Console**, showing everything logged
 //! - the **Cookbook**: the project's own documentation, Markdown pages from its
 //!   `Docs` folder (see `voxear_cookbook`)
@@ -27,7 +30,7 @@
 //!   scene, to open, play, or while playing, change to
 //! - a status bar: what the editor is doing, frame rate, memory and git
 //!   branch
-//! - saving with Ctrl+S, and undo and redo of edits with Ctrl+Z and Ctrl+Y
+//! - saving with Ctrl+S, and undo and redo of every edit with Ctrl+Z and Ctrl+Y
 
 mod console;
 mod editor;
@@ -35,6 +38,7 @@ mod hierarchy;
 mod history;
 mod inspector;
 mod levels_panel;
+mod objs;
 mod project_view;
 pub mod scene_tools;
 mod window;

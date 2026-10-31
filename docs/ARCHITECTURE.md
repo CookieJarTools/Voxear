@@ -1042,6 +1042,16 @@ mid-fade.
 - **`z-index`** above 0 draws an element and its children after everything else, higher ones last, as for the
   split handles. The pointer still finds elements in tree order.
 - **Shapes** (`ui.set_shapes`): lines with round ends and circles drawn on any element, for gizmos and graphs.
+
+**Menus and dragging rows** *(implemented)*:
+- **Context clicks**: the secondary button's press and release on one element (`ui.pointer_secondary`,
+  `ui.context_clicked`). On a list or tree row that is not selected, it selects the row first, as file managers do.
+- **Menus** (`ui.open_menu(owner, at, &[MenuItem])`): a `menu-popup` of items at a point, in the popup layer, moved
+  back inside the screen once laid out. Items can be checked (with a tick), disabled, carry a shortcut shown at the
+  right, or be separators. A choice comes back through `ui.menu_choice(owner)`; Escape or a press elsewhere closes it.
+- **Dragging rows** (`ui.set_rows_draggable`): a press that moves four pixels picks a row up; the list gets
+  `dragging-rows` and the row under the pointer `drop-target`. Letting go on another row, or below the rows, is a
+  drop (`ui.dropped`, or `ui.dropped_item` for a tree), and no click.
 - **Rich text** (`RichText`, `ui.rich_label`): a label whose words are bold, italic, code, struck out or
   highlighted, with links that `ui.clicked_link` reports. Each span shapes as its own run, so its colour, ground
   and lines are drawn with it; `link-color`, `code-background` and `mark-color` come from the text style, and
@@ -1124,26 +1134,42 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   up under the pointer, which takes a press on one before the UI sees it. The strip picks the tool (or Q, W, E and
   R), Pivot or Center, Global or Local axes, and the snap distance (0.1, 0.25, 0.5 or 1 m); Ctrl while dragging
   snaps to it, to 15 degrees, or to tenths of the scale. A drag is one step to undo.
+- **Making, duplicating, deleting and reparenting Objs** (`objs`), from the Hierarchy. Its + button makes an Empty,
+  a Cube, Sphere or Plane, a directional, point or spot light, or a camera, in front of the Scene camera on the snap
+  grid. A context click on an Obj offers Duplicate *(Ctrl+D)*, Delete *(Delete)* and the same new Objs made inside
+  it; on the space below the rows, new Objs at the top. Dragging an Obj onto another puts it inside, keeping where
+  it is in the world, and below the rows takes it out to the top. Copies are named as Unity names them ("Cube
+  (1)"). Objs are copied, and brought back by undo, through scene files of them (`scene_file::capture_scene` and
+  `spawn`), so everything a scene holds comes back, prefab instances included. They keep their place in the
+  level's scenes (`Levels::untrack`, `track` and `track_new`): new Objs go into the active scene, or their parent's,
+  with ids after the highest there, Objs moved under a parent in another scene move into it, and deleted Objs come
+  back with the ids they had. While playing, these change only the played world.
 - **The Inspector** has a header with the Obj's icon, its name and an active switch, then rows for Tag, Layer and
   Static (shown, not yet stored: Objs have no tags or layers yet). The Transform and each component are sections
   divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a menu) on
   the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
   letters, applied as they are typed, and changes made elsewhere show in fields not being edited. A dashed Add
   Component button ends it. While playing it shows the running Obj, its behaviours included.
+- **Keeping values after play.** A context click on the name or a Transform row opens its menu: Reset, and while
+  playing, **Keep value after play**, whose row is then marked in the accent. When play stops, each kept value of
+  an Obj from the edited level (`Levels::counterpart`) is copied into the edited Obj, as one step to undo, and the
+  status bar says how many were kept.
 - **Saving** *(Ctrl+S)* writes the open level's scenes back to their files (`Levels::save`). Only scenes that changed
   are written, so untouched ones keep their comments; each keeps its own sky, prefab instances keep their paths and
   write only what differs from the prefab, and Objs made since the level opened go into its active scene. Hello's
   levels save back unchanged. Edits while playing are not saved, as in Unity. Opening another level with unsaved
   changes asks for a second click first.
 - **Undo and redo** *(Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)* take back and make again edits to an Obj's name and
-  Transform, from the Inspector or the Scene view's handles; typing into one field is one step, and so is a drag.
+  Transform, from the Inspector or the Scene view's handles, values kept from play, and Objs made, duplicated,
+  deleted or reparented; typing into one field is one step, and so is a drag. Objs brought back are new entities,
+  so every step naming them is pointed at the new ones.
 - **The status bar** shows a light, what the editor is doing (ready, building scripts, playing or paused, or that
   there are unsaved changes) and how long the project took to open, then the renderer, frame rate, memory and git
   branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
-Making, deleting and reparenting Objs (with undo), adding components, the command palette and the Odin-style
-inspector attributes come next.
+Adding and removing components, editing their fields, the command palette and the Odin-style inspector attributes
+come next.
 
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.

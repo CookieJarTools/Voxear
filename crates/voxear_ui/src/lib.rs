@@ -20,6 +20,8 @@
 //!   text fields, toggles, sliders and foldouts, with keyboard focus, and
 //!   split views, tabs and dropdowns, and docking: areas of tabbed panels
 //!   rearranged by dragging tabs.
+//! - **Context menus** ([`MenuItem`]), opened on the secondary button's
+//!   clicks, and rows dragged onto one another in lists and trees.
 //! - **Rich text** ([`RichText`]): labels with bold, italic, code,
 //!   struck-out and highlighted words, and links to click.
 //! - **Transitions** ease colours and opacity between styles.
@@ -38,6 +40,7 @@ mod icons;
 mod input;
 mod list;
 pub mod markup;
+mod menu;
 mod panes;
 mod pointer;
 pub mod properties;
@@ -54,6 +57,7 @@ pub use icons::NAMES as ICONS;
 pub use input::{Clipboard, Key, LocalClipboard};
 pub use list::{ItemFns, ListItems, TreeItems};
 pub use markup::LoadFile;
+pub use menu::MenuItem;
 pub use pointer::Modifiers;
 pub use rich::{Marks, RichText, Span};
 pub use sheet::StyleSheet;

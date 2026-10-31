@@ -59,6 +59,11 @@ pub(crate) enum Control {
         dropdown: taffy::NodeId,
         index: usize,
     },
+    /// One item in an open menu: the element it was opened for, and which item.
+    MenuItem {
+        owner: taffy::NodeId,
+        index: usize,
+    },
     Dock(Box<crate::dock::DockState>),
 }
 

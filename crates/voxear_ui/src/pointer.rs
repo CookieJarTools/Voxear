@@ -25,6 +25,10 @@ pub(crate) struct Pointer {
     pub double_clicks: Vec<taffy::NodeId>,
     /// Links clicked in rich text since the last frame, with the label.
     pub link_clicks: Vec<(taffy::NodeId, String)>,
+    /// What the secondary button went down on, and everything it is in, and
+    /// elements context clicked since the last frame.
+    context_pressed: Vec<taffy::NodeId>,
+    pub context_clicks: Vec<taffy::NodeId>,
     /// The last click: on what, and when, to tell a double click.
     last_click: Option<(taffy::NodeId, f32)>,
     /// A scrollbar being dragged: its element, and where on the thumb it was
@@ -35,7 +39,15 @@ pub(crate) struct Pointer {
 impl Pointer {
     /// Drops a removed element from everything that refers to it.
     pub fn forget(&mut self, node: taffy::NodeId) {
-        for list in [&mut self.hovered, &mut self.pressed, &mut self.clicks, &mut self.double_clicks] {
+        let lists = [
+            &mut self.hovered,
+            &mut self.pressed,
+            &mut self.clicks,
+            &mut self.double_clicks,
+            &mut self.context_pressed,
+            &mut self.context_clicks,
+        ];
+        for list in lists {
             list.retain(|&n| n != node);
         }
         self.link_clicks.retain(|(n, _)| *n != node);
@@ -54,6 +66,7 @@ impl Ui {
         }
         self.drag_controls(point);
         self.drag_dock(point);
+        self.drag_rows(point);
         self.update_hover();
     }
 
@@ -77,7 +90,7 @@ impl Ui {
         }
         if !pressed {
             self.input.dragging = None;
-            if self.release_dock() {
+            if self.release_dock() || self.release_rows() {
                 return true;
             }
         }
@@ -107,6 +120,7 @@ impl Ui {
             if let Some(point) = self.pointer.position {
                 self.press_controls(&path, point);
                 self.press_dock(&path, point);
+                self.press_rows(&path, point);
             }
         } else {
             let pressed = std::mem::take(&mut self.pointer.pressed);
@@ -136,6 +150,40 @@ impl Ui {
             }
         }
         !path.is_empty()
+    }
+
+    /// The secondary button went down or up. A press and release on the same
+    /// element is a context click on it, which on a list row not selected
+    /// selects it first. Returns whether the UI is under the pointer.
+    pub fn pointer_secondary(&mut self, pressed: bool) -> bool {
+        let path = self.hit_path();
+        if pressed {
+            if self.press_popup(&path) {
+                return true;
+            }
+            self.pointer.context_pressed = path.clone();
+            return !path.is_empty();
+        }
+        let pressed = std::mem::take(&mut self.pointer.context_pressed);
+        if let Some(&target) = pressed.last()
+            && path.contains(&target)
+            && !self.disabled(&pressed)
+        {
+            self.pointer.context_clicks.push(target);
+            self.row_context_clicked(target);
+        }
+        !path.is_empty()
+    }
+
+    /// Whether `node`, or anything in it, was context clicked since the last
+    /// frame.
+    pub fn context_clicked(&self, node: NodeId) -> bool {
+        self.pointer.context_clicks.iter().any(|&target| self.is_within(NodeId(target), node))
+    }
+
+    /// Where the pointer is, in logical pixels, while it is in the window.
+    pub fn pointer_position(&self) -> Option<(f32, f32)> {
+        self.pointer.position
     }
 
     /// Forgets the press in progress, so letting go is no click: for a press

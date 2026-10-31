@@ -43,7 +43,7 @@
             <DockSpace name="dock" class="dock">
                 <DockPanel id="hierarchy" title="Hierarchy" class="dock-content">
                     <Panel class="panel-actions">
-                        <Button class="icon-button"><Icon icon="plus" /></Button>
+                        <Button name="hierarchy-add" class="icon-button"><Icon icon="plus" /></Button>
                         <Button class="icon-button"><Icon icon="more" /></Button>
                     </Panel>
                     <Panel class="search">

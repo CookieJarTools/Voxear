@@ -1,16 +1,25 @@
-//! Undo and redo for edits made in the editor. Each edit is an Obj's name
-//! and Transform before and after; typing into one field records one step,
-//! not one per key, as edits to the same Obj close together merge.
+//! Undo and redo for edits made in the editor: an Obj's name and Transform
+//! changed, Objs made or deleted, and Objs moved to another parent. Typing
+//! into one field records one step, not one per key, as changes to the
+//! same Obj close together merge. Objs that undo or redo bring back are new
+//! entities, so every step naming them is pointed at the new ones.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use voxear_ecs::{Entity, World};
+use voxear_engine::Game;
+use voxear_render::Renderer;
 use voxear_scene::{Name, Transform};
+
+use crate::objs::{self, Placing, Taken};
 
 /// Edits to the same Obj closer together than this are one step.
 const MERGE_WITHIN: Duration = Duration::from_millis(800);
 
-/// What an edit changes about an Obj.
+/// What a change edits about an Obj.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjState {
     pub name: String,
@@ -24,7 +33,7 @@ impl ObjState {
         Some(Self { name, transform })
     }
 
-    fn apply(&self, world: &mut World, entity: Entity) {
+    pub fn apply(&self, world: &mut World, entity: Entity) {
         if let Some(name) = world.get_mut::<Name>(entity) {
             name.0.clone_from(&self.name);
         }
@@ -34,12 +43,90 @@ impl ObjState {
     }
 }
 
-/// One step: an Obj as it was, and as the edit left it.
-#[derive(Clone, Debug)]
-pub struct Edit {
-    pub entity: Entity,
-    pub before: ObjState,
-    pub after: ObjState,
+/// One step.
+#[derive(Debug)]
+pub enum Edit {
+    /// An Obj's name or Transform changed.
+    Changed { entity: Entity, before: ObjState, after: ObjState },
+    /// Objs made or deleted. Undo and redo each take them away or bring
+    /// them back; `taken` holds them while they are away.
+    Exists { root: Entity, taken: Option<Taken> },
+    /// An Obj moved to another parent.
+    Moved { entity: Entity, before: Placing, after: Placing },
+    /// Edits that are one step, such as values kept from play.
+    Group(Vec<Edit>),
+}
+
+impl Edit {
+    /// Takes the edit back, or makes it again. Returns the Obj to select,
+    /// if any, and the new entity of each Obj brought back.
+    fn apply(
+        &mut self,
+        game: &mut Game,
+        renderer: Option<&mut Renderer>,
+        undo: bool,
+    ) -> (Option<Entity>, HashMap<Entity, Entity>) {
+        match self {
+            Edit::Changed { entity, before, after } => {
+                (if undo { before } else { after }).apply(&mut game.engine.world, *entity);
+                (Some(*entity), HashMap::new())
+            }
+            Edit::Exists { root, taken } => match taken.take() {
+                Some(away) => match objs::bring_back(game, renderer, &away) {
+                    Ok(renamed) => (renamed.get(root).copied(), renamed),
+                    Err(error) => {
+                        tracing::error!("could not bring the Objs back: {error:#}");
+                        *taken = Some(away);
+                        (None, HashMap::new())
+                    }
+                },
+                None => {
+                    *taken = Some(objs::take(game, *root));
+                    (None, HashMap::new())
+                }
+            },
+            Edit::Moved { entity, before, after } => {
+                (if undo { before } else { after }).apply(game, *entity);
+                (Some(*entity), HashMap::new())
+            }
+            Edit::Group(edits) => {
+                let mut renderer = renderer;
+                let (mut selected, mut renamed) = (None, HashMap::new());
+                let order: Vec<usize> =
+                    if undo { (0..edits.len()).rev().collect() } else { (0..edits.len()).collect() };
+                for index in order {
+                    let (select, more) = edits[index].apply(game, renderer.as_deref_mut(), undo);
+                    edits.iter_mut().for_each(|edit| edit.remap(&more));
+                    renamed.extend(more);
+                    selected = select.or(selected);
+                }
+                (selected, renamed)
+            }
+        }
+    }
+
+    /// Follows Objs brought back as new entities.
+    fn remap(&mut self, renamed: &HashMap<Entity, Entity>) {
+        if renamed.is_empty() {
+            return;
+        }
+        let follow = |entity: &mut Entity| *entity = renamed.get(entity).copied().unwrap_or(*entity);
+        match self {
+            Edit::Changed { entity, .. } => follow(entity),
+            Edit::Exists { root, taken } => {
+                follow(root);
+                if let Some(taken) = taken {
+                    taken.remap(renamed);
+                }
+            }
+            Edit::Moved { entity, before, after } => {
+                follow(entity);
+                before.remap(renamed);
+                after.remap(renamed);
+            }
+            Edit::Group(edits) => edits.iter_mut().for_each(|edit| edit.remap(renamed)),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -49,16 +136,17 @@ pub struct History {
 }
 
 impl History {
-    /// Notes an edit already made. One to the same Obj soon after the last
-    /// becomes part of it; a new edit means nothing is left to redo.
+    /// Notes an edit already made. A change to the same Obj soon after the
+    /// last becomes part of it; a new edit means nothing is left to redo.
     pub fn record(&mut self, edit: Edit) {
         self.undone.clear();
         let now = Instant::now();
-        if let Some((last, at)) = self.done.last_mut()
-            && last.entity == edit.entity
+        if let (Some((Edit::Changed { entity: last, after, .. }, at)), Edit::Changed { entity, after: next, .. }) =
+            (self.done.last_mut(), &edit)
+            && last == entity
             && now.duration_since(*at) < MERGE_WITHIN
         {
-            last.after = edit.after;
+            after.clone_from(next);
             *at = now;
             return;
         }
@@ -72,23 +160,25 @@ impl History {
         self.done.push((edit, Instant::now() - MERGE_WITHIN));
     }
 
-    /// Takes back the last edit, and returns the Obj it was on.
-    pub fn undo(&mut self, world: &mut World) -> Option<Entity> {
-        let (edit, _) = self.done.pop()?;
-        edit.before.apply(world, edit.entity);
-        let entity = edit.entity;
+    /// Takes back the last edit. `None` when there is none; otherwise the
+    /// Obj to select, if any.
+    pub fn undo(&mut self, game: &mut Game, renderer: Option<&mut Renderer>) -> Option<Option<Entity>> {
+        let (mut edit, _) = self.done.pop()?;
+        let (selected, renamed) = edit.apply(game, renderer, true);
         self.undone.push(edit);
-        Some(entity)
+        self.remap(&renamed);
+        Some(selected)
     }
 
-    /// Makes the last undone edit again, and returns the Obj it is on.
-    pub fn redo(&mut self, world: &mut World) -> Option<Entity> {
-        let edit = self.undone.pop()?;
-        edit.after.apply(world, edit.entity);
-        let entity = edit.entity;
+    /// Makes the last undone edit again. `None` when there is none;
+    /// otherwise the Obj to select, if any.
+    pub fn redo(&mut self, game: &mut Game, renderer: Option<&mut Renderer>) -> Option<Option<Entity>> {
+        let mut edit = self.undone.pop()?;
+        let (selected, renamed) = edit.apply(game, renderer, false);
         // Not merged with what came before, so it undoes on its own again.
         self.done.push((edit, Instant::now() - MERGE_WITHIN));
-        Some(entity)
+        self.remap(&renamed);
+        Some(selected)
     }
 
     /// Forgets everything, as when another level opens and the Objs go.
@@ -96,36 +186,68 @@ impl History {
         self.done.clear();
         self.undone.clear();
     }
+
+    fn remap(&mut self, renamed: &HashMap<Entity, Entity>) {
+        self.done.iter_mut().for_each(|(edit, _)| edit.remap(renamed));
+        self.undone.iter_mut().for_each(|edit| edit.remap(renamed));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use voxear_core::math::Vec3;
+    use crate::objs::tests::{game, named};
 
-    fn moved(world: &mut World, entity: Entity, x: f32, history: &mut History) {
+    fn moved(game: &mut Game, entity: Entity, x: f32, history: &mut History) {
+        let world = &mut game.engine.world;
         let before = ObjState::of(world, entity).unwrap();
         world.get_mut::<Transform>(entity).unwrap().position.x = x;
         let after = ObjState::of(world, entity).unwrap();
-        history.record(Edit { entity, before, after });
+        history.record(Edit::Changed { entity, before, after });
     }
 
     #[test]
-    fn edits_undo_redo_and_merge_while_typing() {
-        let mut world = World::new();
-        let entity = world.spawn((Name("Crate".into()), Transform::IDENTITY));
-        let x = |world: &World| world.get::<Transform>(entity).unwrap().position.x;
+    fn changes_undo_redo_and_merge_while_typing() {
+        let (_dir, mut game) = game();
+        let entity = named(&game, "Crate").unwrap();
+        let x = |game: &Game| game.engine.world.get::<Transform>(entity).unwrap().position.x;
         let mut history = History::default();
-        moved(&mut world, entity, 1.0, &mut history);
-        moved(&mut world, entity, 12.0, &mut history);
-        assert_eq!(history.undo(&mut world), Some(entity));
-        assert_eq!(x(&world), 0.0, "typing 1 then 12 is one step");
-        assert_eq!(history.redo(&mut world), Some(entity));
-        assert_eq!(x(&world), 12.0);
-        assert_eq!(history.undo(&mut world), Some(entity));
-        assert!(history.undo(&mut world).is_none(), "nothing more to undo");
-        world.get_mut::<Transform>(entity).unwrap().scale = Vec3::splat(2.0);
-        moved(&mut world, entity, 3.0, &mut history);
-        assert!(history.redo(&mut world).is_none(), "a new edit leaves nothing to redo");
+        moved(&mut game, entity, 1.0, &mut history);
+        moved(&mut game, entity, 12.0, &mut history);
+        assert_eq!(history.undo(&mut game, None), Some(Some(entity)));
+        assert_eq!(x(&game), 0.0, "typing 1 then 12 is one step");
+        assert_eq!(history.redo(&mut game, None), Some(Some(entity)));
+        assert_eq!(x(&game), 12.0);
+        assert!(history.undo(&mut game, None).is_some());
+        assert!(history.undo(&mut game, None).is_none(), "nothing more to undo");
+        moved(&mut game, entity, 3.0, &mut history);
+        assert!(history.redo(&mut game, None).is_none(), "a new edit leaves nothing to redo");
+    }
+
+    #[test]
+    fn steps_follow_objs_that_undo_brings_back() {
+        let (_dir, mut game) = game();
+        let mut history = History::default();
+        let (lid, box_) = (named(&game, "Lid").unwrap(), named(&game, "Box").unwrap());
+        moved(&mut game, lid, 5.0, &mut history);
+        // The Lid is deleted, then the Box it was in.
+        for entity in [lid, box_] {
+            let taken = objs::take(&mut game, entity);
+            history.record(Edit::Exists { root: entity, taken: Some(taken) });
+        }
+        assert!(named(&game, "Box").is_none());
+
+        assert_eq!(history.undo(&mut game, None), Some(named(&game, "Box")), "the Box is back, and selected");
+        assert!(history.undo(&mut game, None).is_some());
+        let (new_lid, new_box) = (named(&game, "Lid").unwrap(), named(&game, "Box").unwrap());
+        let parent = game.engine.world.get::<voxear_scene::Parent>(new_lid).map(|p| p.0);
+        assert_eq!(parent, Some(new_box), "the Lid went back into the new Box");
+        assert_eq!(game.engine.world.get::<Transform>(new_lid).unwrap().position.x, 5.0);
+        assert_eq!(history.undo(&mut game, None), Some(Some(new_lid)), "the move before follows the new Lid");
+        assert_eq!(game.engine.world.get::<Transform>(new_lid).unwrap().position.x, 0.0);
+
+        assert!(history.redo(&mut game, None).is_some());
+        assert!(history.redo(&mut game, None).is_some());
+        assert!(named(&game, "Lid").is_none(), "redo deletes it again");
     }
 }

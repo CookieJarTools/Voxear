@@ -3,33 +3,91 @@
 //! Transform and for each component, divided by lines. Typed values apply
 //! as they are typed, and values that change elsewhere show here, except in
 //! the field being edited.
+//!
+//! A context click on the name or a Transform row opens its menu: Reset,
+//! and while playing, "Keep value after play", which brings the value the
+//! played Obj has when play stops back into the edited level, as one step
+//! to undo. Kept rows are marked (`kept`).
 
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::EditBehaviours;
 use voxear_render::{Camera, Light, LightKind, MeshRenderer};
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Transform};
-use voxear_ui::{NodeId, Style, Ui};
+use voxear_ui::{MenuItem, NodeId, Style, Ui};
 
 use crate::history::{Edit, ObjState};
 
-/// The fields showing an Obj's name and Transform, by what they edit.
+/// The fields showing an Obj's name and Transform, by what they edit, and
+/// the row each is on.
 struct Fields {
     name: NodeId,
     position: [NodeId; 3],
     rotation: [NodeId; 3],
     scale: [NodeId; 3],
+    rows: [(Field, NodeId); 4],
+}
+
+/// A value whose row has a menu: to keep it from play, or reset it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Field {
+    Name,
+    Position,
+    Rotation,
+    Scale,
+}
+
+impl Field {
+    pub fn label(self) -> &'static str {
+        match self {
+            Field::Name => "Name",
+            Field::Position => "Position",
+            Field::Rotation => "Rotation",
+            Field::Scale => "Scale",
+        }
+    }
+
+    /// Copies this value from one state of an Obj into another.
+    pub fn copy(self, from: &ObjState, to: &mut ObjState) {
+        match self {
+            Field::Name => to.name.clone_from(&from.name),
+            Field::Position => to.transform.position = from.transform.position,
+            Field::Rotation => to.transform.rotation = from.transform.rotation,
+            Field::Scale => to.transform.scale = from.transform.scale,
+        }
+    }
+
+    /// Sets the value as Unity's Reset leaves a Transform. A name has no
+    /// such value, so it is left as it is.
+    pub fn reset(self, state: &mut ObjState) {
+        match self {
+            Field::Name => {}
+            Field::Position => state.transform.position = Vec3::ZERO,
+            Field::Rotation => state.transform.rotation = Quat::IDENTITY,
+            Field::Scale => state.transform.scale = Vec3::ONE,
+        }
+    }
+}
+
+/// What a row's menu asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowAction {
+    /// Keep the value after play, or stop keeping it.
+    Keep(Field),
+    Reset(Field),
 }
 
 pub struct Inspector {
     root: NodeId,
     shown: Option<Entity>,
     fields: Option<Fields>,
+    /// The row whose menu is open, and what each of its items does.
+    menu: Option<(NodeId, Vec<Option<RowAction>>)>,
 }
 
 impl Inspector {
     pub fn new(root: NodeId) -> Self {
-        Self { root, shown: None, fields: None }
+        Self { root, shown: None, fields: None, menu: None }
     }
 
     /// The Obj showing, if any.
@@ -49,13 +107,19 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
-        let name = header(ui, self.root, world, entity);
+        let (name_row, name) = header(ui, self.root, world, entity);
 
         let rows = section(ui, self.root, "Transform", "transform", false);
-        let position = vector_row(ui, rows, "Position");
-        let rotation = vector_row(ui, rows, "Rotation");
-        let scale = vector_row(ui, rows, "Scale");
-        self.fields = Some(Fields { name, position, rotation, scale });
+        let (position_row, position) = vector_row(ui, rows, "Position");
+        let (rotation_row, rotation) = vector_row(ui, rows, "Rotation");
+        let (scale_row, scale) = vector_row(ui, rows, "Scale");
+        let rows = [
+            (Field::Name, name_row),
+            (Field::Position, position_row),
+            (Field::Rotation, rotation_row),
+            (Field::Scale, scale_row),
+        ];
+        self.fields = Some(Fields { name, position, rotation, scale, rows });
 
         if let Some(mesh) = world.get::<MeshRenderer>(entity) {
             let rows = section(ui, self.root, "Mesh Renderer", "cube", true);
@@ -129,7 +193,36 @@ impl Inspector {
         write(ui, &fields.rotation, if rotation != euler { rotation } else { euler });
         write(ui, &fields.scale, edited.scale);
         let (before, after) = (before?, ObjState::of(world, entity)?);
-        (before != after).then_some(Edit { entity, before, after })
+        (before != after).then_some(Edit::Changed { entity, before, after })
+    }
+
+    /// Marks the rows whose values are `kept`, and opens a row's menu on a
+    /// context click: while `playing`, whether to keep the value after play
+    /// (offered when `can_keep`, as the Obj is in the edited level), and
+    /// Reset. Returns what was chosen.
+    pub fn row_menus(&mut self, ui: &mut Ui, playing: bool, can_keep: bool, kept: &[Field]) -> Option<RowAction> {
+        let rows = self.fields.as_ref()?.rows;
+        for (field, row) in rows {
+            ui.set_class(row, "kept", kept.contains(&field));
+        }
+        if let Some((owner, actions)) = &self.menu
+            && let Some(index) = ui.menu_choice(*owner)
+        {
+            return actions.get(index).copied().flatten();
+        }
+        let (field, row) = rows.into_iter().find(|(_, row)| ui.context_clicked(*row))?;
+        let mut items = Vec::new();
+        let mut actions = Vec::new();
+        if playing {
+            let keep = MenuItem::new("Keep value after play").checked(kept.contains(&field)).enabled(can_keep);
+            items.extend([keep, MenuItem::separator()]);
+            actions.extend([Some(RowAction::Keep(field)), None]);
+        }
+        items.push(MenuItem::new("Reset").enabled(field != Field::Name));
+        actions.push(Some(RowAction::Reset(field)));
+        ui.open_menu(row, ui.pointer_position().unwrap_or_default(), &items);
+        self.menu = Some((row, actions));
+        None
     }
 }
 
@@ -144,9 +237,10 @@ fn behaviours(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
 }
 
 /// The Obj's icon, its name field and whether it is active, then rows for
-/// its tag, layer and whether it is static. Returns the name field. Active,
-/// tag, layer and static show their defaults until Objs have them.
-fn header(ui: &mut Ui, root: NodeId, world: &World, entity: Entity) -> NodeId {
+/// its tag, layer and whether it is static. Returns the top row and the
+/// name field. Active, tag, layer and static show their defaults until
+/// Objs have them.
+fn header(ui: &mut Ui, root: NodeId, world: &World, entity: Entity) -> (NodeId, NodeId) {
     let header = ui.panel(root, Style::column());
     ui.add_class(header, "inspector-header");
     let top = ui.panel(header, Style::row());
@@ -169,16 +263,16 @@ fn header(ui: &mut Ui, root: NodeId, world: &World, entity: Entity) -> NodeId {
     let row = prop(ui, header, "Static");
     let fixed = ui.toggle(row, "", false);
     ui.add_class(fixed, "checkbox");
-    name
+    (top, name)
 }
 
 /// A row of a label and three axis fields, X, Y and Z, each a field with
-/// its coloured letter inside.
-fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> [NodeId; 3] {
+/// its coloured letter inside. Returns the row and the fields.
+fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> (NodeId, [NodeId; 3]) {
     let row = prop(ui, rows, label);
     let vector = ui.panel(row, Style::default());
     ui.add_class(vector, "vector");
-    ["x", "y", "z"].map(|axis| {
+    let fields = ["x", "y", "z"].map(|axis| {
         let cell = ui.panel(vector, Style::row());
         ui.add_class(cell, "axis-field");
         let letter = ui.add_label(cell, &axis.to_uppercase());
@@ -187,7 +281,8 @@ fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> [NodeId; 3] {
         let field = ui.text_field(cell, "");
         ui.add_class(field, "axis-input");
         field
-    })
+    });
+    (row, fields)
 }
 
 /// A component's section: a line above it, then a foldout headed by its

@@ -369,6 +369,86 @@ impl Levels {
         let scene = other.scenes.iter().find(|scene| scene.guid == guid)?;
         scene.objs.iter().find(|(p, _)| p == path).map(|(_, e)| *e)
     }
+
+    /// The scene an Obj is kept in.
+    pub fn scene_of(&self, entity: Entity) -> Option<AssetGuid> {
+        self.scenes.iter().find(|scene| scene.objs.iter().any(|(_, e)| *e == entity)).map(|scene| scene.guid)
+    }
+
+    /// Where Objs are kept, in the order their scenes keep them.
+    pub fn tracked(&self, entities: &[Entity]) -> Vec<Tracked> {
+        let kept = self.scenes.iter().flat_map(|scene| scene.objs.iter().map(move |(path, e)| (scene.guid, path, *e)));
+        kept.filter(|(_, _, entity)| entities.contains(entity))
+            .map(|(scene, path, entity)| Tracked { scene, path: path.clone(), entity })
+            .collect()
+    }
+
+    /// Stops keeping Objs in their scenes, as when the editor deletes them
+    /// or moves them to another scene, and returns where each was, to put
+    /// back with [`track`](Self::track).
+    pub fn untrack(&mut self, entities: &[Entity]) -> Vec<Tracked> {
+        let mut found = Vec::new();
+        for scene in &mut self.scenes {
+            let guid = scene.guid;
+            scene.objs.retain(|(path, entity)| {
+                let leaving = entities.contains(entity);
+                if leaving {
+                    found.push(Tracked { scene: guid, path: path.clone(), entity: *entity });
+                }
+                !leaving
+            });
+        }
+        found
+    }
+
+    /// Keeps Objs in scenes again, where [`untrack`](Self::untrack) found
+    /// them; any whose scene is no longer open go to the active scene.
+    pub fn track(&mut self, objs: &[Tracked]) {
+        for obj in objs {
+            let index = self.scenes.iter().position(|s| s.guid == obj.scene).or_else(|| self.active_index());
+            if let Some(scene) = index.map(|i| &mut self.scenes[i]) {
+                scene.objs.push((obj.path.clone(), obj.entity));
+            }
+        }
+    }
+
+    /// Keeps new Objs in `scene`, or the active scene, as made from a scene
+    /// file: each with its path from the file, whose first id is replaced by
+    /// one after the highest in that scene, so prefab members stay under
+    /// their instance. Returns where each is now kept.
+    pub fn track_new(&mut self, scene: Option<AssetGuid>, objs: &[(ObjPath, Entity)]) -> Vec<Tracked> {
+        let index =
+            scene.and_then(|guid| self.scenes.iter().position(|s| s.guid == guid)).or_else(|| self.active_index());
+        let Some(scene) = index.map(|i| &mut self.scenes[i]) else { return Vec::new() };
+        let mut next = scene.objs.iter().filter_map(|(path, _)| path.ids().first().copied()).max().unwrap_or_default();
+        let mut renumbered: HashMap<u32, u32> = HashMap::new();
+        let mut tracked = Vec::with_capacity(objs.len());
+        for (path, entity) in objs {
+            let first = path.ids().first().copied();
+            let id = match first.map(|first| *renumbered.entry(first).or_insert_with(|| next + 1)) {
+                Some(id) => id,
+                None => next + 1,
+            };
+            next = next.max(id);
+            let rest = first.and_then(|first| path.strip(&ObjPath::new(first))).unwrap_or_default();
+            let path = ObjPath::new(id).join(&rest);
+            scene.objs.push((path.clone(), *entity));
+            tracked.push(Tracked { scene: scene.guid, path, entity: *entity });
+        }
+        tracked
+    }
+
+    fn active_index(&self) -> Option<usize> {
+        self.scenes.iter().position(|s| Some(s.guid) == self.active).or(self.scenes.len().checked_sub(1))
+    }
+}
+
+/// Where an Obj is kept in the open level: its scene, and its path there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tracked {
+    pub scene: AssetGuid,
+    pub path: ObjPath,
+    pub entity: Entity,
 }
 
 impl Levels {

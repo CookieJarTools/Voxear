@@ -1126,7 +1126,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
     Static fields start afresh, listeners the old build added to `Level`'s events are dropped, and awaits it was in
     the middle of never resume. The old context is then unloaded, and a couple of seconds later the editor checks
     that it left memory, warning when something (a thread or timer of the old code, say) still holds it. A build
-    that fails to compile leaves the old scripts running, and the compiler's errors in the Console.
+    that fails to compile leaves the old scripts running, and the compiler's errors in the Console. `vox run`'s
+    window reloads changed scripts the same way (`Game::watch_scripts`, which builds them off the main thread as
+    they change). A build of the scripts that runs past ten minutes, or describing one past two, is taken as stuck
+    and stopped, so it cannot hold Play up for good.
 - **The top bar** has the Voxear mark, the workspaces, the command bar (Ctrl+K), play, pause and step in a pill,
   the user's avatar and the Build button. A **rail** of icons runs down the left, with source control at the
   bottom.

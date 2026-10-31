@@ -13,6 +13,7 @@ use crate::{
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
     prefab::PrefabId,
     project::Project,
+    scripts::ScriptWatcher,
 };
 
 /// A running project: the engine with its content and levels. The window,
@@ -27,6 +28,8 @@ pub struct Game {
     models: ModelWork,
     /// Scripts asked for a sweep, which runs at the end of the frame.
     unload_requested: bool,
+    /// Rebuilds the scripts as they change, when the game reloads them itself.
+    watcher: Option<ScriptWatcher>,
 }
 
 impl Game {
@@ -46,6 +49,31 @@ impl Game {
             project,
             models: ModelWork::Skip,
             unload_requested: false,
+            watcher: None,
+        }
+    }
+
+    /// Rebuilds the scripts when they change and reloads them into the
+    /// running game, keeping it going (see [`Engine::reload_scripts`]), as
+    /// `vox run` does. The editor reloads them its own way.
+    pub fn watch_scripts(&mut self) {
+        if self.project.scripts_project().is_some() {
+            self.watcher = Some(ScriptWatcher::new(&self.project));
+        }
+    }
+
+    /// Reloads the scripts once a build that the watcher started has finished.
+    fn reload_changed_scripts(&mut self) {
+        let Some(finished) = self.watcher.as_mut().and_then(|watcher| watcher.poll(&self.project)) else { return };
+        if let Err(error) = finished {
+            return tracing::error!("the changed scripts did not build, so the old ones keep running: {error:#}");
+        }
+        if !self.engine.scripts().is_some_and(|scripts| scripts.is_out_of_date()) {
+            return;
+        }
+        match self.engine.reload_scripts() {
+            Ok(()) => tracing::info!("reloaded the changed scripts into the running game"),
+            Err(error) => tracing::error!("{error:#}"),
         }
     }
 
@@ -173,6 +201,7 @@ impl Game {
     /// Runs one frame, then any level change scripts asked for. A level that
     /// fails to load is logged and the game carries on, as in Unity.
     pub fn tick(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
+        self.reload_changed_scripts();
         self.models = ModelWork::for_renderer(renderer.as_deref());
         {
             let renderer = renderer.as_deref_mut();

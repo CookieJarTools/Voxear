@@ -427,6 +427,12 @@ fn hello_copy() -> tempfile::TempDir {
     }
     let dir = tempfile::tempdir().unwrap();
     copy(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello"), dir.path());
+    // Without its scripts: the editor would build them in the background to describe them, and a build outlives
+    // the test and its copy, holding up every other build until it is stopped.
+    let file = dir.path().join("voxear.toml");
+    let project = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, project.lines().filter(|line| !line.starts_with("scripts")).collect::<Vec<_>>().join("\n"))
+        .unwrap();
     dir
 }
 

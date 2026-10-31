@@ -2,18 +2,34 @@
 //! runtime that runs them, for `vox` and for the editor's play mode.
 
 use std::{
+    io::Read,
     path::{Path, PathBuf},
-    process::Command,
-    sync::{Mutex, MutexGuard},
+    process::{Command, Output, Stdio},
+    sync::{
+        Mutex, MutexGuard,
+        mpsc::{self, Receiver},
+    },
+    time::{Duration, Instant, SystemTime},
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use voxear_scripting::{DotnetInstall, ScriptRuntime, find_dotnet};
 
 use crate::project::{Project, core_assembly, engine_root};
 
 /// The build configuration scripts are built and loaded in.
 pub const CONFIGURATION: &str = "Debug";
+
+/// How long a build of the scripts may take before it is taken as stuck and
+/// stopped: long enough for a first build that fetches packages.
+const BUILD_LIMIT: Duration = Duration::from_secs(10 * 60);
+
+/// How often a running game's scripts are looked at for changes.
+const WATCH_EVERY: Duration = Duration::from_secs(2);
+
+/// How long a stopped program's output is waited for: a process it started
+/// can keep its pipes open, and what it printed is not worth hanging on.
+const OUTPUT_WAIT: Duration = Duration::from_secs(5);
 
 /// Held while the scripts build: the editor builds them both to describe
 /// them and to play, and two builds of one project at once fight over its
@@ -57,6 +73,85 @@ pub fn start(project: &Project) -> Result<Option<ScriptRuntime>> {
     Ok(Some(scripts))
 }
 
+/// Watches a project's scripts while its game runs outside the editor, as
+/// `vox run` does: once a script changes, the scripts build off the main
+/// thread, and [`poll`](Self::poll) hands back how the build went, for the
+/// game to reload them.
+pub struct ScriptWatcher {
+    root: PathBuf,
+    /// Changes before this are in the scripts running.
+    since: SystemTime,
+    checked: Instant,
+    building: Option<Receiver<Result<()>>>,
+}
+
+impl ScriptWatcher {
+    pub fn new(project: &Project) -> Self {
+        Self { root: project.root.clone(), since: SystemTime::now(), checked: Instant::now(), building: None }
+    }
+
+    /// A build that has finished since the last call, if one has; a build
+    /// starts once a script changed, looked at every couple of seconds.
+    pub fn poll(&mut self, project: &Project) -> Option<Result<()>> {
+        if let Some(building) = &self.building {
+            let finished = building.try_recv().ok()?;
+            self.building = None;
+            return Some(finished);
+        }
+        if self.checked.elapsed() < WATCH_EVERY {
+            return None;
+        }
+        self.checked = Instant::now();
+        if !crate::script_types::changed_since(project, self.since) {
+            return None;
+        }
+        self.since = SystemTime::now();
+        let (done, building) = mpsc::channel();
+        let root = self.root.clone();
+        std::thread::spawn(move || {
+            let _ = done.send(Project::open(&root).and_then(|project| build(&project)));
+        });
+        self.building = Some(building);
+        None
+    }
+}
+
+/// Runs a program to its end and collects what it printed, stopping it once
+/// it has run for `limit`. A build or tool that hangs would otherwise hold the
+/// scripts' build lock, and Play with it, for good.
+pub(crate) fn output_within(command: &mut Command, limit: Duration) -> Result<Output> {
+    let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let (stdout, stderr) = (read_all(child.stdout.take()), read_all(child.stderr.take()));
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("it ran for over {} seconds, so it was stopped", limit.as_secs());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let collected = |read: Receiver<Vec<u8>>| read.recv_timeout(OUTPUT_WAIT).unwrap_or_default();
+    Ok(Output { status, stdout: collected(stdout), stderr: collected(stderr) })
+}
+
+/// Reads a pipe to its end on a thread of its own, so neither pipe can fill
+/// and stall the program writing to it.
+fn read_all(pipe: Option<impl Read + Send + 'static>) -> Receiver<Vec<u8>> {
+    let (done, read) = mpsc::channel();
+    if let Some(mut pipe) = pipe {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = pipe.read_to_end(&mut bytes);
+            let _ = done.send(bytes);
+        });
+    }
+    read
+}
+
 /// `-p:VoxearHome=<engine>/`: which engine the scripts build against, through
 /// `managed/Voxear.Scripts.props` there, so a project needs no checkout.
 /// MSBuild reads `;` and `,` in a property as separators, so they are escaped.
@@ -74,13 +169,13 @@ fn dotnet() -> Result<DotnetInstall> {
 fn build_csproj(dotnet: &DotnetInstall, csproj: &Path) -> Result<()> {
     let exe = dotnet.root.join(if cfg!(windows) { "dotnet.exe" } else { "dotnet" });
     tracing::info!("building {}", csproj.display());
-    let output = Command::new(&exe)
+    let mut command = Command::new(&exe);
+    command
         .args(["build", "-c", CONFIGURATION, "--nologo", "-v", "quiet", "-clp:ErrorsOnly;NoSummary"])
         .arg(engine_home_property())
         .arg(csproj)
-        .env("DOTNET_NOLOGO", "1")
-        .output()
-        .with_context(|| format!("running {}", exe.display()))?;
+        .env("DOTNET_NOLOGO", "1");
+    let output = output_within(&mut command, BUILD_LIMIT).with_context(|| format!("building {}", csproj.display()))?;
     // The compiler's errors go to the log, which the editor shows in its Console.
     if !output.status.success() {
         let printed = [output.stdout, output.stderr].concat();
@@ -90,4 +185,21 @@ fn build_csproj(dotnet: &DotnetInstall, csproj: &Path) -> Result<()> {
     }
     ensure!(output.status.success(), "the C# scripts failed to build");
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_program_that_hangs_is_stopped_and_one_that_ends_gives_its_output() {
+        let started = Instant::now();
+        let stuck = output_within(Command::new("sleep").arg("30"), Duration::from_millis(200));
+        assert!(stuck.is_err_and(|e| e.to_string().contains("stopped")));
+        assert!(started.elapsed() < Duration::from_secs(5), "stopped at the limit, not when it ended");
+
+        let said = output_within(Command::new("sh").args(["-c", "echo out; echo err >&2"]), BUILD_LIMIT).unwrap();
+        assert!(said.status.success());
+        assert_eq!((said.stdout.as_slice(), said.stderr.as_slice()), (&b"out\n"[..], &b"err\n"[..]));
+    }
 }

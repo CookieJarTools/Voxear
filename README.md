@@ -41,6 +41,8 @@ In the window:
 - **Debug views:** F2 shows LODs, F3 shadow cascades, F4 lights per cluster, and F5 normals.
 - **Frame capture:** F12 captures a frame in RenderDoc when run with `--renderdoc`.
 - **Shader hot reload:** shaders in `crates/voxear_render/shaders` reload on save.
+- **Script hot reload:** the project's C# scripts build and reload into the running game when one changes, keeping
+  what its behaviours hold.
 
 ```bash
 ./target/debug/vox render samples/Hello --out frame.png

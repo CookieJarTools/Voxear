@@ -21,6 +21,10 @@ use serde::Deserialize;
 
 use crate::{Project, core_assembly, scripts};
 
+/// How long describing a build may take before it is stopped, as when a
+/// script's constructor never returns.
+const DESCRIBE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2 * 60);
+
 /// The description's file, beside the scripts' build.
 const DESCRIPTION: &str = "Behaviours.json";
 
@@ -214,13 +218,10 @@ pub fn describe(project: &Project) -> Result<ScriptTypes> {
     ensure!(tool.is_file(), "{} is missing; build managed/Voxear.slnx first", tool.display());
     let out = description_path(project).context("scripts project has no file name")?;
     let dotnet = scripts::dotnet_exe()?;
-    let output = Command::new(&dotnet)
-        .arg(&tool)
-        .arg(&assembly)
-        .arg(&out)
-        .env("DOTNET_NOLOGO", "1")
-        .output()
-        .with_context(|| format!("running {}", dotnet.display()))?;
+    let mut command = Command::new(&dotnet);
+    command.arg(&tool).arg(&assembly).arg(&out).env("DOTNET_NOLOGO", "1");
+    // The tool makes each behaviour to read its starting values, which runs the scripts' own constructors.
+    let output = scripts::output_within(&mut command, DESCRIBE_LIMIT).context("describing the scripts")?;
     if !output.status.success() {
         for line in String::from_utf8_lossy(&output.stderr).lines().filter(|l| !l.trim().is_empty()) {
             tracing::error!("{line}");

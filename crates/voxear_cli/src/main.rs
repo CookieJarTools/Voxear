@@ -216,6 +216,8 @@ fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, rende
     let mut game = start_game(project, prepare)?;
 
     if !headless {
+        // A window is for playing while working on the game, so changed scripts reload into it.
+        game.watch_scripts();
         let setup = Box::new(|game: &mut Game, renderer: &mut Renderer| game.start(Some(renderer)));
         return run_windowed(game, &title, frames, stats, settings, setup);
     }

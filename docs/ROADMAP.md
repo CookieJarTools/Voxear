@@ -246,7 +246,7 @@ Done so far:
 - **C# hot reload:** changed scripts build in the background and reload, into the running game while playing: every
   behaviour is made again from its new class under the same handle with its fields carried over (private ones,
   script types, references to behaviours), OnDisable and OnEnable but no Awake or Start, and the old build unloads,
-  checked to have left memory.
+  checked to have left memory. `vox run`'s window reloads them too. A build that hangs is stopped.
 
 Still to do in M3:
 - UI core:
@@ -259,7 +259,6 @@ Still to do in M3:
 - OKLCH theme tokens.
 - The rest of Sifter: colours per category kept for the project, hiding chosen assemblies, saved filters, and the
   player's log.
-- Hot reload in `vox run`, watching the scripts as the editor does.
 - For the launcher: `vox new` and `vox upgrade`, Windows archives, and a workflow that builds and publishes
   releases.
 - **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and

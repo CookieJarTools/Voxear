@@ -214,16 +214,39 @@ impl Library {
         !matches!(self.resolve(url, from), Target::Missing(_))
     }
 
+    /// Every tag the pages use, with how many use it, the most used first.
+    pub fn tags(&self) -> Vec<(String, usize)> {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for (_, page) in self.pages() {
+            for tag in &page.header.tags {
+                match counts.iter_mut().find(|(known, _)| known.eq_ignore_ascii_case(tag)) {
+                    Some((_, count)) => *count += 1,
+                    None => counts.push((tag.clone(), 1)),
+                }
+            }
+        }
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+        counts
+    }
+
     /// Pages with every word of `query` in their title, tags or words,
     /// those with them all in the title first.
     pub fn search(&self, query: &str) -> Vec<PageId> {
+        self.search_tagged(query, &[])
+    }
+
+    /// [`search`](Self::search), among the pages that have every one of
+    /// `tags`. With tags and no words, every page that has them.
+    pub fn search_tagged(&self, query: &str, tags: &[String]) -> Vec<PageId> {
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-        if words.is_empty() {
+        if words.is_empty() && tags.is_empty() {
             return Vec::new();
         }
+        let tagged =
+            |page: &Page| tags.iter().all(|tag| page.header.tags.iter().any(|has| has.eq_ignore_ascii_case(tag)));
         let mut found: Vec<(bool, PageId)> = self
             .pages()
-            .filter(|(_, page)| words.iter().all(|w| page.words.contains(w.as_str())))
+            .filter(|(_, page)| tagged(page) && words.iter().all(|w| page.words.contains(w.as_str())))
             .map(|(id, page)| (words.iter().all(|w| page.title().to_lowercase().contains(w.as_str())), id))
             .collect();
         found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| self.page(a.1).title().cmp(self.page(b.1).title())));

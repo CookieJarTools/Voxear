@@ -108,6 +108,132 @@
     height: 12px;
 }
 
+/* Reading: the page, and "On this page" beside it. */
+
+.cb-reading {
+    flex-direction: row;
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-height: 0px;
+}
+
+.cb-toc {
+    flex-direction: column;
+    flex-shrink: 0;
+    width: 180px;
+    gap: 2px;
+    padding: 18px 12px 12px 4px;
+}
+
+.cb-toc-title {
+    height: 22px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--vx-muted);
+}
+
+.cb-toc-link {
+    min-height: 20px;
+    padding-left: 8px;
+    font-size: 12px;
+    white-space: normal;
+    color: var(--vx-muted);
+    box-shadow: -1px 0px 0px var(--vx-line);
+}
+
+.cb-toc-link:hover {
+    color: var(--vx-text);
+}
+
+.cb-toc-link.cb-toc-3 {
+    padding-left: 18px;
+}
+
+.cb-toc-link.current {
+    color: var(--vx-text);
+    box-shadow: -2px 0px 0px var(--vx-accent);
+}
+
+/* The tags to filter by, over the page tree. */
+
+.cb-tags {
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 5px;
+    padding: 4px 8px 8px 8px;
+}
+
+.cb-tags-head {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+}
+
+.cb-tags-title {
+    flex-grow: 1;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--vx-muted);
+}
+
+.cb-link-button {
+    height: 20px;
+    padding: 0px 4px;
+    font-size: 11px;
+    color: var(--vx-muted);
+    background-color: transparent;
+    border-color: transparent;
+}
+
+.cb-link-button:hover {
+    color: var(--vx-text);
+}
+
+.cb-tags-more {
+    align-self: flex-start;
+}
+
+.cb-tag-chips {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.cb-tag-chip {
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+    height: 20px;
+    padding: 0px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    color: var(--vx-text-2);
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+}
+
+.cb-tag-chip.picked {
+    color: var(--vx-on-accent);
+    background-color: var(--vx-accent);
+    border-color: var(--vx-accent);
+}
+
+.cb-tag-count {
+    font-family: mono;
+    font-size: 10px;
+    color: var(--vx-muted);
+}
+
+.cb-tag-chip.picked .cb-tag-count {
+    color: var(--vx-on-accent);
+}
+
+/* A tag on a page picks it to filter by. */
+.cb-tag:hover {
+    color: var(--vx-text);
+    border-color: var(--vx-line-2);
+}
+
 /* The page itself: a reading column with room around it. */
 
 .cb-page {

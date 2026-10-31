@@ -285,6 +285,8 @@ Done so far:
 - **Pictures in VoxDocs:** PNG and JPEG pictures beside a page or in the project, shown at their size or fitted to
   the page; the project's `Docs` are no longer scanned as assets. Voxear UI gained `aspect-ratio` and mip-mapped
   images.
+- **VoxDocs tags and headings:** tags over the page tree filter the pages, and "On this page" lists a long page's
+  headings beside it, following the reading.
 
 Still to do in M3:
 - UI core:
@@ -301,7 +303,7 @@ Still to do in M3:
   and 2D rendering), Windows archives, and a workflow that builds and publishes releases.
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures dropped
-  in or captured and GIF recordings, live assets, tags and quick open.
+  in or captured and GIF recordings, live assets, a home page, and quick open.
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
   with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
   person explains things: clear and short, plain words, each term explained where it first appears, an example

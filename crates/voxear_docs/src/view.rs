@@ -33,8 +33,18 @@ pub struct Lookups<'a> {
 #[derive(Default)]
 pub struct Rendered {
     pub tasks: Vec<(NodeId, Task)>,
-    pub headings: Vec<(NodeId, String)>,
+    pub headings: Vec<Heading>,
     pub copies: Vec<(NodeId, String)>,
+}
+
+/// A heading as drawn: its element, the anchor links reach it by, its
+/// words and its level, 1 to 6.
+#[derive(Clone, Debug)]
+pub struct Heading {
+    pub node: NodeId,
+    pub anchor: String,
+    pub text: String,
+    pub level: u8,
 }
 
 /// Draws `blocks` into `parent`.
@@ -74,7 +84,7 @@ fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -
         Block::Heading { level, text, anchor } => {
             let node = rich(ui, parent, text, works, &format!("md-h{level}"));
             ui.add_class(node, "md-h");
-            out.headings.push((node, anchor.clone()));
+            out.headings.push(Heading { node, anchor: anchor.clone(), text: text.text.clone(), level: *level });
         }
         Block::Paragraph(text) => {
             rich(ui, parent, text, works, "md-p");

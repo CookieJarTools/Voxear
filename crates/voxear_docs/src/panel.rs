@@ -3,7 +3,10 @@
 //! other pages, headings, files and the web, and a link to a page not
 //! written yet makes it. Ticking a checklist box saves the page. Back and
 //! forward go through the pages read, and the box at the top finds pages by
-//! their words.
+//! their words. Tags over the tree filter the pages to those that have every
+//! one picked, and a tag on a page picks it too. A long page lists its
+//! headings beside it, "On this page", when there is room, picking out the
+//! one being read.
 //!
 //! **Edit** writes the page: its title and tags, its Markdown, and the page
 //! as it will read beside it, drawn again a moment after each change. Save
@@ -36,6 +39,15 @@ use crate::{
 
 const MARKUP: &str = include_str!("../ui/VoxDocs.vui");
 const SHEET: &str = include_str!("../ui/VoxDocs.vss");
+
+/// How many tags show before Show all, beside any picked.
+const TAGS_AT_FIRST: usize = 8;
+/// "On this page" shows for a page with at least this many headings, when
+/// the reading area is at least this wide.
+const TOC_FEWEST: usize = 3;
+const TOC_ROOM: f32 = 640.0;
+/// How far down the page a heading counts as the one being read.
+const READING_LINE: f32 = 60.0;
 
 /// How long after a change the preview is drawn again, so typing stays quick.
 const PREVIEW_DELAY: Duration = Duration::from_millis(250);
@@ -86,13 +98,19 @@ struct Nodes {
     back: NodeId,
     forward: NodeId,
     path: NodeId,
+    tags: NodeId,
+    tag_chips: NodeId,
+    tags_clear: NodeId,
+    tags_more: NodeId,
+    reading: NodeId,
+    toc: NodeId,
     edit: NodeId,
     edit_icon: NodeId,
     edit_label: NodeId,
     page: NodeId,
     editor: NodeId,
     title: NodeId,
-    tags: NodeId,
+    tags_field: NodeId,
     status: NodeId,
     save: NodeId,
     source: NodeId,
@@ -121,6 +139,14 @@ pub struct VoxDocs {
     wanted: RefCell<Vec<PathBuf>>,
     /// A picture came in, so the page is drawn again.
     redraw: bool,
+    /// The tags filtering the pages, whether every tag shows, and the chips
+    /// shown, over the tree and on the page.
+    picked_tags: Vec<String>,
+    all_tags: bool,
+    tag_chips: Vec<(NodeId, String)>,
+    page_tags: Vec<(NodeId, String)>,
+    /// "On this page": each heading's link, and the heading it goes to.
+    toc: Vec<(NodeId, NodeId, String)>,
     /// A heading to scroll to once the page has been laid out.
     pending_anchor: Option<String>,
     results: Rc<RefCell<Vec<PageId>>>,
@@ -146,13 +172,19 @@ impl VoxDocs {
             back: find(ui, "cb-back"),
             forward: find(ui, "cb-forward"),
             path: find(ui, "cb-path"),
+            tags: find(ui, "cb-tags"),
+            tag_chips: find(ui, "cb-tag-chips"),
+            tags_clear: find(ui, "cb-tags-clear"),
+            tags_more: find(ui, "cb-tags-more"),
+            reading: find(ui, "cb-reading"),
+            toc: find(ui, "cb-toc"),
             edit: find(ui, "cb-edit"),
             edit_icon: find(ui, "cb-edit-icon"),
             edit_label: find(ui, "cb-edit-label"),
             page: find(ui, "cb-page"),
             editor: find(ui, "cb-editor"),
             title: find(ui, "cb-title-field"),
-            tags: find(ui, "cb-tags-field"),
+            tags_field: find(ui, "cb-tags-field"),
             status: find(ui, "cb-status"),
             save: find(ui, "cb-save"),
             source: find(ui, "cb-source"),
@@ -199,12 +231,18 @@ impl VoxDocs {
             pictures: HashMap::new(),
             wanted: RefCell::default(),
             redraw: false,
+            picked_tags: Vec::new(),
+            all_tags: false,
+            tag_chips: Vec::new(),
+            page_tags: Vec::new(),
+            toc: Vec::new(),
             pending_anchor: None,
             results,
             file_request: None,
         };
         docs.show_editing(ui, false);
         docs.render(ui);
+        docs.show_tags(ui);
         docs
     }
 
@@ -226,7 +264,7 @@ impl VoxDocs {
     /// Whether the page is being written with the keyboard in it, so Ctrl+S
     /// is for the page rather than the scene.
     pub fn has_keyboard(&self, ui: &Ui) -> bool {
-        let fields = [self.nodes.title, self.nodes.tags, self.nodes.source];
+        let fields = [self.nodes.title, self.nodes.tags_field, self.nodes.source];
         self.editing && ui.focused().is_some_and(|focused| fields.contains(&focused))
     }
 
@@ -271,7 +309,7 @@ impl VoxDocs {
             return;
         }
         let title = ui.text(self.nodes.title);
-        let tags: Vec<String> = ui.text(self.nodes.tags).split(',').map(str::to_string).collect();
+        let tags: Vec<String> = ui.text(self.nodes.tags_field).split(',').map(str::to_string).collect();
         let body = ui.text(self.nodes.source);
         let saved = self.library.borrow_mut().save_page(self.open, &title, &tags, &body);
         match saved {
@@ -281,6 +319,7 @@ impl VoxDocs {
                 ui.refresh_list(self.nodes.tree);
                 self.select_in_tree(ui);
                 self.show_path(ui);
+                self.show_tags(ui);
             }
             Err(error) => tracing::error!("VoxDocs: could not save the page: {error:#}"),
         }
@@ -332,6 +371,8 @@ impl VoxDocs {
         if ui.changed(self.nodes.search) {
             self.search(ui);
         }
+        self.update_tags(ui);
+        self.update_toc(ui);
         if ui.clicked(self.nodes.back) {
             self.step_history(ui, true);
         }
@@ -376,7 +417,8 @@ impl VoxDocs {
         if ui.changed(self.nodes.source) {
             self.preview_due = Some(Instant::now() + PREVIEW_DELAY);
         }
-        if [self.nodes.source, self.nodes.title, self.nodes.tags].iter().any(|&field| ui.changed(field)) && !self.dirty
+        if [self.nodes.source, self.nodes.title, self.nodes.tags_field].iter().any(|&field| ui.changed(field))
+            && !self.dirty
         {
             self.dirty = true;
             self.show_status(ui);
@@ -395,7 +437,7 @@ impl VoxDocs {
         let is_root = self.open == library.root();
         ui.set_text(self.nodes.title, if is_root { "" } else { page.title() });
         ui.set_enabled(self.nodes.title, !is_root);
-        ui.set_text(self.nodes.tags, &page.header.tags.join(", "));
+        ui.set_text(self.nodes.tags_field, &page.header.tags.join(", "));
         ui.set_text(self.nodes.source, &page.body);
         drop(library);
         self.dirty = false;
@@ -493,10 +535,12 @@ impl VoxDocs {
         self.render(ui);
     }
 
+    /// The pages with what is typed in the find box and every tag picked,
+    /// in place of the tree, or the tree when there is neither.
     fn search(&mut self, ui: &mut Ui) {
         let query = ui.text(self.nodes.search);
-        let found = self.library.borrow().search(&query);
-        let searching = !query.trim().is_empty();
+        let found = self.library.borrow().search_tagged(&query, &self.picked_tags);
+        let searching = !query.trim().is_empty() || !self.picked_tags.is_empty();
         let count = found.len();
         *self.results.borrow_mut() = found;
         ui.set_visible(self.nodes.tree, !searching);
@@ -517,13 +561,117 @@ impl VoxDocs {
         ui.select_item(self.nodes.tree, self.open.0 as u64);
     }
 
+    /// Tags clicked over the tree or on the page pick or let go of them, and
+    /// Show all and Clear do what they say.
+    fn update_tags(&mut self, ui: &mut Ui) {
+        let chip = self.tag_chips.iter().find(|(node, _)| ui.clicked(*node)).map(|(_, tag)| tag.clone());
+        let on_page = self.page_tags.iter().find(|(node, _)| ui.clicked(*node)).map(|(_, tag)| tag.clone());
+        let changed = if let Some(tag) = chip {
+            match self.picked_tags.iter().position(|picked| picked.eq_ignore_ascii_case(&tag)) {
+                Some(at) => drop(self.picked_tags.remove(at)),
+                None => self.picked_tags.push(tag),
+            }
+            true
+        } else if let Some(tag) = on_page.filter(|tag| !self.picked_tags.iter().any(|p| p.eq_ignore_ascii_case(tag))) {
+            self.picked_tags.push(tag);
+            true
+        } else if ui.clicked(self.nodes.tags_clear) {
+            self.picked_tags.clear();
+            true
+        } else {
+            false
+        };
+        if ui.clicked(self.nodes.tags_more) {
+            self.all_tags = !self.all_tags;
+            self.show_tags(ui);
+        }
+        if changed {
+            self.show_tags(ui);
+            self.search(ui);
+        }
+    }
+
+    /// The tags over the tree: the most used and any picked, or every one
+    /// once asked, each with how many pages have it.
+    fn show_tags(&mut self, ui: &mut Ui) {
+        let tags = self.library.borrow().tags();
+        self.picked_tags.retain(|picked| tags.iter().any(|(tag, _)| tag.eq_ignore_ascii_case(picked)));
+        let picked = |tag: &str| self.picked_tags.iter().any(|p| p.eq_ignore_ascii_case(tag));
+        let shown: Vec<&(String, usize)> = tags
+            .iter()
+            .enumerate()
+            .filter(|(index, (tag, _))| self.all_tags || *index < TAGS_AT_FIRST || picked(tag))
+            .map(|(_, tag)| tag)
+            .collect();
+        for child in ui.children(self.nodes.tag_chips) {
+            ui.remove(child);
+        }
+        self.tag_chips.clear();
+        for (tag, count) in &shown {
+            let chip = ui.button(self.nodes.tag_chips, "");
+            ui.add_class(chip, "cb-tag-chip");
+            ui.set_class(chip, "picked", picked(tag));
+            let name = ui.add_label(chip, tag);
+            ui.add_class(name, "cb-tag-name");
+            let number = ui.add_label(chip, &count.to_string());
+            ui.add_class(number, "cb-tag-count");
+            self.tag_chips.push((chip, tag.clone()));
+        }
+        ui.set_visible(self.nodes.tags, !tags.is_empty());
+        ui.set_visible(self.nodes.tags_clear, !self.picked_tags.is_empty());
+        ui.set_visible(self.nodes.tags_more, self.all_tags || shown.len() < tags.len());
+        let more = if self.all_tags { "Show fewer".to_string() } else { format!("Show all {}", tags.len()) };
+        ui.set_text(self.nodes.tags_more, &more);
+    }
+
+    /// "On this page" shows when the page has enough headings and there is
+    /// room beside it; a click goes to a heading, and the one being read is
+    /// picked out.
+    fn update_toc(&mut self, ui: &mut Ui) {
+        let roomy = ui.rect(self.nodes.reading)[2] >= TOC_ROOM;
+        ui.set_visible(self.nodes.toc, roomy && !self.toc.is_empty());
+        if let Some(anchor) = self.toc.iter().find(|(link, ..)| ui.clicked(*link)).map(|(.., anchor)| anchor.clone()) {
+            self.pending_anchor = Some(anchor);
+        }
+        let reading = ui.rect(self.nodes.page)[1] + READING_LINE;
+        // Above the first heading, it is the one being read towards; at the
+        // very end, the last, which may never reach the top.
+        let at_end = ui.scroll_max(self.nodes.page)[1] > 0.0
+            && ui.scroll_offset(self.nodes.page)[1] >= ui.scroll_max(self.nodes.page)[1] - 1.0;
+        let passed = self.toc.iter().rposition(|&(_, heading, _)| ui.rect(heading)[1] <= reading);
+        let current = if at_end { self.toc.len().checked_sub(1) } else { passed.or(Some(0)) };
+        for (index, &(link, ..)) in self.toc.iter().enumerate() {
+            ui.set_class(link, "current", current == Some(index));
+        }
+    }
+
+    /// Lists the page's headings, down to the third level, for "On this page".
+    fn show_toc(&mut self, ui: &mut Ui) {
+        for child in ui.children(self.nodes.toc) {
+            ui.remove(child);
+        }
+        self.toc.clear();
+        let headings: Vec<_> = self.rendered.headings.iter().filter(|h| h.level <= 3).cloned().collect();
+        if headings.len() < TOC_FEWEST {
+            return;
+        }
+        let title = ui.add_label(self.nodes.toc, "On this page");
+        ui.add_class(title, "cb-toc-title");
+        for heading in headings {
+            let link = ui.add_label(self.nodes.toc, &heading.text);
+            ui.add_class(link, "cb-toc-link");
+            ui.add_class(link, &format!("cb-toc-{}", heading.level));
+            self.toc.push((link, heading.node, heading.anchor));
+        }
+    }
+
     fn show_editing(&mut self, ui: &mut Ui, editing: bool) {
         self.editing = editing;
         self.focus_source &= editing;
         if !editing {
             self.preview_due = None;
         }
-        ui.set_visible(self.nodes.page, !editing);
+        ui.set_visible(self.nodes.reading, !editing);
         ui.set_visible(self.nodes.editor, editing);
         ui.set_text(self.nodes.edit_label, if editing { "Done" } else { "Edit" });
         ui.set_icon(self.nodes.edit_icon, if editing { "check" } else { "edit" });
@@ -568,6 +716,7 @@ impl VoxDocs {
         for child in ui.children(self.nodes.page) {
             ui.remove(child);
         }
+        self.page_tags.clear();
         self.show_path(ui);
         let library = self.library.borrow();
         let page = library.page(self.open);
@@ -580,6 +729,7 @@ impl VoxDocs {
             for tag in &page.header.tags {
                 let chip = ui.add_label(meta, tag);
                 ui.add_class(chip, "cb-tag");
+                self.page_tags.push((chip, tag.clone()));
             }
             if !page.header.updated.is_empty() {
                 let updated = ui.add_label(meta, &format!("Updated {}", page.header.updated));
@@ -609,12 +759,14 @@ impl VoxDocs {
                 ui.rich_label(row, &link);
             }
         }
+        drop(library);
+        self.show_toc(ui);
     }
 
     /// Scrolls to the heading a link named, once the page is laid out.
     fn scroll_to_pending(&mut self, ui: &mut Ui) {
         let Some(anchor) = self.pending_anchor.as_deref() else { return };
-        let Some(&(heading, _)) = self.rendered.headings.iter().find(|(_, a)| a == anchor) else {
+        let Some(heading) = self.rendered.headings.iter().find(|h| h.anchor == anchor).map(|h| h.node) else {
             self.pending_anchor = None;
             return;
         };

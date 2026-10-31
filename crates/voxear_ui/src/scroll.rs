@@ -47,6 +47,12 @@ impl Ui {
         false
     }
 
+    /// How far an element's children can scroll, in logical pixels, as of
+    /// the last layout.
+    pub fn scroll_max(&self, node: NodeId) -> [f32; 2] {
+        self.element(node).map_or([0.0; 2], |e| e.scroll_max)
+    }
+
     /// How far an element's children are scrolled, in logical pixels.
     pub fn scroll_offset(&self, node: NodeId) -> [f32; 2] {
         self.element(node).map_or([0.0; 2], |e| e.scroll)

@@ -1466,6 +1466,11 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **The panel:** the pages down the side as a tree, a box that finds pages by every word typed, back and
   forward, the page with its title, tags and date, and for a folder what is in it. Ticking a checklist box saves
   the page. Code blocks have a Copy button.
+- **Tags and headings**, as the Cookbook has them: the tags over the tree, the eight most used and any picked
+  (Show all for the rest), each with how many pages have it; picking tags shows only the pages with every one, as
+  the find box does with words, and a tag on a page picks it too. **On this page** lists a page's headings down to
+  the third level beside it, when it has three or more and the reading area is 640 pixels wide; the one being read
+  is picked out as the page scrolls, and a click goes to one.
 - **Pictures**: `![what it shows](images/Day.png)`, from the page's folder (pictures kept with a page sit in an
   `images` folder beside it) or the project's. A page shows its PNG and JPEG pictures at their own size, or
   narrower to fit, keeping their shape; the editor reads them a couple a frame, shrinks any over 2048 pixels, and
@@ -1488,7 +1493,7 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **Docs Health**: out-of-date pages, broken links, and code with no page yet; and git's last change on a page.
 - **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and **live
   assets** shown in a page.
-- Tags to filter by, "On this page", a home page with recent pages, and quick open from the command bar (Ctrl+K).
+- A home page with recent pages, a box to find a tag among many, and quick open from the command bar (Ctrl+K).
 - While writing: tags as chips with suggestions, and Image…, Link… and Action… to put them in at the cursor.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine
   version: how to use each part of Voxear, from first steps to the advanced paths. It is written for people to

@@ -6,6 +6,15 @@
                 <Icon icon="search" class="cb-find-icon" />
                 <TextField name="cb-search" class="cb-find-field" placeholder="Find a page" />
             </Panel>
+            <!-- The tags to filter by: the most used, and the rest on asking. -->
+            <Panel name="cb-tags" class="cb-tags">
+                <Panel class="cb-tags-head">
+                    <Label class="cb-tags-title">Filter by tag</Label>
+                    <Button name="cb-tags-clear" class="cb-link-button">Clear</Button>
+                </Panel>
+                <Panel name="cb-tag-chips" class="cb-tag-chips" />
+                <Button name="cb-tags-more" class="cb-link-button cb-tags-more">Show all</Button>
+            </Panel>
             <TreeView name="cb-tree" class="cb-list" item-height="24" />
             <ListView name="cb-results" class="cb-list" item-height="24" />
         </Panel>
@@ -16,7 +25,11 @@
                 <Label name="cb-path" class="cb-path" />
                 <Button name="cb-edit" class="cb-button"><Icon name="cb-edit-icon" icon="edit" /><Label name="cb-edit-label">Edit</Label></Button>
             </Panel>
-            <ScrollView name="cb-page" class="cb-page" />
+            <Panel name="cb-reading" class="cb-reading">
+                <ScrollView name="cb-page" class="cb-page" />
+                <!-- A long page's headings, beside it when there is room. -->
+                <Panel name="cb-toc" class="cb-toc" />
+            </Panel>
             <!-- Writing a page: its title and tags, the Markdown, and how it will read beside it. -->
             <Panel name="cb-editor" class="cb-editor">
                 <Panel class="cb-editor-head">

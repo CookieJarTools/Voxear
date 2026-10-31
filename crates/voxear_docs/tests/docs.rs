@@ -251,3 +251,84 @@ fn with_class(ui: &Ui, node: NodeId, class: &str, found: &mut Vec<NodeId>) {
         with_class(ui, child, class, found);
     }
 }
+
+#[test]
+fn tags_filter_the_pages_and_a_long_page_lists_its_headings() {
+    let dir = project();
+    let section = "Each hit takes some of what is left.\n\n".repeat(12);
+    let long = format!(
+        "---\ntags: [combat, guide]\n---\n\n## Hits\n\n{section}## Armour\n\n{section}### Plates\n\n{section}\
+         ## Healing\n\n{section}"
+    );
+    std::fs::write(dir.path().join("Docs/Combat/Damage.md"), long).unwrap();
+    let (mut ui, mut docs, host) = panel(dir.path());
+    let named = |ui: &Ui, name: &str| ui.find(host, name).unwrap();
+    let chips = |ui: &Ui| {
+        let mut chips = Vec::new();
+        with_class(ui, host, "cb-tag-chip", &mut chips);
+        chips.iter().map(|&chip| texts(ui, chip).join(" ")).collect::<Vec<_>>()
+    };
+    assert_eq!(chips(&ui), ["guide 2", "combat 1", "docs 1"], "the most used first, with their counts");
+
+    // Picking a tag shows only the pages with it; a second narrows them further.
+    let mut found = Vec::new();
+    with_class(&ui, host, "cb-tag-chip", &mut found);
+    click(&mut ui, found[0]);
+    frame(&mut ui, &mut docs);
+    let results = named(&ui, "cb-results");
+    assert!(ui.is_visible(results) && !ui.is_visible(named(&ui, "cb-tree")));
+    let titles = |docs: &VoxDocs| -> Vec<String> {
+        let library = docs.library();
+        let mut titles: Vec<String> =
+            library.search_tagged("", &["guide".into()]).iter().map(|&p| library.page(p).title().to_string()).collect();
+        titles.sort();
+        titles
+    };
+    assert_eq!(titles(&docs), ["Damage", "Writing Pages"]);
+    assert_eq!(docs.library().search_tagged("", &["guide".into(), "COMBAT".into()]).len(), 1, "every tag, any case");
+    assert!(ui.is_visible(named(&ui, "cb-tags-clear")));
+    let clear = named(&ui, "cb-tags-clear");
+    click(&mut ui, clear);
+    frame(&mut ui, &mut docs);
+    assert!(ui.is_visible(named(&ui, "cb-tree")), "Clear goes back to the tree");
+
+    // A long page lists its headings beside it, and a click on one goes there.
+    assert!(docs.open_reference(&mut ui, "Damage"));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    frame(&mut ui, &mut docs);
+    let toc = named(&ui, "cb-toc");
+    assert_eq!(texts(&ui, toc), ["On this page", "Hits", "Armour", "Plates", "Healing"]);
+    assert!(ui.is_visible(toc), "the page is wide enough for it");
+    let mut links = Vec::new();
+    with_class(&ui, toc, "cb-toc-link", &mut links);
+    assert!(ui.has_class(links[0], "current"), "the first heading is the one being read");
+    let page = named(&ui, "cb-page");
+    ui.set_scroll(page, [0.0, 10_000.0]);
+    frame(&mut ui, &mut docs);
+    let current: Vec<bool> = links.iter().map(|&link| ui.has_class(link, "current")).collect();
+    assert_eq!(current, [false, false, false, true], "scrolled to the end, the last");
+    let armour = links[1];
+    click(&mut ui, armour);
+    frame(&mut ui, &mut docs);
+    frame(&mut ui, &mut docs);
+    assert!(ui.has_class(armour, "current"), "a click goes to its heading");
+
+    // A tag on the page picks it.
+    ui.set_scroll(page, [0.0, 0.0]);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let mut on_page = Vec::new();
+    with_class(&ui, named(&ui, "cb-page"), "cb-tag", &mut on_page);
+    click(&mut ui, on_page[0]);
+    frame(&mut ui, &mut docs);
+    assert!(ui.is_visible(named(&ui, "cb-results")), "the page's tag filters the pages");
+}
+
+/// The words in `node` and everything in it, in tree order.
+fn texts(ui: &Ui, node: NodeId) -> Vec<String> {
+    let mut out = vec![ui.text(node)];
+    for child in ui.children(node) {
+        out.extend(texts(ui, child));
+    }
+    out.retain(|text| !text.is_empty());
+    out
+}

@@ -59,6 +59,7 @@ Put a picture in the page with `![what it shows](images/Day.png)`. Its path is f
 
 ## Getting around
 
+- **Home**, the top page, lists the pages updated lately and how healthy the docs are. **Ctrl+K** opens any page by its title.
 - **Find a page** at the top of the tree searches every page's words.
 - **Back** and **forward** go through the pages you have read.
 - **Filter by tag** over the tree shows only the pages with every tag picked; a tag on a page picks it too.

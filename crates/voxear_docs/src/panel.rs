@@ -13,6 +13,9 @@
 //! or Ctrl+S writes it to its file, and so does Done, or opening another
 //! page, so nothing written is lost. A new title renames the page's file.
 //!
+//! The top page is home, as the Cookbook's is: under its own words and what
+//! is in it, the pages updated most lately, and how healthy the docs are.
+//!
 //! **Health** shows what needs looking after (see [`crate::health`]) in the
 //! page's place, each entry a link to the page or file it is about.
 //!
@@ -44,6 +47,8 @@ use crate::{
 const MARKUP: &str = include_str!("../ui/VoxDocs.vui");
 const SHEET: &str = include_str!("../ui/VoxDocs.vss");
 
+/// How many pages home lists as updated lately.
+const RECENT: usize = 6;
 /// How many tags show before Show all, beside any picked.
 const TAGS_AT_FIRST: usize = 8;
 /// "On this page" shows for a page with at least this many headings, when
@@ -152,8 +157,9 @@ pub struct VoxDocs {
     page_tags: Vec<(NodeId, String)>,
     /// "On this page": each heading's link, and the heading it goes to.
     toc: Vec<(NodeId, NodeId, String)>,
-    /// Docs Health shows in the page's place.
+    /// Docs Health shows in the page's place, and home's line that opens it.
     showing_health: bool,
+    home_health: Option<NodeId>,
     /// A heading to scroll to once the page has been laid out.
     pending_anchor: Option<String>,
     results: Rc<RefCell<Vec<PageId>>>,
@@ -245,6 +251,7 @@ impl VoxDocs {
             page_tags: Vec::new(),
             toc: Vec::new(),
             showing_health: false,
+            home_health: None,
             pending_anchor: None,
             results,
             file_request: None,
@@ -397,6 +404,9 @@ impl VoxDocs {
         let copied = self.rendered.copies.iter().find(|(button, _)| ui.clicked(*button)).map(|(_, code)| code.clone());
         if let Some(code) = copied {
             ui.copy_text(&code);
+        }
+        if self.home_health.is_some_and(|line| ui.clicked(line)) {
+            self.show_health(ui);
         }
         if ui.clicked(self.nodes.health) {
             self.finish_editing(ui);
@@ -779,10 +789,13 @@ impl VoxDocs {
                 ui.rich_label(row, &link);
             }
         }
+        self.home_health = None;
+        if self.open == library.root() && !library.is_empty() {
+            self.home_health = Some(show_home(ui, self.nodes.page, &library));
+        }
         drop(library);
         self.show_toc(ui);
     }
-
     /// Docs Health in the page's place: how many things need looking after,
     /// then each kind, every entry a link to its page or file.
     fn show_health(&mut self, ui: &mut Ui) {
@@ -904,4 +917,43 @@ fn open_in_browser(url: &str) {
     if let Err(error) = opener {
         tracing::warn!("VoxDocs: could not open {url}: {error}");
     }
+}
+
+/// Home's lists, under the top page in `parent`: the pages updated most
+/// lately, with when, and a line saying how healthy the docs are, which
+/// opens Health and is returned.
+fn show_home(ui: &mut Ui, parent: NodeId, library: &Library) -> NodeId {
+    let mut recent: Vec<(&str, PageId)> = library
+        .pages()
+        .filter(|(id, page)| *id != library.root() && !page.header.updated.is_empty())
+        .map(|(id, page)| (page.header.updated.as_str(), id))
+        .collect();
+    recent.sort_by(|a, b| b.0.cmp(a.0).then_with(|| library.page(a.1).title().cmp(library.page(b.1).title())));
+    if !recent.is_empty() {
+        let heading = ui.add_label(parent, "Recently updated");
+        ui.add_class(heading, "cb-section");
+        for (updated, id) in recent.into_iter().take(RECENT) {
+            let page = library.page(id);
+            let row = ui.panel(parent, voxear_ui::Style::row());
+            ui.add_class(row, "cb-child");
+            let icon = ui.icon(row, if page.is_folder { "folder" } else { "file" });
+            ui.add_class(icon, "cb-row-icon");
+            let mut link = voxear_ui::RichText::new();
+            link.push_link(page.title(), &format!("{PAGE_SCHEME}{}", page.reference()), Default::default());
+            let title = ui.rich_label(row, &link);
+            ui.add_class(title, "cb-home-title");
+            let date = ui.add_label(row, updated);
+            ui.add_class(date, "cb-updated");
+        }
+    }
+    let heading = ui.add_label(parent, "Docs health");
+    ui.add_class(heading, "cb-section");
+    let line = match Health::check(library).problems() {
+        0 => "Nothing needs looking after".to_string(),
+        1 => "One thing needs looking after: show it".to_string(),
+        count => format!("{count} things need looking after: show them"),
+    };
+    let line = ui.add_label(parent, &line);
+    ui.add_class(line, "cb-home-health");
+    line
 }

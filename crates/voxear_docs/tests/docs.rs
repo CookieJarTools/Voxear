@@ -379,3 +379,17 @@ fn health_lists_what_needs_looking_after() {
     frame(&mut ui, &mut docs);
     assert!(label(&ui, host, "The team's own notes").is_some(), "back to the page");
 }
+
+#[test]
+fn home_lists_recent_pages_and_how_healthy_the_docs_are() {
+    let dir = project();
+    let (mut ui, mut docs, host) = panel(dir.path());
+    let page = ui.find(host, "cb-page").unwrap();
+    let shown = texts(&ui, page);
+    let recent = shown.iter().position(|text| text == "Recently updated").expect("home lists recent pages");
+    assert_eq!(shown[recent + 1..recent + 3], ["Writing Pages", "2026-09-19"], "the one page with a date");
+    let health = label(&ui, page, "One thing needs looking after").expect("the missing page Writing Pages links to");
+    click(&mut ui, health);
+    frame(&mut ui, &mut docs);
+    assert!(label(&ui, page, "Docs Health").is_some(), "the line opens Docs Health");
+}

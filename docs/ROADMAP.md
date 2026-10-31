@@ -289,8 +289,8 @@ Done so far:
   headings beside it, following the reading.
 - **More of Sifter in the Console:** category colours kept with the project, saved filters, hiding chosen
   assemblies in traces, and the player's log from Run in the Build window.
-- **VoxDocs Docs Health:** pages out of date, links that go nowhere, missing pictures, and pictures no page shows,
-  each a link to its page or file.
+- **VoxDocs Docs Health and home:** pages out of date, links that go nowhere, missing pictures, and pictures no page
+  shows, each a link to its page or file; and home lists the pages updated lately and how healthy the docs are.
 - **Editing build profiles:** the Build window edits the picked profile in place, writing only what differs from
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 
@@ -316,7 +316,7 @@ Still to do in M3:
   and 2D rendering), Windows archives, and a workflow that builds and publishes releases.
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): `[Documentation]` links from code and
   the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures dropped
-  in or captured and GIF recordings, live assets, a home page, and quick open.
+  in or captured and GIF recordings, and live assets.
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
   with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
   person explains things: clear and short, plain words, each term explained where it first appears, an example

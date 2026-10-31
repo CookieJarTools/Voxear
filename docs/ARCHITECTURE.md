@@ -1525,6 +1525,9 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   the find box does with words, and a tag on a page picks it too. **On this page** lists a page's headings down to
   the third level beside it, when it has three or more and the reading area is 640 pixels wide; the one being read
   is picked out as the page scrolls, and a click goes to one.
+- **Home**: the top page, under its own words and what is in it, lists the six pages updated most lately with their
+  dates, and a line saying how many things need looking after, which opens Docs Health. Any page also opens from the
+  command bar (Ctrl+K), which lists every page by its title.
 - **Docs Health** *(`health`)*: Health in the toolbar shows, in the page's place, what needs looking after: pages
   out of date (a project file they link to changed on a later day than the page was updated), links that go
   nowhere (a page not written yet among them), pictures that are not there, and pictures in the pages' `images`
@@ -1552,7 +1555,7 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   code that is gone; and git's last change on a page.
 - **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and **live
   assets** shown in a page.
-- A home page with recent pages, a box to find a tag among many, and quick open from the command bar (Ctrl+K).
+- A box to find a tag among many.
 - While writing: tags as chips with suggestions, and Image…, Link… and Action… to put them in at the cursor.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine
   version: how to use each part of Voxear, from first steps to the advanced paths. It is written for people to

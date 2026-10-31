@@ -533,3 +533,17 @@
     font-size: 11px;
     color: var(--vx-muted);
 }
+
+/* Home: a recent page's date after its title, and the line that opens Health. */
+.cb-home-title {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.cb-home-health {
+    color: var(--vx-accent);
+}
+
+.cb-home-health:hover {
+    color: var(--vx-accent-hover);
+}

@@ -2581,6 +2581,7 @@ dependencies = [
  "indexmap",
  "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 
@@ -2858,6 +2859,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml",
+ "toml_edit",
  "tracing",
  "voxear_assets",
  "voxear_core",

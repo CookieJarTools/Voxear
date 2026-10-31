@@ -2412,8 +2412,12 @@ profiles on the left and the picked one's settings on the right, like Unity 6, a
 project without any. A running build shows its stages with their times, a progress bar for the content stage, and
 the log, warnings and errors in their colours. Cancel asks the process to stop, and stops it if it has not within
 ten seconds. A finished build says how long it took and how big it is, in the window, the status bar and the
-Console, and offers Run and Show in Files. Still to come: editing a profile in the window, the log filtered by level
-with a click selecting the asset a line names, and a desktop notification.
+Console, and offers Run and Show in Files. The picked profile's settings are edited in place: words, lists and
+numbers once Enter is pressed or the field is left, toggles and choices at once, each written to the profile's own
+file (`build_profile::set_setting`, keeping its comments). A value its base already has is taken out again, so a
+profile lists only what differs. Buttons over the log show or hide its info, warnings and errors, with their counts,
+and a build that finishes while the editor is not the window in front says so on the desktop (`notify-send` on
+Linux). Still to come: a click on a log line selecting the asset it names.
 
 **The build report** comes with every build: the project, profile, platform, engine version and git commit, the
 levels shipped, each bundle's size and roots, the build's size, and each stage's time. Later it gains:

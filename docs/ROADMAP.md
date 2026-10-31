@@ -289,6 +289,8 @@ Done so far:
   headings beside it, following the reading.
 - **More of Sifter in the Console:** category colours kept with the project, saved filters, hiding chosen
   assemblies in traces, and the player's log from Run in the Build window.
+- **Editing build profiles:** the Build window edits the picked profile in place, writing only what differs from
+  its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 
 Still to do in M3:
 - UI core:
@@ -333,8 +335,7 @@ Still to do in M3:
   - components written in scenes and prefabs, and shown in the inspector
   - Later: parallel jobs over chunks.
 - The Animation workspace, once there is animation.
-- **Builds, next:** editing a profile in the Build window, bundle compression (LZ4 or Zstd), the log filtered by
-  level with a click selecting the asset a line names, and a desktop notification when a build finishes.
+- **Builds, next:** bundle compression (LZ4 or Zstd), and a click on a log line selecting the asset it names.
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
 

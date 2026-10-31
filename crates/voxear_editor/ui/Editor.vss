@@ -1589,11 +1589,18 @@ DockSpace .project-split > .split-divider {
 .build-panel {
     flex-direction: column;
     font-size: 12px;
+    /* Sized by its dock area, as VoxDocs is, rather than by the settings in it. */
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
 }
 
 .build-main {
     flex-direction: row;
     align-items: stretch;
+    min-height: 0px;
 }
 
 .build-profiles {
@@ -1602,6 +1609,7 @@ DockSpace .project-split > .split-divider {
     width: 200px;
     padding: 6px 0px;
     background-color: var(--vx-bg);
+    min-height: 0px;
 }
 
 .build-heading {
@@ -1630,6 +1638,7 @@ DockSpace .project-split > .split-divider {
 .build-detail {
     flex-direction: column;
     min-width: 0px;
+    min-height: 0px;
 }
 
 .build-head {
@@ -1656,30 +1665,27 @@ DockSpace .project-split > .split-divider {
     border-radius: 6px;
 }
 
+/* Shrinks and scrolls when the window is short, leaving the log room. */
 .build-settings {
     flex-direction: column;
-    flex-shrink: 0;
+    flex-shrink: 1;
+    min-height: 80px;
     gap: 2px;
     padding: 0px 10px 8px 10px;
+    overflow: scroll;
 }
 
 .build-setting {
     flex-direction: row;
     align-items: center;
     gap: 8px;
-    height: 20px;
+    height: 26px;
 }
 
 .build-key {
     flex-shrink: 0;
     width: 110px;
     color: var(--vx-muted);
-}
-
-.build-value {
-    flex-grow: 1;
-    min-width: 0px;
-    color: var(--vx-text-2);
 }
 
 .build-problem {
@@ -1769,12 +1775,51 @@ DockSpace .project-split > .split-divider {
     background-color: var(--vx-accent);
 }
 
+/* The build's settings, edited in place, and the log's level buttons. */
+.build-control {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    max-width: 320px;
+}
+
+.build-base {
+    flex-shrink: 0;
+    margin-right: 8px;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.build-log-levels {
+    flex-direction: row;
+    flex-shrink: 0;
+    gap: 4px;
+    padding: 0px 8px 4px 8px;
+}
+
+.build-log-level {
+    height: 22px;
+    padding: 0px 8px;
+    border-radius: 5px;
+    font-size: 11px;
+    color: var(--vx-muted);
+    background-color: transparent;
+    border-color: transparent;
+}
+
+.build-log-level:checked {
+    color: var(--vx-text);
+    background-color: var(--vx-selected);
+}
+
 .build-log {
     margin: 0px 6px 6px 6px;
     border-radius: 6px;
     font-family: mono;
     font-size: 11px;
     background-color: var(--vx-bg);
+    /* Room for a few lines, which the settings above give up first. */
+    min-height: 100px;
 }
 
 .build-log-message {

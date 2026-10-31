@@ -2247,9 +2247,28 @@ echo "{\"event\":\"finished\",\"result\":\"cancelled\",\"seconds\":0.2,\"message
     frame(&mut editor, &mut renderer);
     assert!(!editor.ui.is_visible(ui_parent(&editor.ui, add)));
     let texts = texts_in(&editor.ui, find(&editor, "build-panel"));
-    for shown in ["Linux Development", "Linux Release", "Windows Development", "Windows Release", "linux-x64"] {
+    for shown in ["Linux Development", "Linux Release", "Windows Development", "Windows Release", "Linux", "900"] {
         assert!(texts.iter().any(|text| text == shown), "{shown} in {texts:?}");
     }
+
+    // The picked profile's settings change in place, each written to its file once typed or ticked.
+    let release = dir.path().join("Settings/BuildProfiles/Linux Release.buildprofile");
+    // Focused rather than clicked: the settings scroll, and Width may be out of sight.
+    let width = find(&editor, "build-width");
+    editor.ui.focus(width);
+    frame(&mut editor, &mut renderer);
+    editor.ui.select_all_text(width);
+    editor.ui.text_input("1280");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    let written = std::fs::read_to_string(&release).unwrap();
+    assert!(written.contains("width = 1280") && written.starts_with("# What a Linux"), "{written}");
+    click_named(&mut editor, "build-enabled");
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(&release).unwrap().contains("[development]\nenabled = true"));
+    click_named(&mut editor, "build-enabled");
+    frame(&mut editor, &mut renderer);
+    assert!(!std::fs::read_to_string(&release).unwrap().contains("[development]"), "back to the default, so left out");
 
     let tools = tempfile::tempdir().unwrap();
     editor.build_window().set_program(fake_vox(tools.path(), "vox-builds", BUILDS));
@@ -2263,6 +2282,19 @@ echo "{\"event\":\"finished\",\"result\":\"cancelled\",\"seconds\":0.2,\"message
     assert_eq!(log, expected.map(|(level, message)| (level.to_string(), message.to_string())));
     frame(&mut editor, &mut renderer);
     assert!(editor.ui.is_visible(find(&editor, "build-run")), "a built game can be run");
+    let log_lines = |editor: &voxear_editor::Editor| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, find(editor, "build-log"), "list-row", &mut rows);
+        let shown = rows.into_iter().filter(|&row| editor.ui.is_visible(row));
+        shown.map(|row| editor.ui.text(editor.ui.children(row)[0])).collect::<Vec<_>>()
+    };
+    assert_eq!(editor.ui.text(find(&editor, "build-log-warnings")), "Warnings 1");
+    click_named(&mut editor, "build-log-info");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(log_lines(&editor), ["a warning"], "info hidden, warnings shown");
+    click_named(&mut editor, "build-log-info");
+    frame(&mut editor, &mut renderer);
     let mut done = Vec::new();
     with_class(&editor.ui, find(&editor, "build-panel"), "done", &mut done);
     assert_eq!(done.len(), 3, "every stage is done");

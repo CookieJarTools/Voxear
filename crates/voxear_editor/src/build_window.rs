@@ -11,6 +11,12 @@
 //! not within ten seconds. A finished build offers Run and Show in Files.
 //! Run starts the built game, and its log comes into the Console as the
 //! Player category, as Sifter shows a player's log.
+//!
+//! The picked profile's settings are edited in place, each written to the
+//! profile's file as it changes (see `build_profile::set_setting`). Buttons
+//! over the log show or hide its info, warnings and errors, and a build that
+//! finishes while the editor is not the window in front says so on the
+//! desktop.
 
 use std::{
     cell::RefCell,
@@ -34,18 +40,41 @@ const CANCEL_WAIT: Duration = Duration::from_secs(10);
 const PROFILES_CHECK: Duration = Duration::from_secs(1);
 const PROFILE_ROW: f32 = 26.0;
 const LOG_ROW: f32 = 20.0;
-/// What the window shows of the picked profile, in order.
-const SETTINGS: [&str; 10] = [
-    "Platform",
-    "Based on",
-    "Start level",
-    "Levels",
-    "Development",
-    "Defines",
-    "Product name",
-    "Version",
-    "Window",
-    "Output",
+/// How a setting is edited in the window.
+#[derive(Clone, Copy)]
+enum Edit {
+    /// Words, with what is used when there are none.
+    Text(&'static str),
+    /// Words separated by commas, written as a list.
+    List(&'static str),
+    /// A whole number.
+    Number,
+    Toggle,
+    /// One of several: what each shows, and what it writes, nothing for the first.
+    Choice(&'static [(&'static str, &'static str)]),
+}
+
+/// The settings the window edits: each one's label, its table and key in a
+/// profile, and how it is edited.
+const SETTINGS: [(&str, Option<&str>, &str, Edit); 13] = [
+    (
+        "Platform",
+        None,
+        "platform",
+        Edit::Choice(&[("This machine", ""), ("Linux", "linux-x64"), ("Windows", "windows-x64")]),
+    ),
+    ("Start level", Some("levels"), "start", Edit::Text("The project's")),
+    ("Levels", Some("levels"), "include", Edit::List("Every level")),
+    ("Development", Some("development"), "enabled", Edit::Toggle),
+    ("Vulkan validation", Some("development"), "validation_layers", Edit::Toggle),
+    ("Defines", Some("scripting"), "defines", Edit::List("None, or DEMO, STEAM")),
+    ("Product name", Some("player"), "product_name", Edit::Text("The project's name")),
+    ("Company", Some("player"), "company_name", Edit::Text("Not set")),
+    ("Version", Some("version"), "version", Edit::Text("Not set")),
+    ("Window", Some("player"), "window", Edit::Choice(&[("Windowed", "windowed"), ("Full screen", "fullscreen")])),
+    ("Width", Some("player"), "width", Edit::Number),
+    ("Height", Some("player"), "height", Edit::Number),
+    ("Output", Some("output"), "folder", Edit::Text("Builds/<profile>")),
 ];
 /// The build's stages, as `vox build` numbers them.
 const STAGES: [&str; 3] = ["Scripts", "Content", "Player"];
@@ -107,8 +136,12 @@ pub struct BuildWindow {
     empty: NodeId,
     add_defaults: NodeId,
     title: NodeId,
-    /// Each setting's value, in [`SETTINGS`] order.
-    values: Vec<NodeId>,
+    /// The profile's base, beside its name.
+    base: NodeId,
+    /// Each setting's control, in [`SETTINGS`] order, and the text setting
+    /// being typed in, written once it is left or Enter is pressed.
+    controls: Vec<NodeId>,
+    typing: Option<usize>,
     problem: NodeId,
     build: NodeId,
     cancel: NodeId,
@@ -123,8 +156,17 @@ pub struct BuildWindow {
     log_list: NodeId,
     names: Rc<RefCell<Vec<String>>>,
     log: Rc<RefCell<Vec<(String, String)>>>,
-    /// How many log lines the list shows.
+    /// The log lines the list shows, by their place in the log, and how
+    /// many lines the log had when they were picked.
+    log_rows: Rc<RefCell<Vec<usize>>>,
     log_shown: usize,
+    /// The buttons that show or hide info, warnings and errors, and which
+    /// are hidden.
+    log_levels: [NodeId; 3],
+    log_hidden: [bool; 3],
+    /// Whether the editor's window is in front, so a finished build is
+    /// told on the desktop only when it is not.
+    window_focused: bool,
     picked: Option<String>,
     checked: Option<Instant>,
     running: Option<Running>,
@@ -181,6 +223,8 @@ impl BuildWindow {
         ui.add_class(head, "build-head");
         let title = ui.add_label(head, "");
         ui.add_class(title, "build-title");
+        let base = ui.add_label(head, "");
+        ui.add_class(base, "build-base");
         let button = |ui: &mut Ui, text: &str, name: &str| {
             let button = ui.button(head, text);
             ui.add_class(button, "build-button");
@@ -195,16 +239,29 @@ impl BuildWindow {
 
         let settings = ui.panel(detail, Style::default());
         ui.add_class(settings, "build-settings");
-        let values = SETTINGS
+        let controls = SETTINGS
             .iter()
-            .map(|key| {
+            .map(|&(label, _, key, edit)| {
                 let row = ui.panel(settings, Style::row());
                 ui.add_class(row, "build-setting");
-                let key = ui.add_label(row, key);
-                ui.add_class(key, "build-key");
-                let value = ui.add_label(row, "");
-                ui.add_class(value, "build-value");
-                value
+                let label = ui.add_label(row, label);
+                ui.add_class(label, "build-key");
+                let control = match edit {
+                    Edit::Text(empty) | Edit::List(empty) => {
+                        let field = ui.text_field(row, "");
+                        ui.set_placeholder(field, empty);
+                        field
+                    }
+                    Edit::Number => ui.text_field(row, ""),
+                    Edit::Toggle => ui.toggle(row, "", false),
+                    Edit::Choice(options) => {
+                        let labels: Vec<&str> = options.iter().map(|(label, _)| *label).collect();
+                        ui.dropdown(row, &labels, 0)
+                    }
+                };
+                ui.add_class(control, "build-control");
+                ui.set_name(control, &format!("build-{key}"));
+                control
             })
             .collect();
         let problem = ui.add_label(settings, "");
@@ -239,8 +296,18 @@ impl BuildWindow {
         let progress_fill = ui.panel(track, Style::default());
         ui.add_class(progress_fill, "build-progress-fill");
 
+        let levels = ui.panel(detail, Style::row());
+        ui.add_class(levels, "build-log-levels");
+        let log_levels = ["info", "warnings", "errors"].map(|name| {
+            let button = ui.button(levels, "");
+            ui.add_class(button, "build-log-level");
+            ui.set_name(button, &format!("build-log-{name}"));
+            ui.set_checked(button, true);
+            button
+        });
         let log: Rc<RefCell<Vec<(String, String)>>> = Rc::default();
-        let bound = log.clone();
+        let log_rows: Rc<RefCell<Vec<usize>>> = Rc::default();
+        let (bound, rows) = (log.clone(), log_rows.clone());
         let items = ItemFns {
             make: |ui: &mut Ui, row: NodeId| {
                 let message = ui.add_label(row, "");
@@ -248,7 +315,7 @@ impl BuildWindow {
             },
             bind: move |ui: &mut Ui, row: NodeId, index: usize| {
                 let log = bound.borrow();
-                let Some((level, message)) = log.get(index) else { return };
+                let Some((level, message)) = rows.borrow().get(index).and_then(|&at| log.get(at)) else { return };
                 ui.set_class(row, "log-warn", level == "warn");
                 ui.set_class(row, "log-error", level == "error");
                 ui.set_text(ui.children(row)[0], message);
@@ -264,7 +331,9 @@ impl BuildWindow {
             empty,
             add_defaults,
             title,
-            values,
+            base,
+            controls,
+            typing: None,
             problem,
             build,
             cancel,
@@ -278,7 +347,11 @@ impl BuildWindow {
             log_list,
             names,
             log,
-            log_shown: 0,
+            log_rows,
+            log_shown: usize::MAX,
+            log_levels,
+            log_hidden: [false; 3],
+            window_focused: true,
             picked: None,
             checked: None,
             running: None,
@@ -342,59 +415,115 @@ impl BuildWindow {
         self.show_settings(ui, root);
     }
 
+    /// The picked profile's settings in their controls, as its file and its
+    /// bases make them; a field being typed in is left alone.
     fn show_settings(&mut self, ui: &mut Ui, root: &Path) {
         let Some(name) = self.picked.clone() else {
             ui.set_text(self.title, "No profile");
-            self.values.iter().for_each(|&value| ui.set_text(value, ""));
+            ui.set_text(self.base, "");
             ui.set_text(self.problem, "");
             return;
         };
         ui.set_text(self.title, &name);
-        let (profile, problem) = match build_profile::load_profile(root, &name) {
-            Ok(profile) => (Some(profile), String::new()),
-            Err(error) => (None, format!("{error:#}")),
+        let base = build_profile::base_of(root, &name).map(|base| format!("based on {base}"));
+        ui.set_text(self.base, &base.unwrap_or_default());
+        let profile = build_profile::load_profile(root, &name);
+        ui.set_text(self.problem, &profile.as_ref().err().map(|e| format!("{e:#}")).unwrap_or_default());
+        let Ok(profile) = profile else { return };
+        let values = toml::Table::try_from(&profile).unwrap_or_default();
+        for (index, &(_, table, key, edit)) in SETTINGS.iter().enumerate() {
+            let control = self.controls[index];
+            if ui.focused() == Some(control) || self.typing == Some(index) {
+                continue;
+            }
+            let value = match table {
+                Some(table) => values.get(table).and_then(|t| t.as_table()).and_then(|t| t.get(key)),
+                None => values.get(key),
+            };
+            match edit {
+                Edit::Text(_) => ui.set_text(control, value.and_then(|v| v.as_str()).unwrap_or_default()),
+                Edit::List(_) => {
+                    let items = value
+                        .and_then(|v| v.as_array())
+                        .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(", "));
+                    ui.set_text(control, &items.unwrap_or_default());
+                }
+                Edit::Number => {
+                    ui.set_text(control, &value.and_then(|v| v.as_integer()).map(|n| n.to_string()).unwrap_or_default())
+                }
+                Edit::Toggle => ui.set_checked(control, value.and_then(|v| v.as_bool()).unwrap_or_default()),
+                Edit::Choice(options) => {
+                    let written = value.and_then(|v| v.as_str()).unwrap_or_default();
+                    let index = options.iter().position(|(_, value)| *value == written).unwrap_or_default();
+                    ui.set_selected_option(control, index);
+                }
+            }
+        }
+    }
+
+    /// Writes setting `index` of the picked profile as its control has it,
+    /// and shows what the profile now holds. A number that is not one is
+    /// not written.
+    fn write_setting(&mut self, ui: &mut Ui, root: &Path, index: usize) {
+        let Some(name) = self.picked.clone() else { return };
+        let (_, table, key, edit) = SETTINGS[index];
+        let control = self.controls[index];
+        let text = ui.text(control).trim().to_string();
+        let value: Option<toml::Value> = match edit {
+            Edit::Text(_) => (!text.is_empty()).then(|| text.clone().into()),
+            Edit::List(_) => {
+                let items: Vec<toml::Value> =
+                    text.split(',').map(str::trim).filter(|item| !item.is_empty()).map(Into::into).collect();
+                Some(toml::Value::Array(items)).filter(|items| items.as_array().is_some_and(|a| !a.is_empty()))
+            }
+            Edit::Number if text.is_empty() => None,
+            Edit::Number => match text.parse::<i64>() {
+                Ok(number) if number > 0 => Some(number.into()),
+                _ => {
+                    self.show_settings(ui, root);
+                    return;
+                }
+            },
+            Edit::Toggle => Some(ui.is_checked(control).into()),
+            Edit::Choice(options) => {
+                let written = options.get(ui.selected_option(control)).map_or("", |(_, value)| value);
+                (!written.is_empty()).then(|| written.into())
+            }
         };
-        ui.set_text(self.problem, &problem);
-        let Some(profile) = profile else {
-            self.values.iter().for_each(|&value| ui.set_text(value, ""));
-            return;
-        };
-        // The profile's own base, which loading folds away.
-        let base = std::fs::read_to_string(build_profile::profile_path(root, &name))
-            .ok()
-            .and_then(|text| text.parse::<toml::Table>().ok())
-            .and_then(|table| table.get("base").and_then(|base| base.as_str()).map(str::to_string));
-        let or = |value: &Option<String>, otherwise: &str| value.clone().unwrap_or_else(|| otherwise.to_string());
-        let player = &profile.player;
-        let window = match player.window.as_str() {
-            "fullscreen" => "Full screen".to_string(),
-            _ => format!("Windowed, {} × {}", player.width, player.height),
-        };
-        let development = match (profile.development.enabled, profile.development.validation_layers) {
-            (false, _) => "Off".to_string(),
-            (true, false) => "On: Debug scripts and the tools".to_string(),
-            (true, true) => "On, with Vulkan validation".to_string(),
-        };
-        let output = profile.output_dir(Path::new(""), &name).display().to_string();
-        let shown = [
-            profile.platform().to_string(),
-            or(&base, "None"),
-            or(&profile.levels.start, "The project's"),
-            if profile.levels.include.is_empty() { "Every level".into() } else { profile.levels.include.join(", ") },
-            development,
-            if profile.scripting.defines.is_empty() { "None".into() } else { profile.scripting.defines.join(", ") },
-            or(&player.product_name, "The project's name"),
-            or(&profile.version.version, "Not set"),
-            window,
-            output,
-        ];
-        for (&value, text) in self.values.iter().zip(shown) {
-            ui.set_text(value, &text);
+        if let Err(error) = build_profile::set_setting(root, &name, table, key, value) {
+            self.add_log("error", format!("could not change {name}: {error:#}"));
+        }
+        self.show_settings(ui, root);
+    }
+
+    /// Settings changed in the window: toggles and choices are written at
+    /// once, and words once Enter is pressed or the field is left.
+    fn respond_settings(&mut self, ui: &mut Ui, root: &Path) {
+        for (index, &(_, _, _, edit)) in SETTINGS.iter().enumerate() {
+            let control = self.controls[index];
+            match edit {
+                Edit::Toggle | Edit::Choice(_) if ui.changed(control) => self.write_setting(ui, root, index),
+                Edit::Text(_) | Edit::List(_) | Edit::Number => {
+                    if ui.changed(control) {
+                        self.typing = Some(index);
+                    }
+                    if ui.submitted(control) && self.typing == Some(index) {
+                        self.typing = None;
+                        self.write_setting(ui, root, index);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(index) = self.typing.filter(|&index| ui.focused() != Some(self.controls[index])) {
+            self.typing = None;
+            self.write_setting(ui, root, index);
         }
     }
 
     /// What the window's buttons and list ask for.
     fn respond(&mut self, ui: &mut Ui, root: &Path) {
+        self.respond_settings(ui, root);
         if ui.selection_changed(self.list) {
             let picked = ui.selection(self.list).first().and_then(|&i| self.names.borrow().get(i).cloned());
             if picked.is_some() {
@@ -431,8 +560,8 @@ impl BuildWindow {
     fn start(&mut self, ui: &mut Ui, root: &Path) {
         let Some(profile) = self.picked.clone() else { return };
         self.log.borrow_mut().clear();
-        self.log_shown = 0;
-        ui.set_list_count(self.log_list, 0);
+        // Drawn again from the empty log, counts and all.
+        self.log_shown = usize::MAX;
         (self.times, self.failed, self.content, self.built) = ([None; 3], None, None, None);
         let mut command = Command::new(&self.program);
         command
@@ -532,6 +661,9 @@ impl BuildWindow {
             }
         };
         ui.set_text(self.result, &result);
+        if !self.window_focused {
+            tell_desktop(&text);
+        }
         Finished { succeeded: done.result == Outcome::Succeeded, text }
     }
 
@@ -539,14 +671,48 @@ impl BuildWindow {
         self.log.borrow_mut().push((level.to_string(), message));
     }
 
+    /// Notes whether the editor's window is in front.
+    pub fn set_window_focused(&mut self, focused: bool) {
+        self.window_focused = focused;
+    }
+
+    /// The log lines the level buttons let through, and each button's
+    /// count, once the log or the buttons change.
+    fn show_log(&mut self, ui: &mut Ui) {
+        for (slot, &button) in self.log_levels.iter().enumerate() {
+            if ui.clicked(button) {
+                self.log_hidden[slot] = !self.log_hidden[slot];
+                self.log_shown = usize::MAX;
+            }
+        }
+        let log = self.log.borrow();
+        if self.log_shown == log.len() {
+            return;
+        }
+        self.log_shown = log.len();
+        let mut counts = [0usize; 3];
+        let mut rows = Vec::new();
+        for (at, (level, _)) in log.iter().enumerate() {
+            let slot = log_slot(level);
+            counts[slot] += 1;
+            if !self.log_hidden[slot] {
+                rows.push(at);
+            }
+        }
+        let count = rows.len();
+        *self.log_rows.borrow_mut() = rows;
+        for (slot, (&button, label)) in self.log_levels.iter().zip(["Info", "Warnings", "Errors"]).enumerate() {
+            ui.set_text(button, &format!("{label} {}", counts[slot]));
+            ui.set_checked(button, !self.log_hidden[slot]);
+        }
+        ui.set_list_count(self.log_list, count);
+        ui.refresh_list(self.log_list);
+        ui.scroll_to_index(self.log_list, count.saturating_sub(1));
+    }
+
     /// Shows which buttons apply, each stage's state, and the progress.
     fn show_state(&mut self, ui: &mut Ui) {
-        let count = self.log.borrow().len();
-        if self.log_shown != count {
-            self.log_shown = count;
-            ui.set_list_count(self.log_list, count);
-            ui.scroll_to_index(self.log_list, count.saturating_sub(1));
-        }
+        self.show_log(ui);
         let running = self.running.as_ref();
         ui.set_visible(self.build, running.is_none());
         ui.set_enabled(self.build, self.picked.is_some());
@@ -581,6 +747,28 @@ impl Drop for BuildWindow {
             let _ = running.child.kill();
             let _ = running.child.wait();
         }
+    }
+}
+
+/// Which level button a log line counts under: info, warnings or errors.
+fn log_slot(level: &str) -> usize {
+    match level {
+        "error" => 2,
+        "warn" => 1,
+        _ => 0,
+    }
+}
+
+/// Puts a notification on the desktop, where there is a way to: on Linux,
+/// `notify-send`. Nothing happens where there is none.
+fn tell_desktop(text: &str) {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let shown = Command::new("notify-send").args(["--app-name=Voxear", "Build finished", text]).spawn();
+    if let Ok(mut child) = shown {
+        // Waited on elsewhere, so it does not linger once it ends.
+        std::thread::spawn(move || child.wait());
     }
 }
 

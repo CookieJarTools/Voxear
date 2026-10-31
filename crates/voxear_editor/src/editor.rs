@@ -1416,6 +1416,7 @@ impl Editor {
         use winit::event::{ElementState, WindowEvent};
         match event {
             WindowEvent::CursorMoved { position, .. } => self.pointer = Some((position.x as f32, position.y as f32)),
+            WindowEvent::Focused(focused) => self.build_window.set_window_focused(*focused),
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.control = modifiers.state().control_key() || modifiers.state().super_key();
                 self.shift = modifiers.state().shift_key();

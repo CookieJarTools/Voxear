@@ -165,6 +165,91 @@ pub fn default_profile(project_root: &Path) -> Option<String> {
 
 /// Reads a profile by name, its bases folded in, the nearest winning.
 pub fn load_profile(project_root: &Path, name: &str) -> Result<BuildProfile> {
+    let merged = merged_table(project_root, name)?;
+    let mut profile: BuildProfile =
+        merged.try_into().with_context(|| format!("reading build profile `{name}` with its bases"))?;
+    profile.base = None;
+    if let Some(platform) = profile.platform.as_deref().filter(|p| !PLATFORMS.contains(p)) {
+        bail!("build profile `{name}` is for `{platform}`; the platforms are {}", PLATFORMS.join(" and "));
+    }
+    if !["windowed", "fullscreen"].contains(&profile.player.window.as_str()) {
+        bail!(
+            "build profile `{name}` opens a `{}` window; it can be `windowed` or `fullscreen`",
+            profile.player.window
+        );
+    }
+    Ok(profile)
+}
+
+/// The profile's own base, as its file names it.
+pub fn base_of(project_root: &Path, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(profile_path(project_root, name)).ok()?;
+    let table: toml::Table = toml::from_str(&text).ok()?;
+    table.get("base")?.as_str().map(str::to_string)
+}
+
+/// Changes one setting of a profile in its own file, keeping its comments
+/// and the rest as they are: `key` in `table` (`player`, `levels`...), or at
+/// the top with `None`. A value its base already has, or `None`, takes the
+/// setting out, so the profile lists only what differs from its base.
+pub fn set_setting(
+    project_root: &Path,
+    name: &str,
+    table: Option<&str>,
+    key: &str,
+    value: Option<toml::Value>,
+) -> Result<()> {
+    let path = profile_path(project_root, name);
+    let text = std::fs::read_to_string(&path).with_context(|| format!("no build profile `{name}`"))?;
+    let mut document: toml_edit::DocumentMut = text.parse().with_context(|| format!("reading {}", path.display()))?;
+    let inherited = match base_of(project_root, name) {
+        Some(base) => {
+            let merged = merged_table(project_root, &base)?;
+            let within = match table {
+                Some(table) => merged.get(table).and_then(|t| t.as_table()).and_then(|t| t.get(key)).cloned(),
+                None => merged.get(key).cloned(),
+            };
+            within.or_else(|| default_value(table, key))
+        }
+        None => default_value(table, key),
+    };
+    let value = value.filter(|value| Some(value) != inherited.as_ref());
+    match (table, value) {
+        (Some(table), Some(value)) => {
+            let edited: toml_edit::Value = value.to_string().parse().context("writing the setting")?;
+            let section = document.entry(table).or_insert_with(toml_edit::table);
+            let section = section.as_table_mut().with_context(|| format!("[{table}] in {name} is not a table"))?;
+            section[key] = toml_edit::value(edited);
+        }
+        (Some(table), None) => {
+            if let Some(section) = document.get_mut(table).and_then(|t| t.as_table_mut()) {
+                section.remove(key);
+                if section.is_empty() {
+                    document.remove(table);
+                }
+            }
+        }
+        (None, Some(value)) => {
+            let edited: toml_edit::Value = value.to_string().parse().context("writing the setting")?;
+            document[key] = toml_edit::value(edited);
+        }
+        (None, None) => drop(document.remove(key)),
+    }
+    std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))
+}
+
+/// What a profile has for a setting when nothing sets it.
+fn default_value(table: Option<&str>, key: &str) -> Option<toml::Value> {
+    let defaults = toml::Table::try_from(BuildProfile::default()).ok()?;
+    match table {
+        Some(table) => defaults.get(table)?.as_table()?.get(key).cloned(),
+        None => defaults.get(key).cloned(),
+    }
+}
+
+/// A profile's settings as a table, its bases' folded in, the nearest
+/// winning.
+fn merged_table(project_root: &Path, name: &str) -> Result<toml::Table> {
     let mut chain = Vec::new();
     let mut next = Some(name.to_string());
     while let Some(current) = next {
@@ -183,19 +268,7 @@ pub fn load_profile(project_root: &Path, name: &str) -> Result<BuildProfile> {
     }
     // The profile asked for is the one named, whatever its bases say.
     merged.insert("base".into(), toml::Value::String(name.to_string()));
-    let mut profile: BuildProfile =
-        merged.try_into().with_context(|| format!("reading build profile `{name}` with its bases"))?;
-    profile.base = None;
-    if let Some(platform) = profile.platform.as_deref().filter(|p| !PLATFORMS.contains(p)) {
-        bail!("build profile `{name}` is for `{platform}`; the platforms are {}", PLATFORMS.join(" and "));
-    }
-    if !["windowed", "fullscreen"].contains(&profile.player.window.as_str()) {
-        bail!(
-            "build profile `{name}` opens a `{}` window; it can be `windowed` or `fullscreen`",
-            profile.player.window
-        );
-    }
-    Ok(profile)
+    Ok(merged)
 }
 
 /// Folds `over` into `into`, table by table, its values winning.
@@ -270,6 +343,32 @@ mod tests {
         assert_eq!(demo.player.product_name.as_deref(), Some("Demo"));
         assert!(demo.development.enabled, "through two bases");
         assert_eq!(demo.output_dir(dir.path(), "Demo"), dir.path().join("Builds/Demo"));
+    }
+
+    #[test]
+    fn a_setting_is_written_where_it_differs_from_the_base_keeping_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        write_default_profiles(dir.path()).unwrap();
+        let path = profile_path(dir.path(), "Linux Development");
+        set_setting(dir.path(), "Linux Development", Some("player"), "width", Some(1280.into())).unwrap();
+        set_setting(dir.path(), "Linux Development", Some("scripting"), "defines", Some(vec!["DEMO"].into())).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# A Linux build to work on"), "its comment is kept: {text}");
+        let profile = load_profile(dir.path(), "Linux Development").unwrap();
+        assert_eq!((profile.player.width, profile.player.height), (1280, 900));
+        assert_eq!(profile.scripting.defines, ["DEMO"]);
+
+        // The base's own value, or none, takes the setting out again.
+        set_setting(dir.path(), "Linux Development", Some("player"), "width", Some(1600.into())).unwrap();
+        set_setting(dir.path(), "Linux Development", Some("scripting"), "defines", None).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("[player]") && !text.contains("defines"), "only what differs: {text}");
+        set_setting(dir.path(), "Linux Release", None, "platform", Some("windows-x64".into())).unwrap();
+        assert_eq!(
+            load_profile(dir.path(), "Linux Development").unwrap().platform(),
+            "windows-x64",
+            "through the base"
+        );
     }
 
     #[test]

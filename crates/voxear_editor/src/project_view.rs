@@ -833,7 +833,7 @@ fn parent(path: &str) -> &str {
 }
 
 /// Opens a folder in the system's file manager.
-fn show_in_files(folder: &Path) {
+pub(crate) fn show_in_files(folder: &Path) {
     let program = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(windows) {

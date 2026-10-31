@@ -1556,3 +1556,201 @@ DockSpace .project-split > .split-divider {
 .picker-search {
     flex-shrink: 0;
 }
+
+/* The Build window: profiles on the left, the picked one's settings and its
+   build beside them. */
+.build-panel {
+    flex-direction: column;
+    font-size: 12px;
+}
+
+.build-main {
+    flex-direction: row;
+    align-items: stretch;
+}
+
+.build-profiles {
+    flex-direction: column;
+    flex-shrink: 0;
+    width: 200px;
+    padding: 6px 0px;
+    background-color: var(--vx-bg);
+}
+
+.build-heading {
+    height: 22px;
+    padding: 0px 10px;
+    font-weight: 600;
+    color: var(--vx-muted);
+}
+
+.build-profile-name {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.build-empty {
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px 10px;
+}
+
+.build-hint {
+    white-space: normal;
+    color: var(--vx-text-2);
+}
+
+.build-detail {
+    flex-direction: column;
+    min-width: 0px;
+}
+
+.build-head {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 6px;
+    height: 40px;
+    padding: 0px 10px;
+}
+
+.build-title {
+    flex-grow: 1;
+    min-width: 0px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.build-button {
+    height: 24px;
+    padding: 0px 10px;
+    flex-shrink: 0;
+    border-radius: 6px;
+}
+
+.build-settings {
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 2px;
+    padding: 0px 10px 8px 10px;
+}
+
+.build-setting {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    height: 20px;
+}
+
+.build-key {
+    flex-shrink: 0;
+    width: 110px;
+    color: var(--vx-muted);
+}
+
+.build-value {
+    flex-grow: 1;
+    min-width: 0px;
+    color: var(--vx-text-2);
+}
+
+.build-problem {
+    white-space: normal;
+    color: var(--vx-x);
+}
+
+/* Each stage as a chip: a dot that lights while it runs and stays lit once
+   done, its name, and its time. */
+.build-stages {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 6px;
+    height: 36px;
+    padding: 0px 10px;
+}
+
+.build-stage {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0px 8px;
+    border-radius: 6px;
+    color: var(--vx-muted);
+    background-color: var(--vx-field);
+}
+
+.build-stage-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background-color: var(--vx-line-2);
+}
+
+.build-stage.running {
+    color: var(--vx-text);
+}
+
+.build-stage.running .build-stage-dot {
+    background-color: var(--vx-accent);
+}
+
+.build-stage.done .build-stage-dot {
+    background-color: var(--vx-success);
+}
+
+.build-stage.failed .build-stage-dot {
+    background-color: var(--vx-x);
+}
+
+.build-stage-time {
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.build-result {
+    flex-grow: 1;
+    min-width: 0px;
+    text-align: right;
+    color: var(--vx-text-2);
+}
+
+.build-progress {
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 5px;
+    padding: 0px 10px 8px 10px;
+}
+
+.build-progress-text {
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.build-progress-track {
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--vx-seg-on);
+}
+
+.build-progress-fill {
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--vx-accent);
+}
+
+.build-log {
+    margin: 0px 6px 6px 6px;
+    border-radius: 6px;
+    font-family: mono;
+    font-size: 11px;
+    background-color: var(--vx-bg);
+}
+
+.build-log-message {
+    flex-grow: 1;
+    min-width: 0px;
+}

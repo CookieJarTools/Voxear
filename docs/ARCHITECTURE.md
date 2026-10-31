@@ -2197,65 +2197,107 @@ them in a running game.
 
 ## Build pipeline
 
-`vox build` runs the stages in order:
-1. Content build (incremental).
-2. Script build in Release, with optional NativeAOT.
-3. Shader permutations.
-4. Player packaging.
+`vox build` *(implemented)* turns a project into a game players can run, in three stages
+(`voxear_engine::player_build`):
+1. **Scripts**: the game's C# in Release, or in Debug for a development build, with the profile's defines.
+2. **Content**: the bundles the profile's levels need (see the content build), with the `[ContentRoot]`s of the
+   scripts just built. Cooked models come from the content cache, so an unchanged model is not cooked again.
+3. **Player**: the player program, named after the game, with `Voxear.Core` and the scripts beside it.
 
-Each stage can also run on its own and caches its outputs. Builds are reproducible from the project folder alone.
+It ends by writing `build-report.json`. Later stages: shader permutations once there are quality tiers, and
+NativeAOT players.
 
 ### Build profiles
 
-What to build is a **build profile**, like Unity 6's Build Profiles: a `.buildprofile` TOML asset under
-`Settings/BuildProfiles/`. A project can have as many as it likes, such as `Windows Release`, `Linux Demo` and
-`Steam Playtest`.
+What to build is a **build profile**, like Unity 6's Build Profiles: a `.buildprofile` TOML file under
+`Settings/BuildProfiles/`, named by its file. A project can have as many as it likes, such as `Windows Release`,
+`Linux Demo` and `Steam Playtest` (`voxear_engine::build_profile`).
 
-**Easy.** A new project comes with a Release profile and a Development profile for each platform. Pick one and
-press Build, or run `vox build --profile "Windows Release"`.
+**Easy.** A new project comes with a Release profile and a Development profile for each platform, and `vox build`
+gives a project without any the same four. Pick one and press Build, or run `vox build --profile "Linux Release"`.
+Without `--profile`, `vox build` builds this platform's Release profile.
 
-**Advanced.** A profile only lists what differs from its base, the same way post-processing presets layer:
+**Advanced.** A profile only lists what differs from its base, the same way post-processing presets layer. Tables
+merge key by key, so a profile can change one player setting and keep the rest of its base's:
 
 ```toml
 format = 1
-base = "Windows Release"     # optional: inherit another profile
-platform = "windows-x64"     # or "linux-x64"
+base = "Linux Release"       # optional: change another profile
+platform = "linux-x64"       # or "windows-x64"; the machine building when not set
 
 [levels]
-start = "Levels/Menu.level"
-include = ["Levels/Demo/*.level"]   # default: every level the start level can reach
+start = "Levels/Menu.level"         # default: voxear.toml's start_level
+include = ["Levels/Demo/*.level"]   # default: every level
 
 [development]
-enabled = true
-script_debugging = true
-profiler_autoconnect = true
-validation_layers = false
+enabled = true               # scripts in Debug with their symbols, and vox run's tools
+validation_layers = false    # Vulkan's validation layers, when installed
+
+[scripting]
+defines = ["DEMO"]           # for C#'s #if
+
+[player]
+product_name = "Orbit Demo"  # the program's name and window title; the project's by default
+company_name = "Orbit Games"
+window = "windowed"          # or "fullscreen", borderless
+width = 1600
+height = 900
+
+[version]
+version = "1.2.0"
+
+[output]
+folder = "Builds/Demo"       # default: Builds/<profile>
 ```
 
-The full set of options a profile can carry:
+A level left out of `include` stops being a root of the content build, so what only it uses does not ship. The
+start level always ships. A base that names itself through others, an unknown platform or window mode, and keys a
+profile does not have are reported with the profile's name.
+
+The full set of options a profile is meant to carry, with what is still to come:
 
 | Group | Options |
 | --- | --- |
 | Platform | Target OS and architecture. Linux and Windows x64 now; arm64 later. |
-| Levels | Start level and which levels ship. By default, what the start level can reach. Content is bundled from the levels' usage sets. |
-| Development | Debug symbols, assertions, the in-game debug panels and console, profiler autoconnect, remote attach, script debugging, deep profiling, Vulkan validation. |
-| Scripting | Backend: CoreCLR (fast builds, allows script mods) or NativeAOT (fast start-up, smaller, harder to reverse, no script mods). IL trimming level, and extra defines for C# (`#if DEMO`) and for shaders. |
-| Content | Bundle compression (LZ4 for load speed, Zstd for size), texture quality caps, which quality tiers' shader variants ship, and asset stripping rules. |
-| Player | Product and company name, icon, splash, default window mode and resolution, vsync, run in background, and crash reporter settings. |
-| Version | Version string, an auto-incremented build number, and the git commit stamped into the player and the report. |
-| Graphics | Defaults per quality tier, including the post-processing preset. |
-| Mods | Whether mods load at all, which trust tiers are allowed, and whether to export the mod SDK alongside. |
-| Store | Steam app and depot IDs, the branch to upload to, and whether to upload when the build succeeds. Other stores slot in through their providers. |
-| Output | The folder and file naming pattern, clean or incremental, and Build and Run. |
-| Hooks | Steps before and after each stage: a C# `IBuildStep` or a shell command, with the build's context as JSON. |
+| Levels | Start level and which levels ship. Later: by default, what the start level can reach. |
+| Development | Debug scripts and the tools, and Vulkan validation. Later: assertions, the debug panels and console, profiler autoconnect, remote attach, script debugging and deep profiling. |
+| Scripting | Extra C# defines. Later: the backend, CoreCLR (fast builds, allows script mods) or NativeAOT (fast start-up, smaller, harder to reverse, no script mods), IL trimming, and shader defines. |
+| Content | Later: bundle compression (LZ4 for load speed, Zstd for size), texture quality caps, which quality tiers' shader variants ship, and asset stripping rules. |
+| Player | Product and company name, window mode and size. Later: icon, splash, vsync, run in background, and the crash reporter. |
+| Version | The version string, and the git commit stamped into the player and the report. Later: an auto-incremented build number. |
+| Graphics | Later: defaults per quality tier, including the post-processing preset. |
+| Mods | Later: whether mods load at all, which trust tiers are allowed, and whether to export the mod SDK alongside. |
+| Store | Later: Steam app and depot IDs, the branch to upload to, and whether to upload when the build succeeds. |
+| Output | The folder. Later: a file naming pattern, clean or incremental, and Build and Run. |
+| Hooks | Later: steps before and after each stage, a C# `IBuildStep` or a shell command, with the build's context as JSON. |
 
 Switching the active profile is instant. Content is cached per platform, and Linux and Windows share desktop
 texture formats, so there is no Unity-style reimport when changing platform.
 
-**Builds for other platforms.** Player runtimes ship prebuilt in each engine install, per platform, as installable
-modules that the launcher manages. Building a Windows player on Linux therefore compiles no Rust: it builds content
-and scripts, then packages the Windows runtime. Script builds for CoreCLR are platform-neutral IL. NativeAOT can only
-compile on the target OS, so the profile says so up front and offers a remote build agent once those exist.
+**Builds for other platforms.** For now a build runs on the platform it is for. Player runtimes will ship prebuilt
+in each engine install, per platform, as installable modules that the launcher manages. Building a Windows player on
+Linux will then compile no Rust: it builds content and scripts, then packages the Windows runtime. Script builds for
+CoreCLR are platform-neutral IL. NativeAOT can only compile on the target OS, so the profile says so up front and
+offers a remote build agent once those exist.
+
+### The player *(implemented)*
+
+A build's folder holds the program and its `Data` folder:
+
+```
+Builds/Linux Release/
+  Hello                  the player, voxear-player under the game's name
+  Data/player.toml       what it runs: the start level, the scripts, the window, and what built it
+  Data/Bundles/          the built content
+  Data/Managed/          Voxear.Core and the game's scripts (with their symbols in a development build)
+  build-report.json
+```
+
+The player (`voxear_engine::player`) opens the bundles, starts .NET with the game's scripts, and runs the start
+level in a window of the profile's size, or full screen. A development build has the tools `vox run` has: the stats
+overlay on F1, the debug views and the fly camera; a release build has none of them. `--headless --frames <n>` runs
+it without a window, to check a build. The player uses the .NET installed on the machine for now; shipping the
+runtime with it, or NativeAOT, comes with M12.
 
 ### Builds run in their own process
 
@@ -2264,27 +2306,34 @@ command CI runs, and the Build window follows it. This means:
 - The editor stays responsive, and you can keep working while it builds.
 - A build that crashes cannot take the editor with it.
 - A build behaves the same from the editor, the terminal and CI.
-- Several profiles can build at once, one process each, sharing the content cache under a lock.
+- Later, several profiles can build at once, one process each, sharing the content cache under a lock.
 
-The process reports progress as one JSON object per line on stdout:
+The process reports progress as one JSON object per line on stdout, its log lines among them, and nothing else:
 
 ```json
-{"event":"stage","stage":"content","index":1,"of":4}
+{"event":"stage","stage":"content","index":2,"of":3}
 {"event":"progress","stage":"content","done":120,"total":800,"item":"Textures/Rock.png"}
-{"event":"log","level":"warn","message":"Texture is not a power of two","asset":"6f1c…"}
-{"event":"finished","result":"succeeded","seconds":42.7,"report":"Builds/Windows Release/build-report.json"}
+{"event":"log","level":"warn","message":"[ContentRoot(\"Icons/*\")] on Hud matches no asset"}
+{"event":"finished","result":"succeeded","seconds":42.7,"output":"…/Builds/Linux Release","program":"…/Builds/Linux Release/Hello","size":31457280,"report":"…/build-report.json"}
 ```
 
-**The Build window** lists profiles on the left and the selected profile's settings on the right, like Unity 6. A
-running build shows its stages with timings, a progress bar for the current stage, and the log, filterable by level.
-Clicking a log entry selects the asset it names. Cancel asks the process to stop at the next safe point, which
-leaves every cache consistent. It is killed only if it does not stop. Finishing posts a notification with the
-result, the output folder and the report.
+A failed or cancelled build finishes with `"result":"failed"` or `"cancelled"` and a `message`, and exits with 1. A
+line `cancel` on stdin stops the build at its next step, between stages or assets, which leaves every cache
+consistent.
 
-**The build report** comes with every build:
-- Size by bundle, asset and type.
+**The Build window** *(implemented)* opens from the top bar's Build button, by the Scene view. It lists the
+profiles on the left and the picked one's settings on the right, like Unity 6, and offers the default profiles to a
+project without any. A running build shows its stages with their times, a progress bar for the content stage, and
+the log, warnings and errors in their colours. Cancel asks the process to stop, and stops it if it has not within
+ten seconds. A finished build says how long it took and how big it is, in the window, the status bar and the
+Console, and offers Run and Show in Files. Still to come: editing a profile in the window, the log filtered by level
+with a click selecting the asset a line names, and a desktop notification.
+
+**The build report** comes with every build: the project, profile, platform, engine version and git commit, the
+levels shipped, each bundle's size and roots, the build's size, and each stage's time. Later it gains:
+- Size by asset and type.
 - Why each asset was included: the chain of references from a level.
-- Stage timings, warnings and shader variant counts.
+- Warnings and shader variant counts.
 - A diff against the previous build of the same profile, so a size jump points straight at its cause.
 
 ## Versions, installs and the launcher
@@ -2340,8 +2389,8 @@ through a small contract.
   names one, so an IDE builds it too.
 - **`voxear-editor`** opens a project as the launcher asks (`--project <folder>`), handing over to `vox editor`
   beside it, so an install carries the engine once. `vox --version` gives the release's version.
-- **Packaging** (`voxear-dist`, `cargo run -p voxear_dist -- --channel nightly`): builds `vox` and
-  `voxear-editor` in release (naming the version through `VOXEAR_VERSION`), and Voxear.Core and ScriptInfo in
+- **Packaging** (`voxear-dist`, `cargo run -p voxear_dist -- --channel nightly`): builds `vox`, `voxear-editor`
+  and `voxear-player` in release (naming the version through `VOXEAR_VERSION`), and Voxear.Core and ScriptInfo in
   release; lays out the install in `target/dist/voxear-<version>-<platform>/` with `engine.toml`, `bin/`,
   `managed/` (with the scripts props), `docs/` and the licence; and packs it as a `.tar.zst` with every entry at
   the root, in name order and without owners or times. A nightly is named for the day (`0.1.0-nightly.20261031`);

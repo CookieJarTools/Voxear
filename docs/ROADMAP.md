@@ -270,6 +270,13 @@ Done so far:
   shown in the Project panel, reference fields, the object picker and a large Inspector preview a drag turns. Any
   size, background, rotation, offset, zoom, field of view and light, from Rust (`Renderer::add_preview`,
   `AssetPreviews`) and C# (`Preview.Of`), read back and saved as PNG. Voxear UI gained images.
+- **Build profiles and the Build window:** `.buildprofile` files that change a base profile key by key, with a
+  Release and a Development profile per platform in new projects; levels, development options, C# defines, player
+  settings and the version. `vox build --profile` builds the scripts, the content the profile's levels need, and a
+  player (`voxear-player` under the game's name) with what it runs in `Data/`, and writes `build-report.json`. With
+  `--progress json` it reports in JSON lines and stops on `cancel`, which the editor's Build window follows in its
+  own process: the profiles and their settings, each stage with its time, the content's progress, the log, Cancel,
+  Run and Show in Files.
 
 Still to do in M3:
 - UI core:
@@ -310,13 +317,8 @@ Still to do in M3:
   - Later: parallel jobs over chunks.
 - The editor's layout, and each workspace's, kept between sessions; the Animation workspace once there is
   animation.
-- **Build profiles and the Build window:**
-  - `.buildprofile` assets that inherit from a base, with a Release and a Development profile per platform in new
-    projects
-  - levels, development options, scripting defines, compression, player settings and versioning
-  - `vox build --profile` for the host platform, with CoreCLR players
-  - builds in their own process, reporting progress as JSON lines
-  - the Build window: live stages, timings, the log, cancel and notifications
+- **Builds, next:** editing a profile in the Build window, bundle compression (LZ4 or Zstd), the log filtered by
+  level with a click selecting the asset a line names, and a desktop notification when a build finishes.
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
 

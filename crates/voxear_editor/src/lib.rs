@@ -39,6 +39,7 @@
 //! - **Settings**, kept per project with what the palette ran recently
 
 mod asset_inspector;
+mod build_window;
 mod console;
 mod editor;
 mod fields;

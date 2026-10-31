@@ -35,6 +35,7 @@ use voxear_ui::{Color, DragSource, NodeId, Shape, Ui};
 
 use crate::{
     asset_inspector::AssetAction,
+    build_window::BuildWindow,
     console::Console,
     fields::Pick,
     gizmos,
@@ -123,6 +124,8 @@ struct Nodes {
     /// The top bar's workspaces, and the Profiler's panel.
     workspaces: NodeId,
     profiler_panel: NodeId,
+    /// The Build window's panel.
+    build_panel: NodeId,
     /// The bar over the Scene view while a prefab is open on its own.
     prefab_bar: NodeId,
     prefab_name: NodeId,
@@ -221,6 +224,7 @@ pub struct Editor {
     workspace: usize,
     workspace_layouts: [Option<String>; 2],
     profiler: Profiler,
+    build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
     picker_picks: Vec<(Entity, Prop, Pick)>,
@@ -319,6 +323,7 @@ impl Editor {
             scene_maximize: find(&ui, "scene-maximize"),
             workspaces: find(&ui, "workspaces"),
             profiler_panel: find(&ui, "profiler-panel"),
+            build_panel: find(&ui, "build-panel"),
             prefab_bar: find(&ui, "prefab-bar"),
             prefab_name: find(&ui, "prefab-name"),
             prefab_back: find(&ui, "prefab-back"),
@@ -349,6 +354,7 @@ impl Editor {
         let (tabs, view, filter) = (find(&ui, "settings-tabs"), find(&ui, "settings"), find(&ui, "settings-filter"));
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
+        let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
         let parts =
             ["picker", "picker-title", "picker-field", "picker-list", "picker-empty"].map(|name| find(&ui, name));
         let picker = ObjectPicker::new(&mut ui, parts[0], parts[1], parts[2], parts[3], parts[4]);
@@ -402,6 +408,7 @@ impl Editor {
             workspace: 0,
             workspace_layouts: [None, None],
             profiler,
+            build_window,
             picker,
             picker_picks: Vec::new(),
             asset_previews: AssetPreviews::default(),
@@ -569,7 +576,19 @@ impl Editor {
             self.project.reveal(&mut self.ui, &path);
         }
         if self.ui.clicked(self.nodes.build) {
-            tracing::info!("Build comes with build profiles, later in M3");
+            self.show_panel("build");
+        }
+        {
+            profile_scope!("Build");
+            let shown = self.shown(self.nodes.build_panel);
+            let root = self.game.project.root.clone();
+            if let Some(finished) = self.build_window.update(&mut self.ui, &root, shown) {
+                match finished.succeeded {
+                    true => tracing::info!("{}", finished.text),
+                    false => tracing::warn!("{}", finished.text),
+                }
+                self.notify(&finished.text);
+            }
         }
         {
             profile_scope!("Previews");
@@ -596,6 +615,11 @@ impl Editor {
     /// The Profiler panel, and the frames it has taken.
     pub fn profiler(&self) -> &Profiler {
         &self.profiler
+    }
+
+    /// The Build window, and the build it runs.
+    pub fn build_window(&mut self) -> &mut BuildWindow {
+        &mut self.build_window
     }
 
     /// What the Project panel asked for: an item shown in the Inspector, a

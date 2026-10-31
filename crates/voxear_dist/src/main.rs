@@ -35,8 +35,9 @@ const PLATFORM: &str = "windows-x86_64";
 /// What an install is, at its root.
 const ENGINE_FILE: &str = "engine.toml";
 
-/// The programs an install carries in `bin/`.
-const PROGRAMS: [&str; 2] = ["vox", "voxear-editor"];
+/// The programs an install carries in `bin/`: the command line, the editor,
+/// and the player `vox build` copies into each build.
+const PROGRAMS: [&str; 3] = ["vox", "voxear-editor", "voxear-player"];
 
 /// The managed assemblies an install carries in `managed/`, each with its
 /// symbols, documentation and runtime files where it has them.
@@ -151,7 +152,7 @@ fn commit(root: &Path) -> Result<String> {
     git(&["rev-parse", "--short", "HEAD"])
 }
 
-/// `vox` and `voxear-editor`, built in release, knowing their version.
+/// The programs, built in release, knowing their version.
 fn build_programs(root: &Path, version: &str) -> Result<()> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let status = Command::new(cargo)

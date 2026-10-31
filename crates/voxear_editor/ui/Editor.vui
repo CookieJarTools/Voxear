@@ -118,6 +118,9 @@
                 <DockPanel id="profiler" title="Profiler" class="dock-content">
                     <Panel name="profiler-panel" class="fill profiler-panel" />
                 </DockPanel>
+                <DockPanel id="build" title="Build" class="dock-content">
+                    <Panel name="build-panel" class="fill build-panel" />
+                </DockPanel>
                 <DockPanel id="inspector" title="Inspector">
                     <Panel class="panel-actions">
                         <Button class="icon-button"><Icon icon="more" /></Button>

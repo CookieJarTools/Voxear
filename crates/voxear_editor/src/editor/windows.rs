@@ -54,9 +54,19 @@ impl Editor {
         if let Some(choice) = self.ui.menu_choice(windows) {
             match self.ui.dock_panels(dock).get(choice) {
                 Some((id, _, true)) => self.ui.close_dock_panel(dock, id),
-                Some((id, _, false)) => self.ui.open_dock_panel(dock, id),
+                Some((id, _, false)) => self.open_panel(&id.clone()),
                 None => self.reset_layout(),
             }
+        }
+    }
+
+    /// Opens a panel by id where the dock last had it. The Build window,
+    /// which is wide, opens by the Scene view the first time rather than in
+    /// a side column.
+    pub(super) fn open_panel(&mut self, id: &str) {
+        match id {
+            "build" => self.ui.open_dock_panel_beside(self.nodes.dock, id, "scene"),
+            _ => self.ui.open_dock_panel(self.nodes.dock, id),
         }
     }
 

@@ -57,7 +57,7 @@ impl Editor {
         match id {
             "levels" => self.open_drawer(Some(Drawer::Levels)),
             "settings" => self.open_drawer(Some(Drawer::Settings)),
-            _ => self.ui.open_dock_panel(self.nodes.dock, id),
+            _ => self.open_panel(id),
         }
     }
 }

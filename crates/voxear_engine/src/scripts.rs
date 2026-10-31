@@ -43,6 +43,23 @@ pub fn build(project: &Project) -> Result<()> {
     build_unlocked(project)
 }
 
+/// Builds the project's scripts in `configuration`, `Debug` or `Release`,
+/// with extra symbols for C#'s `#if`, as a build profile asks.
+pub fn build_for(project: &Project, configuration: &str, defines: &[String]) -> Result<()> {
+    for define in defines {
+        let mut chars = define.chars();
+        let starts = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+        ensure!(
+            starts && chars.all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "`{define}` is not a symbol C# can define: use letters, digits and underscores"
+        );
+    }
+    let _building = lock();
+    let Some(csproj) = project.scripts_project() else { return Ok(()) };
+    write_engine_props(project)?;
+    build_csproj(&dotnet()?, &csproj, configuration, defines)
+}
+
 /// Holds the scripts' build to this thread, for work that builds and then
 /// reads the build.
 pub(crate) fn lock() -> MutexGuard<'static, ()> {
@@ -52,10 +69,14 @@ pub(crate) fn lock() -> MutexGuard<'static, ()> {
 /// [`build`], for a thread already holding [`lock`].
 pub(crate) fn build_unlocked(project: &Project) -> Result<()> {
     let Some(csproj) = project.scripts_project() else { return Ok(()) };
+    write_engine_props(project)?;
+    build_csproj(&dotnet()?, &csproj, CONFIGURATION, &[])
+}
+
+fn write_engine_props(project: &Project) -> Result<()> {
     let props = project.root.join(".voxear").join("Engine.props");
     std::fs::create_dir_all(project.root.join(".voxear"))?;
-    std::fs::write(&props, engine_props()).with_context(|| format!("writing {}", props.display()))?;
-    build_csproj(&dotnet()?, &csproj)
+    std::fs::write(&props, engine_props()).with_context(|| format!("writing {}", props.display()))
 }
 
 /// The `dotnet` command, from the install that runs the scripts.
@@ -67,11 +88,16 @@ pub fn dotnet_exe() -> Result<PathBuf> {
 /// project without scripts. .NET starts only once per process, so the
 /// runtime is kept and handed from run to run.
 pub fn start(project: &Project) -> Result<Option<ScriptRuntime>> {
+    start_for(project, CONFIGURATION)
+}
+
+/// [`start`], with the scripts and `Voxear.Core` built in `configuration`.
+pub fn start_for(project: &Project, configuration: &str) -> Result<Option<ScriptRuntime>> {
     if project.scripts_project().is_none() {
         return Ok(None);
     }
-    let mut scripts = ScriptRuntime::start(&dotnet()?, &core_assembly(CONFIGURATION))?;
-    let assembly = project.scripts_assembly(CONFIGURATION).context("scripts project has no file name")?;
+    let mut scripts = ScriptRuntime::start(&dotnet()?, &core_assembly(configuration))?;
+    let assembly = project.scripts_assembly(configuration).context("scripts project has no file name")?;
     scripts.load_game_assembly(&assembly)?;
     Ok(Some(scripts))
 }
@@ -181,19 +207,23 @@ fn engine_home() -> String {
     format!("{}{}", root.display(), std::path::MAIN_SEPARATOR)
 }
 
-fn dotnet() -> Result<DotnetInstall> {
+pub(crate) fn dotnet() -> Result<DotnetInstall> {
     find_dotnet().context(".NET is not installed; run `vox doctor` for how to get it")
 }
 
-fn build_csproj(dotnet: &DotnetInstall, csproj: &Path) -> Result<()> {
+fn build_csproj(dotnet: &DotnetInstall, csproj: &Path, configuration: &str, defines: &[String]) -> Result<()> {
     let exe = dotnet.root.join(if cfg!(windows) { "dotnet.exe" } else { "dotnet" });
     tracing::info!("building {}", csproj.display());
     let mut command = Command::new(&exe);
     command
-        .args(["build", "-c", CONFIGURATION, "--nologo", "-v", "quiet", "-clp:ErrorsOnly;NoSummary"])
+        .args(["build", "-c", configuration, "--nologo", "-v", "quiet", "-clp:ErrorsOnly;NoSummary"])
         .arg(engine_home_property())
         .arg(csproj)
         .env("DOTNET_NOLOGO", "1");
+    // Voxear.Scripts.props adds these to DefineConstants; `;` would end the property.
+    if !defines.is_empty() {
+        command.arg(format!("-p:VoxearDefines={}", defines.join("%3B")));
+    }
     let output = output_within(&mut command, BUILD_LIMIT).with_context(|| format!("building {}", csproj.display()))?;
     // The compiler's errors go to the log, which the editor shows in its Console.
     if !output.status.success() {

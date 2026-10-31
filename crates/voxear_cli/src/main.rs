@@ -1,18 +1,26 @@
 //! `vox`: the Voxear command line.
 
 use std::{
+    io::BufRead,
     path::{Path, PathBuf},
     process::Command,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use voxear_assets::{AssetDb, AssetKind};
 use voxear_core::math::EulerRot;
 use voxear_engine::{
-    Content, Engine, Game, PROJECT_FILE, Project, StatsOverlay,
+    Content, Engine, Game, PROJECT_FILE, Project, StatsOverlay, WindowOptions, build_profile,
     content_build::{self, CodeRoot},
-    core_assembly, run_windowed,
+    core_assembly,
+    player_build::{self, BUILD_STAGES, BuildEvent},
+    run_windowed,
     scripts::{self, CONFIGURATION},
 };
 use voxear_render::{
@@ -78,6 +86,21 @@ enum Commands {
         /// Project folder or its voxear.toml.
         #[arg(default_value = ".")]
         project: PathBuf,
+    },
+    /// Build the game into a player with a build profile, as the editor's Build window does.
+    Build {
+        /// Project folder or its voxear.toml.
+        #[arg(default_value = ".")]
+        project: PathBuf,
+        /// The build profile, by name (default: this platform's Release profile).
+        #[arg(long)]
+        profile: Option<String>,
+        /// `json` reports one JSON object per line, as the editor reads; `cancel` on stdin stops the build.
+        #[arg(long, value_parser = ["text", "json"], default_value = "text")]
+        progress: String,
+        /// List the project's build profiles.
+        #[arg(long)]
+        list: bool,
     },
     /// Build or inspect a project's content bundles.
     Content {
@@ -180,9 +203,17 @@ struct Prepare {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    // The editor keeps every log line for its Console.
-    let log = match cli.command {
+    // The editor keeps every log line for its Console; a build for the editor
+    // sends each as JSON.
+    let log = match &cli.command {
         Commands::Editor { .. } => Some(voxear_core::logging::init_capturing()),
+        Commands::Build { progress, .. } if progress == "json" => {
+            voxear_core::logging::init_forwarding(|line| {
+                let level = line.level.as_str().to_lowercase();
+                println!("{}", serde_json::json!({ "event": "log", "level": level, "message": line.message }));
+            });
+            None
+        }
         _ => {
             voxear_core::logging::init();
             None
@@ -223,6 +254,7 @@ fn main() -> Result<()> {
             new_project(&request, json)
         }
         Commands::Assets { project } => assets(&project),
+        Commands::Build { project, profile, progress, list } => build(&project, profile, progress == "json", list),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
         Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays, stats } => {
             let prepare = Prepare { build: !no_build, bundles, overlays };
@@ -268,7 +300,8 @@ fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, rende
         // A window is for playing while working on the game, so changed scripts reload into it.
         game.watch_scripts();
         let setup = Box::new(|game: &mut Game, renderer: &mut Renderer| game.start(Some(renderer)));
-        return run_windowed(game, &title, frames, stats, settings, setup);
+        let options = WindowOptions { frames, stats, ..WindowOptions::tools(&title) };
+        return run_windowed(game, options, settings, setup);
     }
     game.start(None)?;
     for _ in 0..frames.unwrap_or(3) {
@@ -422,6 +455,97 @@ fn build_content(path: &Path) -> Result<()> {
         }
     }
     warn_unmatched(&report);
+    Ok(())
+}
+
+/// Stops a build at its next step, as `cancel` on stdin asks.
+#[derive(Debug)]
+struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the build was cancelled")
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+/// `vox build`: builds the game with a profile, writing the default
+/// profiles first into a project that has none. With JSON, everything on
+/// stdout is a JSON line, ending in `finished`, and `cancel` on stdin stops
+/// the build at its next step.
+fn build(path: &Path, profile: Option<String>, json: bool, list: bool) -> Result<()> {
+    let project = Project::open(path)?;
+    if build_profile::profile_names(&project.root).is_empty() {
+        build_profile::write_default_profiles(&project.root)?;
+        let folder = build_profile::PROFILES_FOLDER;
+        tracing::info!("{} had no build profiles, so it has the default ones now, in {folder}", project.name());
+    }
+    if list {
+        build_profile::profile_names(&project.root).iter().for_each(|name| println!("{name}"));
+        return Ok(());
+    }
+    let name = match profile {
+        Some(name) => name,
+        None => build_profile::default_profile(&project.root).context("the project has no build profiles")?,
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    if json {
+        let cancelled = cancelled.clone();
+        std::thread::spawn(move || {
+            for line in std::io::stdin().lock().lines() {
+                if line.is_ok_and(|line| line.trim() == "cancel") {
+                    cancelled.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+    }
+    let line = |event: serde_json::Value| println!("{event}");
+    let mut events = |event: BuildEvent| -> Result<()> {
+        if cancelled.load(Ordering::Relaxed) {
+            bail!(Cancelled);
+        }
+        match event {
+            BuildEvent::Stage { stage, index } if json => {
+                line(
+                    serde_json::json!({ "event": "stage", "stage": stage, "index": index + 1, "of": BUILD_STAGES.len() }),
+                );
+            }
+            BuildEvent::Stage { stage, index } => println!("[{}/{}] {stage}", index + 1, BUILD_STAGES.len()),
+            BuildEvent::Progress { stage, done, total, item } if json => {
+                line(
+                    serde_json::json!({ "event": "progress", "stage": stage, "done": done, "total": total, "item": item }),
+                );
+            }
+            BuildEvent::Progress { .. } => {}
+        }
+        Ok(())
+    };
+    let started = Instant::now();
+    let player = player_build::sibling_program("voxear-player");
+    let built = player_build::build(&project, &name, &player, &mut events);
+    let seconds = (started.elapsed().as_secs_f64() * 10.0).round() / 10.0;
+    match built {
+        Ok(report) if json => {
+            let output = project.root.join(&report.output);
+            line(serde_json::json!({
+                "event": "finished", "result": "succeeded", "seconds": seconds, "output": output,
+                "program": project.root.join(&report.program), "size": report.size,
+                "report": output.join(player_build::REPORT_FILE),
+            }));
+        }
+        Ok(report) => {
+            let program = report.program.display();
+            println!("Built {} with {name} in {seconds} s: {program} ({})", project.name(), size(report.size));
+        }
+        Err(error) if json => {
+            let result = if error.downcast_ref::<Cancelled>().is_some() { "cancelled" } else { "failed" };
+            let message = format!("{error:#}");
+            line(serde_json::json!({ "event": "finished", "result": result, "seconds": seconds, "message": message }));
+            std::process::exit(1);
+        }
+        Err(error) => return Err(error),
+    }
     Ok(())
 }
 

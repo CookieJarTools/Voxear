@@ -2098,3 +2098,100 @@ fn assets_show_previews_in_the_project_fields_picker_and_inspector() {
     editor.picker_key(voxear_editor::PaletteKey::Escape);
     frame(&mut editor, &mut renderer);
 }
+
+/// A program that answers `vox build` as `script` does, for the Build window
+/// to follow. `$2` is the project and `$4` the profile.
+#[cfg(unix)]
+fn fake_vox(dir: &std::path::Path, name: &str, script: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{script}")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn the_build_window_lists_profiles_and_follows_a_build_and_a_cancel() {
+    const BUILDS: &str = r#"echo '{"event":"stage","stage":"scripts","index":1,"of":3}'
+echo "{\"event\":\"log\",\"level\":\"info\",\"message\":\"building $4\"}"
+echo '{"event":"stage","stage":"content","index":2,"of":3}'
+echo '{"event":"progress","stage":"content","done":1,"total":2,"item":"Levels/Day.level"}'
+echo '{"event":"log","level":"warn","message":"a warning"}'
+echo '{"event":"stage","stage":"player","index":3,"of":3}'
+echo "{\"event\":\"finished\",\"result\":\"succeeded\",\"seconds\":1.5,\"output\":\"$2/Builds/X\",\"program\":\"$2/Builds/X/Hello\",\"size\":1048576}"
+"#;
+    const WAITS: &str = r#"echo '{"event":"stage","stage":"scripts","index":1,"of":3}'
+read line
+echo "{\"event\":\"finished\",\"result\":\"cancelled\",\"seconds\":0.2,\"message\":\"asked to $line\"}"
+"#;
+    let dir = hello_copy();
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let find = |editor: &voxear_editor::Editor, name: &str| editor.ui.find(editor.ui.root(), name).unwrap();
+    let frames_until =
+        |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, done: &dyn Fn(&voxear_editor::Editor) -> bool| {
+            for _ in 0..500 {
+                if done(editor) {
+                    return;
+                }
+                frame(editor, renderer);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("the build window never got there: {:?}", editor.ui.text(find(editor, "build-result")));
+        };
+
+    click_named(&mut editor, "build");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let add = find(&editor, "build-add-defaults");
+    assert!(editor.ui.is_visible(ui_parent(&editor.ui, add)), "a project without profiles is offered the defaults");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.ui.is_visible(ui_parent(&editor.ui, add)));
+    let texts = texts_in(&editor.ui, find(&editor, "build-panel"));
+    for shown in ["Linux Development", "Linux Release", "Windows Development", "Windows Release", "linux-x64"] {
+        assert!(texts.iter().any(|text| text == shown), "{shown} in {texts:?}");
+    }
+
+    let tools = tempfile::tempdir().unwrap();
+    editor.build_window().set_program(fake_vox(tools.path(), "vox-builds", BUILDS));
+    click_named(&mut editor, "build-start");
+    frame(&mut editor, &mut renderer);
+    assert!(editor.build_window().is_building());
+    frames_until(&mut editor, &mut renderer, &|editor| !editor.ui.text(find(editor, "build-result")).is_empty());
+    assert_eq!(editor.ui.text(find(&editor, "build-result")), "Built in 1.5 s · 1.0 MB");
+    let log = editor.build_window().log();
+    let expected = [("info", "building Linux Release"), ("warn", "a warning")];
+    assert_eq!(log, expected.map(|(level, message)| (level.to_string(), message.to_string())));
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.is_visible(find(&editor, "build-run")), "a built game can be run");
+    let mut done = Vec::new();
+    with_class(&editor.ui, find(&editor, "build-panel"), "done", &mut done);
+    assert_eq!(done.len(), 3, "every stage is done");
+    shot(&mut renderer, "build.png");
+
+    editor.build_window().set_program(fake_vox(tools.path(), "vox-waits", WAITS));
+    click_named(&mut editor, "build-start");
+    frames_until(&mut editor, &mut renderer, &|editor| editor.ui.is_visible(find(editor, "build-cancel")));
+    assert!(!editor.ui.is_visible(find(&editor, "build-run")), "not while building");
+    click_named(&mut editor, "build-cancel");
+    frames_until(&mut editor, &mut renderer, &|editor| !editor.ui.text(find(editor, "build-result")).is_empty());
+    assert_eq!(editor.ui.text(find(&editor, "build-result")), "Cancelled");
+    assert!(!editor.build_window().is_building());
+}
+
+fn click_named(editor: &mut voxear_editor::Editor, name: &str) {
+    let node = editor.ui.find(editor.ui.root(), name).unwrap();
+    click(&mut editor.ui, node);
+}
+
+fn ui_parent(ui: &Ui, node: NodeId) -> NodeId {
+    ui.parent(node).unwrap()
+}

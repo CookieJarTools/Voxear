@@ -121,26 +121,33 @@ pub fn capturing_only(capture: LogCapture) -> impl Subscriber + Send + Sync {
     tracing_subscriber::registry().with(EnvFilter::new(DEFAULT_FILTER)).with(Capture::new(capture))
 }
 
-/// Keeps every line, noting when, in which frame and on which thread.
-struct Capture {
-    lines: LogCapture,
+/// Installs a global log subscriber that hands each line to `forward` and
+/// prints nothing, for a tool whose output another program reads, as the
+/// editor reads `vox build --progress json`.
+pub fn init_forwarding(forward: impl Fn(LogLine) + Send + Sync + 'static) {
+    let filter =
+        std::env::var("VOXEAR_LOG").or_else(|_| std::env::var("RUST_LOG")).unwrap_or_else(|_| DEFAULT_FILTER.into());
+    let forward = Forward { lines: Lines::new(), forward: Box::new(forward) };
+    let _ = tracing_subscriber::registry().with(EnvFilter::new(filter)).with(forward).try_init();
+}
+
+/// Turns events into lines, noting when, in which frame and on which thread.
+struct Lines {
     started: Instant,
     main: ThreadId,
 }
 
-impl Capture {
-    /// Keeping lines from now, the thread making it being the main one.
-    fn new(lines: LogCapture) -> Self {
-        Self { lines, started: Instant::now(), main: std::thread::current().id() }
+impl Lines {
+    /// Lines from now, the thread making it being the main one.
+    fn new() -> Self {
+        Self { started: Instant::now(), main: std::thread::current().id() }
     }
-}
 
-impl<S: Subscriber> Layer<S> for Capture {
-    fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+    fn read(&self, event: &Event<'_>) -> LogLine {
         let mut fields = Message::default();
         event.record(&mut fields);
         let metadata = event.metadata();
-        let line = LogLine {
+        LogLine {
             level: *metadata.level(),
             message: fields.text,
             target: metadata.target().to_string(),
@@ -151,7 +158,37 @@ impl<S: Subscriber> Layer<S> for Capture {
             worker: std::thread::current().id() != self.main,
             stack: fields.stack,
             context: fields.context,
-        };
+        }
+    }
+}
+
+/// Hands every line on, as [`init_forwarding`] installs it.
+struct Forward {
+    lines: Lines,
+    forward: Box<dyn Fn(LogLine) + Send + Sync>,
+}
+
+impl<S: Subscriber> Layer<S> for Forward {
+    fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+        (self.forward)(self.lines.read(event));
+    }
+}
+
+/// Keeps every line.
+struct Capture {
+    lines: LogCapture,
+    reader: Lines,
+}
+
+impl Capture {
+    fn new(lines: LogCapture) -> Self {
+        Self { lines, reader: Lines::new() }
+    }
+}
+
+impl<S: Subscriber> Layer<S> for Capture {
+    fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+        let line = self.reader.read(event);
         let Ok(mut log) = self.lines.lock() else { return };
         if log.lines.len() == KEPT {
             log.lines.pop_front();

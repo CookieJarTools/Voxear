@@ -123,6 +123,9 @@ pub fn create(request: &NewProject, step: &mut dyn FnMut(&str)) -> Result<PathBu
         write(folder, "Scripts/Turner.cs", &turner(&namespace))?;
     }
 
+    step("Adding the build profiles");
+    crate::build_profile::write_default_profiles(folder)?;
+
     if let Some(ide) = request.ide.as_deref() {
         set_up_ide(folder, ide, &namespace, step)?;
     }
@@ -363,6 +366,10 @@ mod tests {
         let names: Vec<&str> = scene.objs.iter().map(|o| o.name.as_str()).collect();
         assert_eq!(names, ["Sun", "Main Camera", "Ground", "Cube"]);
         assert!(folder.join("Scenes/Main.scene.meta").is_file(), "assets have their GUIDs");
+        assert_eq!(
+            crate::build_profile::default_profile(&folder).as_deref(),
+            Some(if cfg!(windows) { "Windows Release" } else { "Linux Release" })
+        );
         assert!(folder.join(".vscode/settings.json").is_file());
         assert!(create(&request, &mut |_| {}).is_err(), "a folder with something in it is refused");
     }

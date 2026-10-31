@@ -15,6 +15,10 @@ path = "src/main.rs"
 name = "voxear-editor"
 path = "src/editor_main.rs"
 
+[[bin]]
+name = "voxear-player"
+path = "src/player_main.rs"
+
 [dependencies]
 voxear_editor.workspace = true
 voxear_core.workspace = true
@@ -29,3 +33,6 @@ tracing.workspace = true
 voxear_render.workspace = true
 png.workspace = true
 voxear_assets.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

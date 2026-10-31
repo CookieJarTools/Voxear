@@ -98,6 +98,19 @@ struct Needs {
 }
 
 pub fn build(root: &Path, output: &Path, settings: &ContentSettings, code_roots: &[CodeRoot]) -> Result<BuildReport> {
+    build_with(root, output, settings, code_roots, &mut |_, _, _| Ok(()))
+}
+
+/// [`build`], telling `progress` of each asset as it is read or cooked:
+/// how many are done, of how many, and its path. An error from `progress`
+/// stops the build there, as a cancelled build does.
+pub fn build_with(
+    root: &Path,
+    output: &Path,
+    settings: &ContentSettings,
+    code_roots: &[CodeRoot],
+    progress: &mut dyn FnMut(usize, usize, &str) -> Result<()>,
+) -> Result<BuildReport> {
     let (db, _) = AssetDb::scan(root)?;
     let mut needs = HashMap::new();
     for entry in db.entries() {
@@ -115,8 +128,9 @@ pub fn build(root: &Path, output: &Path, settings: &ContentSettings, code_roots:
     // Every asset as it will ship: models cooked, everything else as written.
     let mut cooker = Cooker::open(root)?;
     let mut stored = HashMap::with_capacity(usage.len());
-    for guid in usage.keys() {
+    for (done, guid) in usage.keys().enumerate() {
         let entry = db.get(*guid).expect("from the database");
+        progress(done, usage.len(), &entry.path)?;
         let bytes = if entry.kind == AssetKind::Model {
             cooker.cook(&entry.path, &needs[guid].companions).with_context(|| format!("cooking {}", entry.path))?
         } else {
@@ -415,7 +429,7 @@ impl Cooker {
 
 /// Whether a project path matches a pattern: `*` within a folder, `**` across
 /// any number of folders (including none), `?` one character.
-fn glob(pattern: &str, path: &str) -> bool {
+pub(crate) fn glob(pattern: &str, path: &str) -> bool {
     fn segments(pattern: &[&str], path: &[&str]) -> bool {
         match (pattern.first(), path.first()) {
             (None, None) => true,

@@ -56,7 +56,6 @@ mod tree;
 pub use color::Color;
 pub use drag::DragSource;
 pub use draw::Shape;
-pub use tree::ImageRef;
 pub use icons::NAMES as ICONS;
 pub use input::{Clipboard, Key, LocalClipboard};
 pub use list::{DropPlace, ItemFns, ListItems, TreeItems};
@@ -66,6 +65,7 @@ pub use pointer::Modifiers;
 pub use rich::{Marks, RichText, Span};
 pub use sheet::StyleSheet;
 pub use style::{Animated, Easing, Family, Overflow, Shadow, Style, TextAlign, TextStyle, Transition};
+pub use tree::ImageRef;
 pub use tree::{Kind, NodeId, Ui};
 
 /// The default theme every [`Ui`] starts with: `theme/Default.vss`.

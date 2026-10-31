@@ -13,6 +13,10 @@
 		<ImplicitUsings>disable</ImplicitUsings>
 		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
 	</PropertyGroup>
+	<!-- A build profile's symbols for #if, such as DEMO, which vox passes as VoxearDefines. -->
+	<PropertyGroup Condition="'$(VoxearDefines)' != ''">
+		<DefineConstants>$(DefineConstants);$(VoxearDefines)</DefineConstants>
+	</PropertyGroup>
 	<ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
 		<Reference Include="Voxear.Core">
 			<HintPath>$(MSBuildThisFileDirectory)Voxear.Core.dll</HintPath>

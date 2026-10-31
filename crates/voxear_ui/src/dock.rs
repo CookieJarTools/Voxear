@@ -411,11 +411,24 @@ impl Ui {
     /// closed, or else in the first area, and shows it. One already open is
     /// just shown.
     pub fn open_dock_panel(&mut self, dock: NodeId, id: &str) {
+        self.open_dock_panel_near(dock, id, None);
+    }
+
+    /// Opens a panel as [`open_dock_panel`](Self::open_dock_panel) does,
+    /// but beside `beside`, when that is open, rather than in the first area
+    /// when it has no neighbour to go back to: a wide panel can open by the
+    /// views instead of in a side column.
+    pub fn open_dock_panel_beside(&mut self, dock: NodeId, id: &str, beside: &str) {
+        self.open_dock_panel_near(dock, id, Some(beside));
+    }
+
+    fn open_dock_panel_near(&mut self, dock: NodeId, id: &str, beside: Option<&str>) {
         let Some(state) = self.dock_state(dock) else { return };
         if !state.layout.panels().contains(&id) && state.panels.iter().any(|p| p.id == id) {
             let neighbour = state.closed.iter().find(|(closed, _)| closed == id).and_then(|(_, n)| n.clone());
             state.closed.retain(|(closed, _)| closed != id);
             let target = neighbour.and_then(|n| area_id_with(&state.layout, &n));
+            let target = target.or_else(|| beside.and_then(|b| area_id_with(&state.layout, b)));
             let target = target.unwrap_or_else(|| match state.layout.first_area() {
                 DockNode::Area { id, .. } => *id,
                 DockNode::Split { .. } => 0,

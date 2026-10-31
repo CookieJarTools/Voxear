@@ -13,7 +13,7 @@ use winit::{
     event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{Key, NamedKey, PhysicalKey},
-    window::{CursorGrabMode, Window, WindowId},
+    window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
 use crate::{fly_camera::FlyCamera, game::Game, stats_overlay::StatsOverlay};
@@ -21,29 +21,44 @@ use crate::{fly_camera::FlyCamera, game::Game, stats_overlay::StatsOverlay};
 /// Called once the renderer exists, typically to load the start level.
 pub type Setup = Box<dyn FnOnce(&mut Game, &mut Renderer) -> Result<()>>;
 
-/// Runs the engine in a window until it is closed, or for `frames` frames.
-/// `stats` starts with the stats overlay shown.
-pub fn run_windowed(
-    game: Game,
-    title: &str,
-    frames: Option<u64>,
-    stats: bool,
-    settings: RendererSettings,
-    setup: Setup,
-) -> Result<()> {
+/// How a game's window opens, and what it offers beside the game.
+pub struct WindowOptions {
+    pub title: String,
+    /// Its size in logical pixels, when windowed.
+    pub size: (u32, u32),
+    /// Fill the screen, borderless, rather than open a window.
+    pub fullscreen: bool,
+    /// Stop after this many frames.
+    pub frames: Option<u64>,
+    /// Start with the stats overlay shown.
+    pub stats: bool,
+    /// The fly camera, the stats overlay on F1, the debug views and RenderDoc
+    /// captures: for working on a game, not for playing it.
+    pub tools: bool,
+}
+
+impl WindowOptions {
+    /// A window for working on a game, with every tool, as `vox run` opens.
+    pub fn tools(title: &str) -> Self {
+        Self { title: title.to_string(), size: (1280, 720), fullscreen: false, frames: None, stats: false, tools: true }
+    }
+}
+
+/// Runs the engine in a window until it is closed, or for `options.frames`
+/// frames.
+pub fn run_windowed(game: Game, options: WindowOptions, settings: RendererSettings, setup: Setup) -> Result<()> {
     let event_loop = event_loop(settings.renderdoc || RenderDoc::is_loaded()).context("creating the event loop")?;
     let mut app = App {
         game,
         settings,
         debug_view: DEBUG_VIEW_NONE,
         fly: FlyCamera::default(),
-        title: title.to_string(),
-        frames,
+        overlay: StatsOverlay::new(options.stats),
+        options,
         setup: Some(setup),
         renderer: None,
         window: None,
         last: None,
-        overlay: StatsOverlay::new(stats),
         error: None,
     };
     event_loop.run_app(&mut app)?;
@@ -72,8 +87,7 @@ struct App {
     settings: RendererSettings,
     debug_view: u32,
     fly: FlyCamera,
-    title: String,
-    frames: Option<u64>,
+    options: WindowOptions,
     setup: Option<Setup>,
     // Declared before the window so it is dropped first: the surface borrows the window.
     renderer: Option<Renderer>,
@@ -85,8 +99,11 @@ struct App {
 
 impl App {
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        let attributes =
-            Window::default_attributes().with_title(&self.title).with_inner_size(LogicalSize::new(1280.0, 720.0));
+        let (width, height) = self.options.size;
+        let attributes = Window::default_attributes()
+            .with_title(&self.options.title)
+            .with_inner_size(LogicalSize::new(width as f64, height as f64))
+            .with_fullscreen(self.options.fullscreen.then_some(Fullscreen::Borderless(None)));
         let window = Arc::new(event_loop.create_window(attributes)?);
         let size = window.inner_size();
         let handles =
@@ -97,8 +114,12 @@ impl App {
         }
         self.renderer = Some(renderer);
         self.window = Some(window);
-        tracing::info!("hold the right mouse button to fly: WASD to move, Q/E down/up, Shift faster, wheel for speed");
-        tracing::info!("F1 shows frame stats");
+        if self.options.tools {
+            tracing::info!(
+                "hold the right mouse button to fly: WASD to move, Q/E down/up, Shift faster, wheel for speed"
+            );
+            tracing::info!("F1 shows frame stats");
+        }
         Ok(())
     }
 
@@ -128,7 +149,7 @@ impl App {
             self.overlay.draw(renderer, (size.width, size.height), window.scale_factor() as f32)?;
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)?;
         }
-        if self.frames.is_some_and(|limit| self.game.engine.time().frame >= limit) {
+        if self.options.frames.is_some_and(|limit| self.game.engine.time().frame >= limit) {
             event_loop.exit();
         }
         Ok(())
@@ -138,7 +159,7 @@ impl App {
     /// captures a frame in RenderDoc; F2 to F5 toggle the LOD, shadow
     /// cascade, light complexity and normals views.
     fn key(&mut self, key: &Key) {
-        let Some(renderer) = self.renderer.as_mut() else { return };
+        let Some(renderer) = self.renderer.as_mut().filter(|_| self.options.tools) else { return };
         let view = match key {
             Key::Named(NamedKey::F1) => return self.overlay.toggle(),
             Key::Named(NamedKey::F12) => return renderer.capture_next_frame(),
@@ -171,7 +192,7 @@ impl ApplicationHandler for App {
         // The overlay sees input first; what it uses, the game does not. While
         // flying the cursor is captured and points at nothing, so the pointer is left out.
         let pointer = matches!(event, WindowEvent::CursorMoved { .. } | WindowEvent::MouseWheel { .. });
-        if !(pointer && self.fly.is_looking()) && self.overlay.handle(&event) {
+        if self.options.tools && !(pointer && self.fly.is_looking()) && self.overlay.handle(&event) {
             return;
         }
         match event {
@@ -183,17 +204,19 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state == ElementState::Pressed;
-                if let PhysicalKey::Code(code) = event.physical_key {
+                if let PhysicalKey::Code(code) = event.physical_key
+                    && self.options.tools
+                {
                     self.fly.key(code, pressed);
                 }
                 if pressed && !event.repeat {
                     self.key(&event.logical_key);
                 }
             }
-            WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
+            WindowEvent::MouseInput { state, button: MouseButton::Right, .. } if self.options.tools => {
                 self.set_flying(state == ElementState::Pressed);
             }
-            WindowEvent::MouseWheel { delta, .. } => {
+            WindowEvent::MouseWheel { delta, .. } if self.options.tools => {
                 let notches = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(position) => position.y as f32 / 40.0,
@@ -211,7 +234,9 @@ impl ApplicationHandler for App {
     }
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
-        if let DeviceEvent::MouseMotion { delta } = event {
+        if let DeviceEvent::MouseMotion { delta } = event
+            && self.options.tools
+        {
             self.fly.look(delta.0, delta.1);
         }
     }

@@ -1,6 +1,7 @@
 //! Runs Voxear: the frame loop over the ECS, the behaviour lifecycle, C#
 //! scripts, content, levels and the renderer, either in a window or headless.
 
+pub mod build_profile;
 mod content;
 pub mod content_build;
 mod engine;
@@ -9,6 +10,8 @@ mod game;
 mod levels;
 mod loading;
 pub mod new_project;
+pub mod player;
+pub mod player_build;
 pub mod prefab;
 pub mod previews;
 mod project;
@@ -34,4 +37,4 @@ pub use project::{
     is_install,
 };
 pub use stats_overlay::StatsOverlay;
-pub use windowed::{Setup, run_windowed};
+pub use windowed::{Setup, WindowOptions, run_windowed};

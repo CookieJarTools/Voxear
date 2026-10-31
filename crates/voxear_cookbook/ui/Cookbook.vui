@@ -1,0 +1,25 @@
+<vui>
+    <Style src="Cookbook.vss" />
+    <SplitView name="cookbook" class="cookbook" size="200" min="120">
+        <Panel class="cb-side">
+            <Panel class="cb-find">
+                <Icon icon="search" class="cb-find-icon" />
+                <TextField name="cb-search" class="cb-find-field" placeholder="Find a page" />
+            </Panel>
+            <TreeView name="cb-tree" class="cb-list" item-height="24" />
+            <ListView name="cb-results" class="cb-list" item-height="24" />
+        </Panel>
+        <Panel class="cb-main">
+            <Panel class="cb-toolbar">
+                <Button name="cb-back" class="icon-button"><Icon icon="chevron-left" /></Button>
+                <Button name="cb-forward" class="icon-button"><Icon icon="chevron-right" /></Button>
+                <Label name="cb-path" class="cb-path" />
+                <Button name="cb-edit" class="cb-button"><Icon icon="edit" /><Label>Edit</Label></Button>
+                <Button name="cb-cancel" class="cb-button">Cancel</Button>
+                <Button name="cb-save" class="cb-button primary">Save</Button>
+            </Panel>
+            <ScrollView name="cb-page" class="cb-page" />
+            <TextField name="cb-source" class="cb-source" multiline="true" />
+        </Panel>
+    </SplitView>
+</vui>

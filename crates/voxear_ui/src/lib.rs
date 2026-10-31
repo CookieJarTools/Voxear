@@ -20,6 +20,8 @@
 //!   text fields, toggles, sliders and foldouts, with keyboard focus, and
 //!   split views, tabs and dropdowns, and docking: areas of tabbed panels
 //!   rearranged by dragging tabs.
+//! - **Rich text** ([`RichText`]): labels with bold, italic, code,
+//!   struck-out and highlighted words, and links to click.
 //! - **Transitions** ease colours and opacity between styles.
 //! - **A default theme** in the editor's look, which sheets can override.
 //!
@@ -39,6 +41,7 @@ pub mod markup;
 mod panes;
 mod pointer;
 pub mod properties;
+mod rich;
 mod scroll;
 mod selector;
 mod sheet;
@@ -52,6 +55,7 @@ pub use input::{Clipboard, Key, LocalClipboard};
 pub use list::{ItemFns, ListItems, TreeItems};
 pub use markup::LoadFile;
 pub use pointer::Modifiers;
+pub use rich::{Marks, RichText, Span};
 pub use sheet::StyleSheet;
 pub use style::{Animated, Easing, Family, Overflow, Shadow, Style, TextAlign, TextStyle, Transition};
 pub use tree::{Kind, NodeId, Ui};

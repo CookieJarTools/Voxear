@@ -210,3 +210,40 @@ fn edit_mode_loads_behaviours_as_data_without_scripts() {
     assert_eq!(kept.0[0].type_name, "Game.Spawner");
     assert_eq!(kept.0[0].fields.get("count").and_then(|v| v.as_integer()), Some(3));
 }
+
+#[test]
+fn play_copies_the_level_as_edited_and_leaves_it_alone() {
+    let dir = project();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut edit = Engine::new();
+    edit.set_edit_mode(true);
+    let mut levels = Levels::default();
+    levels.load(&mut edit, &mut content, None, "Levels/Day.level").unwrap();
+    let find = |engine: &Engine, name: &str| {
+        engine.world.query_ref::<(voxear_ecs::Entity, &Name)>().into_iter().find(|(_, n)| n.0 == name).unwrap().0
+    };
+    let sun = find(&edit, "Sun");
+    edit.world.get_mut::<Transform>(sun).unwrap().position.y = 7.5;
+
+    let mut play = Engine::new();
+    let mut played = levels.play_copy(&edit, &mut play, &mut content, None).unwrap();
+    play.tick(1.0 / 60.0);
+    assert_eq!(names(&play), names(&edit), "every Obj comes across");
+    let copy = levels.counterpart(sun, &played).expect("the Sun has a counterpart");
+    assert_eq!(play.world.get::<Name>(copy).unwrap().0, "Sun");
+    assert_eq!(play.world.get::<Transform>(copy).unwrap().position.y, 7.5, "with the edit made to it");
+    assert_eq!(played.counterpart(copy, &levels), Some(sun), "and back again");
+
+    // The copy keeps the scenes' paths, so the persistent Manager is still known on the way round.
+    played.load(&mut play, &mut content, None, "Levels/Night.level").unwrap();
+    played.load(&mut play, &mut content, None, "Levels/Day.level").unwrap();
+    play.tick(1.0 / 60.0);
+    assert_eq!(play.world.query_ref::<&ScenePersistence>().count(), 1, "one Manager, not two");
+
+    if let Some(transform) = play.world.get_mut::<Transform>(copy) {
+        transform.position.y = -1.0;
+    }
+    play.shutdown();
+    assert_eq!(play.world.entity_count(), 0, "stopping clears the play world");
+    assert_eq!(edit.world.get::<Transform>(sun).unwrap().position.y, 7.5, "the edited level is as it was");
+}

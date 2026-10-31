@@ -11,6 +11,7 @@ mod loading;
 pub mod prefab;
 mod project;
 pub mod scene_file;
+pub mod scripts;
 mod stats_overlay;
 pub mod ui_input;
 mod windowed;

@@ -59,6 +59,12 @@ pub const NAMES: &[&str] = &[
     "eye",
     "transform",
     "maximize",
+    "chevron-left",
+    "book",
+    "info",
+    "alert",
+    "copy",
+    "edit",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -138,6 +144,12 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         )],
         "transform" => &[("M5.5 4v14.5H20M5.5 18.5l10-10M15.5 8.5h-4M15.5 8.5v4", STROKE)],
         "maximize" => &[("M4.5 9.5v-5h5M14.5 4.5h5v5M19.5 14.5v5h-5M9.5 19.5h-5v-5", STROKE)],
+        "chevron-left" => &[("M14.5 6l-6 6 6 6", STROKE)],
+        "book" => &[("M5 5.5a2 2 0 0 1 2-2h11.5v14H7a2 2 0 0 0-2 2ZM5 19.5a2 2 0 0 0 2 2h11.5v-4M9 7.5h6", STROKE)],
+        "info" => &[("M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17ZM12 11v5.5M12 7.75v.25", STROKE)],
+        "alert" => &[("M12 4l9 15.5H3ZM12 10v4.5M12 17.25v.25", STROKE)],
+        "copy" => &[("M9 9h10.5v10.5H9ZM15 9V4.5H4.5V15H9", STROKE)],
+        "edit" => &[("M4.5 19.5l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3l-10 10ZM13.5 7l3 3", STROKE)],
         _ => return None,
     })
 }

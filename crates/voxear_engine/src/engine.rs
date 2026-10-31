@@ -87,6 +87,24 @@ impl Engine {
         self.scripts.as_mut()
     }
 
+    /// Ends the simulation as leaving play mode does: every Obj is
+    /// destroyed, so its behaviours get OnDisable and OnDestroy and the
+    /// scripts let go of them. Returns the scripts, for the next run, since
+    /// .NET starts only once per process.
+    pub fn shutdown(&mut self) -> Option<ScriptRuntime> {
+        let all: Vec<Entity> = self.world.query_ref::<Entity>().into_iter().collect();
+        self.destroy_objs(&all);
+        self.with_host(|lifecycle, host| lifecycle.end_of_frame(host));
+        for entity in self.world.query_ref::<Entity>().with::<Destroying>().into_iter().collect::<Vec<_>>() {
+            self.world.despawn(entity);
+        }
+        let mut scripts = self.scripts.take()?;
+        // Requests made on the way out belong to no run.
+        scripts.take_obj_destroys();
+        scripts.take_level_requests();
+        Some(scripts)
+    }
+
     pub fn time(&self) -> &Time {
         &self.time
     }

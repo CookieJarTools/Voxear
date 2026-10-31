@@ -8,7 +8,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::EditBehaviours;
 use voxear_render::{Camera, Light, LightKind, MeshRenderer};
-use voxear_scene::{Name, Transform};
+use voxear_scene::{BehaviourSpec, Behaviours, Name, Transform};
 use voxear_ui::{NodeId, Style, Ui};
 
 /// The fields showing an Obj's name and Transform, by what they edit.
@@ -28,6 +28,11 @@ pub struct Inspector {
 impl Inspector {
     pub fn new(root: NodeId) -> Self {
         Self { root, shown: None, fields: None }
+    }
+
+    /// The Obj showing, if any.
+    pub fn shown(&self) -> Option<Entity> {
+        self.shown
     }
 
     /// Shows `entity`, or a hint when nothing is selected.
@@ -74,7 +79,7 @@ impl Inspector {
             pair(ui, rows, "Field of view", &format!("{}°", number(camera.fov_y_degrees)));
             pair(ui, rows, "Near", &number(camera.near));
         }
-        for behaviour in world.get::<EditBehaviours>(entity).map(|b| b.0.clone()).unwrap_or_default() {
+        for behaviour in behaviours(world, entity) {
             let title = behaviour.type_name.rsplit('.').next().unwrap_or(&behaviour.type_name).to_string();
             let rows = section(ui, self.root, &title, "code", true);
             if behaviour.fields.is_empty() {
@@ -119,6 +124,16 @@ impl Inspector {
         write(ui, &fields.position, edited.position);
         write(ui, &fields.rotation, if rotation != euler { rotation } else { euler });
         write(ui, &fields.scale, edited.scale);
+    }
+}
+
+/// An Obj's behaviours: running ones while playing, or in edit mode the
+/// same kept as data. Fields show as the scene set them.
+fn behaviours(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
+    match (world.get::<Behaviours>(entity), world.get::<EditBehaviours>(entity)) {
+        (Some(running), _) => running.0.iter().map(|b| b.spec.clone()).collect(),
+        (None, Some(kept)) => kept.0.clone(),
+        (None, None) => Vec::new(),
     }
 }
 

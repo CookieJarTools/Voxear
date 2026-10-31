@@ -10,13 +10,20 @@
 //!   Unity's two-column Project window
 //! - the **Scene** view, rendered into its panel through the editor's own
 //!   camera, flown with the right mouse button, with a tool strip, a stats
-//!   chip and an axis gizmo floating over it
+//!   chip and an axis gizmo floating over it, and the **Game** view, through
+//!   the level's camera
+//! - **play mode**: Play runs a copy of the edited level with its scripts,
+//!   Pause and Step hold it and move it on, and Stop brings the edited level
+//!   back as it was
 //! - the **Inspector**, editing the selected Obj's name and Transform and
 //!   showing its components and behaviours
 //! - the **Console**, showing everything logged
-//! - a status bar: the level, frame rate, memory and git branch
+//! - the **Cookbook**: the project's own documentation, Markdown pages from its
+//!   `Docs` folder (see `voxear_cookbook`)
+//! - a status bar: what the editor is doing, frame rate, memory and git
+//!   branch
 //!
-//! Play mode, saving, gizmos and undo come next.
+//! Saving, gizmos and undo come next.
 
 mod console;
 mod editor;

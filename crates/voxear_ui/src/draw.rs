@@ -32,7 +32,7 @@ pub(crate) fn measure(
     element: Option<&mut Element>,
     style: &taffy::Style,
     fonts: &mut FontContext,
-    layouts: &mut LayoutContext<()>,
+    layouts: &mut LayoutContext<u16>,
     scale: f32,
 ) -> LayoutOutput {
     let Some(element) = element else {
@@ -82,7 +82,7 @@ pub(crate) fn measure(
                 AvailableSpace::MaxContent => None,
             });
             let layout = text.shaped(fonts, layouts, scale);
-            layout.break_all_lines(max.map(|w| w * scale));
+            layout.break_all_lines(max.filter(|_| text_style.wrap).map(|w| w * scale));
             Size {
                 width: known.width.unwrap_or(layout.width() / scale),
                 height: known.height.unwrap_or(layout.height() / scale),
@@ -197,7 +197,8 @@ impl Draw<'_> {
             {
                 // Broken again at the width it ended up, which the last
                 // measure may not have been.
-                shaped.break_all_lines(Some((inner * self.scale).ceil()));
+                let width = element.text_style.wrap.then_some((inner * self.scale).ceil());
+                shaped.break_all_lines(width);
                 let alignment = match element.text_style.align {
                     TextAlign::Start => Alignment::Start,
                     TextAlign::Center => Alignment::Center,
@@ -208,7 +209,8 @@ impl Draw<'_> {
                 // with a set height, as Unity's middle alignment does.
                 let spare = (inner_height * self.scale - shaped.height()).max(0.0);
                 let origin = [origin[0], origin[1] + (spare / 2.0).round()];
-                glyph_quads(shaped, origin, color, clip, self.atlas, self.quads);
+                let paint = Paint { color, spans: &text.spans, style: &element.text_style, opacity, scale: self.scale };
+                glyph_quads(shaped, origin, &paint, clip, self.atlas, self.quads);
             }
         }
         // What it clips cannot show when it is itself out of sight.
@@ -394,17 +396,49 @@ fn shape_quad(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32;
     });
 }
 
-/// Every glyph of a shaped text, on whole pixels: hinted glyphs are drawn
-/// where the hinting expected them.
-fn glyph_quads(
-    layout: &Layout<()>,
-    origin: [f32; 2],
+/// How a text's glyphs are coloured: all one colour, or for rich text, as
+/// each span asks, with the text style's colours for links, code and marks.
+struct Paint<'a> {
     color: [f32; 4],
+    spans: &'a [crate::Span],
+    style: &'a crate::TextStyle,
+    opacity: f32,
+    scale: f32,
+}
+
+impl Paint<'_> {
+    /// One colour for everything, as a text field is drawn.
+    fn plain(color: [f32; 4]) -> Paint<'static> {
+        static STYLE: std::sync::LazyLock<crate::TextStyle> = std::sync::LazyLock::new(crate::TextStyle::default);
+        Paint { color, spans: &[], style: &STYLE, opacity: 1.0, scale: 1.0 }
+    }
+
+    fn fade(&self, color: Color) -> [f32; 4] {
+        color.linear_premultiplied().map(|c| c * self.opacity)
+    }
+
+    /// A span's text colour.
+    fn color(&self, span: Option<&crate::Span>) -> [f32; 4] {
+        match span {
+            Some(span) if span.marks.broken => self.color.map(|c| c * 0.6),
+            Some(span) if span.link.is_some() => self.fade(self.style.link_color),
+            _ => self.color,
+        }
+    }
+}
+
+/// Every glyph of a shaped text, on whole pixels: hinted glyphs are drawn
+/// where the hinting expected them. Rich text's grounds go under its
+/// glyphs, and its lines through or under them.
+fn glyph_quads(
+    layout: &Layout<u16>,
+    origin: [f32; 2],
+    paint: &Paint,
     clip: [f32; 4],
     atlas: &mut GlyphAtlas,
     quads: &mut Vec<Quad>,
 ) {
-    if color[3] <= 0.0 {
+    if paint.color[3] <= 0.0 {
         return;
     }
     let size = atlas.size() as f32;
@@ -412,11 +446,39 @@ fn glyph_quads(
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(glyph_run) = item else { continue };
             let run = glyph_run.run();
+            let brush = glyph_run.style().brush as usize;
+            let span = brush.checked_sub(1).and_then(|index| paint.spans.get(index));
+            let color = paint.color(span);
+            let metrics = *run.font_metrics();
+            let left = origin[0] + glyph_run.offset();
+            let baseline = origin[1] + glyph_run.baseline();
+            let width = glyph_run.advance();
+            if let Some(span) = span
+                && (span.marks.code || span.marks.mark)
+            {
+                let (ground, pad) = if span.marks.code {
+                    (paint.style.code_background, 2.0 * paint.scale)
+                } else {
+                    (paint.style.mark_color, 0.0)
+                };
+                let top = (baseline - metrics.ascent).round();
+                let rect = [
+                    (left - pad).round(),
+                    top,
+                    (width + pad * 2.0).round(),
+                    (baseline + metrics.descent).round() - top,
+                ];
+                let look = Look { background: ground.linear_premultiplied(), radius: 3.0, ..Look::default() };
+                shape_quad(&look, rect, paint.scale, paint.opacity, clip, quads);
+            }
             let font = run.font();
             let font = (font.data.data(), font.index, font.data.id());
             let coords: Vec<i16> = run.normalized_coords().iter().map(|c| c.to_bits()).collect();
+            let synthesis = run.synthesis();
+            let synthesis = crate::atlas::Synthesis { skew: synthesis.skew(), embolden: synthesis.embolden() };
             for glyph in glyph_run.positioned_glyphs() {
-                let Some(found) = atlas.glyph(font, glyph.id as u16, run.font_size(), &coords) else { continue };
+                let found = atlas.glyph(font, glyph.id as u16, run.font_size(), &coords, synthesis);
+                let Some(found) = found else { continue };
                 let pen = [(origin[0] + glyph.x).round(), (origin[1] + glyph.y).round()];
                 let (x, y) = (found.x as f32, found.y as f32);
                 let (w, h) = (found.width as f32, found.height as f32);
@@ -428,6 +490,17 @@ fn glyph_quads(
                     kind: Quad::GLYPH,
                     ..Quad::default()
                 });
+            }
+            let style = glyph_run.style();
+            let lines = [
+                style.strikethrough.as_ref().map(|d| (d, metrics.strikethrough_offset, metrics.strikethrough_size)),
+                style.underline.as_ref().map(|d| (d, metrics.underline_offset, metrics.underline_size)),
+            ];
+            for (decoration, offset, thickness) in lines.into_iter().flatten() {
+                let offset = decoration.offset.unwrap_or(offset);
+                let thickness = decoration.size.unwrap_or(thickness).round().max(1.0);
+                let rect = [left.round(), (baseline - offset).round(), width.round(), thickness];
+                quads.push(Quad { rect, color, clip, kind: Quad::SHAPE, ..Quad::default() });
             }
         }
     }
@@ -465,10 +538,10 @@ fn draw_field(element: &mut Element, origin: [f32; 2], field: Field, atlas: &mut
     let empty = edit.editor.raw_text().is_empty();
     if empty && !edit.placeholder.content.is_empty() {
         if let Some((_, layout)) = &edit.placeholder.shaped {
-            glyph_quads(layout, at, fade(edit.placeholder.style.color), field.clip, atlas, quads);
+            glyph_quads(layout, at, &Paint::plain(fade(edit.placeholder.style.color)), field.clip, atlas, quads);
         }
     } else if let Some(layout) = edit.editor.try_layout() {
-        glyph_quads(layout, at, fade(element.text_style.color), field.clip, atlas, quads);
+        glyph_quads(layout, at, &Paint::plain(fade(element.text_style.color)), field.clip, atlas, quads);
     }
     if field.caret
         && let Some(bounds) = edit.editor.cursor_geometry(1.0)

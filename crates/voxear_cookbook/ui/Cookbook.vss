@@ -1,0 +1,337 @@
+/* The Cookbook's look: the pages down the side, the page to the right,
+   written in the editor's tokens so it follows the theme. */
+
+.cookbook {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+}
+
+/* A hairline between the tree and the page, also when docked, where the
+   dock's own gaps would otherwise make it wide. */
+.cookbook > .split-divider, DockSpace .cookbook > .split-divider {
+    width: 1px;
+    background-color: var(--vx-line);
+}
+
+.cb-side {
+    flex-grow: 1;
+    padding-top: 6px;
+    gap: 4px;
+}
+
+.cb-find {
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+    margin: 0px 6px;
+    padding: 0px 7px;
+    gap: 6px;
+    flex-shrink: 0;
+    border-radius: 5px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+}
+
+.cb-find-icon {
+    width: 13px;
+    height: 13px;
+    color: var(--vx-muted);
+}
+
+.cb-find-field {
+    flex-grow: 1;
+    height: 20px;
+    padding: 0px;
+    border-width: 0px;
+    background-color: transparent;
+}
+
+.cb-list {
+    flex-grow: 1;
+    flex-basis: 0px;
+}
+
+.cb-row-icon {
+    width: 13px;
+    height: 13px;
+    color: var(--vx-muted);
+    flex-shrink: 0;
+}
+
+.list-row:selected .cb-row-icon {
+    color: var(--vx-accent);
+}
+
+.cb-row-title {
+    flex-grow: 1;
+    flex-basis: 0px;
+}
+
+.cb-row-folder {
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.cb-main {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.cb-toolbar {
+    flex-direction: row;
+    align-items: center;
+    height: 32px;
+    padding: 0px 6px;
+    gap: 2px;
+    flex-shrink: 0;
+    box-shadow: 0px 1px 0px var(--vx-line);
+}
+
+.cb-path {
+    flex-grow: 1;
+    flex-basis: 0px;
+    margin-left: 6px;
+    color: var(--vx-muted);
+}
+
+.cb-button {
+    height: 24px;
+    padding: 0px 9px;
+}
+
+.cb-button > Icon {
+    width: 12px;
+    height: 12px;
+}
+
+/* The page itself: a reading column with room around it. */
+
+.cb-page {
+    flex-grow: 1;
+    flex-basis: 0px;
+    padding: 16px 22px 28px 22px;
+    gap: 8px;
+}
+
+.cb-title {
+    font-size: 20px;
+    line-height: 26px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.cb-meta {
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.cb-tag {
+    height: 18px;
+    padding: 0px 7px;
+    border-radius: 9px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.cb-updated {
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.cb-section {
+    margin-top: 10px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.cb-child {
+    gap: 7px;
+    height: 22px;
+}
+
+.cb-source {
+    flex-grow: 1;
+    flex-basis: 0px;
+    margin: 8px;
+    padding: 8px 10px;
+    justify-content: flex-start;
+    font-family: mono;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+/* Markdown. */
+
+.md-p {
+    color: var(--vx-text-2);
+    line-height: 19px;
+}
+
+.md-h {
+    color: var(--vx-text);
+    font-weight: 600;
+}
+
+.md-h1 {
+    font-size: 18px;
+    line-height: 24px;
+    margin-top: 10px;
+}
+
+.md-h2 {
+    font-size: 15px;
+    line-height: 20px;
+    margin-top: 10px;
+}
+
+.md-h3, .md-h4, .md-h5, .md-h6 {
+    font-size: 13px;
+    margin-top: 6px;
+}
+
+.md-list {
+    gap: 3px;
+}
+
+.md-item {
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.md-bullet, .md-number {
+    width: 14px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+    text-align: right;
+}
+
+.md-task {
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+.md-item-body {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    gap: 3px;
+}
+
+.md-done .md-p {
+    color: var(--vx-muted);
+}
+
+.md-quote {
+    padding: 8px 12px;
+    gap: 6px;
+    border-radius: 7px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+}
+
+.md-callout-title {
+    gap: 6px;
+    font-weight: 600;
+}
+
+.md-callout-title > Icon {
+    width: 13px;
+    height: 13px;
+}
+
+.md-note .md-callout-title {
+    color: #5e8bf0;
+}
+
+.md-tip .md-callout-title {
+    color: #4cb782;
+}
+
+.md-important .md-callout-title {
+    color: var(--vx-accent);
+}
+
+.md-warning .md-callout-title {
+    color: #e2b340;
+}
+
+.md-caution .md-callout-title {
+    color: #eb5757;
+}
+
+.md-code {
+    border-radius: 7px;
+    background-color: var(--vx-bg);
+    border: 1px solid var(--vx-line);
+    overflow: hidden;
+}
+
+.md-code-bar {
+    height: 26px;
+    padding: 0px 4px 0px 10px;
+    box-shadow: 0px 1px 0px var(--vx-line);
+}
+
+.md-code-language {
+    flex-grow: 1;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.md-code-text {
+    padding: 8px 10px;
+    font-family: mono;
+    font-size: 11px;
+    line-height: 17px;
+    color: var(--vx-text-2);
+}
+
+.md-table {
+    display: grid;
+    border-radius: 7px;
+    border: 1px solid var(--vx-line);
+    overflow: hidden;
+}
+
+.md-th, .md-td {
+    padding: 5px 9px;
+    box-shadow: 0px 1px 0px var(--vx-line);
+}
+
+.md-th {
+    font-weight: 600;
+    color: var(--vx-text);
+    background-color: var(--vx-field);
+}
+
+.md-center {
+    text-align: center;
+}
+
+.md-right {
+    text-align: right;
+}
+
+.md-rule {
+    height: 1px;
+    margin: 6px 0px;
+    background-color: var(--vx-line);
+}
+
+.md-image {
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 7px;
+    border: 1px dashed var(--vx-line-2);
+    color: var(--vx-muted);
+}
+
+.md-image > Icon {
+    width: 16px;
+    height: 16px;
+}

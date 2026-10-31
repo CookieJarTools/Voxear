@@ -102,9 +102,12 @@
                         </Panel>
                     </Panel>
                 </DockPanel>
-                <DockPanel id="game" title="Game" icon="play" class="dock-content">
-                    <Label class="placeholder">The game view shows the game's own camera while playing.</Label>
+                <DockPanel id="game" title="Game" icon="play">
+                    <Panel name="game-viewport" class="viewport">
+                        <Label name="game-empty" class="placeholder">No camera renders this level.</Label>
+                    </Panel>
                 </DockPanel>
+                <DockPanel id="cookbook" title="Cookbook" icon="book" name="cookbook" />
                 <DockPanel id="inspector" title="Inspector">
                     <Panel class="panel-actions">
                         <Button class="icon-button"><Icon icon="more" /></Button>

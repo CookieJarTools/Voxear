@@ -2748,6 +2748,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxear_cookbook"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "png",
+ "tempfile",
+ "tracing",
+ "voxear_ecs",
+ "voxear_render",
+ "voxear_scene",
+ "voxear_ui",
+]
+
+[[package]]
 name = "voxear_core"
 version = "0.1.0"
 dependencies = [
@@ -2770,12 +2784,14 @@ dependencies = [
  "raw-window-handle",
  "tracing",
  "voxear_assets",
+ "voxear_cookbook",
  "voxear_core",
  "voxear_ecs",
  "voxear_engine",
  "voxear_render",
  "voxear_rhi",
  "voxear_scene",
+ "voxear_scripting",
  "voxear_ui",
  "winit",
 ]

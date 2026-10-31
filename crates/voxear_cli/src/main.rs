@@ -5,7 +5,7 @@ use std::{
     process::Command,
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use voxear_assets::{AssetDb, AssetKind};
 use voxear_core::math::EulerRot;
@@ -13,15 +13,14 @@ use voxear_engine::{
     Content, Engine, Game, PROJECT_FILE, Project, StatsOverlay,
     content_build::{self, CodeRoot},
     core_assembly, run_windowed,
+    scripts::{self, CONFIGURATION},
 };
 use voxear_render::{
     DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess,
     Renderer, RendererSettings, ViewOptions,
 };
 use voxear_scene::{Name, Transform};
-use voxear_scripting::{DotnetInstall, ScriptRuntime, find_dotnet};
-
-const CONFIGURATION: &str = "Debug";
+use voxear_scripting::find_dotnet;
 
 #[derive(Parser)]
 #[command(name = "vox", version, about = "The Voxear engine command line")]
@@ -398,15 +397,12 @@ fn size(bytes: u64) -> String {
 
 fn start_engine(project: &Project, no_build: bool) -> Result<Engine> {
     let mut engine = Engine::new();
-    let Some(csproj) = project.scripts_project() else { return Ok(engine) };
-    let dotnet = find_dotnet().context(".NET is not installed; run `vox doctor` for how to get it")?;
     if !no_build {
-        build_scripts(&dotnet, &csproj)?;
+        scripts::build(project)?;
     }
-    let mut scripts = ScriptRuntime::start(&dotnet, &core_assembly(CONFIGURATION))?;
-    let assembly = project.scripts_assembly(CONFIGURATION).context("scripts project has no file name")?;
-    scripts.load_game_assembly(&assembly)?;
-    engine.set_scripts(scripts);
+    if let Some(runtime) = scripts::start(project)? {
+        engine.set_scripts(runtime);
+    }
     Ok(engine)
 }
 
@@ -417,19 +413,6 @@ fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     encoder.write_header()?.write_image_data(rgba)?;
-    Ok(())
-}
-
-fn build_scripts(dotnet: &DotnetInstall, csproj: &Path) -> Result<()> {
-    let exe = dotnet.root.join(if cfg!(windows) { "dotnet.exe" } else { "dotnet" });
-    tracing::info!("building {}", csproj.display());
-    let status = Command::new(&exe)
-        .args(["build", "-c", CONFIGURATION, "--nologo", "-v", "quiet", "-clp:ErrorsOnly;NoSummary"])
-        .arg(csproj)
-        .env("DOTNET_NOLOGO", "1")
-        .status()
-        .with_context(|| format!("running {}", exe.display()))?;
-    ensure!(status.success(), "the C# scripts failed to build");
     Ok(())
 }
 

@@ -64,7 +64,7 @@ pub(crate) enum Control {
 
 /// A text field's editor and how its text sits in the field.
 pub(crate) struct Editing {
-    pub editor: PlainEditor<()>,
+    pub editor: PlainEditor<u16>,
     pub placeholder: Text,
     pub multiline: bool,
     /// How far the text is scrolled left to keep the caret in view, and how
@@ -355,7 +355,7 @@ impl Ui {
 
     /// Runs editor commands on a text field, then notes a change, keeps the
     /// caret in view and restarts its blink.
-    pub(crate) fn edit(&mut self, field: NodeId, command: impl FnOnce(&mut PlainEditorDriver<'_, ()>)) {
+    pub(crate) fn edit(&mut self, field: NodeId, command: impl FnOnce(&mut PlainEditorDriver<'_, u16>)) {
         let scale = self.viewport.2.max(0.25);
         let [_, _, width, _] = self.content_box(field);
         let Ui { tree, fonts, layouts, .. } = self;

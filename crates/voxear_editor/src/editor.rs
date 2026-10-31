@@ -1,5 +1,8 @@
-//! The editor itself: the open project in edit mode, its panels, and the
-//! Scene view, which looks through the editor's own camera.
+//! The editor itself: the open project in edit mode, its panels, the Scene
+//! view, which looks through the editor's own camera, and the Game view,
+//! which looks through the level's. Play mode is in [`play`].
+
+mod play;
 
 use std::{path::Path, time::Instant};
 
@@ -24,7 +27,8 @@ const SHEET: &str = include_str!("../ui/Editor.vss");
 /// Hierarchy on the left, the Scene in the middle over the Project and
 /// Console, and the Inspector on the right. The Project sits under the Scene,
 /// as in Unity, because its folders and files need the width.
-const LAYOUT: &str = "row(240, [hierarchy], row(-300, column(66%, [scene, game], [project, console]), [inspector]))";
+const LAYOUT: &str =
+    "row(240, [hierarchy], row(-300, column(66%, [scene, game, cookbook], [project, console]), [inspector]))";
 /// The window's background, which the 3D view's surroundings are cleared to.
 const BACKGROUND: u32 = 0x0c0e10;
 /// How often the status bar's numbers change.
@@ -36,15 +40,21 @@ const GIZMO_END: f32 = 2.5;
 
 /// Elements the editor reads and writes, found by name in Editor.vui.
 struct Nodes {
+    dock: NodeId,
     viewport: NodeId,
+    game_viewport: NodeId,
+    game_empty: NodeId,
     frame: NodeId,
     command: NodeId,
     gizmo: NodeId,
     stats: NodeId,
+    status_left: NodeId,
     status_time: NodeId,
     status_fps: NodeId,
     status_memory: NodeId,
-    buttons: [(NodeId, &'static str); 4],
+    /// Play, Pause and Step.
+    play_buttons: [NodeId; 3],
+    build: NodeId,
 }
 
 pub struct Editor {
@@ -56,9 +66,15 @@ pub struct Editor {
     project: ProjectView,
     inspector: Inspector,
     console: Console,
+    /// The project's own documentation, from its `Docs` folder.
+    cookbook: voxear_cookbook::Cookbook,
     /// The Scene view's own camera, which the Hierarchy leaves out.
     camera: Entity,
-    /// The dock area showing the viewport, made see-through, and where the
+    /// Play mode, and the scripts it keeps between runs.
+    play: play::Play,
+    /// The camera the renderer was last told to look through.
+    view_camera: Option<Entity>,
+    /// The dock area showing the 3D view, made see-through, and where the
     /// frame over its edge was last put.
     viewport_area: Option<NodeId>,
     framed: Option<[f32; 4]>,
@@ -96,20 +112,20 @@ impl Editor {
             ui.load_markup(ui_root, "Editor.vui", MARKUP, &mut load).expect("the editor's markup is built in");
         let find = |ui: &Ui, name: &str| ui.find(document, name).unwrap_or_else(|| panic!("Editor.vui has no {name}"));
         let nodes = Nodes {
+            dock: find(&ui, "dock"),
             viewport: find(&ui, "viewport"),
+            game_viewport: find(&ui, "game-viewport"),
+            game_empty: find(&ui, "game-empty"),
             frame: find(&ui, "viewport-frame"),
             command: find(&ui, "command"),
             gizmo: find(&ui, "gizmo"),
             stats: find(&ui, "scene-stats"),
+            status_left: find(&ui, "status-left"),
             status_time: find(&ui, "status-time"),
             status_fps: find(&ui, "status-fps"),
             status_memory: find(&ui, "status-memory"),
-            buttons: [
-                (find(&ui, "play"), "Play"),
-                (find(&ui, "pause"), "Pause"),
-                (find(&ui, "step"), "Step"),
-                (find(&ui, "build"), "Build"),
-            ],
+            play_buttons: [find(&ui, "play"), find(&ui, "pause"), find(&ui, "step")],
+            build: find(&ui, "build"),
         };
         let rail_scene = find(&ui, "rail-scene");
         ui.set_checked(rail_scene, true);
@@ -120,8 +136,7 @@ impl Editor {
         ui.set_text(branch_name, branch.as_deref().unwrap_or_default());
         let branch_shown = find(&ui, "status-branch");
         ui.set_visible(branch_shown, branch.is_some());
-        let dock = find(&ui, "dock");
-        ui.set_dock_layout(dock, LAYOUT).expect("the default layout is valid");
+        ui.set_dock_layout(nodes.dock, LAYOUT).expect("the default layout is valid");
         let (tree, filter) = (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"));
         let hierarchy = Hierarchy::new(&mut ui, tree, filter);
         let project = ProjectView::new(&mut ui, document, game.project.name(), &root, game.content.db());
@@ -129,6 +144,8 @@ impl Editor {
         let console = Console::new(&mut ui, console_list, log);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
         inspector.show(&mut ui, &game.engine.world, None);
+        let cookbook_panel = find(&ui, "cookbook");
+        let cookbook = voxear_cookbook::Cookbook::new(&mut ui, cookbook_panel, &root, game.project.name());
         ui.set_text(nodes.status_time, &format!("Opened in {:.2} s", started.elapsed().as_secs_f32()));
 
         tracing::info!("opened {} in edit mode", game.project.name());
@@ -141,7 +158,10 @@ impl Editor {
             project,
             inspector,
             console,
+            cookbook,
             camera,
+            play: play::Play::new(),
+            view_camera: Some(camera),
             viewport_area: None,
             framed: None,
             gizmo_shows: None,
@@ -169,15 +189,19 @@ impl Editor {
         meshes.first().copied()
     }
 
-    /// One frame: input already given to the UI, then panels, the Scene
-    /// view's rectangle, and the render.
+    /// One frame: input already given to the UI, then play mode, the game
+    /// (held still while paused), panels, the 3D view's rectangle and
+    /// camera, and the render.
     pub fn update(&mut self, renderer: &mut Renderer, size: (u32, u32), scale: f32, delta: f32) -> Result<()> {
         self.scale = scale;
         self.ui.advance(delta);
+        self.update_play(renderer);
         if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.camera) {
             self.fly.update_transform(transform, delta);
         }
-        self.game.tick(delta, Some(renderer));
+        if let Some(delta) = self.game_delta(delta) {
+            self.game.tick(delta, Some(renderer));
+        }
 
         self.hierarchy.update(&mut self.ui, &self.game.engine.world);
         if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
@@ -186,17 +210,29 @@ impl Editor {
         self.inspector.update(&mut self.ui, &mut self.game.engine.world);
         self.project.update(&mut self.ui);
         self.console.update(&mut self.ui);
-        for (button, name) in self.nodes.buttons {
-            if self.ui.clicked(button) {
-                tracing::info!("{name} comes with play mode, the next step of the editor");
-            }
+        self.cookbook.update(&mut self.ui);
+        if let Some(path) = self.cookbook.take_file_request() {
+            // A link to a file in the project shows it in the Project panel.
+            self.ui.show_dock_panel(self.nodes.dock, "project");
+            self.project.reveal(&mut self.ui, &path);
         }
-        self.mark_viewport_area();
+        if self.ui.clicked(self.nodes.build) {
+            tracing::info!("Build comes with build profiles, later in M3");
+        }
+        let view = self.active_view();
+        let game_camera = self.game_camera();
+        self.ui.set_visible(self.nodes.game_empty, game_camera.is_none());
+        self.mark_viewport_area(view.map(|(viewport, _)| viewport));
         self.update_gizmo();
         self.update_status(renderer, delta);
 
+        let camera = view.map(|(_, camera)| camera);
+        if camera.is_some() && camera != self.view_camera {
+            renderer.set_view_options(ViewOptions { camera, ..ViewOptions::default() });
+            self.view_camera = camera;
+        }
         let frame = self.ui.frame(size.0, size.1, scale);
-        renderer.set_view_rect(Some(self.viewport_rect(size)));
+        renderer.set_view_rect(Some(self.viewport_rect(view.map(|(viewport, _)| viewport), size)));
         renderer.set_ui(&frame)?;
         renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)
     }
@@ -205,10 +241,32 @@ impl Editor {
     /// mouse button flies the camera.
     pub fn over_viewport(&self) -> bool {
         let Some((x, y)) = self.pointer else { return false };
-        let [vx, vy, vw, vh] = self.viewport_rect((u32::MAX, u32::MAX));
-        (vx as f32..(vx + vw) as f32).contains(&x)
-            && (vy as f32..(vy + vh) as f32).contains(&y)
-            && self.viewport_shown()
+        let Some((viewport, _)) = self.active_view().filter(|(viewport, _)| *viewport == self.nodes.viewport) else {
+            return false;
+        };
+        let [vx, vy, vw, vh] = self.viewport_rect(Some(viewport), (u32::MAX, u32::MAX));
+        (vx as f32..(vx + vw) as f32).contains(&x) && (vy as f32..(vy + vh) as f32).contains(&y)
+    }
+
+    /// Where the 3D view goes this frame, and through which camera: the Game
+    /// view when it is showing and the level has a camera (first, while
+    /// playing), otherwise the Scene view, through the editor's camera.
+    fn active_view(&self) -> Option<(NodeId, Entity)> {
+        let game = self.game_camera().filter(|_| self.shown(self.nodes.game_viewport));
+        let scene = self.shown(self.nodes.viewport).then_some(self.camera);
+        match (game, scene) {
+            (Some(game), Some(_)) if self.is_playing() => Some((self.nodes.game_viewport, game)),
+            (_, Some(scene)) => Some((self.nodes.viewport, scene)),
+            (Some(game), None) => Some((self.nodes.game_viewport, game)),
+            (None, None) => None,
+        }
+    }
+
+    /// The camera the game looks through: the level's first.
+    fn game_camera(&self) -> Option<Entity> {
+        let world = &self.game.engine.world;
+        let cameras = world.query_ref::<(Entity, &Camera)>().without::<EditorOnly>().into_iter();
+        cameras.map(|(entity, _)| entity).min_by_key(|entity| entity.index())
     }
 
     /// Gives the UI a window event; returns whether it used it. Ctrl+K goes
@@ -234,21 +292,20 @@ impl Editor {
         voxear_engine::ui_input::handle(&mut self.ui, event)
     }
 
-    /// The viewport's rectangle in physical pixels, within `size`.
-    fn viewport_rect(&self, size: (u32, u32)) -> [u32; 4] {
-        if !self.viewport_shown() {
-            return [0, 0, 1, 1];
-        }
-        let [x, y, w, h] = self.ui.rect(self.nodes.viewport);
+    /// A viewport's rectangle in physical pixels, within `size`; a pixel
+    /// in the corner when no view shows.
+    fn viewport_rect(&self, viewport: Option<NodeId>, size: (u32, u32)) -> [u32; 4] {
+        let Some(viewport) = viewport else { return [0, 0, 1, 1] };
+        let [x, y, w, h] = self.ui.rect(viewport);
         let s = self.scale;
         let (x, y) = ((x * s).round().max(0.0) as u32, (y * s).round().max(0.0) as u32);
         let (w, h) = ((w * s).round().max(1.0) as u32, (h * s).round().max(1.0) as u32);
         [x.min(size.0.saturating_sub(1)), y.min(size.1.saturating_sub(1)), w, h]
     }
 
-    /// Whether the Scene panel is the tab showing in its area.
-    fn viewport_shown(&self) -> bool {
-        let mut at = Some(self.nodes.viewport);
+    /// Whether a view's panel is the tab showing in its area.
+    fn shown(&self, viewport: NodeId) -> bool {
+        let mut at = Some(viewport);
         while let Some(node) = at {
             if !self.ui.is_visible(node) {
                 return false;
@@ -258,13 +315,13 @@ impl Editor {
         true
     }
 
-    /// Makes the dock area around the viewport see-through, wherever the
-    /// Scene panel has been docked, and lays the frame over its edge, which
-    /// rounds the 3D view's corners to the panel's.
-    fn mark_viewport_area(&mut self) {
-        let mut at = self.ui.parent(self.nodes.viewport);
+    /// Makes the dock area around the 3D view see-through, wherever its
+    /// panel has been docked, and lays the frame over its edge, which rounds
+    /// the view's corners to the panel's.
+    fn mark_viewport_area(&mut self, viewport: Option<NodeId>) {
+        let mut at = viewport.and_then(|viewport| self.ui.parent(viewport));
         let mut area = None;
-        while let Some(node) = at.filter(|_| self.viewport_shown()) {
+        while let Some(node) = at {
             if self.ui.has_class(node, "dock-area") {
                 area = Some(node);
                 break;
@@ -327,6 +384,7 @@ impl Editor {
     }
 
     fn update_status(&mut self, renderer: &Renderer, delta: f32) {
+        self.ui.set_text(self.nodes.status_left, self.play.status());
         self.status.0 += 1;
         self.status.1 += delta;
         if self.status.1 < STATUS_INTERVAL && self.status.0 > 1 {

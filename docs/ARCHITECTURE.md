@@ -1013,6 +1013,11 @@ mid-fade.
 - **`z-index`** above 0 draws an element and its children after everything else, higher ones last, as for the
   split handles. The pointer still finds elements in tree order.
 - **Shapes** (`ui.set_shapes`): lines with round ends and circles drawn on any element, for gizmos and graphs.
+- **Rich text** (`RichText`, `ui.rich_label`): a label whose words are bold, italic, code, struck out or
+  highlighted, with links that `ui.clicked_link` reports. Each span shapes as its own run, so its colour, ground
+  and lines are drawn with it; `link-color`, `code-background` and `mark-color` come from the text style, and
+  italics and bold are slanted and thickened when a font has no such face. `white-space: nowrap` keeps a line
+  whole, as list rows do.
 - **Icons in tabs and foldouts:** a `DockPanel`'s `icon` (or `add_tab_with_icon`) shows before its title, and
   `set_foldout_icon` before a foldout's; `foldout_header` takes buttons or a switch after the title, which work
   without opening or closing it.
@@ -1051,11 +1056,23 @@ surfaces in 3D.
 level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Edit mode:** Objs load with their behaviours kept as data (`EditBehaviours`), so no script runs and a project
   opens without its scripts built, as in Unity.
+- **Play mode**, as in Unity. Play copies the open level, edits included, into a fresh engine whose behaviours
+  run (`Levels::play_copy`: each loaded scene is captured from the edit world with its Objs' own ids, so persistent
+  Objs are still recognised across level changes, and spawned again), and brings the Game view to the front. Stop
+  destroys the played world, so behaviours get OnDisable and OnDestroy (`Engine::shutdown`), and swaps the edited
+  level back exactly as it was. The selection follows between the two (`Levels::counterpart`), and the Scene view
+  keeps where its camera was. Pause holds the game still and Step moves it on one frame. The status bar says
+  whether the editor is building scripts, playing or paused.
+  - The scripts build (`voxear_engine::scripts`) off the main thread the first time Play is pressed, then .NET
+    starts with them. .NET starts only once per process, so the scripts are kept from run to run, and their static
+    state carries over, as in Unity with domain reload turned off. A change to the scripts needs the editor
+    restarted until C# hot reload comes.
 - **The top bar** has the Voxear mark, the workspaces, the command bar (Ctrl+K), play, pause and step in a pill,
   the user's avatar and the Build button. A **rail** of icons runs down the left, with source control at the
   bottom.
 - **Docked panels:** the Hierarchy (Objs by parent, with type icons, child counts and a filter), the Scene view and
-  a Game tab, the Project and the Console under them, and the Inspector on the right at 300px. Each panel has a
+  the Game view (through the level's first camera, and the one drawn while playing when both show), the Project and
+  the Console under them, and the Inspector on the right at 300px. Each panel has a
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
   shading menu, Gizmos and full screen. They can all be dragged around, as docking allows.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
@@ -1074,13 +1091,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a menu) on
   the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
   letters, applied as they are typed, and changes made elsewhere show in fields not being edited. A dashed Add
-  Component button ends it.
-- **The status bar** shows a ready light and how long the project took to open, then the renderer, frame rate,
-  memory and git branch.
+  Component button ends it. While playing it shows the running Obj, its behaviours included.
+- **The status bar** shows a light, what the editor is doing (ready, building scripts, playing or paused) and how
+  long the project took to open, then the renderer, frame rate, memory and git branch.
 - `vox editor --screenshot editor.png` renders it offscreen instead, with an Obj selected.
 
-Play mode with state restore, saving scenes, gizmos, undo, the command palette and the Odin-style inspector
-attributes come next.
+Saving scenes, gizmos, undo, the command palette and the Odin-style inspector attributes come next.
 
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.
@@ -1104,6 +1120,42 @@ whose source is in `Dev/CookieJar` (design notes in `Docs/Sifter-Design.md`):
 
 Read Sifter's design before building it.
 
+### The Cookbook
+
+A project's own documentation, in the editor: the CookieJarTools Cookbook for Unity, rebuilt as part of the
+engine in its own crate (`crates/voxear_cookbook`). Its source and design are in `Dev/CookieJar`
+(`Assets/CookieJarTools/Cookbook`, and the guide in `Docs/Cookbook Guide`).
+
+**What exists now** *(first slice)*: a **Cookbook** tab beside the Scene and Game.
+- **Pages are plain Markdown files** in the project's `Docs` folder, so they can be written in any editor and
+  shared with git. A folder's own words are in its `_folder.md`. A page's header holds its id, title, tags, when
+  it was updated and where it sorts; lines the Cookbook does not know are kept.
+- **The Markdown** is CommonMark's everyday parts plus tables, checklists, bare links, `~~strikethrough~~`,
+  `==highlights==`, GitHub-style callouts (`> [!NOTE]`, `[!TIP]`, `[!WARNING]` and the rest), heading anchors,
+  and `[[Page]]` and `[[Page|words]]` links. It is read by hand, not by a library, into blocks of rich text.
+- **Links** go to pages (by id, path or a title only one page has), to headings (`#checklists`, or
+  `Page.md#hits` on another page), to paths relative to the page, to files in the project (shown in the Project
+  panel), and to the web. A link to a page not written yet is drawn faded and underlined; clicking it makes the
+  page beside the one it is in and opens it to write.
+- **The panel:** the pages down the side as a tree, a box that finds pages by every word typed, back and
+  forward, the page with its title, tags and date, and for a folder what is in it. Ticking a checklist box saves
+  the page. Code blocks have a Copy button. **Edit** shows the page's Markdown to change and **Save** writes it,
+  with today's date.
+- `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
+
+**Still to come**, as the Unity Cookbook has them:
+- `[Documentation("id")]` on C# types and fields, with a button beside them in the Inspector, and excerpts of a
+  page shown in it.
+- The **Code Reference**: a page for every public type, from its `///` comments, with notes kept in
+  `Docs/.code-notes`, and `[[code:Type]]` links.
+- **Step-by-step guides**: `[CookbookAction]` and `[CookbookCheck]` methods, and built-in steps (make an asset,
+  open a panel, run a menu item), as links a page runs and ticks, with each person's progress kept.
+- **Docs Health**: out-of-date pages, broken links, and code with no page yet; and git's last change on a page.
+- **Pictures**, once Voxear UI draws images: dropped in, captured from the Scene view, or recorded as GIFs of the
+  Scene or Game; and **live assets** shown in a page.
+- Tags to filter by, "On this page", a home page with recent pages, quick open from the command bar (Ctrl+K), and
+  an editor with the page beside its Markdown.
+
 **Speed.**
 - A **command palette** on Ctrl+K reaches every action, asset and setting.
 - Keyboard shortcuts appear everywhere, with fuzzy search in every list.
@@ -1113,7 +1165,7 @@ Read Sifter's design before building it.
 
 **Core.**
 - Undo and redo for every edit, as commands.
-- Play mode with state restore.
+- Play mode with state restore *(implemented; see "What exists now")*.
 - **C# hot reload:** game scripts live in a collectible load context. On change, behaviour state is serialised, the
   context unloads, the new build loads, and the state is restored.
 

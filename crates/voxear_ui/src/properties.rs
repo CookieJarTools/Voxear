@@ -15,8 +15,10 @@
 //! (`visible`, `hidden`, or `scroll`/`auto`), `scrollbar-color`, and for
 //! text fields `selection-color` and `caret-color`. Text,
 //! which children inherit: `color`, `font-size`, `font-weight`,
-//! `font-family` (`sans` or `mono`), `line-height` (`16px` or `normal`) and
-//! `text-align`.
+//! `font-family` (`sans` or `mono`), `line-height` (`16px` or `normal`),
+//! `text-align`, `white-space` (`normal`, or `nowrap` to keep a line
+//! whole), and for rich text `link-color`, `code-background` and
+//! `mark-color`.
 //!
 //! Lengths are `px` or `%`, colours are `#rgb`, `#rrggbb`, `#rrggbbaa`,
 //! `rgb()`, `rgba()`, `oklch()` or a few names, and `var(--name)` or
@@ -207,6 +209,10 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "selection-color" => style.selection = color(input)?,
         "caret-color" => style.caret = Some(color(input)?),
         "color" => text.color = color(input)?,
+        "link-color" => text.link_color = color(input)?,
+        "white-space" => text.wrap = keyword(input, &[("normal", true), ("nowrap", false), ("pre", false)])?,
+        "code-background" => text.code_background = color(input)?,
+        "mark-color" => text.mark_color = color(input)?,
         "font-size" => text.size = pixels(input)?,
         "line-height" => {
             text.line_height =

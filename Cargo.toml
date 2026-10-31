@@ -20,6 +20,7 @@ voxear_render = { path = "crates/voxear_render" }
 voxear_scripting = { path = "crates/voxear_scripting" }
 voxear_engine = { path = "crates/voxear_engine" }
 voxear_editor = { path = "crates/voxear_editor" }
+voxear_cookbook = { path = "crates/voxear_cookbook" }
 
 anyhow = "1"
 ash = "0.38"

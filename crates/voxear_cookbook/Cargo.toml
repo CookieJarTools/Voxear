@@ -1,0 +1,22 @@
+[package]
+name = "voxear_cookbook"
+description = "The Cookbook: a project's own documentation, written as Markdown pages and read in the editor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+voxear_ui.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+# For the screenshot example only.
+voxear_render.workspace = true
+voxear_ecs.workspace = true
+voxear_scene.workspace = true
+anyhow.workspace = true
+png.workspace = true

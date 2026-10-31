@@ -1,0 +1,20 @@
+//! The Cookbook: a project's own documentation, kept as Markdown pages in
+//! its `Docs` folder and read and written in the editor, after the
+//! CookieJarTools Cookbook for Unity.
+//!
+//! - [`markdown`] reads the Cookbook's Markdown into blocks of rich text.
+//! - [`Library`] is every page and folder in `Docs`, found by id, path or
+//!   title, and changed and saved.
+//! - [`render`](view::render) draws a page as Voxear UI elements.
+//! - [`Cookbook`] is the panel: the pages down the side, the page beside
+//!   them, links, checklists, search, back and forward, and writing.
+
+pub mod header;
+mod library;
+pub mod markdown;
+mod panel;
+pub mod view;
+
+pub use header::Header;
+pub use library::{Library, Page, PageId, Target};
+pub use panel::Cookbook;

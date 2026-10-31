@@ -137,6 +137,42 @@ impl Levels {
 }
 
 impl Levels {
+    /// The loaded level copied into `play` from `edit`'s Objs as they are
+    /// now, edits included, rather than from its files, as entering play
+    /// mode does. Each scene's Objs are captured and spawned again with the
+    /// same paths, so persistent Objs are still recognised when their scene
+    /// reloads, and behaviours kept as data in edit mode start for real when
+    /// `play` has scripts.
+    pub fn play_copy(
+        &self,
+        edit: &Engine,
+        play: &mut Engine,
+        content: &mut Content,
+        mut renderer: Option<&mut Renderer>,
+    ) -> Result<Levels> {
+        let mut copy = Levels { current: self.current.clone(), ..Levels::default() };
+        for scene in &self.scenes {
+            let captured = scene_file::capture_scene(&edit.world, content, &scene.objs);
+            let objs = scene_file::spawn(play, content, renderer.as_deref_mut(), &captured, &HashSet::new())
+                .with_context(|| format!("starting {}", scene.path))?;
+            copy.scenes.push(LoadedScene { guid: scene.guid, path: scene.path.clone(), objs });
+        }
+        Ok(copy)
+    }
+
+    /// The Obj in `other` loaded from the same place in the same scene as
+    /// `entity` is here: an Obj's counterpart between edit and play mode.
+    pub fn counterpart(&self, entity: Entity, other: &Levels) -> Option<Entity> {
+        let (guid, path) = self
+            .scenes
+            .iter()
+            .find_map(|scene| scene.objs.iter().find(|(_, e)| *e == entity).map(|(path, _)| (scene.guid, path)))?;
+        let scene = other.scenes.iter().find(|scene| scene.guid == guid)?;
+        scene.objs.iter().find(|(p, _)| p == path).map(|(_, e)| *e)
+    }
+}
+
+impl Levels {
     /// Hands root Objs that no scene loaded, which scripts or the engine
     /// created at runtime, to the active scene.
     fn adopt_runtime_objs(&mut self, engine: &Engine) {

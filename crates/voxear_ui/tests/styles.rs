@@ -77,7 +77,14 @@ fn text_inherits_and_descendant_rules_reach_it() {
     assert_eq!(text.size, 14.0, "size from the card");
     assert_eq!(text.weight, 600.0, "weight from a descendant rule");
     let plain = ui.text_style(ui.find(document, "plain").unwrap()).unwrap();
-    let theme = TextStyle { size: 12.0, line_height: 16.0, color: Color::hex(0xc8ccd1), ..TextStyle::default() };
+    let theme = TextStyle {
+        size: 12.0,
+        line_height: 16.0,
+        color: Color::hex(0xc8ccd1),
+        code_background: Color::hex(0x2d3039),
+        mark_color: Color::rgba(226, 179, 64, 56),
+        ..TextStyle::default()
+    };
     assert_eq!(plain, theme, "nothing set: the default theme's text, from the root");
 }
 

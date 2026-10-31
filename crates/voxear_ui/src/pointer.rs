@@ -23,6 +23,8 @@ pub(crate) struct Pointer {
     pub clicks: Vec<taffy::NodeId>,
     /// Elements clicked twice in quick succession since the last frame.
     pub double_clicks: Vec<taffy::NodeId>,
+    /// Links clicked in rich text since the last frame, with the label.
+    pub link_clicks: Vec<(taffy::NodeId, String)>,
     /// The last click: on what, and when, to tell a double click.
     last_click: Option<(taffy::NodeId, f32)>,
     /// A scrollbar being dragged: its element, and where on the thumb it was
@@ -36,6 +38,7 @@ impl Pointer {
         for list in [&mut self.hovered, &mut self.pressed, &mut self.clicks, &mut self.double_clicks] {
             list.retain(|&n| n != node);
         }
+        self.link_clicks.retain(|(n, _)| *n != node);
     }
 }
 
@@ -122,6 +125,11 @@ impl Ui {
                     self.pointer.double_clicks.push(target);
                 }
                 self.pointer.last_click = (!twice).then_some((target, time));
+                if let Some(point) = self.pointer.position
+                    && let Some(url) = self.link_at(NodeId(target), point)
+                {
+                    self.pointer.link_clicks.push((target, url));
+                }
                 self.row_clicked(target);
                 self.click_controls(target);
                 self.click_panes(target);

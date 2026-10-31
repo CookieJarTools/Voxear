@@ -41,11 +41,11 @@ use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{Camera, Light, LightKind, MeshRenderer, PostProcess, Renderer, Sky};
-use voxear_scene::{Behaviours, Name, Parent, ScenePersistence, Transform};
+use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, ScenePersistence, Transform};
 
 use crate::{
     content::{Content, MaterialData, MaterialSource, linear, srgb},
-    engine::Engine,
+    engine::{EditBehaviours, Engine},
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabInstance, Template},
 };
 
@@ -292,14 +292,33 @@ fn without(objs: Vec<FlatObj>, skip: &HashSet<ObjPath>) -> Vec<FlatObj> {
 /// Not saved yet: Objs destroyed inside an instance, and cameras, lights or
 /// renderers removed from one. Both come back from the prefab on reload.
 pub fn capture(world: &World, content: &mut Content, entities: &[Entity]) -> SceneFile {
-    let alive: Vec<Entity> = entities.iter().copied().filter(|e| world.is_alive(*e)).collect();
+    let objs: Vec<(ObjPath, Entity)> = entities.iter().map(|&e| (ObjPath::default(), e)).collect();
+    capture_scene(world, content, &objs)
+}
+
+/// [`capture`], keeping each Obj's id from where it was loaded (a single-id
+/// [`ObjPath`]) so the scene reads back with the same paths, as play mode
+/// needs for persistent Objs to be recognised. Objs without one, such as
+/// those created at runtime, get ids after the highest.
+pub fn capture_scene(world: &World, content: &mut Content, objs: &[(ObjPath, Entity)]) -> SceneFile {
+    let alive: Vec<Entity> = objs.iter().map(|(_, e)| *e).filter(|e| world.is_alive(*e)).collect();
     let captured: HashSet<Entity> = alive.iter().copied().collect();
     // Objs inside a captured instance are saved as its overrides, not on their own.
     let instance_of = |entity: Entity| {
         world.get::<FromPrefab>(entity).filter(|f| !f.path.is_root() && captured.contains(&f.instance))
     };
     let top: Vec<Entity> = alive.iter().copied().filter(|e| instance_of(*e).is_none()).collect();
-    let ids: HashMap<Entity, u32> = top.iter().enumerate().map(|(i, e)| (*e, i as u32 + 1)).collect();
+    let loaded: HashMap<Entity, u32> =
+        objs.iter().filter(|(path, _)| path.ids().len() == 1).map(|(path, e)| (*e, path.ids()[0])).collect();
+    let mut next = loaded.values().max().copied().unwrap_or_default();
+    let mut ids = HashMap::with_capacity(top.len());
+    for &entity in &top {
+        let id = loaded.get(&entity).copied().unwrap_or_else(|| {
+            next += 1;
+            next
+        });
+        ids.insert(entity, id);
+    }
 
     let mut objs = Vec::with_capacity(top.len());
     for &entity in &top {
@@ -531,16 +550,19 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
     }
     obj.parent = world.get::<Parent>(entity).and_then(|p| ids.get(&p.0).copied());
     obj.persistent = world.has::<ScenePersistence>(entity);
-    if let Some(behaviours) = world.get::<Behaviours>(entity) {
-        obj.behaviours = behaviours.type_names().map(str::to_string).collect();
-        // Saved as loaded: values scripts change at runtime are not written back.
-        obj.fields = behaviours
-            .0
-            .iter()
-            .filter(|b| !b.spec.fields.is_empty())
-            .map(|b| (b.spec.type_name.clone(), unbind_refs(world, ids, &b.spec.fields)))
-            .collect();
-    }
+    // Running behaviours, or in edit mode the same as data.
+    let specs: Vec<&BehaviourSpec> = match (world.get::<Behaviours>(entity), world.get::<EditBehaviours>(entity)) {
+        (Some(behaviours), _) => behaviours.0.iter().map(|b| &b.spec).collect(),
+        (None, Some(kept)) => kept.0.iter().collect(),
+        (None, None) => Vec::new(),
+    };
+    obj.behaviours = specs.iter().map(|spec| spec.type_name.clone()).collect();
+    // Saved as loaded: values scripts change at runtime are not written back.
+    obj.fields = specs
+        .iter()
+        .filter(|spec| !spec.fields.is_empty())
+        .map(|spec| (spec.type_name.clone(), unbind_refs(world, ids, &spec.fields)))
+        .collect();
     obj.camera = world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure });
     obj.light = world.get::<Light>(entity).map(light_data);
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {

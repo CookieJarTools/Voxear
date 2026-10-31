@@ -267,6 +267,14 @@ pub struct TextStyle {
     pub align: TextAlign,
     /// The height of each line in logical pixels, or 0 for the font's own.
     pub line_height: f32,
+    /// Rich text's links, and the grounds behind its inline code and its
+    /// highlighted words.
+    pub link_color: Color,
+    pub code_background: Color,
+    pub mark_color: Color,
+    /// Whether lines break to fit; off, the text runs on and is clipped by
+    /// whatever clips it, as in list rows.
+    pub wrap: bool,
 }
 
 /// Where lines of text sit across their element.
@@ -288,6 +296,10 @@ impl Default for TextStyle {
             family: Family::Sans,
             align: TextAlign::Start,
             line_height: 0.0,
+            link_color: Color::hex(0x7988ff),
+            code_background: Color::WHITE.with_alpha(0x18),
+            mark_color: Color::hex(0xe2b340).with_alpha(0x55),
+            wrap: true,
         }
     }
 }

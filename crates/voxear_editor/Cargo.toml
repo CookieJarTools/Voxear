@@ -16,6 +16,8 @@ voxear_render.workspace = true
 voxear_ui.workspace = true
 voxear_engine.workspace = true
 voxear_assets.workspace = true
+voxear_scripting.workspace = true
+voxear_cookbook.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 winit.workspace = true
@@ -24,3 +26,4 @@ png.workspace = true
 
 [dev-dependencies]
 voxear_core.workspace = true
+voxear_scripting.workspace = true

@@ -148,23 +148,31 @@ pub(crate) struct Text {
     /// The style it was last shaped with.
     pub style: TextStyle,
     /// Shaped at the display scale it was last laid out at.
-    pub shaped: Option<(f32, Layout<()>)>,
+    pub shaped: Option<(f32, Layout<u16>)>,
+    /// For rich text: how parts of it differ, and its links.
+    pub spans: Vec<crate::Span>,
 }
 
 impl Text {
     pub fn new(content: &str) -> Self {
-        Self { content: content.to_owned(), style: TextStyle::default(), shaped: None }
+        Self { content: content.to_owned(), style: TextStyle::default(), shaped: None, spans: Vec::new() }
     }
 
     /// Shaped at physical size, so hinting and line breaks match the pixels
     /// it is drawn at.
-    pub fn shaped(&mut self, fonts: &mut FontContext, layouts: &mut LayoutContext<()>, scale: f32) -> &mut Layout<()> {
+    pub fn shaped(
+        &mut self,
+        fonts: &mut FontContext,
+        layouts: &mut LayoutContext<u16>,
+        scale: f32,
+    ) -> &mut Layout<u16> {
         if self.shaped.as_ref().is_none_or(|(at, _)| *at != scale) {
             let mut builder = layouts.ranged_builder(fonts, &self.content, scale, true);
             builder.push_default(StyleProperty::FontSize(self.style.size));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(self.style.weight)));
             builder.push_default(StyleProperty::FontFamily(self.style.family.source().into()));
             builder.push_default(StyleProperty::LineHeight(self.style.parley_line_height()));
+            crate::rich::push_spans(&mut builder, &self.spans, &self.style);
             self.shaped = Some((scale, builder.build(&self.content)));
         }
         &mut self.shaped.as_mut().expect("shaped above").1
@@ -178,7 +186,7 @@ pub struct Ui {
     pub(crate) tree: TaffyTree<Element>,
     pub(crate) root: taffy::NodeId,
     pub(crate) fonts: FontContext,
-    pub(crate) layouts: LayoutContext<()>,
+    pub(crate) layouts: LayoutContext<u16>,
     pub(crate) atlas: GlyphAtlas,
     /// Logical size and display scale of the last frame.
     pub(crate) viewport: (f32, f32, f32),
@@ -359,11 +367,12 @@ impl Ui {
             return;
         }
         let Some(label) = self.element_mut(node).and_then(|e| e.text.as_mut()) else { return };
-        if label.content == text {
+        if label.content == text && label.spans.is_empty() {
             return;
         }
         label.content.clear();
         label.content.push_str(text);
+        label.spans.clear();
         label.shaped = None;
         let _ = self.tree.mark_dirty(node.0);
     }
@@ -652,6 +661,7 @@ impl Ui {
         }
         self.pointer.clicks.clear();
         self.pointer.double_clicks.clear();
+        self.pointer.link_clicks.clear();
         self.clear_selection_changes();
         self.clear_input_events();
         UiFrame { quads, atlas: self.atlas.snapshot() }

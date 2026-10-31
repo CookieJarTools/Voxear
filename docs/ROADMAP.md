@@ -198,6 +198,14 @@ Done so far:
   first's share.
 - **A Unity-style Project panel:** folders as a tree on the left, and the open folder's contents on the right as
   tiles or, when narrow, as rows with sizes, with a breadcrumb; double-clicking a folder opens it.
+- **Play mode with state restore:** Play copies the edited level into a fresh engine with the scripts (built and
+  started on the first Play, then kept, since .NET starts once per process) and shows the Game view; Stop
+  destroys the played world and brings the edited level back as it was. Pause and Step, and the selection
+  follows between the two.
+- **The Cookbook, first slice** (`crates/voxear_cookbook`, after the CookieJarTools Cookbook): Markdown pages in
+  the project's `Docs` folder, read and written in a Cookbook tab, with the page tree, search, back and forward,
+  links to pages, headings, files and the web, missing pages written from their links, checklists that save,
+  callouts, tables and code. Voxear UI gained rich text with clickable links, and `white-space: nowrap`.
 
 Still to do in M3:
 - UI core:
@@ -208,9 +216,15 @@ Still to do in M3:
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
 - OKLCH theme tokens.
-- The editor's next steps: play mode with state restore, saving scenes, Hierarchy instance badges and
-  drag-to-reparent, the Game view, the Console's Sifter features, and C# hot reload.
+- The editor's next steps: saving scenes, Hierarchy instance badges and drag-to-reparent, the Console's Sifter
+  features, and C# hot reload (which play mode will then use to pick up changed scripts).
 - Command palette (Ctrl+K), gizmos, viewport picking, and undo/redo.
+- **The Cookbook's next parts** (see "The Cookbook" in the architecture): `[Documentation]` links from code and
+  the Inspector, the Code Reference, step-by-step guides with actions and checks, Docs Health, pictures and GIF
+  recordings (with images in Voxear UI), live assets, tags and quick open.
+- **LayerCake**, the CookieJarTools scene switcher, as Voxear's level loading: per-scene `active`, `required` and
+  `weight` in levels, levels that stand on a base level, a `SceneLoader`-style C# API with progress, held
+  activation, options and events, and a Levels panel in the editor.
 - Debug tools:
   - the stats overlay's frame-time graph, and the profiler panel (with Tracy)
   - the frame debugger and the ECS inspector

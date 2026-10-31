@@ -109,6 +109,11 @@ impl Ui {
         self.input.clipboard = clipboard;
     }
 
+    /// Puts text on the clipboard, as a Copy button does.
+    pub fn copy_text(&mut self, text: &str) {
+        self.input.clipboard.write(text);
+    }
+
     pub fn focused(&self) -> Option<NodeId> {
         self.input.focused.map(NodeId)
     }

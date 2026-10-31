@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use swash::{
     FontRef,
     scale::{Render, ScaleContext, Source},
-    zeno::{Cap, Fill, Format, Join, Mask, Stroke, Transform},
+    zeno::{Angle, Cap, Fill, Format, Join, Mask, Stroke, Transform},
 };
 
 use std::sync::Arc;
@@ -29,8 +29,17 @@ pub(crate) struct AtlasGlyph {
     pub y: u32,
 }
 
-/// A font, a glyph in it, and the size in 1/64 pixels.
-type Key = (u64, u32, u16, u32);
+/// A font, a glyph in it, the size in 1/64 pixels, and its synthesis: the
+/// slant in degrees and whether it is emboldened.
+type Key = (u64, u32, u16, u32, i8, bool);
+
+/// What a font lacks and is faked for: italics slanted, bold thickened,
+/// as parley asks when the family has no such face.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Synthesis {
+    pub skew: Option<f32>,
+    pub embolden: bool,
+}
 /// An icon's name, its size in pixels, and its stroke in 1/64 pixels.
 type IconKey = (&'static str, u32, u32);
 
@@ -67,12 +76,20 @@ impl GlyphAtlas {
 
     /// The glyph at `size` pixels, rasterised and packed on first use.
     /// `None` for glyphs with no pixels, such as spaces.
-    pub fn glyph(&mut self, font: (&[u8], u32, u64), glyph: u16, size: f32, coords: &[i16]) -> Option<AtlasGlyph> {
-        let key = (font.2, font.1, glyph, (size * 64.0) as u32);
+    pub fn glyph(
+        &mut self,
+        font: (&[u8], u32, u64),
+        glyph: u16,
+        size: f32,
+        coords: &[i16],
+        synthesis: Synthesis,
+    ) -> Option<AtlasGlyph> {
+        let skew = synthesis.skew.unwrap_or_default().round() as i8;
+        let key = (font.2, font.1, glyph, (size * 64.0) as u32, skew, synthesis.embolden);
         if let Some(found) = self.glyphs.get(&key) {
             return *found;
         }
-        let rasterised = self.rasterise(font, glyph, size, coords);
+        let rasterised = self.rasterise(font, glyph, size, coords, synthesis);
         let packed = rasterised.and_then(|(left, top, width, height, coverage)| {
             let (x, y) = self.pack(width, height, &coverage)?;
             Some(AtlasGlyph { left, top, width, height, x, y })
@@ -137,10 +154,19 @@ impl GlyphAtlas {
         glyph: u16,
         size: f32,
         coords: &[i16],
+        synthesis: Synthesis,
     ) -> Option<(i32, i32, u32, u32, Vec<u8>)> {
         let font = FontRef::from_index(data, index as usize)?;
         let mut scaler = self.scaler.builder(font).size(size).hint(true).normalized_coords(coords).build();
-        let image = Render::new(&[Source::Outline]).format(Format::Alpha).render(&mut scaler, glyph)?;
+        let mut render = Render::new(&[Source::Outline]);
+        render.format(Format::Alpha);
+        if let Some(degrees) = synthesis.skew {
+            render.transform(Some(Transform::skew(Angle::from_degrees(degrees), Angle::ZERO)));
+        }
+        if synthesis.embolden {
+            render.embolden(size / 28.0);
+        }
+        let image = render.render(&mut scaler, glyph)?;
         let p = image.placement;
         (p.width > 0 && p.height > 0).then_some((p.left, p.top, p.width, p.height, image.data))
     }

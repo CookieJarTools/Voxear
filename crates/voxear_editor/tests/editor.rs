@@ -129,3 +129,120 @@ fn a_hovered_divider_shows_its_handle_over_the_scene_frame() {
     assert_eq!(at(x + w / 2.0, y + h / 2.0), [0x79, 0x88, 0xff], "the handle, over the frame around the Scene");
     assert_eq!(at(x + w / 2.0, y + 4.0), [0x0c, 0x0e, 0x10], "short of the divider's ends");
 }
+
+/// The Obj called `name` in the editor's world as it is now.
+fn obj(editor: &voxear_editor::Editor, name: &str) -> Option<voxear_ecs::Entity> {
+    let world = &editor.game.engine.world;
+    world.query_ref::<(voxear_ecs::Entity, &Name)>().into_iter().find(|(_, n)| n.0 == name).map(|(e, _)| e)
+}
+
+/// The only test that starts .NET, which can start once per process.
+#[test]
+fn play_runs_the_scripts_and_stop_brings_the_level_back() {
+    if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
+        return eprintln!("skipping: needs .NET and the managed build");
+    }
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let frame = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer| {
+        editor.update(renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    };
+    let spinner = obj(&editor, "Spinner A").expect("Hello has Spinner A");
+    editor.select(Some(spinner));
+    let edited = {
+        let mut moved = *editor.game.engine.world.get::<Transform>(spinner).unwrap();
+        moved.position = voxear_core::math::Vec3::new(1.5, 0.5, 0.0);
+        moved
+    };
+    *editor.game.engine.world.get_mut::<Transform>(spinner).unwrap() = edited;
+
+    editor.play(&mut renderer);
+    let started = std::time::Instant::now();
+    while !editor.is_playing() {
+        assert_eq!(editor.play_error(), None, "the scripts build and start");
+        assert!(started.elapsed().as_secs() < 300, "the scripts take too long to build");
+        frame(&mut editor, &mut renderer);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let played = obj(&editor, "Spinner A").expect("the level comes across");
+    assert_eq!(editor.game.engine.world.get::<Transform>(played).unwrap().position, edited.position, "edits and all");
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("play.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+    let turned = editor.game.engine.world.get::<Transform>(played).unwrap().rotation;
+    assert!(turned.angle_between(edited.rotation) > 0.1, "Hello.Spinner ran and turned it");
+    let root = editor.ui.root();
+    let mut names = Vec::new();
+    with_class(&editor.ui, root, "obj-name", &mut names);
+    assert_eq!(editor.ui.text(names[0]), "Spinner A", "the selection follows into play");
+
+    editor.set_paused(true);
+    frame(&mut editor, &mut renderer);
+    let held = editor.game.engine.world.get::<Transform>(played).unwrap().rotation;
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.engine.world.get::<Transform>(played).unwrap().rotation, held, "paused, it holds still");
+    editor.step();
+    frame(&mut editor, &mut renderer);
+    assert_ne!(editor.game.engine.world.get::<Transform>(played).unwrap().rotation, held, "a step moves it a frame");
+    assert!(editor.is_paused(), "and leaves it paused");
+
+    editor.stop(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.is_playing());
+    assert_eq!(obj(&editor, "Spinner A"), Some(spinner), "the edited level is back");
+    assert_eq!(*editor.game.engine.world.get::<Transform>(spinner).unwrap(), edited, "as it was edited");
+    assert!(editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).is_some(), "with no script running");
+
+    // A second run reuses the scripts, since .NET starts only once.
+    editor.play(&mut renderer);
+    assert!(editor.is_playing(), "plays at once, with the scripts already built");
+    frame(&mut editor, &mut renderer);
+    editor.stop(&mut renderer);
+    assert_eq!(editor.play_error(), None);
+}
+
+/// The first label anywhere in `node` whose text starts with `words`.
+fn label_starting(ui: &Ui, node: NodeId, words: &str) -> Option<NodeId> {
+    if ui.children(node).is_empty() && ui.text(node).starts_with(words) {
+        return Some(node);
+    }
+    ui.children(node).into_iter().find_map(|child| label_starting(ui, child, words))
+}
+
+#[test]
+fn the_cookbook_reads_the_projects_docs() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let root = editor.ui.root();
+    let dock = editor.ui.find(root, "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "cookbook");
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    let intro = label_starting(&editor.ui, root, "Hello's own notes").expect("the Cookbook opens on Hello's Docs");
+    assert!(editor.ui.is_visible(intro));
+
+    // Open the How Hello Works folder from the page tree.
+    let mut rows = Vec::new();
+    with_class(&editor.ui, root, "cb-row-title", &mut rows);
+    let folder = rows.into_iter().find(|&r| editor.ui.text(r) == "How Hello Works").expect("the folder is in the tree");
+    let [x, y, w, h] = editor.ui.rect(folder);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    assert!(label_starting(&editor.ui, root, "What happens when Hello plays").is_some(), "the folder's page opened");
+    assert!(label_starting(&editor.ui, root, "In this folder").is_some(), "with what is in it");
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("cookbook.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+}

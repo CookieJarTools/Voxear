@@ -225,6 +225,36 @@ impl ProjectView {
         }
     }
 
+    /// Opens the folder a file is in and selects the file, as a link to it
+    /// from the Cookbook does. `path` is from the project's folder.
+    pub fn reveal(&mut self, ui: &mut Ui, path: &str) {
+        let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        let name = parts.pop().unwrap_or_default();
+        let mut folder = 0;
+        for part in parts {
+            let contents = self.contents.borrow();
+            let Some(&child) = contents.folders[folder].folders.iter().find(|&&f| contents.folders[f].name == part)
+            else {
+                return;
+            };
+            drop(contents);
+            folder = child;
+        }
+        self.open(ui, folder);
+        let contents = self.contents.borrow();
+        let found = contents.listing.iter().position(|e| contents.name(*e) == name);
+        let entry = found.map(|index| (index, contents.listing[index]));
+        let columns = contents.columns;
+        drop(contents);
+        let Some((index, entry)) = entry else { return };
+        self.contents.borrow_mut().selected = Some(entry);
+        if columns == 0 {
+            ui.set_selection(self.files, &[index]);
+        }
+        ui.scroll_to_index(self.files, index.checked_div(columns).unwrap_or(index));
+        ui.refresh_list(self.files);
+    }
+
     /// Shows what is in `folder`, and marks it in the tree.
     fn open(&mut self, ui: &mut Ui, folder: usize) {
         if folder == self.open {

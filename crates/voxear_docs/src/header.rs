@@ -121,7 +121,12 @@ pub fn new_id() -> String {
 
 /// Today's date as a page's `updated` line writes it: `2026-10-31`.
 pub fn today() -> String {
-    let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    date_of(std::time::SystemTime::now())
+}
+
+/// A moment's date as a page's `updated` line writes it, in UTC.
+pub fn date_of(time: std::time::SystemTime) -> String {
+    let seconds = time.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let (year, month, day) = civil_date((seconds / 86_400) as i64);
     format!("{year:04}-{month:02}-{day:02}")
 }

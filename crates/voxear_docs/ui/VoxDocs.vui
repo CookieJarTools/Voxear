@@ -23,6 +23,7 @@
                 <Button name="cb-back" class="icon-button"><Icon icon="chevron-left" /></Button>
                 <Button name="cb-forward" class="icon-button"><Icon icon="chevron-right" /></Button>
                 <Label name="cb-path" class="cb-path" />
+                <Button name="cb-health" class="cb-button">Health</Button>
                 <Button name="cb-edit" class="cb-button"><Icon name="cb-edit-icon" icon="edit" /><Label name="cb-edit-label">Edit</Label></Button>
             </Panel>
             <Panel name="cb-reading" class="cb-reading">

@@ -289,6 +289,8 @@ Done so far:
   headings beside it, following the reading.
 - **More of Sifter in the Console:** category colours kept with the project, saved filters, hiding chosen
   assemblies in traces, and the player's log from Run in the Build window.
+- **VoxDocs Docs Health:** pages out of date, links that go nowhere, missing pictures, and pictures no page shows,
+  each a link to its page or file.
 - **Editing build profiles:** the Build window edits the picked profile in place, writing only what differs from
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 

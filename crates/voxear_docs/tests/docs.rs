@@ -332,3 +332,50 @@ fn texts(ui: &Ui, node: NodeId) -> Vec<String> {
     out.retain(|text| !text.is_empty());
     out
 }
+
+#[test]
+fn health_lists_what_needs_looking_after() {
+    let dir = project();
+    std::fs::create_dir_all(dir.path().join("Levels")).unwrap();
+    std::fs::write(dir.path().join("Levels/Arena.level"), "").unwrap();
+    let damage = "---\nid: 7b1c0d2e3f40\nupdated: 2020-01-01\n---\n\n\
+                  See [the arena](Levels/Arena.level) and [[Armour]].\n\n![](images/gone.png)\n";
+    std::fs::write(dir.path().join("Docs/Combat/Damage.md"), damage).unwrap();
+    std::fs::create_dir_all(dir.path().join("Docs/Combat/images")).unwrap();
+    std::fs::write(dir.path().join("Docs/Combat/images/old.png"), "not read").unwrap();
+
+    let library = Library::open(dir.path(), "Hello");
+    let health = voxear_docs::health::Health::check(&library);
+    let title = |id| library.page(id).title().to_string();
+    let stale: Vec<(String, Vec<String>)> =
+        health.stale.iter().map(|(id, files)| (title(*id), files.clone())).collect();
+    assert_eq!(stale, [("Damage".to_string(), vec!["Levels/Arena.level".to_string()])], "the level changed after 2020");
+    let mut broken: Vec<(String, String)> = health.broken.iter().map(|(id, url)| (title(*id), url.clone())).collect();
+    broken.sort();
+    assert_eq!(
+        broken,
+        [("Damage".into(), "docs:Armour".into()), ("Writing Pages".into(), "docs:Level Streaming".into())]
+    );
+    let missing: Vec<(String, String)> =
+        health.missing_pictures.iter().map(|(id, url)| (title(*id), url.clone())).collect();
+    assert_eq!(missing, [("Damage".to_string(), "images/gone.png".to_string())]);
+    assert_eq!(health.unused_pictures, ["Docs/Combat/images/old.png"]);
+    assert_eq!(health.problems(), 5);
+
+    // The panel shows it in the page's place, and Health again goes back.
+    let (mut ui, mut docs, host) = panel(dir.path());
+    let button = ui.find(host, "cb-health").unwrap();
+    click(&mut ui, button);
+    frame(&mut ui, &mut docs);
+    let page = ui.find(host, "cb-page").unwrap();
+    let shown = texts(&ui, page);
+    for line in
+        ["Docs Health", "5 things need looking after.", "Out of date", "Links that go nowhere", "Missing pictures"]
+    {
+        assert!(shown.iter().any(|text| text == line), "{line} in {shown:?}");
+    }
+    assert!(shown.iter().any(|text| text == "Pictures no page shows"));
+    click(&mut ui, button);
+    frame(&mut ui, &mut docs);
+    assert!(label(&ui, host, "The team's own notes").is_some(), "back to the page");
+}

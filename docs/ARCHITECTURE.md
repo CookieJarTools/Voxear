@@ -1488,6 +1488,10 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   the find box does with words, and a tag on a page picks it too. **On this page** lists a page's headings down to
   the third level beside it, when it has three or more and the reading area is 640 pixels wide; the one being read
   is picked out as the page scrolls, and a click goes to one.
+- **Docs Health** *(`health`)*: Health in the toolbar shows, in the page's place, what needs looking after: pages
+  out of date (a project file they link to changed on a later day than the page was updated), links that go
+  nowhere (a page not written yet among them), pictures that are not there, and pictures in the pages' `images`
+  folders that no page shows. Each entry links to its page or file.
 - **Pictures**: `![what it shows](images/Day.png)`, from the page's folder (pictures kept with a page sit in an
   `images` folder beside it) or the project's. A page shows its PNG and JPEG pictures at their own size, or
   narrower to fit, keeping their shape; the editor reads them a couple a frame, shrinks any over 2048 pixels, and
@@ -1507,7 +1511,8 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   `Docs/.code-notes`, and `[[code:Type]]` links.
 - **Step-by-step guides**: `[DocsAction]` and `[DocsCheck]` methods, and built-in steps (make an asset,
   open a panel, run a menu item), as links a page runs and ticks, with each person's progress kept.
-- **Docs Health**: out-of-date pages, broken links, and code with no page yet; and git's last change on a page.
+- **Docs Health**'s checks of the code, once there is a Code Reference: code with no page yet and notes left for
+  code that is gone; and git's last change on a page.
 - **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and **live
   assets** shown in a page.
 - A home page with recent pages, a box to find a tag among many, and quick open from the command bar (Ctrl+K).

@@ -13,6 +13,9 @@
 //! or Ctrl+S writes it to its file, and so does Done, or opening another
 //! page, so nothing written is lost. A new title renames the page's file.
 //!
+//! **Health** shows what needs looking after (see [`crate::health`]) in the
+//! page's place, each entry a link to the page or file it is about.
+//!
 //! **Pictures** are files beside a page, or anywhere in the project. The
 //! panel cannot read them into textures itself: [`wanted_pictures`] lists
 //! the files a page needs, and [`set_picture`] hands each back once the
@@ -32,6 +35,7 @@ use std::{
 use voxear_ui::{ImageRef, ItemFns, NodeId, TreeItems, Ui};
 
 use crate::{
+    health::Health,
     library::{Library, PageId, Target},
     markdown::{self, PAGE_SCHEME},
     view::{self, Lookups, Picture, Rendered},
@@ -104,6 +108,7 @@ struct Nodes {
     tags_more: NodeId,
     reading: NodeId,
     toc: NodeId,
+    health: NodeId,
     edit: NodeId,
     edit_icon: NodeId,
     edit_label: NodeId,
@@ -147,6 +152,8 @@ pub struct VoxDocs {
     page_tags: Vec<(NodeId, String)>,
     /// "On this page": each heading's link, and the heading it goes to.
     toc: Vec<(NodeId, NodeId, String)>,
+    /// Docs Health shows in the page's place.
+    showing_health: bool,
     /// A heading to scroll to once the page has been laid out.
     pending_anchor: Option<String>,
     results: Rc<RefCell<Vec<PageId>>>,
@@ -178,6 +185,7 @@ impl VoxDocs {
             tags_more: find(ui, "cb-tags-more"),
             reading: find(ui, "cb-reading"),
             toc: find(ui, "cb-toc"),
+            health: find(ui, "cb-health"),
             edit: find(ui, "cb-edit"),
             edit_icon: find(ui, "cb-edit-icon"),
             edit_label: find(ui, "cb-edit-label"),
@@ -236,6 +244,7 @@ impl VoxDocs {
             tag_chips: Vec::new(),
             page_tags: Vec::new(),
             toc: Vec::new(),
+            showing_health: false,
             pending_anchor: None,
             results,
             file_request: None,
@@ -388,6 +397,14 @@ impl VoxDocs {
         let copied = self.rendered.copies.iter().find(|(button, _)| ui.clicked(*button)).map(|(_, code)| code.clone());
         if let Some(code) = copied {
             ui.copy_text(&code);
+        }
+        if ui.clicked(self.nodes.health) {
+            self.finish_editing(ui);
+            if self.showing_health {
+                self.render(ui);
+            } else {
+                self.show_health(ui);
+            }
         }
         if ui.clicked(self.nodes.edit) {
             if self.editing {
@@ -716,6 +733,9 @@ impl VoxDocs {
         for child in ui.children(self.nodes.page) {
             ui.remove(child);
         }
+        self.showing_health = false;
+        ui.set_checked(self.nodes.health, false);
+        ui.set_visible(self.nodes.edit, true);
         self.page_tags.clear();
         self.show_path(ui);
         let library = self.library.borrow();
@@ -761,6 +781,97 @@ impl VoxDocs {
         }
         drop(library);
         self.show_toc(ui);
+    }
+
+    /// Docs Health in the page's place: how many things need looking after,
+    /// then each kind, every entry a link to its page or file.
+    fn show_health(&mut self, ui: &mut Ui) {
+        for child in ui.children(self.nodes.page).into_iter().chain(ui.children(self.nodes.toc)) {
+            ui.remove(child);
+        }
+        (self.toc, self.page_tags, self.rendered) = (Vec::new(), Vec::new(), Rendered::default());
+        self.showing_health = true;
+        ui.set_checked(self.nodes.health, true);
+        ui.set_visible(self.nodes.edit, false);
+        ui.set_scroll(self.nodes.page, [0.0, 0.0]);
+        let library = self.library.borrow();
+        let health = Health::check(&library);
+        let page = self.nodes.page;
+        let title = ui.add_label(page, "Docs Health");
+        ui.add_class(title, "cb-title");
+        let summary = match health.problems() {
+            0 => "Nothing needs looking after.".to_string(),
+            1 => "One thing needs looking after.".to_string(),
+            count => format!("{count} things need looking after."),
+        };
+        let summary = ui.add_label(page, &summary);
+        ui.add_class(summary, "md-p");
+        let link_to = |id: PageId| {
+            (library.page(id).title().to_string(), format!("{PAGE_SCHEME}{}", library.page(id).reference()))
+        };
+        let section = |ui: &mut Ui, heading: &str, about: &str, lines: Vec<voxear_ui::RichText>| {
+            if lines.is_empty() {
+                return;
+            }
+            let head = ui.add_label(page, heading);
+            ui.add_class(head, "md-h");
+            ui.add_class(head, "md-h2");
+            let note = ui.add_label(page, about);
+            ui.add_class(note, "cb-health-about");
+            for line in lines {
+                let row = ui.rich_label(page, &line);
+                ui.add_class(row, "md-p");
+            }
+        };
+        let page_link = |text: &mut voxear_ui::RichText, id: PageId| {
+            let (title, url) = link_to(id);
+            text.push_link(&title, &url, Default::default());
+        };
+        let code = voxear_ui::Marks { code: true, ..Default::default() };
+        let stale = health.stale.iter().map(|(id, files)| {
+            let mut text = voxear_ui::RichText::new();
+            page_link(&mut text, *id);
+            text.push(" · ", Default::default());
+            for (index, file) in files.iter().enumerate() {
+                if index > 0 {
+                    text.push(", ", Default::default());
+                }
+                text.push_link(file, file, Default::default());
+            }
+            text
+        });
+        let stale = stale.collect();
+        section(ui, "Out of date", "Pages that link to files changed since the page was last updated.", stale);
+        let broken = health.broken.iter().map(|(id, url)| {
+            let mut text = voxear_ui::RichText::new();
+            page_link(&mut text, *id);
+            text.push(" links to ", Default::default());
+            text.push(url, code);
+            text
+        });
+        let broken = broken.collect();
+        section(ui, "Links that go nowhere", "A page not written yet is written by clicking its link.", broken);
+        let missing = health.missing_pictures.iter().map(|(id, url)| {
+            let mut text = voxear_ui::RichText::new();
+            page_link(&mut text, *id);
+            text.push(" shows ", Default::default());
+            text.push(url, code);
+            text
+        });
+        let missing = missing.collect();
+        section(ui, "Missing pictures", "Pictures a page shows that are not there.", missing);
+        let unused = health.unused_pictures.iter().map(|path| {
+            let mut text = voxear_ui::RichText::new();
+            text.push_link(path, path, Default::default());
+            text
+        });
+        let unused = unused.collect();
+        section(
+            ui,
+            "Pictures no page shows",
+            "Kept in the pages' images folders, with nothing pointing at them.",
+            unused,
+        );
     }
 
     /// Scrolls to the heading a link named, once the page is laid out.

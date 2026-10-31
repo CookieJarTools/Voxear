@@ -151,6 +151,11 @@ impl Library {
         &self.root
     }
 
+    /// The project's folder, which the `Docs` folder is in.
+    pub fn project(&self) -> &Path {
+        &self.project
+    }
+
     /// A page by its id, its path (`Combat/Damage`, with or without `.md`)
     /// or, when only one page has it, its title.
     pub fn find(&self, reference: &str) -> Option<PageId> {

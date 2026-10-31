@@ -277,6 +277,8 @@ Done so far:
   `--progress json` it reports in JSON lines and stops on `cancel`, which the editor's Build window follows in its
   own process: the profiles and their settings, each stage with its time, the content's progress, the log, Cancel,
   Run and Show in Files.
+- **The layout kept:** the editor opens with the panels and workspace it was closed with, each workspace's layout
+  kept in `.voxear/Editor.toml`.
 
 Still to do in M3:
 - UI core:
@@ -315,8 +317,7 @@ Still to do in M3:
   - a bridge to Objs (`obj.Add<Spin>()`, `obj.Get<Spin>()`), so Behaviours and systems can mix
   - components written in scenes and prefabs, and shown in the inspector
   - Later: parallel jobs over chunks.
-- The editor's layout, and each workspace's, kept between sessions; the Animation workspace once there is
-  animation.
+- The Animation workspace, once there is animation.
 - **Builds, next:** editing a profile in the Build window, bundle compression (LZ4 or Zstd), the log filtered by
   level with a click selecting the asset a line names, and a desktop notification when a build finishes.
 

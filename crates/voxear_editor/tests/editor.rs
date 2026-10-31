@@ -2195,3 +2195,42 @@ fn click_named(editor: &mut voxear_editor::Editor, name: &str) {
 fn ui_parent(ui: &Ui, node: NodeId) -> NodeId {
     ui.parent(node).unwrap()
 }
+
+#[test]
+fn the_layout_and_workspace_are_kept_between_sessions() {
+    let dir = hello_copy();
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let open = |renderer: &mut Renderer| {
+        let project = Project::open(dir.path()).unwrap();
+        let mut editor = voxear_editor::Editor::open(project, renderer, LogCapture::default()).unwrap();
+        frame(&mut editor, renderer);
+        editor
+    };
+    let mut editor = open(&mut renderer);
+    let named = |editor: &voxear_editor::Editor, name: &str| editor.ui.find(editor.ui.root(), name).unwrap();
+    let dock = named(&editor, "dock");
+    editor.ui.close_dock_panel(dock, "project");
+    frame(&mut editor, &mut renderer);
+    let world = editor.ui.dock_layout(dock);
+    editor.ui.set_segment(named(&editor, "workspaces"), 1);
+    frame(&mut editor, &mut renderer);
+    editor.ui.close_dock_panel(dock, "console");
+    frame(&mut editor, &mut renderer);
+    let profiling = editor.ui.dock_layout(dock);
+    assert_ne!(world, profiling);
+    // The layout is looked at once a second.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    frame(&mut editor, &mut renderer);
+    drop(editor);
+
+    let mut editor = open(&mut renderer);
+    let dock = named(&editor, "dock");
+    assert_eq!(editor.workspace(), 1, "the workspace it was closed in");
+    assert_eq!(editor.ui.dock_layout(dock), profiling);
+    editor.ui.set_segment(named(&editor, "workspaces"), 0);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.ui.dock_layout(dock), world, "and the other workspace's as it was left");
+}

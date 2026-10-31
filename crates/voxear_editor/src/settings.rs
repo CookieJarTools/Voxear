@@ -255,13 +255,17 @@ pub fn info(key: &str) -> Option<&'static SettingInfo> {
     SETTINGS.iter().find(|s| s.key == key)
 }
 
-/// What the editor remembers of a project: its settings, and the keys of
-/// what the palette ran, most recent first.
+/// What the editor remembers of a project: its settings, the keys of what
+/// the palette ran, most recent first, and how its panels were laid out.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Memory {
     pub settings: Settings,
     pub recent: Vec<String>,
+    /// The workspace showing, and each workspace's layout as the dock
+    /// writes it; empty for one never shown.
+    pub workspace: usize,
+    pub layouts: Vec<String>,
     /// Where it is kept, or `None` for an editor that remembers nothing.
     #[serde(skip)]
     path: Option<PathBuf>,

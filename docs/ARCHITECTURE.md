@@ -1203,7 +1203,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   local), fly speed, and whether the stats chip and axis gizmo show; whether Play starts paused, saves first, clears
   the Console, pauses on an error, and reloads changed scripts while playing; the Scene view's shading and gizmos;
   and the Console's Collapse and trace toggles, and which code editor opens files. They are kept per project in
-  `.voxear/Editor.toml` with the palette's recent items, and shown in the rail's Settings drawer, with a tab for
+  `.voxear/Editor.toml` with the palette's recent items and the panels' layout, each workspace's and which one
+  showed, so the editor opens as it was closed. They are shown in the rail's Settings drawer, with a tab for
   each group down its left and a search over all of them that matches as the palette does. The tool strip's
   Pivot, Global and snap buttons, the Scene view's header and the wheel's fly speed are the same settings. From the
   palette, a toggle flips, a choice moves to the next, and a number opens the Settings drawer at it, focused to

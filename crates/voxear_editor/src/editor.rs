@@ -223,6 +223,8 @@ pub struct Editor {
     /// The workspace showing, and the layout each was last left in.
     workspace: usize,
     workspace_layouts: [Option<String>; 2],
+    /// When the layout was last looked at, to keep it in the memory.
+    layout_checked: Instant,
     profiler: Profiler,
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
@@ -363,7 +365,7 @@ impl Editor {
         ui.set_text(nodes.status_time, &format!("Opened in {:.2} s", started.elapsed().as_secs_f32()));
 
         tracing::info!("opened {} in edit mode", game.project.name());
-        Ok(Self {
+        let mut editor = Self {
             game,
             ui,
             fly,
@@ -424,7 +426,10 @@ impl Editor {
             describing: None,
             described_from: None,
             scripts_checked: None,
-        })
+            layout_checked: Instant::now(),
+        };
+        editor.restore_layout();
+        Ok(editor)
     }
 
     /// Selects an Obj, as a click in the Hierarchy does, or nothing.
@@ -535,6 +540,7 @@ impl Editor {
         }
         self.update_windows();
         self.update_workspaces();
+        self.keep_layout();
         {
             profile_scope!("Profiler");
             let profiler_shown = self.shown(self.nodes.profiler_panel);

@@ -4,9 +4,11 @@
 //! Voxear UI markup: `ui/StatsOverlay.vui` and `ui/StatsOverlay.vss`. The
 //! console ([`DevConsole`]) shares its UI, so one frame draws both.
 
+use std::collections::VecDeque;
+
 use anyhow::Result;
 use voxear_render::Renderer;
-use voxear_ui::{Key, NodeId, Ui, UiFrame};
+use voxear_ui::{Color, Key, NodeId, Shape, Ui, UiFrame};
 
 use crate::{
     Engine,
@@ -15,6 +17,13 @@ use crate::{
 
 /// How often the numbers change, slow enough to read.
 const REFRESH: f32 = 0.25;
+/// Frames the graph shows, newest at the right.
+const GRAPHED: usize = 180;
+/// The graph's top is never under this many milliseconds, a little over a
+/// frame at 60 a second, so a steady game sits low with room above.
+const GRAPH_SCALE: f32 = 25.0;
+const FRAME_LINE: u32 = 0x8b93ff;
+const TARGET_LINE: u32 = 0x2a2b30;
 
 pub(crate) const MARKUP: &str = include_str!("../ui/StatsOverlay.vui");
 pub(crate) const SHEET: &str = include_str!("../ui/StatsOverlay.vss");
@@ -28,6 +37,9 @@ pub struct StatsOverlay {
     ui: Ui,
     console: DevConsole,
     panel: NodeId,
+    graph: NodeId,
+    /// The latest frame times, in milliseconds, oldest first.
+    times: VecDeque<f32>,
     header: NodeId,
     values: Vec<NodeId>,
     frames: u32,
@@ -45,11 +57,21 @@ impl StatsOverlay {
         let document =
             ui.load_markup(root, "StatsOverlay.vui", MARKUP, &mut load).expect("the overlay's markup is built in");
         let find = |name: &str| ui.find(document, name).unwrap_or_else(|| panic!("StatsOverlay.vui has no {name}"));
-        let (panel, header) = (find("stats"), find("header"));
+        let (panel, header, graph) = (find("stats"), find("header"), find("graph"));
         let values = VALUES.iter().map(|name| find(name)).collect();
         ui.set_visible(panel, visible);
         let console = DevConsole::new(&mut ui, document);
-        Self { ui, console, panel, header, values, frames: 0, seconds: 0.0 }
+        Self {
+            ui,
+            console,
+            panel,
+            graph,
+            times: VecDeque::with_capacity(GRAPHED),
+            header,
+            values,
+            frames: 0,
+            seconds: 0.0,
+        }
     }
 
     /// Opens the console, ready to type, or closes it. The stats step aside
@@ -92,9 +114,36 @@ impl StatsOverlay {
         self.handle_clicks();
         self.frames += 1;
         self.seconds += delta;
+        if self.times.len() == GRAPHED {
+            self.times.pop_front();
+        }
+        self.times.push_back(delta * 1000.0);
+        if self.is_visible() {
+            self.draw_graph();
+        }
         if self.seconds >= REFRESH {
             self.refresh(renderer);
         }
+    }
+
+    /// The frame times as a line, a frame a step, under a line at 60 frames a
+    /// second; a hitch shows as a spike.
+    fn draw_graph(&mut self) {
+        let [_, _, width, height] = self.ui.rect(self.graph);
+        let slowest = self.times.iter().copied().fold(0.0, f32::max);
+        let scale = (slowest * 1.1).max(GRAPH_SCALE);
+        let y = |ms: f32| height - 2.0 - (ms / scale).min(1.0) * (height - 4.0);
+        let step = width / (GRAPHED - 1) as f32;
+        let first = GRAPHED - self.times.len();
+        let target = y(1000.0 / 60.0);
+        let mut shapes =
+            vec![Shape::Line { from: [0.0, target], to: [width, target], width: 1.0, color: Color::hex(TARGET_LINE) }];
+        let points: Vec<[f32; 2]> =
+            self.times.iter().enumerate().map(|(i, &ms)| [(first + i) as f32 * step, y(ms)]).collect();
+        for pair in points.windows(2) {
+            shapes.push(Shape::Line { from: pair[0], to: pair[1], width: 1.5, color: Color::hex(FRAME_LINE) });
+        }
+        self.ui.set_shapes(self.graph, shapes);
     }
 
     /// Shows the numbers now, averaged over the frames since the last time.
@@ -107,7 +156,8 @@ impl StatsOverlay {
         let texts = [
             format!("{:.0} fps", frames / seconds),
             format!("{:.2} ms", seconds * 1000.0 / frames),
-            format!("{gpu_ms:.2} ms"),
+            // Adding zero turns a rounding's -0.00 into 0.00.
+            format!("{:.2} ms", gpu_ms.max(0.0) + 0.0),
             grouped(stats.drawn_early + stats.drawn_late),
             grouped(stats.shadow_draws),
             grouped(stats.frustum_culled + stats.occlusion_culled),
@@ -233,6 +283,30 @@ mod tests {
                 image::ColorType::Rgba8,
             )
             .unwrap();
+        }
+    }
+
+    /// Frame times as a line, with a hitch as a spike. Set `VOXEAR_TEST_OUTPUT`
+    /// to a folder to keep the image.
+    #[test]
+    fn the_stats_graph_their_frame_times() {
+        let Ok(mut renderer) = Renderer::new_offscreen(640, 360, &voxear_render::RendererSettings::default()) else {
+            return eprintln!("skipping: no usable GPU");
+        };
+        let mut overlay = StatsOverlay::new(true);
+        let before = overlay.frame((640, 360), 1.0).quads.len();
+        for frame in 0..120 {
+            let delta = if frame == 90 { 0.05 } else { 1.0 / 60.0 };
+            overlay.update(delta, &renderer);
+        }
+        let after = overlay.frame((640, 360), 1.0).quads.len();
+        assert!(after >= before + 100, "a line between each two frames: {before} quads, then {after}");
+        overlay.draw(&mut renderer, (640, 360), 1.0).unwrap();
+        renderer.render(&voxear_ecs::World::new(), 0.0).unwrap();
+        if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let (width, height, pixels) = renderer.read_pixels().unwrap();
+            let path = std::path::Path::new(&dir).join("stats-graph.png");
+            image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8).unwrap();
         }
     }
 

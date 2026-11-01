@@ -19,6 +19,9 @@ pub enum Shape {
     Line { from: [f32; 2], to: [f32; 2], width: f32, color: Color },
     /// A filled circle, maybe with a border inside its edge.
     Circle { center: [f32; 2], radius: f32, fill: Color, border: Option<(f32, Color)> },
+    /// A filled rectangle, left, top, width and height, with rounded
+    /// corners, as a timeline's bars are drawn.
+    Rect { rect: [f32; 4], radius: f32, fill: Color },
 }
 
 /// How big an icon is when nothing sizes it.
@@ -394,6 +397,17 @@ fn shape_quads(shapes: &[Shape], content: [f32; 4], scale: f32, opacity: f32, cl
                     radius,
                 };
                 shape_quad(&look, [c[0] - r, c[1] - r, r * 2.0, r * 2.0], scale, opacity, clip, quads);
+            }
+            Shape::Rect { rect: [x, y, w, h], radius, fill } => {
+                let corner = at([x, y]);
+                let look = Look {
+                    background: fill.linear_premultiplied(),
+                    border: 0.0,
+                    border_color: [0.0; 4],
+                    dashed: false,
+                    radius,
+                };
+                shape_quad(&look, [corner[0], corner[1], w * scale, h * scale], scale, opacity, clip, quads);
             }
         }
     }

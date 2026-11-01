@@ -1862,6 +1862,27 @@ fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
 
+    // The Timeline: the frame's runs as bars, named when wide enough, and the one pointed at described.
+    assert!(shown.iter().any(|t| t == "GC Alloc"), "scripts' allocations have a column");
+    let view = first_with(&editor.ui, panel, "profiler-view").unwrap();
+    editor.ui.set_segment(view, 1);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut names = Vec::new();
+    with_class(&editor.ui, panel, "profiler-bar-name", &mut names);
+    let named: Vec<String> = names.iter().filter(|&&n| editor.ui.is_visible(n)).map(|&n| editor.ui.text(n)).collect();
+    let tops = ["Game", "Editor", "UI Layout", "Render"];
+    assert!(named.iter().any(|n| tops.iter().any(|t| n.starts_with(t))), "the widest bars are named: {named:?}");
+    let canvas = first_with(&editor.ui, panel, "profiler-canvas").unwrap();
+    let [x, y, _, _] = editor.ui.rect(canvas);
+    editor.ui.pointer_move(x + 2.0, y + 9.0);
+    frame(&mut editor, &mut renderer);
+    let hovered = editor.ui.text(first_with(&editor.ui, panel, "profiler-hovered").unwrap());
+    assert!(hovered.contains("ms, from"), "the bar pointed at is described: {hovered}");
+    shot(&mut renderer, "profiler-timeline.png");
+    editor.ui.set_segment(view, 0);
+    frame(&mut editor, &mut renderer);
+
     // A click on the chart picks a frame to break down, until Live.
     let toolbar = editor.ui.children(first_with(&editor.ui, panel, "console-toolbar").unwrap());
     let (record, live) = (toolbar[0], toolbar[2]);

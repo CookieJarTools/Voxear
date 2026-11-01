@@ -332,8 +332,8 @@ Still to do in M3:
   person explains things: clear and short, plain words, each term explained where it first appears, an example
   before the details, and nothing that sounds generated.
 - Debug tools:
-  - the stats overlay's frame-time graph; the Profiler's timeline view, worker threads' samples and managed
-    allocations per frame; and Tracy behind it
+  - [x] the stats overlay's frame-time graph; the Profiler's timeline view and managed allocations (GC Alloc)
+  - [ ] worker threads' samples in the Profiler, and Tracy behind it
   - the frame debugger
   - [x] the ECS inspector: archetypes, entities and their components, the system schedule with timings, and a filter
     by components

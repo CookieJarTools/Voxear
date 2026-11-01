@@ -63,5 +63,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<Vector3*, Vector3*, Quaternion*, Color*, float, int, void> DebugBox;
 		public delegate* unmanaged[Cdecl]<Vector3*, float, Color*, float, int, void> DebugSphere;
 		public delegate* unmanaged[Cdecl]<Vector3*, byte*, int, Color*, float, void> DebugText;
+		public delegate* unmanaged[Cdecl]<ulong, void> ProfilerEndAlloc;
 	}
 }

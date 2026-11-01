@@ -2314,12 +2314,19 @@ them in a running game.
   - Step through render graph passes inside the editor, with each pass's inputs and outputs.
   - Inspect any texture (mip, slice, channel, exposure) or buffer.
   - See culling results (instances and meshlets culled by frustum and occlusion, the LOD chosen) and pipeline state.
-- **CPU and GPU profiler.** *(The editor's Profiler has the hierarchy view, cost per system and per behaviour
-  callback, scripts' own samples, and GPU time per pass; see the editor above.)*
-  - Timeline and hierarchy views.
+- **CPU and GPU profiler.** *(The editor's Profiler has the hierarchy and timeline views, cost per system and per
+  behaviour callback, scripts' own samples, managed allocations, and GPU time per pass; see the editor above.)*
+  - Timeline and hierarchy views. The recorder keeps each run of a sample as a span, with when it started and ended
+    in the frame and how deep it ran (`profiling::Span`), beside the merged tree; the Timeline draws them as bars,
+    coloured as the engine's work, scripts, rendering or waiting, names the widest, and describes the one under the
+    pointer.
   - Cost per system, per job and per behaviour.
   - GPU time per render graph pass, from timestamp queries.
-  - Managed allocations per frame.
+  - Managed allocations: each sample a script begins notes the bytes its thread had allocated, and ends with what it
+    allocated since (`profiling::end_with_alloc`), so the Hierarchy has a GC Alloc column, as Unity's does, and the
+    summary the frame's total.
+  - The stats overlay (F1) graphs the last few seconds of frame times under a line at 60 frames a second, so a hitch
+    shows as a spike.
   - **Tracy** is integrated for deep sessions: zones across Rust systems, jobs and C#
     (`using (Profiler.Sample("Pathfinding"))`), locks, plots and frame images.
 - **Memory profiler.**

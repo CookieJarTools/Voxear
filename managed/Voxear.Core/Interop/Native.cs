@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 
 namespace Voxear.Interop
@@ -12,6 +13,9 @@ namespace Voxear.Interop
 		public const int LevelInfoError = 3;
 
 		public static NativeApi* Api;
+
+		/// <summary>The bytes this thread had allocated when each open sample began, innermost last.</summary>
+		private static readonly Stack<long> allocatedAt = new Stack<long>();
 
 		public static bool IsConnected => Api != null;
 
@@ -33,18 +37,30 @@ namespace Voxear.Interop
 			}
 		}
 
-		/// <summary>Starts a sample, returning whether it was recorded; only one that was is ended.</summary>
+		/// <summary>
+		/// Starts a sample, returning whether it was recorded; only one that was is ended. It notes how much managed
+		/// memory this thread has allocated, so the end can say what the sample allocated, as Unity's GC Alloc column.
+		/// </summary>
 		public static bool ProfilerBegin(uint marker)
 		{
-			return IsConnected && Api->ProfilerBegin(marker) != 0;
+			if (!IsConnected || Api->ProfilerBegin(marker) == 0)
+			{
+				return false;
+			}
+
+			allocatedAt.Push(GC.GetAllocatedBytesForCurrentThread());
+			return true;
 		}
 
 		public static void ProfilerEnd()
 		{
-			if (IsConnected)
+			if (!IsConnected)
 			{
-				Api->ProfilerEnd();
+				return;
 			}
+
+			var allocated = allocatedAt.Count > 0 ? GC.GetAllocatedBytesForCurrentThread() - allocatedAt.Pop() : 0;
+			Api->ProfilerEndAlloc((ulong)Math.Max(allocated, 0));
 		}
 
 		/// <summary>A line for the engine log, with the stack that wrote it and the Obj it is about (0 for none).</summary>

@@ -9,6 +9,11 @@
 //! the slowest first. Beside it are the GPU's passes, timed on the GPU, and
 //! what the frame drew and culled and what is loaded.
 //!
+//! The **Timeline** shows the same frame as it ran: each run of each sample
+//! as a bar from when it started to when it ended, under what it ran in,
+//! with the one under the pointer named above. Scripts' samples have the
+//! managed memory they allocated (GC Alloc), as Unity's do.
+//!
 //! Samples are taken only while the panel shows and Record is on. A click on
 //! the chart picks a frame to break down; Live goes back to the newest.
 //! Render's time includes waiting for the GPU and the display ("Wait for
@@ -38,7 +43,18 @@ const DETAIL_INTERVAL: f32 = 0.25;
 /// The milliseconds of 60 and 30 frames a second, drawn across the chart.
 const GUIDES: [(f32, &str); 2] = [(1000.0 / 60.0, "60 fps"), (1000.0 / 30.0, "30 fps")];
 /// The Hierarchy's columns after the sample's name, as its header names them.
-const COLUMNS: [&str; 5] = ["Total", "Self", "Calls", "Time ms", "Self ms"];
+const COLUMNS: [&str; 6] = ["Total", "Self", "Calls", "GC Alloc", "Time ms", "Self ms"];
+/// A timeline row's height, and the least width a bar has a name in.
+const LANE: f32 = 18.0;
+const NAMED: f32 = 56.0;
+/// Bar colours: the engine's own work, scripts, rendering, and waiting.
+const ENGINE: u32 = 0x4f63d2;
+const SCRIPT: u32 = 0x8a5cf0;
+const RENDER: u32 = 0x2f9a68;
+const WAIT: u32 = 0x3b3e46;
+/// Samples that are the renderer's, and those that are waiting on the GPU or display.
+const RENDERING: [&str; 5] = ["Render", "Extract", "Record Passes", "Submit", "UI"];
+const WAITING: [&str; 2] = ["Wait for GPU", "Acquire Image"];
 /// Samples opened by themselves the first time they show, as Unity opens the
 /// player loop, so scripts' callbacks show at once.
 const OPENED: [&str; 7] = ["Game", "Editor", "Render", "FixedUpdate", "Update", "LateUpdate", "Lifecycle"];
@@ -75,6 +91,19 @@ impl Sample {
 
 pub struct Profiler {
     record: NodeId,
+    /// Hierarchy or Timeline.
+    view: NodeId,
+    hierarchy: NodeId,
+    timeline: NodeId,
+    timeline_canvas: NodeId,
+    timeline_hovered: NodeId,
+    /// Names on the timeline's bars, kept and reused.
+    timeline_names: Vec<NodeId>,
+    /// The run under the pointer, as its index in the frame's spans.
+    hovered_span: Option<usize>,
+    /// How wide the timeline was drawn, to draw it again when that changes,
+    /// as when it first shows.
+    timeline_width: f32,
     clear: NodeId,
     live: NodeId,
     summary: NodeId,
@@ -110,6 +139,11 @@ impl Profiler {
         let (record, clear, live) = (button(ui, "Record"), button(ui, "Clear"), button(ui, "Live"));
         ui.set_checked(record, true);
         ui.set_visible(live, false);
+        let view = ui.segmented(bar);
+        ui.add_class(view, "profiler-view");
+        ui.add_segment(view, "Hierarchy", None);
+        ui.add_segment(view, "Timeline", None);
+        ui.set_segment(view, 0);
         let summary = ui.add_label(bar, "");
         ui.add_class(summary, "profiler-summary");
         divider(ui, root);
@@ -153,6 +187,15 @@ impl Profiler {
         let tree = ui.tree_view(hierarchy, ROW, CallItems(calls.clone()));
         ui.add_class(tree, "fill");
         ui.add_class(tree, "profiler-tree");
+        let timeline = ui.panel(lower, Style::default());
+        ui.add_class(timeline, "profiler-hierarchy");
+        ui.add_class(timeline, "profiler-timeline");
+        let timeline_hovered = ui.add_label(timeline, "Point at a bar to see what it is.");
+        ui.add_class(timeline_hovered, "profiler-hovered");
+        let timeline_canvas = ui.panel(timeline, Style::default());
+        ui.add_class(timeline_canvas, "fill");
+        ui.add_class(timeline_canvas, "profiler-canvas");
+        ui.set_visible(timeline, false);
         let side = ui.panel(lower, Style::default());
         ui.add_class(side, "profiler-side");
         let side = ["GPU", "Frame"].map(|title| {
@@ -164,6 +207,14 @@ impl Profiler {
         });
         Self {
             record,
+            view,
+            hierarchy,
+            timeline,
+            timeline_canvas,
+            timeline_hovered,
+            timeline_names: Vec::new(),
+            hovered_span: None,
+            timeline_width: 0.0,
             clear,
             live,
             summary,
@@ -240,7 +291,16 @@ impl Profiler {
         if !shown {
             return;
         }
+        let timeline = ui.segment(self.view) == 1;
+        if timeline != ui.is_visible(self.timeline) {
+            ui.set_visible(self.hierarchy, !timeline);
+            ui.set_visible(self.timeline, timeline);
+            self.shown = None;
+        }
         self.draw_chart(ui);
+        if ui.is_visible(self.timeline) {
+            self.hover_timeline(ui);
+        }
         let Some(sample) = self.shown_sample() else { return };
         let frame = sample.frame;
         let due = self.shown.is_none_or(|(at, built)| {
@@ -305,8 +365,11 @@ impl Profiler {
         let Some(sample) = self.shown_sample().cloned() else { return };
         let (cpu_ms, gpu_ms) = (sample.cpu_ms(), sample.gpu_ms());
         let fps = if sample.frame_ms > 0.0 { 1000.0 / sample.frame_ms } else { 0.0 };
-        let summary =
-            format!("{fps:.0} fps   {:.2} ms frame   CPU {cpu_ms:.2} ms   GPU {gpu_ms:.2} ms", sample.frame_ms);
+        let allocated = bytes(sample.cpu.alloc_bytes(Samples::FRAME));
+        let summary = format!(
+            "{fps:.0} fps   {:.2} ms frame   CPU {cpu_ms:.2} ms   GPU {gpu_ms:.2} ms   GC {allocated}",
+            sample.frame_ms
+        );
         ui.set_text(self.summary, &summary);
         let ago = self.frames.saturating_sub(sample.frame);
         let picked =
@@ -320,6 +383,9 @@ impl Profiler {
             }
         }
         ui.refresh_list(self.tree);
+        if ui.is_visible(self.timeline) {
+            self.draw_timeline(ui, &sample.cpu);
+        }
 
         for column in self.side {
             for row in ui.children(column).into_iter().skip(1) {
@@ -426,12 +492,108 @@ impl TreeItems for CallItems {
             format!("{:.1}%", total / frame * 100.0),
             format!("{:.1}%", own / frame * 100.0),
             samples.nodes[node].calls.to_string(),
+            bytes(samples.alloc_bytes(node)),
             format!("{total:.2}"),
             format!("{own:.2}"),
         ];
         for (part, text) in ui.children(row).into_iter().zip(texts) {
             ui.set_text(part, &text);
         }
+    }
+}
+
+impl Profiler {
+    /// The frame as it ran: each run a bar, along the frame's time and down
+    /// by how deep it ran, named when it is wide enough, the one under the
+    /// pointer lighter.
+    fn draw_timeline(&mut self, ui: &mut Ui, samples: &Samples) {
+        let [_, _, width, _] = ui.rect(self.timeline_canvas);
+        self.timeline_width = width;
+        let length = samples.spans.iter().map(|span| span.end_ns).max().unwrap_or(0).max(1) as f32;
+        let x = |ns: u64| ns as f32 / length * width;
+        let mut shapes = Vec::with_capacity(samples.spans.len());
+        let mut named = Vec::new();
+        for (index, span) in samples.spans.iter().enumerate() {
+            let (left, right) = (x(span.start_ns), x(span.end_ns));
+            let top = f32::from(span.depth) * LANE;
+            let name = span.marker.name();
+            let lit = self.hovered_span == Some(index);
+            let fill = Color::hex(bar_color(&name)).with_alpha(if lit { 255 } else { 210 });
+            let rect = [left, top + 1.0, (right - left).max(1.0), LANE - 2.0];
+            shapes.push(Shape::Rect { rect, radius: 3.0, fill });
+            if right - left >= NAMED {
+                named.push((name, span.end_ns - span.start_ns, [left, top, right - left]));
+            }
+        }
+        ui.set_shapes(self.timeline_canvas, shapes);
+        while self.timeline_names.len() < named.len() {
+            let label = ui.add_label(self.timeline_canvas, "");
+            ui.add_class(label, "profiler-bar-name");
+            self.timeline_names.push(label);
+        }
+        for (index, &label) in self.timeline_names.iter().enumerate() {
+            let Some((name, ns, [left, top, width])) = named.get(index) else {
+                ui.set_visible(label, false);
+                continue;
+            };
+            // As much of the name as fits, with its time when that fits too.
+            let room = ((width - 8.0) / 6.2) as usize;
+            let full = format!("{name} {:.2} ms", *ns as f32 / 1e6);
+            let text: String = if full.chars().count() <= room { full } else { name.chars().take(room).collect() };
+            ui.set_text(label, &text);
+            ui.set_inline_style(label, &format!("left: {}px; top: {}px", left + 4.0, top + 2.0));
+            ui.set_visible(label, true);
+        }
+    }
+
+    /// Names the run under the pointer, and lights its bar.
+    fn hover_timeline(&mut self, ui: &mut Ui) {
+        let Some(sample) = self.shown_sample().cloned() else { return };
+        let [x, y, width, height] = ui.rect(self.timeline_canvas);
+        let hovered = ui.pointer_position().filter(|&(px, py)| px >= x && px < x + width && py >= y && py < y + height);
+        let found = hovered.and_then(|(px, py)| {
+            let length = sample.cpu.spans.iter().map(|span| span.end_ns).max().unwrap_or(0).max(1) as f32;
+            let at = ((px - x) / width * length) as u64;
+            let depth = ((py - y) / LANE) as u16;
+            sample.cpu.spans.iter().rposition(|s| s.depth == depth && s.start_ns <= at && at <= s.end_ns)
+        });
+        if found == self.hovered_span && width == self.timeline_width {
+            return;
+        }
+        self.hovered_span = found;
+        let text = found.map_or_else(
+            || "Point at a bar to see what it is.".to_string(),
+            |index| {
+                let span = sample.cpu.spans[index];
+                let (ms, at) = ((span.end_ns - span.start_ns) as f32 / 1e6, span.start_ns as f32 / 1e6);
+                format!("{}   {ms:.3} ms, from {at:.2} ms into the frame", span.marker.name())
+            },
+        );
+        ui.set_text(self.timeline_hovered, &text);
+        self.draw_timeline(ui, &sample.cpu);
+    }
+}
+
+/// A bar's colour by what ran: scripts' callbacks and systems, the
+/// renderer's work, waiting on the GPU or display, or the engine's own.
+fn bar_color(name: &str) -> u32 {
+    if name.ends_with("()") {
+        SCRIPT
+    } else if WAITING.contains(&name) {
+        WAIT
+    } else if RENDERING.contains(&name) {
+        RENDER
+    } else {
+        ENGINE
+    }
+}
+
+/// Bytes as people read them: 0 B, 512 B, 1.5 KB, 2.3 MB.
+fn bytes(count: u64) -> String {
+    match count {
+        0..1024 => format!("{count} B"),
+        1024..1_048_576 => format!("{:.1} KB", count as f64 / 1024.0),
+        _ => format!("{:.1} MB", count as f64 / 1_048_576.0),
     }
 }
 

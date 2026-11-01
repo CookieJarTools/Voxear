@@ -9,6 +9,10 @@
 //! search among its siblings. [`end_frame`] hands back what the thread
 //! recorded and starts its next frame. Other threads record nothing.
 //!
+//! Each run of a sample is kept too, as a [`Span`] with its start and end in
+//! the frame, for a timeline; and scripts' samples carry the managed memory
+//! allocated in them ([`end_with_alloc`]), as Unity's GC Alloc column.
+//!
 //! The easy form is a scope that ends with its block:
 //!
 //! ```
@@ -73,7 +77,13 @@ impl Marker {
 
 /// Ends the sample begun last on this thread.
 pub fn end() {
-    RECORDER.with_borrow_mut(Recorder::end);
+    RECORDER.with_borrow_mut(|recorder| recorder.end(0));
+}
+
+/// Ends the sample begun last on this thread, noting that `bytes` of managed
+/// memory were allocated while it ran, as scripts' samples do.
+pub fn end_with_alloc(bytes: u64) {
+    RECORDER.with_borrow_mut(|recorder| recorder.end(bytes));
 }
 
 /// Ends its sample when dropped.
@@ -132,6 +142,19 @@ pub struct Node {
     pub children: Vec<usize>,
     pub total_ns: u64,
     pub calls: u32,
+    /// Managed bytes allocated in it, everything in it included, when a
+    /// script said; see [`Samples::alloc_bytes`].
+    pub alloc_bytes: Option<u64>,
+}
+
+/// One run of a sample: when it started and ended, in nanoseconds from the
+/// frame's start, and how many samples were open around it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Span {
+    pub marker: Marker,
+    pub depth: u16,
+    pub start_ns: u64,
+    pub end_ns: u64,
 }
 
 /// A frame's samples as a tree. Node 0 is the frame itself, holding the
@@ -139,12 +162,21 @@ pub struct Node {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Samples {
     pub nodes: Vec<Node>,
+    /// Every run, in the order they started, for a timeline.
+    pub spans: Vec<Span>,
 }
 
 impl Default for Samples {
     fn default() -> Self {
-        let frame = Node { marker: Marker(u32::MAX), parent: None, children: Vec::new(), total_ns: 0, calls: 0 };
-        Self { nodes: vec![frame] }
+        let frame = Node {
+            marker: Marker(u32::MAX),
+            parent: None,
+            children: Vec::new(),
+            total_ns: 0,
+            calls: 0,
+            alloc_bytes: None,
+        };
+        Self { nodes: vec![frame], spans: Vec::new() }
     }
 }
 
@@ -173,50 +205,79 @@ impl Samples {
     pub fn find(&self, name: &str) -> Option<usize> {
         (1..self.nodes.len()).find(|&node| self.name(node) == name)
     }
+
+    /// Managed bytes allocated in the sample and everything in it: what a
+    /// script said, or else what the samples in it add up to.
+    pub fn alloc_bytes(&self, node: usize) -> u64 {
+        match self.nodes[node].alloc_bytes {
+            Some(bytes) => bytes,
+            None => self.nodes[node].children.iter().map(|&child| self.alloc_bytes(child)).sum(),
+        }
+    }
 }
 
 #[derive(Default)]
 struct Recorder {
     enabled: bool,
     samples: Samples,
-    open: Vec<(usize, Instant)>,
+    /// Each open sample's node, when it began, and its span.
+    open: Vec<(usize, Instant, usize)>,
+    /// When the frame being recorded began: at the first sample, or when
+    /// the last frame was taken.
+    frame_start: Option<Instant>,
 }
 
 impl Recorder {
     fn begin(&mut self, marker: Marker) -> bool {
-        let parent = self.open.last().map_or(Samples::FRAME, |&(node, _)| node);
+        let now = Instant::now();
+        let parent = self.open.last().map_or(Samples::FRAME, |&(node, _, _)| node);
         let nodes = &mut self.samples.nodes;
         let found = nodes[parent].children.iter().copied().find(|&child| nodes[child].marker == marker);
         let node = found.unwrap_or_else(|| {
-            nodes.push(Node { marker, parent: Some(parent), children: Vec::new(), total_ns: 0, calls: 0 });
+            let fresh =
+                Node { marker, parent: Some(parent), children: Vec::new(), total_ns: 0, calls: 0, alloc_bytes: None };
+            nodes.push(fresh);
             let node = nodes.len() - 1;
             nodes[parent].children.push(node);
             node
         });
-        self.open.push((node, Instant::now()));
+        let start_ns = (now - *self.frame_start.get_or_insert(now)).as_nanos() as u64;
+        let depth = self.open.len() as u16;
+        self.samples.spans.push(Span { marker, depth, start_ns, end_ns: start_ns });
+        self.open.push((node, now, self.samples.spans.len() - 1));
         true
     }
 
-    fn end(&mut self) {
-        let Some((node, started)) = self.open.pop() else { return };
+    fn end(&mut self, alloc_bytes: u64) {
+        let Some((node, started, span)) = self.open.pop() else { return };
+        let now = Instant::now();
+        if let Some(span) = self.samples.spans.get_mut(span) {
+            span.end_ns = span.start_ns + (now - started).as_nanos() as u64;
+        }
         let Some(node) = self.samples.nodes.get_mut(node) else { return };
-        node.total_ns += started.elapsed().as_nanos() as u64;
+        node.total_ns += (now - started).as_nanos() as u64;
         node.calls += 1;
+        if alloc_bytes > 0 || node.alloc_bytes.is_some() {
+            *node.alloc_bytes.get_or_insert(0) += alloc_bytes;
+        }
     }
 
     /// The frame's samples, leaving those still open to carry on in the next.
     fn take(&mut self) -> Samples {
         let now = Instant::now();
-        let taken = std::mem::take(&mut self.samples);
+        let mut finished = std::mem::take(&mut self.samples);
         // A sample still open is counted up to now in the frame taken, and starts again in the next.
         let mut reopened = Vec::new();
-        let mut finished = taken;
-        for &(node, started) in &self.open {
+        for &(node, started, span) in &self.open {
             finished.nodes[node].total_ns += (now - started).as_nanos() as u64;
             finished.nodes[node].calls += 1;
+            if let Some(span) = finished.spans.get_mut(span) {
+                span.end_ns = span.start_ns + (now - started).as_nanos() as u64;
+            }
             reopened.push(finished.nodes[node].marker);
         }
         self.open.clear();
+        self.frame_start = Some(now);
         for marker in reopened {
             self.begin(marker);
         }
@@ -271,5 +332,34 @@ mod tests {
         assert!(samples.total_ms(update) >= samples.total_ms(spinner) + samples.total_ms(turner));
         assert!(samples.self_ms(update) < samples.total_ms(update));
         assert!(!Marker::new("Off").scope().recorded, "nothing is recorded while sampling is off");
+
+        // Each run is a span, in the order they started, at its depth.
+        let runs: Vec<(String, u16)> = samples.spans.iter().map(|s| (s.marker.name(), s.depth)).collect();
+        assert_eq!(runs[0], ("Update".to_string(), 0));
+        assert_eq!(runs.iter().filter(|(name, depth)| name == "Spinner.Update()" && *depth == 1).count(), 3);
+        let spans = &samples.spans;
+        assert!(spans.windows(2).all(|pair| pair[0].start_ns <= pair[1].start_ns));
+        assert!(spans[1..].iter().all(|span| span.start_ns >= spans[0].start_ns && span.end_ns <= spans[0].end_ns));
+        assert!(spans[1].end_ns - spans[1].start_ns >= 200_000, "a span lasts as long as its run");
+    }
+
+    #[test]
+    fn scripts_samples_carry_what_they_allocated() {
+        set_enabled(true);
+        end_frame();
+        {
+            crate::profile_scope!("Update");
+            Marker::new("Spawner.Update()").begin();
+            end_with_alloc(1024);
+            Marker::new("Spawner.Update()").begin();
+            end_with_alloc(512);
+            let _quiet = Marker::new("Mover.Update()").scope();
+        }
+        let samples = end_frame();
+        set_enabled(false);
+        let spawner = samples.find("Spawner.Update()").unwrap();
+        assert_eq!(samples.alloc_bytes(spawner), 1536);
+        assert_eq!(samples.alloc_bytes(samples.find("Update").unwrap()), 1536, "a parent adds up what is in it");
+        assert_eq!(samples.alloc_bytes(samples.find("Mover.Update()").unwrap()), 0);
     }
 }

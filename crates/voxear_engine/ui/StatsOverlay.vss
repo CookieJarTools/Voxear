@@ -140,3 +140,9 @@
     display: none;
 }
 
+.graph {
+    height: 44px;
+    border-radius: 6px;
+    background-color: #0a0b0e;
+}
+

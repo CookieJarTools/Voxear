@@ -2134,3 +2134,33 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-muted);
 }
 
+
+/* The Profiler's Timeline: the frame's runs as bars, the one pointed at named above. */
+.profiler-view {
+    margin-left: 6px;
+}
+
+.profiler-timeline {
+    padding: 4px 8px;
+    gap: 4px;
+}
+
+.profiler-hovered {
+    flex-shrink: 0;
+    height: 18px;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.profiler-canvas {
+    min-height: 0px;
+}
+
+.profiler-bar-name {
+    position: absolute;
+    font-size: 11px;
+    color: #ffffff;
+    white-space: nowrap;
+    pointer-events: none;
+}

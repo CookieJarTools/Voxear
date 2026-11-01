@@ -36,7 +36,7 @@ use crate::services::{
     SpawnedPrefab, with_services,
 };
 
-pub(crate) const API_VERSION: u32 = 18;
+pub(crate) const API_VERSION: u32 = 19;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -123,6 +123,9 @@ pub(crate) struct NativeApi {
     pub debug_box: unsafe extern "C" fn(*const [f32; 3], *const [f32; 3], *const [f32; 4], *const [f32; 4], f32, i32),
     pub debug_sphere: unsafe extern "C" fn(*const [f32; 3], f32, *const [f32; 4], f32, i32),
     pub debug_text: unsafe extern "C" fn(*const [f32; 3], *const u8, i32, *const [f32; 4], f32),
+    /// Ends the last sample begun, with the managed bytes allocated while it
+    /// ran, as the Profiler's GC Alloc column shows them.
+    pub profiler_end_alloc: unsafe extern "C" fn(bytes: u64),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -355,6 +358,10 @@ unsafe extern "C" fn profiler_begin(marker: u32) -> i32 {
 
 unsafe extern "C" fn profiler_end() {
     profiling::end();
+}
+
+unsafe extern "C" fn profiler_end_alloc(bytes: u64) {
+    profiling::end_with_alloc(bytes);
 }
 
 unsafe extern "C" fn profiler_enabled() -> i32 {
@@ -754,6 +761,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         debug_box,
         debug_sphere,
         debug_text,
+        profiler_end_alloc,
     }
 }
 

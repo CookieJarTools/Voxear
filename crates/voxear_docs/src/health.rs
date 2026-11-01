@@ -30,7 +30,7 @@ use crate::{
 };
 
 /// The extensions of the pictures VoxDocs shows.
-const PICTURES: [&str; 3] = ["png", "jpg", "jpeg"];
+const PICTURES: [&str; 4] = ["png", "jpg", "jpeg", "gif"];
 
 #[derive(Debug, Default)]
 pub struct Health {

@@ -1640,7 +1640,7 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **A page's menu** in the tree (a right click) copies a link to it, and for a page of the project's own a
   `[Documentation]` attribute naming it by its id, ready to paste on code.
 - **Pictures**: `![what it shows](images/Day.png)`, from the page's folder (pictures kept with a page sit in an
-  `images` folder beside it) or the project's. A page shows its PNG and JPEG pictures at their own size, or
+  `images` folder beside it) or the project's. A page shows its PNG, JPEG and GIF pictures at their own size, or
   narrower to fit, keeping their shape; the editor reads them a couple a frame, shrinks any over 2048 pixels, and
   keeps them for the session. Until then, and for one that is not there, its name shows instead. A picture in a
   list or quote shows as its name for now. **Live assets**: a picture naming a prefab, model or material
@@ -1656,7 +1656,12 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   another page, so nothing written is lost. A new title renames its file, or its folder, keeping its id, so links
   by id and Back and Forward still find it; tags are kept once each. Under the title, **Image…** lists the project's
   pictures and live assets, **Link…** its pages, and **Action…** the commands and the kinds of check and asset step,
-  each putting its Markdown in at the cursor.
+  each putting its Markdown in at the cursor. **Capture Scene** puts in a PNG of the Scene view, and **Record Scene**
+  and **Record Game** three seconds of the Scene or Game view as a GIF, fifteen frames a second and no wider than 640
+  pixels, made off the main thread. The renderer copies the view before the UI draws over it, so the editor's
+  overlays are not in them; when VoxDocs shares its place with the view, the view shows while it is taken and the
+  page comes back with the picture. They are kept in the `images` folder beside the page. GIFs play on a page: each
+  frame is uploaded once, and the one due swapped in where the picture shows, without drawing the page again.
 - **The Code Reference** *(`code`)*: a page for every public type in the game's scripts and in Voxear.Core, in a
   folder after the project's pages, with a folder for each namespace, the game's first. Inside each, the pages sit in
   the folders their sources are in, as `Inspector/Help` for Voxear.Core's `managed/Voxear.Core/Inspector/Help`, read
@@ -1696,8 +1701,6 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 **Still to come**, as the Unity Cookbook has them:
 - **Checks written in C#** for guides (`[DocsCheck]`, a static method returning whether it passes or what is still
   wrong), which need the scripts to hand back a value.
-- **Pictures** captured from the Scene view, or recorded as GIFs of the Scene or Game, which need the renderer to
-  read the window's pixels back.
 - A box to find a tag among many.
 - While writing: tags as chips with suggestions.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine

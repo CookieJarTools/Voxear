@@ -24,4 +24,4 @@ pub mod view;
 pub use code::CodeReference;
 pub use header::Header;
 pub use library::{Excerpt, Library, Page, PageId, Target};
-pub use panel::VoxDocs;
+pub use panel::{Capture, VoxDocs};

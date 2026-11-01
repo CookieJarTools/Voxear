@@ -39,6 +39,9 @@ pub struct Rendered {
     /// Under a live asset that has fields to change, a material's, the
     /// place for them, which the editor fills, with the picture's address.
     pub fields: Vec<(String, NodeId)>,
+    /// Each picture shown, by its address, so a new frame of it, as of a
+    /// GIF, can be swapped in without drawing the page again.
+    pub pictures: Vec<(String, NodeId)>,
 }
 
 /// The kinds of live asset whose fields a page shows under them, by their
@@ -105,7 +108,9 @@ pub fn render(ui: &mut Ui, parent: NodeId, blocks: &[Block], lookups: &Lookups) 
     let mut rendered = Rendered::default();
     for block in blocks {
         if let Block::Image { alt, url } = block {
-            picture(ui, parent, alt, url, lookups);
+            if let Some(node) = picture(ui, parent, alt, url, lookups) {
+                rendered.pictures.push((url.clone(), node));
+            }
             let extension = url.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
             if WITH_FIELDS.contains(&extension.as_str()) {
                 let place = classed(ui, parent, Style::column(), "md-live-fields");
@@ -119,15 +124,16 @@ pub fn render(ui: &mut Ui, parent: NodeId, blocks: &[Block], lookups: &Lookups) 
 }
 
 /// A picture at its own size, or narrower to fit the page, keeping its
-/// shape; or, until it is read or when it cannot be, its name.
-fn picture(ui: &mut Ui, parent: NodeId, alt: &str, url: &str, lookups: &Lookups) {
+/// shape, returning its image; or, until it is read or when it cannot be,
+/// its name.
+fn picture(ui: &mut Ui, parent: NodeId, alt: &str, url: &str, lookups: &Lookups) -> Option<NodeId> {
     let picture = (lookups.pictures)(url);
     if let Picture::Shown(image, [width, height]) = picture {
         let node = ui.image(parent);
         ui.set_image(node, Some(image));
         ui.add_class(node, "md-picture");
         ui.set_inline_style(node, &format!("width: {width}px; max-width: 100%; aspect-ratio: {width} / {height}"));
-        return;
+        return Some(node);
     }
     let holder = classed(ui, parent, Style::row(), "md-image");
     ui.set_class(holder, "md-loading", picture == Picture::Loading);
@@ -135,6 +141,7 @@ fn picture(ui: &mut Ui, parent: NodeId, alt: &str, url: &str, lookups: &Lookups)
     let mut text = RichText::new();
     text.push_link(if alt.is_empty() { url } else { alt }, url, Default::default());
     rich(ui, holder, &text, lookups.works, "md-image-name");
+    None
 }
 
 fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -> bool, out: &mut Rendered) {

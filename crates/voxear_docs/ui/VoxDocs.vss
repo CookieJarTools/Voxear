@@ -614,7 +614,17 @@
 /* Image…, Link… and Action… while writing, under the title and tags. */
 .cb-editor-tools {
     flex-direction: row;
+    flex-wrap: wrap;
     flex-shrink: 0;
     gap: 6px;
     padding: 0px 12px 8px 12px;
+}
+
+.cb-editor-tools > .cb-button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.cb-editor-tools-gap {
+    flex-grow: 1;
 }

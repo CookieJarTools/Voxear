@@ -166,6 +166,9 @@ struct Nodes {
     insert_image: NodeId,
     insert_link: NodeId,
     insert_action: NodeId,
+    capture_scene: NodeId,
+    record_scene: NodeId,
+    record_game: NodeId,
     source: NodeId,
     preview: NodeId,
 }
@@ -219,11 +222,20 @@ pub struct VoxDocs {
     progress_line: Option<(NodeId, NodeId)>,
     /// What each item of a page's menu in the tree copies.
     page_menu: Vec<String>,
+    /// Where the page and the preview show each picture, by its file, to
+    /// swap a new frame in.
+    page_pictures: Vec<(PathBuf, NodeId)>,
+    preview_pictures: Vec<(PathBuf, NodeId)>,
     /// While writing: the open menu of Image…, Link… or Action…, by its
     /// button, with the Markdown each item puts in; and Action… asked for
     /// its menu, which the editor fills with its commands.
     insert_menu: Option<(NodeId, Vec<String>)>,
     wants_commands: bool,
+    /// A picture of the Scene or a recording asked for, for the editor; and
+    /// Markdown to put in at the cursor once the page shows again, as after
+    /// one, when the view took the page's place.
+    capture: Option<Capture>,
+    pending_insert: Option<String>,
 }
 
 impl VoxDocs {
@@ -263,6 +275,9 @@ impl VoxDocs {
             insert_image: find(ui, "cb-insert-image"),
             insert_link: find(ui, "cb-insert-link"),
             insert_action: find(ui, "cb-insert-action"),
+            capture_scene: find(ui, "cb-capture-scene"),
+            record_scene: find(ui, "cb-record-scene"),
+            record_game: find(ui, "cb-record-game"),
             source: find(ui, "cb-source"),
             preview: find(ui, "cb-preview"),
         };
@@ -323,8 +338,12 @@ impl VoxDocs {
             running: None,
             progress_line: None,
             page_menu: Vec::new(),
+            page_pictures: Vec::new(),
+            preview_pictures: Vec::new(),
             insert_menu: None,
             wants_commands: false,
+            capture: None,
+            pending_insert: None,
         };
         docs.show_editing(ui, false);
         docs.render(ui);
@@ -369,9 +388,22 @@ impl VoxDocs {
 
     /// A picture file read into a texture, with its size in pixels, or
     /// `None` when it could not be. The page showing it is drawn again.
-    pub fn set_picture(&mut self, path: &Path, picture: Option<(ImageRef, [u32; 2])>) {
+    ///
+    /// A picture already shown that comes again at the same size, as a GIF's
+    /// next frame or a live asset's preview moved, is swapped in where it
+    /// shows, rather than the page being drawn again.
+    pub fn set_picture(&mut self, ui: &mut Ui, path: &Path, picture: Option<(ImageRef, [u32; 2])>) {
         let shown = picture.map_or(Picture::Missing, |(image, size)| Picture::Shown(image, size));
-        self.pictures.insert(path.to_path_buf(), shown);
+        let was = self.pictures.insert(path.to_path_buf(), shown);
+        if let (Some(Picture::Shown(_, before)), Picture::Shown(image, now)) = (was, shown)
+            && before == now
+        {
+            let drawn = self.page_pictures.iter().chain(&self.preview_pictures);
+            for (_, node) in drawn.filter(|(at, _)| at == path) {
+                ui.set_image(*node, Some(image));
+            }
+            return;
+        }
         self.redraw = true;
     }
 
@@ -460,12 +492,12 @@ impl VoxDocs {
         let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
         let shown = PICTURES.contains(&extension.as_str()) || LIVE.contains(&extension.as_str());
         let markdown = match in_project {
-            Some(within) if shown => format!("![{name}]({})", address(&within)),
+            Some(within) if shown => alone(&format!("![{name}]({})", address(&within))),
             Some(within) => format!("[{name}]({})", address(&within)),
             None if PICTURES.contains(&extension.as_str()) => {
                 let folder = library.folder().join(library.page(self.open).directory()).join("images");
                 match copy_into(path, &folder) {
-                    Ok(file) => format!("![{name}]({})", address(&format!("images/{file}"))),
+                    Ok(file) => alone(&format!("![{name}]({})", address(&format!("images/{file}")))),
                     Err(error) => {
                         tracing::error!("VoxDocs: could not keep {} with the page: {error:#}", path.display());
                         return false;
@@ -479,7 +511,7 @@ impl VoxDocs {
             ui.focus(self.nodes.source);
             ui.caret_to_end(self.nodes.source);
         }
-        ui.text_input(&format!("{markdown}\n"));
+        ui.text_input(&markdown);
         true
     }
 
@@ -492,20 +524,17 @@ impl VoxDocs {
     /// Action…'s menu: the three kinds of check, then a step for each of
     /// `commands`, by their titles as the command bar lists them.
     pub fn open_action_menu(&mut self, ui: &mut Ui, commands: &[String]) {
-        let mut items = vec![
-            ("Check: there is an Obj called…".to_string(), "[There is a Sun](check:obj/Sun)".to_string()),
-            ("Check: an Obj has a component…".to_string(), "[The level is lit](check:component/Light)".to_string()),
-            (
-                "Check: the project has a file…".to_string(),
-                "[The lamp is there](check:file/Prefabs/Lamp.prefab)".to_string(),
-            ),
-            (
-                "Make an asset…".to_string(),
-                "[Make the brass](<action:create/Material?at=Materials/Brass.material>)".to_string(),
-            ),
+        let examples = [
+            ("Check: there is an Obj called…", "[There is a Sun](check:obj/Sun)"),
+            ("Check: an Obj has a component…", "[The level is lit](check:component/Light)"),
+            ("Check: the project has a file…", "[The lamp is there](check:file/Prefabs/Lamp.prefab)"),
+            ("Make an asset…", "[Make the brass](<action:create/Material?at=Materials/Brass.material>)"),
         ];
+        let mut items: Vec<(String, String)> =
+            examples.iter().map(|(label, step)| (label.to_string(), alone(step))).collect();
         for title in commands {
-            items.push((title.clone(), format!("[{title}]({})", address(&format!("{ACTION_SCHEME}{title}")))));
+            let step = format!("[{title}]({})", address(&format!("{ACTION_SCHEME}{title}")));
+            items.push((title.clone(), alone(&step)));
         }
         self.open_insert_menu(ui, self.nodes.insert_action, items);
     }
@@ -532,6 +561,39 @@ impl VoxDocs {
         if ui.clicked(self.nodes.insert_action) {
             self.wants_commands = true;
         }
+        let captures = [
+            (self.nodes.capture_scene, Capture::Scene),
+            (self.nodes.record_scene, Capture::SceneRecording),
+            (self.nodes.record_game, Capture::GameRecording),
+        ];
+        if let Some(&(_, capture)) = captures.iter().find(|(button, _)| ui.clicked(*button)) {
+            self.capture = Some(capture);
+        }
+    }
+
+    /// What Capture Scene, Record Scene or Record Game asked for, once.
+    pub fn take_capture_request(&mut self) -> Option<Capture> {
+        self.capture.take()
+    }
+
+    /// Keeps a picture made for the page being written, a capture or a
+    /// recording, in the `images` folder beside it as `name` and `extension`
+    /// (a number added if a different file has the name), and puts it in at
+    /// the cursor once the page shows. Returns its path from the project.
+    pub fn keep_picture(&mut self, name: &str, extension: &str, bytes: &[u8]) -> std::io::Result<String> {
+        let library = self.library.borrow();
+        let directory = library.page(self.open).directory().to_string();
+        let folder = library.folder().join(&directory).join("images");
+        let kept = keep_into(&folder, name, extension, bytes)?;
+        let in_project = library.folder().join(&directory).join("images").join(&kept);
+        let in_project =
+            in_project.strip_prefix(library.project()).unwrap_or(&in_project).to_string_lossy().replace('\\', "/");
+        drop(library);
+        if self.editing {
+            let markdown = alone(&format!("![{name}]({})", address(&format!("images/{kept}"))));
+            self.pending_insert.get_or_insert_default().push_str(&markdown);
+        }
+        Ok(in_project)
     }
 
     /// A menu under a button of the writing tools, of labels and the
@@ -557,7 +619,7 @@ impl VoxDocs {
             .into_iter()
             .map(|path| {
                 let name = path.rsplit('/').next().unwrap_or(&path).rsplit_once('.').map_or("", |(n, _)| n).to_string();
-                (path.clone(), format!("![{name}]({})", address(&path)))
+                (path.clone(), alone(&format!("![{name}]({})", address(&path))))
             })
             .collect()
     }
@@ -739,6 +801,14 @@ impl VoxDocs {
     fn update_writing(&mut self, ui: &mut Ui) {
         if !self.editing {
             return;
+        }
+        if let Some(markdown) = self.pending_insert.take() {
+            ui.focus(self.nodes.source);
+            if ui.focused() == Some(self.nodes.source) {
+                ui.text_input(&markdown);
+            } else {
+                self.pending_insert = Some(markdown);
+            }
         }
         self.update_inserts(ui);
         if self.focus_source {
@@ -1081,7 +1151,8 @@ impl VoxDocs {
         let open = self.open;
         let works = |url: &str| library.works(url, open);
         let pictures = |url: &str| self.picture(&library, open, url);
-        view::render(ui, self.nodes.preview, &blocks, &Lookups { works: &works, pictures: &pictures });
+        let rendered = view::render(ui, self.nodes.preview, &blocks, &Lookups { works: &works, pictures: &pictures });
+        self.preview_pictures = pictures_drawn(&library, open, &rendered.pictures);
     }
 
     /// The folders the open page is in, and whether Back and Forward go anywhere.
@@ -1145,6 +1216,7 @@ impl VoxDocs {
         let works = |url: &str| library.works(url, open);
         let pictures = |url: &str| self.picture(&library, open, url);
         let rendered = view::render(ui, self.nodes.page, &blocks, &Lookups { works: &works, pictures: &pictures });
+        self.page_pictures = pictures_drawn(&library, open, &rendered.pictures);
         self.rendered = rendered;
 
         if page.is_folder && !page.children.is_empty() {
@@ -1191,6 +1263,7 @@ impl VoxDocs {
         }
         (self.toc, self.page_tags, self.rendered) = (Vec::new(), Vec::new(), Rendered::default());
         self.progress_line = None;
+        self.page_pictures.clear();
         self.showing_health = true;
         ui.set_checked(self.nodes.health, true);
         ui.set_visible(self.nodes.edit, false);
@@ -1336,8 +1409,13 @@ impl VoxDocs {
 
 /// The pictures a page shows, and the assets it shows live, by their
 /// extensions.
-const PICTURES: [&str; 3] = ["png", "jpg", "jpeg"];
+const PICTURES: [&str; 4] = ["png", "jpg", "jpeg", "gif"];
 const LIVE: [&str; 4] = ["prefab", "material", "gltf", "glb"];
+
+/// The files of the pictures drawn, with where each shows.
+fn pictures_drawn(library: &Library, page: PageId, drawn: &[(String, NodeId)]) -> Vec<(PathBuf, NodeId)> {
+    drawn.iter().filter_map(|(url, node)| Some((library.picture_path(url, page)?, *node))).collect()
+}
 
 /// Folders the Image… menu does not look in: builds, caches and code output.
 const NOT_PICTURES: [&str; 5] = ["Builds", "bin", "obj", "target", "node_modules"];
@@ -1363,6 +1441,12 @@ fn shown_files(project: &Path, folder: &Path, found: &mut Vec<String>) {
     }
 }
 
+/// Markdown that shows only on a line of its own, a picture or a guide's
+/// step, with a blank line before and after it, wherever the cursor is.
+fn alone(markdown: &str) -> String {
+    format!("\n\n{markdown}\n\n")
+}
+
 /// A path as a link writes it: in angle brackets when it has spaces.
 fn address(path: &str) -> String {
     if path.contains(' ') { format!("<{path}>") } else { path.to_string() }
@@ -1371,10 +1455,17 @@ fn address(path: &str) -> String {
 /// Copies a file into `folder` under its own name, or the name with a number
 /// when a different file has it there already. Returns the name it took.
 fn copy_into(file: &Path, folder: &Path) -> std::io::Result<String> {
-    std::fs::create_dir_all(folder)?;
     let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-    let extension = file.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-    let bytes = std::fs::read(file)?;
+    let extension = file.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    keep_into(folder, &stem, &extension, &std::fs::read(file)?)
+}
+
+/// Writes `bytes` into `folder` as `stem.extension`, or the name with a
+/// number when a different file has it there already; the same file there
+/// already is kept. Returns the name it took.
+fn keep_into(folder: &Path, stem: &str, extension: &str, bytes: &[u8]) -> std::io::Result<String> {
+    std::fs::create_dir_all(folder)?;
+    let extension = if extension.is_empty() { String::new() } else { format!(".{extension}") };
     for number in 1.. {
         let name = if number == 1 { format!("{stem}{extension}") } else { format!("{stem} {number}{extension}") };
         let target = folder.join(&name);
@@ -1382,12 +1473,22 @@ fn copy_into(file: &Path, folder: &Path) -> std::io::Result<String> {
             Ok(there) if there == bytes => return Ok(name),
             Ok(_) => continue,
             Err(_) => {
-                std::fs::write(&target, &bytes)?;
+                std::fs::write(&target, bytes)?;
                 return Ok(name);
             }
         }
     }
     unreachable!("a free name is found")
+}
+
+/// What a page being written asks the editor to make for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Capture {
+    /// A picture of the Scene view.
+    Scene,
+    /// A few seconds of the Scene view, or the Game view, as a GIF.
+    SceneRecording,
+    GameRecording,
 }
 
 /// Opens a web address in the system's browser.

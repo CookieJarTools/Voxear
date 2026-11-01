@@ -228,8 +228,8 @@ fn pictures_show_once_the_editor_has_read_them() {
     assert_eq!(wanted, [images.join("shot.png"), images.join("wide.png")]);
     assert!(docs.wanted_pictures(8).is_empty(), "each is asked for once");
     let image = |texture| voxear_ui::ImageRef { texture, uv: [0.0, 0.0, 1.0, 1.0] };
-    docs.set_picture(&images.join("shot.png"), Some((image(3), [200, 100])));
-    docs.set_picture(&images.join("wide.png"), Some((image(4), [4000, 1000])));
+    docs.set_picture(&mut ui, &images.join("shot.png"), Some((image(3), [200, 100])));
+    docs.set_picture(&mut ui, &images.join("wide.png"), Some((image(4), [4000, 1000])));
     frame(&mut ui, &mut docs);
     let mut pictures = Vec::new();
     with_class(&ui, host, "md-picture", &mut pictures);
@@ -240,6 +240,13 @@ fn pictures_show_once_the_editor_has_read_them() {
     let [_, _, page_width, _] = ui.rect(ui.find(host, "cb-page").unwrap());
     assert!(width < page_width, "narrower to fit the page");
     assert!((width / height - 4.0).abs() < 0.05, "keeping its shape: {width} by {height}");
+
+    // A next frame at the same size, as a GIF's, is swapped in where it shows; the page is not drawn again.
+    docs.set_picture(&mut ui, &images.join("shot.png"), Some((image(5), [200, 100])));
+    frame(&mut ui, &mut docs);
+    let mut again = Vec::new();
+    with_class(&ui, host, "md-picture", &mut again);
+    assert_eq!(again, pictures, "the same pictures, not drawn again");
 }
 
 /// Every element in `node` with `class`, in tree order.

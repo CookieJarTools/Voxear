@@ -56,7 +56,7 @@ public sealed class Enemy : Behaviour
 
 ## Pictures
 
-Put a picture in the page with `![what it shows](images/Day.png)`, or drop a picture file on the editor while writing the page: it is copied into the `images` folder beside the page and put in at the cursor. Its path is from the page's folder, as for pictures kept in an `images` folder beside the page, or from the project's folder. It shows at its own size, or narrower to fit the page. PNG and JPEG pictures show; [[The Day and Night Cycle]] has one. Name a prefab, model or material instead, as `![](Prefabs/Lamp.prefab)`, and the page shows its preview, as the Project panel does. A material shows its fields under it too, to change right there.
+Put a picture in the page with `![what it shows](images/Day.png)`, or drop a picture file on the editor while writing the page: it is copied into the `images` folder beside the page and put in at the cursor. While writing, **Capture Scene** puts in a picture of the Scene view, and **Record Scene** or **Record Game** three seconds of it as a GIF, which plays on the page. Its path is from the page's folder, as for pictures kept in an `images` folder beside the page, or from the project's folder. It shows at its own size, or narrower to fit the page. PNG, JPEG and GIF pictures show; [[The Day and Night Cycle]] has one. Name a prefab, model or material instead, as `![](Prefabs/Lamp.prefab)`, and the page shows its preview, as the Project panel does. A material shows its fields under it too, to change right there.
 
 ## Guides
 

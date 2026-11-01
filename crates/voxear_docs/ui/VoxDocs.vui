@@ -44,6 +44,10 @@
                     <Button name="cb-insert-image" class="cb-button">Image…</Button>
                     <Button name="cb-insert-link" class="cb-button">Link…</Button>
                     <Button name="cb-insert-action" class="cb-button">Action…</Button>
+                    <Panel class="cb-editor-tools-gap" />
+                    <Button name="cb-capture-scene" class="cb-button">Capture Scene</Button>
+                    <Button name="cb-record-scene" class="cb-button">Record Scene</Button>
+                    <Button name="cb-record-game" class="cb-button">Record Game</Button>
                 </Panel>
                 <SplitView name="cb-edit-split" class="cb-edit-split" size="50%" min="160">
                     <TextField name="cb-source" class="cb-source" multiline="true" />

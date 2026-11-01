@@ -4,6 +4,7 @@
 
 mod color_popup;
 mod debug_texts;
+mod docs_capture;
 mod docs_links;
 mod docs_pictures;
 mod docs_steps;
@@ -265,6 +266,10 @@ pub struct Editor {
     /// The fields of the live materials on the VoxDocs page read, in the
     /// places the page leaves for them.
     live_fields: Vec<(NodeId, crate::asset_inspector::AssetView)>,
+    /// The GIFs VoxDocs pages show, playing.
+    animations: Vec<docs_pictures::Animation>,
+    /// A picture or recording being taken for the VoxDocs page written.
+    docs_capture: Option<docs_capture::Taking>,
     field_previews: previews::FieldPreviews,
     inspector_preview: Option<previews::InspectorPreview>,
     /// A material changed, so field previews are drawn again.
@@ -469,6 +474,8 @@ impl Editor {
             asset_previews: AssetPreviews::default(),
             live_assets: Vec::new(),
             live_fields: Vec::new(),
+            animations: Vec::new(),
+            docs_capture: None,
             field_previews: previews::FieldPreviews::default(),
             inspector_preview: None,
             redraw_field_previews: false,
@@ -652,6 +659,7 @@ impl Editor {
             self.docs.update(&mut self.ui);
             self.update_docs_pictures(renderer);
             self.update_docs_steps(renderer);
+            self.update_docs_capture(renderer);
         }
         self.update_palette(renderer);
         let action = self.levels.update(&mut self.ui, self.game.levels.current(), self.game.loads.level_in_progress());

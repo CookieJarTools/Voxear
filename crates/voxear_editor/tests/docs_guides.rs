@@ -198,3 +198,72 @@ fn a_guides_step_makes_an_asset_where_it_says() {
     assert!(made.contains("roughness"), "a material: {made}");
     assert_eq!(texts(&editor.ui, "cb-progress-line"), ["1 of 1 steps done"]);
 }
+
+#[test]
+fn capture_and_record_scene_put_pictures_in_the_page() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_copy();
+    std::fs::write(dir.path().join("Docs/Shots.md"), "Shots of the scene.\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let root = editor.ui.root();
+    let field = editor.ui.find(root, "command").unwrap();
+    editor.ui.focus(field);
+    editor.ui.text_input("shots");
+    frame(&mut editor, &mut renderer);
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    let click = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name: &str| {
+        let node = editor.ui.find(editor.ui.root(), name).unwrap();
+        let [x, y, w, h] = editor.ui.rect(node);
+        editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+        editor.ui.pointer_button(true);
+        editor.ui.pointer_button(false);
+        frame(editor, renderer);
+        frame(editor, renderer);
+    };
+    click(&mut editor, &mut renderer, "cb-edit");
+    let until = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, file: &std::path::Path| {
+        let started = std::time::Instant::now();
+        while !file.is_file() {
+            assert!(started.elapsed().as_secs() < 60, "{} was not made", file.display());
+            frame(editor, renderer);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for _ in 0..3 {
+            frame(editor, renderer);
+        }
+    };
+
+    // The Scene view shows for the capture, and the page comes back with it at the cursor.
+    click(&mut editor, &mut renderer, "cb-capture-scene");
+    let png = dir.path().join("Docs/images/Scene.png");
+    until(&mut editor, &mut renderer, &png);
+    let picture = image::open(&png).expect("a PNG");
+    assert!(picture.width() > 100 && picture.height() > 100, "the Scene view's size");
+    let source = editor.ui.find(root, "cb-source").unwrap();
+    assert!(editor.ui.text(source).contains("![Scene](images/Scene.png)"), "{}", editor.ui.text(source));
+    assert!(editor.ui.is_visible(editor.ui.find(root, "cb-editor").unwrap()), "back to writing");
+    // The preview draws a moment after a change, and the picture once read.
+    for _ in 0..40 {
+        frame(&mut editor, &mut renderer);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+    let preview = editor.ui.find(root, "cb-preview").unwrap();
+    let mut shown = Vec::new();
+    with_class(&editor.ui, preview, "md-picture", &mut shown);
+    assert_eq!(shown.len(), 1, "the capture shows in the preview");
+    shot(&mut renderer, "docs-capture.png");
+
+    click(&mut editor, &mut renderer, "cb-record-scene");
+    let gif = dir.path().join("Docs/images/Scene.gif");
+    until(&mut editor, &mut renderer, &gif);
+    use image::AnimationDecoder;
+    let file = std::io::BufReader::new(std::fs::File::open(&gif).unwrap());
+    let frames = image::codecs::gif::GifDecoder::new(file).unwrap().into_frames().count();
+    assert_eq!(frames, 45, "three seconds, fifteen frames a second");
+    assert!(editor.ui.text(source).contains("![Scene](images/Scene.gif)"), "{}", editor.ui.text(source));
+}

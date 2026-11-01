@@ -138,7 +138,7 @@ fn voxdocs_shows_the_scripts_code_reference() {
     assert!(label(&editor.ui, root, "public sealed class Spinner : Behaviour").is_some(), "with its declaration");
     assert!(label(&editor.ui, root, "protected override void Awake()").is_some(), "and its members");
     let edit = editor.ui.find(root, "cb-edit").unwrap();
-    assert!(!editor.ui.is_visible(edit), "a page made from the code is not written here");
+    assert!(editor.ui.is_visible(edit), "Edit writes the type's note");
 }
 
 #[test]

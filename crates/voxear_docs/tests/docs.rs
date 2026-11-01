@@ -444,7 +444,7 @@ fn the_code_reference_is_pages_of_its_own_after_the_projects() {
     assert_eq!(library.resolve("docs:code:Voxear.Gone", spinner), Target::Missing("code:Voxear.Gone".into()));
     assert_eq!(library.find("Damage"), Some(damage), "a page named as a type is still found by its title");
     assert_eq!(library.search("damage")[0], damage, "and comes before it in a search");
-    assert!(library.save(spinner, "Changed").is_err(), "a type's page is not written");
+    assert!(library.save(code, "Changed").is_err(), "a folder made from the code is not written");
 
     // Made again, as after the scripts build, the project's pages keep their places.
     library.set_code(CodeReference::default());
@@ -457,15 +457,18 @@ fn the_code_reference_is_pages_of_its_own_after_the_projects() {
 }
 
 #[test]
-fn code_pages_are_read_but_not_written() {
+fn code_pages_take_notes_and_their_folders_are_read_only() {
     let dir = project();
     let (mut ui, mut docs, host) = panel(dir.path());
     docs.set_code(&mut ui, CodeReference::parse(CODE).unwrap());
+    assert!(docs.open_reference(&mut ui, "code:Hello"));
+    frame(&mut ui, &mut docs);
+    let edit = ui.find(host, "cb-edit").unwrap();
+    assert!(!ui.is_visible(edit), "a namespace's folder has no Edit");
     assert!(docs.open_reference(&mut ui, "code:Hello.Spinner"));
     frame(&mut ui, &mut docs);
     assert!(label(&ui, host, "How fast it turns").is_some(), "the page shows its members");
-    let edit = ui.find(host, "cb-edit").unwrap();
-    assert!(!ui.is_visible(edit), "with no Edit");
+    assert!(ui.is_visible(edit), "a type's page has Edit, for its note");
 
     // The scripts built again: the page stays open, and Edit comes back with the project's own pages.
     docs.set_code(&mut ui, CodeReference::parse(CODE).unwrap());
@@ -560,4 +563,78 @@ fn a_guide_runs_its_actions_watches_its_checks_and_remembers() {
     click(&mut ui, reset);
     frame(&mut ui, &mut docs);
     assert_eq!(ui.text(line(&ui).unwrap()), "0 of 3 steps done");
+}
+
+#[test]
+fn notes_on_code_pages_last_and_health_finds_lost_ones_and_code_with_no_page() {
+    let dir = project();
+    let mut library = Library::open(dir.path(), "Hello");
+    library.set_code(CodeReference::parse(CODE).unwrap());
+    let spinner = library.find("code:Hello.Spinner").unwrap();
+    library.save_page(spinner, "Ignored", &["combat".to_string()], "Turns **twice** as fast at night.").unwrap();
+    let file = dir.path().join("Docs/.code-notes/Hello.Spinner.md");
+    let text = std::fs::read_to_string(&file).expect("the note is kept in .code-notes");
+    assert!(text.contains("tags: [combat]") && text.ends_with("Turns **twice** as fast at night."), "{text}");
+    let spinner = library.find("code:Hello.Spinner").unwrap();
+    assert_eq!(library.page(spinner).title(), "Spinner", "the page keeps its type's name");
+    assert_eq!(library.page(spinner).header.tags, ["combat"]);
+    assert!(library.page(spinner).body.contains("## Notes\n\nTurns **twice** as fast at night."));
+    assert_eq!(library.notes_of(spinner), "Turns **twice** as fast at night.");
+    let titles: Vec<&str> = library.page(library.root()).children.iter().map(|c| library.page(*c).title()).collect();
+    assert_eq!(titles, ["Combat", "Guide", "Code Reference"], "the notes' folder is not a page");
+
+    // The type renamed, its note is lost; and a type of the project's with no [Documentation] has no page yet.
+    let renamed =
+        CODE.replace("Hello.Spinner", "Hello.Turner").replace("\"name\": \"Spinner\"", "\"name\": \"Turner\"");
+    let renamed = renamed.replace("\"documentation\": \"Combat/Damage\",", "");
+    library.set_code(CodeReference::parse(&renamed).unwrap());
+    let health = voxear_docs::health::Health::check(&library);
+    assert_eq!(health.lost_notes, ["Hello.Spinner"]);
+    let turner = library.find("code:Hello.Turner").unwrap();
+    assert_eq!(health.undocumented, [turner], "the engine's own types are not the project's to document");
+
+    // A note emptied goes, file and all.
+    library.set_code(CodeReference::parse(CODE).unwrap());
+    let spinner = library.find("code:Hello.Spinner").unwrap();
+    library.save_page(spinner, "", &[], "  ").unwrap();
+    assert!(!file.exists());
+}
+
+#[derive(Clone, Default)]
+struct SharedClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+impl voxear_ui::Clipboard for SharedClipboard {
+    fn read(&mut self) -> Option<String> {
+        self.0.borrow().clone()
+    }
+
+    fn write(&mut self, text: &str) {
+        *self.0.borrow_mut() = Some(text.to_string());
+    }
+}
+
+#[test]
+fn a_pages_menu_copies_its_documentation_attribute() {
+    let dir = project();
+    let (mut ui, mut docs, host) = panel(dir.path());
+    let clipboard = SharedClipboard::default();
+    ui.set_clipboard(Box::new(clipboard.clone()));
+    assert!(docs.open_reference(&mut ui, "Writing Pages"));
+    frame(&mut ui, &mut docs);
+    frame(&mut ui, &mut docs);
+    let mut titles = Vec::new();
+    with_class(&ui, host, "cb-row-title", &mut titles);
+    let row = titles.into_iter().find(|&t| ui.text(t) == "Writing Pages").expect("the page in the tree");
+    let [x, y, w, h] = ui.rect(row);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_secondary(true);
+    ui.pointer_secondary(false);
+    frame(&mut ui, &mut docs);
+    let mut items = Vec::new();
+    with_class(&ui, ui.root(), "menu-item", &mut items);
+    let named = |ui: &Ui, item: NodeId, words: &str| ui.children(item).iter().any(|&part| ui.text(part) == words);
+    let attribute = items.into_iter().find(|&i| named(&ui, i, "Copy [Documentation] attribute")).expect("offered");
+    click(&mut ui, attribute);
+    frame(&mut ui, &mut docs);
+    assert_eq!(clipboard.0.borrow().as_deref(), Some("[Documentation(\"a4f08c3e91b2\")]"), "named by its id");
 }

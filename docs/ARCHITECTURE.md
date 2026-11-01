@@ -1627,7 +1627,11 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **Docs Health** *(`health`)*: Health in the toolbar shows, in the page's place, what needs looking after: pages
   out of date (a project file they link to changed on a later day than the page was updated), links that go
   nowhere (a page not written yet among them), pictures that are not there, and pictures in the pages' `images`
-  folders that no page shows. Each entry links to its page or file.
+  folders that no page shows. Each entry links to its page or file. Once there is a Code Reference it also finds
+  notes written for code that is gone, renamed, moved or taken out, and lists the project's own types that no page
+  is about (nothing marked `[Documentation]`), which is worth knowing but not counted as something wrong.
+- **A page's menu** in the tree (a right click) copies a link to it, and for a page of the project's own a
+  `[Documentation]` attribute naming it by its id, ready to paste on code.
 - **Pictures**: `![what it shows](images/Day.png)`, from the page's folder (pictures kept with a page sit in an
   `images` folder beside it) or the project's. A page shows its PNG and JPEG pictures at their own size, or
   narrower to fit, keeping their shape; the editor reads them a couple a frame, shrinks any over 2048 pixels, and
@@ -1650,9 +1654,11 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   what it returns. An override with no comment shows the comment of what it overrides, so a behaviour's `Update` says
   when it runs. Equals, GetHashCode, ToString and constructors without parameters show only when they have a comment.
   A `<see cref>` to a type with a page links to it. The find box finds the pages, after the project's own (the command
-  bar leaves them out, as they would crowd it), and they have no Edit: they change when the code does. Any page links
-  to a type as `[[code:Voxear.Prefab]]` or `[[code:Voxear.Prefab|Prefab]]`, and a link to a type that is gone shows in
-  Docs Health.
+  bar leaves them out, as they would crowd it). A page is made again from the code each time, so what is written on a
+  type's page is its **note**: Edit writes it, with tags, and the page shows it under Notes. Notes are kept in
+  `Docs/.code-notes`, a Markdown file for each type named by its full name, which the tree does not show; one emptied
+  goes, file and all. Any page links to a type as `[[code:Voxear.Prefab]]` or `[[code:Voxear.Prefab|Prefab]]`, and a
+  link to a type that is gone shows in Docs Health.
 - **Code that points at pages**: `[Documentation("Combat/Damage")]` on a behaviour, component, field, property or
   method names a page by its path or id, with a heading after a hash if wanted. The Inspector shows a book button on
   a documented behaviour's section and beside a documented field, which opens VoxDocs at the page.
@@ -1673,14 +1679,11 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
 **Still to come**, as the Unity Cookbook has them:
-- **Copy [Documentation] Attribute** on a page's menu in the tree, ready to paste into a script.
-- **Notes on the Code Reference's pages**, written in VoxDocs beside what the comments say and kept in
-  `Docs/.code-notes`.
 - **More for guides**: checks written in C# (`[DocsCheck]`, a static method returning whether it passes or what is
   still wrong), which need the scripts to hand back a value; a step that makes an asset where the guide says; and
   Action… while writing, to put a step in at the cursor.
-- **Docs Health**'s checks of the code, once there is a Code Reference: code with no page yet and notes left for
-  code that is gone; and git's last change on a page.
+- **Docs Health**: git's last change on a page, in place of the date in its header, and how many parts of each of
+  the project's types have no comment yet.
 - **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and a live
   asset's fields to change on the page.
 - A box to find a tag among many.

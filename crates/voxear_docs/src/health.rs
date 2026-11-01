@@ -8,6 +8,12 @@
 //! - **Pictures no page shows**: files in the pages' own `images` folders
 //!   that nothing points at any more. Pictures elsewhere in the project are
 //!   left alone, since the game likely uses them.
+//! - **Notes for code that is gone**: notes on Code Reference pages whose
+//!   type was renamed, moved or taken out.
+//!
+//! It also lists **code with no page yet**, the project's own types with no
+//! `[Documentation]`, which is worth knowing but not a thing gone wrong, so
+//! it is not counted.
 
 use std::{
     collections::HashSet,
@@ -35,6 +41,12 @@ pub struct Health {
     /// Pictures in the pages' `images` folders that no page shows, by their
     /// paths in the project.
     pub unused_pictures: Vec<String>,
+    /// Notes whose type the code no longer has, by the names they are filed
+    /// under.
+    pub lost_notes: Vec<String>,
+    /// The project's own types no page is about, as their Code Reference
+    /// pages.
+    pub undocumented: Vec<PageId>,
 }
 
 impl Health {
@@ -80,12 +92,18 @@ impl Health {
             .collect();
         unused.sort();
         health.unused_pictures = unused;
+        health.lost_notes = library.lost_notes();
+        health.undocumented = library.undocumented();
         health
     }
 
     /// How many things need looking after.
     pub fn problems(&self) -> usize {
-        self.stale.len() + self.broken.len() + self.missing_pictures.len() + self.unused_pictures.len()
+        self.stale.len()
+            + self.broken.len()
+            + self.missing_pictures.len()
+            + self.unused_pictures.len()
+            + self.lost_notes.len()
     }
 }
 

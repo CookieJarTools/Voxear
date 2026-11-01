@@ -6,7 +6,10 @@
 //! git like any other file.
 //!
 //! The [Code Reference](crate::code)'s pages come after them, in a folder of
-//! their own, made from the code rather than read from files.
+//! their own, made from the code rather than read from files. What is
+//! written on one of them is a note, kept in `Docs/.code-notes`, one file
+//! for each type named by its full name, which the tree does not show: the
+//! page is made again from the code each time, and the note is what lasts.
 
 use std::{
     collections::HashMap,
@@ -27,13 +30,17 @@ pub const FOLDER_FILE: &str = "_folder.md";
 /// The Code Reference's folder, and its words.
 const CODE_FOLDER: &str = "Code Reference";
 const CODE_ABOUT: &str = "Every public type in the game's scripts and in Voxear.Core, with what its `///` comments \
-say. These pages are made from the code each time the editor builds the scripts, so they are not written here: \
-change the comments instead.
+say. These pages are made from the code each time the editor builds the scripts: change the comments to change \
+them, or write a note on a type's page with Edit, which is kept beside the code's own words.
 
 Any page can link to a type, as `[[code:Voxear.Prefab]]`, or `[[code:Voxear.Prefab|Prefab]]` to word the link \
 itself.";
 /// The path of the folder for types in the global namespace.
 const GLOBAL_NAMESPACE: &str = "code:global::";
+/// Where the notes on the Code Reference's pages are kept, in `Docs`.
+pub const NOTES_FOLDER: &str = ".code-notes";
+/// The engine's own assembly, whose types are not the project's to document.
+const ENGINE_ASSEMBLY: &str = "Voxear.Core";
 
 /// A page's place in its [`Library`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -122,6 +129,9 @@ pub struct Library {
     /// Counts each time the pages change, for what shows them elsewhere.
     version: u64,
     code: CodeReference,
+    /// The notes written on the Code Reference's pages: each type's header,
+    /// for its tags, and words, by the type's full name.
+    notes: HashMap<String, (Header, String)>,
     by_id: HashMap<String, PageId>,
     by_reference: HashMap<String, PageId>,
     by_title: HashMap<String, Vec<PageId>>,
@@ -139,6 +149,7 @@ impl Library {
             written: 0,
             version: 0,
             code: CodeReference::default(),
+            notes: HashMap::new(),
             by_id: HashMap::new(),
             by_reference: HashMap::new(),
             by_title: HashMap::new(),
@@ -159,6 +170,7 @@ impl Library {
             self.pages[root.0].header.title.clone_from(&self.name);
         }
         self.written = self.pages.len();
+        self.notes = read_notes(&self.root.join(NOTES_FOLDER));
         // The project's pages are filed first, so the Code Reference's can
         // name the pages its `[Documentation]` points at by their titles.
         for index in 0..self.written {
@@ -307,6 +319,60 @@ impl Library {
         links
     }
 
+    /// The full name of the type a Code Reference page is about, as its
+    /// notes are filed under, or `None` for any other page.
+    pub fn type_of(&self, id: PageId) -> Option<String> {
+        let page = self.page(id);
+        let key = page.path.strip_prefix(CODE_SCHEME).filter(|_| page.generated && !page.is_folder)?;
+        Some(key.to_string())
+    }
+
+    /// The note written on a Code Reference page, as it is written, or
+    /// nothing.
+    pub fn notes_of(&self, id: PageId) -> String {
+        let note = self.type_of(id).and_then(|key| self.notes.get(&key));
+        note.map(|(_, words)| words.clone()).unwrap_or_default()
+    }
+
+    /// Notes written for types the code no longer has, renamed, moved or
+    /// taken out, by the names they are filed under. Nothing, until the
+    /// Code Reference is there to say what the code has.
+    pub fn lost_notes(&self) -> Vec<String> {
+        if self.code.types().is_empty() {
+            return Vec::new();
+        }
+        let mut lost: Vec<String> =
+            self.notes.keys().filter(|key| !self.code.types().iter().any(|t| &t.key == *key)).cloned().collect();
+        lost.sort();
+        lost
+    }
+
+    /// The project's own types that no page is about: nothing marked
+    /// `[Documentation]` on the type, as their Code Reference pages.
+    pub fn undocumented(&self) -> Vec<PageId> {
+        let own = self.code.types().iter().filter(|t| t.assembly != ENGINE_ASSEMBLY && t.documentation.is_empty());
+        own.filter_map(|t| self.find(&format!("{CODE_SCHEME}{}", t.key))).collect()
+    }
+
+    /// Writes a type's note, its tags in its header, or takes the file away
+    /// when nothing is left in it, then makes the pages again.
+    fn write_notes(&mut self, key: &str, tags: &[String], words: &str) -> Result<()> {
+        let file = self.root.join(NOTES_FOLDER).join(format!("{key}{EXTENSION}"));
+        if words.trim().is_empty() && tags.is_empty() {
+            if file.exists() {
+                std::fs::remove_file(&file).with_context(|| format!("removing {}", file.display()))?;
+            }
+        } else {
+            let mut header = self.notes.get(key).map(|(header, _)| header.clone()).unwrap_or_default();
+            header.tags = tags.to_vec();
+            header.updated = header::today();
+            std::fs::create_dir_all(file.parent().unwrap_or(&self.root))?;
+            std::fs::write(&file, header.join(words)).with_context(|| format!("writing {}", file.display()))?;
+        }
+        self.reload();
+        Ok(())
+    }
+
     /// The page a reference names, with or without a heading after a hash.
     fn find_page_of(&self, reference: &str) -> Option<PageId> {
         let target = reference.split_once('#').map_or(reference, |(target, _)| target);
@@ -365,7 +431,11 @@ impl Library {
     /// date as when it was updated.
     pub fn save(&mut self, id: PageId, body: &str) -> Result<()> {
         if self.page(id).generated {
-            bail!("{} is made from the code, so it is not written here", self.page(id).title());
+            let Some(key) = self.type_of(id) else {
+                bail!("{} is made from the code, so it is not written here", self.page(id).title());
+            };
+            let tags = self.page(id).header.tags.clone();
+            return self.write_notes(&key, &tags, body);
         }
         let page = &mut self.pages[id.0];
         if page.header.id.is_empty() {
@@ -396,6 +466,11 @@ impl Library {
             }
         }
         self.pages[id.0].header.tags = kept;
+        // A page of the Code Reference keeps its type's name: what is written on it is its note.
+        if self.page(id).generated {
+            self.save(id, body)?;
+            return Ok(id);
+        }
         let title = title.trim().replace(['/', '\\'], "-");
         let page = self.page(id);
         if title.is_empty() || id == self.root() || title == page.title() {
@@ -422,6 +497,9 @@ impl Library {
 
     /// Ticks or unticks a checklist box, and saves the page.
     pub fn set_task(&mut self, id: PageId, task: Task, done: bool) -> Result<()> {
+        if self.page(id).generated {
+            bail!("a checklist on {} is ticked in its note, with Edit", self.page(id).title());
+        }
         let mut body = self.page(id).body.clone();
         let mark = if done { "x" } else { " " };
         if !matches!(body.get(task.at..task.at + 1), Some(" " | "x" | "X")) {
@@ -533,7 +611,9 @@ impl Library {
             return;
         }
         let title_of = |reference: &str| self.find_page_of(reference).map(|page| self.page(page).title().to_string());
-        let mut bodies: Vec<String> = self.code.types().iter().map(|kind| kind.page(&title_of)).collect();
+        let notes = |key: &str| self.notes.get(key).map_or("", |(_, words)| words.as_str());
+        let mut bodies: Vec<String> =
+            self.code.types().iter().map(|kind| kind.page(&title_of, notes(&kind.key))).collect();
         let code = std::mem::take(&mut self.code);
         let top = self.add_generated(root, CODE_SCHEME.to_string(), CODE_FOLDER, CODE_ABOUT.to_string(), true);
         let mut folders: HashMap<String, PageId> = HashMap::new();
@@ -559,7 +639,11 @@ impl Library {
                     parent = (id, path);
                 }
                 let body = std::mem::take(&mut bodies[index]);
-                self.add_generated(parent.0, format!("{CODE_SCHEME}{}", kind.key), &kind.title(), body, false);
+                let page =
+                    self.add_generated(parent.0, format!("{CODE_SCHEME}{}", kind.key), &kind.title(), body, false);
+                if let Some((header, _)) = self.notes.get(&kind.key) {
+                    self.pages[page.0].header.tags.clone_from(&header.tags);
+                }
             }
         }
         for &folder in folders.values() {
@@ -617,6 +701,20 @@ impl Library {
         }
         self.pages[id.0].words = words;
     }
+}
+
+/// The notes in `folder`, by the names of their files without `.md`.
+fn read_notes(folder: &Path) -> HashMap<String, (Header, String)> {
+    let Ok(entries) = std::fs::read_dir(folder) else { return HashMap::new() };
+    let mut notes = HashMap::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(key) = name.strip_suffix(EXTENSION) else { continue };
+        if let Ok(text) = std::fs::read_to_string(entry.path()) {
+            notes.insert(key.to_string(), Header::split(&text));
+        }
+    }
+    notes
 }
 
 /// Whether two paths are one file, as a rename that only changes the case of

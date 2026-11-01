@@ -143,9 +143,10 @@ impl CodeType {
     }
 
     /// Its page: how it is declared, what its comment says and where it is,
-    /// then its members, a section for each kind. `title_of` names the pages
-    /// `[Documentation]` points at, when they are there.
-    pub fn page(&self, title_of: &dyn Fn(&str) -> Option<String>) -> String {
+    /// the notes written for it in VoxDocs, then its members, a section for
+    /// each kind. `title_of` names the pages `[Documentation]` points at,
+    /// when they are there.
+    pub fn page(&self, title_of: &dyn Fn(&str) -> Option<String>, notes: &str) -> String {
         let mut page = format!("```csharp\n{}\n```\n\n{}\n\n", self.declaration, described(&self.summary));
         if !self.remarks.is_empty() {
             page += &format!("{}\n\n", self.remarks);
@@ -155,6 +156,9 @@ impl CodeType {
             "" => format!("In the global namespace, in {}.\n", self.assembly),
             namespace => format!("In the `{namespace}` namespace, in {}.\n", self.assembly),
         };
+        if !notes.trim().is_empty() {
+            page += &format!("\n## Notes\n\n{}\n", notes.trim());
+        }
         for (kind, heading) in SECTIONS {
             let members: Vec<&Member> = self.members.iter().filter(|m| m.kind == kind).collect();
             if members.is_empty() {
@@ -271,7 +275,7 @@ mod tests {
     #[test]
     fn a_page_shows_the_declaration_comments_and_members_by_kind() {
         let code = CodeReference::parse(SAMPLE).unwrap();
-        let page = code.types()[0].page(&|_| None);
+        let page = code.types()[0].page(&|_| None, "");
         assert!(page.starts_with("```csharp\npublic struct Prefab\n```\n\nA loaded prefab.\n\n"), "{page}");
         assert!(page.contains("In the `Voxear` namespace, in Voxear.Core."), "{page}");
         let fields = page.find("## Fields").unwrap();
@@ -281,7 +285,7 @@ mod tests {
         assert!(page.contains(none), "{page}");
         assert!(page.contains("- `path`: Where it is.\n"), "{page}");
         assert!(page.contains("**Returns** The prefab."), "{page}");
-        let values = code.types()[2].page(&|_| None);
+        let values = code.types()[2].page(&|_| None, "");
         assert!(values.contains("## Values\n\n- `Empty = 0`: Nothing there.\n"), "{values}");
     }
 

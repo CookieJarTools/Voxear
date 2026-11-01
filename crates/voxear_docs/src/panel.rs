@@ -16,11 +16,17 @@
 //! The top page is home, as the Cookbook's is: under its own words and what
 //! is in it, the pages updated most lately, and how healthy the docs are.
 //!
+//! A page's menu in the tree copies what points at it: a link to paste in
+//! another page, and for a page of the project's own, a `[Documentation]`
+//! attribute to paste on code, naming it by its id so it keeps working when
+//! the page is renamed or moved.
+//!
 //! **Health** shows what needs looking after (see [`crate::health`]) in the
 //! page's place, each entry a link to the page or file it is about.
 //!
 //! The **Code Reference** comes last in the tree once the editor hands it
-//! over with [`set_code`]. Its pages are read only, so they have no Edit.
+//! over with [`set_code`]. Its pages are made from the code; Edit on a
+//! type's page writes its note, which the page shows under Notes.
 //! A page lists the code whose `[Documentation]` or `[Excerpt]` points at it
 //! under **In the code**, and [`render_excerpt`] draws an excerpt for the
 //! Inspector.
@@ -54,7 +60,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use voxear_ui::{ImageRef, ItemFns, NodeId, TreeItems, Ui};
+use voxear_ui::{ImageRef, ItemFns, MenuItem, NodeId, TreeItems, Ui};
 
 use crate::{
     code::{CODE_SCHEME, CodeReference},
@@ -204,6 +210,8 @@ pub struct VoxDocs {
     running: Option<(String, String)>,
     /// A guide's line saying how many steps are done, and its Reset.
     progress_line: Option<(NodeId, NodeId)>,
+    /// What each item of a page's menu in the tree copies.
+    page_menu: Vec<String>,
 }
 
 impl VoxDocs {
@@ -299,6 +307,7 @@ impl VoxDocs {
             action_request: None,
             running: None,
             progress_line: None,
+            page_menu: Vec::new(),
         };
         docs.show_editing(ui, false);
         docs.render(ui);
@@ -508,6 +517,7 @@ impl VoxDocs {
         if ui.changed(self.nodes.search) {
             self.search(ui);
         }
+        self.update_page_menu(ui);
         self.update_tags(ui);
         self.update_toc(ui);
         if ui.clicked(self.nodes.back) {
@@ -593,9 +603,11 @@ impl VoxDocs {
         let page = library.page(self.open);
         let is_root = self.open == library.root();
         ui.set_text(self.nodes.title, if is_root { "" } else { page.title() });
-        ui.set_enabled(self.nodes.title, !is_root);
+        // A Code Reference page keeps its type's name, and what is written on it is its note.
+        ui.set_enabled(self.nodes.title, !is_root && !page.generated);
         ui.set_text(self.nodes.tags_field, &page.header.tags.join(", "));
-        ui.set_text(self.nodes.source, &page.body);
+        let words = if page.generated { library.notes_of(self.open) } else { page.body.clone() };
+        ui.set_text(self.nodes.source, &words);
         drop(library);
         self.dirty = false;
         self.show_editing(ui, true);
@@ -671,6 +683,34 @@ impl VoxDocs {
             return;
         }
         self.follow(ui, url);
+    }
+
+    /// A page's menu in the tree, from a right click on it, and what its
+    /// items copy.
+    fn update_page_menu(&mut self, ui: &mut Ui) {
+        if let Some(text) = ui.menu_choice(self.nodes.tree).and_then(|at| self.page_menu.get(at)) {
+            ui.copy_text(text);
+        }
+        if !ui.context_clicked(self.nodes.tree) {
+            return;
+        }
+        let Some(item) = ui.item_at_pointer(self.nodes.tree) else { return };
+        let library = self.library.borrow();
+        let id = PageId(item as usize);
+        if id.0 >= library.len() {
+            return;
+        }
+        let page = library.page(id);
+        let mut items = vec![(MenuItem::new("Copy link"), format!("[[{}]]", page.reference()))];
+        if !page.generated && id != library.root() {
+            let name = if page.header.id.is_empty() { page.reference() } else { page.header.id.as_str() };
+            items.push((MenuItem::new("Copy [Documentation] attribute"), format!("[Documentation(\"{name}\")]")));
+        }
+        drop(library);
+        let at = ui.pointer_position().unwrap_or_default();
+        let menu: Vec<MenuItem> = items.iter().map(|(item, _)| item.clone()).collect();
+        ui.open_menu(self.nodes.tree, at, &menu);
+        self.page_menu = items.into_iter().map(|(_, text)| text).collect();
     }
 
     /// Where a link in the open page goes.
@@ -904,7 +944,7 @@ impl VoxDocs {
         self.show_path(ui);
         let library = self.library.borrow();
         let page = library.page(self.open);
-        ui.set_visible(self.nodes.edit, !page.generated);
+        ui.set_visible(self.nodes.edit, !page.generated || library.type_of(self.open).is_some());
 
         let title = ui.add_label(self.nodes.page, page.title());
         ui.add_class(title, "cb-title");
@@ -1065,6 +1105,33 @@ impl VoxDocs {
             "Pictures no page shows",
             "Kept in the pages' images folders, with nothing pointing at them.",
             unused,
+        );
+        let lost = health.lost_notes.iter().map(|key| {
+            let mut text = voxear_ui::RichText::new();
+            text.push(key, code);
+            text.push(&format!(" · Docs/{}/{key}.md", crate::library::NOTES_FOLDER), Default::default());
+            text
+        });
+        let lost = lost.collect();
+        section(
+            ui,
+            "Notes for code that is gone",
+            "Written for types that were renamed, moved or taken out. Rename each file for its type's new name, or \
+             delete it.",
+            lost,
+        );
+        let undocumented = health.undocumented.iter().map(|&id| {
+            let mut text = voxear_ui::RichText::new();
+            page_link(&mut text, id);
+            text
+        });
+        let undocumented = undocumented.collect();
+        section(
+            ui,
+            "Code with no page yet",
+            "The project's own types that no page is about. Put [Documentation(\"Page\")] on one to link it to its \
+             page. These are not counted among the things to look after.",
+            undocumented,
         );
     }
 

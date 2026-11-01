@@ -64,7 +64,9 @@ A link to an action or a check on a line of its own is a step the reader can run
 
 ## From the code
 
-Put `[Documentation("How Hello Works/The Day and Night Cycle")]` on a behaviour, or on one of its fields, and the Inspector shows a book button there that opens the page. `[Excerpt("How Hello Works/The Day and Night Cycle#who-drives-it")]` on a field shows that part of the page above it instead, and follows the page as it changes. Select the Game Manager to see both. A page lists the code that points at it under **In the code**.
+Put `[Documentation("How Hello Works/The Day and Night Cycle")]` on a behaviour, or on one of its fields, and the Inspector shows a book button there that opens the page. `[Excerpt("How Hello Works/The Day and Night Cycle#who-drives-it")]` on a field shows that part of the page above it instead, and follows the page as it changes. Select the Game Manager to see both. A page lists the code that points at it under **In the code**. Right-click a page in the tree to copy its `[Documentation]` attribute, ready to paste.
+
+The **Code Reference**'s pages are made from the code, so what you write on one with **Edit** is its note: it shows under Notes, and it is kept in `Docs/.code-notes`.
 
 ## Getting around
 
@@ -73,6 +75,6 @@ Put `[Documentation("How Hello Works/The Day and Night Cycle")]` on a behaviour,
 - **Back** and **forward** go through the pages you have read.
 - **Filter by tag** over the tree shows only the pages with every tag picked; a tag on a page picks it too.
 - **On this page** lists a long page's headings beside it, when there is room, and takes you to one.
-- **Code Reference**, last in the tree, has a page for every public type in the scripts and in Voxear.Core, made from their `///` comments each time the scripts build. Its pages are read here, not written: change the comments instead.
+- **Code Reference**, last in the tree, has a page for every public type in the scripts and in Voxear.Core, made from their `///` comments each time the scripts build. Change the comments to change its pages, or write a note on one with **Edit**.
 - **Health** lists what needs looking after: pages out of date with the files they link to, links that go nowhere, and pictures that are missing or that no page shows.
 - **Edit** shows the page's title, tags and Markdown, with the page as it will read beside it. **Save** or Ctrl+S writes it to its file, and so do **Done** and opening another page.

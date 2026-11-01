@@ -83,6 +83,30 @@ fn with(path: &[Step], step: Step) -> Vec<Step> {
     path
 }
 
+/// What a reference points at: an Obj, or an asset by its project path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    Obj(Entity),
+    Asset(String),
+}
+
+/// What the reference at a path points at, if it is a reference set to
+/// something that is there.
+pub fn target(world: &World, types: &ScriptTypes, entity: Entity, behaviour: &str, path: &[Step]) -> Option<Target> {
+    let value = value_at(world, types, entity, behaviour, path)?;
+    match kind_at(types, behaviour, path)? {
+        FieldKind::Obj | FieldKind::Behaviour { .. } => {
+            let bits = value.as_table()?.get("entity")?.as_integer().filter(|&bits| bits != 0)?;
+            let target = Entity::from_bits(bits as u64);
+            world.is_alive(target).then_some(Target::Obj(target))
+        }
+        FieldKind::Asset { .. } | FieldKind::Ref { .. } => {
+            value.as_str().filter(|path| !path.is_empty()).map(|path| Target::Asset(path.to_string()))
+        }
+        _ => None,
+    }
+}
+
 /// The value at a path as it is now: what the scene set, or what the script
 /// starts it as. `None` for nothing, as a reference starts.
 pub fn value_at(

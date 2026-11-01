@@ -929,7 +929,18 @@
 .picker-label {
     flex-grow: 1;
     min-width: 0px;
+    overflow: hidden;
+    white-space: nowrap;
     font-size: 11px;
+}
+
+/* A reference's arrow, which opens the menu to pick another; the rest of the field pings what it points at. */
+.picker-arrow {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-right: -4px;
+    border-radius: 4px;
 }
 
 /* An asset field's preview, before its name. */
@@ -2164,18 +2175,13 @@ DockSpace .project-split > .split-divider {
     align-items: stretch;
 }
 
+/* Each list in a pane of its own, the lines between them dragging to share the room out. */
 .entities-column {
     flex-direction: column;
     flex-grow: 1;
     flex-basis: 0px;
     min-width: 0px;
     padding: 6px 8px;
-    border-left: 1px solid var(--vx-line);
-}
-
-.entities-archetypes {
-    flex-grow: 1.4;
-    border-left: 0px solid var(--vx-line);
 }
 
 .entities-details, .entities-schedule {
@@ -2193,6 +2199,7 @@ DockSpace .project-split > .split-divider {
 .entities-row-name {
     flex-grow: 1;
     min-width: 0px;
+    overflow: hidden;
     white-space: nowrap;
 }
 
@@ -2283,8 +2290,51 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-text-2);
 }
 
-.memory-snapshots {
-    flex-grow: 0.7;
+/* The lines between columns that drag: a hairline in a wider strip that takes the pointer, lit while it is. */
+DockSpace .resizable-columns > .split-divider {
+    width: 7px;
+}
+
+DockSpace .resizable-columns > .split-divider > .split-handle {
+    width: 1px;
+    height: 100%;
+    max-height: 100000px;
+    border-radius: 0px;
+    background-color: var(--vx-line);
+}
+
+DockSpace .resizable-columns > .split-divider:hover > .split-handle,
+DockSpace .resizable-columns > .split-divider:active > .split-handle {
+    width: 2px;
+    background-color: var(--vx-accent);
+}
+
+/* A table's header, whose column edges drag, and its rows, whose cells line up with it and cut off what does not
+   fit. */
+.table-header {
+    flex-shrink: 0;
+    height: 22px;
+    padding: 0px 6px;
+}
+
+.table-heading {
+    min-width: 0px;
+    padding-top: 4px;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.table-row {
+    gap: 0px;
+}
+
+.table-row > Label {
+    min-width: 0px;
+    padding-right: 8px;
+    overflow: hidden;
+    white-space: nowrap;
 }
 
 /* The Frame Debugger: the frame's passes, the picked pass's images, and the picked image as it was. */
@@ -2350,8 +2400,9 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-text-2);
 }
 
+/* As tall as its lanes, which the code sets, in a view that scrolls them. */
 .profiler-canvas {
-    min-height: 0px;
+    flex-shrink: 0;
 }
 
 /* A worker thread's title above its lane of bars. */

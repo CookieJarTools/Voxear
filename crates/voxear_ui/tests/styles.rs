@@ -163,3 +163,22 @@ fn mistakes_are_reported_with_their_place() {
     assert!(error.0.contains("could not read Missing.vss"), "{error}");
     assert_eq!(ui.children(ui.root()).len(), 1, "a failed document leaves nothing behind");
 }
+
+#[test]
+fn a_label_that_hides_its_overflow_keeps_its_text_within_it() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let label = ui.add_label(root, "Name · Transform · WorldTransform · Camera · EditorOnly");
+    ui.set_inline_style(label, "width: 60px; white-space: nowrap; overflow: hidden");
+    let glyphs = |ui: &mut Ui| {
+        let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+        frame.quads.into_iter().filter(|q| q.kind == voxear_ui::Quad::GLYPH).collect::<Vec<_>>()
+    };
+    let shown = glyphs(&mut ui);
+    let [x, _, w, _] = ui.rect(label);
+    assert!(!shown.is_empty(), "the start of the text shows");
+    assert!(shown.iter().all(|q| q.clip[2] <= x + w + 0.5), "every glyph is cut off at the label's edge");
+
+    ui.set_inline_style(label, "width: 60px; white-space: nowrap");
+    assert!(glyphs(&mut ui).iter().any(|q| q.clip[2] > x + w + 0.5), "a label that shows its overflow runs on");
+}

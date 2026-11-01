@@ -3,7 +3,8 @@
 //! hand, each a list of amounts by part and name (see `voxear_engine::memory`).
 //! A snapshot picked shows its amounts, the largest first; compared with
 //! another, only what changed, the largest change first, as before and after
-//! a level change to find what was not let go.
+//! a level change to find what was not let go. The two lists' widths, and
+//! the amounts' columns, are dragged by the lines between them.
 
 use std::{
     cell::RefCell,
@@ -16,12 +17,20 @@ use voxear_engine::Game;
 use voxear_render::Renderer;
 use voxear_ui::{ItemFns, NodeId, Style, Ui};
 
+use crate::columns::{self, TableHeader};
+
 /// How often the line of totals is read again while the panel shows.
 const REFRESH: Duration = Duration::from_secs(1);
 const ROW: f32 = 22.0;
-/// The classes of an amount's columns: its part, its name, its size and its
-/// change.
-const AMOUNT_COLUMNS: [&str; 4] = ["memory-part", "entities-row-name", "entities-row-count", "memory-change"];
+/// The amounts' columns, each with the share of the width it starts with,
+/// and the class of its cells: the part, the size, the change, and the
+/// name, which takes the rest.
+const AMOUNT_COLUMNS: [(&str, f32, &str); 4] = [
+    ("Part", 0.22, "memory-part"),
+    ("Size", 0.18, "entities-row-count"),
+    ("Change", 0.18, "memory-change"),
+    ("Name", 0.0, "entities-row-name"),
+];
 
 /// A row of the amounts' list: part, name, bytes, and the change in bytes
 /// when comparing.
@@ -46,6 +55,9 @@ pub struct MemoryPanel {
     snapshots: NodeId,
     amounts: NodeId,
     hint: NodeId,
+    header: TableHeader,
+    /// The amounts' rows made, to size their cells when the columns change.
+    rows: Rc<RefCell<Vec<NodeId>>>,
     shown: Rc<RefCell<Shown>>,
     picked: Option<usize>,
     read: Option<Instant>,
@@ -70,8 +82,9 @@ impl MemoryPanel {
         ui.add_class(columns, "fill");
         ui.add_class(columns, "entities-columns");
         let shown: Rc<RefCell<Shown>> = Rc::default();
-        let column = |ui: &mut Ui, title: &str, class: &str| {
-            let column = ui.panel(columns, Style::default());
+        let panes = columns::panes(ui, columns, 2);
+        let column = |ui: &mut Ui, pane: NodeId, title: &str, class: &str| {
+            let column = ui.panel(pane, Style::default());
             ui.add_class(column, "entities-column");
             ui.add_class(column, class);
             let heading = ui.add_label(column, title);
@@ -79,7 +92,7 @@ impl MemoryPanel {
             column
         };
 
-        let left = column(ui, "Snapshots", "memory-snapshots");
+        let left = column(ui, panes[0], "Snapshots", "memory-snapshots");
         let rows = shown.clone();
         let snapshots = ui.list_view(
             left,
@@ -96,26 +109,35 @@ impl MemoryPanel {
         );
         ui.add_class(snapshots, "fill");
 
-        let right = column(ui, "Amounts", "memory-amounts");
+        let right = column(ui, panes[1], "Amounts", "memory-amounts");
         let hint = ui.add_label(right, "Take a snapshot to see what each part of the engine holds.");
         ui.add_class(hint, "entities-hint");
-        let rows = shown.clone();
+        let headings: Vec<(&str, f32)> = AMOUNT_COLUMNS.iter().map(|&(title, width, _)| (title, width)).collect();
+        let header = TableHeader::new(ui, right, &headings);
+        let (widths, made) = (header.widths(), Rc::new(RefCell::new(Vec::new())));
+        let (rows, kept) = (shown.clone(), made.clone());
         let amounts = ui.list_view(
             right,
             ROW,
             0,
             ItemFns {
-                make: |ui: &mut Ui, row: NodeId| make_row(ui, row, &AMOUNT_COLUMNS),
+                make: move |ui: &mut Ui, row: NodeId| {
+                    let classes: Vec<&str> = AMOUNT_COLUMNS.iter().map(|&(_, _, class)| class).collect();
+                    make_row(ui, row, &classes);
+                    ui.add_class(row, "table-row");
+                    columns::fit(ui, row, &widths.borrow());
+                    kept.borrow_mut().push(row);
+                },
                 bind: move |ui: &mut Ui, row: NodeId, index: usize| {
                     let shown = rows.borrow();
                     let Some(amount) = shown.amounts.get(index) else { return };
                     let change = amount.change.map_or_else(String::new, signed);
-                    fill_row(ui, row, &[&amount.category, &amount.name, &memory::describe(amount.bytes), &change]);
+                    fill_row(ui, row, &[&amount.category, &memory::describe(amount.bytes), &change, &amount.name]);
                 },
             },
         );
         ui.add_class(amounts, "fill");
-        Self { summary, take, compare, snapshots, amounts, hint, shown, picked: None, read: None }
+        Self { summary, take, compare, snapshots, amounts, hint, header, rows: made, shown, picked: None, read: None }
     }
 
     /// Takes a snapshot when asked, follows what is picked, and keeps the
@@ -123,6 +145,12 @@ impl MemoryPanel {
     pub fn update(&mut self, ui: &mut Ui, shown: bool, game: &Game, renderer: &Renderer) {
         if !shown {
             return;
+        }
+        if self.header.update(ui) {
+            let widths = self.header.widths();
+            for &row in self.rows.borrow().iter() {
+                columns::fit(ui, row, &widths.borrow());
+            }
         }
         let mut changed = false;
         if ui.clicked(self.take) {

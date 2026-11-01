@@ -18,7 +18,9 @@
 //! Script fields show as their kind says: a list as its items, each with a
 //! button to take it out and the list's to add one; a `[Serializable]`
 //! table as its fields, indented under it; and a reference to an Obj, a
-//! behaviour or an asset as what it points at, picked from a menu.
+//! behaviour or an asset as what it points at. As in Unity, a click on a
+//! reference pings what it points at, a double click selects an Obj it
+//! points at, and its arrow opens the menu to pick another.
 
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::Entity;
@@ -112,6 +114,10 @@ pub enum RowAction {
     Remove(Part),
     /// Open the object picker for a reference, under its field.
     Browse(Prop, NodeId),
+    /// Light up what a reference points at, in the Hierarchy or the Project.
+    Ping(Prop),
+    /// Select the Obj a reference points at.
+    SelectTarget(Prop),
     /// Open the colour picker for a colour, under its swatch.
     EditColor(Prop, NodeId),
     /// Point a reference at what its picker picked.
@@ -150,8 +156,9 @@ enum Control {
     /// A field for each number, for a vector or a colour, with the
     /// colour's swatch.
     Axes(Vec<NodeId>, Option<NodeId>),
-    /// A reference: a button showing what it points at, which opens a menu.
-    Picker(NodeId, NodeId),
+    /// A reference: a field showing what it points at, which pings it, its
+    /// label, and its arrow, which opens a menu to pick another.
+    Picker(NodeId, NodeId, NodeId),
     /// A dropdown, and the options it was last given.
     Choice(NodeId, Vec<String>),
     /// A `[ValueDropdown]`: a dropdown, and the value each option sets.
@@ -486,7 +493,7 @@ impl Inspector {
     pub fn field_thumbs(&self, ui: &Ui) -> Vec<(Prop, NodeId)> {
         let thumb = |picker: NodeId| ui.children(picker).into_iter().find(|&n| ui.has_class(n, "field-thumb"));
         let pickers = self.rows.iter().filter_map(|row| match row.control {
-            Control::Picker(picker, _) => Some((row.prop.clone(), thumb(picker)?)),
+            Control::Picker(picker, ..) => Some((row.prop.clone(), thumb(picker)?)),
             _ => None,
         });
         pickers.collect()
@@ -1070,7 +1077,7 @@ impl Inspector {
             return actions.get(index).cloned().flatten();
         }
         let dropped = self.rows.iter().find_map(|row| match row.control {
-            Control::Picker(picker, _) => ui.dropped_onto(picker).map(|source| (row.prop.clone(), source)),
+            Control::Picker(picker, ..) => ui.dropped_onto(picker).map(|source| (row.prop.clone(), source)),
             _ => None,
         });
         if let Some((prop, source)) = dropped {
@@ -1086,8 +1093,8 @@ impl Inspector {
             items = vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))];
             let [x, y, _, height] = ui.rect(button);
             (button, (x, y + height + 4.0))
-        } else if let Some((prop, button)) = self.picker_clicked(ui) {
-            return Some(RowAction::Browse(prop, button));
+        } else if let Some(action) = self.picker_clicked(ui) {
+            return Some(action);
         } else if let Some((prop, swatch)) = self.swatch_clicked(ui) {
             return Some(RowAction::EditColor(prop, swatch));
         } else if let Some((part, header)) = self.headers.iter().find(|(_, h)| ui.context_clicked(*h)) {
@@ -1122,9 +1129,13 @@ impl Inspector {
     }
 
     /// The reference whose button was clicked, and the button.
-    fn picker_clicked(&self, ui: &Ui) -> Option<(Prop, NodeId)> {
+    /// What a click on a reference asks: its arrow, to pick another; a double
+    /// click, to select what it points at; or a click, to ping it.
+    fn picker_clicked(&self, ui: &Ui) -> Option<RowAction> {
         self.rows.iter().find_map(|row| match row.control {
-            Control::Picker(button, _) if ui.clicked(button) => Some((row.prop.clone(), button)),
+            Control::Picker(picker, _, arrow) if ui.clicked(arrow) => Some(RowAction::Browse(row.prop.clone(), picker)),
+            Control::Picker(picker, ..) if ui.double_clicked(picker) => Some(RowAction::SelectTarget(row.prop.clone())),
+            Control::Picker(picker, ..) if ui.clicked(picker) => Some(RowAction::Ping(row.prop.clone())),
             _ => None,
         })
     }
@@ -1281,9 +1292,9 @@ fn control(
             }
             let label = ui.add_label(picker, &display(value));
             ui.add_class(label, "picker-label");
-            let arrow = ui.icon(picker, "chevron-down");
-            ui.add_class(arrow, "dropdown-arrow");
-            Control::Picker(picker, label)
+            let arrow = ui.icon_button(picker, "chevron-down");
+            ui.add_class(arrow, "picker-arrow");
+            Control::Picker(picker, label, arrow)
         }
         Value::Choice(index, options) => {
             let labels: Vec<&str> = options.iter().map(String::as_str).collect();
@@ -1473,7 +1484,7 @@ fn refresh_control(ui: &mut Ui, control: &mut Control, value: &Value) {
                 ui.set_inline_style(*swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
             }
         }
-        (Control::Picker(_, label), value) => {
+        (Control::Picker(_, label, _), value) => {
             let text = display(value);
             if ui.text(*label) != text {
                 ui.set_text(*label, &text);

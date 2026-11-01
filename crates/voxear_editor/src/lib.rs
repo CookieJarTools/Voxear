@@ -45,6 +45,7 @@
 mod asset_inspector;
 mod attributes;
 mod build_window;
+mod columns;
 mod console;
 mod editor;
 pub mod entities_panel;

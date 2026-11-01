@@ -157,6 +157,11 @@ impl Draw<'_> {
         let inner = layout.size.width - inset.0 - layout.border.right - layout.padding.right;
         let inner_height = layout.size.height - inset.1 - layout.border.bottom - layout.padding.bottom;
         let outside = x1 <= clip[0] || y1 <= clip[1] || x0 >= clip[2] || y0 >= clip[3];
+        // Inside its border, where a box that does not let its content show past it cuts it off.
+        let [l, t] = self.snap(at.0 + layout.border.left, at.1 + layout.border.top);
+        let [r, b] =
+            self.snap(at.0 + layout.size.width - layout.border.right, at.1 + layout.size.height - layout.border.bottom);
+        let inside = [clip[0].max(l), clip[1].max(t), clip[2].min(r), clip[3].min(b)];
         let Some(element) = self.tree.get_node_context_mut(node) else { return };
         let mut look = Look::of(&element.computed);
         let mut text_color = element.text_style.color.linear_premultiplied();
@@ -171,6 +176,9 @@ impl Draw<'_> {
         let opacity = opacity * own_opacity;
         let (overflow, scroll, scroll_max, bar) =
             (element.computed.overflow, element.scroll, element.scroll_max, element.computed.scrollbar);
+        // Its own text is its content as much as its children are, so a label that
+        // hides its overflow keeps a long line within it, as a table's cell does.
+        let text_clip = if overflow == Overflow::Visible { clip } else { inside };
         if !outside {
             let rect = [x0, y0, x1 - x0, y1 - y0];
             if let Some(shadow) = &element.computed.shadow {
@@ -266,7 +274,7 @@ impl Draw<'_> {
                 let spare = (inner_height * self.scale - shaped.height()).max(0.0);
                 let origin = [origin[0] + across, origin[1] + (spare / 2.0).round()];
                 let paint = Paint { color, spans: &text.spans, style: &element.text_style, opacity, scale: self.scale };
-                glyph_quads(shaped, origin, &paint, clip, self.atlas, self.quads);
+                glyph_quads(shaped, origin, &paint, text_clip, self.atlas, self.quads);
             }
         }
         // What it clips cannot show when it is itself out of sight.

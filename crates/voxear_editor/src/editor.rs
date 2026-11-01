@@ -49,7 +49,7 @@ use crate::{
     build_window::BuildWindow,
     console::Console,
     entities_panel::EntitiesPanel,
-    fields::Pick,
+    fields::{self, Pick},
     frame_debugger_panel::FrameDebuggerPanel,
     gizmos,
     hierarchy::EditorOnly,
@@ -1210,6 +1210,9 @@ impl Editor {
         if let RowAction::Browse(prop, anchor) = action {
             return self.browse(entity, prop, anchor);
         }
+        if let RowAction::Ping(prop) | RowAction::SelectTarget(prop) = &action {
+            return self.reference_target(entity, prop, matches!(action, RowAction::SelectTarget(_)));
+        }
         if let RowAction::Keep(field) = action {
             let label = field.label();
             let kept = (entity, field);
@@ -1247,7 +1250,7 @@ impl Editor {
                 }
             }
             RowAction::Remove(part) => props::remove(&mut self.game.engine.world, entity, &part),
-            RowAction::Browse(..) | RowAction::EditColor(..) => {}
+            RowAction::Browse(..) | RowAction::EditColor(..) | RowAction::Ping(_) | RowAction::SelectTarget(_) => {}
             RowAction::Pick(prop, pick) => {
                 props::pick(&mut self.game, Some(renderer), self.inspector.types(), entity, &prop, &pick);
             }
@@ -1658,6 +1661,29 @@ impl Editor {
             }
         }
         voxear_engine::ui_input::handle(&mut self.ui, event)
+    }
+
+    /// Pings what a reference of `entity` points at, as Unity's object fields
+    /// do: an Obj in the Hierarchy, or an asset in the Project panel. With
+    /// `select`, an Obj is selected instead, as a double click does.
+    fn reference_target(&mut self, entity: Entity, prop: &Prop, select: bool) {
+        let world = &self.game.engine.world;
+        let target = match prop {
+            Prop::Field { behaviour, path } => fields::target(world, self.inspector.types(), entity, behaviour, path),
+            // A mesh or material by its path, when it is an asset of the project's.
+            _ => match props::get(&self.game, self.inspector.types(), entity, prop) {
+                Some(props::Value::Asset(path)) if path.contains('/') || path.contains('.') => {
+                    Some(fields::Target::Asset(path))
+                }
+                _ => None,
+            },
+        };
+        match target {
+            Some(fields::Target::Obj(obj)) if select => self.select(Some(obj)),
+            Some(fields::Target::Obj(obj)) => self.hierarchy.ping(&mut self.ui, &self.game.engine.world, obj),
+            Some(fields::Target::Asset(path)) => self.project.ping(&mut self.ui, &path),
+            None => {}
+        }
     }
 
     /// Opens the object picker for a reference of `entity`, under its field.

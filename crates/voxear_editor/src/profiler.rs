@@ -15,7 +15,9 @@
 //! managed memory they allocated (GC Alloc), as Unity's do.
 //!
 //! Samples are taken only while the panel shows and Record is on. A click on
-//! the chart picks a frame to break down; Live goes back to the newest.
+//! the chart picks a frame to break down, and dragging along it goes through
+//! the frames; Live goes back to the newest. The Timeline scrolls when its
+//! lanes are more than fit.
 //! Render's time includes waiting for the GPU and the display ("Wait for
 //! GPU", "Acquire Image"), so with vsync on it fills the frame.
 
@@ -95,6 +97,8 @@ pub struct Profiler {
     view: NodeId,
     hierarchy: NodeId,
     timeline: NodeId,
+    /// The Timeline's lanes, in a view that scrolls them.
+    timeline_scroller: NodeId,
     timeline_canvas: NodeId,
     timeline_hovered: NodeId,
     /// Names on the timeline's bars, kept and reused.
@@ -192,8 +196,9 @@ impl Profiler {
         ui.add_class(timeline, "profiler-timeline");
         let timeline_hovered = ui.add_label(timeline, "Point at a bar to see what it is.");
         ui.add_class(timeline_hovered, "profiler-hovered");
-        let timeline_canvas = ui.panel(timeline, Style::default());
-        ui.add_class(timeline_canvas, "fill");
+        let timeline_scroller = ui.panel(timeline, Style::column().scroll());
+        ui.add_class(timeline_scroller, "fill");
+        let timeline_canvas = ui.panel(timeline_scroller, Style::default());
         ui.add_class(timeline_canvas, "profiler-canvas");
         ui.set_visible(timeline, false);
         let side = ui.panel(lower, Style::default());
@@ -210,6 +215,7 @@ impl Profiler {
             view,
             hierarchy,
             timeline,
+            timeline_scroller,
             timeline_canvas,
             timeline_hovered,
             timeline_names: Vec::new(),
@@ -278,8 +284,9 @@ impl Profiler {
         if ui.clicked(self.live) {
             self.picked = None;
         }
-        if ui.clicked(self.chart) {
-            self.picked = self.frame_at(ui);
+        // Held down on the chart, the frame under the pointer, so dragging goes through them.
+        if ui.is_pressed(self.chart) {
+            self.picked = self.frame_at(ui).or(self.picked);
         }
         if self.picked.is_some() && self.shown_sample().is_none() {
             self.picked = None;
@@ -511,6 +518,9 @@ impl Profiler {
         let [_, _, width, _] = ui.rect(self.timeline_canvas);
         self.timeline_width = width;
         let (bars, titles, length) = bars(samples);
+        // As tall as its lanes, so the view around it scrolls to the last.
+        let height = bars.iter().map(|bar| bar.top + LANE).fold(0.0, f32::max) + 4.0;
+        ui.set_inline_style(self.timeline_canvas, &format!("height: {height}px"));
         let x = |ns: u64| ns as f32 / length * width;
         let mut shapes = Vec::with_capacity(bars.len());
         let mut named: Vec<(String, [f32; 3])> = Vec::new();
@@ -551,8 +561,11 @@ impl Profiler {
     /// Names the run under the pointer, and lights its bar.
     fn hover_timeline(&mut self, ui: &mut Ui) {
         let Some(sample) = self.shown_sample().cloned() else { return };
-        let [x, y, width, height] = ui.rect(self.timeline_canvas);
-        let hovered = ui.pointer_position().filter(|&(px, py)| px >= x && px < x + width && py >= y && py < y + height);
+        let [x, y, width, _] = ui.rect(self.timeline_canvas);
+        // Only where the lanes show: the canvas runs on under the view when it scrolls.
+        let [_, view_top, _, view_height] = ui.rect(self.timeline_scroller);
+        let shows = |px: f32, py: f32| px >= x && px < x + width && py >= view_top && py < view_top + view_height;
+        let hovered = ui.pointer_position().filter(|&(px, py)| shows(px, py));
         let (bars, _, length) = bars(&sample.cpu);
         let found = hovered.and_then(|(px, py)| {
             let at = ((px - x) / width * length) as u64;

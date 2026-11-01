@@ -115,8 +115,10 @@ impl EntitiesPanel {
         ui.add_class(columns, "fill");
         ui.add_class(columns, "entities-columns");
         let shown: Rc<RefCell<Shown>> = Rc::default();
-        let column = |ui: &mut Ui, title: &str, class: &str| {
-            let column = ui.panel(columns, Style::default());
+        // Side by side, with lines between that drag to share the room out.
+        let panes = crate::columns::panes(ui, columns, 4);
+        let column = |ui: &mut Ui, pane: NodeId, title: &str, class: &str| {
+            let column = ui.panel(pane, Style::default());
             ui.add_class(column, "entities-column");
             ui.add_class(column, class);
             let heading = ui.add_label(column, title);
@@ -124,7 +126,7 @@ impl EntitiesPanel {
             column
         };
 
-        let left = column(ui, "Archetypes", "entities-archetypes");
+        let left = column(ui, panes[0], "Archetypes", "entities-archetypes");
         let rows = shown.clone();
         // Counts first, at a fixed width, so a long set of components runs off the
         // list's edge rather than over its count.
@@ -145,7 +147,7 @@ impl EntitiesPanel {
         );
         ui.add_class(archetypes, "fill");
 
-        let middle = column(ui, "Entities", "entities-entities");
+        let middle = column(ui, panes[1], "Entities", "entities-entities");
         let chunk_summary = ui.add_label(middle, "");
         ui.add_class(chunk_summary, "entities-hint");
         let chunks = ui.panel(middle, Style::row());
@@ -166,8 +168,8 @@ impl EntitiesPanel {
         );
         ui.add_class(entities, "fill");
 
-        let details = column(ui, "Components", "entities-details");
-        let schedule = column(ui, "Systems", "entities-schedule");
+        let details = column(ui, panes[2], "Components", "entities-details");
+        let schedule = column(ui, panes[3], "Systems", "entities-schedule");
         Self {
             summary,
             filter,

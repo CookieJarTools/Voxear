@@ -731,7 +731,21 @@ fn script_fields_pick_references_and_edit_lists() {
     let picker =
         first_with(&editor.ui, prop_row(&editor.ui, "Leader").unwrap(), "value-picker").expect("a reference picker");
     assert_eq!(editor.ui.text(first_with(&editor.ui, picker, "picker-label").unwrap()), "Spinner A");
-    click(&mut editor.ui, picker);
+    // As in Unity: a click pings what it points at, a double click selects it, and the arrow picks another.
+    let label = first_with(&editor.ui, picker, "picker-label").unwrap();
+    click(&mut editor.ui, label);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(pinged_names(&editor.ui), ["Spinner A"], "its row is lit in the Hierarchy");
+    assert!(!editor.picker_open() && editor.selected() == Some(spinner), "nothing else happens");
+    click(&mut editor.ui, label);
+    click(&mut editor.ui, label);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.selected(), obj(&editor, "Spinner A"), "a double click selects it");
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    let picker = first_with(&editor.ui, prop_row(&editor.ui, "Leader").unwrap(), "value-picker").unwrap();
+    let arrow = first_with(&editor.ui, picker, "picker-arrow").unwrap();
+    click(&mut editor.ui, arrow);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     shot(&mut renderer, "reference-picker.png");
@@ -2177,7 +2191,8 @@ fn the_object_picker_searches_what_a_reference_can_take() {
         |editor: &voxear_editor::Editor| *editor.game.engine.world.get::<voxear_render::MeshRenderer>(spinner).unwrap();
     let open_picker = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, row: &str| {
         let picker = first_with(&editor.ui, prop_row(&editor.ui, row).unwrap(), "value-picker").unwrap();
-        click(&mut editor.ui, picker);
+        let arrow = first_with(&editor.ui, picker, "picker-arrow").unwrap();
+        click(&mut editor.ui, arrow);
         frame(editor, renderer);
         frame(editor, renderer);
         assert!(editor.picker_open(), "{row}");
@@ -2335,7 +2350,8 @@ fn assets_show_previews_in_the_project_fields_picker_and_inspector() {
         assert!(editor.ui.is_visible(thumb), "{row}'s field shows a preview");
     }
     let picker = first_with(&editor.ui, prop_row(&editor.ui, "Material").unwrap(), "value-picker").unwrap();
-    click(&mut editor.ui, picker);
+    let arrow = first_with(&editor.ui, picker, "picker-arrow").unwrap();
+    click(&mut editor.ui, arrow);
     for _ in 0..4 {
         frame(&mut editor, &mut renderer);
     }
@@ -3119,6 +3135,27 @@ fn the_memory_panel_takes_snapshots_and_compares_them() {
         shown.map(|row| texts_in(&editor.ui, row).join(" ")).filter(|t| !t.trim().is_empty()).collect::<Vec<_>>()
     };
     assert!(!rows(&editor).is_empty(), "the snapshot's amounts show");
+
+    // The amounts' columns: the line after Part drags, and every row's Part cell follows it.
+    let part_width = |editor: &voxear_editor::Editor| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, editor.memory_panel().amounts(), "table-row", &mut rows);
+        let row = rows.into_iter().find(|&row| editor.ui.is_visible(row)).expect("a row of amounts");
+        editor.ui.rect(editor.ui.children(row)[0])[2]
+    };
+    let before = part_width(&editor);
+    let header = first_with(&editor.ui, panel, "table-header").unwrap();
+    let line = first_with(&editor.ui, header, "split-divider").unwrap();
+    let [x, y, w, h] = editor.ui.rect(line);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_move(x + w / 2.0 + 60.0, y + h / 2.0);
+    editor.ui.pointer_button(false);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let after = part_width(&editor);
+    assert!((after - before - 60.0).abs() < 2.0, "the Part column went from {before} to {after}");
 
     // More entities, a second snapshot, and the difference from the first.
     for _ in 0..2000 {

@@ -61,6 +61,10 @@ namespace Voxear.Scripting
 			{
 				return "number";
 			}
+			if (type == typeof(Color))
+			{
+				return "color";
+			}
 			return type == typeof(Quaternion) ? "rotation" : type == typeof(Obj) ? "obj" : null;
 		}
 

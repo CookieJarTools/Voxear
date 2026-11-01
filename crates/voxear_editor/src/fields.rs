@@ -162,6 +162,10 @@ fn typed(world: &World, kind: &FieldKind, value: Option<&toml::Value>) -> Value 
             Value::Vector(floats(value).filter(|v| v.len() == *size).unwrap_or(vec![0.0; *size]))
         }
         FieldKind::Rotation => Value::Vector(euler(value)),
+        FieldKind::Color => {
+            let [r, g, b, _] = color(value);
+            Value::Color([r, g, b].map(|c| (c * 1000.0).round() / 1000.0))
+        }
         FieldKind::Obj | FieldKind::Behaviour { .. } => Value::Obj(reference(world, value)),
         FieldKind::Asset { .. } | FieldKind::Ref { .. } => {
             Value::Asset(value.and_then(toml::Value::as_str).filter(|p| !p.is_empty()).unwrap_or("None").to_string())
@@ -208,6 +212,12 @@ pub fn set(
         (Value::Text(text), _) => toml::Value::String(text.clone()),
         (Value::Vector(values), _) => {
             toml::Value::Array(values.iter().map(|&v| toml::Value::Float(f64::from(v))).collect())
+        }
+        // The Inspector picks red, green and blue; alpha stays as it was.
+        (Value::Color([r, g, b]), Some(FieldKind::Color)) => {
+            let [.., a] = color(value_at(world, types, entity, behaviour, path).as_ref());
+            let tidy = |c: f32| toml::Value::Float((f64::from(c) * 10_000.0).round() / 10_000.0);
+            toml::Value::Array([*r, *g, *b, a].map(tidy).to_vec())
         }
         _ => return false,
     };
@@ -339,6 +349,7 @@ fn blank(types: &ScriptTypes, kind: &FieldKind) -> toml::Value {
         FieldKind::Enum { names } => toml::Value::String(names.first().cloned().unwrap_or_default()),
         FieldKind::Vector { size } => toml::Value::Array(vec![toml::Value::Float(0.0); *size]),
         FieldKind::Rotation => toml::Value::Array(vec![toml::Value::Float(0.0); 3]),
+        FieldKind::Color => toml::Value::Array(vec![toml::Value::Float(1.0); 4]),
         FieldKind::List { .. } => toml::Value::Array(Vec::new()),
         FieldKind::Struct { name } => toml::Value::Table(
             types
@@ -453,6 +464,26 @@ fn floats(value: Option<&toml::Value>) -> Option<Vec<f32>> {
     let items = value?.as_array()?;
     let numbers: Vec<f32> = items.iter().filter_map(number).map(|f| f as f32).collect();
     (numbers.len() == items.len()).then_some(numbers)
+}
+
+/// A colour's red, green, blue and alpha, as scenes write one: `"#ff8800"`
+/// or `"#ff880080"`, or three or four numbers. White when there is none.
+fn color(value: Option<&toml::Value>) -> [f32; 4] {
+    if let Some(hex) = value.and_then(toml::Value::as_str) {
+        let digits = hex.trim_start_matches('#');
+        let Ok(bits) = u32::from_str_radix(digits, 16) else { return [1.0; 4] };
+        let bits = match digits.len() {
+            6 => bits << 8 | 0xff,
+            8 => bits,
+            _ => return [1.0; 4],
+        };
+        return bits.to_be_bytes().map(|b| f32::from(b) / 255.0);
+    }
+    match floats(value).as_deref() {
+        Some(&[r, g, b]) => [r, g, b, 1.0],
+        Some(&[r, g, b, a]) => [r, g, b, a],
+        _ => [1.0; 4],
+    }
 }
 
 /// A rotation as Euler degrees, as scenes write one; four numbers are a

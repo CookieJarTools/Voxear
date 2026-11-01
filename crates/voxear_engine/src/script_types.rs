@@ -272,6 +272,9 @@ pub enum FieldKind {
     },
     /// A `Quaternion`, which scenes write as Euler degrees.
     Rotation,
+    /// A `Color`, in sRGB with alpha, which scenes write as `"#ff8800"` or
+    /// as three or four numbers from 0 to 1.
+    Color,
     Obj,
     /// A behaviour on another Obj, of this type or one deriving from or
     /// implementing it.

@@ -27,6 +27,16 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void ColoursFillFromHexOrNumbers()
+		{
+			var lamp = new TestLamp();
+			BehaviourFields.Apply(lamp, """{ "tint": "#00ff0080", "glow": [0.25, 0.5, 1], "shade": [1, 0, 0, 0.5] }""");
+			Check.True(lamp.Tint == new Color(0f, 1f, 0f, 128 / 255f), "hex, with alpha");
+			Check.True(lamp.Glow == new Color(0.25f, 0.5f, 1f), "three numbers are opaque");
+			Check.True(lamp.Shade == new Color(1f, 0f, 0f, 0.5f), "four numbers, alpha last");
+		}
+
+		[Test]
 		private static void BadNestedValuesKeepTheirDefaultsAndTheRestStillLoads()
 		{
 			var spawner = new TestSpawner();

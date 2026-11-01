@@ -56,7 +56,14 @@ pub fn set(
     if get(world, types, entity, component, path).as_ref() == Some(value) {
         return false;
     }
-    let Some(bytes) = encode(&kind, layout, value) else { return false };
+    let current = match world.get_by_id(entity, id) {
+        Some(base) => {
+            unsafe { std::slice::from_raw_parts(base.as_ptr().add(layout.offset as usize), layout.size as usize) }
+                .to_vec()
+        }
+        None => return false,
+    };
+    let Some(bytes) = encode(&kind, layout, value, &current) else { return false };
     let Some(base) = world.get_mut_by_id(entity, id) else { return false };
     let target = unsafe { base.as_ptr().add(layout.offset as usize) };
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), target, bytes.len()) };
@@ -75,6 +82,10 @@ fn decode(world: &World, kind: &FieldKind, layout: FieldLayout, bytes: &[u8]) ->
             Value::Choice(index.min(names.len().saturating_sub(1)), names.clone())
         }
         FieldKind::Vector { .. } => Value::Vector(floats()),
+        FieldKind::Color => {
+            let rgb = floats();
+            Value::Color([rgb[0], rgb[1], rgb[2]])
+        }
         FieldKind::Rotation => {
             let [x, y, z, w] = floats()[..4].try_into().unwrap_or([0.0, 0.0, 0.0, 1.0]);
             let (y, x, z) = Quat::from_xyzw(x, y, z, w).normalize().to_euler(EulerRot::YXZ);
@@ -88,7 +99,9 @@ fn decode(world: &World, kind: &FieldKind, layout: FieldLayout, bytes: &[u8]) ->
     }
 }
 
-fn encode(kind: &FieldKind, layout: FieldLayout, value: &Value) -> Option<Vec<u8>> {
+/// The bytes for a value; `current` is what the field holds now, which
+/// keeps a colour's alpha, since the Inspector picks only the rest.
+fn encode(kind: &FieldKind, layout: FieldLayout, value: &Value, current: &[u8]) -> Option<Vec<u8>> {
     let size = layout.size as usize;
     let bytes = match (kind, value) {
         (FieldKind::Number, Value::Number(n)) if size == 8 => f64::from(*n).to_le_bytes().to_vec(),
@@ -97,6 +110,11 @@ fn encode(kind: &FieldKind, layout: FieldLayout, value: &Value) -> Option<Vec<u8
         (FieldKind::Bool, Value::Toggle(b)) => vec![u8::from(*b)],
         (FieldKind::Enum { .. }, Value::Choice(index, _)) => (*index as i64).to_le_bytes()[..size].to_vec(),
         (FieldKind::Vector { .. }, Value::Vector(values)) => values.iter().flat_map(|v| v.to_le_bytes()).collect(),
+        (FieldKind::Color, Value::Color(rgb)) => {
+            let mut bytes: Vec<u8> = rgb.iter().flat_map(|v| v.to_le_bytes()).collect();
+            bytes.extend_from_slice(current.get(12..16)?);
+            bytes
+        }
         (FieldKind::Rotation, Value::Vector(degrees)) => {
             let [x, y, z] = degrees[..3].try_into().ok()?;
             let q = Quat::from_euler(EulerRot::YXZ, f32::to_radians(y), f32::to_radians(x), f32::to_radians(z));
@@ -125,7 +143,18 @@ fn whole(bytes: &[u8], signed: bool) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::whole;
+    use super::*;
+
+    #[test]
+    fn a_colour_is_written_keeping_its_alpha() {
+        let layout = FieldLayout { offset: 0, size: 16, signed: false };
+        let current: Vec<u8> = [1.0f32, 0.5, 0.0, 0.25].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let world = World::new();
+        assert_eq!(decode(&world, &FieldKind::Color, layout, &current), Value::Color([1.0, 0.5, 0.0]));
+        let bytes = encode(&FieldKind::Color, layout, &Value::Color([0.0, 1.0, 0.0]), &current).unwrap();
+        let floats: Vec<f32> = bytes.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+        assert_eq!(floats, [0.0, 1.0, 0.0, 0.25]);
+    }
 
     #[test]
     fn whole_numbers_widen_with_their_sign() {

@@ -27,6 +27,17 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void ColoursAreDescribedWithTheirNumbers()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestLamp).Assembly));
+			var lamp = document.RootElement.GetProperty("behaviours").EnumerateArray().Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestLamp");
+			var tint = lamp.GetProperty("fields").EnumerateArray().Single(f => f.GetProperty("name").GetString() == "Tint");
+			Check.True(Kind(tint) == "color", Kind(tint) ?? "no kind");
+			var numbers = tint.GetProperty("default").EnumerateArray().Select(n => n.GetDouble()).ToList();
+			Check.True(numbers.Count == 4 && numbers[0] == 1 && numbers[3] == 1, string.Join(", ", numbers));
+		}
+
+		[Test]
 		private static void ComponentsAreDescribedAsBehavioursAreButApart()
 		{
 			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestDrift).Assembly));

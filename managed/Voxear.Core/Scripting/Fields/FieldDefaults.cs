@@ -74,7 +74,7 @@ namespace Voxear.Scripting
 
 		private static bool WriteStructured(Utf8JsonWriter json, object value, Type type)
 		{
-			if (value is Vector2 or Vector3 or Vector4 or Quaternion)
+			if (value is Vector2 or Vector3 or Vector4 or Quaternion or Color)
 			{
 				WriteFloats(json, value);
 				return true;
@@ -108,7 +108,7 @@ namespace Voxear.Scripting
 			json.WriteStringValue(path);
 		}
 
-		/// <summary>A vector as its numbers, and a rotation as its four components, which scenes also accept.</summary>
+		/// <summary>A vector or a colour as its numbers, and a rotation as its four components, which scenes also accept.</summary>
 		private static void WriteFloats(Utf8JsonWriter json, object value)
 		{
 			float[] floats = value switch
@@ -117,6 +117,7 @@ namespace Voxear.Scripting
 				Vector3 v => new[] { v.X, v.Y, v.Z },
 				Vector4 v => new[] { v.X, v.Y, v.Z, v.W },
 				Quaternion q => q == Quaternion.Identity ? new[] { 0f, 0f, 0f } : new[] { q.X, q.Y, q.Z, q.W },
+				Color c => new[] { c.R, c.G, c.B, c.A },
 				_ => Array.Empty<float>(),
 			};
 			json.WriteStartArray();

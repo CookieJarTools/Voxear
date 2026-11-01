@@ -2664,6 +2664,62 @@ fn the_console_saves_filters_hides_assemblies_and_colours_categories() {
     assert!(kept.contains("\"Hello\" = \"#6aa8ff\""), "{kept}");
 }
 
+/// Hello's Spinner as a build with a C# `Color` field on it describes it.
+const SPINNER_WITH_COLOUR: &str = r#"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
+  {"name": "tint", "type": {"kind": "color"}, "default": [1.0, 0.5, 0.0, 0.5]}
+]}], "types": {}, "commands": []}"#;
+
+#[test]
+fn a_scripts_colour_field_shows_a_swatch_and_keeps_its_alpha() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(SPINNER_WITH_COLOUR).unwrap());
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let tint = |editor: &voxear_editor::Editor| {
+        let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+        kept.0[0].fields.get("tint").cloned()
+    };
+
+    let row = prop_row(&editor.ui, "Tint").expect("a row for the colour");
+    let swatch = first_with(&editor.ui, row, "swatch").expect("with a swatch");
+    assert_eq!(editor.ui.style(swatch).unwrap().background, Some(voxear_ui::Color::hex(0xff8000)), "in its colour");
+    let mut axes = Vec::new();
+    with_class(&editor.ui, row, "axis-input", &mut axes);
+    let shown: Vec<String> = axes.iter().map(|&a| editor.ui.text(a)).collect();
+    assert_eq!(shown, ["1", "0.5", "0"], "red, green and blue as the script starts them");
+
+    type_into(&mut editor.ui, axes[2], "0.25");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    let written = tint(&editor).and_then(|v| v.as_array().cloned()).expect("the scene sets it now");
+    let numbers: Vec<f64> = written.iter().filter_map(toml::Value::as_float).collect();
+    assert_eq!(numbers, [1.0, 0.5, 0.25, 0.5], "the alpha stays as it was");
+
+    // A scene can write it as hex.
+    let kept = &mut editor.game.engine.world.get_mut::<voxear_engine::EditBehaviours>(spinner).unwrap().0[0];
+    std::sync::Arc::make_mut(&mut kept.fields).insert("tint".into(), toml::Value::String("#00ff00".into()));
+    editor.select(None);
+    frame(&mut editor, &mut renderer);
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut axes = Vec::new();
+    with_class(&editor.ui, prop_row(&editor.ui, "Tint").unwrap(), "axis-input", &mut axes);
+    let shown: Vec<String> = axes.iter().map(|&a| editor.ui.text(a)).collect();
+    assert_eq!(shown, ["0", "1", "0"], "hex reads as its numbers");
+
+    let swatch_now = first_with(&editor.ui, prop_row(&editor.ui, "Tint").unwrap(), "swatch").unwrap();
+    click(&mut editor.ui, swatch_now);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.color_picker_open(), "the swatch opens the colour picker");
+}
+
 /// Hello's Spinner as a build with inspector attributes on it describes it.
 const SPINNER_WITH_ATTRIBUTES: &str = r#"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
   {"name": "degreesPerSecond", "type": {"kind": "number"}, "default": 90.0,

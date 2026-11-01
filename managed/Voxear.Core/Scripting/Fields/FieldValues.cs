@@ -63,6 +63,10 @@ namespace Voxear.Scripting
 			{
 				return ReadRotation(value);
 			}
+			if (type == typeof(Color))
+			{
+				return ReadColor(value);
+			}
 			if (type == typeof(Obj))
 			{
 				return ReadObj(value);
@@ -143,6 +147,18 @@ namespace Voxear.Scripting
 
 			var euler = Floats(value, 3);
 			return Quaternion.CreateFromYawPitchRoll(euler[1] * DegreesToRadians, euler[0] * DegreesToRadians, euler[2] * DegreesToRadians);
+		}
+
+		/// <summary>A colour as hex, "#ff8800" or "#ff880080", or as three or four numbers from 0 to 1, alpha last.</summary>
+		private static Color ReadColor(JsonElement value)
+		{
+			if (value.ValueKind == JsonValueKind.String)
+			{
+				return Color.Hex(value.GetString() ?? string.Empty);
+			}
+
+			var c = Floats(value, value.GetArrayLength() == 3 ? 3 : 4);
+			return new Color(c[0], c[1], c[2], c.Length == 4 ? c[3] : 1f);
 		}
 
 		/// <summary>

@@ -495,6 +495,9 @@ behaviour with field values always gets Awake dispatched, even if its type does 
 - numbers, `bool`, `string` and enums (by name or number)
 - `Vector2`, `Vector3` and `Vector4`
 - `Quaternion`: Euler degrees like transforms, or four components
+- `Color`: hex as a design tool writes it, `"#ff8800"` or `"#ff880080"` with alpha, or three or four numbers from 0 to
+  1. The Inspector shows a swatch that opens the colour picker, then red, green and blue to type; alpha keeps what the
+  script or scene gave it. A C# component's `Color` is edited the same way while playing.
 - arrays and `List<T>` of any of these
 - **`Prefab`:** a direct reference, loaded with the Obj, before Awake.
 - **`Ref<T>`:** a lazy reference, like an Addressables AssetReference. It holds the path or GUID, and

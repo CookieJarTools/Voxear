@@ -105,6 +105,14 @@ impl Project {
         let name = csproj.file_stem()?.to_string_lossy().into_owned();
         Some(self.root.join(".voxear").join("Scripts").join(configuration).join(format!("{name}.dll")))
     }
+
+    /// The scripts' assembly as a build makes it, in `configuration`, in a
+    /// folder of its own apart from the editor's.
+    pub fn built_scripts_assembly(&self, configuration: &str) -> Option<PathBuf> {
+        let csproj = self.scripts_project()?;
+        let name = csproj.file_stem()?.to_string_lossy().into_owned();
+        Some(self.root.join(".voxear").join("Scripts").join("Build").join(configuration).join(format!("{name}.dll")))
+    }
 }
 
 /// This engine's version: a release's, as its packaging names it, or the

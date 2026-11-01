@@ -29,7 +29,8 @@
 		<Analyzer Include="$(MSBuildThisFileDirectory)Voxear.Analyzers.dll" Condition="Exists('$(MSBuildThisFileDirectory)Voxear.Analyzers.dll')" />
 	</ItemGroup>
 	<ItemGroup Condition="!Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
-		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Core/Voxear.Core.csproj" Private="false" />
-		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Analyzers/Voxear.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+		<!-- A build's own output folder, which vox passes for the scripts alone, is not the engine's. -->
+		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Core/Voxear.Core.csproj" Private="false" GlobalPropertiesToRemove="OutputPath;IntermediateOutputPath" />
+		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Analyzers/Voxear.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="OutputPath;IntermediateOutputPath" />
 	</ItemGroup>
 </Project>

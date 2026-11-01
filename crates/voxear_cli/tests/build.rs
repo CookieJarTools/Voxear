@@ -72,6 +72,10 @@ fn a_profile_builds_a_player_that_runs_the_game() {
     let program = Path::new(finished["program"].as_str().unwrap());
     assert_eq!(program.file_name().unwrap(), format!("Hello Demo{}", std::env::consts::EXE_SUFFIX).as_str());
     assert!(output.join("Data/Managed/Hello.Scripts.pdb").is_file(), "a development build keeps its symbols");
+    // Apart from the editor's, which is built with VOXEAR_EDITOR, and only the game's own.
+    let built = dir.path().join(".voxear/Scripts/Build/Debug");
+    assert!(built.join("Hello.Scripts.dll").is_file(), "a build's scripts are built in a folder of their own");
+    assert!(!built.join("Voxear.Core.dll").exists(), "where Voxear.Core is not built again");
     let report: Value =
         serde_json::from_str(&std::fs::read_to_string(output.join("build-report.json")).unwrap()).unwrap();
     assert_eq!(report["levels"], serde_json::json!(["Levels/Day.level"]), "only the level the profile ships");

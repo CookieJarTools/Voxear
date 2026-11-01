@@ -2660,7 +2660,13 @@ them in a running game.
 
 `vox build` *(implemented)* turns a project into a game players can run, in three stages
 (`voxear_engine::player_build`):
-1. **Scripts**: the game's C# in Release, or in Debug for a development build, with the profile's defines.
+1. **Scripts**: the game's C# in Release, or in Debug for a development build, with the profile's defines and
+   the built-in ones (`scripts::built_in_defines`): `VOXEAR`, the engine's version (`VOXEAR_0_1`, and
+   `VOXEAR_0_1_OR_NEWER` for it and each minor version before it in its major, with `VOXEAR_1_OR_NEWER` and the like
+   from major 1), the platform (`VOXEAR_LINUX`, `VOXEAR_WINDOWS`), and `VOXEAR_DEVELOPMENT` for a development build.
+   The editor's own build, which `vox run` shares, has `VOXEAR_EDITOR` in place of that. A build's scripts are
+   built into `.voxear/Scripts/Build/<configuration>` with their own intermediate folder, so a build never replaces
+   the editor's copy with one built without `VOXEAR_EDITOR`.
 2. **Content**: the bundles the profile's levels need (see the content build), with the `[ContentRoot]`s of the
    scripts just built. Cooked models come from the content cache, so an unchanged model is not cooked again.
 3. **Player**: the player program, named after the game, with `Voxear.Core` and the scripts beside it.

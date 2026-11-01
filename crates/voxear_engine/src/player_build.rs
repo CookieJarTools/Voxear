@@ -33,7 +33,8 @@ use crate::{
     core_assembly, engine_version,
     field_checks::{self, FieldProblem},
     player::{BUNDLES_FOLDER, DATA_FOLDER, MANAGED_FOLDER, PLAYER_FORMAT, PlayerSettings, file_name},
-    script_types, scripts,
+    script_types,
+    scripts::{self, ScriptsFor},
 };
 use voxear_scripting::{InspectorAnswer, InspectorAsk};
 
@@ -139,8 +140,12 @@ pub fn build(
     events(BuildEvent::Stage { stage: "scripts", index: 0 })?;
     let (code_roots, problems) = match project.scripts_project() {
         Some(_) => {
-            scripts::build_for(project, configuration, &profile.scripting.defines)?;
-            let mut runtime = scripts::start_for(project, configuration)?.context("the scripts did not start")?;
+            let place = ScriptsFor::Build { development: profile.development.enabled };
+            let mut defines = scripts::built_in_defines(engine_version(), &platform, place);
+            defines.extend(profile.scripting.defines.iter().cloned());
+            let assembly =
+                scripts::build_for(project, configuration, &defines)?.context("the scripts were not built")?;
+            let mut runtime = scripts::start_assembly(&assembly, configuration)?;
             let roots = runtime.content_roots()?;
             let roots = roots.into_iter().map(|(pattern, source)| CodeRoot { pattern, source }).collect();
             (roots, check_fields(project, &mut runtime)?)
@@ -288,7 +293,7 @@ fn copy_managed(project: &Project, configuration: &str, symbols: bool, managed: 
         std::fs::remove_dir_all(managed).with_context(|| format!("clearing {}", managed.display()))?;
     }
     std::fs::create_dir_all(managed).with_context(|| format!("making {}", managed.display()))?;
-    let Some(assembly) = project.scripts_assembly(configuration) else { return Ok(None) };
+    let Some(assembly) = project.built_scripts_assembly(configuration) else { return Ok(None) };
     let core = core_assembly(configuration);
     for name in ["Voxear.Core.dll", "Voxear.Core.runtimeconfig.json", "Voxear.Core.deps.json"] {
         copy(&core.with_file_name(name), &managed.join(name))?;

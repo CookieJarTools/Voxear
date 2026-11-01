@@ -144,10 +144,9 @@
                 <Label name="status-branch-name" />
             </Panel>
         </Panel>
-        <Panel name="viewport-frame" class="viewport-frame" />
         <!-- Debug draw's texts, at the points in the 3D view they name. Under the drawer and menus. -->
         <Panel name="debug-texts" class="debug-texts" />
-        <!-- Opens from the rail over the dock's left side: Levels, or Settings. After the viewport's frame, so over it. -->
+        <!-- Opens from the rail over the dock's left side: Levels, or Settings. -->
         <Panel name="drawer" class="drawer">
             <Panel class="drawer-header">
                 <Label name="drawer-title" class="drawer-title">Levels</Label>

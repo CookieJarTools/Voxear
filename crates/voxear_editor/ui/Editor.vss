@@ -576,8 +576,11 @@
    overlays float over it. The frame is drawn over the view's edge, in the
    window's layer, so the view's corners follow the panel's. */
 
+/* The dock area around the 3D view: see-through, with a ring of the editor's background around its edge that
+   rounds the view's corners to the panel's. The ring is the area's own, so a floating window over it covers it. */
 .viewport-area {
     background-color: transparent;
+    box-shadow: 0px 0px 0px 4px var(--vx-bg);
 }
 
 .viewport-area > .tab-bar {
@@ -632,15 +635,6 @@
     flex-grow: 1;
     color: var(--vx-muted);
     text-align: right;
-}
-
-.viewport-frame {
-    position: absolute;
-    display: none;
-    pointer-events: none;
-    border-radius: 8px;
-    border: 1px solid var(--vx-line);
-    box-shadow: 0px 0px 0px 4px var(--vx-bg);
 }
 
 /* The move, rotate and scale handles, drawn as shapes over the 3D view. */

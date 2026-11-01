@@ -101,7 +101,6 @@ struct Nodes {
     viewport: NodeId,
     game_viewport: NodeId,
     game_empty: NodeId,
-    frame: NodeId,
     command: NodeId,
     gizmo: NodeId,
     handles: NodeId,
@@ -216,10 +215,9 @@ pub struct Editor {
     /// view it was told to show.
     view_camera: Option<Entity>,
     view_debug: u32,
-    /// The dock area showing the 3D view, made see-through, and where the
-    /// frame over its edge was last put.
+    /// The dock area showing the 3D view, made see-through, with a ring
+    /// around its edge that rounds the view's corners to the panel's.
     viewport_area: Option<NodeId>,
-    framed: Option<[f32; 4]>,
     /// The camera's rotation as the gizmo last showed it.
     gizmo_shows: Option<Quat>,
     /// The pointer, in physical pixels, for whether it is over the viewport.
@@ -351,7 +349,6 @@ impl Editor {
             viewport: find(&ui, "viewport"),
             game_viewport: find(&ui, "game-viewport"),
             game_empty: find(&ui, "game-empty"),
-            frame: find(&ui, "viewport-frame"),
             command: find(&ui, "command"),
             gizmo: find(&ui, "gizmo"),
             handles: find(&ui, "handles"),
@@ -468,7 +465,6 @@ impl Editor {
             view_camera: Some(camera),
             view_debug: 0,
             viewport_area: None,
-            framed: None,
             gizmo_shows: None,
             pointer: None,
             scale: 1.0,
@@ -1849,8 +1845,9 @@ impl Editor {
     }
 
     /// Makes the dock area around the 3D view see-through, wherever its
-    /// panel has been docked, and lays the frame over its edge, which rounds
-    /// the view's corners to the panel's.
+    /// panel has been docked, with a ring around its edge that rounds the
+    /// view's corners to the panel's (`.viewport-area`). The ring is the
+    /// area's own, so a floating window over it covers it.
     fn mark_viewport_area(&mut self, viewport: Option<NodeId>) {
         let mut at = viewport.and_then(|viewport| self.ui.parent(viewport));
         let mut area = None;
@@ -1869,15 +1866,6 @@ impl Editor {
                 self.ui.add_class(new, "viewport-area");
             }
             self.viewport_area = area;
-        }
-        let rect = area.map(|area| self.ui.rect(area));
-        if rect != self.framed {
-            let style = match rect {
-                Some([x, y, w, h]) => format!("display: flex; left: {x}px; top: {y}px; width: {w}px; height: {h}px"),
-                None => "display: none".to_string(),
-            };
-            self.ui.set_inline_style(self.nodes.frame, &style);
-            self.framed = rect;
         }
     }
 

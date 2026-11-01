@@ -6,16 +6,21 @@
 //! its preview, as the Project panel draws them, and changes when the asset
 //! does. Previews share an atlas whose cells go to whichever were asked for
 //! lately, so each live picture is asked for every frame, and handed to the
-//! page again should it be drawn somewhere else.
+//! page again should it be drawn somewhere else. A live material shows its
+//! fields under it as well, to change right there, as in the Inspector.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use image::imageops::FilterType;
 use voxear_render::{Renderer, TextureSource};
-use voxear_ui::ImageRef;
+use voxear_ui::{ImageRef, NodeId};
 
 use super::Editor;
+use crate::{
+    asset_inspector::{AssetAction, AssetView},
+    project_view::{ItemKind, ProjectItem},
+};
 
 /// Pictures read in one frame.
 const PER_FRAME: usize = 2;
@@ -59,6 +64,30 @@ impl Editor {
             self.docs.set_picture(&path, shown);
         }
         self.update_live_assets(renderer);
+        self.update_live_fields(renderer);
+    }
+
+    /// Fills the places the page leaves for live materials' fields, each time
+    /// it is drawn again, and saves what is changed in them as the Inspector
+    /// does, which draws the preview again.
+    fn update_live_fields(&mut self, renderer: &mut Renderer) {
+        let places = self.docs.live_fields();
+        let built: Vec<NodeId> = self.live_fields.iter().map(|(place, _)| *place).collect();
+        if places.iter().map(|(_, place)| *place).ne(built.iter().copied()) {
+            let root = self.game.project.root.clone();
+            self.live_fields = places
+                .into_iter()
+                .filter_map(|(path, place)| {
+                    let item = project_item(&path, &root)?;
+                    Some((place, AssetView::fields(&mut self.ui, place, &item, &self.game)?))
+                })
+                .collect();
+        }
+        let ui = &self.ui;
+        let actions: Vec<AssetAction> = self.live_fields.iter_mut().filter_map(|(_, view)| view.update(ui)).collect();
+        for action in actions {
+            self.asset_action(action, renderer);
+        }
     }
 
     /// Asks for each live asset's preview, so it stays drawn, and hands it to
@@ -94,6 +123,17 @@ fn live_reference(path: &Path, root: &Path) -> Option<String> {
     }
     let within = path.strip_prefix(root).ok()?;
     Some(within.to_string_lossy().replace('\\', "/"))
+}
+
+/// A file in the project as the Project panel lists it.
+fn project_item(path: &Path, root: &Path) -> Option<ProjectItem> {
+    let kind = voxear_assets::AssetKind::from_path(path)?;
+    Some(ProjectItem {
+        path: path.strip_prefix(root).ok()?.to_string_lossy().replace('\\', "/"),
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        kind: ItemKind::Asset(kind),
+        size: std::fs::metadata(path).map_or(0, |m| m.len()),
+    })
 }
 
 /// A picture file as premultiplied RGBA, as the UI draws images, with its

@@ -1645,7 +1645,8 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   keeps them for the session. Until then, and for one that is not there, its name shows instead. A picture in a
   list or quote shows as its name for now. **Live assets**: a picture naming a prefab, model or material
   (`![The lamp](Prefabs/Lamp.prefab)`) shows its preview, as the Project panel draws it, changing when the asset
-  does.
+  does. A material shows its fields under it too, as the Inspector has them, colour picker and all, to change right
+  there; the material is saved and its preview drawn again.
 - **Writing a page**, as the Cookbook does: **Edit** shows its title and tags over its Markdown, with the page
   as it will read beside it, drawn again a moment after each change, and the cursor at the end of the text. The
   status says whether it is saved. **Save** or Ctrl+S writes it with today's date, and so do **Done** and opening
@@ -1689,8 +1690,7 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **More for guides**: checks written in C# (`[DocsCheck]`, a static method returning whether it passes or what is
   still wrong), which need the scripts to hand back a value; a step that makes an asset where the guide says; and
   Action… while writing, to put a step in at the cursor.
-- **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and a live
-  asset's fields to change on the page.
+- **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game.
 - A box to find a tag among many.
 - While writing: tags as chips with suggestions, and Image…, Link… and Action… to put them in at the cursor.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine

@@ -109,6 +109,17 @@ impl AssetView {
         view
     }
 
+    /// Only an asset's fields to change, a material's, for where it shows
+    /// outside the Inspector, as under its picture on a VoxDocs page. None
+    /// for an asset without them.
+    pub fn fields(ui: &mut Ui, root: NodeId, item: &ProjectItem, game: &Game) -> Option<Self> {
+        if item.kind != ItemKind::Asset(AssetKind::Material) {
+            return None;
+        }
+        let material = material(ui, root, &game.project.root.join(&item.path))?;
+        Some(Self { item: item.clone(), open: None, material: Some(material), preview: None })
+    }
+
     /// What was asked of the editor this frame: Open, or a material changed.
     pub fn update(&mut self, ui: &Ui) -> Option<AssetAction> {
         if self.open.is_some_and(|button| ui.clicked(button)) {

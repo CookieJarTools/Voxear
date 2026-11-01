@@ -36,7 +36,14 @@ pub struct Rendered {
     pub headings: Vec<Heading>,
     pub copies: Vec<(NodeId, String)>,
     pub steps: Vec<Step>,
+    /// Under a live asset that has fields to change, a material's, the
+    /// place for them, which the editor fills, with the picture's address.
+    pub fields: Vec<(String, NodeId)>,
 }
+
+/// The kinds of live asset whose fields a page shows under them, by their
+/// extensions.
+const WITH_FIELDS: [&str; 1] = ["material"];
 
 /// What a guide's step link starts with: an action runs a command, and a
 /// check looks at the project and ticks itself when it passes.
@@ -99,6 +106,11 @@ pub fn render(ui: &mut Ui, parent: NodeId, blocks: &[Block], lookups: &Lookups) 
     for block in blocks {
         if let Block::Image { alt, url } = block {
             picture(ui, parent, alt, url, lookups);
+            let extension = url.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
+            if WITH_FIELDS.contains(&extension.as_str()) {
+                let place = classed(ui, parent, Style::column(), "md-live-fields");
+                rendered.fields.push((url.clone(), place));
+            }
             continue;
         }
         block_into(ui, parent, block, lookups.works, &mut rendered);

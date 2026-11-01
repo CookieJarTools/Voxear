@@ -39,6 +39,9 @@
 //! What each person has done is kept on their machine (see
 //! [`crate::progress`]).
 //!
+//! **Live assets** show their previews, as pictures; a material's fields
+//! show under it too, in a place the editor fills ([`live_fields`]).
+//!
 //! **Pictures** are files beside a page, or anywhere in the project. The
 //! panel cannot read them into textures itself: [`wanted_pictures`] lists
 //! the files a page needs, and [`set_picture`] hands each back once the
@@ -47,6 +50,7 @@
 //! [`wanted_pictures`]: VoxDocs::wanted_pictures
 //! [`set_picture`]: VoxDocs::set_picture
 //! [`set_code`]: VoxDocs::set_code
+//! [`live_fields`]: VoxDocs::live_fields
 //! [`take_action_request`]: VoxDocs::take_action_request
 //! [`wanted_checks`]: VoxDocs::wanted_checks
 //! [`set_check`]: VoxDocs::set_check
@@ -426,6 +430,15 @@ impl VoxDocs {
         if gone {
             self.select_in_tree(ui);
         }
+    }
+
+    /// The places under the open page's live assets for their fields, with
+    /// each asset's file, for the editor to fill. They change whenever the
+    /// page is drawn again.
+    pub fn live_fields(&self) -> Vec<(PathBuf, NodeId)> {
+        let library = self.library.borrow();
+        let fields = self.rendered.fields.iter();
+        fields.filter_map(|(url, place)| Some((library.picture_path(url, self.open)?, *place))).collect()
     }
 
     /// The command a step's button asked to run, by its title, once. Call

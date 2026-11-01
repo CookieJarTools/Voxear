@@ -603,3 +603,10 @@
     flex-grow: 1;
     color: var(--vx-text-2);
 }
+
+/* A live material's fields under its picture, to change on the page. */
+.md-live-fields {
+    flex-shrink: 0;
+    max-width: 420px;
+    margin-top: -2px;
+}

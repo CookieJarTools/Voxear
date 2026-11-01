@@ -1,7 +1,7 @@
 //! The colour picker, opened from a colour's swatch: a Light's colour in the
-//! Inspector, a material's Colour or Emission in the asset view, the
-//! emission being HDR, so the picker adds its intensity, or a colour in
-//! Settings, such as the theme's. It opens under the
+//! Inspector, a material's Colour or Emission in the asset view or on a
+//! VoxDocs page, the emission being HDR, so the picker adds its intensity,
+//! or a colour in Settings, such as the theme's. It opens under the
 //! swatch, what is picked shows at once, and an Obj's changes over the whole
 //! visit are one step to undo. A press outside it, or Escape, closes it.
 
@@ -26,6 +26,9 @@ enum Target {
     Prop { entity: Entity, prop: Prop, before: Box<ObjState> },
     /// A colour of the material the Inspector shows.
     Material(MaterialColor),
+    /// A colour of a material on a VoxDocs page, by the place its fields
+    /// are in.
+    PageMaterial(MaterialColor, NodeId),
     /// A colour setting, by its key.
     Setting(&'static str),
 }
@@ -79,6 +82,12 @@ impl Editor {
             let title = if which == MaterialColor::Base { "Colour" } else { "Emission" };
             return self.open_color(Target::Material(which), swatch, title, (color, which == MaterialColor::Emission));
         }
+        let on_page = self.live_fields.iter().find_map(|(place, view)| Some((*place, view.color_clicked(&self.ui)?)));
+        if let Some((place, (which, swatch, color))) = on_page {
+            let title = if which == MaterialColor::Base { "Colour" } else { "Emission" };
+            let target = Target::PageMaterial(which, place);
+            return self.open_color(target, swatch, title, (color, which == MaterialColor::Emission));
+        }
         if let Some((key, swatch)) = self.settings_panel.color_clicked(&self.ui)
             && let Some(SettingValue::Color(hex)) = self.memory.settings.get(key)
         {
@@ -109,6 +118,13 @@ impl Editor {
                 let which = *which;
                 let action = self.inspector.asset_view().and_then(|view| view.set_color(&mut self.ui, which, color));
                 if let Some(action) = action {
+                    self.asset_action(action, renderer);
+                }
+            }
+            Some((Target::PageMaterial(which, place), _)) => {
+                let (which, place) = (*which, *place);
+                let view = self.live_fields.iter_mut().find(|(at, _)| *at == place).map(|(_, view)| view);
+                if let Some(action) = view.and_then(|view| view.set_color(&mut self.ui, which, color)) {
                     self.asset_action(action, renderer);
                 }
             }

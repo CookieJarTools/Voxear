@@ -262,6 +262,9 @@ pub struct Editor {
     asset_previews: AssetPreviews,
     /// Prefabs, models and materials VoxDocs pages show live.
     live_assets: Vec<docs_pictures::LiveAsset>,
+    /// The fields of the live materials on the VoxDocs page read, in the
+    /// places the page leaves for them.
+    live_fields: Vec<(NodeId, crate::asset_inspector::AssetView)>,
     field_previews: previews::FieldPreviews,
     inspector_preview: Option<previews::InspectorPreview>,
     /// A material changed, so field previews are drawn again.
@@ -465,6 +468,7 @@ impl Editor {
             picker_picks: Vec::new(),
             asset_previews: AssetPreviews::default(),
             live_assets: Vec::new(),
+            live_fields: Vec::new(),
             field_previews: previews::FieldPreviews::default(),
             inspector_preview: None,
             redraw_field_previews: false,

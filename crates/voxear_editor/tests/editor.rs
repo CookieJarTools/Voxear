@@ -2054,7 +2054,8 @@ fn the_project_panel_shows_assets_and_makes_renames_and_deletes_files() {
     assert!(dir.path().join("Scenes/New Material.material").is_file());
     let field = editor.ui.find(editor.ui.root(), "project-rename-field").unwrap();
     assert!(editor.ui.is_visible(field) && editor.ui.focused() == Some(field), "naming it straight away");
-    type_into(&mut editor.ui, field, "Rock.material");
+    assert_eq!(editor.ui.text(field), "New Material", "the name to type over, without its extension");
+    type_into(&mut editor.ui, field, "Rock");
     editor.ui.key_down(Key::Enter);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);

@@ -649,15 +649,20 @@ impl ProjectView {
         ui.refresh_list(self.files);
     }
 
-    /// Opens the rename bar on the selected item.
+    /// Opens the rename bar on the selected item, with its name to type
+    /// over: a file's without its extension, which it keeps, as in Unity.
     pub fn start_rename(&mut self, ui: &mut Ui) {
         let Some(entry) = self.contents.borrow().selected else { return };
         let item = self.contents.borrow().item(entry);
         if item.path.is_empty() {
             return;
         }
+        let name = match item.kind {
+            ItemKind::Folder => item.name.as_str(),
+            _ => item.name.rsplit_once('.').map_or(item.name.as_str(), |(stem, _)| stem),
+        };
         ui.set_visible(self.rename_bar, true);
-        ui.set_text(self.rename_field, &item.name);
+        ui.set_text(self.rename_field, name);
         self.renaming = Some(item.path);
         self.focus_rename = true;
     }

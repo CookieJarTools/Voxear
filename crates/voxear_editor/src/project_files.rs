@@ -68,11 +68,19 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
 }
 
 /// Renames a file or folder in place, with its `.meta`, and returns its new
-/// path. A script's class follows its name.
+/// path. A file keeps its extension, and a script's class follows its name.
 pub fn rename(root: &Path, path: &str, name: &str) -> Result<String> {
     let name = name.trim();
     ensure!(!name.is_empty() && !name.contains(['/', '\\']), "a name cannot be empty or have slashes in it");
     let from = root.join(path);
+    // A file keeps its kind, as in Unity's Project window: a name typed
+    // without its extension gets it back.
+    let extension = split_extension(path.rsplit('/').next().unwrap_or(path)).1;
+    let name = match from.is_file() && !extension.is_empty() && !name.ends_with(extension) {
+        true => format!("{name}{extension}"),
+        false => name.to_string(),
+    };
+    let name = name.as_str();
     let folder = parent(path);
     let renamed = join(folder, name);
     let to = root.join(&renamed);
@@ -260,8 +268,9 @@ mod tests {
         assert_eq!(create(root, "Scenes", NewFile::Scene, "Game").unwrap(), "Scenes/New Scene 1.scene", "a free name");
         std::fs::write(root.join("Scenes/New Scene.scene.meta"), "guid = \"x\"\n").unwrap();
 
-        let renamed = rename(root, "Scenes/New Scene.scene", "Main.scene").unwrap();
-        assert_eq!(renamed, "Scenes/Main.scene");
+        let renamed = rename(root, "Scenes/New Scene.scene", "Main").unwrap();
+        assert_eq!(renamed, "Scenes/Main.scene", "a file keeps its extension when the name leaves it out");
+        assert_eq!(rename(root, "Scenes/Main.scene", "Main.scene").unwrap(), "Scenes/Main.scene", "or has it");
         assert!(root.join("Scenes/Main.scene.meta").is_file(), "the .meta goes along, keeping the GUID");
 
         let script = create(root, "", NewFile::Script, "Game").unwrap();

@@ -996,6 +996,57 @@ fn references_take_objs_and_assets_dragged_onto_them() {
     assert!(label_starting(&editor.ui, editor.ui.root(), "Lamp.prefab is an asset").is_some(), "an asset is no Obj");
 }
 
+#[test]
+fn a_model_opens_out_to_its_parts_and_a_field_takes_one() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let folder = tile(&editor.ui, "Models").expect("the Project shows its folders as tiles");
+    let [x, y, w, h] = editor.ui.rect(folder);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    for _ in 0..2 {
+        editor.ui.pointer_button(true);
+        editor.ui.pointer_button(false);
+    }
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // The model's arrow opens it out, after it.
+    let model = tile(&editor.ui, "Pyramid.gltf").expect("the model shows");
+    let arrow = first_with(&editor.ui, model, "part-arrow").expect("a model has an arrow");
+    assert!(editor.ui.is_visible(arrow));
+    click(&mut editor.ui, arrow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut parts = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "part", &mut parts);
+    let names: Vec<String> = parts
+        .into_iter()
+        .filter(|&part| editor.ui.is_visible(part) && editor.ui.has_class(part, "tile"))
+        .map(|part| editor.ui.text(editor.ui.children(part)[1]))
+        .collect();
+    assert!(
+        names.len() >= 2 && names.last().map(String::as_str) == Some("Material 1"),
+        "its meshes, then its material: {names:?}"
+    );
+    assert_eq!(editor.selected(), None, "opening it out selects nothing");
+
+    // A mesh of it, dragged onto a Mesh Renderer's Mesh, draws that.
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mesh = tile(&editor.ui, &names[0]).expect("the mesh's tile");
+    let field = first_with(&editor.ui, prop_row(&editor.ui, "Mesh").unwrap(), "value-picker").unwrap();
+    drag(&mut editor.ui, mesh, field);
+    frame(&mut editor, &mut renderer);
+    let renderer_part = editor.game.engine.world.get::<voxear_render::MeshRenderer>(spinner).unwrap().mesh;
+    let reference = editor.game.content.mesh_ref(renderer_part).map(|r| r.to_string()).unwrap_or_default();
+    assert!(
+        reference.starts_with("277e6fd45f82419a894b65b6b72ed398#mesh"),
+        "the Pyramid's mesh, by its model's GUID: {reference}"
+    );
+}
+
 /// The command palette's results showing, top to bottom, by title.
 fn palette_results(ui: &Ui) -> Vec<String> {
     let list = ui.find(ui.root(), "palette-list").unwrap();
@@ -1601,7 +1652,7 @@ fn settings_open_in_the_drawer_with_a_tab_for_each_group() {
     let mut tabs = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "settings-tab", &mut tabs);
     let names: Vec<String> = tabs.iter().map(|&t| editor.ui.text(t)).collect();
-    assert_eq!(names, ["Scene view", "Play mode", "Console", "Appearance"]);
+    assert_eq!(names, ["Scene view", "Play mode", "Console", "Appearance", "Project panel"]);
     assert!(shown_settings(&editor.ui).contains(&"Snap distance".to_string()), "the first group shows");
     assert!(!shown_settings(&editor.ui).contains(&"Pause on error".to_string()), "and only it");
 

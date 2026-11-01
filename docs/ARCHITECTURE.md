@@ -1395,7 +1395,11 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
   or more, they show as tiles; narrower, as rows with each file's size. Selecting a folder in the tree opens it,
   as does double-clicking one on the right. The Project sits under the Scene by default, because its two columns
-  need the width; dragged under the Hierarchy, it turns to rows.
+  need the width; dragged under the Hierarchy, it turns to rows. A model has an arrow that opens it out, as Unity's
+  does, to its meshes (named as the model names them) and then its materials, after it as tiles or rows of their
+  own; the editor reads them from the model the first time (`ProjectEvent::WantsParts`, `objs::model_parts`). A
+  part drags onto a field that takes it, a mesh onto a Mesh Renderer's Mesh and a material onto its Material, as
+  `Models/Crate.gltf#mesh0.0`. With the Project panel setting on, a prefab opens out to its Objs too.
 - **Working with the project's files** (`project_files`). A context click on an item offers Open, Show in Files,
   Copy Path, Rename, Duplicate and Delete, and on the empty space or a folder, a new folder, scene, level, material
   or C# script, named so as not to clash ("New Scene 1"). Renaming takes the item's `.meta` along, so its GUID and

@@ -27,6 +27,12 @@ The new Obj is named after the model, and has a **Mesh Renderer** that draws the
 
 If you will use the model many times with the same settings, make it a prefab and place that instead. See [[Prefabs]].
 
+## A model's parts
+
+A model can hold several meshes, the shapes it is made of, and the materials they are drawn with. Click the arrow on the model's tile in the Project panel to open it out: its meshes, then its materials, show after it. Click the arrow again to close it.
+
+Drag a mesh onto a Mesh Renderer's **Mesh** in the Inspector to draw that mesh, or a material onto its **Material** to draw with that material.
+
 ### A model in the scene file
 
 In the scene file, the Obj looks like this. You can also write it by hand:

@@ -52,7 +52,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 22] = [
+pub const SETTINGS: [SettingInfo; 23] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -130,6 +130,12 @@ pub const SETTINGS: [SettingInfo; 22] = [
         group: "Appearance",
         kind: SettingKind::Number { min: 0.0, max: 100.0, unit: "%" },
     },
+    SettingInfo {
+        key: "prefab_parts",
+        title: "Open out prefabs to their Objs",
+        group: "Project panel",
+        kind: SettingKind::Toggle,
+    },
 ];
 
 /// A setting's value, as the panel and palette show and change it.
@@ -162,6 +168,9 @@ pub struct Settings {
     pub show_gizmos: bool,
     /// How the Scene view shades: lit, unlit, or as wireframe.
     pub scene_shading: usize,
+    /// Prefabs in the Project panel open out to their Objs, as models open
+    /// out to their parts.
+    pub prefab_parts: bool,
     /// Play starts paused, to step through the first frames.
     pub start_paused: bool,
     pub save_before_play: bool,
@@ -231,6 +240,7 @@ impl Default for Settings {
             show_axis_gizmo: true,
             show_gizmos: true,
             scene_shading: 0,
+            prefab_parts: false,
             start_paused: false,
             save_before_play: false,
             clear_console_on_play: false,
@@ -268,6 +278,7 @@ impl Settings {
             "show_axis_gizmo" => SettingValue::Toggle(self.show_axis_gizmo),
             "show_gizmos" => SettingValue::Toggle(self.show_gizmos),
             "scene_shading" => SettingValue::Choice(self.scene_shading),
+            "prefab_parts" => SettingValue::Toggle(self.prefab_parts),
             "start_paused" => SettingValue::Toggle(self.start_paused),
             "save_before_play" => SettingValue::Toggle(self.save_before_play),
             "clear_console_on_play" => SettingValue::Toggle(self.clear_console_on_play),
@@ -299,6 +310,7 @@ impl Settings {
             ("show_axis_gizmo", SettingValue::Toggle(on)) => self.show_axis_gizmo = on,
             ("show_gizmos", SettingValue::Toggle(on)) => self.show_gizmos = on,
             ("scene_shading", SettingValue::Choice(i)) => self.scene_shading = i.min(2),
+            ("prefab_parts", SettingValue::Toggle(on)) => self.prefab_parts = on,
             ("start_paused", SettingValue::Toggle(on)) => self.start_paused = on,
             ("save_before_play", SettingValue::Toggle(on)) => self.save_before_play = on,
             ("clear_console_on_play", SettingValue::Toggle(on)) => self.clear_console_on_play = on,

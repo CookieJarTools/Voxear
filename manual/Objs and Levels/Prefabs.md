@@ -10,6 +10,10 @@ Each copy is called an **instance**. An instance can still differ from its prefa
 
 Drag an Obj from the Hierarchy onto the Project panel. Voxear writes it as a `.prefab` file in the folder the Project panel shows, named after the Obj, and the Obj in your level becomes an instance of it.
 
+## Seeing what is inside a prefab
+
+Select a prefab in the Project panel to see the Objs it holds in the Inspector. To see them in the Project panel itself, as Unity shows a prefab's contents, open **Settings**, from the strip on the far left, and turn on **Open out prefabs to their Objs** under **Project panel**. Prefabs then get an arrow that opens them out, as models do.
+
 ## Changing a prefab
 
 Double-click the prefab in the Project panel. It opens on its own in the Scene view, with a bar along the top. Change it as you would any Obj, and save with Ctrl+S. Click **Back** to return to your level, where every instance now shows the change.

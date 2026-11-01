@@ -801,6 +801,13 @@ impl Editor {
                     self.make_prefab(entity, &folder, renderer);
                 }
             }
+            ProjectEvent::WantsParts(path) => {
+                let parts = objs::model_parts(&mut self.game, renderer, &path);
+                if parts.is_empty() {
+                    self.notify(&format!("{path} could not be read for its parts"));
+                }
+                self.project.set_parts(&mut self.ui, &path, parts);
+            }
         }
     }
 
@@ -995,6 +1002,7 @@ impl Editor {
         if self.ui.selected_option(self.nodes.shading) != settings.scene_shading {
             self.ui.set_selected_option(self.nodes.shading, settings.scene_shading);
         }
+        self.project.set_prefab_parts(&mut self.ui, settings.prefab_parts);
     }
 
     /// Does what a result of the command palette says.
@@ -1299,7 +1307,13 @@ impl Editor {
             (None, None) => return,
         };
         let types = self.inspector.types();
-        if props::choices(&self.game, types, entity, prop).iter().any(|(_, offered)| *offered == pick) {
+        // A model's part, from the Project panel's opened-out model, fits the field of its kind.
+        let part = match (&pick, prop) {
+            (Pick::Asset(Some(reference)), Prop::Mesh) => reference.contains("#mesh"),
+            (Pick::Asset(Some(reference)), Prop::Material) => reference.contains("#material"),
+            _ => false,
+        };
+        if part || props::choices(&self.game, types, entity, prop).iter().any(|(_, offered)| *offered == pick) {
             props::pick(&mut self.game, Some(renderer), types, entity, prop, &pick);
         } else {
             let why = props::why_not(&self.game, types, entity, prop, &pick);

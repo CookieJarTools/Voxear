@@ -15,10 +15,16 @@
 //!
 //! Materials, prefabs and models show previews of themselves in place of
 //! their icons once the editor has them drawn (see [`ProjectView::set_previews`]).
+//!
+//! A model has an arrow that opens it out, as Unity's Project window does,
+//! to show its meshes and materials after it, which the editor reads from
+//! the model when it is first opened out ([`ProjectEvent::WantsParts`]).
+//! A part can be dragged onto a field that takes one, as a mesh onto a Mesh
+//! Renderer's Mesh. With the setting on, a prefab opens out to its Objs.
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -62,6 +68,20 @@ pub enum ProjectEvent {
     /// Something was dropped on the files, such as an Obj from the Hierarchy
     /// to make a prefab of, here: in `folder` (from the project's folder).
     Dropped { source: DragSource, folder: String },
+    /// A model was opened out before its parts were known: the editor reads
+    /// them and hands them to [`ProjectView::set_parts`].
+    WantsParts(String),
+}
+
+/// A part of a model, or an Obj of a prefab, shown after it when it is
+/// opened out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssetPart {
+    pub name: String,
+    pub icon: &'static str,
+    /// What a field takes for it, as `Models/Crate.gltf#mesh0.0`, or `None`
+    /// for an Obj inside a prefab, which no field takes on its own.
+    pub reference: Option<String>,
 }
 
 /// What a context menu's item does.
@@ -117,6 +137,8 @@ struct File {
 enum Entry {
     Folder(usize),
     File(usize),
+    /// A part of an opened-out file: the file, and which part.
+    Part(usize, usize),
 }
 
 /// The project as folders and files, and what the right side shows.
@@ -134,12 +156,21 @@ struct Contents {
     tiles: Vec<(NodeId, Option<usize>)>,
     /// Previews drawn so far, by path, shown in place of icons.
     previews: HashMap<String, ImageRef>,
+    /// Each model's or prefab's parts, by its path, once known.
+    parts: HashMap<String, Vec<AssetPart>>,
+    /// The models and prefabs opened out, by path.
+    opened: HashSet<String>,
+    /// Whether prefabs open out to their Objs, as a setting says.
+    prefab_parts: bool,
+    /// Each opening arrow made, with the place in `listing` it opens.
+    arrows: Vec<(NodeId, Option<usize>)>,
 }
 
 impl Contents {
     fn icon(&self, entry: Entry) -> &'static str {
         match entry {
             Entry::Folder(_) => "folder",
+            Entry::Part(file, part) => self.part(file, part).map_or("file", |p| p.icon),
             Entry::File(file) => match self.files[file].kind {
                 FileKind::Script => "code",
                 FileKind::Asset(AssetKind::Level) => "level",
@@ -159,7 +190,7 @@ impl Contents {
         let parts = ui.children(thumb);
         let preview = match entry {
             Entry::File(file) => self.previews.get(&self.files[file].path).copied(),
-            Entry::Folder(_) => None,
+            Entry::Folder(_) | Entry::Part(..) => None,
         };
         ui.set_icon(parts[0], self.icon(entry));
         ui.set_visible(parts[0], preview.is_none());
@@ -171,11 +202,44 @@ impl Contents {
         match entry {
             Entry::Folder(folder) => &self.folders[folder].name,
             Entry::File(file) => &self.files[file].name,
+            Entry::Part(file, part) => self.part(file, part).map_or("", |p| &p.name),
         }
     }
 
+    fn part(&self, file: usize, part: usize) -> Option<&AssetPart> {
+        self.parts.get(&self.files[file].path)?.get(part)
+    }
+
+    /// Whether a file opens out: a model, or a prefab while the setting says.
+    fn opens(&self, file: usize) -> bool {
+        match self.files[file].kind {
+            FileKind::Asset(AssetKind::Model) => true,
+            FileKind::Asset(AssetKind::Prefab) => self.prefab_parts,
+            _ => false,
+        }
+    }
+
+    /// What `folder` shows: its folders, then its files, each opened out
+    /// one followed by its parts.
+    fn list(&self, folder: usize) -> Vec<Entry> {
+        let at = &self.folders[folder];
+        let mut listing: Vec<Entry> = at.folders.iter().map(|&f| Entry::Folder(f)).collect();
+        for &file in &at.files {
+            listing.push(Entry::File(file));
+            let path = &self.files[file].path;
+            if self.opens(file) && self.opened.contains(path) {
+                let parts = self.parts.get(path).map_or(0, Vec::len);
+                listing.extend((0..parts).map(|part| Entry::Part(file, part)));
+            }
+        }
+        listing
+    }
+
+    /// What an entry is, as the Inspector shows it: a part shows the file
+    /// it is part of.
     fn item(&self, entry: Entry) -> ProjectItem {
         match entry {
+            Entry::Part(file, _) => self.item(Entry::File(file)),
             Entry::Folder(at) => {
                 let folder = &self.folders[at];
                 ProjectItem { path: folder.path.clone(), name: folder.name.clone(), kind: ItemKind::Folder, size: 0 }
@@ -188,6 +252,22 @@ impl Contents {
                 };
                 ProjectItem { path: file.path.clone(), name: file.name.clone(), kind, size: file.size }
             }
+        }
+    }
+
+    /// Shows an entry's opening arrow, pointing down while it is opened
+    /// out, and notes the place in the listing it opens.
+    fn bind_arrow(&mut self, ui: &mut Ui, arrow: NodeId, entry: Entry, at: usize) {
+        let opens = match entry {
+            Entry::File(file) => self.opens(file).then(|| self.opened.contains(&self.files[file].path)),
+            _ => None,
+        };
+        ui.set_visible(arrow, opens.is_some());
+        if let Some(&icon) = ui.children(arrow).first() {
+            ui.set_icon(icon, if opens == Some(true) { "chevron-down" } else { "chevron-right" });
+        }
+        if let Some(slot) = self.arrows.iter_mut().find(|(node, _)| *node == arrow) {
+            slot.1 = opens.map(|_| at);
         }
     }
 
@@ -251,20 +331,25 @@ impl ListItems for FileRows {
         ui.add_class(name, "row-name");
         let size = ui.add_label(row, "");
         ui.add_class(size, "file-size");
+        let arrow = ui.icon_button(row, "chevron-right");
+        ui.add_class(arrow, "part-arrow");
+        self.0.borrow_mut().arrows.push((arrow, None));
     }
 
     fn bind(&mut self, ui: &mut Ui, row: NodeId, index: usize) {
-        let contents = self.0.borrow();
+        let mut contents = self.0.borrow_mut();
         let Some(&entry) = contents.listing.get(index) else { return };
         let parts = ui.children(row);
         contents.show_thumb(ui, parts[0], entry);
         ui.set_text(parts[1], contents.name(entry));
         let size = match entry {
-            Entry::Folder(_) => String::new(),
+            Entry::Folder(_) | Entry::Part(..) => String::new(),
             Entry::File(file) => file_size(contents.files[file].size),
         };
         ui.set_text(parts[2], &size);
         ui.set_class(row, "pinged", contents.pinged == Some(entry));
+        ui.set_class(row, "part", matches!(entry, Entry::Part(..)));
+        contents.bind_arrow(ui, parts[3], entry, index);
     }
 }
 
@@ -283,7 +368,11 @@ impl ListItems for TileRows {
             thumb(ui, tile, "tile-thumb", "tile-icon");
             let name = ui.add_label(tile, "");
             ui.add_class(name, "tile-name");
-            self.0.borrow_mut().tiles.push((tile, None));
+            let arrow = ui.icon_button(tile, "chevron-right");
+            ui.add_class(arrow, "part-arrow");
+            let mut contents = self.0.borrow_mut();
+            contents.tiles.push((tile, None));
+            contents.arrows.push((arrow, None));
         }
     }
 
@@ -303,6 +392,8 @@ impl ListItems for TileRows {
             ui.set_text(parts[1], contents.name(entry));
             ui.set_checked(tile, contents.selected == Some(entry));
             ui.set_class(tile, "pinged", contents.pinged == Some(entry));
+            ui.set_class(tile, "part", matches!(entry, Entry::Part(..)));
+            contents.bind_arrow(ui, parts[2], entry, at);
         }
     }
 }
@@ -383,8 +474,12 @@ impl ProjectView {
         }
         self.fit(ui);
         let columns = self.contents.borrow().columns;
+        let arrow = self.arrow_clicked(ui);
+        if let Some(file) = arrow {
+            events.extend(self.open_out(ui, file));
+        }
         let picked = if columns == 0 { self.row_clicks(ui) } else { self.tile_clicks(ui) };
-        if let Some((entry, twice)) = picked {
+        if let Some((entry, twice)) = picked.filter(|_| arrow.is_none()) {
             match (twice, entry) {
                 (true, Entry::Folder(folder)) => self.open(ui, folder),
                 (true, Entry::File(_)) => events.push(ProjectEvent::Open(self.contents.borrow().item(entry))),
@@ -415,6 +510,12 @@ impl ProjectView {
         let mut contents = scan(&self.name, &self.root, db);
         // So the rows are made again for the new contents, whichever kind fits.
         contents.columns = usize::MAX;
+        {
+            let mut kept = self.contents.borrow_mut();
+            contents.opened = std::mem::take(&mut kept.opened);
+            contents.parts = std::mem::take(&mut kept.parts);
+            contents.prefab_parts = kept.prefab_parts;
+        }
         *self.contents.borrow_mut() = contents;
         let folder = self.contents.borrow().folders.iter().position(|f| f.path == open).unwrap_or(0);
         ui.refresh_list(self.folder_tree);
@@ -450,7 +551,7 @@ impl ProjectView {
             .into_iter()
             .filter_map(|entry| match entry {
                 Entry::File(file) => Some(&contents.files[file]),
-                Entry::Folder(_) => None,
+                Entry::Folder(_) | Entry::Part(..) => None,
             })
             .filter(|file| matches!(file.kind, FileKind::Asset(kind) if kinds(kind)))
             .map(|file| file.path.clone())
@@ -538,7 +639,8 @@ impl ProjectView {
         } else {
             None
         };
-        let Some((owner, entry)) = target else { return };
+        // A part is not a file of its own, to rename or delete.
+        let Some((owner, entry)) = target.filter(|(_, entry)| !matches!(entry, Some(Entry::Part(..)))) else { return };
         let mut items = Vec::new();
         let mut actions = Vec::new();
         let mut add = |item: MenuItem, action: Option<MenuAction>| {
@@ -684,11 +786,7 @@ impl ProjectView {
         }
         self.open = folder;
         let mut contents = self.contents.borrow_mut();
-        let listing: Vec<Entry> = {
-            let at = &contents.folders[folder];
-            at.folders.iter().map(|&f| Entry::Folder(f)).chain(at.files.iter().map(|&f| Entry::File(f))).collect()
-        };
-        contents.listing = listing;
+        contents.listing = contents.list(folder);
         contents.selected = None;
         let mut crumbs = vec![contents.folders[folder].name.clone()];
         let mut parent = contents.folders[folder].parent;
@@ -725,6 +823,7 @@ impl ProjectView {
             let mut contents = self.contents.borrow_mut();
             contents.columns = columns;
             contents.tiles.clear();
+            contents.arrows.clear();
         }
         let rows = self.contents.borrow().rows();
         // Rows of files drag one by one; a row of tiles does not, its tiles do.
@@ -748,9 +847,77 @@ impl ProjectView {
             DragSource::Element(tile) => contents.tiles.iter().find(|(node, _)| *node == tile)?.1?,
             _ => return None,
         };
-        let Entry::File(file) = *contents.listing.get(at)? else { return None };
-        let file = &contents.files[file];
-        matches!(file.kind, FileKind::Asset(_)).then(|| file.path.clone())
+        match *contents.listing.get(at)? {
+            Entry::File(file) => {
+                let file = &contents.files[file];
+                matches!(file.kind, FileKind::Asset(_)).then(|| file.path.clone())
+            }
+            Entry::Part(file, part) => contents.part(file, part)?.reference.clone(),
+            Entry::Folder(_) => None,
+        }
+    }
+
+    /// Shows a model's or prefab's parts, by its path, as the editor read
+    /// them when it was opened out.
+    pub fn set_parts(&mut self, ui: &mut Ui, path: &str, parts: Vec<AssetPart>) {
+        self.contents.borrow_mut().parts.insert(path.to_string(), parts);
+        self.relist(ui);
+    }
+
+    /// Lets prefabs open out to their Objs, or closes those opened, as the
+    /// setting says.
+    pub fn set_prefab_parts(&mut self, ui: &mut Ui, on: bool) {
+        let mut contents = self.contents.borrow_mut();
+        if contents.prefab_parts == on {
+            return;
+        }
+        contents.prefab_parts = on;
+        drop(contents);
+        self.relist(ui);
+    }
+
+    /// The file whose opening arrow was clicked.
+    fn arrow_clicked(&self, ui: &Ui) -> Option<usize> {
+        let contents = self.contents.borrow();
+        let (_, at) = contents.arrows.iter().find(|(arrow, at)| at.is_some() && ui.clicked(*arrow))?;
+        match contents.listing.get((*at)?)? {
+            Entry::File(file) => Some(*file),
+            _ => None,
+        }
+    }
+
+    /// Opens a file out to its parts, or closes it. A prefab's are read from
+    /// its file; a model's the editor is asked for, the first time.
+    fn open_out(&mut self, ui: &mut Ui, file: usize) -> Option<ProjectEvent> {
+        let mut contents = self.contents.borrow_mut();
+        let (path, kind) = (contents.files[file].path.clone(), contents.files[file].kind);
+        if !contents.opened.remove(&path) {
+            contents.opened.insert(path.clone());
+            if kind == FileKind::Asset(AssetKind::Prefab) {
+                let objs = prefab_objs(&self.root.join(&path));
+                contents.parts.insert(path.clone(), objs);
+            }
+        }
+        let wants = contents.opened.contains(&path) && !contents.parts.contains_key(&path);
+        drop(contents);
+        self.relist(ui);
+        wants.then_some(ProjectEvent::WantsParts(path))
+    }
+
+    /// Lists the open folder again, as after a file was opened out or
+    /// closed, keeping the place.
+    fn relist(&mut self, ui: &mut Ui) {
+        let mut contents = self.contents.borrow_mut();
+        contents.listing = contents.list(self.open);
+        let rows = contents.rows();
+        let selected = contents.selected.and_then(|s| contents.listing.iter().position(|&e| e == s));
+        let columns = contents.columns;
+        drop(contents);
+        ui.set_list_count(self.files, rows);
+        if columns == 0 {
+            ui.set_selection(self.files, &selected.into_iter().collect::<Vec<_>>());
+        }
+        ui.refresh_list(self.files);
     }
 
     /// A row picked in the list, and whether it was a double click.
@@ -770,6 +937,14 @@ impl ProjectView {
     }
 }
 
+/// A prefab's Objs, by name, as its file lists them.
+fn prefab_objs(file: &Path) -> Vec<AssetPart> {
+    let Ok(table) = std::fs::read_to_string(file).unwrap_or_default().parse::<toml::Table>() else { return Vec::new() };
+    let objs = table.get("obj").and_then(|objs| objs.as_array()).cloned().unwrap_or_default();
+    let names = objs.iter().filter_map(|obj| obj.get("name")?.as_str().map(str::to_string));
+    names.map(|name| AssetPart { name, icon: "obj", reference: None }).collect()
+}
+
 /// The project's folders and files: its assets, its C# scripts, and every
 /// folder, empty ones too, leaving out build output and hidden folders such
 /// as `.voxear`.
@@ -785,6 +960,10 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         pinged: None,
         tiles: Vec::new(),
         previews: HashMap::new(),
+        parts: HashMap::new(),
+        opened: HashSet::new(),
+        prefab_parts: false,
+        arrows: Vec::new(),
     };
     let mut paths: Vec<(String, FileKind)> = db.entries().map(|e| (e.path.clone(), FileKind::Asset(e.kind))).collect();
     let mut folders = Vec::new();

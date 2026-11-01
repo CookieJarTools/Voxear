@@ -22,6 +22,8 @@ use voxear_engine::{
 use voxear_render::Renderer;
 use voxear_scene::{Destroying, Name, Parent, Transform};
 
+use crate::project_view::AssetPart;
+
 /// What the Hierarchy's + makes, as Unity's GameObject menu: what the menu
 /// says, the new Obj's name, and the rest of its scene file entry.
 pub const NEW_OBJS: [(&str, &str, &str); 8] = [
@@ -233,6 +235,33 @@ pub fn place_model(
     let made = made.context("the model's Obj was made")?;
     settle(world, made, parent, position);
     Ok(made)
+}
+
+/// A model's meshes and materials, as the Project panel shows them when the
+/// model is opened out: each mesh by the name the model gives it, then each
+/// material it uses, each with what a Mesh Renderer's field takes for it.
+/// Nothing when the model cannot be read.
+pub fn model_parts(game: &mut Game, renderer: &mut Renderer, path: &str) -> Vec<AssetPart> {
+    let Some(guid) = game.content.db().guid_of(path) else { return Vec::new() };
+    let Ok(nodes) = game.content.model(renderer, guid) else { return Vec::new() };
+    let mut meshes: Vec<AssetPart> = Vec::new();
+    let mut materials: Vec<String> = Vec::new();
+    for node in nodes {
+        let reference = format!("{path}#{}", node.mesh_part);
+        if !meshes.iter().any(|mesh| mesh.reference.as_deref() == Some(&reference)) {
+            let name = if node.name.is_empty() { format!("Mesh {}", meshes.len() + 1) } else { node.name.clone() };
+            meshes.push(AssetPart { name, icon: "box", reference: Some(reference) });
+        }
+        if let Some(material) = node.material_part.as_ref().filter(|m| !materials.contains(m)) {
+            materials.push(material.clone());
+        }
+    }
+    let materials = materials.iter().enumerate().map(|(index, material)| AssetPart {
+        name: format!("Material {}", index + 1),
+        icon: "material",
+        reference: Some(format!("{path}#{material}")),
+    });
+    meshes.into_iter().chain(materials).collect()
 }
 
 /// A part of a model, as placing it needs: its name, where the model puts

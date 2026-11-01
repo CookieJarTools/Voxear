@@ -1124,6 +1124,28 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-text-2);
 }
 
+/* The arrow that opens a model out to its parts: on a tile's right edge, at a row's end. */
+.part-arrow {
+    width: 18px;
+    height: 18px;
+    padding: 1px;
+}
+
+.tile .part-arrow {
+    position: absolute;
+    right: -4px;
+    top: 16px;
+}
+
+/* A model's part, after the model: indented in rows, on a ground of its own as tiles. */
+.list-row.part {
+    padding-left: 26px;
+}
+
+.tile.part {
+    background-color: var(--vx-field);
+}
+
 /* A row or tile a log line points at, lit for a moment, as Unity pings. */
 .list-row.pinged, .tile.pinged {
     background-color: var(--vx-accent-soft);

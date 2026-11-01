@@ -12,8 +12,10 @@
 //! page is made again from the code each time, and the note is what lasts.
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use anyhow::{Context, Result, bail};
@@ -21,10 +23,13 @@ use anyhow::{Context, Result, bail};
 use crate::{
     code::{CODE_SCHEME, CodeReference},
     header::{self, Header},
+    history::History,
     markdown::{self, PAGE_SCHEME, Task},
 };
 
 pub const EXTENSION: &str = ".md";
+/// The project's folder of pages.
+pub const DOCS: &str = "Docs";
 pub const FOLDER_FILE: &str = "_folder.md";
 
 /// The Code Reference's folder, and its words.
@@ -132,6 +137,9 @@ pub struct Library {
     /// The notes written on the Code Reference's pages: each type's header,
     /// for its tags, and words, by the type's full name.
     notes: HashMap<String, (Header, String)>,
+    /// What git knew of the pages when last asked, and the version of the
+    /// pages it was asked for.
+    history: RefCell<Option<(u64, Rc<History>)>>,
     by_id: HashMap<String, PageId>,
     by_reference: HashMap<String, PageId>,
     by_title: HashMap<String, Vec<PageId>>,
@@ -142,7 +150,7 @@ impl Library {
     /// empty VoxDocs, whose first page makes the folder.
     pub fn open(project: &Path, name: &str) -> Self {
         let mut library = Self {
-            root: project.join("Docs"),
+            root: project.join(DOCS),
             project: project.to_path_buf(),
             name: name.to_string(),
             pages: Vec::new(),
@@ -150,6 +158,7 @@ impl Library {
             version: 0,
             code: CodeReference::default(),
             notes: HashMap::new(),
+            history: RefCell::new(None),
             by_id: HashMap::new(),
             by_reference: HashMap::new(),
             by_title: HashMap::new(),
@@ -345,6 +354,40 @@ impl Library {
             self.notes.keys().filter(|key| !self.code.types().iter().any(|t| &t.key == *key)).cloned().collect();
         lost.sort();
         lost
+    }
+
+    /// What git knows of `paths`, from the project's folder: looked up once
+    /// for each version of the pages, or again after
+    /// [`forget_history`](Self::forget_history).
+    pub fn history(&self, paths: &[String]) -> Rc<History> {
+        if let Some((version, history)) = &*self.history.borrow()
+            && *version == self.version
+        {
+            return history.clone();
+        }
+        let history = Rc::new(History::read(&self.project, paths));
+        *self.history.borrow_mut() = Some((self.version, history.clone()));
+        history
+    }
+
+    /// Asks git again next time, as for commits made since.
+    pub fn forget_history(&self) {
+        *self.history.borrow_mut() = None;
+    }
+
+    /// Each of the project's types with parts that have no `///` comment,
+    /// the type itself among them: its page, how many have none, and how
+    /// many it has.
+    pub fn comment_gaps(&self) -> Vec<(PageId, usize, usize)> {
+        let own = self.code.types().iter().filter(|t| t.assembly != ENGINE_ASSEMBLY);
+        own.filter_map(|kind| {
+            let summaries = std::iter::once(&kind.summary).chain(kind.members.iter().map(|m| &m.summary));
+            let (missing, total) =
+                summaries.fold((0, 0), |(missing, total), s| (missing + usize::from(s.is_empty()), total + 1));
+            let page = self.find(&format!("{CODE_SCHEME}{}", kind.key))?;
+            (missing > 0).then_some((page, missing, total))
+        })
+        .collect()
     }
 
     /// The project's own types that no page is about: nothing marked

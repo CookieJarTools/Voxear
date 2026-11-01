@@ -1625,12 +1625,15 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **Home**: the top page, under its own words and what is in it, lists the six pages updated most lately with their
   dates, and a line saying how many things need looking after, which opens Docs Health. Any page also opens from the
   command bar (Ctrl+K), which lists every page by its title.
-- **Docs Health** *(`health`)*: Health in the toolbar shows, in the page's place, what needs looking after: pages
-  out of date (a project file they link to changed on a later day than the page was updated), links that go
-  nowhere (a page not written yet among them), pictures that are not there, and pictures in the pages' `images`
-  folders that no page shows. Each entry links to its page or file. Once there is a Code Reference it also finds
-  notes written for code that is gone, renamed, moved or taken out, and lists the project's own types that no page
-  is about (nothing marked `[Documentation]`), which is worth knowing but not counted as something wrong.
+- **Docs Health** *(`health`)*: Health in the toolbar shows, in the page's place, what needs looking after: pages out
+  of date (a project file they link to changed on a later day than the page did, by git's last commit of each, or for
+  a file with changes not committed, its own time; a page git does not know goes by the date in its header,
+  `history`), links that go nowhere (a page not written yet among them), pictures that are not there, and pictures in
+  the pages' `images` folders that no page shows. Each entry links to its page or file. Once there is a Code Reference
+  it also finds notes written for code that is gone, renamed, moved or taken out, and lists the project's own types
+  that no page is about (nothing marked `[Documentation]`) and how many parts of each have no `///` comment, which are
+  worth knowing but not counted as things wrong. Git is asked once for every page and file in one look through the
+  history, kept until the pages change, and asked again whenever Health is opened.
 - **A page's menu** in the tree (a right click) copies a link to it, and for a page of the project's own a
   `[Documentation]` attribute naming it by its id, ready to paste on code.
 - **Pictures**: `![what it shows](images/Day.png)`, from the page's folder (pictures kept with a page sit in an
@@ -1683,8 +1686,6 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - **More for guides**: checks written in C# (`[DocsCheck]`, a static method returning whether it passes or what is
   still wrong), which need the scripts to hand back a value; a step that makes an asset where the guide says; and
   Action… while writing, to put a step in at the cursor.
-- **Docs Health**: git's last change on a page, in place of the date in its header, and how many parts of each of
-  the project's types have no comment yet.
 - **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and a live
   asset's fields to change on the page.
 - A box to find a tag among many.

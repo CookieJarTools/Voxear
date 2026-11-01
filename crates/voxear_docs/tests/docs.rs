@@ -638,3 +638,54 @@ fn a_pages_menu_copies_its_documentation_attribute() {
     frame(&mut ui, &mut docs);
     assert_eq!(clipboard.0.borrow().as_deref(), Some("[Documentation(\"a4f08c3e91b2\")]"), "named by its id");
 }
+
+/// Runs git in `dir`, as a commit made on `date` would.
+fn git(dir: &Path, date: &str, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
+        .status()
+        .expect("git runs");
+    assert!(status.success(), "git {args:?}");
+}
+
+#[test]
+fn a_page_is_out_of_date_by_gits_days_not_its_header() {
+    let dir = project();
+    std::fs::create_dir_all(dir.path().join("Levels")).unwrap();
+    std::fs::write(dir.path().join("Levels/Arena.level"), "format = 1\n").unwrap();
+    // The header says the page is newer than the level, but the page last changed in January.
+    let page = "---\nid: 7b1c0d2e3f40\nupdated: 2026-09-01\n---\n\nSee [the arena](Levels/Arena.level).\n";
+    std::fs::write(dir.path().join("Docs/Combat/Damage.md"), page).unwrap();
+    git(dir.path(), "2026-01-01T12:00:00Z", &["init", "-q"]);
+    git(dir.path(), "2026-01-01T12:00:00Z", &["add", "Docs"]);
+    git(dir.path(), "2026-01-01T12:00:00Z", &["commit", "-q", "-m", "Pages"]);
+    git(dir.path(), "2026-02-01T12:00:00Z", &["add", "Levels"]);
+    git(dir.path(), "2026-02-01T12:00:00Z", &["commit", "-q", "-m", "The arena"]);
+
+    let library = Library::open(dir.path(), "Hello");
+    let damage = library.find("Combat/Damage").unwrap();
+    let health = voxear_docs::health::Health::check(&library);
+    assert_eq!(health.stale, [(damage, vec!["Levels/Arena.level".to_string()])], "the level changed after the page");
+
+    // The page written again, committed later: no longer out of date, once Health looks again.
+    std::fs::write(dir.path().join("Docs/Combat/Damage.md"), page.replace("See", "Now see")).unwrap();
+    git(dir.path(), "2026-03-01T12:00:00Z", &["commit", "-q", "-am", "Damage again"]);
+    library.forget_history();
+    assert!(voxear_docs::health::Health::check(&library).stale.is_empty());
+}
+
+#[test]
+fn health_counts_the_comments_the_projects_types_still_need() {
+    let dir = project();
+    let mut library = Library::open(dir.path(), "Hello");
+    library.set_code(CodeReference::parse(&CODE.replace("How fast it turns.", "")).unwrap());
+    let spinner = library.find("code:Hello.Spinner").unwrap();
+    let health = voxear_docs::health::Health::check(&library);
+    assert_eq!(health.comment_gaps, [(spinner, 1, 2)], "the field has none; the engine's types are not counted");
+    assert_eq!(health.problems(), 2, "nor are these among the things to look after");
+}

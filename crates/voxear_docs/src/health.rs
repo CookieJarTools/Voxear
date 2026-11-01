@@ -2,7 +2,10 @@
 //! after in a project's pages.
 //!
 //! - **Out of date**: a page that links to a project file, such as a script
-//!   or a level, changed on a later day than the page was last updated.
+//!   or a level, changed on a later day than the page was. Both days are
+//!   git's where git knows them (see [`crate::history`]), so a page edited
+//!   anywhere counts; a page git does not know goes by the date in its
+//!   header.
 //! - **Links that go nowhere**, a page not written yet among them.
 //! - **Missing pictures**: a picture a page shows that is not there.
 //! - **Pictures no page shows**: files in the pages' own `images` folders
@@ -12,8 +15,9 @@
 //!   type was renamed, moved or taken out.
 //!
 //! It also lists **code with no page yet**, the project's own types with no
-//! `[Documentation]`, which is worth knowing but not a thing gone wrong, so
-//! it is not counted.
+//! `[Documentation]`, and **comments still to write**, how many parts of
+//! each of the project's types have no `///` comment, which are worth
+//! knowing but not things gone wrong, so they are not counted.
 
 use std::{
     collections::HashSet,
@@ -21,8 +25,7 @@ use std::{
 };
 
 use crate::{
-    header,
-    library::{Library, PageId, Target},
+    library::{DOCS, Library, PageId, Target},
     markdown::{self, Block},
 };
 
@@ -47,6 +50,9 @@ pub struct Health {
     /// The project's own types no page is about, as their Code Reference
     /// pages.
     pub undocumented: Vec<PageId>,
+    /// Each of the project's types with parts that have no comment: its
+    /// page, how many have none, and how many parts it has.
+    pub comment_gaps: Vec<(PageId, usize, usize)>,
 }
 
 impl Health {
@@ -54,6 +60,7 @@ impl Health {
     pub fn check(library: &Library) -> Self {
         let mut health = Health::default();
         let mut shown: HashSet<PathBuf> = HashSet::new();
+        let mut linked: Vec<(PageId, Vec<String>)> = Vec::new();
         for (id, page) in library.pages() {
             let blocks = markdown::parse(&page.body);
             let pictures: Vec<&str> = blocks
@@ -70,19 +77,19 @@ impl Health {
                     None => {}
                 }
             }
-            let mut changed = Vec::new();
+            let mut files = Vec::new();
             for url in markdown::links(&blocks).into_iter().filter(|url| !pictures.contains(&url.as_str())) {
                 match library.resolve(&url, id) {
                     Target::Missing(_) => health.broken.push((id, url)),
-                    Target::File(path) if newer(library.project(), &path, &page.header.updated) => changed.push(path),
+                    Target::File(path) if !page.generated => files.push(path),
                     _ => {}
                 }
             }
-            if !changed.is_empty() {
-                changed.dedup();
-                health.stale.push((id, changed));
+            if !files.is_empty() {
+                linked.push((id, files));
             }
         }
+        health.stale = stale(library, linked);
         let docs = library.folder();
         let project = library.project();
         let mut unused: Vec<String> = picture_files(docs)
@@ -94,6 +101,7 @@ impl Health {
         health.unused_pictures = unused;
         health.lost_notes = library.lost_notes();
         health.undocumented = library.undocumented();
+        health.comment_gaps = library.comment_gaps();
         health
     }
 
@@ -107,14 +115,30 @@ impl Health {
     }
 }
 
-/// Whether a project file changed on a later day than `updated`, a page's
-/// `2026-10-31`. A page with no date is never out of date.
-fn newer(project: &Path, file: &str, updated: &str) -> bool {
-    if updated.is_empty() {
-        return false;
+/// Each page that links to files changed on a later day than it was, with
+/// those files. A page's day is git's when git knows the page, or else the
+/// date in its header; one with neither is never out of date.
+fn stale(library: &Library, linked: Vec<(PageId, Vec<String>)>) -> Vec<(PageId, Vec<String>)> {
+    let page_file = |id: PageId| format!("{DOCS}/{}", library.page(id).file());
+    let mut paths: Vec<String> =
+        linked.iter().flat_map(|(id, files)| files.iter().cloned().chain([page_file(*id)])).collect();
+    paths.sort();
+    paths.dedup();
+    let history = library.history(&paths);
+    let project = library.project();
+    let mut stale = Vec::new();
+    for (id, mut files) in linked {
+        let file = page_file(id);
+        let updated = &library.page(id).header.updated;
+        let day = if history.knows(&file) { history.changed(project, &file) } else { Some(updated.clone()) };
+        let Some(day) = day.filter(|day| !day.is_empty()) else { continue };
+        files.retain(|path| history.changed(project, path).is_some_and(|changed| changed > day));
+        files.dedup();
+        if !files.is_empty() {
+            stale.push((id, files));
+        }
     }
-    let modified = std::fs::metadata(project.join(file)).and_then(|m| m.modified());
-    modified.is_ok_and(|time| header::date_of(time).as_str() > updated)
+    stale
 }
 
 /// Every picture file in an `images` folder under `folder`.

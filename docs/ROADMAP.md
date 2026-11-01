@@ -303,6 +303,8 @@ Done so far:
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
+- **Docs Health by git:** a page is out of date by git's last change of it and of the files it links to, not the
+  date in its header, and Health counts the comments the project's types still need.
 - **Notes, code checks and Copy [Documentation] in VoxDocs:** Edit on a Code Reference page writes its note,
   kept in `Docs/.code-notes`; Docs Health finds notes for code that is gone and lists the project's types with no
   page; and a page's menu in the tree copies its link or a `[Documentation]` attribute.
@@ -346,9 +348,8 @@ Still to do in M3:
     analyzer, and custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
-- **VoxDocs' next parts** (see "VoxDocs" in the architecture): checks written in C# and more for guides, git's
-  last change in Docs Health, pictures dropped in or captured and GIF recordings, and live assets' fields on the
-  page.
+- **VoxDocs' next parts** (see "VoxDocs" in the architecture): checks written in C# and more for guides, pictures
+  dropped in or captured and GIF recordings, and live assets' fields on the page.
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
   with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
   person explains things: clear and short, plain words, each term explained where it first appears, an example

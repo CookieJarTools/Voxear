@@ -14,6 +14,7 @@
 pub mod code;
 pub mod header;
 pub mod health;
+pub mod history;
 mod library;
 pub mod markdown;
 mod panel;

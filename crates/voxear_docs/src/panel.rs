@@ -549,6 +549,8 @@ impl VoxDocs {
             self.show_health(ui);
         }
         if ui.clicked(self.nodes.health) {
+            // Asked for, Health looks at git again, for commits made since it last did.
+            self.library.borrow().forget_history();
             self.finish_editing(ui);
             if self.showing_health {
                 self.render(ui);
@@ -1132,6 +1134,20 @@ impl VoxDocs {
             "The project's own types that no page is about. Put [Documentation(\"Page\")] on one to link it to its \
              page. These are not counted among the things to look after.",
             undocumented,
+        );
+        let gaps = health.comment_gaps.iter().map(|&(id, missing, total)| {
+            let mut text = voxear_ui::RichText::new();
+            page_link(&mut text, id);
+            text.push(&format!(" · {missing} of {total} parts"), Default::default());
+            text
+        });
+        let gaps = gaps.collect();
+        section(
+            ui,
+            "Comments still to write",
+            "The project's own types, with how many of their parts have no /// comment, the type itself among them. \
+             Not counted either.",
+            gaps,
         );
     }
 

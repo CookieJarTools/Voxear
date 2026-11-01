@@ -49,11 +49,7 @@ If several values point to the same object, they still point to one object after
 
 An Obj is found again by the scene it was loaded from, so read a save after its level is loaded. If the scene isn't open, the Obj reads as `Obj.None`, and the Console says so.
 
-An Obj made while the game runs, such as a spawned enemy, isn't in any scene file, so a save can't find it again. Save what you need to make it again instead, such as its prefab and position:
-
-```csharp
-public sealed record EnemySave(Ref<Prefab> Kind, Vector3 Position, int Health);
-```
+An Obj made while the game runs, such as a spawned enemy, isn't in any scene file, so `Save.Write` can't find it again. A [save of the scene](#saving-the-scene-as-the-player-left-it) makes such Objs again for you.
 
 ## Saving a behaviour's fields
 
@@ -144,6 +140,92 @@ file.ReadInto("player", player);
 world.State = file.Get<WorldState>("world");
 var quests = file.Get("quests", new QuestLog());   // a default if the save has none
 ```
+
+## Saving the scene as the player left it
+
+Some things in a level should stay as the player left them: a door they opened, a chest they emptied, coins they picked up, enemies that were spawned. Rather than writing a class that holds every door, mark the values to keep with `[Saved]`, and save the scene:
+
+```csharp
+public sealed class Door : Behaviour
+{
+	[Saved] public bool IsOpen;     // kept in a save of the scene
+	public float OpenSpeed = 2;     // set in the scene file, so not saved
+
+	protected override void Start()
+	{
+		if (IsOpen)
+		{
+			SnapOpen();
+		}
+	}
+}
+
+[Saved]   // on the class: every field this behaviour has is kept
+public sealed class Chest : Behaviour
+{
+	public bool Looted;
+	public List<string> Items = ["potion", "key"];
+}
+```
+
+```csharp
+// The Save button:
+Save.WriteScene("slot1", "The caves, 1h 20m");
+
+// Continue, on the main menu:
+await Save.LoadScene("slot1");
+```
+
+`[Saved]` works on private fields and on properties too. A save of the scene keeps:
+
+- every `[Saved]` value, on every behaviour in the open scenes
+- which of the Objs loaded from scene files have been destroyed, so a coin the player picked up stays gone, with nothing to mark
+- every Obj your scripts made from a prefab, with its parent, position, rotation and scale, and its own `[Saved]` values
+
+`LoadScene` loads the saved level again, with all its scenes loaded fresh. Then it destroys the Objs that were destroyed, removes any Objs your scripts had spawned, makes the saved ones again, and sets every `[Saved]` value. Values that point at a spawned Obj, such as a spawner's list of its enemies, point at the new copies:
+
+```csharp
+public sealed class WolfSpawner : Behaviour
+{
+	[SerializeField] private Prefab wolf;
+	[Saved] private List<Obj> wolves = [];
+
+	public void Spawn(Vector3 at) => wolves.Add(wolf.Instantiate(at, Quaternion.Identity));
+}
+```
+
+Behaviours in the reloaded scene get their saved values before their `Awake` and `Start` run, so those can act on them, as the door above does. For the same reason, a spawner that makes its first enemies in `Awake` or `Start` should skip that while a save is loading, because the save makes the ones it had again:
+
+```csharp
+protected override void Start()
+{
+	if (!Save.IsLoadingScene)
+	{
+		SpawnFirstWave();
+	}
+}
+```
+
+`Save.IsLoadingScene` is true from `LoadScene` until the end of the frame the save is put back in.
+
+To keep where an Obj from a scene file is, such as a crate the player can push, add the `SavedTransform` behaviour to it. Objs your scripts spawn don't need it.
+
+A save of the scene is a value like any other, so it can be one part of a `SaveFile` beside your own:
+
+```csharp
+var file = new SaveFile { Summary = "The caves" };
+file.Set("scene", SceneState.Capture());
+file.Set("player", playerData);
+await file.WriteAsync("slot1");
+```
+
+```csharp
+var read = SaveFile.Read("slot1");
+await read.Get<SceneState>("scene").LoadAsync();
+player.Data = read.Get<PlayerData>("player");
+```
+
+If the level is already freshly loaded, `state.Apply()` puts the state back without loading it again.
 
 ## Binary or JSON
 

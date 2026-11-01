@@ -1,15 +1,16 @@
 use anyhow::{Context, Result};
+use voxear_assets::AssetGuid;
 use voxear_core::{
     math::{Quat, Vec2, Vec3},
     profile_scope,
 };
 use voxear_ecs::{Entity, World};
 use voxear_render::{MAX_PREVIEW_SIZE, MeshRenderer, PreviewId, PreviewOptions, Renderer};
-use voxear_scene::{Placement, Transform};
+use voxear_scene::{Parent, Placement, Transform};
 use voxear_scripting::{
-    AssetName, ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions,
-    PreviewSource, PreviewState, SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab,
-    UiAnswer, UiAsk,
+    AssetName, ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress,
+    PreviewOptions as ScriptPreviewOptions, PreviewSource, PreviewState, SceneLoadOptions, SceneRequest,
+    ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
 };
 use voxear_ui::ElementKind;
 
@@ -17,9 +18,9 @@ use crate::{
     content::{Content, Reimported, Released},
     engine::Engine,
     game_ui::GameUi,
-    levels::{LevelChange, LevelOptions, Levels},
+    levels::{LevelChange, LevelOptions, Levels, is_doomed},
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
-    prefab::{ObjPath, PrefabId},
+    prefab::{ObjPath, PrefabId, Spawned},
     previews::ScriptPreviews,
     project::Project,
     scripts::ScriptWatcher,
@@ -378,6 +379,10 @@ impl Game {
     }
 }
 
+/// How a key for an Obj a script made from a prefab starts (see
+/// [`ScriptServices::obj_key`]).
+const SPAWNED_KEY: &str = "spawned:";
+
 /// What scripts reach through native calls while the game runs: content,
 /// and the renderer to upload what they load.
 struct GameServices<'a> {
@@ -449,9 +454,13 @@ impl ScriptServices for GameServices<'_> {
         parent: Option<Entity>,
         placement: Option<Placement>,
     ) -> Result<SpawnedPrefab> {
+        let guid = self.content.prefab_guid(PrefabId(prefab)).context("no such prefab is loaded")?;
         let template = self.content.loaded_template(self.renderer.as_deref_mut(), PrefabId(prefab))?;
         let root = template.root().context("the prefab has no Objs")?;
         let entities = template.spawn_objs(world, parent, placement);
+        for (index, &entity) in entities.iter().enumerate() {
+            world.insert(entity, Spawned { prefab: guid, root: entities[root], index: index as u32 });
+        }
         let objs =
             entities.iter().enumerate().map(|(i, &entity)| (entity, template.behaviours(i, &entities))).collect();
         Ok(SpawnedPrefab { root: entities[root], objs })
@@ -513,14 +522,44 @@ impl ScriptServices for GameServices<'_> {
         self.content.keep_prefab(PrefabId(prefab), keep);
     }
 
-    fn obj_key(&self, entity: Entity) -> Option<String> {
-        let (scene, path) = self.levels.place_of(entity)?;
-        Some(format!("{scene}:{path}"))
+    fn obj_key(&self, world: &World, entity: Entity) -> Option<String> {
+        if let Some((scene, path)) = self.levels.place_of(entity) {
+            return Some(format!("{scene}:{path}"));
+        }
+        let spawned = world.get::<Spawned>(entity)?;
+        world.is_alive(spawned.root).then(|| format!("{SPAWNED_KEY}{}/{}", spawned.root.to_bits(), spawned.index))
     }
 
-    fn obj_by_key(&self, key: &str) -> Option<Entity> {
+    fn obj_by_key(&self, world: &World, key: &str) -> Option<Entity> {
+        if let Some(copy) = key.strip_prefix(SPAWNED_KEY) {
+            let (root, index) = copy.split_once('/')?;
+            let (root, index) = (Entity::from_bits(root.parse().ok()?), index.parse::<u32>().ok()?);
+            let mut found = world.query_ref::<(Entity, &Spawned)>().into_iter();
+            return found.find(|(_, spawned)| spawned.root == root && spawned.index == index).map(|(entity, _)| entity);
+        }
         let (scene, path) = key.split_once(':')?;
         self.levels.obj_at(scene.parse().ok()?, &ObjPath::parse(path).ok()?)
+    }
+
+    fn scene_state(&self, world: &World, doomed: &[Entity]) -> Option<String> {
+        let level = self.levels.current().and_then(|path| self.content.db().guid_of(path)).map(|guid| guid.to_string());
+        let gone: Vec<String> =
+            self.levels.gone(world, doomed).into_iter().map(|(scene, path)| format!("{scene}:{path}")).collect();
+        let mut roots: Vec<(Entity, AssetGuid)> = world
+            .query_ref::<(Entity, &Spawned)>()
+            .into_iter()
+            .filter(|(entity, spawned)| spawned.root == *entity && !is_doomed(world, doomed, *entity))
+            .map(|(entity, spawned)| (entity, spawned.prefab))
+            .collect();
+        roots.sort_by_key(|(entity, _)| entity.index());
+        let spawned: Vec<serde_json::Value> = roots
+            .into_iter()
+            .map(|(root, prefab)| {
+                let parent = world.get::<Parent>(root).and_then(|parent| self.obj_key(world, parent.0));
+                serde_json::json!({ "root": root.to_bits(), "prefab": prefab.to_string(), "parent": parent })
+            })
+            .collect();
+        Some(serde_json::json!({ "level": level, "gone": gone, "spawned": spawned }).to_string())
     }
 
     fn asset_guid(&self, asset: AssetName<'_>) -> Option<String> {

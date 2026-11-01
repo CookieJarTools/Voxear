@@ -390,6 +390,18 @@ pub struct FromPrefab {
 }
 impl Component for FromPrefab {}
 
+/// Marks an Obj that a script made from a prefab while the game ran: the
+/// prefab, the root of the copy it is part of, and its place in the
+/// prefab's order, so a save of the scene can make the copy again and find
+/// each of its Objs in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spawned {
+    pub prefab: AssetGuid,
+    pub root: Entity,
+    pub index: u32,
+}
+impl Component for Spawned {}
+
 impl Template {
     /// The index of the first root, which is a prefab's only one.
     pub fn root(&self) -> Option<usize> {

@@ -49,6 +49,12 @@ namespace Voxear.Scripting
 			return handle < behaviours.Count ? behaviours[(int)handle] : null;
 		}
 
+		/// <summary>Every live behaviour, by handle.</summary>
+		public static List<Behaviour> Live()
+		{
+			return behaviours.OfType<Behaviour>().ToList();
+		}
+
 		/// <summary>The live behaviours among these handles, by execution order and then in the order given.</summary>
 		public static List<Behaviour> Ordered(IEnumerable<uint> handles)
 		{

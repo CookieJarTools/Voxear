@@ -42,15 +42,31 @@ namespace Voxear.Saving
 				return current.Value(node, type, into);
 			}
 
+			using var scope = Begin(context);
+			return current!.Value(node, type, into);
+		}
+
+		/// <summary>Fills only these members of target from a table, as a save of the scene puts back a behaviour's marked ones.</summary>
+		public static void ReadMembers(SaveNode node, object target, IReadOnlyList<SaveMember> members, string context = "")
+		{
+			using var scope = Begin(context);
+			if (node.Kind != SaveNodeKind.Table)
+			{
+				current!.Warn(new FormatException($"The save has {node.Shown()} where the values of a {target.GetType().Name} were expected."));
+				return;
+			}
+			current!.Fill(node, target, members);
+		}
+
+		/// <summary>One save read in several calls, sharing its references, until the scope ends.</summary>
+		public static IDisposable Begin(string context)
+		{
+			if (current != null)
+			{
+				return new Scope(null);
+			}
 			current = new SaveReader(context);
-			try
-			{
-				return current.Value(node, type, into);
-			}
-			finally
-			{
-				current = null;
-			}
+			return new Scope(() => current = null);
 		}
 
 		private object? Value(SaveNode node, Type type, object? into)
@@ -235,8 +251,13 @@ namespace Voxear.Saving
 
 		private Obj FindObj(string key, string what)
 		{
-			var obj = NativeSaves.FindObj(key);
-			if (!obj.IsValid)
+			var found = SpawnedKeys.ForLookup(key);
+			var obj = found == null ? Obj.None : NativeSaves.FindObj(found);
+			if (!obj.IsValid && found == null)
+			{
+				Log.Warning($"{Where()}: the save names {what} that a script made while the game ran, which only a save of the scene makes again, so it reads as nothing.");
+			}
+			else if (!obj.IsValid)
 			{
 				Log.Warning($"{Where()}: the save names {what} in a scene that is not open now, so it reads as nothing. Read the save once its level is open.");
 			}
@@ -323,7 +344,13 @@ namespace Voxear.Saving
 			{
 				made[node["$id"].AsLong()] = target;
 			}
-			foreach (var member in SaveMembers.Of(type))
+			Fill(node, target, SaveMembers.Of(type));
+			return target;
+		}
+
+		private void Fill(SaveNode node, object target, IReadOnlyList<SaveMember> members)
+		{
+			foreach (var member in members)
 			{
 				var value = Field(node, member.Name);
 				if (value == null)
@@ -338,7 +365,6 @@ namespace Voxear.Saving
 				}
 				path.RemoveAt(path.Count - 1);
 			}
-			return target;
 		}
 
 		/// <summary>Brings a type's table up to date, one version at a time, and marks it so, so it is never migrated twice.</summary>

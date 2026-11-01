@@ -42,7 +42,7 @@ use crate::ui::{
     ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 28;
+pub(crate) const API_VERSION: u32 = 29;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -206,6 +206,10 @@ pub(crate) struct NativeApi {
     pub save_key:
         unsafe extern "C" fn(kind: i32, id: u64, reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
     pub save_obj: unsafe extern "C" fn(key: *const u8, len: i32) -> u64,
+    /// The open scenes' state as JSON, for `SceneState.Capture` (see
+    /// [`ScriptServices::scene_state`]), written when it fits, its length
+    /// returned either way, or -1 where there are no scenes.
+    pub save_scene: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -438,7 +442,7 @@ unsafe extern "C" fn save_key(
 ) -> i32 {
     let reference = unsafe { utf8(reference, len) };
     let key = match kind {
-        0 => with_services(|services| services.obj_key(Entity::from_bits(id))),
+        0 => with_services(|services| with_world(|world| services.obj_key(world, Entity::from_bits(id)))),
         1 => with_services(|services| services.asset_guid(AssetName::Reference(&reference))),
         _ => with_services(|services| services.asset_guid(AssetName::Prefab(id as u32))),
     };
@@ -451,7 +455,19 @@ unsafe extern "C" fn save_key(
 
 unsafe extern "C" fn save_obj(key: *const u8, len: i32) -> u64 {
     let key = unsafe { utf8(key, len) };
-    with_services(|services| services.obj_by_key(&key)).flatten().map_or(0, Entity::to_bits)
+    with_services(|services| with_world(|world| services.obj_by_key(world, &key))).flatten().map_or(0, Entity::to_bits)
+}
+
+unsafe extern "C" fn save_scene(buffer: *mut u8, capacity: i32) -> i32 {
+    let doomed = OBJ_DESTROYS.with_borrow(Clone::clone);
+    let Some(state) = with_services(|services| with_world(|world| services.scene_state(world, &doomed))).flatten()
+    else {
+        return -1;
+    };
+    if !buffer.is_null() && state.len() <= capacity.max(0) as usize {
+        unsafe { ptr::copy_nonoverlapping(state.as_ptr(), buffer, state.len()) };
+    }
+    state.len() as i32
 }
 
 unsafe extern "C" fn preview_create(
@@ -968,6 +984,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         save_info,
         save_key,
         save_obj,
+        save_scene,
     }
 }
 

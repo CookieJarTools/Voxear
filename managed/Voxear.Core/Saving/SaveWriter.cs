@@ -41,15 +41,26 @@ namespace Voxear.Saving
 				return current.Value(value, declared, false);
 			}
 
+			using var scope = Begin(context);
+			return current!.Value(value, declared, true);
+		}
+
+		/// <summary>A table of only these members of target, as a save of the scene keeps a behaviour's marked ones.</summary>
+		public static SaveNode WriteMembers(object target, IReadOnlyList<SaveMember> members, string context = "")
+		{
+			using var scope = Begin(context);
+			return current!.Table(target, members, false);
+		}
+
+		/// <summary>One save written in several calls, sharing its references, until the scope ends.</summary>
+		public static IDisposable Begin(string context)
+		{
+			if (current != null)
+			{
+				return new Scope(null);
+			}
 			current = new SaveWriter(context);
-			try
-			{
-				return current.Value(value, declared, true);
-			}
-			finally
-			{
-				current = null;
-			}
+			return new Scope(() => current = null);
 		}
 
 		private SaveNode Value(object? value, Type declared, bool top)
@@ -155,10 +166,10 @@ namespace Voxear.Saving
 				return SaveNode.Null;
 			}
 
-			var key = NativeSaves.Key(0, obj.Id, string.Empty);
+			var key = SpawnedKeys.ForSave(NativeSaves.Key(0, obj.Id, string.Empty));
 			if (key == null)
 			{
-				Log.Warning($"{Where()}: {shown} was made while the game ran, so a save cannot find it again, and keeps nothing for it.");
+				Log.Warning($"{Where()}: {shown} was made while the game ran, so a save cannot find it again, and keeps nothing for it. A save of the scene makes such Objs again.");
 			}
 			return key;
 		}
@@ -240,17 +251,23 @@ namespace Voxear.Saving
 				return Reference(value, first);
 			}
 
+			return Table(value, SaveMembers.Of(type), true);
+		}
+
+		private SaveNode Table(object value, IReadOnlyList<SaveMember> members, bool versioned)
+		{
+			var type = value.GetType();
 			var table = SaveNode.NewTable();
 			if (!type.IsValueType)
 			{
 				written[value] = table;
 			}
 			var (version, marked) = SaveTypes.Version(type);
-			if (marked)
+			if (marked && versioned)
 			{
 				table["$version"] = version;
 			}
-			foreach (var member in SaveMembers.Of(type))
+			foreach (var member in members)
 			{
 				path.Add("." + member.Name);
 				table.AddField(member.Name, Value(Read(member, value), member.Type, false));

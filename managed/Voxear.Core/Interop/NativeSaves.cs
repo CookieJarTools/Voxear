@@ -117,6 +117,28 @@ namespace Voxear.Interop
 			}
 		}
 
+		/// <summary>The open scenes' state as the engine describes it, as JSON, or null where there are no scenes.</summary>
+		public static string? SceneState()
+		{
+			if (!Native.IsConnected)
+			{
+				return null;
+			}
+
+			var length = Native.Api->SaveScene(null, 0);
+			if (length < 0)
+			{
+				return null;
+			}
+
+			var bytes = new byte[length];
+			fixed (byte* buffer = bytes)
+			{
+				Native.Api->SaveScene(buffer, length);
+			}
+			return Encoding.UTF8.GetString(bytes);
+		}
+
 		/// <summary>The result when it is not a failure; a failure, below 0, thrown with the engine's message.</summary>
 		private static int Check(int result)
 		{

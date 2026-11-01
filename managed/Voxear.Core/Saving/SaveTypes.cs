@@ -298,6 +298,7 @@ namespace Voxear.Saving
 			foundConverters = null;
 			foundFormats = null;
 			SaveMembers.Clear();
+			SceneMembers.Clear();
 		}
 
 		/// <summary>Drops what the old scripts added in code, so they can leave memory.</summary>

@@ -8,7 +8,7 @@ namespace Voxear.Saving
 	/// <summary>
 	/// How saves keep the math and time types that have no public fields to save, or that read better another way:
 	/// vectors, rotations, colours and matrices as lists of numbers, as scenes write them, and dates, times and GUIDs
-	/// as text that sorts and reads the same everywhere.
+	/// as text that sorts and reads the same everywhere. A SceneState is the table it already holds.
 	/// </summary>
 	internal static class BuiltInConverters
 	{
@@ -28,6 +28,7 @@ namespace Voxear.Saving
 				new DelegateConverter<DateTimeOffset>(d => d.ToString("O", CultureInfo.InvariantCulture), n => DateTimeOffset.Parse(Text(n), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)),
 				new DelegateConverter<TimeSpan>(t => t.ToString("c", CultureInfo.InvariantCulture), n => TimeSpan.Parse(Text(n), CultureInfo.InvariantCulture)),
 				new DelegateConverter<Guid>(g => g.ToString("D"), n => Guid.Parse(Text(n))),
+				new DelegateConverter<SceneState>(state => state.Root, n => new SceneState(n)),
 			};
 			var byType = new Dictionary<Type, SaveConverter>();
 			all.ForEach(converter => byType[converter.Type] = converter);

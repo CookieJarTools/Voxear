@@ -151,13 +151,26 @@ pub trait ScriptServices {
 
     /// What a save calls an Obj, so that a later run finds it again: the
     /// GUID of the scene it was loaded from and its path there, as
-    /// `guid:3/2`. None for an Obj made while the game runs.
-    fn obj_key(&self, _entity: Entity) -> Option<String> {
+    /// `guid:3/2`. An Obj a script made from a prefab is `spawned:` and its
+    /// copy's root entity, a slash and its place in the prefab, which holds
+    /// only for this run; a save of the scene numbers the copies itself.
+    /// None for any other Obj.
+    fn obj_key(&self, _world: &World, _entity: Entity) -> Option<String> {
         None
     }
 
-    /// The Obj a save's key names, when its scene is open.
-    fn obj_by_key(&self, _key: &str) -> Option<Entity> {
+    /// The Obj a key names, when its scene is open or its copy exists.
+    fn obj_by_key(&self, _world: &World, _key: &str) -> Option<Entity> {
+        None
+    }
+
+    /// The open scenes' state as JSON, for a save of the scene: the level's
+    /// GUID, the keys of the Objs scenes loaded that are gone, and the root
+    /// of each copy scripts made from a prefab, with the prefab's GUID and
+    /// the key of its parent (see [`obj_key`](Self::obj_key)). `doomed` are
+    /// the Objs scripts asked to destroy that are still waiting, which count
+    /// as gone, with everything under them.
+    fn scene_state(&self, _world: &World, _doomed: &[Entity]) -> Option<String> {
         None
     }
 

@@ -49,7 +49,7 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetGuid, AssetKind};
-use voxear_ecs::Entity;
+use voxear_ecs::{Entity, World};
 use voxear_render::Renderer;
 use voxear_scene::{Destroying, EditorOnly, Name, Parent, ScenePersistence};
 
@@ -502,9 +502,27 @@ impl Levels {
     /// while the game runs.
     pub fn place_of(&self, entity: Entity) -> Option<(AssetGuid, ObjPath)> {
         let loaded = self.scenes.iter().find_map(|scene| {
-            scene.objs.iter().find(|(path, e)| *e == entity && !path.is_root()).map(|(path, _)| (scene.guid, path.clone()))
+            scene
+                .objs
+                .iter()
+                .find(|(path, e)| *e == entity && !path.is_root())
+                .map(|(path, _)| (scene.guid, path.clone()))
         });
         loaded.or_else(|| self.persistent.iter().find(|(_, e)| **e == entity).map(|(place, _)| place.clone()))
+    }
+
+    /// The Objs that open scenes loaded and that have been destroyed since,
+    /// or are being destroyed, by scene and path, as a save of the scene
+    /// keeps them so they stay gone. `doomed` are Objs scripts asked to
+    /// destroy that are still waiting, with everything under them.
+    pub fn gone(&self, world: &World, doomed: &[Entity]) -> Vec<(AssetGuid, ObjPath)> {
+        let gone = |entity: Entity| is_doomed(world, doomed, entity);
+        self.scenes
+            .iter()
+            .flat_map(|scene| scene.objs.iter().map(move |(path, entity)| (scene.guid, path, *entity)))
+            .filter(|(_, path, entity)| !path.is_root() && gone(*entity))
+            .map(|(scene, path, _)| (scene, path.clone()))
+            .collect()
     }
 
     /// The Obj loaded from `path` in `scene`, while that scene is open or the
@@ -618,6 +636,19 @@ impl Levels {
     fn active_index(&self) -> Option<usize> {
         self.scenes.iter().position(|s| Some(s.guid) == self.active).or(self.scenes.len().checked_sub(1))
     }
+}
+
+/// Whether an Obj is destroyed, being destroyed, or waiting to be as one of
+/// `doomed` or under one.
+pub fn is_doomed(world: &World, doomed: &[Entity], entity: Entity) -> bool {
+    let mut at = Some(entity);
+    while let Some(obj) = at {
+        if !world.is_alive(obj) || world.get::<Destroying>(obj).is_some() || doomed.contains(&obj) {
+            return true;
+        }
+        at = world.get::<Parent>(obj).map(|parent| parent.0);
+    }
+    false
 }
 
 /// Where an Obj is kept in the open level: its scene, its path there, and

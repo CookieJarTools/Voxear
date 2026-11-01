@@ -85,13 +85,13 @@ namespace Voxear.Saving
 		}
 
 		/// <summary>A backing field marked [field: SerializeField] goes by its property's name.</summary>
-		private static string NameOf(FieldInfo field)
+		public static string NameOf(FieldInfo field)
 		{
 			var name = field.Name;
 			return name.StartsWith('<') && name.IndexOf('>') is var end and > 1 ? name[1..end] : name;
 		}
 
-		private static bool IsCode(Type type)
+		public static bool IsCode(Type type)
 		{
 			return typeof(Delegate).IsAssignableFrom(type) || type.IsPointer || type.IsByRef;
 		}
@@ -102,7 +102,7 @@ namespace Voxear.Saving
 		}
 
 		/// <summary>Where the search stops: the engine's own base classes have nothing for a save to keep.</summary>
-		private static bool IsBase(Type type)
+		public static bool IsBase(Type type)
 		{
 			return type == typeof(Behaviour) || type == typeof(object) || type == typeof(ValueType);
 		}

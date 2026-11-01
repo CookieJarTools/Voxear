@@ -421,7 +421,11 @@ Still to do in M3:
   - [x] slots in the game's own save folder, each written whole and renamed into place, and checked when read
   - [x] `WriteAsync`, writing on a thread of its own while the game carries on
   - [x] `SaveFile`, for several parts in one save
-  - [ ] persistent Objs and scene state, saved by marking fields or components (to decide with the user first)
+  - [x] saves of the scene: `[Saved]` on a behaviour's fields, properties or whole class, Objs scenes loaded that
+    were destroyed, and Objs scripts made from prefabs, made again with their parents, places and values, in
+    `Save.WriteScene` and `await Save.LoadScene`, or `SceneState` as a part of a `SaveFile`
+  - [x] `SavedTransform` for where a scene's Obj stands, and `Save.IsLoadingScene` for spawners
+  - [ ] C# components (`IComponent`) marked to be kept in a save of the scene
   - [ ] a picture of the game with each save, for load menus (the file already has room for one)
   - [ ] a Saves window in the editor, to look into, change and delete the project's saves
   - Later: a store for cloud saves, with Steam's in M11.

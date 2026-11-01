@@ -76,6 +76,7 @@ namespace Voxear.Scripting
 			{
 				Loading.Update();
 				SaveWrite.Update();
+				SceneState.Update();
 				UiElements.Dispatch();
 				MainThreadContext.Instance.Run();
 				GameScripts.Settle();

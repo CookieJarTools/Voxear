@@ -92,5 +92,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<int, byte*, int, int> SaveInfo;
 		public delegate* unmanaged[Cdecl]<int, ulong, byte*, int, byte*, int, int> SaveKey;
 		public delegate* unmanaged[Cdecl]<byte*, int, ulong> SaveObj;
+		public delegate* unmanaged[Cdecl]<byte*, int, int> SaveScene;
 	}
 }

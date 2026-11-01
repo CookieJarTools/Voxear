@@ -36,17 +36,19 @@ public sealed class Progress
 public sealed class SaveCheck : SystemBase
 {
 	private int frame;
+	private bool outsideRead;
 
 	protected override void Update()
 	{
-		switch (++frame)
+		if (++frame == 2)
 		{
-			case 2:
-				WriteAndRead();
-				break;
-			case 5:
-				ReadWhatCameFromOutside();
-				break;
+			WriteAndRead();
+		}
+		// The test writes the slot "go" once it has put saves of its own in the folder.
+		else if (frame > 2 && !outsideRead && Save.Exists("go"))
+		{
+			outsideRead = true;
+			ReadWhatCameFromOutside();
 		}
 	}
 
@@ -178,13 +180,21 @@ fn scripts_save_and_read_back_through_the_engines_files() {
     engine.set_scripts(runtime);
     let mut game = Game::new(project, engine).unwrap();
     game.start(None).unwrap();
-    for _ in 0..3 {
-        game.tick(1.0 / 60.0, None);
-    }
     let said = |log: &LogCapture| -> Vec<String> {
         let lines = log.lock().unwrap();
         lines.lines.iter().filter(|l| l.target == "script").map(|l| l.message.clone()).collect()
     };
+    // Until the write that went on while the game ran has finished, however busy the disk is.
+    let tick_until = |game: &mut Game, start: &str| {
+        for _ in 0..1000 {
+            game.tick(1.0 / 60.0, None);
+            if said(&log).iter().any(|line| line.starts_with(start)) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    };
+    tick_until(&mut game, "written while going on");
     let lines = said(&log);
     let firefly = guid_of(dir.path(), "Prefabs/Firefly.prefab");
     let read =
@@ -230,9 +240,8 @@ fn scripts_save_and_read_back_through_the_engines_files() {
     std::fs::write(&path, bytes).unwrap();
     folder.write("future", br#"{"format":"json","version":3}"#, &[], br#"{"$version": 3, "Level": 1}"#).unwrap();
     folder.write("old", br#"{"format":"json"}"#, &[], br#"{"Stage": 7}"#).unwrap();
-    for _ in 0..2 {
-        game.tick(1.0 / 60.0, None);
-    }
+    folder.write("go", br#"{"format":"json"}"#, &[], b"null").unwrap();
+    tick_until(&mut game, "future: ");
     let lines = said(&log);
     assert!(lines.contains(&"writing binary".to_string()), "builds write binary: {lines:#?}");
     assert!(folder.read("binary", SavePart::Data).unwrap().starts_with(b"VSB"));

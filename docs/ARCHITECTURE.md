@@ -578,7 +578,7 @@ directly.
 - A Roslyn suppressor for warning CS0649, which fires on `[SerializeField]` fields because the compiler cannot see
   the engine set them. Until it exists, game projects turn that warning off, as Hello's `.csproj` does.
 
-## Saves *(implemented; persistent Objs and pictures planned)*
+## Saves *(implemented; pictures planned)*
 
 A game's saves, from `Voxear.Save` in C#. The work is split where it is cheapest: C# knows the values and their
 types, so it takes them apart and puts them back; Rust knows files, so it keeps the slots and writes them safely.
@@ -631,8 +631,24 @@ types, so it takes them apart and puts them back; Rust knows files, so it keeps 
   fallback)` and `TryRead` never throw. `Save.Write` waits for the disk; `WriteAsync` takes the values apart at
   once and leaves only the disk to another thread, as a `SaveWrite` to await. `SaveFile` keeps several named parts
   in one slot, with its own format, summary and version, and `Save.Slots` reads only the headers.
-- **Planned:** persistent Objs and scene state saved by marking fields or components; a picture of the game with
-  each save; a store interface for cloud saves (Steam's, with the platform API); and a Saves window in the editor.
+- **Saves of the scene** (`SceneState`, `Save.WriteScene`, `Save.LoadScene`): the open scenes as the player
+  left them, gathered from marks rather than a class of the game's own. `Capture` asks the engine (`save_scene`,
+  `ScriptServices::scene_state`, API 29) for the level's GUID, the Objs scenes loaded that are gone
+  (`Levels::gone`: their entity is dead, being destroyed, or waiting in the script call's destroys, or under one
+  that is), and the root of each copy scripts made from a prefab: `spawn_prefab` gives every Obj of a copy
+  `Spawned { prefab, root, index }`, its index in the prefab's order. Then it walks every live behaviour and keeps
+  the members `[Saved]` marks (`SceneMembers`: marked fields and properties of any visibility, or, on a marked
+  class, what `SaveMembers` keeps), each by its Obj's key, its class, and which of that class on the Obj it is.
+  A copy's Obj has the key `spawned:<root entity>/<index>`, good for one run only, so the state numbers its
+  copies and writes `spawned:<number>/<index>` (`SpawnedKeys`), in its own records and in any value pointing at
+  one. `LoadAsync` loads the level again with `ReloadShared`, so every scene is fresh, then `Apply` destroys the
+  copies there are, destroys the gone Objs, makes each copy again under its parent (a copy's parent first),
+  placed as it was, and fills the marked members, with the numbers pointing at the new copies. The continuation
+  runs before the reloaded scene's Awake, so its behaviours start with what was put back, and
+  `Save.IsLoadingScene` stays true until the end of that frame, for spawners to skip their first spawn.
+  `SavedTransform` is a behaviour with one marked property, its Obj's transform.
+- **Planned:** C# components kept in a save of the scene; a picture of the game with each save; a store interface
+  for cloud saves (Steam's, with the platform API); and a Saves window in the editor.
 
 ## Content (assets, Bundles, loading)
 

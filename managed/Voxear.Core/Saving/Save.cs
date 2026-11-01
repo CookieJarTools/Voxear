@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Loader;
+using System.Threading.Tasks;
 using Voxear.Saving;
 using Voxear.Scripting;
 
@@ -35,6 +36,13 @@ namespace Voxear
 				}
 			}
 		}
+
+		/// <summary>
+		/// Whether a save of the scene is being loaded, from Save.LoadScene until the end of the frame it is put back
+		/// in, which is when the reloaded scene's behaviours run Awake, OnEnable and Start. A spawner that makes its
+		/// first Objs there skips that while it is true, as the save makes the ones it had again.
+		/// </summary>
+		public static bool IsLoadingScene => SceneState.IsLoading;
 
 		/// <summary>The folder saves are kept in, in the player's own data folder, or empty when there is none.</summary>
 		public static string Folder => SaveStore.Current.Folder;
@@ -104,6 +112,25 @@ namespace Voxear
 		public static void ReadInto(string slot, object target)
 		{
 			SaveFile.Read(slot).ReadAllInto(target);
+		}
+
+		/// <summary>
+		/// Saves the open scenes as the player left them: every value behaviours marked [Saved], the Objs the scenes
+		/// loaded that have been destroyed since, and the Objs scripts made from prefabs. Save.LoadScene puts it back.
+		/// To keep the scene beside values of your own, set SceneState.Capture() as a part of a SaveFile.
+		/// </summary>
+		public static void WriteScene(string slot, string? summary = null)
+		{
+			Write(slot, SceneState.Capture(), summary);
+		}
+
+		/// <summary>
+		/// Loads a save of the scene: its level again, with its scenes afresh, and then everything put back as it was
+		/// saved. Await it before using what it puts back. Throws a SaveException as Read does.
+		/// </summary>
+		public static Task LoadScene(string slot)
+		{
+			return Read<SceneState>(slot).LoadAsync();
 		}
 
 		public static bool Exists(string slot)

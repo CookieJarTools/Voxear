@@ -24,5 +24,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<byte*, int, ulong, byte*, int, int> AddComponent;
 		public delegate* unmanaged[Cdecl]<byte*, int, int> ConsoleRun;
 		public delegate* unmanaged[Cdecl]<byte*, int, int> ConsoleNames;
+		public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, byte*, int, int*, int> RunCheck;
 	}
 }

@@ -252,6 +252,9 @@ mod tests {
     use super::*;
     use crate::stats_overlay::{MARKUP, SHEET};
 
+    /// The console reads the game's one log, so its tests take turns.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn console() -> (Ui, DevConsole) {
         let mut ui = Ui::new();
         let root = ui.root();
@@ -277,6 +280,7 @@ mod tests {
 
     #[test]
     fn lines_run_and_what_they_did_shows() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // The game's log keeps its lines where the console reads them.
         let _log = tracing::subscriber::set_default(logging::capturing_only(logging::recent()));
         let (mut ui, mut console) = console();
@@ -311,6 +315,7 @@ mod tests {
 
     #[test]
     fn a_line_from_vox_gives_back_what_it_logged() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let _log = tracing::subscriber::set_default(logging::capturing_only(logging::recent()));
         let (mut ui, mut console) = console();
         let mut engine = Engine::new();

@@ -107,6 +107,13 @@ impl Engine {
         ran
     }
 
+    /// Runs a check a guide's step names against this engine's world, as
+    /// while playing (see [`ScriptRuntime::run_check`]).
+    pub fn run_check(&mut self, type_name: &str, method: &str) -> anyhow::Result<Result<(), String>> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        scripts.run_check(&mut self.world, type_name, method)
+    }
+
     /// Runs a line typed in a development build's console against the
     /// scripts (see [`ScriptRuntime::run_console`]). False when nothing has
     /// its first word as a name, or there are no scripts.

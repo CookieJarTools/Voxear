@@ -118,6 +118,35 @@ namespace Voxear.Scripting
 			}
 		}
 
+		/// <summary>
+		/// Runs a check a guide's step names: 0 when it passes; 1 when it does not, with what is still wrong written into
+		/// buffer, cut to fit, and its length into written; 2 when there is no such check; 3 when it threw, which is logged.
+		/// </summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int RunCheck(byte* type, int typeLength, byte* method, int methodLength, byte* buffer, int capacity, int* written)
+		{
+			*written = 0;
+			try
+			{
+				if (!GuideChecks.Run(Native.Utf8(type, typeLength), Native.Utf8(method, methodLength), out var passed, out var failure))
+				{
+					return 2;
+				}
+				if (passed)
+				{
+					return 0;
+				}
+
+				*written = GuideChecks.Write(failure, new Span<byte>(buffer, capacity));
+				return 1;
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+				return 3;
+			}
+		}
+
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static int ContentRoots(byte* buffer, int capacity)
 		{

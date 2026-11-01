@@ -92,7 +92,8 @@ impl ScriptRuntime {
                 && managed.run_systems.is_some()
                 && managed.add_component.is_some()
                 && managed.console_run.is_some()
-                && managed.console_names.is_some(),
+                && managed.console_names.is_some()
+                && managed.run_check.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -182,6 +183,34 @@ impl ScriptRuntime {
         ensure!(status != 1, "{type_name} has no [Command] method {method}");
         ensure!(status == 0, "{type_name}.{method} threw; the Console has what it said");
         Ok(())
+    }
+
+    /// Runs a check a VoxDocs guide's step names, against `world`: a static
+    /// method of the game scripts that takes nothing and returns `bool`, true
+    /// when it passes, or `string`, empty when it passes and otherwise what is
+    /// still wrong. `Ok(Err(why))` when it does not pass, `why` empty when it
+    /// said nothing; an error when there is no such method or it threw, which
+    /// is logged.
+    pub fn run_check(&mut self, world: &mut World, type_name: &str, method: &str) -> Result<Result<(), String>> {
+        let run = self.managed.run_check.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        let mut buffer = vec![0u8; 1024];
+        let mut written = 0i32;
+        let (ty, name) = (type_name.as_bytes(), method.as_bytes());
+        let status = unsafe {
+            let (buffer_len, buffer_ptr) = (buffer.len() as i32, buffer.as_mut_ptr());
+            run(ty.as_ptr(), ty.len() as i32, name.as_ptr(), name.len() as i32, buffer_ptr, buffer_len, &mut written)
+        };
+        ensure!(
+            status != 2,
+            "{type_name} has no check {method}: a static method taking nothing and returning bool or string"
+        );
+        ensure!(status != 3, "{type_name}.{method} threw; the Console has what it said");
+        if status == 0 {
+            return Ok(Ok(()));
+        }
+        buffer.truncate(written.clamp(0, buffer.len() as i32) as usize);
+        Ok(Err(String::from_utf8_lossy(&buffer).into_owned()))
     }
 
     /// Runs a line typed in a development build's console: a `[Command]`

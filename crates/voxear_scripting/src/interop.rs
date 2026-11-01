@@ -39,7 +39,7 @@ use crate::ui::{
     ui_class, ui_clicked, ui_close, ui_find, ui_load, ui_set_text, ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 20;
+pub(crate) const API_VERSION: u32 = 21;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -207,7 +207,22 @@ pub(crate) struct ManagedApi {
     /// The console's commands and variables as "name\tusage\thelp" lines,
     /// written when they fit, and their length either way.
     pub console_names: Option<unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32>,
+    /// Runs a check a guide's step names: 0 when it passes; 1 when it does
+    /// not, with what is still wrong written into the buffer, cut to fit,
+    /// and its length into `written`; 2 when there is no such check; 3 when
+    /// it threw.
+    pub run_check: Option<RunCheck>,
 }
+
+pub(crate) type RunCheck = unsafe extern "C" fn(
+    ty: *const u8,
+    ty_len: i32,
+    method: *const u8,
+    method_len: i32,
+    buffer: *mut u8,
+    capacity: i32,
+    written: *mut i32,
+) -> i32;
 
 #[repr(C)]
 #[derive(Default, Debug)]

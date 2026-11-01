@@ -11,9 +11,9 @@ If you can choose, pick glTF: it says more about how materials should look. Both
 
 ## Adding a model to your project
 
-Copy the model file into your project's folder, with any pictures it uses beside it. A `Models` folder is a good place.
+Drag the model file from your file manager onto the Project panel, with any pictures it uses. The files are copied into the folder you let go on: a folder's tile, a folder in the tree, or the space around the files, which means the folder the Project panel shows. A `Models` folder is a good place. If a file of that name is already there, the copy is numbered, as in `Ship 1.glb`.
 
-The editor finds new files when the project opens. A file copied in while the editor is open shows up after you next make, rename, duplicate or delete something in the Project panel, or when you open the project again.
+You can also copy files into the project's folder yourself. The editor sees them when you come back to it. On a Linux desktop that uses Wayland, dropping files on the editor does not work yet, so copy them in this way. In the same way, when you export a model again over its file, Voxear imports it again when you come back to the editor, and everything drawing it shows the change.
 
 Select the model in the Project panel to see it in the Inspector. Drag the preview to turn it.
 

@@ -143,6 +143,12 @@ impl PreparedModel {
         &self.path
     }
 
+    /// Each drawable part's mesh and material, by name, in order: what
+    /// [`reupload`] needs to match an earlier import.
+    pub fn parts(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.nodes.iter().map(|node| (node.mesh_part.as_str(), node.material_part.as_deref()))
+    }
+
     /// Replaces a texture's pixels with `rgba`, for tests and tools that
     /// need a particular image.
     pub fn replace_texture(&mut self, index: usize, width: u32, height: u32, rgba: Vec<u8>) {

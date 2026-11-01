@@ -541,6 +541,30 @@ impl ProjectView {
         Some((source, contents.folders.get(folder)?.path.clone()))
     }
 
+    /// The folder under `point`, in the UI's units: a folder's tile or a
+    /// folder in the tree, or else the folder open, when the point is over
+    /// the panel at all. Files dropped from outside the editor go there.
+    pub fn folder_at(&self, ui: &Ui, [x, y]: [f32; 2]) -> Option<String> {
+        let over = |node: NodeId| {
+            let [left, top, width, height] = ui.rect(node);
+            ui.is_visible(node) && (left..left + width).contains(&x) && (top..top + height).contains(&y)
+        };
+        let contents = self.contents.borrow();
+        let tile = contents.tiles.iter().find_map(|&(tile, at)| match contents.listing.get(at?)? {
+            Entry::Folder(folder) if over(tile) => Some(*folder),
+            _ => None,
+        });
+        let row = || self.folder_rows.borrow().iter().find_map(|&(row, folder)| over(row).then_some(folder as usize));
+        let open = || (over(self.files) || over(self.folder_tree)).then_some(self.open);
+        let folder = tile.or_else(row).or_else(open)?;
+        contents.folders.get(folder).map(|folder| folder.path.clone())
+    }
+
+    /// The project path of the folder open, `""` for the project's own.
+    pub fn open_folder(&self) -> String {
+        self.contents.borrow().folders.get(self.open).map(|folder| folder.path.clone()).unwrap_or_default()
+    }
+
     /// Lets the folders, as tiles and in the tree, take what is dragged onto
     /// them, or stops them: while an Obj is dragged from the Hierarchy, to
     /// make a prefab in the folder it is let go of on.

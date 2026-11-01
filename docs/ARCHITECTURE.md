@@ -581,6 +581,13 @@ This is the only way to load assets. It replaces Addressables and fixes the buil
   covers them. Applied in the Inspector, they import the model again behind the mesh and material handles it had
   (`Renderer::reupload_model`), so every Obj, undo step and preview drawing it shows the change, and a placed part
   still where the model put it follows it *(implemented)*.
+- Files come in as Unity's do *(implemented)*. One dropped on the editor's window from outside is copied into
+  the folder under the pointer in the Project panel, or the folder it shows, numbered if its name is taken, with
+  a `.meta` dropped beside it following it. When the window gets the focus back the editor compares the project's
+  files with when it last looked: files that came or went show in the Project panel, and a model in use whose
+  file, `.meta`, buffers or pictures changed is imported again. With the same parts it goes behind the handles it
+  had; with others, as after a re-export that added a mesh, it is uploaded anew, the Objs drawing it move to the
+  new parts by name, and the old model stays loaded for the undo steps that may still draw it.
 - Files reference assets by GUID, optionally with a part inside the asset: `9f2c…#mesh0.0` is a mesh inside a model.
   Hand-written files may use project paths instead, which are resolved on load.
 - In code, a field of type `Ref<Mesh>`, `Ref<Material>`, `Ref<Level>` and so on is all a developer writes. The

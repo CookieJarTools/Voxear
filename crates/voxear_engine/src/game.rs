@@ -12,7 +12,7 @@ use voxear_scripting::{
 };
 
 use crate::{
-    content::{Content, Released},
+    content::{Content, Reimported, Released},
     engine::Engine,
     game_ui::GameUi,
     levels::{LevelChange, LevelOptions, Levels},
@@ -160,15 +160,22 @@ impl Game {
         Ok(change)
     }
 
-    /// Imports the model at `path` again with the settings in its `.meta`,
-    /// as after they changed (see [`Content::reimport_model`]). A part of it
-    /// placed in the world that still sits where the model put it moves to
-    /// where the model puts it now, as after a change of size; one moved
-    /// since stays. Returns how many moved.
+    /// Imports the model at `path` again, as after its import settings or
+    /// its file changed (see [`Content::reimport_model`]). Objs drawing a
+    /// part of it that was uploaded anew draw the new one. A part placed in
+    /// the world that still sits where the model put it moves to where the
+    /// model puts it now, as after a change of size; one moved since stays.
+    /// Returns how many moved.
     pub fn reimport_model(&mut self, renderer: &mut Renderer, path: &str) -> Result<usize> {
         let guid = self.content.db().guid_of(path).with_context(|| format!("{path} is not in the project"))?;
-        let moved = self.content.reimport_model(renderer, guid)?;
+        let Reimported { moved, meshes, materials } = self.content.reimport_model(renderer, guid)?;
         let world = &mut self.engine.world;
+        if !meshes.is_empty() || !materials.is_empty() {
+            for drawn in world.query::<&mut MeshRenderer>() {
+                drawn.mesh = meshes.get(&drawn.mesh).copied().unwrap_or(drawn.mesh);
+                drawn.material = materials.get(&drawn.material).copied().unwrap_or(drawn.material);
+            }
+        }
         let mut placed = Vec::new();
         for (entity, renderer, transform) in world.query_ref::<(Entity, &MeshRenderer, &Transform)>() {
             let at = (transform.position, transform.rotation, transform.scale);

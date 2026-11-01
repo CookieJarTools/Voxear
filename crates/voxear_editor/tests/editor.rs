@@ -1058,32 +1058,11 @@ fn a_models_import_settings_apply_where_it_is_drawn() {
     let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
-    // The Pyramid the Day scene draws, and how tall its mesh is.
-    let pyramid = |editor: &voxear_editor::Editor| {
-        let world = &editor.game.engine.world;
-        let drawn = world.query_ref::<&voxear_render::MeshRenderer>().into_iter().map(|r| r.mesh);
-        let mut drawn = drawn.filter(|&mesh| {
-            editor
-                .game
-                .content
-                .mesh_ref(mesh)
-                .is_some_and(|r| r.to_string().starts_with("277e6fd45f82419a894b65b6b72ed398"))
-        });
-        drawn.next().expect("the Day scene draws the Pyramid")
-    };
     let mesh = pyramid(&editor);
     let height = |renderer: &Renderer| renderer.mesh_bounds(mesh).map(|(min, max)| max.y - min.y).unwrap();
     let before = height(&renderer);
 
-    let folder = tile(&editor.ui, "Models").expect("the Project shows its folders as tiles");
-    let [x, y, w, h] = editor.ui.rect(folder);
-    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
-    for _ in 0..2 {
-        editor.ui.pointer_button(true);
-        editor.ui.pointer_button(false);
-    }
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    open_models(&mut editor, &mut renderer);
     let model = tile(&editor.ui, "Pyramid.gltf").expect("the model shows");
     click(&mut editor.ui, model);
     frame(&mut editor, &mut renderer);
@@ -1114,6 +1093,75 @@ fn a_models_import_settings_apply_where_it_is_drawn() {
     click(&mut editor.ui, revert);
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.ui.text(scale), "2");
+}
+
+/// The mesh the Day scene draws the Pyramid model with.
+fn pyramid(editor: &voxear_editor::Editor) -> voxear_render::MeshHandle {
+    let world = &editor.game.engine.world;
+    let mut drawn = world.query_ref::<&voxear_render::MeshRenderer>().into_iter().map(|r| r.mesh).filter(|&mesh| {
+        let reference = editor.game.content.mesh_ref(mesh).map(|r| r.to_string()).unwrap_or_default();
+        reference.starts_with("277e6fd45f82419a894b65b6b72ed398")
+    });
+    drawn.next().expect("the Day scene draws the Pyramid")
+}
+
+/// Opens the Models folder in the Project panel, by double-clicking its tile.
+fn open_models(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) {
+    let folder = tile(&editor.ui, "Models").expect("the Project shows its folders as tiles");
+    let [x, y, w, h] = editor.ui.rect(folder);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    for _ in 0..2 {
+        editor.ui.pointer_button(true);
+        editor.ui.pointer_button(false);
+    }
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+#[test]
+fn files_from_outside_come_in_when_dropped_or_when_the_editor_gets_the_focus() {
+    use winit::event::WindowEvent;
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    open_models(&mut editor, &mut renderer);
+
+    // A model dropped from a file manager over the files goes into the folder shown.
+    let outside = tempfile::tempdir().unwrap();
+    let rock = outside.path().join("Rock.gltf");
+    std::fs::copy(dir.path().join("Models/Pyramid.gltf"), &rock).unwrap();
+    let [x, y, w, h] = editor.ui.rect(tile(&editor.ui, "Pyramid.gltf").unwrap());
+    pointer_to(&mut editor, [x + w / 2.0, y + h / 2.0]);
+    editor.handle(&WindowEvent::DroppedFile(rock));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Models/Rock.gltf.meta").is_file(), "copied in, and given a GUID");
+    assert!(tile(&editor.ui, "Rock.gltf").is_some(), "the Project panel shows it");
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Models/Rock.gltf"), "selected");
+
+    // Changed while the editor was away: a model in use is imported again, and a new file shows.
+    let mesh = pyramid(&editor);
+    let height = |renderer: &Renderer| renderer.mesh_bounds(mesh).map(|(min, max)| max.y - min.y).unwrap();
+    let before = height(&renderer);
+    let meta = dir.path().join("Models/Pyramid.gltf.meta");
+    let text = std::fs::read_to_string(&meta).unwrap();
+    std::fs::write(&meta, format!("{text}\n[model]\nscale = 3.0\n")).unwrap();
+    std::fs::copy(dir.path().join("Models/Pyramid.gltf"), dir.path().join("Models/Stone.gltf")).unwrap();
+    frame(&mut editor, &mut renderer);
+    assert_eq!(height(&renderer), before, "nothing is looked at while the editor is away");
+    editor.handle(&WindowEvent::Focused(false));
+    editor.handle(&WindowEvent::Focused(true));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!((height(&renderer) - before * 3.0).abs() < 1e-4, "imported again: {} against {before}", height(&renderer));
+    assert_eq!(pyramid(&editor), mesh, "behind the same mesh");
+    assert!(tile(&editor.ui, "Stone.gltf").is_some(), "the new file shows");
 }
 
 /// The command palette's results showing, top to bottom, by title.

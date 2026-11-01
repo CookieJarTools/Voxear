@@ -5,7 +5,8 @@
 //! must match the file. Duplicating copies the file without its `.meta`, so
 //! the copy gets a GUID of its own. Deleting moves a file and its `.meta`
 //! into the project's `.voxear/Trash`, where it can be got back, rather than
-//! destroying it.
+//! destroying it. Files dropped on the panel from outside the editor are
+//! copied in, numbered when their names are taken.
 
 use std::path::{Path, PathBuf};
 
@@ -96,16 +97,65 @@ pub fn duplicate(root: &Path, path: &str) -> Result<String> {
     let from = root.join(path);
     ensure!(from.is_file(), "only files can be duplicated");
     let name = path.rsplit('/').next().unwrap_or(path);
-    let (base, extension) = match name.rfind('.') {
-        Some(dot) => (&name[..dot], &name[dot..]),
-        None => (name, ""),
-    };
+    let (base, extension) = split_extension(name);
     let copy = join(parent(path), &unique(&root.join(parent(path)), base, extension));
     std::fs::copy(&from, root.join(&copy)).with_context(|| format!("copying {path}"))?;
     if path.ends_with(".cs") {
         rename_class(&root.join(&copy), base, stem(&copy))?;
     }
     Ok(copy)
+}
+
+/// Copies files and folders from outside the project into `folder` (from
+/// the project's folder), as dropped on the Project panel, and returns their
+/// project paths. A name already taken is numbered, and a script then
+/// renamed to match. A `.meta` dropped with its file follows it, keeping its
+/// GUID and import settings; any other `.meta` is left out. A file already
+/// in `folder` stays as it is.
+pub fn bring_in(root: &Path, folder: &str, files: &[PathBuf]) -> Result<Vec<String>> {
+    let into = root.join(folder);
+    let is_meta = |file: &&PathBuf| file.extension().is_some_and(|e| e == "meta");
+    let (metas, files): (Vec<&PathBuf>, Vec<&PathBuf>) = files.iter().partition(is_meta);
+    let mut brought = Vec::new();
+    // Each file's name, and the name it has in the project.
+    let mut named = Vec::new();
+    for file in files {
+        let name = file.file_name().context("a file has no name")?.to_string_lossy().into_owned();
+        if file.parent() == Some(into.as_path()) {
+            brought.push(join(folder, &name));
+            continue;
+        }
+        let (base, extension) = if file.is_dir() { (name.as_str(), "") } else { split_extension(&name) };
+        let free = unique(&into, base, extension);
+        copy_all(file, &into.join(&free)).with_context(|| format!("copying {}", file.display()))?;
+        if free != name && name.ends_with(".cs") {
+            rename_class(&into.join(&free), base, stem(&free))?;
+        }
+        brought.push(join(folder, &free));
+        named.push((name, free));
+    }
+    for meta in metas {
+        let name = meta.file_name().unwrap_or_default().to_string_lossy();
+        let of = name.trim_end_matches(".meta");
+        if let Some((_, free)) = named.iter().find(|(name, _)| name == of) {
+            std::fs::copy(meta, into.join(format!("{free}.meta"))).with_context(|| format!("copying {name}"))?;
+        }
+    }
+    Ok(brought)
+}
+
+/// Copies a file, or a folder with everything in it.
+fn copy_all(from: &Path, to: &Path) -> Result<()> {
+    if !from.is_dir() {
+        std::fs::copy(from, to)?;
+        return Ok(());
+    }
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        copy_all(&entry.path(), &to.join(entry.file_name()))?;
+    }
+    Ok(())
 }
 
 /// Moves a file or folder, and its `.meta`, into `.voxear/Trash`, and
@@ -184,6 +234,14 @@ fn join(folder: &str, name: &str) -> String {
     if folder.is_empty() { name.to_string() } else { format!("{folder}/{name}") }
 }
 
+/// A file's name before its extension, and its extension with the dot.
+fn split_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(dot) => (&name[..dot], &name[dot..]),
+        None => (name, ""),
+    }
+}
+
 fn stem(name: &str) -> &str {
     let name = name.rsplit('/').next().unwrap_or(name);
     name.rsplit_once('.').map_or(name, |(stem, _)| stem)
@@ -216,5 +274,26 @@ mod tests {
 
         let gone = trash(root, "Scenes/Main.scene").unwrap();
         assert!(!root.join("Scenes/Main.scene").exists() && gone.is_file() && meta_of(&gone).is_file());
+    }
+
+    #[test]
+    fn files_dropped_from_outside_are_copied_in_with_their_meta() {
+        let (outside, project) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (from, root) = (outside.path(), project.path());
+        std::fs::create_dir_all(root.join("Models")).unwrap();
+        std::fs::write(root.join("Models/Ship.glb"), "old").unwrap();
+        for (name, text) in [("Ship.glb", "new"), ("Ship.glb.meta", "guid = \"x\"\n"), ("Lone.png.meta", "")] {
+            std::fs::write(from.join(name), text).unwrap();
+        }
+        std::fs::create_dir_all(from.join("Rocks/Small")).unwrap();
+        std::fs::write(from.join("Rocks/Small/Pebble.glb"), "").unwrap();
+        let dropped = ["Ship.glb.meta", "Ship.glb", "Rocks", "Lone.png.meta"].map(|name| from.join(name));
+
+        let brought = bring_in(root, "Models", &dropped).unwrap();
+        assert_eq!(brought, ["Models/Ship 1.glb", "Models/Rocks"], "a taken name is numbered");
+        assert_eq!(std::fs::read_to_string(root.join("Models/Ship.glb")).unwrap(), "old", "nothing is replaced");
+        assert!(root.join("Models/Ship 1.glb.meta").is_file(), "the .meta follows its file");
+        assert!(root.join("Models/Rocks/Small/Pebble.glb").is_file(), "a folder comes with what is in it");
+        assert!(!root.join("Models/Lone.png.meta").exists(), "a .meta without its file is left out");
     }
 }

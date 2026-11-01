@@ -283,6 +283,9 @@ pub struct Editor {
     /// Previews of assets, of a Mesh Renderer's own mesh and material, and
     /// the Inspector's large one; see `previews`.
     asset_previews: AssetPreviews,
+    /// Files dropped on the window, and when the project's files last
+    /// changed, to bring in what changed outside the editor; see `importing`.
+    imports: importing::Imports,
     /// Prefabs, models and materials VoxDocs pages show live.
     live_assets: Vec<docs_pictures::LiveAsset>,
     /// The fields of the live materials on the VoxDocs page read, in the
@@ -509,6 +512,7 @@ impl Editor {
             selection: None,
             extra_inspectors: Vec::new(),
             asset_previews: AssetPreviews::default(),
+            imports: importing::Imports::new(&root),
             live_assets: Vec::new(),
             live_fields: Vec::new(),
             animations: Vec::new(),
@@ -696,6 +700,7 @@ impl Editor {
             // Folders take an Obj dragged from the Hierarchy, to make a prefab in.
             let making = self.ui.dragging().is_some_and(|source| self.hierarchy.dragged(&source).is_some());
             self.project.take_drops(&mut self.ui, making);
+            self.update_imports(renderer);
             if let Some(action) = self.inspector.update_asset(&mut self.ui) {
                 self.asset_action(action, renderer);
             }
@@ -796,6 +801,7 @@ impl Editor {
                 if let Err(error) = self.game.content.rescan() {
                     tracing::warn!("could not look at the project's files again: {error:#}");
                 }
+                self.files_seen();
                 // Files moved or went, so previews are made again for the paths they have now.
                 self.asset_previews.clear(renderer);
                 self.project.refresh(&mut self.ui, self.game.content.db(), select.as_deref());
@@ -1614,13 +1620,15 @@ impl Editor {
         }
         match event {
             WindowEvent::CursorMoved { position, .. } => self.pointer = Some((position.x as f32, position.y as f32)),
-            WindowEvent::Focused(focused) => self.build_window.set_window_focused(*focused),
-            // A file dropped on the window goes into the VoxDocs page being written.
-            WindowEvent::DroppedFile(path) => {
-                if !self.docs.drop_file(&mut self.ui, path) {
-                    self.notify("Drop pictures on a VoxDocs page while writing it, with Edit");
+            WindowEvent::Focused(focused) => {
+                self.build_window.set_window_focused(*focused);
+                // Files may have changed while the editor was away.
+                if *focused {
+                    self.imports.look_again();
                 }
             }
+            // A file dropped on the window goes into the project, or the VoxDocs page being written.
+            WindowEvent::DroppedFile(path) => self.file_dropped(path),
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.control = modifiers.state().control_key() || modifiers.state().super_key();
                 self.shift = modifiers.state().shift_key();

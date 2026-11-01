@@ -103,6 +103,27 @@ pub struct ContentUsage {
     pub materials: usize,
 }
 
+/// What importing a model again changed (see [`Content::reimport_model`]).
+#[derive(Clone, Debug, Default)]
+pub struct Reimported {
+    /// Its parts that sit elsewhere in it now, as after a change of size.
+    pub moved: Vec<MovedPart>,
+    /// When its parts changed and it was uploaded anew, the mesh and the
+    /// material each old one became, for parts it still has.
+    pub meshes: HashMap<MeshHandle, MeshHandle>,
+    pub materials: HashMap<MaterialHandle, MaterialHandle>,
+}
+
+/// The parts of a model imported again whose place in it changed, from
+/// each old part and the new one it became.
+fn moved_parts<'a>(pairs: impl Iterator<Item = (&'a ImportedNode, &'a ImportedNode)>) -> Vec<MovedPart> {
+    let place = |node: &ImportedNode| (node.position, node.rotation, node.scale);
+    pairs
+        .filter(|(was, now)| place(was) != place(now))
+        .map(|(was, now)| MovedPart { mesh: now.mesh, before: place(was), after: place(now) })
+        .collect()
+}
+
 /// A part of a model imported again that sits elsewhere in it now: its
 /// mesh, and its position, rotation and scale in the model before and after.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,6 +148,9 @@ pub struct Content {
     /// Models the content build cooked, which load without import work.
     cooked: Arc<HashSet<AssetGuid>>,
     models: HashMap<AssetGuid, ImportedModel>,
+    /// Models replaced by an import with other parts, kept for the undo
+    /// steps that may still draw them.
+    stale_models: Vec<ImportedModel>,
     meshes: HashMap<AssetRef, MeshHandle>,
     mesh_refs: HashMap<MeshHandle, AssetRef>,
     asset_materials: HashMap<AssetRef, MaterialHandle>,
@@ -205,6 +229,7 @@ impl Content {
             texts: HashMap::new(),
             cooked: Arc::default(),
             models: HashMap::new(),
+            stale_models: Vec::new(),
             meshes: HashMap::new(),
             mesh_refs: HashMap::new(),
             asset_materials: HashMap::new(),
@@ -362,28 +387,56 @@ impl Content {
         Ok(&self.models[&guid].nodes)
     }
 
-    /// Imports a loaded model again, as after its import settings changed,
-    /// behind the handles its meshes and materials have, so whatever draws
-    /// them shows the change from the next frame. Returns each part whose
-    /// place in the model changed, as after a change of size. A model not
-    /// loaded is left to import with its settings when next used.
-    pub fn reimport_model(&mut self, renderer: &mut Renderer, guid: AssetGuid) -> Result<Vec<MovedPart>> {
+    /// Imports a loaded model again, as after its import settings or its
+    /// file changed. With the same parts as before, it goes behind the
+    /// handles its meshes and materials have, so whatever draws them shows
+    /// the change from the next frame. With other parts, as after its file
+    /// changed, it is uploaded anew, and [`Reimported`] says which handles
+    /// became which; the old model stays loaded, since undo steps may still
+    /// draw it. A model not loaded is left to import when next used.
+    pub fn reimport_model(&mut self, renderer: &mut Renderer, guid: AssetGuid) -> Result<Reimported> {
         if !self.models.contains_key(&guid) {
-            return Ok(Vec::new());
+            return Ok(Reimported::default());
         }
         ensure!(!self.cooked.contains(&guid), "a model in built content cannot be imported again");
         let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
         let reader = self.reader();
         let prepared = voxear_render::prepare_model(&path, &mut |file| reader.read(file))?;
         let old = &self.models[&guid];
-        let model = renderer.reupload_model(old, &prepared)?;
-        let place = |node: &ImportedNode| (node.position, node.rotation, node.scale);
-        let moved = (old.nodes.iter().zip(&model.nodes))
-            .filter(|(was, now)| place(was) != place(now))
-            .map(|(was, now)| MovedPart { mesh: now.mesh, before: place(was), after: place(now) })
-            .collect();
-        self.models.insert(guid, model);
-        Ok(moved)
+        let parts = old.nodes.iter().map(|node| (node.mesh_part.as_str(), node.material_part.as_deref()));
+        if prepared.parts().eq(parts) {
+            let model = renderer.reupload_model(old, &prepared)?;
+            let moved = moved_parts(old.nodes.iter().zip(&model.nodes));
+            self.models.insert(guid, model);
+            return Ok(Reimported { moved, ..Reimported::default() });
+        }
+
+        let model = renderer.upload_model(&prepared)?;
+        let old = self.models.remove(&guid).expect("loaded, as checked above");
+        let mut reimported = Reimported::default();
+        let mut pairs = Vec::new();
+        for was in &old.nodes {
+            if let Some(now) = model.nodes.iter().find(|now| now.mesh_part == was.mesh_part) {
+                reimported.meshes.insert(was.mesh, now.mesh);
+                pairs.push((was, now));
+            }
+            let material = model.nodes.iter().find(|now| now.material_part == was.material_part);
+            if let Some(now) = material.filter(|_| was.material_part.is_some()) {
+                reimported.materials.insert(was.material, now.material);
+            }
+        }
+        reimported.moved = moved_parts(pairs.into_iter());
+        // Prefabs drawing it are read again, with its new parts.
+        self.prefabs.templates.iter_mut().for_each(|template| *template = None);
+        self.stale_models.push(old);
+        self.register_model(guid, model);
+        Ok(reimported)
+    }
+
+    /// The project paths of the models imported from their source files.
+    pub fn loaded_models(&self) -> Vec<String> {
+        let source = self.models.keys().filter(|guid| !self.cooked.contains(guid));
+        source.filter_map(|&guid| Some(self.db.get(guid)?.path.clone())).collect()
     }
 
     fn register_model(&mut self, guid: AssetGuid, model: ImportedModel) {

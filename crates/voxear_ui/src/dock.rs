@@ -102,8 +102,9 @@ pub(crate) struct DockState {
     pub closed: Vec<(String, Option<String>)>,
     /// Each tab button, and the panel it shows.
     pub headers: Vec<(taffy::NodeId, String)>,
-    /// Each tab's close button, and the panel it closes.
-    pub closers: Vec<(taffy::NodeId, String)>,
+    /// Each area's and floating window's options button, at its tab bar's
+    /// right end, and the tabs it is for.
+    pub menus: Vec<(taffy::NodeId, taffy::NodeId)>,
     /// What was built for the layout, replaced whenever it changes.
     pub structure: Option<taffy::NodeId>,
     pub next_area: u32,
@@ -419,7 +420,7 @@ impl Ui {
             panels: Vec::new(),
             closed: Vec::new(),
             headers: Vec::new(),
-            closers: Vec::new(),
+            menus: Vec::new(),
             structure: None,
             next_area: 1,
         };
@@ -492,6 +493,8 @@ impl Ui {
     /// Closes a panel: its tab goes, an area left empty folds away, and its
     /// elements stay alive out of sight until it opens again. Any panel can
     /// close, the last one too, which leaves the dock empty until one opens.
+    /// Each area's options button, at its tab bar's right end, is where the
+    /// editor offers it, with what else is done to a window.
     pub fn close_dock_panel(&mut self, dock: NodeId, id: &str) {
         let Some(state) = self.dock_state(dock) else { return };
         if !state.placed().iter().any(|p| p == id) {
@@ -567,16 +570,25 @@ impl Ui {
             .into_iter()
             .map(NodeId)
             .find(|&tabs| self.children(tabs).first().is_some_and(|&bar| self.context_clicked(bar)))?;
+        self.showing_in(dock, tabs)
+    }
+
+    /// The panel whose area's options button was clicked since the last
+    /// frame, the one showing there, with where its menu opens: under the
+    /// button, to its right edge.
+    pub fn dock_menu_clicked(&mut self, dock: NodeId) -> Option<(String, (f32, f32))> {
+        let menus = self.dock_state(dock)?.menus.clone();
+        let (button, tabs) = menus.into_iter().find(|(button, _)| self.clicked(NodeId(*button)))?;
+        let [x, y, width, height] = self.rect(NodeId(button));
+        Some((self.showing_in(dock, NodeId(tabs))?, (x + width, y + height + 4.0)))
+    }
+
+    /// The panel whose tab is selected among an area's or window's tabs.
+    fn showing_in(&mut self, dock: NodeId, tabs: NodeId) -> Option<String> {
         let selected = self.selected_tab(tabs);
         let header = self.children(self.children(tabs)[0]).get(selected).copied()?;
         let headers = &self.dock_state(dock)?.headers;
         headers.iter().find(|(node, _)| *node == header.0).map(|(_, panel)| panel.clone())
-    }
-
-    /// The panel whose tab's close button was clicked since the last frame.
-    pub fn dock_tab_close_clicked(&mut self, dock: NodeId) -> Option<String> {
-        let closers = self.dock_state(dock)?.closers.clone();
-        closers.into_iter().find(|(close, _)| self.clicked(NodeId(*close))).map(|(_, panel)| panel)
     }
 
     /// The other panels in the area a panel is in.
@@ -676,7 +688,7 @@ impl Ui {
             }
         }
         state.headers.clear();
-        state.closers.clear();
+        state.menus.clear();
         let mut layout = std::mem::replace(&mut state.layout, DockNode::area(0, Vec::new(), 0));
         let structure = self.build_dock(dock, &mut layout, &mut state);
         state.layout = layout;
@@ -738,10 +750,12 @@ impl Ui {
             let bar = self.children(tabs)[0];
             let header = *self.children(bar).last().expect("add_tab added a tab");
             state.headers.push((header.0, id.clone()));
-            let close = self.icon_button(header, "close");
-            self.add_class(close, "dock-tab-close");
-            state.closers.push((close.0, id.clone()));
         }
+        // After the tabs, so they keep their places among the bar's children.
+        let bar = self.children(tabs)[0];
+        let options = self.icon_button(bar, "more");
+        self.add_class(options, "dock-menu");
+        state.menus.push((options.0, tabs.0));
         self.set_selected_tab(tabs, selected);
         tabs
     }

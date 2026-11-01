@@ -182,16 +182,17 @@ fn panels_close_and_open_again_beside_where_they_were() {
         "back beside the Hierarchy, showing"
     );
 
-    // A tab's close button closes it too.
-    let close = with_class(&ui, tab(&ui, dock, "Project"), "dock-tab-close").expect("a close button on the tab");
-    let (x, y) = centre(&ui, close);
+    // Every area has an options button at its tab bar's right end, for the menu of its tab showing.
+    let area = ui.parent(ui.parent(tab(&ui, dock, "Project")).unwrap()).unwrap();
+    let options = with_class(&ui, area, "dock-menu").expect("an options button");
+    let [bar_x, _, bar_w, _] = ui.rect(ui.children(area)[0]);
+    let [x, _, w, _] = ui.rect(options);
+    assert!(x + w > bar_x + bar_w - 10.0, "at the bar's right end");
+    let (x, y) = centre(&ui, options);
     ui.pointer_move(x, y);
     ui.pointer_button(true);
     ui.pointer_button(false);
-    assert_eq!(ui.dock_tab_close_clicked(dock).as_deref(), Some("project"));
-    ui.close_dock_panel(dock, "project");
-    ui.frame(WIDTH, HEIGHT, 1.0);
-    ui.open_dock_panel(dock, "project");
+    assert_eq!(ui.dock_menu_clicked(dock).map(|(panel, _)| panel).as_deref(), Some("project"));
     ui.frame(WIDTH, HEIGHT, 1.0);
 
     // A whole area closes, folding away; its panel comes back to the first area.
@@ -259,7 +260,8 @@ fn panels_float_in_windows_that_move_resize_and_dock_again() {
     let bar = with_class(&ui, window, "tab-bar").unwrap();
     let [bx, by, bw, bh] = ui.rect(bar);
     let before = floated(&layout);
-    drag(&mut ui, (bx + bw - 20.0, by + bh / 2.0), (bx + bw + 30.0, by + bh / 2.0 + 20.0));
+    // Grabbed on its empty part, left of the options button at its right end.
+    drag(&mut ui, (bx + bw - 60.0, by + bh / 2.0), (bx + bw - 10.0, by + bh / 2.0 + 20.0));
     let moved = floated(&ui.dock_layout(dock));
     assert_eq!((moved[0] - before[0], moved[1] - before[1]), (50.0, 20.0), "{moved:?} from {before:?}");
     let grip = with_class(&ui, window, "dock-float-grip").unwrap();

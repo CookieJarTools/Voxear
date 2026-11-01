@@ -1144,8 +1144,8 @@ tabbed areas of panels.
 - **Closing and opening panels.** `close_dock_panel` takes a panel's tab away, folding an area left empty, and its
   elements stay alive out of sight; any panel can close, the last one too. `open_dock_panel` brings it back as a
   tab beside a panel it shared an area with, or in the first area, and `open_dock_panel_beside` beside another.
-  Each tab has a close button, shown on the tab showing and on any under the pointer, which
-  `dock_tab_close_clicked` reports. `dock_panels` lists every panel with whether it is open, and
+  Each area and floating window has an options button at its tab bar's right end, which `dock_menu_clicked`
+  reports with the panel showing there, for the window's menu. `dock_panels` lists every panel with whether it is open, and
   `dock_tab_context_clicked` says whose tab was context-clicked, for a menu; a context click on a tab bar's empty
   part is one on its tab showing.
 - **Where a dragged tab lands.** Over a tab bar it joins that area or floating window as a tab; near an area's
@@ -1413,10 +1413,11 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   the Game view (through the level's first camera, and the one drawn while playing when both show), the Project and
   the Console under them, and the Inspector on the right at 300px. Each panel has a
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
-  shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. A tab's close button
-  closes it, and a context click on a tab or its bar offers Close, Close Other Tabs, Float or Dock, each panel
-  closed to open beside it, and Reset Layout; a closed panel keeps its state, and opens again from there or the
-  Window button, beside a panel it shared an area with.
+  shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. Every window's options
+  button, at its header's right end (the Game and Scene views' too), and a context click on a tab or its bar,
+  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, each panel closed to open beside it, and
+  Reset Layout; a closed panel keeps its state, and opens again from there or the Window button, beside a panel it
+  shared an area with.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
   or more, they show as tiles; narrower, as rows with each file's size. Selecting a folder in the tree opens it,

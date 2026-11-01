@@ -247,9 +247,8 @@ pub struct Editor {
     discard_armed: Option<String>,
     /// A message for the status bar, and when it was given.
     notice: Option<(String, Instant)>,
-    /// The panel whose tab's menu is open, and the panels closed it offers
-    /// to open beside it.
-    tab_menu: Option<(String, Vec<String>)>,
+    /// The panel whose window menu is open, and what each of its items does.
+    window_menu: Option<(String, Vec<Option<windows::WindowAction>>)>,
     /// What the rail's drawer shows, if it is open.
     drawer: Option<Drawer>,
     /// The prefab open on its own to edit, if one is.
@@ -485,7 +484,7 @@ impl Editor {
             unsaved: false,
             discard_armed: None,
             notice: None,
-            tab_menu: None,
+            window_menu: None,
             drawer: None,
             prefab: None,
             layouts: windows::built_in_layouts(),

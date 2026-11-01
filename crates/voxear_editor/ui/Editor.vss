@@ -438,11 +438,12 @@
     gap: 4px;
 }
 
-/* A panel's own controls, at the right of its header. */
+/* A panel's own controls, at the right of its header, left of the dock's options button, which is every window's
+   menu. */
 .panel-actions {
     position: absolute;
     top: -32px;
-    right: 4px;
+    right: 30px;
     height: 32px;
     flex-direction: row;
     align-items: center;

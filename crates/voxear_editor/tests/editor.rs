@@ -1612,13 +1612,24 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     frame(&mut editor, &mut renderer);
     assert!(editor.ui.dock_panel_neighbours(dock, "console").contains(&"project".to_string()), "beside the Project");
 
-    // Its tab's own close button closes it as well.
+    // Every window's options button, at its tab bar's right end, has the same menu, with Maximize too.
     let tab = dock_tab(&editor.ui, "Console").unwrap();
-    let close = first_with(&editor.ui, tab, "dock-tab-close").expect("a close button on the tab");
+    editor.ui.show_dock_panel(dock, "console");
+    frame(&mut editor, &mut renderer);
+    let area = editor.ui.parent(editor.ui.parent(tab).unwrap()).unwrap();
+    let options = first_with(&editor.ui, area, "dock-menu").expect("an options button");
+    click(&mut editor.ui, options);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_item(&editor.ui, "Maximize").is_some(), "{:?}", menu_texts(&editor.ui));
+    let close = menu_item(&editor.ui, "Close").unwrap();
     click(&mut editor.ui, close);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
-    assert!(dock_tab(&editor.ui, "Console").is_none(), "closed from its tab");
+    assert!(dock_tab(&editor.ui, "Console").is_none(), "closed from its window's menu");
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, dock, "dock-menu", &mut buttons);
+    let shown = buttons.into_iter().filter(|&b| editor.ui.is_visible(b)).count();
+    assert!(shown >= 4, "every window has one, the Game and Scene views too: {shown}");
 
     let windows = editor.ui.find(editor.ui.root(), "windows").unwrap();
     click(&mut editor.ui, windows);

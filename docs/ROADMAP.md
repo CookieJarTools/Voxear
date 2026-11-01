@@ -417,8 +417,9 @@ Still to do in M3:
   - [x] reference fields as Unity's: a click pings, a double click selects, and the arrow opens the picker
   - [x] Close Prefab on prefab mode's bar
   - [x] a Layout menu in place of the World and Profiling tabs, with layouts saved under names
-  - [x] windows: a close button on each tab, any panel can close, closed panels open from any tab's menu, a tab
-    bar's own menu, and a tab dropped in the middle of a panel floats rather than joining it
+  - [x] windows: an options button on every window with its menu (Maximize, Close, Float, panels to open, Reset
+    Layout), the same on a tab's or its bar's context click, any panel can close, and a tab dropped in the middle
+    of a panel floats rather than joining it
   - [x] script fields edited while playing, on the running behaviour, with its buttons and callbacks
   - [ ] references rather than strings: a level field, and a component field that takes an Obj with the component
   - [ ] several Inspectors, each lockable, and windows a game's code can open more than once

@@ -1,10 +1,11 @@
-//! The dock's panels as windows. Each tab has a button to close it, and a
-//! context click on a tab, or on its bar, offers Close, Close Other Tabs,
-//! Float (or Dock, for one floating in a window of its own), every panel
-//! closed to open beside it, and Reset Layout; the top bar's Window button
-//! lists every panel, ticked while open, to open or close, and resets the
-//! layout. Any panel can close, and a closed one keeps its state and opens
-//! again beside a panel it shared an area with.
+//! The dock's panels as windows. Each window's options button, at its tab
+//! bar's right end, and a context click on a tab or its bar, offer Maximize
+//! (or Restore), Close, Close Other Tabs, Float (or Dock, for one floating
+//! in a window of its own), every panel closed to open beside it, and Reset
+//! Layout. The top bar's Window button lists every panel, ticked while
+//! open, to open or close, and resets the layout. Any panel can close, and a
+//! closed one keeps its state and opens again beside a panel it shared an
+//! area with.
 //!
 //! Layouts are arrangements of the same panels, picked from the top bar's
 //! Layout menu: Default for building levels, Profiling with the Game view
@@ -41,6 +42,20 @@ pub(super) struct Layout {
     kept: Option<String>,
 }
 
+/// What a window's menu does to the panel it was opened for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum WindowAction {
+    /// Gives it the whole dock, or puts the layout back.
+    Maximize,
+    Close,
+    CloseOthers,
+    /// Floats it in a window of its own, or docks it again.
+    Float,
+    /// Opens a panel closed, beside it.
+    Open(String),
+    ResetLayout,
+}
+
 /// The built-in layouts, as they start.
 pub(super) fn built_in_layouts() -> Vec<Layout> {
     BUILT_IN.iter().map(|&(name, start)| Layout { name: name.into(), start: start.into(), kept: None }).collect()
@@ -49,51 +64,14 @@ pub(super) fn built_in_layouts() -> Vec<Layout> {
 impl Editor {
     pub(super) fn update_windows(&mut self) {
         let dock = self.nodes.dock;
-        if let Some(panel) = self.ui.dock_tab_close_clicked(dock) {
-            self.ui.close_dock_panel(dock, &panel);
-        }
-        if let Some((panel, at)) = self.ui.dock_tab_context_clicked(dock) {
-            let others = !self.ui.dock_panel_neighbours(dock, &panel).is_empty();
-            let floating = self.ui.dock_panel_floating(dock, &panel);
-            let closed: Vec<(String, String)> = self
-                .ui
-                .dock_panels(dock)
-                .into_iter()
-                .filter(|(.., open)| !open)
-                .map(|(id, title, _)| (id, title))
-                .collect();
-            let mut items = vec![
-                MenuItem::new("Close"),
-                MenuItem::new("Close Other Tabs").enabled(others),
-                MenuItem::new(if floating { "Dock" } else { "Float" }),
-                MenuItem::separator(),
-            ];
-            items.extend(closed.iter().map(|(_, title)| MenuItem::new(&format!("Open {title}"))));
-            if !closed.is_empty() {
-                items.push(MenuItem::separator());
-            }
-            items.push(MenuItem::new("Reset Layout"));
-            self.ui.open_menu(dock, at, &items);
-            self.tab_menu = Some((panel, closed.into_iter().map(|(id, _)| id).collect()));
+        let asked = self.ui.dock_menu_clicked(dock).or_else(|| self.ui.dock_tab_context_clicked(dock));
+        if let Some((panel, at)) = asked {
+            self.open_window_menu(panel, at);
         }
         if let Some(choice) = self.ui.menu_choice(dock) {
-            let (panel, closed) = self.tab_menu.take().unwrap_or_default();
-            // The items after the first separator open the panels closed, beside this one.
-            let opening = choice.checked_sub(4).and_then(|index| closed.get(index));
-            match choice {
-                0 => self.ui.close_dock_panel(dock, &panel),
-                1 => {
-                    for other in self.ui.dock_panel_neighbours(dock, &panel) {
-                        self.ui.close_dock_panel(dock, &other);
-                    }
-                }
-                2 if self.ui.dock_panel_floating(dock, &panel) => self.ui.dock_floating_panel(dock, &panel),
-                2 => self.ui.float_dock_panel(dock, &panel, None),
-                _ if opening.is_some() => {
-                    let id = opening.cloned().unwrap_or_default();
-                    self.ui.open_dock_panel_beside(dock, &id, &panel);
-                }
-                _ => self.reset_layout(),
+            let (panel, actions) = self.window_menu.take().unwrap_or_default();
+            if let Some(Some(action)) = actions.get(choice) {
+                self.window_action(&panel, action.clone());
             }
         }
 
@@ -114,7 +92,60 @@ impl Editor {
         }
     }
 
-    /// Opens a panel by id where the dock last had it. The Build window,
+    /// A window's menu, from its options button or a context click on its
+    /// tab or tab bar: Maximize (or Restore), Close, Close Other Tabs, Float
+    /// (or Dock), each panel closed to open beside it, and Reset Layout.
+    fn open_window_menu(&mut self, panel: String, at: (f32, f32)) {
+        let dock = self.nodes.dock;
+        let others = !self.ui.dock_panel_neighbours(dock, &panel).is_empty();
+        let floating = self.ui.dock_panel_floating(dock, &panel);
+        let maximized = self.maximized.is_some();
+        let mut items = vec![
+            (MenuItem::new(if maximized { "Restore" } else { "Maximize" }), Some(WindowAction::Maximize)),
+            (MenuItem::new("Close"), Some(WindowAction::Close)),
+            (MenuItem::new("Close Other Tabs").enabled(others), Some(WindowAction::CloseOthers)),
+            (MenuItem::new(if floating { "Dock" } else { "Float" }), Some(WindowAction::Float)),
+            (MenuItem::separator(), None),
+        ];
+        let closed: Vec<(String, String)> = self
+            .ui
+            .dock_panels(dock)
+            .into_iter()
+            .filter(|(.., open)| !open)
+            .map(|(id, title, _)| (id, title))
+            .collect();
+        if !closed.is_empty() {
+            let open = closed
+                .into_iter()
+                .map(|(id, title)| (MenuItem::new(&format!("Open {title}")), Some(WindowAction::Open(id))));
+            items.extend(open);
+            items.push((MenuItem::separator(), None));
+        }
+        items.push((MenuItem::new("Reset Layout"), Some(WindowAction::ResetLayout)));
+        let (menu, actions): (Vec<MenuItem>, Vec<Option<WindowAction>>) = items.into_iter().unzip();
+        self.ui.open_menu(dock, at, &menu);
+        self.window_menu = Some((panel, actions));
+    }
+
+    /// Does what a window's menu picked, for the panel it was opened for.
+    fn window_action(&mut self, panel: &str, action: WindowAction) {
+        let dock = self.nodes.dock;
+        match action {
+            WindowAction::Maximize => self.toggle_maximized(panel),
+            WindowAction::Close => self.ui.close_dock_panel(dock, panel),
+            WindowAction::CloseOthers => {
+                for other in self.ui.dock_panel_neighbours(dock, panel) {
+                    self.ui.close_dock_panel(dock, &other);
+                }
+            }
+            WindowAction::Float if self.ui.dock_panel_floating(dock, panel) => self.ui.dock_floating_panel(dock, panel),
+            WindowAction::Float => self.ui.float_dock_panel(dock, panel, None),
+            WindowAction::Open(id) => self.ui.open_dock_panel_beside(dock, &id, panel),
+            WindowAction::ResetLayout => self.reset_layout(),
+        }
+    }
+
+    /// Opens a panel by id where the dock last had it.    /// Opens a panel by id where the dock last had it. The Build window,
     /// which is wide, opens by the Scene view the first time rather than in
     /// a side column.
     pub(super) fn open_panel(&mut self, id: &str) {

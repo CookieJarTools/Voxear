@@ -36,7 +36,6 @@
                 <DockPanel id="hierarchy" title="Hierarchy" class="dock-content">
                     <Panel class="panel-actions">
                         <Button name="hierarchy-add" class="icon-button"><Icon icon="plus" /></Button>
-                        <Button class="icon-button"><Icon icon="more" /></Button>
                     </Panel>
                     <Panel class="search">
                         <Icon icon="search" class="search-icon" />
@@ -47,7 +46,6 @@
                 <DockPanel id="project" title="Project" class="dock-content">
                     <Panel class="panel-actions">
                         <Button class="icon-button"><Icon icon="plus" /></Button>
-                        <Button class="icon-button"><Icon icon="more" /></Button>
                     </Panel>
                     <SplitView name="project-split" class="fill project-split" size="200">
                         <TreeView name="project-folders" class="fill folders" item-height="24" />
@@ -129,9 +127,6 @@
                     <Panel name="build-panel" class="fill build-panel" />
                 </DockPanel>
                 <DockPanel id="inspector" title="Inspector">
-                    <Panel class="panel-actions">
-                        <Button class="icon-button"><Icon icon="more" /></Button>
-                    </Panel>
                     <ScrollView name="inspector" class="fill inspector" />
                 </DockPanel>
             </DockSpace>

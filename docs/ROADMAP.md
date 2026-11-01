@@ -406,7 +406,21 @@ Still to do in M3:
   - [x] components written in scenes and prefabs, and shown in the inspector
   - [x] live component values in the Inspector while playing
   - Later: parallel jobs over chunks.
-- The Animation workspace, once there is animation.
+- The Animation layout, once there is animation.
+- **From the first full try of the editor** (2026-11-01), the editor's own part:
+  - [x] clicks and double clicks that land even when what was pressed is built again before the release
+  - [x] text cut off at the edge of what hides its overflow, and resizable columns: the Entities panel's lists,
+    and the Memory panel's lists and amounts table
+  - [x] the Profiler: dragging along the chart goes through the frames, and the Timeline scrolls
+  - [x] reference fields as Unity's: a click pings, a double click selects, and the arrow opens the picker
+  - [x] Close Prefab on prefab mode's bar
+  - [x] a Layout menu in place of the World and Profiling tabs, with layouts saved under names
+  - [x] windows: a close button on each tab, any panel can close, closed panels open from any tab's menu, a tab
+    bar's own menu, and a tab dropped in the middle of a panel floats rather than joining it
+  - [ ] script fields edited while playing, on the running behaviour, with its buttons and callbacks
+  - [ ] references rather than strings: a level field, and a component field that takes an Obj with the component
+  - [ ] several Inspectors, each lockable, and windows a game's code can open more than once
+  - [ ] windows dragged out of the editor into windows of the desktop's own
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
 

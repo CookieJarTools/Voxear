@@ -1045,8 +1045,14 @@ how they look, as UXML and USS do in Unity:
   skipped, as browsers do, and the rest of the sheet still applies.
 - **The pointer** sets `:hover` on the element under it and everything it is in, and `:active` while pressed.
   A press and release on the same element is a click, which code reads with `ui.clicked(node)`, as the overlay
-  does to fold itself away. Disabled elements cannot be clicked, and `pointer-events: none` lets the pointer
-  through. A document's container lets it through too, so UI over a game takes only the clicks it is under.
+  does to fold itself away. When what was pressed is built again before the release, as a panel rebuilt by a
+  value typed a moment before, the release clicks what is under the pointer then, if the pointer has hardly
+  moved (5 pixels). A double click is two clicks within 0.4 seconds and 5 pixels, as desktops tell them, so it
+  holds when the first click rebuilt what it landed on. Disabled elements cannot be clicked, and
+  `pointer-events: none` lets the pointer through. A document's container lets it through too, so UI over a game
+  takes only the clicks it is under.
+- **Overflow.** `overflow: hidden` cuts off what an element holds at its edge, its own text included, so a
+  label in a table's cell keeps a long line within its column instead of running over the next.
 - Code finds elements by name with `ui.find(document, "gpu")`, and changes them with `set_text`, `add_class`,
   `set_enabled` and the like.
 
@@ -1124,21 +1130,28 @@ tabbed areas of panels.
   it splits that area. A ghost of the tab follows the pointer and a preview shows where it will land. Areas
   left empty fold away, and a press that never moves stays a click on the tab.
 - A panel keeps its own elements wherever it goes, so a half-typed field or a scrolled list survives a move.
-- The layout reads and writes as text, for workspace presets and saving between sessions:
+- The layout reads and writes as text, for the editor's layouts and saving between sessions:
   `row(240, [hierarchy, project], column(420, [scene, game*], [console]))`, where `row` and `column` give the
   first part's size in pixels (or the second's, negative, or the first's share, as `57%`) and `*` marks the
   showing tab. Divider moves and tab choices are part of it. Panels a layout leaves out join its first area, or,
   with `set_dock_layout_closing_rest`, are closed.
 - **Closing and opening panels.** `close_dock_panel` takes a panel's tab away, folding an area left empty, and its
-  elements stay alive out of sight; `open_dock_panel` brings it back as a tab beside a panel it shared an area
-  with, or in the first area. `dock_panels` lists every panel with whether it is open, and
-  `dock_tab_context_clicked` says whose tab was context-clicked, for a menu.
+  elements stay alive out of sight; any panel can close, the last one too. `open_dock_panel` brings it back as a
+  tab beside a panel it shared an area with, or in the first area, and `open_dock_panel_beside` beside another.
+  Each tab has a close button, shown on the tab showing and on any under the pointer, which
+  `dock_tab_close_clicked` reports. `dock_panels` lists every panel with whether it is open, and
+  `dock_tab_context_clicked` says whose tab was context-clicked, for a menu; a context click on a tab bar's empty
+  part is one on its tab showing.
+- **Where a dragged tab lands.** Over a tab bar it joins that area or floating window as a tab; near an area's
+  edge (its outer quarter) it splits the area; in the middle of another area or window there is nowhere to dock,
+  so it floats there in a window of its own, whose place the preview shows. In the middle of where it came from,
+  it stays.
 - **Floating windows** *(implemented)*. A panel floats in a window of its own over the dock with
   `float_dock_panel`, Float on its tab's menu in the editor, or its tab let go outside every area. Dragging the
   window's bar moves it, the grip in its corner resizes it, and both stay inside the dock. Its tabs dock again as
-  any tab does (or with Dock on the menu, `dock_floating_panel`); other tabs dropped on it join it. A window is the
-  dock's last child, so it is drawn over the areas yet under menus opened from it, and the last panel docked stays
-  docked. Floating windows follow the tree in the layout's text, each with its place and size:
+  any tab does (or with Dock on the menu, `dock_floating_panel`); other tabs dropped on its tab bar join it. A
+  window is the dock's last child, so it is drawn over the areas yet under menus opened from it. Floating windows
+  follow the tree in the layout's text, each with its place and size:
   `row(240, [hierarchy], [scene]) float(600, 80, 420, 320, [inspector])`, so they are kept between sessions too.
 
   ```xml
@@ -1349,9 +1362,15 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
     window reloads changed scripts the same way (`Game::watch_scripts`, which builds them off the main thread as
     they change). A build of the scripts that runs past ten minutes, or describing one past two, is taken as stuck
     and stopped, so it cannot hold Play up for good.
-- **The top bar** has the Voxear mark, the workspaces (World and Profiling; see the Profiler below), the command
-  bar (Ctrl+K), play, pause and step in a pill, the **Window** button and the Build button. Window lists every
-  panel, ticked while open, to open or close, and resets the layout.
+- **The top bar** has the Voxear mark, the **Layout** menu, the command bar (Ctrl+K), play, pause and step in a
+  pill, the **Window** button and the Build button. Window lists every panel, ticked while open, to open or close,
+  and resets the layout.
+- **Layouts** (`editor::windows`), as Unity's: arrangements of the same panels, picked from the Layout menu, which
+  names the one showing. Default is for building levels; Profiling has the Game view over the Profiler, the
+  Entities panel, the Frame Debugger, the Memory panel and the Console. Save Layout As keeps the arrangement
+  showing under a name typed in a box under the menu's button, and Delete Layout forgets a saved one. Each layout
+  keeps the arrangement it was left in, as Blender's workspaces do, and Reset Layout puts it back as it started.
+  `Editor::use_layout` and `layout_name` pick and name them from code.
 - **The rail** down the left opens a **drawer** over the left third of the dock: Levels from the top, Settings
   from the bottom. Its button again, or the drawer's close button, closes it. The palette's commands that show the
   Levels or Settings open it there.
@@ -1375,8 +1394,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   local), fly speed, and whether the stats chip and axis gizmo show; whether Play starts paused, saves first, clears
   the Console, pauses on an error, and reloads changed scripts while playing; the Scene view's shading and gizmos;
   and the Console's Collapse and trace toggles, and which code editor opens files. They are kept per project in
-  `.voxear/Editor.toml` with the palette's recent items and the panels' layout, each workspace's and which one
-  showed, so the editor opens as it was closed. They are shown in the rail's Settings drawer, with a tab for
+  `.voxear/Editor.toml` with the palette's recent items and the layouts, the saved ones, each one's arrangement
+  and which one showed, so the editor opens as it was closed. They are shown in the rail's Settings drawer, with a tab for
   each group down its left and a search over all of them that matches as the palette does. The tool strip's
   Pivot, Global and snap buttons, the Scene view's header and the wheel's fly speed are the same settings. From the
   palette, a toggle flips, a choice moves to the next, and a number opens the Settings drawer at it, focused to
@@ -1388,9 +1407,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   the Game view (through the level's first camera, and the one drawn while playing when both show), the Project and
   the Console under them, and the Inspector on the right at 300px. Each panel has a
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
-  shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. A context click on a
-  tab offers Close, Close Other Tabs and Reset Layout; a closed panel keeps its state, and opens again from the
-  Window button beside a panel it shared an area with.
+  shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. A tab's close button
+  closes it, and a context click on a tab or its bar offers Close, Close Other Tabs, Float or Dock, each panel
+  closed to open beside it, and Reset Layout; a closed panel keeps its state, and opens again from there or the
+  Window button, beside a panel it shared an area with.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
   or more, they show as tiles; narrower, as rows with each file's size. Selecting a folder in the tree opens it,
@@ -1487,7 +1507,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   Camera the Obj lacks, and the project's scripts; a context click on a component's header removes it, or moves a
   script up or down among the Obj's scripts, which is the order they run and save in, and on a script field's row
   resets it to the script's value. Every change is a step to undo.
-- **The object picker** (`object_picker`), as Unity's: a click on a reference field opens it under the field, titled
+- **Reference fields**, as Unity's object fields: a click pings what one points at, lighting an Obj's row in the
+  Hierarchy (its scene and parents opened) or an asset's tile in the Project panel (its folder opened); a double
+  click selects an Obj it points at; and its arrow, a button of its own, opens the object picker.
+- **The object picker** (`object_picker`), as Unity's: a reference field's arrow opens it under the field, titled
   for what the field takes ("Select Material", "Select Spinner"), with a search box to type in at once over None and
   everything the field can take, each with its icon and where it is (an asset's folder, an Obj's scene). Typing
   narrows it as the command palette does, letters in order and the best match first, by name or by place. Up and
@@ -1531,8 +1554,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   as a prefab has one root; and the prefab open, or one that holds it, is not placed.
 - **Prefab mode** (`editor::prefab_mode`), as in Unity: a prefab opens on its own to edit from the Project (a double
   click, or the Inspector's Open), or from the Hierarchy's Open Prefab on an instance. Its Objs load as a scene's
-  would, in place of the level (`Levels::open_scene` takes prefabs), a bar over the Scene view names it, and Back
-  opens again the level or scene it was opened from. Save writes the prefab, and what was read of it is then
+  would, in place of the level (`Levels::open_scene` takes prefabs), a bar over the Scene view names it, and Back,
+  or Close Prefab at the bar's other end, opens again the level or scene it was opened from. Save writes the prefab, and what was read of it is then
   forgotten (`Content::forget`), so the level's instances show the change when it opens again. A prefab does not
   play on its own: Play asks to go Back first.
 - **Locking components for designers.** In prefab mode, a component's menu has Lock for Designers. A locked
@@ -1586,9 +1609,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
     comes into the Console at its level, in the Player category, ending with how the game closed. A game run on its
     own keeps its log in a file (see "The player"), and **Player Log** in the toolbar lists each build that has
     run, its last run and the one before, to read into the Console the same way.
-- **The Profiler** (`profiler`), the Profiling workspace's panel, after Unity's. The top bar's workspaces are
-  layouts of the same panels, each kept as it was left: World for building levels, and Profiling, with the Game
-  view over the Profiler and the Console. The Profiler keeps the last 300 frames as a chart of their CPU and GPU
+- **The Profiler** (`profiler`), in the Profiling layout, after Unity's. It keeps the last 300 frames as a chart of
+  their CPU and GPU
   milliseconds, under lines at 60 and 30 frames a second, and breaks one frame down. Its **Hierarchy** is the
   frame's samples as a tree, each row with its share of the frame with and without what is in it (Total and Self),
   how many times it ran, and its milliseconds, the slowest first: the editor's stages (Game, Editor with a sample
@@ -1597,7 +1619,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   callbacks by class and method** ("Hello.Spinner.Update()", one row for every Spinner, with its calls), with the
   samples scripts take themselves. Beside it are the renderer's passes as the GPU timed them (`Renderer::timings`)
   and what the frame drew and culled, by LOD, with memory and what is loaded. A click on the chart picks a frame,
-  Live goes back to the newest, and Record stops and starts taking frames. Samples are taken only while the panel
+  and dragging along it goes through the frames; Live goes back to the newest, and Record stops and starts taking
+  frames. The Timeline scrolls when its lanes are more than fit. Samples are taken only while the panel
   shows and records.
 - **Profiling samples** (`voxear_core::profiling`): named spans of a frame's work, nested as they ran, merged by name
   under the same parent as Unity's Hierarchy merges them. Sampling is per thread and off until the Profiler turns
@@ -1625,8 +1648,7 @@ The Odin-style inspector attributes come next.
 **Layout.**
 - Dockable tabbed panels: Hierarchy (with instance badges), Inspector, Project, Scene, Game, Console, Profiler and
   Lighting.
-- Workspace presets along the top, as in the concept: World and Profiling now, Animation and Lighting when those
-  systems are built.
+- Built-in layouts for Animation and Lighting, when those systems are built.
 - Floating tool overlays in the viewport, like the Paint Texture panel in the concept.
 
 **Console.** Modelled on CookieJarTools' [Sifter](https://github.com/CookieJarTools/Sifter), a Unity console
@@ -1949,7 +1971,7 @@ terrain, brush tools and asset names are placeholders, not planned features.
 
 - **Top bar:**
   - the Voxear mark
-  - workspace tabs (World, Animation, Profiling)
+  - workspace tabs (World, Animation, Profiling), which became the Layout menu, after Unity's
   - a command bar ("Search or run a command", Ctrl+K)
   - play, pause and step in the centre
   - an accent **Build** button that opens the Build window; the concept's avatar is left out
@@ -2550,7 +2572,7 @@ them in a running game.
     engine's own structure.
   - The same labels make Nsight Graphics, Radeon GPU Profiler and Intel GPA useful.
 - **Frame debugger**, like Unity's, lighter than RenderDoc and always available. *(Implemented: the Frame Debugger
-  panel, in the Profiling workspace.)*
+  panel, in the Profiling layout.)*
   - It lists the passes of the frame the editor just drew, in order, each with its GPU time, and the images the
     picked pass used and how: drawn into, sampled, depth tested, copied.
   - The picked image shows as it stood right after its pass, at any of its mips, in all its colour channels or one
@@ -2598,10 +2620,12 @@ them in a running game.
     the system counts it; Rust's heap, which `vox` and the player count with `CountingAllocator` as their global
     allocator, two atomic sums an allocation; the ECS's chunks by archetype; every GPU allocation by name, and the
     room its blocks have unused (the allocator's report); and the managed heap, in use and committed, from .NET.
-  - The Memory panel, in the Profiling workspace, keeps a line of the parts' totals up to date while it shows, and
+  - The Memory panel, in the Profiling layout, keeps a line of the parts' totals up to date while it shows, and
     takes snapshots by hand, each labelled with the level open. A snapshot picked shows its amounts, the largest
     first; compared with another, only what changed, the largest change first, as before and after a level change
-    to find what was not let go (`voxear_core::memory::diff`).
+    to find what was not let go (`voxear_core::memory::diff`). The amounts are a table under a header whose column
+    edges drag (`editor::columns`), each column starting as a share of the width, and a name too long for its
+    column is cut off at its edge.
   - Still to come: Rust's heap by subsystem (Content, render, audio, physics, scripts), which needs allocations
     tagged where they are made; "who holds this asset", the reference chain behind Content's refcounts; and a
     bundle view of what is resident and why.
@@ -2613,7 +2637,8 @@ them in a running game.
     engine's, with their milliseconds when the Profiler is recording.
   - A filter of component names, as "Transform, Spin", keeps the archetypes that have them all: what a query over
     them would walk.
-  - It reads the world a few times a second while it shows, in the Profiling workspace beside the Profiler.
+  - It reads the world a few times a second while it shows, in the Profiling layout beside the Profiler. Its four
+    lists sit side by side in panes whose lines drag to share the room out.
   - A plain entity, one that is not an Obj, is changed in the panel, in the running world: its Transform, its Name, and
     its C# components' fields, typed as numbers, or a vector's or colour's numbers between commas. An Obj is changed
     in the Inspector instead, where it can be undone and saved. Values are left alone while one is being typed in.

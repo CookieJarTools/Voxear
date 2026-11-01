@@ -1,5 +1,5 @@
 ---
-order: 6
+order: 8
 ---
 
 When something goes wrong, or the game runs slowly, these tools help you find out why:

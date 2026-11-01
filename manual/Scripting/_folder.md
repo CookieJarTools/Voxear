@@ -10,6 +10,8 @@ You write your game's code in C#. A script that you put on an Obj is called a **
 4. [[Fields in the Inspector]]
 5. [[Commands]]
 6. [[Loading Levels]]
+7. [[Components and Systems]], for when there are thousands of something
+8. [[Queries]]
 
 If you know Unity, much will feel familiar: Obj is Voxear's GameObject, and Behaviour its MonoBehaviour. [[How Scripts Run]] lists the few differences that catch people out.
 

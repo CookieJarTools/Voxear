@@ -148,7 +148,8 @@ fn the_inspector_shows_and_opens_what_code_documents() {
     let mut editor = open_described(&mut renderer, &dir);
     let root = editor.ui.root();
     let world = &editor.game.engine.world;
-    let manager = world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == "Game Manager");
+    let manager =
+        world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == "Game Manager");
     editor.select(manager.map(|(entity, _)| entity));
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);

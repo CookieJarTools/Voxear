@@ -40,7 +40,8 @@ impl Editor {
                     self.docs.render_excerpt(&mut self.ui, content, &excerpt);
                 }
                 None => {
-                    let line = self.ui.add_label(content, &format!("There is no VoxDocs page called {}", fold.reference));
+                    let line =
+                        self.ui.add_label(content, &format!("There is no VoxDocs page called {}", fold.reference));
                     self.ui.add_class(line, "excerpt-missing");
                 }
             }

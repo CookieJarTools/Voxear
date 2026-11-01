@@ -2,8 +2,9 @@
 //! and of Voxear.Core, made from the code and its `///` comments. The
 //! engine's script tool writes it as `Code.json` each time the scripts are
 //! described, and VoxDocs shows it after the project's own pages, a folder
-//! for each namespace, the game's first. Its pages are read, not written:
-//! they change when the code does.
+//! for each namespace, the game's first, and in it the folders the types are
+//! written in. Its pages are read, not written: they change when the code
+//! does.
 //!
 //! Any page links to a type as `[[code:Voxear.Prefab]]`, or
 //! `[[code:Voxear.Prefab|Prefab]]` to word the link itself.
@@ -53,6 +54,9 @@ pub struct CodeType {
     pub kind: String,
     pub declaration: String,
     pub assembly: String,
+    /// The folder its source is in, from the folder all its assembly's
+    /// sources share, as `Inspector/Layout`; empty at the top.
+    pub folder: String,
     pub summary: String,
     pub remarks: String,
     /// The VoxDocs page its `[Documentation]` names, or nothing.
@@ -122,6 +126,20 @@ impl CodeType {
             Some((outer, _)) => format!("{}.{}", without_arity(outer), self.name),
             None => self.name.clone(),
         }
+    }
+
+    /// The folders its page is in under its namespace's: those its source is
+    /// in, less any the namespace already names, so `Voxear.UI` types in
+    /// `UI/Controls` go in `Controls`.
+    pub fn folders(&self) -> Vec<&str> {
+        let mut folders: Vec<&str> = self.folder.split('/').filter(|f| !f.is_empty()).collect();
+        let named: Vec<&str> = self.namespace.split('.').collect();
+        let skip = (1..=named.len().min(folders.len()))
+            .rev()
+            .find(|&count| folders[..count] == named[named.len() - count..])
+            .unwrap_or(0);
+        folders.drain(..skip);
+        folders
     }
 
     /// Its page: how it is declared, what its comment says and where it is,
@@ -265,6 +283,19 @@ mod tests {
         assert!(page.contains("**Returns** The prefab."), "{page}");
         let values = code.types()[2].page(&|_| None);
         assert!(values.contains("## Values\n\n- `Empty = 0`: Nothing there.\n"), "{values}");
+    }
+
+    #[test]
+    fn folders_the_namespace_names_are_left_out() {
+        let kind = |namespace: &str, folder: &str| CodeType {
+            namespace: namespace.into(),
+            folder: folder.into(),
+            ..CodeType::default()
+        };
+        assert_eq!(kind("Voxear", "Inspector/Layout").folders(), ["Inspector", "Layout"]);
+        assert_eq!(kind("Voxear.UI", "UI/Controls").folders(), ["Controls"]);
+        assert_eq!(kind("Hello.Enemies.Bosses", "Enemies/Bosses").folders(), Vec::<&str>::new());
+        assert!(kind("Hello", "").folders().is_empty());
     }
 
     #[test]

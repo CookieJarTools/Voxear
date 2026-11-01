@@ -404,7 +404,7 @@ const CODE: &str = r#"{ "format": 1, "types": [
       "members": [{ "kind": "field", "name": "degreesPerSecond", "summary": "How fast it turns.",
                     "declaration": "[SerializeField] private float degreesPerSecond",
                     "documentation": "Combat/Damage#hits" }] },
-    { "key": "Voxear.Prefab", "namespace": "Voxear", "name": "Prefab", "kind": "struct",
+    { "key": "Voxear.Prefab", "namespace": "Voxear", "name": "Prefab", "kind": "struct", "folder": "Content/Loading",
       "declaration": "public struct Prefab", "assembly": "Voxear.Core", "summary": "A loaded prefab.", "members": [] },
     { "key": "Voxear.Damage", "namespace": "Voxear", "name": "Damage", "kind": "struct",
       "declaration": "public struct Damage", "assembly": "Voxear.Core", "summary": "", "members": [],
@@ -423,6 +423,18 @@ fn the_code_reference_is_pages_of_its_own_after_the_projects() {
     let code = library.find("code:").unwrap();
     let namespaces: Vec<&str> = library.page(code).children.iter().map(|c| library.page(*c).title()).collect();
     assert_eq!(namespaces, ["Hello", "Voxear"], "the game's first");
+
+    let prefab = library.find("code:Voxear.Prefab").unwrap();
+    let mut trail = Vec::new();
+    let mut at = library.page(prefab).parent;
+    while let Some(folder) = at.filter(|&f| f != code) {
+        trail.insert(0, library.page(folder).title());
+        at = library.page(folder).parent;
+    }
+    assert_eq!(trail, ["Voxear", "Content", "Loading"], "in the folders its source is in");
+    let voxear: Vec<&str> =
+        library.page(library.find("code:Voxear").unwrap()).children.iter().map(|c| library.page(*c).title()).collect();
+    assert_eq!(voxear, ["Content", "Damage"], "folders first");
 
     let spinner = library.find("code:Hello.Spinner").expect("a type's page, by its full name");
     assert!(library.page(spinner).generated);

@@ -303,6 +303,8 @@ Done so far:
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
+- **The Code Reference by folder:** inside each namespace, a type's page sits in the folders its source is in, read
+  from the debug symbols, so the engine's 90-odd types are found by area rather than in one long list.
 - **`[Documentation]` and `[Excerpt]`:** a book button in the Inspector that opens a behaviour's or field's VoxDocs
   page, a page's section shown above a field and kept up to date with the page, and each page's In the code. Voxear
   UI now breaks a padded label's words to its content width, so wrapped text in a narrow table cell no longer loses

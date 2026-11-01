@@ -526,7 +526,8 @@ impl Library {
     }
 
     /// The Code Reference's folder, last in the top folder: a folder for
-    /// each namespace, and a page for each type in it.
+    /// each namespace, the folders its types are written in inside it, and
+    /// a page for each type, folders first in each and then by title.
     fn add_code(&mut self, root: PageId) {
         if self.code.types().is_empty() {
             return;
@@ -535,16 +536,39 @@ impl Library {
         let mut bodies: Vec<String> = self.code.types().iter().map(|kind| kind.page(&title_of)).collect();
         let code = std::mem::take(&mut self.code);
         let top = self.add_generated(root, CODE_SCHEME.to_string(), CODE_FOLDER, CODE_ABOUT.to_string(), true);
+        let mut folders: HashMap<String, PageId> = HashMap::new();
         for namespace in code.namespaces() {
             let (path, title) = match namespace {
                 "" => (GLOBAL_NAMESPACE.to_string(), "Global namespace"),
                 namespace => (format!("{CODE_SCHEME}{namespace}"), namespace),
             };
-            let folder = self.add_generated(top, path, title, String::new(), true);
+            let folder = self.add_generated(top, path.clone(), title, String::new(), true);
+            folders.insert(path, folder);
             for (index, kind) in code.types().iter().enumerate().filter(|(_, t)| t.namespace == namespace) {
+                let mut parent = (folder, self.page(folder).path.clone());
+                for name in kind.folders() {
+                    let path = format!("{}/{name}", parent.1);
+                    let id = match folders.get(&path) {
+                        Some(&id) => id,
+                        None => {
+                            let id = self.add_generated(parent.0, path.clone(), name, String::new(), true);
+                            folders.insert(path.clone(), id);
+                            id
+                        }
+                    };
+                    parent = (id, path);
+                }
                 let body = std::mem::take(&mut bodies[index]);
-                self.add_generated(folder, format!("{CODE_SCHEME}{}", kind.key), &kind.title(), body, false);
+                self.add_generated(parent.0, format!("{CODE_SCHEME}{}", kind.key), &kind.title(), body, false);
             }
+        }
+        for &folder in folders.values() {
+            let mut children = std::mem::take(&mut self.pages[folder.0].children);
+            children.sort_by(|a, b| {
+                let (a, b) = (&self.pages[a.0], &self.pages[b.0]);
+                b.is_folder.cmp(&a.is_folder).then_with(|| a.title().to_lowercase().cmp(&b.title().to_lowercase()))
+            });
+            self.pages[folder.0].children = children;
         }
         self.code = code;
     }

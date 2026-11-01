@@ -26,6 +26,7 @@ namespace Voxear.ScriptInfo
 			var types = assemblies.SelectMany(Shown).OrderBy(DocIds.TypeName, StringComparer.Ordinal).ToList();
 			var pages = new HashSet<string>(types.Select(DocIds.TypeName));
 			var comments = new DocComments(assemblies.Select(a => Path.ChangeExtension(a.Location, ".xml")), pages);
+			var folders = assemblies.Distinct().ToDictionary(a => a, a => new SourceFolders(a));
 			using var stream = new MemoryStream();
 			using (var json = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
 			{
@@ -34,11 +35,16 @@ namespace Voxear.ScriptInfo
 				json.WriteStartArray("types");
 				foreach (var type in types)
 				{
-					WriteType(json, type, comments);
+					WriteType(json, type, comments, folders[type.Assembly].Of(type));
 				}
 
 				json.WriteEndArray();
 				json.WriteEndObject();
+			}
+
+			foreach (var folder in folders.Values)
+			{
+				folder.Dispose();
 			}
 
 			return Encoding.UTF8.GetString(stream.ToArray());
@@ -46,10 +52,11 @@ namespace Voxear.ScriptInfo
 
 		private static IEnumerable<Type> Shown(Assembly assembly)
 		{
-			return assembly.GetExportedTypes().Where(t => !t.IsDefined(typeof(CompilerGeneratedAttribute)));
+			// A name nobody could write, as C# 14's extension blocks give the types they compile to, is the compiler's.
+			return assembly.GetExportedTypes().Where(t => !t.IsDefined(typeof(CompilerGeneratedAttribute)) && !t.Name.Contains('<'));
 		}
 
-		private static void WriteType(Utf8JsonWriter json, Type type, DocComments comments)
+		private static void WriteType(Utf8JsonWriter json, Type type, DocComments comments, string folder)
 		{
 			var id = DocIds.Of(type);
 			json.WriteStartObject();
@@ -59,6 +66,7 @@ namespace Voxear.ScriptInfo
 			json.WriteString("kind", Signatures.Kind(type));
 			json.WriteString("declaration", Signatures.Declaration(type));
 			json.WriteString("assembly", type.Assembly.GetName().Name);
+			json.WriteString("folder", folder);
 			json.WriteString("summary", comments.Part(id, "summary"));
 			json.WriteString("remarks", comments.Part(id, "remarks"));
 			json.WriteString("documentation", Page(type));

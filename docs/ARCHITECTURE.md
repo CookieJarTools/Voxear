@@ -1576,7 +1576,9 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   another page, so nothing written is lost. A new title renames its file, or its folder, keeping its id, so links
   by id and Back and Forward still find it; tags are kept once each.
 - **The Code Reference** *(`code`)*: a page for every public type in the game's scripts and in Voxear.Core, in a
-  folder after the project's pages, with a folder for each namespace, the game's first. Each time the editor describes
+  folder after the project's pages, with a folder for each namespace, the game's first. Inside each, the pages sit in
+  the folders their sources are in, as `Inspector/Help` for Voxear.Core's `managed/Voxear.Core/Inspector/Help`, read
+  from the assembly's debug symbols; a folder the namespace already names is left out. Each time the editor describes
   the scripts, `Voxear.ScriptInfo` writes it beside their build as `Code.json`, from reflection and the XML the
   compiler makes of the `///` comments. A type's page shows how it is declared and what its comment says, then its
   constructors, values, fields, properties, methods and events, each with its declaration, comment, parameters and

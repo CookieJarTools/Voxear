@@ -461,16 +461,17 @@ Still to do in M3:
     - one drawing API callable from anywhere (Update, systems, worker threads), keeping today's `Debug.Line`,
       `Box`, `Sphere`, `Arrow` and `Text` and adding the rest: polyline, ray, capsule, cylinder, cone, disc, arc,
       frustum, bezier, grid, wire mesh and solid shapes; thick anti-aliased lines in pixels or metres, dimmed
-      rather than hidden behind geometry; labels in 3D and on screen; durations; batched so thousands of shapes
-      cost a few draws
+      rather than hidden behind geometry, or always on top when asked; labels in 3D, which keep their size on
+      screen, and in a corner of the screen; durations; batched so thousands of shapes cost a few draws
     - nestable scopes instead of global state: `using (Draw.Color(Color.Red))`, `Draw.InLocalSpace(this)`,
       `Draw.Width(3)`, `Draw.Duration(2)`
     - `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`
       and `IsHovered`; its gizmos are clickable and select their Obj; a type's gizmos can be hidden from the
       Gizmos menu, and `[GizmoIcon]` gives it an icon by typed reference
-    - attribute handles that edit fields in the Scene view with no code, undoable: `[PositionHandle]` (local
-      or world, every item of a list), `[RadiusHandle]`, `[BoundsHandle]`, `[ArcHandle]`, `[DirectionHandle]`
-      and `[SliderHandle]`
+    - attribute handles that edit fields in the Scene view with no code, undoable, with prefab overrides and
+      several Objs selected: `[PositionHandle]` (local or world, every item of a list), `[RadiusHandle]`,
+      `[BoundsHandle]`, `[ArcHandle]`, `[DirectionHandle]` and `[SliderHandle]`; the move, rotate and scale
+      handles on points inside an Obj, such as a path's points, picked by clicking them
     - for custom tools, handles that return the new value, with undo and change callbacks built in:
       `target = Handles.Position(target)`, `Handles.Radius`, `Handles.Slider`, `Handles.Disc`,
       `Handles.FreeMove` and `Handles.Button`, in `DrawGizmos` while selected

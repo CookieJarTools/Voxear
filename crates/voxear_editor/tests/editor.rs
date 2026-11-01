@@ -3479,6 +3479,74 @@ fn a_model_dragged_from_the_project_places_objs_drawing_it() {
     }
 }
 
+/// A rug a metre square, as 3ds Max writes FBX: Z up, in centimetres.
+const RUG: &str = r#"; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+	FBXVersion: 7400
+}
+GlobalSettings:  {
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",2
+		P: "UpAxisSign", "int", "Integer", "",1
+		P: "FrontAxis", "int", "Integer", "",1
+		P: "FrontAxisSign", "int", "Integer", "",-1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "CoordAxisSign", "int", "Integer", "",1
+		P: "UnitScaleFactor", "double", "Number", "",1
+	}
+}
+Objects:  {
+	Geometry: 1, "Geometry::Rug", "Mesh" {
+		Vertices: *12 {
+			a: -50,-50,0,50,-50,0,50,50,0,-50,50,0
+		}
+		PolygonVertexIndex: *4 {
+			a: 0,1,2,-4
+		}
+	}
+	Model: 2, "Model::Rug", "Mesh" {
+	}
+	Material: 3, "Material::Wool", "" {
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A",0.6,0.1,0.1
+		}
+	}
+}
+Connections:  {
+	C: "OO",2,0
+	C: "OO",1,2
+	C: "OO",3,2
+}
+"#;
+
+#[test]
+fn an_fbx_model_shows_and_places_as_a_gltf_one_does() {
+    let rug = |root: &std::path::Path| std::fs::write(root.join("Models/Rug.fbx"), RUG).unwrap();
+    let Some((dir, mut renderer, mut editor)) = open_copy_with(rug) else { return };
+    open_folder(&mut editor, &mut renderer, "Models");
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(tile_preview(&editor.ui, "Rug.fbx").is_some(), "the Project draws a preview of it");
+
+    let from = centre(&editor.ui, tile(&editor.ui, "Rug.fbx").unwrap());
+    let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Day").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    let rug = obj(&editor, "Rug").expect("an Obj for the model");
+    let world = &editor.game.engine.world;
+    let transform = world.get::<Transform>(rug).unwrap();
+    assert_eq!(transform.rotation, Default::default(), "standing up, with no turn left on it from Z up");
+    assert!(world.get::<voxear_render::MeshRenderer>(rug).is_some());
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "fbx-rug.png");
+    editor.save();
+    let text = std::fs::read_to_string(dir.path().join("Scenes/Day.scene")).unwrap();
+    let guid = std::fs::read_to_string(dir.path().join("Models/Rug.fbx.meta")).unwrap();
+    let guid = guid.split('"').nth(1).unwrap();
+    assert!(text.contains(&format!("mesh = \"{guid}#mesh0.0\"")), "{text}");
+    assert!(text.contains(&format!("material = \"{guid}#material0\"")), "{text}");
+}
+
 #[test]
 fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     let Some((dir, mut renderer, mut editor)) = open_copy() else { return };

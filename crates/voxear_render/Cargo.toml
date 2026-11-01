@@ -20,6 +20,7 @@ voxear_scene.workspace = true
 voxear_core.workspace = true
 voxear_ui.workspace = true
 gltf.workspace = true
+ufbx.workspace = true
 image.workspace = true
 base64.workspace = true
 meshopt.workspace = true

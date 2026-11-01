@@ -3,7 +3,8 @@
 //! runtime. Files come through a callback, so a model loads the same from a
 //! project folder or from a content bundle. [`prepare`] does the slow work
 //! (parsing, decoding images, building LODs) on any thread, and [`upload`]
-//! then needs only the GPU.
+//! then needs only the GPU. FBX files are read by `fbx_import` into the same
+//! [`PreparedModel`]; [`prepare`] and [`companion_files`] take either.
 
 use std::collections::HashMap;
 
@@ -14,6 +15,7 @@ use voxear_rhi::{Bindless, Gpu, TextureId, vk};
 use crate::{
     assets::{Assets, MaterialDesc, MaterialHandle, MeshHandle, TextureSource},
     cooked::CookedModel,
+    fbx_import,
     lod::{Lod, build_lods},
     mesh::{MeshData, Vertex},
     texture_codec,
@@ -42,8 +44,8 @@ pub struct ImportedNode {
     pub material_part: Option<String>,
 }
 
-/// Reads one of a model's files by project path: the `.gltf` or `.glb`
-/// itself, or a buffer or image it names.
+/// Reads one of a model's files by project path: the `.gltf`, `.glb` or
+/// `.fbx` itself, or a buffer or image it names.
 pub type ReadFile<'a> = dyn FnMut(&str) -> Result<Vec<u8>> + 'a;
 
 /// A model read and processed, ready to upload: meshes with their LOD chains,
@@ -154,6 +156,9 @@ impl PreparedModel {
 
 /// Reads and processes a model without touching the GPU.
 pub fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
+    if fbx_import::is_fbx(path) {
+        return fbx_import::prepare(path, read).with_context(|| format!("reading {path}"));
+    }
     let (document, buffers, images) = load(path, read).with_context(|| format!("reading {path}"))?;
     let mut preparer = Preparer {
         buffers,
@@ -412,8 +417,12 @@ impl Preparer {
 }
 
 /// The project paths of the files a glTF file names, relative to its own
-/// folder: its buffers and images, but not those embedded in it.
+/// folder: its buffers and images, but not those embedded in it. For an FBX
+/// file, the textures it may read.
 pub fn companion_files(path: &str, bytes: &[u8]) -> Result<Vec<String>> {
+    if fbx_import::is_fbx(path) {
+        return fbx_import::companion_files(path, bytes);
+    }
     let document = gltf::Gltf::from_slice(bytes)?.document;
     let buffers = document.buffers().filter_map(|b| match b.source() {
         gltf::buffer::Source::Uri(uri) => Some(uri),
@@ -474,9 +483,15 @@ fn read_uri(path: &str, uri: &str, read: &mut ReadFile) -> Result<Vec<u8>> {
 /// A URI relative to the glTF file, as a project path: percent escapes
 /// decoded and `..` folded away.
 fn resolve(path: &str, uri: &str) -> String {
+    relative_to(path, &percent_decode(uri))
+}
+
+/// A path relative to the file at `path`, as a project path, with `..`
+/// folded away.
+pub(crate) fn relative_to(path: &str, relative: &str) -> String {
     let mut parts: Vec<String> = path.split('/').map(str::to_string).collect();
     parts.pop();
-    for part in percent_decode(uri).split('/') {
+    for part in relative.split('/') {
         match part {
             "." | "" => {}
             ".." => {

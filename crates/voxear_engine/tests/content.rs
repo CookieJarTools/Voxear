@@ -23,6 +23,37 @@ const TREE: &str = r#"{
   "scenes": [{ "nodes": [0] }]
 }"#;
 
+/// A one-triangle FBX, a metre on a side, whose leaves' picture is looked
+/// for beside it, by the name in the absolute path the artist's tool wrote.
+const BUSH: &str = r#"; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+	FBXVersion: 7400
+}
+Objects:  {
+	Geometry: 1, "Geometry::Bush", "Mesh" {
+		Vertices: *9 {
+			a: 0,0,0,100,0,0,0,100,0
+		}
+		PolygonVertexIndex: *3 {
+			a: 0,1,-3
+		}
+	}
+	Model: 2, "Model::Bush", "Mesh" {
+	}
+	Material: 3, "Material::Leaves", "" {
+	}
+	Texture: 4, "Texture::Leaves", "" {
+		FileName: "D:\Art\bush.png"
+	}
+}
+Connections:  {
+	C: "OO",2,0
+	C: "OO",1,2
+	C: "OO",3,2
+	C: "OP",4,3, "DiffuseColor"
+}
+"#;
+
 fn level(scenes: &[&str]) -> String {
     let mut text = "format = 1\n".to_string();
     for scene in scenes {
@@ -232,6 +263,31 @@ fn unchanged_models_are_not_cooked_again() {
     assert_eq!((changed.cooked, changed.cached), (1, 0));
     let cooks = std::fs::read_dir(content_build::cache_dir(dir.path())).unwrap().count();
     assert_eq!(cooks, 1);
+}
+
+#[test]
+fn fbx_models_cook_and_cook_again_when_a_picture_they_look_for_comes() {
+    let dir = project();
+    std::fs::write(dir.path().join("Models/Bush.fbx"), BUSH).unwrap();
+    let forest = FOREST.replace("Models/Tree.gltf", "Models/Bush.fbx#mesh0.0");
+    std::fs::write(dir.path().join("Scenes/Forest.scene"), forest).unwrap();
+    let output = dir.path().join("Built");
+    let first = content_build::build(dir.path(), &output, &Default::default(), &[]).unwrap();
+    assert_eq!((first.cooked, first.cached), (1, 0), "its picture is not there, which does not stop it");
+    let catalog = Catalog::read(&output).unwrap();
+    let mut reader = voxear_assets::bundle::BundleReader::new(&output, &catalog);
+    let cooked = reader.read("Models/Bush.fbx").unwrap();
+    assert!(voxear_render::CookedModel::from_bytes("Models/Bush.fbx", &cooked).is_ok(), "it ships cooked");
+
+    let again = content_build::build(dir.path(), &output, &Default::default(), &[]).unwrap();
+    assert_eq!((again.cooked, again.cached), (0, 1));
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(4, 4, image::Rgba([40, 160, 60, 255]))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    std::fs::write(dir.path().join("Models/bush.png"), png.into_inner()).unwrap();
+    let found = content_build::build(dir.path(), &output, &Default::default(), &[]).unwrap();
+    assert_eq!((found.cooked, found.cached), (1, 0), "with its picture now");
 }
 
 #[test]

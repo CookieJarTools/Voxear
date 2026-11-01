@@ -103,7 +103,7 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 | 2D physics | Box2D v3 (C, MIT) | The modern solver is fast and deterministic, and it pairs naturally with Jolt. |
 | UI | **Our own retained UI** on taffy, parley, swash and cssparser, rendered by our Vulkan renderer | See [UI](#ui-voxear-ui). |
 | Audio | Rust mixer on cpal, with spatial acoustics from **Steam Audio** (Apache-2.0) | Steam Audio provides HRTF, occlusion, transmission, reflections and pathing around corners. A GPU ray-traced path can come later. |
-| Mesh import | glTF 2.0 first, then FBX via ufbx | meshoptimizer handles meshlets, LOD and vertex cache optimisation. |
+| Mesh import | glTF 2.0, and FBX through **ufbx** (C, MIT) | Both become the same prepared model, so LODs, cooking and previews are shared. meshoptimizer handles meshlets, LOD and vertex cache optimisation. |
 
 ## Conventions
 
@@ -113,6 +113,11 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 - Rotations are quaternions. Euler angles in the inspector are in degrees and applied in Z, X, Y order, as in Unity.
 - Importers convert right-handed formats such as glTF and FBX so that assets face +Z, and nothing is flipped at
   runtime.
+- FBX files (`voxear_render::fbx_import`) come in metres, scaled by ufbx, and their axes are turned into glTF's in
+  the vertices, each node's transform conjugated to match, as Unity's Bake Axis Conversion does: a Z-up model made
+  in centimetres stands up at its size, with no -90 degree turn left on its Objs. A mesh splits into a part per
+  material (`#mesh<mesh>.<part>`, `#material<index>`, in the file's order). Textures are read from the file or found
+  beside it by name, and one found nowhere is left out with a warning.
 - The renderer uses left-handed projection with reverse-Z depth (1 near, 0 far) for precision, and handles Vulkan's
   Y-down clip space internally.
 

@@ -1710,6 +1710,11 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   or model is dragged do the two take drops, so nothing else lights them up; the Scene view is tinted in the accent
   under it. In prefab mode, what would land at the top goes inside the prefab's root, keeping its place in the world,
   as a prefab has one root; and the prefab open, or one that holds it, is not placed.
+- **Materials dropped on Objs** (`editor::material_drops`), as in Unity. A material from the Project (or a model's,
+  from the opened-out model) held over a Scene view shows on the Obj with a Mesh Renderer under the pointer, picked
+  as a click picks; moving off, or the drag ending elsewhere, puts the Obj's own back. Let go of there, or on an
+  Obj's row in the Hierarchy, the Obj takes it through the same row action as the Inspector's object picker, so it
+  is one step to undo; an Obj that draws nothing says so in the status bar.
 - **Prefab mode** (`editor::prefab_mode`), as in Unity: a prefab opens on its own to edit from the Project (a double
   click, or the Inspector's Open), or from the Hierarchy's Open Prefab on an instance. Its Objs load as a scene's
   would, in place of the level (`Levels::open_scene` takes prefabs), a bar over the Scene view names it, and Back,

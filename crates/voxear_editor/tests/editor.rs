@@ -4660,3 +4660,114 @@ fn scene_views_open_more_than_once_each_through_its_own_camera() {
     assert!(editor.game.engine.world.is_alive(first));
     assert_eq!(editor.ui.dock_panels(dock).iter().filter(|(id, ..)| id.starts_with("scene")).count(), 1);
 }
+
+#[test]
+fn the_object_picker_sets_a_mesh_renderers_material() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    std::fs::write(dir.path().join("Materials/Red.material"), "color = [0.9, 0.1, 0.1]\n").unwrap();
+    std::fs::write(dir.path().join("Models/Rug.fbx"), RUG).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    open_folder(&mut editor, &mut renderer, "Models");
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    let from = centre(&editor.ui, tile(&editor.ui, "Rug.fbx").unwrap());
+    let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Day").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    let mut cases = vec![("an FBX model placed from the Project", obj(&editor, "Rug").expect("an Obj for the model"))];
+    // A cube with a material of its own, and a model's part, whose material is the model's.
+    let world = &editor.game.engine.world;
+    let part = world
+        .query_ref::<(voxear_ecs::Entity, &Name, &voxear_scene::Parent)>()
+        .into_iter()
+        .find(|(_, name, _)| name.0 == "Pyramid")
+        .map(|(entity, ..)| entity)
+        .expect("the Pyramid's part");
+    cases.extend([("a cube", obj(&editor, "Spinner A").unwrap()), ("a model's part", part)]);
+    for (what, entity) in cases {
+        editor.select(Some(entity));
+        for _ in 0..3 {
+            frame(&mut editor, &mut renderer);
+        }
+        let picker = first_with(&editor.ui, prop_row(&editor.ui, "Material").unwrap(), "value-picker").unwrap();
+        let arrow = first_with(&editor.ui, picker, "picker-arrow").unwrap();
+        click(&mut editor.ui, arrow);
+        for _ in 0..3 {
+            frame(&mut editor, &mut renderer);
+        }
+        let red = picker_row(&editor.ui, "Red.material").unwrap_or_else(|| panic!("Red is offered for {what}"));
+        click(&mut editor.ui, red);
+        for _ in 0..3 {
+            frame(&mut editor, &mut renderer);
+        }
+        let handle = editor.game.engine.world.get::<voxear_render::MeshRenderer>(entity).unwrap().material;
+        let source = editor.game.content.material_source(handle).map(|s| format!("{s:?}"));
+        let red_guid = editor.game.content.db().guid_of("Materials/Red.material").unwrap().to_string();
+        assert!(source.as_deref().is_some_and(|s| s.contains(&red_guid)), "{what} draws with Red: {source:?}");
+        let label = first_with(&editor.ui, prop_row(&editor.ui, "Material").unwrap(), "picker-label").unwrap();
+        assert!(editor.ui.text(label).starts_with("Red"), "{what}'s field says Red: {}", editor.ui.text(label));
+    }
+}
+
+#[test]
+fn a_material_dragged_onto_an_obj_shows_on_it_and_stays_where_let_go() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    std::fs::write(dir.path().join("Materials/Red.material"), "color = [0.9, 0.1, 0.1]\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    open_folder(&mut editor, &mut renderer, "Materials");
+    frame(&mut editor, &mut renderer);
+    let red_guid = editor.game.content.db().guid_of("Materials/Red.material").unwrap().to_string();
+    let draws_red = |editor: &voxear_editor::Editor, entity| {
+        let handle = editor.game.engine.world.get::<voxear_render::MeshRenderer>(entity).unwrap().material;
+        editor.game.content.material_source(handle).is_some_and(|source| format!("{source:?}").contains(&red_guid))
+    };
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    let position = editor.game.engine.world.get::<Transform>(spinner).unwrap().position;
+    let camera = editor.scene_camera().expect("the Scene view shows");
+    let on_spinner = camera.project(position).expect("Spinner A is in view");
+    let sky = [on_spinner[0], camera.rect[1] + 30.0];
+
+    // Held over Spinner A, it shows Red; moved off, its own comes back.
+    let from = centre(&editor.ui, tile(&editor.ui, "Red.material").expect("the material's tile"));
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(from[0] + 30.0, from[1] - 30.0);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(on_spinner[0], on_spinner[1]);
+    frame(&mut editor, &mut renderer);
+    assert!(draws_red(&editor, spinner), "it shows on the Obj under the pointer");
+    editor.ui.pointer_move(sky[0], sky[1]);
+    frame(&mut editor, &mut renderer);
+    assert!(!draws_red(&editor, spinner), "its own comes back when the pointer moves off");
+
+    // Let go of on it, Spinner A keeps Red, as one step to undo.
+    editor.ui.pointer_move(on_spinner[0], on_spinner[1]);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(draws_red(&editor, spinner), "it keeps the material it was let go of with");
+    shot(&mut renderer, "material-dropped.png");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!draws_red(&editor, spinner), "undo puts its own back");
+
+    // Let go of on an Obj's row in the Hierarchy, that Obj takes it.
+    let other = obj(&editor, "Spinner B").unwrap();
+    let from = centre(&editor.ui, tile(&editor.ui, "Red.material").unwrap());
+    let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Spinner B").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    frame(&mut editor, &mut renderer);
+    assert!(draws_red(&editor, other), "dropped on its row in the Hierarchy");
+}

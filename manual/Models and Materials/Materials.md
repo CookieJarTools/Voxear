@@ -23,6 +23,8 @@ Click a colour's swatch to open the colour picker: drag in the square and the ba
 
 Select an Obj with a Mesh Renderer, and click its **Material** field in the Inspector. Pick the material from the list, or drag it there from the Project panel. **Default** is the plain grey every new shape starts with.
 
+You can also drag a material from the Project panel straight onto an Obj in the Scene view. While you hold it over an Obj, the Obj shows the material, so you can try it on a few before choosing; move away and the Obj looks as it did. Let go to keep it. Dropping a material on an Obj's row in the Hierarchy works too. **Ctrl+Z** undoes either.
+
 ## Making a material glow
 
 Give a material an **Emission** colour to make it glow. Emission's colour picker has an extra **Intensity** slider: each step up doubles the brightness. Bright emission spills a soft glow around it on screen, called **bloom**.

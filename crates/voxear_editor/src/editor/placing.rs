@@ -56,10 +56,12 @@ impl Editor {
             }
         }
         let placing = self.ui.dragging().is_some_and(|source| self.dragged_placeable(&source).is_some());
-        self.hierarchy.take_drops(&mut self.ui, placing);
+        // A material dropped on an Obj there goes to it (see `material_drops`).
+        let material = self.ui.dragging().is_some_and(|source| self.dragged_material(&source).is_some());
+        self.hierarchy.take_drops(&mut self.ui, placing || material);
         let viewports: Vec<_> = self.all_scene_views().map(|view| view.viewport).collect();
         for viewport in viewports {
-            self.ui.accept_drops(viewport, placing);
+            self.ui.accept_drops(viewport, placing || material);
         }
     }
 

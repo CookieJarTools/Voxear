@@ -12,6 +12,7 @@ mod drawer;
 mod importing;
 mod inspectors;
 mod level_edits;
+mod material_drops;
 mod placing;
 mod play;
 mod prefab_mode;
@@ -256,6 +257,8 @@ pub struct Editor {
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
     picker_picks: Vec<(PickFor, Pick)>,
+    /// A material shown on an Obj while it is dragged over it from the Project.
+    material_preview: Option<material_drops::MaterialPreview>,
     /// The Obj selected, which every Inspector not locked shows.
     selection: Option<Entity>,
     /// The Inspectors opened from a window's menu, after the first.
@@ -472,6 +475,7 @@ impl Editor {
             hovered_tooltip: None,
             debug_texts,
             picker_picks: Vec::new(),
+            material_preview: None,
             selection: None,
             extra_inspectors: Vec::new(),
             asset_previews: AssetPreviews::default(),
@@ -616,6 +620,7 @@ impl Editor {
             self.obj_action(action, renderer);
         }
         self.update_placing(renderer);
+        self.update_material_drops(renderer);
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
         }

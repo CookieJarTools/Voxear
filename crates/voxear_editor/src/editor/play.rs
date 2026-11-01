@@ -16,7 +16,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use anyhow::Result;
 use voxear_ecs::Entity;
 use voxear_engine::{
-    Engine, Levels, Project,
+    Engine, Game, Levels, Project,
     script_types::{self, ScriptTypes},
     scripts,
 };
@@ -220,6 +220,23 @@ impl Editor {
     /// while playing, or the edited level once the scripts have started,
     /// which the first check asks for, without playing. `None` until they
     /// have.
+    /// Runs `run` with the scripts started for the edited level, without
+    /// playing, as the Inspector's `[Button]`s and answers need them. `None`
+    /// while playing, while they build and start, which this sets going the
+    /// first time, or when there are none or they would not start.
+    pub(super) fn with_edit_scripts<R>(&mut self, run: impl FnOnce(&mut ScriptRuntime, &mut Game) -> R) -> Option<R> {
+        if !matches!(self.play.mode, Mode::Editing) || self.play.error.is_some() {
+            return None;
+        }
+        if !self.play.ready {
+            self.play.start_only = true;
+            self.build_scripts();
+            return None;
+        }
+        let scripts = self.play.scripts.as_mut()?;
+        Some(run(scripts, &mut self.game))
+    }
+
     pub(super) fn run_script_check(&mut self, type_name: &str, method: &str) -> Option<Result<Result<(), String>>> {
         match &self.play.mode {
             Mode::Playing(_) => Some(self.game.engine.run_check(type_name, method)),

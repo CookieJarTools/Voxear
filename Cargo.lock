@@ -2951,6 +2951,7 @@ dependencies = [
  "anyhow",
  "libloading 0.9.0",
  "serde_json",
+ "toml",
  "tracing",
  "voxear_core",
  "voxear_ecs",

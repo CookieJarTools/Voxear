@@ -1961,6 +1961,12 @@ DockSpace .project-split > .split-divider {
     min-width: 0px;
 }
 
+/* A behaviour's [Button]s, under its fields. */
+.attr-buttons-column {
+    gap: 4px;
+    margin-top: 6px;
+}
+
 .attr-progress {
     height: 20px;
     justify-content: center;

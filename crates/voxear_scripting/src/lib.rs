@@ -8,12 +8,14 @@
 mod debug;
 mod ecs;
 mod hostfxr;
+mod inspector;
 mod interop;
 mod runtime;
 mod services;
 mod ui;
 
 pub use hostfxr::{DotnetInstall, find_dotnet};
+pub use inspector::{InspectorAnswer, InspectorAsk};
 pub use runtime::{ConsoleName, CreatedBehaviour, Reloaded, ScriptHost, ScriptRuntime};
 pub use services::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,

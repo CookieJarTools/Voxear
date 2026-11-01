@@ -11,6 +11,7 @@ mod docs_steps;
 mod drawer;
 mod play;
 mod prefab_mode;
+mod script_actions;
 mod previews;
 mod scene_view;
 mod tooltip;
@@ -595,11 +596,14 @@ impl Editor {
         {
             profile_scope!("Inspector");
             let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
+            let edit = self.run_inspector_callbacks(edit);
             // Edits while playing go with the played world, so there is nothing to undo or save.
             if let Some(edit) = edit.filter(|_| !self.is_playing()) {
                 self.history.record(edit);
                 self.unsaved = true;
             }
+            self.run_inspector_button();
+            self.ask_inspector_answers();
             self.update_docs_links();
         }
         if let Some(action) = self.hierarchy.action(&mut self.ui) {

@@ -1785,9 +1785,24 @@ still reads no assembly; a source generator can take its place later without the
 - **Help and validation:** `[InfoBox]` (a note, warning or error, shown while a field holds if given),
   `[Tooltip]` (under the label once the pointer rests on it for half a second), and `[Required]`, an error above
   an empty reference. `[Documentation]` and `[Excerpt]` link a behaviour or field to VoxDocs (see "VoxDocs").
+- **The behaviour's own code, while editing:** `[Button]` on a method that takes nothing puts a button under the
+  behaviour's fields; `[OnValueChanged(nameof(Method))]` calls a method each time the field is changed;
+  `[ValidateInput(nameof(Method), "message")]` asks a method that takes the value whether it is right (it answers
+  `bool`, or `string`, empty when it is) and shows an error above the field while it is not; and
+  `[ValueDropdown(nameof(Member))]` offers the values a method, property or field gives, by name when they are
+  `ValueDropdownItem`s.
+  - In edit mode a behaviour has no instance, so each call runs on a copy made for it: the scene's values set on a
+    new instance, bound to its Obj so `Obj` works, with no Awake or other callback, and let go after
+    (`InspectorCalls` in Voxear.Core, `ScriptRuntime::inspector`). The scripts start for it without playing, as a
+    guide's check starts them.
+  - The fields a method changes go back into the scene: a button's as a step of its own to undo, a callback's with
+    the change that called it. References a method sets are not carried back yet.
+  - Checks and dropdowns are asked again only when the selection or the Obj's scene values change, so a method that
+    throws is not asked over and over. An error shows in place, so a field being typed in keeps its focus. A value
+    the scene set that a dropdown does not offer stays first in its menu.
+  - While playing, buttons wait until play stops.
 
-Still to come: `[Button]` and `[OnValueChanged]`, which run a behaviour's code in edit mode, `[ValidateInput]`
-and `[ValueDropdown]`, which ask it for answers, `[ShowInInspector]`, `[ColorPalette]` (once C# has a `Color`),
+Still to come: buttons and callbacks while playing, on the running behaviour, `[ShowInInspector]`, `[ColorPalette]` (once C# has a `Color`),
 the collections' `[ListDrawerSettings]` and `[TableList]`, `[AssetsOnly]` and `[SceneObjectsOnly]` (a Voxear field
 takes one or the other already), the build's check of every scene and prefab, the source generator and analyzer,
 and custom drawers.

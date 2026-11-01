@@ -114,6 +114,18 @@ impl Engine {
         scripts.run_check(&mut self.world, type_name, method)
     }
 
+    /// Asks a behaviour's code what the Inspector wants, as for an Obj
+    /// with no instance of it (see [`ScriptRuntime::inspector`]).
+    pub fn ask_inspector(
+        &mut self,
+        entity: Entity,
+        spec: &voxear_scene::BehaviourSpec,
+        ask: voxear_scripting::InspectorAsk,
+    ) -> anyhow::Result<voxear_scripting::InspectorAnswer> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        scripts.inspector(&mut self.world, entity, spec, ask)
+    }
+
     /// Runs a line typed in a development build's console against the
     /// scripts (see [`ScriptRuntime::run_console`]). False when nothing has
     /// its first word as a name, or there are no scripts.

@@ -119,6 +119,18 @@ pub struct BehaviourType {
     pub documentation: Option<String>,
     /// Base classes' fields first, then its own, in the order declared.
     pub fields: Vec<ScriptField>,
+    /// Its `[Button]` methods, which the Inspector shows under its fields.
+    #[serde(default)]
+    pub buttons: Vec<ScriptButton>,
+}
+
+/// A `[Button]` method, which takes nothing, and what its button says, or
+/// empty for the method's name in words.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptButton {
+    pub method: String,
+    #[serde(default)]
+    pub label: String,
 }
 
 impl BehaviourType {
@@ -216,6 +228,21 @@ pub struct FieldInspector {
     pub documentation: Option<String>,
     /// The VoxDocs page, or section of one, `[Excerpt]` shows above it.
     pub excerpt: Option<String>,
+    /// A method `[OnValueChanged]` calls when the field is changed.
+    pub on_changed: Option<String>,
+    /// A member `[ValueDropdown]` asks for the values to offer.
+    pub dropdown: Option<String>,
+    /// A method `[ValidateInput]` asks whether the value is right.
+    pub validate: Option<FieldValidate>,
+}
+
+/// A `[ValidateInput]`: the method to ask, and what the error says when it
+/// answers false, or empty for the usual.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct FieldValidate {
+    pub method: String,
+    pub message: String,
 }
 
 /// A group a field shows in, by name: a foldout, a box, a row, or a tab of

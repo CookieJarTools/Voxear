@@ -39,7 +39,7 @@ use crate::ui::{
     ui_class, ui_clicked, ui_close, ui_find, ui_load, ui_set_text, ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 21;
+pub(crate) const API_VERSION: u32 = 22;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -212,6 +212,12 @@ pub(crate) struct ManagedApi {
     /// and its length into `written`; 2 when there is no such check; 3 when
     /// it threw.
     pub run_check: Option<RunCheck>,
+    /// Answers the Inspector about a behaviour in edit mode, as JSON (see
+    /// `inspector`), writing the answer when it fits and returning its
+    /// length either way, or -1. A request of no bytes asks for the last
+    /// answer again.
+    pub inspector_call:
+        Option<unsafe extern "C" fn(request: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(

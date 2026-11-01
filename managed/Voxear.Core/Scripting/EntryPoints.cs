@@ -12,6 +12,9 @@ namespace Voxear.Scripting
 	/// </summary>
 	internal static unsafe class EntryPoints
 	{
+		/// <summary>InspectorCall's last answer, kept for a caller whose buffer was too small for it.</summary>
+		private static byte[] lastAnswer = Array.Empty<byte>();
+
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static int LoadGameAssembly(byte* path, int length)
 		{
@@ -144,6 +147,33 @@ namespace Voxear.Scripting
 			{
 				Log.Exception(exception);
 				return 3;
+			}
+		}
+
+		/// <summary>
+		/// Answers the Inspector's request about a behaviour in edit mode (see InspectorCalls), writing the answer into
+		/// buffer when it fits and returning its length either way. A request of no bytes asks for the last answer again,
+		/// for a caller whose buffer was too small, so nothing runs twice.
+		/// </summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int InspectorCall(byte* request, int length, byte* buffer, int capacity)
+		{
+			try
+			{
+				if (length > 0)
+				{
+					lastAnswer = Encoding.UTF8.GetBytes(InspectorCalls.Answer(Native.Utf8(request, length)));
+				}
+				if (lastAnswer.Length <= capacity)
+				{
+					lastAnswer.CopyTo(new Span<byte>(buffer, capacity));
+				}
+				return lastAnswer.Length;
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+				return -1;
 			}
 		}
 

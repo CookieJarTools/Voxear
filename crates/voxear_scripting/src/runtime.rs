@@ -49,7 +49,7 @@ pub enum Reloaded {
 /// The C# side of the engine. CoreCLR cannot be restarted, so there is at most
 /// one per process.
 pub struct ScriptRuntime {
-    managed: ManagedApi,
+    pub(crate) managed: ManagedApi,
     // Scripts hold pointers into both of these, so they live on the heap.
     _native: Box<NativeApi>,
     time: Box<Time>,
@@ -93,7 +93,8 @@ impl ScriptRuntime {
                 && managed.add_component.is_some()
                 && managed.console_run.is_some()
                 && managed.console_names.is_some()
-                && managed.run_check.is_some(),
+                && managed.run_check.is_some()
+                && managed.inspector_call.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(

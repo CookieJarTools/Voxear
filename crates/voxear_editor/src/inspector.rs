@@ -34,7 +34,7 @@ use voxear_engine::prefab::Locks;
 use crate::{
     asset_inspector::{AssetAction, AssetView},
     attributes,
-    fields::Pick,
+    fields::{Pick, Step},
     history::{Edit, ObjState},
     project_view::ProjectItem,
     props::{self, Part, Prop, Value},
@@ -149,6 +149,8 @@ enum Control {
     Picker(NodeId, NodeId),
     /// A dropdown, and the options it was last given.
     Choice(NodeId, Vec<String>),
+    /// A `[ValueDropdown]`: a dropdown, and the value each option sets.
+    Offered(NodeId, Vec<Value>),
     /// A number with `[Range]`: a slider and its field.
     Range(NodeId, NodeId),
     /// An enum with `[EnumToggleButtons]`: a button for each value.
@@ -158,6 +160,15 @@ enum Control {
     Progress(NodeId, NodeId, NodeId, [f64; 2]),
     /// A label, for what is shown but not edited here.
     Fixed(NodeId),
+}
+
+/// What a behaviour's code said about the shown Obj's fields, by behaviour
+/// and field: `[ValidateInput]` errors, and the values `[ValueDropdown]`s
+/// offer, each with its name. The editor asks the scripts for them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ScriptAnswers {
+    pub errors: std::collections::HashMap<(String, String), String>,
+    pub options: std::collections::HashMap<(String, String), Vec<(String, Value)>>,
 }
 
 /// A fold `[Excerpt]` puts above a field, which the editor fills with the
@@ -216,6 +227,17 @@ pub struct Inspector {
     /// The `[Excerpt]` folds shown, and the fields whose folds are open.
     excerpts: Vec<ExcerptFold>,
     open_excerpts: std::collections::HashSet<String>,
+    /// The `[Button]`s shown, each with its behaviour and method.
+    buttons: Vec<(NodeId, String, String)>,
+    /// `[OnValueChanged]` methods to call for fields changed this frame, each
+    /// with its behaviour.
+    callbacks: Vec<(String, String)>,
+    /// What the scripts answered, and the box each `[ValidateInput]` field
+    /// has for its error, shown while there is one.
+    answers: ScriptAnswers,
+    validation_boxes: Vec<((String, String), NodeId, NodeId)>,
+    /// What the answers were last asked for: the Obj and its scene values.
+    asked_for: String,
 }
 
 impl Inspector {
@@ -242,7 +264,52 @@ impl Inspector {
             doc_buttons: Vec::new(),
             excerpts: Vec::new(),
             open_excerpts: std::collections::HashSet::new(),
+            buttons: Vec::new(),
+            callbacks: Vec::new(),
+            answers: ScriptAnswers::default(),
+            validation_boxes: Vec::new(),
+            asked_for: String::new(),
         }
+    }
+
+    /// Whether the scripts are to be asked again, for an Obj and scene values
+    /// `key` stands for: true when it changed since the last time, noting
+    /// it. An empty key asks again next time.
+    pub fn ask_again(&mut self, key: &str) -> bool {
+        if self.asked_for == key {
+            return false;
+        }
+        self.asked_for = key.to_string();
+        true
+    }
+
+    /// Takes what the scripts answered about the shown Obj. Errors show in
+    /// place, so a field being typed in keeps its focus; new values to offer
+    /// build the sections again.
+    pub fn set_answers(&mut self, ui: &mut Ui, answers: ScriptAnswers) {
+        if answers.options != self.answers.options {
+            self.built.0.clear();
+        }
+        for (key, frame, text) in &self.validation_boxes {
+            let error = answers.errors.get(key);
+            ui.set_visible(*frame, error.is_some());
+            if let Some(error) = error.filter(|e| ui.text(*text) != **e) {
+                ui.set_text(*text, error);
+            }
+        }
+        self.answers = answers;
+    }
+
+    /// The `[Button]` clicked this frame: its behaviour and method.
+    pub fn clicked_button(&self, ui: &Ui) -> Option<(String, String)> {
+        let (_, behaviour, method) = self.buttons.iter().find(|(button, ..)| ui.clicked(*button))?;
+        Some((behaviour.clone(), method.clone()))
+    }
+
+    /// The `[OnValueChanged]` methods to call for what was changed since the
+    /// last time, each with its behaviour.
+    pub fn take_callbacks(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.callbacks)
     }
 
     /// The Obj showing, if any.
@@ -323,6 +390,15 @@ impl Inspector {
             let message = meta.required.as_deref().filter(|m| !m.is_empty());
             let message = message.map_or_else(|| format!("{label} is required"), str::to_string);
             info_box(ui, container, InfoKind::Error, &message);
+        }
+        if let (Some(_), Prop::Field { behaviour, path }) = (&meta.validate, value)
+            && let [Step::Key(field)] = path.as_slice()
+        {
+            let key = (behaviour.clone(), field.clone());
+            let error = self.answers.errors.get(&key);
+            let (frame, text) = info_box(ui, container, InfoKind::Error, error.map_or("", String::as_str));
+            ui.set_visible(frame, error.is_some());
+            self.validation_boxes.push((key, frame, text));
         }
         if let Some(reference) = &meta.excerpt {
             let key = value.lock_key();
@@ -444,6 +520,8 @@ impl Inspector {
         self.previews.clear();
         self.doc_buttons.clear();
         self.excerpts.clear();
+        self.buttons.clear();
+        self.validation_boxes.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
         let Some(entity) = self.shown else {
@@ -545,7 +623,14 @@ impl Inspector {
                 } else {
                     row
                 };
-                let control = control(ui, holder, &shown, editable, &meta);
+                let offered = match value {
+                    Prop::Field { behaviour, path } if meta.dropdown.is_some() => match path.as_slice() {
+                        [Step::Key(field)] => self.answers.options.get(&(behaviour.clone(), field.clone())),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let control = control(ui, holder, &shown, editable, (&meta, offered.map(Vec::as_slice)));
                 if let Some(suffix) = &meta.suffix {
                     let unit = ui.add_label(holder, suffix);
                     ui.add_class(unit, "attr-suffix");
@@ -571,6 +656,9 @@ impl Inspector {
                 let tooltip = meta.tooltip.clone();
                 self.rows.push(PropRow { prop: value.clone(), row, control, add, remove, tooltip, limits });
             }
+            if let Part::Behaviour(name) = part {
+                self.add_buttons(ui, rows, name, playing);
+            }
             let prefix = part.lock_key();
             for (name, tabs) in groups.tabs {
                 let name = format!("{prefix}/{name}");
@@ -592,6 +680,26 @@ impl Inspector {
         self.add = Some(add);
         self.conditions = attributes::key(game, &self.types, entity, &layout);
         self.built = (layout, playing, locks);
+    }
+
+    /// A behaviour's `[Button]`s, under its fields. They run in edit mode,
+    /// on the scene's values; while playing they wait.
+    fn add_buttons(&mut self, ui: &mut Ui, rows: NodeId, behaviour: &str, playing: bool) {
+        let Some(described) = self.types.behaviour(behaviour) else { return };
+        if described.buttons.is_empty() {
+            return;
+        }
+        let bar = ui.panel(rows, Style::column());
+        ui.add_class(bar, "attr-buttons-column");
+        for button in &described.buttons {
+            let label = if button.label.is_empty() { props::nice_name(&button.method) } else { button.label.clone() };
+            let node = ui.button(bar, &label);
+            ui.add_class(node, "attr-button");
+            ui.set_class(node, "disabled", playing);
+            if !playing {
+                self.buttons.push((node, behaviour.to_string(), button.method.clone()));
+            }
+        }
     }
 
     /// Applies what was typed or picked, and shows changes made elsewhere.
@@ -631,7 +739,12 @@ impl Inspector {
             let Some(current) = props::get(game, &self.types, entity, &row.prop) else { continue };
             if let Some(picked) = read_control(ui, &row.control, &current) {
                 let picked = clamp(picked, row.limits);
-                props::set(game, renderer.as_deref_mut(), &self.types, entity, &row.prop, picked);
+                let changed = props::set(game, renderer.as_deref_mut(), &self.types, entity, &row.prop, picked);
+                if let (true, Prop::Field { behaviour, .. }) = (changed, &row.prop)
+                    && let Some(method) = &attributes::top(&self.types, &row.prop).on_changed
+                {
+                    self.callbacks.push((behaviour.clone(), method.clone()));
+                }
             }
             if let Some(now) = props::get(game, &self.types, entity, &row.prop) {
                 refresh_control(ui, &mut row.control, &now);
@@ -818,11 +931,30 @@ fn layout(game: &Game, entity: Entity, types: &ScriptTypes) -> Vec<(Part, Vec<Pr
 
 /// The control for a value: a field, a toggle, three fields, a dropdown, or
 /// a label when it is not edited here.
-fn control(ui: &mut Ui, row: NodeId, value: &Value, editable: bool, meta: &FieldInspector) -> Control {
+fn control(
+    ui: &mut Ui,
+    row: NodeId,
+    value: &Value,
+    editable: bool,
+    (meta, offered): (&FieldInspector, Option<&[(String, Value)]>),
+) -> Control {
     if !editable {
         let label = ui.add_label(row, &display(value));
         ui.add_class(label, "value");
         return Control::Fixed(label);
+    }
+    if let Some(offered) = offered.filter(|o| !o.is_empty()) {
+        // A value the scene set that is not offered stays first, as itself, until another is picked.
+        let mut options: Vec<(String, Value)> = offered.to_vec();
+        if !options.iter().any(|(_, v)| v == value) {
+            options.insert(0, (display(value), value.clone()));
+        }
+        let labels: Vec<&str> = options.iter().map(|(label, _)| label.as_str()).collect();
+        let index = options.iter().position(|(_, v)| v == value).unwrap_or_default();
+        let dropdown = ui.dropdown(row, &labels, index);
+        ui.add_class(dropdown, "value-choice");
+        ui.add_class(dropdown, "attr-dropdown");
+        return Control::Offered(dropdown, options.into_iter().map(|(_, v)| v).collect());
     }
     if let Some(control) = attribute_control(ui, row, value, meta) {
         return control;
@@ -910,6 +1042,9 @@ fn read_control(ui: &Ui, control: &Control, current: &Value) -> Option<Value> {
         }
         (Control::Choice(dropdown, options), _) if ui.changed(*dropdown) => {
             Some(Value::Choice(ui.selected_option(*dropdown), options.clone()))
+        }
+        (Control::Offered(dropdown, values), _) if ui.changed(*dropdown) => {
+            values.get(ui.selected_option(*dropdown)).cloned()
         }
         (Control::Buttons(buttons, options), _) if ui.changed(*buttons) => {
             Some(Value::Choice(ui.segment(*buttons), options.clone()))
@@ -1009,7 +1144,8 @@ fn clamp(value: Value, (low, high): (Option<f64>, Option<f64>)) -> Value {
 }
 
 /// A message in a box: a note, a warning or an error.
-fn info_box(ui: &mut Ui, container: NodeId, kind: InfoKind, message: &str) {
+/// A note, warning or error above a field; returns it and its text.
+fn info_box(ui: &mut Ui, container: NodeId, kind: InfoKind, message: &str) -> (NodeId, NodeId) {
     let frame = ui.panel(container, Style::row());
     ui.add_class(frame, "info-box");
     let (class, icon) = match kind {
@@ -1022,6 +1158,7 @@ fn info_box(ui: &mut Ui, container: NodeId, kind: InfoKind, message: &str) {
     ui.add_class(mark, "info-icon");
     let text = ui.add_label(frame, message);
     ui.add_class(text, "info-text");
+    (frame, text)
 }
 
 /// Shows a value in its control, except in a field being typed in.
@@ -1065,6 +1202,12 @@ fn refresh_control(ui: &mut Ui, control: &mut Control, value: &Value) {
             let text = display(value);
             if ui.text(*label) != text {
                 ui.set_text(*label, &text);
+            }
+        }
+        (Control::Offered(dropdown, values), value) => {
+            if let Some(index) = values.iter().position(|v| v == value).filter(|&i| ui.selected_option(*dropdown) != i)
+            {
+                ui.set_selected_option(*dropdown, index);
             }
         }
         (Control::Buttons(buttons, _), Value::Choice(index, _)) => {

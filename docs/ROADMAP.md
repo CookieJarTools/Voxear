@@ -352,8 +352,8 @@ Still to do in M3:
     enable and disable on another field's value; read-only and hidden; range sliders, min and max, suffixes,
     multiline text, progress bars, enum buttons and larger previews; info boxes, required references and
     tooltips; described by ScriptInfo
-  - [ ] buttons, value-changed callbacks, input validation and value dropdowns, which run the behaviour's code in
-    edit mode
+  - [x] buttons, value-changed callbacks, input validation and value dropdowns, which run the behaviour's code in
+    edit mode, on a copy of it made from the scene's values
   - [ ] list and table drawers, colour palettes, the build's check of every scene, the source generator and
     analyzer, and custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D

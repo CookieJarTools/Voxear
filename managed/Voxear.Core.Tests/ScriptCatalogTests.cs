@@ -39,6 +39,21 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void ButtonsCallbacksChecksAndDropdownsAreDescribed()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestTower).Assembly));
+			var tower = document.RootElement.GetProperty("behaviours").EnumerateArray().Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestTower");
+			var button = tower.GetProperty("buttons").EnumerateArray().Single();
+			Check.True(button.GetProperty("method").GetString() == "Rebuild" && button.GetProperty("label").GetString() == "Rebuild the tower", "a [Button] with its label");
+			var fields = tower.GetProperty("fields").EnumerateArray().ToDictionary(f => f.GetProperty("name").GetString()!);
+			Check.True(fields["Floors"].GetProperty("inspector").GetProperty("on_changed").GetString() == "Rebuild", "[OnValueChanged]");
+			var paint = fields["Paint"].GetProperty("inspector");
+			Check.True(paint.GetProperty("dropdown").GetString() == "Colours", "[ValueDropdown]");
+			var validate = paint.GetProperty("validate");
+			Check.True(validate.GetProperty("method").GetString() == "IsColour" && validate.GetProperty("message").GetString() == "Pick a colour the tower has", "[ValidateInput]");
+		}
+
+		[Test]
 		private static void ComponentsAreDescribedAsBehavioursAreButApart()
 		{
 			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestDrift).Assembly));

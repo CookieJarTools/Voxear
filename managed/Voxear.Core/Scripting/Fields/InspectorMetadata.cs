@@ -110,6 +110,18 @@ namespace Voxear.Scripting
 				case ExcerptAttribute excerpt:
 					json.WriteString("excerpt", excerpt.Page);
 					break;
+				case OnValueChangedAttribute changed:
+					json.WriteString("on_changed", changed.Method);
+					break;
+				case ValueDropdownAttribute dropdown:
+					json.WriteString("dropdown", dropdown.Member);
+					break;
+				case ValidateInputAttribute validate:
+					json.WriteStartObject("validate");
+					json.WriteString("method", validate.Method);
+					json.WriteString("message", validate.Message ?? string.Empty);
+					json.WriteEndObject();
+					break;
 				default:
 					WriteFlag(json, attribute);
 					break;

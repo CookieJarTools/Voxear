@@ -142,7 +142,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, behaviour: &str, pa
 }
 
 /// A value shown as its field's kind says.
-fn typed(world: &World, kind: &FieldKind, value: Option<&toml::Value>) -> Value {
+pub(crate) fn typed(world: &World, kind: &FieldKind, value: Option<&toml::Value>) -> Value {
     match kind {
         FieldKind::Number => Value::Number(value.and_then(number).unwrap_or_default() as f32),
         FieldKind::Whole => {
@@ -225,6 +225,17 @@ pub fn set(
         return false;
     }
     change(world, types, entity, behaviour, path, |slot| *slot = new)
+}
+
+/// Sets a top-level field for the scene to a value as a scene writes it,
+/// under the name the scene already uses for it, if any.
+pub fn set_raw(world: &mut World, entity: Entity, behaviour: &str, name: &str, value: toml::Value) -> bool {
+    let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return false };
+    let Some(spec) = kept.0.iter_mut().find(|s| s.type_name == behaviour) else { return false };
+    let fields = Arc::make_mut(&mut spec.fields);
+    let key = fields.keys().find(|key| same_field(key, name)).cloned().unwrap_or_else(|| name.to_string());
+    fields.insert(key, value);
+    true
 }
 
 /// Points a reference at what its menu picked. A top-level asset set to

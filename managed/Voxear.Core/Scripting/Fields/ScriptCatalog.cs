@@ -150,7 +150,29 @@ namespace Voxear.Scripting
 			json.WriteEndArray();
 			WriteDocumentation(json, type);
 			WriteFields(json, type, FieldDefaults.Create(type), types);
+			WriteButtons(json, type);
 			json.WriteEndObject();
+		}
+
+		/// <summary>The behaviour's [Button] methods, which take nothing, with what each button says.</summary>
+		private static void WriteButtons(Utf8JsonWriter json, Type type)
+		{
+			const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+			json.WriteStartArray("buttons");
+			foreach (var method in type.GetMethods(Instance))
+			{
+				var button = method.GetCustomAttribute<ButtonAttribute>(inherit: true);
+				if (button == null || method.GetParameters().Length > 0)
+				{
+					continue;
+				}
+
+				json.WriteStartObject();
+				json.WriteString("method", method.Name);
+				json.WriteString("label", button.Label ?? string.Empty);
+				json.WriteEndObject();
+			}
+			json.WriteEndArray();
 		}
 
 		/// <summary>The VoxDocs page a type's [Documentation] names, for the book button on its Inspector section.</summary>

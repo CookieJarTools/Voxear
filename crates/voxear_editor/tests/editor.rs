@@ -2417,6 +2417,8 @@ read line
 echo "{\"event\":\"finished\",\"result\":\"cancelled\",\"seconds\":0.2,\"message\":\"asked to $line\"}"
 "#;
     let dir = hello_copy();
+    // Profiles saved in Hello by an editor that opened it are not this test's.
+    let _ = std::fs::remove_dir_all(dir.path().join("Settings/BuildProfiles"));
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,
         Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),

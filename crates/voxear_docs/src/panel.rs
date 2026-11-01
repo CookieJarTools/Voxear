@@ -1557,7 +1557,7 @@ impl VoxDocs {
 /// The pictures a page shows, and the assets it shows live, by their
 /// extensions.
 const PICTURES: [&str; 4] = ["png", "jpg", "jpeg", "gif"];
-const LIVE: [&str; 4] = ["prefab", "material", "gltf", "glb"];
+const LIVE: [&str; 5] = ["prefab", "material", "gltf", "glb", "fbx"];
 
 /// The files of the pictures drawn, with where each shows.
 fn pictures_drawn(library: &Library, page: PageId, drawn: &[(String, NodeId)]) -> Vec<(PathBuf, NodeId)> {

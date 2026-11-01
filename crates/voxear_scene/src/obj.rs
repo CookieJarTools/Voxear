@@ -150,7 +150,7 @@ pub struct InstanceMarker;
 impl Component for InstanceMarker {}
 
 /// Survives level and scene changes (Unity's `DontDestroyOnLoad`).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScenePersistence;
 impl Component for ScenePersistence {}
 

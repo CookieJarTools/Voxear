@@ -103,7 +103,7 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 | 2D physics | Box2D v3 (C, MIT) | The modern solver is fast and deterministic, and it pairs naturally with Jolt. |
 | UI | **Our own retained UI** on taffy, parley, swash and cssparser, rendered by our Vulkan renderer | See [UI](#ui-voxear-ui). |
 | Audio | Rust mixer on cpal, with spatial acoustics from **Steam Audio** (Apache-2.0) | Steam Audio provides HRTF, occlusion, transmission, reflections and pathing around corners. A GPU ray-traced path can come later. |
-| Mesh import | glTF 2.0 first, then FBX via ufbx | meshoptimizer handles meshlets, LOD and vertex cache optimisation. |
+| Mesh import | glTF 2.0, and FBX through **ufbx** (C, MIT) | Both become the same prepared model, so LODs, cooking and previews are shared. meshoptimizer handles meshlets, LOD and vertex cache optimisation. |
 
 ## Conventions
 
@@ -113,6 +113,11 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 - Rotations are quaternions. Euler angles in the inspector are in degrees and applied in Z, X, Y order, as in Unity.
 - Importers convert right-handed formats such as glTF and FBX so that assets face +Z, and nothing is flipped at
   runtime.
+- FBX files (`voxear_render::fbx_import`) come in metres, scaled by ufbx, and their axes are turned into glTF's in
+  the vertices, each node's transform conjugated to match, as Unity's Bake Axis Conversion does: a Z-up model made
+  in centimetres stands up at its size, with no -90 degree turn left on its Objs. A mesh splits into a part per
+  material (`#mesh<mesh>.<part>`, `#material<index>`, in the file's order). Textures are read from the file or found
+  beside it by name, and one found nowhere is left out with a warning.
 - The renderer uses left-handed projection with reverse-Z depth (1 near, 0 far) for precision, and handles Vulkan's
   Y-down clip space internally.
 
@@ -359,6 +364,8 @@ and a positive pitch looks down.
     `crates/voxear_engine/src/loading.rs`.
   - Assets that behaviour fields name (`Prefab` and `Ref<T>` fields) are not preloaded, since they load on their
     own.
+  - The editor adds and takes out a level's own scenes, and sets `active` and `required`, from the Inspector (see
+    the Inspector for assets); `stands_on` and `weight` are still written by hand.
 - **Scene Persistence:** Objs marked `persistent` (the `ScenePersistence` component) survive every level change,
   along with their children, like `DontDestroyOnLoad`. `obj.Persist()` will be the easy form in code.
   - **No duplicates on reload, unlike Unity.** Reloading the scene a persistent Obj came from does not create a
@@ -366,17 +373,18 @@ and a positive pitch looks down.
     myself if a copy exists" boilerplate.
   - **Only a running game keeps them.** In edit mode (`Engine::set_edit_mode`) persistent Objs unload with their
     scene like any other, so the editor opening another level, scene or prefab does not carry them along.
+  - In the editor, the Inspector's **Persistent** box marks an Obj, as a step to undo, and saving writes it.
 - From C#, `Level.Load("Levels/Night.level")` changes level after the current frame. Unloaded Objs stop rendering
   at once, and their behaviours get OnDisable and OnDestroy at the end of the next frame.
 - Loading a scene is one lifecycle batch, so ordering guarantee 2 holds across the whole scene.
 - **Objs created at runtime**, such as instantiated prefabs, belong to the level's active scene and unload with
   it, unless they are persistent. Objs marked `EditorOnly`, such as the editor's Scene camera, belong to no scene
   and level changes leave them alone.
-- **The Levels panel** in the editor is LayerCake's window: every level (with its scene count and the level it
-  stands on) and every scene in no level, to find by name. Stopped, clicking a level opens it to edit (a loose scene
-  opens on its own) and its play button opens it and plays. Playing, clicking a level changes to it through the
-  scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in a build; the bar at the
-  bottom follows any level change, whoever started it.
+- **The Levels panel** in the editor is LayerCake's window: every level (with its scene count and the level it stands
+  on) and every scene in no level, to find by name, listed again when the Project changes files. Stopped, clicking a
+  level opens it to edit (a loose scene opens on its own) and its play button opens it and plays. Playing, clicking a
+  level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
+  a build; the bar at the bottom follows any level change, whoever started it.
 
 ### Prefabs *(implemented: nesting, variants, overrides, Instantiate; inspector editing planned)*
 
@@ -1217,7 +1225,10 @@ frame, as design tools and Unity have it.
   with its text follows the pointer. An element that takes drops (`ui.accept_drops`) is marked `drop-hover` while
   it is under the pointer, and letting go on it is a drop onto it (`ui.dropped_onto`, with a `DragSource` saying
   what was dragged). Letting go elsewhere in a row's own list is a drop in the list, the row under the pointer
-  marked `drop-target` (`ui.dropped`, or `ui.dropped_item` for a tree). Either way the release is no click.
+  marked `drop-target` (`ui.dropped`, or `ui.dropped_item` for a tree). A list whose rows take drops
+  (`ui.accept_row_drops`) also takes what is dragged from elsewhere onto its rows, marked the same way before, onto
+  or after the row under the pointer (`ui.dropped_on_item`), while its own rows still land in it as rows. Either way
+  the release is no click.
 - **Rich text** (`RichText`, `ui.rich_label`): a label whose words are bold, italic, code, struck out or
   highlighted, with links that `ui.clicked_link` reports. Each span shapes as its own run, so its colour, ground
   and lines are drawn with it; `link-color`, `code-background` and `mark-color` come from the text style, and
@@ -1397,8 +1408,17 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   kind holds. A material's colour, metallic, roughness and emission are edited in place and saved to its file,
   showing at once wherever it is drawn (`Content::save_material`, `Renderer::update_material`); its colour and
   emission have swatches that open the colour picker, the emission's with its HDR intensity; a script shows its
-  behaviour's fields with their starting values; a prefab or scene lists its Objs, and a level its scenes. Levels,
-  scenes, prefabs and scripts have an Open button.
+  behaviour's fields with their starting values; a prefab or scene lists its Objs. Levels, scenes, prefabs and
+  scripts have an Open button.
+- **A level's scenes in the Inspector** (`level_files`). A level shows the level it stands on and its own scenes,
+  each with an Active box (one is always active: the one marked, or the first), a Required box and a button to take
+  it out, and **Add Scene**, a menu of the project's scenes it does not list. Each change is written to the
+  `.level` at once, as a material's are, through `toml_edit`, so its comments and layout stay; a scene added is
+  written by its GUID with its path in a comment. The Levels panel lists again, and a level open is opened again
+  (`Game::load_level_with`), so a change to it or to a level it stands on shows in the Hierarchy at once: the scenes
+  it keeps stay as they are, unsaved edits included, and only those added load and those taken out unload. Taking
+  out a scene with edits not saved asks for a second click first, and clears undo, whose steps may name its Objs.
+  Not while playing.
 - **The Scene view** renders into its panel through the editor's own camera, flown with the right mouse button
   as in Unity. The renderer draws the 3D view into a rectangle of the window (`Renderer::set_view_rect`), clears
   around it to the window's background (`Renderer::set_clear_color`), and looks through a chosen camera
@@ -1435,11 +1455,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   with ids after the highest there; Objs moved into another scene move into its list with new ids; deleted Objs
   come back with the ids they had. While playing, these change only the played world.
 - **The Inspector** has a header with the Obj's icon, its name and an active switch, then rows for Tag, Layer and
-  Static (shown, not yet stored: Objs have no tags or layers yet). The Transform and each component are sections
-  divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a menu) on
-  the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
-  letters, applied as they are typed, and changes made elsewhere show in fields not being edited. While playing it
-  shows the running Obj, its behaviours included.
+  Static (shown, not yet stored: Objs have no tags or layers yet) and Persistent, which marks the Obj to stay through
+  level changes (`ScenePersistence`, saved as `persistent = true`) as a step to undo. The Transform and each component
+  are sections divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a
+  menu) on the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with
+  coloured axis letters, applied as they are typed, and changes made elsewhere show in fields not being edited. While
+  playing it shows the running Obj, its behaviours included.
 - **Components in the Inspector** (`props`): each component is a part, and each value in it a prop, read from the
   world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
   mesh it has) and its material (the default, or a `.material` in the project, which can also be dragged onto it from
@@ -1491,6 +1512,19 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Making prefabs.** Dragging an Obj from the Hierarchy onto the Project panel writes it, with what is under it,
   to a `.prefab` in the folder shown (`objs::make_prefab`), and puts an instance of the new prefab in its place, as
   one step to undo.
+- **Placing prefabs and models** (`editor::placing`, `objs::place_prefab` and `place_model`). A prefab dragged from
+  the Project places an instance of it, and a model an Obj drawing it, with a Mesh Renderer on its mesh and its own
+  material (`<model>#mesh0.0`, `#material0`); a model of several parts places an Obj with one inside for each part,
+  where the model puts it. Either, dragged onto the Hierarchy, lands where an Obj moved there would: inside the Obj
+  under the pointer, beside it near its edge, at the top of a scene on its header, and below the rows at the top of
+  the active scene. On the Scene view it lands where the pointer's ray first enters a mesh's box, or else meets the
+  ground plane (y = 0, within 200 m), snapped to the grid across; failing both, 8 m along the ray on the grid. Inside
+  an Obj, what is placed keeps the position its prefab or model gives it; elsewhere that position is an offset from
+  where it lands, so a prefab made to stand on the ground at the origin stands on it. What is placed is named for the
+  prefab or model, numbered as copies are when the name is taken, selected, and one step to undo. Only while a prefab
+  or model is dragged do the two take drops, so nothing else lights them up; the Scene view is tinted in the accent
+  under it. In prefab mode, what would land at the top goes inside the prefab's root, keeping its place in the world,
+  as a prefab has one root; and the prefab open, or one that holds it, is not placed.
 - **Prefab mode** (`editor::prefab_mode`), as in Unity: a prefab opens on its own to edit from the Project (a double
   click, or the Inspector's Open), or from the Hierarchy's Open Prefab on an instance. Its Objs load as a scene's
   would, in place of the level (`Levels::open_scene` takes prefabs), a bar over the Scene view names it, and Back

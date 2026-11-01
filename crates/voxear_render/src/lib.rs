@@ -12,6 +12,7 @@ mod assets;
 mod cooked;
 mod capture;
 mod debug_pass;
+mod fbx_import;
 mod frame_debugger;
 mod gltf_import;
 mod gpu;
@@ -361,10 +362,10 @@ impl Renderer {
         self.assets.as_mut().expect("assets live until drop").set_material(&self.gpu, handle, desc)
     }
 
-    /// Loads a `.gltf` or `.glb` file and returns its drawable pieces. `path`
-    /// is the model's project path, and `read` reads it and every file it
-    /// names, from wherever the content lives.
-    pub fn import_gltf(&mut self, path: &str, read: &mut ReadFile) -> Result<ImportedModel> {
+    /// Loads a `.gltf`, `.glb` or `.fbx` file and returns its drawable pieces.
+    /// `path` is the model's project path, and `read` reads it and every file
+    /// it names, from wherever the content lives.
+    pub fn import_model(&mut self, path: &str, read: &mut ReadFile) -> Result<ImportedModel> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         gltf_import::import(&self.gpu, &mut self.bindless, assets, path, read)
     }

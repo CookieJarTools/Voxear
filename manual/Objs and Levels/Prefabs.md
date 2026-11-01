@@ -18,7 +18,17 @@ You can also open a prefab from one of its instances: right-click the instance i
 
 ## Placing more instances
 
-Select an instance and press Ctrl+D to duplicate it. Each duplicate is another instance of the same prefab.
+Drag the prefab from the Project panel into the Scene view. The new instance lands where the pointer meets the ground, or on top of whatever is under the pointer. If there is nothing there, it lands a little way in front of the camera.
+
+You can also drag the prefab onto the Hierarchy:
+
+- Let go on an Obj to put the instance inside that Obj.
+- Let go near the top or bottom edge of a row to put it just before or after that Obj. A line shows where it will go.
+- Let go on a scene's name to put it in that scene.
+
+Press Ctrl+Z to take a placed instance away again.
+
+To copy an instance you already have, select it and press Ctrl+D. Each copy is another instance of the same prefab.
 
 Your scripts can make instances while the game runs, which is how you spawn bullets, enemies or pickups:
 

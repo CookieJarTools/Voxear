@@ -35,7 +35,7 @@ const PER_FRAME: usize = 2;
 const LIVE_SIZE: u32 = 256;
 const LIVE_PATIENCE: u32 = 240;
 /// The kinds of asset a page can show live, by their extensions.
-const LIVE_KINDS: [&str; 4] = ["prefab", "material", "gltf", "glb"];
+const LIVE_KINDS: [&str; 5] = ["prefab", "material", "gltf", "glb", "fbx"];
 
 /// A live asset a page shows: its file, the asset, the preview last handed
 /// to the page, and how many frames it has waited for one.
@@ -141,7 +141,7 @@ impl Editor {
                 })
                 .collect();
         }
-        let ui = &self.ui;
+        let ui = &mut self.ui;
         let actions: Vec<AssetAction> = self.live_fields.iter_mut().filter_map(|(_, view)| view.update(ui)).collect();
         for action in actions {
             self.asset_action(action, renderer);

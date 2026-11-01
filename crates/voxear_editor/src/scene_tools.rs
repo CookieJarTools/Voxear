@@ -26,6 +26,9 @@ const RING_SEGMENTS: usize = 48;
 /// How long the move arrowheads and how big the scale blocks are, on screen.
 const ARROW_HEAD: f32 = 12.0;
 const BLOCK: f32 = 9.0;
+/// How far away the ground can be met to place something on it; further,
+/// the pointer is too near the horizon for it to be where it was meant.
+const GROUND_REACH: f32 = 200.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tool {
@@ -125,19 +128,8 @@ pub fn pick(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32
             best = Some((distance, entity));
         }
     };
-    let meshes = world
-        .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
-        .without::<EditorOnly>()
-        .without::<Destroying>();
-    for (entity, renderer_of, transform, placed) in meshes {
-        let Some((min, max)) = renderer.mesh_bounds(renderer_of.mesh) else { continue };
-        let matrix = placed.map_or_else(|| transform.matrix(), |w| w.0);
-        let inverse = matrix.inverse();
-        let (local_origin, local_direction) = (inverse.transform_point3(origin), inverse.transform_vector3(direction));
-        if let Some(t) = enter_box(local_origin, local_direction, min, max) {
-            let hit = matrix.transform_point3(local_origin + local_direction * t);
-            consider(hit.distance(origin), entity);
-        }
+    for (distance, _, entity) in mesh_hits(world, renderer, (origin, direction)) {
+        consider(distance, entity);
     }
     let marked = world
         .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>)>()
@@ -155,6 +147,40 @@ pub fn pick(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32
         }
     }
     best.map(|(_, entity)| entity)
+}
+
+/// Where the ray through a point in the Scene view first meets a mesh, by
+/// its box, or else the ground, the plane through the origin facing up, if
+/// that is in front and not too near the horizon to place things on.
+pub fn surface_at(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32; 2]) -> Option<Vec3> {
+    let ray = camera.ray(point);
+    let nearest = mesh_hits(world, renderer, ray).into_iter().min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((_, hit, _)) = nearest {
+        return Some(hit);
+    }
+    let ground = on_plane(ray, Vec3::ZERO, Vec3::Y)?;
+    let along = (ground - ray.0).dot(ray.1);
+    (along > 0.0 && along < GROUND_REACH).then_some(ground)
+}
+
+/// Each mesh a ray enters, by its box: how far along the ray, where, and its Obj.
+fn mesh_hits(world: &World, renderer: &Renderer, (origin, direction): (Vec3, Vec3)) -> Vec<(f32, Vec3, Entity)> {
+    let meshes = world
+        .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
+        .without::<EditorOnly>()
+        .without::<Destroying>();
+    let mut hits = Vec::new();
+    for (entity, renderer_of, transform, placed) in meshes {
+        let Some((min, max)) = renderer.mesh_bounds(renderer_of.mesh) else { continue };
+        let matrix = placed.map_or_else(|| transform.matrix(), |w| w.0);
+        let inverse = matrix.inverse();
+        let (local_origin, local_direction) = (inverse.transform_point3(origin), inverse.transform_vector3(direction));
+        if let Some(t) = enter_box(local_origin, local_direction, min, max) {
+            let hit = matrix.transform_point3(local_origin + local_direction * t);
+            hits.push((hit.distance(origin), hit, entity));
+        }
+    }
+    hits
 }
 
 /// How far along a ray it enters a box, by the slab method; `None` if it

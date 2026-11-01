@@ -22,10 +22,14 @@
 //!   move, rotate or scale handles around it (Q, W, E and R pick the tool;
 //!   Ctrl snaps)
 //! - **editing Objs** in the Hierarchy: its + button and context menus make,
-//!   duplicate and delete them, and dragging one onto another reparents it
-//! - the **Inspector**, editing the selected Obj's name, Transform and
-//!   components, its scripts' fields included, with Add and Remove
-//!   Component; while playing, a row's menu can keep its value after play
+//!   duplicate and delete them, and dragging one onto another reparents it;
+//!   a prefab dragged from the Project onto it or the Scene view places an
+//!   instance there
+//! - the **Inspector**, editing the selected Obj's name, Transform, whether
+//!   it is persistent, and components, its scripts' fields included, with Add
+//!   and Remove Component; while playing, a row's menu can keep its value
+//!   after play; for a level selected in the Project, its scenes, added,
+//!   taken out and marked active or not required
 //! - the **Console**, after Sifter: categories nobody declared, a search with
 //!   tags and regular expressions, and each line's stack coloured and folded,
 //!   its frames opening their files
@@ -51,6 +55,7 @@ mod gizmos;
 mod hierarchy;
 mod history;
 mod inspector;
+mod level_files;
 mod levels_panel;
 mod live;
 pub mod memory_panel;

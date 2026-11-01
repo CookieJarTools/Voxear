@@ -47,6 +47,8 @@ roxmltree = "0.21"
 parley = "0.12"
 swash = "0.2"
 meshopt = "0.7"
+# FBX models, read into the same form as glTF ones.
+ufbx = "0.11"
 uuid = { version = "1", features = ["v4"] }
 # Tracy's client, for `--features tracy`: it collects only while the viewer
 # is connected, and only from this machine, without announcing itself.

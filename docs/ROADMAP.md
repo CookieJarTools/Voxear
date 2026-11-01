@@ -30,6 +30,8 @@ Done so far:
 - **Lighting:** a camera with reverse-Z depth, a PBR forward pass, a sun plus point and spot lights, an analytic sky,
   and ACES tonemapping.
 - **glTF import:** mirrored to Unity's coordinates, with textures and mips.
+- **FBX import** through ufbx, into the same prepared model as glTF: units and axes baked into the vertices, Phong
+  materials read as PBR, and textures found beside the file when the path it names does not hold.
 - **Hierarchy:** parent/child transforms.
 - **Rendering modes:** headless offscreen rendering (`vox render`), and RenderDoc capture (F12 or `--renderdoc`).
 - **Two-phase Hi-Z occlusion culling.**

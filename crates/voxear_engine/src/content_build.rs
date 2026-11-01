@@ -425,7 +425,9 @@ impl Cooker {
         let mut inputs = vec![voxear_render::COOKED_VERSION.to_le_bytes().to_vec(), read(&self.root, path)?];
         for file in companions {
             inputs.push(file.as_bytes().to_vec());
-            inputs.push(read(&self.root, file)?);
+            // An FBX file's textures are looked for in more than one place, so one may be missing: it counts as
+            // empty, and its coming changes the hash. A glTF file's buffer that is missing fails when it is read.
+            inputs.push(read(&self.root, file).unwrap_or_default());
         }
         let parts: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
         let cached = self.dir.join(format!("{}.model", content_hash(&parts)));

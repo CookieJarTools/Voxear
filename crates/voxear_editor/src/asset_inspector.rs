@@ -3,17 +3,21 @@
 //! material's colour, metallic, roughness and emission are edited in place
 //! and saved to its file, showing at once where it is drawn. A script shows
 //! the fields of the behaviour it declares, with their starting values, as
-//! its last build describes them. A prefab and a scene list their Objs, and
-//! a level its scenes. Levels, scenes, prefabs and scripts have an Open
-//! button; a prefab opens on its own, to edit. A material, prefab or model
-//! shows a large preview of itself under its name, which a drag turns.
+//! its last build describes them. A prefab and a scene list their Objs. A
+//! level lists the level it stands on and its own scenes, each with whether
+//! it is the active one and whether it is required, and a button to take
+//! it out; Add Scene offers the project's other scenes (see `level_files`).
+//! Levels, scenes, prefabs and scripts have an Open button; a prefab opens
+//! on its own, to edit. A material, prefab or model shows a large preview
+//! of itself under its name, which a drag turns.
 
 use voxear_assets::AssetKind;
 use voxear_engine::{Game, MaterialData, script_types::ScriptTypes};
-use voxear_ui::{NodeId, PickedColor, Style, Ui};
+use voxear_ui::{MenuItem, NodeId, PickedColor, Style, Ui};
 
 use crate::{
     inspector::{color_row, number, prop},
+    level_files::{self, LevelEdit},
     project_view::{ItemKind, ProjectItem},
 };
 
@@ -22,14 +26,26 @@ use crate::{
 pub enum AssetAction {
     Open(ProjectItem),
     SaveMaterial(String, MaterialData),
+    /// Change the scenes of the level at this path.
+    EditLevel(String, LevelEdit),
 }
 
 pub struct AssetView {
     item: ProjectItem,
     open: Option<NodeId>,
     material: Option<MaterialFields>,
+    level: Option<LevelFields>,
     /// The preview's frame, which takes drags, and its image.
     preview: Option<(NodeId, NodeId)>,
+}
+
+/// A level's own scenes: each one's active and required boxes and remove
+/// button, in the file's order, then Add Scene and the scenes it offers, by
+/// GUID and path.
+struct LevelFields {
+    scenes: Vec<[NodeId; 3]>,
+    add: NodeId,
+    offered: Vec<(String, String)>,
 }
 
 /// A material's fields, and the values they were last saved with.
@@ -87,13 +103,13 @@ impl AssetView {
         }
 
         let file = game.project.root.join(&item.path);
-        let mut view = Self { item: item.clone(), open: None, material: None, preview };
+        let mut view = Self { item: item.clone(), open: None, material: None, level: None, preview };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file),
             ItemKind::Script => script(ui, root, item, types),
             ItemKind::Asset(AssetKind::Prefab) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Scene) => objs(ui, root, "Objs", &file),
-            ItemKind::Asset(AssetKind::Level) => scenes(ui, root, &file, game),
+            ItemKind::Asset(AssetKind::Level) => view.level = scenes(ui, root, &file, game),
             _ => {}
         }
         let opens = matches!(
@@ -117,13 +133,17 @@ impl AssetView {
             return None;
         }
         let material = material(ui, root, &game.project.root.join(&item.path))?;
-        Some(Self { item: item.clone(), open: None, material: Some(material), preview: None })
+        Some(Self { item: item.clone(), open: None, material: Some(material), level: None, preview: None })
     }
 
-    /// What was asked of the editor this frame: Open, or a material changed.
-    pub fn update(&mut self, ui: &Ui) -> Option<AssetAction> {
+    /// What was asked of the editor this frame: Open, a material changed, or
+    /// a level's scenes.
+    pub fn update(&mut self, ui: &mut Ui) -> Option<AssetAction> {
         if self.open.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::Open(self.item.clone()));
+        }
+        if let Some(edit) = self.level.as_ref().and_then(|level| level.update(ui)) {
+            return Some(AssetAction::EditLevel(self.item.path.clone(), edit));
         }
         let fields = self.material.as_mut()?;
         let changed = fields.color.iter().chain(&fields.emissive).chain([&fields.metallic, &fields.roughness]);
@@ -294,18 +314,82 @@ fn objs(ui: &mut Ui, root: NodeId, title: &str, file: &std::path::Path) {
     }
 }
 
-/// The scenes a level loads, by path.
-fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) {
-    let Ok(text) = std::fs::read_to_string(file) else { return };
-    let Ok(table) = text.parse::<toml::Table>() else { return };
+/// The level a level stands on, and its own scenes, to change.
+fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Option<LevelFields> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let table = text.parse::<toml::Table>().ok()?;
+    let entries = level_files::entries(&text).ok()?;
     let rows = part(ui, root, "Scenes", "scene");
     if let Some(base) = table.get("stands_on").and_then(|v| v.as_str()) {
         text_row(ui, rows, "Stands on", &asset_path(game, base));
     }
-    let listed = table.get("scene").and_then(|s| s.as_array()).cloned().unwrap_or_default();
-    for scene in listed.iter().filter_map(|s| s.get("scene")?.as_str()) {
-        let row = ui.add_label(rows, &asset_path(game, scene));
-        ui.add_class(row, "asset-line");
+    if entries.is_empty() {
+        let hint = ui.add_label(rows, "No scenes yet. Add one to fill the level.");
+        ui.add_class(hint, "asset-line");
+    }
+    let mut scenes = Vec::new();
+    for entry in &entries {
+        let path = asset_path(game, &entry.scene);
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        let row = prop(ui, rows, name.rsplit_once('.').map_or(name, |(stem, _)| stem));
+        let holder = ui.panel(row, Style::row());
+        ui.add_class(holder, "prop-value");
+        let mut check = |label: &str, on: bool| {
+            let toggle = ui.toggle(holder, label, on);
+            ui.add_class(toggle, "checkbox");
+            ui.add_class(toggle, "level-flag");
+            toggle
+        };
+        let (active, required) = (check("Active", entry.active), check("Required", entry.required));
+        let remove = ui.icon_button(holder, "close");
+        ui.add_class(remove, "list-remove");
+        scenes.push([active, required, remove]);
+    }
+    let add = ui.button(rows, "Add Scene");
+    ui.add_class(add, "add-component");
+    let listed: Vec<Option<voxear_assets::AssetGuid>> =
+        entries.iter().map(|entry| game.content.parse(&entry.scene).ok().and_then(|r| r.guid())).collect();
+    let mut offered: Vec<(String, String)> = (game.content.db().entries())
+        .filter(|e| e.kind == AssetKind::Scene && !listed.contains(&Some(e.guid)))
+        .map(|e| (e.guid.to_string(), e.path.clone()))
+        .collect();
+    offered.sort_by(|a, b| a.1.cmp(&b.1));
+    Some(LevelFields { scenes, add, offered })
+}
+
+impl LevelFields {
+    /// The change asked for this frame: a scene picked from Add Scene's
+    /// menu, a box ticked, or a scene taken out. The active box is ticked
+    /// on another scene to move it; ticked off, it stays, as one scene is
+    /// always the active one.
+    fn update(&self, ui: &mut Ui) -> Option<LevelEdit> {
+        if let Some(index) = ui.menu_choice(self.add) {
+            let (guid, path) = self.offered.get(index)?.clone();
+            return Some(LevelEdit::Add { guid, path });
+        }
+        if ui.clicked(self.add) {
+            let [x, y, _, height] = ui.rect(self.add);
+            let items: Vec<MenuItem> = match self.offered.is_empty() {
+                true => vec![MenuItem::new("Every scene is in this level").enabled(false)],
+                false => self.offered.iter().map(|(_, path)| MenuItem::new(path)).collect(),
+            };
+            ui.open_menu(self.add, (x, y + height + 4.0), &items);
+        }
+        for (at, &[active, required, remove]) in self.scenes.iter().enumerate() {
+            if ui.changed(active) {
+                if ui.is_checked(active) {
+                    return Some(LevelEdit::Activate(at));
+                }
+                ui.set_checked(active, true);
+            }
+            if ui.changed(required) {
+                return Some(LevelEdit::Require(at, ui.is_checked(required)));
+            }
+            if ui.clicked(remove) {
+                return Some(LevelEdit::Remove(at));
+            }
+        }
+        None
     }
 }
 

@@ -345,7 +345,7 @@ impl Content {
                 renderer.upload_cooked(&CookedModel::from_bytes(&path, &self.read(&path)?)?)?
             } else {
                 let reader = self.reader();
-                renderer.import_gltf(&path, &mut |file| reader.read(file))?
+                renderer.import_model(&path, &mut |file| reader.read(file))?
             };
             self.register_model(guid, model);
         }

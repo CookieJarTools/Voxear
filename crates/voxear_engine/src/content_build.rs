@@ -1,16 +1,17 @@
 //! The content build: packs a project's assets into bundles by how they are
 //! used, so a level loads exactly the bundles it needs.
 //!
-//! 1. **Roots** are what a game can ask for by name: every level and prefab,
-//!    and every asset a behaviour field names, since `Ref<T>` loads those on
-//!    their own. `[content]` in `voxear.toml` adds roots with `include` and
+//! 1. **Roots** are what a game can ask for by name: every level, prefab and
+//!    UI document, and every asset a behaviour field names, since `Ref<T>`
+//!    loads those on their own. `[content]` in `voxear.toml` adds roots with `include` and
 //!    takes them away with `exclude` (see [`ContentSettings`]). `[ContentRoot]`
 //!    in scripts names what code loads by path ([`CodeRoot`]); like a field,
 //!    it ships even when excluded.
 //! 2. **Dependencies** come from the files: a level's scenes, the prefabs,
 //!    meshes and materials that scenes and prefabs use, and a model's
 //!    textures. Files a model reads that are not assets, such as its
-//!    buffers, travel with it.
+//!    buffers, are cooked into it, and the sheets a UI document names ship
+//!    beside it, so it reads them by path as it does from the project.
 //! 3. An asset's **usage set** is the roots that reach it. Assets with the
 //!    same usage set share a bundle, so loading a root opens only bundles
 //!    it needs, and what two levels share sits in a bundle both open.
@@ -92,8 +93,8 @@ struct Needs {
     direct: BTreeSet<AssetGuid>,
     /// Assets its behaviour fields name, which load on their own.
     named: BTreeSet<AssetGuid>,
-    /// Files it reads beside its own, such as a model's buffers and images.
-    /// They are cooked into it rather than shipped.
+    /// Files it reads beside its own: a model's buffers and images, which
+    /// are cooked into it, or a UI document's sheets, which ship with it.
     companions: Vec<String>,
 }
 
@@ -125,9 +126,11 @@ pub fn build_with(
         db.entries().filter(|e| !usage.contains_key(&e.guid)).map(|e| e.path.clone()).collect();
     excluded.sort();
 
-    // Every asset as it will ship: models cooked, everything else as written.
+    // Every asset as it will ship: models cooked, everything else as written,
+    // and a UI document's sheets beside it.
     let mut cooker = Cooker::open(root)?;
     let mut stored = HashMap::with_capacity(usage.len());
+    let mut beside: HashMap<AssetGuid, Vec<(String, Vec<u8>)>> = HashMap::new();
     for (done, guid) in usage.keys().enumerate() {
         let entry = db.get(*guid).expect("from the database");
         progress(done, usage.len(), &entry.path)?;
@@ -137,6 +140,13 @@ pub fn build_with(
             read(root, &entry.path)?
         };
         stored.insert(*guid, bytes);
+        if entry.kind == AssetKind::Ui {
+            let sheets = needs[guid].companions.iter().map(|sheet| {
+                let bytes = read(root, sheet).with_context(|| format!("{} names {sheet}", entry.path))?;
+                Ok((sheet.clone(), bytes))
+            });
+            beside.insert(*guid, sheets.collect::<Result<_>>()?);
+        }
     }
 
     // One bundle per distinct usage set, then split and merged to size.
@@ -146,7 +156,11 @@ pub fn build_with(
     }
     let path_of = |guid: &AssetGuid| db.get(*guid).expect("from the database").path.clone();
     let limits = (settings.merge_below_kb * 1024, settings.split_above_mb * 1024 * 1024);
-    let planned = plan_bundles(groups, |g| stored[g].len() as u64, path_of, limits);
+    let size_of = |g: &AssetGuid| {
+        let sheets: usize = beside.get(g).map_or(0, |files| files.iter().map(|(_, bytes)| bytes.len()).sum());
+        (stored[g].len() + sheets) as u64
+    };
+    let planned = plan_bundles(groups, size_of, path_of, limits);
 
     std::fs::create_dir_all(output).with_context(|| format!("creating {}", output.display()))?;
     let mut catalog = Catalog { format: CATALOG_FORMAT, ..Catalog::default() };
@@ -156,17 +170,21 @@ pub fn build_with(
         let mut writer = BundleWriter::new(settings.compression);
         for &guid in &assets {
             let entry = db.get(guid).expect("from the database");
+            // A cooked model compressed its own GPU data, as GDeflate the GPU unpacks.
+            let mut files = vec![if entry.kind == AssetKind::Model {
+                writer.add_as_is(&entry.path, &stored[&guid])
+            } else {
+                writer.add(&entry.path, &stored[&guid])
+            }];
+            for (sheet, bytes) in beside.get(&guid).into_iter().flatten() {
+                files.push(writer.add(sheet, bytes));
+            }
             catalog.assets.push(CatalogAsset {
                 guid: guid.to_string(),
                 path: entry.path.clone(),
                 kind: entry.kind,
                 bundle: index,
-                // A cooked model compressed its own GPU data, as GDeflate the GPU unpacks.
-                files: vec![if entry.kind == AssetKind::Model {
-                    writer.add_as_is(&entry.path, &stored[&guid])
-                } else {
-                    writer.add(&entry.path, &stored[&guid])
-                }],
+                files,
                 cooked: entry.kind == AssetKind::Model,
             });
             bundle_of.insert(guid, index);
@@ -278,7 +296,9 @@ fn usage_sets(
         .filter(|e| {
             // A field or code naming an asset means something shipped uses it, so exclude cannot drop it.
             let needed = named.contains(&e.guid) || code_roots.iter().any(|r| r.matches(e.guid, &e.path));
-            let blanket = matches!(e.kind, AssetKind::Level | AssetKind::Prefab) || matches(&settings.include, &e.path);
+            // Code loads levels, prefabs and UI documents by path, which the build cannot see.
+            let blanket = matches!(e.kind, AssetKind::Level | AssetKind::Prefab | AssetKind::Ui)
+                || matches(&settings.include, &e.path);
             needed || (blanket && !matches(&settings.exclude, &e.path))
         })
         .map(|e| (e.guid, e.path.clone()));
@@ -333,6 +353,14 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         AssetKind::Model => {
             let bytes = read(db.root(), path)?;
             needs.companions = voxear_render::companion_files(path, &bytes)?;
+        }
+        AssetKind::Ui => {
+            // Sheets are named from the document's folder, as the game reads them.
+            let markup = std::fs::read_to_string(db.root().join(path))?;
+            let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+            let sheets = voxear_ui::markup::style_sources(&markup).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let beside = |sheet: String| if folder.is_empty() { sheet } else { format!("{folder}/{sheet}") };
+            needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Texture => {}
     }

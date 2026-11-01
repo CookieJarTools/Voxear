@@ -40,6 +40,14 @@ use crate::{
 /// Reads a file a document refers to, by the path written in it.
 pub type LoadFile<'a> = dyn FnMut(&str) -> Result<String, String> + 'a;
 
+/// The style sheets a document names in its `<Style src>`, as written, for
+/// a content build to ship beside it.
+pub fn style_sources(markup: &str) -> Result<Vec<String>, UiError> {
+    let document = Document::parse(markup).map_err(|e| UiError(e.to_string()))?;
+    let styles = document.descendants().filter(|node| node.has_tag_name("Style"));
+    Ok(styles.filter_map(|node| node.attribute("src")).map(String::from).collect())
+}
+
 struct Builder<'a, 'd> {
     source: &'a str,
     document: &'d Document<'d>,

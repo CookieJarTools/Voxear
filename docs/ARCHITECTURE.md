@@ -574,12 +574,13 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
 `crates/voxear_assets/src/bundle.rs`.
 
 1. **Walk the dependency graph from every root.** Roots are what a game can ask for by name: every level, every
-   prefab, and every asset a behaviour field names.
+   prefab, every UI document (`.vui`), and every asset a behaviour field names.
    - A field's asset is a root of its own because `Ref<T>` loads it separately. A `Prefab` field is treated the same
      way, so its bundle opens at the Obj's Awake.
    - Dependencies come from the files: a level's scenes, the prefabs, meshes and materials that scenes and prefabs
      use (overrides included), and the textures a model names. Files a model reads that are not assets, such as its
-     `.bin` buffers, are packed with it.
+     `.bin` buffers, are packed with it, and so are the `.vss` sheets a UI document names, which it reads by path in a
+     built game as it does from the project.
    - `[content]` in `voxear.toml` adjusts the roots with path patterns (`*` within a folder, `**` across
      folders):
 
@@ -1274,10 +1275,10 @@ hud.Close();
 - `Clicked` handlers run at the start of each frame, before the systems update, and a handler that throws is
   logged without stopping the others. `WasClicked` asks the same without a handler.
 - Stopping play takes the game's UI away; reloading scripts forgets the elements they held.
-- Built games do not pack `.vui` and `.vss` files yet, so for now the game's UI shows when run from the project.
+- A built game packs every `.vui` document with the sheets it names (see the content build), since scripts load
+  documents by a path the build cannot see. A sheet that is not there stops the build, naming both files.
 
 **Still to come.**
-- Packing `.vui` and `.vss` files into built games.
 - Editor extensions written in C# with the same API.
 - Data binding to C#, using source generators instead of reflection.
 - A live-reloading UI builder in the editor.

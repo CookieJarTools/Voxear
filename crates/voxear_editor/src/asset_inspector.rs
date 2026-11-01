@@ -317,6 +317,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Model) => "Model",
         ItemKind::Asset(AssetKind::Material) => "Material",
         ItemKind::Asset(AssetKind::Texture) => "Texture",
+        ItemKind::Asset(AssetKind::Ui) => "UI document",
     }
 }
 
@@ -330,6 +331,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Model) => "box",
         ItemKind::Asset(AssetKind::Material) => "material",
         ItemKind::Asset(AssetKind::Texture) => "texture",
+        ItemKind::Asset(AssetKind::Ui) => "panels",
     }
 }
 

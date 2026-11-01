@@ -399,6 +399,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Model => ("Model", "box"),
                 AssetKind::Material => ("Material", "material"),
                 AssetKind::Texture => ("Texture", "texture"),
+                AssetKind::Ui => ("UI document", "panels"),
             };
             let (action, key) = match kind {
                 AssetKind::Level => (PaletteAction::OpenLevel(path.clone()), format!("level:{path}")),

@@ -26,6 +26,8 @@ pub enum AssetKind {
     Scene,
     Level,
     Prefab,
+    /// A `.vui` document, which ships with the `.vss` sheets it names.
+    Ui,
 }
 
 impl AssetKind {
@@ -38,6 +40,7 @@ impl AssetKind {
             "scene" => Self::Scene,
             "level" => Self::Level,
             "prefab" => Self::Prefab,
+            "vui" => Self::Ui,
             _ => return None,
         })
     }

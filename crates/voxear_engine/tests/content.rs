@@ -170,6 +170,29 @@ fn content_settings_add_and_remove_roots() {
 }
 
 #[test]
+fn ui_documents_ship_with_their_sheets() {
+    let dir = project();
+    std::fs::create_dir_all(dir.path().join("UI/Styles")).unwrap();
+    let hud = r#"<vui><Style src="Styles/Hud.vss" /><Panel name="hud"><Label name="score">0</Label></Panel></vui>"#;
+    std::fs::write(dir.path().join("UI/Hud.vui"), hud).unwrap();
+    std::fs::write(dir.path().join("UI/Styles/Hud.vss"), ".hud { gap: 4px; }").unwrap();
+    let output = dir.path().join("Built");
+    let report = content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    let roots: Vec<String> = report.bundles.iter().flat_map(|b| b.roots.clone()).collect();
+    assert!(roots.contains(&"UI/Hud.vui".to_string()), "scripts load documents by path, so each is a root");
+
+    let mut content = Content::open_bundles(dir.path(), &output).unwrap();
+    assert_eq!(content.read_text("UI/Styles/Hud.vss").unwrap(), ".hud { gap: 4px; }", "its sheet ships beside it");
+    let mut ui = voxear_engine::game_ui::GameUi::default();
+    let document = ui.load(&mut content, "UI/Hud.vui").expect("the game loads it from the bundles");
+    assert!(ui.find(document, "score").is_some());
+
+    std::fs::write(dir.path().join("UI/Broken.vui"), r#"<vui><Style src="Missing.vss" /></vui>"#).unwrap();
+    let error = content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap_err();
+    assert!(format!("{error:#}").contains("UI/Broken.vui names UI/Missing.vss"), "{error:#}");
+}
+
+#[test]
 fn code_roots_ship_what_scripts_load_by_path() {
     let dir = project();
     std::fs::create_dir_all(dir.path().join("Prefabs/Bosses")).unwrap();

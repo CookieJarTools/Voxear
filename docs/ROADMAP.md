@@ -332,7 +332,7 @@ Still to do in M3:
   - [x] backdrop blur behind the viewport overlays (`backdrop-filter: blur()`)
   - [x] the C# UI API: `UiDocument.Load` and `Find`, text, classes, visibility, values and styles, and `Clicked`;
     the game's UI drawn over the Game view while playing, and over a player's window
-  - [ ] pack `.vui` and `.vss` files into built games
+  - [x] pack `.vui` and `.vss` files into built games: every document is a root, and its sheets ship with it
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.

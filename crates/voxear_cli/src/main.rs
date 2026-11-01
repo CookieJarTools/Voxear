@@ -626,6 +626,7 @@ fn assets(path: &Path) -> Result<()> {
         let kind = match entry.kind {
             AssetKind::Model => "model",
             AssetKind::Texture => "texture",
+            AssetKind::Ui => "ui",
             AssetKind::Material => "material",
             AssetKind::Scene => "scene",
             AssetKind::Level => "level",

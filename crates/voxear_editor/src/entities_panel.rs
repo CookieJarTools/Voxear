@@ -7,8 +7,12 @@
 //! it shows what a query over them would walk.
 //!
 //! Picking an entity that is an Obj selects it, so the Inspector shows and
-//! edits it. The lists are read again a few times a second while the panel
-//! shows, so they follow a running game without costing it every frame.
+//! edits it, with undo and saving. A plain entity's values are edited here,
+//! in the running world: its Transform, its Name and its C# components'
+//! fields. The picked archetype's chunks show how full each is. The lists
+//! are read again a few times a second while the panel shows, so they
+//! follow a running game without costing it every frame, and the values
+//! are left alone while one is being typed in.
 
 use std::{
     cell::RefCell,
@@ -16,7 +20,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use voxear_core::{math::EulerRot, profiling::Samples};
+use voxear_core::{
+    math::{EulerRot, Quat, Vec3},
+    profiling::Samples,
+};
 use voxear_ecs::{ComponentId, Entity, World};
 use voxear_engine::{Game, STAGES, script_types::ScriptTypes};
 use voxear_scene::{EditorOnly, Name, Transform};
@@ -37,6 +44,30 @@ struct ArchetypeRow {
     chunks: usize,
 }
 
+/// The most chunks the strip shows; past them it says how many more.
+const SHOWN_CHUNKS: usize = 64;
+
+/// A value of a plain entity that can be changed: the field showing it, and
+/// where what is typed goes.
+struct Editable {
+    field: NodeId,
+    entity: Entity,
+    target: Target,
+    /// The value as it showed, which says how to read what is typed.
+    shown: Value,
+}
+
+enum Target {
+    /// The Transform's position, rotation in degrees, or scale.
+    Transform(usize),
+    Name,
+    /// A C# component's field, by the component's full name.
+    Script {
+        component: String,
+        field: String,
+    },
+}
+
 /// What the lists show, shared with their rows.
 #[derive(Default)]
 struct Shown {
@@ -51,6 +82,10 @@ pub struct EntitiesPanel {
     entities: NodeId,
     details: NodeId,
     schedule: NodeId,
+    /// The picked archetype's chunks, each filled as far as it is.
+    chunks: NodeId,
+    chunk_summary: NodeId,
+    editables: Vec<Editable>,
     shown: Rc<RefCell<Shown>>,
     picked_archetype: Option<Vec<ComponentId>>,
     picked_entity: Option<Entity>,
@@ -111,6 +146,10 @@ impl EntitiesPanel {
         ui.add_class(archetypes, "fill");
 
         let middle = column(ui, "Entities", "entities-entities");
+        let chunk_summary = ui.add_label(middle, "");
+        ui.add_class(chunk_summary, "entities-hint");
+        let chunks = ui.panel(middle, Style::row());
+        ui.add_class(chunks, "entities-chunks");
         let rows = shown.clone();
         let entities = ui.list_view(
             middle,
@@ -136,6 +175,9 @@ impl EntitiesPanel {
             entities,
             details,
             schedule,
+            chunks,
+            chunk_summary,
+            editables: Vec::new(),
             shown,
             picked_archetype: None,
             picked_entity: None,
@@ -144,19 +186,21 @@ impl EntitiesPanel {
         }
     }
 
-    /// Reads the world again when due, or when a pick or the filter changed,
-    /// and returns an Obj picked in the list, for the editor to select.
+    /// Applies values typed in, reads the world again when due, or when a
+    /// pick or the filter changed, and returns an Obj picked in the list,
+    /// for the editor to select.
     pub fn update(
         &mut self,
         ui: &mut Ui,
         shown: bool,
-        game: &Game,
+        game: &mut Game,
         types: &ScriptTypes,
         frame: Option<&Samples>,
     ) -> Option<Entity> {
         if !shown {
             return None;
         }
+        self.apply_edits(ui, &mut game.engine.world, types);
         let world = &game.engine.world;
         let mut picked_obj = None;
         if ui.selection_changed(self.archetypes) {
@@ -181,9 +225,49 @@ impl EntitiesPanel {
         }
         self.read = Some(Instant::now());
         self.read_world(ui, world);
-        self.show_details(ui, world, types);
+        // Rebuilt, the field being typed in would lose what is typed.
+        let typing = ui.focused().is_some_and(|focused| self.editables.iter().any(|e| e.field == focused));
+        if !typing {
+            self.show_details(ui, world, types);
+        }
         self.show_schedule(ui, game, types, frame);
         picked_obj
+    }
+
+    /// Writes what was typed into a value into the world, when it reads as
+    /// that value: numbers, or a vector's or colour's numbers between commas.
+    fn apply_edits(&mut self, ui: &Ui, world: &mut World, types: &ScriptTypes) {
+        for editable in &self.editables {
+            if !ui.changed(editable.field) || !world.is_alive(editable.entity) {
+                continue;
+            }
+            let typed = ui.text(editable.field);
+            let Some(value) = parse(&editable.shown, &typed) else { continue };
+            let entity = editable.entity;
+            match (&editable.target, value) {
+                (Target::Transform(part), Value::Vector(v)) => {
+                    let Some(transform) = world.get_mut::<Transform>(entity) else { continue };
+                    let v = Vec3::new(v[0], v[1], v[2]);
+                    match part {
+                        0 => transform.position = v,
+                        1 => {
+                            let [x, y, z] = v.to_array().map(f32::to_radians);
+                            transform.rotation = Quat::from_euler(EulerRot::YXZ, y, x, z);
+                        }
+                        _ => transform.scale = v,
+                    }
+                }
+                (Target::Name, Value::Text(text)) => {
+                    if let Some(name) = world.get_mut::<Name>(entity) {
+                        name.0 = text;
+                    }
+                }
+                (Target::Script { component, field }, value) => {
+                    crate::live::set(world, types, entity, component, &[Step::Key(field.clone())], &value);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// The archetypes the filter keeps, and the picked one's entities.
@@ -229,6 +313,9 @@ impl EntitiesPanel {
                     .collect()
             })
             .unwrap_or_default();
+        let picked_archetype =
+            picked.and_then(|index| world.archetypes().iter().find(|a| a.components() == archetypes[index].components));
+        self.show_chunks(ui, picked_archetype);
         let picked_entity = self.picked_entity.and_then(|picked| entities.iter().position(|(e, _)| *e == picked));
         let (archetype_count, entity_rows) = (archetypes.len(), entities.len());
         *self.shown.borrow_mut() = Shown { archetypes, entities };
@@ -240,9 +327,38 @@ impl EntitiesPanel {
         let _ = (ui.selection_changed(self.archetypes), ui.selection_changed(self.entities));
     }
 
-    /// The picked entity's components, each with what it holds.
+    /// The picked archetype's chunks, each a bar filled as far as the chunk
+    /// is, with how full they are together.
+    fn show_chunks(&mut self, ui: &mut Ui, archetype: Option<&voxear_ecs::Archetype>) {
+        for child in ui.children(self.chunks) {
+            ui.remove(child);
+        }
+        let Some(archetype) = archetype else {
+            ui.set_visible(self.chunk_summary, false);
+            return;
+        };
+        let capacity = archetype.chunk_capacity().max(1);
+        let count = archetype.chunk_count();
+        for chunk in 0..count.min(SHOWN_CHUNKS) {
+            let held = archetype.chunk_entities(chunk).len();
+            let bar = ui.panel(self.chunks, Style::default());
+            ui.add_class(bar, "entities-chunk");
+            let fill = ui.panel(bar, Style::default());
+            ui.add_class(fill, "entities-chunk-fill");
+            ui.set_inline_style(fill, &format!("height: {}%", held * 100 / capacity));
+        }
+        let full = archetype.len() * 100 / (count * capacity).max(1);
+        let more = if count > SHOWN_CHUNKS { format!(", the first {SHOWN_CHUNKS} shown") } else { String::new() };
+        let chunks = if count == 1 { "1 chunk".to_string() } else { format!("{count} chunks") };
+        ui.set_text(self.chunk_summary, &format!("{chunks} holding {capacity} each · {full}% full{more}"));
+        ui.set_visible(self.chunk_summary, true);
+    }
+
+    /// The picked entity's components, each with what it holds; a plain
+    /// entity's values are fields to change.
     fn show_details(&mut self, ui: &mut Ui, world: &World, types: &ScriptTypes) {
         clear(ui, self.details);
+        self.editables.clear();
         let Some(entity) = self.picked_entity.filter(|&e| world.is_alive(e)) else {
             let hint = ui.add_label(self.details, "Pick an entity to see its components.");
             ui.add_class(hint, "entities-hint");
@@ -253,6 +369,8 @@ impl EntitiesPanel {
         else {
             return;
         };
+        // An Obj is changed in the Inspector, where it can be undone and saved.
+        let plain = !(world.has::<Name>(entity) && world.has::<Transform>(entity));
         for &id in archetype.components() {
             let name = short(world, id);
             let full = world.components().info(id).name().to_owned();
@@ -260,13 +378,21 @@ impl EntitiesPanel {
             ui.add_class(card, "entities-component");
             let title = ui.add_label(card, &name);
             ui.add_class(title, "entities-component-name");
-            for (field, value) in values(world, types, entity, id, &full) {
+            for (field, value, target) in values(world, types, entity, id, &full) {
                 let row = ui.panel(card, Style::row());
                 ui.add_class(row, "entities-value");
                 let label = ui.add_label(row, &field);
                 ui.add_class(label, "entities-value-name");
-                let shown = ui.add_label(row, &value);
-                ui.add_class(shown, "entities-value-text");
+                let editable = target.filter(|_| plain && parse(&value, &text(&value)).is_some());
+                let Some(target) = editable else {
+                    let shown = ui.add_label(row, &text(&value));
+                    ui.add_class(shown, "entities-value-text");
+                    continue;
+                };
+                let input = ui.text_field(row, &text(&value));
+                ui.add_class(input, "value-input");
+                ui.add_class(input, "entities-value-input");
+                self.editables.push(Editable { field: input, entity, target, shown: value });
             }
         }
     }
@@ -368,22 +494,29 @@ fn short(world: &World, id: ComponentId) -> String {
     name.rsplit('.').next().unwrap_or(name).to_owned()
 }
 
-/// What a component holds, as pairs of a field and its value, for the ones
-/// whose layout is known: the Transform, a Name, and C# components.
-fn values(world: &World, types: &ScriptTypes, entity: Entity, id: ComponentId, full: &str) -> Vec<(String, String)> {
+/// What a component holds, as a field's name, its value and where a change
+/// to it goes, for the ones whose layout is known: the Transform, a Name,
+/// and C# components.
+fn values(
+    world: &World,
+    types: &ScriptTypes,
+    entity: Entity,
+    id: ComponentId,
+    full: &str,
+) -> Vec<(String, Value, Option<Target>)> {
     if world.components().id_of::<Transform>() == Some(id) {
         let Some(t) = world.get::<Transform>(entity) else { return Vec::new() };
         let (y, x, z) = t.rotation.to_euler(EulerRot::YXZ);
-        // Adding zero turns a rounding's -0.00 into 0.00.
-        let three = |v: [f32; 3]| format!("{:.2}, {:.2}, {:.2}", v[0] + 0.0, v[1] + 0.0, v[2] + 0.0);
+        let three = |v: [f32; 3]| Value::Vector(v.to_vec());
         return vec![
-            ("Position".into(), three(t.position.to_array())),
-            ("Rotation".into(), three([x, y, z].map(f32::to_degrees))),
-            ("Scale".into(), three(t.scale.to_array())),
+            ("Position".into(), three(t.position.to_array()), Some(Target::Transform(0))),
+            ("Rotation".into(), three([x, y, z].map(f32::to_degrees)), Some(Target::Transform(1))),
+            ("Scale".into(), three(t.scale.to_array()), Some(Target::Transform(2))),
         ];
     }
     if world.components().id_of::<Name>() == Some(id) {
-        return world.get::<Name>(entity).map(|n| vec![("Name".into(), n.0.clone())]).unwrap_or_default();
+        let Some(name) = world.get::<Name>(entity) else { return Vec::new() };
+        return vec![("Name".into(), Value::Text(name.0.clone()), Some(Target::Name))];
     }
     let Some(declared) = types.components.iter().find(|c| c.name == full) else { return Vec::new() };
     declared
@@ -392,9 +525,30 @@ fn values(world: &World, types: &ScriptTypes, entity: Entity, id: ComponentId, f
         .filter_map(|field| {
             let path = [Step::Key(field.name.clone())];
             let value = crate::live::get(world, types, entity, full, &path)?;
-            Some((crate::props::nice_name(&field.name), text(&value)))
+            let target = Target::Script { component: full.to_owned(), field: field.name.clone() };
+            Some((crate::props::nice_name(&field.name), value, Some(target)))
         })
         .collect()
+}
+
+/// What is typed into a value's field, read as the kind of value it showed;
+/// `None` when it does not read as one, or the kind is not typed in.
+fn parse(shown: &Value, typed: &str) -> Option<Value> {
+    let numbers = |count: usize| -> Option<Vec<f32>> {
+        let parts: Vec<f32> = typed.split(',').map(|p| p.trim().parse().ok()).collect::<Option<_>>()?;
+        (parts.len() == count).then_some(parts)
+    };
+    Some(match shown {
+        Value::Number(_) => Value::Number(typed.trim().parse().ok()?),
+        Value::Whole(_) => Value::Whole(typed.trim().parse().ok()?),
+        Value::Text(_) => Value::Text(typed.to_owned()),
+        Value::Vector(v) => Value::Vector(numbers(v.len())?),
+        Value::Color(_) => {
+            let rgb = numbers(3)?;
+            Value::Color([rgb[0], rgb[1], rgb[2]])
+        }
+        _ => return None,
+    })
 }
 
 fn text(value: &Value) -> String {
@@ -408,7 +562,9 @@ fn text(value: &Value) -> String {
                 "No".into()
             }
         }
-        Value::Vector(v) => v.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(", "),
+        // Adding zero turns a rounding's -0.00 into 0.00.
+        Value::Vector(v) => v.iter().map(|x| format!("{:.2}", x + 0.0)).collect::<Vec<_>>().join(", "),
+        Value::Color(rgb) => rgb.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(", "),
         Value::Choice(index, names) => names.get(*index).cloned().unwrap_or_default(),
         Value::Obj(name) | Value::Text(name) | Value::Asset(name) | Value::Fixed(name) => name.clone(),
         _ => String::new(),

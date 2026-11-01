@@ -2952,7 +2952,55 @@ fn the_entities_panel_lists_archetypes_entities_and_their_components() {
     assert!(values.iter().any(|&v| editor.ui.text(v) == "Position"), "the Transform's values show");
     let selected = editor.selected().expect("an Obj picked there is selected");
     assert_eq!(editor.game.engine.world.get::<Name>(selected).unwrap().0, named[0]);
+    let mut inputs = Vec::new();
+    with_class(&editor.ui, details, "entities-value-input", &mut inputs);
+    assert!(inputs.is_empty(), "an Obj is changed in the Inspector, not here");
+
+    // The picked archetype's chunks, each filled as far as it is.
+    let mut bars = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "entities-chunk", &mut bars);
+    assert!(!bars.is_empty(), "a bar for each chunk");
+    let mut hints = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "entities-hint", &mut hints);
+    let summary = hints.iter().map(|&h| editor.ui.text(h)).find(|t| t.contains("% full")).expect("how full they are");
+    assert!(summary.contains("chunk"), "{summary}");
     shot(&mut renderer, "entities-panel.png");
+
+    // A plain entity, which no scene saves, is changed here, in the world.
+    let plain = editor.game.engine.world.spawn((Transform::from_position(Vec3::new(5.0, 0.0, 0.0)),));
+    editor.ui.set_text(filter, "");
+    frame(&mut editor, &mut renderer);
+    let archetype = editor
+        .game
+        .engine
+        .world
+        .archetypes()
+        .iter()
+        .position(|a| (0..a.chunk_count()).any(|c| a.chunk_entities(c).contains(&plain)));
+    assert!(archetype.is_some());
+    let shown = rows(&editor, archetypes);
+    let plain_row = shown.iter().position(|names| !names.contains("Name") && names.contains("Transform"));
+    editor.ui.set_selection(archetypes, &[plain_row.unwrap_or_else(|| panic!("no plain archetype in {shown:?}"))]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let listed = editor.entities_panel().entities();
+    let position = rows(&editor, listed).len();
+    assert!(position >= 1, "its entities are listed");
+    editor.ui.set_selection(listed, &[position - 1]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut inputs = Vec::new();
+    with_class(&editor.ui, details, "entities-value-input", &mut inputs);
+    assert_eq!(inputs.len(), 3, "its position, rotation and scale are fields");
+    assert_eq!(editor.ui.text(inputs[0]), "5.00, 0.00, 0.00");
+    type_into(&mut editor.ui, inputs[0], "1, 2, 3");
+    frame(&mut editor, &mut renderer);
+    let moved = editor.game.engine.world.get::<Transform>(plain).unwrap().position;
+    assert_eq!(moved, Vec3::new(1.0, 2.0, 3.0), "what is typed goes into the world");
+    type_into(&mut editor.ui, inputs[0], "1, 2");
+    frame(&mut editor, &mut renderer);
+    let kept = editor.game.engine.world.get::<Transform>(plain).unwrap().position;
+    assert_eq!(kept, Vec3::new(1.0, 2.0, 3.0), "half a vector changes nothing");
 }
 
 #[test]

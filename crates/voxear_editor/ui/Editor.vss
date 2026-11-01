@@ -2106,6 +2106,31 @@ DockSpace .project-split > .split-divider {
     width: 92px;
 }
 
+/* The picked archetype's chunks, each a bar filled as far as it is. */
+.entities-chunks {
+    flex-wrap: wrap;
+    gap: 2px;
+    margin-bottom: 6px;
+}
+
+.entities-chunk {
+    width: 8px;
+    height: 18px;
+    border-radius: 2px;
+    background-color: var(--vx-field);
+    justify-content: flex-end;
+}
+
+.entities-chunk-fill {
+    border-radius: 2px;
+    background-color: var(--vx-accent);
+}
+
+.entities-value-input {
+    width: 150px;
+    height: 20px;
+}
+
 .entities-row-count, .entities-value-text {
     flex-shrink: 0;
     font-family: mono;

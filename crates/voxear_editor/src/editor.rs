@@ -610,7 +610,7 @@ impl Editor {
             let entities_shown = self.shown(self.nodes.entities_panel);
             let frame = self.profiler.shown_sample().map(|sample| &sample.cpu);
             let types = self.inspector.types();
-            if let Some(picked) = self.entities.update(&mut self.ui, entities_shown, &self.game, types, frame) {
+            if let Some(picked) = self.entities.update(&mut self.ui, entities_shown, &mut self.game, types, frame) {
                 self.select(Some(picked));
             }
             let frames_shown = self.shown(self.nodes.frame_debugger_panel);

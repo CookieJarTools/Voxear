@@ -361,7 +361,7 @@ Still to do in M3:
     its pass, at any mip, in one channel or all, with an exposure
   - [x] the ECS inspector: archetypes, entities and their components, the system schedule with timings, and a filter
     by components
-  - [ ] the ECS inspector's editing of plain entities' values, and chunk occupancy
+  - [x] the ECS inspector's editing of plain entities' values, and chunk occupancy
   - the memory profiler with snapshots and diffs
   - [x] debug draw: lines, arrows, boxes, spheres and text, from C# and Rust, hidden behind the scene or on top
   - [x] the dev console: commands with arguments and console variables, in the game window's development tools

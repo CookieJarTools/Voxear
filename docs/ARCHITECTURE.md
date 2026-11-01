@@ -2465,7 +2465,11 @@ them in a running game.
   - A filter of component names, as "Transform, Spin", keeps the archetypes that have them all: what a query over
     them would walk.
   - It reads the world a few times a second while it shows, in the Profiling workspace beside the Profiler.
-  - Still to come: editing a plain entity's values in the panel, and chunk occupancy.
+  - A plain entity, one that is not an Obj, is changed in the panel, in the running world: its Transform, its Name, and
+    its C# components' fields, typed as numbers, or a vector's or colour's numbers between commas. An Obj is changed
+    in the Inspector instead, where it can be undone and saved. Values are left alone while one is being typed in.
+  - The picked archetype's chunks show as a strip of bars, each filled as far as its chunk is, with how many there
+    are, how many entities each holds, and how full they are together.
 - **Debug draw** *(implemented)*.
   - `Debug.Line`, `Arrow`, `Box`, `Sphere` and `Text` from C#, each with a duration and a `Color` (sRGB, with
     `Color.Hex("#ff8800")`), and the same from Rust in `voxear_core::debug_draw`, which keeps one list for the process

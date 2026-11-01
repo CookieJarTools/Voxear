@@ -271,6 +271,24 @@ pub fn add_item(world: &mut World, types: &ScriptTypes, entity: Entity, behaviou
     })
 }
 
+/// Moves a list's item from one place to another.
+pub fn move_item(
+    world: &mut World,
+    types: &ScriptTypes,
+    entity: Entity,
+    behaviour: &str,
+    list: &[Step],
+    from: usize,
+    to: usize,
+) -> bool {
+    change(world, types, entity, behaviour, list, |slot| {
+        if let Some(items) = slot.as_array_mut().filter(|items| from < items.len() && to < items.len()) {
+            let item = items.remove(from);
+            items.insert(to, item);
+        }
+    })
+}
+
 /// Takes an item out of its list.
 pub fn remove_item(world: &mut World, types: &ScriptTypes, entity: Entity, behaviour: &str, item: &[Step]) -> bool {
     let Some((Step::Item(index), list)) = item.split_last() else { return false };

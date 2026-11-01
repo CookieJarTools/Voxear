@@ -244,6 +244,9 @@ pub struct Inspector {
     pagers: Vec<(NodeId, NodeId, String, usize)>,
     /// The `[ColorPalette]` swatches shown: each, its field and its colour.
     palette_swatches: Vec<(NodeId, Prop, [f32; 3])>,
+    /// A list's items shown: each one's row, which takes drops, its label,
+    /// which drags it, and the item.
+    item_handles: Vec<(NodeId, NodeId, Prop)>,
 }
 
 impl Inspector {
@@ -278,6 +281,7 @@ impl Inspector {
             pages: std::collections::HashMap::new(),
             pagers: Vec::new(),
             palette_swatches: Vec::new(),
+            item_handles: Vec::new(),
         }
     }
 
@@ -533,6 +537,7 @@ impl Inspector {
         self.validation_boxes.clear();
         self.pagers.clear();
         self.palette_swatches.clear();
+        self.item_handles.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
         let Some(entity) = self.shown else {
@@ -660,6 +665,13 @@ impl Inspector {
                 };
                 let add = list.then(|| button(ui, "plus", "list-add"));
                 let remove = item.then(|| button(ui, "close", "list-remove"));
+                // An item's label drags it onto another of its list, which moves it there.
+                if item && !meta.hide_label {
+                    ui.set_draggable(label_node, true);
+                    ui.add_class(label_node, "drag-handle");
+                    ui.accept_drops(row, true);
+                    self.item_handles.push((row, label_node, value.clone()));
+                }
                 if let Some(page) = &meta.documentation {
                     self.doc_buttons.push((button(ui, "book", "docs-link"), page.clone()));
                 }
@@ -811,10 +823,19 @@ impl Inspector {
         }
     }
 
-    /// Turns a page or picks a palette's colour, as clicked this frame. True
-    /// when a page turned, which builds the sections again.
+    /// Turns a page, picks a palette's colour or moves a list's item, as
+    /// clicked or dropped this frame. True when a page turned or an item
+    /// moved, which builds the sections again.
     fn update_lists(&mut self, ui: &Ui, game: &mut Game, entity: Entity, renderer: Option<&mut Renderer>) -> bool {
         let mut turned = false;
+        let dropped = self.item_handles.iter().find_map(|(row, _, onto)| {
+            let Some(DragSource::Element(handle)) = ui.dropped_onto(*row) else { return None };
+            let (_, _, item) = self.item_handles.iter().find(|(_, h, _)| *h == handle)?;
+            Some((item.clone(), onto.clone()))
+        });
+        if let Some((item, onto)) = dropped {
+            turned |= props::move_item(&mut game.engine.world, &self.types, entity, &item, &onto);
+        }
         for (back, on, key, pages) in &self.pagers {
             let page = self.pages.get(key).copied().unwrap_or_default();
             let next = if ui.clicked(*back) {
@@ -883,7 +904,8 @@ impl Inspector {
         let before = ObjState::of(&game.engine.world, entity);
         if self.update_lists(ui, game, entity, renderer.as_deref_mut()) {
             self.show(ui, game, Some(entity), playing);
-            return None;
+            let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);
+            return (before != after).then_some(Edit::Changed { entity, before, after });
         }
         self.update_transform(ui, game, entity, transform);
         for row in &self.rows {

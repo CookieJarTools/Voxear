@@ -483,6 +483,22 @@ pub fn remove_item(world: &mut World, types: &ScriptTypes, entity: Entity, item:
     fields::remove_item(world, types, entity, behaviour, path)
 }
 
+/// Moves a list's item to where another of the same list is, as dropping
+/// one onto the other does. False when they are not of one list.
+pub fn move_item(world: &mut World, types: &ScriptTypes, entity: Entity, item: &Prop, onto: &Prop) -> bool {
+    let (Prop::Field { behaviour, path }, Prop::Field { behaviour: other, path: target }) = (item, onto) else {
+        return false;
+    };
+    let (Some((Step::Item(from), list)), Some((Step::Item(to), same))) = (path.split_last(), target.split_last())
+    else {
+        return false;
+    };
+    behaviour == other
+        && list == same
+        && from != to
+        && fields::move_item(world, types, entity, behaviour, list, *from, *to)
+}
+
 /// Whether a prop is an item of a list, which can be taken out.
 pub fn is_item(prop: &Prop) -> bool {
     matches!(prop, Prop::Field { path, .. } if matches!(path.last(), Some(Step::Item(_))))

@@ -7,8 +7,8 @@ use voxear_ecs::{Entity, World};
 use voxear_render::{MAX_PREVIEW_SIZE, PreviewId, PreviewOptions, Renderer};
 use voxear_scene::Placement;
 use voxear_scripting::{
-    ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions, PreviewSource,
-    PreviewState, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
+    ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions,
+    PreviewSource, PreviewState, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
 };
 
 use crate::{
@@ -41,6 +41,40 @@ pub struct Game {
     previews: ScriptPreviews,
     /// The game's own UI, which its scripts load documents into.
     pub ui: GameUi,
+    /// The window as scripts see it and ask for it.
+    pub display: Display,
+}
+
+/// The game's window as scripts see it and ask for it, through `Screen` and
+/// `Cursor` in C#: whatever shows the game sets its size each frame, and
+/// afterwards makes what scripts asked for.
+#[derive(Clone, Debug)]
+pub struct Display {
+    /// The window's size in pixels, and whether it fills the screen.
+    pub width: u32,
+    pub height: u32,
+    pub fullscreen: bool,
+    /// A size and full screen asked for and not yet made.
+    pub asked: Option<(u32, u32, bool)>,
+    /// Whether the mouse shows, and how it is held, as scripts asked.
+    pub cursor_visible: bool,
+    pub cursor_lock: CursorLock,
+    /// The mouse was asked to change since it was last made so.
+    pub cursor_changed: bool,
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Self {
+            width: 0,
+            height: 0,
+            fullscreen: false,
+            asked: None,
+            cursor_visible: true,
+            cursor_lock: CursorLock::None,
+            cursor_changed: false,
+        }
+    }
 }
 
 impl Game {
@@ -63,6 +97,7 @@ impl Game {
             watcher: None,
             previews: ScriptPreviews::default(),
             ui: GameUi::default(),
+            display: Display::default(),
         }
     }
 
@@ -171,6 +206,7 @@ impl Game {
             unload_requested,
             previews: &mut self.previews,
             ui: &mut self.ui,
+            display: &mut self.display,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.switch_level_through_scripts(level);
@@ -210,6 +246,7 @@ impl Game {
             unload_requested,
             previews: &mut self.previews,
             ui: &mut self.ui,
+            display: &mut self.display,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.instantiate(&template, parent, placement)
@@ -236,6 +273,7 @@ impl Game {
                 unload_requested,
                 previews: &mut self.previews,
                 ui: &mut self.ui,
+                display: &mut self.display,
             };
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
@@ -271,9 +309,27 @@ struct GameServices<'a> {
     unload_requested: &'a mut bool,
     previews: &'a mut ScriptPreviews,
     ui: &'a mut GameUi,
+    display: &'a mut Display,
 }
 
 impl ScriptServices for GameServices<'_> {
+    fn screen(&self) -> (u32, u32, bool) {
+        (self.display.width, self.display.height, self.display.fullscreen)
+    }
+
+    fn set_resolution(&mut self, width: u32, height: u32, fullscreen: bool) {
+        self.display.asked = Some((width.max(1), height.max(1), fullscreen));
+    }
+
+    fn cursor(&self) -> (bool, CursorLock) {
+        (self.display.cursor_visible, self.display.cursor_lock)
+    }
+
+    fn set_cursor(&mut self, visible: bool, lock: CursorLock) {
+        (self.display.cursor_visible, self.display.cursor_lock) = (visible, lock);
+        self.display.cursor_changed = true;
+    }
+
     fn ui_load(&mut self, path: &str) -> Result<u32> {
         self.ui.load(self.content, path)
     }

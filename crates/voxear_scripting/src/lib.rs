@@ -6,6 +6,7 @@
 //! for engine calls scripts make, one for script calls the engine makes.
 
 mod debug;
+mod display;
 mod drawers;
 mod ecs;
 mod hostfxr;
@@ -16,6 +17,7 @@ mod runtime;
 mod services;
 mod ui;
 
+pub use display::CursorLock;
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use hostfxr::{DotnetInstall, find_dotnet};
 pub use inspector::{InspectorAnswer, InspectorAsk};

@@ -32,7 +32,7 @@ mod windowed;
 pub use content::{Content, ContentUsage, MaterialData, MaterialSource, Released, linear, srgb};
 pub use engine::{EditBehaviours, Engine, STAGES};
 pub use fly_camera::FlyCamera;
-pub use game::Game;
+pub use game::{Display, Game};
 pub use levels::{
     LEVEL_FORMAT, LevelChange, LevelFile, LevelOptions, LevelScene, LevelSummary, Levels, Tracked, summarise,
 };

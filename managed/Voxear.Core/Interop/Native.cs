@@ -83,6 +83,48 @@ namespace Voxear.Interop
 			}
 		}
 
+		/// <summary>The game's window: its size in pixels, and whether it fills the screen.</summary>
+		public static (int Width, int Height, bool Fullscreen) Screen()
+		{
+			if (!IsConnected)
+			{
+				return (0, 0, false);
+			}
+
+			uint width = 0, height = 0;
+			var fullscreen = Api->ScreenGet(&width, &height) != 0;
+			return ((int)width, (int)height, fullscreen);
+		}
+
+		public static void SetScreen(int width, int height, bool fullscreen)
+		{
+			if (IsConnected)
+			{
+				Api->ScreenSet((uint)Math.Max(width, 1), (uint)Math.Max(height, 1), fullscreen ? 1 : 0);
+			}
+		}
+
+		/// <summary>Whether the mouse shows, and how it is held.</summary>
+		public static (bool Visible, CursorLock Lock) Cursor()
+		{
+			if (!IsConnected)
+			{
+				return (true, CursorLock.None);
+			}
+
+			var held = 0;
+			var visible = Api->CursorGet(&held) != 0;
+			return (visible, (CursorLock)held);
+		}
+
+		public static void SetCursor(bool visible, CursorLock held)
+		{
+			if (IsConnected)
+			{
+				Api->CursorSet(visible ? 1 : 0, (int)held);
+			}
+		}
+
 		/// <summary>The Objs with a name, oldest first.</summary>
 		public static ulong[] FindObjs(string name)
 		{

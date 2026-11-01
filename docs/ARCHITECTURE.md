@@ -2807,6 +2807,14 @@ on Linux, `%LOCALAPPDATA%` on Windows), with the run before's as `player-prev.lo
 and the editor's Console can read it. The player uses the .NET installed on the machine for now; shipping the
 runtime with it, or NativeAOT, comes with M12.
 
+The profile's window is how the game starts. Scripts read the window and ask of it through `Screen` (`Width`,
+`Height`, `Fullscreen`, `SetResolution`) and `Cursor` (`Visible`, and `Lock`: `None`, `Locked` or `Confined`), in
+`managed/Voxear.Core/Display`, native API 25. The game keeps them in `Game::display`: whatever shows the game sets
+the window's size before each frame, and after it makes what the scripts asked for, a new size or full screen, and
+the pointer shown, hidden and held (`windowed::App::apply_display`; the fly camera's own hold comes first, and the
+game's comes back after it). In the editor, they read the Game view's size, and the window and the pointer are left
+as they are, so the editor can still be worked in.
+
 ### Builds run in their own process
 
 The editor never builds inside itself. Pressing Build starts `vox build --profile <name> --progress json`, the same

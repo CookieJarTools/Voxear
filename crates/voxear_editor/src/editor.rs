@@ -594,6 +594,10 @@ impl Editor {
                     view.is_some_and(|(viewport, _)| viewport == self.nodes.game_viewport) && self.is_playing();
                 let area =
                     if in_game { self.viewport_rect(Some(self.nodes.game_viewport), size) } else { [0, 0, 0, 0] };
+                if in_game {
+                    // Scripts' Screen.Width and Height are the Game view's.
+                    (self.game.display.width, self.game.display.height) = (area[2], area[3]);
+                }
                 match in_game {
                     true => self.game.ui.draw(renderer, delta, area, scale)?,
                     false => renderer.set_game_ui(&voxear_ui::UiFrame::default(), [0, 0])?,

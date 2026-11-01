@@ -26,6 +26,7 @@ use voxear_scene::{
 };
 
 use crate::debug::{debug_box, debug_line, debug_sphere, debug_text};
+use crate::display;
 use crate::ecs::{
     self, CURRENT_WORLD, QueryDesc, change_tick, chunk_written, commands_defer, component_add, component_get,
     component_has, component_register, component_remove, component_set, entity_alive, entity_create, entity_destroy,
@@ -39,7 +40,7 @@ use crate::ui::{
     ui_class, ui_clicked, ui_close, ui_find, ui_load, ui_set_text, ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 24;
+pub(crate) const API_VERSION: u32 = 25;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -153,6 +154,14 @@ pub(crate) struct NativeApi {
     pub ui_clicked: unsafe extern "C" fn(element: i32) -> i32,
     pub ui_value: unsafe extern "C" fn(element: i32, set: i32, value: f32) -> f32,
     pub ui_style: unsafe extern "C" fn(element: i32, style: *const u8, len: i32),
+    /// The game's window, for `Screen`: its size, then whether it fills the
+    /// screen; and a size and full screen asked for.
+    pub screen_get: unsafe extern "C" fn(width: *mut u32, height: *mut u32) -> i32,
+    pub screen_set: unsafe extern "C" fn(width: u32, height: u32, fullscreen: i32),
+    /// The mouse, for `Cursor`: whether it shows, with how it is held
+    /// written to `lock`; and both asked for.
+    pub cursor_get: unsafe extern "C" fn(lock: *mut i32) -> i32,
+    pub cursor_set: unsafe extern "C" fn(visible: i32, lock: i32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -840,6 +849,10 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         ui_clicked,
         ui_value,
         ui_style,
+        screen_get: display::screen_get,
+        screen_set: display::screen_set,
+        cursor_get: display::cursor_get,
+        cursor_set: display::cursor_set,
     }
 }
 

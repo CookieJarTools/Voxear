@@ -7,9 +7,10 @@ use voxear_render::{
     RendererSettings, ViewOptions,
 };
 use voxear_rhi::{RenderDoc, WindowHandles};
+use voxear_scripting::CursorLock;
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalSize,
+    dpi::{LogicalSize, PhysicalSize},
     event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
@@ -156,11 +157,53 @@ impl App {
         }
         self.fly.set_looking(flying);
         let Some(window) = &self.window else { return };
-        let grab = if flying { CursorGrabMode::Locked } else { CursorGrabMode::None };
-        if window.set_cursor_grab(grab).is_err() && flying {
-            let _ = window.set_cursor_grab(CursorGrabMode::Confined);
+        if flying {
+            if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
+                let _ = window.set_cursor_grab(CursorGrabMode::Confined);
+            }
+            window.set_cursor_visible(false);
+        } else {
+            // Back to the mouse as the game's scripts want it.
+            self.game.display.cursor_changed = true;
         }
-        window.set_cursor_visible(!flying);
+    }
+
+    /// Tells the scripts the window's size, before a frame.
+    fn measure_window(&mut self) {
+        let Some(window) = &self.window else { return };
+        let size = window.inner_size();
+        let display = &mut self.game.display;
+        (display.width, display.height) = (size.width, size.height);
+        display.fullscreen = window.fullscreen().is_some();
+    }
+
+    /// Makes what the scripts asked of the window and the mouse, after a
+    /// frame: a size and full screen, and the mouse shown or hidden and held.
+    /// The mouse is left alone while it flies the camera.
+    fn apply_display(&mut self) {
+        let Some(window) = &self.window else { return };
+        let display = &mut self.game.display;
+        if let Some((width, height, fullscreen)) = display.asked.take() {
+            window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+            if !fullscreen {
+                let _ = window.request_inner_size(PhysicalSize::new(width, height));
+            }
+        }
+        if !display.cursor_changed || self.fly.is_looking() {
+            return;
+        }
+        display.cursor_changed = false;
+        let grab = match display.cursor_lock {
+            CursorLock::None => CursorGrabMode::None,
+            CursorLock::Locked => CursorGrabMode::Locked,
+            CursorLock::Confined => CursorGrabMode::Confined,
+        };
+        // Some systems lock only by confining, and some confine only by locking.
+        if window.set_cursor_grab(grab).is_err() {
+            let other = if grab == CursorGrabMode::Locked { CursorGrabMode::Confined } else { CursorGrabMode::Locked };
+            let _ = window.set_cursor_grab(other);
+        }
+        window.set_cursor_visible(display.cursor_visible && display.cursor_lock != CursorLock::Locked);
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -168,7 +211,9 @@ impl App {
         let delta = self.last.map_or(0.0, |last| (now - last).as_secs_f32());
         self.last = Some(now);
         self.fly.update(&mut self.game.engine.world, delta);
+        self.measure_window();
         self.game.tick(delta, self.renderer.as_mut());
+        self.apply_display();
         if self.options.tools && self.overlay.update_console(Some(&mut self.game.engine)) == Some(ConsoleAction::Quit) {
             event_loop.exit();
         }

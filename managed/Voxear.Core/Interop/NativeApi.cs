@@ -74,5 +74,9 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<int, int> UiClicked;
 		public delegate* unmanaged[Cdecl]<int, int, float, float> UiValue;
 		public delegate* unmanaged[Cdecl]<int, byte*, int, void> UiStyle;
+		public delegate* unmanaged[Cdecl]<uint*, uint*, int> ScreenGet;
+		public delegate* unmanaged[Cdecl]<uint, uint, int, void> ScreenSet;
+		public delegate* unmanaged[Cdecl]<int*, int> CursorGet;
+		public delegate* unmanaged[Cdecl]<int, int, void> CursorSet;
 	}
 }

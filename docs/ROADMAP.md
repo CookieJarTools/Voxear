@@ -375,6 +375,8 @@ Still to do in M3:
     (`VOX0001` to `VOX0007`); the source generator is not needed, as ScriptInfo describes the scripts already
   - [x] custom drawers in C#: `ValueDrawer<T>` and `AttributeDrawer<TAttribute, T>`, built from `.vui` markup and
     drawn through the C# UI API, chained through a `next` element around the Inspector's own control
+- A build option to compile the scripts ahead of time (Native AOT) as well as run them on CoreCLR, which needs the
+  player and Voxear.Core built that way too, and an option to ship the .NET runtime with the game (M12).
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
 - **More of the Voxear Manual**: each part as it is built (input, audio, physics, animation and the rest),

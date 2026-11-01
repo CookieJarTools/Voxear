@@ -8,6 +8,8 @@ use anyhow::Result;
 use voxear_ecs::{Entity, World};
 use voxear_scene::{BehaviourSpec, Placement};
 
+use crate::display::CursorLock;
+
 /// What scripts reach beyond the world. Each part has a default that says
 /// there is none of it here, so a host lends only what it has, as the
 /// Inspector lends only its UI to the drawers scripts draw fields with.
@@ -56,6 +58,23 @@ pub trait ScriptServices {
 
     /// Keeps a loaded prefab across sweeps, or lets it go again.
     fn keep_prefab(&mut self, _prefab: u32, _keep: bool) {}
+
+    /// The game's window as whatever shows the game has it: its size in
+    /// pixels, and whether it fills the screen.
+    fn screen(&self) -> (u32, u32, bool) {
+        (0, 0, false)
+    }
+
+    /// A size and full screen scripts ask the game's window for.
+    fn set_resolution(&mut self, _width: u32, _height: u32, _fullscreen: bool) {}
+
+    /// Whether the mouse shows, and how it is held.
+    fn cursor(&self) -> (bool, CursorLock) {
+        (true, CursorLock::None)
+    }
+
+    /// Shows or hides the mouse, and holds it, as scripts ask.
+    fn set_cursor(&mut self, _visible: bool, _lock: CursorLock) {}
 
     /// The project path of the file a loaded prefab came from, as a log line
     /// about it names it.

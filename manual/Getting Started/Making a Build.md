@@ -31,6 +31,8 @@ Select a profile to change it: the platform, which levels go in and which one st
 - **Defines** are words your scripts can test with `#if`, as `DEMO`. **Add a define** adds one. See [[How Scripts Run]] for the ones Voxear defines itself.
 - **New**, under the profiles, makes a profile based on the one picked, so it starts with its settings and you change only what differs. Type its name in the title at the top, and press Enter. **Remove** takes the picked profile out, unless another is based on it.
 
+The window size and full screen are how the game starts. Your scripts can change them while it runs, as a settings menu does: see [[The Window and the Mouse]].
+
 For now, a build is made on the platform it is for: build the Windows profiles on Windows, and the Linux ones on Linux.
 
 ## What a build makes

@@ -64,7 +64,7 @@ A link to an action or a check on a line of its own is a step the reader can run
 
 ## From the code
 
-Put `[Documentation("How Hello Works/The Day and Night Cycle")]` on a behaviour, or on one of its fields, and the Inspector shows a book button there that opens the page. `[Excerpt("How Hello Works/The Day and Night Cycle#who-drives-it")]` on a field shows that part of the page above it instead, and follows the page as it changes. Select the Game Manager to see both. A page lists the code that points at it under **In the code**. Right-click a page in the tree to copy its `[Documentation]` attribute, ready to paste.
+Put `[Documentation("How Hello Works/The Day and Night Cycle")]` on a behaviour, or on one of its fields, and the Inspector shows a book button there that opens the page. `[Excerpt("How Hello Works/The Day and Night Cycle#how-the-levels-change")]` on a field shows that part of the page above it instead, and follows the page as it changes. Select the Game Manager to see both. A page lists the code that points at it under **In the code**. Right-click a page in the tree to copy its `[Documentation]` attribute, ready to paste.
 
 The **Code Reference**'s pages are made from the code, so what you write on one with **Edit** is its note: it shows under Notes, and it is kept in `Docs/.code-notes`.
 

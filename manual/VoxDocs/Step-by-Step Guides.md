@@ -11,7 +11,7 @@ A step is a link on a line of its own. There are two kinds:
 
 A page with steps shows how many are done at the top, with **Reset** to start again.
 
-## Try it
+## A step to try
 
 This adds a point light to the level you have open. Undo takes it away again.
 

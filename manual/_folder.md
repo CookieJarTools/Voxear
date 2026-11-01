@@ -12,7 +12,7 @@ Start with [[Getting Started]]. It takes you from installing Voxear to a game yo
 
 Then read [[Objs and Components]] and [[Your First Script]].
 
-## What is here
+## What the manual covers
 
 - **[[Getting Started]]**: installing, the editor, playing and building.
 - **[[Objs and Levels]]**: the pieces every game is made of, and how they load.

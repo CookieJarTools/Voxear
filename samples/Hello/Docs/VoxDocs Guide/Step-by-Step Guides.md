@@ -6,7 +6,7 @@ updated: 2026-11-01
 
 A guide can do the work for the reader. A link to an action or a check, on a line of its own, is a step: an action is a button that runs a command, and a check ticks itself once what it looks for is there. The line at the top says how far you have got.
 
-## Try it
+## A guide to try
 
 1. Swap the two spinners, with the command Hello's `Tools.cs` adds.
 

@@ -12,7 +12,7 @@ Add a light with the Hierarchy's **+** button. There are three kinds:
 
 A directional light and a spot light shine the way their Obj faces. Turn the Obj to aim them: while one is selected, the Scene view shows which way it points. Where a directional light stands makes no difference.
 
-## Its settings
+## A light's settings
 
 Select the light, and the Inspector shows:
 

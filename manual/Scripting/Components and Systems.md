@@ -133,7 +133,7 @@ A system can also have:
 
 Systems run only while the game plays, never while you edit.
 
-## Seeing it at work
+## Watching systems run
 
 The **Entities** panel, in the Profiling layout, shows every entity and its components while the game plays, and every system with how long it took. See [[The Entities Panel]].
 

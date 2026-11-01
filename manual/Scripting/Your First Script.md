@@ -33,7 +33,7 @@ namespace MyGame
 }
 ```
 
-## Making it spin
+## Making the Spinner spin
 
 Change it to this, and save:
 
@@ -65,7 +65,7 @@ namespace MyGame
 
 When you save, the editor builds your scripts in the background. If something is wrong, the Console lists the errors under **Compiler**.
 
-## Putting it on a cube
+## Putting the Spinner on a cube
 
 1. Make a cube: the **+** at the top of the Hierarchy, then **Cube**.
 2. With the cube selected, click **Add Component** in the Inspector and pick **Spinner**.

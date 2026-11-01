@@ -6,7 +6,7 @@ A camera is what the player sees the world through. The Game view, and the game 
 
 A camera looks the way its Obj faces. Select it, and the Scene view shows the shape of what it sees.
 
-## Its settings
+## A camera's settings
 
 | Setting | Does |
 | --- | --- |

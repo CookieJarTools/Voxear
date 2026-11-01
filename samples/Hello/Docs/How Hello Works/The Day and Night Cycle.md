@@ -8,9 +8,9 @@ Hello moves between two levels, **Day** and **Night**. Both stand on the **Envir
 
 ![The Day level](images/Day.png)
 
-## Who drives it
+## How the levels change
 
-The `GameManager` keeps the score and walks through the levels its scene lists in `cycle`, each a level and how many seconds to wait first. It loads the next one in the background with `Level.LoadAsync` and carries on once it is in.
+The `GameManager` keeps the score and moves through the levels listed in its `cycle` field, each with how many seconds to wait before it. It loads the next level in the background with `Level.LoadAsync`, and switches to it once it has loaded.
 
 Its Obj is ==persistent==, so it survives every level change while the scenes around it come and go. Any script reaches it through `Instance<GameManager>.Current`.
 

@@ -33,10 +33,16 @@
 //! - **Hide…** in the trace pane folds away the frames of chosen assemblies
 //!   (a frame's root namespace, such as `Voxear`, or an engine crate), for
 //!   the one library that fills every trace.
+//! - **Settings**, at the end of the toolbar, opens the Console's settings
+//!   in its place, with a sample drawn as the Console draws its lines (see
+//!   `settings_view`): row height, colour by kind, alternating rows, how a
+//!   category shows, the stack's parts, colours, how many lines are held,
+//!   and the category colours.
 
 mod entry;
 mod frame;
 mod query;
+mod settings_view;
 
 use std::{
     cell::RefCell,
@@ -51,14 +57,16 @@ use voxear_ecs::Entity;
 use voxear_engine::{build_profile, player};
 use voxear_ui::{Color, ItemFns, MenuItem, NodeId, RichText, Style, Ui};
 
-use self::{entry::Entry, frame::Frame, query::Query};
+use self::{
+    entry::Entry,
+    frame::Frame,
+    query::Query,
+    settings_view::{Change, PARTS, SettingsView},
+};
 use crate::settings::{SavedFilter, Settings};
 
-/// A line's height, and the list's share of the Console over the trace pane.
-const ROW: f32 = 20.0;
+/// The list's share of the Console over the trace pane.
 const LIST_SHARE: f32 = 0.6;
-/// The most lines held; older ones go first.
-const KEPT: usize = 10_000;
 /// Each part of a frame's colour, tuned for the dark theme.
 const NAMESPACE: u32 = 0x7d8597;
 const CLASS: u32 = 0x7cc4fa;
@@ -113,11 +121,35 @@ struct Toolbar {
     /// Where a filter being saved is named.
     filter_name: NodeId,
     muted: NodeId,
+    settings: NodeId,
     search_box: NodeId,
     search: NodeId,
     problem: NodeId,
     /// Log, Warning and Error, each with its count's label.
     levels: [(NodeId, NodeId); 3],
+}
+
+/// How the settings ask lines to look, which every row is bound with.
+#[derive(Clone, Debug, Default)]
+struct Look {
+    tint: bool,
+    stripes: bool,
+    /// 0 no category, 1 a dot in its colour, 2 its name.
+    category: usize,
+    error: Option<u32>,
+    warning: Option<u32>,
+}
+
+impl Look {
+    fn of(settings: &Settings) -> Self {
+        Self {
+            tint: settings.console_tint,
+            stripes: settings.console_stripes,
+            category: settings.console_category,
+            error: settings.console_colours.get("error").copied(),
+            warning: settings.console_colours.get("warning").copied(),
+        }
+    }
 }
 
 /// The pane under the list: the selected line's details, message and stack.
@@ -134,6 +166,12 @@ struct Detail {
 
 pub struct Console {
     list: NodeId,
+    /// The list and trace pane, which the settings take the place of.
+    split: NodeId,
+    root: NodeId,
+    look: Rc<RefCell<Look>>,
+    row_height: f32,
+    settings_view: Option<SettingsView>,
     log: LogCapture,
     /// The project's folder, whose files are its own code, and the engine's,
     /// which a Rust line's file is relative to.
@@ -184,29 +222,18 @@ impl Console {
         let entries: Rc<RefCell<Vec<Entry>>> = Rc::default();
         let shown: Rc<RefCell<Vec<Shown>>> = Rc::default();
         let colours = Rc::new(RefCell::new(read_colours(project)));
-        let (read, rows, painted) = (entries.clone(), shown.clone(), colours.clone());
+        let look = Rc::new(RefCell::new(Look::of(settings)));
+        let (read, rows, painted, looks) = (entries.clone(), shown.clone(), colours.clone(), look.clone());
         let items = ItemFns {
-            make: |ui: &mut Ui, row: NodeId| {
-                for (part, class) in [
-                    ("", "console-icon"),
-                    ("", "console-time"),
-                    ("", "console-category"),
-                    ("", "console-message"),
-                    ("", "console-count"),
-                    ("", "console-source"),
-                ] {
-                    let made = if class == "console-icon" { ui.icon(row, "info") } else { ui.add_label(row, part) };
-                    ui.add_class(made, class);
-                }
-            },
+            make: make_row,
             bind: move |ui: &mut Ui, row: NodeId, index: usize| {
                 let (entries, rows) = (read.borrow(), rows.borrow());
                 let Some(shown) = rows.get(index) else { return };
                 let Some(entry) = entries.get(shown.entry) else { return };
-                bind_row(ui, row, entry, shown.count, &painted.borrow());
+                bind_row(ui, row, (entry, shown.count, index), &painted.borrow(), &looks.borrow());
             },
         };
-        let list = ui.list_view(top, ROW, 0, items);
+        let list = ui.list_view(top, settings.console_row_height, 0, items);
         ui.add_class(list, "fill");
         ui.add_class(list, "console");
         let detail = detail(ui, bottom, settings);
@@ -216,6 +243,11 @@ impl Console {
         let project = project.canonicalize().unwrap_or_else(|_| project.to_path_buf());
         let console = Self {
             list,
+            split,
+            root,
+            look,
+            row_height: settings.console_row_height,
+            settings_view: None,
             log,
             project,
             engine,
@@ -248,9 +280,18 @@ impl Console {
     /// Takes in lines logged since the last frame and follows the toolbar,
     /// the list, its menu and the trace pane.
     pub fn update(&mut self, ui: &mut Ui, settings: &mut Settings) -> ConsoleUpdate {
-        let mut update = ConsoleUpdate { errors: self.take_new_lines(), ..ConsoleUpdate::default() };
+        let mut update =
+            ConsoleUpdate { errors: self.take_new_lines(settings.console_kept), ..ConsoleUpdate::default() };
+        if self.settings_view.is_some() {
+            update.settings_changed = self.update_settings(ui, settings);
+            return update;
+        }
         let mut changed = update.errors > 0 || self.new_lines_arrived;
         self.new_lines_arrived = false;
+        if ui.clicked(self.toolbar.settings) {
+            self.open_settings(ui, settings);
+            return update;
+        }
         changed |= self.toolbar_clicks(ui, settings, &mut update);
         changed |= self.menu(ui);
         if changed {
@@ -275,9 +316,9 @@ impl Console {
         self.count_categories(ui);
     }
 
-    /// Reads the lines logged since it last looked. Returns how many were
-    /// errors.
-    fn take_new_lines(&mut self) -> usize {
+    /// Reads the lines logged since it last looked, holding no more than
+    /// `kept`. Returns how many were errors.
+    fn take_new_lines(&mut self, kept: usize) -> usize {
         let Ok(log) = self.log.lock() else { return 0 };
         let new = (log.total - self.seen).min(log.lines.len() as u64) as usize;
         self.seen = log.total;
@@ -289,7 +330,7 @@ impl Console {
         let mut entries = self.entries.borrow_mut();
         let errors = lines.iter().filter(|l| l.level == Level::ERROR).count();
         entries.extend(lines.iter().map(|line| Entry::new(line, &self.project)));
-        let over = entries.len().saturating_sub(KEPT);
+        let over = entries.len().saturating_sub(kept);
         if over > 0 {
             entries.drain(..over);
             self.selected = self.selected.and_then(|s| s.checked_sub(over));
@@ -517,6 +558,79 @@ impl Console {
         ui.refresh_list(self.list);
     }
 
+    /// Shows the settings in the Console's place, with the categories seen
+    /// so far to colour.
+    fn open_settings(&mut self, ui: &mut Ui, settings: &Settings) {
+        let colours = self.category_colours();
+        let view = SettingsView::new(ui, self.root, &self.project, settings, &colours);
+        ui.set_visible(self.split, false);
+        self.settings_view = Some(view);
+        self.show_settings(ui, settings);
+    }
+
+    /// Every category seen, and those given a colour, with their colours.
+    fn category_colours(&self) -> Vec<(String, Option<u32>)> {
+        let colours = self.colours.borrow();
+        let mut names: Vec<&String> = self.categories.iter().map(|(name, _)| name).chain(colours.keys()).collect();
+        names.sort();
+        names.dedup();
+        names.into_iter().map(|name| (name.clone(), colours.get(name).copied())).collect()
+    }
+
+    /// The settings screen: what was picked is applied to the Console at
+    /// once, and the sample drawn again. Returns whether a setting changed.
+    fn update_settings(&mut self, ui: &mut Ui, settings: &mut Settings) -> bool {
+        let Some(change) = self.settings_view.as_ref().and_then(|view| view.update(ui, settings)) else {
+            return false;
+        };
+        let settings_changed = matches!(change, Change::Settings);
+        match change {
+            Change::Done => {
+                if let Some(view) = self.settings_view.take() {
+                    ui.remove(view.screen);
+                }
+                ui.set_visible(self.split, true);
+                return false;
+            }
+            Change::Category(name, colour) => self.set_colour(ui, &name, colour),
+            Change::ClearCategories => {
+                self.colours.borrow_mut().clear();
+                if let Err(error) = write_colours(&self.project, &self.colours.borrow()) {
+                    tracing::warn!("could not keep the Console's colours in {COLOURS_FILE}: {error:#}");
+                }
+            }
+            Change::Settings => {}
+        }
+        self.apply_settings(ui, settings);
+        self.show_settings(ui, settings);
+        settings_changed
+    }
+
+    /// Draws every line again as the settings now ask.
+    fn apply_settings(&mut self, ui: &mut Ui, settings: &Settings) {
+        *self.look.borrow_mut() = Look::of(settings);
+        if self.row_height != settings.console_row_height {
+            self.row_height = settings.console_row_height;
+            ui.set_item_height(self.list, self.row_height);
+        }
+        self.drawn = None;
+        self.refresh(ui, settings);
+        self.show_toggles(ui, settings);
+    }
+
+    /// The settings screen as the settings are now, and its sample.
+    fn show_settings(&self, ui: &mut Ui, settings: &Settings) {
+        let Some(view) = &self.settings_view else { return };
+        view.show(ui, settings, &self.category_colours());
+        let (colours, look) = (self.colours.borrow(), self.look.borrow());
+        for (index, (&row, entry)) in view.sample_rows.iter().zip(&view.samples).enumerate() {
+            ui.set_inline_style(row, &format!("height: {}px", settings.console_row_height));
+            bind_row(ui, row, (entry, 1, index), &colours, &look);
+        }
+        let traced = view.samples.first().map(|entry| trace(entry, settings, false)).unwrap_or_default();
+        ui.set_rich_text(view.sample_trace, &traced);
+    }
+
     /// Whether a line passes the categories, the muted messages and the
     /// search, whatever its level.
     fn passes(&self, entry: &Entry) -> bool {
@@ -555,7 +669,8 @@ impl Console {
         let before = self.shown.borrow().len();
         let [_, scrolled] = ui.scroll_offset(self.list);
         let [_, _, _, height] = ui.viewport(self.list);
-        let following = scrolled + height >= before as f32 * ROW - ROW;
+        let row = self.row_height;
+        let following = scrolled + height >= before as f32 * row - row;
         let count = shown.len();
         let selected = self.selected.and_then(|e| shown.iter().position(|s| s.entry == e));
         *self.shown.borrow_mut() = shown;
@@ -825,6 +940,8 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
     ui.set_visible(filter_name, false);
     let muted = button(ui, "Muted");
     ui.set_visible(muted, false);
+    let settings = ui.icon_button(bar, "settings");
+    ui.add_class(settings, "console-settings-button");
     let line = ui.panel(root, Style::default());
     ui.add_class(line, "divider");
     let problem = ui.add_label(root, "");
@@ -839,6 +956,7 @@ fn toolbar(ui: &mut Ui, root: NodeId) -> Toolbar {
         player_log,
         filter_name,
         muted,
+        settings,
         search_box,
         search,
         problem,
@@ -877,19 +995,52 @@ fn detail(ui: &mut Ui, pane: NodeId, settings: &Settings) -> Detail {
     Detail { info, message, trace, mine_only, namespaces, parameters, hide, copy }
 }
 
-/// Fills a row: the level's icon, when, its category in its colour, the
-/// message's first line, how many identical lines it stands for, and where
-/// it came from.
-fn bind_row(ui: &mut Ui, row: NodeId, entry: &Entry, count: usize, colours: &HashMap<String, u32>) {
+/// A row's parts, which [`bind_row`] fills: the level's icon, when, the
+/// category, the message, how many lines it stands for, and where from.
+fn make_row(ui: &mut Ui, row: NodeId) {
+    let icon = ui.icon(row, "info");
+    ui.add_class(icon, "console-icon");
+    for class in ["console-time", "console-category", "console-message", "console-count", "console-source"] {
+        let label = ui.add_label(row, "");
+        ui.add_class(label, class);
+    }
+}
+
+/// Fills a row with a line, the `count` identical ones it stands for, and
+/// its `index` in the list: the level's icon, when, its category in its
+/// colour, the message's first line, how many, and where it came from.
+fn bind_row(
+    ui: &mut Ui,
+    row: NodeId,
+    (entry, count, index): (&Entry, usize, usize),
+    colours: &HashMap<String, u32>,
+    look: &Look,
+) {
     let parts = ui.children(row);
     let warn = entry.level == Level::WARN;
     let error = entry.level == Level::ERROR;
     ui.set_icon(parts[0], if warn || error { "alert" } else { "info" });
-    ui.set_class(row, "log-warn", warn);
-    ui.set_class(row, "log-error", error);
+    ui.set_class(parts[0], "warn", warn);
+    ui.set_class(parts[0], "error", error);
+    ui.set_class(row, "log-warn", warn && look.tint);
+    ui.set_class(row, "log-error", error && look.tint);
+    ui.set_class(row, "odd", look.stripes && index % 2 == 1);
+    // A colour picked for the level takes the theme's place, on the mark and, tinted, the line.
+    let picked = if error {
+        look.error
+    } else if warn {
+        look.warning
+    } else {
+        None
+    };
+    let painted = picked.map(|c| format!("color: #{c:06x}")).unwrap_or_default();
+    ui.set_inline_style(parts[0], &painted);
+    ui.set_inline_style(parts[3], if look.tint { &painted } else { "" });
     ui.set_text(parts[1], &time(entry.seconds));
     let category = entry.categories.first().map_or("", String::as_str);
-    ui.set_text(parts[2], category);
+    ui.set_text(parts[2], if look.category == 1 && !category.is_empty() { "●" } else { category });
+    ui.set_visible(parts[2], look.category > 0);
+    ui.set_class(parts[2], "dot", look.category == 1);
     let colour = colours.get(category).map(|c| format!("color: #{c:06x}")).unwrap_or_default();
     ui.set_inline_style(parts[2], &colour);
     ui.set_text(parts[3], entry.message.lines().next().unwrap_or_default());
@@ -933,25 +1084,32 @@ fn trace(entry: &Entry, settings: &Settings, unfolded: bool) -> RichText {
 /// One frame: `Namespace.Class.Method(parameters)  File.cs:12`.
 fn push_frame(text: &mut RichText, entry: &Entry, index: usize, settings: &Settings) {
     let frame = &entry.frames[index];
+    let colour = |part: &str| Color::hex(part_colour(settings, part));
     if frame.has_call() {
         if settings.console_namespaces && !frame.namespace.is_empty() {
-            text.push_colored(&format!("{}.", frame.namespace), Color::hex(NAMESPACE));
+            text.push_colored(&format!("{}.", frame.namespace), colour("namespace"));
         }
         if !frame.class.is_empty() {
-            text.push_colored(&format!("{}.", frame.class), Color::hex(CLASS));
+            text.push_colored(&format!("{}.", frame.class), colour("class"));
         }
-        text.push_colored(&frame.method, Color::hex(METHOD));
+        text.push_colored(&frame.method, colour("method"));
         let parameters = if settings.console_parameters { frame.parameters.as_str() } else { "" };
-        text.push_colored(&format!("({parameters})"), Color::hex(PARAMETERS));
+        text.push_colored(&format!("({parameters})"), colour("parameters"));
     } else if frame.file.is_none() {
         text.push_colored(&frame.raw, Color::hex(FOLDED));
     }
     if let (Some(name), Some(line)) = (frame.file_name(), frame.line) {
         let gap = if frame.has_call() { "  " } else { "" };
         text.push(gap, Default::default());
-        text.push_link_colored(&format!("{name}:{line}"), &format!("frame:{index}"), Color::hex(FILE));
+        text.push_link_colored(&format!("{name}:{line}"), &format!("frame:{index}"), colour("file"));
     }
     text.push("\n", Default::default());
+}
+
+/// A frame part's colour: the one picked in the settings, or its own.
+fn part_colour(settings: &Settings, part: &str) -> u32 {
+    let own = PARTS.iter().find(|(key, ..)| *key == part).and_then(|(_, _, own)| *own).unwrap_or(FOLDED);
+    settings.console_colours.get(part).copied().unwrap_or(own)
 }
 
 /// The logs the project's builds have kept: each profile's build that has

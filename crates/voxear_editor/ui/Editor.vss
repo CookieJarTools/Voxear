@@ -1300,13 +1300,32 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-muted);
 }
 
-/* Warnings and errors take their own colour, which the eye lands on. */
-.list-row.log-warn, .list-row.log-warn .console-icon {
+/* Warnings and errors take their own colour, which the eye lands on: the
+   mark always, the line when Colour by kind is on. */
+.list-row.log-warn, .console-icon.warn {
     color: var(--ed-warn);
 }
 
-.list-row.log-error, .list-row.log-error .console-icon {
+.list-row.log-error, .console-icon.error {
     color: var(--vx-x);
+}
+
+/* Alternating rows, kept under hover and selection. */
+.console .list-row.odd {
+    background-color: rgba(255, 255, 255, 0.025);
+}
+
+.console .list-row.odd:hover {
+    background-color: var(--vx-hover);
+}
+
+.console .list-row.odd:selected {
+    background-color: var(--vx-selected);
+}
+
+/* A category shown as a dot in its colour. */
+.console-category.dot {
+    width: 10px;
 }
 
 .console-detail {
@@ -2216,4 +2235,116 @@ DockSpace .project-split > .split-divider {
 
 .excerpt-missing {
     color: var(--vx-muted);
+}
+
+/* The Console's settings, in its place: a sample drawn as the Console draws
+   its lines, then each option, its words on the left and its choices on the
+   right. */
+.console-settings-head {
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--vx-line);
+}
+
+.console-settings-body {
+    padding: 0px 14px 18px 14px;
+    gap: 6px;
+}
+
+.console-settings-title {
+    flex-grow: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.console-settings-section {
+    flex-shrink: 0;
+    margin-top: 10px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.console-settings-box {
+    flex-shrink: 0;
+    border-radius: 7px;
+    border: 1px solid var(--vx-line);
+    padding: 4px 0px;
+}
+
+.console-sample {
+    flex-shrink: 0;
+    padding: 4px 0px;
+}
+
+.console-sample-trace {
+    padding: 6px 12px 2px 12px;
+}
+
+.console-option {
+    flex-shrink: 0;
+    align-items: center;
+    gap: 14px;
+    padding: 6px 12px;
+}
+
+.console-option-words {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    gap: 2px;
+}
+
+.console-option-title {
+    color: var(--vx-text);
+}
+
+.console-option-note, .console-settings-note {
+    color: var(--vx-muted);
+}
+
+.console-settings-note {
+    padding: 4px 12px;
+}
+
+.console-option-control {
+    flex-shrink: 0;
+    gap: 2px;
+}
+
+.console-segment {
+    height: 22px;
+    padding: 0px 9px;
+    border-radius: 5px;
+    color: var(--vx-text-2);
+    background-color: var(--vx-field);
+}
+
+.console-segment:checked {
+    color: var(--vx-on-accent);
+    background-color: var(--vx-accent);
+}
+
+.console-swatch {
+    width: 16px;
+    height: 16px;
+    padding: 0px;
+    border-radius: 8px;
+    border: 2px solid transparent;
+}
+
+.console-swatch-own {
+    background-color: var(--vx-field);
+    border-color: var(--vx-line-2);
+}
+
+.console-swatch:checked {
+    border-color: var(--vx-text);
+}
+
+.console-settings-reset {
+    align-self: flex-start;
+    margin: 6px 12px 4px 12px;
 }

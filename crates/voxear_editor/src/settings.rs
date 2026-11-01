@@ -161,6 +161,21 @@ pub struct Settings {
     pub console_hidden_assemblies: Vec<String>,
     /// The Console's filters, saved by name.
     pub console_filters: Vec<SavedFilter>,
+    /// How tall the Console's lines are, in pixels.
+    pub console_row_height: f32,
+    /// Warnings and errors take their colour across the line, not only in
+    /// their mark.
+    pub console_tint: bool,
+    /// Every other line of the Console is shaded.
+    pub console_stripes: bool,
+    /// How a line shows its category: 0 not at all, 1 a dot in its colour,
+    /// 2 its name.
+    pub console_category: usize,
+    /// How many lines the Console holds before the oldest go.
+    pub console_kept: usize,
+    /// Colours chosen in place of the Console's own: `error`, `warning`, and
+    /// a frame's `namespace`, `class`, `method`, `parameters` and `file`.
+    pub console_colours: std::collections::BTreeMap<String, u32>,
 }
 
 /// A Console filter saved by name, as Sifter keeps them: a search, and the
@@ -198,6 +213,12 @@ impl Default for Settings {
             code_editor: 0,
             console_hidden_assemblies: Vec::new(),
             console_filters: Vec::new(),
+            console_row_height: 20.0,
+            console_tint: true,
+            console_stripes: false,
+            console_category: 2,
+            console_kept: 10_000,
+            console_colours: std::collections::BTreeMap::new(),
         }
     }
 }

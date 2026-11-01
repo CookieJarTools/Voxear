@@ -2778,3 +2778,89 @@ fn the_entities_panel_lists_archetypes_entities_and_their_components() {
     assert_eq!(editor.game.engine.world.get::<Name>(selected).unwrap().0, named[0]);
     shot(&mut renderer, "entities-panel.png");
 }
+
+#[test]
+fn the_consoles_settings_show_a_sample_and_change_it_at_once() {
+    use tracing::Level;
+    use voxear_core::logging::LogLine;
+    let dir = hello_copy();
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let log = LogCapture::default();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, log.clone()).unwrap();
+    for (level, message) in [(Level::INFO, "one"), (Level::WARN, "two"), (Level::INFO, "three")] {
+        log_line(&log, LogLine { target: "voxear_engine::levels".into(), ..LogLine::new(level, message) });
+    }
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let roomy = "row(240, [hierarchy], row(-300, column(45%, [scene, game, docs], [console, project]), [inspector]))";
+    editor.ui.set_dock_layout(dock, roomy).unwrap();
+    editor.ui.show_dock_panel(dock, "console");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(console_lines(&editor.ui), ["one", "two", "three"]);
+
+    // Settings opens in the Console's place, with a sample drawn as its lines are.
+    let mut gears = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-settings-button", &mut gears);
+    click(&mut editor.ui, gears[0]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // Shown when it and everything it is in are.
+    let shown = |ui: &Ui, node: NodeId| {
+        let mut at = Some(node);
+        while let Some(node) = at {
+            if !ui.is_visible(node) {
+                return false;
+            }
+            at = ui.parent(node);
+        }
+        true
+    };
+    assert!(!shown(&editor.ui, console_list(&editor.ui)), "the list makes way");
+    let mut samples = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-sample", &mut samples);
+    let sample_rows = |ui: &Ui| {
+        let mut rows = Vec::new();
+        with_class(ui, samples[0], "list-row", &mut rows);
+        rows
+    };
+    assert_eq!(sample_rows(&editor.ui).len(), 3);
+    shot(&mut renderer, "console-settings.png");
+
+    // A choice changes the sample and the setting at once.
+    let segment = |ui: &Ui, name: &str| {
+        let mut found = Vec::new();
+        with_class(ui, ui.root(), "console-segment", &mut found);
+        found.into_iter().find(|&b| ui.text(b) == name).unwrap()
+    };
+    let tall = segment(&editor.ui, "Tall");
+    click(&mut editor.ui, tall);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.settings().console_row_height, 24.0);
+    assert_eq!(editor.ui.rect(sample_rows(&editor.ui)[0])[3], 24.0, "the sample shows it");
+    // Further down the screen, scrolled to.
+    let mut screens = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "console-settings-body", &mut screens);
+    let dot = segment(&editor.ui, "Dot");
+    let down = editor.ui.rect(dot)[1] - editor.ui.rect(screens[0])[1] - 40.0;
+    editor.ui.set_scroll(screens[0], [0.0, down]);
+    frame(&mut editor, &mut renderer);
+    click(&mut editor.ui, dot);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.ui.text(editor.ui.children(sample_rows(&editor.ui)[1])[2]), "●", "a category as a dot");
+
+    // Done brings the list back, drawn the new way.
+    let done = console_button(&editor.ui, "Done").unwrap();
+    click(&mut editor.ui, done);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(shown(&editor.ui, console_list(&editor.ui)));
+    let rows = console_rows(&editor.ui);
+    assert_eq!(editor.ui.rect(rows[0])[3], 24.0, "the list's lines are taller");
+    assert_eq!(editor.ui.text(editor.ui.children(rows[0])[2]), "●");
+}

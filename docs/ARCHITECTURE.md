@@ -1543,7 +1543,11 @@ whose source is in `Dev/CookieJar` (design notes in `Docs/Sifter-Design.md`):
 - The list survives a script recompile, which here means C# hot reload.
 
 What is built is described under the editor above. Its lines are kept across hot reload, since the Console is the
-editor's own and nothing of it reloads. Still to come from Sifter: the settings screen with a live sample of a row.
+editor's own and nothing of it reloads. **Its settings** have a screen of their own, opened from the toolbar's gear,
+in the Console's place: a sample of three lines and a stack, drawn by the Console's own row and stack code, then row
+height, colour by kind, alternating rows, a category shown as its name, a dot or not at all, the stack's namespaces,
+parameters and My code only, a colour for errors, warnings and each part of a frame, how many lines are held, Clear
+on play, and the project's category colours. A change shows in the sample and the Console at once.
 
 ### VoxDocs
 

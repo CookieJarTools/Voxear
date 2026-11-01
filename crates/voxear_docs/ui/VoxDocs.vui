@@ -12,6 +12,7 @@
                     <Label class="cb-tags-title">Filter by tag</Label>
                     <Button name="cb-tags-clear" class="cb-link-button">Clear</Button>
                 </Panel>
+                <TextField name="cb-tag-find" class="cb-tag-find" placeholder="Find a tag" />
                 <Panel name="cb-tag-chips" class="cb-tag-chips" />
                 <Button name="cb-tags-more" class="cb-link-button cb-tags-more">Show all</Button>
             </Panel>
@@ -35,10 +36,16 @@
             <Panel name="cb-editor" class="cb-editor">
                 <Panel class="cb-editor-head">
                     <TextField name="cb-title-field" class="cb-title-field" placeholder="Title" />
-                    <TextField name="cb-tags-field" class="cb-tags-field" placeholder="Tags, separated by commas" />
+                    <!-- The page's tags as chips, then the field the next one is typed in. -->
+                    <Panel name="cb-tag-box" class="cb-tag-box">
+                        <Panel name="cb-tag-picked" class="cb-tag-picked" />
+                        <TextField name="cb-tags-field" class="cb-tags-field" placeholder="Add a tag" />
+                    </Panel>
                     <Label name="cb-status" class="cb-status" />
                     <Button name="cb-save" class="cb-button primary">Save</Button>
                 </Panel>
+                <!-- The project's tags that fit what is typed, to add with a click. -->
+                <Panel name="cb-tag-suggestions" class="cb-tag-suggestions" />
                 <!-- Put a picture, a link or a guide's step in at the cursor. -->
                 <Panel class="cb-editor-tools">
                     <Button name="cb-insert-image" class="cb-button">Image…</Button>

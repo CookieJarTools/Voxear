@@ -8,7 +8,8 @@
 //! headings beside it, "On this page", when there is room, picking out the
 //! one being read.
 //!
-//! **Edit** writes the page: its title and tags, its Markdown, and the page
+//! **Edit** writes the page: its title, its tags as chips (the project's
+//! tags that fit what is typed are suggested), its Markdown, and the page
 //! as it will read beside it, drawn again a moment after each change. Save
 //! or Ctrl+S writes it to its file, and so does Done, or opening another
 //! page, so nothing written is lost. A new title renames the page's file.
@@ -80,8 +81,11 @@ const SHEET: &str = include_str!("../ui/VoxDocs.vss");
 
 /// How many pages home lists as updated lately.
 const RECENT: usize = 6;
-/// How many tags show before Show all, beside any picked.
+/// How many tags show before Show all, beside any picked; past it, a box
+/// finds a tag among them.
 const TAGS_AT_FIRST: usize = 8;
+/// How many of the project's tags are suggested while writing.
+const SUGGESTED: usize = 6;
 /// "On this page" shows for a page with at least this many headings, when
 /// the reading area is at least this wide.
 const TOC_FEWEST: usize = 3;
@@ -151,6 +155,9 @@ struct Nodes {
     tag_chips: NodeId,
     tags_clear: NodeId,
     tags_more: NodeId,
+    tag_find: NodeId,
+    tag_picked: NodeId,
+    tag_suggestions: NodeId,
     reading: NodeId,
     toc: NodeId,
     health: NodeId,
@@ -231,6 +238,11 @@ pub struct VoxDocs {
     /// its menu, which the editor fills with its commands.
     insert_menu: Option<(NodeId, Vec<String>)>,
     wants_commands: bool,
+    /// While writing: the page's tags, each chip's × with its tag, and the
+    /// suggested tags with theirs.
+    writing_tags: Vec<String>,
+    tag_removes: Vec<(NodeId, String)>,
+    suggestions: Vec<(NodeId, String)>,
     /// A picture of the Scene or a recording asked for, for the editor; and
     /// Markdown to put in at the cursor once the page shows again, as after
     /// one, when the view took the page's place.
@@ -260,6 +272,9 @@ impl VoxDocs {
             tag_chips: find(ui, "cb-tag-chips"),
             tags_clear: find(ui, "cb-tags-clear"),
             tags_more: find(ui, "cb-tags-more"),
+            tag_find: find(ui, "cb-tag-find"),
+            tag_picked: find(ui, "cb-tag-picked"),
+            tag_suggestions: find(ui, "cb-tag-suggestions"),
             reading: find(ui, "cb-reading"),
             toc: find(ui, "cb-toc"),
             health: find(ui, "cb-health"),
@@ -344,6 +359,9 @@ impl VoxDocs {
             wants_commands: false,
             capture: None,
             pending_insert: None,
+            writing_tags: Vec::new(),
+            tag_removes: Vec::new(),
+            suggestions: Vec::new(),
         };
         docs.show_editing(ui, false);
         docs.render(ui);
@@ -427,7 +445,9 @@ impl VoxDocs {
             return;
         }
         let title = ui.text(self.nodes.title);
-        let tags: Vec<String> = ui.text(self.nodes.tags_field).split(',').map(str::to_string).collect();
+        // The chips, and a tag typed but not yet made one.
+        let typed = ui.text(self.nodes.tags_field);
+        let tags: Vec<String> = self.writing_tags.iter().cloned().chain(typed.split(',').map(str::to_string)).collect();
         let body = ui.text(self.nodes.source);
         let saved = self.library.borrow_mut().save_page(self.open, &title, &tags, &body);
         match saved {
@@ -821,6 +841,10 @@ impl VoxDocs {
         if ui.changed(self.nodes.source) {
             self.preview_due = Some(Instant::now() + PREVIEW_DELAY);
         }
+        if self.update_writing_tags(ui) && !self.dirty {
+            self.dirty = true;
+            self.show_status(ui);
+        }
         if [self.nodes.source, self.nodes.title, self.nodes.tags_field].iter().any(|&field| ui.changed(field))
             && !self.dirty
         {
@@ -833,6 +857,96 @@ impl VoxDocs {
         }
     }
 
+    /// The page's tags while writing: what is typed becomes a chip at a comma
+    /// or Enter, a chip's × takes its tag off, and a suggestion adds its
+    /// own. Returns whether the tags changed.
+    fn update_writing_tags(&mut self, ui: &mut Ui) -> bool {
+        let field = self.nodes.tags_field;
+        let mut added = Vec::new();
+        if ui.submitted(field) {
+            added.push(ui.text(field));
+            ui.set_text(field, "");
+        } else if ui.changed(field)
+            && let Some((done, typing)) = ui.text(field).rsplit_once(',')
+        {
+            added.extend(done.split(',').map(str::to_string));
+            ui.set_text(field, typing.trim_start());
+        }
+        let suggested = self.suggestions.iter().find(|(chip, _)| ui.clicked(*chip)).map(|(_, tag)| tag.clone());
+        if let Some(tag) = suggested {
+            added.push(tag);
+            ui.set_text(field, "");
+            ui.focus(field);
+        }
+        let mut changed = false;
+        for tag in added.iter().map(|tag| tag.trim()).filter(|tag| !tag.is_empty()) {
+            if !self.writing_tags.iter().any(|has| has.eq_ignore_ascii_case(tag)) {
+                self.writing_tags.push(tag.to_string());
+                changed = true;
+            }
+        }
+        if let Some(gone) = self.tag_removes.iter().find(|(button, _)| ui.clicked(*button)).map(|(_, tag)| tag.clone())
+        {
+            self.writing_tags.retain(|tag| *tag != gone);
+            changed = true;
+        }
+        if changed {
+            self.show_writing_tags(ui);
+        } else if ui.changed(field) {
+            self.show_suggestions(ui);
+        }
+        changed
+    }
+
+    /// The page's tags as chips, each with its ×.
+    fn show_writing_tags(&mut self, ui: &mut Ui) {
+        for child in ui.children(self.nodes.tag_picked) {
+            ui.remove(child);
+        }
+        self.tag_removes.clear();
+        for tag in &self.writing_tags {
+            let chip = ui.panel(self.nodes.tag_picked, voxear_ui::Style::row());
+            ui.add_class(chip, "cb-tag-chip");
+            let name = ui.add_label(chip, tag);
+            ui.add_class(name, "cb-tag-name");
+            let remove = ui.icon_button(chip, "close");
+            ui.add_class(remove, "cb-tag-remove");
+            self.tag_removes.push((remove, tag.clone()));
+        }
+        self.show_suggestions(ui);
+    }
+
+    /// The project's tags the page has not, that fit what is typed, the most
+    /// used first: or with nothing typed, the most used.
+    fn show_suggestions(&mut self, ui: &mut Ui) {
+        for child in ui.children(self.nodes.tag_suggestions) {
+            ui.remove(child);
+        }
+        self.suggestions.clear();
+        let typed = ui.text(self.nodes.tags_field).trim().to_lowercase();
+        let tags = self.library.borrow().tags();
+        let has = |tag: &str| self.writing_tags.iter().any(|t| t.eq_ignore_ascii_case(tag));
+        let fitting: Vec<String> = tags
+            .into_iter()
+            .map(|(tag, _)| tag)
+            .filter(|tag| !has(tag) && tag.to_lowercase().contains(&typed))
+            .take(SUGGESTED)
+            .collect();
+        ui.set_visible(self.nodes.tag_suggestions, !fitting.is_empty());
+        if fitting.is_empty() {
+            return;
+        }
+        let title = ui.add_label(self.nodes.tag_suggestions, "Suggested:");
+        ui.add_class(title, "cb-tag-suggestions-title");
+        for tag in fitting {
+            let chip = ui.button(self.nodes.tag_suggestions, "");
+            ui.add_class(chip, "cb-tag-chip");
+            let name = ui.add_label(chip, &tag);
+            ui.add_class(name, "cb-tag-name");
+            self.suggestions.push((chip, tag));
+        }
+    }
+
     /// Writes the open page: its title, tags and Markdown in fields, and how
     /// it reads beside them.
     fn start_editing(&mut self, ui: &mut Ui) {
@@ -842,10 +956,12 @@ impl VoxDocs {
         ui.set_text(self.nodes.title, if is_root { "" } else { page.title() });
         // A Code Reference page keeps its type's name, and what is written on it is its note.
         ui.set_enabled(self.nodes.title, !is_root && !page.generated);
-        ui.set_text(self.nodes.tags_field, &page.header.tags.join(", "));
+        self.writing_tags.clone_from(&page.header.tags);
+        ui.set_text(self.nodes.tags_field, "");
         let words = if page.generated { library.notes_of(self.open) } else { page.body.clone() };
         ui.set_text(self.nodes.source, &words);
         drop(library);
+        self.show_writing_tags(ui);
         self.dirty = false;
         self.show_editing(ui, true);
         self.show_status(ui);
@@ -1044,6 +1160,9 @@ impl VoxDocs {
             self.all_tags = !self.all_tags;
             self.show_tags(ui);
         }
+        if ui.changed(self.nodes.tag_find) {
+            self.show_tags(ui);
+        }
         if changed {
             self.show_tags(ui);
             self.search(ui);
@@ -1056,10 +1175,16 @@ impl VoxDocs {
         let tags = self.library.borrow().tags();
         self.picked_tags.retain(|picked| tags.iter().any(|(tag, _)| tag.eq_ignore_ascii_case(picked)));
         let picked = |tag: &str| self.picked_tags.iter().any(|p| p.eq_ignore_ascii_case(tag));
+        // With words in the find box, every tag with them in it, however many.
+        let find = ui.text(self.nodes.tag_find).trim().to_lowercase();
+        let fits = |index: usize, tag: &str| match find.as_str() {
+            "" => self.all_tags || index < TAGS_AT_FIRST,
+            words => tag.to_lowercase().contains(words),
+        };
         let shown: Vec<&(String, usize)> = tags
             .iter()
             .enumerate()
-            .filter(|(index, (tag, _))| self.all_tags || *index < TAGS_AT_FIRST || picked(tag))
+            .filter(|(index, (tag, _))| fits(*index, tag) || picked(tag))
             .map(|(_, tag)| tag)
             .collect();
         for child in ui.children(self.nodes.tag_chips) {
@@ -1078,7 +1203,8 @@ impl VoxDocs {
         }
         ui.set_visible(self.nodes.tags, !tags.is_empty());
         ui.set_visible(self.nodes.tags_clear, !self.picked_tags.is_empty());
-        ui.set_visible(self.nodes.tags_more, self.all_tags || shown.len() < tags.len());
+        ui.set_visible(self.nodes.tag_find, tags.len() > TAGS_AT_FIRST);
+        ui.set_visible(self.nodes.tags_more, find.is_empty() && (self.all_tags || shown.len() < tags.len()));
         let more = if self.all_tags { "Show fewer".to_string() } else { format!("Show all {}", tags.len()) };
         ui.set_text(self.nodes.tags_more, &more);
     }

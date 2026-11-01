@@ -303,6 +303,8 @@ Done so far:
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
+- **VoxDocs' tags while writing and among many:** a page's tags as chips with the project's tags suggested, and a
+  box that finds a tag when there are more than show at first.
 - **Scene captures and GIF recordings in VoxDocs:** Capture Scene, Record Scene and Record Game put a PNG or a
   three-second GIF in the page being written, from the renderer's new captures; GIFs play on a page.
 - **Image…, Link… and Action… while writing a VoxDocs page**, and a guide's step that makes an asset where it says.

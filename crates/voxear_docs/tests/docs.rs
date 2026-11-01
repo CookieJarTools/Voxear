@@ -159,7 +159,13 @@ fn edit_writes_the_title_tags_and_markdown_and_leaving_saves() {
     assert!(docs.is_editing());
     assert_eq!(ui.text(named(&ui, "cb-edit-label")), "Done");
     assert_eq!(ui.text(named(&ui, "cb-title-field")), "Writing Pages");
-    assert_eq!(ui.text(named(&ui, "cb-tags-field")), "docs, guide");
+    let chips = |ui: &Ui| {
+        let mut names = Vec::new();
+        with_class(ui, ui.find(host, "cb-tag-picked").unwrap(), "cb-tag-name", &mut names);
+        names.into_iter().map(|name| ui.text(name)).collect::<Vec<_>>()
+    };
+    assert_eq!(chips(&ui), ["docs", "guide"], "the page's tags, as chips");
+    assert_eq!(ui.text(named(&ui, "cb-tags-field")), "");
     assert_eq!(ui.text(named(&ui, "cb-status")), "Saved");
     frame(&mut ui, &mut docs);
     let source = named(&ui, "cb-source");
@@ -174,8 +180,24 @@ fn edit_writes_the_title_tags_and_markdown_and_leaving_saves() {
     frame(&mut ui, &mut docs);
     assert!(label(&ui, named(&ui, "cb-preview"), "A new paragraph").is_some(), "the preview follows");
 
+    // A chip's × takes its tag off; a comma makes what is typed a tag; and a suggestion adds its own.
+    let mut removes = Vec::new();
+    with_class(&ui, host, "cb-tag-remove", &mut removes);
+    click(&mut ui, removes[1]);
+    frame(&mut ui, &mut docs);
+    assert_eq!(chips(&ui), ["docs"]);
+    ui.focus(named(&ui, "cb-tags-field"));
+    ui.text_input("new, Docs, gu");
+    frame(&mut ui, &mut docs);
+    assert_eq!(chips(&ui), ["docs", "new"], "once each");
+    assert_eq!(ui.text(named(&ui, "cb-tags-field")), "gu", "what is still being typed");
+    let mut suggested = Vec::new();
+    with_class(&ui, named(&ui, "cb-tag-suggestions"), "cb-tag-chip", &mut suggested);
+    assert_eq!(suggested.len(), 1, "the project's tags that fit what is typed");
+    click(&mut ui, suggested[0]);
+    frame(&mut ui, &mut docs);
+    assert_eq!(chips(&ui), ["docs", "new", "guide"]);
     ui.set_text(named(&ui, "cb-title-field"), "Writing Guide");
-    ui.set_text(named(&ui, "cb-tags-field"), "docs, Guide, new, docs");
     // Set from code, so the field reports no change: what is typed would.
     ui.focus(named(&ui, "cb-title-field"));
     ui.text_input(" ");
@@ -185,7 +207,7 @@ fn edit_writes_the_title_tags_and_markdown_and_leaving_saves() {
     assert_eq!(ui.text(named(&ui, "cb-status")), "Saved");
     assert!(!dir.path().join("Docs/Guide/Writing Pages.md").exists(), "a new title renames the file");
     let saved = std::fs::read_to_string(dir.path().join("Docs/Guide/Writing Guide.md")).unwrap();
-    assert!(saved.contains("tags: [docs, Guide, new]"), "tags kept once each: {saved}");
+    assert!(saved.contains("tags: [docs, new, guide]"), "the chips: {saved}");
     assert!(saved.contains("id: a4f08c3e91b2"), "the page keeps its id");
     assert!(saved.ends_with("A new paragraph."));
 
@@ -768,4 +790,29 @@ fn image_link_and_action_put_markdown_in_while_writing() {
     frame(&mut ui, &mut docs);
     choose(&mut ui, &mut docs, "New Point Light");
     assert!(ui.text(source).contains("[New Point Light](<action:New Point Light>)"), "{}", ui.text(source));
+}
+
+#[test]
+fn a_box_finds_a_tag_among_many() {
+    let dir = project();
+    let tags = ["combat", "camera", "lighting", "levels", "audio", "input", "ui", "saving", "net", "combo"];
+    for (index, tag) in tags.iter().enumerate() {
+        std::fs::write(
+            dir.path().join(format!("Docs/Page {index}.md")),
+            format!("---\ntags: [{tag}]\n---\n\nWords.\n"),
+        )
+        .unwrap();
+    }
+    let (mut ui, mut docs, host) = panel(dir.path());
+    let find = ui.find(host, "cb-tag-find").unwrap();
+    assert!(ui.is_visible(find), "shown once there are more tags than show at first");
+    ui.focus(find);
+    ui.text_input("com");
+    frame(&mut ui, &mut docs);
+    let mut names = Vec::new();
+    with_class(&ui, ui.find(host, "cb-tag-chips").unwrap(), "cb-tag-name", &mut names);
+    let mut shown: Vec<String> = names.into_iter().map(|name| ui.text(name)).collect();
+    shown.sort();
+    assert_eq!(shown, ["combat", "combo"], "the tags with the words in them");
+    assert!(!ui.is_visible(ui.find(host, "cb-tags-more").unwrap()), "every one that fits shows");
 }

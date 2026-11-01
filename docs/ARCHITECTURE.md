@@ -1622,7 +1622,8 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   the page. Code blocks have a Copy button.
 - **Tags and headings**, as the Cookbook has them: the tags over the tree, the eight most used and any picked
   (Show all for the rest), each with how many pages have it; picking tags shows only the pages with every one, as
-  the find box does with words, and a tag on a page picks it too. **On this page** lists a page's headings down to
+  the find box does with words, and a tag on a page picks it too; past eight tags, a box finds those with the words
+  typed in them. **On this page** lists a page's headings down to
   the third level beside it, when it has three or more and the reading area is 640 pixels wide; the one being read
   is picked out as the page scrolls, and a click goes to one.
 - **Home**: the top page, under its own words and what is in it, lists the six pages updated most lately with their
@@ -1652,7 +1653,9 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   linked.
 - **Writing a page**, as the Cookbook does: **Edit** shows its title and tags over its Markdown, with the page
   as it will read beside it, drawn again a moment after each change, and the cursor at the end of the text. The
-  status says whether it is saved. **Save** or Ctrl+S writes it with today's date, and so do **Done** and opening
+  status says whether it is saved. The page's tags are chips, each with an × to take it off; what is typed becomes
+  one at a comma or Enter, and the project's tags that fit what is typed, the most used first, are suggested under
+  it, to add with a click. **Save** or Ctrl+S writes it with today's date, and so do **Done** and opening
   another page, so nothing written is lost. A new title renames its file, or its folder, keeping its id, so links
   by id and Back and Forward still find it; tags are kept once each. Under the title, **Image…** lists the project's
   pictures and live assets, **Link…** its pages, and **Action…** the commands and the kinds of check and asset step,
@@ -1701,8 +1704,6 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 **Still to come**, as the Unity Cookbook has them:
 - **Checks written in C#** for guides (`[DocsCheck]`, a static method returning whether it passes or what is still
   wrong), which need the scripts to hand back a value.
-- A box to find a tag among many.
-- While writing: tags as chips with suggestions.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine
   version: how to use each part of Voxear, from first steps to the advanced paths. It is written for people to
   read: plain words and short sentences, each term explained where it first appears, an example before the

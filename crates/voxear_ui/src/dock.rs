@@ -725,9 +725,14 @@ impl Ui {
         if let Some(old) = state.structure.take() {
             self.remove(NodeId(old));
         }
+        // Every floating window built before, those the state has let go of too (one
+        // emptied by docking its last panel, or left out of a layout): none may stay.
         for floating in &mut state.floating {
-            if let Some(window) = floating.window.take() {
-                self.remove(NodeId(window));
+            floating.window = None;
+        }
+        for child in self.children(dock) {
+            if self.has_class(child, "dock-float") {
+                self.remove(child);
             }
         }
         state.headers.clear();

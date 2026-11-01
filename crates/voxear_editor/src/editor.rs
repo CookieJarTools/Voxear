@@ -738,8 +738,22 @@ impl Editor {
             self.update_previews(renderer);
         }
         let view = self.active_view();
-        let game_camera = self.game_camera();
-        self.ui.set_visible(self.nodes.game_empty, game_camera.is_none());
+        // Why the Game view shows no game: no camera, or the Scene view drawing beside it, since one 3D view
+        // draws at a time for now.
+        let drawn_elsewhere = self.shown(self.nodes.game_viewport)
+            && view.is_some_and(|(viewport, _)| viewport != self.nodes.game_viewport);
+        let note = match (self.game_camera(), drawn_elsewhere) {
+            (None, _) => Some("No camera renders this level."),
+            (Some(_), true) => Some(
+                "One 3D view draws at a time for now, and the Scene view is drawing. Put the Game view in the \
+                 Scene view's area, or close the Scene view, to see the game here.",
+            ),
+            (Some(_), false) => None,
+        };
+        if let Some(note) = note {
+            self.ui.set_text(self.nodes.game_empty, note);
+        }
+        self.ui.set_visible(self.nodes.game_empty, note.is_some());
         self.mark_viewport_area(view.map(|(viewport, _)| viewport));
         self.update_gizmo();
         self.update_status(renderer, delta);

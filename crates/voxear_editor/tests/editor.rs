@@ -4169,3 +4169,22 @@ fn inspectors_open_more_than_once_and_lock_to_what_they_show() {
     assert_eq!(editor.inspector_count(), 1);
     assert!(!editor.ui.dock_panels(dock).iter().any(|(id, ..)| id == "inspector-2"), "gone, not just closed");
 }
+
+#[test]
+fn a_floating_game_view_says_why_the_game_is_not_drawn_there() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let note = editor.ui.find(editor.ui.root(), "game-empty").unwrap();
+    // Docked beside the Scene view, it is drawn when it is the tab showing.
+    editor.ui.show_dock_panel(dock, "game");
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.ui.is_visible(note), "the game draws there");
+
+    // Floating over the Scene view, which draws instead, it says why.
+    editor.ui.float_dock_panel(dock, "game", None);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.is_visible(note));
+    assert!(editor.ui.text(note).starts_with("One 3D view draws at a time"), "{}", editor.ui.text(note));
+    shot(&mut renderer, "float-game.png");
+}

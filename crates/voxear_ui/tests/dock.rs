@@ -300,6 +300,14 @@ fn panels_float_in_windows_that_move_resize_and_dock_again() {
     assert_eq!(ui.dock_layout(dock), layout);
     ui.dock_floating_panel(dock, "project");
     assert!(!ui.dock_panel_floating(dock, "project"));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let mut windows = 0;
+    let mut stack = vec![dock];
+    while let Some(node) = stack.pop() {
+        windows += usize::from(ui.has_class(node, "dock-float"));
+        stack.extend(ui.children(node));
+    }
+    assert_eq!(windows, layout.matches("float(").count() - 1, "a window emptied by docking goes with it");
     assert!(
         ui.dock_layout(dock).starts_with("row(240, [inspector, project*], [scene]) float("),
         "{}",

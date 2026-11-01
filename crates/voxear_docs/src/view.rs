@@ -7,7 +7,10 @@
 
 use voxear_ui::{ImageRef, NodeId, RichText, Style, Ui};
 
-use crate::markdown::{Align, Block, Callout, Item, Task};
+use crate::{
+    highlight,
+    markdown::{Align, Block, Callout, Item, Task},
+};
 
 /// How a page's picture shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,6 +28,8 @@ pub enum Picture {
 /// shows, from its address.
 pub struct Lookups<'a> {
     pub works: &'a dyn Fn(&str) -> bool,
+    /// Whether the theme is dark, for code's colours.
+    pub dark: bool,
     pub pictures: &'a dyn Fn(&str) -> Picture,
 }
 
@@ -50,9 +55,6 @@ const WITH_FIELDS: [&str; 1] = ["material"];
 
 /// What a guide's step link starts with: an action runs a command, and a
 /// check looks at the project and ticks itself when it passes.
-/// How many columns a tab in a code block reaches to, as code editors show
-/// them.
-const TAB: usize = 4;
 pub const ACTION_SCHEME: &str = "action:";
 pub const CHECK_SCHEME: &str = "check:";
 
@@ -121,7 +123,7 @@ pub fn render(ui: &mut Ui, parent: NodeId, blocks: &[Block], lookups: &Lookups) 
             }
             continue;
         }
-        block_into(ui, parent, block, lookups.works, &mut rendered);
+        block_into(ui, parent, block, lookups, &mut rendered);
     }
     rendered
 }
@@ -147,7 +149,8 @@ fn picture(ui: &mut Ui, parent: NodeId, alt: &str, url: &str, lookups: &Lookups)
     None
 }
 
-fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -> bool, out: &mut Rendered) {
+fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, lookups: &Lookups, out: &mut Rendered) {
+    let works = lookups.works;
     match block {
         Block::Heading { level, text, anchor } => {
             let node = rich(ui, parent, text, works, &format!("md-h{level}"));
@@ -161,7 +164,7 @@ fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -
         Block::List { start, items } => {
             let list = classed(ui, parent, Style::column(), "md-list");
             for (index, item) in items.iter().enumerate() {
-                list_item(ui, list, item, start.map(|s| s + index as u64), works, out);
+                list_item(ui, list, item, start.map(|s| s + index as u64), lookups, out);
             }
         }
         Block::Quote { callout, blocks } => {
@@ -174,7 +177,7 @@ fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -
                 ui.add_label(title, callout.title());
             }
             for block in blocks {
-                block_into(ui, quote, block, works, out);
+                block_into(ui, quote, block, lookups, out);
             }
         }
         Block::Code { language, code } => {
@@ -184,7 +187,7 @@ fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -
             ui.add_class(name, "md-code-language");
             let copy = ui.icon_button(bar, "copy");
             out.copies.push((copy, code.clone()));
-            let text = ui.add_label(panel, &expand_tabs(code));
+            let text = ui.rich_label(panel, &highlight::colored(language, &highlight::expand_tabs(code), lookups.dark));
             ui.add_class(text, "md-code-text");
         }
         Block::Table { align, head, rows } => {
@@ -240,14 +243,7 @@ fn step(ui: &mut Ui, parent: NodeId, words: &str, url: &str) -> Step {
     Step { url: url.to_string(), row, mark, button, note }
 }
 
-fn list_item(
-    ui: &mut Ui,
-    list: NodeId,
-    item: &Item,
-    number: Option<u64>,
-    works: &dyn Fn(&str) -> bool,
-    out: &mut Rendered,
-) {
+fn list_item(ui: &mut Ui, list: NodeId, item: &Item, number: Option<u64>, lookups: &Lookups, out: &mut Rendered) {
     let row = classed(ui, list, Style::row(), "md-item");
     match (item.task, number) {
         (Some(task), _) => {
@@ -270,7 +266,7 @@ fn list_item(
     }
     let body = classed(ui, row, Style::column(), "md-item-body");
     for block in &item.blocks {
-        block_into(ui, body, block, works, out);
+        block_into(ui, body, block, lookups, out);
     }
 }
 
@@ -316,37 +312,5 @@ fn callout_icon(callout: Callout) -> &'static str {
         Callout::Note => "info",
         Callout::Tip => "light",
         Callout::Important | Callout::Warning | Callout::Caution => "alert",
-    }
-}
-
-/// Code as it shows: each tab out to the next of every [`TAB`] columns,
-/// since the fonts draw no tab of their own. Copy still gives the tabs.
-fn expand_tabs(code: &str) -> String {
-    let mut out = String::with_capacity(code.len());
-    for line in code.split_inclusive('\n') {
-        let mut column = 0;
-        for c in line.chars() {
-            if c == '\t' {
-                let spaces = TAB - column % TAB;
-                out.extend(std::iter::repeat_n(' ', spaces));
-                column += spaces;
-            } else {
-                out.push(c);
-                column += 1;
-            }
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tabs_in_code_show_as_spaces_to_the_next_stop() {
-        assert_eq!(expand_tabs("{\n\tint x;\n\t\treturn;\n}"), "{\n    int x;\n        return;\n}");
-        assert_eq!(expand_tabs("ab\tc"), "ab  c", "out to the next stop, not four more");
-        assert_eq!(expand_tabs("no tabs"), "no tabs");
     }
 }

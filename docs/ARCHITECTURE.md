@@ -1657,7 +1657,10 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   page beside the one it is in and opens it to write.
 - **The panel:** the pages down the side as a tree, a box that finds pages by every word typed, back and
   forward, the page with its title, tags and date, and for a folder what is in it. Ticking a checklist box saves
-  the page. Code blocks have a Copy button.
+  the page. Code blocks have a Copy button, and are coloured as a code editor colours them (`highlight`, a small
+  reader for each of C#, Rust, TOML, JSON, `.vui` markup and XML, `.vss` and CSS, and shell, for a dark theme or a
+  light one, which the editor tells it); their tabs show as spaces to the next of every four columns. The editor's
+  Inspector shows a selected script's code, and a UI document's markup, coloured the same way.
 - **Tags and headings**, as the Cookbook has them: the tags over the tree, the eight most used and any picked
   (Show all … tags for the rest), each with how many pages have it; picking tags shows only the pages with every one, as
   the find box does with words, and a tag on a page picks it too; past eight tags, a box finds those with the words

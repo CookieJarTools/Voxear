@@ -107,6 +107,40 @@ fn the_project_shows_folders_as_tiles_and_opens_them() {
 }
 
 #[test]
+fn a_selected_script_shows_its_code() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let tile_named = |editor: &voxear_editor::Editor, name: &str| {
+        let (ui, mut tiles) = (&editor.ui, Vec::new());
+        with_class(ui, ui.root(), "tile", &mut tiles);
+        tiles.into_iter().find(|&tile| ui.is_visible(tile) && ui.text(ui.children(tile)[1]).starts_with(name))
+    };
+    let press = |editor: &mut voxear_editor::Editor, tile: NodeId, times: usize| {
+        let [x, y, w, h] = editor.ui.rect(tile);
+        editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+        for _ in 0..times {
+            editor.ui.pointer_button(true);
+            editor.ui.pointer_button(false);
+        }
+    };
+    let scripts = tile_named(&editor, "Scripts").expect("a tile for the Scripts folder");
+    press(&mut editor, scripts, 2);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let spinner = tile_named(&editor, "Spinner").expect("a tile for Spinner.cs");
+    press(&mut editor, spinner, 1);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut previews = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "code-preview", &mut previews);
+    assert_eq!(previews.len(), 1, "the script's code, under its fields");
+    let code = editor.ui.text(previews[0]);
+    assert!(code.contains("public sealed class Spinner : Behaviour"), "{code}");
+    assert!(!code.contains('\t'), "its tabs shown as spaces");
+}
+
+#[test]
 fn a_hovered_divider_shows_its_handle_over_the_scene_frame() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let root = editor.ui.root();

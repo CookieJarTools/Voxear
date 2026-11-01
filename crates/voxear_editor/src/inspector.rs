@@ -214,6 +214,8 @@ pub struct Inspector {
     add: Option<NodeId>,
     /// The project's scripts, as their last build describes them.
     types: ScriptTypes,
+    /// Whether the theme is dark, for the colours of code a script shows.
+    dark: bool,
     /// To build again when any of it changes.
     built: Built,
     /// A prefab is open on its own, so locks can be set, and every value of
@@ -276,6 +278,7 @@ impl Inspector {
             rows: Vec::new(),
             add: None,
             types: ScriptTypes::default(),
+            dark: true,
             built: (Vec::new(), false, None),
             prefab_mode: false,
             menu: None,
@@ -384,6 +387,11 @@ impl Inspector {
 
     /// The project's scripts as a new build describes them. What is showing
     /// is built again on the next update.
+    /// Colours code a script shows for a dark theme or a light one.
+    pub fn set_dark(&mut self, dark: bool) {
+        self.dark = dark;
+    }
+
     pub fn set_types(&mut self, types: ScriptTypes) {
         self.types = types;
         self.built.0.clear();
@@ -568,7 +576,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        self.asset = Some(AssetView::build(ui, self.root, item, game, &self.types));
+        self.asset = Some(AssetView::build(ui, self.root, item, game, &self.types, self.dark));
     }
 
     /// What the asset shown asks of the editor this frame.

@@ -214,6 +214,8 @@ pub struct VoxDocs {
     toc: Vec<(NodeId, NodeId, String)>,
     /// Docs Health shows in the page's place, and home's line that opens it.
     showing_health: bool,
+    /// Whether the editor's theme is dark, for code's colours.
+    dark: bool,
     home_health: Option<NodeId>,
     /// A heading to scroll to once the page has been laid out.
     pending_anchor: Option<String>,
@@ -345,6 +347,7 @@ impl VoxDocs {
             page_tags: Vec::new(),
             toc: Vec::new(),
             showing_health: false,
+            dark: true,
             home_health: None,
             pending_anchor: None,
             results,
@@ -478,6 +481,17 @@ impl VoxDocs {
             self.go(ui, page, anchor, true);
         }
         found.is_some()
+    }
+
+    /// Colours code for a dark theme or a light one, drawing the page again.
+    pub fn set_dark(&mut self, ui: &mut Ui, dark: bool) {
+        if dark == self.dark {
+            return;
+        }
+        self.dark = dark;
+        if !self.editing && !self.showing_health {
+            self.render(ui);
+        }
     }
 
     /// Shows the engine's manual, the pages in `folder`, after the
@@ -1044,7 +1058,7 @@ impl VoxDocs {
         let library = self.library.borrow();
         let works = |url: &str| library.works(url, excerpt.page);
         let pictures = |url: &str| self.picture(&library, excerpt.page, url);
-        view::render(ui, parent, &excerpt.blocks, &Lookups { works: &works, pictures: &pictures });
+        view::render(ui, parent, &excerpt.blocks, &Lookups { works: &works, pictures: &pictures, dark: self.dark });
     }
 
     /// Follows a link clicked outside the panel, as in an excerpt, from the
@@ -1298,7 +1312,12 @@ impl VoxDocs {
         let open = self.open;
         let works = |url: &str| library.works(url, open);
         let pictures = |url: &str| self.picture(&library, open, url);
-        let rendered = view::render(ui, self.nodes.preview, &blocks, &Lookups { works: &works, pictures: &pictures });
+        let rendered = view::render(
+            ui,
+            self.nodes.preview,
+            &blocks,
+            &Lookups { works: &works, pictures: &pictures, dark: self.dark },
+        );
         self.preview_pictures = pictures_drawn(&library, open, &rendered.pictures);
     }
 
@@ -1362,7 +1381,12 @@ impl VoxDocs {
         let open = self.open;
         let works = |url: &str| library.works(url, open);
         let pictures = |url: &str| self.picture(&library, open, url);
-        let rendered = view::render(ui, self.nodes.page, &blocks, &Lookups { works: &works, pictures: &pictures });
+        let rendered = view::render(
+            ui,
+            self.nodes.page,
+            &blocks,
+            &Lookups { works: &works, pictures: &pictures, dark: self.dark },
+        );
         self.page_pictures = pictures_drawn(&library, open, &rendered.pictures);
         self.rendered = rendered;
 

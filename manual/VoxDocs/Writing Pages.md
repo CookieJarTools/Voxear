@@ -43,7 +43,7 @@ Ticking a box on a page saves the page, so a checklist remembers what is done.
 
 A callout is a box that stands out from the page, for a note or a warning. Each kind, NOTE, TIP, IMPORTANT, WARNING or CAUTION, has its own colour and icon.
 
-A block of code between three backticks keeps its spacing and gets a **Copy** button. Write the language after the backticks, as `csharp`, and its name shows over the block.
+A block of code between three backticks keeps its spacing and gets a **Copy** button. Write the language after the backticks, as `csharp`, and its name shows over the block and its code is coloured as a code editor colours it. VoxDocs colours C# (`csharp`), Rust (`rust`), TOML (`toml`), JSON (`json`), UI markup (`vui` or `xml`), style sheets (`vss` or `css`) and shell commands (`bash`).
 
 ## Finding your way around VoxDocs
 

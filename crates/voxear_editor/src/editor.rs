@@ -655,6 +655,8 @@ impl Editor {
         if theme != self.theme {
             self.ui.set_theme(&theme);
             renderer.set_clear_color(theme.base.linear_premultiplied());
+            self.docs.set_dark(&mut self.ui, theme.is_dark());
+            self.inspector.set_dark(theme.is_dark());
             self.theme = theme;
         }
         {

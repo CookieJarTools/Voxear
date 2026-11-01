@@ -9,7 +9,7 @@ This page makes a script that spins a cube.
 1. In the Project panel, open the `Scripts` folder.
 2. Right-click in it and choose **New C# Script**.
 3. Type `Spinner` as its name and press Enter.
-4. Double-click it to open it in your code editor.
+4. Double-click it to open it in your code editor. Select it once to see its fields and its code in the Inspector.
 
 Keep your scripts in the `Scripts` folder, or in folders inside it. Scripts anywhere else are not built.
 

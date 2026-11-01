@@ -1072,6 +1072,17 @@ DockSpace .project-split > .split-divider {
     background-color: var(--vx-selected);
 }
 
+/* A script's code in the Inspector, coloured as a code editor colours it. */
+.code-preview {
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: var(--vx-bg);
+    font-family: mono;
+    font-size: 11px;
+    line-height: 17px;
+    color: var(--vx-text-2);
+}
+
 /* A row or tile a log line points at, lit for a moment, as Unity pings. */
 .list-row.pinged, .tile.pinged {
     background-color: var(--vx-accent-soft);

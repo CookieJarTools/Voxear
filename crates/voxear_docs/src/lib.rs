@@ -3,6 +3,8 @@
 //! CookieJarTools Cookbook for Unity.
 //!
 //! - [`markdown`] reads the VoxDocs Markdown into blocks of rich text.
+//! - [`highlight`] colours code, for a page's code blocks and the editor's
+//!   previews of scripts.
 //! - [`CodeReference`] is the code's own pages, made from its comments.
 //! - [`Library`] is every page and folder in `Docs`, found by id, path or
 //!   title, and changed and saved, with the engine's manual after them.
@@ -14,6 +16,7 @@
 pub mod code;
 pub mod header;
 pub mod health;
+pub mod highlight;
 pub mod history;
 mod library;
 pub mod markdown;

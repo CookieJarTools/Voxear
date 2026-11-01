@@ -3,7 +3,8 @@
 //! material's colour, metallic, roughness and emission are edited in place
 //! and saved to its file, showing at once where it is drawn. A script shows
 //! the fields of the behaviour it declares, with their starting values, as
-//! its last build describes them. A prefab and a scene list their Objs. A
+//! its last build describes them, then its code, coloured as a code editor
+//! colours it, as a UI document shows its markup. A prefab and a scene list their Objs. A
 //! level lists the level it stands on and its own scenes, each with whether
 //! it is the active one and whether it is required, and a button to take
 //! it out; Add Scene offers the project's other scenes (see `level_files`).
@@ -20,6 +21,9 @@ use crate::{
     level_files::{self, LevelEdit},
     project_view::{ItemKind, ProjectItem},
 };
+
+/// How many lines of a file's code the Inspector shows.
+const CODE_LINES: usize = 200;
 
 /// What the asset view asks of the editor.
 #[derive(Clone, Debug, PartialEq)]
@@ -69,7 +73,7 @@ pub enum MaterialColor {
 
 impl AssetView {
     /// Shows `item` in `root`, which is emptied first.
-    pub fn build(ui: &mut Ui, root: NodeId, item: &ProjectItem, game: &Game, types: &ScriptTypes) -> Self {
+    pub fn build(ui: &mut Ui, root: NodeId, item: &ProjectItem, game: &Game, types: &ScriptTypes, dark: bool) -> Self {
         for child in ui.children(root) {
             ui.remove(child);
         }
@@ -106,7 +110,11 @@ impl AssetView {
         let mut view = Self { item: item.clone(), open: None, material: None, level: None, preview };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file),
-            ItemKind::Script => script(ui, root, item, types),
+            ItemKind::Script => {
+                script(ui, root, item, types);
+                code(ui, root, &file, "csharp", dark);
+            }
+            ItemKind::Asset(AssetKind::Ui) => code(ui, root, &file, "vui", dark),
             ItemKind::Asset(AssetKind::Prefab) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Scene) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Level) => view.level = scenes(ui, root, &file, game),
@@ -295,6 +303,24 @@ fn script(ui: &mut Ui, root: NodeId, item: &ProjectItem, types: &ScriptTypes) {
     for field in &behaviour.fields {
         let value = field.default.as_ref().map_or("None".to_string(), |v| v.to_string());
         text_row(ui, rows, &crate::props::nice_name(&field.name), &value);
+    }
+}
+
+/// A file's text, as a code editor colours it: the first lines of it, with
+/// how many more there are, so a long file does not make the Inspector slow.
+fn code(ui: &mut Ui, root: NodeId, file: &std::path::Path, language: &str, dark: bool) {
+    let Ok(text) = std::fs::read_to_string(file) else { return };
+    let lines: Vec<&str> = text.lines().collect();
+    let shown = lines[..lines.len().min(CODE_LINES)].join("\n");
+    let rows = part(ui, root, "Code", "code");
+    let code = ui.rich_label(
+        rows,
+        &voxear_docs::highlight::colored(language, &voxear_docs::highlight::expand_tabs(&shown), dark),
+    );
+    ui.add_class(code, "code-preview");
+    if lines.len() > CODE_LINES {
+        let more = ui.add_label(rows, &format!("… {} more lines", lines.len() - CODE_LINES));
+        ui.add_class(more, "asset-line");
     }
 }
 

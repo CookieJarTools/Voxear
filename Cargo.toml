@@ -48,6 +48,9 @@ parley = "0.12"
 swash = "0.2"
 meshopt = "0.7"
 uuid = { version = "1", features = ["v4"] }
+# Tracy's client, for `--features tracy`: it collects only while the viewer
+# is connected, and only from this machine, without announcing itself.
+tracy-client = { version = "0.19", default-features = false, features = ["enable", "ondemand", "only-localhost"] }
 tempfile = "3"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

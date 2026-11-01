@@ -12,3 +12,8 @@ glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracy-client = { workspace = true, optional = true }
+
+[features]
+# Every profiling sample a zone in the Tracy profiler too (version 0.14).
+tracy = ["dep:tracy-client"]

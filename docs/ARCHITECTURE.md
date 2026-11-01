@@ -2519,8 +2519,16 @@ them in a running game.
     summary the frame's total.
   - The stats overlay (F1) graphs the last few seconds of frame times under a line at 60 frames a second, so a hitch
     shows as a spike.
-  - **Tracy** is integrated for deep sessions: zones across Rust systems, jobs and C#
-    (`using (Profiler.Sample("Pathfinding"))`), locks, plots and frame images.
+  - Worker threads: a thread that names itself with `profiling::register_thread`, as the one a level loads on does,
+    has its samples kept while the Profiler records. Each frame takes those that ended in it and those still running,
+    cut to the frame, so a load lasting seconds shows in every frame it runs through. The Timeline draws each worker in
+    a lane of its own under the main thread's, titled with its name, and pointing at a bar says which thread it ran on.
+  - **Tracy** *(implemented: zones, threads and frames)*, for deep sessions: built with `cargo build --features tracy`,
+    every sample is also a zone in [Tracy](https://github.com/wolfpld/tracy), on every thread and whether or not the
+    Profiler records: the engine's systems, scripts' callbacks and their own `Profiler.Sample`s, and the workers',
+    with each thread's name and a frame mark at each frame's end. It needs Tracy's viewer at version 0.14. The client
+    collects only while the viewer is connected, and only from this machine, without announcing itself on the
+    network. Locks, plots and frame images are still to come.
 - **Memory profiler.**
   - Every native allocation is tagged by subsystem: ECS chunks, Content, render, audio, physics and scripts.
   - GPU memory is reported per resource and category. The managed heap comes from the .NET runtime.

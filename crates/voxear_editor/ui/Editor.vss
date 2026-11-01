@@ -2301,6 +2301,12 @@ DockSpace .project-split > .split-divider {
     min-height: 0px;
 }
 
+/* A worker thread's title above its lane of bars. */
+.profiler-thread-title {
+    color: var(--vx-muted);
+    font-weight: 600;
+}
+
 .profiler-bar-name {
     position: absolute;
     font-size: 11px;

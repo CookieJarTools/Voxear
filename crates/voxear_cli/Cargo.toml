@@ -34,5 +34,9 @@ voxear_render.workspace = true
 png.workspace = true
 voxear_assets.workspace = true
 
+[features]
+# Profiling samples as Tracy zones: `cargo build --features tracy`.
+tracy = ["voxear_engine/tracy", "voxear_editor/tracy"]
+
 [dev-dependencies]
 tempfile.workspace = true

@@ -182,6 +182,9 @@ impl Loads {
         let progress = Arc::new(Progress::default());
         let counter = progress.clone();
         let job = std::thread::Builder::new().name(format!("load {reference}")).spawn(move || {
+            // The Profiler shows this thread's samples beside the main thread's.
+            voxear_core::profiling::register_thread("Loading");
+            voxear_core::profile_scope!("Load");
             let models = Models { work: models, cooked: &cooked };
             gather(&db, reader.as_mut(), root, &loaded, models, &counter)
         })?;
@@ -399,11 +402,14 @@ fn gather(
             reads.push((guid, owner, entry, read));
         }
         let paths: Vec<&str> = reads.iter().filter(|(.., read)| *read).map(|(_, _, e, _)| e.path.as_str()).collect();
+        let read_files = voxear_core::profile_marker!("Read files").scope();
         let mut bytes = reader.read_many(&paths)?.into_iter();
+        drop(read_files);
         for (guid, owner, entry, read) in reads {
             let data = if read { bytes.next() } else { None };
             match (entry.kind, data) {
                 (AssetKind::Model, Some(data)) => {
+                    voxear_core::profile_scope!("Unpack model");
                     let mut model = CookedModel::from_bytes(&entry.path, &data)?;
                     if models.work == (ModelWork::Prepare { decompress: true }) {
                         model.decompress()?;
@@ -411,6 +417,7 @@ fn gather(
                     prepared.models.push((guid, ReadyModel::Cooked(model)));
                 }
                 (AssetKind::Model, None) if models.work != ModelWork::Skip => {
+                    voxear_core::profile_scope!("Prepare model");
                     let model = voxear_render::prepare_model(&entry.path, &mut |file| reader.read(file))?;
                     prepared.models.push((guid, ReadyModel::Source(model)));
                 }

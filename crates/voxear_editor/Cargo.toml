@@ -29,6 +29,10 @@ serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 
+[features]
+# Profiling samples as Tracy zones: `cargo build --features tracy`.
+tracy = ["voxear_engine/tracy"]
+
 [dev-dependencies]
 tempfile.workspace = true
 voxear_core.workspace = true

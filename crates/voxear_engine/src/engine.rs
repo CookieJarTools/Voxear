@@ -53,14 +53,18 @@ impl Engine {
         world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");
         world.register_named_component::<FromPrefab>("Voxear.FromPrefab");
         let mut schedule = Schedule::new(STAGES);
-        // Each system is a profiling sample by its name.
+        // Each system is a profiling sample by its name, begun and ended alike.
         schedule.set_system_timer(Some((
             |name| {
-                if profiling::enabled() {
+                if profiling::active() {
                     profiling::Marker::new(name).begin();
                 }
             },
-            profiling::end,
+            || {
+                if profiling::active() {
+                    profiling::end();
+                }
+            },
         )));
         schedule.add_system("PostUpdate", "propagate transforms", propagate_transforms);
         Self {

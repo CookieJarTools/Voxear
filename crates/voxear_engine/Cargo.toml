@@ -27,6 +27,10 @@ raw-window-handle.workspace = true
 voxear_assets.workspace = true
 uuid.workspace = true
 
+[features]
+# Profiling samples as Tracy zones: `cargo build --features tracy`.
+tracy = ["voxear_core/tracy"]
+
 [dev-dependencies]
 image.workspace = true
 tempfile.workspace = true

@@ -27,7 +27,7 @@ use std::{
     time::Instant,
 };
 
-use voxear_core::profiling::{self, Samples};
+use voxear_core::profiling::{self, Samples, Span};
 use voxear_engine::Game;
 use voxear_render::{RenderStats, Renderer};
 use voxear_ui::{Color, NodeId, Shape, Style, TreeItems, Ui};
@@ -505,43 +505,45 @@ impl TreeItems for CallItems {
 impl Profiler {
     /// The frame as it ran: each run a bar, along the frame's time and down
     /// by how deep it ran, named when it is wide enough, the one under the
-    /// pointer lighter.
+    /// pointer lighter. Worker threads' runs follow in lanes of their own
+    /// under the main thread's, each titled with its thread.
     fn draw_timeline(&mut self, ui: &mut Ui, samples: &Samples) {
         let [_, _, width, _] = ui.rect(self.timeline_canvas);
         self.timeline_width = width;
-        let length = samples.spans.iter().map(|span| span.end_ns).max().unwrap_or(0).max(1) as f32;
+        let (bars, titles, length) = bars(samples);
         let x = |ns: u64| ns as f32 / length * width;
-        let mut shapes = Vec::with_capacity(samples.spans.len());
-        let mut named = Vec::new();
-        for (index, span) in samples.spans.iter().enumerate() {
-            let (left, right) = (x(span.start_ns), x(span.end_ns));
-            let top = f32::from(span.depth) * LANE;
-            let name = span.marker.name();
+        let mut shapes = Vec::with_capacity(bars.len());
+        let mut named: Vec<(String, [f32; 3])> = Vec::new();
+        for (index, bar) in bars.iter().enumerate() {
+            let (left, right) = (x(bar.span.start_ns), x(bar.span.end_ns));
+            let name = bar.span.marker.name();
             let lit = self.hovered_span == Some(index);
             let fill = Color::hex(bar_color(&name)).with_alpha(if lit { 255 } else { 210 });
-            let rect = [left, top + 1.0, (right - left).max(1.0), LANE - 2.0];
+            let rect = [left, bar.top + 1.0, (right - left).max(1.0), LANE - 2.0];
             shapes.push(Shape::Rect { rect, radius: 3.0, fill });
             if right - left >= NAMED {
-                named.push((name, span.end_ns - span.start_ns, [left, top, right - left]));
+                // As much of the name as fits, with its time when that fits too.
+                let room = ((right - left - 8.0) / 6.2) as usize;
+                let full = format!("{name} {:.2} ms", (bar.span.end_ns - bar.span.start_ns) as f32 / 1e6);
+                let text = if full.chars().count() <= room { full } else { name.chars().take(room).collect() };
+                named.push((text, [left + 4.0, bar.top + 2.0, 0.0]));
             }
         }
         ui.set_shapes(self.timeline_canvas, shapes);
+        named.extend(titles.into_iter().map(|(title, top)| (title, [0.0, top + 2.0, 1.0])));
         while self.timeline_names.len() < named.len() {
             let label = ui.add_label(self.timeline_canvas, "");
             ui.add_class(label, "profiler-bar-name");
             self.timeline_names.push(label);
         }
         for (index, &label) in self.timeline_names.iter().enumerate() {
-            let Some((name, ns, [left, top, width])) = named.get(index) else {
+            let Some((text, [left, top, title])) = named.get(index) else {
                 ui.set_visible(label, false);
                 continue;
             };
-            // As much of the name as fits, with its time when that fits too.
-            let room = ((width - 8.0) / 6.2) as usize;
-            let full = format!("{name} {:.2} ms", *ns as f32 / 1e6);
-            let text: String = if full.chars().count() <= room { full } else { name.chars().take(room).collect() };
-            ui.set_text(label, &text);
-            ui.set_inline_style(label, &format!("left: {}px; top: {}px", left + 4.0, top + 2.0));
+            ui.set_text(label, text);
+            ui.set_class(label, "profiler-thread-title", *title > 0.0);
+            ui.set_inline_style(label, &format!("left: {left}px; top: {top}px"));
             ui.set_visible(label, true);
         }
     }
@@ -551,11 +553,13 @@ impl Profiler {
         let Some(sample) = self.shown_sample().cloned() else { return };
         let [x, y, width, height] = ui.rect(self.timeline_canvas);
         let hovered = ui.pointer_position().filter(|&(px, py)| px >= x && px < x + width && py >= y && py < y + height);
+        let (bars, _, length) = bars(&sample.cpu);
         let found = hovered.and_then(|(px, py)| {
-            let length = sample.cpu.spans.iter().map(|span| span.end_ns).max().unwrap_or(0).max(1) as f32;
             let at = ((px - x) / width * length) as u64;
-            let depth = ((py - y) / LANE) as u16;
-            sample.cpu.spans.iter().rposition(|s| s.depth == depth && s.start_ns <= at && at <= s.end_ns)
+            let top = py - y;
+            bars.iter().rposition(|bar| {
+                bar.top <= top && top < bar.top + LANE && bar.span.start_ns <= at && at <= bar.span.end_ns
+            })
         });
         if found == self.hovered_span && width == self.timeline_width {
             return;
@@ -564,14 +568,48 @@ impl Profiler {
         let text = found.map_or_else(
             || "Point at a bar to see what it is.".to_string(),
             |index| {
-                let span = sample.cpu.spans[index];
+                let bar = &bars[index];
+                let span = bar.span;
                 let (ms, at) = ((span.end_ns - span.start_ns) as f32 / 1e6, span.start_ns as f32 / 1e6);
-                format!("{}   {ms:.3} ms, from {at:.2} ms into the frame", span.marker.name())
+                let thread = bar.thread.map_or_else(String::new, |name| format!(", on {name}"));
+                format!("{}   {ms:.3} ms, from {at:.2} ms into the frame{thread}", span.marker.name())
             },
         );
         ui.set_text(self.timeline_hovered, &text);
         self.draw_timeline(ui, &sample.cpu);
     }
+}
+
+/// A run on the timeline: the run, how far down its bar is, and the worker
+/// thread it ran on, if not the main thread.
+struct Bar<'a> {
+    span: Span,
+    top: f32,
+    thread: Option<&'a str>,
+}
+
+/// Every run of a frame as a bar, the main thread's first and then each
+/// worker thread's in a lane of its own under a title; the titles, each with
+/// how far down it is; and the frame's length in nanoseconds.
+fn bars(samples: &Samples) -> (Vec<Bar<'_>>, Vec<(String, f32)>, f32) {
+    let rows = |spans: &[Span]| spans.iter().map(|span| span.depth + 1).max().unwrap_or(1) as f32;
+    let mut bars: Vec<Bar> =
+        samples.spans.iter().map(|&span| Bar { span, top: f32::from(span.depth) * LANE, thread: None }).collect();
+    let mut titles = Vec::new();
+    let mut below = rows(&samples.spans) * LANE;
+    for thread in &samples.threads {
+        titles.push((thread.name.clone(), below));
+        let lane = below + LANE;
+        let name = Some(thread.name.as_str());
+        bars.extend(thread.spans.iter().map(|&span| Bar {
+            span,
+            top: lane + f32::from(span.depth) * LANE,
+            thread: name,
+        }));
+        below = lane + rows(&thread.spans) * LANE;
+    }
+    let length = bars.iter().map(|bar| bar.span.end_ns).max().unwrap_or(0).max(1) as f32;
+    (bars, titles, length)
 }
 
 /// A bar's colour by what ran: scripts' callbacks and systems, the

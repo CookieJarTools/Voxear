@@ -373,7 +373,8 @@ Still to do in M3:
   explained where it first appears, an example before the details, and nothing that sounds generated.
 - Debug tools:
   - [x] the stats overlay's frame-time graph; the Profiler's timeline view and managed allocations (GC Alloc)
-  - [ ] worker threads' samples in the Profiler, and Tracy behind it
+  - [x] worker threads' samples in the Profiler, a lane each in the Timeline, and Tracy behind it
+    (`--features tracy`: every sample a zone, each thread named, a mark at each frame)
   - [x] the frame debugger: each pass of the frame with its GPU time and images, and an image as it stood after
     its pass, at any mip, in one channel or all, with an exposure
   - [x] the ECS inspector: archetypes, entities and their components, the system schedule with timings, and a filter

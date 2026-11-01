@@ -2021,6 +2021,43 @@ fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
     let hovered = editor.ui.text(first_with(&editor.ui, panel, "profiler-hovered").unwrap());
     assert!(hovered.contains("ms, from"), "the bar pointed at is described: {hovered}");
     shot(&mut renderer, "profiler-timeline.png");
+
+    // A worker thread's samples show in a lane of their own, titled with its name, while it works.
+    let (started, finish) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+    let (tell, wait) = (started.0, finish.1);
+    let worker = std::thread::spawn(move || {
+        voxear_core::profiling::register_thread("Worker");
+        let _bake = voxear_core::profile_marker!("Bake lighting").scope();
+        tell.send(()).unwrap();
+        wait.recv().unwrap();
+    });
+    started.1.recv().unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let threads = |editor: &voxear_editor::Editor| {
+        editor
+            .profiler()
+            .samples()
+            .iter()
+            .flat_map(|s| s.cpu.threads.iter().map(|t| t.name.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert!(threads(&editor).contains(&"Worker".to_string()), "the worker's runs came with a frame");
+    // The timeline's details refresh a few times a second while live.
+    let titled = |editor: &voxear_editor::Editor| {
+        let mut titles = Vec::new();
+        with_class(&editor.ui, panel, "profiler-thread-title", &mut titles);
+        titles.iter().filter(|&&t| editor.ui.is_visible(t)).map(|&t| editor.ui.text(t)).collect::<Vec<_>>()
+    };
+    let started = std::time::Instant::now();
+    while titled(&editor).is_empty() && started.elapsed().as_secs() < 5 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(titled(&editor), ["Worker"], "a lane for it under the main thread's");
+    shot(&mut renderer, "profiler-worker.png");
+    finish.0.send(()).unwrap();
+    worker.join().unwrap();
     editor.ui.set_segment(view, 0);
     frame(&mut editor, &mut renderer);
 

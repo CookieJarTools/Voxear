@@ -5,7 +5,9 @@
 //! front) and mirrored on X, as glTF is, in the vertices too, each node's
 //! transform following: a model made in centimetres in a Z-up program comes
 //! in at its size, standing up, with no turn left on its Objs to undo, as
-//! Unity's Bake Axis Conversion does. Normals the file lacks are made, and
+//! Unity's Bake Axis Conversion does. Import settings that name the file's
+//! units read it unconverted and size it by them instead. Normals the file
+//! lacks are made, and
 //! UVs are turned to count down from the top, as glTF's do. A mesh is split
 //! into a part for each material its faces use (`mesh<mesh>.<part>`), each
 //! drawn with that material (`material<index>`), meshes and materials
@@ -23,6 +25,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
+use voxear_assets::{ModelImport, Units};
 use voxear_core::math::{Mat3, Mat4, Vec3};
 
 use crate::{
@@ -30,8 +33,8 @@ use crate::{
     gltf_import::{
         PreparedMaterial, PreparedModel, PreparedNode, PreparedTexture, ReadFile, TextureFormat, relative_to,
     },
-    lod::build_lods,
     mesh::{MeshData, Vertex},
+    mesh_tools::{self, FromFile},
 };
 
 /// Whether a project path names an FBX file.
@@ -39,10 +42,13 @@ pub(crate) fn is_fbx(path: &str) -> bool {
     path.rsplit_once('.').is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("fbx"))
 }
 
-/// Reads and processes an FBX file without touching the GPU.
-pub(crate) fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
-    let scene = load(&read(path)?, true)?;
+/// Reads and processes an FBX file without touching the GPU, as `settings`
+/// say.
+pub(crate) fn prepare(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result<PreparedModel> {
+    let scene = load(&read(path)?, true, settings.units == Units::File)?;
     let mut preparer = Preparer {
+        settings: *settings,
+        size: mesh_tools::size(settings),
         space: space(&scene.settings.axes),
         model: PreparedModel {
             path: path.to_string(),
@@ -66,7 +72,7 @@ pub(crate) fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> 
 /// The project paths of the texture files an FBX file may read, in every
 /// place [`prepare`] looks for them, leaving out those it holds itself.
 pub(crate) fn companion_files(path: &str, bytes: &[u8]) -> Result<Vec<String>> {
-    let scene = load(bytes, false)?;
+    let scene = load(bytes, false, true)?;
     let mut files = Vec::new();
     for texture in scene.textures.iter().filter(|t| t.type_ == ufbx::TextureType::File && t.content.is_empty()) {
         for file in texture_files(path, texture) {
@@ -78,10 +84,11 @@ pub(crate) fn companion_files(path: &str, bytes: &[u8]) -> Result<Vec<String>> {
     Ok(files)
 }
 
-/// The file as ufbx reads it, in metres, with its meshes or without.
-fn load(bytes: &[u8], geometry: bool) -> Result<ufbx::SceneRoot> {
+/// The file as ufbx reads it, with its meshes or without: in metres, or in
+/// its own unit when not `in_metres`.
+fn load(bytes: &[u8], geometry: bool, in_metres: bool) -> Result<ufbx::SceneRoot> {
     let opts = ufbx::LoadOpts {
-        target_unit_meters: 1.0,
+        target_unit_meters: if in_metres { 1.0 } else { 0.0 },
         space_conversion: ufbx::SpaceConversion::ModifyGeometry,
         geometry_transform_handling: ufbx::GeometryTransformHandling::ModifyGeometry,
         generate_missing_normals: true,
@@ -149,6 +156,9 @@ fn texture_files(path: &str, texture: &ufbx::Texture) -> Vec<String> {
 }
 
 struct Preparer {
+    settings: ModelImport,
+    /// The metres one unit, as the file is read, becomes.
+    size: f32,
     /// From the file's space into Voxear's.
     space: Mat4,
     model: PreparedModel,
@@ -165,6 +175,7 @@ impl Preparer {
         // In Voxear's space, as its mesh is: the same turn on both sides of the node's matrix.
         let world = self.space * matrix(&node.geometry_to_world) * self.space.inverse();
         let (scale, rotation, position) = world.to_scale_rotation_translation();
+        let position = position * self.size;
         let name = [&node.element.name, &mesh.element.name].into_iter().find(|name| !name.is_empty());
         let name = name.map_or("mesh", |name| name);
         for part in mesh.material_parts.iter().filter(|part| part.num_triangles > 0) {
@@ -205,8 +216,11 @@ impl Preparer {
         }
         let mut data = MeshData { vertices, indices };
         into_space(&mut data, self.space);
-        let lods = build_lods(&data);
-        self.model.meshes.push((data, lods));
+        let file = FromFile {
+            normals: mesh.vertex_normal.exists,
+            tangents: mesh.vertex_tangent.exists && mesh.vertex_bitangent.exists,
+        };
+        self.model.meshes.push(mesh_tools::finish(data, &self.settings, self.size, file));
         let index = self.model.meshes.len() - 1;
         self.meshes.insert(key, index);
         index
@@ -216,6 +230,11 @@ impl Preparer {
         let key = material.element.typed_id;
         if let Some(&index) = self.materials.get(&key) {
             return index;
+        }
+        if !self.settings.materials {
+            self.model.materials.push(PreparedMaterial::plain());
+            self.materials.insert(key, self.model.materials.len() - 1);
+            return self.model.materials.len() - 1;
         }
         let pbr = &material.pbr;
         let base_color = self.texture(&pbr.base_color, true, read);
@@ -466,7 +485,7 @@ Connections:  {
             }
             files.iter().find(|(name, _)| *name == file).map(|(_, bytes)| bytes.clone()).ok_or(anyhow!("no {file}"))
         };
-        prepare("Models/Floor.fbx", &mut read).unwrap()
+        prepare("Models/Floor.fbx", &mut read, &ModelImport::default()).unwrap()
     }
 
     #[test]
@@ -491,6 +510,22 @@ Connections:  {
         let corner = |i: u32| Vec3::from(mesh.vertices[i as usize].position);
         let [a, b, c] = [mesh.indices[0], mesh.indices[1], mesh.indices[2]].map(corner);
         assert!((b - a).cross(c - a).y > 0.0, "wound as mirror_x winds them");
+    }
+
+    #[test]
+    fn units_named_in_the_settings_replace_the_files() {
+        let read = |file: &str| -> Result<Vec<u8>> {
+            if file == "Models/Floor.fbx" { Ok(FLOOR.as_bytes().to_vec()) } else { Err(anyhow!("no {file}")) }
+        };
+        // The file is in centimetres; read as metres, it is a hundred times the size.
+        let settings = ModelImport { units: Units::Metres, ..ModelImport::default() };
+        let model = prepare("Models/Floor.fbx", &mut { read }, &settings).unwrap();
+        assert_eq!(model.nodes[0].position, Vec3::new(-100.0, 0.0, 0.0));
+        let reach = model.meshes[0].0.vertices.iter().map(|v| v.position[0].abs()).fold(0.0, f32::max);
+        assert_eq!(reach, 50.0);
+        let settings = ModelImport { scale: 0.5, ..ModelImport::default() };
+        let model = prepare("Models/Floor.fbx", &mut { read }, &settings).unwrap();
+        assert_eq!(model.nodes[0].position, Vec3::new(-0.5, 0.0, 0.0), "the file's unit, then the scale");
     }
 
     #[test]

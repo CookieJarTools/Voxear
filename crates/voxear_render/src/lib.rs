@@ -20,6 +20,7 @@ mod graph;
 mod hot_reload;
 mod lod;
 mod mesh;
+mod mesh_tools;
 mod passes;
 mod payload;
 mod pipelines;
@@ -360,6 +361,16 @@ impl Renderer {
     pub fn upload_model(&mut self, model: &PreparedModel) -> Result<ImportedModel> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         gltf_import::upload(&self.gpu, &mut self.bindless, assets, model)
+    }
+
+    /// Puts a model prepared again, as after its import settings changed,
+    /// behind the mesh and material handles `old` was given, so whatever
+    /// draws it shows the change from the next frame. Fails, changing
+    /// nothing, when the model's parts are not the ones it had.
+    pub fn reupload_model(&mut self, old: &ImportedModel, model: &PreparedModel) -> Result<ImportedModel> {
+        let frame = self.frame_index;
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        gltf_import::reupload(&self.gpu, &mut self.bindless, assets, old, model, frame)
     }
 
     /// Uploads a cooked model, as the content build wrote it. All of its

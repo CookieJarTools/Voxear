@@ -4,8 +4,8 @@ use voxear_core::{
     profile_scope,
 };
 use voxear_ecs::{Entity, World};
-use voxear_render::{MAX_PREVIEW_SIZE, PreviewId, PreviewOptions, Renderer};
-use voxear_scene::Placement;
+use voxear_render::{MAX_PREVIEW_SIZE, MeshRenderer, PreviewId, PreviewOptions, Renderer};
+use voxear_scene::{Placement, Transform};
 use voxear_scripting::{
     ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions,
     PreviewSource, PreviewState, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
@@ -158,6 +158,29 @@ impl Game {
             self.release_unused(renderer);
         }
         Ok(change)
+    }
+
+    /// Imports the model at `path` again with the settings in its `.meta`,
+    /// as after they changed (see [`Content::reimport_model`]). A part of it
+    /// placed in the world that still sits where the model put it moves to
+    /// where the model puts it now, as after a change of size; one moved
+    /// since stays. Returns how many moved.
+    pub fn reimport_model(&mut self, renderer: &mut Renderer, path: &str) -> Result<usize> {
+        let guid = self.content.db().guid_of(path).with_context(|| format!("{path} is not in the project"))?;
+        let moved = self.content.reimport_model(renderer, guid)?;
+        let world = &mut self.engine.world;
+        let mut placed = Vec::new();
+        for (entity, renderer, transform) in world.query_ref::<(Entity, &MeshRenderer, &Transform)>() {
+            let at = (transform.position, transform.rotation, transform.scale);
+            let part = moved.iter().find(|part| part.mesh == renderer.mesh && same_place(part.before, at));
+            if let Some(part) = part {
+                placed.push((entity, part.after));
+            }
+        }
+        for &(entity, (position, rotation, scale)) in &placed {
+            world.insert(entity, Transform::new(position, rotation, scale));
+        }
+        Ok(placed.len())
     }
 
     /// Frees what nothing uses any more (see [`Content::release_unused`]).
@@ -492,4 +515,11 @@ fn log_change(level: &str, change: &LevelChange) {
         list(&change.kept),
         list(&change.unloaded)
     );
+}
+
+/// Whether an Obj's place is a model part's, to within what a scene file
+/// keeps of it: its rotation is written as angles, and read back a hair off.
+fn same_place(part: (Vec3, Quat, Vec3), obj: (Vec3, Quat, Vec3)) -> bool {
+    const CLOSE: f32 = 1e-4;
+    part.0.abs_diff_eq(obj.0, CLOSE) && part.1.dot(obj.1).abs() > 1.0 - CLOSE && part.2.abs_diff_eq(obj.2, CLOSE)
 }

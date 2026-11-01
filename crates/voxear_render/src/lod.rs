@@ -32,8 +32,7 @@ pub struct Lod {
 /// cache; each further LOD has about half the triangles of the one before.
 pub fn build_lods(mesh: &MeshData) -> Vec<Lod> {
     let vertex_count = mesh.vertices.len();
-    let base = optimize_vertex_cache(&mesh.indices, vertex_count);
-    let mut lods = vec![Lod { indices: base, error: 0.0 }];
+    let mut lods = full_lod(mesh);
     if mesh.indices.len() / 3 < MIN_TRIANGLES {
         return lods;
     }
@@ -70,6 +69,12 @@ pub fn build_lods(mesh: &MeshData) -> Vec<Lod> {
         lods.push(Lod { indices: optimize_vertex_cache(&indices, vertex_count), error });
     }
     lods
+}
+
+/// LOD 0 alone, the mesh in full with its triangles reordered for the
+/// vertex cache, for a mesh imported without LODs.
+pub fn full_lod(mesh: &MeshData) -> Vec<Lod> {
+    vec![Lod { indices: optimize_vertex_cache(&mesh.indices, mesh.vertices.len()), error: 0.0 }]
 }
 
 #[cfg(test)]

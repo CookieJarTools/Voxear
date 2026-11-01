@@ -11,8 +11,14 @@
 //! Levels, scenes, prefabs and scripts have an Open button; a prefab opens
 //! on its own, to edit. A material, prefab or model shows a large preview
 //! of itself under its name, which a drag turns.
+//!
+//! A model shows its import settings, as Unity's model importer does: its
+//! units and scale, where its normals and tangents come from, whether it
+//! gets LODs and uses the file's materials. They change nothing until
+//! Apply, which writes them to the model's `.meta` and imports it again;
+//! Revert puts back the ones applied.
 
-use voxear_assets::AssetKind;
+use voxear_assets::{AssetKind, ModelImport, Normals, Tangents, Units};
 use voxear_engine::{Game, MaterialData, script_types::ScriptTypes};
 use voxear_ui::{MenuItem, NodeId, PickedColor, Style, Ui};
 
@@ -32,6 +38,9 @@ pub enum AssetAction {
     SaveMaterial(String, MaterialData),
     /// Change the scenes of the level at this path.
     EditLevel(String, LevelEdit),
+    /// Write these import settings for the model at this path, and import
+    /// it again.
+    Reimport(String, ModelImport),
 }
 
 pub struct AssetView {
@@ -39,6 +48,7 @@ pub struct AssetView {
     open: Option<NodeId>,
     material: Option<MaterialFields>,
     level: Option<LevelFields>,
+    import: Option<ImportFields>,
     /// The preview's frame, which takes drags, and its image.
     preview: Option<(NodeId, NodeId)>,
 }
@@ -61,6 +71,21 @@ struct MaterialFields {
     emissive: [NodeId; 3],
     /// The colour's and the emission's swatches, which open the colour picker.
     swatches: [NodeId; 2],
+}
+
+/// A model's import settings as they are being changed, and as they were
+/// last applied.
+struct ImportFields {
+    applied: ModelImport,
+    units: NodeId,
+    scale: NodeId,
+    normals: NodeId,
+    smoothing_angle: NodeId,
+    tangents: NodeId,
+    lods: NodeId,
+    materials: NodeId,
+    revert: NodeId,
+    apply: NodeId,
 }
 
 /// Which of a material's colours: its colour, picked as sRGB, or its
@@ -107,9 +132,10 @@ impl AssetView {
         }
 
         let file = game.project.root.join(&item.path);
-        let mut view = Self { item: item.clone(), open: None, material: None, level: None, preview };
+        let mut view = Self { item: item.clone(), open: None, material: None, level: None, import: None, preview };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file),
+            ItemKind::Asset(AssetKind::Model) => view.import = Some(ImportFields::build(ui, root, &file)),
             ItemKind::Script => {
                 script(ui, root, item, types);
                 code(ui, root, &file, "csharp", dark);
@@ -141,14 +167,24 @@ impl AssetView {
             return None;
         }
         let material = material(ui, root, &game.project.root.join(&item.path))?;
-        Some(Self { item: item.clone(), open: None, material: Some(material), level: None, preview: None })
+        Some(Self {
+            item: item.clone(),
+            open: None,
+            material: Some(material),
+            level: None,
+            import: None,
+            preview: None,
+        })
     }
 
-    /// What was asked of the editor this frame: Open, a material changed, or
-    /// a level's scenes.
+    /// What was asked of the editor this frame: Open, a material changed, a
+    /// level's scenes, or a model's import settings applied.
     pub fn update(&mut self, ui: &mut Ui) -> Option<AssetAction> {
         if self.open.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::Open(self.item.clone()));
+        }
+        if let Some(settings) = self.import.as_mut().and_then(|import| import.update(ui)) {
+            return Some(AssetAction::Reimport(self.item.path.clone(), settings));
         }
         if let Some(edit) = self.level.as_ref().and_then(|level| level.update(ui)) {
             return Some(AssetAction::EditLevel(self.item.path.clone(), edit));
@@ -284,6 +320,110 @@ impl MaterialFields {
         for (which, swatch) in [MaterialColor::Base, MaterialColor::Emission].into_iter().zip(self.swatches) {
             ui.set_inline_style(swatch, &format!("background-color: {}", self.picked(which).hex()));
         }
+    }
+}
+
+impl ImportFields {
+    const UNITS: [&str; 6] = ["As the file says", "Millimetres", "Centimetres", "Metres", "Inches", "Feet"];
+    const SOURCES: [&str; 2] = ["From the file", "Calculate"];
+
+    /// The settings in the `.meta` beside the model's file, to change.
+    fn build(ui: &mut Ui, root: NodeId, file: &std::path::Path) -> Self {
+        let applied = ModelImport::read(file);
+        let rows = part(ui, root, "Import Settings", "box");
+        let choice = |ui: &mut Ui, label: &str, options: &[&str]| {
+            let row = prop(ui, rows, label);
+            let dropdown = ui.dropdown(row, options, 0);
+            ui.add_class(dropdown, "value-choice");
+            dropdown
+        };
+        let number = |ui: &mut Ui, label: &str| {
+            let row = prop(ui, rows, label);
+            let field = ui.text_field(row, "");
+            ui.add_class(field, "value-input");
+            ui.add_class(field, "number-input");
+            field
+        };
+        let toggle = |ui: &mut Ui, label: &str| {
+            let row = prop(ui, rows, label);
+            ui.toggle(row, "", false)
+        };
+        let units = choice(ui, "Units", &Self::UNITS);
+        let scale = number(ui, "Scale");
+        let normals = choice(ui, "Normals", &Self::SOURCES);
+        let smoothing_angle = number(ui, "Smoothing angle");
+        let tangents = choice(ui, "Tangents", &Self::SOURCES);
+        let lods = toggle(ui, "Make LODs");
+        let materials = toggle(ui, "Import materials");
+        let buttons = ui.panel(rows, Style::row());
+        ui.add_class(buttons, "import-buttons");
+        let revert = ui.button(buttons, "Revert");
+        let apply = ui.button(buttons, "Apply");
+        for (button, name) in [(revert, "import-revert"), (apply, "import-apply")] {
+            ui.add_class(button, "import-button");
+            ui.set_name(button, name);
+        }
+        let fields = Self { applied, units, scale, normals, smoothing_angle, tangents, lods, materials, revert, apply };
+        fields.show(ui, &applied);
+        fields
+    }
+
+    /// Shows `settings` in the fields.
+    fn show(&self, ui: &mut Ui, settings: &ModelImport) {
+        let units = Units::ALL.iter().position(|&units| units == settings.units).unwrap_or(0);
+        ui.set_selected_option(self.units, units);
+        ui.set_text(self.scale, &number(settings.scale));
+        ui.set_selected_option(self.normals, usize::from(settings.normals == Normals::Calculate));
+        ui.set_text(self.smoothing_angle, &number(settings.smoothing_angle));
+        ui.set_selected_option(self.tangents, usize::from(settings.tangents == Tangents::Calculate));
+        ui.set_checked(self.lods, settings.lods);
+        ui.set_checked(self.materials, settings.materials);
+        self.enable(ui, settings);
+    }
+
+    /// The settings as the fields show them. A number that does not read,
+    /// or is out of its range, keeps the value applied.
+    fn shown(&self, ui: &Ui) -> ModelImport {
+        let read = |field: NodeId, was: f32| {
+            ui.text(field).trim().parse::<f32>().ok().filter(|v| v.is_finite()).unwrap_or(was)
+        };
+        let calculate = |dropdown: NodeId| ui.selected_option(dropdown) == 1;
+        let scale = read(self.scale, self.applied.scale);
+        ModelImport {
+            units: Units::ALL.get(ui.selected_option(self.units)).copied().unwrap_or_default(),
+            scale: if scale > 0.0 { scale } else { self.applied.scale },
+            normals: if calculate(self.normals) { Normals::Calculate } else { Normals::Import },
+            smoothing_angle: read(self.smoothing_angle, self.applied.smoothing_angle).clamp(0.0, 180.0),
+            tangents: if calculate(self.tangents) { Tangents::Calculate } else { Tangents::Import },
+            lods: ui.is_checked(self.lods),
+            materials: ui.is_checked(self.materials),
+        }
+    }
+
+    /// Revert and Apply, only while the fields differ from what is applied;
+    /// the smoothing angle, only while normals are calculated.
+    fn enable(&self, ui: &mut Ui, shown: &ModelImport) {
+        let changed = *shown != self.applied;
+        ui.set_enabled(self.revert, changed);
+        ui.set_enabled(self.apply, changed);
+        ui.set_enabled(self.smoothing_angle, shown.normals == Normals::Calculate);
+    }
+
+    /// The settings to apply, when Apply was clicked.
+    fn update(&mut self, ui: &mut Ui) -> Option<ModelImport> {
+        let shown = self.shown(ui);
+        if ui.clicked(self.revert) {
+            let applied = self.applied;
+            self.show(ui, &applied);
+            return None;
+        }
+        if ui.clicked(self.apply) && shown != self.applied {
+            self.applied = shown;
+            self.show(ui, &shown);
+            return Some(shown);
+        }
+        self.enable(ui, &shown);
+        None
     }
 }
 

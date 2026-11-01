@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::guid::AssetGuid;
+use crate::{guid::AssetGuid, import::meta_path};
 
 pub const META_EXTENSION: &str = "meta";
 
@@ -64,7 +64,7 @@ pub struct ScanReport {
     pub reassigned: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct MetaFile {
     guid: String,
 }
@@ -183,22 +183,19 @@ fn collect(folder: &Path, files: &mut Vec<PathBuf>, top: bool) -> Result<()> {
     Ok(())
 }
 
-fn meta_path(asset: &Path) -> PathBuf {
-    let mut name = asset.as_os_str().to_owned();
-    name.push(".");
-    name.push(META_EXTENSION);
-    PathBuf::from(name)
-}
-
 fn read_meta(path: &Path) -> Option<AssetGuid> {
     let text = std::fs::read_to_string(path).ok()?;
     let meta: MetaFile = toml::from_str(&text).ok()?;
     meta.guid.parse().ok()
 }
 
+/// Gives a `.meta` file a GUID, keeping whatever else it holds, such as a
+/// copied model's import settings.
 fn write_meta(path: &Path, guid: AssetGuid) -> Result<AssetGuid> {
-    let text = toml::to_string(&MetaFile { guid: guid.to_string() })?;
-    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut meta: toml::Table = text.parse().unwrap_or_default();
+    meta.insert("guid".to_string(), toml::Value::String(guid.to_string()));
+    std::fs::write(path, toml::to_string(&meta)?).with_context(|| format!("writing {}", path.display()))?;
     Ok(guid)
 }
 
@@ -262,8 +259,14 @@ mod tests {
         std::fs::copy(dir.path().join("A.scene"), dir.path().join("B.scene")).unwrap();
         std::fs::copy(dir.path().join("A.scene.meta"), dir.path().join("B.scene.meta")).unwrap();
 
+        let meta = dir.path().join("B.scene.meta");
+        let copied = std::fs::read_to_string(&meta).unwrap();
+        std::fs::write(&meta, format!("{copied}\n[later]\nkept = true\n")).unwrap();
+
         let (db, report) = AssetDb::scan(dir.path()).unwrap();
         assert_eq!(report.reassigned, vec!["B.scene".to_string()]);
         assert_ne!(db.guid_of("A.scene"), db.guid_of("B.scene"));
+        let text = std::fs::read_to_string(&meta).unwrap();
+        assert!(text.contains("[later]"), "the copy keeps its settings: {text}");
     }
 }

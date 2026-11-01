@@ -104,6 +104,8 @@ struct MeshRanges {
 #[derive(Clone, Copy)]
 enum Retiring {
     Mesh(MeshHandle),
+    /// A replaced mesh's old vertex and index space, as (offset, count).
+    Space((u64, u64), (u64, u64)),
     Material(MaterialHandle),
     Texture(TextureId),
 }
@@ -181,6 +183,44 @@ impl Assets {
     pub fn add_mesh_with_lods(&mut self, gpu: &Gpu, mesh: &MeshData, lods: &[Lod]) -> Result<MeshHandle> {
         let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
         let (handle, ranges) = self.reserve_mesh(mesh.vertices.len() as u64, index_count)?;
+        self.write_mesh(gpu, handle, ranges, mesh, lods)?;
+        Ok(handle)
+    }
+
+    /// Puts new data behind a mesh's handle, as when its model is imported
+    /// again with other settings: whatever draws the mesh draws the new data
+    /// from the next frame. The old data's space is given back once frames
+    /// in flight are done with it.
+    pub fn replace_mesh(
+        &mut self,
+        gpu: &Gpu,
+        mesh: MeshHandle,
+        data: &MeshData,
+        lods: &[Lod],
+        frame: u64,
+    ) -> Result<()> {
+        let old = *self.mesh_ranges.get(&mesh).context("the mesh to replace is not loaded")?;
+        let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
+        let (vertices, indices) = self.reserve_space(data.vertices.len() as u64, index_count)?;
+        let ranges = MeshRanges { vertices, indices, first_lod: 0, sphere: (Vec3::ZERO, 0.0) };
+        self.mesh_ranges.insert(mesh, ranges);
+        self.mesh_bounds.remove(&mesh);
+        self.write_mesh(gpu, mesh, ranges, data, lods)?;
+        self.retire(frame, Retiring::Space(old.vertices, old.indices));
+        Ok(())
+    }
+
+    /// Writes a mesh's vertices, its LODs' indices and its entry, into the
+    /// space and slot reserved for it.
+    fn write_mesh(
+        &mut self,
+        gpu: &Gpu,
+        handle: MeshHandle,
+        ranges: MeshRanges,
+        mesh: &MeshData,
+        lods: &[Lod],
+    ) -> Result<()> {
+        let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
         let (vertex_offset, index_start, slot) = (ranges.vertices.0, ranges.indices.0, handle.0);
         if let (Some(ranges), Some(lod)) = (self.mesh_ranges.get_mut(&handle), lods.first()) {
             ranges.first_lod = lod.indices.len() as u32;
@@ -223,7 +263,7 @@ impl Assets {
         if !mesh.vertices.is_empty() {
             self.mesh_bounds.insert(handle, (min, max));
         }
-        Ok(handle)
+        Ok(())
     }
 
     /// A mesh's box in its own space, min and max corners.
@@ -246,24 +286,25 @@ impl Assets {
 
     /// Takes vertex and index space and a mesh table slot, all or nothing.
     fn reserve_mesh(&mut self, vertex_count: u64, index_count: u64) -> Result<(MeshHandle, MeshRanges)> {
+        let (vertices, indices) = self.reserve_space(vertex_count, index_count)?;
+        let Some(slot) = self.mesh_slots.alloc() else {
+            self.vertex_space.free(vertices.0, vertices.1);
+            self.index_space.free(indices.0, indices.1);
+            anyhow::bail!("too many meshes");
+        };
+        let ranges = MeshRanges { vertices, indices, first_lod: 0, sphere: (Vec3::ZERO, 0.0) };
+        self.mesh_ranges.insert(MeshHandle(slot), ranges);
+        Ok((MeshHandle(slot), ranges))
+    }
+
+    /// Room for a mesh's vertices and indices, as (offset, count) each.
+    fn reserve_space(&mut self, vertex_count: u64, index_count: u64) -> Result<((u64, u64), (u64, u64))> {
         let vertex_offset = self.vertex_space.alloc(vertex_count).context("out of vertex space")?;
         let Some(index_start) = self.index_space.alloc(index_count) else {
             self.vertex_space.free(vertex_offset, vertex_count);
             anyhow::bail!("out of index space");
         };
-        let Some(slot) = self.mesh_slots.alloc() else {
-            self.vertex_space.free(vertex_offset, vertex_count);
-            self.index_space.free(index_start, index_count);
-            anyhow::bail!("too many meshes");
-        };
-        let ranges = MeshRanges {
-            vertices: (vertex_offset, vertex_count),
-            indices: (index_start, index_count),
-            first_lod: 0,
-            sphere: (Vec3::ZERO, 0.0),
-        };
-        self.mesh_ranges.insert(MeshHandle(slot), ranges);
-        Ok((MeshHandle(slot), ranges))
+        Ok(((vertex_offset, vertex_count), (index_start, index_count)))
     }
 
     /// Uploads a cooked model's meshes and textures with one submission. A
@@ -529,6 +570,10 @@ impl Assets {
                     self.index_space.free(ranges.indices.0, ranges.indices.1);
                     self.mesh_slots.free(mesh.0);
                 }
+            }
+            Retiring::Space(vertices, indices) => {
+                self.vertex_space.free(vertices.0, vertices.1);
+                self.index_space.free(indices.0, indices.1);
             }
             Retiring::Material(material) => self.material_slots.free(material.0),
             Retiring::Texture(texture) => {

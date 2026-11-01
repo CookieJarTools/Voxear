@@ -397,12 +397,12 @@ impl Reader<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A two-triangle quad with a 2×1 texture, a material and named parts,
     /// all embedded so no files are needed.
-    fn quad() -> Vec<u8> {
+    pub(crate) fn quad() -> Vec<u8> {
         let mut buffer = Vec::new();
         for value in [0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0] {
             buffer.extend_from_slice(&value.to_le_bytes());

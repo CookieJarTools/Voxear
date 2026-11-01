@@ -573,6 +573,14 @@ This is the only way to load assets. It replaces Addressables and fixes the buil
   its `.meta` keeps its GUID, and a copied file and `.meta` get a fresh one *(implemented in `voxear_assets`)*.
   The project's own `Docs` folder, VoxDocs' pages and their pictures, is documentation rather than content, so
   its files are not assets and never ship.
+- The `.meta` also keeps the asset's import settings, as Unity's do, in a table named for its kind: a model's
+  `[model]` holds its units and scale, where its normals and tangents come from (the file's, or calculated by a
+  smoothing angle), whether it gets LODs and uses its own materials. Only settings that differ from the defaults
+  are written, and a copy keeps them. The importers read them through the same callback as the model's other
+  files, so the editor, a game run from the project and a content build import alike, and a build's cook key
+  covers them. Applied in the Inspector, they import the model again behind the mesh and material handles it had
+  (`Renderer::reupload_model`), so every Obj, undo step and preview drawing it shows the change, and a placed part
+  still where the model put it follows it *(implemented)*.
 - Files reference assets by GUID, optionally with a part inside the asset: `9f2c…#mesh0.0` is a mesh inside a model.
   Hand-written files may use project paths instead, which are resolved on load.
 - In code, a field of type `Ref<Mesh>`, `Ref<Material>`, `Ref<Level>` and so on is all a developer writes. The

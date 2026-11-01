@@ -17,7 +17,7 @@ The editor finds new files when the project opens. A file copied in while the ed
 
 Select the model in the Project panel to see it in the Inspector. Drag the preview to turn it.
 
-When a model is first used, Voxear makes simpler copies of it, called **levels of detail**, for when it is far away and small on screen. You do not need to set anything up: the engine picks the right one as the camera moves, and blends smoothly between them.
+When a model is first used, Voxear makes simpler copies of it, called **levels of detail**, for when it is far away and small on screen. You do not need to set anything up: the engine picks the right one as the camera moves, and blends smoothly between them. To leave them out, turn off **Make LODs** in the model's import settings.
 
 ## Putting a model in a level
 
@@ -53,13 +53,41 @@ material = "Models/Pyramid.gltf#material0"
 
 If you write it by hand, save the file and open the level again. When the editor saves the scene, it writes the model's ID (from its `.meta` file) in place of its path, so the link survives the model being renamed.
 
+## A model's import settings
+
+Select a model in the Project panel, and the Inspector shows its **Import Settings**, as Unity's model importer does. Change them, then click **Apply** to import the model again with them. **Revert** puts back the settings last applied.
+
+| Setting | What it does |
+| --- | --- |
+| **Units** | The length one unit in the file stands for. **As the file says** trusts the file: glTF is always in metres, and an FBX file names its own unit. Pick another when a model comes in at the wrong size, such as one made in centimetres whose file says metres. |
+| **Scale** | Makes the model bigger or smaller, after its units. 2 is twice the size. |
+| **Normals** | Which way each surface faces, for lighting. **From the file** uses the file's, and works them out for a mesh that has none. **Calculate** always works them out. |
+| **Smoothing angle** | For calculated normals: an edge whose faces meet at less than this many degrees is smooth, and a sharper one stays hard. |
+| **Tangents** | What normal maps need. **From the file** uses the file's, and works them out for a mesh that has none. **Calculate** always works them out. They are worked out whenever the normals are. |
+| **Make LODs** | Whether the simpler copies for far away are made. Turn it off for a model that must always be drawn in full. |
+| **Import materials** | Whether the model is drawn with its own materials. Turned off, each part is drawn plain grey, and fields that name one of its materials still work. |
+
+Everything that draws the model shows the change at once. A part of the model placed in an open scene moves to where the model now puts it, unless you have moved it since. In scenes that are not open, the parts stay where they were.
+
+The settings are kept in the model's `.meta` file, beside its ID, so keep the two files together when you move or copy the model. Only settings you changed are written:
+
+```toml
+guid = "277e6fd45f82419a894b65b6b72ed398"
+
+[model]
+units = "centimetres"
+scale = 2.0
+```
+
+A build uses the same settings, and builds the model again when they change.
+
 ## What is read from a glTF file
 
-- The shape, its normals (which way each surface faces) and its texture coordinates.
+- The shape, its normals (which way each surface faces) and its texture coordinates. If the file has no normals, Voxear works them out.
 - Its materials: colour, metal and roughness, normal map, and glow, each with its picture.
 - Cut-outs, such as leaves on a flat card, where the material says to cut them out.
 
-Not yet read: animation, skinning, vertex colours, see-through materials (they are drawn solid), and the cameras and lights in the file. Export normals from your modelling program, since Voxear does not work them out itself.
+Not yet read: animation, skinning, vertex colours, see-through materials (they are drawn solid), and the cameras and lights in the file.
 
 ## What is read from an FBX file
 

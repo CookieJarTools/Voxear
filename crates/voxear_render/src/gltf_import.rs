@@ -5,10 +5,17 @@
 //! (parsing, decoding images, building LODs) on any thread, and [`upload`]
 //! then needs only the GPU. FBX files are read by `fbx_import` into the same
 //! [`PreparedModel`]; [`prepare`] and [`companion_files`] take either.
+//!
+//! A model's import settings come from its `.meta` file, read through the
+//! same callback (see `voxear_assets::ModelImport` and `mesh_tools`), so
+//! the editor, a game run from the project and a content build all import
+//! it alike. [`reupload`] puts a model imported again behind the handles it
+//! had, for settings changed while it is drawn.
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
+use voxear_assets::{ModelImport, meta_path};
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_rhi::{Bindless, Gpu, TextureId, vk};
 
@@ -16,8 +23,9 @@ use crate::{
     assets::{Assets, MaterialDesc, MaterialHandle, MeshHandle, TextureSource},
     cooked::CookedModel,
     fbx_import,
-    lod::{Lod, build_lods},
+    lod::Lod,
     mesh::{MeshData, Vertex},
+    mesh_tools::{self, FromFile},
     texture_codec,
 };
 
@@ -108,6 +116,15 @@ pub(crate) struct PreparedMaterial {
     pub emissive: Option<usize>,
 }
 
+impl PreparedMaterial {
+    /// The default material's look, for a model imported without its
+    /// materials: each keeps a material of its own, so its references
+    /// still work and taking the materials back needs no new ones.
+    pub(crate) fn plain() -> Self {
+        Self { desc: MaterialDesc::default(), base_color: None, metallic_roughness: None, normal: None, emissive: None }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct PreparedNode {
     pub name: String,
@@ -154,13 +171,23 @@ impl PreparedModel {
     }
 }
 
-/// Reads and processes a model without touching the GPU.
+/// Reads and processes a model without touching the GPU, as the import
+/// settings in its `.meta` say, or with the defaults when it has none.
 pub fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
+    let meta = meta_path(std::path::Path::new(path)).to_string_lossy().into_owned();
+    let settings = read(&meta).map(|bytes| ModelImport::from_meta(&String::from_utf8_lossy(&bytes)));
+    prepare_with(path, read, &settings.unwrap_or_default())
+}
+
+/// [`prepare`], with the import settings given.
+pub(crate) fn prepare_with(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result<PreparedModel> {
     if fbx_import::is_fbx(path) {
-        return fbx_import::prepare(path, read).with_context(|| format!("reading {path}"));
+        return fbx_import::prepare(path, read, settings).with_context(|| format!("reading {path}"));
     }
     let (document, buffers, images) = load(path, read).with_context(|| format!("reading {path}"))?;
     let mut preparer = Preparer {
+        settings: *settings,
+        size: mesh_tools::size(settings),
         buffers,
         images,
         model: PreparedModel {
@@ -183,6 +210,66 @@ pub fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
 
 /// Uploads a prepared model and returns its drawable pieces.
 pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &PreparedModel) -> Result<ImportedModel> {
+    let textures = upload_textures(gpu, bindless, assets, model)?;
+    let materials = add_materials(gpu, assets, &model.materials, &textures)?;
+    let mut meshes = Vec::with_capacity(model.meshes.len());
+    for (data, lods) in &model.meshes {
+        meshes.push(assets.add_mesh_with_lods(gpu, data, lods)?);
+    }
+    Ok(imported(assets, &model.nodes, &meshes, &materials, textures))
+}
+
+/// Puts a model prepared again, as with other import settings, behind the
+/// handles `old` was given, so whatever draws it shows the change from the
+/// next frame: each mesh's data replaced and each material's values written
+/// over, matched by their parts. Its old textures are freed once frames in
+/// flight are done with them. Fails, changing nothing, when its parts are
+/// not the ones it had, as when its file changed: it is uploaded anew then.
+pub fn reupload(
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    assets: &mut Assets,
+    old: &ImportedModel,
+    model: &PreparedModel,
+    frame: u64,
+) -> Result<ImportedModel> {
+    let same = |(node, was): (&PreparedNode, &ImportedNode)| {
+        node.mesh_part == was.mesh_part && node.material_part == was.material_part
+    };
+    ensure!(
+        old.nodes.len() == model.nodes.len() && model.nodes.iter().zip(&old.nodes).all(same),
+        "{}'s parts are not the ones it had",
+        model.path
+    );
+    let mut meshes = vec![None; model.meshes.len()];
+    let mut materials = vec![None; model.materials.len()];
+    for (node, was) in model.nodes.iter().zip(&old.nodes) {
+        meshes[node.mesh] = Some(was.mesh);
+        if let Some(material) = node.material {
+            materials[material] = Some(was.material);
+        }
+    }
+    let meshes: Vec<MeshHandle> = meshes.into_iter().collect::<Option<_>>().context("a mesh no part draws")?;
+    let materials: Vec<MaterialHandle> =
+        materials.into_iter().collect::<Option<_>>().context("a material no part uses")?;
+
+    let textures = upload_textures(gpu, bindless, assets, model)?;
+    for (&handle, (data, lods)) in meshes.iter().zip(&model.meshes) {
+        assets.replace_mesh(gpu, handle, data, lods, frame)?;
+    }
+    for (&handle, material) in materials.iter().zip(&model.materials) {
+        assets.set_material(gpu, handle, &material_desc(material, &textures))?;
+    }
+    old.textures.iter().for_each(|&texture| assets.free_texture(texture, frame));
+    Ok(imported(assets, &model.nodes, &meshes, &materials, textures))
+}
+
+fn upload_textures(
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    assets: &mut Assets,
+    model: &PreparedModel,
+) -> Result<Vec<TextureId>> {
     let mut textures = Vec::with_capacity(model.textures.len());
     for texture in &model.textures {
         let id = match texture.format {
@@ -207,12 +294,7 @@ pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &P
         };
         textures.push(id);
     }
-    let materials = add_materials(gpu, assets, &model.materials, &textures)?;
-    let mut meshes = Vec::with_capacity(model.meshes.len());
-    for (data, lods) in &model.meshes {
-        meshes.push(assets.add_mesh_with_lods(gpu, data, lods)?);
-    }
-    Ok(imported(assets, &model.nodes, &meshes, &materials, textures))
+    Ok(textures)
 }
 
 /// Uploads a cooked model: its meshes and textures with one submission, then
@@ -236,20 +318,19 @@ fn add_materials(
     materials: &[PreparedMaterial],
     textures: &[TextureId],
 ) -> Result<Vec<MaterialHandle>> {
+    materials.iter().map(|material| assets.add_material(gpu, &material_desc(material, textures))).collect()
+}
+
+/// A material's values, with its textures as uploaded.
+fn material_desc(material: &PreparedMaterial, textures: &[TextureId]) -> MaterialDesc {
     let texture = |index: Option<usize>| index.map(|i| textures[i]);
-    materials
-        .iter()
-        .map(|material| {
-            let desc = MaterialDesc {
-                base_color_texture: texture(material.base_color),
-                metallic_roughness_texture: texture(material.metallic_roughness),
-                normal_texture: texture(material.normal),
-                emissive_texture: texture(material.emissive),
-                ..material.desc
-            };
-            assets.add_material(gpu, &desc)
-        })
-        .collect()
+    MaterialDesc {
+        base_color_texture: texture(material.base_color),
+        metallic_roughness_texture: texture(material.metallic_roughness),
+        normal_texture: texture(material.normal),
+        emissive_texture: texture(material.emissive),
+        ..material.desc
+    }
 }
 
 fn imported(
@@ -287,6 +368,9 @@ pub fn import(
 }
 
 struct Preparer {
+    settings: ModelImport,
+    /// The metres one unit of the file becomes.
+    size: f32,
     buffers: Vec<gltf::buffer::Data>,
     images: Vec<gltf::image::Data>,
     model: PreparedModel,
@@ -304,6 +388,7 @@ impl Preparer {
 
         if let Some(mesh) = node.mesh() {
             let (scale, rotation, position) = world.to_scale_rotation_translation();
+            let position = position * self.size;
             for primitive in mesh.primitives() {
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
                     continue;
@@ -355,8 +440,8 @@ impl Preparer {
             .collect();
         let mut data = MeshData { vertices, indices };
         data.mirror_x();
-        let lods = build_lods(&data);
-        self.model.meshes.push((data, lods));
+        let file = FromFile { normals: !normals.is_empty(), tangents: !tangents.is_empty() };
+        self.model.meshes.push(mesh_tools::finish(data, &self.settings, self.size, file));
         let index = self.model.meshes.len() - 1;
         self.meshes.insert(key, index);
         Ok(index)
@@ -366,6 +451,11 @@ impl Preparer {
         let Some(key) = material.index() else { return Ok(None) };
         if let Some(&index) = self.materials.get(&key) {
             return Ok(Some(index));
+        }
+        if !self.settings.materials {
+            self.model.materials.push(PreparedMaterial::plain());
+            self.materials.insert(key, self.model.materials.len() - 1);
+            return Ok(Some(self.model.materials.len() - 1));
         }
         let pbr = material.pbr_metallic_roughness();
         let base_color = pbr.base_color_texture().map(|t| self.texture(t.texture(), true)).transpose()?;
@@ -545,4 +635,34 @@ fn to_rgba8(image: &gltf::image::Data) -> Option<Vec<u8>> {
         Format::R16G16B16 => pixels.as_chunks::<6>().0.iter().flat_map(|p| [p[1], p[3], p[5], 255]).collect(),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cooked::tests::quad;
+
+    #[test]
+    fn a_models_meta_sizes_it_and_can_leave_out_its_materials_and_lods() {
+        let gltf = quad();
+        let meta = "guid = \"x\"\n[model]\nunits = \"centimetres\"\nscale = 2.0\nmaterials = false\nlods = false\n";
+        let mut read = |file: &str| Ok(if file.ends_with(".meta") { meta.as_bytes().to_vec() } else { gltf.clone() });
+        let model = prepare("Models/Quad.gltf", &mut read).unwrap();
+
+        let (mesh, lods) = &model.meshes[0];
+        let reach = mesh.vertices.iter().map(|v| v.position[1]).fold(0.0, f32::max);
+        assert!((reach - 0.02).abs() < 1e-6, "a centimetre, twice over: {reach}");
+        assert!(model.nodes[0].position.abs_diff_eq(Vec3::new(-0.02, 0.04, 0.06), 1e-6), "where it sits, sized too");
+        assert_eq!(lods.len(), 1, "no LODs");
+        assert!(mesh.vertices.iter().all(|v| v.normal[2].abs() == 1.0), "normals the file lacks, made from the face");
+
+        assert!(model.textures.is_empty(), "no textures read for materials left out");
+        assert_eq!(model.materials[0].desc.roughness, MaterialDesc::default().roughness);
+        assert_eq!(model.nodes[0].material_part.as_deref(), Some("material0"), "the part keeps its material");
+
+        let mut without =
+            |file: &str| if file.ends_with(".meta") { anyhow::bail!("no .meta") } else { Ok(gltf.clone()) };
+        let plain = prepare("Models/Quad.gltf", &mut without).unwrap();
+        assert_eq!(plain.materials[0].desc.roughness, 0.25, "without a .meta, the defaults");
+    }
 }

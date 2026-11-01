@@ -2974,6 +2974,7 @@ dependencies = [
  "toml",
  "tracing",
  "ufbx",
+ "voxear_assets",
  "voxear_core",
  "voxear_ecs",
  "voxear_rhi",

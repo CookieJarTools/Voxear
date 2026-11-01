@@ -1047,6 +1047,75 @@ fn a_model_opens_out_to_its_parts_and_a_field_takes_one() {
     );
 }
 
+#[test]
+fn a_models_import_settings_apply_where_it_is_drawn() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // The Pyramid the Day scene draws, and how tall its mesh is.
+    let pyramid = |editor: &voxear_editor::Editor| {
+        let world = &editor.game.engine.world;
+        let drawn = world.query_ref::<&voxear_render::MeshRenderer>().into_iter().map(|r| r.mesh);
+        let mut drawn = drawn.filter(|&mesh| {
+            editor
+                .game
+                .content
+                .mesh_ref(mesh)
+                .is_some_and(|r| r.to_string().starts_with("277e6fd45f82419a894b65b6b72ed398"))
+        });
+        drawn.next().expect("the Day scene draws the Pyramid")
+    };
+    let mesh = pyramid(&editor);
+    let height = |renderer: &Renderer| renderer.mesh_bounds(mesh).map(|(min, max)| max.y - min.y).unwrap();
+    let before = height(&renderer);
+
+    let folder = tile(&editor.ui, "Models").expect("the Project shows its folders as tiles");
+    let [x, y, w, h] = editor.ui.rect(folder);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    for _ in 0..2 {
+        editor.ui.pointer_button(true);
+        editor.ui.pointer_button(false);
+    }
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let model = tile(&editor.ui, "Pyramid.gltf").expect("the model shows");
+    click(&mut editor.ui, model);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let scale = prop_field(&editor.ui, "Scale").expect("a model shows its import settings");
+    assert_eq!(editor.ui.text(scale), "1");
+    type_into(&mut editor.ui, scale, "2");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(height(&renderer), before, "nothing changes before Apply");
+    let apply = editor.ui.find(editor.ui.root(), "import-apply").unwrap();
+    click(&mut editor.ui, apply);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    let meta = std::fs::read_to_string(dir.path().join("Models/Pyramid.gltf.meta")).unwrap();
+    assert!(meta.contains("[model]") && meta.contains("scale = 2.0"), "Apply writes them to the .meta: {meta}");
+    assert_eq!(pyramid(&editor), mesh, "the Obj draws the same mesh");
+    assert!(
+        (height(&renderer) - before * 2.0).abs() < 1e-4,
+        "now twice as tall: {} against {before}",
+        height(&renderer)
+    );
+
+    // Revert puts back what was applied.
+    type_into(&mut editor.ui, scale, "5");
+    frame(&mut editor, &mut renderer);
+    let revert = editor.ui.find(editor.ui.root(), "import-revert").unwrap();
+    click(&mut editor.ui, revert);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.ui.text(scale), "2");
+}
+
 /// The command palette's results showing, top to bottom, by title.
 fn palette_results(ui: &Ui) -> Vec<String> {
     let list = ui.find(ui.root(), "palette-list").unwrap();

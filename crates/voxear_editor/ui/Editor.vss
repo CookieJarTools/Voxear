@@ -1059,6 +1059,19 @@
     font-weight: 500;
 }
 
+/* A model's import settings' Revert and Apply, at the section's end. */
+.import-buttons {
+    justify-content: flex-end;
+    gap: 6px;
+    padding-top: 8px;
+}
+
+.import-button {
+    height: 24px;
+    padding: 0px 12px;
+    border-radius: 6px;
+}
+
 .add-component:hover {
     border-color: var(--vx-accent);
     background-color: var(--vx-accent-soft);

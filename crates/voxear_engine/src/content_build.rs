@@ -419,10 +419,13 @@ impl Cooker {
         Ok(Self { root: root.to_path_buf(), dir, used: Vec::new(), cooked: 0, cached: 0 })
     }
 
-    /// The cooked model. Its cache key covers every file it reads and the
-    /// format version, so changing any of them cooks again.
+    /// The cooked model. Its cache key covers every file it reads, its
+    /// `.meta` with its import settings, and the format version, so changing
+    /// any of them cooks again.
     fn cook(&mut self, path: &str, companions: &[String]) -> Result<Vec<u8>> {
+        let meta = voxear_assets::meta_path(&self.root.join(path));
         let mut inputs = vec![voxear_render::COOKED_VERSION.to_le_bytes().to_vec(), read(&self.root, path)?];
+        inputs.push(std::fs::read(meta).unwrap_or_default());
         for file in companions {
             inputs.push(file.as_bytes().to_vec());
             // An FBX file's textures are looked for in more than one place, so one may be missing: it counts as

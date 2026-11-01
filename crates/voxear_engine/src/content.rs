@@ -17,6 +17,7 @@ use voxear_assets::{
     AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader,
     bundle::{BundleInfo, BundleReader, Catalog},
 };
+use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     CookedModel, ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, MeshRenderer, Primitive,
@@ -100,6 +101,15 @@ pub struct ContentUsage {
     pub prefabs: usize,
     pub kept_prefabs: usize,
     pub materials: usize,
+}
+
+/// A part of a model imported again that sits elsewhere in it now: its
+/// mesh, and its position, rotation and scale in the model before and after.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MovedPart {
+    pub mesh: MeshHandle,
+    pub before: (Vec3, Quat, Vec3),
+    pub after: (Vec3, Quat, Vec3),
 }
 
 /// Where a material came from, so scenes save it back the way it was written.
@@ -350,6 +360,30 @@ impl Content {
             self.register_model(guid, model);
         }
         Ok(&self.models[&guid].nodes)
+    }
+
+    /// Imports a loaded model again, as after its import settings changed,
+    /// behind the handles its meshes and materials have, so whatever draws
+    /// them shows the change from the next frame. Returns each part whose
+    /// place in the model changed, as after a change of size. A model not
+    /// loaded is left to import with its settings when next used.
+    pub fn reimport_model(&mut self, renderer: &mut Renderer, guid: AssetGuid) -> Result<Vec<MovedPart>> {
+        if !self.models.contains_key(&guid) {
+            return Ok(Vec::new());
+        }
+        ensure!(!self.cooked.contains(&guid), "a model in built content cannot be imported again");
+        let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
+        let reader = self.reader();
+        let prepared = voxear_render::prepare_model(&path, &mut |file| reader.read(file))?;
+        let old = &self.models[&guid];
+        let model = renderer.reupload_model(old, &prepared)?;
+        let place = |node: &ImportedNode| (node.position, node.rotation, node.scale);
+        let moved = (old.nodes.iter().zip(&model.nodes))
+            .filter(|(was, now)| place(was) != place(now))
+            .map(|(was, now)| MovedPart { mesh: now.mesh, before: place(was), after: place(now) })
+            .collect();
+        self.models.insert(guid, model);
+        Ok(moved)
     }
 
     fn register_model(&mut self, guid: AssetGuid, model: ImportedModel) {

@@ -9,6 +9,7 @@ mod docs_links;
 mod docs_pictures;
 mod docs_steps;
 mod drawer;
+mod importing;
 mod inspectors;
 mod level_edits;
 mod placing;
@@ -887,6 +888,7 @@ impl Editor {
                 self.asset_changed(renderer, &path);
             }
             AssetAction::EditLevel(path, edit) => self.edit_level(&path, &edit, renderer),
+            AssetAction::Reimport(path, settings) => self.apply_import_settings(&path, &settings, renderer),
         }
     }
 

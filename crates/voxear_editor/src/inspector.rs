@@ -238,6 +238,12 @@ pub struct Inspector {
     validation_boxes: Vec<((String, String), NodeId, NodeId)>,
     /// What the answers were last asked for: the Obj and its scene values.
     asked_for: String,
+    /// The page each `[ListDrawerSettings]` list shows, by its place, and its
+    /// buttons: back, on, the list's place and how many pages it has.
+    pages: std::collections::HashMap<String, usize>,
+    pagers: Vec<(NodeId, NodeId, String, usize)>,
+    /// The `[ColorPalette]` swatches shown: each, its field and its colour.
+    palette_swatches: Vec<(NodeId, Prop, [f32; 3])>,
 }
 
 impl Inspector {
@@ -269,6 +275,9 @@ impl Inspector {
             answers: ScriptAnswers::default(),
             validation_boxes: Vec::new(),
             asked_for: String::new(),
+            pages: std::collections::HashMap::new(),
+            pagers: Vec::new(),
+            palette_swatches: Vec::new(),
         }
     }
 
@@ -522,6 +531,8 @@ impl Inspector {
         self.excerpts.clear();
         self.buttons.clear();
         self.validation_boxes.clear();
+        self.pagers.clear();
+        self.palette_swatches.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
         let Some(entity) = self.shown else {
@@ -587,12 +598,19 @@ impl Inspector {
                 if !self.prefab_mode && !designers_see(value) {
                     continue;
                 }
-                if !attributes::shows(game, &self.types, entity, value) {
+                if !attributes::shows(game, &self.types, entity, value)
+                    || attributes::drawn_by_list(&self.types, value, &self.pages)
+                {
                     continue;
                 }
-                let meta = attributes::of(&self.types, value).clone();
+                let mut meta = attributes::of(&self.types, value).clone();
                 let container = groups.container(ui, attributes::top(&self.types, value).group.as_ref());
-                let label = meta.label.clone().unwrap_or_else(|| props::label(value));
+                let mut label = meta.label.clone().unwrap_or_else(|| props::label(value));
+                // A [ListDrawerSettings] list labels its items by index, or not at all.
+                if let Some((Some(settings), index)) = attributes::item_of(&self.types, value) {
+                    label = index.to_string();
+                    meta.hide_label |= !settings.index_labels;
+                }
                 self.decorate(ui, container, game, (entity, value), (&meta, &label));
                 let row = prop(ui, container, &label);
                 ui.set_class(row, "hidden-from-designers", !designers_see(value));
@@ -655,6 +673,26 @@ impl Inspector {
                 let limits = limits(&meta);
                 let tooltip = meta.tooltip.clone();
                 self.rows.push(PropRow { prop: value.clone(), row, control, add, remove, tooltip, limits });
+                if let (Value::List(count), Prop::Field { behaviour, path }) = (&shown, value) {
+                    let per_page = meta.list.map_or(0, |settings| settings.per_page);
+                    let page = attributes::page(&self.pages, behaviour, path);
+                    let shown_items = page_range(*count, per_page, page);
+                    if attributes::is_table(&self.types, behaviour, path) {
+                        self.table(ui, container, game, (entity, behaviour, path), shown_items, editable);
+                    }
+                    if per_page > 0 && *count > per_page {
+                        self.pager(
+                            ui,
+                            container,
+                            attributes::page_key(behaviour, path),
+                            page,
+                            count.div_ceil(per_page),
+                        );
+                    }
+                }
+                if let (Value::Color(_), false) = (&shown, meta.palette.is_empty() || !editable) {
+                    self.palette(ui, container, value, &meta.palette);
+                }
             }
             if let Part::Behaviour(name) = part {
                 self.add_buttons(ui, rows, name, playing);
@@ -680,6 +718,124 @@ impl Inspector {
         self.add = Some(add);
         self.conditions = attributes::key(game, &self.types, entity, &layout);
         self.built = (layout, playing, locks);
+    }
+
+    /// A `[TableList]`: a column for each field of the list's values and a
+    /// row for each item shown, each cell its field's control, with a button
+    /// to take the item out.
+    fn table(
+        &mut self,
+        ui: &mut Ui,
+        container: NodeId,
+        game: &Game,
+        (entity, behaviour, list): (Entity, &str, &[Step]),
+        items: std::ops::Range<usize>,
+        editable: bool,
+    ) {
+        let Some(voxear_engine::script_types::FieldKind::List { element }) =
+            crate::fields::kind_at(&self.types, behaviour, list)
+        else {
+            return;
+        };
+        let voxear_engine::script_types::FieldKind::Struct { name } = *element else { return };
+        let columns: Vec<_> = self.types.fields_of(&name).iter().filter(|f| !f.inspector.hidden).cloned().collect();
+        let table = ui.panel(container, Style::default());
+        ui.add_class(table, "attr-table");
+        ui.set_inline_style(table, &format!("grid-template-columns: repeat({}, minmax(0px, 1fr)) 22px", columns.len()));
+        for column in &columns {
+            let title = column.inspector.label.clone().unwrap_or_else(|| props::nice_name(&column.name));
+            let head = ui.add_label(table, &title);
+            ui.add_class(head, "attr-table-head");
+        }
+        ui.panel(table, Style::default());
+        for item in items {
+            let mut item_path = list.to_vec();
+            item_path.push(Step::Item(item));
+            for column in &columns {
+                let mut path = item_path.clone();
+                path.push(Step::Key(column.name.clone()));
+                let prop = Prop::Field { behaviour: behaviour.to_string(), path };
+                let cell = ui.panel(table, Style::row());
+                ui.add_class(cell, "attr-table-cell");
+                let shown = props::get(game, &self.types, entity, &prop).unwrap_or(Value::Fixed(String::new()));
+                let control = control(ui, cell, &shown, editable, (&column.inspector, None));
+                let (limits, tooltip) = (limits(&column.inspector), column.inspector.tooltip.clone());
+                self.rows.push(PropRow { prop, row: cell, control, add: None, remove: None, tooltip, limits });
+            }
+            let cell = ui.panel(table, Style::row());
+            let remove = editable.then(|| {
+                let button = ui.icon_button(cell, "close");
+                ui.add_class(button, "list-remove");
+                button
+            });
+            let prop = Prop::Field { behaviour: behaviour.to_string(), path: item_path };
+            let mark = ui.add_label(cell, "");
+            let control = Control::Fixed(mark);
+            self.rows.push(PropRow {
+                prop,
+                row: cell,
+                control,
+                add: None,
+                remove,
+                tooltip: None,
+                limits: (None, None),
+            });
+        }
+    }
+
+    /// A `[ListDrawerSettings]` list's page buttons: back, which page of how
+    /// many, and on.
+    fn pager(&mut self, ui: &mut Ui, container: NodeId, key: String, page: usize, pages: usize) {
+        let bar = ui.panel(container, Style::row());
+        ui.add_class(bar, "attr-pager");
+        let back = ui.icon_button(bar, "chevron-left");
+        let shown = ui.add_label(bar, &format!("Page {} of {pages}", page + 1));
+        ui.add_class(shown, "attr-pager-text");
+        let on = ui.icon_button(bar, "chevron-right");
+        ui.set_class(back, "disabled", page == 0);
+        ui.set_class(on, "disabled", page + 1 >= pages);
+        self.pagers.push((back, on, key, pages));
+    }
+
+    /// A `[ColorPalette]`'s swatches under its colour; a click picks one.
+    fn palette(&mut self, ui: &mut Ui, container: NodeId, prop: &Prop, colours: &[String]) {
+        let strip = ui.panel(container, Style::row());
+        ui.add_class(strip, "attr-palette");
+        for hex in colours {
+            let Some(rgb) = parse_hex(hex) else { continue };
+            let swatch = ui.panel(strip, Style::default());
+            ui.add_class(swatch, "attr-palette-swatch");
+            let [r, g, b] = rgb.map(|c| (c * 255.0).round() as u8);
+            ui.set_inline_style(swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
+            self.palette_swatches.push((swatch, prop.clone(), rgb));
+        }
+    }
+
+    /// Turns a page or picks a palette's colour, as clicked this frame. True
+    /// when a page turned, which builds the sections again.
+    fn update_lists(&mut self, ui: &Ui, game: &mut Game, entity: Entity, renderer: Option<&mut Renderer>) -> bool {
+        let mut turned = false;
+        for (back, on, key, pages) in &self.pagers {
+            let page = self.pages.get(key).copied().unwrap_or_default();
+            let next = if ui.clicked(*back) {
+                page.saturating_sub(1)
+            } else if ui.clicked(*on) {
+                (page + 1).min(pages - 1)
+            } else {
+                continue;
+            };
+            self.pages.insert(key.clone(), next);
+            turned |= next != page;
+        }
+        let picked = self.palette_swatches.iter().find(|(swatch, ..)| ui.clicked(*swatch));
+        if let Some((_, prop, rgb)) = picked.cloned()
+            && props::set(game, renderer, &self.types, entity, &prop, Value::Color(rgb))
+            && let (Prop::Field { behaviour, .. }, Some(method)) =
+                (&prop, &attributes::top(&self.types, &prop).on_changed)
+        {
+            self.callbacks.push((behaviour.clone(), method.clone()));
+        }
+        turned
     }
 
     /// A behaviour's `[Button]`s, under its fields. They run in edit mode,
@@ -725,6 +881,10 @@ impl Inspector {
             return None;
         }
         let before = ObjState::of(&game.engine.world, entity);
+        if self.update_lists(ui, game, entity, renderer.as_deref_mut()) {
+            self.show(ui, game, Some(entity), playing);
+            return None;
+        }
         self.update_transform(ui, game, entity, transform);
         for row in &self.rows {
             // Adding or taking out an item changes the rows, which are built again next frame.
@@ -1144,6 +1304,22 @@ fn clamp(value: Value, (low, high): (Option<f64>, Option<f64>)) -> Value {
 }
 
 /// A message in a box: a note, a warning or an error.
+/// The items of a list of `count` shown on a page, or all of them.
+fn page_range(count: usize, per_page: usize, page: usize) -> std::ops::Range<usize> {
+    if per_page == 0 {
+        return 0..count;
+    }
+    let start = (page * per_page).min(count);
+    start..(start + per_page).min(count)
+}
+
+/// A colour from hex, `#rrggbb`, as sRGB from 0 to 1.
+fn parse_hex(hex: &str) -> Option<[f32; 3]> {
+    let digits = hex.trim().trim_start_matches('#');
+    let bits = u32::from_str_radix(digits, 16).ok().filter(|_| digits.len() == 6)?;
+    Some([bits >> 16, bits >> 8, bits].map(|c| (c & 0xff) as f32 / 255.0))
+}
+
 /// A note, warning or error above a field; returns it and its text.
 fn info_box(ui: &mut Ui, container: NodeId, kind: InfoKind, message: &str) -> (NodeId, NodeId) {
     let frame = ui.panel(container, Style::row());

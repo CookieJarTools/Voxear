@@ -2720,6 +2720,91 @@ fn a_scripts_colour_field_shows_a_swatch_and_keeps_its_alpha() {
     assert!(editor.color_picker_open(), "the swatch opens the colour picker");
 }
 
+/// Hello's Spinner as a build with a table, a paged list and a palette describes it.
+const SPINNER_WITH_LISTS: &str = r##"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
+  {"name": "waves", "type": {"kind": "list", "element": {"kind": "struct", "name": "Hello.Wave"}}, "default": [],
+   "inspector": {"table": true}},
+  {"name": "scores", "type": {"kind": "list", "element": {"kind": "whole"}}, "default": [],
+   "inspector": {"list": {"per_page": 3, "index_labels": true}}},
+  {"name": "tint", "type": {"kind": "color"}, "default": [1.0, 1.0, 1.0, 1.0],
+   "inspector": {"palette": ["#e63946", "#457b9d"]}}
+]}], "types": {"Hello.Wave": {"fields": [
+  {"name": "count", "type": {"kind": "whole"}, "default": 0},
+  {"name": "delay", "type": {"kind": "number"}, "default": 0.5}
+]}}, "commands": []}"##;
+
+#[test]
+fn tables_pages_and_palettes_show_lists_and_colours() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(SPINNER_WITH_LISTS).unwrap());
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    {
+        let kept = &mut editor.game.engine.world.get_mut::<voxear_engine::EditBehaviours>(spinner).unwrap().0[0];
+        let fields = std::sync::Arc::make_mut(&mut kept.fields);
+        let waves: toml::Value = toml::from_str("w = [{ count = 2, delay = 1.0 }, { count = 5 }]").unwrap();
+        fields.insert("waves".into(), waves["w"].clone());
+        fields.insert("scores".into(), toml::Value::Array((1..=7).map(|n| toml::Value::Integer(n * 10)).collect()));
+    }
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let field = |editor: &voxear_editor::Editor, name: &str| {
+        let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+        kept.0[0].fields.get(name).cloned()
+    };
+    shot(&mut renderer, "inspector-lists.png");
+
+    // [TableList]: a column for each of a wave's fields, a row for each wave.
+    let table = first_with(&editor.ui, editor.ui.root(), "attr-table").expect("the waves as a table");
+    let mut heads = Vec::new();
+    with_class(&editor.ui, table, "attr-table-head", &mut heads);
+    let heads: Vec<String> = heads.iter().map(|&h| editor.ui.text(h)).collect();
+    assert_eq!(heads, ["Count", "Delay"]);
+    let mut cells = Vec::new();
+    with_class(&editor.ui, table, "value-input", &mut cells);
+    let shown: Vec<String> = cells.iter().map(|&c| editor.ui.text(c)).collect();
+    assert_eq!(shown, ["2", "1", "5", "0.5"], "each wave's values, with the default where it sets none");
+    assert!(prop_row(&editor.ui, "Count").is_none(), "no rows of their own beside the table");
+    type_into(&mut editor.ui, cells[2], "7");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    let count = |editor: &voxear_editor::Editor, wave: usize| field(editor, "waves").unwrap()[wave]["count"].clone();
+    assert_eq!(count(&editor, 1), toml::Value::Integer(7), "a cell edits its field");
+    let mut removes = Vec::new();
+    with_class(&editor.ui, table, "list-remove", &mut removes);
+    click(&mut editor.ui, removes[0]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(field(&editor, "waves").unwrap().as_array().unwrap().len(), 1, "a row's button takes it out");
+
+    // [ListDrawerSettings]: three scores at a time, each labelled by its index.
+    let labels = |editor: &voxear_editor::Editor| -> Vec<String> {
+        (0..7).map(|i| i.to_string()).filter(|l| prop_row(&editor.ui, l).is_some()).collect()
+    };
+    frame(&mut editor, &mut renderer);
+    assert_eq!(labels(&editor), ["0", "1", "2"], "the first page");
+    let pager = first_with(&editor.ui, editor.ui.root(), "attr-pager").unwrap();
+    assert_eq!(editor.ui.text(first_with(&editor.ui, pager, "attr-pager-text").unwrap()), "Page 1 of 3");
+    let on = *editor.ui.children(pager).last().unwrap();
+    click(&mut editor.ui, on);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(labels(&editor), ["3", "4", "5"], "the next page");
+
+    // [ColorPalette]: a swatch picks its colour.
+    let mut swatches = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "attr-palette-swatch", &mut swatches);
+    assert_eq!(swatches.len(), 2);
+    click(&mut editor.ui, swatches[1]);
+    frame(&mut editor, &mut renderer);
+    let tint = field(&editor, "tint").unwrap();
+    let red = tint[0].as_float().unwrap();
+    assert!((red - 0x45 as f64 / 255.0).abs() < 1e-3, "#457b9d's red: {tint}");
+}
+
 /// Hello's Spinner as a build with inspector attributes on it describes it.
 const SPINNER_WITH_ATTRIBUTES: &str = r#"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
   {"name": "degreesPerSecond", "type": {"kind": "number"}, "default": 90.0,

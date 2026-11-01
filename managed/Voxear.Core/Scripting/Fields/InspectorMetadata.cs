@@ -116,6 +116,17 @@ namespace Voxear.Scripting
 				case ValueDropdownAttribute dropdown:
 					json.WriteString("dropdown", dropdown.Member);
 					break;
+				case ListDrawerSettingsAttribute list:
+					json.WriteStartObject("list");
+					json.WriteNumber("per_page", Math.Max(list.NumberOfItemsPerPage, 0));
+					json.WriteBoolean("index_labels", list.ShowIndexLabels);
+					json.WriteEndObject();
+					break;
+				case ColorPaletteAttribute palette:
+					json.WriteStartArray("palette");
+					Array.ForEach(palette.Colors, json.WriteStringValue);
+					json.WriteEndArray();
+					break;
 				case ValidateInputAttribute validate:
 					json.WriteStartObject("validate");
 					json.WriteString("method", validate.Method);
@@ -136,6 +147,7 @@ namespace Voxear.Scripting
 				ReadOnlyAttribute => "read_only",
 				HideInInspectorAttribute => "hidden",
 				EnumToggleButtonsAttribute => "enum_buttons",
+				TableListAttribute => "table",
 				_ => null,
 			};
 			if (flag != null)

@@ -16,7 +16,9 @@ use std::{collections::HashMap, sync::OnceLock};
 use voxear_ecs::Entity;
 use voxear_engine::{
     Game,
-    script_types::{FieldCondition, FieldGroup, FieldInspector, FieldKind, GroupKind, ScriptTypes, same_field},
+    script_types::{
+        FieldCondition, FieldGroup, FieldInspector, FieldKind, GroupKind, ListSettings, ScriptTypes, same_field,
+    },
 };
 use voxear_ui::{NodeId, Style, Ui};
 
@@ -231,6 +233,48 @@ fn truthy(value: Option<&toml::Value>) -> bool {
 
 /// The description of the field at `path`, when the path ends at a field (a
 /// behaviour's, or a table's) rather than a list's item.
+/// Whether a row is drawn by its list rather than on its own: an item of a
+/// `[TableList]` of `[Serializable]` values, or what is in one, which the
+/// table shows, or an item on a `[ListDrawerSettings]` page not shown.
+pub fn drawn_by_list(types: &ScriptTypes, prop: &Prop, pages: &HashMap<String, usize>) -> bool {
+    let Prop::Field { behaviour, path } = prop else { return false };
+    path.iter().enumerate().any(|(at, step)| {
+        let Step::Item(index) = step else { return false };
+        let list = &path[..at];
+        let Some(meta) = field_at(types, behaviour, list) else { return false };
+        let per_page = meta.list.map_or(0, |settings| settings.per_page);
+        is_table(types, behaviour, list) || (per_page > 0 && index / per_page != page(pages, behaviour, list))
+    })
+}
+
+/// Whether a list is shown as a table: `[TableList]` on a list of
+/// `[Serializable]` values.
+pub fn is_table(types: &ScriptTypes, behaviour: &str, list: &[Step]) -> bool {
+    let table = field_at(types, behaviour, list).is_some_and(|meta| meta.table);
+    let element = match fields::kind_at(types, behaviour, list) {
+        Some(FieldKind::List { element }) => Some(*element),
+        _ => None,
+    };
+    table && matches!(element, Some(FieldKind::Struct { .. }))
+}
+
+/// The page of a list showing, by the list's place.
+pub fn page(pages: &HashMap<String, usize>, behaviour: &str, list: &[Step]) -> usize {
+    pages.get(&page_key(behaviour, list)).copied().unwrap_or_default()
+}
+
+pub fn page_key(behaviour: &str, list: &[Step]) -> String {
+    format!("{behaviour}/{list:?}")
+}
+
+/// When a row is a list's item, the list's `[ListDrawerSettings]`, if any,
+/// and the item's index.
+pub fn item_of(types: &ScriptTypes, prop: &Prop) -> Option<(Option<ListSettings>, usize)> {
+    let Prop::Field { behaviour, path } = prop else { return None };
+    let (Step::Item(index), list) = path.split_last()? else { return None };
+    Some((field_at(types, behaviour, list).and_then(|meta| meta.list), *index))
+}
+
 fn field_at<'t>(types: &'t ScriptTypes, behaviour: &str, path: &[Step]) -> Option<&'t FieldInspector> {
     let (Step::Key(first), rest) = path.split_first()? else { return None };
     let mut field = types.behaviour(behaviour)?.field(first)?;

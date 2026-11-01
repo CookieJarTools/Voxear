@@ -1961,6 +1961,62 @@ DockSpace .project-split > .split-divider {
     min-width: 0px;
 }
 
+/* A [TableList]: a column for each field, a row for each item. */
+.attr-table {
+    display: grid;
+    column-gap: 4px;
+    row-gap: 3px;
+    margin: 2px 0px 4px 0px;
+}
+
+.attr-table-head {
+    font-size: 11px;
+    color: var(--vx-muted);
+    white-space: nowrap;
+}
+
+.attr-table-cell {
+    min-width: 0px;
+    align-items: center;
+}
+
+.attr-table-cell > .value-input {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+/* A [ListDrawerSettings] list's page buttons. */
+.attr-pager {
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    margin: 2px 0px 4px 0px;
+}
+
+.attr-pager-text {
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+/* A [ColorPalette]'s swatches under its colour. */
+.attr-palette {
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 2px 0px 4px 0px;
+    justify-content: flex-end;
+}
+
+.attr-palette-swatch {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--vx-field-line);
+}
+
+.attr-palette-swatch:hover {
+    border-color: var(--vx-text-2);
+}
+
 /* A behaviour's [Button]s, under its fields. */
 .attr-buttons-column {
     gap: 4px;

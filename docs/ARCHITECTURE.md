@@ -1802,10 +1802,15 @@ still reads no assembly; a source generator can take its place later without the
     the scene set that a dropdown does not offer stays first in its menu.
   - While playing, buttons wait until play stops.
 
-Still to come: buttons and callbacks while playing, on the running behaviour, `[ShowInInspector]`, `[ColorPalette]` (once C# has a `Color`),
-the collections' `[ListDrawerSettings]` and `[TableList]`, `[AssetsOnly]` and `[SceneObjectsOnly]` (a Voxear field
-takes one or the other already), the build's check of every scene and prefab, the source generator and analyzer,
-and custom drawers.
+- **Collections and colours:** `[TableList]` shows a list of `[Serializable]` values as a table, a column for each
+  of their fields and a row for each item, with a button on each row to take it out. `[ListDrawerSettings]` shows a
+  list a page at a time (`NumberOfItemsPerPage`), with buttons to turn the page, and labels each item by its index
+  (`ShowIndexLabels`) or not at all. `[ColorPalette("#e63946", "#457b9d")]` puts swatches under a `Color` field,
+  and a click picks one.
+
+Still to come: buttons and callbacks while playing, on the running behaviour, `[ShowInInspector]`, dragging a
+list's items to reorder them, `[AssetsOnly]` and `[SceneObjectsOnly]` (a Voxear field takes one or the other
+already), the build's check of every scene and prefab, the source generator and analyzer, and custom drawers.
 
 **Advanced.** Custom drawers in C#, built with Voxear UI: `ValueDrawer<T>` for a type, and
 `AttributeDrawer<TAttribute>` for your own attributes. Drawers chain as Odin's do, with each decorator wrapping the

@@ -54,6 +54,19 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void TablesListSettingsAndPalettesAreDescribed()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestShelf).Assembly));
+			var shelf = document.RootElement.GetProperty("behaviours").EnumerateArray().Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestShelf");
+			var fields = shelf.GetProperty("fields").EnumerateArray().ToDictionary(f => f.GetProperty("name").GetString()!);
+			Check.True(fields["Waves"].GetProperty("inspector").GetProperty("table").GetBoolean(), "[TableList]");
+			var list = fields["Scores"].GetProperty("inspector").GetProperty("list");
+			Check.True(list.GetProperty("per_page").GetInt32() == 3 && list.GetProperty("index_labels").GetBoolean(), "[ListDrawerSettings]");
+			var palette = fields["Paint"].GetProperty("inspector").GetProperty("palette").EnumerateArray().Select(c => c.GetString()).ToList();
+			Check.True(palette.SequenceEqual(new[] { "#e63946", "#457b9d" }), "[ColorPalette]");
+		}
+
+		[Test]
 		private static void ComponentsAreDescribedAsBehavioursAreButApart()
 		{
 			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestDrift).Assembly));

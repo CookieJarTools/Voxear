@@ -234,6 +234,21 @@ pub struct FieldInspector {
     pub dropdown: Option<String>,
     /// A method `[ValidateInput]` asks whether the value is right.
     pub validate: Option<FieldValidate>,
+    /// A list of `[Serializable]` values shown as a table, `[TableList]`.
+    pub table: bool,
+    /// How a list shows its items, `[ListDrawerSettings]`.
+    pub list: Option<ListSettings>,
+    /// Colours `[ColorPalette]` offers, as hex.
+    pub palette: Vec<String>,
+}
+
+/// A `[ListDrawerSettings]`: how many items show at a time, 0 for all, and
+/// whether each is labelled by its index, rather than not at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ListSettings {
+    pub per_page: usize,
+    pub index_labels: bool,
 }
 
 /// A `[ValidateInput]`: the method to ask, and what the error says when it

@@ -7,11 +7,14 @@
 use std::collections::VecDeque;
 
 use anyhow::Result;
+use voxear_core::math::Vec3;
+use voxear_ecs::World;
 use voxear_render::Renderer;
 use voxear_ui::{Color, Key, NodeId, Shape, Ui, UiFrame};
 
 use crate::{
     Engine,
+    debug_texts::{DebugTexts, camera_projection},
     dev_console::{ConsoleAction, DevConsole},
 };
 
@@ -44,12 +47,16 @@ pub struct StatsOverlay {
     values: Vec<NodeId>,
     frames: u32,
     seconds: f32,
+    /// Debug draw's texts, under the stats and the console.
+    debug_texts: DebugTexts,
 }
 
 impl StatsOverlay {
     pub fn new(visible: bool) -> Self {
         let mut ui = Ui::new();
         let root = ui.root();
+        let layer = ui.panel(root, voxear_ui::Style::default());
+        let debug_texts = DebugTexts::new(&mut ui, layer);
         let mut load = |path: &str| match path {
             "StatsOverlay.vss" => Ok(SHEET.to_string()),
             other => Err(format!("{other} is not built in")),
@@ -71,7 +78,17 @@ impl StatsOverlay {
             values,
             frames: 0,
             seconds: 0.0,
+            debug_texts,
         }
+    }
+
+    /// Shows debug draw's texts over the window, `size` physical pixels at
+    /// `scale`, where the world's camera sees their points.
+    pub fn show_debug_texts(&mut self, world: &World, (width, height): (u32, u32), scale: f32) {
+        let rect = [0.0, 0.0, width as f32 / scale, height as f32 / scale];
+        let project = camera_projection(world, None, rect);
+        let project = project.as_ref().map(|p| p as &dyn Fn(Vec3) -> Option<[f32; 2]>);
+        self.debug_texts.update(&mut self.ui, project, rect);
     }
 
     /// Opens the console, ready to type, or closes it. The stats step aside

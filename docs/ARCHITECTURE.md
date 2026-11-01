@@ -2471,7 +2471,9 @@ them in a running game.
     playing, and clears it all when play stops.
   - The renderer draws the lines after post-processing, so their colours are exactly as asked, as quads a pixel and a
     half wide with soft edges (`debug_pass.rs`, `debug.slang`). It reads the scene's depth to hide them behind the
-    scene, unless drawn on top. Texts are labels the editor places at their points over the 3D view.
+    scene, unless drawn on top. Texts are labels at their points over the 3D view, as the camera sees them: over the
+    editor's Scene and Game views, and over a player's window, under its stats and console (`debug_texts.rs` in
+    voxear_engine, which both share).
   - Calls are `[Conditional("DEBUG")]`, so scripts built for a release leave them out, and a release build of the
     player turns debug draw off.
 - **Debug views.**

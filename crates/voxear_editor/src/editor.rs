@@ -33,6 +33,7 @@ use voxear_core::{
 use voxear_ecs::Entity;
 use voxear_engine::{
     AssetPreviews, Engine, FlyCamera, Game, Project,
+    debug_texts::DebugTexts,
     script_types::{self, ScriptTypes},
 };
 use voxear_render::{Camera, MeshRenderer, Renderer, ViewOptions};
@@ -251,8 +252,8 @@ pub struct Editor {
     picker: ObjectPicker,
     /// The tooltip the pointer rests on, and for how long, in seconds.
     hovered_tooltip: Option<(String, f32)>,
-    /// Labels for debug draw's texts, kept and reused frame to frame.
-    debug_texts: Vec<NodeId>,
+    /// Debug draw's texts, over the view showing.
+    debug_texts: DebugTexts,
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
     picker_picks: Vec<(Entity, Prop, Pick)>,
@@ -396,6 +397,7 @@ impl Editor {
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
+        let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
         let parts =
             ["picker", "picker-title", "picker-field", "picker-list", "picker-empty"].map(|name| find(&ui, name));
@@ -459,7 +461,7 @@ impl Editor {
             picker,
             color_popup,
             hovered_tooltip: None,
-            debug_texts: Vec::new(),
+            debug_texts,
             picker_picks: Vec::new(),
             asset_previews: AssetPreviews::default(),
             live_assets: Vec::new(),

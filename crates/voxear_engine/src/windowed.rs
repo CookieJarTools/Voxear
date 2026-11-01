@@ -154,6 +154,7 @@ impl App {
             let scale = window.scale_factor() as f32;
             // The game's own UI over the whole window, under the tools.
             self.game.ui.draw(renderer, delta, [0, 0, size.width, size.height], scale)?;
+            self.overlay.show_debug_texts(&self.game.engine.world, (size.width, size.height), scale);
             self.overlay.draw(renderer, (size.width, size.height), scale)?;
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)?;
         }

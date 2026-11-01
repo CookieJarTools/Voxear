@@ -46,6 +46,17 @@ pub enum Reloaded {
     Gone,
 }
 
+/// The managed heap, as .NET counts it: the bytes in use now, those
+/// committed, all ever allocated, and each generation's size after the last
+/// collection: 0, 1 and 2, the large objects' and the pinned objects'.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ManagedMemory {
+    pub heap: u64,
+    pub committed: u64,
+    pub allocated: u64,
+    pub generations: [u64; 5],
+}
+
 /// The C# side of the engine. CoreCLR cannot be restarted, so there is at most
 /// one per process.
 pub struct ScriptRuntime {
@@ -94,7 +105,8 @@ impl ScriptRuntime {
                 && managed.console_run.is_some()
                 && managed.console_names.is_some()
                 && managed.run_check.is_some()
-                && managed.inspector_call.is_some(),
+                && managed.inspector_call.is_some()
+                && managed.managed_memory.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -212,6 +224,18 @@ impl ScriptRuntime {
         }
         buffer.truncate(written.clamp(0, buffer.len() as i32) as usize);
         Ok(Err(String::from_utf8_lossy(&buffer).into_owned()))
+    }
+
+    /// The managed heap as .NET counts it.
+    pub fn managed_memory(&self) -> ManagedMemory {
+        let read = self.managed.managed_memory.expect("validated at start");
+        let mut values = [0u64; 8];
+        let written = unsafe { read(values.as_mut_ptr(), values.len() as i32) }.clamp(0, 8) as usize;
+        let [heap, committed, allocated, generations @ ..] = values;
+        let mut sizes = [0; 5];
+        let kept = written.saturating_sub(3);
+        sizes[..kept].copy_from_slice(&generations[..kept]);
+        ManagedMemory { heap, committed, allocated, generations: sizes }
     }
 
     /// Runs a line typed in a development build's console: a `[Command]`

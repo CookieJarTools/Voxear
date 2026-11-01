@@ -39,7 +39,7 @@ use crate::ui::{
     ui_class, ui_clicked, ui_close, ui_find, ui_load, ui_set_text, ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 22;
+pub(crate) const API_VERSION: u32 = 23;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -218,6 +218,9 @@ pub(crate) struct ManagedApi {
     /// answer again.
     pub inspector_call:
         Option<unsafe extern "C" fn(request: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32>,
+    /// The managed heap's numbers, as many as fit: see
+    /// [`ManagedMemory`](crate::ManagedMemory).
+    pub managed_memory: Option<unsafe extern "C" fn(values: *mut u64, count: i32) -> i32>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(

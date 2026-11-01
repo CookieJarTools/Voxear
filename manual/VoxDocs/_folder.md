@@ -1,5 +1,5 @@
 ---
-order: 4
+order: 7
 ---
 
 VoxDocs is where your project's own documentation lives: pages on how your game works, kept beside the game itself. It is the tab next to Scene and Game.

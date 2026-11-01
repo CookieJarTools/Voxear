@@ -13,9 +13,9 @@ mod level_edits;
 mod placing;
 mod play;
 mod prefab_mode;
-mod script_actions;
 mod previews;
 mod scene_view;
+mod script_actions;
 mod tooltip;
 mod windows;
 
@@ -58,6 +58,7 @@ use crate::{
     history::{Edit, History, ObjState},
     inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
+    memory_panel::MemoryPanel,
     object_picker::{self, ObjectPicker},
     objs,
     palette::{Added, Keys, Palette, PaletteAction, PaletteCommand, PaletteKey, Picked, Sources},
@@ -138,6 +139,7 @@ struct Nodes {
     /// The Entities panel's content, the ECS inspector.
     entities_panel: NodeId,
     frame_debugger_panel: NodeId,
+    memory_panel: NodeId,
     /// The Build window's panel.
     build_panel: NodeId,
     /// A script field's tooltip, shown under its label.
@@ -251,6 +253,7 @@ pub struct Editor {
     profiler: Profiler,
     entities: EntitiesPanel,
     frame_debugger: FrameDebuggerPanel,
+    memory_profiler: MemoryPanel,
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
@@ -370,6 +373,7 @@ impl Editor {
             profiler_panel: find(&ui, "profiler-panel"),
             entities_panel: find(&ui, "entities-panel"),
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
+            memory_panel: find(&ui, "memory-panel"),
             build_panel: find(&ui, "build-panel"),
             tooltip: find(&ui, "tooltip"),
             debug_texts: find(&ui, "debug-texts"),
@@ -411,6 +415,7 @@ impl Editor {
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
+        let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
         let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
         let parts =
@@ -471,6 +476,7 @@ impl Editor {
             profiler,
             entities,
             frame_debugger,
+            memory_profiler,
             build_window,
             picker,
             color_popup,
@@ -637,6 +643,8 @@ impl Editor {
             }
             let frames_shown = self.shown(self.nodes.frame_debugger_panel);
             self.frame_debugger.update(&mut self.ui, frames_shown, renderer);
+            let memory_shown = self.shown(self.nodes.memory_panel);
+            self.memory_profiler.update(&mut self.ui, memory_shown, &self.game, renderer);
         }
         self.update_drawer();
         self.update_prefab_mode(renderer);
@@ -732,6 +740,10 @@ impl Editor {
     }
 
     /// The Entities panel, the ECS inspector.
+    pub fn memory_panel(&self) -> &MemoryPanel {
+        &self.memory_profiler
+    }
+
     pub fn entities_panel(&self) -> &EntitiesPanel {
         &self.entities
     }

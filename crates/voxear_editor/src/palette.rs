@@ -470,15 +470,30 @@ fn commands(playing: bool) -> Vec<Entry> {
 /// How well `query` matches `text`, or `None` when its letters are not all
 /// there in order. Letters that start words, or follow the last one
 /// matched, count for more; letters skipped count against; and between
-/// matches as good, a shorter text is nearer what was meant.
+/// matches as good, a shorter text is nearer what was meant. The first
+/// letter is tried wherever it is, so "tool" finds the "tool" of "Rotate
+/// tool" rather than its first t.
 pub fn score(query: &str, text: &str) -> Option<i32> {
     let text: Vec<char> = text.chars().collect();
+    let query: Vec<char> = query.chars().filter(|c| !c.is_whitespace()).map(lower).collect();
+    let best = match query.first() {
+        Some(&first) => {
+            let starts = (0..text.len()).filter(|&i| lower(text[i]) == first);
+            starts.filter_map(|start| matched(&query, &text, start)).max()?
+        }
+        None => 0,
+    };
+    Some(best * 64 - text.len().min(63) as i32)
+}
+
+/// How well `query` matches `text` with its first letter at `start` and
+/// each one after at the next place it is.
+fn matched(query: &[char], text: &[char], start: usize) -> Option<i32> {
     let mut total = 0;
     let mut at = 0;
     let mut last: Option<usize> = None;
-    for wanted in query.chars().filter(|c| !c.is_whitespace()) {
-        let wanted = wanted.to_lowercase().next().unwrap_or(wanted);
-        let found = (at..text.len()).find(|&i| text[i].to_lowercase().next() == Some(wanted))?;
+    for (index, &wanted) in query.iter().enumerate() {
+        let found = if index == 0 { start } else { (at..text.len()).find(|&i| lower(text[i]) == wanted)? };
         let starts_word = found == 0
             || matches!(text[found - 1], ' ' | '_' | '-' | '.' | '/')
             || (text[found].is_uppercase() && text[found - 1].is_lowercase());
@@ -493,7 +508,11 @@ pub fn score(query: &str, text: &str) -> Option<i32> {
         last = Some(found);
         at = found + 1;
     }
-    Some(total * 64 - text.len().min(63) as i32)
+    Some(total)
+}
+
+fn lower(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
 }
 
 /// Keys that run a command, as written for one: "Ctrl+Shift+B", "F5".
@@ -533,6 +552,7 @@ mod tests {
         assert!(score("spin", "Spinner") > score("spin", "Stop playing in"), "letters together count for more");
         assert!(score("mt", "Move tool") > score("mt", "Material"), "word starts count for more");
         assert!(score("save", "Save") > score("save", "Save As"), "and shorter is nearer");
+        assert!(score("tool", "Rotate tool") > score("tool", "The Console"), "the word, not its first t");
         assert!(score("", "Anything").is_some(), "nothing typed matches everything");
     }
 

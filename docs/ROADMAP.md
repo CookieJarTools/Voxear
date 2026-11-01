@@ -305,6 +305,10 @@ Done so far:
   project, shipped in each install and read but not written there. First pages: getting started (installing, a
   first project, the editor, playing, building), Objs and levels, scripting in C#, and VoxDocs itself; a test keeps
   every link and picture in it working. `vox doctor` no longer asks an install for the shader compiler.
+- **The manual's models, lighting and debugging pages:** models and materials, lights, the sky, cameras and
+  post-processing, and finding problems with the Console, the Profiler, the Frame Debugger, the Entities panel and
+  a running game's own tools. The command bar now tries a query's first letter wherever it is, so "tool" finds
+  "Rotate tool" before titles whose letters are only scattered.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
 - **Guide checks written in C#:** `[DocsCheck]` static methods, listed by ScriptInfo and in Action…, that a page's
@@ -368,9 +372,9 @@ Still to do in M3:
   - [ ] custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
-- **More of the Voxear Manual**: materials and models, lighting and the look, the Console, profiling and the debug
-  tools, the UI, and each part as it is built, written the same way: clear and short, plain words, each term
-  explained where it first appears, an example before the details, and nothing that sounds generated.
+- **More of the Voxear Manual**: the UI, the C# ECS, content builds and bundles, and each part as it is built,
+  written the same way: clear and short, plain words, each term explained where it first appears, an example
+  before the details, and nothing that sounds generated.
 - Debug tools:
   - [x] the stats overlay's frame-time graph; the Profiler's timeline view and managed allocations (GC Alloc)
   - [x] worker threads' samples in the Profiler, a lane each in the Timeline, and Tracy behind it
@@ -380,7 +384,8 @@ Still to do in M3:
   - [x] the ECS inspector: archetypes, entities and their components, the system schedule with timings, and a filter
     by components
   - [x] the ECS inspector's editing of plain entities' values, and chunk occupancy
-  - the memory profiler with snapshots and diffs
+  - [x] the memory profiler with snapshots and diffs: the process, Rust's heap, ECS chunks, each GPU allocation and
+    the managed heap, in the Memory panel
   - [x] debug draw: lines, arrows, boxes, spheres and text, from C# and Rust, hidden behind the scene or on top
   - [x] the dev console: commands with arguments and console variables, in the game window's development tools
   - [x] the dev console through `vox`, into a running game: `vox console "line"`

@@ -17,6 +17,9 @@ Then read [[Objs and Components]] and [[Your First Script]].
 - **[[Getting Started]]**: installing, the editor, playing and building.
 - **[[Objs and Levels]]**: the pieces every game is made of, and how they load.
 - **[[Scripting]]**: writing your game's code in C#.
+- **[[Models and Materials]]**: bringing in 3D models, and giving surfaces their colour.
+- **[[Lighting and the Look]]**: lights, the sky, and the finishing touches on the picture.
+- **[[Finding Problems]]**: the Console, the Profiler, and the other tools for finding out why.
 - **[[VoxDocs]]**: writing your project's own pages, guides that do the work for the reader, and linking code to pages.
 
 ## Reading the manual

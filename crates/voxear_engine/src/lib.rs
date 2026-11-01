@@ -13,6 +13,7 @@ mod game;
 pub mod game_ui;
 mod levels;
 mod loading;
+pub mod memory;
 pub mod new_project;
 pub mod player;
 pub mod player_build;

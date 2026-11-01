@@ -177,6 +177,29 @@ namespace Voxear.Scripting
 			}
 		}
 
+		/// <summary>
+		/// The managed heap, for the memory profiler: the bytes in use now, those committed, all ever allocated, and each
+		/// generation's size after the last collection (0, 1 and 2, the large objects' and the pinned ones'). Writes as
+		/// many as count allows and returns how many it wrote.
+		/// </summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int ManagedMemory(ulong* values, int count)
+		{
+			var info = GC.GetGCMemoryInfo();
+			var measured = new long[3 + info.GenerationInfo.Length];
+			(measured[0], measured[1], measured[2]) = (GC.GetTotalMemory(false), info.TotalCommittedBytes, GC.GetTotalAllocatedBytes());
+			for (var generation = 0; generation < info.GenerationInfo.Length; generation++)
+			{
+				measured[3 + generation] = info.GenerationInfo[generation].SizeAfterBytes;
+			}
+			var written = Math.Min(count, measured.Length);
+			for (var index = 0; index < written; index++)
+			{
+				values[index] = (ulong)Math.Max(measured[index], 0);
+			}
+			return written;
+		}
+
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static int ContentRoots(byte* buffer, int capacity)
 		{

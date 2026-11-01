@@ -16,7 +16,7 @@ mod ui;
 
 pub use hostfxr::{DotnetInstall, find_dotnet};
 pub use inspector::{InspectorAnswer, InspectorAsk};
-pub use runtime::{ConsoleName, CreatedBehaviour, Reloaded, ScriptHost, ScriptRuntime};
+pub use runtime::{ConsoleName, CreatedBehaviour, ManagedMemory, Reloaded, ScriptHost, ScriptRuntime};
 pub use services::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
     ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,

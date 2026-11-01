@@ -7,6 +7,10 @@
 use anyhow::{Context, Result};
 use voxear_engine::player::{self, PlayerArgs};
 
+/// Counts Rust's heap, for the memory profiler.
+#[global_allocator]
+static ALLOCATOR: voxear_core::memory::CountingAllocator = voxear_core::memory::CountingAllocator;
+
 fn main() -> Result<()> {
     let data = player::data_folder()?;
     player::choose_validation(&data);

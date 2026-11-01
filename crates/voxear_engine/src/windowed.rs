@@ -12,11 +12,13 @@ use winit::{
     dpi::LogicalSize,
     event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{Key, NamedKey, PhysicalKey},
+    keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
-use crate::{fly_camera::FlyCamera, game::Game, stats_overlay::StatsOverlay};
+use voxear_ui::Key as UiKey;
+
+use crate::{dev_console::ConsoleAction, fly_camera::FlyCamera, game::Game, stats_overlay::StatsOverlay};
 
 /// Called once the renderer exists, typically to load the start level.
 pub type Setup = Box<dyn FnOnce(&mut Game, &mut Renderer) -> Result<()>>;
@@ -118,7 +120,7 @@ impl App {
             tracing::info!(
                 "hold the right mouse button to fly: WASD to move, Q/E down/up, Shift faster, wheel for speed"
             );
-            tracing::info!("F1 shows frame stats");
+            tracing::info!("F1 shows frame stats, and the key left of 1 opens the console");
         }
         Ok(())
     }
@@ -143,6 +145,9 @@ impl App {
         self.last = Some(now);
         self.fly.update(&mut self.game.engine.world, delta);
         self.game.tick(delta, self.renderer.as_mut());
+        if self.options.tools && self.overlay.update_console(Some(&mut self.game.engine)) == Some(ConsoleAction::Quit) {
+            event_loop.exit();
+        }
         if let (Some(renderer), Some(window)) = (self.renderer.as_mut(), &self.window) {
             self.overlay.update(delta, renderer);
             let size = window.inner_size();
@@ -173,6 +178,30 @@ impl App {
         renderer.set_view_options(ViewOptions { debug_view: self.debug_view, ..ViewOptions::default() });
     }
 
+    /// The console's keys, before its text field sees them: the key left of 1
+    /// opens and closes it, and while open, Up, Down, Tab and Escape are its.
+    fn console_key(&mut self, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput { event, .. } = event else { return false };
+        if event.state != ElementState::Pressed {
+            return false;
+        }
+        if event.physical_key == PhysicalKey::Code(KeyCode::Backquote) {
+            if !event.repeat {
+                self.set_flying(false);
+                self.overlay.toggle_console();
+            }
+            return true;
+        }
+        let key = match &event.logical_key {
+            Key::Named(NamedKey::ArrowUp) => UiKey::Up,
+            Key::Named(NamedKey::ArrowDown) => UiKey::Down,
+            Key::Named(NamedKey::Tab) => UiKey::Tab,
+            Key::Named(NamedKey::Escape) => UiKey::Escape,
+            _ => return false,
+        };
+        self.overlay.console_key(key, Some(&self.game.engine))
+    }
+
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: anyhow::Error) {
         self.error = Some(error);
         event_loop.exit();
@@ -192,6 +221,9 @@ impl ApplicationHandler for App {
         // The overlay sees input first; what it uses, the game does not. While
         // flying the cursor is captured and points at nothing, so the pointer is left out.
         let pointer = matches!(event, WindowEvent::CursorMoved { .. } | WindowEvent::MouseWheel { .. });
+        if self.options.tools && self.console_key(&event) {
+            return;
+        }
         if self.options.tools && !(pointer && self.fly.is_looking()) && self.overlay.handle(&event) {
             return;
         }

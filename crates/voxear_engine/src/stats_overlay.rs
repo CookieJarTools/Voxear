@@ -1,17 +1,23 @@
 //! The stats overlay: frame rate, GPU time and what the renderer drew, in a
 //! panel over the game. F1 shows and hides it in a game window, and
 //! clicking its header folds it away. It is the first thing built with
-//! Voxear UI markup: `ui/StatsOverlay.vui` and `ui/StatsOverlay.vss`.
+//! Voxear UI markup: `ui/StatsOverlay.vui` and `ui/StatsOverlay.vss`. The
+//! console ([`DevConsole`]) shares its UI, so one frame draws both.
 
 use anyhow::Result;
 use voxear_render::Renderer;
-use voxear_ui::{NodeId, Ui, UiFrame};
+use voxear_ui::{Key, NodeId, Ui, UiFrame};
+
+use crate::{
+    Engine,
+    dev_console::{ConsoleAction, DevConsole},
+};
 
 /// How often the numbers change, slow enough to read.
 const REFRESH: f32 = 0.25;
 
-const MARKUP: &str = include_str!("../ui/StatsOverlay.vui");
-const SHEET: &str = include_str!("../ui/StatsOverlay.vss");
+pub(crate) const MARKUP: &str = include_str!("../ui/StatsOverlay.vui");
+pub(crate) const SHEET: &str = include_str!("../ui/StatsOverlay.vss");
 
 /// The labels the numbers go in, by name, in the order [`refresh`] fills them.
 ///
@@ -20,6 +26,7 @@ const VALUES: [&str; 8] = ["fps", "frame", "gpu", "draws", "shadow-draws", "cull
 
 pub struct StatsOverlay {
     ui: Ui,
+    console: DevConsole,
     panel: NodeId,
     header: NodeId,
     values: Vec<NodeId>,
@@ -41,7 +48,32 @@ impl StatsOverlay {
         let (panel, header) = (find("stats"), find("header"));
         let values = VALUES.iter().map(|name| find(name)).collect();
         ui.set_visible(panel, visible);
-        Self { ui, panel, header, values, frames: 0, seconds: 0.0 }
+        let console = DevConsole::new(&mut ui, document);
+        Self { ui, console, panel, header, values, frames: 0, seconds: 0.0 }
+    }
+
+    /// Opens the console, ready to type, or closes it. The stats step aside
+    /// while it is open, as it covers where they show, and come back after.
+    pub fn toggle_console(&mut self) {
+        self.console.toggle(&mut self.ui);
+        self.ui.set_class(self.panel, "under-console", self.console.is_open(&self.ui));
+    }
+
+    pub fn console_open(&self) -> bool {
+        self.console.is_open(&self.ui)
+    }
+
+    /// The console's frame: what was logged, and a line run on Enter.
+    pub fn update_console(&mut self, engine: Option<&mut Engine>) -> Option<ConsoleAction> {
+        self.console.update(&mut self.ui, engine)
+    }
+
+    /// Hands the open console a key; returns whether it took it.
+    pub fn console_key(&mut self, key: Key, engine: Option<&Engine>) -> bool {
+        let took = self.console.key(&mut self.ui, key, engine);
+        // Escape closes it, which gives the stats their place back.
+        self.ui.set_class(self.panel, "under-console", self.console.is_open(&self.ui));
+        took
     }
 
     pub fn is_visible(&self) -> bool {
@@ -160,13 +192,48 @@ mod tests {
         overlay.handle_clicks();
         let folded = overlay.frame(size, 1.0).quads.len();
         assert!(folded < open / 2, "{open} quads open, {folded} folded");
-        assert!(overlay.ui.take_warnings().is_empty(), "the built-in markup and sheet are clean");
+        let warnings = overlay.ui.take_warnings();
+        assert!(warnings.is_empty(), "the built-in markup and sheet are clean: {warnings:?}");
 
         overlay.pointer_move(x + w / 2.0, y + h / 2.0);
         overlay.pointer_button(true);
         overlay.pointer_button(false);
         overlay.handle_clicks();
         assert_eq!(overlay.frame(size, 1.0).quads.len(), open, "and unfolds it again");
+    }
+
+    /// The console open over a frame, with lines in it. Set `VOXEAR_TEST_OUTPUT`
+    /// to a folder to keep the image.
+    #[test]
+    fn the_console_draws_over_the_game() {
+        let Ok(mut renderer) = Renderer::new_offscreen(960, 540, &voxear_render::RendererSettings::default()) else {
+            return eprintln!("skipping: no usable GPU");
+        };
+        let _log =
+            tracing::subscriber::set_default(voxear_core::logging::capturing_only(voxear_core::logging::recent()));
+        let mut overlay = StatsOverlay::new(true);
+        overlay.toggle_console();
+        tracing::info!("Loaded game scripts");
+        tracing::warn!("Spinner B has no leader");
+        overlay.update_console(None);
+        let closed_quads = StatsOverlay::new(false).frame((960, 540), 1.0).quads.len();
+        let quads = overlay.frame((960, 540), 1.0).quads.len();
+        assert!(quads > closed_quads, "the console draws: {quads} quads, {closed_quads} without it");
+        assert!(overlay.ui.take_warnings().is_empty(), "{:?}", overlay.ui.take_warnings());
+        assert!(!overlay.ui.is_visible(overlay.panel) || overlay.ui.has_class(overlay.panel, "under-console"));
+        overlay.draw(&mut renderer, (960, 540), 1.0).unwrap();
+        renderer.render(&voxear_ecs::World::new(), 0.0).unwrap();
+        if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let (width, height, pixels) = renderer.read_pixels().unwrap();
+            image::save_buffer(
+                std::path::Path::new(&dir).join("dev-console.png"),
+                &pixels,
+                width,
+                height,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+        }
     }
 
     #[test]

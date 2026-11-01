@@ -10,7 +10,7 @@ namespace Voxear.Interop
 	/// </summary>
 	internal static unsafe class Bootstrap
 	{
-		public const uint ApiVersion = 17;
+		public const uint ApiVersion = 18;
 
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static int Initialize(NativeApi* native, ManagedApi* managed)
@@ -34,6 +34,8 @@ namespace Voxear.Interop
 			managed->ReloadGameAssembly = &EntryPoints.ReloadGameAssembly;
 			managed->RunSystems = &EntryPoints.RunSystems;
 			managed->AddComponent = &EntryPoints.AddComponent;
+			managed->ConsoleRun = &EntryPoints.ConsoleRun;
+			managed->ConsoleNames = &EntryPoints.ConsoleNames;
 			MainThreadContext.Instance.Install();
 			return 0;
 		}

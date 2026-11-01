@@ -13,7 +13,7 @@ mod runtime;
 mod services;
 
 pub use hostfxr::{DotnetInstall, find_dotnet};
-pub use runtime::{CreatedBehaviour, Reloaded, ScriptHost, ScriptRuntime};
+pub use runtime::{ConsoleName, CreatedBehaviour, Reloaded, ScriptHost, ScriptRuntime};
 pub use services::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
     ScriptServices, ServicesScope, SpawnedPrefab,

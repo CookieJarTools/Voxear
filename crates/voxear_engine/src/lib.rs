@@ -4,6 +4,7 @@
 pub mod build_profile;
 mod content;
 pub mod content_build;
+mod dev_console;
 mod engine;
 mod fly_camera;
 mod game;

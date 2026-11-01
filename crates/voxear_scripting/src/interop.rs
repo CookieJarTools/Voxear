@@ -36,7 +36,7 @@ use crate::services::{
     SpawnedPrefab, with_services,
 };
 
-pub(crate) const API_VERSION: u32 = 17;
+pub(crate) const API_VERSION: u32 = 18;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -180,6 +180,13 @@ pub(crate) struct ManagedApi {
     /// Gives an entity a C# component by type name, with field values as
     /// JSON (or null): 0 when it did, -1 when it could not.
     pub add_component: Option<AddComponent>,
+    /// Runs a line typed in a development build's console, printing what it
+    /// did as log lines: 0 when it ran, 1 when nothing has its first word as
+    /// a name, 2 when it failed.
+    pub console_run: Option<unsafe extern "C" fn(line: *const u8, len: i32) -> i32>,
+    /// The console's commands and variables as "name\tusage\thelp" lines,
+    /// written when they fit, and their length either way.
+    pub console_names: Option<unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32>,
 }
 
 #[repr(C)]

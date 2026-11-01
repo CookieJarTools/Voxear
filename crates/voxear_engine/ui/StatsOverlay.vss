@@ -73,3 +73,70 @@
 .accent {
     color: var(--accent);
 }
+
+/* The console: over the top of the game, the log as it comes, and a prompt. */
+.console {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    height: 42%;
+    padding: 8px 12px;
+    gap: 6px;
+    background-color: #111216;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.console-lines {
+    flex-grow: 1;
+}
+
+.console-line {
+    font-family: mono;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.console-line.warning {
+    color: #f2c55c;
+}
+
+.console-line.error {
+    color: #ff6b6b;
+}
+
+.console-line.typed {
+    color: var(--accent);
+}
+
+.console-prompt {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0px 8px;
+    border-radius: 6px;
+    background-color: #0a0b0e;
+    border: 1px solid var(--edge);
+}
+
+.console-caret {
+    font-family: mono;
+    color: var(--accent);
+}
+
+/* The prompt is the box; the field in it has none of its own. */
+.console-input, .console-input:hover, .console-input:focus {
+    flex-grow: 1;
+    padding: 0px;
+    background-color: #00000000;
+    border: 0px solid #00000000;
+    font-family: mono;
+}
+
+/* While the console is open, it covers where the stats show. */
+.under-console {
+    display: none;
+}
+

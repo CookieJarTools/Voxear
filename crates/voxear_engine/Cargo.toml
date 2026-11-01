@@ -27,5 +27,6 @@ raw-window-handle.workspace = true
 voxear_assets.workspace = true
 
 [dev-dependencies]
+image.workspace = true
 tempfile.workspace = true
 toml.workspace = true

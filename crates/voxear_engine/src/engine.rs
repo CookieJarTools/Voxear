@@ -107,6 +107,18 @@ impl Engine {
         ran
     }
 
+    /// Runs a line typed in a development build's console against the
+    /// scripts (see [`ScriptRuntime::run_console`]). False when nothing has
+    /// its first word as a name, or there are no scripts.
+    pub fn run_console(&mut self, line: &str) -> anyhow::Result<bool> {
+        let Some(scripts) = self.scripts.as_mut() else { return Ok(false) };
+        let ran = scripts.run_console(&mut self.world, line);
+        let doomed = scripts.take_obj_destroys();
+        self.destroy_objs(&doomed);
+        self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+        ran
+    }
+
     /// Asks the scripts to change level through `Level.LoadAsync`, so its
     /// events fire. False without scripts.
     pub fn switch_level_through_scripts(&mut self, level: &str) -> bool {

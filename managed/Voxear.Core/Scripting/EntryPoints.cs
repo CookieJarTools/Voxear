@@ -153,6 +153,53 @@ namespace Voxear.Scripting
 			}
 		}
 
+		/// <summary>
+		/// Runs a line typed in a development build's console, printing what it did as log lines: 0 when it ran, 1 when
+		/// nothing has its first word as a name, and 2 when it failed, which is logged.
+		/// </summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int ConsoleRun(byte* line, int length)
+		{
+			try
+			{
+				var printed = DevConsole.Run(Native.Utf8(line, length));
+				if (printed == null)
+				{
+					return 1;
+				}
+				foreach (var (level, text) in printed)
+				{
+					Native.Log(level, text, string.Empty, 0);
+				}
+				return 0;
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+				return 2;
+			}
+		}
+
+		/// <summary>The console's commands and variables, as DevConsole.Names writes them, when they fit; their length either way.</summary>
+		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+		public static int ConsoleNames(byte* buffer, int capacity)
+		{
+			try
+			{
+				var bytes = Encoding.UTF8.GetBytes(DevConsole.Names(GameScripts.Assemblies));
+				if (bytes.Length <= capacity)
+				{
+					bytes.CopyTo(new Span<byte>(buffer, capacity));
+				}
+				return bytes.Length;
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+				return -1;
+			}
+		}
+
 		/// <summary>Runs the game's systems of one stage, each guarded on its own, so one that throws stops no other.</summary>
 		[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 		public static void RunSystems(int stage)

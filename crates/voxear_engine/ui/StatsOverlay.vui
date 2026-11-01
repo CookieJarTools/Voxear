@@ -19,4 +19,12 @@
             <Panel class="row"><Label>Exposure</Label><Label name="exposure" class="value">–</Label></Panel>
         </Panel>
     </Panel>
+    <!-- The console, on the key left of 1: the log, and a line to run commands from. -->
+    <Panel name="console" class="console">
+        <ListView name="console-lines" class="console-lines" item-height="18" />
+        <Panel class="console-prompt">
+            <Label class="console-caret">›</Label>
+            <TextField name="console-input" class="console-input" placeholder="A command or variable, or help" />
+        </Panel>
+    </Panel>
 </vui>

@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     fmt::Write,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     thread::ThreadId,
@@ -16,16 +16,25 @@ use tracing_subscriber::{EnvFilter, Layer, layer::Context, prelude::*};
 /// library, whose warnings are mostly desktop-environment noise.
 const DEFAULT_FILTER: &str = "info,winit=error,sctk=error";
 
-/// Installs the global log subscriber. `VOXEAR_LOG` (or `RUST_LOG`) overrides
+/// Installs the global log subscriber, printing to the terminal and keeping
+/// the latest lines in [`recent`]. `VOXEAR_LOG` (or `RUST_LOG`) overrides
 /// the default filter, e.g. `VOXEAR_LOG=voxear_rhi=debug`.
 pub fn init() {
     let filter =
         std::env::var("VOXEAR_LOG").or_else(|_| std::env::var("RUST_LOG")).unwrap_or_else(|_| DEFAULT_FILTER.into());
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(filter))
-        .with_target(false)
-        .fmt_fields(printed_fields())
+    let terminal = tracing_subscriber::fmt::layer().with_target(false).fmt_fields(printed_fields());
+    let _ = tracing_subscriber::registry()
+        .with(EnvFilter::new(filter))
+        .with(terminal)
+        .with(Capture::new(recent()))
         .try_init();
+}
+
+/// The latest lines logged since [`init`] or [`init_with_file`], for a
+/// game's own console to show.
+pub fn recent() -> LogCapture {
+    static RECENT: OnceLock<LogCapture> = OnceLock::new();
+    RECENT.get_or_init(LogCapture::default).clone()
 }
 
 /// Installs the global log subscriber as [`init`] does, writing to stderr,
@@ -44,7 +53,7 @@ pub fn init_stderr() {
 
 /// Installs the global log subscriber as [`init`] does, and also writes
 /// every line to `file`, without the terminal's colours, as a built game
-/// keeps its log.
+/// keeps its log. The latest lines are in [`recent`] too.
 pub fn init_with_file(file: std::fs::File) {
     let filter =
         std::env::var("VOXEAR_LOG").or_else(|_| std::env::var("RUST_LOG")).unwrap_or_else(|_| DEFAULT_FILTER.into());
@@ -54,7 +63,12 @@ pub fn init_with_file(file: std::fs::File) {
         .with_ansi(false)
         .fmt_fields(printed_fields())
         .with_writer(std::sync::Mutex::new(file));
-    let _ = tracing_subscriber::registry().with(EnvFilter::new(filter)).with(terminal).with(kept).try_init();
+    let _ = tracing_subscriber::registry()
+        .with(EnvFilter::new(filter))
+        .with(terminal)
+        .with(kept)
+        .with(Capture::new(recent()))
+        .try_init();
 }
 
 /// What the terminal shows of a line's fields: the message and anything

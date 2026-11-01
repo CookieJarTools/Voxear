@@ -20,6 +20,16 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 
 type Initialize = unsafe extern "C" fn(*const NativeApi, *mut ManagedApi) -> i32;
 
+/// A command or variable a development build's console takes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConsoleName {
+    pub name: String,
+    /// How it is typed: `SpawnWave count [mode]`, or `God = False`.
+    pub usage: String,
+    /// What it is for.
+    pub help: String,
+}
+
 pub struct CreatedBehaviour {
     pub registration: Registration,
     /// The type implements `IInstance`.
@@ -80,7 +90,9 @@ impl ScriptRuntime {
                 && managed.content_roots.is_some()
                 && managed.reload_game_assembly.is_some()
                 && managed.run_systems.is_some()
-                && managed.add_component.is_some(),
+                && managed.add_component.is_some()
+                && managed.console_run.is_some()
+                && managed.console_names.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -170,6 +182,44 @@ impl ScriptRuntime {
         ensure!(status != 1, "{type_name} has no [Command] method {method}");
         ensure!(status == 0, "{type_name}.{method} threw; the Console has what it said");
         Ok(())
+    }
+
+    /// Runs a line typed in a development build's console: a `[Command]`
+    /// method by name with its arguments, or a `[ConsoleVariable]`, read or
+    /// set. What it did is logged. False when nothing has its first word as
+    /// a name.
+    pub fn run_console(&mut self, world: &mut World, line: &str) -> Result<bool> {
+        let run = self.managed.console_run.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        let status = unsafe { run(line.as_ptr(), line.len() as i32) };
+        ensure!(status != 2, "`{line}` failed; the log has what went wrong");
+        Ok(status == 0)
+    }
+
+    /// The console's commands and variables: each one's name, how it is
+    /// typed, and what it is for.
+    pub fn console_names(&self) -> Vec<ConsoleName> {
+        let call = self.managed.console_names.expect("validated at start");
+        let mut buffer = vec![0u8; 4096];
+        loop {
+            let length = unsafe { call(buffer.as_mut_ptr(), buffer.len() as i32) };
+            if length < 0 {
+                return Vec::new();
+            }
+            if length as usize <= buffer.len() {
+                buffer.truncate(length as usize);
+                break;
+            }
+            buffer.resize(length as usize, 0);
+        }
+        String::from_utf8_lossy(&buffer)
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.splitn(3, '\t');
+                let (name, usage, help) = (parts.next()?, parts.next()?, parts.next().unwrap_or(""));
+                Some(ConsoleName { name: name.into(), usage: usage.into(), help: help.into() })
+            })
+            .collect()
     }
 
     /// Every `[ContentRoot]` pattern in the game scripts, with the type or

@@ -1807,10 +1807,15 @@ still reads no assembly; a source generator can take its place later without the
   list a page at a time (`NumberOfItemsPerPage`), with buttons to turn the page, and labels each item by its index
   (`ShowIndexLabels`) or not at all. `[ColorPalette("#e63946", "#457b9d")]` puts swatches under a `Color` field,
   and a click picks one.
+- **The build's check:** before its content, a build checks every scene and prefab for a `[Required]` field left
+  empty and a value a `[ValidateInput]` method says is wrong, asking the method through the scripts it has just
+  started (`field_checks.rs`). Each problem is a warning in the build's log, which the Build window shows, naming
+  the file, the Obj and what is wrong, and the report keeps them; the build goes on. A prefab's instances in a
+  scene are left to the prefab's own file.
 
 Still to come: buttons and callbacks while playing, on the running behaviour, `[ShowInInspector]`, dragging a
 list's items to reorder them, `[AssetsOnly]` and `[SceneObjectsOnly]` (a Voxear field takes one or the other
-already), the build's check of every scene and prefab, the source generator and analyzer, and custom drawers.
+already), the source generator and analyzer, and custom drawers.
 
 **Advanced.** Custom drawers in C#, built with Voxear UI: `ValueDrawer<T>` for a type, and
 `AttributeDrawer<TAttribute>` for your own attributes. Drawers chain as Odin's do, with each decorator wrapping the

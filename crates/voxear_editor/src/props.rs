@@ -557,28 +557,7 @@ fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// A field's name as a label, as Unity shows it: `degreesPerSecond` is
-/// "Degrees Per Second", and `rare_chance` "Rare Chance".
-pub fn nice_name(name: &str) -> String {
-    let mut words = String::new();
-    let mut previous: Option<char> = None;
-    for c in name.trim_start_matches('_').chars() {
-        if c == '_' {
-            previous = Some(' ');
-            continue;
-        }
-        let starts_word = previous.is_some_and(|p| {
-            p == ' ' || (c.is_uppercase() && p.is_lowercase()) || (c.is_ascii_digit() && !p.is_ascii_digit())
-        });
-        if starts_word {
-            words.push(' ');
-        }
-        let first = words.is_empty() || words.ends_with(' ');
-        words.extend(if first { c.to_uppercase().collect::<Vec<_>>() } else { vec![c] });
-        previous = Some(c);
-    }
-    words
-}
+pub use voxear_engine::script_types::nice_name;
 
 fn round3(value: f32) -> f32 {
     (value * 1000.0).round() / 1000.0

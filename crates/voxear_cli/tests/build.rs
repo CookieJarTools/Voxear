@@ -35,6 +35,13 @@ fn a_profile_builds_a_player_that_runs_the_game() {
     }
     let dir = hello_copy();
     build_profile::write_default_profiles(dir.path()).unwrap();
+    // A gate whose door is required, and left empty in the scene, for the build's check to find.
+    let gate = "using Voxear;\n\nnamespace Hello\n{\n\tpublic sealed class Gate : Behaviour\n\t{\n\t\t[Required]\n\t\tpublic Obj Door;\n\t}\n}\n";
+    std::fs::write(dir.path().join("Scripts/Gate.cs"), gate).unwrap();
+    let scene = dir.path().join("Scenes/Day.scene");
+    let text = std::fs::read_to_string(&scene).unwrap();
+    std::fs::write(&scene, format!("{text}\n[[obj]]\nid = 99\nname = \"Gate\"\nbehaviours = [\"Hello.Gate\"]\n"))
+        .unwrap();
     // A demo: Release's settings, with one level, its own name, the development tools, and smaller bundles.
     let base = if cfg!(windows) { "Windows Release" } else { "Linux Release" };
     let demo = format!(
@@ -70,6 +77,13 @@ fn a_profile_builds_a_player_that_runs_the_game() {
     assert_eq!(report["levels"], serde_json::json!(["Levels/Day.level"]), "only the level the profile ships");
     assert_eq!(report["development"], true);
     assert_eq!(report["compression"], "zstd", "the profile's compression, over the project's");
+    let problems = report["problems"].as_array().unwrap();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0]["file"], "Scenes/Day.scene");
+    assert_eq!(
+        (problems[0]["obj"].as_str(), problems[0]["message"].as_str()),
+        (Some("Gate"), Some("Door is required"))
+    );
 
     // The game keeps its log in the user's data folder, here a throwaway one, the run before's beside it.
     let data = tempfile::tempdir().unwrap();

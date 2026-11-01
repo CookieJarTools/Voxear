@@ -11,7 +11,10 @@
 //!    `Data/player.toml`.
 //!
 //! Then `build-report.json` records what was built and how long each stage
-//! took.
+//! took. Before content, every scene and prefab is checked for `[Required]`
+//! fields left empty and values `[ValidateInput]` says are wrong (see
+//! `field_checks`); what it finds is logged as warnings and kept in the
+//! report, and the build goes on.
 
 use std::{
     path::{Path, PathBuf},
@@ -28,9 +31,11 @@ use crate::{
     build_profile::{self, BuildProfile},
     content_build::{self, CodeRoot, glob},
     core_assembly, engine_version,
+    field_checks::{self, FieldProblem},
     player::{BUNDLES_FOLDER, DATA_FOLDER, MANAGED_FOLDER, PLAYER_FORMAT, PlayerSettings, file_name},
-    scripts,
+    script_types, scripts,
 };
+use voxear_scripting::{InspectorAnswer, InspectorAsk};
 
 /// A program beside this one, such as `vox` beside the editor or the player
 /// beside `vox`. A test runs from `deps/`, one folder down from them.
@@ -82,6 +87,8 @@ pub struct Report {
     pub size: u64,
     pub stages: Vec<StageTime>,
     pub seconds: f64,
+    /// What the check of every scene and prefab found.
+    pub problems: Vec<FieldProblem>,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,15 +137,23 @@ pub fn build(
     // Scripts: built, then started, for the content roots they declare.
     let stage = Instant::now();
     events(BuildEvent::Stage { stage: "scripts", index: 0 })?;
-    let code_roots = match project.scripts_project() {
+    let (code_roots, problems) = match project.scripts_project() {
         Some(_) => {
             scripts::build_for(project, configuration, &profile.scripting.defines)?;
-            let runtime = scripts::start_for(project, configuration)?.context("the scripts did not start")?;
+            let mut runtime = scripts::start_for(project, configuration)?.context("the scripts did not start")?;
             let roots = runtime.content_roots()?;
-            roots.into_iter().map(|(pattern, source)| CodeRoot { pattern, source }).collect()
+            let roots = roots.into_iter().map(|(pattern, source)| CodeRoot { pattern, source }).collect();
+            (roots, check_fields(project, &mut runtime)?)
         }
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
+    for problem in &problems {
+        tracing::warn!("{problem}");
+    }
+    if !problems.is_empty() {
+        let found = if problems.len() == 1 { "1 problem".to_string() } else { format!("{} problems", problems.len()) };
+        tracing::warn!("{found} in the scenes and prefabs; the build goes on");
+    }
     timed("scripts", stage);
 
     // Content: what the profile's levels need.
@@ -204,12 +219,33 @@ pub fn build(
         size: folder_size(&output),
         stages,
         seconds: seconds(started),
+        problems,
         output: output.strip_prefix(&project.root).unwrap_or(&output).to_path_buf(),
     };
     let path = output.join(REPORT_FILE);
     std::fs::write(&path, serde_json::to_string_pretty(&report)?)
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(report)
+}
+
+/// Checks every scene and prefab against the scripts' description, asking
+/// `[ValidateInput]` methods through the scripts just started, on a copy of
+/// each behaviour bound to no Obj.
+fn check_fields(project: &Project, runtime: &mut voxear_scripting::ScriptRuntime) -> Result<Vec<FieldProblem>> {
+    let types = match script_types::cached(project).filter(|_| !script_types::is_stale(project)) {
+        Some(types) => types,
+        None => script_types::describe(project)?,
+    };
+    let mut world = voxear_ecs::World::new();
+    let nobody = world.spawn(());
+    let mut validate = |spec: &voxear_scene::BehaviourSpec, field: &str, method: &str| {
+        let ask = InspectorAsk::Validate { method, field };
+        match runtime.inspector(&mut world, nobody, spec, ask) {
+            Ok(InspectorAnswer::Valid(false, said)) => Some(said),
+            _ => None,
+        }
+    };
+    field_checks::check(&project.root, &types, &mut validate)
 }
 
 /// The project's content settings with the levels the profile leaves out

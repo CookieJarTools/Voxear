@@ -5,6 +5,7 @@ pub mod build_profile;
 mod content;
 pub mod content_build;
 pub mod debug_texts;
+pub mod field_checks;
 mod dev_console;
 mod engine;
 mod fly_camera;

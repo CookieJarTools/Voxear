@@ -356,8 +356,9 @@ Still to do in M3:
     edit mode, on a copy of it made from the scene's values
   - [x] list and table drawers, and colour palettes: `[TableList]`, `[ListDrawerSettings]` with pages and index
     labels, and `[ColorPalette]`
-  - [ ] dragging a list's items to reorder them, the build's check of every scene, the source generator and
-    analyzer, and custom drawers
+  - [x] the build's check of every scene and prefab: `[Required]` and `[ValidateInput]` problems listed as the
+    build's warnings, and kept in its report
+  - [ ] dragging a list's items to reorder them, the source generator and analyzer, and custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped

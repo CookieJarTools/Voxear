@@ -257,7 +257,8 @@ struct DebugLine
     float3 from;
     uint flags;
     float3 to;
-    float pad;
+    // Pixels wide, or 0 for the pass's usual width.
+    float width;
     float4 color;
 };
 

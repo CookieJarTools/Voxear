@@ -2834,9 +2834,16 @@ them in a running game.
   - A shape lasts its duration in game time, counted down at the start of each game frame, so a paused game keeps
     showing what was drawn; with none, it shows for the frame it was drawn in. The editor counts down itself while not
     playing, and clears it all when play stops.
-  - The renderer draws the lines after post-processing, so their colours are exactly as asked, as quads a pixel and a
-    half wide with soft edges (`debug_pass.rs`, `debug.slang`). It reads the scene's depth to hide them behind the
-    scene, unless drawn on top. Texts are labels at their points over the 3D view, as the camera sees them: over the
+  - **`Draw`** *(implemented)*, the full drawing API, callable from anywhere: lines, rays, arrows, polylines,
+    crosses, circles, arcs, wire boxes, spheres, capsules, cylinders and cones, frustums, beziers, grids and labels,
+    each with an optional colour. Nestable `using` scopes set the colour, a matrix (`InLocalSpace(obj)`), the width
+    in pixels, a duration, on top, and `InGame()`, whose lines are kept in release builds, where debug draw is
+    otherwise off (`LineStyle::in_game`). The scopes are per thread. Shapes are made of lines in C#, each sent
+    through the same native call as `Debug.Line`, whose flags carry the width in sixteenths of a pixel (bits 8 to
+    23), so the native API did not change.
+  - The renderer draws the lines after post-processing, so their colours are exactly as asked, as quads with soft
+    edges, each as wide as it asks or a pixel and a half (`debug_pass.rs`, `debug.slang`). It reads the scene's depth
+    to dim them to 30% where the scene is in front, unless drawn on top. Texts are labels at their points over the 3D view, as the camera sees them: over the
     editor's Scene and Game views, and over a player's window, under its stats and console (`debug_texts.rs` in
     voxear_engine, which both share).
   - Calls are `[Conditional("DEBUG")]`, so scripts built for a release leave them out, and a release build of the

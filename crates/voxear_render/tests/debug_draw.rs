@@ -47,8 +47,14 @@ fn changed(before: &[u8], after: &[u8], channel: usize) -> (usize, usize) {
     (left, right)
 }
 
+/// Pixels in the left half that changed at all, however faintly.
+fn touched_left(before: &[u8], after: &[u8]) -> usize {
+    let pixels = before.chunks(4).zip(after.chunks(4)).enumerate();
+    pixels.filter(|(i, (was, now))| (*i as u32 % SIZE.0) < SIZE.0 / 2 && was != now).count()
+}
+
 #[test]
-fn lines_hide_behind_the_scene_unless_drawn_on_top() {
+fn lines_dim_behind_the_scene_unless_drawn_on_top() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else {
         return eprintln!("skipping: no usable GPU");
     };
@@ -57,13 +63,25 @@ fn lines_hide_behind_the_scene_unless_drawn_on_top() {
     debug_draw::clear();
     let plain = frame(&mut renderer, &world, &mut time);
 
-    // Red behind the wall, hidden; red in plain view on the right, shown.
+    // Red behind the wall, dimmed; red in plain view on the right, shown in full.
     debug_draw::line(Vec3::new(-6.0, 1.0, 6.0), Vec3::new(-2.0, 1.0, 6.0), [1.0, 0.0, 0.0, 1.0], 10.0, false);
     debug_draw::line(Vec3::new(2.0, 1.0, 0.0), Vec3::new(6.0, 1.0, 0.0), [1.0, 0.0, 0.0, 1.0], 10.0, false);
     let drawn = frame(&mut renderer, &world, &mut time);
     let (left, right) = changed(&plain, &drawn, 0);
-    assert_eq!(left, 0, "the wall hides the line behind it");
+    assert_eq!(left, 0, "the wall dims the line behind it, so it is never strong there");
+    assert!(touched_left(&plain, &drawn) > 50, "but it still shows faintly through");
     assert!(right > 100, "the line in plain view shows: {right} pixels");
+
+    // A line asking for 6 pixels covers more than one of the usual width.
+    debug_draw::clear();
+    debug_draw::line(Vec3::new(2.0, 1.0, 0.0), Vec3::new(6.0, 1.0, 0.0), [1.0, 0.0, 0.0, 1.0], 10.0, false);
+    let thin = changed(&plain, &frame(&mut renderer, &world, &mut time), 0).1;
+    debug_draw::clear();
+    let wide = debug_draw::LineStyle { width: 6.0, ..Default::default() };
+    debug_draw::line(Vec3::new(2.0, 1.0, 0.0), Vec3::new(6.0, 1.0, 0.0), [1.0, 0.0, 0.0, 1.0], 10.0, wide);
+    let thick = changed(&plain, &frame(&mut renderer, &world, &mut time), 0).1;
+    assert!(thick > thin * 2, "a wider line covers more: {thick} pixels against {thin}");
+    debug_draw::clear();
 
     // Green behind the wall, on top: it shows through.
     debug_draw::line(Vec3::new(-6.0, 2.0, 6.0), Vec3::new(-2.0, 2.0, 6.0), [0.0, 1.0, 0.0, 1.0], 10.0, true);

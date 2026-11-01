@@ -460,27 +460,28 @@ Still to do in M3:
     View)
   - [x] handles for two axes at once: move's and scale's squares between each two axes, rotate's ring around the
     view and turning freely inside the rings
-  - [ ] **A gizmo API for game code** (proposed; to build once agreed). Unity splits this into Gizmos, Handles and
-    Debug, each with its own shapes, and gizmos are editor-only and one pixel thin. Voxear would have one set:
-    - one drawing API callable from anywhere (Update, systems, worker threads), keeping today's `Debug.Line`,
-      `Box`, `Sphere`, `Arrow` and `Text` and adding the rest: polyline, ray, capsule, cylinder, cone, disc, arc,
-      frustum, bezier, grid, wire mesh and solid shapes; thick anti-aliased lines in pixels or metres, dimmed
-      rather than hidden behind geometry, or always on top when asked; labels in 3D, which keep their size on
-      screen, and in a corner of the screen; durations; batched so thousands of shapes cost a few draws
-    - nestable scopes instead of global state: `using (Draw.Color(Color.Red))`, `Draw.InLocalSpace(this)`,
-      `Draw.Width(3)`, `Draw.Duration(2)`
-    - `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`
+  - [ ] **A gizmo API for game code** (agreed, being built). Unity splits this into Gizmos, Handles and Debug, each
+    with its own shapes, and gizmos are editor-only and one pixel thin. Voxear has one set:
+    - [x] one drawing API callable from anywhere (Update, systems, worker threads), `Draw`, beside today's
+      `Debug.Line`, `Box`, `Sphere`, `Arrow` and `Text`: polyline, ray, cross, circle, arc, capsule, cylinder,
+      cone, frustum, bezier, grid and labels; lines of any width in pixels, dimmed rather than hidden behind
+      geometry, or on top when asked; durations; all lines in one draw
+    - [ ] still to come for drawing: solid shapes, wire meshes, widths in metres, and labels in a corner of the
+      screen
+    - [x] nestable scopes instead of global state: `using (Draw.Color(Color.Red))`, `Draw.InLocalSpace(obj)`,
+      `Draw.Width(3)`, `Draw.Duration(2)`, `Draw.OnTop()` and `Draw.InGame()`
+    - [ ] `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`
       and `IsHovered`; its gizmos are clickable and select their Obj; a type's gizmos can be hidden from the
       Gizmos menu, and `[GizmoIcon]` gives it an icon by typed reference
-    - attribute handles that edit fields in the Scene view with no code, undoable, with prefab overrides and
+    - [ ] attribute handles that edit fields in the Scene view with no code, undoable, with prefab overrides and
       several Objs selected: `[PositionHandle]` (local or world, every item of a list), `[RadiusHandle]`,
       `[BoundsHandle]`, `[ArcHandle]`, `[DirectionHandle]` and `[SliderHandle]`; the move, rotate and scale
       handles on points inside an Obj, such as a path's points, picked by clicking them
-    - for custom tools, handles that return the new value, with undo and change callbacks built in:
+    - [ ] for custom tools, handles that return the new value, with undo and change callbacks built in:
       `target = Handles.Position(target)`, `Handles.Radius`, `Handles.Slider`, `Handles.Disc`,
       `Handles.FreeMove` and `Handles.Button`, in `DrawGizmos` while selected
-    - in development builds, drawing shows in the game; release builds leave it out unless asked to keep it
-    - later: physics queries drawn with their hits, and a recorder to scrub back through what was drawn
+    - [x] in development builds, drawing shows in the game; release builds leave it out unless asked to keep it
+    - [ ] later: physics queries drawn with their hits, and a recorder to scrub back through what was drawn
   - [ ] several Hierarchies and Projects, and windows a game's code can open more than once
   - [ ] windows dragged out of the editor into windows of the desktop's own
 

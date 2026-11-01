@@ -247,7 +247,8 @@ pub struct GpuDebugLine {
     /// `DEBUG_ON_TOP`.
     pub flags: u32,
     pub to: [f32; 3],
-    pub _pad: f32,
+    /// Pixels wide, or 0 for the pass's usual width.
+    pub width: f32,
     pub color: [f32; 4],
 }
 

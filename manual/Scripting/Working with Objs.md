@@ -108,6 +108,6 @@ Debug.Text(Obj.WorldPosition, "Here");
 
 Give a number of seconds after the colour to keep a drawing up for longer. `Arrow` and `Box` work the same way.
 
-Drawings show in the editor and in development builds. Release builds leave them out.
+Drawings show in the editor and in development builds. Release builds leave them out. For more shapes, thicker lines and drawing in an Obj's own space, see [[Drawing in the Scene]].
 
 Next: [[Fields in the Inspector]].

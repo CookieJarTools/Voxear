@@ -8,9 +8,9 @@ namespace Voxear
 	/// <summary>
 	/// Draws lines, shapes and text in the 3D view while the game runs, in the editor and in development builds, for as
 	/// long as asked, as Unity's Debug.DrawLine: <c>Debug.Line(Obj.WorldPosition, target, Color.Green)</c>. A duration
-	/// of zero shows for one frame, so code that draws each frame keeps its drawing up to date. Lines are hidden
-	/// behind the scene unless drawn on top. Calls are compiled out of scripts built without DEBUG, as a release build's
-	/// are, so they cost a release nothing.
+	/// of zero shows for one frame, so code that draws each frame keeps its drawing up to date. Lines are dimmed
+	/// where the scene is in front of them unless drawn on top. Calls are compiled out of scripts built without DEBUG, as
+	/// a release build's are, so they cost a release nothing. Draw has more shapes, scopes and line widths.
 	/// </summary>
 	public static unsafe class Debug
 	{

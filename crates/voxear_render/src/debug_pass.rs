@@ -1,6 +1,7 @@
 //! Debug draw over the finished frame: the lines `voxear_core::debug_draw`
-//! holds, from a per-frame buffer, a few pixels wide, hidden behind the
-//! scene unless drawn on top. Drawn after post-processing, so their colours
+//! holds, from a per-frame buffer, each as wide as it asks or a pixel and a
+//! half, and dimmed where the scene is in front of it unless drawn on top,
+//! so it stays readable without hiding what is in front. Drawn after post-processing, so their colours
 //! are exactly as asked, and before the UI. The shader is
 //! `shaders/debug.slang`.
 
@@ -39,7 +40,7 @@ pub(crate) fn record(
             from: line.from.to_array(),
             flags: if line.on_top { DEBUG_ON_TOP } else { 0 },
             to: line.to.to_array(),
-            _pad: 0.0,
+            width: line.width,
             color: line.color,
         })
         .collect();

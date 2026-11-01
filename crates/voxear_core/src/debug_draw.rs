@@ -12,9 +12,11 @@
 //! duration in game time: [`advance`] counts it down at the start of each
 //! game frame, so a paused game keeps showing what was drawn, and a shape
 //! with no duration shows for the one frame it was drawn in. The renderer
-//! draws [`lines`] after post-processing, hidden behind the scene unless
-//! drawn on top; [`texts`] are left to the UI, which has the fonts.
-//! Builds for players turn it off with [`set_enabled`].
+//! draws [`lines`] after post-processing, dimmed where the scene is in front
+//! of them unless drawn on top, each as wide as its [`LineStyle`] asks;
+//! [`texts`] are left to the UI, which has the fonts. Release builds for
+//! players turn it off with [`set_enabled`], all but the lines marked as
+//! part of the game.
 
 use std::sync::{
     Mutex, MutexGuard,
@@ -45,8 +47,28 @@ pub struct Line {
     pub from: Vec3,
     pub to: Vec3,
     pub color: [f32; 4],
-    /// Drawn over the scene rather than hidden behind it.
+    /// Drawn over the scene rather than dimmed behind it.
     pub on_top: bool,
+    /// Pixels wide, or 0 for the usual width.
+    pub width: f32,
+}
+
+/// How a shape's lines are drawn. `false` and `true` stand for the usual
+/// style, behind or on top.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LineStyle {
+    /// Drawn over the scene, rather than dimmed where the scene is in front.
+    pub on_top: bool,
+    /// Pixels wide, or 0 for the usual width.
+    pub width: f32,
+    /// Part of the game, kept while debug draw is off, as in a release build.
+    pub in_game: bool,
+}
+
+impl From<bool> for LineStyle {
+    fn from(on_top: bool) -> Self {
+        Self { on_top, ..Self::default() }
+    }
 }
 
 /// Text at a point in the world, its colour sRGB with alpha.
@@ -83,13 +105,13 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-pub fn line(from: Vec3, to: Vec3, color: [f32; 4], duration: f32, on_top: bool) {
-    add_lines([(from, to)], color, duration, on_top);
+pub fn line(from: Vec3, to: Vec3, color: [f32; 4], duration: f32, style: impl Into<LineStyle>) {
+    add_lines([(from, to)], color, duration, style.into());
 }
 
 /// An arrow from `from` to `to`, its head a quarter of its length, at most
 /// half a metre.
-pub fn arrow(from: Vec3, to: Vec3, color: [f32; 4], duration: f32, on_top: bool) {
+pub fn arrow(from: Vec3, to: Vec3, color: [f32; 4], duration: f32, style: impl Into<LineStyle>) {
     let direction = to - from;
     let length = direction.length();
     if length <= f32::EPSILON {
@@ -101,12 +123,19 @@ pub fn arrow(from: Vec3, to: Vec3, color: [f32; 4], duration: f32, on_top: bool)
     let head = (length * 0.25).min(0.5);
     let back = to - forward * head;
     let barbs = [side, -side, up, -up].map(|d| (to, back + d * head * 0.4));
-    add_lines(std::iter::once((from, to)).chain(barbs), color, duration, on_top);
+    add_lines(std::iter::once((from, to)).chain(barbs), color, duration, style.into());
 }
 
 /// A box's twelve edges, `half_size` from its centre on each axis, turned by
 /// `rotation`.
-pub fn wire_box(center: Vec3, half_size: Vec3, rotation: Quat, color: [f32; 4], duration: f32, on_top: bool) {
+pub fn wire_box(
+    center: Vec3,
+    half_size: Vec3,
+    rotation: Quat,
+    color: [f32; 4],
+    duration: f32,
+    style: impl Into<LineStyle>,
+) {
     let corner = |i: usize| {
         let sign = Vec3::new(
             if i & 1 == 0 { -1.0 } else { 1.0 },
@@ -117,18 +146,18 @@ pub fn wire_box(center: Vec3, half_size: Vec3, rotation: Quat, color: [f32; 4], 
     };
     // Corners that differ in one bit share an edge.
     let edges = (0..8).flat_map(|a| [1, 2, 4].map(move |bit| (a, a ^ bit))).filter(|(a, b)| a < b);
-    add_lines(edges.map(|(a, b)| (corner(a), corner(b))), color, duration, on_top);
+    add_lines(edges.map(|(a, b)| (corner(a), corner(b))), color, duration, style.into());
 }
 
 /// A sphere as three circles, one around each axis.
-pub fn sphere(center: Vec3, radius: f32, color: [f32; 4], duration: f32, on_top: bool) {
+pub fn sphere(center: Vec3, radius: f32, color: [f32; 4], duration: f32, style: impl Into<LineStyle>) {
     let axes = [(Vec3::X, Vec3::Y), (Vec3::Y, Vec3::Z), (Vec3::Z, Vec3::X)];
     let point = |(u, v): (Vec3, Vec3), i: usize| {
         let angle = i as f32 / CIRCLE_SEGMENTS as f32 * std::f32::consts::TAU;
         center + (u * angle.cos() + v * angle.sin()) * radius
     };
     let segments = axes.into_iter().flat_map(|axes| (0..CIRCLE_SEGMENTS).map(move |i| (axes, i)));
-    add_lines(segments.map(|(axes, i)| (point(axes, i), point(axes, i + 1))), color, duration, on_top);
+    add_lines(segments.map(|(axes, i)| (point(axes, i), point(axes, i + 1))), color, duration, style.into());
 }
 
 /// Text at a point in the world, facing the camera at a fixed size.
@@ -176,8 +205,14 @@ pub fn clear() {
     shapes.texts.clear();
 }
 
-fn add_lines(segments: impl IntoIterator<Item = (Vec3, Vec3)>, color: [f32; 4], duration: f32, on_top: bool) {
-    if !enabled() {
+/// Lines from each segment's start to its end, as `style` says: what the
+/// shapes above and C#'s `Draw` are made of.
+pub fn segments(segments: impl IntoIterator<Item = (Vec3, Vec3)>, color: [f32; 4], duration: f32, style: LineStyle) {
+    add_lines(segments, color, duration, style);
+}
+
+fn add_lines(segments: impl IntoIterator<Item = (Vec3, Vec3)>, color: [f32; 4], duration: f32, style: LineStyle) {
+    if !enabled() && !style.in_game {
         return;
     }
     let mut shapes = shapes();
@@ -189,7 +224,7 @@ fn add_lines(segments: impl IntoIterator<Item = (Vec3, Vec3)>, color: [f32; 4], 
             }
             return;
         }
-        shapes.lines.push((Line { from, to, color, on_top }, duration));
+        shapes.lines.push((Line { from, to, color, on_top: style.on_top, width: style.width }, duration));
     }
     shapes.dropped = false;
 }
@@ -211,7 +246,7 @@ mod tests {
         assert_eq!(lines().len(), 2, "both show the frame they were drawn");
         assert_eq!(texts().len(), 1);
         advance(0.25);
-        assert_eq!(lines(), [Line { from: Vec3::ZERO, to: Vec3::Y, color: GREEN, on_top: true }]);
+        assert_eq!(lines(), [Line { from: Vec3::ZERO, to: Vec3::Y, color: GREEN, on_top: true, width: 0.0 }]);
         assert!(texts().is_empty(), "no duration: one frame");
         advance(0.25);
         assert!(lines().is_empty());
@@ -235,7 +270,10 @@ mod tests {
         clear();
         set_enabled(false);
         line(Vec3::ZERO, Vec3::X, RED, 1.0, false);
+        let game = LineStyle { width: 3.0, in_game: true, ..LineStyle::default() };
+        line(Vec3::ZERO, Vec3::Y, RED, 1.0, game);
         set_enabled(true);
-        assert!(lines().is_empty(), "nothing is kept while it is off");
+        assert_eq!(lines().len(), 1, "while it is off, only what is part of the game is kept");
+        assert_eq!(lines()[0].width, 3.0, "as wide as its style asks");
     }
 }

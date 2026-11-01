@@ -1,16 +1,18 @@
 // Debug draw's lines over the finished frame (see src/debug_pass.rs and
-// voxear_core::debug_draw). Each line is a quad a few pixels wide with soft
-// edges, six vertices pulled from buffers().debugLines. A line is hidden
-// where the scene is in front of it, unless it is drawn on top, by reading
-// the scene's depth rather than testing against a depth attachment, since
-// the view can be a rectangle of a larger output.
+// voxear_core::debug_draw). Each line is a quad as wide as it asks, with
+// soft edges, six vertices pulled from buffers().debugLines. A line is
+// dimmed where the scene is in front of it, unless it is drawn on top, by
+// reading the scene's depth rather than testing against a depth attachment,
+// since the view can be a rectangle of a larger output.
 //
 // push.textures: the scene's depth texture, the view's offset in the
-// output (x, y), and the line width in pixels (as float bits).
+// output (x, y), and the usual line width in pixels (as float bits).
 
 #include "common.slang"
 
 static const uint DEBUG_ON_TOP = 1;
+// How much of a line shows where the scene is in front of it.
+static const float DEBUG_BEHIND = 0.3;
 // Corners of a line's quad: along it (0 at `from`, 1 at `to`), and across.
 static const float2 DEBUG_CORNERS[6] = {
     float2(0, -1), float2(1, -1), float2(0, 1),
@@ -23,6 +25,7 @@ struct DebugOut
     float4 color : COLOR;
     // Pixels from the line's middle, across it.
     float across : ACROSS;
+    nointerpolation float width : WIDTH;
     nointerpolation uint flags : FLAGS;
 };
 
@@ -51,6 +54,7 @@ DebugOut debugVertex(uint vertexId : SV_VertexID)
     o.color = drawn.color;
     o.flags = drawn.flags;
     o.across = 0.0;
+    o.width = drawn.width > 0.0 ? drawn.width : asfloat(push.textures.w);
     // Wholly behind the camera: nothing to draw.
     if (a.w < near && b.w < near)
     {
@@ -65,7 +69,7 @@ DebugOut debugVertex(uint vertexId : SV_VertexID)
     direction = length(direction) > 1e-4 ? normalize(direction) : float2(1.0, 0.0);
     float2 normal = float2(-direction.y, direction.x);
     // A pixel more than the width, for the soft edge.
-    float reach = asfloat(push.textures.w) * 0.5 + 1.0;
+    float reach = o.width * 0.5 + 1.0;
     float4 p = lerp(start, end, corner.x);
     p.xy += normal * corner.y * reach / halfView * p.w;
     o.position = p;
@@ -76,6 +80,7 @@ DebugOut debugVertex(uint vertexId : SV_VertexID)
 [shader("fragment")]
 float4 debugFragment(DebugOut i) : SV_Target
 {
+    float shown = 1.0;
     if ((i.flags & DEBUG_ON_TOP) == 0)
     {
         int2 pixel = int2(i.position.xy) - int2(push.textures.yz);
@@ -84,11 +89,11 @@ float4 debugFragment(DebugOut i) : SV_Target
         // surface, and the TAA jitter, from flickering.
         if (i.position.z < scene * 0.999)
         {
-            discard;
+            shown = DEBUG_BEHIND;
         }
     }
-    float halfWidth = asfloat(push.textures.w) * 0.5;
-    float coverage = saturate(halfWidth + 0.5 - abs(i.across));
+    float halfWidth = i.width * 0.5;
+    float coverage = saturate(halfWidth + 0.5 - abs(i.across)) * shown;
     // Colours come as they look (sRGB), and the output blends in linear light.
     float3 c = i.color.rgb;
     float3 linearColor = select(c <= 0.04045, c / 12.92, pow((c + 0.055) / 1.055, 2.4));

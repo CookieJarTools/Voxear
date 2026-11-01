@@ -101,6 +101,11 @@ namespace EcsCheck
 			Debug.Line(Vector3.Zero, Vector3.UnitY, Color.Red);
 			Debug.Sphere(Vector3.One, 0.5f, Color.Hex("#00ff00"), 0f, true);
 			Debug.Text(Vector3.UnitY, "spun", Color.Yellow);
+			using (Draw.Width(4f))
+			using (Draw.InGame())
+			{
+				Draw.Line(Vector3.Zero, Vector3.UnitX, Color.Blue);
+			}
 		}
 	}
 
@@ -250,7 +255,10 @@ fn csharp_systems_work_on_the_engines_own_chunks() {
 
     // Debug draw: this frame's shapes, last frame's gone.
     let lines = voxear_core::debug_draw::lines();
-    assert_eq!(lines.len(), 1 + 72, "a line and a sphere's three circles");
+    assert_eq!(lines.len(), 1 + 72 + 1, "a line, a sphere's three circles, and Draw's line");
+    let drawn = lines.last().unwrap();
+    assert_eq!((drawn.to, drawn.color, drawn.width), (voxear_core::math::Vec3::X, [0.0, 0.0, 1.0, 1.0], 4.0));
+    let lines = &lines[..lines.len() - 1];
     assert_eq!(
         (lines[0].to, lines[0].color, lines[0].on_top),
         (voxear_core::math::Vec3::Y, [1.0, 0.0, 0.0, 1.0], false)

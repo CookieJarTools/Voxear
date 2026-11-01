@@ -75,7 +75,7 @@ pub fn init_with_file(file: std::fs::File) {
 /// else, but not a script's stack or Obj, which are for the Console.
 fn printed_fields() -> impl for<'writer> tracing_subscriber::fmt::FormatFields<'writer> + 'static {
     tracing_subscriber::fmt::format::debug_fn(|writer, field, value| match field.name() {
-        "stack" | "context" => Ok(()),
+        "stack" | "context" | "asset" => Ok(()),
         "message" => write!(writer, "{value:?}"),
         name => write!(writer, " {name}={value:?}"),
     })
@@ -124,6 +124,8 @@ pub struct LogLine {
     pub stack: Option<String>,
     /// The Obj a script's line is about, as entity bits.
     pub context: Option<u64>,
+    /// The asset a script's line is about, by its path in the project.
+    pub asset: Option<String>,
 }
 
 impl LogLine {
@@ -140,6 +142,7 @@ impl LogLine {
             worker: false,
             stack: None,
             context: None,
+            asset: None,
         }
     }
 }
@@ -201,6 +204,7 @@ impl Lines {
             worker: std::thread::current().id() != self.main,
             stack: fields.stack,
             context: fields.context,
+            asset: fields.asset,
         }
     }
 }
@@ -242,12 +246,13 @@ impl<S: Subscriber> Layer<S> for Capture {
 }
 
 /// An event's message, then any other fields as `name=value`; and the
-/// `stack` and `context` fields scripts' lines carry, kept apart.
+/// `stack`, `context` and `asset` fields scripts' lines carry, kept apart.
 #[derive(Default)]
 struct Message {
     text: String,
     stack: Option<String>,
     context: Option<u64>,
+    asset: Option<String>,
 }
 
 impl tracing::field::Visit for Message {
@@ -255,6 +260,7 @@ impl tracing::field::Visit for Message {
         match field.name() {
             "message" => self.text.insert_str(0, value),
             "stack" => self.stack = Some(value.to_string()).filter(|s| !s.trim().is_empty()),
+            "asset" => self.asset = Some(value.to_string()).filter(|a| !a.is_empty()),
             name => {
                 let _ = write!(self.text, " {name}={value}");
             }

@@ -20,9 +20,10 @@
 //! the top of the active scene ([`Hierarchy::dropped_from_elsewhere`]).
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
+    time::{Duration, Instant},
 };
 
 use voxear_assets::AssetGuid;
@@ -89,7 +90,11 @@ impl Snapshot {
     }
 }
 
-struct Items(Rc<RefCell<Snapshot>>);
+/// How long a pinged row stays lit.
+const PING: Duration = Duration::from_millis(1500);
+
+/// What the tree shows, and the row lit by a ping, if any.
+struct Items(Rc<RefCell<Snapshot>>, Rc<Cell<Option<u64>>>);
 
 impl TreeItems for Items {
     fn children(&self, parent: Option<u64>) -> Vec<u64> {
@@ -129,6 +134,7 @@ impl TreeItems for Items {
         let inside = snapshot.children.get(&item).map_or(0, Vec::len);
         let count = if inside > 0 && !shown.header { inside.to_string() } else { String::new() };
         ui.set_text(parts[3], &count);
+        ui.set_class(row, "pinged", self.1.get() == Some(item));
     }
 }
 
@@ -155,6 +161,9 @@ pub struct Hierarchy {
     filter: NodeId,
     add: NodeId,
     shown: Rc<RefCell<Snapshot>>,
+    /// The row lit by a ping, and until when.
+    pinged: Rc<Cell<Option<u64>>>,
+    ping_until: Option<Instant>,
     /// Headers opened once, so a scene starts open but can be closed.
     opened: HashSet<u64>,
     /// What each item of the menu open now does.
@@ -164,9 +173,10 @@ pub struct Hierarchy {
 impl Hierarchy {
     pub fn new(ui: &mut Ui, tree: NodeId, filter: NodeId, add: NodeId) -> Self {
         let shown = Rc::new(RefCell::new(Snapshot::default()));
-        ui.bind_tree(tree, Items(shown.clone()));
+        let pinged = Rc::new(Cell::new(None));
+        ui.bind_tree(tree, Items(shown.clone(), pinged.clone()));
         ui.set_rows_draggable(tree, true);
-        Self { tree, filter, add, shown, opened: HashSet::new(), menu: Vec::new() }
+        Self { tree, filter, add, shown, pinged, ping_until: None, opened: HashSet::new(), menu: Vec::new() }
     }
 
     /// What the + button, a context click or a dropped row asks for.
@@ -264,6 +274,11 @@ impl Hierarchy {
     /// Shows the world as it is now, if anything changed. `types` say which
     /// scripts are `IInstance`s while their behaviours are not running.
     pub fn update(&mut self, ui: &mut Ui, world: &World, levels: &Levels, types: &ScriptTypes) {
+        if self.ping_until.is_some_and(|until| Instant::now() >= until) {
+            self.ping_until = None;
+            self.pinged.set(None);
+            ui.refresh_list(self.tree);
+        }
         let filter = ui.text(self.filter).to_lowercase();
         let snapshot = snapshot(world, levels, types, &filter);
         if *self.shown.borrow() == snapshot {
@@ -307,6 +322,23 @@ impl Hierarchy {
 
     /// Selects the Obj, opening its scene and the Objs it is in.
     pub fn select(&mut self, ui: &mut Ui, world: &World, entity: Entity) {
+        self.open_to(ui, world, entity);
+        ui.select_item(self.tree, entity.to_bits());
+    }
+
+    /// Shows the Obj without selecting it, as a log line about it asks, like
+    /// Unity's ping: its scene and the Objs it is in open, the tree scrolls
+    /// to it, and its row is lit for a moment.
+    pub fn ping(&mut self, ui: &mut Ui, world: &World, entity: Entity) {
+        self.open_to(ui, world, entity);
+        ui.scroll_to_item(self.tree, entity.to_bits());
+        self.pinged.set(Some(entity.to_bits()));
+        self.ping_until = Some(Instant::now() + PING);
+        ui.refresh_list(self.tree);
+    }
+
+    /// Opens the Obj's scene and the Objs it is in.
+    fn open_to(&mut self, ui: &mut Ui, world: &World, entity: Entity) {
         let mut parent = world.get::<Parent>(entity).map(|p| p.0);
         while let Some(at) = parent {
             ui.set_expanded(self.tree, at.to_bits(), true);
@@ -315,7 +347,6 @@ impl Hierarchy {
         if let Some(header) = self.shown.borrow().header_of(entity.to_bits()) {
             ui.set_expanded(self.tree, header, true);
         }
-        ui.select_item(self.tree, entity.to_bits());
     }
 }
 

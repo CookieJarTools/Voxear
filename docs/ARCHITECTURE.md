@@ -1565,7 +1565,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   and line. My code only folds runs of frames not in the project's folder into a line that unfolds them;
   Namespaces and Parameters can be hidden. A frame's file and line, or a double click on a line, open the file at
   its line in the code editor the settings name (VS Code, Rider, Zed or the system's default;
-  `Editor::set_source_opener` replaces it). Selecting a line about an Obj selects the Obj, Copy puts the line and its
+  `Editor::set_source_opener` replaces it). A script says what a line is about after its message, `Log.Info("Opened", door)`,
+  with an Obj, a behaviour, a `Prefab` or a `Ref<Prefab>` (`LogContext`, native API 24, which names a prefab by
+  its file); picking the line pings it as Unity does, lighting its row in the Hierarchy or its file in the Project
+  panel for a moment, its folders opened and scrolled to, without changing the selection. Copy puts the line and its
   stack on the clipboard, and a context click copies a line or mutes its message until Muted brings them back.
   - **Category colours**: each row shows its first category, in the colour the project gave it. A context click on
     a line colours its category from a palette; the colours are kept in the project's `Settings/Console.toml`, since

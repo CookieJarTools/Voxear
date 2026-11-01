@@ -13,7 +13,7 @@ namespace Voxear.Interop
 		public uint Size;
 		public uint Version;
 		public TimeData* Time;
-		public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, ulong, void> Log;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, ulong, int, byte*, int, void> Log;
 		public delegate* unmanaged[Cdecl]<ulong, byte*, int, int> ObjName;
 		public delegate* unmanaged[Cdecl]<ulong, Transform*, int> TransformGet;
 		public delegate* unmanaged[Cdecl]<ulong, Transform*, int> TransformSet;

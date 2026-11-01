@@ -1299,8 +1299,14 @@ impl Editor {
         if let Some((file, line)) = result.open {
             self.open_source(&file, line);
         }
+        // A line about an Obj or an asset shows it, as Unity's log context does, leaving the selection alone.
         if let Some(entity) = result.ping.filter(|&e| self.game.engine.world.is_alive(e)) {
-            self.select(Some(entity));
+            self.hierarchy.ping(&mut self.ui, &self.game.engine.world, entity);
+        }
+        if let Some(asset) = result.ping_asset {
+            let db = self.game.content.db();
+            let path = asset.parse().ok().and_then(|guid| db.get(guid)).map_or(asset.clone(), |e| e.path.clone());
+            self.project.ping(&mut self.ui, &path);
         }
     }
 

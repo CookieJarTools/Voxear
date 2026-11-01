@@ -105,8 +105,11 @@ pub struct ConsoleUpdate {
     pub errors: usize,
     /// A frame clicked: its file, and line, to open in the code editor.
     pub open: Option<(PathBuf, u32)>,
-    /// The Obj the line selected is about, to select it.
+    /// The Obj the line picked is about, to show in the Hierarchy.
     pub ping: Option<Entity>,
+    /// The asset the line picked is about, by its project path or GUID, to
+    /// show in the Project panel.
+    pub ping_asset: Option<String>,
 }
 
 /// The toolbar's buttons, and the line under it that says what is wrong
@@ -752,7 +755,10 @@ impl Console {
         }
         self.selected = picked;
         self.unfolded = false;
-        update.ping = picked.and_then(|at| self.entries.borrow().get(at).and_then(|e| e.context));
+        let entries = self.entries.borrow();
+        let entry = picked.and_then(|at| entries.get(at));
+        update.ping = entry.and_then(|e| e.context);
+        update.ping_asset = entry.and_then(|e| e.asset.clone());
     }
 
     /// A double click on a line opens where it came from, as in Unity.

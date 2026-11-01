@@ -39,7 +39,7 @@ use crate::ui::{
     ui_class, ui_clicked, ui_close, ui_find, ui_load, ui_set_text, ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 23;
+pub(crate) const API_VERSION: u32 = 24;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -47,10 +47,20 @@ pub(crate) struct NativeApi {
     pub size: u32,
     pub version: u32,
     pub time: *const Time,
-    /// A script's line, with its stack (a frame to a line) and the Obj it is
-    /// about (0 for none).
-    pub log:
-        unsafe extern "C" fn(level: i32, message: *const u8, len: i32, stack: *const u8, stack_len: i32, context: u64),
+    /// A script's line, with its stack (a frame to a line), and what it is
+    /// about: an Obj (0 for none), a loaded prefab (-1 for none), or an asset
+    /// by its project path or GUID (empty for none).
+    pub log: unsafe extern "C" fn(
+        level: i32,
+        message: *const u8,
+        len: i32,
+        stack: *const u8,
+        stack_len: i32,
+        context: u64,
+        prefab: i32,
+        asset: *const u8,
+        asset_len: i32,
+    ),
     pub obj_name: unsafe extern "C" fn(entity: u64, buffer: *mut u8, capacity: i32) -> i32,
     pub transform_get: unsafe extern "C" fn(entity: u64, out: *mut Transform) -> i32,
     pub transform_set: unsafe extern "C" fn(entity: u64, value: *const Transform) -> i32,
@@ -308,15 +318,32 @@ pub(crate) unsafe fn utf8<'a>(ptr: *const u8, len: i32) -> std::borrow::Cow<'a, 
     String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len as usize) })
 }
 
-unsafe extern "C" fn log(level: i32, message: *const u8, len: i32, stack: *const u8, stack_len: i32, context: u64) {
+#[allow(clippy::too_many_arguments)]
+unsafe extern "C" fn log(
+    level: i32,
+    message: *const u8,
+    len: i32,
+    stack: *const u8,
+    stack_len: i32,
+    context: u64,
+    prefab: i32,
+    asset: *const u8,
+    asset_len: i32,
+) {
     let text = unsafe { utf8(message, len) };
     let stack = if stack.is_null() { Default::default() } else { unsafe { utf8(stack, stack_len) } };
     let stack: &str = &stack;
+    // A prefab is named by the file it was loaded from, as the Project panel shows it.
+    let asset = match prefab {
+        prefab if prefab >= 0 => with_services(|services| services.prefab_path(prefab as u32)).flatten(),
+        _ => Some(unsafe { utf8(asset, asset_len) }.into_owned()),
+    };
+    let asset: &str = asset.as_deref().unwrap_or_default();
     match level {
-        0 => tracing::debug!(target: "script", stack, context, "{text}"),
-        1 => tracing::info!(target: "script", stack, context, "{text}"),
-        2 => tracing::warn!(target: "script", stack, context, "{text}"),
-        _ => tracing::error!(target: "script", stack, context, "{text}"),
+        0 => tracing::debug!(target: "script", stack, context, asset, "{text}"),
+        1 => tracing::info!(target: "script", stack, context, asset, "{text}"),
+        2 => tracing::warn!(target: "script", stack, context, asset, "{text}"),
+        _ => tracing::error!(target: "script", stack, context, asset, "{text}"),
     }
 }
 

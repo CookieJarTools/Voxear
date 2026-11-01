@@ -1256,6 +1256,53 @@ fn click_link(ui: &mut Ui, label: NodeId, url: &str) {
     ui.pointer_button(false);
 }
 
+/// Runs the command bar's first result for `words`.
+fn run_command(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, words: &str) {
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    editor.ui.focus(field);
+    editor.ui.text_input(words);
+    frame(editor, renderer);
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+/// The names on the rows and tiles a log line has lit.
+fn pinged_names(ui: &Ui) -> Vec<String> {
+    let mut lit = Vec::new();
+    with_class(ui, ui.root(), "pinged", &mut lit);
+    let name = |node: NodeId| {
+        let part = ui.children(node).into_iter().find(|&c| ui.has_class(c, "row-name") || ui.has_class(c, "tile-name"));
+        part.map(|part| ui.text(part))
+    };
+    lit.into_iter().filter(|&node| ui.is_visible(node)).filter_map(name).collect()
+}
+
+#[test]
+fn a_log_line_about_an_asset_lights_it_in_the_project_panel() {
+    use voxear_core::logging::LogLine;
+    let log = LogCapture::default();
+    let Some((mut renderer, mut editor)) = open_logging(log.clone()) else { return };
+    frame(&mut editor, &mut renderer);
+    let about = LogLine {
+        target: "script".into(),
+        asset: Some("Prefabs/Lamp.prefab".into()),
+        ..LogLine::new(tracing::Level::INFO, "The lamp is out")
+    };
+    log_line(&log, about);
+    // The Console and the Project panel share a place, the Project panel in front.
+    run_command(&mut editor, &mut renderer, "show console");
+    search_console(&mut editor, &mut renderer, "lamp is out");
+    let row = console_rows(&editor.ui)[0];
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    run_command(&mut editor, &mut renderer, "show project");
+    let lit = pinged_names(&editor.ui);
+    assert!(lit.iter().any(|name| name.starts_with("Lamp")), "the prefab is lit in its folder: {lit:?}");
+    assert_eq!(editor.selected(), None, "and nothing is selected");
+}
+
 #[test]
 fn the_console_sifts_searches_and_opens_stacks() {
     use tracing::Level;
@@ -1367,15 +1414,17 @@ fn the_console_sifts_searches_and_opens_stacks() {
         editor.ui.text(problems[0])
     );
 
-    // The line about Spinner A: selecting it selects the Obj, and its stack
-    // shows below, the engine's frames folded.
+    // The line about Spinner A: picking it lights the Obj in the Hierarchy,
+    // leaving the selection alone, as Unity pings it; its stack shows below,
+    // the engine's frames folded.
     search_console(&mut editor, &mut renderer, "spinner a hit");
     assert!(!editor.ui.is_visible(problems[0]), "a good search clears the complaint");
     let row = console_rows(&editor.ui)[0];
     click(&mut editor.ui, row);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
-    assert_eq!(editor.selected(), Some(spinner), "the line's Obj is selected");
+    assert_ne!(editor.selected(), Some(spinner), "the line's Obj is shown, not selected");
+    assert_eq!(pinged_names(&editor.ui), ["Spinner A"], "its row is lit in the Hierarchy");
     let mut infos = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "console-info", &mut infos);
     assert_eq!(editor.ui.text(infos[0]), "00:03.000 · frame 7 · main thread · Combat, Hello");

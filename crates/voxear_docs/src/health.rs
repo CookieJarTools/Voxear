@@ -27,6 +27,7 @@ use std::{
 use crate::{
     library::{DOCS, Library, PageId, Target},
     markdown::{self, Block},
+    view::{ACTION_SCHEME, CHECK_SCHEME},
 };
 
 /// The extensions of the pictures VoxDocs shows.
@@ -61,7 +62,8 @@ impl Health {
         let mut health = Health::default();
         let mut shown: HashSet<PathBuf> = HashSet::new();
         let mut linked: Vec<(PageId, Vec<String>)> = Vec::new();
-        for (id, page) in library.pages() {
+        // The manual comes with the engine: it is not the project's to look after.
+        for (id, page) in library.pages().filter(|(_, page)| !page.is_manual()) {
             let blocks = markdown::parse(&page.body);
             let pictures: Vec<&str> = blocks
                 .iter()
@@ -78,7 +80,11 @@ impl Health {
                 }
             }
             let mut files = Vec::new();
-            for url in markdown::links(&blocks).into_iter().filter(|url| !pictures.contains(&url.as_str())) {
+            // A guide's steps run commands and look for things: they are not links to anywhere.
+            let step = |url: &str| url.starts_with(ACTION_SCHEME) || url.starts_with(CHECK_SCHEME);
+            for url in
+                markdown::links(&blocks).into_iter().filter(|url| !pictures.contains(&url.as_str()) && !step(url))
+            {
                 match library.resolve(&url, id) {
                     Target::Missing(_) => health.broken.push((id, url)),
                     Target::File(path) if !page.generated => files.push(path),

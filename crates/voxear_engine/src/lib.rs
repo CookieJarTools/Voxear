@@ -40,7 +40,7 @@ pub use prefab::{ObjPath, PrefabId, Template};
 pub use previews::{AssetPreviews, ScriptPreviews, preview_parts};
 pub use project::{
     ContentSettings, ENGINE_FILE, PROJECT_FILE, Project, ProjectFile, core_assembly, engine_root, engine_version,
-    is_install,
+    is_install, manual_folder,
 };
 pub use stats_overlay::StatsOverlay;
 pub use windowed::{Setup, WindowOptions, run_windowed};

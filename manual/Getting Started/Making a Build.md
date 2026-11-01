@@ -1,0 +1,57 @@
+---
+order: 5
+---
+
+# Making a Build
+
+A build is your game on its own, as a program anyone can run without Voxear.
+
+## Building
+
+1. Click **Build**, at the end of the bar along the top of the editor.
+2. If the project has no build profiles yet, click **Add the default profiles**.
+3. Pick a profile from **Profiles**, and click **Build**.
+
+The Build panel shows each stage as it goes (**Scripts**, **Content**, then **Player**) and ends with how long it took and how big the game is. **Run** starts the built game, and its messages go to the Console. **Show in Files** opens the folder it is in.
+
+The build runs in a program of its own, so the editor stays usable while it works, and **Cancel** stops it.
+
+## Build profiles
+
+A profile is a set of choices for one kind of build. New projects come with four, kept in `Settings/BuildProfiles/`:
+
+| Profile | For |
+| --- | --- |
+| Linux Release | The game as players get it |
+| Linux Development | Testing: adds a stats overlay on F1, debug views and a free camera |
+| Windows Release | The game as players get it |
+| Windows Development | Testing, as above |
+
+Select a profile to change it: the platform, which levels go in and which one starts, the product name, company and version, whether the game starts in a window or full screen, and where the build goes.
+
+For now, a build is made on the platform it is for: build the Windows profiles on Windows, and the Linux ones on Linux.
+
+## What comes out
+
+Each build goes in `Builds/` in your project, in a folder named after its profile:
+
+| File | What it is |
+| --- | --- |
+| The game | The program to run, named after the product |
+| `Data/` | Your levels, models and other content, and your scripts |
+| `build-report.json` | What went into the build, and how long each stage took |
+
+> [!NOTE]
+> For now, players need .NET installed to run a build. Later versions will include it with the game.
+
+## Building from the command line
+
+`vox` builds the same way the editor does, which suits build servers:
+
+```bash
+vox build MyGame
+vox build MyGame --profile "Linux Development"
+vox build MyGame --list
+```
+
+With no `--profile`, it builds the Release profile for the platform you are on. `--list` shows the project's profiles.

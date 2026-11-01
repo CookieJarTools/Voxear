@@ -352,7 +352,7 @@ fn gather(sources: &Sources) -> Vec<Entry> {
     every.extend(assets(sources.game));
     every.extend(sources.docs.iter().map(|(title, reference)| Entry {
         title: title.clone(),
-        detail: "Doc".into(),
+        detail: if reference.starts_with(voxear_docs::MANUAL_SCHEME) { "Manual" } else { "Doc" }.into(),
         icon: "book",
         action: PaletteAction::OpenDoc(reference.clone()),
         key: format!("doc:{reference}"),

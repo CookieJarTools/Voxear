@@ -301,6 +301,10 @@ Done so far:
   in the Project panel when picked.
 - **Editing build profiles:** the Build window edits the picked profile in place, writing only what differs from
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
+- **The Voxear Manual in VoxDocs:** the engine's own pages, in `manual/`, shown after the project's in every
+  project, shipped in each install and read but not written there. First pages: getting started (installing, a
+  first project, the editor, playing, building), Objs and levels, scripting in C#, and VoxDocs itself; a test keeps
+  every link and picture in it working. `vox doctor` no longer asks an install for the shader compiler.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
 - **Guide checks written in C#:** `[DocsCheck]` static methods, listed by ScriptInfo and in Action…, that a page's
@@ -364,10 +368,9 @@ Still to do in M3:
   - [ ] custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
-- **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
-  with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
-  person explains things: clear and short, plain words, each term explained where it first appears, an example
-  before the details, and nothing that sounds generated.
+- **More of the Voxear Manual**: materials and models, lighting and the look, the Console, profiling and the debug
+  tools, the UI, and each part as it is built, written the same way: clear and short, plain words, each term
+  explained where it first appears, an example before the details, and nothing that sounds generated.
 - Debug tools:
   - [x] the stats overlay's frame-time graph; the Profiler's timeline view and managed allocations (GC Alloc)
   - [ ] worker threads' samples in the Profiler, and Tracy behind it

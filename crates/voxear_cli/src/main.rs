@@ -708,14 +708,17 @@ fn doctor() -> Result<()> {
         println!("  · Voxear.Core not built yet (`vox run` builds it with the game scripts)");
     }
 
-    println!("\nShader compiler");
-    match tool_version("slangc", "-v") {
-        Some(version) => {
-            ok(&format!("slangc ({version})"));
-        }
-        None => {
-            ready &= fail("slangc not found");
-            hint("Arch: sudo pacman -S shader-slang    Windows: install the Vulkan SDK");
+    // An install's shaders come built: only a checkout compiles them, and reloads them on save.
+    if shaders_reload() {
+        println!("\nShader compiler");
+        match tool_version("slangc", "-v") {
+            Some(version) => {
+                ok(&format!("slangc ({version})"));
+            }
+            None => {
+                ready &= fail("slangc not found");
+                hint("Arch: sudo pacman -S shader-slang    Windows: install the Vulkan SDK");
+            }
         }
     }
 

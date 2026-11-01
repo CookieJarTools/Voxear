@@ -10,6 +10,12 @@
 //! written on one of them is a note, kept in `Docs/.code-notes`, one file
 //! for each type named by its full name, which the tree does not show: the
 //! page is made again from the code each time, and the note is what lasts.
+//!
+//! Between the two comes the engine's own manual, when the editor has one:
+//! a folder of Markdown pages that comes with each version of the engine,
+//! read like the project's but not written here. Links name its pages as
+//! `[[manual:Levels]]`, by title or path, and a link in the manual finds the
+//! manual's own pages, as it cannot know the project's.
 
 use std::{
     cell::RefCell,
@@ -40,6 +46,10 @@ them, or write a note on a type's page with Edit, which is kept beside the code'
 
 Any page can link to a type, as `[[code:Voxear.Prefab]]`, or `[[code:Voxear.Prefab|Prefab]]` to word the link \
 itself.";
+/// How links name the manual's pages, as `manual:Scripting/Behaviours`,
+/// and its folder's title.
+pub const MANUAL_SCHEME: &str = "manual:";
+const MANUAL_FOLDER: &str = "Voxear Manual";
 /// The path of the folder for types in the global namespace.
 const GLOBAL_NAMESPACE: &str = "code:global::";
 /// Where the notes on the Code Reference's pages are kept, in `Docs`.
@@ -61,9 +71,10 @@ pub struct Page {
     pub body: String,
     pub parent: Option<PageId>,
     pub children: Vec<PageId>,
-    /// Made from the code, as the Code Reference's pages are, rather than
-    /// read from a file: it is read but not written. Its path is how links
-    /// name it, `code:Voxear.Prefab`.
+    /// Not one of the project's files: made from the code, as the Code
+    /// Reference's pages are, or part of the engine's manual. It is read but
+    /// not written. Its path is how links name it, `code:Voxear.Prefab` or
+    /// `manual:Scripting/Behaviours.md`.
     pub generated: bool,
     /// Its title, tags and words in lower case, for searching.
     words: String,
@@ -73,7 +84,13 @@ impl Page {
     /// The file or folder's name, without `.md`.
     pub fn name(&self) -> &str {
         let name = self.path.rsplit('/').next().unwrap_or_default();
+        let name = name.strip_prefix(MANUAL_SCHEME).unwrap_or(name);
         name.strip_suffix(EXTENSION).unwrap_or(name)
+    }
+
+    /// Part of the engine's manual, rather than the project's.
+    pub fn is_manual(&self) -> bool {
+        self.path.starts_with(MANUAL_SCHEME)
     }
 
     pub fn title(&self) -> &str {
@@ -95,7 +112,8 @@ impl Page {
         if self.is_folder {
             return &self.path;
         }
-        self.path.rsplit_once('/').map_or("", |(folder, _)| folder)
+        let top = if self.is_manual() { MANUAL_SCHEME } else { "" };
+        self.path.rsplit_once('/').map_or(top, |(folder, _)| folder)
     }
 }
 
@@ -134,6 +152,8 @@ pub struct Library {
     /// Counts each time the pages change, for what shows them elsewhere.
     version: u64,
     code: CodeReference,
+    /// The engine's manual, the folder of pages that comes with it.
+    manual: Option<PathBuf>,
     /// The notes written on the Code Reference's pages: each type's header,
     /// for its tags, and words, by the type's full name.
     notes: HashMap<String, (Header, String)>,
@@ -157,6 +177,7 @@ impl Library {
             written: 0,
             version: 0,
             code: CodeReference::default(),
+            manual: None,
             notes: HashMap::new(),
             history: RefCell::new(None),
             by_id: HashMap::new(),
@@ -185,6 +206,7 @@ impl Library {
         for index in 0..self.written {
             self.index(PageId(index));
         }
+        self.add_manual(root);
         self.add_code(root);
         for index in self.written..self.pages.len() {
             self.index(PageId(index));
@@ -222,6 +244,13 @@ impl Library {
     /// The pages read from `Docs` keep their ids.
     pub fn set_code(&mut self, code: CodeReference) {
         self.code = code;
+        self.reload();
+    }
+
+    /// Shows the engine's manual, the pages in `folder`, after the project's.
+    /// The pages read from `Docs` keep their ids.
+    pub fn set_manual(&mut self, folder: &Path) {
+        self.manual = Some(folder.to_path_buf());
         self.reload();
     }
 
@@ -266,9 +295,8 @@ impl Library {
         };
         let target = unescape(target);
         if let Some(name) = target.strip_prefix(PAGE_SCHEME) {
-            return self
-                .find(name)
-                .map_or_else(|| Target::Missing(name.trim().to_string()), |page| Target::Page(page, anchor));
+            let name = self.link_name(name, from);
+            return self.find(&name).map_or(Target::Missing(name), |page| Target::Page(page, anchor));
         }
         let relative = combine(self.page(from).directory(), &target);
         if let Some(page) = relative.as_deref().and_then(|path| self.find(path)).or_else(|| self.find(&target)) {
@@ -289,8 +317,10 @@ impl Library {
             return None;
         }
         let url = unescape(url);
-        let beside = combine(self.page(from).directory(), &url).map(|path| self.root.join(path));
-        beside.filter(|path| path.is_file()).or_else(|| Some(self.project.join(&url)).filter(|path| path.is_file()))
+        let beside = combine(self.page(from).directory(), &url).map(|path| self.disk(&path));
+        // The manual's pictures are its own: it cannot know the project's.
+        let project = (!self.page(from).is_manual()).then(|| self.project.join(&url));
+        beside.filter(|path| path.is_file()).or_else(|| project.filter(|path| path.is_file()))
     }
 
     /// What `[Excerpt]` shows of the page a reference names: the section
@@ -416,6 +446,14 @@ impl Library {
         Ok(())
     }
 
+    /// What `[[name]]` in page `from` names: in the manual, the manual's own
+    /// pages, unless it names the Code Reference's.
+    fn link_name(&self, name: &str, from: PageId) -> String {
+        let name = name.trim();
+        let named = [MANUAL_SCHEME, CODE_SCHEME].iter().any(|scheme| name.starts_with(scheme));
+        if self.page(from).is_manual() && !named { format!("{MANUAL_SCHEME}{name}") } else { name.to_string() }
+    }
+
     /// The page a reference names, with or without a heading after a hash.
     fn find_page_of(&self, reference: &str) -> Option<PageId> {
         let target = reference.split_once('#').map_or(reference, |(target, _)| target);
@@ -463,9 +501,11 @@ impl Library {
             .map(|(id, page)| (words.iter().all(|w| page.title().to_lowercase().contains(w.as_str())), id))
             .collect();
         // The project's own pages before the Code Reference's.
+        // The project's own pages first, then the manual's, then the Code Reference's.
+        let rank = |page: &Page| (page.generated, !page.is_manual());
         found.sort_by(|a, b| {
             let (page_a, page_b) = (self.page(a.1), self.page(b.1));
-            b.0.cmp(&a.0).then(page_a.generated.cmp(&page_b.generated)).then_with(|| page_a.title().cmp(page_b.title()))
+            b.0.cmp(&a.0).then(rank(page_a).cmp(&rank(page_b))).then_with(|| page_a.title().cmp(page_b.title()))
         });
         found.into_iter().map(|(_, id)| id).collect()
     }
@@ -473,6 +513,12 @@ impl Library {
     /// Writes a page's Markdown, giving it an id if it has none and today's
     /// date as when it was updated.
     pub fn save(&mut self, id: PageId, body: &str) -> Result<()> {
+        if self.page(id).is_manual() {
+            bail!(
+                "{} is part of Voxear's manual, which comes with the engine, so it is not written here",
+                self.page(id).title()
+            );
+        }
         if self.page(id).generated {
             let Some(key) = self.type_of(id) else {
                 bail!("{} is made from the code, so it is not written here", self.page(id).title());
@@ -540,6 +586,9 @@ impl Library {
 
     /// Ticks or unticks a checklist box, and saves the page.
     pub fn set_task(&mut self, id: PageId, task: Task, done: bool) -> Result<()> {
+        if self.page(id).is_manual() {
+            bail!("{} is part of Voxear's manual, so its checklists are not kept", self.page(id).title());
+        }
         if self.page(id).generated {
             bail!("a checklist on {} is ticked in its note, with Edit", self.page(id).title());
         }
@@ -579,7 +628,7 @@ impl Library {
     }
 
     fn read_folder(&mut self, path: String, parent: Option<PageId>) -> PageId {
-        let disk = self.root.join(&path);
+        let disk = self.disk(&path);
         let (header, body) =
             std::fs::read_to_string(disk.join(FOLDER_FILE)).map(|t| Header::split(&t)).unwrap_or_default();
         let id = self.add(Page {
@@ -644,6 +693,32 @@ impl Library {
     fn add(&mut self, page: Page) -> PageId {
         self.pages.push(page);
         PageId(self.pages.len() - 1)
+    }
+
+    /// Where a page's path is on disk: in the manual's folder for the
+    /// manual's pages, in `Docs` for the project's.
+    fn disk(&self, path: &str) -> PathBuf {
+        match (path.strip_prefix(MANUAL_SCHEME), &self.manual) {
+            (Some(path), Some(manual)) => manual.join(path),
+            _ => self.root.join(path),
+        }
+    }
+
+    /// The manual's folder, after the project's pages: its folders and pages
+    /// as they are on disk, read but not written.
+    fn add_manual(&mut self, root: PageId) {
+        if !self.manual.as_deref().is_some_and(Path::is_dir) {
+            return;
+        }
+        let first = self.pages.len();
+        let top = self.read_folder(MANUAL_SCHEME.to_string(), Some(root));
+        self.pages[root.0].children.push(top);
+        if self.pages[top.0].header.title.is_empty() {
+            self.pages[top.0].header.title = MANUAL_FOLDER.to_string();
+        }
+        for page in &mut self.pages[first..] {
+            page.generated = true;
+        }
     }
 
     /// The Code Reference's folder, last in the top folder: a folder for
@@ -732,12 +807,18 @@ impl Library {
             self.by_id.insert(page.header.id.clone(), id);
         }
         // The Code Reference's pages are found by their paths alone, so a page
-        // named as a type is still found by its title.
+        // named as a type is still found by its title. The manual's are found
+        // by their titles too, after `manual:`.
         if !page.path.is_empty() {
             self.by_reference.insert(page.reference().to_string(), id);
         }
-        if !page.path.is_empty() && !page.generated {
-            let titles = self.by_title.entry(page.title().to_lowercase()).or_default();
+        let title = if page.is_manual() {
+            Some(format!("{MANUAL_SCHEME}{}", page.title().to_lowercase()))
+        } else {
+            (!page.path.is_empty() && !page.generated).then(|| page.title().to_lowercase())
+        };
+        if let Some(title) = title {
+            let titles = self.by_title.entry(title).or_default();
             if !titles.contains(&id) {
                 titles.push(id);
             }
@@ -767,12 +848,13 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 fn join(folder: &str, name: &str) -> String {
-    if folder.is_empty() { name.to_string() } else { format!("{folder}/{name}") }
+    if folder.is_empty() || folder == MANUAL_SCHEME { format!("{folder}{name}") } else { format!("{folder}/{name}") }
 }
 
-/// A path relative to `folder`, made into one from `Docs`, or `None` if it
-/// climbs out.
+/// A path relative to `folder`, made into one from `Docs`, or from the
+/// manual's folder for a folder of the manual, or `None` if it climbs out.
 fn combine(folder: &str, relative: &str) -> Option<String> {
+    let (top, folder) = folder.strip_prefix(MANUAL_SCHEME).map_or(("", folder), |folder| (MANUAL_SCHEME, folder));
     let mut parts: Vec<&str> = folder.split('/').filter(|p| !p.is_empty()).collect();
     for part in relative.split('/') {
         match part {
@@ -783,7 +865,7 @@ fn combine(folder: &str, relative: &str) -> Option<String> {
             part => parts.push(part),
         }
     }
-    Some(parts.join("/"))
+    Some(format!("{top}{}", parts.join("/")))
 }
 
 /// `%20` and the like, as links write spaces.

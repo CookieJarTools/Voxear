@@ -1,9 +1,9 @@
 //! `voxear-dist`: packages this checkout as an engine release, laid out as
 //! the launcher installs one ("Engine archives" in its design): the programs
 //! built in release, `Voxear.Core` and the tool beside it, the settings game
-//! scripts build with, the documentation, and `engine.toml` saying what it
-//! is. It writes an install folder and a `.tar.zst` of it with every entry at
-//! the root. `voxear-release engine add` then signs the archive and lists it.
+//! scripts build with, the documentation, the manual VoxDocs shows, and
+//! `engine.toml` saying what it is. It writes an install folder and a
+//! `.tar.zst` of it with every entry at the root. `voxear-release engine add` then signs the archive and lists it.
 //!
 //! ```bash
 //! cargo run -p voxear_dist -- --channel nightly
@@ -47,7 +47,7 @@ const PROGRAMS: [&str; 3] = ["vox", "voxear-editor", "voxear-player"];
 
 /// The managed assemblies an install carries in `managed/`, each with its
 /// symbols, documentation and runtime files where it has them.
-const ASSEMBLIES: [&str; 2] = ["Voxear.Core", "Voxear.ScriptInfo"];
+const ASSEMBLIES: [&str; 3] = ["Voxear.Core", "Voxear.ScriptInfo", "Voxear.Analyzers"];
 
 #[derive(Parser)]
 #[command(name = "voxear-dist", about = "Package this checkout as a Voxear engine release")]
@@ -181,7 +181,12 @@ fn build_programs(root: &Path, version: &str) -> Result<()> {
 
 /// `Voxear.Core` and `Voxear.ScriptInfo`, built in release.
 fn build_managed(root: &Path) -> Result<()> {
-    for project in ["managed/Voxear.Core/Voxear.Core.csproj", "managed/Voxear.ScriptInfo/Voxear.ScriptInfo.csproj"] {
+    let projects = [
+        "managed/Voxear.Core/Voxear.Core.csproj",
+        "managed/Voxear.ScriptInfo/Voxear.ScriptInfo.csproj",
+        "managed/Voxear.Analyzers/Voxear.Analyzers.csproj",
+    ];
+    for project in projects {
         let status = Command::new("dotnet")
             .current_dir(root)
             .args(["build", project, "-c", "Release", "--nologo", "-v", "quiet"])
@@ -240,6 +245,10 @@ fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
         }
     }
     add(&root.join("managed/Voxear.Scripts.props"), "managed/Voxear.Scripts.props".into(), false)?;
+    // The manual VoxDocs shows after a project's own pages, pictures and all.
+    for source in files_in(&root.join("manual"))? {
+        add(&source, source.strip_prefix(root)?.to_path_buf(), false)?;
+    }
     add(&root.join("README.md"), "docs/README.md".into(), false)?;
     for entry in fs::read_dir(root.join("docs"))? {
         let source = entry?.path();
@@ -248,6 +257,23 @@ fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
         }
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// Every file in `folder` and the folders inside it, but hidden ones.
+fn files_in(folder: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(folder).with_context(|| format!("reading {}", folder.display()))? {
+        let path = entry?.path();
+        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.')) {
+            continue;
+        }
+        if path.is_dir() {
+            files.extend(files_in(&path)?);
+        } else {
+            files.push(path);
+        }
+    }
     Ok(files)
 }
 
@@ -288,8 +314,11 @@ fn pack(archive: &Path, files: &[Packed]) -> Result<()> {
     let mut builder = tar::Builder::new(encoder);
     let mut folders: Vec<&Path> = Vec::new();
     for file in files {
-        let folder = file.path.parent().filter(|folder| !folder.as_os_str().is_empty());
-        if let Some(folder) = folder.filter(|folder| !folders.contains(folder)) {
+        // Each folder before what is in it, the manual's folders inside folders too.
+        let mut new: Vec<&Path> =
+            file.path.ancestors().skip(1).filter(|folder| !folder.as_os_str().is_empty()).collect();
+        new.retain(|folder| !folders.contains(folder));
+        for folder in new.into_iter().rev() {
             builder.append_data(&mut header(tar::EntryType::Directory, 0o755, 0), folder, std::io::empty())?;
             folders.push(folder);
         }

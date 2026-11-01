@@ -134,6 +134,12 @@ pub fn is_install(root: &Path) -> bool {
     root.join(ENGINE_FILE).is_file()
 }
 
+/// The engine's manual, the Markdown pages VoxDocs shows after a project's
+/// own: the `manual/` folder of an install, or of the checkout.
+pub fn manual_folder() -> PathBuf {
+    engine_root().join("manual")
+}
+
 /// `Voxear.Core.dll`: an install's, in its `managed/` folder, or a checkout's
 /// build of it in this configuration.
 pub fn core_assembly(configuration: &str) -> PathBuf {

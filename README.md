@@ -6,6 +6,7 @@ box.
 
 - [Architecture](docs/ARCHITECTURE.md): what the engine is and how each system works.
 - [Roadmap](docs/ROADMAP.md): milestones and open questions.
+- [The Voxear Manual](manual/_folder.md): how to make games with Voxear, as the editor's VoxDocs shows it.
 
 ## Requirements
 
@@ -100,6 +101,7 @@ crates/     Rust engine, one crate per system (ecs, scene, rhi, render, scriptin
 managed/    C# scripting API (Voxear.Core)
 samples/    example projects
 docs/       architecture and roadmap
+manual/     the Voxear Manual, which every install ships and VoxDocs shows
 ```
 
 ## Licence

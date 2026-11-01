@@ -83,6 +83,7 @@ crates/            Rust engine (one crate per system)
 managed/           C# side: Voxear.Core (the scripting API), more to come (Editor, Generators)
 samples/           example projects (`vox run samples/Hello`)
 docs/              this document and the roadmap
+manual/            the Voxear Manual: Markdown pages VoxDocs shows in every project
 ```
 
 ## Technology decisions
@@ -1705,11 +1706,21 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   machine in `.voxear/VoxDocs.toml`. Hello's VoxDocs Guide has one, with a check in Hello's `Tools.cs`.
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
-**Still to come**:
-- **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine
-  version: how to use each part of Voxear, from first steps to the advanced paths. It is written for people to
-  read: plain words and short sentences, each term explained where it first appears, an example before the
-  details, and nothing that sounds generated.
+- **The Voxear Manual**: the engine's own pages, Markdown in the checkout's `manual/` folder, which
+  `voxear-dist` ships in every install's `manual/` (`voxear_engine::manual_folder`). The editor shows them in every
+  project as a folder after the project's pages and before the Code Reference (`Library::set_manual`). They are read
+  like the project's but not written, ticked or looked after: Edit is hidden, Docs Health passes them over, and
+  their pictures come from the manual's own folders. Their paths start `manual:`, as `manual:Scripting/Commands.md`;
+  a project's page links to one as `[[manual:Commands]]`, by title or path, and `[[Commands]]` in the manual finds
+  the manual's own page, as the manual cannot know a project's. They come after the project's pages in a search,
+  and are in the command bar and Link…. A guide's steps work in them, so the manual can show a step by running it.
+  A test reads the checkout's manual and fails on any link that goes nowhere or picture that is not there.
+  The pages are written for people to read: plain words and short sentences, each term explained where it first
+  appears, an example before the details, and nothing that sounds generated. The first cover getting started,
+  Objs and levels, scripting in C#, and VoxDocs.
+
+**Still to come**: the manual's pages on materials and models, lighting and the look, the Console, profiling and
+the debug tools, the UI, and each part of Voxear as it is built.
 
 **Speed.**
 - A **command palette** on Ctrl+K reaches every action, asset and setting *(implemented; see "What exists now")*.
@@ -2430,7 +2441,8 @@ Platform.Achievements.Unlock(Achievements.FirstBlood);
 Every operation the editor can do should be scriptable.
 
 **Now.**
-- `vox doctor` checks the GPU, .NET and the shader compiler.
+- `vox doctor` checks the GPU and .NET, and in a source checkout the shader compiler, which an install does not
+  need.
 - `vox run <project> [--headless] [--frames N]` runs a project.
 - `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
   timings, culling stats and the adapted exposure.

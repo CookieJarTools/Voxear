@@ -561,6 +561,11 @@ fn a_guide_runs_its_actions_watches_its_checks_and_remembers() {
     };
     assert_eq!(ui.text(line(&ui).expect("how far the guide has got")), "0 of 3 steps done");
     assert_eq!(docs.wanted_checks(), ["obj/Sun", "file/Prefabs/Lamp.prefab"]);
+    let health = voxear_docs::health::Health::check(&docs.library());
+    assert!(
+        health.broken.iter().all(|(_, url)| !url.starts_with("action:") && !url.starts_with("check:")),
+        "steps are not links"
+    );
 
     let mut buttons = Vec::new();
     with_class(&ui, host, "md-step-action", &mut buttons);
@@ -815,4 +820,87 @@ fn a_box_finds_a_tag_among_many() {
     shown.sort();
     assert_eq!(shown, ["combat", "combo"], "the tags with the words in them");
     assert!(!ui.is_visible(ui.find(host, "cb-tags-more").unwrap()), "every one that fits shows");
+}
+
+/// A manual beside the project, as the engine's comes with it.
+fn manual() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |path: &str, text: &str| {
+        let file = dir.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    };
+    write("_folder.md", "Start with [[Your First Level]].\n");
+    write("Welcome.md", "# Welcome\n\nSee [[Damage]] and [your first level](Basics/Your%20First%20Level.md).\n");
+    write(
+        "Basics/Your First Level.md",
+        "![The editor](images/Editor.png)\n\nBack to [[Welcome]], or [[code:Voxear.Prefab]].\n",
+    );
+    write("Basics/images/Editor.png", "png");
+    dir
+}
+
+#[test]
+fn the_manual_comes_after_the_projects_pages_and_is_read_not_written() {
+    let dir = project();
+    std::fs::write(dir.path().join("Docs/Welcome.md"), "The team's own welcome.\n").unwrap();
+    let manual = manual();
+    let mut library = Library::open(dir.path(), "Hello");
+    let damage = library.find("Damage").unwrap();
+    library.set_manual(manual.path());
+    library.set_code(CodeReference::parse(CODE).unwrap());
+    let root = library.root();
+    let titles: Vec<&str> = library.page(root).children.iter().map(|c| library.page(*c).title()).collect();
+    assert_eq!(titles, ["Combat", "Guide", "Welcome", "Voxear Manual", "Code Reference"]);
+    assert_eq!(library.find("Damage"), Some(damage), "the project's pages keep their places");
+
+    let first = library.find("manual:Your First Level").expect("a page of the manual, by its title");
+    assert_eq!(library.find("manual:Basics/Your First Level"), Some(first), "or its path");
+    assert!(library.page(first).generated && library.page(first).is_manual());
+    assert_eq!(library.page(first).title(), "Your First Level");
+    let welcome = library.find("manual:Welcome").unwrap();
+    let theirs = library.find("Welcome").unwrap();
+    assert_ne!(welcome, theirs, "the project's own page of that title");
+
+    assert_eq!(library.resolve("docs:Welcome", first), Target::Page(welcome, None), "the manual links to its own");
+    assert_eq!(library.resolve("Basics/Your%20First%20Level.md", welcome), Target::Page(first, None));
+    assert_eq!(library.resolve("docs:Damage", welcome), Target::Missing("manual:Damage".into()), "not the project's");
+    let prefab = library.find("code:Voxear.Prefab").unwrap();
+    assert_eq!(library.resolve("docs:code:Voxear.Prefab", first), Target::Page(prefab, None));
+    assert_eq!(library.resolve("docs:manual:Welcome", theirs), Target::Page(welcome, None), "the project's link to it");
+    let picture = library.picture_path("images/Editor.png", first);
+    assert_eq!(picture, Some(manual.path().join("Basics/images/Editor.png")), "its pictures are its own");
+
+    assert!(library.save(first, "Changed").is_err(), "the manual is not written");
+    let health = voxear_docs::health::Health::check(&library);
+    assert!(!health.broken.is_empty());
+    assert!(health.broken.iter().all(|(page, _)| !library.page(*page).is_manual()), "nor looked after");
+    assert_eq!(library.search("welcome")[..2], [theirs, welcome], "the project's own pages first");
+}
+
+/// The engine's own manual, as each version ships it: every link in it goes
+/// somewhere and every picture is there. Links to the Code Reference are
+/// left out, as it is made from the scripts' build.
+#[test]
+fn the_engines_manual_has_no_broken_links_or_missing_pictures() {
+    let empty = tempfile::tempdir().unwrap();
+    let mut library = Library::open(empty.path(), "Empty");
+    library.set_manual(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../manual"));
+    let mut wrong = Vec::new();
+    let pages: Vec<_> = library.pages().filter(|(_, page)| page.is_manual()).collect();
+    assert!(pages.len() > 1, "the manual is there");
+    for (id, page) in pages {
+        let blocks = voxear_docs::markdown::parse(&page.body);
+        for url in voxear_docs::markdown::links(&blocks) {
+            let picture =
+                blocks.iter().any(|b| matches!(b, voxear_docs::markdown::Block::Image { url: u, .. } if *u == url));
+            let elsewhere = ["action:", "check:", "docs:code:"].iter().any(|scheme| url.starts_with(scheme));
+            let fine =
+                if picture { library.picture_path(&url, id).is_some() } else { elsewhere || library.works(&url, id) };
+            if !fine {
+                wrong.push(format!("{}: {url}", page.path));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "links that go nowhere and pictures not there:\n{}", wrong.join("\n"));
 }

@@ -1538,7 +1538,7 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
     a team should agree on them.
   - **Filters** saves the search, the levels hidden and the categories hidden under a name, ticked while in use, to
     pick again or forget; they are kept per user with the settings.
-  - **Hide…** over the trace lists the assemblies in the selected line's stack (a frame's root namespace, such as
+  - **Hide libraries…** over the trace lists the assemblies in the selected line's stack (a frame's root namespace, such as
     `Voxear` or `System`, or an engine crate), ticked while hidden; their frames fold into a line that unfolds them,
     as My code only does, for the one library that fills every trace.
   - **The player's log**: Run in the Build window starts the built game with its output piped back, and each line
@@ -1622,7 +1622,7 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   forward, the page with its title, tags and date, and for a folder what is in it. Ticking a checklist box saves
   the page. Code blocks have a Copy button.
 - **Tags and headings**, as the Cookbook has them: the tags over the tree, the eight most used and any picked
-  (Show all for the rest), each with how many pages have it; picking tags shows only the pages with every one, as
+  (Show all … tags for the rest), each with how many pages have it; picking tags shows only the pages with every one, as
   the find box does with words, and a tag on a page picks it too; past eight tags, a box finds those with the words
   typed in them. **On this page** lists a page's headings down to
   the third level beside it, when it has three or more and the reading area is 640 pixels wide; the one being read
@@ -1702,7 +1702,7 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   returning `bool`, or `string` with what is still to do. It runs through the scripts (`ScriptRuntime::run_check`)
   against the edited level, once a second; the first starts the scripts, without playing, if nothing has; while
   playing it runs against the game. The editor runs the actions and looks at the checks for the page being read. A
-  page with steps says how many are done, with Reset to start again; the actions each person has run are kept on their
+  page with steps says how many are done, with Start again to clear the ticks; the actions each person has run are kept on their
   machine in `.voxear/VoxDocs.toml`. Hello's VoxDocs Guide has one, with a check in Hello's `Tools.cs`.
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 

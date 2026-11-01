@@ -54,7 +54,7 @@ engine = "0.1.0"
 > [!WARNING]
 > Voxear will not open a project whose `voxear.toml` has a setting it does not know, so a misspelt setting stops the project opening. The error names the setting.
 
-## Without the launcher
+## Making a project without the launcher
 
 The `vox` tool can make and open projects too:
 

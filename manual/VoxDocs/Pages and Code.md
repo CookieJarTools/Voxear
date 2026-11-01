@@ -56,7 +56,7 @@ public float Falloff = 0.5f;
 
 The section runs from that heading to the next heading of the same size or bigger. It updates as soon as the page changes, so what you write in VoxDocs shows in the Inspector straight away.
 
-## Seeing both sides
+## Seeing which code documents a page
 
 A page lists the code that points at it under **In the code**, each linking to the type's Code Reference page. A type's Code Reference page says which page documents it.
 

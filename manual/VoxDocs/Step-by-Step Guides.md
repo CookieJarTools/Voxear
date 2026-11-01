@@ -9,7 +9,7 @@ A step is a link on a line of its own. There are two kinds:
 - An **action** is a button that runs a command.
 - A **check** ticks itself while what it looks for is there, and says what is still missing.
 
-A page with steps shows how many are done at the top, with **Reset** to start again.
+A page with steps shows how many are done at the top, with **Start again** to clear the ticks.
 
 ## A step to try
 
@@ -21,7 +21,7 @@ This step ticks itself as soon as the light is there:
 
 [There is a Point Light](<check:obj/Point Light>)
 
-## Actions
+## Action steps
 
 ```markdown
 [Add a point light](<action:New Point Light>)
@@ -40,9 +40,9 @@ An action can also make an asset, as the Project panel's **New** menu does:
 
 The first makes a material next to your others. The second makes it at that exact path, or finds it there if it is already made. Folders, scenes, levels and scripts can be made the same way.
 
-## Checks
+## Check steps
 
-| Write | Ticks while |
+| Write | Ticks itself while |
 | --- | --- |
 | `[words](check:obj/Sun)` | there is an Obj called Sun |
 | `[words](check:component/Light)` | some Obj has a Light, or a behaviour called Light |
@@ -83,7 +83,7 @@ Return `bool` for a plain yes or no. Return `string` to say what is still to do:
 
 The check runs about once a second against the level you are editing, or against the game while it plays. Your scripts need to build first: until they do, the step says it is waiting for them.
 
-## Your progress
+## Progress through a guide
 
 Ticked steps stay ticked on your own machine, through restarts. They are kept in the project's `.voxear` folder, so they are not shared with your team.
 

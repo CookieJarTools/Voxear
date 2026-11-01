@@ -4,7 +4,7 @@ order: 1
 
 Add a light with the Hierarchy's **+** button. There are three kinds:
 
-| Light | Shines | Like |
+| Light | How it shines | Like |
 | --- | --- | --- |
 | Directional Light | In one direction, everywhere at once | The sun |
 | Point Light | Out in every direction from one point | A light bulb |
@@ -16,7 +16,7 @@ A directional light and a spot light shine the way their Obj faces. Turn the Obj
 
 Select the light, and the Inspector shows:
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | Type | Directional, Point or Spot. You can change it at any time |
 | Colour | The light's colour |
@@ -34,7 +34,7 @@ The first directional light in the level is its **sun**. It is the only light th
 
 Shadows reach 80 metres from the camera, and are sharpest close to it.
 
-## Many lights
+## Using many lights
 
 Point and spot lights are cheap, so a level can have hundreds. Each part of the screen is lit by up to 128 of them at once. Point and spot lights do not cast shadows yet.
 

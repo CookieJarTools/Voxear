@@ -10,7 +10,7 @@ Behaviours suit things there are a few of, each with its own mind: the player, a
 
 Systems are fast because the engine keeps entities with the same components side by side in memory, and a system works through them in one sweep.
 
-## A component
+## Writing a component
 
 A component is a `struct` marked `IComponent`, holding only plain values: numbers, `bool`, vectors, other structs like these, and `Obj`. No strings, arrays or classes.
 
@@ -26,7 +26,7 @@ namespace MyGame
 }
 ```
 
-## A system
+## Writing a system
 
 A system is a class that derives from `SystemBase`. Voxear finds and runs every system in your scripts by itself, once each frame, while the game plays:
 
@@ -97,7 +97,7 @@ protected override void OnCreate()
 
 A plain entity holds only your own components. It has no Transform, so nothing draws it: use it for data your systems work on. It belongs to no scene, so changing level leaves it in place, and it is never saved.
 
-| Call | Does |
+| Call | What it does |
 | --- | --- |
 | `Entity.Create()` | Makes an entity |
 | `entity.Add(new Spot { … })`, `entity.Add<Gone>()` | Adds a component, or replaces its value. Calls can be chained |
@@ -115,7 +115,7 @@ Your scripts can change their own components and an Obj's Transform. The engine'
 
 Each system runs in one **stage** of the frame. Choose it with `[UpdateIn]`:
 
-| Stage | Runs |
+| Stage | When it runs |
 | --- | --- |
 | `Stage.First` | At the start of the frame, before new behaviours get Awake, OnEnable and Start |
 | `Stage.FixedUpdate` | After the behaviours' FixedUpdate, at each fixed step |
@@ -137,7 +137,7 @@ Systems run only while the game plays, never while you edit.
 
 The **Entities** panel, in the Profiling layout, shows every entity and its components while the game plays, and every system with how long it took. See [[The Entities Panel]].
 
-## Things to watch for
+## Things to watch for with systems
 
 - Keep no state in a system's fields. Systems are made again each time play starts and each time your scripts reload. Keep state in components.
 - A system needs a public constructor that takes nothing, which a class has unless you write another.

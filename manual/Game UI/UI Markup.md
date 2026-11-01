@@ -17,17 +17,17 @@ A `.vui` file lists what is on screen, as elements inside elements, in a form li
 </vui>
 ```
 
-## Every element takes
+## Attributes every element takes
 
-| Attribute | Does |
+| Attribute | What it does |
 | --- | --- |
 | `name` | How scripts find it, and how a style sheet picks it out with `#name` |
 | `class` | One or more class names, separated by spaces, for style sheets to use |
 | `style` | Style written right there, as `style="width: 200px"`. It wins over style sheets |
 
-## The elements
+## The UI elements
 
-| Element | Is | Its own attributes |
+| Element | What it is | Its own attributes |
 | --- | --- | --- |
 | `Panel` | A box holding other elements, stacked top to bottom | |
 | `Label` | A line of text, written between its tags | |
@@ -46,11 +46,11 @@ A `.vui` file lists what is on screen, as elements inside elements, in a form li
 
 Most icons are the editor's own, such as `play`, `pause`, `check`, `close`, `plus`, `search`, `settings`, `eye`, `lock`, `info` and `alert`.
 
-## Style sheets
+## Linking a style sheet
 
 `<Style src="Menu.vss" />` styles the element it sits in and everything inside it. Put one at the top, directly in `<vui>`, to style the whole document. The path is from the `.vui` file's folder, so `UI/Menu.vui` with `src="Menu.vss"` reads `UI/Menu.vss`.
 
-## Mistakes
+## Mistakes in markup
 
 A misspelt element name, such as `<Lable>`, stops the whole document loading, and the Console says which line is wrong. A misspelt attribute is only a warning, and the rest still loads. Keep the Console open while you work on UI.
 

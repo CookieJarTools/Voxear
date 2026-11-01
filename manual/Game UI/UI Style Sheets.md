@@ -19,9 +19,9 @@ A `.vss` style sheet says how UI looks and where things go. It is written like C
 }
 ```
 
-## Picking elements
+## Picking the elements to style
 
-| Write | Picks |
+| Write | What it picks |
 | --- | --- |
 | `Button` | Every element of that kind |
 | `.menu` | Every element with that class |
@@ -35,11 +35,11 @@ Add a state to style an element only while it is in it: `:hover` (the pointer is
 
 When rules disagree, the more specific one wins: a name beats a class, which beats a kind. Text settings, such as `color` and `font-size`, pass down from an element to what is inside it.
 
-## Laying things out
+## Laying out UI
 
 Elements inside a box are laid out in a line, top to bottom unless you say otherwise:
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `flex-direction: row` | Lays the elements inside left to right. `column` is the default |
 | `gap: 8px` | Space between them |
@@ -60,9 +60,9 @@ To centre a menu on screen, centre what the document holds:
 }
 ```
 
-## How things look
+## How UI elements look
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `background-color` | The fill |
 | `border: 1px solid #3a3b42` | An edge: its width first, then `solid` or `dashed`, then its colour |
@@ -78,7 +78,7 @@ Colours are written `#rgb`, `#rrggbb`, `#rrggbbaa` (with see-through), `rgb(…)
 
 Sizes are in `px` or `%`. There is no `em`, `rem`, `vw` or `vh`: use percentages and flexible layouts for screens of different sizes. UI is laid out in pixels that follow the screen's scale setting, so it looks the same size on a high-resolution screen.
 
-## Movement
+## Transitions and animations
 
 ```css
 Button {
@@ -97,7 +97,7 @@ Button {
 
 Transitions and animations change colours and opacity smoothly.
 
-## Variables and the theme
+## Style sheet variables and the theme
 
 `--name: value` sets a variable, and `var(--name)` uses it:
 
@@ -121,6 +121,6 @@ Your UI starts from Voxear's own dark theme, which styles every kind of element 
 
 A dropdown's open list is drawn apart from your document, so it keeps the default theme's look whatever your sheet says.
 
-## Mistakes
+## Mistakes in a style sheet
 
 A setting Voxear does not know, or a value it cannot read, is skipped, and the Console names the file and line. The rest of the sheet still applies. Some habits from the web that do not work here: `background` (write `background-color`), a border written with its colour first, named colours other than the three above, `em` sizes, and `@media`.

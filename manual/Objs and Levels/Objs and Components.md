@@ -10,7 +10,7 @@ What an Obj does comes from its **components**. A cube is an Obj with a Mesh Ren
 
 Click the **+** at the top of the Hierarchy and pick what to make:
 
-| Choice | Makes |
+| Choice | What it makes |
 | --- | --- |
 | Empty | An Obj with nothing but a Transform, to hold other Objs or a script |
 | Cube, Sphere, Plane | A shape, drawn by a Mesh Renderer |
@@ -31,7 +31,7 @@ An Obj can hold other Objs, called its children. Children move, turn and grow wi
 
 To put one Obj inside another, drag its row in the Hierarchy onto the other's row. Drop it near the top or bottom edge of a row instead to put it before or after that Obj; a line shows where it will go. The Obj stays where it was in the world.
 
-## The Transform
+## An Obj's Transform
 
 The Inspector shows the Transform of the selected Obj first:
 
@@ -41,7 +41,7 @@ The Inspector shows the Transform of the selected Obj first:
 
 Y is up, and Z is forward. Right-click a value to **Reset** it.
 
-## Components
+## An Obj's components
 
 Under the Transform, the Inspector shows each component, each with its own settings. The built-in ones are:
 

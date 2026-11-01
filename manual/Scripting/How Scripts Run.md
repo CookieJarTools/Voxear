@@ -4,9 +4,9 @@ order: 2
 
 A behaviour has methods the engine calls at set times: when it first appears, every frame, and when it goes away. Write the ones you need, as `protected override`, and leave the rest out.
 
-## When each method runs
+## When each behaviour method runs
 
-| Method | Runs |
+| Method | When it runs |
 | --- | --- |
 | `Awake` | Once, first, as soon as the behaviour exists and its fields are set |
 | `OnEnable` | After Awake, and again each time the behaviour is turned back on |
@@ -19,7 +19,7 @@ A behaviour has methods the engine calls at set times: when it first appears, ev
 
 Use `Awake` to set the behaviour itself up, and `Start` for anything that needs other behaviours to be ready. Use `FixedUpdate` for movement that must not depend on how fast the computer is, and `LateUpdate` for things that follow others, such as a camera following the player.
 
-## The order is guaranteed
+## The order behaviours start in
 
 When a level loads, or a prefab is spawned, all its behaviours arrive together:
 
@@ -38,9 +38,9 @@ public sealed class GameManager : Behaviour
 }
 ```
 
-## Time
+## Time in scripts
 
-| | |
+| Value | What it is |
 | --- | --- |
 | `Time.Delta` | Seconds since the last frame. Inside FixedUpdate, the length of a fixed step |
 | `Time.UnscaledDelta` | The same, ignoring the time scale |
@@ -52,7 +52,7 @@ public sealed class GameManager : Behaviour
 
 Set `Enabled` to false to turn a behaviour off: it stops getting Update and the other frame methods, and gets OnDisable. Set it back to true to turn it on again. `Destroy()` removes the behaviour from its Obj for good.
 
-## Waiting
+## Waiting with async and await
 
 Methods can be `async`, and carry on after an `await` on the next frame. `Task` needs `using System.Threading.Tasks;` at the top of the file:
 
@@ -67,7 +67,7 @@ protected override async void Start()
 
 Code after an `await` always runs on the main thread, so it can change Objs as any other code can.
 
-## For Unity users
+## How scripts differ from Unity
 
 - Lifecycle methods are `protected override`. A plain `void Update()` never runs.
 - `Obj.Position` and `Obj.Rotation` are local, as Unity's `localPosition` and `localRotation`. `Obj.WorldPosition` is where the Obj is in the world.

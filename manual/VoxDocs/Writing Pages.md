@@ -4,7 +4,7 @@ order: 1
 
 A page is a Markdown file in your project's `Docs` folder. Its file name is its title, and folders in `Docs` show as folders in the tree.
 
-## Your first page
+## Writing your first page
 
 A new project has no pages yet, so its top page says so and links to a page called Welcome that does not exist yet. Links to missing pages are drawn faded. Click one and VoxDocs makes the page and opens it for writing.
 
@@ -18,7 +18,7 @@ Click **Edit** at the top of a page. You get its title, its tags and its Markdow
 - Changing the title renames the file. Links that used the old title then go nowhere, and **Health** lists them so you can fix them.
 - **Tags** sort pages into groups. Type a tag and press Enter or a comma. VoxDocs suggests tags your other pages already use.
 
-## What you can write
+## Markdown you can write
 
 ```markdown
 # A heading
@@ -45,7 +45,7 @@ A callout is a box that stands out from the page, for a note or a warning. Each 
 
 A block of code between three backticks keeps its spacing and gets a **Copy** button. Write the language after the backticks, as `csharp`, and its name shows over the block.
 
-## Finding your way around
+## Finding your way around VoxDocs
 
 - **Find a page**, over the tree, finds pages with every word you type, in their titles, tags or text.
 - The **tags** over the tree show only the pages that have every tag you pick.

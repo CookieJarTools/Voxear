@@ -4,7 +4,7 @@ order: 3
 
 Inside a behaviour, `Obj` is the Obj it is on. These are the things you will do with it most.
 
-## Moving and turning
+## Moving and turning an Obj
 
 ```csharp
 // Forward, at 2 metres a second:
@@ -52,7 +52,7 @@ if (door.TryGetBehaviour<Lock>(out var doorLock))
 
 `GetBehaviour` gives `null` when the Obj has no such behaviour.
 
-## One of a kind
+## Behaviours there is only one of
 
 Some behaviours there is only ever one of, such as a game manager. Mark it with `IInstance`, and any script can reach it:
 
@@ -95,7 +95,7 @@ Obj.Destroy();
 
 `AddBehaviour<T>()` adds a behaviour to an Obj while the game runs.
 
-## Drawing to help you see
+## Drawing lines and shapes to debug
 
 `Debug` draws lines, shapes and words over the game for one frame, to show what your code is doing:
 

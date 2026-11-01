@@ -4,7 +4,7 @@ order: 3
 
 When a project opens, the editor shows its first level, ready to change. Nothing in the game runs yet: your scripts start when you press Play.
 
-## The parts of the window
+## The parts of the editor window
 
 - **Hierarchy**, on the left: every Obj in the open level, as a tree. An Obj is one thing in your game's world, such as a light, a crate or the player. See [[Objs and Components]].
 - **Scene**, in the middle: the level as you edit it. Click things here to select them, and drag their handles to move them.
@@ -25,7 +25,7 @@ Press **Ctrl+K** and start typing. The command bar finds commands, settings, Obj
 
 Hold the **right mouse button** over the Scene view to fly:
 
-| Key | Does |
+| Key | What it does |
 | --- | --- |
 | W, A, S, D | Forward, left, back, right |
 | E and Q | Up and down |
@@ -34,7 +34,7 @@ Hold the **right mouse button** over the Scene view to fly:
 
 Move the mouse while you hold the button to look around. Let go to stop flying.
 
-## Selecting and moving things
+## Selecting and moving Objs
 
 Click an Obj in the Scene or the Hierarchy to select it. Then pick a tool, at the top left of the Scene view:
 
@@ -53,15 +53,15 @@ Hold **Ctrl** while you drag to snap: moves go in steps of the size shown in the
 - **Ctrl+S** saves the level. Only the scenes you changed are written.
 - If you open another level with changes not saved, the editor asks you to save first, or to click again to leave them.
 
-## Arranging the panels
+## Arranging the editor's panels
 
 Drag a panel's tab to move it somewhere else in the window. Right-click a tab to close it, to float it in a window of its own, or to **Reset Layout**. The **Window** button at the top lists every panel, so you can bring back one you closed.
 
 **World** and **Profiling**, at the top left, are two layouts, each remembered on its own. Profiling holds the tools for finding out why a game runs slowly.
 
-## Shortcuts
+## Editor shortcuts
 
-| Key | Does |
+| Key | What it does |
 | --- | --- |
 | Ctrl+K | Command bar |
 | Ctrl+S | Save |

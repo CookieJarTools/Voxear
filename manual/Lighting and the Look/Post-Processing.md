@@ -6,11 +6,11 @@ Post-processing is what Voxear does to the picture after drawing it, the way a p
 
 Every level gets the **Voxear Look** unless a scene says otherwise. It is made to look good from the start: smooth edges, a little glow, exposure that adapts to the light, rich but natural colour, darker corners, and a light mist.
 
-## Choosing a look
+## Choosing a preset
 
 Set post-processing in a scene file, in a `[post]` table. Start from one of three presets:
 
-| Preset | Gives |
+| Preset | What it gives |
 | --- | --- |
 | `voxear` | The Voxear Look, as above |
 | `neutral` | Nothing added: no glow, mist or dark corners, and a fixed exposure. Useful for checking colours |
@@ -37,20 +37,20 @@ The level uses the post-processing of its active scene (see [[Scenes and Levels]
 > [!NOTE]
 > The editor has no settings for post-processing yet. Change the scene file in a text editor, then open the level again to see it.
 
-## Everything you can set
+## Every post-processing setting
 
 The values shown are the Voxear Look's.
 
 **Smooth edges**, `[post.anti_aliasing]`
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `mode = "taa"` | How edges are smoothed: `"taa"` blends each frame with the ones before; `"fxaa"` is simpler, smoothing each frame on its own; `"off"` turns it off |
 | `sharpness = 0.25` | Sharpens the picture again after smoothing |
 
 **Glow**, `[post.bloom]`
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `enabled = true` | Bright things glow |
 | `intensity = 0.04` | How much glow |
@@ -58,7 +58,7 @@ The values shown are the Voxear Look's.
 
 **Exposure**, `[post.exposure]`
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `auto = true` | Adjusts the brightness to the scene, as eyes do. See [[Cameras]] |
 | `compensation = 0.5` | Brighter or darker than auto exposure would choose, in stops: each 1 doubles the brightness |
@@ -67,7 +67,7 @@ The values shown are the Voxear Look's.
 
 **Colour**, `[post.tonemap]` and `[post.grading]`
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `mapper = "agx"` | How bright colours are fitted to the screen: `"agx"`, `"aces"` (more like film), `"neutral"`, `"reinhard"` or `"none"` |
 | `contrast = 1.1`, `saturation = 1.15` | Contrast and colour strength, in `[post.tonemap]` |
@@ -76,7 +76,7 @@ The values shown are the Voxear Look's.
 
 **Dark corners**, `[post.vignette]`
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `intensity = 0.2` | How dark the corners get. 0 turns it off |
 | `smoothness = 0.4` | How gently it fades in |
@@ -84,7 +84,7 @@ The values shown are the Voxear Look's.
 
 **Mist**, `[post.fog]`
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `enabled = true` | Distant things fade into mist |
 | `density = 0.004` | How thick it is |
@@ -94,7 +94,7 @@ The values shown are the Voxear Look's.
 
 **Focus**, `[post.depth_of_field]`, off unless you turn it on
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | `enabled = false` | Blurs what is nearer or farther than the focus |
 | `focus_distance = 10` | How far away is sharp, in metres |

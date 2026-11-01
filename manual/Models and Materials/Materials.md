@@ -8,7 +8,7 @@ A material says what a surface looks like. Every Mesh Renderer draws its shape w
 
 Right-click in the Project panel and choose **New Material**, then type its name. Select it, and the Inspector shows what it holds:
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | Colour | The surface's own colour |
 | Emission | Light the surface gives off, so it glows. Black for none |
@@ -23,7 +23,7 @@ Click a colour's swatch to open the colour picker: drag in the square and the ba
 
 Select an Obj with a Mesh Renderer, and click its **Material** field in the Inspector. Pick the material from the list, or drag it there from the Project panel. **Default** is the plain grey every new shape starts with.
 
-## Making things glow
+## Making a material glow
 
 Give a material an **Emission** colour to make it glow. Emission's colour picker has an extra **Intensity** slider: each step up doubles the brightness. Bright emission spills a soft glow around it on screen, called **bloom**.
 

@@ -1323,16 +1323,16 @@ fn the_console_sifts_searches_and_opens_stacks() {
     frame(&mut editor, &mut renderer);
     assert_eq!(
         menu_texts(&editor.ui),
-        ["Show all", "Combat 3", "Compiler 1", "Engine 1", "Hello 4", "Render 1"],
+        ["Show all categories", "Combat 3", "Compiler 1", "Engine 1", "Hello 4", "Render 1"],
         "categories nobody declared: a [tag], the scripts' namespace, the crate, the compiler"
     );
-    // Hiding one keeps the menu open for the next; Show all brings them back.
+    // Hiding one keeps the menu open for the next; Show all categories brings them back.
     let render = menu_item(&editor.ui, "Render").unwrap();
     click(&mut editor.ui, render);
     frame(&mut editor, &mut renderer);
     assert!(editor.ui.is_menu_open(categories), "the menu stays open");
     assert!(console_button(&editor.ui, "Categories · 1 hidden").is_some());
-    let all = menu_item(&editor.ui, "Show all").unwrap();
+    let all = menu_item(&editor.ui, "Show all categories").unwrap();
     click(&mut editor.ui, all);
     frame(&mut editor, &mut renderer);
     editor.ui.close_popup();
@@ -2671,7 +2671,7 @@ fn the_console_saves_filters_hides_assemblies_and_colours_categories() {
     let mine_only = console_button(&editor.ui, "My code only").unwrap();
     click(&mut editor.ui, mine_only);
     frame(&mut editor, &mut renderer);
-    let hide = console_button(&editor.ui, "Hide…").unwrap();
+    let hide = console_button(&editor.ui, "Hide libraries…").unwrap();
     click(&mut editor.ui, hide);
     frame(&mut editor, &mut renderer);
     assert_eq!(menu_texts(&editor.ui), ["Voxear", "Hello"], "the assemblies in this stack");

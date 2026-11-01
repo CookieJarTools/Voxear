@@ -29,7 +29,7 @@ The Game view looks through the first camera in the level. A level with no camer
 
 Open **Settings**, from the strip on the far left, and look under **Play mode**:
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | Start paused | Starts the game paused, ready to Step |
 | Save before play | Saves the level each time you press Play |

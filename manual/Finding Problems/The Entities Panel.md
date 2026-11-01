@@ -6,7 +6,7 @@ Under the Objs you see in the Hierarchy, the engine keeps everything in the worl
 
 The Entities panel shows the world as the engine sees it. It is in the **Profiling** layout, beside the Profiler.
 
-## The columns
+## The Entities panel's columns
 
 - **Archetypes**: entities with exactly the same components are kept together, in a group called an archetype. Each row shows how many entities it holds and which components they have, the busiest first.
 - **Entities**: the entities in the archetype you picked, by name. Picking one that is an Obj selects it in the Hierarchy and the Inspector.
@@ -15,7 +15,7 @@ The Entities panel shows the world as the engine sees it. It is in the **Profili
 
 Type component names in the box at the top, separated by commas, to see only the archetypes that have them all: `Transform, Spin`.
 
-## Changing values
+## Changing an entity's values
 
 You can change the values of entities that are not Objs right here, while the game runs, to try things out. Change Objs in the Inspector instead, where changes can be undone and saved.
 

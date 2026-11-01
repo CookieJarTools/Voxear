@@ -573,7 +573,7 @@ impl VoxDocs {
         for (title, code) in checks {
             items.push((format!("Check: {title}"), alone(&format!("[{title}]({CHECK_SCHEME}code/{code})"))));
         }
-        self.open_insert_menu(ui, self.nodes.insert_action, items);
+        self.open_insert_menu(ui, self.nodes.insert_action, items, "No commands or checks yet");
     }
 
     /// Image…, Link… and Action… while writing, and what their menus put in.
@@ -589,11 +589,11 @@ impl VoxDocs {
         }
         if ui.clicked(self.nodes.insert_image) {
             let items = self.picture_items();
-            self.open_insert_menu(ui, self.nodes.insert_image, items);
+            self.open_insert_menu(ui, self.nodes.insert_image, items, "No pictures or assets in the project yet");
         }
         if ui.clicked(self.nodes.insert_link) {
             let items = self.link_items();
-            self.open_insert_menu(ui, self.nodes.insert_link, items);
+            self.open_insert_menu(ui, self.nodes.insert_link, items, "No other pages yet");
         }
         if ui.clicked(self.nodes.insert_action) {
             self.wants_commands = true;
@@ -634,11 +634,11 @@ impl VoxDocs {
     }
 
     /// A menu under a button of the writing tools, of labels and the
-    /// Markdown each puts in.
-    fn open_insert_menu(&mut self, ui: &mut Ui, button: NodeId, items: Vec<(String, String)>) {
+    /// Markdown each puts in, or what there is none of.
+    fn open_insert_menu(&mut self, ui: &mut Ui, button: NodeId, items: Vec<(String, String)>, empty: &str) {
         let [x, y, _, height] = ui.rect(button);
         let menu: Vec<MenuItem> = if items.is_empty() {
-            vec![MenuItem::new("Nothing to put in").enabled(false)]
+            vec![MenuItem::new(empty).enabled(false)]
         } else {
             items.iter().map(|(label, _)| MenuItem::new(label)).collect()
         };
@@ -956,7 +956,7 @@ impl VoxDocs {
         if fitting.is_empty() {
             return;
         }
-        let title = ui.add_label(self.nodes.tag_suggestions, "Suggested:");
+        let title = ui.add_label(self.nodes.tag_suggestions, "Suggested tags:");
         ui.add_class(title, "cb-tag-suggestions-title");
         for tag in fitting {
             let chip = ui.button(self.nodes.tag_suggestions, "");
@@ -1226,7 +1226,7 @@ impl VoxDocs {
         ui.set_visible(self.nodes.tags_clear, !self.picked_tags.is_empty());
         ui.set_visible(self.nodes.tag_find, tags.len() > TAGS_AT_FIRST);
         ui.set_visible(self.nodes.tags_more, find.is_empty() && (self.all_tags || shown.len() < tags.len()));
-        let more = if self.all_tags { "Show fewer".to_string() } else { format!("Show all {}", tags.len()) };
+        let more = if self.all_tags { "Show fewer tags".to_string() } else { format!("Show all {} tags", tags.len()) };
         ui.set_text(self.nodes.tags_more, &more);
     }
 
@@ -1355,7 +1355,7 @@ impl VoxDocs {
             ui.add_class(row, "cb-progress");
             let line = ui.add_label(row, "");
             ui.add_class(line, "cb-progress-line");
-            let reset = ui.button(row, "Reset");
+            let reset = ui.button(row, "Start again");
             ui.add_class(reset, "cb-progress-reset");
             self.progress_line = Some((line, reset));
         }
@@ -1679,12 +1679,12 @@ fn show_home(ui: &mut Ui, parent: NodeId, library: &Library) -> NodeId {
             ui.add_class(date, "cb-updated");
         }
     }
-    let heading = ui.add_label(parent, "Docs health");
+    let heading = ui.add_label(parent, "Docs Health");
     ui.add_class(heading, "cb-section");
     let line = match Health::check(library).problems() {
         0 => "Nothing needs looking after".to_string(),
-        1 => "One thing needs looking after: show it".to_string(),
-        count => format!("{count} things need looking after: show them"),
+        1 => "One thing needs looking after: open Docs Health".to_string(),
+        count => format!("{count} things need looking after: open Docs Health"),
     };
     let line = ui.add_label(parent, &line);
     ui.add_class(line, "cb-home-health");

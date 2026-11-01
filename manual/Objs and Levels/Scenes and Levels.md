@@ -19,7 +19,7 @@ You can also double-click a level in the Project panel, or find it with the comm
 
 The level the game starts with is `start_level` in your project's `voxear.toml`.
 
-## Saving
+## Saving a level
 
 **Ctrl+S** saves the level you are editing. Only the scenes you changed are written. One scene in each level is its **active scene**: new Objs you make go into it.
 
@@ -58,7 +58,7 @@ scene = "Scenes/Day.scene"
 
 The scenes of the level stood on load first. When the game moves from one level to another that stands on the same one, those scenes stay loaded, untouched. Only the scenes that differ are unloaded and loaded.
 
-## Objs that stay
+## Objs that stay from level to level
 
 Most Objs leave when their level does. An Obj marked as persistent stays through every change of level, children and all. Mark it in its scene file:
 

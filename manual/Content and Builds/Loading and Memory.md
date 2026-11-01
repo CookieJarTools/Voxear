@@ -44,7 +44,7 @@ Loading a prefab that is already loaded costs nothing. If loading fails, the Con
 
 For loading levels, see [[Loading Levels]].
 
-## Letting go
+## Freeing what nothing uses
 
 After a level change, Voxear frees everything nothing uses any more: models, materials and prefabs that no Obj in the world draws or came from. You can also ask it to, for example after a big fight:
 

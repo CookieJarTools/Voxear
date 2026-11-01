@@ -22,7 +22,7 @@ Click a message to see it in full below the list, with its **stack trace**: the 
 - Double-click a message to open the line that wrote it.
 - If the message is about an Obj, clicking the message selects that Obj.
 
-**My code only** folds away the parts of the trace that are not in your project, such as the engine's own code, so your own methods stand out. **Namespaces** and **Parameters** show or hide those parts of each line. **Hide…** folds away a library you do not want to see in any trace. **Copy** puts the message and its trace on the clipboard.
+**My code only** folds away the parts of the trace that are not in your project, such as the engine's own code, so your own methods stand out. **Namespaces** and **Parameters** show or hide those parts of each line. **Hide libraries…** folds away a library you do not want to see in any trace. **Copy** puts the message and its trace on the clipboard.
 
 Your code editor is set in **Settings**: VS Code, Rider, Zed, or whatever your system opens code with.
 
@@ -34,7 +34,7 @@ Your code editor is set in **Settings**: VS Code, Rider, Zed, or whatever your s
 - **Clear** empties the Console.
 - **Error Pause** pauses the game as soon as it logs an error, so you can look around at that moment.
 
-## Categories
+## Message categories
 
 Every message belongs to a category, worked out for you:
 
@@ -46,11 +46,11 @@ Every message belongs to a category, worked out for you:
 
 **Filters** saves the search, and the kinds and categories you have hidden, under a name, so you can come back to them in one click.
 
-## Quietening a message
+## Muting a message
 
 Right-click a message and choose **Mute this message** to stop it showing. **Muted**, in the toolbar, lists what you have muted and brings it back.
 
-## A build's messages
+## Messages from a build
 
 When you start a build with **Run** in the Build panel, its messages come into the Console too, in the Player category. A build run on its own keeps its messages in a file; **Player Log** reads the last run of each build back into the Console.
 

@@ -43,7 +43,7 @@ namespace MyGame
 
 Point the `lamp` field at the prefab in the Inspector. See [[Fields in the Inspector]] for how fields work.
 
-## Instances that differ
+## Instances that differ from their prefab
 
 Change an instance in the Inspector, and the change belongs to that instance alone. Everything you have not changed still follows the prefab.
 

@@ -10,7 +10,7 @@ Click **Profiling**, beside **World** at the top left of the editor. This switch
 
 The Profiler records while its tab is showing and **Record** is on. It shares its place with the Entities panel, the Frame Debugger and the Console, so it stops recording while you look at one of those. Drag its tab elsewhere, or float it, to keep it recording while you use the others.
 
-## The chart
+## The Profiler's chart
 
 The chart at the top shows the last 300 frames: how long each took on the main processor (CPU) and on the graphics card (GPU), in milliseconds. Lines mark 60 and 30 frames a second. A frame above the 60 line took too long for a smooth 60 frames a second.
 
@@ -18,11 +18,11 @@ Click the chart to look at one frame. **Live** goes back to the newest. **Record
 
 The line under the toolbar sums up the frame: frames a second, how long it took, the CPU and GPU times, and how much memory your scripts asked for (**GC**).
 
-## Hierarchy
+## The Profiler's Hierarchy
 
 **Hierarchy** lists the work done in the frame as a tree, slowest first:
 
-| Column | Means |
+| Column | What it means |
 | --- | --- |
 | Total | The share of the frame spent in this row, and everything inside it |
 | Self | The share spent in this row alone |
@@ -37,13 +37,13 @@ Open **Game** to see the game's own work: **FixedUpdate**, **Update**, **LateUpd
 > [!TIP]
 > **GC Alloc** is worth watching. Memory asked for every frame must be cleaned up later, and the cleaning makes the game stutter. A behaviour that shows GC Alloc on every frame is worth fixing first.
 
-## Timeline
+## The Profiler's Timeline
 
 **Timeline** shows the same frame as bars across time, so you can see what ran when, and what ran inside what. Point at a bar to see its name, how long it took, and when in the frame it started. Script work is purple, the engine's blue, drawing green, and waiting grey.
 
 Work on other threads, such as loading a level in the background, shows in lanes of its own under the main thread.
 
-## Beside the frame
+## Drawing passes and what a frame drew
 
 The right side lists each drawing pass with how long the graphics card took over it, and what the frame drew: how many Objs were drawn and how many were skipped because they were out of view or hidden behind others, the levels of detail used, and what is loaded.
 

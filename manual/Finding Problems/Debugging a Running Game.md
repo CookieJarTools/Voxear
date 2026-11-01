@@ -14,9 +14,9 @@ A game running on its own, outside the editor, has tools of its own built in. Th
 
 Release builds have none of these tools, so players never see them.
 
-## Keys
+## Keys for debugging
 
-| Key | Does |
+| Key | What it does |
 | --- | --- |
 | F1 | Shows or hides the stats |
 | F2 | Colours everything by its level of detail |
@@ -28,19 +28,19 @@ Release builds have none of these tools, so players never see them.
 
 Press F2 to F5 again to go back to the normal picture.
 
-## The stats
+## The stats panel
 
 F1 shows a panel with the frame rate, how long each frame takes on the processor and the graphics card, a graph of recent frames, how many things were drawn and skipped, and the camera's exposure. Click its title to fold it away. `vox run MyGame --stats` starts with it showing.
 
-## Flying around
+## Flying the camera
 
 Hold the right mouse button to fly the game's camera, as in the editor's Scene view: W, A, S and D to move, Q and E to go down and up, Shift to go faster, and the mouse wheel to change speed.
 
-## The console
+## The game's console
 
 Press the key to the left of 1 (the same key whatever your keyboard layout) to open the console. It shows the game's messages, and runs what you type.
 
-| Type | Does |
+| Type | What it does |
 | --- | --- |
 | `help` | Lists everything the console can run |
 | `clear` | Empties the messages shown |

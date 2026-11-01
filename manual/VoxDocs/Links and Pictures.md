@@ -30,7 +30,7 @@ Clicking a link to a file in your project shows that file in the Project panel.
 
 While editing, **Link…** lists your pages and the manual's, and puts in a link to the one you pick.
 
-## Pictures
+## Pictures on a page
 
 ```markdown
 ![The first level at night](images/Night.png)
@@ -49,7 +49,7 @@ Ways to add a picture while editing:
 
 Captures and recordings leave out the editor's own lines and handles, so they show only the game.
 
-## Live previews
+## Live previews of assets
 
 Name a prefab, model or material in place of a picture and the page shows its preview, as the Project panel draws it:
 

@@ -29,7 +29,7 @@ A guide can do the work for the reader. A link to an action or a check, on a lin
    [The lamp prefab is there](check:file/Prefabs/Lamp.prefab)
 
 > [!TIP]
-> What you have done stays ticked on your machine, through restarts, and nobody else's. **Reset** starts the guide again. Undo takes back what an action did, as for anything else.
+> What you have done stays ticked on your machine, through restarts, and nobody else's. **Start again** clears the ticks. Undo takes back what an action did, as for anything else.
 
 ## Writing steps
 

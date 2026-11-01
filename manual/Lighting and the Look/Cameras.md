@@ -8,7 +8,7 @@ A camera looks the way its Obj faces. Select it, and the Scene view shows the sh
 
 ## A camera's settings
 
-| Setting | Does |
+| Setting | What it does |
 | --- | --- |
 | Field of view | How wide it sees, in degrees from top to bottom. 60 is usual; lower zooms in, higher sees more around the edges |
 | Near | How close something can be, in metres, and still be seen. Anything nearer is cut away |
@@ -16,7 +16,7 @@ A camera looks the way its Obj faces. Select it, and the Scene view shows the sh
 
 There is no far limit: a camera sees as far as there is anything to see.
 
-## Exposure
+## A camera's exposure
 
 Like a real camera, Voxear's adjusts to how bright the scene is: step from a dark cave into sunlight, and the picture brightens and then settles, as your eyes would. This is **auto exposure**, and it is on unless you turn it off.
 

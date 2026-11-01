@@ -4,7 +4,7 @@ order: 8
 
 A query finds the entities that have certain components, so a system can work through them. Inside a system, write `Query<…>()`; anywhere else, `World.Query<…>()`. A query names up to four components.
 
-## Going through entities
+## Going through a query's entities
 
 The simplest way is `ForEach`, with `ref` for each component. It takes up to three:
 
@@ -33,7 +33,7 @@ foreach (var chunk in Query<Spot, Drift>())
 
 ## Narrowing a query
 
-| Add | Keeps only entities that |
+| Add | Keeps only the entities that |
 | --- | --- |
 | `.With<Gone>()` | Also have this component, without reading it |
 | `.Without<Gone>()` | Do not have this component |
@@ -50,7 +50,7 @@ foreach (var chunk in Query<Spot>().Without<Gone>())
 
 `Changed` works chunk by chunk: writing to one entity counts for its whole chunk. A system's own writes do not count for itself the next time it runs. `ForEach` counts every component it names as written, even ones you only read, so use a chunk loop with `Read` when you filter with `Changed`.
 
-## Adding and destroying while you go through
+## Adding and destroying during a query
 
 You can add, remove and destroy while going through a query. Those changes wait until the system's `Update` is over, then apply in order, so the query you are in is not disturbed. Until then, `Has` does not see a component you just added. Changing values happens at once.
 

@@ -4,7 +4,7 @@ order: 1
 
 You install Voxear, and keep it up to date, with the **Voxear Launcher**. The launcher holds every version of the engine you have installed, side by side, and opens each of your projects with the version it was made for.
 
-## What you need
+## What you need to run Voxear
 
 - **Linux or Windows 10/11**, on a 64-bit PC.
 - **A graphics card with Vulkan 1.3**, with its current driver.

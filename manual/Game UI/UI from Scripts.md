@@ -2,7 +2,7 @@
 order: 4
 ---
 
-## Loading and closing
+## Loading and closing a UI document
 
 ```csharp
 var menu = UiDocument.Load("UI/Menu.vui");
@@ -12,7 +12,7 @@ var menu = UiDocument.Load("UI/Menu.vui");
 
 `menu.Close()` takes the document off screen, and `menu.IsOpen` says whether it is still there.
 
-## Finding elements
+## Finding UI elements
 
 ```csharp
 var resume = menu.Find("resume");
@@ -20,7 +20,7 @@ var resume = menu.Find("resume");
 
 `Find` gives the first element in the document with that `name`, or `null`. Finding the same name again gives the same element, so find each one once and keep it.
 
-## Reacting to clicks
+## Reacting to clicks on UI
 
 ```csharp
 resume!.Clicked += () => Resume();
@@ -38,9 +38,9 @@ protected override void Update()
 }
 ```
 
-## Reading and changing elements
+## Reading and changing UI elements
 
-| Member | Does |
+| Member | What it does |
 | --- | --- |
 | `Text` | A label's or button's text, or what is typed in a text field |
 | `Visible` | Shows or hides the element. Hidden, it takes no space |
@@ -58,7 +58,7 @@ lowHealth!.Visible = health < 20;
 
 Sliders, toggles and text fields have no event for a change. Read their `Value`, `Checked` or `Text` when you need them, or check them each frame.
 
-## The keyboard
+## Using UI with the keyboard
 
 In a running game, Tab and Shift+Tab move between buttons, text fields, toggles, sliders and dropdowns. Enter or Space clicks a button or flips a toggle, the arrow keys move a slider or a dropdown's choice, and Escape lets go. The element you are on matches `:focus` in your style sheet.
 
@@ -66,10 +66,10 @@ The editor's Game view passes on less: the pointer, the left mouse button, and t
 
 Gamepads cannot drive UI yet.
 
-## Not yet in C#
+## What C# cannot do with UI yet
 
 Scripts cannot yet build elements in code, read which option a dropdown or tab has picked, turn an element off with `:disabled`, show a picture in an `Image`, or fill a `ListView`. For a picked option, name each `Segment` and read its `Checked`, or name each `Tab`, whose page is `Visible` only while its tab is picked.
 
-## Text and fonts
+## UI text and fonts
 
 Text uses the fonts installed on the player's computer: Inter where it is there, or a similar one. Your own font files cannot be used yet. Labels hold plain text; bold or coloured words within one label are not possible yet, so use a label for each.

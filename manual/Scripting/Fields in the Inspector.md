@@ -15,7 +15,7 @@ public sealed class Door : Behaviour
 
 The Inspector writes each name out as words: **Open Speed**, **Handle**, **Starts Open**.
 
-## Which fields show
+## Which fields the Inspector shows
 
 - **Public fields**, such as `StartsOpen`.
 - **Private fields marked `[SerializeField]`**, such as `openSpeed`. Most scripts use these, so other code cannot change them by mistake.
@@ -48,7 +48,7 @@ An Obj field can only point at an Obj in the same scene, or in the same prefab. 
 > [!TIP]
 > A `Prefab` field loads its prefab when the level loads. For a prefab the game might never need, use `Ref<Prefab>` instead, and call `Load()` on it when you do need it.
 
-## Arranging fields
+## Arranging fields with attributes
 
 Attributes on a field change how the Inspector shows it. A few of the most useful:
 
@@ -63,7 +63,7 @@ public float TopSpeed = 8f;
 public float OpenTime = 1f;
 ```
 
-| Attribute | Does |
+| Attribute | What it does |
 | --- | --- |
 | `[Range(min, max)]` | A slider between two values |
 | `[MinValue(n)]`, `[MaxValue(n)]` | Keeps typed values in bounds |
@@ -83,7 +83,7 @@ public float OpenTime = 1f;
 
 The Code Reference, in VoxDocs, has a page for every attribute: look in the **Inspector** folder under **Voxear**. When no attribute shows a field the way you want, write your own drawer: see [[Custom Drawers]].
 
-## When the code changes
+## When a script's fields change
 
 When you save a script, the editor builds it and shows its fields as they now are. If the build fails, the Inspector keeps showing the fields from the last good build, and the Console says what is wrong.
 

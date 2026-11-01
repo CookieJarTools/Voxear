@@ -47,8 +47,8 @@ enum Choice {
 /// The sections of choices, in order; the colours come after them.
 const SECTIONS: [(&str, &[Choice]); 3] = [
     ("Rows", &[Choice::RowHeight, Choice::Tint, Choice::Stripes, Choice::Category]),
-    ("Stack", &[Choice::Namespaces, Choice::Parameters, Choice::MineOnly]),
-    ("Keeping", &[Choice::Kept, Choice::ClearOnPlay]),
+    ("Stack traces", &[Choice::Namespaces, Choice::Parameters, Choice::MineOnly]),
+    ("Keeping lines", &[Choice::Kept, Choice::ClearOnPlay]),
 ];
 
 impl Choice {

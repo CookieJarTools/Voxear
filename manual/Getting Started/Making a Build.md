@@ -4,7 +4,7 @@ order: 5
 
 A build is your game on its own, as a program anyone can run without Voxear.
 
-## Building
+## Building the game
 
 1. Click **Build**, at the end of the bar along the top of the editor.
 2. If the project has no build profiles yet, click **Add the default profiles**.
@@ -18,7 +18,7 @@ The build runs in a program of its own, so the editor stays usable while it work
 
 A profile is a set of choices for one kind of build. New projects come with four, kept in `Settings/BuildProfiles/`:
 
-| Profile | For |
+| Profile | What it is for |
 | --- | --- |
 | Linux Release | The game as players get it |
 | Linux Development | Testing: adds a stats overlay on F1, debug views and a free camera |
@@ -29,7 +29,7 @@ Select a profile to change it: the platform, which levels go in and which one st
 
 For now, a build is made on the platform it is for: build the Windows profiles on Windows, and the Linux ones on Linux.
 
-## What comes out
+## What a build makes
 
 Each build goes in `Builds/` in your project, in a folder named after its profile:
 

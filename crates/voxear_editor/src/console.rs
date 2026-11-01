@@ -706,11 +706,13 @@ impl Console {
         ui.set_checked(self.toolbar.categories, hidden > 0);
     }
 
-    /// The Categories menu: Show all, then each category, ticked while
+    /// The Categories menu: Show all categories, then each category, ticked while
     /// shown, with how many lines it has.
     fn open_categories(&self, ui: &mut Ui) {
-        let mut items =
-            vec![MenuItem::new("Show all").enabled(!self.hidden_categories.is_empty()), MenuItem::separator()];
+        let mut items = vec![
+            MenuItem::new("Show all categories").enabled(!self.hidden_categories.is_empty()),
+            MenuItem::separator(),
+        ];
         for (name, count) in &self.categories {
             let shown = !self.hidden_categories.contains(name);
             items.push(MenuItem::new(name).checked(shown).shortcut(&count.to_string()));
@@ -983,7 +985,7 @@ fn detail(ui: &mut Ui, pane: NodeId, settings: &Settings) -> Detail {
     let mine_only = button(ui, "My code only", settings.console_mine_only);
     let namespaces = button(ui, "Namespaces", settings.console_namespaces);
     let parameters = button(ui, "Parameters", settings.console_parameters);
-    let hide = button(ui, "Hide…", false);
+    let hide = button(ui, "Hide libraries…", false);
     let copy = button(ui, "Copy", false);
     let body = ui.panel(pane, Style::column().scroll());
     ui.add_class(body, "fill");

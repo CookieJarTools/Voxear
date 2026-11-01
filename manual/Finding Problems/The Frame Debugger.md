@@ -6,7 +6,7 @@ The Frame Debugger shows how a frame is drawn, one step at a time. Voxear draws 
 
 It is in the **Profiling** layout, beside the Profiler. It always shows the frame just drawn, and keeps up as frames go by.
 
-## Looking at a pass
+## Looking at a drawing pass
 
 The line at the top sums up the frame: how many passes there were, how long the graphics card took, and how many Objs were drawn or skipped.
 

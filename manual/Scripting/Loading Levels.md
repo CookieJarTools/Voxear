@@ -4,7 +4,7 @@ order: 6
 
 Your scripts choose when the game moves to another level. There are two ways.
 
-## All at once
+## Loading a level all at once
 
 ```csharp
 Level.Load("Levels/Night.level");
@@ -12,7 +12,7 @@ Level.Load("Levels/Night.level");
 
 The game finishes the frame, then reads the new level and changes over. It is the simplest way, but the game stops while the level is read, so a big level can make it stutter.
 
-## In the background
+## Loading a level in the background
 
 ```csharp
 private async void GoToNight()
@@ -59,13 +59,13 @@ var options = new LevelLoadOptions { LeastTime = 1.5f };
 Level.LoadAsync("Levels/Night.level", options);
 ```
 
-## What stays and what goes
+## What stays loaded when the level changes
 
 Scenes the new level shares with the old one stay loaded, untouched, and so do the scenes of a level they both stand on. Only the scenes that differ are unloaded and loaded. Objs marked as persistent stay through every change. See [[Scenes and Levels]].
 
 Objs your scripts make while the game runs belong to the level's active scene, and leave with it.
 
-## Hearing about changes
+## Hearing about level changes
 
 `Level` has events any script can listen to, such as `SwitchStarted` when a change begins and `SwitchFinished` when it is done:
 

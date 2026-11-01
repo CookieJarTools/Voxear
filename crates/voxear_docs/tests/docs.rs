@@ -593,7 +593,7 @@ fn a_guide_runs_its_actions_watches_its_checks_and_remembers() {
     docs.open_reference(&mut ui, "Set Up");
     frame(&mut ui, &mut docs);
     assert_eq!(ui.text(line(&ui).unwrap()), "1 of 3 steps done", "the action is kept, checks look again");
-    let reset = label(&ui, host, "Reset").unwrap();
+    let reset = label(&ui, host, "Start again").unwrap();
     click(&mut ui, reset);
     frame(&mut ui, &mut docs);
     assert_eq!(ui.text(line(&ui).unwrap()), "0 of 3 steps done");

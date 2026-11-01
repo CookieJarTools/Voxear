@@ -4,7 +4,7 @@ order: 1
 
 This page makes a script that spins a cube.
 
-## Making the script
+## Making the Spinner script
 
 1. In the Project panel, open the `Scripts` folder.
 2. Right-click in it and choose **New C# Script**.
@@ -83,7 +83,7 @@ Log.Error("The cube fell off the world");
 
 Each message shows in the Console. Double-click it to open the line of code that wrote it.
 
-## Things to watch for
+## Things to watch for in scripts
 
 - Write lifecycle methods as `protected override void Update()`. A plain `void Update()`, as in Unity, never runs. The compiler warns about it.
 - Write your `using` lines yourself: `using System.Numerics;` for vectors and rotations, and `using System;` for `Random`.

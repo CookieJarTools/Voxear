@@ -1716,11 +1716,14 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   and are in the command bar and Link…. A guide's steps work in them, so the manual can show a step by running it.
   A test reads the checkout's manual and fails on any link that goes nowhere or picture that is not there.
   The pages are written for people to read: plain words and short sentences, each term explained where it first
-  appears, an example before the details, and nothing that sounds generated. The first cover getting started,
-  Objs and levels, scripting in C#, and VoxDocs.
+  appears, an example before the details, and nothing that sounds generated. They cover getting started, Objs
+  and levels, scripting in C#, models and materials, lighting and the look, finding problems (the Console, the
+  Profiler, the Frame Debugger, the Entities panel and a running game's own tools), and VoxDocs. Where the editor
+  cannot do something yet, such as placing a model or setting a scene's sky, a page says so and shows the file to
+  write instead.
 
-**Still to come**: the manual's pages on materials and models, lighting and the look, the Console, profiling and
-the debug tools, the UI, and each part of Voxear as it is built.
+**Still to come**: the manual's pages on the UI, the C# ECS, content builds and bundles, and each part of Voxear
+as it is built.
 
 **Speed.**
 - A **command palette** on Ctrl+K reaches every action, asset and setting *(implemented; see "What exists now")*.

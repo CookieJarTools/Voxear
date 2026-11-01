@@ -59,7 +59,7 @@ namespace MyGame
 }
 ```
 
-- `Update` runs once every frame.
+- `Update` runs once every frame. A frame is one picture of the game, and the game draws many each second.
 - `Obj` is the Obj this behaviour is on.
 - `Time.Delta` is how many seconds the last frame took, so the cube turns at the same speed however fast the computer is.
 - `degreesPerSecond` shows in the Inspector, so you can change the speed without changing the code. See [[Fields in the Inspector]].

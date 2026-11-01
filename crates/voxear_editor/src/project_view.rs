@@ -21,7 +21,6 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
-    time::{Duration, Instant},
 };
 
 use voxear_assets::{AssetDb, AssetKind};
@@ -77,8 +76,8 @@ enum MenuAction {
     New(NewFile),
 }
 
-/// How long a pinged file stays lit.
-const PING: Duration = Duration::from_millis(1500);
+/// How long a pinged file stays lit, in seconds.
+const PING: f32 = 1.5;
 /// A tile's width with the gap after it, and a row of tiles' height.
 const TILE: f32 = 72.0;
 const TILE_ROW: f32 = 76.0;
@@ -329,8 +328,8 @@ pub struct ProjectView {
     /// The open context menu: what it was opened on (nothing for the open
     /// folder), and what each of its items does.
     menu: Option<(NodeId, Option<Entry>, Vec<Option<MenuAction>>)>,
-    /// When the pinged entry stops being lit.
-    ping_until: Option<Instant>,
+    /// How many seconds the pinged entry stays lit.
+    ping_left: f32,
 }
 
 impl ProjectView {
@@ -363,7 +362,7 @@ impl ProjectView {
             renaming: None,
             focus_rename: false,
             menu: None,
-            ping_until: None,
+            ping_left: 0.0,
         };
         view.open(ui, 0);
         view
@@ -373,11 +372,6 @@ impl ProjectView {
     /// is. Returns what the editor is asked to do.
     pub fn update(&mut self, ui: &mut Ui) -> Vec<ProjectEvent> {
         let mut events = Vec::new();
-        if self.ping_until.is_some_and(|until| Instant::now() >= until) {
-            self.ping_until = None;
-            self.contents.borrow_mut().pinged = None;
-            ui.refresh_list(self.files);
-        }
         // The panel picks folders itself, opening them; only another one
         // picked in the tree is shown in the Inspector.
         if ui.selection_changed(self.folder_tree)
@@ -648,9 +642,22 @@ impl ProjectView {
         let Some((index, entry)) = self.open_folder_of(ui, path) else { return };
         let columns = self.contents.borrow().columns;
         self.contents.borrow_mut().pinged = Some(entry);
-        self.ping_until = Some(Instant::now() + PING);
+        self.ping_left = PING;
         ui.scroll_to_index(self.files, index.checked_div(columns).unwrap_or(index));
         ui.refresh_list(self.files);
+    }
+
+    /// Counts a ping down by a frame's `delta` seconds, and puts its light
+    /// out once it is over.
+    pub fn fade_ping(&mut self, ui: &mut Ui, delta: f32) {
+        if self.ping_left <= 0.0 {
+            return;
+        }
+        self.ping_left -= delta;
+        if self.ping_left <= 0.0 {
+            self.contents.borrow_mut().pinged = None;
+            ui.refresh_list(self.files);
+        }
     }
 
     /// Opens the folder `path` is in, and finds the file there: its place

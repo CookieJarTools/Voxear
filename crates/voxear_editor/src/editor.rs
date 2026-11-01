@@ -597,6 +597,7 @@ impl Editor {
         self.update_color_popup(renderer);
         {
             profile_scope!("Hierarchy");
+            self.hierarchy.fade_ping(&mut self.ui, delta);
             self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
             if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
                 self.inspector.show(&mut self.ui, &self.game, selected, playing);
@@ -663,6 +664,7 @@ impl Editor {
         self.update_script_types();
         {
             profile_scope!("Project");
+            self.project.fade_ping(&mut self.ui, delta);
             for event in self.project.update(&mut self.ui) {
                 self.project_event(event, renderer);
             }

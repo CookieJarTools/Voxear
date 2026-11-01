@@ -1,6 +1,8 @@
 // Voxear UI over the finished frame: rounded, bordered rectangles, text and
 // icons from the glyph atlas in push.texture, soft shadows and lines. Each quad is six vertices; see
-// src/ui_pass.rs. Colours arrive linear and premultiplied, and the output is
+// src/ui_pass.rs. A shape with UI_BACKDROP shows the view blurred under its background: push.textures
+// is the blurred view, where the view is in the output (x | y << 16), its size, and the blurred
+// image's size, the same way packed. Colours arrive linear and premultiplied, and the output is
 // sRGB, so blending happens in linear light.
 
 #include "common.slang"
@@ -11,6 +13,7 @@ static const uint UI_LINE = 3;
 static const uint UI_IMAGE = 4;
 static const uint UI_GRADIENT = 5;
 static const uint UI_DASHED = 1;
+static const uint UI_BACKDROP = 2;
 static const uint UI_FADES_DOWN = 1;
 static const float3 UI_LUMA = float3(0.2126, 0.7152, 0.0722);
 static const float2 UI_CORNERS[6] = {
@@ -78,6 +81,24 @@ float shadowCoverage(float2 pixel, float4 box, float radius, float sigma)
     float2 halfSize = box.zw * 0.5;
     float d = roundedBox(pixel - box.xy - halfSize, halfSize, min(radius, min(halfSize.x, halfSize.y)));
     return 0.5 - 0.5 * erfApprox(d / (max(sigma, 1e-3) * 1.41421356));
+}
+
+// The view behind a pixel, blurred: the small blurred image, sampled four
+// times around the point so its texels do not show as blocks.
+float3 backdrop(float2 pixel)
+{
+    float2 origin = float2(push.textures.y & 0xFFFF, push.textures.y >> 16);
+    float2 size = max(float2(push.textures.z & 0xFFFF, push.textures.z >> 16), 1.0);
+    float2 blurred = max(float2(push.textures.w & 0xFFFF, push.textures.w >> 16), 1.0);
+    float2 uv = (pixel - origin) / size;
+    float2 texel = 0.5 / blurred;
+    Texture2D image = textures[NonUniformResourceIndex(push.textures.x)];
+    SamplerState clamped = samplers[SAMPLER_LINEAR_CLAMP];
+    float3 sum = image.SampleLevel(clamped, uv + float2(-texel.x, -texel.y), 0.0).rgb
+        + image.SampleLevel(clamped, uv + float2(texel.x, -texel.y), 0.0).rgb
+        + image.SampleLevel(clamped, uv + float2(-texel.x, texel.y), 0.0).rgb
+        + image.SampleLevel(clamped, uv + float2(texel.x, texel.y), 0.0).rgb;
+    return sum * 0.25;
 }
 
 // Distance from a line segment.
@@ -157,5 +178,11 @@ float4 uiFragment(UiOut i) : SV_Target
     {
         edge *= dashes(p, halfSize, q.border);
     }
-    return q.color * inner + q.borderColor * edge;
+    float4 fill = q.color;
+    if ((q.flags & UI_BACKDROP) != 0 && push.textures.x != NO_TEXTURE)
+    {
+        // The background over what is behind, blurred: frosted glass, opaque.
+        fill = float4(backdrop(pixel) * (1.0 - q.color.a) + q.color.rgb, 1.0);
+    }
+    return fill * inner + q.borderColor * edge;
 }

@@ -712,11 +712,20 @@ impl Renderer {
             clear: self.clear,
             exposure: fg.import_buffer(exposure),
             history: (frame_index % 2) as usize,
+            keep_ldr: ui.wants_backdrop(),
         };
-        post_passes::record(&mut fg, gpu, bindless, &post)?;
+        let finished = post_passes::record(&mut fg, gpu, bindless, &post)?;
+        let backdrop = match finished.filter(|_| post.keep_ldr) {
+            Some(view_image) => {
+                let (blurred, size) =
+                    post_passes::blur_for_backdrop(&mut fg, gpu, bindless, (*pipelines, push), view_image, extent)?;
+                Some((blurred, size, view))
+            }
+            None => None,
+        };
         debug_pass::record(&mut fg, pipelines.debug, push, &buffers.debug_lines, (output, view), depth);
         let preview_atlas = previews.record(&mut fg, (gpu, bindless), (pipelines, assets), frame.slot)?;
-        ui.record(&mut fg, pipelines.ui, push, &buffers.ui, (output, full), preview_atlas);
+        ui.record(&mut fg, (pipelines.ui, push), &buffers.ui, (output, full), preview_atlas, backdrop);
         if acquired.is_some() {
             fg.transition(output, ImageAccess::Present);
         }

@@ -1159,6 +1159,13 @@ mid-fade.
   animation itself changes. `ui.is_animating()` is true while one plays. The editor's status dot breathes this way
   while the scripts build.
 
+**Backdrop blur** *(implemented)*: `backdrop-filter: blur(16px)` shows the 3D view under an element blurred, with its
+background over it, as frosted glass, inside its rounded corners. When a frame's UI has such an element, the
+renderer keeps the finished view as an image of its own (the path FXAA takes anyway), halves it three times with the
+13-tap filter bloom goes down with, which blurs as it shrinks, and the UI pass samples the smallest, four times
+around each point so its texels never show (`post_passes::blur_for_backdrop`, `ui.slang`). It blurs the view, not
+other UI, which is what overlays over the view sit on; a frame with none pays nothing.
+
 **Icons and shapes** *(implemented)*:
 - **Icons** are Voxear's own line icons (`voxear_ui::ICONS`: chevrons, play controls, tools, object and asset
   kinds, the Voxear mark), drawn on a 24-unit grid as SVG path data. Each is rasterised by swash's zeno into the
@@ -1743,8 +1750,9 @@ Graphite + Abyss spec and now takes its colours and density from the editor conc
   icons rather than filled buttons.
 - **Principles:** one accent; thin borders and narrow gaps rather than heavy chrome; shadows only on what floats
   over the viewport; mono for numbers.
-- **Not yet:** the overlays' backdrop blur (they are translucent without it), and the concept's Voxel Brush panel,
-  which is example content.
+- The overlays over the 3D view are frosted glass: `backdrop-filter: blur(16px)` under a lighter wash of the
+  overlay colour (see "Backdrop blur" under the UI).
+- **Not yet:** the concept's Voxel Brush panel, which is example content.
 
 ### The editor concept
 

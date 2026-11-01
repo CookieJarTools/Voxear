@@ -39,6 +39,10 @@ pub struct Style {
     pub transitions: Vec<Transition>,
     /// Keyframes it plays, as CSS's `animation` does.
     pub animation: Option<KeyframeAnimation>,
+    /// Above 0, what is behind its background shows through blurred, as
+    /// CSS's `backdrop-filter: blur(16px)` does: frosted glass over the 3D
+    /// view, which the renderer draws.
+    pub backdrop_blur: f32,
 }
 
 /// A blurred copy of an element's box, drawn under it, as CSS's
@@ -163,6 +167,7 @@ impl Default for Style {
             caret: None,
             transitions: Vec::new(),
             animation: None,
+            backdrop_blur: 0.0,
         }
     }
 }

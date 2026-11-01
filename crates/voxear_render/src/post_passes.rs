@@ -49,9 +49,23 @@ pub struct PostInput {
     /// Which of the two TAA history images this frame writes; the other
     /// holds last frame's result.
     pub history: usize,
+    /// Keep the finished view as an image of its own, for the UI's backdrop
+    /// blur to read, as FXAA and sharpening need it anyway.
+    pub keep_ldr: bool,
 }
 
-pub fn record(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless, input: &PostInput) -> Result<()> {
+/// Steps the backdrop's blur halves the view's size by.
+const BACKDROP_STEPS: usize = 3;
+const BACKDROP_NAMES: [&str; BACKDROP_STEPS] = ["backdrop 0", "backdrop 1", "backdrop 2"];
+
+/// Records the post passes; returns the finished view as an image of its own
+/// when it is kept (see [`PostInput::keep_ldr`]).
+pub fn record(
+    fg: &mut FrameGraph<'_>,
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    input: &PostInput,
+) -> Result<Option<ImageId>> {
     let settings = &input.settings;
     let (pipelines, push, extent) = (input.pipelines, input.push, input.extent);
     let (hdr, velocity, depth) = (input.hdr, input.velocity, input.depth);
@@ -137,7 +151,9 @@ pub fn record(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless, input
     }
 
     // Sharpening and FXAA need the finished image, so they get a pass of their own.
-    let finish = settings.anti_aliasing.mode == AntiAliasingMode::Fxaa || settings.anti_aliasing.sharpness > 0.0;
+    let finish = settings.anti_aliasing.mode == AntiAliasingMode::Fxaa
+        || settings.anti_aliasing.sharpness > 0.0
+        || input.keep_ldr;
     let composited = if finish { fg.create_image(gpu, bindless, "ldr", full(LDR_FORMAT))? } else { input.output };
     let bloom_texture = if bloom { fg.texture(levels[0].0).0 } else { NO_TEXTURE };
     let push = Push { textures: [fg.texture(scene).0, bloom_texture, 0, 0], output: u32::from(!finish), ..push };
@@ -167,7 +183,33 @@ pub fn record(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless, input
         let images = [(composited, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)];
         fg.add_pass("Finish", &images, &[], move |ctx| draw_into(ctx, pipelines.finish, &push, output, rect));
     }
-    Ok(())
+    Ok(finish.then_some(composited))
+}
+
+/// The finished view blurred for UI backdrops (`backdrop-filter`): halved a
+/// few times with the same 13-tap filter bloom goes down with, which blurs
+/// as it shrinks, so the smallest is soft enough for frosted glass. Returns
+/// it with its size.
+pub fn blur_for_backdrop(
+    fg: &mut FrameGraph<'_>,
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    (pipelines, push): (Pipelines, Push),
+    view: ImageId,
+    extent: vk::Extent2D,
+) -> Result<(ImageId, [u32; 2])> {
+    let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+    let (mut source, mut size) = (view, [extent.width, extent.height]);
+    for name in BACKDROP_NAMES {
+        let half = size.map(|v| (v / 2).max(1));
+        let target = fg.create_image(gpu, bindless, name, ImageDesc::new(half[0], half[1], BLOOM_FORMAT, usage))?;
+        // Level 1, so the filter does not damp bright pixels as bloom's first step does.
+        let push = Push { textures: [fg.texture(source).0, 0, 0, 0], size, level: 1, ..push };
+        let images = [(source, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
+        fg.add_pass("Backdrop blur", &images, &[], move |ctx| draw(ctx, pipelines.bloom_down, &push, target, false));
+        (source, size) = (target, half);
+    }
+    Ok((source, size))
 }
 
 /// A fullscreen pass into `target`. Passes that blend keep its contents; the

@@ -317,7 +317,7 @@ Still to do in M3:
   - [x] keyframe animations
   - [x] floating windows: Float on a tab's menu, or a tab dropped outside every area; moved by the bar, resized by
     the corner, docked again by a tab, and kept with the layout
-  - backdrop blur behind the viewport overlays
+  - [x] backdrop blur behind the viewport overlays (`backdrop-filter: blur()`)
   - the C# UI API
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus

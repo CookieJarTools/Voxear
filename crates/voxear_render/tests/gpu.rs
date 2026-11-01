@@ -303,6 +303,50 @@ fn the_ui_draws_over_the_frame() {
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "an empty frame clears the UI");
 }
 
+/// A panel with `backdrop-filter` shows the view under it blurred: the
+/// wall's sharp edge behind it comes out soft, while beside it the edge stays
+/// sharp. Set `VOXEAR_TEST_OUTPUT` to a folder to keep the image.
+#[test]
+fn backdrops_blur_the_view_behind_them() {
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let world = wall_scene(&mut renderer);
+    let (width, height) = (640, 360);
+    run(&mut renderer, &world, &mut 0.0, 2);
+    let (_, _, plain) = renderer.read_pixels().unwrap();
+    // The wall's right edge, as the largest jump between neighbours along a row.
+    let edge = |pixels: &[u8], y: u32, from: u32, to: u32| {
+        let at = |x: u32| {
+            let i = ((y * width + x) * 4) as usize;
+            pixels[i] as i32 + pixels[i + 1] as i32 + pixels[i + 2] as i32
+        };
+        (from..to).map(|x| (at(x + 1) - at(x)).abs()).max().unwrap()
+    };
+    let (row, left, right) = (150, 250, 390);
+    let sharp = edge(&plain, row, left, right);
+    assert!(sharp > 60, "the wall has a sharp edge to blur: {sharp}");
+
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let mut style = Style::column().at(left as f32, 100.0).width((right - left) as f32).height(100.0).radius(10.0);
+    style.background = Some(Color::hex(0x000000).with_alpha(0));
+    style.backdrop_blur = 16.0;
+    ui.panel(root, style);
+    renderer.set_ui(&ui.frame(width, height, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 2);
+    let (_, _, frosted) = renderer.read_pixels().unwrap();
+    let soft = edge(&frosted, row, left + 12, right - 12);
+    assert!(soft * 3 < sharp, "behind the panel the edge is blurred: {soft} against {sharp}");
+    assert!(edge(&frosted, 260, left, right) > 60, "below the panel it is still sharp");
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join("backdrop.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&frosted).unwrap();
+    }
+}
+
 /// A styled list of 100,000 rows and a tree, scrolled, with a selection,
 /// drawn over a frame. Set `VOXEAR_TEST_OUTPUT` to a folder to keep the image.
 #[test]

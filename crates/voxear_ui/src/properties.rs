@@ -10,7 +10,8 @@
 //! `minmax(...)`, `span 2`, `1 / 3`), read by taffy itself. Motion:
 //! `transition` (`background-color 150ms ease-out, opacity 0.1s`) and
 //! `animation` (`pulse 1.2s ease-in-out infinite alternate`, playing a
-//! sheet's `@keyframes`). Look: `background-color`, `border`, `border-width`,
+//! sheet's `@keyframes`). Look: `backdrop-filter` (`blur(16px)`, frosted glass
+//! over the 3D view), `background-color`, `border`, `border-width`,
 //! `border-color`, `border-style` (`solid` or `dashed`), `border-radius`, `box-shadow` (`0 16px 40px #0006`,
 //! with an optional spread, or `none`), `opacity`, `z-index` (above 0 draws over everything), `pointer-events`,
 //! `overflow`
@@ -126,6 +127,7 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "grid-row" => layout.grid_row = grid_line(input)?,
         "transition" => style.transitions = transitions(input)?,
         "animation" => style.animation = animation(input)?,
+        "backdrop-filter" => style.backdrop_blur = backdrop(input)?,
         "position" => {
             let positions =
                 [("relative", Position::Relative), ("absolute", Position::Absolute), ("static", Position::Static)];
@@ -398,6 +400,24 @@ fn animation(input: &mut Parser) -> Parsed<Option<KeyframeAnimation>> {
         }
     }
     Ok(Some(played))
+}
+
+/// `backdrop-filter: blur(16px)`, or `none`, as the blur's radius.
+fn backdrop(input: &mut Parser) -> Parsed<f32> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Ok(0.0);
+    }
+    input.expect_function_matching("blur").map_err(|_| "expected blur(...) or none".to_string())?;
+    input
+        .parse_nested_block(|block| match block.next()?.clone() {
+            Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("px") => Ok(value.max(0.0)),
+            Token::Number { value: 0.0, .. } => Ok(0.0),
+            other => Err(block.new_custom_error::<_, String>(format!("expected a length in px, not {other:?}"))),
+        })
+        .map_err(|e: cssparser::ParseError<String>| match e.kind {
+            cssparser::ParseErrorKind::Custom(message) => message,
+            _ => "expected blur(16px)".to_string(),
+        })
 }
 
 /// A time in `s` or `ms`, as seconds.
@@ -687,6 +707,13 @@ mod tests {
         assert_eq!(style.animation.unwrap().iterations, Some(3.0));
         assert!(applied("animation", "none").unwrap().0.animation.is_none());
         assert!(applied("animation", "pulse 1s sideways").unwrap_err().contains("'sideways' is not"));
+    }
+
+    #[test]
+    fn backdrops_blur_by_a_length() {
+        assert_eq!(applied("backdrop-filter", "blur(16px)").unwrap().0.backdrop_blur, 16.0);
+        assert_eq!(applied("backdrop-filter", "none").unwrap().0.backdrop_blur, 0.0);
+        assert!(applied("backdrop-filter", "blur(2em)").unwrap_err().contains("expected a length in px"));
     }
 
     #[test]

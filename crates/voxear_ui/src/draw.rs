@@ -316,6 +316,8 @@ struct Look {
     border_color: [f32; 4],
     dashed: bool,
     radius: f32,
+    /// What is behind shows through, blurred.
+    backdrop: bool,
 }
 
 impl Look {
@@ -327,6 +329,7 @@ impl Look {
             border_color,
             dashed: style.dashed,
             radius: style.radius,
+            backdrop: style.backdrop_blur > 0.0,
         }
     }
 }
@@ -397,6 +400,7 @@ fn shape_quads(shapes: &[Shape], content: [f32; 4], scale: f32, opacity: f32, cl
                     border_color: border.map_or([0.0; 4], |(_, c)| c.linear_premultiplied()),
                     dashed: false,
                     radius,
+                    backdrop: false,
                 };
                 shape_quad(&look, [c[0] - r, c[1] - r, r * 2.0, r * 2.0], scale, opacity, clip, quads);
             }
@@ -407,6 +411,7 @@ fn shape_quads(shapes: &[Shape], content: [f32; 4], scale: f32, opacity: f32, cl
                     border: 0.0,
                     border_color: [0.0; 4],
                     dashed: false,
+                    backdrop: false,
                     radius,
                 };
                 shape_quad(&look, [corner[0], corner[1], w * scale, h * scale], scale, opacity, clip, quads);
@@ -446,7 +451,7 @@ fn icon_quad(
 
 fn shape_quad(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
     let border = look.border > 0.0 && look.border_color[3] > 0.0;
-    if (look.background[3] <= 0.0 && !border) || opacity <= 0.0 {
+    if (look.background[3] <= 0.0 && !border && !look.backdrop) || opacity <= 0.0 {
         return;
     }
     let border = if border { (look.border * scale).round().max(1.0) } else { 0.0 };
@@ -458,7 +463,7 @@ fn shape_quad(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32;
         radius: look.radius * scale,
         border,
         kind: Quad::SHAPE,
-        flags: if look.dashed { Quad::DASHED } else { 0 },
+        flags: if look.dashed { Quad::DASHED } else { 0 } | if look.backdrop { Quad::BACKDROP } else { 0 },
         ..Quad::default()
     });
 }

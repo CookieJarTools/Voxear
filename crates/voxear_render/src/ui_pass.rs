@@ -58,15 +58,23 @@ impl UiGpu {
         gpu.upload_mips(image, std::slice::from_ref(&atlas.pixels))
     }
 
-    /// Writes this frame's quads and adds the pass that draws them onto `output`.
+    /// Whether a quad shows the view through it blurred (`backdrop-filter`),
+    /// so the frame keeps a blurred copy of the view for it.
+    pub fn wants_backdrop(&self) -> bool {
+        self.quads.iter().any(|q| q.kind == Quad::SHAPE && q.flags & Quad::BACKDROP != 0)
+    }
+
+    /// Writes this frame's quads and adds the pass that draws them onto
+    /// `output`. `backdrop` is the view blurred, with its size, and where the
+    /// view is in the output, for quads that show it.
     pub fn record(
         &self,
         fg: &mut FrameGraph<'_>,
-        pipeline: vk::Pipeline,
-        push: Push,
+        (pipeline, push): (vk::Pipeline, Push),
         buffer: &Buffer,
         output: (ImageId, vk::Extent2D),
         previews: Option<ImageId>,
+        backdrop: Option<(ImageId, [u32; 2], vk::Rect2D)>,
     ) {
         if self.quads.is_empty() {
             return;
@@ -74,11 +82,22 @@ impl UiGpu {
         buffer.write(0, &self.quads);
         let (output, extent) = output;
         let texture = self.atlas.as_ref().map_or(NO_TEXTURE, |(_, texture)| texture.0);
-        let push = Push { texture, size: [extent.width, extent.height], ..push };
+        let pack = |a: u32, b: u32| a.min(0xffff) | b.min(0xffff) << 16;
+        let textures = match backdrop {
+            Some((blurred, [w, h], view)) => [
+                fg.texture(blurred).0,
+                pack(view.offset.x as u32, view.offset.y as u32),
+                pack(view.extent.width, view.extent.height),
+                pack(w, h),
+            ],
+            None => [NO_TEXTURE, 0, 0, 0],
+        };
+        let push = Push { texture, size: [extent.width, extent.height], textures, ..push };
         let vertices = self.quads.len() as u32 * 6;
         // Images in the UI sample the preview atlas, which previews drew into this frame.
         let mut images = vec![(output, ImageAccess::ColorAttachment)];
         images.extend(previews.map(|atlas| (atlas, ImageAccess::Sampled)));
+        images.extend(backdrop.map(|(blurred, ..)| (blurred, ImageAccess::Sampled)));
         fg.add_pass("UI", &images, &[], move |ctx| {
             let color = [vk::RenderingAttachmentInfo::default()
                 .image_view(ctx.view(output))

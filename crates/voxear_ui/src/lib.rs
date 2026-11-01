@@ -107,8 +107,8 @@ pub struct Quad {
     /// [`Quad::SHAPE`], [`Quad::GLYPH`], [`Quad::SHADOW`], [`Quad::LINE`],
     /// [`Quad::IMAGE`] or [`Quad::GRADIENT`].
     pub kind: u32,
-    /// For shapes, [`Quad::DASHED`]; for an image, its texture; for a
-    /// gradient, [`Quad::FADES_DOWN`].
+    /// For shapes, [`Quad::DASHED`] and [`Quad::BACKDROP`]; for an image,
+    /// its texture; for a gradient, [`Quad::FADES_DOWN`].
     pub flags: u32,
 }
 
@@ -135,6 +135,9 @@ impl Quad {
     pub const FADES_DOWN: u32 = 1;
     /// The border is drawn in dashes.
     pub const DASHED: u32 = 1;
+    /// For a shape: what is behind it shows through its background, blurred,
+    /// as CSS's `backdrop-filter: blur()` makes frosted glass.
+    pub const BACKDROP: u32 = 2;
     /// A clip that clips nothing.
     pub const UNCLIPPED: [f32; 4] = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
 }

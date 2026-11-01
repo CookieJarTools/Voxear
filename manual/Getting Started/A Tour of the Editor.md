@@ -41,9 +41,9 @@ Click an Obj in the Scene or the Hierarchy to select it. Then pick a tool, at th
 | Key | Tool |
 | --- | --- |
 | Q | Select only |
-| W | Move: drag an arrow to move along it, or the middle to move freely |
-| E | Rotate: drag a ring to turn around it |
-| R | Scale: drag a block to stretch along it, or the middle to scale evenly |
+| W | Move: drag an arrow to move along it, a square to move along its two axes, or the middle to move freely |
+| E | Rotate: drag a ring to turn around it, the outer ring to turn around the way you look, or inside the rings to turn freely |
+| R | Scale: drag a block to stretch along it, a square to stretch along its two axes, or the middle to scale evenly |
 
 Hold **Ctrl** while you drag to snap: moves go in steps of the size shown in the Scene view (0.25 m to begin with), turns in steps of 15°, and scaling in tenths. **Pivot** and **Global**, beside the tools, choose where the handles sit and which way they point.
 

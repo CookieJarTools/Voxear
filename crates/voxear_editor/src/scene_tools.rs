@@ -3,12 +3,17 @@
 //! are drawn as Voxear UI shapes over the 3D view, projected through the
 //! same camera the renderer uses, and stay the same size on screen.
 //!
-//! Move has an arrow per axis and a square in the middle that moves in the
-//! view's plane; rotate has a ring per axis; scale has an axis per side and
-//! a middle that scales evenly. Axes are the world's (Global) or the Obj's
-//! own (Local); handles sit at the Obj's pivot or the middle of its bounds.
-//! Holding Ctrl while dragging snaps: to the snap distance, to 15 degrees,
-//! or to tenths of the scale.
+//! Move has an arrow per axis, a square between each two axes that moves
+//! along both, and a dot in the middle that moves in the view's plane.
+//! Rotate has a ring per axis, an outer ring that turns around the
+//! direction the view looks, and turns freely, as a trackball, when dragged
+//! inside the rings. Scale has an axis per side, a square between each two
+//! that scales both together, and a middle that scales evenly. The squares
+//! sit on the side of each axis that faces the camera, and hide when seen
+//! edge on. Axes are the world's (Global) or the Obj's own (Local); handles
+//! sit at the Obj's pivot or the middle of its bounds. Holding Ctrl while
+//! dragging snaps: to the snap distance, to 15 degrees, or to tenths of the
+//! scale.
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Entity, World};
@@ -26,6 +31,19 @@ const RING_SEGMENTS: usize = 48;
 /// How long the move arrowheads and how big the scale blocks are, on screen.
 const ARROW_HEAD: f32 = 12.0;
 const BLOCK: f32 = 9.0;
+/// Where the two-axis squares start and end along each of their axes, as a
+/// share of the handles' length.
+const PLANE_NEAR: f32 = 0.2;
+const PLANE_FAR: f32 = 0.45;
+/// A square seen more edge on than this, as the cosine of the angle between
+/// its axis and the view, hides: it could not be told apart or held.
+const PLANE_EDGE: f32 = 0.2;
+/// How far out rotate's view ring is, past the axis rings, on screen.
+const VIEW_RING: f32 = HANDLE_LENGTH * 1.08;
+/// How far the axis rings are, as a share of the handles' length.
+const AXIS_RING: f32 = 0.9;
+/// How far turning freely turns for each logical pixel dragged, in radians.
+const FREE_TURN: f32 = 0.01;
 /// How far away the ground can be met to place something on it; further,
 /// the pointer is too near the horizon for it to be where it was meant.
 const GROUND_REACH: f32 = 200.0;
@@ -54,7 +72,13 @@ impl Tool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Handle {
     Axis(usize),
+    /// The square across this axis, for moving or scaling along the other two.
+    Plane(usize),
     Middle,
+    /// Rotate's outer ring, which turns around the direction the view looks.
+    View,
+    /// Inside rotate's rings, which turns freely, as a trackball.
+    Free,
 }
 
 /// The Scene camera as the renderer sees it, over the view's rectangle in
@@ -65,6 +89,9 @@ pub struct ViewCamera {
     inverse: Mat4,
     pub position: Vec3,
     pub forward: Vec3,
+    /// Which way the view's right and up are, in the world.
+    pub right: Vec3,
+    pub up: Vec3,
     /// Left, top, width and height.
     pub rect: [f32; 4],
     /// World units per logical pixel one unit in front of the camera.
@@ -84,6 +111,8 @@ impl ViewCamera {
             inverse: view_projection.inverse(),
             position: transform.position,
             forward: transform.rotation * Vec3::Z,
+            right: transform.rotation * Vec3::X,
+            up: transform.rotation * Vec3::Y,
             rect,
             spread: 2.0 * (fov * 0.5).tan() / rect[3].max(1.0),
         })
@@ -240,6 +269,19 @@ struct Drag {
     /// The Obj's world rotation then, and its parent's world transform.
     world_rotation: Quat,
     parent: Mat4,
+    /// The view's right, up and forward then, for turning with the view.
+    view: [Vec3; 3],
+    /// For a scale square: the way out from the middle through it.
+    outward: Vec3,
+}
+
+impl Drag {
+    /// The Obj's rotation, as its parent holds it, once turned by `turn` in
+    /// the world from where it was when the drag began.
+    fn turned(&self, turn: Quat) -> Quat {
+        let parent_rotation = self.parent.to_scale_rotation_translation().1;
+        (parent_rotation.inverse() * (turn * self.world_rotation)).normalize()
+    }
 }
 
 /// The tool in use, its settings, and any drag under way.
@@ -304,15 +346,35 @@ impl SceneTools {
         if self.tool == Tool::Select {
             return None;
         }
-        let (middle, axes, length) = self.frame(world, renderer, camera, entity)?;
+        self.handle_in(camera, self.frame(world, renderer, camera, entity)?, point)
+    }
+
+    /// The handle under a point, for handles whose middle, axes and length
+    /// are as given.
+    fn handle_in(
+        &self,
+        camera: &ViewCamera,
+        (middle, axes, length): (Vec3, [Vec3; 3], f32),
+        point: [f32; 2],
+    ) -> Option<Handle> {
         let centre = camera.project(middle)?;
         if self.tool != Tool::Rotate && distance(point, centre) <= REACH + 3.0 {
             return Some(Handle::Middle);
         }
+        if self.tool != Tool::Rotate {
+            let inside = |index: usize| {
+                let corners = plane_corners(camera, middle, axes, length, index)?;
+                let on_screen = corners.map(|corner| camera.project(corner));
+                inside_quad(point, on_screen.into_iter().collect::<Option<Vec<_>>>()?.try_into().ok()?).then_some(())
+            };
+            if let Some(index) = (0..3).find(|&index| inside(index).is_some()) {
+                return Some(Handle::Plane(index));
+            }
+        }
         let mut best: Option<(f32, Handle)> = None;
         for (index, axis) in axes.iter().enumerate() {
             let near = if self.tool == Tool::Rotate {
-                ring(camera, middle, *axis, length * 0.9)
+                ring(camera, middle, *axis, length * AXIS_RING)
                     .windows(2)
                     .map(|w| to_segment(point, w[0], w[1]))
                     .fold(f32::MAX, f32::min)
@@ -322,6 +384,15 @@ impl SceneTools {
             };
             if near <= REACH && best.is_none_or(|(d, _)| near < d) {
                 best = Some((near, Handle::Axis(index)));
+            }
+        }
+        if best.is_none() && self.tool == Tool::Rotate {
+            let from_centre = distance(point, centre);
+            if (from_centre - VIEW_RING).abs() <= REACH {
+                return Some(Handle::View);
+            }
+            if from_centre < HANDLE_LENGTH * AXIS_RING - REACH {
+                return Some(Handle::Free);
             }
         }
         best.map(|(_, handle)| handle)
@@ -355,7 +426,15 @@ impl SceneTools {
                 (0.0, on_plane(ray, middle, axes[index]).unwrap_or(middle))
             }
             Handle::Axis(index) => (along_axis(ray, middle, axes[index]).unwrap_or(0.0), middle),
-            Handle::Middle => (0.0, on_plane(ray, middle, camera.forward).unwrap_or(middle)),
+            Handle::Plane(index) => (0.0, on_plane(ray, middle, axes[index]).unwrap_or(middle)),
+            Handle::Middle | Handle::View | Handle::Free => {
+                (0.0, on_plane(ray, middle, camera.forward).unwrap_or(middle))
+            }
+        };
+        let outward = match handle {
+            Handle::Plane(index) => plane_corners(camera, middle, axes, length, index)
+                .map_or(Vec3::ZERO, |corners| ((corners[0] + corners[2]) * 0.5 - middle).normalize_or_zero()),
+            _ => Vec3::ZERO,
         };
         self.drag = Some(Drag {
             entity,
@@ -369,6 +448,8 @@ impl SceneTools {
             length,
             world_rotation: matrix.to_scale_rotation_translation().1,
             parent,
+            view: [camera.right, camera.up, camera.forward],
+            outward,
         });
         self.hovered = Some(handle);
     }
@@ -392,21 +473,43 @@ impl SceneTools {
                 let shift = (hit - drag.grip).to_array().map(|v| snapped(v, if snap { self.snap } else { 0.0 }));
                 transform.position = to_local(start_world + Vec3::from_array(shift));
             }
+            (Tool::Move, Handle::Plane(index)) => {
+                let Some(hit) = on_plane(ray, drag.middle, drag.axes[index]) else { return };
+                let shift = hit - drag.grip;
+                let step = if snap { self.snap } else { 0.0 };
+                let along = |axis: Vec3| axis * snapped(shift.dot(axis), step);
+                let (a, b) = (drag.axes[(index + 1) % 3], drag.axes[(index + 2) % 3]);
+                transform.position = to_local(start_world + along(a) + along(b));
+            }
             (Tool::Rotate, Handle::Axis(index)) => {
-                let axis = drag.axes[index];
-                let Some(hit) = on_plane(ray, drag.middle, axis) else { return };
-                let (from, to) = (drag.grip - drag.middle, hit - drag.middle);
-                let angle = axis.dot(from.cross(to)).atan2(from.dot(to));
-                let angle = if snap { snapped(angle, 15f32.to_radians()) } else { angle };
-                let world_rotation = Quat::from_axis_angle(axis, angle) * drag.world_rotation;
-                let parent_rotation = drag.parent.to_scale_rotation_translation().1;
-                transform.rotation = (parent_rotation.inverse() * world_rotation).normalize();
+                let Some(turn) = turn_on_plane(&drag, ray, drag.axes[index], snap) else { return };
+                transform.rotation = drag.turned(turn);
+            }
+            (Tool::Rotate, Handle::View) => {
+                let Some(turn) = turn_on_plane(&drag, ray, drag.view[2], snap) else { return };
+                transform.rotation = drag.turned(turn);
+            }
+            (Tool::Rotate, Handle::Free) => {
+                // The near side of the Obj follows the pointer, as a ball turned under the hand.
+                let [right, up, forward] = drag.view;
+                let moved = right * (point[0] - drag.pointer[0]) - up * (point[1] - drag.pointer[1]);
+                let Some(axis) = (-forward).cross(moved).try_normalize() else { return };
+                transform.rotation = drag.turned(Quat::from_axis_angle(axis, moved.length() * FREE_TURN));
             }
             (Tool::Scale, Handle::Axis(index)) => {
                 let Some(along) = along_axis(ray, drag.middle, drag.axes[index]) else { return };
                 let factor = 1.0 + (along - drag.along) / drag.length.max(1e-4);
                 let mut scale = drag.start.scale.to_array();
                 scale[index] = scaled(scale[index], factor, snap);
+                transform.scale = Vec3::from_array(scale);
+            }
+            (Tool::Scale, Handle::Plane(index)) => {
+                let Some(hit) = on_plane(ray, drag.middle, drag.axes[index]) else { return };
+                let factor = 1.0 + (hit - drag.grip).dot(drag.outward) / drag.length.max(1e-4);
+                let mut scale = drag.start.scale.to_array();
+                for axis in [(index + 1) % 3, (index + 2) % 3] {
+                    scale[axis] = scaled(scale[axis], factor, snap);
+                }
                 transform.scale = Vec3::from_array(scale);
             }
             (Tool::Scale, Handle::Middle) => {
@@ -443,10 +546,40 @@ impl SceneTools {
         let lit = Color::hex(0xf2c94c);
         let color_of = |handle: Handle, base: Color| if self.hovered == Some(handle) { lit } else { base };
         let mut shapes = Vec::new();
+        if self.tool == Tool::Rotate {
+            // A faint ball inside the rings, which turns freely, then the ring around the view.
+            let free = self.hovered == Some(Handle::Free);
+            shapes.push(Shape::Circle {
+                center: local(centre),
+                radius: HANDLE_LENGTH * AXIS_RING,
+                fill: Color::rgba(255, 255, 255, if free { 34 } else { 12 }),
+                border: Some((1.0, Color::rgba(255, 255, 255, if free { 110 } else { 50 }))),
+            });
+            let view = color_of(Handle::View, Color::rgba(214, 217, 222, 230));
+            let around: Vec<[f32; 2]> = (0..=RING_SEGMENTS)
+                .map(|i| {
+                    let angle = i as f32 / RING_SEGMENTS as f32 * std::f32::consts::TAU;
+                    local([centre[0] + angle.cos() * VIEW_RING, centre[1] + angle.sin() * VIEW_RING])
+                })
+                .collect();
+            for pair in around.windows(2) {
+                shapes.push(Shape::Line { from: pair[0], to: pair[1], width: 1.5, color: view });
+            }
+        } else {
+            for (index, color) in colors.iter().enumerate() {
+                let Some(corners) = plane_corners(camera, middle, axes, length, index) else { continue };
+                let Some(on_screen) =
+                    corners.map(|c| camera.project(c).map(local)).into_iter().collect::<Option<Vec<_>>>()
+                else {
+                    continue;
+                };
+                shapes.extend(square(&on_screen, color_of(Handle::Plane(index), *color)));
+            }
+        }
         for (index, axis) in axes.iter().enumerate() {
             let color = color_of(Handle::Axis(index), colors[index]);
             if self.tool == Tool::Rotate {
-                for pair in ring(camera, middle, *axis, length * 0.9).windows(2) {
+                for pair in ring(camera, middle, *axis, length * AXIS_RING).windows(2) {
                     shapes.push(Shape::Line { from: local(pair[0]), to: local(pair[1]), width: 2.0, color });
                 }
                 continue;
@@ -492,6 +625,24 @@ fn arrow_head(tip: Vec2, along: Vec2, color: Color) -> Vec<Shape> {
         .collect()
 }
 
+/// A two-axis square from its corners on screen, in order: filled faintly
+/// in its colour, with lines across it 2 pixels apart, and outlined.
+fn square(corners: &[[f32; 2]], color: Color) -> Vec<Shape> {
+    let [c0, c1, c2, c3] = [0, 1, 2, 3].map(|i| Vec2::from(corners[i]));
+    let fill = color.with_alpha(105);
+    let rows = ((c1 - c0).length().max((c2 - c3).length()) / 2.0).ceil().max(1.0) as usize;
+    let mut shapes: Vec<Shape> = (0..=rows)
+        .map(|row| {
+            let t = row as f32 / rows as f32;
+            Shape::Line { from: c0.lerp(c1, t).into(), to: c3.lerp(c2, t).into(), width: 2.0, color: fill }
+        })
+        .collect();
+    for (from, to) in [(c0, c1), (c1, c2), (c2, c3), (c3, c0)] {
+        shapes.push(Shape::Line { from: from.into(), to: to.into(), width: 1.5, color });
+    }
+    shapes
+}
+
 /// A square block centred a little short of `tip`, along `along`.
 fn block(tip: Vec2, along: Vec2, color: Color) -> Vec<Shape> {
     let (across, half) = (along.perp(), BLOCK * 0.5);
@@ -503,6 +654,40 @@ fn block(tip: Vec2, along: Vec2, color: Color) -> Vec<Shape> {
             Shape::Line { from: from.into(), to: to.into(), width: 2.0, color }
         })
         .collect()
+}
+
+/// The turn around `axis` that brings where the drag took hold on its plane
+/// round to where the pointer's ray meets it now, in 15 degree steps when
+/// snapping.
+fn turn_on_plane(drag: &Drag, ray: (Vec3, Vec3), axis: Vec3, snap: bool) -> Option<Quat> {
+    let hit = on_plane(ray, drag.middle, axis)?;
+    let (from, to) = (drag.grip - drag.middle, hit - drag.middle);
+    let angle = axis.dot(from.cross(to)).atan2(from.dot(to));
+    let angle = if snap { snapped(angle, 15f32.to_radians()) } else { angle };
+    Some(Quat::from_axis_angle(axis, angle))
+}
+
+/// The corners, in the world, of the square across axis `index`: between
+/// the other two axes, on the side of each that faces the camera. None when
+/// the square is seen so edge on that it could not be told apart.
+fn plane_corners(camera: &ViewCamera, middle: Vec3, axes: [Vec3; 3], length: f32, index: usize) -> Option<[Vec3; 4]> {
+    let looking = (middle - camera.position).normalize_or(camera.forward);
+    if axes[index].dot(looking).abs() < PLANE_EDGE {
+        return None;
+    }
+    let toward = camera.position - middle;
+    let facing = |axis: Vec3| if axis.dot(toward) >= 0.0 { axis } else { -axis } * length;
+    let (u, v) = (facing(axes[(index + 1) % 3]), facing(axes[(index + 2) % 3]));
+    let (near, far) = (PLANE_NEAR, PLANE_FAR);
+    Some([middle + (u + v) * near, middle + u * far + v * near, middle + (u + v) * far, middle + u * near + v * far])
+}
+
+/// Whether a point on screen is inside a quadrilateral drawn in order, as
+/// the projected square of a handle is: on the same side of every edge.
+fn inside_quad(point: [f32; 2], corners: [[f32; 2]; 4]) -> bool {
+    let side = |a: [f32; 2], b: [f32; 2]| (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0]);
+    let sides: Vec<f32> = (0..4).map(|i| side(corners[i], corners[(i + 1) % 4])).collect();
+    sides.iter().all(|&s| s >= 0.0) || sides.iter().all(|&s| s <= 0.0)
 }
 
 /// A circle in the world around `middle` in the plane across `axis`, as
@@ -611,6 +796,8 @@ mod tests {
                 length,
                 world_rotation: Quat::IDENTITY,
                 parent: Mat4::IDENTITY,
+                view: [view.right, view.up, view.forward],
+                outward: Vec3::ZERO,
             });
             let _ = world;
         };
@@ -623,5 +810,97 @@ mod tests {
         tools.drag_to(&mut world, &view, to, true);
         assert!((world.get::<Transform>(crate_).unwrap().position.x - 1.25).abs() < 1e-4, "snapped to 0.25");
         assert_eq!(tools.end().map(|(e, t)| (e, t.position)), Some((crate_, Vec3::ZERO)), "the start, for undo");
+    }
+
+    /// A drag of `handle` on an Obj at the origin with the world's axes,
+    /// taken at `grip`, for the tests: the frame `begin` would build.
+    fn drag_of(view: &ViewCamera, entity: Entity, handle: Handle, grip: Vec3, outward: Vec3) -> Drag {
+        Drag {
+            entity,
+            handle,
+            start: Transform::IDENTITY,
+            middle: Vec3::ZERO,
+            axes: [Vec3::X, Vec3::Y, Vec3::Z],
+            along: 0.0,
+            grip,
+            pointer: view.project(grip).unwrap(),
+            length: view.world_size(Vec3::ZERO, HANDLE_LENGTH),
+            world_rotation: Quat::IDENTITY,
+            parent: Mat4::IDENTITY,
+            view: [view.right, view.up, view.forward],
+            outward,
+        }
+    }
+
+    #[test]
+    fn a_square_moves_along_its_two_axes_and_not_the_third() {
+        let (mut world, view) = camera();
+        let crate_ = world.spawn((Transform::IDENTITY,));
+        let mut tools = SceneTools { tool: Tool::Move, ..SceneTools::new() };
+        tools.drag = Some(drag_of(&view, crate_, Handle::Plane(2), Vec3::ZERO, Vec3::ZERO));
+        tools.drag_to(&mut world, &view, view.project(Vec3::new(1.0, 0.5, 0.0)).unwrap(), false);
+        let moved = world.get::<Transform>(crate_).unwrap().position;
+        assert!(moved.distance(Vec3::new(1.0, 0.5, 0.0)) < 1e-3, "along x and y, on the square's plane: {moved}");
+        tools.drag_to(&mut world, &view, view.project(Vec3::new(1.1, 0.4, 0.0)).unwrap(), true);
+        let snapped = world.get::<Transform>(crate_).unwrap().position;
+        assert!(snapped.distance(Vec3::new(1.0, 0.5, 0.0)) < 1e-4, "each axis snapped to 0.25: {snapped}");
+    }
+
+    #[test]
+    fn a_square_is_found_inside_it_and_hides_edge_on() {
+        let (_, view) = camera();
+        let tools = SceneTools { tool: Tool::Move, ..SceneTools::new() };
+        let length = view.world_size(Vec3::ZERO, HANDLE_LENGTH);
+        let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+        let corners = plane_corners(&view, Vec3::ZERO, axes, length, 2).expect("the square facing the camera");
+        let inside = view.project((corners[0] + corners[2]) * 0.5).unwrap();
+        assert_eq!(tools.handle_in(&view, (Vec3::ZERO, axes, length), inside), Some(Handle::Plane(2)));
+        assert!(plane_corners(&view, Vec3::ZERO, axes, length, 0).is_none(), "the square across x is edge on");
+        let outside = view.project(corners[2] + (corners[2] - corners[0])).unwrap();
+        assert_ne!(tools.handle_in(&view, (Vec3::ZERO, axes, length), outside), Some(Handle::Plane(2)));
+    }
+
+    #[test]
+    fn the_view_ring_turns_around_the_way_the_view_looks() {
+        let (mut world, view) = camera();
+        let crate_ = world.spawn((Transform::IDENTITY,));
+        let mut tools = SceneTools { tool: Tool::Rotate, ..SceneTools::new() };
+        tools.drag = Some(drag_of(&view, crate_, Handle::View, Vec3::X, Vec3::ZERO));
+        tools.drag_to(&mut world, &view, view.project(Vec3::Y).unwrap(), false);
+        let turned = world.get::<Transform>(crate_).unwrap().rotation;
+        assert!((turned * Vec3::X).distance(Vec3::Y) < 1e-3, "a quarter turn around the view: {turned}");
+        assert!((turned * Vec3::Z).distance(Vec3::Z) < 1e-3, "and the view's own direction stays");
+    }
+
+    #[test]
+    fn turning_freely_brings_the_near_side_after_the_pointer() {
+        let (mut world, view) = camera();
+        let crate_ = world.spawn((Transform::IDENTITY,));
+        let mut tools = SceneTools { tool: Tool::Rotate, ..SceneTools::new() };
+        tools.drag = Some(drag_of(&view, crate_, Handle::Free, Vec3::ZERO, Vec3::ZERO));
+        let start = view.project(Vec3::ZERO).unwrap();
+        tools.drag_to(&mut world, &view, [start[0] + 50.0, start[1]], false);
+        let turned = world.get::<Transform>(crate_).unwrap().rotation;
+        let near = turned * Vec3::NEG_Z;
+        assert!(near.x > 0.4 && near.y.abs() < 1e-4, "the side facing the camera went right: {near}");
+        tools.drag_to(&mut world, &view, [start[0], start[1] - 50.0], false);
+        let near = world.get::<Transform>(crate_).unwrap().rotation * Vec3::NEG_Z;
+        assert!(near.y > 0.4 && near.x.abs() < 1e-4, "and up, with the pointer: {near}");
+    }
+
+    #[test]
+    fn a_scale_square_scales_its_two_axes_together() {
+        let (mut world, view) = camera();
+        let crate_ = world.spawn((Transform::IDENTITY,));
+        let mut tools = SceneTools { tool: Tool::Scale, ..SceneTools::new() };
+        let outward = Vec3::new(1.0, 1.0, 0.0).normalize();
+        let drag = drag_of(&view, crate_, Handle::Plane(2), Vec3::new(0.3, 0.3, 0.0), outward);
+        let length = drag.length;
+        tools.drag = Some(drag);
+        let to = view.project(Vec3::new(0.3, 0.3, 0.0) + outward * length * 0.5).unwrap();
+        tools.drag_to(&mut world, &view, to, false);
+        let scale = world.get::<Transform>(crate_).unwrap().scale;
+        assert!((scale.x - 1.5).abs() < 1e-3 && (scale.y - 1.5).abs() < 1e-3, "x and y grow together: {scale}");
+        assert_eq!(scale.z, 1.0, "and z stays");
     }
 }

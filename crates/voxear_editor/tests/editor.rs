@@ -602,6 +602,35 @@ fn a_click_selects_an_obj_and_its_move_handle_drags_it() {
     assert!(editor.has_unsaved_changes(), "a drag is an edit");
     editor.undo(&mut renderer);
     assert_eq!(position(&editor), start, "one undo takes the whole drag back");
+
+    // The square between X and Y, on the sides facing the camera, moves along both and not along Z.
+    let facing = |axis: Vec3| if axis.dot(camera.position - start) >= 0.0 { axis } else { -axis };
+    let square = start + (facing(Vec3::X) + facing(Vec3::Y)) * camera.world_size(start, 84.0) * 0.325;
+    let grip = camera.project(square).unwrap();
+    pointer_to(&mut editor, grip);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "move-handles.png");
+    left_button(&mut editor, true);
+    frame(&mut editor, &mut renderer);
+    pointer_to(&mut editor, [grip[0] + 40.0, grip[1] - 30.0]);
+    frame(&mut editor, &mut renderer);
+    left_button(&mut editor, false);
+    frame(&mut editor, &mut renderer);
+    let moved = position(&editor);
+    assert!((moved.x - start.x).abs() > 0.05 && (moved.y - start.y).abs() > 0.05, "along X and Y: {start} to {moved}");
+    assert!((moved.z - start.z).abs() < 1e-4, "and not along Z: {moved}");
+    editor.undo(&mut renderer);
+
+    // Rotate and scale draw theirs too: rotate's view ring and ball, scale's squares.
+    let tool = editor.ui.find(editor.ui.root(), "tool").expect("the tool strip");
+    pointer_to(&mut editor, [10.0, 10.0]);
+    for (index, name) in [(2, "rotate-handles.png"), (3, "scale-handles.png")] {
+        editor.ui.set_segment(tool, index);
+        frame(&mut editor, &mut renderer);
+        frame(&mut editor, &mut renderer);
+        shot(&mut renderer, name);
+    }
 }
 
 /// Writes what the renderer last drew to `name` in `VOXEAR_TEST_OUTPUT`, when set.

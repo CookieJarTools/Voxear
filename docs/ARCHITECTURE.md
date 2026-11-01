@@ -1596,8 +1596,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Scene view tools** (`scene_tools`), as Unity's. A click selects the nearest Obj under the pointer: a ray
   against each mesh's bounds in the Obj's own space (`Renderer::mesh_bounds`; cooked meshes keep only a sphere,
   so they use the box around it), or a light or camera close to where it shows; a click on nothing clears the
-  selection. Around the selected Obj, move has an arrow per axis and a middle that moves in the view's plane,
-  rotate a ring per axis, and scale a block per axis and a middle that scales evenly. Handles are Voxear UI shapes
+  selection. Around the selected Obj, move has an arrow per axis, a square between each two axes that moves along
+  both, and a middle that moves in the view's plane; rotate a ring per axis, an outer ring that turns around the
+  direction the view looks, and a faint ball inside the rings that turns freely, its near side following the
+  pointer; and scale a block per axis, a square between each two that scales both together, and a middle that
+  scales evenly. The squares sit on the side of each axis that faces the camera, as Unity's do, and hide when seen
+  nearly edge on. Handles are Voxear UI shapes
   projected through the same matrices the renderer uses (`ViewCamera`), stay the same size on screen, and light
   up under the pointer, which takes a press on one before the UI sees it. The strip picks the tool (or Q, W, E and
   R), Pivot or Center, Global or Local axes, and the snap distance (0.1, 0.25, 0.5 or 1 m); Ctrl while dragging

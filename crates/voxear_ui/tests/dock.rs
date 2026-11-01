@@ -37,6 +37,12 @@ fn tab(ui: &Ui, dock: NodeId, title: &str) -> NodeId {
     search(ui, dock, title).unwrap_or_else(|| panic!("no tab {title}"))
 }
 
+/// The middle of an area's tab bar, past its tabs, where a tab dropped joins it.
+fn bar_of(ui: &Ui, area: NodeId) -> (f32, f32) {
+    let [x, y, w, h] = ui.rect(ui.children(area)[0]);
+    (x + w * 0.75, y + h / 2.0)
+}
+
 fn centre(ui: &Ui, node: NodeId) -> (f32, f32) {
     let [x, y, w, h] = ui.rect(node);
     (x + w / 2.0, y + h / 2.0)
@@ -71,7 +77,7 @@ fn dragging_a_tab_into_an_area_joins_it_and_keeps_the_panel_alive() {
     ui.set_text(name, "Lamp (edited)");
     let inspector = tab(&ui, dock, "Inspector");
     let scene_area = ui.parent(ui.parent(tab(&ui, dock, "Scene")).unwrap()).unwrap();
-    let target = centre(&ui, scene_area);
+    let target = bar_of(&ui, scene_area);
     let from = centre(&ui, inspector);
     drag(&mut ui, from, target);
 
@@ -82,6 +88,21 @@ fn dragging_a_tab_into_an_area_joins_it_and_keeps_the_panel_alive() {
     );
     assert_eq!(ui.find(dock, "name"), Some(name), "the same field, moved rather than rebuilt");
     assert_eq!(ui.text(name), "Lamp (edited)");
+}
+
+#[test]
+fn a_tab_let_go_in_the_middle_of_another_area_floats() {
+    let (mut ui, dock) = editor();
+    let inspector = tab(&ui, dock, "Inspector");
+    let scene_area = ui.parent(ui.parent(tab(&ui, dock, "Scene")).unwrap()).unwrap();
+    let (from, middle) = (centre(&ui, inspector), centre(&ui, scene_area));
+    drag(&mut ui, from, middle);
+    assert!(
+        ui.dock_panel_floating(dock, "inspector"),
+        "out on its own, not a tab of the Scene's: {}",
+        ui.dock_layout(dock)
+    );
+    assert!(ui.dock_layout(dock).starts_with("row(240, [hierarchy, project], [scene]) float("));
 }
 
 #[test]
@@ -161,6 +182,18 @@ fn panels_close_and_open_again_beside_where_they_were() {
         "back beside the Hierarchy, showing"
     );
 
+    // A tab's close button closes it too.
+    let close = with_class(&ui, tab(&ui, dock, "Project"), "dock-tab-close").expect("a close button on the tab");
+    let (x, y) = centre(&ui, close);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    ui.pointer_button(false);
+    assert_eq!(ui.dock_tab_close_clicked(dock).as_deref(), Some("project"));
+    ui.close_dock_panel(dock, "project");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.open_dock_panel(dock, "project");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+
     // A whole area closes, folding away; its panel comes back to the first area.
     ui.close_dock_panel(dock, "inspector");
     ui.frame(WIDTH, HEIGHT, 1.0);
@@ -174,6 +207,16 @@ fn panels_close_and_open_again_beside_where_they_were() {
     ui.pointer_secondary(true);
     ui.pointer_secondary(false);
     assert_eq!(ui.dock_tab_context_clicked(dock).map(|(panel, _)| panel), Some("scene".to_string()), "a tab's menu");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let hierarchy_area = ui.parent(ui.parent(tab(&ui, dock, "Hierarchy")).unwrap()).unwrap();
+    let (x, y) = bar_of(&ui, hierarchy_area);
+    ui.pointer_move(x, y);
+    ui.pointer_secondary(true);
+    ui.pointer_secondary(false);
+    let menu = ui.dock_tab_context_clicked(dock).map(|(panel, _)| panel);
+    // The Inspector opened again into that area a moment ago, so it is the tab showing there.
+    assert_eq!(menu.as_deref(), Some("inspector"), "the bar's empty part is its tab's showing");
+    ui.frame(WIDTH, HEIGHT, 1.0);
 
     // A layout that leaves panels out can close them rather than gather them in the first area.
     ui.set_dock_layout_closing_rest(dock, "row(240, [hierarchy], [scene])").unwrap();
@@ -227,7 +270,7 @@ fn panels_float_in_windows_that_move_resize_and_dock_again() {
 
     // A tab dropped on it joins it; one of its tabs dropped on an area docks there.
     let window = with_class(&ui, dock, "dock-float").unwrap();
-    let into = centre(&ui, window);
+    let into = bar_of(&ui, ui.children(window)[0]);
     let project = centre(&ui, tab(&ui, dock, "Project"));
     drag(&mut ui, project, into);
     assert!(ui.dock_layout(dock).ends_with("[inspector, project*])"), "{}", ui.dock_layout(dock));
@@ -235,7 +278,7 @@ fn panels_float_in_windows_that_move_resize_and_dock_again() {
     drag(&mut ui, inspector, (inspector.0 + 10.0, inspector.1 + 40.0));
     assert!(ui.dock_layout(dock).ends_with("[inspector, project*])"), "dropped on its own window, it stays");
     let hierarchy_area = ui.parent(ui.parent(tab(&ui, dock, "Hierarchy")).unwrap()).unwrap();
-    let target = centre(&ui, hierarchy_area);
+    let target = bar_of(&ui, hierarchy_area);
     let inspector = centre(&ui, tab(&ui, dock, "Inspector"));
     drag(&mut ui, inspector, target);
     let layout = ui.dock_layout(dock);

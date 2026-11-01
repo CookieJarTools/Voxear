@@ -102,6 +102,8 @@ pub(crate) struct DockState {
     pub closed: Vec<(String, Option<String>)>,
     /// Each tab button, and the panel it shows.
     pub headers: Vec<(taffy::NodeId, String)>,
+    /// Each tab's close button, and the panel it closes.
+    pub closers: Vec<(taffy::NodeId, String)>,
     /// What was built for the layout, replaced whenever it changes.
     pub structure: Option<taffy::NodeId>,
     pub next_area: u32,
@@ -417,6 +419,7 @@ impl Ui {
             panels: Vec::new(),
             closed: Vec::new(),
             headers: Vec::new(),
+            closers: Vec::new(),
             structure: None,
             next_area: 1,
         };
@@ -487,14 +490,11 @@ impl Ui {
     }
 
     /// Closes a panel: its tab goes, an area left empty folds away, and its
-    /// elements stay alive out of sight until it opens again. The last panel
-    /// placed stays.
+    /// elements stay alive out of sight until it opens again. Any panel can
+    /// close, the last one too, which leaves the dock empty until one opens.
     pub fn close_dock_panel(&mut self, dock: NodeId, id: &str) {
         let Some(state) = self.dock_state(dock) else { return };
-        let placed = state.placed();
-        let docked = state.layout.panels();
-        let last_docked = docked == [id];
-        if !placed.iter().any(|p| p == id) || placed.len() == 1 || last_docked {
+        if !state.placed().iter().any(|p| p == id) {
             return;
         }
         let neighbour = state.area_with(id).and_then(|area| area.into_iter().find(|p| p != id));
@@ -544,10 +544,39 @@ impl Ui {
 
     /// The panel whose tab was context-clicked since the last frame, for its
     /// menu, with where the pointer was.
+    /// A context click on a tab bar's empty part is one on its tab showing.
     pub fn dock_tab_context_clicked(&mut self, dock: NodeId) -> Option<(String, (f32, f32))> {
         let headers = self.dock_state(dock)?.headers.clone();
-        let (_, panel) = headers.into_iter().find(|(header, _)| self.context_clicked(NodeId(*header)))?;
+        let on_tab = headers.into_iter().find(|(header, _)| self.context_clicked(NodeId(*header)));
+        let panel = match on_tab {
+            Some((_, panel)) => panel,
+            None => self.dock_bar_context_clicked(dock)?,
+        };
         Some((panel, self.pointer_position().unwrap_or_default()))
+    }
+
+    /// The panel showing in the area or floating window whose tab bar was
+    /// context-clicked, away from its tabs.
+    fn dock_bar_context_clicked(&mut self, dock: NodeId) -> Option<String> {
+        let state = self.dock_state(dock)?;
+        let mut areas = Vec::new();
+        state.layout.areas(&mut areas);
+        let mut tabs: Vec<taffy::NodeId> = areas.into_iter().map(|(_, element, _)| element).collect();
+        tabs.extend(state.floating.iter().filter_map(|f| f.tabs));
+        let tabs = tabs
+            .into_iter()
+            .map(NodeId)
+            .find(|&tabs| self.children(tabs).first().is_some_and(|&bar| self.context_clicked(bar)))?;
+        let selected = self.selected_tab(tabs);
+        let header = self.children(self.children(tabs)[0]).get(selected).copied()?;
+        let headers = &self.dock_state(dock)?.headers;
+        headers.iter().find(|(node, _)| *node == header.0).map(|(_, panel)| panel.clone())
+    }
+
+    /// The panel whose tab's close button was clicked since the last frame.
+    pub fn dock_tab_close_clicked(&mut self, dock: NodeId) -> Option<String> {
+        let closers = self.dock_state(dock)?.closers.clone();
+        closers.into_iter().find(|(close, _)| self.clicked(NodeId(*close))).map(|(_, panel)| panel)
     }
 
     /// The other panels in the area a panel is in.
@@ -647,6 +676,7 @@ impl Ui {
             }
         }
         state.headers.clear();
+        state.closers.clear();
         let mut layout = std::mem::replace(&mut state.layout, DockNode::area(0, Vec::new(), 0));
         let structure = self.build_dock(dock, &mut layout, &mut state);
         state.layout = layout;
@@ -708,6 +738,9 @@ impl Ui {
             let bar = self.children(tabs)[0];
             let header = *self.children(bar).last().expect("add_tab added a tab");
             state.headers.push((header.0, id.clone()));
+            let close = self.icon_button(header, "close");
+            self.add_class(close, "dock-tab-close");
+            state.closers.push((close.0, id.clone()));
         }
         self.set_selected_tab(tabs, selected);
         tabs
@@ -906,15 +939,13 @@ impl Ui {
         if let Some(ghost) = ghost {
             self.set_style(ghost, absolute(point.0 + 12.0, point.1 + 8.0, None));
         }
-        let target = self.dock_target(dock, point);
+        let target = self.dock_target(dock, &panel, point);
         if let Some(preview) = preview {
-            match target {
-                Some((_, rect)) => {
-                    self.set_style(preview, absolute(rect[0], rect[1], Some((rect[2], rect[3]))));
-                    self.set_visible(preview, true);
-                }
-                None => self.set_visible(preview, false),
-            }
+            // Nowhere to dock, it floats where it is let go: its window is shown there.
+            let (w, h) = FLOAT_SIZE;
+            let rect = target.map_or([point.0 - 40.0, point.1 - 12.0, w, h], |(_, rect)| rect);
+            self.set_style(preview, absolute(rect[0], rect[1], Some((rect[2], rect[3]))));
+            self.set_visible(preview, true);
         }
         if let Some(drag) = self.dock_drag.as_mut() {
             drag.target = target.map(|(target, _)| target);
@@ -922,25 +953,39 @@ impl Ui {
     }
 
     /// The area and zone under `point`, and the rectangle the panel would
-    /// fill. A floating window, over the rest, takes a panel as a tab.
-    fn dock_target(&mut self, dock: NodeId, point: (f32, f32)) -> Option<((u32, Zone), [f32; 4])> {
-        let windows: Vec<(u32, taffy::NodeId)> =
-            self.dock_state(dock)?.floating.iter().rev().filter_map(|f| Some((f.id, f.window?))).collect();
-        for (area, window) in windows {
-            let [x, y, w, h] = self.rect(NodeId(window));
-            if (x..x + w).contains(&point.0) && (y..y + h).contains(&point.1) {
-                return Some(((area, Zone::Center), [x, y, w, h]));
+    /// fill: over a tab bar, the area or floating window it heads, as a tab;
+    /// near an area's edge, a split. The middle of an area or window is no
+    /// place to dock, so a panel let go there floats, unless it is the one
+    /// it came from, where it stays.
+    fn dock_target(&mut self, dock: NodeId, panel: &str, point: (f32, f32)) -> Option<((u32, Zone), [f32; 4])> {
+        let inside = |[x, y, w, h]: [f32; 4]| (x..x + w).contains(&point.0) && (y..y + h).contains(&point.1);
+        let state = self.dock_state(dock)?;
+        let windows: Vec<(u32, taffy::NodeId, taffy::NodeId, bool)> = state
+            .floating
+            .iter()
+            .rev()
+            .filter_map(|f| Some((f.id, f.window?, f.tabs?, f.panels.iter().any(|p| p == panel))))
+            .collect();
+        for (area, window, tabs, own) in windows {
+            let rect = self.rect(NodeId(window));
+            if inside(rect) {
+                let on_bar = self.children(NodeId(tabs)).first().is_some_and(|&bar| inside(self.rect(bar)));
+                return (on_bar || own).then_some(((area, Zone::Center), rect));
             }
         }
         let mut areas = Vec::new();
         self.dock_state(dock)?.layout.areas(&mut areas);
+        let own = self.dock_state(dock).and_then(|state| area_id_with(&state.layout, panel));
         areas.into_iter().find_map(|(id, element, _)| {
             let [x, y, w, h] = self.rect(NodeId(element));
-            if !(x..x + w).contains(&point.0) || !(y..y + h).contains(&point.1) {
+            if !inside([x, y, w, h]) {
                 return None;
             }
+            let on_bar = self.children(NodeId(element)).first().is_some_and(|&bar| inside(self.rect(bar)));
             let (u, v) = ((point.0 - x) / w, (point.1 - y) / h);
-            let (zone, rect) = if u < EDGE {
+            let (zone, rect) = if on_bar {
+                (Zone::Center, [x, y, w, h])
+            } else if u < EDGE {
                 (Zone::Left, [x, y, w / 2.0, h])
             } else if u > 1.0 - EDGE {
                 (Zone::Right, [x + w / 2.0, y, w / 2.0, h])
@@ -948,8 +993,11 @@ impl Ui {
                 (Zone::Top, [x, y, w, h / 2.0])
             } else if v > 1.0 - EDGE {
                 (Zone::Bottom, [x, y + h / 2.0, w, h / 2.0])
-            } else {
+            } else if own == Some(id) {
+                // Back in the middle of where it came from, it stays.
                 (Zone::Center, [x, y, w, h])
+            } else {
+                return None;
             };
             Some(((id, zone), rect))
         })

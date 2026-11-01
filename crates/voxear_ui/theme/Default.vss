@@ -388,6 +388,33 @@ Foldout:focus .foldout-title {
     color: var(--vx-text);
 }
 
+/* A dock tab's close button: on the tab showing, and on any under the pointer. */
+.dock-tab-close {
+    width: 16px;
+    height: 16px;
+    margin-right: -4px;
+    padding: 0px;
+    justify-content: center;
+    align-items: center;
+    border-radius: 4px;
+    border: 0px transparent;
+    background-color: transparent;
+    opacity: 0;
+}
+
+.dock-tab-close > Icon {
+    width: 10px;
+    height: 10px;
+}
+
+.tab:hover > .dock-tab-close, .tab:checked > .dock-tab-close {
+    opacity: 1;
+}
+
+.dock-tab-close:hover {
+    background-color: var(--vx-hover);
+}
+
 Dropdown {
     height: 24px;
     padding: 0px 7px;

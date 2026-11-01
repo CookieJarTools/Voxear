@@ -246,8 +246,9 @@ pub struct Editor {
     discard_armed: Option<String>,
     /// A message for the status bar, and when it was given.
     notice: Option<(String, Instant)>,
-    /// The panel whose tab's menu is open.
-    tab_menu: Option<String>,
+    /// The panel whose tab's menu is open, and the panels closed it offers
+    /// to open beside it.
+    tab_menu: Option<(String, Vec<String>)>,
     /// What the rail's drawer shows, if it is open.
     drawer: Option<Drawer>,
     /// The prefab open on its own to edit, if one is.

@@ -1,9 +1,10 @@
-//! The dock's panels as windows. A context click on a panel's tab offers
-//! Close, Close Other Tabs, Float (or Dock, for one floating in a window of
-//! its own) and Reset Layout; the top bar's Window button
+//! The dock's panels as windows. Each tab has a button to close it, and a
+//! context click on a tab, or on its bar, offers Close, Close Other Tabs,
+//! Float (or Dock, for one floating in a window of its own), every panel
+//! closed to open beside it, and Reset Layout; the top bar's Window button
 //! lists every panel, ticked while open, to open or close, and resets the
-//! layout. A closed panel keeps its state, and opens again beside a panel it
-//! shared an area with.
+//! layout. Any panel can close, and a closed one keeps its state and opens
+//! again beside a panel it shared an area with.
 //!
 //! Layouts are arrangements of the same panels, picked from the top bar's
 //! Layout menu: Default for building levels, Profiling with the Game view
@@ -48,21 +49,37 @@ pub(super) fn built_in_layouts() -> Vec<Layout> {
 impl Editor {
     pub(super) fn update_windows(&mut self) {
         let dock = self.nodes.dock;
+        if let Some(panel) = self.ui.dock_tab_close_clicked(dock) {
+            self.ui.close_dock_panel(dock, &panel);
+        }
         if let Some((panel, at)) = self.ui.dock_tab_context_clicked(dock) {
             let others = !self.ui.dock_panel_neighbours(dock, &panel).is_empty();
             let floating = self.ui.dock_panel_floating(dock, &panel);
-            let items = [
+            let closed: Vec<(String, String)> = self
+                .ui
+                .dock_panels(dock)
+                .into_iter()
+                .filter(|(.., open)| !open)
+                .map(|(id, title, _)| (id, title))
+                .collect();
+            let mut items = vec![
                 MenuItem::new("Close"),
                 MenuItem::new("Close Other Tabs").enabled(others),
                 MenuItem::new(if floating { "Dock" } else { "Float" }),
                 MenuItem::separator(),
-                MenuItem::new("Reset Layout"),
             ];
+            items.extend(closed.iter().map(|(_, title)| MenuItem::new(&format!("Open {title}"))));
+            if !closed.is_empty() {
+                items.push(MenuItem::separator());
+            }
+            items.push(MenuItem::new("Reset Layout"));
             self.ui.open_menu(dock, at, &items);
-            self.tab_menu = Some(panel);
+            self.tab_menu = Some((panel, closed.into_iter().map(|(id, _)| id).collect()));
         }
         if let Some(choice) = self.ui.menu_choice(dock) {
-            let panel = self.tab_menu.take().unwrap_or_default();
+            let (panel, closed) = self.tab_menu.take().unwrap_or_default();
+            // The items after the first separator open the panels closed, beside this one.
+            let opening = choice.checked_sub(4).and_then(|index| closed.get(index));
             match choice {
                 0 => self.ui.close_dock_panel(dock, &panel),
                 1 => {
@@ -72,6 +89,10 @@ impl Editor {
                 }
                 2 if self.ui.dock_panel_floating(dock, &panel) => self.ui.dock_floating_panel(dock, &panel),
                 2 => self.ui.float_dock_panel(dock, &panel, None),
+                _ if opening.is_some() => {
+                    let id = opening.cloned().unwrap_or_default();
+                    self.ui.open_dock_panel_beside(dock, &id, &panel);
+                }
                 _ => self.reset_layout(),
             }
         }

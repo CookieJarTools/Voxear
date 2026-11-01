@@ -1601,6 +1601,25 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     frame(&mut editor, &mut renderer);
     assert!(dock_tab(&editor.ui, "Console").is_none(), "closed");
 
+    // Another tab's menu opens it again, beside that tab.
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let project = dock_tab(&editor.ui, "Project").unwrap();
+    context_click(&mut editor.ui, project);
+    frame(&mut editor, &mut renderer);
+    let open_console = menu_item(&editor.ui, "Open Console").expect("closed panels in a tab's menu");
+    click(&mut editor.ui, open_console);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.dock_panel_neighbours(dock, "console").contains(&"project".to_string()), "beside the Project");
+
+    // Its tab's own close button closes it as well.
+    let tab = dock_tab(&editor.ui, "Console").unwrap();
+    let close = first_with(&editor.ui, tab, "dock-tab-close").expect("a close button on the tab");
+    click(&mut editor.ui, close);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(dock_tab(&editor.ui, "Console").is_none(), "closed from its tab");
+
     let windows = editor.ui.find(editor.ui.root(), "windows").unwrap();
     click(&mut editor.ui, windows);
     frame(&mut editor, &mut renderer);
@@ -1613,7 +1632,6 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     assert!(editor.ui.is_checked(tab), "and showing");
 
     // Float, from a tab's menu: a window of its own over the dock; Dock puts it back.
-    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
     let inspector = dock_tab(&editor.ui, "Inspector").unwrap();
     context_click(&mut editor.ui, inspector);
     frame(&mut editor, &mut renderer);

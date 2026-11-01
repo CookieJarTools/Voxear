@@ -292,6 +292,16 @@ impl<'a> FrameGraph<'a> {
         self.transient(gpu, bindless, name, desc, false)
     }
 
+    /// A graph-owned image every 3D view uses in turn, as the shadow atlas:
+    /// one image whatever the views' prefix, so views do not each keep one.
+    /// Its size must not depend on the view's.
+    pub fn shared_image(&mut self, gpu: &Gpu, bindless: &mut Bindless, name: &str, desc: ImageDesc) -> Result<ImageId> {
+        let prefix = std::mem::take(&mut self.prefix);
+        let image = self.transient(gpu, bindless, name, desc, false);
+        self.prefix = prefix;
+        image
+    }
+
     /// A graph-owned image whose contents carry over to the next frame.
     pub fn history_image(
         &mut self,

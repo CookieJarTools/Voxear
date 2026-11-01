@@ -912,7 +912,7 @@ impl View {
         let pyramid = fg.create_image(gpu, bindless, "depth pyramid", pyramid_desc)?;
         let shadows = if extracted.has_sun {
             let desc = ImageDesc::new(ATLAS_RESOLUTION, ATLAS_RESOLUTION, DEPTH_FORMAT, depth_usage);
-            Some(fg.create_image(gpu, bindless, "shadow atlas", desc)?)
+            Some(fg.shared_image(gpu, bindless, "shadow atlas", desc)?)
         } else {
             None
         };

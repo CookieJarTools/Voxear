@@ -84,6 +84,54 @@ impl ModelImport {
     }
 }
 
+/// How a picture file (`.png` or `.jpg`) is imported, where it is used: as
+/// a texture a model reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TextureImport {
+    /// The most pixels its longer side keeps: a larger picture is shrunk,
+    /// keeping its shape. `None` keeps it at its own size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<u32>,
+    /// Whether a build ships it compressed, a quarter of the memory. Off,
+    /// it ships as it is, as sharp edges and pixel art need.
+    pub compress: bool,
+}
+
+impl Default for TextureImport {
+    fn default() -> Self {
+        Self { max_size: None, compress: true }
+    }
+}
+
+impl TextureImport {
+    const TABLE: &str = "texture";
+
+    /// The settings in a `.meta` file's text, or the defaults.
+    pub fn from_meta(text: &str) -> Self {
+        section(text, Self::TABLE)
+    }
+
+    /// The settings of the picture at `asset`, from its `.meta`, or the defaults.
+    pub fn read(asset: &Path) -> Self {
+        std::fs::read_to_string(meta_path(asset)).map(|text| Self::from_meta(&text)).unwrap_or_default()
+    }
+
+    /// Writes the settings into the `.meta` beside `asset`.
+    pub fn write(&self, asset: &Path) -> Result<()> {
+        write_section(asset, Self::TABLE, self, &Self::default())
+    }
+
+    /// The size a picture of `width` × `height` pixels is imported at.
+    pub fn size(&self, width: u32, height: u32) -> (u32, u32) {
+        let Some(max) = self.max_size.filter(|&max| max > 0 && width.max(height) > max) else {
+            return (width, height);
+        };
+        let shrink = |side: u32| ((u64::from(side) * u64::from(max)) / u64::from(width.max(height))).max(1) as u32;
+        (shrink(width), shrink(height))
+    }
+}
+
 /// The length one unit in a model file stands for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -194,6 +242,23 @@ mod tests {
         ModelImport::default().write(&model).unwrap();
         let text = std::fs::read_to_string(meta_path(&model)).unwrap();
         assert!(!text.contains("[model]"), "back to the defaults, the table goes: {text}");
+    }
+
+    #[test]
+    fn a_textures_settings_shrink_it_keeping_its_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let picture = dir.path().join("Bricks.png");
+        std::fs::write(meta_path(&picture), "guid = \"abc\"\n").unwrap();
+        let settings = TextureImport { max_size: Some(256), compress: false };
+        settings.write(&picture).unwrap();
+        let text = std::fs::read_to_string(meta_path(&picture)).unwrap();
+        assert!(text.contains("[texture]") && text.contains("max_size = 256") && text.contains("compress = false"));
+        assert_eq!(TextureImport::read(&picture), settings);
+
+        assert_eq!(settings.size(1024, 512), (256, 128));
+        assert_eq!(settings.size(100, 3000), (8, 256));
+        assert_eq!(settings.size(200, 100), (200, 100), "a smaller picture keeps its size");
+        assert_eq!(TextureImport::default().size(8192, 8192), (8192, 8192));
     }
 
     #[test]

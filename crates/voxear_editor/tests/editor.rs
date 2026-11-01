@@ -1109,6 +1109,48 @@ fn a_models_import_settings_apply_where_it_is_drawn() {
     assert_eq!(editor.ui.text(scale), "2");
 }
 
+#[test]
+fn a_pictures_import_settings_apply_to_the_models_that_read_it() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    // The Pyramid reads its picture from a file of its own beside it.
+    let model = dir.path().join("Models/Pyramid.gltf");
+    let gltf = std::fs::read_to_string(&model).unwrap();
+    let start = gltf.find("data:image/png;base64,").unwrap();
+    let end = start + gltf[start..].find('"').unwrap();
+    std::fs::write(&model, format!("{}Bricks.png{}", &gltf[..start], &gltf[end..])).unwrap();
+    image::RgbaImage::from_pixel(64, 32, image::Rgba([200, 90, 40, 255]))
+        .save(dir.path().join("Models/Bricks.png"))
+        .unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    open_models(&mut editor, &mut renderer);
+    let picture = tile(&editor.ui, "Bricks.png").expect("the picture shows");
+    click(&mut editor.ui, picture);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    let pixels = prop_row(&editor.ui, "Pixels").expect("a picture shows its size");
+    assert_eq!(editor.ui.text(editor.ui.children(pixels)[1]), "64 × 32");
+    let max_size = first_with(&editor.ui, prop_row(&editor.ui, "Max size").unwrap(), "value-choice").unwrap();
+    assert_eq!(editor.ui.selected_option(max_size), 0, "its own size, to start with");
+    choose(&mut editor, &mut renderer, max_size, 9);
+    let apply = editor.ui.find(editor.ui.root(), "import-apply").unwrap();
+    click(&mut editor.ui, apply);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    let meta = std::fs::read_to_string(dir.path().join("Models/Bricks.png.meta")).unwrap();
+    assert!(meta.contains("[texture]") && meta.contains("max_size = 32"), "Apply writes them to the .meta: {meta}");
+    let status = editor.ui.text(editor.ui.find(editor.ui.root(), "status-left").unwrap());
+    assert!(status.contains("Imported Pyramid.gltf again"), "the model reading it is imported again: {status}");
+}
+
 /// The mesh the Day scene draws the Pyramid model with.
 fn pyramid(editor: &voxear_editor::Editor) -> voxear_render::MeshHandle {
     let world = &editor.game.engine.world;

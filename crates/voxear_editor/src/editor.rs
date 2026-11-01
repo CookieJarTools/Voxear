@@ -858,7 +858,7 @@ impl Editor {
                 self.asset_changed(renderer, &path);
             }
             AssetAction::EditLevel(path, edit) => self.edit_level(&path, &edit, renderer),
-            AssetAction::Reimport(path, settings) => self.apply_import_settings(&path, &settings, renderer),
+            AssetAction::Import(path, settings) => self.apply_import_settings(&path, &settings, renderer),
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
             AssetAction::Ping(path) => self.project.ping(&mut self.ui, &path),

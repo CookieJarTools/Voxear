@@ -81,6 +81,25 @@ scale = 2.0
 
 A build uses the same settings, and builds the model again when they change.
 
+## A picture's import settings
+
+Select a picture (`.png` or `.jpg`) in the Project panel, and the Inspector shows its size in pixels and its **Import Settings**. They apply wherever a model reads the picture, as a colour, a normal map or glow. Click **Apply**, and every model in use that reads the picture is imported again.
+
+| Setting | What it does |
+| --- | --- |
+| **Max size** | The most pixels the picture's longer side keeps. A larger picture is shrunk, keeping its shape. **Its own size** keeps every pixel. |
+| **Compress in builds** | Whether a build ships the picture compressed, in a quarter of the memory. Turn it off for pixel art and sharp edges, which compression softens. The editor never compresses pictures. |
+
+The settings are kept in the picture's `.meta` file, as a model's are:
+
+```toml
+[texture]
+max_size = 1024
+compress = false
+```
+
+A picture packed inside a model file has no `.meta` of its own, so it is always read at its own size and compressed in builds.
+
 ## What is read from a glTF file
 
 - The shape, its normals (which way each surface faces) and its texture coordinates. If the file has no normals, Voxear works them out.

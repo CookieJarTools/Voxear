@@ -21,6 +21,6 @@ mod reference;
 
 pub use db::{AssetDb, AssetEntry, AssetKind, META_EXTENSION, ScanReport};
 pub use guid::AssetGuid;
-pub use import::{ModelImport, Normals, Tangents, Units, meta_path};
+pub use import::{ModelImport, Normals, Tangents, TextureImport, Units, meta_path};
 pub use reader::{AssetReader, FolderReader};
 pub use reference::AssetRef;

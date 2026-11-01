@@ -5,7 +5,8 @@
 //!   again with them and put behind the meshes and materials it had, so
 //!   every Obj drawing it, and every undo step, shows the change at once.
 //!   Parts of it placed in the open scenes move to where the model puts them
-//!   now, as after a change of size, unless moved since.
+//!   now, as after a change of size, unless moved since. A picture's
+//!   settings applied import again every model in use that reads it.
 //! - Files dropped on the window from outside the editor are copied into the
 //!   folder under the pointer in the Project panel, or else the folder it
 //!   shows, unless a VoxDocs page being written takes them.
@@ -20,11 +21,11 @@ use std::{
     time::SystemTime,
 };
 
-use voxear_assets::{ModelImport, meta_path};
+use voxear_assets::meta_path;
 use voxear_render::Renderer;
 
 use super::Editor;
-use crate::{project_files, project_view::ProjectEvent};
+use crate::{import_fields::ImportSettings, project_files, project_view::ProjectEvent};
 
 /// Folders never looked in for changes, as the asset database skips them,
 /// beside those whose names start with a dot.
@@ -53,19 +54,41 @@ impl Imports {
 }
 
 impl Editor {
-    /// Writes a model's import settings to its `.meta`, and imports it again.
-    pub(super) fn apply_import_settings(&mut self, path: &str, settings: &ModelImport, renderer: &mut Renderer) {
+    /// Writes an asset's import settings to its `.meta`, and imports it
+    /// again: a model itself, and for a picture each model in use that
+    /// reads it.
+    pub(super) fn apply_import_settings(&mut self, path: &str, settings: &ImportSettings, renderer: &mut Renderer) {
         let file = self.game.project.root.join(path);
-        if let Err(error) = settings.write(&file) {
+        let written = match settings {
+            ImportSettings::Model(settings) => settings.write(&file),
+            ImportSettings::Texture(settings) => settings.write(&file),
+        };
+        if let Err(error) = written {
             self.notify(&format!("Could not save the import settings of {path}: {error:#}"));
             return;
         }
         // Written here, so not a change from outside to import again for.
         let meta = format!("{path}.meta");
         if let Ok(time) = meta_path(&file).metadata().and_then(|m| m.modified()) {
-            self.imports.times.insert(meta, time);
+            self.imports.times.insert(meta.clone(), time);
         }
-        self.reimport_model(path, renderer);
+        if let ImportSettings::Model(_) = settings {
+            self.reimport_model(path, renderer);
+            return;
+        }
+        let root = self.game.project.root.clone();
+        let changed = HashSet::from([&meta]);
+        let models: Vec<String> =
+            self.game.content.loaded_models().into_iter().filter(|model| reads_any(&root, model, &changed)).collect();
+        for model in &models {
+            self.reimport_model(model, renderer);
+        }
+        let name = path.rsplit('/').next().unwrap_or(path);
+        match models.as_slice() {
+            [] => self.notify(&format!("Saved the import settings of {name}; models read it with them")),
+            [_] => {}
+            _ => self.notify(&format!("Imported the {} models that use {name} again", models.len())),
+        }
     }
 
     /// Imports a model again with its file and the settings in its `.meta`,
@@ -175,8 +198,8 @@ impl Editor {
     }
 }
 
-/// Whether the model at `path` reads any of `files`: itself, its `.meta`,
-/// or a buffer or picture it names.
+/// Whether the model at `path` reads any of `files`: itself, or a buffer or
+/// picture it names, or the `.meta` of any of them.
 fn reads_any(root: &Path, path: &str, files: &HashSet<&String>) -> bool {
     let has = |file: &str| files.iter().any(|changed| changed.as_str() == file);
     if has(path) || has(&format!("{path}.meta")) {
@@ -184,7 +207,7 @@ fn reads_any(root: &Path, path: &str, files: &HashSet<&String>) -> bool {
     }
     let Ok(bytes) = std::fs::read(root.join(path)) else { return false };
     let companions = voxear_render::companion_files(path, &bytes).unwrap_or_default();
-    companions.iter().any(|file| has(file))
+    companions.iter().any(|file| has(file) || has(&format!("{file}.meta")))
 }
 
 /// When each of the project's files last changed, by project path, and its

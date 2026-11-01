@@ -575,8 +575,9 @@ This is the only way to load assets. It replaces Addressables and fixes the buil
   its files are not assets and never ship.
 - The `.meta` also keeps the asset's import settings, as Unity's do, in a table named for its kind: a model's
   `[model]` holds its units and scale, where its normals and tangents come from (the file's, or calculated by a
-  smoothing angle), whether it gets LODs and uses its own materials. Only settings that differ from the defaults
-  are written, and a copy keeps them. The importers read them through the same callback as the model's other
+  smoothing angle), whether it gets LODs and uses its own materials; a picture's `[texture]` its largest size and
+  whether a build compresses it, used where a model reads it. Only settings that differ from the defaults are
+  written, and a copy keeps them. The importers read them through the same callback as the model's other
   files, so the editor, a game run from the project and a content build import alike, and a build's cook key
   covers them. Applied in the Inspector, they import the model again behind the mesh and material handles it had
   (`Renderer::reupload_model`), so every Obj, undo step and preview drawing it shows the change, and a placed part

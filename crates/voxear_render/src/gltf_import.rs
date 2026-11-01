@@ -7,7 +7,8 @@
 //! [`PreparedModel`]; [`prepare`] and [`companion_files`] take either.
 //!
 //! A model's import settings come from its `.meta` file, read through the
-//! same callback (see `voxear_assets::ModelImport` and `mesh_tools`), so
+//! same callback (see `voxear_assets::ModelImport` and `mesh_tools`), as do
+//! those of each picture file it reads (`voxear_assets::TextureImport`), so
 //! the editor, a game run from the project and a content build all import
 //! it alike. [`reupload`] puts a model imported again behind the handles it
 //! had, for settings changed while it is drawn.
@@ -15,7 +16,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, ensure};
-use voxear_assets::{ModelImport, meta_path};
+use voxear_assets::{ModelImport, TextureImport, meta_path};
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_rhi::{Bindless, Gpu, TextureId, vk};
 
@@ -76,6 +77,9 @@ pub(crate) struct PreparedTexture {
     /// Level 0 first. RGBA8 textures have one level and the GPU makes the
     /// rest; compressed ones carry their whole chain.
     pub mips: Vec<Vec<u8>>,
+    /// Whether [`PreparedModel::compress_textures`] compresses it, as its
+    /// picture's import settings say.
+    pub compress: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,12 +164,12 @@ impl PreparedModel {
     /// Compresses the textures for shipping: BC5 for normal maps, BC7 for
     /// the rest, each with its whole mip chain. A quarter of RGBA8's memory
     /// and bundle size. Textures whose sides are not multiples of 4 stay
-    /// RGBA8.
+    /// RGBA8, as do those whose import settings say not to compress them.
     pub fn compress_textures(&mut self) {
         let normals: Vec<usize> = self.materials.iter().filter_map(|m| m.normal).collect();
         for (index, texture) in self.textures.iter_mut().enumerate() {
             let fits = texture.width % 4 == 0 && texture.height % 4 == 0;
-            if texture.format != TextureFormat::Rgba8 || !fits {
+            if texture.format != TextureFormat::Rgba8 || !fits || !texture.compress {
                 continue;
             }
             let normal = normals.contains(&index);
@@ -190,12 +194,13 @@ pub(crate) fn prepare_with(path: &str, read: &mut ReadFile, settings: &ModelImpo
     if fbx_import::is_fbx(path) {
         return fbx_import::prepare(path, read, settings).with_context(|| format!("reading {path}"));
     }
-    let (document, buffers, images) = load(path, read).with_context(|| format!("reading {path}"))?;
+    let (document, buffers, images, compress) = load(path, read).with_context(|| format!("reading {path}"))?;
     let mut preparer = Preparer {
         settings: *settings,
         size: mesh_tools::size(settings),
         buffers,
         images,
+        compress,
         model: PreparedModel {
             path: path.to_string(),
             meshes: Vec::new(),
@@ -379,6 +384,8 @@ struct Preparer {
     size: f32,
     buffers: Vec<gltf::buffer::Data>,
     images: Vec<gltf::image::Data>,
+    /// Whether each image is compressed for a build.
+    compress: Vec<bool>,
     model: PreparedModel,
     meshes: HashMap<(usize, usize), usize>,
     textures: HashMap<(usize, bool), usize>,
@@ -505,6 +512,7 @@ impl Preparer {
             srgb,
             format: TextureFormat::Rgba8,
             mips: vec![rgba],
+            compress: self.compress[image_index],
         });
         let index = self.model.textures.len() - 1;
         self.textures.insert((image_index, srgb), index);
@@ -531,7 +539,9 @@ pub fn companion_files(path: &str, bytes: &[u8]) -> Result<Vec<String>> {
     Ok(buffers.chain(images).filter(|uri| !uri.starts_with("data:")).map(|uri| resolve(path, uri)).collect())
 }
 
-type Loaded = (gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>);
+/// The file, its buffers, its images at the size their settings say, and
+/// whether each is compressed for a build.
+type Loaded = (gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>, Vec<bool>);
 
 /// What `gltf::import` does, but reading every file through `read`.
 fn load(path: &str, read: &mut ReadFile) -> Result<Loaded> {
@@ -544,17 +554,23 @@ fn load(path: &str, read: &mut ReadFile) -> Result<Loaded> {
         };
         buffers.push(gltf::buffer::Data(data));
     }
-    let mut images = Vec::new();
+    let (mut images, mut compress) = (Vec::new(), Vec::new());
     for image in document.images() {
-        let encoded = match image.source() {
+        let (encoded, settings) = match image.source() {
             gltf::image::Source::View { view, .. } => {
                 let buffer = &buffers[view.buffer().index()].0;
-                buffer[view.offset()..view.offset() + view.length()].to_vec()
+                (buffer[view.offset()..view.offset() + view.length()].to_vec(), TextureImport::default())
             }
-            gltf::image::Source::Uri { uri, .. } => read_uri(path, uri, read)?,
+            gltf::image::Source::Uri { uri, .. } if uri.starts_with("data:") => {
+                (read_uri(path, uri, read)?, TextureImport::default())
+            }
+            gltf::image::Source::Uri { uri, .. } => {
+                (read_uri(path, uri, read)?, texture_settings(&resolve(path, uri), read))
+            }
         };
         let decoded =
             image::load_from_memory(&encoded).with_context(|| format!("decoding image {}", image.index()))?.to_rgba8();
+        let decoded = sized(decoded, &settings);
         let (width, height) = decoded.dimensions();
         images.push(gltf::image::Data {
             pixels: decoded.into_raw(),
@@ -562,8 +578,25 @@ fn load(path: &str, read: &mut ReadFile) -> Result<Loaded> {
             width,
             height,
         });
+        compress.push(settings.compress);
     }
-    Ok((document, buffers, images))
+    Ok((document, buffers, images, compress))
+}
+
+/// The import settings of the picture file at `path`, from its `.meta`, or
+/// the defaults.
+pub(crate) fn texture_settings(path: &str, read: &mut ReadFile) -> TextureImport {
+    let meta = meta_path(std::path::Path::new(path)).to_string_lossy().into_owned();
+    read(&meta).map(|bytes| TextureImport::from_meta(&String::from_utf8_lossy(&bytes))).unwrap_or_default()
+}
+
+/// A picture shrunk to the largest size its settings allow, keeping its shape.
+pub(crate) fn sized(picture: image::RgbaImage, settings: &TextureImport) -> image::RgbaImage {
+    let (width, height) = settings.size(picture.width(), picture.height());
+    if (width, height) == picture.dimensions() {
+        return picture;
+    }
+    image::imageops::resize(&picture, width, height, image::imageops::FilterType::Triangle)
 }
 
 fn read_uri(path: &str, uri: &str, read: &mut ReadFile) -> Result<Vec<u8>> {
@@ -647,6 +680,43 @@ fn to_rgba8(image: &gltf::image::Data) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::cooked::tests::quad;
+
+    #[test]
+    fn a_pictures_meta_shrinks_it_and_can_keep_it_uncompressed() {
+        // The quad, its picture in a file of its own beside it.
+        let gltf = String::from_utf8(quad()).unwrap();
+        let start = gltf.find("\"images\": [{ \"uri\": \"").unwrap() + "\"images\": [{ \"uri\": \"".len();
+        let end = start + gltf[start..].find('"').unwrap();
+        let gltf = format!("{}Bricks.png{}", &gltf[..start], &gltf[end..]);
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(64, 32, image::Rgba([200, 90, 40, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let png = png.into_inner();
+        let files = |settings: &'static str| {
+            let (gltf, png) = (gltf.clone(), png.clone());
+            move |file: &str| -> Result<Vec<u8>> {
+                Ok(match file {
+                    "Models/Bricks.png" => png.clone(),
+                    "Models/Bricks.png.meta" => settings.as_bytes().to_vec(),
+                    "Models/Quad.gltf" => gltf.clone().into_bytes(),
+                    _ => anyhow::bail!("no {file}"),
+                })
+            }
+        };
+
+        let mut model =
+            prepare("Models/Quad.gltf", &mut files("[texture]\nmax_size = 16\ncompress = false\n")).unwrap();
+        let texture = &model.textures[0];
+        assert_eq!((texture.width, texture.height), (16, 8), "shrunk to 16 pixels across, keeping its shape");
+        model.compress_textures();
+        assert_eq!(model.textures[0].format, TextureFormat::Rgba8, "shipped as it is");
+
+        let mut model = prepare("Models/Quad.gltf", &mut files("")).unwrap();
+        assert_eq!((model.textures[0].width, model.textures[0].height), (64, 32), "without settings, its own size");
+        model.compress_textures();
+        assert_eq!(model.textures[0].format, TextureFormat::Bc7, "and compressed");
+    }
 
     #[test]
     fn a_models_meta_sizes_it_and_can_leave_out_its_materials_and_lods() {

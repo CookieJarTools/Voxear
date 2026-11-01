@@ -55,6 +55,7 @@ mod frame_debugger_panel;
 mod gizmos;
 mod hierarchy;
 mod history;
+mod import_fields;
 mod inspector;
 mod level_files;
 mod levels_panel;

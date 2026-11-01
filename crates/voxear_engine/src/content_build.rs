@@ -419,9 +419,9 @@ impl Cooker {
         Ok(Self { root: root.to_path_buf(), dir, used: Vec::new(), cooked: 0, cached: 0 })
     }
 
-    /// The cooked model. Its cache key covers every file it reads, its
-    /// `.meta` with its import settings, and the format version, so changing
-    /// any of them cooks again.
+    /// The cooked model. Its cache key covers every file it reads with its
+    /// `.meta`, for the model's import settings and its pictures', and the
+    /// format version, so changing any of them cooks again.
     fn cook(&mut self, path: &str, companions: &[String]) -> Result<Vec<u8>> {
         let meta = voxear_assets::meta_path(&self.root.join(path));
         let mut inputs = vec![voxear_render::COOKED_VERSION.to_le_bytes().to_vec(), read(&self.root, path)?];
@@ -431,6 +431,7 @@ impl Cooker {
             // An FBX file's textures are looked for in more than one place, so one may be missing: it counts as
             // empty, and its coming changes the hash. A glTF file's buffer that is missing fails when it is read.
             inputs.push(read(&self.root, file).unwrap_or_default());
+            inputs.push(std::fs::read(voxear_assets::meta_path(&self.root.join(file))).unwrap_or_default());
         }
         let parts: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
         let cached = self.dir.join(format!("{}.model", content_hash(&parts)));

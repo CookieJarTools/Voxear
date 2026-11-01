@@ -25,13 +25,14 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
-use voxear_assets::{ModelImport, Units};
+use voxear_assets::{ModelImport, TextureImport, Units};
 use voxear_core::math::{Mat3, Mat4, Vec3};
 
 use crate::{
     assets::MaterialDesc,
     gltf_import::{
-        PreparedMaterial, PreparedModel, PreparedNode, PreparedTexture, ReadFile, TextureFormat, relative_to,
+        PreparedMaterial, PreparedModel, PreparedNode, PreparedTexture, ReadFile, TextureFormat, relative_to, sized,
+        texture_settings,
     },
     mesh::{MeshData, Vertex},
     mesh_tools::{self, FromFile},
@@ -275,19 +276,19 @@ impl Preparer {
 
     fn read_texture(&mut self, texture: &ufbx::Texture, srgb: bool, read: &mut ReadFile) -> Option<usize> {
         let path = &self.model.path;
-        let encoded = match texture.content.is_empty() {
-            false => texture.content.to_vec(),
+        let (encoded, settings) = match texture.content.is_empty() {
+            false => (texture.content.to_vec(), TextureImport::default()),
             true => {
                 let files = texture_files(path, texture);
-                let Some(bytes) = files.iter().find_map(|file| read(file).ok()) else {
+                let Some((file, bytes)) = files.iter().find_map(|file| Some((file, read(file).ok()?))) else {
                     tracing::warn!("{path}: no texture {} (looked for {})", &*texture.filename, files.join(", "));
                     return None;
                 };
-                bytes
+                (bytes, texture_settings(file, read))
             }
         };
         let image = match image::load_from_memory(&encoded) {
-            Ok(image) => image.to_rgba8(),
+            Ok(image) => sized(image.to_rgba8(), &settings),
             Err(error) => {
                 tracing::warn!("{path}: could not read the texture {}: {error}", &*texture.filename);
                 return None;
@@ -302,6 +303,7 @@ impl Preparer {
             srgb,
             format: TextureFormat::Rgba8,
             mips: vec![image.into_raw()],
+            compress: settings.compress,
         });
         Some(self.model.textures.len() - 1)
     }

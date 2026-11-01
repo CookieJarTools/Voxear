@@ -2529,12 +2529,18 @@ them in a running game.
     with each thread's name and a frame mark at each frame's end. It needs Tracy's viewer at version 0.14. The client
     collects only while the viewer is connected, and only from this machine, without announcing itself on the
     network. Locks, plots and frame images are still to come.
-- **Memory profiler.**
-  - Every native allocation is tagged by subsystem: ECS chunks, Content, render, audio, physics and scripts.
-  - GPU memory is reported per resource and category. The managed heap comes from the .NET runtime.
-  - Snapshots can be diffed, for example before and after a level change to find leaks.
-  - "Who holds this asset" shows the reference chain behind Content's refcounts.
-  - A bundle view shows what is resident and why.
+- **Memory profiler** *(first part implemented: the Memory panel, `memory_panel.rs`)*.
+  - A snapshot (`voxear_engine::memory::snapshot`) lists what each part of the engine holds, by name: the process as
+    the system counts it; Rust's heap, which `vox` and the player count with `CountingAllocator` as their global
+    allocator, two atomic sums an allocation; the ECS's chunks by archetype; every GPU allocation by name, and the
+    room its blocks have unused (the allocator's report); and the managed heap, in use and committed, from .NET.
+  - The Memory panel, in the Profiling workspace, keeps a line of the parts' totals up to date while it shows, and
+    takes snapshots by hand, each labelled with the level open. A snapshot picked shows its amounts, the largest
+    first; compared with another, only what changed, the largest change first, as before and after a level change
+    to find what was not let go (`voxear_core::memory::diff`).
+  - Still to come: Rust's heap by subsystem (Content, render, audio, physics, scripts), which needs allocations
+    tagged where they are made; "who holds this asset", the reference chain behind Content's refcounts; and a
+    bundle view of what is resident and why.
 - **ECS inspector** *(first part implemented: the Entities panel, `entities_panel.rs`)*.
   - Live archetypes, with how many entities and chunks each has, the busiest first; the picked one's entities; and
     the picked entity's components with their values (the Transform, a Name, and C# components by their layout).

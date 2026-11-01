@@ -3042,6 +3042,57 @@ fn voxdocs_shows_prefabs_and_materials_live() {
 }
 
 #[test]
+fn the_memory_panel_takes_snapshots_and_compares_them() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();
+    editor.ui.set_segment(workspaces, 1);
+    frame(&mut editor, &mut renderer);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "memory");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let panel = editor.ui.find(editor.ui.root(), "memory-panel").unwrap();
+    let summary = editor.ui.text(first_with(&editor.ui, panel, "entities-summary").unwrap());
+    assert!(summary.contains("GPU") && summary.contains("ECS chunks"), "the parts' totals, live: {summary}");
+
+    let take = editor.memory_panel().take_button();
+    click(&mut editor.ui, take);
+    frame(&mut editor, &mut renderer);
+    let first = &editor.memory_panel().snapshots()[0];
+    assert!(first.label.starts_with("Snapshot 1"), "{}", first.label);
+    assert!(first.entries.iter().any(|e| e.category == "GPU" && e.name == "hdr"), "the GPU's allocations by name");
+    let rows = |editor: &voxear_editor::Editor| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, editor.memory_panel().amounts(), "entities-row", &mut rows);
+        let shown = rows.into_iter().filter(|&row| editor.ui.is_visible(row));
+        shown.map(|row| texts_in(&editor.ui, row).join(" ")).filter(|t| !t.trim().is_empty()).collect::<Vec<_>>()
+    };
+    assert!(!rows(&editor).is_empty(), "the snapshot's amounts show");
+
+    // More entities, a second snapshot, and the difference from the first.
+    for _ in 0..2000 {
+        editor.game.engine.world.spawn((Transform::IDENTITY,));
+    }
+    click(&mut editor.ui, take);
+    frame(&mut editor, &mut renderer);
+    let compare = editor.memory_panel().compare();
+    click(&mut editor.ui, compare);
+    frame(&mut editor, &mut renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    let named = |option: NodeId| texts_in(&editor.ui, option).iter().any(|t| t.starts_with("Snapshot 1"));
+    let first_option = options.iter().copied().find(|&o| named(o)).expect("the first snapshot to compare with");
+    click(&mut editor.ui, first_option);
+    frame(&mut editor, &mut renderer);
+    let changed = rows(&editor);
+    assert!(
+        changed.iter().any(|r| r.contains("ECS chunks") && r.contains("Transform") && r.contains('+')),
+        "{changed:?}"
+    );
+    shot(&mut renderer, "memory.png");
+}
+
+#[test]
 fn the_entities_panel_lists_archetypes_entities_and_their_components() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();

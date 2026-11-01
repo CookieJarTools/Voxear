@@ -96,7 +96,23 @@ pub enum Retired {
     Image(Image),
 }
 
+/// GPU memory as the allocator holds it: each live allocation's name and
+/// size, and the bytes of the blocks it sub-allocates them from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpuMemory {
+    pub allocations: Vec<(String, u64)>,
+    pub capacity: u64,
+}
+
 impl Gpu {
+    /// What the allocator holds now.
+    pub fn memory(&self) -> GpuMemory {
+        let allocator = self.allocator.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let report = allocator.generate_report();
+        let allocations = report.allocations.into_iter().map(|a| (a.name, a.size)).collect();
+        GpuMemory { allocations, capacity: report.total_capacity_bytes }
+    }
+
     pub fn create_buffer(
         &self,
         name: &str,

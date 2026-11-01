@@ -469,6 +469,12 @@ impl Renderer {
         self.previews.pixels(id)
     }
 
+    /// GPU memory: each live allocation by name, and the blocks they are
+    /// sub-allocated from.
+    pub fn gpu_memory(&self) -> voxear_rhi::GpuMemory {
+        self.gpu.memory()
+    }
+
     /// How much of the GPU asset storage is in use.
     pub fn asset_usage(&self) -> AssetUsage {
         self.assets.as_ref().expect("assets live until drop").usage()

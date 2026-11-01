@@ -380,7 +380,8 @@ Still to do in M3:
   - [x] the ECS inspector: archetypes, entities and their components, the system schedule with timings, and a filter
     by components
   - [x] the ECS inspector's editing of plain entities' values, and chunk occupancy
-  - the memory profiler with snapshots and diffs
+  - [x] the memory profiler with snapshots and diffs: the process, Rust's heap, ECS chunks, each GPU allocation and
+    the managed heap, in the Memory panel
   - [x] debug draw: lines, arrows, boxes, spheres and text, from C# and Rust, hidden behind the scene or on top
   - [x] the dev console: commands with arguments and console variables, in the game window's development tools
   - [x] the dev console through `vox`, into a running game: `vox console "line"`

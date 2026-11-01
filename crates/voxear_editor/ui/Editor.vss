@@ -2234,6 +2234,27 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-muted);
 }
 
+/* The Memory panel: its amounts' part and change columns line up. */
+.memory-part {
+    flex-shrink: 0;
+    width: 96px;
+    color: var(--vx-muted);
+    white-space: nowrap;
+}
+
+.memory-change {
+    flex-shrink: 0;
+    width: 84px;
+    text-align: right;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.memory-snapshots {
+    flex-grow: 0.7;
+}
+
 /* The Frame Debugger: the frame's passes, the picked pass's images, and the picked image as it was. */
 .frame-debugger-panel {
     flex-direction: column;

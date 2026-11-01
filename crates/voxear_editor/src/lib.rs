@@ -46,6 +46,7 @@ mod editor;
 pub mod entities_panel;
 mod fields;
 mod frame_debugger_panel;
+pub mod memory_panel;
 mod gizmos;
 mod hierarchy;
 mod history;

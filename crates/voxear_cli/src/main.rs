@@ -30,6 +30,10 @@ use voxear_render::{
 use voxear_scene::{Name, Transform};
 use voxear_scripting::find_dotnet;
 
+/// Counts Rust's heap, for the memory profiler.
+#[global_allocator]
+static ALLOCATOR: voxear_core::memory::CountingAllocator = voxear_core::memory::CountingAllocator;
+
 #[derive(Parser)]
 #[command(name = "vox", version = voxear_engine::engine_version(), about = "The Voxear engine command line")]
 struct Cli {

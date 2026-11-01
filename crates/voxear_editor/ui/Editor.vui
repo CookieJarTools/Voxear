@@ -124,6 +124,9 @@
                 <DockPanel id="frames" title="Frame Debugger" class="dock-content">
                     <Panel name="frame-debugger-panel" class="fill frame-debugger-panel" />
                 </DockPanel>
+                <DockPanel id="memory" title="Memory" class="dock-content">
+                    <Panel name="memory-panel" class="fill frame-debugger-panel" />
+                </DockPanel>
                 <DockPanel id="build" title="Build" class="dock-content">
                     <Panel name="build-panel" class="fill build-panel" />
                 </DockPanel>

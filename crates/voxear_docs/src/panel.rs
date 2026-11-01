@@ -163,6 +163,9 @@ struct Nodes {
     tags_field: NodeId,
     status: NodeId,
     save: NodeId,
+    insert_image: NodeId,
+    insert_link: NodeId,
+    insert_action: NodeId,
     source: NodeId,
     preview: NodeId,
 }
@@ -216,6 +219,11 @@ pub struct VoxDocs {
     progress_line: Option<(NodeId, NodeId)>,
     /// What each item of a page's menu in the tree copies.
     page_menu: Vec<String>,
+    /// While writing: the open menu of Image…, Link… or Action…, by its
+    /// button, with the Markdown each item puts in; and Action… asked for
+    /// its menu, which the editor fills with its commands.
+    insert_menu: Option<(NodeId, Vec<String>)>,
+    wants_commands: bool,
 }
 
 impl VoxDocs {
@@ -252,6 +260,9 @@ impl VoxDocs {
             tags_field: find(ui, "cb-tags-field"),
             status: find(ui, "cb-status"),
             save: find(ui, "cb-save"),
+            insert_image: find(ui, "cb-insert-image"),
+            insert_link: find(ui, "cb-insert-link"),
+            insert_action: find(ui, "cb-insert-action"),
             source: find(ui, "cb-source"),
             preview: find(ui, "cb-preview"),
         };
@@ -312,6 +323,8 @@ impl VoxDocs {
             running: None,
             progress_line: None,
             page_menu: Vec::new(),
+            insert_menu: None,
+            wants_commands: false,
         };
         docs.show_editing(ui, false);
         docs.render(ui);
@@ -468,6 +481,106 @@ impl VoxDocs {
         }
         ui.text_input(&format!("{markdown}\n"));
         true
+    }
+
+    /// Whether Action… was clicked, once: the editor then hands over its
+    /// commands with [`open_action_menu`](Self::open_action_menu).
+    pub fn take_commands_wanted(&mut self) -> bool {
+        std::mem::take(&mut self.wants_commands)
+    }
+
+    /// Action…'s menu: the three kinds of check, then a step for each of
+    /// `commands`, by their titles as the command bar lists them.
+    pub fn open_action_menu(&mut self, ui: &mut Ui, commands: &[String]) {
+        let mut items = vec![
+            ("Check: there is an Obj called…".to_string(), "[There is a Sun](check:obj/Sun)".to_string()),
+            ("Check: an Obj has a component…".to_string(), "[The level is lit](check:component/Light)".to_string()),
+            (
+                "Check: the project has a file…".to_string(),
+                "[The lamp is there](check:file/Prefabs/Lamp.prefab)".to_string(),
+            ),
+            (
+                "Make an asset…".to_string(),
+                "[Make the brass](<action:create/Material?at=Materials/Brass.material>)".to_string(),
+            ),
+        ];
+        for title in commands {
+            items.push((title.clone(), format!("[{title}]({})", address(&format!("{ACTION_SCHEME}{title}")))));
+        }
+        self.open_insert_menu(ui, self.nodes.insert_action, items);
+    }
+
+    /// Image…, Link… and Action… while writing, and what their menus put in.
+    fn update_inserts(&mut self, ui: &mut Ui) {
+        if let Some((owner, texts)) = &self.insert_menu
+            && let Some(text) = ui.menu_choice(*owner).and_then(|at| texts.get(at)).cloned()
+        {
+            self.insert_menu = None;
+            if ui.focused() != Some(self.nodes.source) {
+                ui.focus(self.nodes.source);
+            }
+            ui.text_input(&text);
+        }
+        if ui.clicked(self.nodes.insert_image) {
+            let items = self.picture_items();
+            self.open_insert_menu(ui, self.nodes.insert_image, items);
+        }
+        if ui.clicked(self.nodes.insert_link) {
+            let items = self.link_items();
+            self.open_insert_menu(ui, self.nodes.insert_link, items);
+        }
+        if ui.clicked(self.nodes.insert_action) {
+            self.wants_commands = true;
+        }
+    }
+
+    /// A menu under a button of the writing tools, of labels and the
+    /// Markdown each puts in.
+    fn open_insert_menu(&mut self, ui: &mut Ui, button: NodeId, items: Vec<(String, String)>) {
+        let [x, y, _, height] = ui.rect(button);
+        let menu: Vec<MenuItem> = if items.is_empty() {
+            vec![MenuItem::new("Nothing to put in").enabled(false)]
+        } else {
+            items.iter().map(|(label, _)| MenuItem::new(label)).collect()
+        };
+        ui.open_menu(button, (x, y + height + 4.0), &menu);
+        self.insert_menu = Some((button, items.into_iter().map(|(_, text)| text).collect()));
+    }
+
+    /// The project's pictures and the assets that show live, by their paths.
+    fn picture_items(&self) -> Vec<(String, String)> {
+        let library = self.library.borrow();
+        let mut files = Vec::new();
+        shown_files(library.project(), library.project(), &mut files);
+        files.sort();
+        files
+            .into_iter()
+            .map(|path| {
+                let name = path.rsplit('/').next().unwrap_or(&path).rsplit_once('.').map_or("", |(n, _)| n).to_string();
+                (path.clone(), format!("![{name}]({})", address(&path)))
+            })
+            .collect()
+    }
+
+    /// The project's own pages, linked by their titles, or by their paths
+    /// when another page shares the title.
+    fn link_items(&self) -> Vec<(String, String)> {
+        let library = self.library.borrow();
+        let mut pages: Vec<(String, String)> = library
+            .pages()
+            .filter(|(id, page)| !page.generated && *id != library.root() && *id != self.open)
+            .map(|(id, page)| {
+                let title = page.title();
+                let link = if library.find(title) == Some(id) {
+                    format!("[[{title}]]")
+                } else {
+                    format!("[[{}|{title}]]", page.reference())
+                };
+                (page.reference().to_string(), link)
+            })
+            .collect();
+        pages.sort();
+        pages
     }
 
     /// The places under the open page's live assets for their fields, with
@@ -627,6 +740,7 @@ impl VoxDocs {
         if !self.editing {
             return;
         }
+        self.update_inserts(ui);
         if self.focus_source {
             ui.focus(self.nodes.source);
             if ui.focused() == Some(self.nodes.source) {
@@ -1224,6 +1338,30 @@ impl VoxDocs {
 /// extensions.
 const PICTURES: [&str; 3] = ["png", "jpg", "jpeg"];
 const LIVE: [&str; 4] = ["prefab", "material", "gltf", "glb"];
+
+/// Folders the Image… menu does not look in: builds, caches and code output.
+const NOT_PICTURES: [&str; 5] = ["Builds", "bin", "obj", "target", "node_modules"];
+
+/// Every picture and live asset under `folder`, by its path from `project`.
+fn shown_files(project: &Path, folder: &Path, found: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(folder) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || NOT_PICTURES.contains(&name.as_str()) {
+            continue;
+        }
+        if path.is_dir() {
+            shown_files(project, &path, found);
+            continue;
+        }
+        let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let shown = PICTURES.contains(&extension.as_str()) || LIVE.contains(&extension.as_str());
+        if let (true, Ok(within)) = (shown, path.strip_prefix(project)) {
+            found.push(within.to_string_lossy().replace('\\', "/"));
+        }
+    }
+}
 
 /// A path as a link writes it: in angle brackets when it has spaces.
 fn address(path: &str) -> String {

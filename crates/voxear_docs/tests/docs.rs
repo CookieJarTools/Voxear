@@ -715,3 +715,50 @@ fn files_dropped_while_writing_go_into_the_page() {
     assert!(text.contains("![Arena Shot](<images/Arena Shot.png>)\n"), "{text}");
     assert!(text.contains("![Crate](Models/Crate.gltf)\n"), "a model in the project, shown live: {text}");
 }
+
+/// Clicks the open menu's item that says `label`.
+fn choose(ui: &mut Ui, docs: &mut VoxDocs, label: &str) {
+    let mut items = Vec::new();
+    with_class(ui, ui.root(), "menu-item", &mut items);
+    let item = items
+        .into_iter()
+        .find(|&item| ui.children(item).iter().any(|&part| ui.text(part) == label))
+        .unwrap_or_else(|| panic!("no menu item says {label}"));
+    click(ui, item);
+    frame(ui, docs);
+}
+
+#[test]
+fn image_link_and_action_put_markdown_in_while_writing() {
+    let dir = project();
+    let (mut ui, mut docs, host) = panel(dir.path());
+    assert!(docs.open_reference(&mut ui, "Writing Pages"));
+    frame(&mut ui, &mut docs);
+    let edit = ui.find(host, "cb-edit").unwrap();
+    click(&mut ui, edit);
+    frame(&mut ui, &mut docs);
+    frame(&mut ui, &mut docs);
+    let source = ui.find(host, "cb-source").unwrap();
+
+    let image = ui.find(host, "cb-insert-image").unwrap();
+    click(&mut ui, image);
+    frame(&mut ui, &mut docs);
+    choose(&mut ui, &mut docs, "Models/Crate.gltf");
+    assert!(ui.text(source).contains("![Crate](Models/Crate.gltf)"), "{}", ui.text(source));
+
+    let link = ui.find(host, "cb-insert-link").unwrap();
+    click(&mut ui, link);
+    frame(&mut ui, &mut docs);
+    choose(&mut ui, &mut docs, "Combat/Damage");
+    assert!(ui.text(source).contains("[[Damage]]"), "{}", ui.text(source));
+
+    // Action… asks the editor for its commands, then lists them with the checks.
+    let action = ui.find(host, "cb-insert-action").unwrap();
+    click(&mut ui, action);
+    frame(&mut ui, &mut docs);
+    assert!(docs.take_commands_wanted());
+    docs.open_action_menu(&mut ui, &["Play".to_string(), "New Point Light".to_string()]);
+    frame(&mut ui, &mut docs);
+    choose(&mut ui, &mut docs, "New Point Light");
+    assert!(ui.text(source).contains("[New Point Light](<action:New Point Light>)"), "{}", ui.text(source));
+}

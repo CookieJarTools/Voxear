@@ -303,6 +303,7 @@ Done so far:
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
+- **Image…, Link… and Action… while writing a VoxDocs page**, and a guide's step that makes an asset where it says.
 - **Pictures dropped on a VoxDocs page** while writing it: copied beside the page and put in at the cursor.
 - **A live material's fields on a VoxDocs page**, under its preview, changed and saved there as in the Inspector.
 - **Docs Health by git:** a page is out of date by git's last change of it and of the files it links to, not the
@@ -350,7 +351,7 @@ Still to do in M3:
     analyzer, and custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
-- **VoxDocs' next parts** (see "VoxDocs" in the architecture): checks written in C# and more for guides, and
+- **VoxDocs' next parts** (see "VoxDocs" in the architecture): checks written in C# for guides, and
   pictures captured from the Scene view and GIF recordings.
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
   with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a

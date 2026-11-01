@@ -164,3 +164,37 @@ fn a_live_materials_fields_change_it_on_the_page() {
     }
     shot(&mut renderer, "docs-material-fields.png");
 }
+
+#[test]
+fn a_guides_step_makes_an_asset_where_it_says() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_copy();
+    let guide =
+        "Make the brass for the lamps.\n\n[Make the brass](<action:create/Material?at=Materials/Brass.material>)\n";
+    std::fs::write(dir.path().join("Docs/Brass Guide.md"), guide).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let root = editor.ui.root();
+    let field = editor.ui.find(root, "command").unwrap();
+    editor.ui.focus(field);
+    editor.ui.text_input("brass guide");
+    frame(&mut editor, &mut renderer);
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, root, "md-step-action", &mut buttons);
+    let [x, y, w, h] = editor.ui.rect(buttons[0]);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let made = std::fs::read_to_string(dir.path().join("Materials/Brass.material")).expect("made where the guide says");
+    assert!(made.contains("roughness"), "a material: {made}");
+    assert_eq!(texts(&editor.ui, "cb-progress-line"), ["1 of 1 steps done"]);
+}

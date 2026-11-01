@@ -33,5 +33,8 @@ A guide can do the work for the reader. A link to an action or a check, on a lin
 - `[words](check:obj/Name)` ticks while there is an Obj with that name.
 - `[words](check:component/Light)` ticks while some Obj has that component, or a behaviour of that name.
 - `[words](check:file/Prefabs/Lamp.prefab)` ticks while the project has that file.
+- `[words](action:create/Material)` makes a material beside the project's others, as the Project panel's New menu does, and `[words](<action:create/Material?at=Materials/Brass.material>)` makes it just there. A Folder, Scene, Level or Script can be made the same way.
+
+While writing, **Action…** under the title puts any of these in at the cursor.
 
 Put a title with spaces in angle brackets, as `[Add a light](<action:New Point Light>)`.

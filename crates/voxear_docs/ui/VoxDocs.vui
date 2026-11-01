@@ -39,6 +39,12 @@
                     <Label name="cb-status" class="cb-status" />
                     <Button name="cb-save" class="cb-button primary">Save</Button>
                 </Panel>
+                <!-- Put a picture, a link or a guide's step in at the cursor. -->
+                <Panel class="cb-editor-tools">
+                    <Button name="cb-insert-image" class="cb-button">Image…</Button>
+                    <Button name="cb-insert-link" class="cb-button">Link…</Button>
+                    <Button name="cb-insert-action" class="cb-button">Action…</Button>
+                </Panel>
                 <SplitView name="cb-edit-split" class="cb-edit-split" size="50%" min="160">
                     <TextField name="cb-source" class="cb-source" multiline="true" />
                     <ScrollView name="cb-preview" class="cb-page cb-preview" />

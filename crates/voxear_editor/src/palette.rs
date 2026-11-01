@@ -322,6 +322,12 @@ pub fn command_named(sources: &Sources, title: &str) -> Option<PaletteAction> {
     gather(sources).into_iter().find(|entry| entry.command && entry.title.eq_ignore_ascii_case(title)).map(|e| e.action)
 }
 
+/// Every command's title, as the palette lists them: the editor's own, then
+/// those the scripts add, for a VoxDocs page's Action… menu.
+pub fn command_titles(sources: &Sources) -> Vec<String> {
+    gather(sources).into_iter().filter(|entry| entry.command).map(|entry| entry.title).collect()
+}
+
 /// Everything the palette offers: the commands first, those added by code,
 /// the settings, then Objs, levels, assets, and the VoxDocs pages.
 fn gather(sources: &Sources) -> Vec<Entry> {

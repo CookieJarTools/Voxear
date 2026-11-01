@@ -610,3 +610,11 @@
     max-width: 420px;
     margin-top: -2px;
 }
+
+/* Image…, Link… and Action… while writing, under the title and tags. */
+.cb-editor-tools {
+    flex-direction: row;
+    flex-shrink: 0;
+    gap: 6px;
+    padding: 0px 12px 8px 12px;
+}

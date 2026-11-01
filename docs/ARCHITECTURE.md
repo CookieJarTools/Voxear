@@ -1654,7 +1654,9 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   as it will read beside it, drawn again a moment after each change, and the cursor at the end of the text. The
   status says whether it is saved. **Save** or Ctrl+S writes it with today's date, and so do **Done** and opening
   another page, so nothing written is lost. A new title renames its file, or its folder, keeping its id, so links
-  by id and Back and Forward still find it; tags are kept once each.
+  by id and Back and Forward still find it; tags are kept once each. Under the title, **Image…** lists the project's
+  pictures and live assets, **Link…** its pages, and **Action…** the commands and the kinds of check and asset step,
+  each putting its Markdown in at the cursor.
 - **The Code Reference** *(`code`)*: a page for every public type in the game's scripts and in Voxear.Core, in a
   folder after the project's pages, with a folder for each namespace, the game's first. Inside each, the pages sit in
   the folders their sources are in, as `Inspector/Help` for Voxear.Core's `managed/Voxear.Core/Inspector/Help`, read
@@ -1679,24 +1681,25 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   lists the code pointing at it under **In the code**, each a link to its Code Reference page, and the Code Reference
   says which page documents a type or member, so an attribute naming a page that is not there shows in Docs Health.
   Hello's GameManager has both.
-- **Step-by-step guides**: a link to an action or a check on a line of its own is a step.
-  `[Add a light](<action:New Point Light>)` is a button that runs the command with that title, as the command bar
-  lists it: the editor's own, or a script's `[Command]`, run on the edited level and undone as one step. A check ticks itself while what it
-  looks for is there, and says under it what is still to do: `check:obj/Sun` for an Obj by name,
-  `check:component/Light` for an Obj with a component or a behaviour, and `check:file/Prefabs/Lamp.prefab` for a
-  file. The editor runs the actions and looks at the checks for the page being read. A page with steps says how many
-  are done, with Reset to start again; the actions each person has run are kept on their machine in
-  `.voxear/VoxDocs.toml`. Hello's VoxDocs Guide has one.
+- **Step-by-step guides**: a link to an action or a check on a line of its own is a step. `[Add a light](<action:New
+  Point Light>)` is a button that runs the command with that title, as the command bar lists it: the editor's own, or
+  a script's `[Command]`, run on the edited level and undone as one step. `action:create/Material` makes an asset as
+  the Project panel's New menu does (a Folder, Scene, Level, Material or Script), and
+  `<action:create/Material?at=Materials/Brass.material>` makes it just there, or finds it there already, showing it in
+  the Project panel. A check ticks itself while what it looks for is there, and says under it what is still to do:
+  `check:obj/Sun` for an Obj by name, `check:component/Light` for an Obj with a component or a behaviour, and
+  `check:file/Prefabs/Lamp.prefab` for a file. The editor runs the actions and looks at the checks for the page being
+  read. A page with steps says how many are done, with Reset to start again; the actions each person has run are kept
+  on their machine in `.voxear/VoxDocs.toml`. Hello's VoxDocs Guide has one.
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
 **Still to come**, as the Unity Cookbook has them:
-- **More for guides**: checks written in C# (`[DocsCheck]`, a static method returning whether it passes or what is
-  still wrong), which need the scripts to hand back a value; a step that makes an asset where the guide says; and
-  Action… while writing, to put a step in at the cursor.
+- **Checks written in C#** for guides (`[DocsCheck]`, a static method returning whether it passes or what is still
+  wrong), which need the scripts to hand back a value.
 - **Pictures** captured from the Scene view, or recorded as GIFs of the Scene or Game, which need the renderer to
   read the window's pixels back.
 - A box to find a tag among many.
-- While writing: tags as chips with suggestions, and Image…, Link… and Action… to put them in at the cursor.
+- While writing: tags as chips with suggestions.
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine
   version: how to use each part of Voxear, from first steps to the advanced paths. It is written for people to
   read: plain words and short sentences, each term explained where it first appears, an example before the

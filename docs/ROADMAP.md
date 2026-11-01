@@ -422,7 +422,8 @@ Still to do in M3:
     of a panel floats rather than joining it
   - [x] script fields edited while playing, on the running behaviour, with its buttons and callbacks
   - [ ] references rather than strings: a level field, and a component field that takes an Obj with the component
-  - [ ] several Inspectors, each lockable, and windows a game's code can open more than once
+  - [x] several Inspectors, each with a padlock, opened from a window's menu (Add Inspector)
+  - [ ] several Hierarchies, Projects and Scene views, and windows a game's code can open more than once
   - [ ] windows dragged out of the editor into windows of the desktop's own
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.

@@ -1,8 +1,8 @@
 //! The dock's panels as windows. Each window's options button, at its tab
 //! bar's right end, and a context click on a tab or its bar, offer Maximize
 //! (or Restore), Close, Close Other Tabs, Float (or Dock, for one floating
-//! in a window of its own), every panel closed to open beside it, and Reset
-//! Layout. The top bar's Window button lists every panel, ticked while
+//! in a window of its own), another of each window there can be more than
+//! one of (as Unity's Add Tab: an Inspector), and Reset Layout. The top bar's Window button lists every panel, ticked while
 //! open, to open or close, and resets the layout. Any panel can close, and a
 //! closed one keeps its state and opens again beside a panel it shared an
 //! area with.
@@ -51,8 +51,8 @@ pub(super) enum WindowAction {
     CloseOthers,
     /// Floats it in a window of its own, or docks it again.
     Float,
-    /// Opens a panel closed, beside it.
-    Open(String),
+    /// Opens another Inspector beside it.
+    AddInspector,
     ResetLayout,
 }
 
@@ -94,7 +94,8 @@ impl Editor {
 
     /// A window's menu, from its options button or a context click on its
     /// tab or tab bar: Maximize (or Restore), Close, Close Other Tabs, Float
-    /// (or Dock), each panel closed to open beside it, and Reset Layout.
+    /// (or Dock), another of each window there can be more than one of, and
+    /// Reset Layout. Closed panels open from the top bar's Window button.
     fn open_window_menu(&mut self, panel: String, at: (f32, f32)) {
         let dock = self.nodes.dock;
         let others = !self.ui.dock_panel_neighbours(dock, &panel).is_empty();
@@ -107,20 +108,10 @@ impl Editor {
             (MenuItem::new(if floating { "Dock" } else { "Float" }), Some(WindowAction::Float)),
             (MenuItem::separator(), None),
         ];
-        let closed: Vec<(String, String)> = self
-            .ui
-            .dock_panels(dock)
-            .into_iter()
-            .filter(|(.., open)| !open)
-            .map(|(id, title, _)| (id, title))
-            .collect();
-        if !closed.is_empty() {
-            let open = closed
-                .into_iter()
-                .map(|(id, title)| (MenuItem::new(&format!("Open {title}")), Some(WindowAction::Open(id))));
-            items.extend(open);
-            items.push((MenuItem::separator(), None));
-        }
+        items.extend([
+            (MenuItem::new("Add Inspector"), Some(WindowAction::AddInspector)),
+            (MenuItem::separator(), None),
+        ]);
         items.push((MenuItem::new("Reset Layout"), Some(WindowAction::ResetLayout)));
         let (menu, actions): (Vec<MenuItem>, Vec<Option<WindowAction>>) = items.into_iter().unzip();
         self.ui.open_menu(dock, at, &menu);
@@ -132,15 +123,21 @@ impl Editor {
         let dock = self.nodes.dock;
         match action {
             WindowAction::Maximize => self.toggle_maximized(panel),
+            // An Inspector opened from the menu goes for good; any other waits closed.
+            WindowAction::Close if self.remove_inspector(panel) => {}
             WindowAction::Close => self.ui.close_dock_panel(dock, panel),
             WindowAction::CloseOthers => {
                 for other in self.ui.dock_panel_neighbours(dock, panel) {
-                    self.ui.close_dock_panel(dock, &other);
+                    if !self.remove_inspector(&other) {
+                        self.ui.close_dock_panel(dock, &other);
+                    }
                 }
             }
             WindowAction::Float if self.ui.dock_panel_floating(dock, panel) => self.ui.dock_floating_panel(dock, panel),
             WindowAction::Float => self.ui.float_dock_panel(dock, panel, None),
-            WindowAction::Open(id) => self.ui.open_dock_panel_beside(dock, &id, panel),
+            WindowAction::AddInspector => {
+                self.add_inspector(panel);
+            }
             WindowAction::ResetLayout => self.reset_layout(),
         }
     }

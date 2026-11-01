@@ -61,7 +61,9 @@ impl Editor {
         let Some(entity) = self.inspector.shown().filter(|_| !self.is_playing()) else { return edit };
         if let Some(fields) = self.inspector.drawers_to_open() {
             let asked: Vec<DrawerField> = fields.iter().map(ToOpen::field).collect();
-            let opened = self.with_edit_scripts(|scripts, game| scripts.open_drawers(&mut game.engine.world, &asked));
+            let owner = self.inspector.drawer_owner();
+            let opened =
+                self.with_edit_scripts(|scripts, game| scripts.open_drawers(&mut game.engine.world, owner, &asked));
             let answers = match opened {
                 // Opened once the scripts have started.
                 None => return edit,
@@ -79,8 +81,9 @@ impl Editor {
             Some(Edit::Changed { before, .. }) => before.clone(),
             _ => ObjState::of(&self.game.engine.world, entity)?,
         };
+        let owner = self.inspector.drawer_owner();
         let mut ui = self.inspector.drawer_ui(&mut self.ui);
-        let drawn = scripts.draw_fields(&mut self.game.engine.world, &mut ui, &requests);
+        let drawn = scripts.draw_fields(&mut self.game.engine.world, &mut ui, owner, &requests);
         match drawn {
             Ok(answers) => {
                 for error in self.inspector.take_drawn(&mut self.game, answers) {

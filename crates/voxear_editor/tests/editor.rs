@@ -1601,16 +1601,16 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     frame(&mut editor, &mut renderer);
     assert!(dock_tab(&editor.ui, "Console").is_none(), "closed");
 
-    // Another tab's menu opens it again, beside that tab.
+    // The top bar's Window button opens it again.
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
-    let project = dock_tab(&editor.ui, "Project").unwrap();
-    context_click(&mut editor.ui, project);
+    let windows = editor.ui.find(editor.ui.root(), "windows").unwrap();
+    click(&mut editor.ui, windows);
     frame(&mut editor, &mut renderer);
-    let open_console = menu_item(&editor.ui, "Open Console").expect("closed panels in a tab's menu");
-    click(&mut editor.ui, open_console);
+    let console = menu_item(&editor.ui, "Console").unwrap();
+    click(&mut editor.ui, console);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
-    assert!(editor.ui.dock_panel_neighbours(dock, "console").contains(&"project".to_string()), "beside the Project");
+    assert!(dock_tab(&editor.ui, "Console").is_some(), "open again");
 
     // Every window's options button, at its tab bar's right end, has the same menu, with Maximize too.
     let tab = dock_tab(&editor.ui, "Console").unwrap();
@@ -1621,6 +1621,11 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     click(&mut editor.ui, options);
     frame(&mut editor, &mut renderer);
     assert!(menu_item(&editor.ui, "Maximize").is_some(), "{:?}", menu_texts(&editor.ui));
+    assert!(menu_item(&editor.ui, "Add Inspector").is_some(), "windows there can be more than one of");
+    assert!(
+        !menu_texts(&editor.ui).iter().any(|item| item.starts_with("Open ")),
+        "closed panels are the Window button's"
+    );
     let close = menu_item(&editor.ui, "Close").unwrap();
     click(&mut editor.ui, close);
     frame(&mut editor, &mut renderer);
@@ -4098,4 +4103,69 @@ fn prefab_button(ui: &Ui, label: &str) -> NodeId {
     let mut buttons = Vec::new();
     with_class(ui, ui.root(), "prefab-button", &mut buttons);
     buttons.into_iter().find(|&b| ui.text(b) == label).unwrap_or_else(|| panic!("no {label} button"))
+}
+
+#[test]
+fn inspectors_open_more_than_once_and_lock_to_what_they_show() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let (a, b) = (obj(&editor, "Spinner A").unwrap(), obj(&editor, "Spinner B").unwrap());
+    editor.select(Some(a));
+    frame(&mut editor, &mut renderer);
+
+    // Add Inspector, from the Inspector's own window menu: a second, beside it, showing the selection too.
+    let tab = dock_tab(&editor.ui, "Inspector").unwrap();
+    context_click(&mut editor.ui, tab);
+    frame(&mut editor, &mut renderer);
+    let add = menu_item(&editor.ui, "Add Inspector").expect("in the window's menu");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspector_count(), 2);
+    assert_eq!(editor.inspectors_shown(), [Some(a), Some(a)]);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    assert!(editor.ui.dock_panel_neighbours(dock, "inspector-2").contains(&"inspector".to_string()));
+
+    // The second's padlock keeps it on Spinner A as the selection moves on, and edits there change Spinner A.
+    let visible = |editor: &voxear_editor::Editor, class: &str| {
+        let mut found = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), class, &mut found);
+        found
+            .into_iter()
+            .find(|&node| std::iter::successors(Some(node), |&n| editor.ui.parent(n)).all(|n| editor.ui.is_visible(n)))
+    };
+    let lock = visible(&editor, "inspector-lock").expect("the second's padlock, showing");
+    assert_ne!(lock, editor.inspector_lock());
+    click(&mut editor.ui, lock);
+    frame(&mut editor, &mut renderer);
+    editor.select(Some(b));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspectors_shown(), [Some(b), Some(a)], "the first follows, the locked one stays");
+    assert_eq!(editor.selected(), Some(b));
+    let name = visible(&editor, "obj-name").expect("the second's name field");
+    editor.ui.focus(name);
+    editor.ui.set_modifiers(voxear_ui::Modifiers { shift: false, control: true });
+    editor.ui.key_down(voxear_ui::Key::Char('a'));
+    editor.ui.set_modifiers(voxear_ui::Modifiers::default());
+    editor.ui.text_input("Spinner A, locked");
+    frame(&mut editor, &mut renderer);
+    let named = |e: voxear_ecs::Entity| editor.game.engine.world.get::<Name>(e).map(|n| n.0.clone());
+    assert_eq!(named(a).as_deref(), Some("Spinner A, locked"), "the locked Inspector edits what it shows");
+    assert_eq!(named(b).as_deref(), Some("Spinner B"));
+
+    // Unlocked, it follows the selection again; closed from its menu, it goes for good.
+    click(&mut editor.ui, lock);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspectors_shown(), [Some(b), Some(b)]);
+    let mut tabs = Vec::new();
+    with_class(&editor.ui, dock, "tab", &mut tabs);
+    let second = tabs.into_iter().filter(|&t| editor.ui.text(t) == "Inspector").last().unwrap();
+    context_click(&mut editor.ui, second);
+    frame(&mut editor, &mut renderer);
+    let close = menu_item(&editor.ui, "Close").unwrap();
+    click(&mut editor.ui, close);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspector_count(), 1);
+    assert!(!editor.ui.dock_panels(dock).iter().any(|(id, ..)| id == "inspector-2"), "gone, not just closed");
 }

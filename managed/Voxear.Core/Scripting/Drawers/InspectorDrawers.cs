@@ -9,7 +9,8 @@ namespace Voxear.Scripting
 {
 	/// <summary>
 	/// The drawers the Inspector draws the shown Obj's fields with, which live while it shows them, so a drawer can keep
-	/// what it likes between draws. When the Inspector is built, the editor opens a drawer for each the catalog names
+	/// what it likes between draws. With several Inspectors open, each one's drawers are kept apart, by the number the
+	/// editor gives it as "owner". When the Inspector is built, the editor opens a drawer for each the catalog names
 	/// on a field, and is given each one's markup to build; then, when something in a field's drawers was clicked or
 	/// changed, or its value changed elsewhere, it draws them with the value, innermost first, each with the document
 	/// its markup became. Requests and answers are JSON, through InspectorCalls:
@@ -20,11 +21,12 @@ namespace Voxear.Scripting
 	/// </summary>
 	internal static class InspectorDrawers
 	{
-		private static readonly List<DrawnField?> fields = new List<DrawnField?>();
+		private static readonly Dictionary<int, List<DrawnField?>> owners = new Dictionary<int, List<DrawnField?>>();
 
-		/// <summary>Lets go of the drawers open before, and opens those asked for.</summary>
+		/// <summary>Lets go of the drawers the Inspector asking opened before, and opens those asked for.</summary>
 		public static void Open(Utf8JsonWriter json, JsonElement request)
 		{
+			var fields = Of(request);
 			fields.Clear();
 			json.WriteStartArray("fields");
 			foreach (var asked in request.GetProperty("fields").EnumerateArray())
@@ -49,13 +51,14 @@ namespace Voxear.Scripting
 		/// <summary>Draws each field asked for with the drawers whose markup the editor built, innermost first.</summary>
 		public static void Draw(Utf8JsonWriter json, JsonElement request)
 		{
+			var fields = Of(request);
 			json.WriteStartArray("fields");
 			foreach (var asked in request.GetProperty("fields").EnumerateArray())
 			{
 				json.WriteStartObject();
 				try
 				{
-					DrawOne(json, asked);
+					DrawOne(json, asked, fields);
 				}
 				catch (Exception exception)
 				{
@@ -69,7 +72,19 @@ namespace Voxear.Scripting
 		/// <summary>Lets go of every drawer, as when the scripts reload, so the old scripts can leave memory.</summary>
 		public static void Forget()
 		{
-			fields.Clear();
+			owners.Clear();
+		}
+
+		/// <summary>The drawers of the Inspector a request is from, its "owner"; the first one's when it names none.</summary>
+		private static List<DrawnField?> Of(JsonElement request)
+		{
+			var owner = request.TryGetProperty("owner", out var named) ? named.GetInt32() : 0;
+			if (!owners.TryGetValue(owner, out var fields))
+			{
+				fields = new List<DrawnField?>();
+				owners[owner] = fields;
+			}
+			return fields;
 		}
 
 		private static DrawnField OpenOne(JsonElement asked)
@@ -132,7 +147,7 @@ namespace Voxear.Scripting
 			json.WriteEndArray();
 		}
 
-		private static void DrawOne(Utf8JsonWriter json, JsonElement asked)
+		private static void DrawOne(Utf8JsonWriter json, JsonElement asked, List<DrawnField?> fields)
 		{
 			var index = asked.GetProperty("field").GetInt32();
 			var field = index >= 0 && index < fields.Count ? fields[index] : null;

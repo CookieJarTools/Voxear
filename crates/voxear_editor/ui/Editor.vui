@@ -127,6 +127,9 @@
                     <Panel name="build-panel" class="fill build-panel" />
                 </DockPanel>
                 <DockPanel id="inspector" title="Inspector">
+                    <Panel class="panel-actions">
+                        <Button name="inspector-lock" class="icon-button inspector-lock"><Icon icon="lock" /></Button>
+                    </Panel>
                     <ScrollView name="inspector" class="fill inspector" />
                 </DockPanel>
             </DockSpace>

@@ -308,3 +308,29 @@ fn panels_float_in_windows_that_move_resize_and_dock_again() {
     let warnings = ui.take_warnings();
     assert!(warnings.is_empty(), "{warnings:?}");
 }
+
+#[test]
+fn panels_are_added_beside_others_and_removed_for_good() {
+    let (mut ui, dock) = editor();
+    let content = ui.add_dock_panel_beside(dock, "inspector-2", "Inspector", "scene");
+    let label = ui.add_label(content, "the second Inspector");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(
+        ui.dock_layout(dock).contains("[scene, inspector-2*]"),
+        "a tab beside the Scene's, showing: {}",
+        ui.dock_layout(dock)
+    );
+    assert!(ui.is_visible(label));
+
+    // Beside a panel floating, it joins its window.
+    ui.float_dock_panel(dock, "inspector", None);
+    ui.add_dock_panel_beside(dock, "inspector-3", "Inspector", "inspector");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(ui.dock_layout(dock).ends_with("[inspector, inspector-3*])"), "{}", ui.dock_layout(dock));
+
+    ui.remove_dock_panel(dock, "inspector-2");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(!ui.dock_layout(dock).contains("inspector-2"));
+    assert!(!ui.dock_panels(dock).iter().any(|(id, ..)| id == "inspector-2"), "gone, not closed");
+    assert_eq!(ui.find(dock, "nothing"), None);
+}

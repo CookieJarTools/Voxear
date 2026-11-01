@@ -438,6 +438,12 @@
     gap: 4px;
 }
 
+/* An Inspector's padlock, lit while it is locked to what it shows. */
+.inspector-lock:checked {
+    color: var(--vx-accent);
+    background-color: var(--vx-accent-soft);
+}
+
 /* A panel's own controls, at the right of its header, left of the dock's options button, which is every window's
    menu. */
 .panel-actions {

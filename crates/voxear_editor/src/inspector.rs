@@ -213,6 +213,10 @@ type Built = (Vec<(Part, Vec<Prop>)>, bool, Option<Locks>);
 
 pub struct Inspector {
     root: NodeId,
+    /// Its lock button, and whether it is locked: showing what it shows
+    /// rather than following the selection.
+    lock: Option<NodeId>,
+    locked: bool,
     shown: Option<Entity>,
     fields: Option<Fields>,
     /// The Transform's menu button, and each section's header with its
@@ -281,8 +285,16 @@ pub struct Inspector {
 
 impl Inspector {
     pub fn new(root: NodeId) -> Self {
+        Self::with_owner(root, 0)
+    }
+
+    /// An Inspector of several, its drawers kept apart from the others' by
+    /// `owner` (see `field_drawers`).
+    pub fn with_owner(root: NodeId, owner: u32) -> Self {
         Self {
             root,
+            lock: None,
+            locked: false,
             shown: None,
             fields: None,
             transform_menu: None,
@@ -313,9 +325,35 @@ impl Inspector {
             pagers: Vec::new(),
             palette_swatches: Vec::new(),
             item_handles: Vec::new(),
-            drawers: FieldDrawers::default(),
+            drawers: FieldDrawers::new(owner),
             prefab_buttons: None,
         }
+    }
+
+    /// The button that locks it, as Unity's padlock does, which it lights
+    /// while locked.
+    pub fn set_lock_button(&mut self, ui: &mut Ui, button: NodeId) {
+        self.lock = Some(button);
+        ui.set_checked(button, self.locked);
+    }
+
+    /// Locks or unlocks it when its lock button was clicked. Returns whether
+    /// it did.
+    pub fn update_lock(&mut self, ui: &mut Ui) -> bool {
+        let Some(button) = self.lock.filter(|&b| ui.clicked(b)) else { return false };
+        self.locked = !self.locked;
+        ui.set_checked(button, self.locked);
+        true
+    }
+
+    /// Whether it keeps showing what it shows, rather than the selection.
+    pub fn is_locked(&self) -> bool {
+        self.locked
+    }
+
+    /// Which of several Inspectors' drawers are its own, as the scripts know them.
+    pub fn drawer_owner(&self) -> u32 {
+        self.drawers.owner()
     }
 
     /// Whether the scripts are to be asked again, for an Obj and scene values
@@ -398,13 +436,13 @@ impl Inspector {
         items
     }
 
-    /// The project's scripts as a new build describes them. What is showing
-    /// is built again on the next update.
     /// Colours code a script shows for a dark theme or a light one.
     pub fn set_dark(&mut self, dark: bool) {
         self.dark = dark;
     }
 
+    /// The project's scripts as a new build describes them. What is showing
+    /// is built again on the next update.
     pub fn set_types(&mut self, types: ScriptTypes) {
         self.types = types;
         self.built.0.clear();

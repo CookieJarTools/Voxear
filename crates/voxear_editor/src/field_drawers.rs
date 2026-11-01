@@ -22,6 +22,8 @@ use crate::{fields::Step, props::Prop};
 /// The first number the drawers' documents and elements are known by, far
 /// from the game UI's, which start at 0.
 const FIRST_NUMBER: u32 = 1 << 24;
+/// How many numbers each Inspector's drawers have, so several never share one.
+const NUMBERS_EACH: u32 = 1 << 20;
 
 /// A field the Inspector draws with drawers.
 struct DrawnRow {
@@ -46,6 +48,9 @@ struct DrawnRow {
 }
 
 pub struct FieldDrawers {
+    /// Which of several Inspectors these are, so the scripts keep each's
+    /// drawers apart, and the numbers of each's elements too.
+    owner: u32,
     rows: Vec<DrawnRow>,
     /// Whether the rows' drawers were opened since the Inspector was built.
     opened: bool,
@@ -76,13 +81,16 @@ impl ToOpen {
     }
 }
 
-impl Default for FieldDrawers {
-    fn default() -> Self {
-        Self { rows: Vec::new(), opened: false, numbers: UiNumbers::starting_at(FIRST_NUMBER), asked: Vec::new() }
-    }
-}
-
 impl FieldDrawers {
+    pub fn new(owner: u32) -> Self {
+        let numbers = UiNumbers::starting_at(FIRST_NUMBER + owner * NUMBERS_EACH);
+        Self { owner, rows: Vec::new(), opened: false, numbers, asked: Vec::new() }
+    }
+
+    pub fn owner(&self) -> u32 {
+        self.owner
+    }
+
     /// Forgets every drawn field, as the Inspector is built again.
     pub fn clear(&mut self) {
         self.rows.clear();

@@ -308,7 +308,8 @@ impl Editor {
         voxear_core::debug_draw::clear();
         self.game.ui = voxear_engine::game_ui::GameUi::default();
         let Run { edit, levels, camera, .. } = *run;
-        let selected = self.inspector.shown().and_then(|entity| self.game.levels.counterpart(entity, &levels));
+        let selected = self.selected().and_then(|entity| self.game.levels.counterpart(entity, &levels));
+        let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
         // The values to keep, read before the played world goes.
         let kept: Vec<(Entity, Field, Kept)> = std::mem::take(&mut self.kept)
             .into_iter()
@@ -332,6 +333,7 @@ impl Editor {
         self.game.release_unused(Some(renderer));
         self.keep_from_play(kept, renderer);
         self.after_swap(selected, "scene");
+        self.show_locked(locked);
         // Changes left waiting for play to stop.
         self.reload_scripts();
         tracing::info!("stopped playing; the level is back as it was edited");
@@ -481,7 +483,8 @@ impl Editor {
         let view = self.game.engine.world.get::<Transform>(self.camera).copied().unwrap_or(Transform::IDENTITY);
         let lens = self.game.engine.world.get::<Camera>(self.camera).copied().unwrap_or_default();
         let camera = engine.world.spawn((Name("Scene Camera".into()), view, lens, EditorOnly));
-        let selected = self.inspector.shown().and_then(|entity| self.game.levels.counterpart(entity, &levels));
+        let selected = self.selected().and_then(|entity| self.game.levels.counterpart(entity, &levels));
+        let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
         let edit = std::mem::replace(&mut self.game.engine, engine);
         let levels = std::mem::replace(&mut self.game.levels, levels);
         self.kept.clear();
@@ -493,6 +496,7 @@ impl Editor {
         self.play.mode = Mode::Playing(Box::new(run));
         self.camera = camera;
         self.after_swap(selected, "game");
+        self.show_locked(locked);
         tracing::info!("playing {}", self.game.levels.current().unwrap_or("the level"));
     }
 

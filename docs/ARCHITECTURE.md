@@ -1415,9 +1415,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
   shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. Every window's options
   button, at its header's right end (the Game and Scene views' too), and a context click on a tab or its bar,
-  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, each panel closed to open beside it, and
-  Reset Layout; a closed panel keeps its state, and opens again from there or the Window button, beside a panel it
-  shared an area with.
+  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, Add Inspector (another of the windows there
+  can be more than one of, as Unity's Add Tab), and Reset Layout; a closed panel keeps its state, and opens again
+  from the Window button, beside a panel it shared an area with.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
   or more, they show as tiles; narrower, as rows with each file's size. Selecting a folder in the tree opens it,
@@ -1498,6 +1498,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   menu) on the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with
   coloured axis letters, applied as they are typed, and changes made elsewhere show in fields not being edited. While
   playing it shows the running Obj, its behaviours included.
+- **Several Inspectors** (`editor::inspectors`), as Unity's: Add Inspector on a window's menu opens another beside
+  it, and each has a padlock that keeps it on what it shows while the selection moves on, as to compare two Objs.
+  The selection is the editor's own, which every Inspector not locked shows. Each runs the same Inspector's frame in
+  turn, swapped in as the editor's `inspector`, so editing, menus, the object picker, buttons, callbacks and drawers
+  act on the Obj it shows; each keeps its drawers apart by an owner number the scripts know. One opened from the
+  menu goes for good when it closes, and locked ones follow their Objs into the played world and back.
 - **Components in the Inspector** (`props`): each component is a part, and each value in it a prop, read from the
   world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
   mesh it has) and its material (the default, or a `.material` in the project, which can also be dragged onto it from

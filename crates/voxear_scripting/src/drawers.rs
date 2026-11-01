@@ -50,12 +50,13 @@ pub struct Drawn {
 }
 
 impl ScriptRuntime {
-    /// Opens the drawers of each field, letting go of those opened before,
-    /// and gives each field's markups, outermost first, or why it could not
-    /// be opened, which is logged.
+    /// Opens the drawers of each field for the Inspector `owner`, letting go
+    /// of those it opened before, and gives each field's markups, outermost
+    /// first, or why it could not be opened, which is logged.
     pub fn open_drawers(
         &mut self,
         world: &mut World,
+        owner: u32,
         fields: &[DrawerField],
     ) -> Result<Vec<Result<Vec<String>, String>>> {
         let fields: Vec<serde_json::Value> = fields
@@ -72,7 +73,7 @@ impl ScriptRuntime {
                 json!({ "type": field.type_name, "path": path, "drawers": field.drawers, "label": field.label })
             })
             .collect();
-        let answers = self.ask_drawers(world, &json!({ "action": "open", "fields": fields }))?;
+        let answers = self.ask_drawers(world, &json!({ "action": "open", "owner": owner, "fields": fields }))?;
         Ok(answers
             .into_iter()
             .map(|answer| {
@@ -82,13 +83,14 @@ impl ScriptRuntime {
             .collect())
     }
 
-    /// Draws each field with its drawers, lending `services` for what they
-    /// ask of their elements, and gives what each made of its value, or
-    /// what it threw, which is logged.
+    /// Draws each field of the Inspector `owner` with its drawers, lending
+    /// `services` for what they ask of their elements, and gives what each
+    /// made of its value, or what it threw, which is logged.
     pub fn draw_fields(
         &mut self,
         world: &mut World,
         services: &mut dyn ScriptServices,
+        owner: u32,
         fields: &[DrawRequest],
     ) -> Result<Vec<Result<Drawn, String>>> {
         let fields: Vec<serde_json::Value> = fields
@@ -96,7 +98,7 @@ impl ScriptRuntime {
             .map(|field| json!({ "field": field.field, "documents": field.documents, "value": field.value }))
             .collect();
         let _services = ServicesScope::enter(services);
-        let answers = self.ask_drawers(world, &json!({ "action": "draw", "fields": fields }))?;
+        let answers = self.ask_drawers(world, &json!({ "action": "draw", "owner": owner, "fields": fields }))?;
         Ok(answers
             .into_iter()
             .map(|answer| {

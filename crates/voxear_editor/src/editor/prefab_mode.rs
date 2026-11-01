@@ -66,7 +66,9 @@ impl Editor {
         }
         self.opened(renderer);
         self.prefab = Some(OpenPrefab { path: path.to_string(), back });
-        self.inspector.set_prefab_mode(true);
+        for inspector in self.inspectors_mut() {
+            inspector.set_prefab_mode(true);
+        }
         let name = path.rsplit('/').next().unwrap_or(path);
         self.ui.set_text(self.nodes.prefab_name, name);
         self.ui.set_visible(self.nodes.prefab_bar, true);
@@ -98,7 +100,7 @@ impl Editor {
             _ => {
                 self.leave_prefab_mode();
                 let selected = self.selected();
-                self.inspector.show(&mut self.ui, &self.game, selected, false);
+                self.show_selection(selected);
             }
         }
     }
@@ -108,7 +110,9 @@ impl Editor {
         if self.prefab.take().is_none() {
             return;
         }
-        self.inspector.set_prefab_mode(false);
+        for inspector in self.inspectors_mut() {
+            inspector.set_prefab_mode(false);
+        }
         self.ui.set_visible(self.nodes.prefab_bar, false);
     }
 

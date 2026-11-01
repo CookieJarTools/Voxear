@@ -117,7 +117,7 @@ impl Editor {
         let thumb = size(FIELD_PREVIEW, self.scale);
         let redraw = std::mem::take(&mut self.redraw_field_previews);
         self.field_previews.sweep(renderer, redraw);
-        if let Some(entity) = self.selected() {
+        if let Some(entity) = self.inspector.shown() {
             for (prop, node) in self.inspector.field_thumbs(&self.ui) {
                 let image = self.field_image(renderer, entity, &prop, thumb, &mut budget);
                 self.ui.set_image(node, image);

@@ -9,6 +9,7 @@ mod docs_links;
 mod docs_pictures;
 mod docs_steps;
 mod drawer;
+mod inspectors;
 mod level_edits;
 mod placing;
 mod play;
@@ -101,6 +102,8 @@ struct Nodes {
     viewport: NodeId,
     game_viewport: NodeId,
     game_empty: NodeId,
+    /// The first Inspector's padlock.
+    inspector_lock: NodeId,
     command: NodeId,
     gizmo: NodeId,
     handles: NodeId,
@@ -272,6 +275,10 @@ pub struct Editor {
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
     picker_picks: Vec<(Entity, Prop, Pick)>,
+    /// The Obj selected, which every Inspector not locked shows.
+    selection: Option<Entity>,
+    /// The Inspectors opened from a window's menu, after the first.
+    extra_inspectors: Vec<inspectors::ExtraInspector>,
     /// Previews of assets, of a Mesh Renderer's own mesh and material, and
     /// the Inspector's large one; see `previews`.
     asset_previews: AssetPreviews,
@@ -349,6 +356,7 @@ impl Editor {
             viewport: find(&ui, "viewport"),
             game_viewport: find(&ui, "game-viewport"),
             game_empty: find(&ui, "game-empty"),
+            inspector_lock: find(&ui, "inspector-lock"),
             command: find(&ui, "command"),
             gizmo: find(&ui, "gizmo"),
             handles: find(&ui, "handles"),
@@ -413,6 +421,7 @@ impl Editor {
         let console = Console::new(&mut ui, console_panel, log, &root, &memory.settings);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
         inspector.set_types(script_types::cached(&game.project).unwrap_or_default());
+        inspector.set_lock_button(&mut ui, nodes.inspector_lock);
         inspector.show(&mut ui, &game, None, false);
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let docs_panel = find(&ui, "docs");
@@ -496,6 +505,8 @@ impl Editor {
             hovered_tooltip: None,
             debug_texts,
             picker_picks: Vec::new(),
+            selection: None,
+            extra_inspectors: Vec::new(),
             asset_previews: AssetPreviews::default(),
             live_assets: Vec::new(),
             live_fields: Vec::new(),
@@ -528,13 +539,12 @@ impl Editor {
             Some(entity) => self.hierarchy.select(&mut self.ui, &self.game.engine.world, entity),
             None => self.hierarchy.clear(&mut self.ui),
         }
-        let playing = self.is_playing();
-        self.inspector.show(&mut self.ui, &self.game, entity, playing);
+        self.show_selection(entity);
     }
 
     /// The Obj selected, as the Inspector shows it.
     pub fn selected(&self) -> Option<Entity> {
-        self.inspector.shown()
+        self.selection
     }
 
     /// The Scene view's camera over its rectangle, when the Scene view is
@@ -617,36 +627,17 @@ impl Editor {
             self.hierarchy.fade_ping(&mut self.ui, delta);
             self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
             if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
-                self.inspector.show(&mut self.ui, &self.game, selected, playing);
+                self.show_selection(selected);
             }
         }
         {
             profile_scope!("Inspector");
-            let live = self.pull_live_fields();
-            let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
-            let edit = self.run_inspector_drawers(edit);
-            // Before the callbacks, so a running behaviour's has the value it was called for.
-            self.push_live_fields(live);
-            let edit = self.run_inspector_callbacks(edit);
-            // Edits while playing go with the played world, so there is nothing to undo or save.
-            if let Some(edit) = edit.filter(|_| !self.is_playing()) {
-                self.history.record(edit);
-                self.unsaved = true;
-            }
-            self.run_inspector_button();
-            self.ask_inspector_answers();
-            self.update_docs_links();
+            self.update_inspectors(renderer, playing);
         }
         if let Some(action) = self.hierarchy.action(&mut self.ui) {
             self.obj_action(action, renderer);
         }
         self.update_placing(renderer);
-        let shown = self.selected();
-        let can_keep = shown.is_some_and(|entity| self.edited_counterpart(entity).is_some());
-        let kept: Vec<Field> = self.kept.iter().filter(|(e, _)| Some(*e) == shown).map(|(_, f)| f.clone()).collect();
-        if let Some(action) = self.inspector.menus(&mut self.ui, &self.game, playing, can_keep, &kept) {
-            self.row_action(action, renderer);
-        }
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
         }
@@ -676,7 +667,9 @@ impl Editor {
             self.ui.set_theme(&theme);
             renderer.set_clear_color(theme.base.linear_premultiplied());
             self.docs.set_dark(&mut self.ui, theme.is_dark());
-            self.inspector.set_dark(theme.is_dark());
+            for inspector in self.inspectors_mut() {
+                inspector.set_dark(theme.is_dark());
+            }
             self.theme = theme;
         }
         {
@@ -1121,7 +1114,7 @@ impl Editor {
         self.unsaved = false;
         self.discard_armed = None;
         self.game.release_unused(Some(renderer));
-        self.inspector.show(&mut self.ui, &self.game, None, false);
+        self.show_selection(None);
         tracing::info!("opened {}", self.game.levels.current().unwrap_or("a scene"));
     }
 
@@ -1129,7 +1122,7 @@ impl Editor {
     /// select, the handles under the pointer, and dragging them.
     fn update_scene_tools(&mut self, renderer: &Renderer) {
         self.tools.tool = Tool::from_index(self.ui.segment(self.nodes.tool));
-        let selected = self.inspector.shown();
+        let selected = self.selected();
         let Some(camera) = self.scene_camera() else {
             self.hovered_handle = None;
             self.ui.set_shapes(self.nodes.handles, Vec::new());
@@ -1242,7 +1235,12 @@ impl Editor {
     /// stops keeping it, resets a value or the Transform, or adds or removes
     /// a component. Each change is a step to undo, except while playing.
     fn row_action(&mut self, action: RowAction, renderer: &mut Renderer) {
-        let Some(entity) = self.selected() else { return };
+        let Some(entity) = self.inspector.shown() else { return };
+        self.row_action_on(entity, action, renderer);
+    }
+
+    /// Does what a menu in an Inspector asks, for the Obj it shows.
+    fn row_action_on(&mut self, entity: Entity, action: RowAction, renderer: &mut Renderer) {
         if let RowAction::EditColor(prop, swatch) = action {
             return self.edit_color(entity, prop, swatch);
         }
@@ -1403,7 +1401,9 @@ impl Editor {
         if let Some(describing) = &self.describing {
             match describing.try_recv() {
                 Ok(Ok(types)) => {
-                    self.inspector.set_types(types);
+                    for inspector in self.inspectors_mut() {
+                        inspector.set_types(types.clone());
+                    }
                     self.describing = None;
                     self.reload_scripts();
                     if let Some(code) = code_reference(&self.game.project) {
@@ -1442,7 +1442,9 @@ impl Editor {
     /// description does: for code that describes scripts its own way, and
     /// for tests, which need no .NET this way.
     pub fn set_script_types(&mut self, types: ScriptTypes) {
-        self.inspector.set_types(types);
+        for inspector in self.inspectors_mut() {
+            inspector.set_types(types.clone());
+        }
     }
 
     /// Whether the scripts are described as they are now, with no build of
@@ -1748,8 +1750,9 @@ impl Editor {
     fn update_picker(&mut self, renderer: &mut Renderer) {
         let clicked = self.picker.update(&mut self.ui);
         for (entity, prop, pick) in std::mem::take(&mut self.picker_picks).into_iter().chain(clicked) {
-            if self.selected() == Some(entity) {
-                self.row_action(RowAction::Pick(prop, pick), renderer);
+            // For the Obj it was opened for, by whichever Inspector, while it is there.
+            if self.game.engine.world.is_alive(entity) {
+                self.row_action_on(entity, RowAction::Pick(prop, pick), renderer);
             }
         }
     }

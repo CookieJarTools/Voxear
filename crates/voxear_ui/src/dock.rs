@@ -447,6 +447,49 @@ impl Ui {
         content
     }
 
+    /// Adds a panel while the dock is in use, as a tab beside `beside` (or in
+    /// the first area, when that is not open), showing: a second Inspector,
+    /// say, for a window that can be open more than once. Returns the
+    /// element to fill with its contents.
+    pub fn add_dock_panel_beside(&mut self, dock: NodeId, id: &str, title: &str, beside: &str) -> NodeId {
+        let content = self.add(dock, Element::new(Kind::Panel, Style::column().grow()));
+        self.add_class(content, "dock-panel");
+        let Some(state) = self.dock_state(dock) else { return content };
+        state.panels.push(DockPanel { id: id.to_string(), title: title.to_string(), icon: None, content: content.0 });
+        match state.floating.iter_mut().find(|f| f.panels.iter().any(|p| p == beside)) {
+            Some(window) => {
+                window.panels.push(id.to_string());
+                window.selected = window.panels.len() - 1;
+            }
+            None => {
+                let target = area_id_with(&state.layout, beside);
+                let target = target.unwrap_or_else(|| match state.layout.first_area() {
+                    DockNode::Area { id, .. } => *id,
+                    DockNode::Split { .. } => 0,
+                });
+                state.layout.insert(target, Zone::Center, id, 0.0, 0);
+            }
+        }
+        self.rebuild_dock(dock);
+        self.show_dock_panel(dock, id);
+        content
+    }
+
+    /// Takes a panel out for good, its elements with it, as a window that
+    /// can be open more than once does when it closes. An area left empty
+    /// folds away.
+    pub fn remove_dock_panel(&mut self, dock: NodeId, id: &str) {
+        let Some(state) = self.dock_state(dock) else { return };
+        let Some(index) = state.panels.iter().position(|p| p.id == id) else { return };
+        let content = state.panels.remove(index).content;
+        state.remove_panel(id);
+        state.closed.retain(|(closed, _)| closed != id);
+        state.closed.iter_mut().filter(|(_, n)| n.as_deref() == Some(id)).for_each(|(_, n)| *n = None);
+        // Before the rebuild, which would take it out with the tabs it is in.
+        self.remove(NodeId(content));
+        self.rebuild_dock(dock);
+    }
+
     /// Shows an icon before a panel's title on its tab.
     pub fn set_dock_panel_icon(&mut self, dock: NodeId, id: &str, icon: &str) {
         let Some(state) = self.dock_state(dock) else { return };

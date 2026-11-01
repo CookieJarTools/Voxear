@@ -1776,7 +1776,9 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
 - **The Voxear Manual**: the engine's own pages, Markdown in the checkout's `manual/` folder, which
-  `voxear-dist` ships in every install's `manual/` (`voxear_engine::manual_folder`). The editor shows them in every
+  `voxear-dist` packs as an archive of its own, for the launcher to offer as an optional part of an install, which
+  then has them in its `manual/` (`voxear_engine::manual_folder`); an install without it has no manual in VoxDocs.
+  The editor shows them in every
   project as a folder after the project's pages and before the Code Reference (`Library::set_manual`). They are read
   like the project's but not written, ticked or looked after: Edit is hidden, Docs Health passes them over, and
   their pictures come from the manual's own folders. Their paths start `manual:`, as `manual:Scripting/Commands.md`;
@@ -2926,8 +2928,10 @@ through a small contract.
 - **Packaging** (`voxear-dist`, `cargo run -p voxear_dist -- --channel nightly`): builds `vox`, `voxear-editor`
   and `voxear-player` in release (naming the version through `VOXEAR_VERSION`), and Voxear.Core and ScriptInfo in
   release; lays out the install in `target/dist/voxear-<version>-<platform>/` with `engine.toml`, `bin/`,
-  `managed/` (with the scripts props), `docs/` and the licence; and packs it as a `.tar.zst` with every entry at
-  the root, in name order and without owners or times. A nightly is named for the day (`0.1.0-nightly.20261031`);
+  `managed/` (with the scripts props), `docs/`, `manual/` and the licence; and packs it as a `.tar.zst` with every
+  entry at the root, in name order and without owners or times, all but the manual, which goes in an archive of its
+  own, `voxear-<version>-manual.tar.zst`, the same on every platform, for the launcher to offer as an optional part
+  of an install. A nightly is named for the day (`0.1.0-nightly.20261031`);
   a beta names its version. The folder is an install too, which `voxup locate` can point the launcher at. Run on
   Windows it packages for Windows (`voxear-<version>-windows-x86_64.tar.zst`), with the C runtime linked into the
   programs so an install needs nothing else of Microsoft's; it builds wherever `CARGO_TARGET_DIR` points.

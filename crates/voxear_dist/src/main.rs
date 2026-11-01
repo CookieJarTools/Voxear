@@ -3,7 +3,10 @@
 //! built in release, `Voxear.Core` and the tool beside it, the settings game
 //! scripts build with, the documentation, the manual VoxDocs shows, and
 //! `engine.toml` saying what it is. It writes an install folder and a
-//! `.tar.zst` of it with every entry at the root. `voxear-release engine add` then signs the archive and lists it.
+//! `.tar.zst` of it with every entry at the root, all but the manual, which
+//! goes in an archive of its own, `voxear-<version>-manual.tar.zst`, its
+//! entries under `manual/`, so the launcher can offer it as an optional part
+//! of an install. `voxear-release engine add` then signs the archive and lists it.
 //!
 //! ```bash
 //! cargo run -p voxear_dist -- --channel nightly
@@ -40,6 +43,10 @@ const PLATFORM: &str = "windows-x86_64";
 
 /// What an install is, at its root.
 const ENGINE_FILE: &str = "engine.toml";
+
+/// The folder the manual is in, in the checkout and in an install, and
+/// packed into an archive of its own.
+const MANUAL: &str = "manual";
 
 /// The programs an install carries in `bin/`: the command line, the editor,
 /// and the player `vox build` copies into each build.
@@ -95,13 +102,19 @@ fn main() -> Result<()> {
     let install = out.join(&name);
     let files = gather(&root, &target_dir(&root), &engine_file(&version, args.channel, &commit))?;
     stage(&install, &files)?;
+    // The manual is an archive of its own, for the launcher to offer as an optional part of an install.
+    let (manual, engine): (Vec<Packed>, Vec<Packed>) =
+        files.into_iter().partition(|file| file.path.starts_with(MANUAL));
     let archive = out.join(format!("{name}.tar.zst"));
-    pack(&archive, &files)?;
-    check(&archive, &files)?;
+    pack(&archive, &engine)?;
+    check(&archive, &engine)?;
+    let manual_archive = out.join(format!("voxear-{version}-manual.tar.zst"));
+    pack(&manual_archive, &manual)?;
+    check(&manual_archive, &manual)?;
 
-    let size = fs::metadata(&archive)?.len() as f64 / 1_048_576.0;
     println!("Install folder: {}", install.display());
-    println!("Archive: {} ({size:.1} MB)", archive.display());
+    println!("Archive: {} ({})", archive.display(), size(&archive)?);
+    println!("The manual: {} ({})", manual_archive.display(), size(&manual_archive)?);
     Ok(())
 }
 
@@ -246,7 +259,7 @@ fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
     }
     add(&root.join("managed/Voxear.Scripts.props"), "managed/Voxear.Scripts.props".into(), false)?;
     // The manual VoxDocs shows after a project's own pages, pictures and all.
-    for source in files_in(&root.join("manual"))? {
+    for source in files_in(&root.join(MANUAL))? {
         add(&source, source.strip_prefix(root)?.to_path_buf(), false)?;
     }
     add(&root.join("README.md"), "docs/README.md".into(), false)?;
@@ -258,6 +271,12 @@ fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+/// An archive's size as people read it: in MB, or in KB for a small one.
+fn size(archive: &Path) -> Result<String> {
+    let bytes = fs::metadata(archive)?.len() as f64;
+    Ok(if bytes < 1_048_576.0 { format!("{:.0} KB", bytes / 1024.0) } else { format!("{:.1} MB", bytes / 1_048_576.0) })
 }
 
 /// Every file in `folder` and the folders inside it, but hidden ones.

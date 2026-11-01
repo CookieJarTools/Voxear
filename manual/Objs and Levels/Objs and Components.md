@@ -58,4 +58,4 @@ Click **Add Component**, under the last one, to add another: the built-in ones t
 Right-click a component's title to **Remove Component**, or, for a behaviour, to **Move Up** or **Move Down**. Behaviours on an Obj run in the order they are listed.
 
 > [!NOTE]
-> The Inspector also shows **Tag**, **Layer** and **Static** for an Obj, and a switch to turn it on and off. These are not used yet, and are not saved.
+> The Inspector also shows **Tag**, **Layer** and **Static** for an Obj, and a switch to turn it on and off. These are not used yet, and are not saved. **Persistent**, below them, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].

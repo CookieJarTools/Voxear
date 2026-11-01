@@ -1,5 +1,6 @@
-//! The Inspector: the selected Obj's header (its kind, name, and the
-//! active, tag, layer and static settings to come), then a section for its
+//! The Inspector: the selected Obj's header (its kind, name, whether it is
+//! persistent, staying through level changes, and the active, tag, layer
+//! and static settings to come), then a section for its
 //! Transform and for each component (see `props`), divided by lines. Values
 //! apply as they are typed or picked, and values that change elsewhere show
 //! here, except in the field being edited. When an Obj's components, or what
@@ -26,7 +27,7 @@ use voxear_engine::{
     script_types::{FieldInspector, InfoKind, ScriptTypes},
 };
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
-use voxear_scene::{Name, Transform};
+use voxear_scene::{Name, ScenePersistence, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
 use voxear_engine::prefab::Locks;
@@ -40,10 +41,11 @@ use crate::{
     props::{self, Part, Prop, Value},
 };
 
-/// The fields showing an Obj's name and Transform, by what they edit, and
-/// the row each is on.
+/// The fields showing an Obj's name, persistence and Transform, by what
+/// they edit, and the row each is on.
 struct Fields {
     name: NodeId,
+    persistent: NodeId,
     position: [NodeId; 3],
     rotation: [NodeId; 3],
     scale: [NodeId; 3],
@@ -498,7 +500,7 @@ impl Inspector {
     }
 
     /// What the asset shown asks of the editor this frame.
-    pub fn update_asset(&mut self, ui: &Ui) -> Option<AssetAction> {
+    pub fn update_asset(&mut self, ui: &mut Ui) -> Option<AssetAction> {
         self.asset.as_mut()?.update(ui)
     }
 
@@ -545,7 +547,7 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
-        let (name_row, name) = header(ui, self.root, game, entity);
+        let (name_row, name, persistent) = header(ui, self.root, game, entity);
 
         let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", false);
         let (position_row, position) = vector_row(ui, rows, "Position");
@@ -557,7 +559,7 @@ impl Inspector {
             (Field::Rotation, rotation_row),
             (Field::Scale, scale_row),
         ];
-        self.fields = Some(Fields { name, position, rotation, scale, rows });
+        self.fields = Some(Fields { name, persistent, position, rotation, scale, rows });
         self.transform_menu = menu;
         self.headers.push((None, transform));
 
@@ -945,6 +947,14 @@ impl Inspector {
                 current.0 = name;
             }
         }
+        if ui.changed(fields.persistent) {
+            if ui.is_checked(fields.persistent) {
+                world.insert(entity, ScenePersistence);
+            } else {
+                world.remove::<ScenePersistence>(entity);
+            }
+        }
+        ui.set_checked(fields.persistent, world.has::<ScenePersistence>(entity));
         let (y, x, z) = transform.rotation.to_euler(EulerRot::YXZ);
         let euler = Vec3::new(x, y, z) * (180.0 / std::f32::consts::PI);
         let mut edited = transform;
@@ -1468,10 +1478,10 @@ fn numbers(value: &Value) -> Vec<f32> {
 }
 
 /// The Obj's icon, its name field and whether it is active, then rows for
-/// its tag, layer and whether it is static. Returns the top row and the
-/// name field. Active, tag, layer and static show their defaults until
-/// Objs have them.
-fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, NodeId) {
+/// its tag, layer, whether it is static and whether it is persistent.
+/// Returns the top row, the name field and the persistent box. Active, tag,
+/// layer and static show their defaults until Objs have them.
+fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, NodeId, NodeId) {
     let world = &game.engine.world;
     let header = ui.panel(root, Style::column());
     ui.add_class(header, "inspector-header");
@@ -1495,7 +1505,10 @@ fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, No
     let row = prop(ui, header, "Static");
     let fixed = ui.toggle(row, "", false);
     ui.add_class(fixed, "checkbox");
-    (top, name)
+    let row = prop(ui, header, "Persistent");
+    let persistent = ui.toggle(row, "", world.has::<ScenePersistence>(entity));
+    ui.add_class(persistent, "checkbox");
+    (top, name, persistent)
 }
 
 /// A row of a label and three axis fields, X, Y and Z. Returns the row and

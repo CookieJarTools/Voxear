@@ -126,6 +126,13 @@ impl LevelsPanel {
         panel
     }
 
+    /// Lists the levels and scenes again, after files came, went or
+    /// changed, keeping the filter.
+    pub fn refresh(&mut self, ui: &mut Ui, content: &mut Content) {
+        self.every = rows(content);
+        self.apply_filter(ui);
+    }
+
     /// Follows the filter, the current level and any level change under
     /// way, and returns what a click asked for.
     pub fn update(

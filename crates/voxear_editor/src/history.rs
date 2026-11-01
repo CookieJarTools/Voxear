@@ -1,5 +1,5 @@
-//! Undo and redo for edits made in the editor: an Obj's name, Transform or
-//! components changed, Objs made or deleted, and Objs moved to another
+//! Undo and redo for edits made in the editor: an Obj's name, Transform,
+//! persistence or components changed, Objs made or deleted, and Objs moved to another
 //! parent. Typing
 //! into one field records one step, not one per key, as changes to the
 //! same Obj close together merge. Objs that undo or redo bring back are new
@@ -13,20 +13,22 @@ use std::{
 use voxear_ecs::{Component, Entity, World};
 use voxear_engine::{EditBehaviours, Game, prefab::Locks};
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
-use voxear_scene::{Name, Transform};
+use voxear_scene::{Name, ScenePersistence, Transform};
 
 use crate::objs::{self, Placing, Taken};
 
 /// Edits to the same Obj closer together than this are one step.
 const MERGE_WITHIN: Duration = Duration::from_millis(800);
 
-/// What a change edits about an Obj: its name, its Transform, and the
-/// components the Inspector edits, each there or not. Its scripts are
-/// kept as data in edit mode; while playing nothing is undone.
+/// What a change edits about an Obj: its name, its Transform, whether it
+/// stays through level changes, and the components the Inspector edits,
+/// each there or not. Its scripts are kept as data in edit mode; while
+/// playing nothing is undone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjState {
     pub name: String,
     pub transform: Transform,
+    pub persistent: bool,
     pub renderer: Option<MeshRenderer>,
     pub light: Option<Light>,
     pub camera: Option<Camera>,
@@ -40,6 +42,7 @@ impl ObjState {
         Some(Self {
             name: world.get::<Name>(entity)?.0.clone(),
             transform: *world.get::<Transform>(entity)?,
+            persistent: world.has::<ScenePersistence>(entity),
             renderer: world.get::<MeshRenderer>(entity).copied(),
             light: world.get::<Light>(entity).copied(),
             camera: world.get::<Camera>(entity).copied(),
@@ -55,6 +58,7 @@ impl ObjState {
         if let Some(transform) = world.get_mut::<Transform>(entity) {
             *transform = self.transform;
         }
+        put(world, entity, self.persistent.then_some(ScenePersistence));
         put(world, entity, self.renderer);
         put(world, entity, self.light);
         put(world, entity, self.camera);

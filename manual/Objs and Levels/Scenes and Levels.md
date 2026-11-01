@@ -28,7 +28,17 @@ The level the game starts with is `start_level` in your project's `voxear.toml`.
 ## Making a level
 
 1. Right-click in the Project panel and choose **New Scene**, and type its name. Do the same with **New Level**.
-2. Open the new `.level` file in a text editor and list its scenes:
+2. Click the new level in the Project panel. The Inspector shows its scenes, which is none yet.
+3. Click **Add Scene** and pick your scene from the list.
+
+Add as many scenes as the level needs. To take one out, click the cross at the end of its row. The level's file changes straight away. If the level is open, the Hierarchy shows the change too.
+
+Each scene in the list has two boxes:
+
+- **Active**: new Objs you make go into this scene, and the level uses this scene's sky. A level always has one active scene. Until you tick another, it is the first.
+- **Required**: if a required scene fails to load, the level does not load. Untick it to let the level load without that scene.
+
+A level is a small text file. The Inspector writes it for you, but you can also write it by hand:
 
 ```toml
 # Voxear level
@@ -39,11 +49,11 @@ scene = "Scenes/Castle.scene"
 
 [[scene]]
 scene = "Scenes/Castle Lights.scene"
+active = true
+required = false
 ```
 
-The first scene is the active one. Put `active = true` on another to make it active instead. The level uses the active scene's sky.
-
-A scene marked `required = false` is left out, rather than stopping the level, if it fails to load.
+The Inspector names each scene by its ID from its `.meta` file, with the scene's path in a comment beside it. That way, renaming the scene does not break the level.
 
 ## Levels that stand on other levels
 
@@ -62,7 +72,9 @@ The scenes of the level stood on load first. When the game moves from one level 
 
 ## Objs that stay
 
-Most Objs leave when their level does. An Obj marked as persistent stays through every change of level, children and all. Mark it in its scene file:
+Most Objs leave when their level does. An Obj marked as persistent stays through every change of level, children and all.
+
+To mark one, select it in the Hierarchy and tick **Persistent** in the Inspector. Then save. The scene file now says so:
 
 ```toml
 [[obj]]

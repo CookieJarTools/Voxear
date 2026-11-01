@@ -8,7 +8,9 @@
 //! ([`Ui::accept_drops`]) is marked `drop-hover` while the pointer is over
 //! it. Letting go on one is a drop onto it, which [`Ui::dropped_onto`]
 //! reports with what was dragged; letting go elsewhere in a row's own list
-//! is a drop in that list (see `list`). Either way the release is no click.
+//! is a drop in that list (see `list`). A list whose rows take drops also
+//! marks and reports the row something from elsewhere lands on, while its
+//! own rows still land in it as rows. Either way the release is no click.
 
 use taffy::{LengthPercentageAuto, Position};
 
@@ -111,10 +113,11 @@ impl Ui {
             }
         }
         self.place_ghost(point);
-        let target = self.target_under_pointer();
-        let row = match source {
-            DragSource::Row { list, index, .. } if target.is_none() => self.landing_row(list, index),
-            _ => None,
+        let target = self.target_under_pointer(source);
+        let row = match (source, target) {
+            (DragSource::Row { list, index, .. }, None) => self.landing_row(list, index),
+            (_, Some(target)) => self.landing_from_elsewhere(NodeId(target)),
+            (DragSource::Element(_), None) => None,
         };
         let (old_row, old_target) = self.drag.as_ref().map_or((None, None), |d| (d.over_row, d.over_target));
         self.mark_row(old_row, row);
@@ -140,8 +143,9 @@ impl Ui {
         if let DragSource::Row { list, .. } = drag.source {
             self.set_class(list, "dragging-rows", false);
         }
-        if let Some(target) = self.target_under_pointer() {
+        if let Some(target) = self.target_under_pointer(drag.source) {
             self.element_drops.push((target, drag.source));
+            self.drop_from_elsewhere(NodeId(target), drag.source);
             return true;
         }
         if let DragSource::Row { list, index, .. } = drag.source
@@ -152,9 +156,13 @@ impl Ui {
         true
     }
 
-    /// The innermost element taking drops under the pointer.
-    fn target_under_pointer(&self) -> Option<taffy::NodeId> {
-        self.hit_path().into_iter().rev().find(|n| self.drop_targets.contains(n))
+    /// The innermost element taking drops under the pointer, but for the
+    /// list `source` is a row of, when its rows take drops: there it lands
+    /// as a row.
+    fn target_under_pointer(&self, source: DragSource) -> Option<taffy::NodeId> {
+        let target = self.hit_path().into_iter().rev().find(|n| self.drop_targets.contains(n))?;
+        let own = matches!(source, DragSource::Row { list, .. } if list.0 == target);
+        (!own || !self.takes_row_drops(target)).then_some(target)
     }
 
     /// Moves the mark of where a row would land from one row to another.

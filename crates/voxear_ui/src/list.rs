@@ -22,6 +22,12 @@
 //! the default theme shows on the edge something would land on. Letting go on another row, or below
 //! the rows, is a drop in the list, which [`Ui::dropped`] reports with that
 //! place for the owner to act on, as the Hierarchy moves Objs.
+//!
+//! A list can also take what is dragged from elsewhere onto its rows
+//! ([`Ui::accept_row_drops`]): another list's rows, or elements made
+//! draggable. The row under the pointer is marked in the same way, and
+//! [`Ui::dropped_on_item`] reports the drop, as the Hierarchy places a
+//! prefab dragged from the Project.
 
 use std::collections::HashSet;
 
@@ -84,6 +90,15 @@ pub(crate) struct RowDrop {
     items: Option<(u64, Option<(u64, DropPlace)>)>,
 }
 
+/// Something from elsewhere let go of on a list whose rows take drops: the
+/// list, what was dragged, and in a tree the item it landed on, with where
+/// on it.
+pub(crate) struct RowLanding {
+    list: taffy::NodeId,
+    source: DragSource,
+    item: Option<(u64, DropPlace)>,
+}
+
 /// Where on a row something dragged lands: before it, onto it, or after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DropPlace {
@@ -118,6 +133,8 @@ pub(crate) struct ListState {
     rebind: bool,
     source: Source,
     draggable: bool,
+    /// What is dragged from elsewhere lands on the rows.
+    takes_drops: bool,
 }
 
 struct Row {
@@ -346,6 +363,24 @@ impl Ui {
         self.row_drops.iter().find(|d| d.list == tree.0).and_then(|d| d.items)
     }
 
+    /// Lets what is dragged from elsewhere, another list's rows or elements
+    /// made draggable, land on the list's rows, marked where it would land
+    /// as the list's own rows are. The list's own rows still land in it.
+    pub fn accept_row_drops(&mut self, list: NodeId, accept: bool) {
+        if let Some(state) = self.list_state(list) {
+            state.takes_drops = accept;
+        }
+        self.accept_drops(list, accept);
+    }
+
+    /// Something dragged from elsewhere and let go of on a tree whose rows
+    /// take drops ([`accept_row_drops`](Self::accept_row_drops)) since the
+    /// last frame: what was dragged, and the item it landed on with where
+    /// on it, or `None` below the rows.
+    pub fn dropped_on_item(&self, tree: NodeId) -> Option<(DragSource, Option<(u64, DropPlace)>)> {
+        self.row_landings.iter().find(|d| d.list == tree.0).map(|d| (d.source, d.item))
+    }
+
     fn list_state(&mut self, list: NodeId) -> Option<&mut ListState> {
         let kind = self.kind(list)?;
         if !matches!(kind, Kind::ListView | Kind::TreeView) {
@@ -365,6 +400,7 @@ impl Ui {
                 rebind: true,
                 source: Source::Empty,
                 draggable: false,
+                takes_drops: false,
             };
             self.element_mut(list)?.list = Some(Box::new(state));
             self.lists.push(list.0);
@@ -463,6 +499,35 @@ impl Ui {
     pub(crate) fn landing_row(&mut self, list: NodeId, index: usize) -> Option<(taffy::NodeId, DropPlace)> {
         let (row, _) = self.drop_row(list).filter(|&(_, i)| i != index)?;
         Some((row, self.place_on(row)))
+    }
+
+    /// Whether a list's rows take what is dragged from elsewhere.
+    pub(crate) fn takes_row_drops(&self, list: taffy::NodeId) -> bool {
+        self.element(NodeId(list)).and_then(|e| e.list.as_ref()).is_some_and(|state| state.takes_drops)
+    }
+
+    /// Where something from elsewhere would land on a list whose rows take
+    /// drops: the row under the pointer, and where on it.
+    pub(crate) fn landing_from_elsewhere(&mut self, list: NodeId) -> Option<(taffy::NodeId, DropPlace)> {
+        if !self.takes_row_drops(list.0) {
+            return None;
+        }
+        let (row, _) = self.drop_row(list)?;
+        Some((row, self.place_on(row)))
+    }
+
+    /// Something from elsewhere let go of on a list whose rows take drops:
+    /// a drop on the row under the pointer, or below the rows.
+    pub(crate) fn drop_from_elsewhere(&mut self, list: NodeId, source: DragSource) {
+        if !self.takes_row_drops(list.0) {
+            return;
+        }
+        let onto = self.drop_row(list).map(|(row, at)| (at, self.place_on(row)));
+        let item = match self.element(list).and_then(|e| e.list.as_ref()).map(|state| &state.source) {
+            Some(Source::Tree(tree)) => onto.and_then(|(at, place)| Some((tree.open.get(at)?.0, place))),
+            _ => None,
+        };
+        self.row_landings.push(RowLanding { list: list.0, source, item });
     }
 
     /// Where on a row the pointer is: its top quarter is before it, its

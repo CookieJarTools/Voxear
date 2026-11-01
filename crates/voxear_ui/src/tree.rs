@@ -245,11 +245,13 @@ pub struct Ui {
     pub(crate) menu_choices: Vec<(taffy::NodeId, usize)>,
     pub(crate) placing_menu: Option<(taffy::NodeId, f32)>,
     /// Something pressed, and maybe being dragged; rows let go of in their
-    /// lists and drops onto elements since the last frame; and the elements
-    /// that drag and that take drops.
+    /// lists, drops onto elements, and drops from elsewhere onto lists'
+    /// rows since the last frame; and the elements that drag and that take
+    /// drops.
     pub(crate) drag: Option<crate::drag::Drag>,
     pub(crate) row_drops: Vec<crate::list::RowDrop>,
     pub(crate) element_drops: Vec<(taffy::NodeId, crate::drag::DragSource)>,
+    pub(crate) row_landings: Vec<crate::list::RowLanding>,
     pub(crate) draggables: std::collections::HashSet<taffy::NodeId>,
     pub(crate) drop_targets: std::collections::HashSet<taffy::NodeId>,
 }
@@ -294,6 +296,7 @@ impl Ui {
             drag: None,
             row_drops: Vec::new(),
             element_drops: Vec::new(),
+            row_landings: Vec::new(),
             draggables: Default::default(),
             drop_targets: Default::default(),
         }
@@ -756,6 +759,7 @@ impl Ui {
         self.menu_choices.clear();
         self.row_drops.clear();
         self.element_drops.clear();
+        self.row_landings.clear();
         self.clear_selection_changes();
         self.clear_input_events();
         UiFrame { quads, atlas: self.atlas.snapshot() }

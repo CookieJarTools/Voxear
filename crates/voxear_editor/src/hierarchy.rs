@@ -13,6 +13,11 @@
 //! top or bottom edge, beside it, before or after; onto a scene's header, at
 //! the top of that scene; and below the rest, at the top of its own scene.
 //! The editor carries these out (see [`ObjAction`]).
+//!
+//! While the editor lets it ([`Hierarchy::take_drops`]), as it does while a
+//! prefab is dragged from the Project, the rows take drops from elsewhere
+//! too, landing in the same places, except that below the rest is the top of
+//! the active scene ([`Hierarchy::dropped_from_elsewhere`]).
 
 use std::{
     cell::RefCell,
@@ -194,14 +199,25 @@ impl Hierarchy {
         let entity = Entity::from_bits(item);
         let shown = self.shown.borrow();
         let to = match onto {
-            Some((target, _)) if is_header(target) => Destination::SceneEnd(*shown.scenes.get(&target)?),
-            Some((target, DropPlace::Onto)) => Destination::Into(Entity::from_bits(target)),
-            Some((target, DropPlace::Before)) => Destination::Before(Entity::from_bits(target)),
-            Some((target, DropPlace::After)) => Destination::After(Entity::from_bits(target)),
+            Some((target, place)) => destination(&shown, target, place)?,
             // Below the rows: at the top of its own scene.
             None => Destination::SceneEnd(*shown.scenes.get(&shown.header_of(item)?)?),
         };
         Some(ObjAction::Move(entity, to))
+    }
+
+    /// Lets the rows take what is dragged from elsewhere, or stops them.
+    pub fn take_drops(&self, ui: &mut Ui, take: bool) {
+        ui.accept_row_drops(self.tree, take);
+    }
+
+    /// Something dragged from elsewhere and let go of on the rows since the
+    /// last frame, and where it lands: inside an Obj, beside one, at the top
+    /// of a scene, or `None` for the top of the active scene.
+    pub fn dropped_from_elsewhere(&self, ui: &Ui) -> Option<(DragSource, Option<Destination>)> {
+        let (source, onto) = ui.dropped_on_item(self.tree)?;
+        let to = onto.and_then(|(target, place)| destination(&self.shown.borrow(), target, place));
+        Some((source, to))
     }
 
     /// The menu of what can be done to the Obj or scene `on`, or made at
@@ -301,6 +317,20 @@ impl Hierarchy {
         }
         ui.select_item(self.tree, entity.to_bits());
     }
+}
+
+/// Where something let go of on a row lands: on a scene's header, at the
+/// top of that scene; otherwise inside the row's Obj, or beside it.
+fn destination(shown: &Snapshot, target: u64, place: DropPlace) -> Option<Destination> {
+    if is_header(target) {
+        return shown.scenes.get(&target).map(|scene| Destination::SceneEnd(*scene));
+    }
+    let entity = Entity::from_bits(target);
+    Some(match place {
+        DropPlace::Onto => Destination::Into(entity),
+        DropPlace::Before => Destination::Before(entity),
+        DropPlace::After => Destination::After(entity),
+    })
 }
 
 /// The icon for an Obj with a camera, a light or a mesh, in that order.

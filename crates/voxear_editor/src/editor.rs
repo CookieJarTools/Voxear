@@ -9,6 +9,8 @@ mod docs_links;
 mod docs_pictures;
 mod docs_steps;
 mod drawer;
+mod level_edits;
+mod placing;
 mod play;
 mod prefab_mode;
 mod script_actions;
@@ -610,6 +612,7 @@ impl Editor {
         if let Some(action) = self.hierarchy.action(&mut self.ui) {
             self.obj_action(action, renderer);
         }
+        self.update_placing(renderer);
         let shown = self.selected();
         let can_keep = shown.is_some_and(|entity| self.edited_counterpart(entity).is_some());
         let kept: Vec<Field> = self.kept.iter().filter(|(e, _)| Some(*e) == shown).map(|(_, f)| f.clone()).collect();
@@ -654,7 +657,7 @@ impl Editor {
             for event in self.project.update(&mut self.ui) {
                 self.project_event(event, renderer);
             }
-            if let Some(action) = self.inspector.update_asset(&self.ui) {
+            if let Some(action) = self.inspector.update_asset(&mut self.ui) {
                 self.asset_action(action, renderer);
             }
         }
@@ -751,6 +754,7 @@ impl Editor {
                 // Files moved or went, so previews are made again for the paths they have now.
                 self.asset_previews.clear(renderer);
                 self.project.refresh(&mut self.ui, self.game.content.db(), select.as_deref());
+                self.levels.refresh(&mut self.ui, &mut self.game.content);
                 if let Some(item) = select.and_then(|path| self.project.item(&path)) {
                     self.inspect_asset(&item);
                 }
@@ -831,6 +835,7 @@ impl Editor {
                 }
                 self.asset_changed(renderer, &path);
             }
+            AssetAction::EditLevel(path, edit) => self.edit_level(&path, &edit, renderer),
         }
     }
 

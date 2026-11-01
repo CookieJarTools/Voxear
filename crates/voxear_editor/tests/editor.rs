@@ -3223,3 +3223,216 @@ fn the_consoles_settings_show_a_sample_and_change_it_at_once() {
     assert_eq!(editor.ui.rect(rows[0])[3], 24.0, "the list's lines are taller");
     assert_eq!(editor.ui.text(editor.ui.children(rows[0])[2]), "●");
 }
+
+/// The middle of an element on screen.
+fn centre(ui: &Ui, node: NodeId) -> [f32; 2] {
+    let [x, y, w, h] = ui.rect(node);
+    [x + w / 2.0, y + h / 2.0]
+}
+
+/// The editor on a copy of Hello it may save, two frames in, or `None` without a GPU.
+fn open_copy() -> Option<(tempfile::TempDir, Renderer, voxear_editor::Editor)> {
+    let mut renderer = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok()?;
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    Some((dir, renderer, editor))
+}
+
+#[test]
+fn prefabs_dragged_from_the_project_place_instances() {
+    let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
+    open_folder(&mut editor, &mut renderer, "Prefabs");
+    frame(&mut editor, &mut renderer);
+    let parent = |editor: &voxear_editor::Editor, e: voxear_ecs::Entity| {
+        editor.game.engine.world.get::<voxear_scene::Parent>(e).map(|p| p.0)
+    };
+    let is_instance =
+        |editor: &voxear_editor::Editor, e| editor.game.engine.world.has::<voxear_engine::prefab::PrefabInstance>(e);
+
+    // Onto an Obj's row, held there for a frame: the row is marked, and the lamp goes inside it, as one step.
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    let from = centre(&editor.ui, tile(&editor.ui, "Lamp.prefab").expect("the Prefabs folder shows"));
+    let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Spinner A").unwrap());
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(to[0], to[1]);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(to[0], to[1] + 1.0);
+    let row = hierarchy_row(&editor.ui, "Spinner A").unwrap();
+    assert!(editor.ui.has_class(row, "drop-target"), "the row it would land in is marked");
+    editor.update(&mut renderer, SIZE, 1.0, 0.5).unwrap();
+    shot(&mut renderer, "place-in-hierarchy.png");
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let lamp = obj(&editor, "Lamp (1)").expect("Hello has a Lamp, so the instance is numbered");
+    assert!(is_instance(&editor, lamp));
+    assert_eq!(parent(&editor, lamp), Some(spinner), "inside the Obj it was let go of on");
+    let position = editor.game.engine.world.get::<Transform>(lamp).unwrap().position;
+    assert_eq!(position, Vec3::new(0.0, 0.6, 0.0), "at its middle, as the prefab places its root");
+    assert_eq!(editor.selected(), Some(lamp));
+    editor.undo(&mut renderer);
+    assert!(obj(&editor, "Lamp (1)").is_none(), "one undo takes it away");
+
+    // Onto a scene's header, at the top of that scene.
+    let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Day").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    let lamp = obj(&editor, "Lamp (1)").unwrap();
+    assert_eq!(parent(&editor, lamp), None);
+    let day = editor.game.levels.scene_order().into_iter().find(|(_, path, _)| *path == "Scenes/Day.scene");
+    assert_eq!(editor.game.levels.scene_of(lamp), day.map(|(guid, ..)| guid));
+
+    // Onto the Scene view, where the pointer meets the ground, on the grid across it.
+    let camera = editor.scene_camera().unwrap();
+    let viewport = editor.ui.find(editor.ui.root(), "viewport").unwrap();
+    let [x, y, w, h] = editor.ui.rect(viewport);
+    let point = [x + w * 0.2, y + h * 0.85];
+    let world = &editor.game.engine.world;
+    let ground = obj(&editor, "Ground").unwrap();
+    assert_eq!(voxear_editor::scene_tools::pick(world, &renderer, &camera, point), Some(ground), "only ground there");
+    let (origin, direction) = camera.ray(point);
+    let hit = origin + direction * (-origin.y / direction.y);
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(point[0], point[1]);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(point[0], point[1]);
+    assert!(editor.ui.has_class(viewport, "drop-hover"), "the Scene view lights up for a prefab");
+    editor.update(&mut renderer, SIZE, 1.0, 0.5).unwrap();
+    shot(&mut renderer, "place-in-scene.png");
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let lamp = obj(&editor, "Lamp (2)").expect("placed on the ground");
+    let position = editor.game.engine.world.get::<Transform>(lamp).unwrap().position;
+    let snap = editor.settings().snap;
+    assert!((position.y - 0.6).abs() < 1e-4, "on the ground, as the prefab stands its root: {position}");
+    for (placed, aimed) in [(position.x, hit.x), (position.z, hit.z)] {
+        assert!((placed - aimed).abs() <= snap / 2.0 + 1e-4, "where the pointer was: {position} for {hit}");
+        assert!((placed / snap - (placed / snap).round()).abs() < 1e-4, "on the grid: {position}");
+    }
+
+    editor.save();
+    let saved = voxear_engine::scene_file::read(&dir.path().join("Scenes/Day.scene")).unwrap();
+    let placed: Vec<&str> = saved
+        .objs
+        .iter()
+        .filter(|o| o.prefab.as_deref() == Some("Prefabs/Lamp.prefab"))
+        .map(|o| o.name.as_str())
+        .collect();
+    assert_eq!(placed, ["Lamp (1)", "Lamp (2)"], "both are saved as instances");
+
+    // In a prefab open on its own, what lands at the top goes inside its root, and the prefab never inside itself.
+    editor.open_prefab("Prefabs/Lamp.prefab", &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let root = obj(&editor, "Lamp").unwrap();
+    let from = centre(&editor.ui, tile(&editor.ui, "Firefly.prefab").unwrap());
+    drag_between(&mut editor, &mut renderer, from, point);
+    let firefly = editor.selected().expect("the firefly placed is selected");
+    assert_eq!(parent(&editor, firefly), Some(root), "a prefab keeps one root");
+    let objs = editor.game.engine.world.query_ref::<&Name>().into_iter().count();
+    let from = centre(&editor.ui, tile(&editor.ui, "AmberLamp.prefab").unwrap());
+    drag_between(&mut editor, &mut renderer, from, point);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.engine.world.query_ref::<&Name>().into_iter().count(), objs, "the amber lamp holds a lamp");
+    assert!(
+        label_starting(&editor.ui, editor.ui.root(), "A prefab cannot hold").is_some(),
+        "and the status bar says so"
+    );
+}
+
+#[test]
+fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
+    let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
+    let level = || std::fs::read_to_string(dir.path().join("Levels/Day.level")).unwrap();
+    let parts = |ui: &Ui, scene: &str| {
+        let row = prop_row(ui, scene).unwrap_or_else(|| panic!("a row for {scene}"));
+        let mut flags = Vec::new();
+        with_class(ui, row, "level-flag", &mut flags);
+        (flags[0], flags[1], first_with(ui, row, "list-remove").unwrap())
+    };
+    open_folder(&mut editor, &mut renderer, "Levels");
+    frame(&mut editor, &mut renderer);
+    let day = tile(&editor.ui, "Day.level").unwrap();
+    click(&mut editor.ui, day);
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "Stands on").is_some());
+    let (active, required, _) = parts(&editor.ui, "Day");
+    assert!(editor.ui.is_checked(active) && editor.ui.is_checked(required), "its only scene is active and required");
+
+    // Add Scene offers the scenes not in it; the open level takes the one picked at once.
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "add-component", &mut buttons);
+    let add = buttons.into_iter().find(|&b| editor.ui.text(b) == "Add Scene").expect("an Add Scene button");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_item(&editor.ui, "Scenes/Day.scene").is_none(), "not one it has");
+    let night = menu_item(&editor.ui, "Scenes/Night.scene").expect("Night is offered");
+    click(&mut editor.ui, night);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(level().contains("  # Scenes/Night.scene\n"), "written with its path beside it:\n{}", level());
+    assert!(editor.game.levels.loaded_scenes().any(|s| s == "Scenes/Night.scene"), "the open level loads it");
+    assert!(hierarchy_names(&editor.ui).contains(&"Night".to_string()), "and the Hierarchy shows it");
+    assert!(level().starts_with("# Voxear level\n"), "the file's comments are kept");
+    shot(&mut renderer, "level-scenes.png");
+
+    // Night made the active scene, then not required.
+    let (active, ..) = parts(&editor.ui, "Night");
+    click(&mut editor.ui, active);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(level().contains("active = true"), "{}", level());
+    assert_eq!(editor.game.levels.active_scene(), Some("Scenes/Night.scene"));
+    let (day_active, ..) = parts(&editor.ui, "Day");
+    assert!(!editor.ui.is_checked(day_active), "only one scene is active");
+    let (_, required, _) = parts(&editor.ui, "Night");
+    click(&mut editor.ui, required);
+    frame(&mut editor, &mut renderer);
+    assert!(level().contains("required = false"), "{}", level());
+
+    // Taken out, it unloads, and Day is active again.
+    let (.., remove) = parts(&editor.ui, "Night");
+    click(&mut editor.ui, remove);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!level().contains("Night"), "{}", level());
+    assert!(!editor.game.levels.loaded_scenes().any(|s| s == "Scenes/Night.scene"));
+    assert!(!hierarchy_names(&editor.ui).contains(&"Night".to_string()));
+    assert_eq!(editor.game.levels.active_scene(), Some("Scenes/Day.scene"));
+    assert!(prop_row(&editor.ui, "Night").is_none(), "nor does the Inspector list it");
+}
+
+#[test]
+fn the_persistent_box_marks_an_obj_to_stay_through_level_changes() {
+    let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
+    let persistent = |ui: &Ui| first_with(ui, prop_row(ui, "Persistent").unwrap(), "checkbox").unwrap();
+    let marked = |editor: &voxear_editor::Editor, e| editor.game.engine.world.has::<voxear_scene::ScenePersistence>(e);
+    let manager = obj(&editor, "Game Manager").unwrap();
+    editor.select(Some(manager));
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.is_checked(persistent(&editor.ui)), "Hello's Game Manager is persistent");
+
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.ui.is_checked(persistent(&editor.ui)));
+    let tick = persistent(&editor.ui);
+    click(&mut editor.ui, tick);
+    frame(&mut editor, &mut renderer);
+    assert!(marked(&editor, spinner) && editor.has_unsaved_changes());
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "persistent.png");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!marked(&editor, spinner), "undo takes it back");
+    assert!(!editor.ui.is_checked(persistent(&editor.ui)), "and the box shows it");
+    editor.redo(&mut renderer);
+    editor.save();
+    let saved = voxear_engine::scene_file::read(&dir.path().join("Scenes/Day.scene")).unwrap();
+    let written = saved.objs.iter().find(|o| o.name == "Spinner A").unwrap();
+    assert!(written.persistent, "saved as persistent = true");
+}

@@ -279,6 +279,65 @@ fn rows_and_elements_drop_onto_elements_that_take_them() {
 }
 
 #[test]
+fn a_tree_whose_rows_take_drops_takes_them_from_elsewhere() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let host = ui.panel(root, Style::column().at(0.0, 0.0).width(300.0).height(200.0));
+    let tree = ui.tree_view(host, 20.0, Folders);
+    ui.set_style(tree, Style::column().scroll().grow());
+    ui.set_rows_draggable(tree, true);
+    ui.accept_row_drops(tree, true);
+    let card = ui.panel(root, Style::default().at(0.0, 300.0).width(100.0).height(40.0));
+    ui.label(card, "Card", TextStyle::default());
+    ui.set_draggable(card, true);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let rows = shown_rows(&ui, tree);
+    let centre = |ui: &Ui, node: NodeId| {
+        let [x, y, w, h] = ui.rect(node);
+        (x + w / 2.0, y + h / 2.0)
+    };
+
+    // The card, held over the second row, marks it, and lands on its item.
+    let (x, y) = centre(&ui, card);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    let (to_x, to_y) = centre(&ui, rows[1]);
+    ui.pointer_move(to_x, to_y);
+    assert!(ui.has_class(rows[1], "drop-target"), "the row it would land on is marked");
+    ui.pointer_button(false);
+    assert_eq!(ui.dropped_on_item(tree), Some((voxear_ui::DragSource::Element(card), Some((2, DropPlace::Onto)))));
+    assert!(!ui.has_class(rows[1], "drop-target"));
+
+    // Near a row's edge it lands beside it, and below the rows on nothing.
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let [_, top, _, height] = ui.rect(rows[0]);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    ui.pointer_move(to_x, top + height * 0.9);
+    assert!(ui.has_class(rows[0], "drop-after"));
+    ui.pointer_button(false);
+    assert_eq!(ui.dropped_on_item(tree), Some((voxear_ui::DragSource::Element(card), Some((1, DropPlace::After)))));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    ui.pointer_move(to_x, 180.0);
+    ui.pointer_button(false);
+    assert_eq!(ui.dropped_on_item(tree), Some((voxear_ui::DragSource::Element(card), None)));
+
+    // Its own rows still land in it as rows, not as drops from elsewhere.
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let (x, y) = centre(&ui, rows[2]);
+    ui.pointer_move(x, y);
+    ui.pointer_button(true);
+    let (to_x, to_y) = centre(&ui, rows[0]);
+    ui.pointer_move(to_x, to_y);
+    ui.pointer_button(false);
+    assert_eq!(ui.dropped_item(tree), Some((3, Some((1, DropPlace::Onto)))));
+    assert_eq!(ui.dropped_on_item(tree), None);
+    assert_eq!(ui.dropped_onto(tree), None);
+}
+
+#[test]
 fn lists_declared_in_markup_get_their_items_from_code() {
     let mut ui = Ui::new();
     let root = ui.root();

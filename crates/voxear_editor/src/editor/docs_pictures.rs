@@ -141,7 +141,7 @@ impl Editor {
                 })
                 .collect();
         }
-        let ui = &self.ui;
+        let ui = &mut self.ui;
         let actions: Vec<AssetAction> = self.live_fields.iter_mut().filter_map(|(_, view)| view.update(ui)).collect();
         for action in actions {
             self.asset_action(action, renderer);

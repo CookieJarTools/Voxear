@@ -2906,6 +2906,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml",
+ "toml_edit",
  "tracing",
  "voxear_assets",
  "voxear_core",

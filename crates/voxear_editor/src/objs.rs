@@ -1,5 +1,5 @@
 //! Making, duplicating, deleting and reparenting Objs, as the Hierarchy
-//! does. Objs are copied and brought back through scene files of them
+//! does, and placing instances of prefabs dragged from the Project. Objs are copied and brought back through scene files of them
 //! (`scene_file::capture_scene` and `spawn`), so everything a scene holds
 //! comes back, prefab instances included. They keep their place in the
 //! level's scenes (`Levels::untrack` and `track`), so a save writes them
@@ -151,6 +151,47 @@ pub fn create(
     let made = spawned.first().map(|(_, entity)| *entity).context("the new Obj was made")?;
     if let Some(parent) = parent {
         game.engine.world.insert(made, Parent(parent));
+    }
+    Ok(made)
+}
+
+/// Places an instance of the prefab at `path` (from the project's folder):
+/// under `parent` at its middle, or at the top at `position`, last in the
+/// parent's scene, or `scene`, or the active one. At the top, the prefab's
+/// root keeps its own offset from `position`, so a lamp made to stand on the
+/// ground at the origin stands on it here. It is named for the prefab, and
+/// numbered as a copy is when an Obj has that name already. Returns it.
+pub fn place_prefab(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    path: &str,
+    parent: Option<Entity>,
+    scene: Option<AssetGuid>,
+    position: Vec3,
+) -> Result<Entity> {
+    let reference = toml::Value::String(path.to_string());
+    let file = scene_file::parse(&format!("format = 1\n\n[[obj]]\nid = 1\nprefab = {reference}\n"), path)?;
+    let spawned = scene_file::spawn(&mut game.engine, &mut game.content, renderer, &file, &HashSet::new())?;
+    game.levels.track_new(parent.and_then(|p| game.levels.scene_of(p)).or(scene), &spawned);
+    let made = spawned.iter().find(|(at, _)| *at == ObjPath::new(1)).map(|(_, e)| *e);
+    let made = made.context("the instance was made")?;
+    let world = &mut game.engine.world;
+    match parent {
+        Some(parent) => {
+            world.insert(made, Parent(parent));
+        }
+        None => {
+            if let Some(transform) = world.get_mut::<Transform>(made) {
+                transform.position += position;
+            }
+        }
+    }
+    let name = world.get::<Name>(made).map(|n| n.0.clone()).unwrap_or_default();
+    let taken =
+        world.query_ref::<(Entity, &Name)>().without::<Destroying>().into_iter().any(|(e, n)| e != made && n.0 == name);
+    if taken {
+        let numbered = copy_name(world, &name);
+        world.insert(made, Name(numbered));
     }
     Ok(made)
 }
@@ -523,6 +564,27 @@ pub(crate) mod tests {
         let copy = duplicate(&mut game, None, crate_).unwrap();
         assert_eq!(order(&game)[..2], ["Crate".to_string(), "Crate (1)".to_string()], "a copy goes just after");
         let _ = copy;
+    }
+
+    #[test]
+    fn placed_prefabs_keep_their_own_offset_and_are_numbered() {
+        let (dir, mut game) = game();
+        let prefab = "format = 1\n[[obj]]\nid = 1\nname = \"Lamp\"\nposition = [0.0, 0.6, 0.0]\n\
+                      [[obj]]\nid = 2\nname = \"Glow\"\nparent = 1\n";
+        std::fs::write(dir.path().join("Lamp.prefab"), prefab).unwrap();
+        game.content.rescan().unwrap();
+        let lamp = place_prefab(&mut game, None, "Lamp.prefab", None, None, Vec3::new(4.0, 0.0, 2.0)).unwrap();
+        assert_eq!(game.engine.world.get::<Transform>(lamp).unwrap().position, Vec3::new(4.0, 0.6, 2.0));
+        assert_eq!(game.engine.world.get::<Name>(lamp).unwrap().0, "Lamp", "named for its prefab");
+        let crate_ = named(&game, "Crate").unwrap();
+        let inside =
+            place_prefab(&mut game, None, "Lamp.prefab", Some(crate_), None, Vec3::new(9.0, 9.0, 9.0)).unwrap();
+        assert_eq!(game.engine.world.get::<Name>(inside).unwrap().0, "Lamp (1)", "the second is numbered");
+        assert_eq!(game.engine.world.get::<Parent>(inside).map(|p| p.0), Some(crate_));
+        assert_eq!(game.engine.world.get::<Transform>(inside).unwrap().position, Vec3::new(0.0, 0.6, 0.0));
+        let text = saved(&dir, &mut game);
+        assert_eq!(text.matches("prefab = \"").count(), 2, "both are instances in the scene:\n{text}");
+        assert!(!text.contains("name = \"Glow\""), "whose members come from the prefab:\n{text}");
     }
 
     #[test]

@@ -529,6 +529,11 @@
     flex-grow: 1;
 }
 
+/* A prefab dragged over the Scene view, ready to place. */
+.viewport.drop-hover {
+    background-color: var(--vx-accent-soft);
+}
+
 /* Prefab mode: what is open, and the way back to the level. */
 .prefab-bar {
     flex-direction: row;
@@ -890,6 +895,12 @@
     width: 20px;
     height: 20px;
     flex-shrink: 0;
+}
+
+/* A level's scene in the Inspector: whether it is active, and required. */
+.level-flag {
+    gap: 5px;
+    font-size: 11px;
 }
 
 /* A reference: what it points at, opening a menu to pick another. */

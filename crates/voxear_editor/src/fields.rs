@@ -14,7 +14,7 @@ use voxear_engine::{
     EditBehaviours, Game,
     script_types::{FieldKind, ScriptTypes, same_field},
 };
-use voxear_scene::{Destroying, EditorOnly, Name};
+use voxear_scene::{BehaviourSpec, Behaviours, Destroying, EditorOnly, Name};
 
 use crate::props::{Value, specs};
 
@@ -270,8 +270,7 @@ pub fn set_raw_at(
 /// Sets a top-level field for the scene to a value as a scene writes it,
 /// under the name the scene already uses for it, if any.
 pub fn set_raw(world: &mut World, entity: Entity, behaviour: &str, name: &str, value: toml::Value) -> bool {
-    let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return false };
-    let Some(spec) = kept.0.iter_mut().find(|s| s.type_name == behaviour) else { return false };
+    let Some(spec) = spec_mut(world, entity, behaviour) else { return false };
     let fields = Arc::make_mut(&mut spec.fields);
     let key = fields.keys().find(|key| same_field(key, name)).cloned().unwrap_or_else(|| name.to_string());
     fields.insert(key, value);
@@ -344,8 +343,7 @@ pub fn remove_item(world: &mut World, types: &ScriptTypes, entity: Entity, behav
 /// sets it. Only whole fields can be, not values inside them.
 pub fn reset(world: &mut World, entity: Entity, behaviour: &str, path: &[Step]) -> bool {
     let [Step::Key(name)] = path else { return false };
-    let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return false };
-    let Some(spec) = kept.0.iter_mut().find(|s| s.type_name == behaviour) else { return false };
+    let Some(spec) = spec_mut(world, entity, behaviour) else { return false };
     let Some(key) = spec.fields.keys().find(|key| same_field(key, name)).cloned() else { return false };
     Arc::make_mut(&mut spec.fields).remove(&key);
     true
@@ -364,8 +362,7 @@ fn change(
     let Some((Step::Key(first), rest)) = path.split_first() else { return false };
     let now = value_at(world, types, entity, behaviour, &path[..1]);
     let kind = kind_at(types, behaviour, &path[..1]);
-    let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return false };
-    let Some(spec) = kept.0.iter_mut().find(|s| s.type_name == behaviour) else { return false };
+    let Some(spec) = spec_mut(world, entity, behaviour) else { return false };
     let fields = Arc::make_mut(&mut spec.fields);
     let key = fields.keys().find(|key| same_field(key, first)).cloned().unwrap_or_else(|| first.clone());
     let blank_top = || kind.as_ref().map_or_else(|| toml::Value::Table(toml::Table::new()), |k| blank(types, k));
@@ -373,6 +370,17 @@ fn change(
     let Some(slot) = descend_mut(types, top, kind, rest) else { return false };
     change(slot);
     true
+}
+
+/// The values of a behaviour of an Obj, to change: the running one's while
+/// the game plays, which the editor gives the running instance, or else the
+/// scene's.
+fn spec_mut<'w>(world: &'w mut World, entity: Entity, behaviour: &str) -> Option<&'w mut BehaviourSpec> {
+    if world.has::<Behaviours>(entity) {
+        let running = world.get_mut::<Behaviours>(entity)?;
+        return running.0.iter_mut().find(|b| b.spec.type_name == behaviour).map(|b| &mut b.spec);
+    }
+    world.get_mut::<EditBehaviours>(entity)?.0.iter_mut().find(|s| s.type_name == behaviour)
 }
 
 /// [`descend`], for changing: a table's field the scene left out is set to

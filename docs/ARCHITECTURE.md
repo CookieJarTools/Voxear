@@ -1503,7 +1503,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   status bar; a list shows its items, each with a button
   to take it out and the list's to add one; and a `[Serializable]` table shows its fields indented under it. A field
   the scene does not set shows the script's value, and setting anything in it writes the whole field for the scene.
-  While playing, scripts show the values they started with. **Add Component** offers a Mesh Renderer, Light or
+  While playing, a running behaviour's fields are read from its instance each frame and show as they are now, a
+  value changed in the Inspector is given to the instance (and goes with the played world when play stops, unless
+  kept), and its `[Button]`s and `[OnValueChanged]` callbacks run on it (`LiveFields` in Voxear.Core, through the
+  Inspector's JSON calls). **Add Component** offers a Mesh Renderer, Light or
   Camera the Obj lacks, and the project's scripts; a context click on a component's header removes it, or moves a
   script up or down among the Obj's scripts, which is the order they run and save in, and on a script field's row
   resets it to the script's value. Every change is a step to undo.
@@ -1881,7 +1884,7 @@ still reads no assembly; a source generator can take its place later without the
   - Checks and dropdowns are asked again only when the selection or the Obj's scene values change, so a method that
     throws is not asked over and over. An error shows in place, so a field being typed in keeps its focus. A value
     the scene set that a dropdown does not offer stays first in its menu.
-  - While playing, buttons wait until play stops.
+  - While playing, buttons and callbacks run on the running behaviour.
 
 - **Collections and colours:** `[TableList]` shows a list of `[Serializable]` values as a table, a column for each
   of their fields and a row for each item, with a button on each row to take it out. `[ListDrawerSettings]` shows a
@@ -1895,8 +1898,8 @@ still reads no assembly; a source generator can take its place later without the
   the file, the Obj and what is wrong, and the report keeps them; the build goes on. A prefab's instances in a
   scene are left to the prefab's own file.
 
-Still to come: buttons and callbacks while playing, on the running behaviour, `[ShowInInspector]`, and `[AssetsOnly]`
-and `[SceneObjectsOnly]` (a Voxear field takes one or the other already). A source generator, as
+Still to come: `[ShowInInspector]`, `[AssetsOnly]` and `[SceneObjectsOnly]` (a Voxear field takes one or the
+other already). A source generator, as
 first planned, is not needed: ScriptInfo already gives the editor every attribute without the editor reading the
 assembly.
 

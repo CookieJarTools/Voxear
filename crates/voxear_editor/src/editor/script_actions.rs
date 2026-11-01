@@ -6,16 +6,20 @@
 //! made from the Obj's scene values (see `voxear_scripting::InspectorAsk`).
 //! The fields a method changes go back into the scene: a callback's with
 //! the change that called it, as one step to undo, and a button's as a step
-//! of its own. Checks and values are asked again only when the selection or
+//! of its own. While the game plays, the shown Obj's running behaviours are
+//! read into the Inspector each frame, what it changes is given to them,
+//! and their buttons and callbacks run on them. Checks and values are asked again only when the selection or
 //! the Obj's scene values change, so a method that throws is not asked over
 //! and over.
+
+use std::sync::Arc;
 
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours,
-    script_types::{FieldKind, ScriptTypes},
+    script_types::{FieldKind, ScriptTypes, same_field},
 };
-use voxear_scene::BehaviourSpec;
+use voxear_scene::{BehaviourHandle, BehaviourSpec, Behaviours};
 use voxear_scripting::{DrawerField, InspectorAnswer, InspectorAsk};
 
 use super::Editor;
@@ -32,8 +36,13 @@ impl Editor {
     /// this frame, folding what they change into that change.
     pub(super) fn run_inspector_callbacks(&mut self, edit: Option<Edit>) -> Option<Edit> {
         let calls = self.inspector.take_callbacks();
-        let entity = self.inspector.shown().filter(|_| !calls.is_empty() && !self.is_playing());
-        let Some(entity) = entity else { return edit };
+        let Some(entity) = self.inspector.shown().filter(|_| !calls.is_empty()) else { return edit };
+        if self.is_playing() {
+            for (behaviour, method) in calls {
+                self.call_running(entity, &behaviour, &method);
+            }
+            return edit;
+        }
         let before = match &edit {
             Some(Edit::Changed { before, .. }) => before.clone(),
             _ => ObjState::of(&self.game.engine.world, entity)?,
@@ -88,6 +97,9 @@ impl Editor {
     pub(super) fn run_inspector_button(&mut self) {
         let Some((behaviour, method)) = self.inspector.clicked_button(&self.ui) else { return };
         let Some(entity) = self.inspector.shown() else { return };
+        if self.is_playing() {
+            return self.call_running(entity, &behaviour, &method);
+        }
         let Some(before) = ObjState::of(&self.game.engine.world, entity) else { return };
         if !self.call_behaviour(entity, &behaviour, &method) {
             return;
@@ -96,6 +108,72 @@ impl Editor {
         if before != after {
             self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
+        }
+    }
+
+    /// While playing, reads the shown Obj's running behaviours' fields from
+    /// their instances into the played world's values, so the Inspector shows
+    /// them as they are now. Gives back what was read, for
+    /// [`push_live_fields`](Self::push_live_fields) to tell what the
+    /// Inspector changed.
+    pub(super) fn pull_live_fields(&mut self) -> Vec<(BehaviourHandle, Arc<toml::Table>)> {
+        let Some(entity) = self.inspector.shown().filter(|_| self.is_playing()) else { return Vec::new() };
+        let Some(running) = self.game.engine.world.get::<Behaviours>(entity) else { return Vec::new() };
+        let handles: Vec<BehaviourHandle> = running.handles().collect();
+        let values = match self.game.engine.live_fields(&handles) {
+            Ok(values) => values,
+            Err(error) => {
+                tracing::debug!("the running behaviours' fields could not be read: {error:#}");
+                return Vec::new();
+            }
+        };
+        let Some(running) = self.game.engine.world.get_mut::<Behaviours>(entity) else { return Vec::new() };
+        let mut read = Vec::with_capacity(running.0.len());
+        for (attached, live) in running.0.iter_mut().zip(values) {
+            if let Some(live) = live {
+                let fields = Arc::make_mut(&mut attached.spec.fields);
+                for (name, value) in live {
+                    // Under the name the values already use for it, as a scene writes them.
+                    let key = fields.keys().find(|key| same_field(key, &name)).cloned().unwrap_or(name);
+                    fields.insert(key, value);
+                }
+            }
+            read.push((attached.handle, attached.spec.fields.clone()));
+        }
+        read
+    }
+
+    /// Gives the running behaviours what the Inspector changed of their
+    /// fields this frame, as read before by
+    /// [`pull_live_fields`](Self::pull_live_fields).
+    pub(super) fn push_live_fields(&mut self, read: Vec<(BehaviourHandle, Arc<toml::Table>)>) {
+        let Some(entity) = self.inspector.shown().filter(|_| !read.is_empty()) else { return };
+        let Some(running) = self.game.engine.world.get::<Behaviours>(entity) else { return };
+        let mut changed = Vec::new();
+        for (handle, before) in &read {
+            let Some(now) = running.0.iter().find(|attached| attached.handle == *handle) else { continue };
+            for (name, value) in now.spec.fields.iter() {
+                if before.get(name) != Some(value) {
+                    changed.push((*handle, name.clone(), value.clone()));
+                }
+            }
+        }
+        for (handle, name, value) in changed {
+            if let Err(error) = self.game.engine.set_live_field(handle, &name, &value) {
+                self.notify(&format!("{name} could not be set: {error}"));
+            }
+        }
+    }
+
+    /// Calls a method that takes nothing on a running behaviour of an Obj,
+    /// as a `[Button]` or `[OnValueChanged]` does while the game plays.
+    fn call_running(&mut self, entity: Entity, behaviour: &str, method: &str) {
+        let running = self.game.engine.world.get::<Behaviours>(entity);
+        let handle = running.and_then(|r| r.0.iter().find(|b| b.spec.type_name == behaviour).map(|b| b.handle));
+        let Some(handle) = handle else { return };
+        if let Err(error) = self.game.engine.call_live(handle, method) {
+            tracing::error!("{behaviour}.{method} threw: {error:#}");
+            self.notify(&format!("{behaviour}.{method} threw: {error}"));
         }
     }
 

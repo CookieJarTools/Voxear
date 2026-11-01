@@ -6,7 +6,7 @@
 use voxear_core::math::{EulerRot, Quat};
 use voxear_ecs::{ComponentId, Entity, World};
 use voxear_engine::script_types::{FieldKind, FieldLayout, ScriptTypes};
-use voxear_scene::Name;
+use voxear_scene::{Behaviours, Name};
 
 use crate::{fields::Step, props::Value};
 
@@ -27,6 +27,12 @@ fn slot(
     let layout = field.layout?;
     let fits = layout.offset + layout.size <= world.components().info(id).layout().size() as u32;
     (world.has_id(entity, id) && fits).then(|| (id, layout, field.kind.clone()))
+}
+
+/// Whether a behaviour of an Obj is running, as while the game plays, so its
+/// fields are read from and written to its instance.
+pub fn is_running(world: &World, entity: Entity, behaviour: &str) -> bool {
+    world.get::<Behaviours>(entity).is_some_and(|running| running.type_names().any(|name| name == behaviour))
 }
 
 /// Whether a field is shown and edited from the running game.

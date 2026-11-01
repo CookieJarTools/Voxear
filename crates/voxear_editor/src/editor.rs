@@ -622,8 +622,11 @@ impl Editor {
         }
         {
             profile_scope!("Inspector");
+            let live = self.pull_live_fields();
             let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
             let edit = self.run_inspector_drawers(edit);
+            // Before the callbacks, so a running behaviour's has the value it was called for.
+            self.push_live_fields(live);
             let edit = self.run_inspector_callbacks(edit);
             // Edits while playing go with the played world, so there is nothing to undo or save.
             if let Some(edit) = edit.filter(|_| !self.is_playing()) {

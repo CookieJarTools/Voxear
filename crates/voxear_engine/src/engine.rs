@@ -118,6 +118,27 @@ impl Engine {
         scripts.run_check(&mut self.world, type_name, method)
     }
 
+    /// The running behaviours' fields as they are now, for the Inspector
+    /// while the game plays (see [`ScriptRuntime::live_fields`]).
+    pub fn live_fields(&mut self, handles: &[BehaviourHandle]) -> anyhow::Result<Vec<Option<toml::Table>>> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        scripts.live_fields(&mut self.world, handles)
+    }
+
+    /// Sets a running behaviour's field, as the Inspector edits it while the
+    /// game plays.
+    pub fn set_live_field(&mut self, handle: BehaviourHandle, field: &str, value: &toml::Value) -> anyhow::Result<()> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        scripts.set_live_field(&mut self.world, handle, field, value)
+    }
+
+    /// Calls a method that takes nothing on a running behaviour, as a
+    /// `[Button]` or `[OnValueChanged]` does while the game plays.
+    pub fn call_live(&mut self, handle: BehaviourHandle, method: &str) -> anyhow::Result<()> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        scripts.call_live(&mut self.world, handle, method)
+    }
+
     /// Asks a behaviour's code what the Inspector wants, as for an Obj
     /// with no instance of it (see [`ScriptRuntime::inspector`]).
     pub fn ask_inspector(

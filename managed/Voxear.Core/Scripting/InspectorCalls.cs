@@ -16,7 +16,8 @@ namespace Voxear.Scripting
 	/// { "behaviour", "entity", "fields", "action": "call" | "validate" | "dropdown", "member", "field" }, answered with
 	/// { "changed": { field: value } }, { "valid", "message" } or { "options": [{ "label", "value" }] }, and
 	/// { "error" } when it could not be asked, which is logged. The Inspector's drawers are opened and drawn through
-	/// here too, as InspectorDrawers says.
+	/// here too, as InspectorDrawers says, and the running game's behaviours read and changed while it plays, as
+	/// LiveFields says.
 	/// </summary>
 	internal static class InspectorCalls
 	{
@@ -58,6 +59,11 @@ namespace Voxear.Scripting
 				InspectorDrawers.Draw(json, root);
 				return;
 			}
+			if (action is "live-read" or "live-write" or "live-call")
+			{
+				Live(json, root, action);
+				return;
+			}
 
 			var behaviour = Make(root);
 			var member = root.GetProperty("member").GetString() ?? string.Empty;
@@ -74,6 +80,23 @@ namespace Voxear.Scripting
 					break;
 				default:
 					throw new ArgumentException("The Inspector asked for something it cannot.");
+			}
+		}
+
+		/// <summary>What is asked of the running game's behaviours while it plays: see LiveFields.</summary>
+		private static void Live(Utf8JsonWriter json, JsonElement root, string action)
+		{
+			switch (action)
+			{
+				case "live-read":
+					LiveFields.Read(json, root);
+					break;
+				case "live-write":
+					LiveFields.Write(root);
+					break;
+				default:
+					LiveFields.Call(root);
+					break;
 			}
 		}
 

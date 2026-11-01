@@ -716,10 +716,12 @@ impl Inspector {
                 let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
                 let enabled = attributes::enabled(game, &self.types, entity, value);
                 ui.set_class(row, "disabled", !enabled && !meta.read_only);
-                // While playing, a script's values are those it started with, but a C#
-                // component's are read and written in the running game.
+                // While playing, a C# component's values are read and written in the running
+                // game, and a running behaviour's on its instance, as the editor keeps them.
+                let world = &game.engine.world;
                 let live = matches!(value, Prop::Field { behaviour, path }
-                    if crate::live::is_live(&game.engine.world, &self.types, entity, behaviour, path));
+                    if crate::live::is_live(world, &self.types, entity, behaviour, path)
+                        || crate::live::is_running(world, entity, behaviour));
                 let editable = !(playing && matches!(value, Prop::Field { .. }) && !live) && enabled;
                 // An item of a list, or a list, gets its button beside its value, as a unit does.
                 let item = editable && props::is_item(value);
@@ -795,7 +797,8 @@ impl Inspector {
                 }
             }
             if let Part::Behaviour(name) = part {
-                self.add_buttons(ui, rows, name, playing);
+                let waits = playing && !crate::live::is_running(&game.engine.world, entity, name);
+                self.add_buttons(ui, rows, name, waits);
             }
             let prefix = part.lock_key();
             for (name, tabs) in groups.tabs {
@@ -947,9 +950,10 @@ impl Inspector {
         turned
     }
 
-    /// A behaviour's `[Button]`s, under its fields. They run in edit mode,
-    /// on the scene's values; while playing they wait.
-    fn add_buttons(&mut self, ui: &mut Ui, rows: NodeId, behaviour: &str, playing: bool) {
+    /// A behaviour's `[Button]`s, under its fields. They run in edit mode on
+    /// the scene's values, and while playing on the running behaviour; they
+    /// wait when it `waits`, as for one not running.
+    fn add_buttons(&mut self, ui: &mut Ui, rows: NodeId, behaviour: &str, waits: bool) {
         let Some(described) = self.types.behaviour(behaviour) else { return };
         if described.buttons.is_empty() {
             return;
@@ -960,8 +964,8 @@ impl Inspector {
             let label = if button.label.is_empty() { props::nice_name(&button.method) } else { button.label.clone() };
             let node = ui.button(bar, &label);
             ui.add_class(node, "attr-button");
-            ui.set_class(node, "disabled", playing);
-            if !playing {
+            ui.set_class(node, "disabled", waits);
+            if !waits {
                 self.buttons.push((node, behaviour.to_string(), button.method.clone()));
             }
         }

@@ -11,6 +11,7 @@ mod ecs;
 mod hostfxr;
 mod inspector;
 mod interop;
+mod playing;
 mod runtime;
 mod services;
 mod ui;

@@ -417,7 +417,7 @@ Still to do in M3:
   - [x] a Layout menu in place of the World and Profiling tabs, with layouts saved under names
   - [x] windows: a close button on each tab, any panel can close, closed panels open from any tab's menu, a tab
     bar's own menu, and a tab dropped in the middle of a panel floats rather than joining it
-  - [ ] script fields edited while playing, on the running behaviour, with its buttons and callbacks
+  - [x] script fields edited while playing, on the running behaviour, with its buttons and callbacks
   - [ ] references rather than strings: a level field, and a component field that takes an Obj with the component
   - [ ] several Inspectors, each lockable, and windows a game's code can open more than once
   - [ ] windows dragged out of the editor into windows of the desktop's own

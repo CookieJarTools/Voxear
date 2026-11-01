@@ -1,5 +1,5 @@
 //! A prefab opened on its own to edit, as Unity's prefab mode does: its Objs
-//! load as a scene's would, in place of the level, a bar over the Scene view
+//! load as a scene's would, in place of the level, a bar over each Scene view
 //! names it, and Back, or Close Prefab at the bar's other end, opens again
 //! what was open before. Save writes the
 //! prefab, and what was read of it is then forgotten, so the level's
@@ -26,7 +26,7 @@ pub(super) struct OpenPrefab {
 
 impl Editor {
     pub(super) fn update_prefab_mode(&mut self, renderer: &mut Renderer) {
-        if self.ui.clicked(self.nodes.prefab_back) || self.ui.clicked(self.nodes.prefab_close) {
+        if self.prefab_bar_clicked() {
             self.close_prefab(renderer);
         }
         match self.inspector.prefab_clicked(&self.ui) {
@@ -69,9 +69,7 @@ impl Editor {
         for inspector in self.inspectors_mut() {
             inspector.set_prefab_mode(true);
         }
-        let name = path.rsplit('/').next().unwrap_or(path);
-        self.ui.set_text(self.nodes.prefab_name, name);
-        self.ui.set_visible(self.nodes.prefab_bar, true);
+        self.show_prefab_bars(Some(path));
         let root = self.game.levels.scene_order().first().and_then(|(_, _, objs)| objs.first().copied());
         self.select(root);
     }
@@ -113,7 +111,7 @@ impl Editor {
         for inspector in self.inspectors_mut() {
             inspector.set_prefab_mode(false);
         }
-        self.ui.set_visible(self.nodes.prefab_bar, false);
+        self.show_prefab_bars(None);
     }
 
     /// After a save: the prefab open is read from its file again when next

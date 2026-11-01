@@ -325,9 +325,20 @@ fn play_runs_the_scripts_and_stop_brings_the_level_back() {
 
     // A second run reuses the scripts, since .NET starts only once. A value
     // marked to keep comes back into the edited level when play stops.
+    editor.add_scene_view("scene");
+    let edit_cameras = editor.scene_view_cameras();
     editor.play(&mut renderer);
     assert!(editor.is_playing(), "plays at once, with the scripts already built");
     frame(&mut editor, &mut renderer);
+    // Each Scene view flies a camera of its own in the world playing, and takes back where it flew to.
+    let played_cameras = editor.scene_view_cameras();
+    assert_eq!(played_cameras.len(), 2);
+    for (_, played) in &played_cameras {
+        let named = editor.game.engine.world.get::<Name>(*played).map(|name| name.0.as_str());
+        assert_eq!(named, Some("Scene Camera"), "a camera in the world playing");
+    }
+    let flown_to = voxear_core::math::Vec3::new(4.0, 3.0, -6.0);
+    editor.game.engine.world.get_mut::<Transform>(played_cameras[1].1).unwrap().position = flown_to;
     let played = obj(&editor, "Spinner A").unwrap();
     editor.select(Some(played));
     frame(&mut editor, &mut renderer);
@@ -363,6 +374,9 @@ fn play_runs_the_scripts_and_stop_brings_the_level_back() {
     editor.stop(&mut renderer);
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.play_error(), None);
+    assert_eq!(editor.scene_view_cameras(), edit_cameras, "each Scene view looks through its edited camera again");
+    let second = editor.game.engine.world.get::<Transform>(edit_cameras[1].1).unwrap();
+    assert_eq!(second.position, flown_to, "put where it flew to while playing");
     let back = *editor.game.engine.world.get::<Transform>(spinner).unwrap();
     assert_eq!(back.position, kept_at, "the kept position came back from play");
     assert_eq!(back.rotation, edited.rotation, "and nothing else did");
@@ -1284,7 +1298,7 @@ fn settings_and_recent_palette_items_are_kept_per_project() {
     shot(&mut renderer, "settings.png");
     editor.ui.blur();
     assert_eq!(editor.settings().fly_speed, 12.0);
-    assert_eq!(editor.fly.speed(), 12.0, "the Scene camera flies at it");
+    assert_eq!(editor.fly().speed(), 12.0, "the Scene camera flies at it");
     drop(editor);
 
     // Opened again, all of it is as it was left, and the palette leads with what ran last.
@@ -4397,4 +4411,98 @@ fn a_floating_game_view_draws_beside_the_scene_view() {
         .filter(|&i| (0..3).all(|c| (i32::from(pixels[i + c]) - gizmo[c]).abs() < 24))
         .count();
     assert_eq!(near_gizmo, 0, "no light gizmo's yellow in the Game view");
+}
+
+/// How many pixels in the middle of `rect` are thin dark lines, as a mesh's
+/// edges are: darker than the pixels two either side of them.
+fn thin_lines(renderer: &mut Renderer, [x, y, w, h]: [f32; 4]) -> usize {
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    let light = |row: usize, column: usize| {
+        let i = (row * width as usize + column) * 4;
+        u32::from(pixels[i]) + u32::from(pixels[i + 1]) + u32::from(pixels[i + 2])
+    };
+    let (left, right) = ((x + w * 0.1) as usize, (x + w * 0.9) as usize);
+    let rows = (y + h * 0.25) as usize..(y + h * 0.8) as usize;
+    let at = rows.flat_map(|row| (left..right).map(move |column| (row, column)));
+    at.filter(|&(row, column)| light(row, column) * 10 < light(row, column - 2).min(light(row, column + 2)) * 8).count()
+}
+
+#[test]
+fn scene_views_open_more_than_once_each_through_its_own_camera() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let place = |editor: &voxear_editor::Editor, camera| *editor.game.engine.world.get::<Transform>(camera).unwrap();
+
+    // Add Scene View, from the Scene view's own window menu: a second, looking from where the first does.
+    let tab = dock_tab(&editor.ui, "Scene").unwrap();
+    context_click(&mut editor.ui, tab);
+    frame(&mut editor, &mut renderer);
+    let add = menu_item(&editor.ui, "Add Scene View").expect("in the window's menu");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.scene_view_count(), 2);
+    let cameras = editor.scene_view_cameras();
+    let panels: Vec<&str> = cameras.iter().map(|(panel, _)| panel.as_str()).collect();
+    assert_eq!(panels, ["scene", "scene-2"]);
+    let (first, second) = (cameras[0].1, cameras[1].1);
+    assert_ne!(first, second, "each looks through a camera of its own");
+    assert_eq!(place(&editor, second), place(&editor, first), "from where the first looks");
+    assert!(editor.ui.dock_panel_neighbours(dock, "scene-2").contains(&"scene".to_string()), "beside it");
+
+    // Floating low over the Project, the second draws beside the first, each shaded as its own menu says: Lit
+    // Wireframe in the second draws the meshes' edges there and not in the first.
+    editor.ui.float_dock_panel(dock, "scene-2", Some((560.0, f32::MAX)));
+    editor.ui.show_dock_panel(dock, "scene");
+    frame(&mut editor, &mut renderer);
+    let mut viewports = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "viewport", &mut viewports);
+    let game = editor.ui.find(editor.ui.root(), "game-viewport").unwrap();
+    viewports.retain(|&node| node != game);
+    let (one, two) = (viewports[0], viewports[1]);
+    let mut menus = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "shading", &mut menus);
+    choose(&mut editor, &mut renderer, menus[1], 3);
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "scene-views.png");
+    assert_eq!(editor.settings().scene_shading, 0, "the first's shading, which is kept, stays Lit");
+    let (lit, edged) = (thin_lines(&mut renderer, editor.ui.rect(one)), thin_lines(&mut renderer, editor.ui.rect(two)));
+    assert!(edged > lit * 3 + 100, "the second draws edges and the first does not: {edged} thin lines against {lit}");
+
+    // The pointer over a Scene view puts it in use: flying moves that one's camera alone.
+    let centre = |rect: [f32; 4]| [rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0];
+    let over_second = centre(editor.ui.rect(two));
+    pointer_to(&mut editor, over_second);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.scene_view_in_use(), "scene-2");
+    let (first_was, second_was) = (place(&editor, first), place(&editor, second));
+    editor.fly_mut().set_looking(true);
+    editor.fly_mut().key(winit::keyboard::KeyCode::KeyW, true);
+    for _ in 0..10 {
+        frame(&mut editor, &mut renderer);
+    }
+    editor.fly_mut().key(winit::keyboard::KeyCode::KeyW, false);
+    editor.fly_mut().set_looking(false);
+    assert_ne!(place(&editor, second).position, second_was.position, "the second flew");
+    assert_eq!(place(&editor, first), first_was, "the first stayed");
+    let [x, y, _, h] = editor.ui.rect(one);
+    pointer_to(&mut editor, [x + 20.0, y + h - 20.0]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.scene_view_in_use(), "scene", "the first again, under the pointer");
+
+    // Closed from its menu, the second goes for good, its camera with it.
+    let mut tabs = Vec::new();
+    with_class(&editor.ui, dock, "tab", &mut tabs);
+    let says = |tab: NodeId| editor.ui.children(tab).iter().any(|&part| editor.ui.text(part) == "Scene");
+    let last = tabs.into_iter().rfind(|&tab| says(tab)).unwrap();
+    context_click(&mut editor.ui, last);
+    frame(&mut editor, &mut renderer);
+    let close = menu_item(&editor.ui, "Close").unwrap();
+    click(&mut editor.ui, close);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.scene_view_count(), 1);
+    assert!(!editor.game.engine.world.is_alive(second));
+    assert!(editor.game.engine.world.is_alive(first));
+    assert_eq!(editor.ui.dock_panels(dock).iter().filter(|(id, ..)| id.starts_with("scene")).count(), 1);
 }

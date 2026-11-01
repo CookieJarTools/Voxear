@@ -65,47 +65,7 @@
                 <DockPanel id="console" title="Console" class="dock-content">
                     <Panel name="console-panel" class="fill console-panel" />
                 </DockPanel>
-                <DockPanel id="scene" title="Scene" icon="cube">
-                    <Panel class="panel-actions">
-                        <Dropdown name="shading" class="shading">
-                            <Option>Lit</Option>
-                            <Option>Unlit</Option>
-                            <Option>Wireframe</Option>
-                            <Option>Lit Wireframe</Option>
-                        </Dropdown>
-                        <Button name="gizmos" class="header-button">Gizmos</Button>
-                        <Button name="scene-maximize" class="icon-button"><Icon icon="maximize" /></Button>
-                    </Panel>
-                    <!-- Over the view while a prefab is open on its own, as Unity's prefab mode. -->
-                    <Panel name="prefab-bar" class="prefab-bar">
-                        <Button name="prefab-back" class="header-button prefab-back"><Icon icon="chevron-left" /><Label>Back</Label></Button>
-                        <Icon icon="cube" class="prefab-icon" />
-                        <Label name="prefab-name" class="prefab-name" />
-                        <Label class="prefab-hint">Lock a component for designers from its menu</Label>
-                        <Button name="prefab-close" class="header-button prefab-close"><Icon icon="close" /><Label>Close Prefab</Label></Button>
-                    </Panel>
-                    <Panel name="viewport" class="viewport">
-                        <Panel name="handles" class="handles" />
-                        <Panel name="tool-strip" class="overlay tools">
-                            <Segmented name="tool" class="tool-modes" value="1">
-                                <Segment icon="select" />
-                                <Segment icon="move" />
-                                <Segment icon="rotate" />
-                                <Segment icon="scale" />
-                            </Segmented>
-                            <Panel class="tool-divider" />
-                            <Button name="pivot" class="tool-toggle">Pivot</Button>
-                            <Button name="space" class="tool-toggle">Global</Button>
-                            <Panel class="tool-divider" />
-                            <Button name="snap" class="tool-toggle"><Icon icon="grid" /><Label>0.25 m</Label></Button>
-                        </Panel>
-                        <Label name="scene-stats" class="overlay chip" />
-                        <Panel name="view-gizmo" class="overlay gizmo-box">
-                            <Panel name="gizmo" class="gizmo" />
-                            <Label class="projection">Persp</Label>
-                        </Panel>
-                    </Panel>
-                </DockPanel>
+                <DockPanel id="scene" title="Scene" icon="cube" name="scene-panel" />
                 <DockPanel id="game" title="Game" icon="play">
                     <Panel name="game-viewport" class="viewport">
                         <Label name="game-empty" class="placeholder">No camera renders this level.</Label>

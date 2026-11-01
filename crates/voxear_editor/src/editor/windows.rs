@@ -2,8 +2,9 @@
 //! bar's right end, and a context click on a tab or its bar, offer Maximize
 //! (or Restore), Close, Close Other Tabs, Float (or Dock, for one floating
 //! in a window of its own), another of each window there can be more than
-//! one of (as Unity's Add Tab: an Inspector), and Reset Layout. The top bar's Window button lists every panel, ticked while
-//! open, to open or close, and resets the layout. Any panel can close, and a
+//! one of (as Unity's Add Tab: an Inspector or a Scene view), and Reset
+//! Layout. The top bar's Window button lists every panel, ticked while open,
+//! to open or close, and resets the layout. Any panel can close, and a
 //! closed one keeps its state and opens again beside a panel it shared an
 //! area with.
 //!
@@ -53,6 +54,8 @@ pub(super) enum WindowAction {
     Float,
     /// Opens another Inspector beside it.
     AddInspector,
+    /// Opens another Scene view beside it.
+    AddSceneView,
     ResetLayout,
 }
 
@@ -110,6 +113,7 @@ impl Editor {
         ];
         items.extend([
             (MenuItem::new("Add Inspector"), Some(WindowAction::AddInspector)),
+            (MenuItem::new("Add Scene View"), Some(WindowAction::AddSceneView)),
             (MenuItem::separator(), None),
         ]);
         items.push((MenuItem::new("Reset Layout"), Some(WindowAction::ResetLayout)));
@@ -123,12 +127,12 @@ impl Editor {
         let dock = self.nodes.dock;
         match action {
             WindowAction::Maximize => self.toggle_maximized(panel),
-            // An Inspector opened from the menu goes for good; any other waits closed.
-            WindowAction::Close if self.remove_inspector(panel) => {}
+            // An Inspector or Scene view opened from the menu goes for good; any other waits closed.
+            WindowAction::Close if self.remove_inspector(panel) || self.remove_scene_view(panel) => {}
             WindowAction::Close => self.ui.close_dock_panel(dock, panel),
             WindowAction::CloseOthers => {
                 for other in self.ui.dock_panel_neighbours(dock, panel) {
-                    if !self.remove_inspector(&other) {
+                    if !self.remove_inspector(&other) && !self.remove_scene_view(&other) {
                         self.ui.close_dock_panel(dock, &other);
                     }
                 }
@@ -138,11 +142,35 @@ impl Editor {
             WindowAction::AddInspector => {
                 self.add_inspector(panel);
             }
+            WindowAction::AddSceneView => {
+                self.add_scene_view(panel);
+            }
             WindowAction::ResetLayout => self.reset_layout(),
         }
     }
 
-    /// Opens a panel by id where the dock last had it.    /// Opens a panel by id where the dock last had it. The Build window,
+    /// Gives the whole dock to one panel by closing the others, or puts back
+    /// the layout from before.
+    pub(super) fn toggle_maximized(&mut self, panel: &str) {
+        let dock = self.nodes.dock;
+        if let Some((layout, closed)) = self.maximized.take() {
+            let _ = self.ui.set_dock_layout(dock, &layout);
+            for id in closed {
+                self.ui.close_dock_panel(dock, &id);
+            }
+            return;
+        }
+        let panels = self.ui.dock_panels(dock);
+        let closed = panels.iter().filter(|(_, _, open)| !open).map(|(id, ..)| id.clone()).collect();
+        self.maximized = Some((self.ui.dock_layout(dock), closed));
+        for (id, _, open) in panels {
+            if open && id != panel {
+                self.ui.close_dock_panel(dock, &id);
+            }
+        }
+    }
+
+    /// Opens a panel by id where the dock last had it. The Build window,
     /// which is wide, opens by the Scene view the first time rather than in
     /// a side column.
     pub(super) fn open_panel(&mut self, id: &str) {

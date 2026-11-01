@@ -78,10 +78,13 @@ impl Editor {
         if game && self.game_camera().is_none() {
             return self.notify("The level has no camera for the Game view to look through");
         }
-        let (view, panel) = if game { (self.nodes.game_viewport, "game") } else { (self.nodes.viewport, "scene") };
+        let (view, panel) = match game {
+            true => (self.nodes.game_viewport, "game".to_string()),
+            false => (self.scene.viewport, self.scene.panel.clone()),
+        };
         let switched = !self.shown(view);
         if switched {
-            self.show_panel(panel);
+            self.show_panel(&panel);
         }
         let taking = Taking {
             capture,

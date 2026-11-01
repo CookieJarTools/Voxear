@@ -1437,8 +1437,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
   shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. Every window's options
   button, at its header's right end (the Game and Scene views' too), and a context click on a tab or its bar,
-  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, Add Inspector (another of the windows there
-  can be more than one of, as Unity's Add Tab), and Reset Layout; a closed panel keeps its state, and opens again
+  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, Add Inspector and Add Scene View (another
+  of the windows there can be more than one of, as Unity's Add Tab), and Reset Layout; a closed panel keeps its state, and opens again
   from the Window button, beside a panel it shared an area with.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
@@ -1497,6 +1497,16 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   camera body for each camera, which a click selects, and for the one selected, a light's reach (its range, or its
   spot's cone) and a camera's frustum; the button shows or hides them. **Full screen** gives the dock to the Scene
   view alone until it is pressed again.
+- **Several Scene views** (`editor::scene_views`), as Unity's: Add Scene View on a window's menu opens another
+  beside it, looking from where the Scene view in use looks. Each is built from `SceneView.vui`, looks through a
+  camera of its own, which the Hierarchy leaves out and which flies on its own, and has its own shading menu and
+  Gizmos button, so one can show Wireframe while another shows Lit; the first one's shading and Gizmos are the
+  settings, and the tool strip's settings are shared. They draw at once, in the order they were opened, so each
+  keeps its own history in the renderer. The tools act in the one the pointer is over: that one is swapped in as
+  the editor's `scene`, so flying, handles, a click to select and a prefab dropped all go to it, and the others
+  draw their gizmos and the selection's handles as they are. Prefab mode's bar shows over every Scene view. While
+  playing, each flies a camera of its own in the world playing, and its camera in the edited level takes where it
+  flew to when play stops. One opened from the menu goes for good when it closes, its camera with it.
 - **Scene view tools** (`scene_tools`), as Unity's. A click selects the nearest Obj under the pointer: a ray
   against each mesh's bounds in the Obj's own space (`Renderer::mesh_bounds`; cooked meshes keep only a sphere,
   so they use the box around it), or a light or camera close to where it shows; a click on nothing clears the

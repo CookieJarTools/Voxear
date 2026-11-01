@@ -4,7 +4,7 @@
 //! scenes open instead (see `scenes`). One dragged onto the Hierarchy lands
 //! where an Obj moved there would: inside the Obj it is let go of on, beside
 //! it near its edge, at the top of a scene on its header, and below the
-//! rows, at the top of the active scene. Let go of on the Scene view, it
+//! rows, at the top of the active scene. Let go of on a Scene view, it
 //! lands where the pointer meets what is under it, or the ground, on the
 //! snap grid across; failing both, in front of the camera, as a new Obj
 //! does. Either is one step to undo. Only while a prefab, model or scene is
@@ -43,7 +43,8 @@ impl Editor {
                 }
             }
         }
-        if let Some(source) = self.ui.dropped_onto(self.nodes.viewport)
+        let dropped = self.all_scene_views().find_map(|view| self.ui.dropped_onto(view.viewport));
+        if let Some(source) = dropped
             && let Some((path, kind)) = self.dragged_placeable(&source)
         {
             match kind {
@@ -56,7 +57,10 @@ impl Editor {
         }
         let placing = self.ui.dragging().is_some_and(|source| self.dragged_placeable(&source).is_some());
         self.hierarchy.take_drops(&mut self.ui, placing);
-        self.ui.accept_drops(self.nodes.viewport, placing);
+        let viewports: Vec<_> = self.all_scene_views().map(|view| view.viewport).collect();
+        for viewport in viewports {
+            self.ui.accept_drops(viewport, placing);
+        }
     }
 
     /// The path of the prefab, model or scene being dragged, when it is one

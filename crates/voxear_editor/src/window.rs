@@ -84,10 +84,10 @@ impl App {
     /// Captures the pointer while flying the Scene camera, so it can turn without limit.
     fn set_flying(&mut self, flying: bool) {
         let (Some(editor), Some(window)) = (&mut self.editor, &self.window) else { return };
-        if flying == editor.fly.is_looking() {
+        if flying == editor.fly().is_looking() {
             return;
         }
-        editor.fly.set_looking(flying);
+        editor.fly_mut().set_looking(flying);
         let grab = if flying { CursorGrabMode::Locked } else { CursorGrabMode::None };
         if window.set_cursor_grab(grab).is_err() && flying {
             let _ = window.set_cursor_grab(CursorGrabMode::Confined);
@@ -107,7 +107,7 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let flying = self.editor.as_ref().is_some_and(|e| e.fly.is_looking());
+        let flying = self.editor.as_ref().is_some_and(|e| e.fly().is_looking());
         match &event {
             WindowEvent::CloseRequested => return event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -132,7 +132,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event: key, .. } if flying => {
                 if let (PhysicalKey::Code(code), Some(editor)) = (key.physical_key, self.editor.as_mut()) {
-                    editor.fly.key(code, key.state == ElementState::Pressed);
+                    editor.fly_mut().key(code, key.state == ElementState::Pressed);
                 }
                 return;
             }
@@ -142,7 +142,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::PixelDelta(position) => position.y as f32 / 40.0,
                 };
                 if let Some(editor) = self.editor.as_mut() {
-                    editor.fly.scroll(notches);
+                    editor.fly_mut().scroll(notches);
                 }
                 return;
             }
@@ -156,7 +156,7 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
         if let (DeviceEvent::MouseMotion { delta }, Some(editor)) = (event, self.editor.as_mut()) {
-            editor.fly.look(delta.0, delta.1);
+            editor.fly_mut().look(delta.0, delta.1);
         }
     }
 

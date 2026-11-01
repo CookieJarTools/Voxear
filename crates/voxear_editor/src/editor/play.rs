@@ -20,8 +20,8 @@ use voxear_engine::{
     script_types::{self, ScriptTypes},
     scripts,
 };
-use voxear_render::{Camera, Renderer};
-use voxear_scene::{Name, Transform};
+use voxear_render::Renderer;
+use voxear_scene::Name;
 use voxear_scripting::ScriptRuntime;
 
 use super::Editor;
@@ -53,8 +53,6 @@ pub(super) enum Mode {
 pub(super) struct Run {
     edit: Engine,
     levels: Levels,
-    /// The edit world's Scene camera.
-    camera: Entity,
     pub paused: bool,
     /// Step was pressed: move the paused game on one frame.
     step: bool,
@@ -307,7 +305,7 @@ impl Editor {
         // What the game drew goes with it, and its UI.
         voxear_core::debug_draw::clear();
         self.game.ui = voxear_engine::game_ui::GameUi::default();
-        let Run { edit, levels, camera, .. } = *run;
+        let Run { edit, levels, .. } = *run;
         let selected = self.selected().and_then(|entity| self.game.levels.counterpart(entity, &levels));
         let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
         // The values to keep, read before the played world goes.
@@ -321,15 +319,12 @@ impl Editor {
                 Some((self.game.levels.counterpart(played, &levels)?, field, value))
             })
             .collect();
-        let view = self.game.engine.world.get::<Transform>(self.camera).copied();
+        let flown = self.scene_cameras_flown();
         let mut played = std::mem::replace(&mut self.game.engine, edit);
         self.game.levels = levels;
         self.play.scripts = played.shutdown();
         drop(played);
-        if let (Some(view), Some(transform)) = (view, self.game.engine.world.get_mut::<Transform>(camera)) {
-            *transform = view;
-        }
-        self.camera = camera;
+        self.scene_cameras_back(flown);
         self.game.release_unused(Some(renderer));
         self.keep_from_play(kept, renderer);
         self.after_swap(selected, "scene");
@@ -480,9 +475,7 @@ impl Editor {
                 return self.fail("The level could not start", error);
             }
         };
-        let view = self.game.engine.world.get::<Transform>(self.camera).copied().unwrap_or(Transform::IDENTITY);
-        let lens = self.game.engine.world.get::<Camera>(self.camera).copied().unwrap_or_default();
-        let camera = engine.world.spawn((Name("Scene Camera".into()), view, lens, EditorOnly));
+        self.scene_cameras_into(&mut engine.world);
         let selected = self.selected().and_then(|entity| self.game.levels.counterpart(entity, &levels));
         let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
         let edit = std::mem::replace(&mut self.game.engine, engine);
@@ -492,9 +485,8 @@ impl Editor {
         if self.memory.settings.clear_console_on_play {
             self.console.clear(&mut self.ui);
         }
-        let run = Run { edit, levels, camera: self.camera, paused, step: false };
+        let run = Run { edit, levels, paused, step: false };
         self.play.mode = Mode::Playing(Box::new(run));
-        self.camera = camera;
         self.after_swap(selected, "game");
         self.show_locked(locked);
         tracing::info!("playing {}", self.game.levels.current().unwrap_or("the level"));
@@ -503,11 +495,22 @@ impl Editor {
     /// Shows the world just swapped in, keeping the selection where it has a
     /// counterpart, and brings `panel` (the Game or Scene view) to the front.
     fn after_swap(&mut self, selected: Option<Entity>, panel: &str) {
-        self.gizmo_shows = None;
+        for view in self.all_scene_views_mut() {
+            view.gizmo_shows = None;
+        }
         self.view_camera = None;
         self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
         self.select(selected);
         self.show_panel(panel);
+    }
+
+    /// Takes an Obj out of the level as edited, which is kept aside while
+    /// the game plays, or out of the world when it is not playing.
+    pub(super) fn despawn_in_edit_world(&mut self, entity: Entity) {
+        match &mut self.play.mode {
+            Mode::Playing(run) => run.edit.world.despawn(entity),
+            _ => self.game.engine.world.despawn(entity),
+        };
     }
 
     fn fail(&mut self, what: &str, error: anyhow::Error) {

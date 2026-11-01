@@ -16,7 +16,7 @@ mod placing;
 mod play;
 mod prefab_mode;
 mod previews;
-mod scene_view;
+mod scene_views;
 mod scenes;
 mod script_actions;
 mod tooltip;
@@ -39,13 +39,13 @@ use voxear_core::{
 };
 use voxear_ecs::Entity;
 use voxear_engine::{
-    AssetPreviews, Engine, FlyCamera, Game, Project,
+    AssetPreviews, Engine, Game, Project,
     debug_texts::DebugTexts,
     script_types::{self, ScriptTypes},
 };
 use voxear_render::{Camera, MeshRenderer, Renderer, ViewOptions};
 use voxear_scene::{Name, Transform};
-use voxear_ui::{Color, DragSource, NodeId, Shape, Theme, Ui};
+use voxear_ui::{DragSource, NodeId, Theme, Ui};
 
 use crate::{
     asset_inspector::AssetAction,
@@ -100,21 +100,11 @@ const GIZMO_END: f32 = 2.5;
 /// Elements the editor reads and writes, found by name in Editor.vui.
 struct Nodes {
     dock: NodeId,
-    viewport: NodeId,
     game_viewport: NodeId,
     game_empty: NodeId,
     /// The first Inspector's padlock.
     inspector_lock: NodeId,
     command: NodeId,
-    gizmo: NodeId,
-    handles: NodeId,
-    tool: NodeId,
-    tool_strip: NodeId,
-    view_gizmo: NodeId,
-    pivot: NodeId,
-    space: NodeId,
-    snap: NodeId,
-    stats: NodeId,
     status_left: NodeId,
     status_time: NodeId,
     status_fps: NodeId,
@@ -133,10 +123,6 @@ struct Nodes {
     drawer_close: NodeId,
     drawer_levels: NodeId,
     drawer_settings: NodeId,
-    /// The Scene view's shading menu, Gizmos button and full screen button.
-    shading: NodeId,
-    gizmos: NodeId,
-    scene_maximize: NodeId,
     /// The top bar's Layout menu button and the name on it, the box that
     /// asks for a new layout's name with its field and Save button, and the
     /// Profiler's panel.
@@ -158,11 +144,6 @@ struct Nodes {
     debug_texts: NodeId,
     /// The status bar's dot, which pulses while the scripts build.
     status_dot: NodeId,
-    /// The bar over the Scene view while a prefab is open on its own.
-    prefab_bar: NodeId,
-    prefab_name: NodeId,
-    prefab_back: NodeId,
-    prefab_close: NodeId,
 }
 
 /// What a shortcut asks of the editor, done in the next frame.
@@ -186,8 +167,11 @@ pub type SourceOpener = Box<dyn FnMut(&Path, u32)>;
 pub struct Editor {
     pub game: Game,
     pub ui: Ui,
-    pub fly: FlyCamera,
     nodes: Nodes,
+    /// The Scene view in use, which the tools act in, and the others; see
+    /// [`scene_views`].
+    scene: scene_views::SceneView,
+    scene_views: Vec<scene_views::SceneView>,
     hierarchy: Hierarchy,
     project: ProjectView,
     inspector: Inspector,
@@ -211,8 +195,6 @@ pub struct Editor {
     fly_speed: f32,
     /// Every level and loose scene, to open, play or change to.
     levels: LevelsPanel,
-    /// The Scene view's own camera, which the Hierarchy leaves out.
-    camera: Entity,
     /// Play mode, and the scripts it keeps between runs.
     play: play::Play,
     /// The camera the renderer was last told to look through, and the debug
@@ -222,8 +204,6 @@ pub struct Editor {
     /// The dock areas showing 3D views, made see-through, each with a ring
     /// around its edge that rounds the view's corners to the panel's.
     viewport_areas: Vec<NodeId>,
-    /// The camera's rotation as the gizmo last showed it.
-    gizmo_shows: Option<Quat>,
     /// The pointer, in physical pixels, for whether it is over the viewport.
     pointer: Option<(f32, f32)>,
     scale: f32,
@@ -357,20 +337,10 @@ impl Editor {
         let find = |ui: &Ui, name: &str| ui.find(document, name).unwrap_or_else(|| panic!("Editor.vui has no {name}"));
         let nodes = Nodes {
             dock: find(&ui, "dock"),
-            viewport: find(&ui, "viewport"),
             game_viewport: find(&ui, "game-viewport"),
             game_empty: find(&ui, "game-empty"),
             inspector_lock: find(&ui, "inspector-lock"),
             command: find(&ui, "command"),
-            gizmo: find(&ui, "gizmo"),
-            handles: find(&ui, "handles"),
-            tool: find(&ui, "tool"),
-            tool_strip: find(&ui, "tool-strip"),
-            view_gizmo: find(&ui, "view-gizmo"),
-            pivot: find(&ui, "pivot"),
-            space: find(&ui, "space"),
-            snap: find(&ui, "snap"),
-            stats: find(&ui, "scene-stats"),
             status_left: find(&ui, "status-left"),
             status_time: find(&ui, "status-time"),
             status_fps: find(&ui, "status-fps"),
@@ -385,9 +355,6 @@ impl Editor {
             drawer_close: find(&ui, "drawer-close"),
             drawer_levels: find(&ui, "drawer-levels"),
             drawer_settings: find(&ui, "drawer-settings"),
-            shading: find(&ui, "shading"),
-            gizmos: find(&ui, "gizmos"),
-            scene_maximize: find(&ui, "scene-maximize"),
             layouts: find(&ui, "layouts"),
             layout_name: find(&ui, "layout-name"),
             layout_prompt: find(&ui, "layout-prompt"),
@@ -401,10 +368,6 @@ impl Editor {
             tooltip: find(&ui, "tooltip"),
             debug_texts: find(&ui, "debug-texts"),
             status_dot: find(&ui, "status-dot"),
-            prefab_bar: find(&ui, "prefab-bar"),
-            prefab_name: find(&ui, "prefab-name"),
-            prefab_back: find(&ui, "prefab-back"),
-            prefab_close: find(&ui, "prefab-close"),
         };
         let branch = git_branch(&root);
         let branch_name = find(&ui, "status-branch-name");
@@ -414,7 +377,6 @@ impl Editor {
         ui.set_dock_layout_closing_rest(nodes.dock, LAYOUT).expect("the default layout is valid");
         ui.set_visible(nodes.drawer, false);
         ui.set_visible(nodes.layout_prompt, false);
-        ui.set_visible(nodes.prefab_bar, false);
         ui.set_visible(nodes.tooltip, false);
         let (tree, filter, add) =
             (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"), find(&ui, "hierarchy-add"));
@@ -449,15 +411,18 @@ impl Editor {
         let picker = ObjectPicker::new(&mut ui, parts[0], parts[1], parts[2], parts[3], parts[4]);
         let (color_panel, color_title) = (find(&ui, "color-popup"), find(&ui, "color-title"));
         let color_popup = color_popup::ColorPopup::new(&mut ui, color_panel, color_title);
-        let mut fly = FlyCamera::default();
-        fly.set_speed(memory.settings.fly_speed);
+        let scene_panel = find(&ui, "scene-panel");
+        let mut scene = scene_views::SceneView::build(&mut ui, scene_panel, scene_views::FIRST, camera);
+        scene.fly.set_speed(memory.settings.fly_speed);
+        (scene.shading, scene.show_gizmos) = (memory.settings.scene_shading, memory.settings.show_gizmos);
         ui.set_text(nodes.status_time, &format!("Opened in {:.2} s", started.elapsed().as_secs_f32()));
 
         tracing::info!("opened {} in edit mode", game.project.name());
         let mut editor = Self {
             game,
             ui,
-            fly,
+            scene,
+            scene_views: Vec::new(),
             alt: false,
             nodes,
             hierarchy,
@@ -473,12 +438,10 @@ impl Editor {
             settings_panel,
             theme: Theme::DARK,
             levels,
-            camera,
             play: play::Play::new(),
             view_camera: Some(camera),
             view_debug: 0,
             viewport_areas: Vec::new(),
-            gizmo_shows: None,
             pointer: None,
             scale: 1.0,
             control: false,
@@ -555,8 +518,8 @@ impl Editor {
     /// The Scene view's camera over its rectangle, when the Scene view is
     /// showing: where points in the world fall on screen, and back.
     pub fn scene_camera(&self) -> Option<ViewCamera> {
-        let rect = self.shown(self.nodes.viewport).then(|| self.ui.rect(self.nodes.viewport))?;
-        ViewCamera::new(&self.game.engine.world, self.camera, rect)
+        let rect = self.shown(self.scene.viewport).then(|| self.ui.rect(self.scene.viewport))?;
+        ViewCamera::new(&self.game.engine.world, self.scene.camera, rect)
     }
 
     /// The first Obj with a mesh, for showing something selected.
@@ -579,8 +542,9 @@ impl Editor {
         {
             profile_scope!("Game");
             self.update_play(renderer);
-            if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.camera) {
-                self.fly.update_transform(transform, delta);
+            self.follow_pointer();
+            if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.scene.camera) {
+                self.scene.fly.update_transform(transform, delta);
             }
             if let Some(delta) = self.game_delta(delta) {
                 self.game.tick(delta, Some(renderer));
@@ -756,7 +720,7 @@ impl Editor {
         let view = views.first().copied();
         self.ui.set_visible(self.nodes.game_empty, self.game_camera().is_none());
         self.mark_viewport_areas(&views);
-        self.update_gizmo();
+        self.update_axis_gizmos();
         self.update_status(renderer, delta);
         self.update_tooltip(delta);
         self.update_debug_draw(view, delta);
@@ -994,14 +958,15 @@ impl Editor {
     fn update_settings(&mut self) {
         let mut changed = self.settings_panel.update(&mut self.ui, &mut self.memory.settings);
         changed |= self.update_tool_strip();
-        changed |= self.update_scene_view();
+        changed |= self.update_scene_headers();
         // The wheel changes the speed while flying; the setting follows it once flying stops.
-        if self.fly.speed() != self.fly_speed && !self.fly.is_looking() {
-            changed |= self.memory.settings.set("fly_speed", SettingValue::Number(self.fly.speed()));
-        } else if self.memory.settings.fly_speed != self.fly_speed && !self.fly.is_looking() {
-            self.fly.set_speed(self.memory.settings.fly_speed);
+        let fly = &mut self.scene.fly;
+        if fly.speed() != self.fly_speed && !fly.is_looking() {
+            changed |= self.memory.settings.set("fly_speed", SettingValue::Number(fly.speed()));
+        } else if self.memory.settings.fly_speed != self.fly_speed && !fly.is_looking() {
+            fly.set_speed(self.memory.settings.fly_speed);
         }
-        self.fly_speed = self.fly.speed();
+        self.fly_speed = self.scene.fly.speed();
         if changed {
             self.memory.save();
         }
@@ -1012,19 +977,8 @@ impl Editor {
     fn apply_settings(&mut self) {
         let settings = &self.memory.settings;
         (self.tools.snap, self.tools.centred, self.tools.local) = (settings.snap, settings.centred, settings.local);
-        let (show_stats, show_gizmo) = (settings.show_stats, settings.show_axis_gizmo);
-        self.ui.set_text(self.nodes.pivot, if self.tools.centred { "Center" } else { "Pivot" });
-        self.ui.set_text(self.nodes.space, if self.tools.local { "Local" } else { "Global" });
-        if let Some(&label) = self.ui.children(self.nodes.snap).last() {
-            self.ui.set_text(label, &format!("{} m", self.tools.snap));
-        }
-        self.ui.set_visible(self.nodes.stats, show_stats);
-        self.ui.set_visible(self.nodes.view_gizmo, show_gizmo);
-        self.ui.set_checked(self.nodes.gizmos, settings.show_gizmos);
-        if self.ui.selected_option(self.nodes.shading) != settings.scene_shading {
-            self.ui.set_selected_option(self.nodes.shading, settings.scene_shading);
-        }
         self.project.set_prefab_parts(&mut self.ui, settings.prefab_parts);
+        self.apply_scene_settings();
     }
 
     /// Does what a result of the command palette says.
@@ -1046,7 +1000,7 @@ impl Editor {
                 self.set_paused(paused);
             }
             PaletteAction::Step => self.step(),
-            PaletteAction::Tool(index) => self.ui.set_segment(self.nodes.tool, index),
+            PaletteAction::Tool(index) => self.ui.set_segment(self.scene.tool, index),
             PaletteAction::Create(kind) => {
                 self.obj_action(ObjAction::Create { kind, parent: None, scene: None }, renderer)
             }
@@ -1140,11 +1094,12 @@ impl Editor {
     /// The Scene view's tools: the tool strip's settings, a click to
     /// select, the handles under the pointer, and dragging them.
     fn update_scene_tools(&mut self, renderer: &Renderer) {
-        self.tools.tool = Tool::from_index(self.ui.segment(self.nodes.tool));
+        self.tools.tool = Tool::from_index(self.ui.segment(self.scene.tool));
         let selected = self.selected();
+        self.draw_other_scene_views(renderer);
         let Some(camera) = self.scene_camera() else {
             self.hovered_handle = None;
-            self.ui.set_shapes(self.nodes.handles, Vec::new());
+            self.ui.set_shapes(self.scene.handles, Vec::new());
             return;
         };
         let point = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
@@ -1173,16 +1128,16 @@ impl Editor {
         // Gizmos go under the handles, which are drawn last.
         let world = &self.game.engine.world;
         let mut shapes =
-            if self.memory.settings.show_gizmos { gizmos::shapes(world, &camera, self.selected()) } else { Vec::new() };
+            if self.scene.show_gizmos { gizmos::shapes(world, &camera, self.selected()) } else { Vec::new() };
         shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
-        self.ui.set_shapes(self.nodes.handles, shapes);
+        self.ui.set_shapes(self.scene.handles, shapes);
     }
 
     /// A click on the 3D view itself, not on what floats over it, selects
     /// the Obj under it, or nothing.
     fn click_to_select(&mut self, renderer: &Renderer, camera: &ViewCamera, point: Option<[f32; 2]>) {
         let (viewport, overlays) =
-            (self.nodes.viewport, [self.nodes.tool_strip, self.nodes.stats, self.nodes.view_gizmo]);
+            (self.scene.viewport, [self.scene.tool_strip, self.scene.stats, self.scene.view_gizmo]);
         if !self.ui.clicked(viewport) || overlays.iter().any(|&o| self.ui.clicked(o)) {
             return;
         }
@@ -1245,7 +1200,7 @@ impl Editor {
     /// Where a new Obj goes: a little in front of the Scene camera, on the
     /// snap grid.
     fn new_obj_position(&self) -> Vec3 {
-        let Some(view) = self.game.engine.world.get::<Transform>(self.camera) else { return Vec3::ZERO };
+        let Some(view) = self.game.engine.world.get::<Transform>(self.scene.camera) else { return Vec3::ZERO };
         let at = view.position + view.rotation * Vec3::Z * NEW_OBJ_DISTANCE;
         (at / self.tools.snap).round() * self.tools.snap
     }
@@ -1477,13 +1432,13 @@ impl Editor {
     fn update_tool_strip(&mut self) -> bool {
         let settings = &mut self.memory.settings;
         let mut changed = false;
-        if self.ui.clicked(self.nodes.pivot) {
+        if self.ui.clicked(self.scene.pivot) {
             changed |= settings.set("handle_position", SettingValue::Choice(usize::from(!settings.centred)));
         }
-        if self.ui.clicked(self.nodes.space) {
+        if self.ui.clicked(self.scene.space) {
             changed |= settings.set("handle_space", SettingValue::Choice(usize::from(!settings.local)));
         }
-        if self.ui.clicked(self.nodes.snap)
+        if self.ui.clicked(self.scene.snap)
             && let Some(SettingValue::Choice(at)) = settings.get("snap")
         {
             changed |= settings.set("snap", SettingValue::Choice((at + 1) % SNAPS.len()));
@@ -1570,26 +1525,27 @@ impl Editor {
         self.notice = Some((text.to_string(), Instant::now()));
     }
 
-    /// Whether a physical point is over the Scene view, where the right
-    /// mouse button flies the camera.
+    /// Whether the pointer is over the Scene view in use, and not over a
+    /// window floating on it: there the right mouse button flies its camera.
     pub fn over_viewport(&self) -> bool {
         let Some((x, y)) = self.pointer else { return false };
-        if !self.shown(self.nodes.viewport) {
+        if !self.shown(self.scene.viewport) || !self.ui.is_hovered(self.scene.viewport) {
             return false;
         }
-        let [vx, vy, vw, vh] = self.viewport_rect(Some(self.nodes.viewport), (u32::MAX, u32::MAX));
+        let [vx, vy, vw, vh] = self.viewport_rect(Some(self.scene.viewport), (u32::MAX, u32::MAX));
         (vx as f32..(vx + vw) as f32).contains(&x) && (vy as f32..(vy + vh) as f32).contains(&y)
     }
 
-    /// The 3D views drawn this frame, each with its camera: the Scene view,
-    /// through the editor's camera, when it shows, and the Game view, through
-    /// the level's first camera, when it shows and the level has one. Both
-    /// draw when both show, as one floating over the other.
+    /// The 3D views drawn this frame, each with its camera: each Scene view
+    /// that shows, through its own camera, in the order they were opened,
+    /// and the Game view, through the level's first camera, when it shows and
+    /// the level has one. All draw at once, one floating over another. The
+    /// order holds while the Scene view in use changes, so each view keeps
+    /// its own history in the renderer.
     fn active_views(&self) -> Vec<(NodeId, Entity)> {
-        let scene = self.shown(self.nodes.viewport).then_some((self.nodes.viewport, self.camera));
         let game = self.game_camera().filter(|_| self.shown(self.nodes.game_viewport));
         let game = game.map(|camera| (self.nodes.game_viewport, camera));
-        let mut views: Vec<_> = scene.into_iter().chain(game).collect();
+        let mut views: Vec<_> = self.shown_scene_views().into_iter().chain(game).collect();
         // Those in floating windows draw last, over the docked ones.
         views.sort_by_key(|&(viewport, _)| self.floats(viewport));
         views
@@ -1600,10 +1556,10 @@ impl Editor {
         std::iter::successors(self.ui.parent(node), |&n| self.ui.parent(n)).any(|n| self.ui.has_class(n, "dock-float"))
     }
 
-    /// How a view draws: through its camera, and the Scene view shaded as
-    /// its menu says, the Game view always lit.
+    /// How a view draws: through its camera, and a Scene view shaded as its
+    /// menu says, the Game view always lit.
     fn view_options(&self, viewport: NodeId, camera: Entity) -> ViewOptions {
-        let debug_view = if viewport == self.nodes.viewport { self.scene_debug_view() } else { 0 };
+        let debug_view = self.scene_view_at(viewport).map_or(0, |view| view.debug_view());
         ViewOptions { camera: Some(camera), debug_view, ..ViewOptions::default() }
     }
 
@@ -1707,7 +1663,7 @@ impl Editor {
             && let Some(index) = ["q", "w", "e", "r"].iter().position(|k| *k == text.to_lowercase())
         {
             // Q, W, E and R pick the tool, as in Unity.
-            self.ui.set_segment(self.nodes.tool, index);
+            self.ui.set_segment(self.scene.tool, index);
             return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
@@ -1740,7 +1696,12 @@ impl Editor {
                 return true;
             }
         }
-        voxear_engine::ui_input::handle(&mut self.ui, event)
+        let used = voxear_engine::ui_input::handle(&mut self.ui, event);
+        // The Scene view under the pointer is the one a right click flies, even before the next frame.
+        if let WindowEvent::CursorMoved { .. } = event {
+            self.follow_pointer();
+        }
+        used
     }
 
     /// Pings what a reference of `entity` points at, as Unity's object fields
@@ -1891,7 +1852,8 @@ impl Editor {
     /// see-through too, so what the UI drew under a floating one, such as
     /// the Scene view's gizmos, does not show through it.
     fn mark_viewport_areas(&mut self, views: &[(NodeId, Entity)]) {
-        for viewport in [self.nodes.viewport, self.nodes.game_viewport] {
+        let viewports: Vec<NodeId> = self.all_scene_views().map(|view| view.viewport).collect();
+        for viewport in viewports.into_iter().chain([self.nodes.game_viewport]) {
             self.ui.set_see_through(viewport, views.iter().any(|&(shown, _)| shown == viewport));
         }
         let areas: Vec<NodeId> = views.iter().filter_map(|&(viewport, _)| self.area_of(viewport)).collect();
@@ -1910,41 +1872,6 @@ impl Editor {
     /// The dock area a panel's element is in.
     fn area_of(&self, node: NodeId) -> Option<NodeId> {
         std::iter::successors(self.ui.parent(node), |&n| self.ui.parent(n)).find(|&n| self.ui.has_class(n, "dock-area"))
-    }
-
-    /// Turns the axis gizmo with the Scene camera: each world axis drawn
-    /// where the camera sees it, the ones nearer the viewer on top, and a
-    /// faint dot where each points away.
-    fn update_gizmo(&mut self) {
-        let Some(rotation) = self.game.engine.world.get::<Transform>(self.camera).map(|t| t.rotation) else {
-            return;
-        };
-        if self.gizmo_shows == Some(rotation) {
-            return;
-        }
-        self.gizmo_shows = Some(rotation);
-        let (right, up, forward) = (rotation * Vec3::X, rotation * Vec3::Y, rotation * Vec3::Z);
-        let colors = [0xeb5757, 0x4cb782, 0x5e8bf0].map(Color::hex);
-        let mut axes: Vec<(usize, [f32; 2], f32)> = [Vec3::X, Vec3::Y, Vec3::Z]
-            .into_iter()
-            .enumerate()
-            .map(|(i, axis)| (i, [axis.dot(right), -axis.dot(up)], axis.dot(forward)))
-            .collect();
-        // Furthest first, so the nearest draw last.
-        axes.sort_by(|a, b| b.2.total_cmp(&a.2));
-        let middle = [GIZMO_MIDDLE, GIZMO_MIDDLE];
-        let mut shapes = Vec::new();
-        for &(i, [x, y], _) in &axes {
-            let back = [middle[0] - x * GIZMO_REACH, middle[1] - y * GIZMO_REACH];
-            let faded = colors[i].with_alpha(0x66);
-            shapes.push(Shape::Circle { center: back, radius: GIZMO_END - 0.5, fill: faded, border: None });
-        }
-        for &(i, [x, y], _) in &axes {
-            let end = [middle[0] + x * GIZMO_REACH, middle[1] + y * GIZMO_REACH];
-            shapes.push(Shape::Line { from: middle, to: end, width: 2.0, color: colors[i] });
-            shapes.push(Shape::Circle { center: end, radius: GIZMO_END, fill: colors[i], border: None });
-        }
-        self.ui.set_shapes(self.nodes.gizmo, shapes);
     }
 
     fn update_status(&mut self, renderer: &Renderer, delta: f32) {
@@ -1977,7 +1904,10 @@ impl Editor {
         let gpu_ms: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
         let drawn = stats.drawn_early + stats.drawn_late;
         let chip = format!("{} objs   {drawn} draws   {gpu_ms:.2} ms GPU", stats.instances);
-        self.ui.set_text(self.nodes.stats, &chip);
+        let first = self.all_scene_views().find(|view| view.panel == scene_views::FIRST).map(|view| view.stats);
+        if let Some(stats) = first {
+            self.ui.set_text(stats, &chip);
+        }
     }
 }
 

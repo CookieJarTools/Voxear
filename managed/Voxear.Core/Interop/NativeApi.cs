@@ -78,5 +78,8 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<uint, uint, int, void> ScreenSet;
 		public delegate* unmanaged[Cdecl]<int*, int> CursorGet;
 		public delegate* unmanaged[Cdecl]<int, int, void> CursorSet;
+		public delegate* unmanaged[Cdecl]<byte*, int, SceneLoadOptionsData*, int> SceneLoadAsync;
+		public delegate* unmanaged[Cdecl]<byte*, int, void> SceneUnload;
+		public delegate* unmanaged[Cdecl]<byte*, int, void> SceneSetActive;
 	}
 }

@@ -4199,6 +4199,14 @@ fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     click(&mut editor.ui, required);
     frame(&mut editor, &mut renderer);
     assert!(level().contains("required = false"), "{}", level());
+    // Reload: the scene loads again whenever the level comes in.
+    let row = scene_row(&editor.ui, "Night").unwrap();
+    let mut flags = Vec::new();
+    with_class(&editor.ui, row, "level-flag", &mut flags);
+    assert_eq!(flags.len(), 3, "Active, Required and Reload");
+    click(&mut editor.ui, flags[2]);
+    frame(&mut editor, &mut renderer);
+    assert!(level().contains("reload = true"), "{}", level());
 
     // Taken out, it unloads, and Day is active again.
     let (.., remove) = parts(&editor.ui, "Night");

@@ -13,9 +13,12 @@ namespace Voxear
 	/// await Level.LoadAsync("Levels/Night.level");
 	/// </code>
 	/// <para>
-	/// The events are static, so anything can hear about a change without being handed anything: pause a simulation on
-	/// SwitchStarted, move a bar on SwitchProgressed, begin playing on SwitchFinished. Only one change happens at a
-	/// time; asking for another while one is going gives back the one already going, and says so in the log.
+	/// The change going on is Level.Current, and Level.Progress, Level.IsReady and Level.Activate() read and drive it, so
+	/// a loading screen needs no handle: start the change anywhere, and bind a bar to Level.Progress. They cost no more
+	/// than reading a field. The events are static too, so anything can hear about a change without being handed
+	/// anything: pause a simulation on SwitchStarted, move a bar on SwitchProgressed, begin playing on SwitchFinished.
+	/// Only one change happens at a time; asking for another while one is going gives back the one already going, and
+	/// says so in the log. For single scenes, see Scene.
 	/// </para>
 	/// </summary>
 	public static class Level
@@ -29,7 +32,7 @@ namespace Voxear
 		/// <summary>Everything is read in and waiting to be let in; only for a change asked to hold.</summary>
 		public static event Action<LevelLoad>? SwitchReady;
 
-		/// <summary>One scene of the new level is in, by its path.</summary>
+		/// <summary>A scene is in, by its path: one of a new level's, or one loaded alongside with Scene.LoadAsync.</summary>
 		public static event Action<string>? SceneLoaded;
 
 		/// <summary>The change is over and the new level is there.</summary>
@@ -62,6 +65,27 @@ namespace Voxear
 		public static LevelLoad? Current { get; private set; }
 
 		public static bool IsSwitching => Current != null && !Current.IsDone;
+
+		/// <summary>The level coming in, or null when no change is going on.</summary>
+		public static string? Next => Current is { IsDone: false } load ? load.Level : null;
+
+		/// <summary>How far the change going on has come, from 0 to 1; 1 when none is. For a loading bar, read each frame.</summary>
+		public static float Progress => Current is { IsDone: false } load ? load.Progress : 1f;
+
+		/// <summary>Whether a held change has everything read in and waits to be let in with Activate.</summary>
+		public static bool IsReady => Current is { IsDone: false, IsReady: true };
+
+		/// <summary>Why the last change failed, or null when it did not.</summary>
+		public static string? Error => Current?.Error;
+
+		/// <summary>Lets a held change in, at the end of the frame. Does nothing when no change is held.</summary>
+		public static void Activate()
+		{
+			if (Current is { IsDone: false } load)
+			{
+				load.Activate();
+			}
+		}
 
 		/// <summary>
 		/// Loads a level by project path or GUID, for example "Levels/Night.level". The change happens after the current
@@ -126,6 +150,11 @@ namespace Voxear
 		internal static void Failed(LevelLoad load)
 		{
 			Raise(SwitchFailed, load);
+		}
+
+		internal static void SceneCameIn(string scene)
+		{
+			Raise(SceneLoaded, scene);
 		}
 
 		/// <summary>A listener that throws is logged, so the rest still hear and the change goes on.</summary>

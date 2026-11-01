@@ -24,5 +24,5 @@ pub use inspector::{InspectorAnswer, InspectorAsk};
 pub use runtime::{ConsoleName, CreatedBehaviour, ManagedMemory, Reloaded, ScriptHost, ScriptRuntime};
 pub use services::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
-    ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
+    SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
 };

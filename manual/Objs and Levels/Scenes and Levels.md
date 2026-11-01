@@ -48,10 +48,11 @@ Add as many scenes as the level needs. Each scene in the list is a field, like a
 
 If the level is open, you can also open the scene alongside it and add it from the Hierarchy, as "Opening a scene alongside a level" above shows.
 
-Each scene in the list has two boxes:
+Each scene in the list has three boxes:
 
 - **Active**: new Objs you make go into this scene, and the level uses this scene's sky. A level always has one active scene. Until you tick another, it is the first.
 - **Required**: if a required scene fails to load, the level does not load. Untick it to let the level load without that scene.
+- **Reload**: the scene loads again whenever the game moves to this level, even when the level before had it loaded too. Use it for a scene that should start fresh each time, such as a puzzle room. Without it, a scene both levels share stays as it was.
 
 A level is a small text file. The Inspector writes it for you, but you can also write it by hand:
 
@@ -66,6 +67,7 @@ scene = "Scenes/Castle.scene"
 scene = "Scenes/Castle Lights.scene"
 active = true
 required = false
+reload = true
 ```
 
 The Inspector names each scene by its ID from its `.meta` file, with the scene's path in a comment beside it. That way, renaming the scene does not break the level.
@@ -83,7 +85,7 @@ stands_on = "Levels/World.level"
 scene = "Scenes/Day.scene"
 ```
 
-The scenes of the level stood on load first. When the game moves from one level to another that stands on the same one, those scenes stay loaded, untouched. Only the scenes that differ are unloaded and loaded.
+The scenes of the level stood on load first. When the game moves from one level to another that stands on the same one, those scenes stay loaded, untouched. Only the scenes that differ are unloaded and loaded. A scene marked **Reload** loads again anyway.
 
 ## Objs that stay from level to level
 

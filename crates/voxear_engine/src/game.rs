@@ -8,7 +8,8 @@ use voxear_render::{MAX_PREVIEW_SIZE, MeshRenderer, PreviewId, PreviewOptions, R
 use voxear_scene::{Placement, Transform};
 use voxear_scripting::{
     ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions,
-    PreviewSource, PreviewState, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
+    PreviewSource, PreviewState, SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab,
+    UiAnswer, UiAsk,
 };
 
 use crate::{
@@ -153,7 +154,7 @@ impl Game {
     ) -> Result<LevelChange> {
         let change =
             self.levels.load_with(&mut self.engine, &mut self.content, renderer.as_deref_mut(), level, options)?;
-        log_change(level, &change);
+        log_change("level", level, &change);
         if options.tidy_up {
             self.release_unused(renderer);
         }
@@ -216,6 +217,38 @@ impl Game {
     /// `options` say: held for a loading screen, or taking a least time.
     pub fn load_level_async_with(&mut self, level: &str, options: LevelOptions) -> Result<LoadId> {
         self.loads.start_with(&self.content, LoadTarget::Level(level.to_string()), options, self.models)
+    }
+
+    /// Loads one scene alongside those loaded now, without a level; see
+    /// [`Levels::add_scene`] for what `options` mean for it.
+    pub fn add_scene(
+        &mut self,
+        scene: &str,
+        options: &LevelOptions,
+        renderer: Option<&mut Renderer>,
+    ) -> Result<LevelChange> {
+        let change = self.levels.add_scene(&mut self.engine, &mut self.content, renderer, scene, options)?;
+        log_change("scene", scene, &change);
+        Ok(change)
+    }
+
+    /// Starts loading one scene in the background, to come in alongside
+    /// those loaded once it is read, as `options` say.
+    pub fn load_scene_async(&mut self, scene: &str, options: LevelOptions) -> Result<LoadId> {
+        self.loads.start_with(&self.content, LoadTarget::Scene(scene.to_string()), options, self.models)
+    }
+
+    /// Unloads one loaded scene, its Objs with it, persistent ones aside.
+    /// Returns whether it was loaded.
+    pub fn unload_scene(&mut self, scene: &str) -> Result<bool> {
+        let guid = self.content.parse(scene)?.guid().with_context(|| format!("`{scene}` is not a scene"))?;
+        self.levels.close_scene(&mut self.engine, guid)
+    }
+
+    /// Makes a loaded scene the active one. Returns whether it is loaded.
+    pub fn set_active_scene(&mut self, scene: &str) -> Result<bool> {
+        let guid = self.content.parse(scene)?.guid().with_context(|| format!("`{scene}` is not a scene"))?;
+        self.levels.set_active_scene(&mut self.engine, guid)
     }
 
     /// Changes level in the background as a running game would, as the
@@ -309,9 +342,25 @@ impl Game {
             self.engine.tick(delta);
         }
         profile_scope!("Loading");
-        for (id, level, options) in self.loads.advance(&mut self.content, renderer.as_deref_mut()) {
-            let changed = self.load_level_with(&level, &options, renderer.as_deref_mut());
+        for (id, target, options) in self.loads.advance(&mut self.content, renderer.as_deref_mut()) {
+            let changed = match target {
+                LoadTarget::Level(level) => self.load_level_with(&level, &options, renderer.as_deref_mut()),
+                LoadTarget::Scene(scene) => self.add_scene(&scene, &options, renderer.as_deref_mut()),
+                LoadTarget::Prefab(_) => continue,
+            };
             self.loads.activated(id, changed);
+        }
+        let scene_requests = self.engine.scripts_mut().map(|scripts| scripts.take_scene_requests()).unwrap_or_default();
+        for request in scene_requests {
+            let (done, scene) = match &request {
+                SceneRequest::Unload(scene) => (self.unload_scene(scene), scene),
+                SceneRequest::SetActive(scene) => (self.set_active_scene(scene), scene),
+            };
+            match done {
+                Ok(true) => {}
+                Ok(false) => tracing::warn!(target: "script", "{scene} is not loaded, so {request:?} did nothing"),
+                Err(error) => tracing::error!(target: "script", "{request:?}: {error:#}"),
+            }
         }
         let requested = self.engine.scripts_mut().and_then(|scripts| scripts.take_level_requests().pop());
         if let Some(level) = requested
@@ -402,9 +451,15 @@ impl ScriptServices for GameServices<'_> {
             unload_rest: options.unload_rest != 0,
             set_active: options.set_active != 0,
             tidy_up: options.tidy_up != 0,
+            reload_shared: options.reload_shared != 0,
         };
         let target = LoadTarget::Level(reference.to_string());
         Ok(self.loads.start_with(self.content, target, options, self.models)?.0)
+    }
+
+    fn load_scene(&mut self, reference: &str, options: SceneLoadOptions) -> Result<u32> {
+        let target = LoadTarget::Scene(reference.to_string());
+        Ok(self.loads.start_with(self.content, target, scene_options(options), self.models)?.0)
     }
 
     fn level_info(&self, what: LevelInfo, id: u32) -> Option<String> {
@@ -416,6 +471,7 @@ impl ScriptServices for GameServices<'_> {
                 LoadState::Failed(error) => Some(error),
                 _ => None,
             },
+            LevelInfo::Loaded => Some(self.levels.loaded_scenes().collect::<Vec<_>>().join("\n")),
         }
     }
 
@@ -514,10 +570,12 @@ impl ScriptServices for GameServices<'_> {
     }
 }
 
-fn log_change(level: &str, change: &LevelChange) {
+/// What a change did, for the log: `what` is "level" or "scene", and
+/// `name` the level or scene it was for.
+fn log_change(what: &str, name: &str, change: &LevelChange) {
     let list = |scenes: &[String]| if scenes.is_empty() { "none".to_string() } else { scenes.join(", ") };
     tracing::info!(
-        "level {level}: loaded {} · kept {} · unloaded {}",
+        "{what} {name}: loaded {} · kept {} · unloaded {}",
         list(&change.loaded),
         list(&change.kept),
         list(&change.unloaded)
@@ -529,4 +587,14 @@ fn log_change(level: &str, change: &LevelChange) {
 fn same_place(part: (Vec3, Quat, Vec3), obj: (Vec3, Quat, Vec3)) -> bool {
     const CLOSE: f32 = 1e-4;
     part.0.abs_diff_eq(obj.0, CLOSE) && part.1.dot(obj.1).abs() > 1.0 - CLOSE && part.2.abs_diff_eq(obj.2, CLOSE)
+}
+
+/// How a scene loaded alongside comes in, from what scripts ask for.
+fn scene_options(options: SceneLoadOptions) -> LevelOptions {
+    LevelOptions {
+        hold: options.hold != 0,
+        set_active: options.set_active != 0,
+        reload_shared: options.reload != 0,
+        ..LevelOptions::default()
+    }
 }

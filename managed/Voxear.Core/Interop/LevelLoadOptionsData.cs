@@ -11,5 +11,6 @@ namespace Voxear.Interop
 		public int UnloadRest;
 		public int SetActive;
 		public int TidyUp;
+		public int ReloadShared;
 	}
 }

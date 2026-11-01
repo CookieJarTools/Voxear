@@ -371,6 +371,11 @@ impl ScriptRuntime {
         interop::take_level_requests()
     }
 
+    /// What scripts asked of loaded scenes since the last call, oldest first.
+    pub fn take_scene_requests(&mut self) -> Vec<crate::SceneRequest> {
+        interop::take_scene_requests()
+    }
+
     pub fn time(&self) -> &Time {
         &self.time
     }

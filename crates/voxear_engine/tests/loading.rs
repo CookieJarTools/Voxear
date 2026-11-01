@@ -1,7 +1,7 @@
 //! Background loading on a throwaway project: headless, and on an offscreen
 //! GPU for models.
 
-use voxear_engine::{Engine, Game, LoadState, Project};
+use voxear_engine::{Engine, Game, LevelOptions, LoadState, Project};
 use voxear_render::{MeshRenderer, Renderer, RendererSettings};
 use voxear_scene::Name;
 
@@ -239,4 +239,51 @@ fn a_held_change_waits_its_least_time_and_says_what_came_in() {
     assert_eq!(status.state, LoadState::Done);
     assert_eq!(status.scenes, ["Scenes/Forest.scene"], "Start was kept, so only Forest came in");
     assert_eq!(game.levels.active_scene(), Some("Scenes/Forest.scene"));
+}
+
+#[test]
+fn a_scene_loads_alongside_the_level_and_goes_again_on_its_own() {
+    let dir = project();
+    let mut game = game(&dir);
+    game.start(None).unwrap();
+    let options = LevelOptions { set_active: true, ..LevelOptions::default() };
+    let id = game.load_scene_async("Scenes/Forest.scene", options).unwrap();
+    tick_while(&mut game, None, id, LoadState::Loading);
+    tick_while(&mut game, None, id, LoadState::Ready);
+    let status = game.load_status(id).unwrap();
+    assert_eq!((status.state, status.scenes), (LoadState::Done, vec!["Scenes/Forest.scene".to_string()]));
+    assert_eq!(names(&game), ["Rock", "Start", "Tree"], "the level's scene stays: nothing else unloads");
+    assert_eq!(game.levels.active_scene(), Some("Scenes/Forest.scene"), "asked to be the active scene");
+    assert_eq!(game.levels.current(), Some("Levels/Start.level"), "the level is the same level");
+
+    assert!(game.set_active_scene("Scenes/Start.scene").unwrap());
+    assert_eq!(game.levels.active_scene(), Some("Scenes/Start.scene"));
+    assert!(game.unload_scene("Scenes/Forest.scene").unwrap());
+    game.tick(1.0 / 60.0, None);
+    assert_eq!(names(&game), ["Start"], "its Objs go at the end of the frame");
+    assert!(!game.unload_scene("Scenes/Forest.scene").unwrap(), "it is not loaded any more");
+}
+
+#[test]
+fn a_level_change_can_load_its_shared_scenes_again() {
+    let dir = project();
+    let mut game = game(&dir);
+    game.start(None).unwrap();
+    let start =
+        |game: &Game| game.engine.world.query_ref::<(voxear_ecs::Entity, &Name)>().into_iter().next().unwrap().0;
+    let before = start(&game);
+
+    let kept = game.load_level_with("Levels/Start.level", &LevelOptions::default(), None).unwrap();
+    assert_eq!(kept.kept, ["Scenes/Start.scene"], "a scene both levels have stays as it is");
+    assert_eq!(start(&game), before);
+
+    let again = LevelOptions { reload_shared: true, ..LevelOptions::default() };
+    let reloaded = game.load_level_with("Levels/Start.level", &again, None).unwrap();
+    assert_eq!(
+        (reloaded.unloaded, reloaded.loaded),
+        (vec!["Scenes/Start.scene".to_string()], vec!["Scenes/Start.scene".to_string()])
+    );
+    game.tick(1.0 / 60.0, None);
+    assert_ne!(start(&game), before, "loaded again, its Objs are new");
+    assert_eq!(names(&game), ["Start"], "and the old ones went at the end of the frame");
 }

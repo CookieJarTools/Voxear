@@ -1,8 +1,9 @@
 //! Loading in the background, so the game keeps running while a level or a
 //! prefab loads.
 //!
-//! A worker thread, with its own reader, reads and parses every level,
-//! scene, prefab and material file the target needs, and prepares its models:
+//! A level, a scene to load alongside those loaded, or a prefab. A worker
+//! thread, with its own reader, reads and parses every level, scene, prefab
+//! and material file the target needs, and prepares its models:
 //! parsing, decoding images and building LODs. It reads in waves, one batch
 //! per step down the dependency graph (the level, then its scenes, then what
 //! they use), so the IO system works on each wave's reads together. The main thread then uploads
@@ -42,9 +43,13 @@ const UPLOAD_BUDGET: Duration = Duration::from_millis(4);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LoadId(pub u32);
 
+/// What a background load brings in, by GUID or project path.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LoadTarget {
     Level(String),
+    /// One scene, alongside those loaded, as [`crate::Levels::add_scene`]
+    /// loads it. It waits at ready as a level does.
+    Scene(String),
     Prefab(String),
 }
 
@@ -172,7 +177,7 @@ impl Loads {
         models: ModelWork,
     ) -> Result<LoadId> {
         let reference = match &target {
-            LoadTarget::Level(path) | LoadTarget::Prefab(path) => path,
+            LoadTarget::Level(path) | LoadTarget::Scene(path) | LoadTarget::Prefab(path) => path,
         };
         let root = content.parse(reference)?.guid().with_context(|| format!("`{reference}` is not an asset"))?;
         let db = content.shared_db();
@@ -229,7 +234,7 @@ impl Loads {
     pub fn level_in_progress(&self) -> Option<(&str, &LoadStatus)> {
         self.active.iter().find_map(|load| match &load.target {
             LoadTarget::Level(level) => Some((level.as_str(), &load.status)),
-            LoadTarget::Prefab(_) => None,
+            LoadTarget::Scene(_) | LoadTarget::Prefab(_) => None,
         })
     }
 
@@ -239,20 +244,20 @@ impl Loads {
     }
 
     /// Moves every load along: collects finished workers, uploads within the
-    /// frame budget, and returns the levels that may now change over, with
-    /// how. Call once per frame, after the engine ticks.
+    /// frame budget, and returns the levels and scenes that may now come in,
+    /// with how. Call once per frame, after the engine ticks.
     pub fn advance(
         &mut self,
         content: &mut Content,
         mut renderer: Option<&mut Renderer>,
-    ) -> Vec<(LoadId, String, LevelOptions)> {
+    ) -> Vec<(LoadId, LoadTarget, LevelOptions)> {
         let started = Instant::now();
         let mut activate = Vec::new();
         for load in &mut self.active {
             let step = advance_one(load, content, renderer.as_deref_mut(), started);
             match step {
-                Ok(Some(level)) => activate.push((load.id, level, load.options)),
-                Ok(None) => {}
+                Ok(true) => activate.push((load.id, load.target.clone(), load.options)),
+                Ok(false) => {}
                 Err(error) => load.status.state = LoadState::Failed(format!("{error:#}")),
             }
         }
@@ -260,7 +265,8 @@ impl Loads {
         activate
     }
 
-    /// Records the outcome of a level change [`advance`](Self::advance) asked for.
+    /// Records the outcome of a level change, or a scene loaded alongside,
+    /// that [`advance`](Self::advance) asked for.
     pub fn activated(&mut self, id: LoadId, result: Result<LevelChange>) {
         if let Some(load) = self.active.iter_mut().find(|l| l.id == id) {
             load.status.state = match result {
@@ -289,13 +295,14 @@ impl Loads {
     }
 }
 
-/// One frame's work on one load. Returns a level to change to once it may.
+/// One frame's work on one load. Returns whether its level or scene may
+/// now come in.
 fn advance_one(
     load: &mut Load,
     content: &mut Content,
     mut renderer: Option<&mut Renderer>,
     frame_started: Instant,
-) -> Result<Option<String>> {
+) -> Result<bool> {
     if load.job.as_ref().is_some_and(|job| job.is_finished()) {
         let job = load.job.take().expect("checked above");
         let prepared = job.join().map_err(|_| anyhow::anyhow!("the loading thread panicked"))??;
@@ -303,7 +310,7 @@ fn advance_one(
     }
     let Some(prepared) = &mut load.prepared else {
         load.status.progress = load.status.progress.max(load.progress.reading() * 0.8);
-        return Ok(None);
+        return Ok(false);
     };
 
     if let Some(renderer) = renderer.as_deref_mut() {
@@ -314,7 +321,7 @@ fn advance_one(
             load.uploaded.push(guid);
             load.status.progress = 0.8 + 0.1 * load.uploads as f32 / total as f32;
             if frame_started.elapsed() > UPLOAD_BUDGET {
-                return Ok(None);
+                return Ok(false);
             }
         }
     }
@@ -326,17 +333,17 @@ fn advance_one(
             load.status.prefab = Some(content.prefab(renderer, path)?);
             load.status.state = LoadState::Done;
             load.status.progress = 1.0;
-            Ok(None)
+            Ok(false)
         }
-        LoadTarget::Level(path) => {
+        LoadTarget::Level(_) | LoadTarget::Scene(_) => {
             load.status.state = LoadState::Ready;
             load.status.progress = 0.9;
             let early = load.started.elapsed().as_secs_f32() < load.options.least_time;
             if !load.allow_activation || early {
-                return Ok(None);
+                return Ok(false);
             }
             content.adopt_texts(std::mem::take(&mut prepared.texts));
-            Ok(Some(path.clone()))
+            Ok(true)
         }
     }
 }

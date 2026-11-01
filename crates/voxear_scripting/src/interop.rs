@@ -34,13 +34,13 @@ use crate::ecs::{
 };
 use crate::services::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
-    SpawnedPrefab, with_services,
+    SceneLoadOptions, SceneRequest, SpawnedPrefab, with_services,
 };
 use crate::ui::{
     ui_class, ui_clicked, ui_close, ui_find, ui_load, ui_set_text, ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 25;
+pub(crate) const API_VERSION: u32 = 26;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -162,6 +162,12 @@ pub(crate) struct NativeApi {
     /// written to `lock`; and both asked for.
     pub cursor_get: unsafe extern "C" fn(lock: *mut i32) -> i32,
     pub cursor_set: unsafe extern "C" fn(visible: i32, lock: i32),
+    /// Single scenes, for `Scene`: one loaded alongside in the background,
+    /// one unloaded, and one made the active scene, those two at the end of
+    /// the frame.
+    pub scene_load_async: unsafe extern "C" fn(reference: *const u8, len: i32, options: *const SceneLoadOptions) -> i32,
+    pub scene_unload: unsafe extern "C" fn(reference: *const u8, len: i32),
+    pub scene_set_active: unsafe extern "C" fn(reference: *const u8, len: i32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -268,6 +274,7 @@ thread_local! {
     static WORLD: Cell<*mut World> = const { Cell::new(ptr::null_mut()) };
     static REQUESTS: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
     static LEVEL_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static SCENE_REQUESTS: RefCell<Vec<SceneRequest>> = const { RefCell::new(Vec::new()) };
     static OBJ_DESTROYS: RefCell<Vec<Entity>> = const { RefCell::new(Vec::new()) };
     /// Managed `CreateBehaviour` and `AddComponent`, for behaviours and
     /// components made during script calls.
@@ -310,6 +317,10 @@ pub(crate) fn drain_requests(out: &mut Vec<Request>) {
 
 pub(crate) fn take_level_requests() -> Vec<String> {
     LEVEL_REQUESTS.take()
+}
+
+pub(crate) fn take_scene_requests() -> Vec<SceneRequest> {
+    SCENE_REQUESTS.take()
 }
 
 pub(crate) fn with_world<R>(f: impl FnOnce(&mut World) -> Option<R>) -> Option<R> {
@@ -515,6 +526,32 @@ unsafe extern "C" fn level_load_async(reference: *const u8, len: i32, options: *
             -1
         }
     }
+}
+
+unsafe extern "C" fn scene_load_async(reference: *const u8, len: i32, options: *const SceneLoadOptions) -> i32 {
+    let reference = unsafe { utf8(reference, len) };
+    let options = unsafe { options.read_unaligned() };
+    match with_services(|services| services.load_scene(&reference, options)) {
+        Some(Ok(id)) => id as i32,
+        Some(Err(error)) => {
+            tracing::error!(target: "script", "Scene.LoadAsync(\"{reference}\"): {error:#}");
+            -1
+        }
+        None => {
+            tracing::error!(target: "script", "Scene.LoadAsync(\"{reference}\"): scenes are not available here");
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn scene_unload(reference: *const u8, len: i32) {
+    let scene = unsafe { utf8(reference, len) }.into_owned();
+    SCENE_REQUESTS.with_borrow_mut(|requests| requests.push(SceneRequest::Unload(scene)));
+}
+
+unsafe extern "C" fn scene_set_active(reference: *const u8, len: i32) {
+    let scene = unsafe { utf8(reference, len) }.into_owned();
+    SCENE_REQUESTS.with_borrow_mut(|requests| requests.push(SceneRequest::SetActive(scene)));
 }
 
 /// Writes what was asked into the buffer when it fits, and returns its
@@ -853,6 +890,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         screen_set: display::screen_set,
         cursor_get: display::cursor_get,
         cursor_set: display::cursor_set,
+        scene_load_async,
+        scene_unload,
+        scene_set_active,
     }
 }
 

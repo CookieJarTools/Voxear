@@ -26,5 +26,11 @@ namespace Voxear
 
 		/// <summary>Whether what nothing uses any more is let go once the change is over. On by default.</summary>
 		public bool TidyUp { get; set; } = true;
+
+		/// <summary>
+		/// Whether the scenes the new level shares with the old one load again, as if each were marked Reload in the
+		/// level, so everything in them starts afresh. Off by default, when shared scenes stay as they are.
+		/// </summary>
+		public bool ReloadShared { get; set; }
 	}
 }

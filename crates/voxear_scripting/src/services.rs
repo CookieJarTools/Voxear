@@ -39,6 +39,12 @@ pub trait ScriptServices {
         anyhow::bail!("{reference}: there are no levels to load here")
     }
 
+    /// Starts loading one scene in the background, to come in alongside
+    /// those loaded as `options` say.
+    fn load_scene(&mut self, reference: &str, _options: SceneLoadOptions) -> Result<u32> {
+        anyhow::bail!("{reference}: there are no scenes to load here")
+    }
+
     /// What scripts can ask about levels: see [`LevelInfo`]. `id` names a
     /// background load for the kinds that are about one.
     fn level_info(&self, _what: LevelInfo, _id: u32) -> Option<String> {
@@ -239,6 +245,28 @@ pub struct LevelLoadOptions {
     pub unload_rest: i32,
     pub set_active: i32,
     pub tidy_up: i32,
+    pub reload_shared: i32,
+}
+
+/// How a scene is loaded alongside those loaded, as scripts ask for it.
+/// Mirrors `SceneLoadOptions` in Voxear.Core.
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct SceneLoadOptions {
+    /// Make it the active scene once it is in.
+    pub set_active: i32,
+    /// Load it again if it is loaded already.
+    pub reload: i32,
+    /// Wait at ready until activation is allowed, as a held level change does.
+    pub hold: i32,
+}
+
+/// What scripts ask of a loaded scene, done at the end of the frame, as a
+/// level change is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SceneRequest {
+    Unload(String),
+    SetActive(String),
 }
 
 /// What [`ScriptServices::level_info`] answers.
@@ -252,6 +280,8 @@ pub enum LevelInfo {
     Scenes,
     /// Why a change failed.
     Error,
+    /// Every scene loaded now, one per line.
+    Loaded,
 }
 
 impl LevelInfo {
@@ -261,6 +291,7 @@ impl LevelInfo {
             1 => LevelInfo::ActiveScene,
             2 => LevelInfo::Scenes,
             3 => LevelInfo::Error,
+            4 => LevelInfo::Loaded,
             _ => return None,
         })
     }

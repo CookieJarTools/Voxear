@@ -1,7 +1,8 @@
 //! A level's own scenes, as the Inspector shows them for a `.level`
 //! selected in the Project, and the changes it makes to them: a scene added
 //! at the end, one put in another's place, one taken out, another made the
-//! active one, or one no longer required. Each change is written to the file at once, keeping its
+//! active one, one no longer required, or one loaded again on every level
+//! change. Each change is written to the file at once, keeping its
 //! comments and the rest as they were, as a material's fields are. A scene
 //! added is written by its GUID, so renaming it keeps the level working, with
 //! its path in a comment beside it, as the samples write them.
@@ -18,6 +19,9 @@ pub struct LevelEntry {
     pub active: bool,
     /// Off, the level passes over it if it fails to load.
     pub required: bool,
+    /// On, it loads again when the level comes in, even if the level before
+    /// had it loaded too.
+    pub reload: bool,
 }
 
 /// A change to a level's scenes, by their place in its file.
@@ -38,6 +42,7 @@ pub enum LevelEdit {
     /// This scene is the active one, and no other is marked so.
     Activate(usize),
     Require(usize, bool),
+    Reload(usize, bool),
 }
 
 /// A level file's own scenes, in order, not those of the level it stands on.
@@ -50,6 +55,7 @@ pub fn entries(text: &str) -> Result<Vec<LevelEntry>> {
             scene: table.get("scene").and_then(Item::as_str).unwrap_or_default().to_string(),
             active: flag(table, "active").unwrap_or(false),
             required: flag(table, "required").unwrap_or(true),
+            reload: flag(table, "reload").unwrap_or(false),
         })
         .collect();
     let active = entries.iter().rposition(|entry| entry.active).unwrap_or(0);
@@ -65,9 +71,11 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
     let count = scenes(&document).count();
     let index = match edit {
         LevelEdit::Add { .. } => None,
-        LevelEdit::Replace { at, .. } | LevelEdit::Remove(at) | LevelEdit::Activate(at) | LevelEdit::Require(at, _) => {
-            Some(*at)
-        }
+        LevelEdit::Replace { at, .. }
+        | LevelEdit::Remove(at)
+        | LevelEdit::Activate(at)
+        | LevelEdit::Require(at, _)
+        | LevelEdit::Reload(at, _) => Some(*at),
     };
     ensure!(index.is_none_or(|at| at < count), "the level has no scene {}", index.unwrap_or_default() + 1);
     let list = document.entry("scene").or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
@@ -101,6 +109,14 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
                 table.remove("required");
             } else {
                 table["required"] = value(false);
+            }
+        }
+        LevelEdit::Reload(at, reload) => {
+            let table = list.get_mut(*at).context("the scene is listed")?;
+            if *reload {
+                table["reload"] = value(true);
+            } else {
+                table.remove("reload");
             }
         }
     }
@@ -148,6 +164,9 @@ mod tests {
         assert!(marked.contains("required = false") && marked.contains("active = true"), "{marked}");
         let marked = edit(&marked, &LevelEdit::Require(0, true)).unwrap();
         assert!(!marked.contains("required"), "required is the default, so it is not written:\n{marked}");
+        let reloaded = edit(&marked, &LevelEdit::Reload(1, true)).unwrap();
+        assert!(entries(&reloaded).unwrap()[1].reload && reloaded.contains("reload = true"), "{reloaded}");
+        assert_eq!(edit(&reloaded, &LevelEdit::Reload(1, false)).unwrap(), marked, "off is the default, not written");
 
         let replaced =
             edit(&marked, &LevelEdit::Replace { at: 1, guid: "def".into(), path: "Scenes/Dusk.scene".into() });
@@ -158,7 +177,7 @@ mod tests {
         let taken = edit(&marked, &LevelEdit::Remove(1)).unwrap();
         assert_eq!(
             entries(&taken).unwrap(),
-            [LevelEntry { scene: listed[0].scene.clone(), active: true, required: true }]
+            [LevelEntry { scene: listed[0].scene.clone(), active: true, required: true, reload: false }]
         );
         let empty = edit(&taken, &LevelEdit::Remove(0)).unwrap();
         assert!(!empty.contains("[[scene]]") && empty.contains("stands_on"), "{empty}");

@@ -11,6 +11,7 @@ namespace Voxear.Interop
 		public const int LevelInfoActiveScene = 1;
 		public const int LevelInfoScenes = 2;
 		public const int LevelInfoError = 3;
+		public const int LevelInfoLoaded = 4;
 
 		public static NativeApi* Api;
 
@@ -330,6 +331,7 @@ namespace Voxear.Interop
 				UnloadRest = options.UnloadRest ? 1 : 0,
 				SetActive = options.SetActive ? 1 : 0,
 				TidyUp = options.TidyUp ? 1 : 0,
+				ReloadShared = options.ReloadShared ? 1 : 0,
 			};
 			var bytes = Encoding.UTF8.GetBytes(reference);
 			fixed (byte* text = bytes)
@@ -361,6 +363,40 @@ namespace Voxear.Interop
 			var known = id >= 0 && Api->LoadStatus((uint)id, &result) != 0;
 			status = known ? result : default;
 			return known;
+		}
+
+		/// <summary>Starts loading a scene in the background, to come in alongside those loaded, and returns its id, or -1.</summary>
+		public static int SceneLoadAsync(string reference, SceneLoadOptions options)
+		{
+			var data = new SceneLoadOptionsData
+			{
+				SetActive = options.SetActive ? 1 : 0,
+				Reload = options.Reload ? 1 : 0,
+				Hold = options.Hold ? 1 : 0,
+			};
+			var bytes = Encoding.UTF8.GetBytes(reference);
+			fixed (byte* text = bytes)
+			{
+				return Api->SceneLoadAsync(text, bytes.Length, &data);
+			}
+		}
+
+		public static void SceneUnload(string scene)
+		{
+			var bytes = Encoding.UTF8.GetBytes(scene);
+			fixed (byte* text = bytes)
+			{
+				Api->SceneUnload(text, bytes.Length);
+			}
+		}
+
+		public static void SceneSetActive(string scene)
+		{
+			var bytes = Encoding.UTF8.GetBytes(scene);
+			fixed (byte* text = bytes)
+			{
+				Api->SceneSetActive(text, bytes.Length);
+			}
 		}
 
 		public static void AllowActivation(int id, bool allow)

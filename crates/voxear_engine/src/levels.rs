@@ -122,11 +122,15 @@ pub struct LevelOptions {
     pub set_active: bool,
     /// Free what nothing uses once the change is over.
     pub tidy_up: bool,
+    /// Load again the scenes the new level shares with those loaded now,
+    /// as if each were marked `reload`. For a single scene loaded alongside
+    /// ([`Levels::add_scene`]), load it again if it is loaded already.
+    pub reload_shared: bool,
 }
 
 impl Default for LevelOptions {
     fn default() -> Self {
-        Self { hold: false, least_time: 0.0, unload_rest: true, set_active: true, tidy_up: true }
+        Self { hold: false, least_time: 0.0, unload_rest: true, set_active: true, tidy_up: true, reload_shared: false }
     }
 }
 
@@ -267,6 +271,48 @@ impl Levels {
         Ok(true)
     }
 
+    /// Loads one scene alongside those loaded, as scripts' `Scene.LoadAsync`
+    /// does, without a level: nothing else unloads. A scene loaded already
+    /// stays as it is, unless [`LevelOptions::reload_shared`] asks for it to
+    /// load again; with [`LevelOptions::set_active`], it becomes the active
+    /// scene. The other options are a level change's.
+    pub fn add_scene(
+        &mut self,
+        engine: &mut Engine,
+        content: &mut Content,
+        renderer: Option<&mut Renderer>,
+        scene: &str,
+        options: &LevelOptions,
+    ) -> Result<LevelChange> {
+        let (guid, path) = find_scene(content, scene)?;
+        let mut change = LevelChange::default();
+        if options.reload_shared && self.close_scene(engine, guid)? {
+            change.unloaded.push(path.clone());
+        }
+        match self.open_scene_alongside(engine, content, renderer, guid)? {
+            true => change.loaded.push(path),
+            false => change.kept.push(path),
+        }
+        if options.set_active {
+            self.set_active_scene(engine, guid)?;
+        }
+        Ok(change)
+    }
+
+    /// Makes a loaded scene the active one: where Objs made at runtime go,
+    /// and whose sky and post-processing are used. Objs made at runtime
+    /// before stay with the scene that was active then. Returns whether the
+    /// scene is loaded.
+    pub fn set_active_scene(&mut self, engine: &mut Engine, scene: AssetGuid) -> Result<bool> {
+        if !self.scenes.iter().any(|s| s.guid == scene) {
+            return Ok(false);
+        }
+        self.adopt_runtime_objs(engine);
+        self.active = Some(scene);
+        self.apply_environment(engine)?;
+        Ok(true)
+    }
+
     /// Closes one open scene, unloading its Objs; persistent ones stay only
     /// while the game runs. If it was the active scene, the last one open is
     /// now. Returns whether it was open.
@@ -306,7 +352,7 @@ impl Levels {
 
         let mut kept = Vec::new();
         for scene in std::mem::take(&mut self.scenes) {
-            let wanted = targets.iter().any(|t| t.guid == scene.guid && !t.reload);
+            let wanted = targets.iter().any(|t| t.guid == scene.guid && !t.reload && !options.reload_shared);
             let unwanted = !targets.iter().any(|t| t.guid == scene.guid);
             if wanted || (unwanted && !options.unload_rest) {
                 change.kept.push(scene.path.clone());

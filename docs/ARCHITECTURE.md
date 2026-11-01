@@ -336,8 +336,22 @@ and a positive pitch looks down.
     - `IsReady`, `IsDone`, `Error`, and the `Scenes` it brought in
     - awaiting it carries on once the level is in, and throws `LevelLoadException` if the change failed
     - `LevelLoadOptions`: `Straight` or `Held` (wait at `IsReady` until `Activate()`), `LeastTime` (a change takes at
-      least this long, so a loading screen is seen), `UnloadRest`, `SetActive` and `TidyUp` (free what nothing uses
-      once it is over); `LoadAsync(level, activate: false)` is the same as `Held`
+      least this long, so a loading screen is seen), `UnloadRest`, `SetActive`, `TidyUp` (free what nothing uses
+      once it is over) and `ReloadShared` (the scenes both levels have load again, as if each were marked `reload`);
+      `LoadAsync(level, activate: false)` is the same as `Held`
+  - **No handle needed** *(implemented)*: the change going on is `Level.Current`, so `Level.Progress` (1 when none
+    is going on), `Level.IsReady`, `Level.Activate()`, `Level.Next` (the level coming in) and `Level.Error` read and
+    drive it from anywhere, and a loading screen binds to them. They cost no more than reading a field. The same
+    shape is meant for other APIs with one obvious thing in flight: the easy form reads it, and the handle stays for
+    those who want it. Where the easy form costs more, its documentation says so.
+  - **Single scenes** *(implemented)*, for games that want more say than levels give: `Scene.LoadAsync(scene,
+    options)` loads one in the background alongside those loaded (`LoadTarget::Scene`, then `Levels::add_scene`),
+    waiting at ready as a level does; `SceneLoadOptions` has `SetActive`, `Reload` and `Hold`.
+    `Scene.ReloadAsync`, `Scene.Unload` and `Scene.SetActive` (both at the end of the frame), `Scene.Loaded` and
+    `Scene.IsLoaded` (which ask the engine and make a list each time), and, as for levels, `Scene.Current`,
+    `Progress`, `IsLoading`, `IsReady` and `Activate()`. A scene loaded this way raises `Level.SceneLoaded` too.
+    The level stays the level: its next change unloads the scenes it does not want, these with them, unless that
+    change has `UnloadRest` off.
 
     ```csharp
     var switching = Level.LoadAsync("Levels/Night.level", LevelLoadOptions.Held);

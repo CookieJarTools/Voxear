@@ -6,8 +6,9 @@
 //! its last build describes them, then its code, coloured as a code editor
 //! colours it, as a UI document shows its markup. A prefab and a scene list their Objs. A
 //! level lists the level it stands on and its own scenes, each a reference
-//! to a scene with whether it is the active one and whether it is required,
-//! and a button to take it out. As an Obj's references do, a scene's field
+//! to a scene with whether it is the active one, whether it is required and
+//! whether it loads again on every level change, and a button to take it
+//! out. As an Obj's references do, a scene's field
 //! pings the scene in the Project on a click, opens the object picker from
 //! its arrow to put another in its place, and takes a scene dropped on it;
 //! Add Scene opens the picker for a new one, and takes a scene dropped on it
@@ -78,14 +79,15 @@ struct LevelFields {
 }
 
 /// One of a level's scenes: its reference field and the field's arrow, the
-/// scene's project path, and its active and required boxes and remove
-/// button.
+/// scene's project path, and its Active, Required and Reload boxes and
+/// remove button.
 struct SceneRow {
     field: NodeId,
     arrow: NodeId,
     path: String,
     active: NodeId,
     required: NodeId,
+    reload: NodeId,
     remove: NodeId,
 }
 
@@ -437,9 +439,10 @@ fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Opt
             toggle
         };
         let (active, required) = (check("Active", entry.active), check("Required", entry.required));
+        let reload = check("Reload", entry.reload);
         let remove = ui.icon_button(row, "close");
         ui.add_class(remove, "list-remove");
-        scenes.push(SceneRow { field, arrow, path, active, required, remove });
+        scenes.push(SceneRow { field, arrow, path, active, required, reload, remove });
     }
     let add = ui.button(rows, "Add Scene");
     ui.add_class(add, "add-component");
@@ -481,6 +484,9 @@ impl LevelFields {
             }
             if ui.changed(scene.required) {
                 return edit(LevelEdit::Require(at, ui.is_checked(scene.required)));
+            }
+            if ui.changed(scene.reload) {
+                return edit(LevelEdit::Reload(at, ui.is_checked(scene.reload)));
             }
             if ui.clicked(scene.remove) {
                 return edit(LevelEdit::Remove(at));

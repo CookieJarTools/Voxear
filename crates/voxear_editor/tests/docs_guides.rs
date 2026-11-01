@@ -84,11 +84,16 @@ fn a_guides_step_runs_a_command_and_its_check_ticks() {
     editor.palette_key(voxear_editor::PaletteKey::Enter);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
-    assert_eq!(texts(&editor.ui, "cb-progress-line"), ["1 of 4 steps done"], "Hello has its lamp already");
+    assert_eq!(texts(&editor.ui, "cb-progress-line"), ["1 of 5 steps done"], "Hello has its lamp already");
 
     let mut buttons = Vec::new();
     with_class(&editor.ui, root, "md-step-action", &mut buttons);
     let light = buttons.into_iter().find(|&b| editor.ui.text(b) == "Add a point light").expect("the step's button");
+    // Scrolled to, as the page runs past the panel.
+    let page = editor.ui.find(root, "cb-page").unwrap();
+    let down = editor.ui.rect(light)[1] - editor.ui.rect(page)[1] - 40.0;
+    editor.ui.set_scroll(page, [0.0, down.max(0.0)]);
+    frame(&mut editor, &mut renderer);
     let [x, y, w, h] = editor.ui.rect(light);
     editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
     editor.ui.pointer_button(true);
@@ -98,7 +103,7 @@ fn a_guides_step_runs_a_command_and_its_check_ticks() {
     let world = &editor.game.engine.world;
     let names = world.query_ref::<&voxear_scene::Name>().into_iter().filter(|n| n.0 == "Point Light").count();
     assert_eq!(names, 1, "the command made the light");
-    assert_eq!(texts(&editor.ui, "cb-progress-line"), ["3 of 4 steps done"], "the action and its check");
+    assert_eq!(texts(&editor.ui, "cb-progress-line"), ["3 of 5 steps done"], "the action and its check");
 }
 
 #[test]

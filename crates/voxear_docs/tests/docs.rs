@@ -786,7 +786,7 @@ fn image_link_and_action_put_markdown_in_while_writing() {
     click(&mut ui, action);
     frame(&mut ui, &mut docs);
     assert!(docs.take_commands_wanted());
-    docs.open_action_menu(&mut ui, &["Play".to_string(), "New Point Light".to_string()]);
+    docs.open_action_menu(&mut ui, &["Play".to_string(), "New Point Light".to_string()], &[]);
     frame(&mut ui, &mut docs);
     choose(&mut ui, &mut docs, "New Point Light");
     assert!(ui.text(source).contains("[New Point Light](<action:New Point Light>)"), "{}", ui.text(source));

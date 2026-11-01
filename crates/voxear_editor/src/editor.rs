@@ -270,6 +270,8 @@ pub struct Editor {
     animations: Vec<docs_pictures::Animation>,
     /// A picture or recording being taken for the VoxDocs page written.
     docs_capture: Option<docs_capture::Taking>,
+    /// When a VoxDocs guide's checks written in C# last ran.
+    code_checked: Option<Instant>,
     field_previews: previews::FieldPreviews,
     inspector_preview: Option<previews::InspectorPreview>,
     /// A material changed, so field previews are drawn again.
@@ -476,6 +478,7 @@ impl Editor {
             live_fields: Vec::new(),
             animations: Vec::new(),
             docs_capture: None,
+            code_checked: None,
             field_previews: previews::FieldPreviews::default(),
             inspector_preview: None,
             redraw_field_previews: false,

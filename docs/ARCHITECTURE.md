@@ -1691,19 +1691,21 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   Hello's GameManager has both.
 - **Step-by-step guides**: a link to an action or a check on a line of its own is a step. `[Add a light](<action:New
   Point Light>)` is a button that runs the command with that title, as the command bar lists it: the editor's own, or
-  a script's `[Command]`, run on the edited level and undone as one step. `action:create/Material` makes an asset as
-  the Project panel's New menu does (a Folder, Scene, Level, Material or Script), and
-  `<action:create/Material?at=Materials/Brass.material>` makes it just there, or finds it there already, showing it in
-  the Project panel. A check ticks itself while what it looks for is there, and says under it what is still to do:
-  `check:obj/Sun` for an Obj by name, `check:component/Light` for an Obj with a component or a behaviour, and
-  `check:file/Prefabs/Lamp.prefab` for a file. The editor runs the actions and looks at the checks for the page being
-  read. A page with steps says how many are done, with Reset to start again; the actions each person has run are kept
-  on their machine in `.voxear/VoxDocs.toml`. Hello's VoxDocs Guide has one.
+  a script's `[Command]`, run on the edited level and undone as one step (a title with spaces goes in angle brackets,
+  as any address with spaces does). `action:create/Material` makes an asset as the Project panel's New menu does (a
+  Folder, Scene, Level, Material or Script), and `<action:create/Material?at=Materials/Brass.material>` makes it just
+  there, or finds it there already, showing it in the Project panel. A check ticks itself while what it looks for is
+  there, and says under it what is still to do: `check:obj/Sun` for an Obj by name, `check:component/Light` for an Obj
+  with a component or a behaviour, `check:file/Prefabs/Lamp.prefab` for a file, and
+  `check:code/Hello.Tools.SpinnerAOnTheRight` for a check written in C#: a static method marked `[DocsCheck("…")]`,
+  returning `bool`, or `string` with what is still to do. It runs through the scripts (`ScriptRuntime::run_check`)
+  against the edited level, once a second; the first starts the scripts, without playing, if nothing has; while
+  playing it runs against the game. The editor runs the actions and looks at the checks for the page being read. A
+  page with steps says how many are done, with Reset to start again; the actions each person has run are kept on their
+  machine in `.voxear/VoxDocs.toml`. Hello's VoxDocs Guide has one, with a check in Hello's `Tools.cs`.
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
-**Still to come**, as the Unity Cookbook has them:
-- **Checks written in C#** for guides (`[DocsCheck]`, a static method returning whether it passes or what is still
-  wrong), which need the scripts to hand back a value.
+**Still to come**:
 - **The engine's own documentation**, as a section of VoxDocs beside the project's pages, shipped with each engine
   version: how to use each part of Voxear, from first steps to the advanced paths. It is written for people to
   read: plain words and short sentences, each term explained where it first appears, an example before the

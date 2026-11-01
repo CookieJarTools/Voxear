@@ -50,6 +50,19 @@ pub struct ScriptTypes {
     pub structs: BTreeMap<String, NestedType>,
     #[serde(default)]
     pub commands: Vec<ScriptCommand>,
+    /// The `[DocsCheck]` methods, for a VoxDocs guide's checks.
+    #[serde(default)]
+    pub checks: Vec<ScriptCheck>,
+}
+
+/// A static method marked `[DocsCheck]`: what its step says, and where it
+/// is, which a page names as `check:code/<type>.<method>`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptCheck {
+    pub title: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub method: String,
 }
 
 /// A C# system: its full name, the engine stage it runs in ("Update"),

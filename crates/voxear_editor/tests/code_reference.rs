@@ -177,3 +177,48 @@ fn the_inspector_shows_and_opens_what_code_documents() {
     assert!(label(&editor.ui, docs, "GameManager.cycle").is_some(), "with what points at it");
     shot(&mut renderer, "docs-in-the-code.png");
 }
+
+#[test]
+fn a_guides_check_written_in_csharp_ticks_once_its_step_has_run() {
+    let Some(mut renderer) = renderer() else { return };
+    let dir = hello_copy();
+    let guide = "[Swap the spinners](<action:Swap Spinners>)\n\n\
+                 [Spinner A stands on the right](check:code/Hello.Tools.SpinnerAOnTheRight)\n";
+    std::fs::write(dir.path().join("Docs/Spinner Guide.md"), guide).unwrap();
+    let mut editor = open_described(&mut renderer, &dir);
+    let root = editor.ui.root();
+    let dock = editor.ui.find(root, "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "docs");
+    frame(&mut editor, &mut renderer);
+    let field = editor.ui.find(root, "command").unwrap();
+    editor.ui.focus(field);
+    editor.ui.text_input("spinner guide");
+    frame(&mut editor, &mut renderer);
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let line = |editor: &voxear_editor::Editor| {
+        let mut lines = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "cb-progress-line", &mut lines);
+        lines.first().map(|&l| editor.ui.text(l)).unwrap_or_default()
+    };
+    assert_eq!(line(&editor), "0 of 2 steps done", "the page with its two steps");
+
+    // The check starts the scripts, without playing, and says what is still to do.
+    let started = std::time::Instant::now();
+    while label(&editor.ui, root, "Spinner A is on the left").is_none() {
+        assert!(started.elapsed().as_secs() < 300, "the check never answered");
+        assert!(!editor.is_playing(), "a check does not play");
+        frame(&mut editor, &mut renderer);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, root, "md-step-action", &mut buttons);
+    click(&mut editor, &mut renderer, buttons[0]);
+    let started = std::time::Instant::now();
+    while line(&editor) != "2 of 2 steps done" {
+        assert!(started.elapsed().as_secs() < 30, "the check never ticked: {}", line(&editor));
+        frame(&mut editor, &mut renderer);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}

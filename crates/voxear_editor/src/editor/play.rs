@@ -71,11 +71,14 @@ pub(super) struct Play {
     /// A `[Command]` to run once the scripts are built and started, instead
     /// of playing: its type and method.
     command: Option<(String, String)>,
+    /// The scripts are being built and started for a VoxDocs guide's checks,
+    /// not to play.
+    start_only: bool,
 }
 
 impl Play {
     pub fn new() -> Self {
-        Self { mode: Mode::Editing, scripts: None, ready: false, error: None, command: None }
+        Self { mode: Mode::Editing, scripts: None, ready: false, error: None, command: None, start_only: false }
     }
 
     /// What the status bar says the editor is doing.
@@ -210,6 +213,33 @@ impl Editor {
         if let Err(error) = ran {
             tracing::error!("{error:#}");
             self.notify(&format!("{error}"));
+        }
+    }
+
+    /// Runs a guide's check written in C# (`[DocsCheck]`): against the game
+    /// while playing, or the edited level once the scripts have started,
+    /// which the first check asks for, without playing. `None` until they
+    /// have.
+    pub(super) fn run_script_check(&mut self, type_name: &str, method: &str) -> Option<Result<Result<(), String>>> {
+        match &self.play.mode {
+            Mode::Playing(_) => Some(self.game.engine.run_check(type_name, method)),
+            Mode::Building(_) => None,
+            // Not again and again for a project with no scripts, or scripts that would not build or start.
+            Mode::Editing if self.play.ready && self.play.scripts.is_none() => {
+                Some(Err(anyhow::anyhow!("this project has no scripts")))
+            }
+            Mode::Editing if self.play.error.is_some() => {
+                Some(Err(anyhow::anyhow!("the scripts did not build or start; the Console says why")))
+            }
+            Mode::Editing if !self.play.ready => {
+                self.play.start_only = true;
+                self.build_scripts();
+                None
+            }
+            Mode::Editing => {
+                let scripts = self.play.scripts.as_mut()?;
+                Some(scripts.run_check(&mut self.game.engine.world, type_name, method))
+            }
         }
     }
 
@@ -390,6 +420,7 @@ impl Editor {
             }
             return match self.play.command.take() {
                 Some((type_name, method)) => self.run_script_command(&type_name, &method),
+                None if std::mem::take(&mut self.play.start_only) => {}
                 None => self.start_run(renderer),
             };
         }
@@ -401,6 +432,7 @@ impl Editor {
                 self.play.mode = Mode::Editing;
                 match self.play.command.take() {
                     Some((type_name, method)) => self.run_script_command(&type_name, &method),
+                    None if std::mem::take(&mut self.play.start_only) => {}
                     None => self.start_run(renderer),
                 }
             }

@@ -303,6 +303,9 @@ Done so far:
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
+- **Guide checks written in C#:** `[DocsCheck]` static methods, listed by ScriptInfo and in Action…, that a page's
+  `check:code/` step runs through the scripts against the edited level, starting them without playing. That finishes
+  the VoxDocs parts the Cookbook has.
 - **VoxDocs' tags while writing and among many:** a page's tags as chips with the project's tags suggested, and a
   box that finds a tag when there are more than show at first.
 - **Scene captures and GIF recordings in VoxDocs:** Capture Scene, Record Scene and Record Game put a PNG or a
@@ -355,7 +358,6 @@ Still to do in M3:
     analyzer, and custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
-- **VoxDocs' next parts** (see "VoxDocs" in the architecture): checks written in C# for guides.
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
   with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
   person explains things: clear and short, plain words, each term explained where it first appears, an example

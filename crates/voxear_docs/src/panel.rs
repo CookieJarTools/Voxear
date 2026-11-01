@@ -541,9 +541,10 @@ impl VoxDocs {
         std::mem::take(&mut self.wants_commands)
     }
 
-    /// Action…'s menu: the three kinds of check, then a step for each of
-    /// `commands`, by their titles as the command bar lists them.
-    pub fn open_action_menu(&mut self, ui: &mut Ui, commands: &[String]) {
+    /// Action…'s menu: the kinds of check, then a step for each of
+    /// `commands`, by their titles as the command bar lists them, and for
+    /// each of the scripts' `checks`, by title and class and method.
+    pub fn open_action_menu(&mut self, ui: &mut Ui, commands: &[String], checks: &[(String, String)]) {
         let examples = [
             ("Check: there is an Obj called…", "[There is a Sun](check:obj/Sun)"),
             ("Check: an Obj has a component…", "[The level is lit](check:component/Light)"),
@@ -555,6 +556,9 @@ impl VoxDocs {
         for title in commands {
             let step = format!("[{title}]({})", address(&format!("{ACTION_SCHEME}{title}")));
             items.push((title.clone(), alone(&step)));
+        }
+        for (title, code) in checks {
+            items.push((format!("Check: {title}"), alone(&format!("[{title}]({CHECK_SCHEME}code/{code})"))));
         }
         self.open_insert_menu(ui, self.nodes.insert_action, items);
     }

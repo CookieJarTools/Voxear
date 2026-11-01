@@ -8,6 +8,10 @@
 //! - `check:component/Light`: some Obj has a Light, or a behaviour of that
 //!   name, as `Spinner` or `Hello.Spinner`.
 //! - `check:file/Prefabs/Lamp.prefab`: the project has that file.
+//! - `check:code/Hello.Tools.LampsAreLit`: a static method of the scripts,
+//!   marked `[DocsCheck]`, passes. It runs against the edited level, once
+//!   the scripts have started, which the first such check asks for without
+//!   playing; while playing, against the game. These run once a second.
 //!
 //! An action can also make an asset, as the Project panel's New menu does:
 //! `action:create/Material` beside the project's others, under a name of its
@@ -18,6 +22,8 @@
 //!
 //! While a page is written, its Action… menu lists the same commands, to
 //! put a step in at the cursor.
+
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use voxear_ecs::Entity;
@@ -33,14 +39,21 @@ use crate::{
     props::{self, Part},
 };
 
-/// What a guide's step that makes an asset starts with, after `action:`.
+/// What a guide's step that makes an asset starts with, after `action:`;
+/// what a check written in C# starts with, after `check:`; and how often
+/// those run, as each calls into the scripts.
 const CREATE: &str = "create/";
+const CODE: &str = "code/";
+const CODE_EVERY: Duration = Duration::from_secs(1);
 
 impl Editor {
     pub(super) fn update_docs_steps(&mut self, renderer: &mut Renderer) {
         if self.docs.take_commands_wanted() {
             let titles = palette::command_titles(&self.command_sources());
-            self.docs.open_action_menu(&mut self.ui, &titles);
+            let checks = &self.inspector.types().checks;
+            let checks: Vec<(String, String)> =
+                checks.iter().map(|c| (c.title.clone(), format!("{}.{}", c.type_name, c.method))).collect();
+            self.docs.open_action_menu(&mut self.ui, &titles, &checks);
         }
         if let Some(title) = self.docs.take_action_request() {
             if let Some(what) = title.strip_prefix(CREATE) {
@@ -58,9 +71,17 @@ impl Editor {
                 None => self.notify(&format!("There is no command called {title}")),
             }
         }
+        let code_due = self.code_checked.is_none_or(|at| at.elapsed() >= CODE_EVERY);
         for check in self.docs.wanted_checks() {
+            let code = check.starts_with(CODE);
+            if code && !code_due {
+                continue;
+            }
             let found = self.check(&check);
             self.docs.set_check(&mut self.ui, &check, found);
+            if code {
+                self.code_checked = Some(Instant::now());
+            }
         }
     }
 
@@ -105,7 +126,10 @@ impl Editor {
     }
 
     /// What a guide's check finds: nothing wrong, or what is still to do.
-    fn check(&self, check: &str) -> std::result::Result<(), String> {
+    fn check(&mut self, check: &str) -> std::result::Result<(), String> {
+        if let Some(code) = check.strip_prefix(CODE) {
+            return self.code_check(code);
+        }
         let world = &self.game.engine.world;
         let objs: Vec<Entity> =
             world.query_ref::<(Entity, &Name)>().without::<EditorOnly>().into_iter().map(|(e, _)| e).collect();
@@ -124,6 +148,25 @@ impl Editor {
             "component" => format!("No Obj has a {wanted} yet"),
             _ => format!("There is no {wanted} in the project yet"),
         })
+    }
+}
+
+impl Editor {
+    /// A check written in C#, by its class and method, as the scripts answer
+    /// it: what it says is still to do, or "Not yet" when it only said no.
+    fn code_check(&mut self, code: &str) -> std::result::Result<(), String> {
+        let Some((type_name, method)) = code.rsplit_once('.') else {
+            return Err(format!(
+                "A check written in C# names its class and method, as Hello.Tools.LampsAreLit: not {code}"
+            ));
+        };
+        match self.run_script_check(type_name, method) {
+            None => Err("Waiting for the scripts to build and start".to_string()),
+            Some(Ok(Ok(()))) => Ok(()),
+            Some(Ok(Err(why))) if why.trim().is_empty() => Err("Not yet".to_string()),
+            Some(Ok(Err(why))) => Err(why),
+            Some(Err(error)) => Err(format!("The check could not run: {error:#}")),
+        }
     }
 }
 

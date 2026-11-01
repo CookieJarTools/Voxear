@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Text.Json;
 using Voxear.Scripting;
@@ -74,6 +75,18 @@ namespace Voxear.Tests
 			var tidy = commands[0];
 			Check.True(tidy.GetProperty("title").GetString() == "Tidy Up" && tidy.GetProperty("keys").GetString() == "Ctrl+Shift+T", "its title and keys");
 			Check.True(tidy.GetProperty("type").GetString() == "Voxear.Tests.TestCommands" && tidy.GetProperty("method").GetString() == "TidyUp", "and where it is");
+		}
+
+		[Test]
+		private static void GuideChecksAreListedWithTheirTitles()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestDocsChecks).Assembly));
+			var checks = document.RootElement.GetProperty("checks").EnumerateArray()
+				.Where(c => c.GetProperty("type").GetString() == "Voxear.Tests.TestDocsChecks")
+				.Select(c => c.GetProperty("title").GetString() + " " + c.GetProperty("method").GetString())
+				.OrderBy(c => c, StringComparer.Ordinal)
+				.ToList();
+			Check.True(checks.SequenceEqual(new[] { "The door is shut DoorIsShut", "The lamps are lit LampsAreLit" }), string.Join(", ", checks));
 		}
 
 		[Test]

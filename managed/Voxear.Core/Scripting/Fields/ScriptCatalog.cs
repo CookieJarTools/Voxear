@@ -41,6 +41,7 @@ namespace Voxear.Scripting
 				WriteSystems(json, assembly);
 				WriteNestedTypes(json, types, nested);
 				WriteCommands(json, assembly);
+				WriteChecks(json, assembly);
 				json.WriteEndObject();
 			}
 			return Encoding.UTF8.GetString(stream.ToArray());
@@ -244,6 +245,40 @@ namespace Voxear.Scripting
 			json.WriteStartObject();
 			json.WriteString("title", command.Title);
 			json.WriteString("keys", command.Keys);
+			json.WriteString("type", type.FullName);
+			json.WriteString("method", method.Name);
+			json.WriteEndObject();
+		}
+
+		/// <summary>The <c>[DocsCheck]</c> methods, which a VoxDocs page's Action… menu lists for a guide's steps.</summary>
+		private static void WriteChecks(Utf8JsonWriter json, Assembly assembly)
+		{
+			json.WriteStartArray("checks");
+			foreach (var type in Loadable(assembly))
+			{
+				if (type == null)
+				{
+					continue;
+				}
+				foreach (var method in type.GetMethods(Static))
+				{
+					WriteCheck(json, type, method);
+				}
+			}
+			json.WriteEndArray();
+		}
+
+		private static void WriteCheck(Utf8JsonWriter json, Type type, MethodInfo method)
+		{
+			var check = method.GetCustomAttribute<DocsCheckAttribute>();
+			var answers = method.ReturnType == typeof(bool) || method.ReturnType == typeof(string);
+			if (check == null || method.GetParameters().Length > 0 || !answers)
+			{
+				return;
+			}
+
+			json.WriteStartObject();
+			json.WriteString("title", check.Title);
 			json.WriteString("type", type.FullName);
 			json.WriteString("method", method.Name);
 			json.WriteEndObject();

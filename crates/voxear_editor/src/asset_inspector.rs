@@ -5,9 +5,13 @@
 //! the fields of the behaviour it declares, with their starting values, as
 //! its last build describes them, then its code, coloured as a code editor
 //! colours it, as a UI document shows its markup. A prefab and a scene list their Objs. A
-//! level lists the level it stands on and its own scenes, each with whether
-//! it is the active one and whether it is required, and a button to take
-//! it out; Add Scene offers the project's other scenes (see `level_files`).
+//! level lists the level it stands on and its own scenes, each a reference
+//! to a scene with whether it is the active one and whether it is required,
+//! and a button to take it out. As an Obj's references do, a scene's field
+//! pings the scene in the Project on a click, opens the object picker from
+//! its arrow to put another in its place, and takes a scene dropped on it;
+//! Add Scene opens the picker for a new one, and takes a scene dropped on it
+//! too (see `level_files`).
 //! Levels, scenes, prefabs and scripts have an Open button; a prefab opens
 //! on its own, to edit. A material, prefab or model shows a large preview
 //! of itself under its name, which a drag turns.
@@ -20,7 +24,7 @@
 
 use voxear_assets::{AssetKind, ModelImport, Normals, Tangents, Units};
 use voxear_engine::{Game, MaterialData, script_types::ScriptTypes};
-use voxear_ui::{MenuItem, NodeId, PickedColor, Style, Ui};
+use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
     inspector::{color_row, number, prop},
@@ -41,6 +45,22 @@ pub enum AssetAction {
     /// Write these import settings for the model at this path, and import
     /// it again.
     Reimport(String, ModelImport),
+    /// Open the object picker under `anchor` for the scene at this place in
+    /// the level at this path, or for a new one.
+    BrowseScene {
+        level: String,
+        at: Option<usize>,
+        anchor: NodeId,
+    },
+    /// Something was dragged onto the scene at this place in the level at
+    /// this path, or onto Add Scene.
+    DropScene {
+        level: String,
+        at: Option<usize>,
+        source: DragSource,
+    },
+    /// Show where the asset at this path is in the Project panel.
+    Ping(String),
 }
 
 pub struct AssetView {
@@ -53,13 +73,22 @@ pub struct AssetView {
     preview: Option<(NodeId, NodeId)>,
 }
 
-/// A level's own scenes: each one's active and required boxes and remove
-/// button, in the file's order, then Add Scene and the scenes it offers, by
-/// GUID and path.
+/// A level's own scenes, in the file's order, then Add Scene.
 struct LevelFields {
-    scenes: Vec<[NodeId; 3]>,
+    scenes: Vec<SceneRow>,
     add: NodeId,
-    offered: Vec<(String, String)>,
+}
+
+/// One of a level's scenes: its reference field and the field's arrow, the
+/// scene's project path, and its active and required boxes and remove
+/// button.
+struct SceneRow {
+    field: NodeId,
+    arrow: NodeId,
+    path: String,
+    active: NodeId,
+    required: NodeId,
+    remove: NodeId,
 }
 
 /// A material's fields, and the values they were last saved with.
@@ -186,8 +215,8 @@ impl AssetView {
         if let Some(settings) = self.import.as_mut().and_then(|import| import.update(ui)) {
             return Some(AssetAction::Reimport(self.item.path.clone(), settings));
         }
-        if let Some(edit) = self.level.as_ref().and_then(|level| level.update(ui)) {
-            return Some(AssetAction::EditLevel(self.item.path.clone(), edit));
+        if let Some(action) = self.level.as_ref().and_then(|level| level.update(ui, &self.item.path)) {
+            return Some(action);
         }
         let fields = self.material.as_mut()?;
         let changed = fields.color.iter().chain(&fields.emissive).chain([&fields.metallic, &fields.roughness]);
@@ -495,64 +524,75 @@ fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Opt
     }
     let mut scenes = Vec::new();
     for entry in &entries {
-        let path = asset_path(game, &entry.scene);
+        let found = game.content.parse(&entry.scene).ok().and_then(|r| r.guid()).and_then(|g| game.content.db().get(g));
+        let path = found.map_or_else(|| entry.scene.clone(), |found| found.path.clone());
+        let row = ui.panel(rows, Style::row());
+        ui.add_class(row, "level-scene");
+        let field = ui.panel(row, Style::row());
+        ui.add_class(field, "value-picker");
+        ui.accept_drops(field, true);
+        let icon = ui.icon(field, "scene");
+        ui.add_class(icon, "picker-icon");
         let name = path.rsplit('/').next().unwrap_or(&path);
-        let row = prop(ui, rows, name.rsplit_once('.').map_or(name, |(stem, _)| stem));
-        let holder = ui.panel(row, Style::row());
-        ui.add_class(holder, "prop-value");
+        let name = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+        let label = ui.add_label(field, &if found.is_some() { name.to_string() } else { format!("Missing ({name})") });
+        ui.add_class(label, "picker-label");
+        let arrow = ui.icon_button(field, "chevron-down");
+        ui.add_class(arrow, "picker-arrow");
         let mut check = |label: &str, on: bool| {
-            let toggle = ui.toggle(holder, label, on);
+            let toggle = ui.toggle(row, label, on);
             ui.add_class(toggle, "checkbox");
             ui.add_class(toggle, "level-flag");
             toggle
         };
         let (active, required) = (check("Active", entry.active), check("Required", entry.required));
-        let remove = ui.icon_button(holder, "close");
+        let remove = ui.icon_button(row, "close");
         ui.add_class(remove, "list-remove");
-        scenes.push([active, required, remove]);
+        scenes.push(SceneRow { field, arrow, path, active, required, remove });
     }
     let add = ui.button(rows, "Add Scene");
     ui.add_class(add, "add-component");
-    let listed: Vec<Option<voxear_assets::AssetGuid>> =
-        entries.iter().map(|entry| game.content.parse(&entry.scene).ok().and_then(|r| r.guid())).collect();
-    let mut offered: Vec<(String, String)> = (game.content.db().entries())
-        .filter(|e| e.kind == AssetKind::Scene && !listed.contains(&Some(e.guid)))
-        .map(|e| (e.guid.to_string(), e.path.clone()))
-        .collect();
-    offered.sort_by(|a, b| a.1.cmp(&b.1));
-    Some(LevelFields { scenes, add, offered })
+    ui.accept_drops(add, true);
+    Some(LevelFields { scenes, add })
 }
 
 impl LevelFields {
-    /// The change asked for this frame: a scene picked from Add Scene's
-    /// menu, a box ticked, or a scene taken out. The active box is ticked
-    /// on another scene to move it; ticked off, it stays, as one scene is
-    /// always the active one.
-    fn update(&self, ui: &mut Ui) -> Option<LevelEdit> {
-        if let Some(index) = ui.menu_choice(self.add) {
-            let (guid, path) = self.offered.get(index)?.clone();
-            return Some(LevelEdit::Add { guid, path });
+    /// What was asked this frame of the level at `level`: a scene's field
+    /// clicked, its arrow, or something dropped on it; Add Scene clicked or
+    /// dropped on; a box ticked, or a scene taken out. The active box is
+    /// ticked on another scene to move it; ticked off, it stays, as one
+    /// scene is always the active one.
+    fn update(&self, ui: &mut Ui, level: &str) -> Option<AssetAction> {
+        let level = level.to_string();
+        let edit = |edit: LevelEdit| Some(AssetAction::EditLevel(level.clone(), edit));
+        if let Some(source) = ui.dropped_onto(self.add) {
+            return Some(AssetAction::DropScene { level, at: None, source });
         }
         if ui.clicked(self.add) {
-            let [x, y, _, height] = ui.rect(self.add);
-            let items: Vec<MenuItem> = match self.offered.is_empty() {
-                true => vec![MenuItem::new("Every scene is in this level").enabled(false)],
-                false => self.offered.iter().map(|(_, path)| MenuItem::new(path)).collect(),
-            };
-            ui.open_menu(self.add, (x, y + height + 4.0), &items);
+            return Some(AssetAction::BrowseScene { level, at: None, anchor: self.add });
         }
-        for (at, &[active, required, remove]) in self.scenes.iter().enumerate() {
-            if ui.changed(active) {
-                if ui.is_checked(active) {
-                    return Some(LevelEdit::Activate(at));
+        for (at, scene) in self.scenes.iter().enumerate() {
+            if let Some(source) = ui.dropped_onto(scene.field) {
+                return Some(AssetAction::DropScene { level, at: Some(at), source });
+            }
+            // The arrow first, as a click on it is a click on the field too.
+            if ui.clicked(scene.arrow) {
+                return Some(AssetAction::BrowseScene { level, at: Some(at), anchor: scene.field });
+            }
+            if ui.clicked(scene.field) {
+                return Some(AssetAction::Ping(scene.path.clone()));
+            }
+            if ui.changed(scene.active) {
+                if ui.is_checked(scene.active) {
+                    return edit(LevelEdit::Activate(at));
                 }
-                ui.set_checked(active, true);
+                ui.set_checked(scene.active, true);
             }
-            if ui.changed(required) {
-                return Some(LevelEdit::Require(at, ui.is_checked(required)));
+            if ui.changed(scene.required) {
+                return edit(LevelEdit::Require(at, ui.is_checked(scene.required)));
             }
-            if ui.clicked(remove) {
-                return Some(LevelEdit::Remove(at));
+            if ui.clicked(scene.remove) {
+                return edit(LevelEdit::Remove(at));
             }
         }
         None

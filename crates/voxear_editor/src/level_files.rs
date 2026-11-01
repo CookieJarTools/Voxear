@@ -1,7 +1,7 @@
 //! A level's own scenes, as the Inspector shows them for a `.level`
 //! selected in the Project, and the changes it makes to them: a scene added
-//! at the end, one taken out, another made the active one, or one no longer
-//! required. Each change is written to the file at once, keeping its
+//! at the end, one put in another's place, one taken out, another made the
+//! active one, or one no longer required. Each change is written to the file at once, keeping its
 //! comments and the rest as they were, as a material's fields are. A scene
 //! added is written by its GUID, so renaming it keeps the level working, with
 //! its path in a comment beside it, as the samples write them.
@@ -25,6 +25,12 @@ pub struct LevelEntry {
 pub enum LevelEdit {
     /// A scene added at the end: its GUID, and its path for the comment.
     Add {
+        guid: String,
+        path: String,
+    },
+    /// Another scene in this one's place, keeping its flags.
+    Replace {
+        at: usize,
         guid: String,
         path: String,
     },
@@ -59,7 +65,9 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
     let count = scenes(&document).count();
     let index = match edit {
         LevelEdit::Add { .. } => None,
-        LevelEdit::Remove(at) | LevelEdit::Activate(at) | LevelEdit::Require(at, _) => Some(*at),
+        LevelEdit::Replace { at, .. } | LevelEdit::Remove(at) | LevelEdit::Activate(at) | LevelEdit::Require(at, _) => {
+            Some(*at)
+        }
     };
     ensure!(index.is_none_or(|at| at < count), "the level has no scene {}", index.unwrap_or_default() + 1);
     let list = document.entry("scene").or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
@@ -67,13 +75,13 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
     match edit {
         LevelEdit::Add { guid, path } => {
             let mut table = Table::new();
-            table["scene"] = value(guid.as_str());
-            if let Some(scene) = table["scene"].as_value_mut() {
-                scene.decor_mut().set_suffix(format!("  # {path}"));
-            }
+            set_scene(&mut table, guid, path);
             // A line between scenes, as a person writes them.
             table.decor_mut().set_prefix("\n");
             list.push(table);
+        }
+        LevelEdit::Replace { at, guid, path } => {
+            set_scene(list.get_mut(*at).context("the scene is listed")?, guid, path);
         }
         LevelEdit::Remove(at) => {
             list.remove(*at);
@@ -100,6 +108,15 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
         document.remove("scene");
     }
     Ok(document.to_string())
+}
+
+/// Points a level's entry at a scene by its GUID, with its path in a
+/// comment beside it.
+fn set_scene(table: &mut Table, guid: &str, path: &str) {
+    table["scene"] = value(guid);
+    if let Some(scene) = table["scene"].as_value_mut() {
+        scene.decor_mut().set_suffix(format!("  # {path}"));
+    }
 }
 
 fn scenes(document: &DocumentMut) -> impl Iterator<Item = &Table> {
@@ -131,6 +148,12 @@ mod tests {
         assert!(marked.contains("required = false") && marked.contains("active = true"), "{marked}");
         let marked = edit(&marked, &LevelEdit::Require(0, true)).unwrap();
         assert!(!marked.contains("required"), "required is the default, so it is not written:\n{marked}");
+
+        let replaced =
+            edit(&marked, &LevelEdit::Replace { at: 1, guid: "def".into(), path: "Scenes/Dusk.scene".into() });
+        let replaced = replaced.unwrap();
+        assert!(replaced.contains("scene = \"def\"  # Scenes/Dusk.scene\nactive = true"), "{replaced}");
+        assert!(!replaced.contains("abc"), "{replaced}");
 
         let taken = edit(&marked, &LevelEdit::Remove(1)).unwrap();
         assert_eq!(

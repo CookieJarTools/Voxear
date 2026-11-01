@@ -969,6 +969,31 @@
     font-size: 11px;
 }
 
+/* One of a level's scenes: a reference to it, then its boxes and remove button. */
+.level-scene {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    min-height: 26px;
+}
+
+.level-scene > .value-picker {
+    flex-grow: 1;
+}
+
+.picker-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--vx-text-2);
+}
+
+/* A scene dragged over Add Scene, ready to drop. */
+.add-component.drop-hover {
+    border-color: var(--vx-accent);
+    background-color: var(--vx-selected);
+}
+
 /* A reference: what it points at, opening a menu to pick another. */
 .value-picker {
     height: 22px;

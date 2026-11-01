@@ -1464,8 +1464,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   behaviour's fields with their starting values; a prefab or scene lists its Objs. Levels, scenes, prefabs and
   scripts have an Open button.
 - **A level's scenes in the Inspector** (`level_files`). A level shows the level it stands on and its own scenes,
-  each with an Active box (one is always active: the one marked, or the first), a Required box and a button to take
-  it out, and **Add Scene**, a menu of the project's scenes it does not list. Each change is written to the
+  each a reference to a scene, with an Active box (one is always active: the one marked, or the first), a Required
+  box and a button to take it out, and **Add Scene**. As an Obj's references do, a scene's field pings the scene in
+  the Project on a click, opens the object picker from its arrow to put another scene in its place, and takes a
+  scene dragged onto it from the Project; Add Scene opens the picker on the project's scenes the level does not
+  list, and takes a dragged scene too. A scene the level has already, or anything that is not a scene, is turned
+  away with a note saying why. Each change is written to the
   `.level` at once, as a material's are, through `toml_edit`, so its comments and layout stay; a scene added is
   written by its GUID with its path in a comment. The Levels panel lists again, and a level open is opened again
   (`Game::load_level_with`), so a change to it or to a level it stands on shows in the Hierarchy at once: the scenes

@@ -62,7 +62,7 @@ use crate::{
     inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
     memory_panel::MemoryPanel,
-    object_picker::{self, ObjectPicker},
+    object_picker::{self, ObjectPicker, PickFor},
     objs,
     palette::{Added, Keys, Palette, PaletteAction, PaletteCommand, PaletteKey, Picked, Sources},
     profiler::{self, Profiler},
@@ -275,7 +275,7 @@ pub struct Editor {
     debug_texts: DebugTexts,
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
-    picker_picks: Vec<(Entity, Prop, Pick)>,
+    picker_picks: Vec<(PickFor, Pick)>,
     /// The Obj selected, which every Inspector not locked shows.
     selection: Option<Entity>,
     /// The Inspectors opened from a window's menu, after the first.
@@ -895,6 +895,9 @@ impl Editor {
             }
             AssetAction::EditLevel(path, edit) => self.edit_level(&path, &edit, renderer),
             AssetAction::Reimport(path, settings) => self.apply_import_settings(&path, &settings, renderer),
+            AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
+            AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
+            AssetAction::Ping(path) => self.project.ping(&mut self.ui, &path),
         }
     }
 
@@ -1772,17 +1775,21 @@ impl Editor {
             Some(props::Value::Asset(now) | props::Value::Obj(now)) => now,
             _ => String::new(),
         };
-        self.picker.open(&mut self.ui, (entity, prop, anchor), &title, choices, &now);
+        self.picker.open(&mut self.ui, (PickFor::Field(entity, prop), anchor), &title, choices, &now);
     }
 
-    /// The object picker's frame, and what it or its keys picked, for the
-    /// Obj it was opened for if that is still the one selected.
+    /// The object picker's frame, and what it or its keys picked: for the
+    /// Obj it was opened for, while it is there, or a level's scene.
     fn update_picker(&mut self, renderer: &mut Renderer) {
         let clicked = self.picker.update(&mut self.ui);
-        for (entity, prop, pick) in std::mem::take(&mut self.picker_picks).into_iter().chain(clicked) {
-            // For the Obj it was opened for, by whichever Inspector, while it is there.
-            if self.game.engine.world.is_alive(entity) {
-                self.row_action_on(entity, RowAction::Pick(prop, pick), renderer);
+        for (target, pick) in std::mem::take(&mut self.picker_picks).into_iter().chain(clicked) {
+            match target {
+                // By whichever Inspector it was opened from.
+                PickFor::Field(entity, prop) if self.game.engine.world.is_alive(entity) => {
+                    self.row_action_on(entity, RowAction::Pick(prop, pick), renderer);
+                }
+                PickFor::Field(..) => {}
+                PickFor::LevelScene { level, at } => self.pick_level_scene(&level, at, &pick, renderer),
             }
         }
     }

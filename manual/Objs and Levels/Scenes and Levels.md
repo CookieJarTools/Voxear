@@ -42,9 +42,9 @@ Opening another level closes the scenes you opened alongside.
 
 1. Right-click in the Project panel and choose **New Scene**, and type its name. Do the same with **New Level**.
 2. Click the new level in the Project panel. The Inspector shows its scenes, which is none yet.
-3. Click **Add Scene** and pick your scene from the list.
+3. Click **Add Scene** and pick your scene from the list. Type to search it. You can also drag the scene from the Project panel onto **Add Scene**.
 
-Add as many scenes as the level needs. To take one out, click the cross at the end of its row. The level's file changes straight away. If the level is open, the Hierarchy shows the change too.
+Add as many scenes as the level needs. Each scene in the list is a field, like a reference field on a script. Click it to find the scene in the Project panel. To put another scene in its place, click the arrow at its end, or drag a scene onto it. To take one out, click the cross at the end of its row. The level's file changes straight away. If the level is open, the Hierarchy shows the change too.
 
 If the level is open, you can also open the scene alongside it and add it from the Hierarchy, as "Opening a scene alongside a level" above shows.
 

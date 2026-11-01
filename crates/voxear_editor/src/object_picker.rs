@@ -1,9 +1,9 @@
 //! The object picker, as Unity's: what a reference can point at, searched.
 //! A click on a field that takes an Obj or an asset (a script's reference,
-//! a Mesh Renderer's mesh or material) opens it under the field: a title
-//! naming what the field takes, a search box to type in at once, and None
-//! and everything the field can take, each with its icon and where it is
-//! (an asset's folder, an Obj's scene). Typing narrows the list as the
+//! a Mesh Renderer's mesh or material, a level's scene) opens it under the
+//! field: a title naming what the field takes, a search box to type in at
+//! once, and None and everything the field can take, each with its icon
+//! and where it is (an asset's folder, an Obj's scene). Typing narrows the list as the
 //! command palette does, letters in order and the best first. Up and Down
 //! move the highlight, which starts on what the field points at now; Enter
 //! or a click picks, and Escape or a click elsewhere closes it. Materials,
@@ -44,11 +44,19 @@ pub struct Choice {
     pub preview: Option<String>,
 }
 
-/// What the picker is open for: the Obj and value it picks for, and the
-/// field it opened from.
+/// What a pick is for: a reference of an Obj's, or a scene of a level's.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PickFor {
+    /// The Obj and the value of it to point elsewhere.
+    Field(Entity, Prop),
+    /// The level, by its path, and the place of the scene to change, or
+    /// none for a scene to add.
+    LevelScene { level: String, at: Option<usize> },
+}
+
+/// What the picker is open for, and the field it opened from.
 struct Opened {
-    entity: Entity,
-    prop: Prop,
+    target: PickFor,
     anchor: NodeId,
 }
 
@@ -137,18 +145,18 @@ impl ObjectPicker {
         ui.refresh_list(self.list);
     }
 
-    /// Opens under `anchor` for `prop` of `entity`, offering `choices`, with
-    /// the one called `now` highlighted.
+    /// Opens under `anchor` for `target`, offering `choices`, with the one
+    /// called `now` highlighted.
     pub fn open(
         &mut self,
         ui: &mut Ui,
-        (entity, prop, anchor): (Entity, Prop, NodeId),
+        (target, anchor): (PickFor, NodeId),
         title: &str,
         choices: Vec<Choice>,
         now: &str,
     ) {
         self.every = choices;
-        self.opened = Some(Opened { entity, prop, anchor });
+        self.opened = Some(Opened { target, anchor });
         ui.set_text(self.title, &format!("Select {title}"));
         ui.set_text(self.field, "");
         ui.set_visible(self.panel, true);
@@ -160,8 +168,8 @@ impl ObjectPicker {
     }
 
     /// Narrows as the search is typed in, and closes when focus goes
-    /// elsewhere. Returns a click's pick, with the Obj and value it is for.
-    pub fn update(&mut self, ui: &mut Ui) -> Option<(Entity, Prop, Pick)> {
+    /// elsewhere. Returns a click's pick, with what it is for.
+    pub fn update(&mut self, ui: &mut Ui) -> Option<(PickFor, Pick)> {
         self.opened.as_ref()?;
         if ui.clicked(self.list) {
             self.current = ui.selection(self.list).first().copied().unwrap_or(self.current);
@@ -183,7 +191,7 @@ impl ObjectPicker {
     }
 
     /// Up and Down move the highlight; Enter picks it; Escape closes.
-    pub fn key(&mut self, ui: &mut Ui, key: PaletteKey) -> Option<(Entity, Prop, Pick)> {
+    pub fn key(&mut self, ui: &mut Ui, key: PaletteKey) -> Option<(PickFor, Pick)> {
         let count = self.shown.borrow().len();
         match key {
             PaletteKey::Up => self.highlight(ui, self.current.saturating_sub(1)),
@@ -194,12 +202,11 @@ impl ObjectPicker {
         None
     }
 
-    fn pick(&mut self, ui: &mut Ui) -> Option<(Entity, Prop, Pick)> {
+    fn pick(&mut self, ui: &mut Ui) -> Option<(PickFor, Pick)> {
         let choice = self.shown.borrow().get(self.current).map(|c| c.pick.clone());
         let opened = self.opened.take();
         self.close(ui);
-        let Opened { entity, prop, .. } = opened?;
-        Some((entity, prop, choice?))
+        Some((opened?.target, choice?))
     }
 
     fn close(&mut self, ui: &mut Ui) {

@@ -4076,12 +4076,20 @@ fn scenes_open_alongside_the_level_and_join_it_from_the_hierarchy() {
 fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
     let level = || std::fs::read_to_string(dir.path().join("Levels/Day.level")).unwrap();
+    // A scene's row: its field, which says the scene's name, then its boxes and remove button.
+    let scene_row = |ui: &Ui, scene: &str| {
+        let mut rows = Vec::new();
+        with_class(ui, ui.root(), "level-scene", &mut rows);
+        let named = |row: &NodeId| first_with(ui, *row, "picker-label").is_some_and(|label| ui.text(label) == scene);
+        rows.into_iter().find(named)
+    };
     let parts = |ui: &Ui, scene: &str| {
-        let row = prop_row(ui, scene).unwrap_or_else(|| panic!("a row for {scene}"));
+        let row = scene_row(ui, scene).unwrap_or_else(|| panic!("a row for {scene}"));
         let mut flags = Vec::new();
         with_class(ui, row, "level-flag", &mut flags);
         (flags[0], flags[1], first_with(ui, row, "list-remove").unwrap())
     };
+    let field = |ui: &Ui, scene: &str| first_with(ui, scene_row(ui, scene).unwrap(), "value-picker").unwrap();
     open_folder(&mut editor, &mut renderer, "Levels");
     frame(&mut editor, &mut renderer);
     let day = tile(&editor.ui, "Day.level").unwrap();
@@ -4091,14 +4099,21 @@ fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     let (active, required, _) = parts(&editor.ui, "Day");
     assert!(editor.ui.is_checked(active) && editor.ui.is_checked(required), "its only scene is active and required");
 
-    // Add Scene offers the scenes not in it; the open level takes the one picked at once.
-    let mut buttons = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "add-component", &mut buttons);
-    let add = buttons.into_iter().find(|&b| editor.ui.text(b) == "Add Scene").expect("an Add Scene button");
+    // Add Scene opens the object picker on the scenes not in it; the open level takes the one picked at once.
+    let add_scene = |ui: &Ui| {
+        let mut buttons = Vec::new();
+        with_class(ui, ui.root(), "add-component", &mut buttons);
+        buttons.into_iter().find(|&b| ui.text(b) == "Add Scene").expect("an Add Scene button")
+    };
+    let add = add_scene(&editor.ui);
     click(&mut editor.ui, add);
     frame(&mut editor, &mut renderer);
-    assert!(menu_item(&editor.ui, "Scenes/Day.scene").is_none(), "not one it has");
-    let night = menu_item(&editor.ui, "Scenes/Night.scene").expect("Night is offered");
+    frame(&mut editor, &mut renderer);
+    assert!(editor.picker_open(), "Add Scene opens the object picker");
+    let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
+    assert!(offered.contains(&"Night.scene".to_string()), "{offered:?}");
+    assert!(!offered.contains(&"Day.scene".to_string()), "not one it has: {offered:?}");
+    let night = picker_row(&editor.ui, "Night.scene").unwrap();
     click(&mut editor.ui, night);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
@@ -4107,6 +4122,13 @@ fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     assert!(hierarchy_names(&editor.ui).contains(&"Night".to_string()), "and the Hierarchy shows it");
     assert!(level().starts_with("# Voxear level\n"), "the file's comments are kept");
     shot(&mut renderer, "level-scenes.png");
+
+    // A click on a scene's field shows it in the Project.
+    let day_field = field(&editor.ui, "Day");
+    click(&mut editor.ui, day_field);
+    frame(&mut editor, &mut renderer);
+    let day_tile = tile(&editor.ui, "Day.scene").expect("the Project opens the Scenes folder");
+    assert!(editor.ui.has_class(day_tile, "pinged"), "and lights the scene up");
 
     // Night made the active scene, then not required.
     let (active, ..) = parts(&editor.ui, "Night");
@@ -4131,7 +4153,27 @@ fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     assert!(!editor.game.levels.loaded_scenes().any(|s| s == "Scenes/Night.scene"));
     assert!(!hierarchy_names(&editor.ui).contains(&"Night".to_string()));
     assert_eq!(editor.game.levels.active_scene(), Some("Scenes/Day.scene"));
-    assert!(prop_row(&editor.ui, "Night").is_none(), "nor does the Inspector list it");
+    assert!(scene_row(&editor.ui, "Night").is_none(), "nor does the Inspector list it");
+
+    // A scene dragged from the Project onto Add Scene goes in; onto a scene's field, it takes that one's place.
+    let night = tile(&editor.ui, "Night.scene").expect("the Scenes folder shows");
+    let add = add_scene(&editor.ui);
+    drag(&mut editor.ui, night, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(level().contains("  # Scenes/Night.scene\n"), "dropped on Add Scene:\n{}", level());
+    let environment = tile(&editor.ui, "Environment.scene").unwrap();
+    let night_field = field(&editor.ui, "Night");
+    drag(&mut editor.ui, environment, night_field);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(level().contains("  # Scenes/Environment.scene\n") && !level().contains("Night"), "{}", level());
+    assert!(scene_row(&editor.ui, "Environment").is_some());
+    let day = tile(&editor.ui, "Day.scene").unwrap();
+    let environment_field = field(&editor.ui, "Environment");
+    drag(&mut editor.ui, day, environment_field);
+    frame(&mut editor, &mut renderer);
+    assert!(level().contains("Environment"), "a scene the level has already is turned away:\n{}", level());
 }
 
 #[test]

@@ -5,13 +5,22 @@
 //! only scenes added load and scenes taken out unload. Taking out a scene
 //! that is open while edits are not saved asks first, as opening another
 //! level does, as they would go with it.
+//!
+//! Each scene is a reference, as an Obj's are: the object picker offers the
+//! project's other scenes for it, or for Add Scene, and a scene dragged from
+//! the Project panel onto either goes in.
 
 use anyhow::{Context, Result};
 use voxear_assets::AssetKind;
 use voxear_render::Renderer;
+use voxear_ui::{DragSource, NodeId};
 
 use super::Editor;
-use crate::level_files::{self, LevelEdit};
+use crate::{
+    fields::Pick,
+    level_files::{self, LevelEdit},
+    object_picker::{self, PickFor},
+};
 
 impl Editor {
     pub(super) fn edit_level(&mut self, path: &str, edit: &LevelEdit, renderer: &mut Renderer) {
@@ -23,7 +32,7 @@ impl Editor {
             Ok(text) => text,
             Err(error) => return self.notify(&format!("Could not read {path}: {error}")),
         };
-        if let LevelEdit::Remove(at) = edit
+        if let LevelEdit::Remove(at) | LevelEdit::Replace { at, .. } = edit
             && self.unsaved
             && self.takes_out_open_scene(&text, *at)
         {
@@ -51,6 +60,74 @@ impl Editor {
         if let Err(error) = self.open_level_again(renderer) {
             self.notify(&format!("Could not open the level again: {error:#}"));
         }
+    }
+
+    /// Opens the object picker under `anchor` for a level's scene: the one
+    /// at `at`, to put another in its place, or a new one. It offers the
+    /// project's scenes the level does not have yet.
+    pub(super) fn browse_level_scene(&mut self, level: &str, at: Option<usize>, anchor: NodeId) {
+        let listed = self.level_scene_paths(level);
+        let now = at.and_then(|at| listed.get(at)).cloned().unwrap_or_default();
+        let db = self.game.content.db();
+        let mut paths: Vec<String> = (db.entries())
+            .filter(|entry| entry.kind == AssetKind::Scene && (entry.path == now || !listed.contains(&entry.path)))
+            .map(|entry| entry.path.clone())
+            .collect();
+        paths.sort();
+        let choices = paths.into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))).collect();
+        let choices = object_picker::decorate(&self.game, choices);
+        let target = PickFor::LevelScene { level: level.to_string(), at };
+        let now = now.rsplit('/').next().unwrap_or_default().to_string();
+        self.picker.open(&mut self.ui, (target, anchor), "Scene", choices, &now);
+    }
+
+    /// Puts a scene picked for a level in: in place of the one at `at`, or
+    /// at the end.
+    pub(super) fn pick_level_scene(&mut self, level: &str, at: Option<usize>, pick: &Pick, renderer: &mut Renderer) {
+        let Pick::Asset(Some(path)) = pick else { return };
+        if at.is_some_and(|at| self.level_scene_paths(level).get(at) == Some(path)) {
+            return;
+        }
+        let Some(guid) = self.game.content.db().guid_of(path) else { return };
+        let (guid, path) = (guid.to_string(), path.clone());
+        let edit = match at {
+            Some(at) => LevelEdit::Replace { at, guid, path },
+            None => LevelEdit::Add { guid, path },
+        };
+        self.edit_level(level, &edit, renderer);
+    }
+
+    /// Something dragged from the Project panel onto a level's scene, or
+    /// onto Add Scene: a scene the level does not have yet goes in, and
+    /// anything else is turned away, saying why.
+    pub(super) fn drop_level_scene(
+        &mut self,
+        level: &str,
+        at: Option<usize>,
+        source: &DragSource,
+        renderer: &mut Renderer,
+    ) {
+        let Some(path) = self.project.dragged(source) else { return };
+        let db = self.game.content.db();
+        if db.guid_of(&path).and_then(|guid| db.get(guid)).map(|entry| entry.kind) != Some(AssetKind::Scene) {
+            return self.notify("Only a scene goes in a level's scenes");
+        }
+        let listed = self.level_scene_paths(level);
+        if listed.iter().position(|listed| *listed == path).is_some_and(|already| Some(already) != at) {
+            let name = path.rsplit('/').next().unwrap_or(&path);
+            return self.notify(&format!("{name} is in this level already"));
+        }
+        self.pick_level_scene(level, at, &Pick::Asset(Some(path)), renderer);
+    }
+
+    /// A level's own scenes, by their paths, in its file's order. A scene
+    /// the project does not have keeps the reference written.
+    fn level_scene_paths(&self, level: &str) -> Vec<String> {
+        let text = std::fs::read_to_string(self.game.project.root.join(level)).unwrap_or_default();
+        let db = self.game.content.db();
+        let path = |scene: &str| scene.parse().ok().and_then(|guid| db.get(guid)).map(|entry| entry.path.clone());
+        let entries = level_files::entries(&text).unwrap_or_default();
+        entries.iter().map(|entry| path(&entry.scene).unwrap_or_else(|| entry.scene.clone())).collect()
     }
 
     /// Whether the scene at `at` in a level's text is open in the editor, so

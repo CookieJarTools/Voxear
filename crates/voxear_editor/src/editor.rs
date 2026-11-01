@@ -724,7 +724,9 @@ impl Editor {
                 self.show_panel("project");
                 self.project.reveal(&mut self.ui, &path);
             }
-            if let Some(finished) = self.build_window.update(&mut self.ui, &root, shown) {
+            let (db, project) = (self.game.content.db(), &self.project);
+            let finished = self.build_window.update(&mut self.ui, &root, db, shown, &|source| project.dragged(source));
+            if let Some(finished) = finished {
                 match finished.succeeded {
                     true => tracing::info!("{}", finished.text),
                     false => tracing::warn!("{}", finished.text),

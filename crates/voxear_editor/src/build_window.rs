@@ -13,7 +13,14 @@
 //! Player category, as Sifter shows a player's log.
 //!
 //! The picked profile's settings are edited in place, each written to the
-//! profile's file as it changes (see `build_profile::set_setting`). A log
+//! profile's file as it changes (see `build_profile::set_setting`). The
+//! start level and the levels that ship are level fields, as the Inspector's
+//! object fields are: a click offers the project's levels, a level dragged
+//! from the Project panel lands, and they are written by GUID, so a level
+//! renamed or moved stays named. The levels and the defines are lists, each
+//! item with a button to take it out and a button to add one. New makes a
+//! profile based on the picked one, its name typed in the title; Remove
+//! moves the picked one into `.voxear/Trash`. A log
 //! line that names a file in the project, picked, shows it in the Project
 //! panel. Buttons
 //! over the log show or hide its info, warnings and errors, and a build that
@@ -32,8 +39,9 @@ use std::{
 
 use serde_json::Value;
 use tracing::Level;
+use voxear_assets::{AssetDb, AssetGuid, AssetKind};
 use voxear_engine::{build_profile, player_build::sibling_program};
-use voxear_ui::{ItemFns, NodeId, Style, Ui};
+use voxear_ui::{DragSource, ItemFns, MenuItem, NodeId, Style, Ui};
 
 /// How long a cancelled build has to stop before its process is stopped.
 const CANCEL_WAIT: Duration = Duration::from_secs(10);
@@ -47,8 +55,12 @@ const LOG_ROW: f32 = 20.0;
 enum Edit {
     /// Words, with what is used when there are none.
     Text(&'static str),
-    /// Words separated by commas, written as a list.
-    List(&'static str),
+    /// A level, as a level field, with what is used when there is none.
+    Level(&'static str),
+    /// Levels, as a list of level fields, with what an empty list means.
+    Levels(&'static str),
+    /// Words, as a list of fields, with what an empty list means.
+    Words(&'static str),
     /// A whole number.
     Number,
     Toggle,
@@ -69,11 +81,11 @@ const SETTINGS: [(&str, Option<&str>, &str, Edit); 14] = [
         "platform",
         Edit::Choice(&[("This machine", ""), ("Linux", "linux-x64"), ("Windows", "windows-x64")]),
     ),
-    ("Start level", Some("levels"), "start", Edit::Text("The project's")),
-    ("Levels", Some("levels"), "include", Edit::List("Every level")),
+    ("Start level", Some("levels"), "start", Edit::Level("The project's start level")),
+    ("Levels", Some("levels"), "include", Edit::Levels("Every level ships")),
     ("Development", Some("development"), "enabled", Edit::Toggle),
     ("Vulkan validation", Some("development"), "validation_layers", Edit::Toggle),
-    ("Defines", Some("scripting"), "defines", Edit::List("None, or DEMO, STEAM")),
+    ("Defines", Some("scripting"), "defines", Edit::Words("None of its own, as DEMO")),
     ("Product name", Some("player"), "product_name", Edit::Text("The project's name")),
     ("Company", Some("player"), "company_name", Edit::Text("Not set")),
     ("Version", Some("version"), "version", Edit::Text("Not set")),
@@ -83,6 +95,35 @@ const SETTINGS: [(&str, Option<&str>, &str, Edit); 14] = [
     ("Compression", Some("content"), "compression", Edit::Choice(COMPRESSIONS)),
     ("Output", Some("output"), "folder", Edit::Text("Builds/<profile>")),
 ];
+/// A setting shown as fields: one level field, or a list of level fields or
+/// words, each with a button that takes it out, and one that adds.
+struct FieldList {
+    /// Its place in [`SETTINGS`].
+    index: usize,
+    holder: NodeId,
+    add: Option<NodeId>,
+    /// What an empty list means.
+    empty: NodeId,
+    rows: Vec<FieldRow>,
+}
+
+/// One field of a list, and what it holds: a level's GUID or path, or words.
+struct FieldRow {
+    panel: NodeId,
+    field: NodeId,
+    remove: Option<NodeId>,
+    value: String,
+}
+
+/// A level field's menu, open: the list it is in, the row, `None` for one
+/// to add, and what each item writes, `None` for no level.
+struct LevelMenu {
+    owner: NodeId,
+    list: usize,
+    row: Option<usize>,
+    values: Vec<Option<String>>,
+}
+
 /// The build's stages, as `vox build` numbers them.
 const STAGES: [&str; 3] = ["Scripts", "Content", "Player"];
 
@@ -142,6 +183,9 @@ pub struct BuildWindow {
     list: NodeId,
     empty: NodeId,
     add_defaults: NodeId,
+    new_profile: NodeId,
+    remove_profile: NodeId,
+    /// The picked profile's name, typed in to rename it.
     title: NodeId,
     /// The profile's base, beside its name.
     base: NodeId,
@@ -149,6 +193,11 @@ pub struct BuildWindow {
     /// being typed in, written once it is left or Enter is pressed.
     controls: Vec<NodeId>,
     typing: Option<usize>,
+    /// The settings shown as fields, the word being typed in, by list and
+    /// row, and a level field's menu, open.
+    lists: Vec<FieldList>,
+    typing_word: Option<(usize, usize)>,
+    level_menu: Option<LevelMenu>,
     problem: NodeId,
     build: NodeId,
     cancel: NodeId,
@@ -225,14 +274,23 @@ impl BuildWindow {
         let add_defaults = ui.button(empty, "Add the default profiles");
         ui.add_class(add_defaults, "build-button");
         ui.set_name(add_defaults, "build-add-defaults");
+        let tools = ui.panel(side, Style::row());
+        ui.add_class(tools, "build-profile-tools");
+        let new_profile = ui.button(tools, "New");
+        ui.add_class(new_profile, "build-button");
+        ui.set_name(new_profile, "build-new-profile");
+        let remove_profile = ui.button(tools, "Remove");
+        ui.add_class(remove_profile, "build-button");
+        ui.set_name(remove_profile, "build-remove-profile");
 
         let detail = ui.panel(main, Style::default());
         ui.add_class(detail, "fill");
         ui.add_class(detail, "build-detail");
         let head = ui.panel(detail, Style::row());
         ui.add_class(head, "build-head");
-        let title = ui.add_label(head, "");
+        let title = ui.text_field(head, "");
         ui.add_class(title, "build-title");
+        ui.set_name(title, "build-title");
         let base = ui.add_label(head, "");
         ui.add_class(base, "build-base");
         let button = |ui: &mut Ui, text: &str, name: &str| {
@@ -249,18 +307,40 @@ impl BuildWindow {
 
         let settings = ui.panel(detail, Style::default());
         ui.add_class(settings, "build-settings");
+        let mut lists = Vec::new();
         let controls = SETTINGS
             .iter()
-            .map(|&(label, _, key, edit)| {
+            .enumerate()
+            .map(|(index, &(label, _, key, edit))| {
                 let row = ui.panel(settings, Style::row());
                 ui.add_class(row, "build-setting");
                 let label = ui.add_label(row, label);
                 ui.add_class(label, "build-key");
                 let control = match edit {
-                    Edit::Text(empty) | Edit::List(empty) => {
+                    Edit::Text(empty) => {
                         let field = ui.text_field(row, "");
                         ui.set_placeholder(field, empty);
                         field
+                    }
+                    Edit::Level(empty) | Edit::Levels(empty) | Edit::Words(empty) => {
+                        ui.add_class(row, "build-setting-list");
+                        let holder = ui.panel(row, Style::column());
+                        ui.add_class(holder, "build-fields");
+                        let hint = ui.add_label(holder, empty);
+                        ui.add_class(hint, "build-fields-empty");
+                        let items = ui.panel(holder, Style::column());
+                        ui.add_class(items, "build-fields-items");
+                        let add = match edit {
+                            Edit::Levels(_) => Some(ui.button(holder, "Add a level")),
+                            Edit::Words(_) => Some(ui.button(holder, "Add a define")),
+                            _ => None,
+                        };
+                        if let Some(add) = add {
+                            ui.add_class(add, "build-fields-add");
+                            ui.set_name(add, &format!("build-{key}-add"));
+                        }
+                        lists.push(FieldList { index, holder: items, add, empty: hint, rows: Vec::new() });
+                        holder
                     }
                     Edit::Number => ui.text_field(row, ""),
                     Edit::Toggle => ui.toggle(row, "", false),
@@ -270,7 +350,8 @@ impl BuildWindow {
                     }
                 };
                 ui.add_class(control, "build-control");
-                ui.set_name(control, &format!("build-{key}"));
+                // The start level's name, apart from the Build button's.
+                ui.set_name(control, &format!("build-{}", if key == "start" { "start-level" } else { key }));
                 control
             })
             .collect();
@@ -340,10 +421,15 @@ impl BuildWindow {
             list,
             empty,
             add_defaults,
+            new_profile,
+            remove_profile,
             title,
             base,
             controls,
             typing: None,
+            lists,
+            typing_word: None,
+            level_menu: None,
             problem,
             build,
             cancel,
@@ -392,11 +478,18 @@ impl BuildWindow {
 
     /// Follows a running build, and, while the window shows, its profiles
     /// and buttons. Returns how a build ended, the frame it does.
-    pub fn update(&mut self, ui: &mut Ui, project_root: &Path, shown: bool) -> Option<Finished> {
+    pub fn update(
+        &mut self,
+        ui: &mut Ui,
+        project_root: &Path,
+        db: &AssetDb,
+        shown: bool,
+        dragged: &dyn Fn(&DragSource) -> Option<String>,
+    ) -> Option<Finished> {
         let finished = self.follow(ui);
         if shown {
-            self.read_profiles(ui, project_root, false);
-            self.respond(ui, project_root);
+            self.read_profiles(ui, project_root, db, false);
+            self.respond(ui, project_root, db, dragged);
         }
         self.show_state(ui);
         finished
@@ -404,7 +497,7 @@ impl BuildWindow {
 
     /// Reads the profiles again, once a second or when `now`, and shows the
     /// picked one's settings.
-    fn read_profiles(&mut self, ui: &mut Ui, root: &Path, now: bool) {
+    fn read_profiles(&mut self, ui: &mut Ui, root: &Path, db: &AssetDb, now: bool) {
         if !now && self.checked.is_some_and(|at| at.elapsed() < PROFILES_CHECK) {
             return;
         }
@@ -423,19 +516,22 @@ impl BuildWindow {
             ui.set_selection(self.list, index.as_slice());
         }
         ui.set_visible(self.empty, self.names.borrow().is_empty());
-        self.show_settings(ui, root);
+        self.show_settings(ui, root, db);
     }
 
     /// The picked profile's settings in their controls, as its file and its
     /// bases make them; a field being typed in is left alone.
-    fn show_settings(&mut self, ui: &mut Ui, root: &Path) {
+    fn show_settings(&mut self, ui: &mut Ui, root: &Path, db: &AssetDb) {
         let Some(name) = self.picked.clone() else {
-            ui.set_text(self.title, "No profile");
+            ui.set_text(self.title, "");
+            ui.set_placeholder(self.title, "No profile");
             ui.set_text(self.base, "");
             ui.set_text(self.problem, "");
             return;
         };
-        ui.set_text(self.title, &name);
+        if ui.focused() != Some(self.title) {
+            ui.set_text(self.title, &name);
+        }
         let base = build_profile::base_of(root, &name).map(|base| format!("based on {base}"));
         ui.set_text(self.base, &base.unwrap_or_default());
         let profile = build_profile::load_profile(root, &name);
@@ -453,11 +549,17 @@ impl BuildWindow {
             };
             match edit {
                 Edit::Text(_) => ui.set_text(control, value.and_then(|v| v.as_str()).unwrap_or_default()),
-                Edit::List(_) => {
-                    let items = value
-                        .and_then(|v| v.as_array())
-                        .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(", "));
-                    ui.set_text(control, &items.unwrap_or_default());
+                Edit::Level(_) | Edit::Levels(_) | Edit::Words(_) => {
+                    let values: Vec<String> = match value {
+                        Some(toml::Value::Array(items)) => {
+                            items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect()
+                        }
+                        Some(toml::Value::String(one)) => vec![one.clone()],
+                        _ => Vec::new(),
+                    };
+                    if let Some(list) = self.lists.iter().position(|list| list.index == index) {
+                        self.show_list(ui, db, list, values);
+                    }
                 }
                 Edit::Number => {
                     ui.set_text(control, &value.and_then(|v| v.as_integer()).map(|n| n.to_string()).unwrap_or_default())
@@ -475,23 +577,20 @@ impl BuildWindow {
     /// Writes setting `index` of the picked profile as its control has it,
     /// and shows what the profile now holds. A number that is not one is
     /// not written.
-    fn write_setting(&mut self, ui: &mut Ui, root: &Path, index: usize) {
+    fn write_setting(&mut self, ui: &mut Ui, root: &Path, db: &AssetDb, index: usize) {
         let Some(name) = self.picked.clone() else { return };
         let (_, table, key, edit) = SETTINGS[index];
         let control = self.controls[index];
         let text = ui.text(control).trim().to_string();
         let value: Option<toml::Value> = match edit {
             Edit::Text(_) => (!text.is_empty()).then(|| text.clone().into()),
-            Edit::List(_) => {
-                let items: Vec<toml::Value> =
-                    text.split(',').map(str::trim).filter(|item| !item.is_empty()).map(Into::into).collect();
-                Some(toml::Value::Array(items)).filter(|items| items.as_array().is_some_and(|a| !a.is_empty()))
-            }
+            // Written by `write_list`.
+            Edit::Level(_) | Edit::Levels(_) | Edit::Words(_) => return,
             Edit::Number if text.is_empty() => None,
             Edit::Number => match text.parse::<i64>() {
                 Ok(number) if number > 0 => Some(number.into()),
                 _ => {
-                    self.show_settings(ui, root);
+                    self.show_settings(ui, root, db);
                     return;
                 }
             },
@@ -504,23 +603,23 @@ impl BuildWindow {
         if let Err(error) = build_profile::set_setting(root, &name, table, key, value) {
             self.add_log("error", format!("could not change {name}: {error:#}"));
         }
-        self.show_settings(ui, root);
+        self.show_settings(ui, root, db);
     }
 
     /// Settings changed in the window: toggles and choices are written at
     /// once, and words once Enter is pressed or the field is left.
-    fn respond_settings(&mut self, ui: &mut Ui, root: &Path) {
+    fn respond_settings(&mut self, ui: &mut Ui, root: &Path, db: &AssetDb) {
         for (index, &(_, _, _, edit)) in SETTINGS.iter().enumerate() {
             let control = self.controls[index];
             match edit {
-                Edit::Toggle | Edit::Choice(_) if ui.changed(control) => self.write_setting(ui, root, index),
-                Edit::Text(_) | Edit::List(_) | Edit::Number => {
+                Edit::Toggle | Edit::Choice(_) if ui.changed(control) => self.write_setting(ui, root, db, index),
+                Edit::Text(_) | Edit::Number => {
                     if ui.changed(control) {
                         self.typing = Some(index);
                     }
                     if ui.submitted(control) && self.typing == Some(index) {
                         self.typing = None;
-                        self.write_setting(ui, root, index);
+                        self.write_setting(ui, root, db, index);
                     }
                 }
                 _ => {}
@@ -528,13 +627,15 @@ impl BuildWindow {
         }
         if let Some(index) = self.typing.filter(|&index| ui.focused() != Some(self.controls[index])) {
             self.typing = None;
-            self.write_setting(ui, root, index);
+            self.write_setting(ui, root, db, index);
         }
     }
 
     /// What the window's buttons and list ask for.
-    fn respond(&mut self, ui: &mut Ui, root: &Path) {
-        self.respond_settings(ui, root);
+    fn respond(&mut self, ui: &mut Ui, root: &Path, db: &AssetDb, dragged: &dyn Fn(&DragSource) -> Option<String>) {
+        self.respond_settings(ui, root, db);
+        self.respond_lists(ui, root, db, dragged);
+        self.respond_profiles(ui, root, db);
         if ui.selection_changed(self.log_list) {
             let log = self.log.borrow();
             let picked = ui.selection(self.log_list).first().and_then(|&row| self.log_rows.borrow().get(row).copied());
@@ -546,14 +647,14 @@ impl BuildWindow {
             let picked = ui.selection(self.list).first().and_then(|&i| self.names.borrow().get(i).cloned());
             if picked.is_some() {
                 self.picked = picked;
-                self.show_settings(ui, root);
+                self.show_settings(ui, root, db);
             }
         }
         if ui.clicked(self.add_defaults) {
             if let Err(error) = build_profile::write_default_profiles(root) {
                 self.add_log("error", format!("could not add the default profiles: {error:#}"));
             }
-            self.read_profiles(ui, root, true);
+            self.read_profiles(ui, root, db, true);
         }
         if ui.clicked(self.build) && self.running.is_none() {
             self.start(ui, root);
@@ -571,6 +672,192 @@ impl BuildWindow {
             && let Some((_, output)) = &self.built
         {
             crate::project_view::show_in_files(output);
+        }
+    }
+
+    /// A list's fields as they hold their values: a level field's, or the
+    /// words typed in.
+    fn show_list(&mut self, ui: &mut Ui, db: &AssetDb, list: usize, values: Vec<String>) {
+        let edit = SETTINGS[self.lists[list].index].3;
+        let typing = self.typing_word.is_some_and(|(at, _)| at == list);
+        let shown: Vec<&str> = self.lists[list].rows.iter().map(|row| row.value.as_str()).collect();
+        // A level field shows one row, holding a level or not.
+        let values = if matches!(edit, Edit::Level(_)) && values.is_empty() { vec![String::new()] } else { values };
+        if typing || shown == values.iter().map(String::as_str).collect::<Vec<_>>() {
+            return;
+        }
+        let FieldList { holder, empty, ref mut rows, .. } = self.lists[list];
+        for row in rows.drain(..) {
+            ui.remove(row.panel);
+        }
+        for value in values {
+            rows.push(field_row(ui, db, holder, edit, value));
+        }
+        ui.set_visible(empty, rows.is_empty());
+    }
+
+    /// What a list's fields hold now, typed words as they are typed.
+    fn values_of(&self, ui: &Ui, list: usize) -> Vec<String> {
+        let words = matches!(SETTINGS[self.lists[list].index].3, Edit::Words(_));
+        let value = |row: &FieldRow| if words { ui.text(row.field).trim().to_string() } else { row.value.clone() };
+        self.lists[list].rows.iter().map(value).filter(|value| !value.is_empty()).collect()
+    }
+
+    /// Writes a list's values to the picked profile: a level field's level,
+    /// or the list, left out when empty, so the profile takes its base's.
+    fn write_list(&mut self, ui: &mut Ui, root: &Path, db: &AssetDb, list: usize, values: Vec<String>) {
+        let Some(name) = self.picked.clone() else { return };
+        let (_, table, key, edit) = SETTINGS[self.lists[list].index];
+        let mut values: Vec<String> = values.into_iter().filter(|value| !value.trim().is_empty()).collect();
+        values.dedup();
+        let value = match edit {
+            Edit::Level(_) => values.first().cloned().map(toml::Value::from),
+            _ => (!values.is_empty()).then(|| toml::Value::Array(values.into_iter().map(Into::into).collect())),
+        };
+        if let Err(error) = build_profile::set_setting(root, &name, table, key, value) {
+            self.add_log("error", format!("could not change {name}: {error:#}"));
+        }
+        self.show_settings(ui, root, db);
+    }
+
+    /// The level fields and word lists: a level picked from a field's menu
+    /// or dragged onto it, a field taken out, one added, and words typed.
+    fn respond_lists(
+        &mut self,
+        ui: &mut Ui,
+        root: &Path,
+        db: &AssetDb,
+        dragged: &dyn Fn(&DragSource) -> Option<String>,
+    ) {
+        if let Some(choice) = self.level_menu.as_ref().and_then(|menu| ui.menu_choice(menu.owner)) {
+            let menu = self.level_menu.take().expect("a menu was open");
+            let mut values = self.values_of(ui, menu.list);
+            match (menu.row, menu.values.get(choice).cloned().flatten()) {
+                (Some(row), Some(level)) if row < values.len() => values[row] = level,
+                (Some(_), None) => values.clear(),
+                (_, Some(level)) => values.push(level),
+                (None, None) => {}
+            }
+            return self.write_list(ui, root, db, menu.list, values);
+        }
+        for list in 0..self.lists.len() {
+            let edit = SETTINGS[self.lists[list].index].3;
+            if let Some(add) = self.lists[list].add.filter(|&add| ui.clicked(add)) {
+                match edit {
+                    Edit::Levels(_) => self.open_level_menu(ui, db, list, None, add),
+                    _ => {
+                        let row = field_row(ui, db, self.lists[list].holder, edit, String::new());
+                        ui.focus(row.field);
+                        ui.set_visible(self.lists[list].empty, false);
+                        self.lists[list].rows.push(row);
+                        self.typing_word = Some((list, self.lists[list].rows.len() - 1));
+                    }
+                }
+                return;
+            }
+            for at in 0..self.lists[list].rows.len() {
+                let (field, remove) = (self.lists[list].rows[at].field, self.lists[list].rows[at].remove);
+                if remove.is_some_and(|remove| ui.clicked(remove)) {
+                    let mut values = self.values_of(ui, list);
+                    let value = self.lists[list].rows[at].value.clone();
+                    if let Some(found) = values.iter().position(|v| *v == value || (v.is_empty() && value.is_empty())) {
+                        values.remove(found);
+                    } else if matches!(edit, Edit::Words(_)) && at < values.len() {
+                        values.remove(at);
+                    }
+                    self.typing_word = None;
+                    return self.write_list(ui, root, db, list, values);
+                }
+                if matches!(edit, Edit::Words(_)) {
+                    if ui.changed(field) {
+                        self.typing_word = Some((list, at));
+                    }
+                    if ui.submitted(field) {
+                        self.typing_word = None;
+                        let values = self.values_of(ui, list);
+                        return self.write_list(ui, root, db, list, values);
+                    }
+                    continue;
+                }
+                if ui.clicked(field) {
+                    return self.open_level_menu(ui, db, list, Some(at), field);
+                }
+                let dropped = ui.dropped_onto(field).and_then(|source| dragged(&source));
+                if let Some(guid) = dropped.as_deref().and_then(|path| level_guid(db, path)) {
+                    let mut values = self.values_of(ui, list);
+                    match values.get_mut(at) {
+                        Some(value) => *value = guid,
+                        None => values.push(guid),
+                    }
+                    return self.write_list(ui, root, db, list, values);
+                }
+            }
+        }
+        if let Some((list, at)) = self.typing_word {
+            let left = self.lists[list].rows.get(at).is_none_or(|row| ui.focused() != Some(row.field));
+            if left {
+                self.typing_word = None;
+                let values = self.values_of(ui, list);
+                self.write_list(ui, root, db, list, values);
+            }
+        }
+    }
+
+    /// Opens a menu of the project's levels under a level field, or under a
+    /// list's Add, for `row` or for one to add.
+    fn open_level_menu(&mut self, ui: &mut Ui, db: &AssetDb, list: usize, row: Option<usize>, owner: NodeId) {
+        let mut levels: Vec<(String, AssetGuid)> =
+            db.entries().filter(|e| e.kind == AssetKind::Level).map(|e| (e.path.clone(), e.guid)).collect();
+        levels.sort();
+        let (mut items, mut values) = (Vec::new(), Vec::new());
+        if let Edit::Level(none) = SETTINGS[self.lists[list].index].3 {
+            items.push(MenuItem::new(none));
+            values.push(None);
+        }
+        for (path, guid) in levels {
+            items.push(MenuItem::new(&path));
+            values.push(Some(guid.to_string()));
+        }
+        if values.is_empty() {
+            items.push(MenuItem::new("The project has no levels").enabled(false));
+        }
+        let [x, y, _, height] = ui.rect(owner);
+        ui.open_menu(owner, (x, y + height + 2.0), &items);
+        self.level_menu = Some(LevelMenu { owner, list, row, values });
+    }
+
+    /// New, Remove, and a profile's name typed in its title to rename it.
+    fn respond_profiles(&mut self, ui: &mut Ui, root: &Path, db: &AssetDb) {
+        if ui.clicked(self.new_profile) {
+            match build_profile::add_profile(root, self.picked.as_deref()) {
+                Ok(name) => {
+                    self.picked = Some(name);
+                    self.read_profiles(ui, root, db, true);
+                    ui.focus(self.title);
+                    ui.select_all_text(self.title);
+                }
+                Err(error) => self.add_log("error", format!("could not make a profile: {error:#}")),
+            }
+        }
+        if ui.clicked(self.remove_profile)
+            && let Some(name) = self.picked.clone()
+        {
+            match build_profile::remove_profile(root, &name) {
+                Ok(()) => self.picked = None,
+                Err(error) => self.add_log("error", format!("could not take {name} out: {error:#}")),
+            }
+            self.read_profiles(ui, root, db, true);
+        }
+        if ui.submitted(self.title)
+            && let Some(name) = self.picked.clone()
+        {
+            let to = ui.text(self.title).trim().to_string();
+            match build_profile::rename_profile(root, &name, &to) {
+                Ok(()) => self.picked = Some(to),
+                Err(error) => self.add_log("error", format!("could not rename {name}: {error:#}")),
+            }
+            ui.set_text(self.title, self.picked.as_deref().unwrap_or_default());
+            self.read_profiles(ui, root, db, true);
         }
     }
 
@@ -929,6 +1216,55 @@ fn parse(text: &str) -> Line {
         }),
         _ => Line::Log { level: "info".into(), message: text.to_string() },
     }
+}
+
+/// A field of a list: a level field, which shows its level by name and
+/// takes a level dragged onto it, or a field to type words in; in a list,
+/// with a button that takes it out.
+fn field_row(ui: &mut Ui, db: &AssetDb, holder: NodeId, edit: Edit, value: String) -> FieldRow {
+    let panel = ui.panel(holder, Style::row());
+    ui.add_class(panel, "build-field-row");
+    let field = match edit {
+        Edit::Words(_) => ui.text_field(panel, &value),
+        Edit::Level(none) => ui.button(panel, &level_name(db, &value, none)),
+        _ => ui.button(panel, &level_name(db, &value, "")),
+    };
+    ui.add_class(field, if matches!(edit, Edit::Words(_)) { "build-word-field" } else { "build-level-field" });
+    if !matches!(edit, Edit::Words(_)) {
+        ui.accept_drops(field, true);
+    }
+    let remove = (!matches!(edit, Edit::Level(_))).then(|| {
+        let remove = ui.icon_button(panel, "close");
+        ui.add_class(remove, "build-field-remove");
+        remove
+    });
+    FieldRow { panel, field, remove, value }
+}
+
+/// A level as a field shows it: its name, from its GUID or path, `none`
+/// when there is none, or the pattern a profile file names levels by.
+fn level_name(db: &AssetDb, value: &str, none: &str) -> String {
+    if value.is_empty() {
+        return none.to_string();
+    }
+    let path = match value.parse::<AssetGuid>() {
+        Ok(guid) => match db.get(guid) {
+            Some(entry) => entry.path.clone(),
+            None => return "A level no longer in the project".to_string(),
+        },
+        Err(_) => value.to_string(),
+    };
+    if path.contains('*') {
+        return path;
+    }
+    let file = path.rsplit('/').next().unwrap_or(&path);
+    file.strip_suffix(".level").unwrap_or(file).to_string()
+}
+
+/// The GUID of the level at `path`, or `None` for anything else.
+fn level_guid(db: &AssetDb, path: &str) -> Option<String> {
+    let entry = db.get(db.guid_of(path)?)?;
+    (entry.kind == AssetKind::Level).then(|| entry.guid.to_string())
 }
 
 #[cfg(test)]

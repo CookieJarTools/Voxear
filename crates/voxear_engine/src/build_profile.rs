@@ -26,7 +26,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::bundle::Compression;
 
@@ -203,6 +203,56 @@ pub fn base_of(project_root: &Path, name: &str) -> Option<String> {
 /// and the rest as they are: `key` in `table` (`player`, `levels`...), or at
 /// the top with `None`. A value its base already has, or `None`, takes the
 /// setting out, so the profile lists only what differs from its base.
+/// Makes a new profile, named "New Profile" or the next free "New Profile
+/// 2", based on `base` when given, and returns its name.
+pub fn add_profile(project_root: &Path, base: Option<&str>) -> Result<String> {
+    let folder = project_root.join(PROFILES_FOLDER);
+    std::fs::create_dir_all(&folder).with_context(|| format!("making {}", folder.display()))?;
+    let names = profile_names(project_root);
+    let name = (1..)
+        .map(|n| if n == 1 { "New Profile".to_string() } else { format!("New Profile {n}") })
+        .find(|name| !names.contains(name))
+        .context("no free name")?;
+    let text = match base {
+        Some(base) => format!("format = 1\nbase = {}\n", toml::Value::from(base)),
+        None => "format = 1\n".to_string(),
+    };
+    let path = profile_path(project_root, &name);
+    std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+    Ok(name)
+}
+
+/// Renames a profile, and every profile based on it follows the new name.
+pub fn rename_profile(project_root: &Path, from: &str, to: &str) -> Result<()> {
+    let to = to.trim();
+    ensure!(!to.is_empty() && !to.contains(['/', '\\']), "a profile's name cannot be empty or hold a slash");
+    if from == to {
+        return Ok(());
+    }
+    ensure!(!profile_names(project_root).iter().any(|name| name == to), "there is already a profile called {to}");
+    // Those based on it first, while it is still there to read their settings through.
+    for name in profile_names(project_root) {
+        if base_of(project_root, &name).as_deref() == Some(from) {
+            set_setting(project_root, &name, None, "base", Some(to.into()))?;
+        }
+    }
+    std::fs::rename(profile_path(project_root, from), profile_path(project_root, to))
+        .with_context(|| format!("renaming {from} to {to}"))
+}
+
+/// Takes a profile out, moving its file into the project's
+/// `.voxear/Trash` rather than destroying it. A profile others are based on
+/// is kept, as they need it.
+pub fn remove_profile(project_root: &Path, name: &str) -> Result<()> {
+    let based: Vec<String> =
+        profile_names(project_root).into_iter().filter(|n| base_of(project_root, n).as_deref() == Some(name)).collect();
+    ensure!(based.is_empty(), "{} is based on {name}, so {name} stays", based.join(" and "));
+    let trash = project_root.join(".voxear").join("Trash").join(PROFILES_FOLDER);
+    std::fs::create_dir_all(&trash).with_context(|| format!("making {}", trash.display()))?;
+    let file = format!("{name}.{PROFILE_EXTENSION}");
+    std::fs::rename(profile_path(project_root, name), trash.join(file)).with_context(|| format!("taking {name} out"))
+}
+
 pub fn set_setting(
     project_root: &Path,
     name: &str,
@@ -330,6 +380,23 @@ pub fn write_default_profiles(project_root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profiles_are_added_renamed_with_those_based_on_them_and_taken_out_to_the_trash() {
+        let dir = tempfile::tempdir().unwrap();
+        write_default_profiles(dir.path()).unwrap();
+        assert_eq!(add_profile(dir.path(), Some("Linux Release")).unwrap(), "New Profile");
+        assert_eq!(base_of(dir.path(), "New Profile").as_deref(), Some("Linux Release"));
+        assert_eq!(add_profile(dir.path(), None).unwrap(), "New Profile 2", "the next free name");
+        set_setting(dir.path(), "New Profile 2", None, "base", Some("New Profile".into())).unwrap();
+        rename_profile(dir.path(), "New Profile", "Demo").unwrap();
+        assert_eq!(base_of(dir.path(), "New Profile 2").as_deref(), Some("Demo"), "what is based on it follows");
+        assert!(rename_profile(dir.path(), "Demo", "Linux Release").is_err(), "a name taken");
+        assert!(remove_profile(dir.path(), "Demo").is_err(), "New Profile 2 needs it");
+        remove_profile(dir.path(), "New Profile 2").unwrap();
+        assert!(!profile_names(dir.path()).contains(&"New Profile 2".to_string()));
+        assert!(dir.path().join(".voxear/Trash/Settings/BuildProfiles/New Profile 2.buildprofile").is_file());
+    }
 
     #[test]
     fn a_profile_changes_its_base_key_by_key() {

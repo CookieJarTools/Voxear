@@ -1918,6 +1918,66 @@ DockSpace .project-split > .split-divider {
     max-width: 320px;
 }
 
+/* The profile's name, typed in to rename it: a title until it is clicked. */
+TextField.build-title {
+    background-color: transparent;
+    border: 0px solid transparent;
+    padding: 0px 4px;
+}
+
+TextField.build-title:focus {
+    background-color: var(--vx-field);
+}
+
+/* New and Remove, under the profiles. */
+.build-profile-tools {
+    flex-direction: row;
+    gap: 6px;
+    padding: 6px 8px 0px 8px;
+}
+
+/* A setting shown as fields: the level fields and the list of defines. */
+.build-setting-list {
+    height: auto;
+    align-items: flex-start;
+    padding: 2px 0px;
+}
+
+.build-setting-list .build-key {
+    padding-top: 4px;
+}
+
+.build-fields-items {
+    flex-direction: column;
+    gap: 4px;
+}
+
+.build-field-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+}
+
+.build-level-field, .build-word-field {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+}
+
+.build-level-field {
+    justify-content: flex-start;
+}
+
+.build-fields-empty {
+    color: var(--vx-muted);
+    padding: 4px 0px;
+}
+
+.build-fields-add {
+    align-self: flex-start;
+    margin-top: 4px;
+}
+
 .build-base {
     flex-shrink: 0;
     margin-right: 8px;

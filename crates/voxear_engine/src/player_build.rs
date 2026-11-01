@@ -273,10 +273,14 @@ fn content_settings(
     let start = start.with_context(|| format!("the start level {start_level} is not in the project"))?;
     ensure!(start.kind == AssetKind::Level, "the start level {start_level} is not a level");
 
-    let wanted = |path: &str| profile.levels.include.is_empty() || profile.levels.include.iter().any(|p| glob(p, path));
+    // A level is named by its GUID, as the Build window's level fields write it, or by a path or pattern.
+    let wanted = |entry: &voxear_assets::AssetEntry| {
+        let named = |p: &String| p.parse().ok() == Some(entry.guid) || glob(p, &entry.path);
+        profile.levels.include.is_empty() || profile.levels.include.iter().any(named)
+    };
     let mut levels = Vec::new();
     for entry in db.entries().filter(|e| e.kind == AssetKind::Level) {
-        if wanted(&entry.path) || entry.guid == start.guid {
+        if wanted(entry) || entry.guid == start.guid {
             levels.push(entry.path.clone());
         } else {
             settings.exclude.push(entry.path.clone());

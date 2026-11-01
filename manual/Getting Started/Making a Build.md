@@ -27,6 +27,10 @@ A profile is a set of choices for one kind of build. New projects come with four
 
 Select a profile to change it: the platform, which levels go in and which one starts, the product name, company and version, whether the game starts in a window or full screen, and where the build goes.
 
+- **Start level** and **Levels** are level fields: click one to pick from your project's levels, or drag a level onto it from the Project panel. **Add a level** adds another, and the × beside a level takes it out. With no levels listed, every level ships.
+- **Defines** are words your scripts can test with `#if`, as `DEMO`. **Add a define** adds one. See [[How Scripts Run]] for the ones Voxear defines itself.
+- **New**, under the profiles, makes a profile based on the one picked, so it starts with its settings and you change only what differs. Type its name in the title at the top, and press Enter. **Remove** takes the picked profile out, unless another is based on it.
+
 For now, a build is made on the platform it is for: build the Windows profiles on Windows, and the Linux ones on Linux.
 
 ## What a build makes

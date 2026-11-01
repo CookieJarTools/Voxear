@@ -2834,7 +2834,13 @@ ten seconds. A finished build says how long it took and how big it is, in the wi
 Console, and offers Run and Show in Files. The picked profile's settings are edited in place: words, lists and
 numbers once Enter is pressed or the field is left, toggles and choices at once, each written to the profile's own
 file (`build_profile::set_setting`, keeping its comments). A value its base already has is taken out again, so a
-profile lists only what differs. Buttons over the log show or hide its info, warnings and errors, with their counts,
+profile lists only what differs. The start level and the levels that ship are level fields, as the Inspector's
+object fields are: a click offers the project's levels, a level dragged from the Project panel lands, and they are
+written by GUID, which the build matches as it matches a path or pattern, so a renamed level stays named. The levels
+and the defines are lists of fields, each with a button to take it out, and one to add one. New makes a profile
+based on the picked one (`build_profile::add_profile`), its name typed in the title, which renames it and every
+profile based on it (`rename_profile`); Remove moves it into `.voxear/Trash`, unless another is based on it
+(`remove_profile`). Buttons over the log show or hide its info, warnings and errors, with their counts,
 and a build that finishes while the editor is not the window in front says so on the desktop (`notify-send` on
 Linux). Picking a log line that names a file in the project, as `cooking Models/Rock.gltf` does, shows it in the
 Project panel.

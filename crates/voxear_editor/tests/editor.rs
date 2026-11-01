@@ -2693,6 +2693,91 @@ echo "{\"event\":\"finished\",\"result\":\"cancelled\",\"seconds\":0.2,\"message
     assert!(!editor.build_window().is_building());
 }
 
+#[test]
+fn build_profiles_are_made_named_and_given_levels_and_defines_in_fields() {
+    let dir = hello_copy();
+    let _ = std::fs::remove_dir_all(dir.path().join("Settings/BuildProfiles"));
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    click_named(&mut editor, "build");
+    frame(&mut editor, &mut renderer);
+    click_named(&mut editor, "build-add-defaults");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let profiles = dir.path().join("Settings/BuildProfiles");
+    let read = |name: &str| std::fs::read_to_string(profiles.join(format!("{name}.buildprofile"))).unwrap_or_default();
+    // A click on what may have scrolled out of sight, brought into it first.
+    let press = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: NodeId| {
+        let settings = first_with(&editor.ui, editor.ui.root(), "build-settings").unwrap();
+        let [_, top, _, height] = editor.ui.rect(settings);
+        let [_, y, _, h] = editor.ui.rect(node);
+        if y < top || y + h > top + height {
+            let [x, at] = editor.ui.scroll_offset(settings);
+            editor.ui.set_scroll(settings, [x, (at + y - top - 20.0).max(0.0)]);
+            frame(editor, renderer);
+        }
+        click(&mut editor.ui, node);
+        frame(editor, renderer);
+        frame(editor, renderer);
+    };
+
+    // New makes a profile based on the picked one, named in the title.
+    click_named(&mut editor, "build-new-profile");
+    frame(&mut editor, &mut renderer);
+    assert!(read("New Profile").contains("base = "), "{}", read("New Profile"));
+    let title = editor.ui.find(editor.ui.root(), "build-title").unwrap();
+    assert_eq!(editor.ui.focused(), Some(title), "its name is ready to type");
+    editor.ui.select_all_text(title);
+    editor.ui.text_input("Demo");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    assert!(!read("Demo").is_empty() && read("New Profile").is_empty(), "renamed");
+
+    // The start level is a level field: a click offers the project's levels, written by GUID.
+    let night = editor.game.content.db().guid_of("Levels/Night.level").unwrap().to_string();
+    let day = editor.game.content.db().guid_of("Levels/Day.level").unwrap().to_string();
+    let start = editor.ui.find(editor.ui.root(), "build-start-level").unwrap();
+    let field = first_with(&editor.ui, start, "build-level-field").unwrap();
+    press(&mut editor, &mut renderer, field);
+    let item = menu_item(&editor.ui, "Levels/Night.level").expect("the project's levels");
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    assert!(read("Demo").contains(&format!("start = \"{night}\"")), "{}", read("Demo"));
+    let field = first_with(&editor.ui, start, "build-level-field").unwrap();
+    assert_eq!(editor.ui.text(field), "Night", "shown by name");
+
+    // The levels that ship: a list of level fields.
+    let add = editor.ui.find(editor.ui.root(), "build-include-add").unwrap();
+    press(&mut editor, &mut renderer, add);
+    let item = menu_item(&editor.ui, "Levels/Day.level").unwrap();
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    assert!(read("Demo").contains(&format!("include = [\"{day}\"]")), "{}", read("Demo"));
+
+    // The defines: a list of fields to type in.
+    let add = editor.ui.find(editor.ui.root(), "build-defines-add").unwrap();
+    press(&mut editor, &mut renderer, add);
+    editor.ui.text_input("DEMO");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    assert!(read("Demo").contains("defines = [\"DEMO\"]"), "{}", read("Demo"));
+    let defines = editor.ui.find(editor.ui.root(), "build-defines").unwrap();
+    let remove = first_with(&editor.ui, defines, "build-field-remove").unwrap();
+    press(&mut editor, &mut renderer, remove);
+    assert!(!read("Demo").contains("defines"), "taken out again: {}", read("Demo"));
+
+    // Remove moves the picked profile into the project's trash.
+    click_named(&mut editor, "build-remove-profile");
+    frame(&mut editor, &mut renderer);
+    assert!(read("Demo").is_empty());
+    assert!(dir.path().join(".voxear/Trash/Settings/BuildProfiles/Demo.buildprofile").is_file());
+}
+
 fn click_named(editor: &mut voxear_editor::Editor, name: &str) {
     let node = editor.ui.find(editor.ui.root(), name).unwrap();
     click(&mut editor.ui, node);

@@ -375,11 +375,11 @@ and a positive pitch looks down.
 - **Objs created at runtime**, such as instantiated prefabs, belong to the level's active scene and unload with
   it, unless they are persistent. Objs marked `EditorOnly`, such as the editor's Scene camera, belong to no scene
   and level changes leave them alone.
-- **The Levels panel** in the editor is LayerCake's window: every level (with its scene count and the level it
-  stands on) and every scene in no level, to find by name, listed again when the Project changes files. Stopped, clicking a level opens it to edit (a loose scene
-  opens on its own) and its play button opens it and plays. Playing, clicking a level changes to it through the
-  scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in a build; the bar at the
-  bottom follows any level change, whoever started it.
+- **The Levels panel** in the editor is LayerCake's window: every level (with its scene count and the level it stands
+  on) and every scene in no level, to find by name, listed again when the Project changes files. Stopped, clicking a
+  level opens it to edit (a loose scene opens on its own) and its play button opens it and plays. Playing, clicking a
+  level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
+  a build; the bar at the bottom follows any level change, whoever started it.
 
 ### Prefabs *(implemented: nesting, variants, overrides, Instantiate; inspector editing planned)*
 
@@ -1450,12 +1450,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   with ids after the highest there; Objs moved into another scene move into its list with new ids; deleted Objs
   come back with the ids they had. While playing, these change only the played world.
 - **The Inspector** has a header with the Obj's icon, its name and an active switch, then rows for Tag, Layer and
-  Static (shown, not yet stored: Objs have no tags or layers yet) and Persistent, which marks the Obj to stay
-  through level changes (`ScenePersistence`, saved as `persistent = true`) as a step to undo. The Transform and each component are sections
-  divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a menu) on
-  the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with coloured axis
-  letters, applied as they are typed, and changes made elsewhere show in fields not being edited. While playing it
-  shows the running Obj, its behaviours included.
+  Static (shown, not yet stored: Objs have no tags or layers yet) and Persistent, which marks the Obj to stay through
+  level changes (`ScenePersistence`, saved as `persistent = true`) as a step to undo. The Transform and each component
+  are sections divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a
+  menu) on the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with
+  coloured axis letters, applied as they are typed, and changes made elsewhere show in fields not being edited. While
+  playing it shows the running Obj, its behaviours included.
 - **Components in the Inspector** (`props`): each component is a part, and each value in it a prop, read from the
   world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
   mesh it has) and its material (the default, or a `.material` in the project, which can also be dragged onto it from
@@ -1507,16 +1507,19 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Making prefabs.** Dragging an Obj from the Hierarchy onto the Project panel writes it, with what is under it,
   to a `.prefab` in the folder shown (`objs::make_prefab`), and puts an instance of the new prefab in its place, as
   one step to undo.
-- **Placing prefabs** (`editor::placing`, `objs::place_prefab`). A prefab dragged from the Project onto the
-  Hierarchy lands where an Obj moved there would: inside the Obj under the pointer, beside it near its edge, at the
-  top of a scene on its header, and below the rows at the top of the active scene. On the Scene view it lands where
-  the pointer's ray first enters a mesh's box, or else meets the ground plane (y = 0, within 200 m), snapped to the
-  grid across; failing both, 8 m along the ray on the grid. Inside an Obj, the instance takes the prefab root's own
-  position; elsewhere that position is an offset from where it lands, so a prefab made to stand on the ground at the
-  origin stands on it. It is named for the prefab, numbered as copies are when the name is taken, selected, and one
-  step to undo. Only while a prefab is dragged do the two take drops, so nothing else lights them up; the Scene view
-  is tinted in the accent under it. In prefab mode, what would land at the top goes inside the prefab's root,
-  keeping its place in the world, as a prefab has one root; and the prefab open, or one that holds it, is not placed.
+- **Placing prefabs and models** (`editor::placing`, `objs::place_prefab` and `place_model`). A prefab dragged from
+  the Project places an instance of it, and a model an Obj drawing it, with a Mesh Renderer on its mesh and its own
+  material (`<model>#mesh0.0`, `#material0`); a model of several parts places an Obj with one inside for each part,
+  where the model puts it. Either, dragged onto the Hierarchy, lands where an Obj moved there would: inside the Obj
+  under the pointer, beside it near its edge, at the top of a scene on its header, and below the rows at the top of
+  the active scene. On the Scene view it lands where the pointer's ray first enters a mesh's box, or else meets the
+  ground plane (y = 0, within 200 m), snapped to the grid across; failing both, 8 m along the ray on the grid. Inside
+  an Obj, what is placed keeps the position its prefab or model gives it; elsewhere that position is an offset from
+  where it lands, so a prefab made to stand on the ground at the origin stands on it. What is placed is named for the
+  prefab or model, numbered as copies are when the name is taken, selected, and one step to undo. Only while a prefab
+  or model is dragged do the two take drops, so nothing else lights them up; the Scene view is tinted in the accent
+  under it. In prefab mode, what would land at the top goes inside the prefab's root, keeping its place in the world,
+  as a prefab has one root; and the prefab open, or one that holds it, is not placed.
 - **Prefab mode** (`editor::prefab_mode`), as in Unity: a prefab opens on its own to edit from the Project (a double
   click, or the Inspector's Open), or from the Hierarchy's Open Prefab on an instance. Its Objs load as a scene's
   would, in place of the level (`Levels::open_scene` takes prefabs), a bar over the Scene view names it, and Back

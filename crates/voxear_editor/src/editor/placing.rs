@@ -1,13 +1,15 @@
-//! Placing prefabs, as Unity's drag from the Project window does. A prefab
-//! dragged onto the Hierarchy lands where an Obj moved there would: inside
-//! the Obj it is let go of on, beside it near its edge, at the top of a scene
-//! on its header, and below the rows, at the top of the active scene. Let go
-//! of on the Scene view, it lands where the pointer meets what is under it,
-//! or the ground, on the snap grid across; failing both, in front of the
-//! camera, as a new Obj does. Either is one step to undo. Only while a prefab
-//! is dragged do the two take drops, so nothing else dragged lights them up.
-//! In a prefab open on its own, what would land at the top goes inside its
-//! root instead, keeping its place in the world, as a prefab has one root.
+//! Placing prefabs and models, as Unity's drag from the Project window does:
+//! a prefab as an instance of it, a model as Objs drawing it (see
+//! `objs::place_model`). One dragged onto the Hierarchy lands where an Obj
+//! moved there would: inside the Obj it is let go of on, beside it near its
+//! edge, at the top of a scene on its header, and below the rows, at the top
+//! of the active scene. Let go of on the Scene view, it lands where the
+//! pointer meets what is under it, or the ground, on the snap grid across;
+//! failing both, in front of the camera, as a new Obj does. Either is one
+//! step to undo. Only while a prefab or model is dragged do the two take
+//! drops, so nothing else dragged lights them up. In a prefab open on its
+//! own, what would land at the top goes inside its root instead, keeping its
+//! place in the world, as a prefab has one root.
 
 use std::collections::HashSet;
 
@@ -27,37 +29,39 @@ use crate::{
 
 impl Editor {
     /// Places what was let go of on the Hierarchy or the Scene view, and lets
-    /// them take drops while a prefab is dragged.
+    /// them take drops while a prefab or model is dragged.
     pub(super) fn update_placing(&mut self, renderer: &mut Renderer) {
         if let Some((source, to)) = self.hierarchy.dropped_from_elsewhere(&self.ui)
-            && let Some(prefab) = self.dragged_prefab(&source)
+            && let Some((path, kind)) = self.dragged_placeable(&source)
         {
             let at = self.new_obj_position();
-            self.place_prefab(&prefab, to, at, renderer);
+            self.place(&path, kind, to, at, renderer);
         }
         if let Some(source) = self.ui.dropped_onto(self.nodes.viewport)
-            && let Some(prefab) = self.dragged_prefab(&source)
+            && let Some((path, kind)) = self.dragged_placeable(&source)
         {
             let at = self.scene_landing(renderer);
-            self.place_prefab(&prefab, None, at, renderer);
+            self.place(&path, kind, None, at, renderer);
         }
-        let placing = self.ui.dragging().is_some_and(|source| self.dragged_prefab(&source).is_some());
+        let placing = self.ui.dragging().is_some_and(|source| self.dragged_placeable(&source).is_some());
         self.hierarchy.take_drops(&mut self.ui, placing);
         self.ui.accept_drops(self.nodes.viewport, placing);
     }
 
-    /// The path of the prefab being dragged, when it is one from the Project.
-    fn dragged_prefab(&self, source: &DragSource) -> Option<String> {
+    /// The path of the prefab or model being dragged, when it is one from
+    /// the Project, and which it is.
+    fn dragged_placeable(&self, source: &DragSource) -> Option<(String, AssetKind)> {
         let path = self.project.dragged(source)?;
         let db = self.game.content.db();
-        let kind = db.guid_of(&path).and_then(|guid| db.get(guid)).map(|entry| entry.kind);
-        (kind == Some(AssetKind::Prefab)).then_some(path)
+        let kind = db.guid_of(&path).and_then(|guid| db.get(guid)).map(|entry| entry.kind)?;
+        matches!(kind, AssetKind::Prefab | AssetKind::Model).then_some((path, kind))
     }
 
-    /// Places an instance of `prefab` where `to` says, or at the top of the
-    /// active scene, at `at` unless it goes inside an Obj, and selects it.
-    fn place_prefab(&mut self, prefab: &str, to: Option<Destination>, at: Vec3, renderer: &mut Renderer) {
-        if self.would_hold_itself(prefab) {
+    /// Places an instance of a prefab, or a model's Objs, where `to` says, or
+    /// at the top of the active scene, at `at` unless it goes inside an Obj,
+    /// and selects it.
+    fn place(&mut self, path: &str, kind: AssetKind, to: Option<Destination>, at: Vec3, renderer: &mut Renderer) {
+        if kind == AssetKind::Prefab && self.would_hold_itself(path) {
             return self.notify("A prefab cannot hold an instance of itself");
         }
         let (parent, scene) = match to {
@@ -66,9 +70,13 @@ impl Editor {
             Some(Destination::Before(beside) | Destination::After(beside)) => (None, self.game.levels.scene_of(beside)),
             None => (None, None),
         };
-        let made = match objs::place_prefab(&mut self.game, Some(renderer), prefab, parent, scene, at) {
+        let made = match kind {
+            AssetKind::Model => objs::place_model(&mut self.game, renderer, path, parent, scene, at),
+            _ => objs::place_prefab(&mut self.game, Some(renderer), path, parent, scene, at),
+        };
+        let made = match made {
             Ok(made) => made,
-            Err(error) => return self.notify(&format!("Could not place {prefab}: {error:#}")),
+            Err(error) => return self.notify(&format!("Could not place {path}: {error:#}")),
         };
         if let Some(beside @ (Destination::Before(_) | Destination::After(_))) = to {
             objs::move_obj(&mut self.game, made, beside);
@@ -115,7 +123,7 @@ impl Editor {
         false
     }
 
-    /// Where a prefab let go of on the Scene view goes: where the pointer
+    /// Where a prefab or model let go of on the Scene view goes: where the pointer
     /// meets what is under it, or the ground, on the snap grid across it;
     /// failing both, a little way along the pointer's ray, on the grid.
     fn scene_landing(&self, renderer: &Renderer) -> Vec3 {

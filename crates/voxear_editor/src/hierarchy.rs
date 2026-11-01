@@ -15,9 +15,9 @@
 //! The editor carries these out (see [`ObjAction`]).
 //!
 //! While the editor lets it ([`Hierarchy::take_drops`]), as it does while a
-//! prefab is dragged from the Project, the rows take drops from elsewhere
-//! too, landing in the same places, except that below the rest is the top of
-//! the active scene ([`Hierarchy::dropped_from_elsewhere`]).
+//! prefab or model is dragged from the Project, the rows take drops from
+//! elsewhere too, landing in the same places, except that below the rest is
+//! the top of the active scene ([`Hierarchy::dropped_from_elsewhere`]).
 
 use std::{
     cell::RefCell,

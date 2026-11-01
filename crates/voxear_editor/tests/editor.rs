@@ -3283,8 +3283,16 @@ fn centre(ui: &Ui, node: NodeId) -> [f32; 2] {
 
 /// The editor on a copy of Hello it may save, two frames in, or `None` without a GPU.
 fn open_copy() -> Option<(tempfile::TempDir, Renderer, voxear_editor::Editor)> {
+    open_copy_with(|_| {})
+}
+
+/// The same, with the copy changed by `prepare` before it opens.
+fn open_copy_with(
+    prepare: impl FnOnce(&std::path::Path),
+) -> Option<(tempfile::TempDir, Renderer, voxear_editor::Editor)> {
     let mut renderer = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok()?;
     let dir = hello_copy();
+    prepare(dir.path());
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     frame(&mut editor, &mut renderer);
@@ -3393,6 +3401,82 @@ fn prefabs_dragged_from_the_project_place_instances() {
         label_starting(&editor.ui, editor.ui.root(), "A prefab cannot hold").is_some(),
         "and the status bar says so"
     );
+}
+
+#[test]
+fn a_model_dragged_from_the_project_places_objs_drawing_it() {
+    // Beside Hello's pyramid, a model of two pyramids side by side.
+    let pair = |root: &std::path::Path| {
+        let text = std::fs::read_to_string(root.join("Models/Pyramid.gltf")).unwrap();
+        let mut model: serde_json::Value = serde_json::from_str(&text).unwrap();
+        model["nodes"] = serde_json::json!([
+            { "name": "Left", "mesh": 0, "translation": [-1.0, 0.0, 0.0] },
+            { "name": "Right", "mesh": 0, "translation": [1.0, 0.0, 0.0] },
+        ]);
+        model["scenes"] = serde_json::json!([{ "nodes": [0, 1] }]);
+        std::fs::write(root.join("Models/Pair.gltf"), model.to_string()).unwrap();
+    };
+    let Some((dir, mut renderer, mut editor)) = open_copy_with(pair) else { return };
+    open_folder(&mut editor, &mut renderer, "Models");
+    frame(&mut editor, &mut renderer);
+    let from = centre(&editor.ui, tile(&editor.ui, "Pyramid.gltf").expect("the Models folder shows"));
+    let camera = editor.scene_camera().unwrap();
+    let viewport = editor.ui.find(editor.ui.root(), "viewport").unwrap();
+    let [x, y, w, h] = editor.ui.rect(viewport);
+    let point = [x + w * 0.2, y + h * 0.85];
+    let (origin, direction) = camera.ray(point);
+    let hit = origin + direction * (-origin.y / direction.y);
+    drag_between(&mut editor, &mut renderer, from, point);
+
+    // One part, so one Obj, named for the model and numbered as Hello has a Pyramid, standing where it was let go.
+    let pyramid = obj(&editor, "Pyramid (1)").expect("an Obj for the model");
+    assert_eq!(editor.selected(), Some(pyramid));
+    let world = &editor.game.engine.world;
+    assert!(
+        world.get::<voxear_scene::Parent>(pyramid).is_none()
+            && world.get::<voxear_render::MeshRenderer>(pyramid).is_some()
+    );
+    let position = world.get::<Transform>(pyramid).unwrap().position;
+    assert!(
+        position.y.abs() < 1e-4 && (position.x - hit.x).abs() <= 0.13 && (position.z - hit.z).abs() <= 0.13,
+        "{position}"
+    );
+    editor.undo(&mut renderer);
+    assert!(obj(&editor, "Pyramid (1)").is_none(), "one step to undo");
+    editor.redo(&mut renderer);
+
+    // Onto an Obj's row, inside it, and saved naming the model's mesh and material.
+    let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Spinner A").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    let inside = obj(&editor, "Pyramid (2)").unwrap();
+    let spinner = obj(&editor, "Spinner A");
+    assert_eq!(editor.game.engine.world.get::<voxear_scene::Parent>(inside).map(|p| p.0), spinner);
+    editor.save();
+    let text = std::fs::read_to_string(dir.path().join("Scenes/Day.scene")).unwrap();
+    let guid = std::fs::read_to_string(dir.path().join("Models/Pyramid.gltf.meta")).unwrap();
+    let guid = guid.split('"').nth(1).unwrap();
+    assert_eq!(text.matches(&format!("mesh = \"{guid}#mesh0.0\"")).count(), 3, "Hello's and the two placed:\n{text}");
+    assert_eq!(text.matches(&format!("material = \"{guid}#material0\"")).count(), 3, "{text}");
+
+    // A model of two parts: an Obj named for it, with one inside for each part, where the model puts it.
+    let from = centre(&editor.ui, tile(&editor.ui, "Pair.gltf").unwrap());
+    let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Day").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    let pair = obj(&editor, "Pair").expect("an Obj for the model");
+    // Where the model puts its parts, read as the engine reads glTF, whose X it turns around.
+    let guid = editor.game.content.db().guid_of("Models/Pair.gltf").unwrap();
+    let parts: Vec<(String, Vec3)> =
+        editor.game.content.model(&mut renderer, guid).unwrap().iter().map(|n| (n.name.clone(), n.position)).collect();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].1.x, -parts[1].1.x, "side by side");
+    let world = &editor.game.engine.world;
+    assert!(world.get::<voxear_render::MeshRenderer>(pair).is_none(), "which draws nothing itself");
+    for (name, position) in parts {
+        let part = obj(&editor, &name).unwrap();
+        assert_eq!(world.get::<voxear_scene::Parent>(part).map(|p| p.0), Some(pair));
+        assert_eq!(world.get::<Transform>(part).unwrap().position, position, "{name}");
+        assert!(world.get::<voxear_render::MeshRenderer>(part).is_some());
+    }
 }
 
 #[test]

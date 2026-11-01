@@ -529,7 +529,7 @@
     flex-grow: 1;
 }
 
-/* A prefab dragged over the Scene view, ready to place. */
+/* A prefab or model dragged over the Scene view, ready to place. */
 .viewport.drop-hover {
     background-color: var(--vx-accent-soft);
 }

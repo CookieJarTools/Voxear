@@ -18,10 +18,15 @@ When a model is first used, Voxear makes simpler copies of it, called **levels o
 
 ## Putting a model in a level
 
-> [!NOTE]
-> The editor cannot place a model in a level by dragging yet. For now, add it to the scene file by hand, as below. Once one Obj shows the model, you can duplicate it in the editor with Ctrl+D, or make it a prefab and place that.
+Drag the model from the Project panel into the Scene view. It lands where the pointer meets the ground, or on top of whatever is under the pointer. You can also drag it onto the Hierarchy: let go on an Obj to put the model inside that Obj, or on a scene's name to put it in that scene. Press Ctrl+Z to take it away again.
 
-Open the scene file in a text editor and add an Obj with a Mesh Renderer that names the model's mesh and material:
+The new Obj is named after the model, and has a **Mesh Renderer** that draws the model with its own material. A model made of several parts becomes an Obj with an Obj inside it for each part.
+
+If you will use the model many times with the same settings, make it a prefab and place that instead. See [[Prefabs]].
+
+### In the scene file
+
+In the scene file, the Obj looks like this. You can also write it by hand:
 
 ```toml
 [[obj]]
@@ -37,7 +42,7 @@ material = "Models/Pyramid.gltf#material0"
 - `#mesh0.0` is the first part of the first mesh in the model; `#mesh1.0` the first part of the second, and so on. A model made of several parts needs an Obj for each.
 - `#material0` is the model's first material. Leave `material` out and the model is drawn plain grey.
 
-Save the file and open the level again. When the editor next saves the scene, it writes the model's ID (from its `.meta` file) in place of its path, so the link survives the model being renamed.
+If you write it by hand, save the file and open the level again. When the editor saves the scene, it writes the model's ID (from its `.meta` file) in place of its path, so the link survives the model being renamed.
 
 ## What is read from a glTF file
 

@@ -4,6 +4,7 @@
 
 mod color_popup;
 mod debug_texts;
+mod docs_links;
 mod docs_pictures;
 mod drawer;
 mod play;
@@ -564,6 +565,7 @@ impl Editor {
                 self.history.record(edit);
                 self.unsaved = true;
             }
+            self.update_docs_links();
         }
         if let Some(action) = self.hierarchy.action(&mut self.ui) {
             self.obj_action(action, renderer);

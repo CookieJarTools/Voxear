@@ -2174,3 +2174,43 @@ DockSpace .project-split > .split-divider {
     white-space: nowrap;
     pointer-events: none;
 }
+
+/* [Documentation]: a book button on a section or beside a field, opening
+   its VoxDocs page. */
+.docs-link {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+.docs-link:hover {
+    color: var(--vx-accent);
+}
+
+/* [Excerpt]: part of a VoxDocs page above a field, in a fold. */
+.excerpt {
+    flex-shrink: 0;
+    margin: 3px 0px;
+    border-radius: 6px;
+    background-color: var(--vx-field);
+}
+
+.excerpt > .foldout-header {
+    height: 26px;
+    padding: 0px 8px;
+}
+
+.excerpt .foldout-icon {
+    width: 13px;
+    height: 13px;
+    color: var(--vx-accent);
+}
+
+.excerpt > .foldout-content {
+    padding: 0px 10px 8px 10px;
+}
+
+.excerpt-missing {
+    color: var(--vx-muted);
+}

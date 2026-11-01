@@ -21,6 +21,9 @@
 //!
 //! The **Code Reference** comes last in the tree once the editor hands it
 //! over with [`set_code`]. Its pages are read only, so they have no Edit.
+//! A page lists the code whose `[Documentation]` or `[Excerpt]` points at it
+//! under **In the code**, and [`render_excerpt`] draws an excerpt for the
+//! Inspector.
 //!
 //! **Pictures** are files beside a page, or anywhere in the project. The
 //! panel cannot read them into textures itself: [`wanted_pictures`] lists
@@ -30,6 +33,7 @@
 //! [`wanted_pictures`]: VoxDocs::wanted_pictures
 //! [`set_picture`]: VoxDocs::set_picture
 //! [`set_code`]: VoxDocs::set_code
+//! [`render_excerpt`]: VoxDocs::render_excerpt
 
 use std::{
     cell::RefCell,
@@ -44,7 +48,7 @@ use voxear_ui::{ImageRef, ItemFns, NodeId, TreeItems, Ui};
 use crate::{
     code::{CODE_SCHEME, CodeReference},
     health::Health,
-    library::{Library, Page, PageId, Target},
+    library::{Excerpt, Library, Page, PageId, Target},
     markdown::{self, PAGE_SCHEME},
     view::{self, Lookups, Picture, Rendered},
 };
@@ -321,8 +325,8 @@ impl VoxDocs {
 
     /// How a picture in the open page shows: once read, or else as loading,
     /// noting it to be read, or as missing.
-    fn picture(&self, library: &Library, url: &str) -> Picture {
-        let Some(path) = library.picture_path(url, self.open) else { return Picture::Missing };
+    fn picture(&self, library: &Library, page: PageId, url: &str) -> Picture {
+        let Some(path) = library.picture_path(url, page) else { return Picture::Missing };
         if let Some(picture) = self.pictures.get(&path) {
             return *picture;
         }
@@ -553,6 +557,29 @@ impl VoxDocs {
         }
     }
 
+    /// Draws what `[Excerpt]` shows in `parent`, as the Inspector does
+    /// above a field: the page's words, with its links and pictures.
+    pub fn render_excerpt(&self, ui: &mut Ui, parent: NodeId, excerpt: &Excerpt) {
+        // The page's look, which VoxDocs' sheet gives only what is inside the panel.
+        ui.clear_sheets(parent);
+        ui.add_sheet(parent, voxear_ui::StyleSheet::parse("VoxDocs.vss", SHEET));
+        let library = self.library.borrow();
+        let works = |url: &str| library.works(url, excerpt.page);
+        let pictures = |url: &str| self.picture(&library, excerpt.page, url);
+        view::render(ui, parent, &excerpt.blocks, &Lookups { works: &works, pictures: &pictures });
+    }
+
+    /// Follows a link clicked outside the panel, as in an excerpt, from the
+    /// page it is on: another page opens here.
+    pub fn follow_from(&mut self, ui: &mut Ui, page: PageId, url: &str) {
+        let target = self.library.borrow().resolve(url, page);
+        if let Target::Heading(anchor) = target {
+            self.go(ui, page, Some(anchor), true);
+            return;
+        }
+        self.follow(ui, url);
+    }
+
     /// Where a link in the open page goes.
     fn follow(&mut self, ui: &mut Ui, url: &str) {
         let target = self.library.borrow().resolve(url, self.open);
@@ -753,7 +780,7 @@ impl VoxDocs {
         let blocks = markdown::parse(&ui.text(self.nodes.source));
         let open = self.open;
         let works = |url: &str| library.works(url, open);
-        let pictures = |url: &str| self.picture(&library, url);
+        let pictures = |url: &str| self.picture(&library, open, url);
         view::render(ui, self.nodes.preview, &blocks, &Lookups { works: &works, pictures: &pictures });
     }
 
@@ -806,7 +833,7 @@ impl VoxDocs {
         let blocks = markdown::parse(body);
         let open = self.open;
         let works = |url: &str| library.works(url, open);
-        let pictures = |url: &str| self.picture(&library, url);
+        let pictures = |url: &str| self.picture(&library, open, url);
         let rendered = view::render(ui, self.nodes.page, &blocks, &Lookups { works: &works, pictures: &pictures });
         self.rendered = rendered;
 
@@ -821,6 +848,20 @@ impl VoxDocs {
                 ui.add_class(icon, "cb-row-icon");
                 let mut link = voxear_ui::RichText::new();
                 link.push_link(child.title(), &format!("{PAGE_SCHEME}{}", child.reference()), Default::default());
+                ui.rich_label(row, &link);
+            }
+        }
+        let code = library.code_links(self.open);
+        if !code.is_empty() {
+            let heading = ui.add_label(self.nodes.page, "In the code");
+            ui.add_class(heading, "cb-section");
+            for (name, url) in &code {
+                let row = ui.panel(self.nodes.page, voxear_ui::Style::row());
+                ui.add_class(row, "cb-child");
+                let icon = ui.icon(row, "code");
+                ui.add_class(icon, "cb-row-icon");
+                let mut link = voxear_ui::RichText::new();
+                link.push_link(name, url, Default::default());
                 ui.rich_label(row, &link);
             }
         }

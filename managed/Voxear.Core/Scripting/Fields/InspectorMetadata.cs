@@ -104,6 +104,12 @@ namespace Voxear.Scripting
 				case TooltipAttribute tooltip:
 					json.WriteString("tooltip", tooltip.Text);
 					break;
+				case DocumentationAttribute documentation:
+					json.WriteString("documentation", documentation.Page);
+					break;
+				case ExcerptAttribute excerpt:
+					json.WriteString("excerpt", excerpt.Page);
+					break;
 				default:
 					WriteFlag(json, attribute);
 					break;

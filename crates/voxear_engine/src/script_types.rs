@@ -100,6 +100,10 @@ pub struct BehaviourType {
     pub bases: Vec<String>,
     #[serde(default)]
     pub interfaces: Vec<String>,
+    /// The VoxDocs page its `[Documentation]` names, by path or id, with a
+    /// heading after a hash if any.
+    #[serde(default)]
+    pub documentation: Option<String>,
     /// Base classes' fields first, then its own, in the order declared.
     pub fields: Vec<ScriptField>,
 }
@@ -195,6 +199,10 @@ pub struct FieldInspector {
     pub required: Option<String>,
     pub info: Vec<InfoBox>,
     pub tooltip: Option<String>,
+    /// The VoxDocs page `[Documentation]` names, for a book button beside it.
+    pub documentation: Option<String>,
+    /// The VoxDocs page, or section of one, `[Excerpt]` shows above it.
+    pub excerpt: Option<String>,
 }
 
 /// A group a field shows in, by name: a foldout, a box, a row, or a tab of

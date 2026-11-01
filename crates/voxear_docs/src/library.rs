@@ -87,6 +87,15 @@ impl Page {
     }
 }
 
+/// What `[Excerpt]` shows of a page in the Inspector.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Excerpt {
+    pub page: PageId,
+    /// The section's heading, or the page's title for the whole page.
+    pub title: String,
+    pub blocks: Vec<markdown::Block>,
+}
+
 /// Where a link in a page goes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
@@ -110,6 +119,8 @@ pub struct Library {
     pages: Vec<Page>,
     /// How many pages are read from `Docs`; the Code Reference's come after.
     written: usize,
+    /// Counts each time the pages change, for what shows them elsewhere.
+    version: u64,
     code: CodeReference,
     by_id: HashMap<String, PageId>,
     by_reference: HashMap<String, PageId>,
@@ -126,6 +137,7 @@ impl Library {
             name: name.to_string(),
             pages: Vec::new(),
             written: 0,
+            version: 0,
             code: CodeReference::default(),
             by_id: HashMap::new(),
             by_reference: HashMap::new(),
@@ -137,6 +149,7 @@ impl Library {
 
     /// Reads every page again, as after they changed on disk.
     pub fn reload(&mut self) {
+        self.version += 1;
         self.pages.clear();
         self.by_id.clear();
         self.by_reference.clear();
@@ -146,10 +159,21 @@ impl Library {
             self.pages[root.0].header.title.clone_from(&self.name);
         }
         self.written = self.pages.len();
-        self.add_code(root);
-        for index in 0..self.pages.len() {
+        // The project's pages are filed first, so the Code Reference's can
+        // name the pages its `[Documentation]` points at by their titles.
+        for index in 0..self.written {
             self.index(PageId(index));
         }
+        self.add_code(root);
+        for index in self.written..self.pages.len() {
+            self.index(PageId(index));
+        }
+    }
+
+    /// A number that changes whenever a page is read again or saved, so
+    /// what shows a page elsewhere, as an excerpt does, knows to draw it again.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     pub fn root(&self) -> PageId {
@@ -248,6 +272,47 @@ impl Library {
         beside.filter(|path| path.is_file()).or_else(|| Some(self.project.join(&url)).filter(|path| path.is_file()))
     }
 
+    /// What `[Excerpt]` shows of the page a reference names: the section
+    /// under the heading after a hash, down to the next heading as big or
+    /// bigger, or the whole page. `None` when there is no such page or
+    /// heading.
+    pub fn excerpt(&self, reference: &str) -> Option<Excerpt> {
+        let (target, anchor) = reference.split_once('#').map_or((reference, None), |(t, a)| (t, Some(a)));
+        let page = self.find(&unescape(target))?;
+        let blocks = markdown::parse(&self.page(page).body);
+        let (title, blocks) = match anchor {
+            Some(anchor) => markdown::section(&blocks, anchor)?,
+            None => (self.page(page).title().to_string(), blocks),
+        };
+        Some(Excerpt { page, title, blocks })
+    }
+
+    /// The code whose `[Documentation]` or `[Excerpt]` points at a page, as
+    /// the page lists it under In the code: each type or member's name, as
+    /// `Spinner` or `Spinner.speed`, and the link to it in the Code
+    /// Reference.
+    pub fn code_links(&self, page: PageId) -> Vec<(String, String)> {
+        let points_here = |reference: &str| !reference.is_empty() && self.find_page_of(reference) == Some(page);
+        let mut links = Vec::new();
+        for kind in self.code.types() {
+            let at = format!("{PAGE_SCHEME}{CODE_SCHEME}{}", kind.key);
+            if points_here(&kind.documentation) {
+                links.push((kind.title(), at.clone()));
+            }
+            for member in kind.members.iter().filter(|m| points_here(&m.documentation)) {
+                let name = member.name.split('(').next().unwrap_or(&member.name);
+                links.push((format!("{}.{name}", kind.title()), format!("{at}#{}", markdown::anchor(&member.name))));
+            }
+        }
+        links
+    }
+
+    /// The page a reference names, with or without a heading after a hash.
+    fn find_page_of(&self, reference: &str) -> Option<PageId> {
+        let target = reference.split_once('#').map_or(reference, |(target, _)| target);
+        self.find(&unescape(target))
+    }
+
     /// Whether a link goes somewhere: false for a page not written yet.
     pub fn works(&self, url: &str, from: PageId) -> bool {
         !matches!(self.resolve(url, from), Target::Missing(_))
@@ -315,6 +380,7 @@ impl Library {
         let text = page.header.join(body);
         std::fs::write(&file, text).with_context(|| format!("writing {}", file.display()))?;
         self.index(id);
+        self.version += 1;
         Ok(())
     }
 
@@ -465,6 +531,8 @@ impl Library {
         if self.code.types().is_empty() {
             return;
         }
+        let title_of = |reference: &str| self.find_page_of(reference).map(|page| self.page(page).title().to_string());
+        let mut bodies: Vec<String> = self.code.types().iter().map(|kind| kind.page(&title_of)).collect();
         let code = std::mem::take(&mut self.code);
         let top = self.add_generated(root, CODE_SCHEME.to_string(), CODE_FOLDER, CODE_ABOUT.to_string(), true);
         for namespace in code.namespaces() {
@@ -473,8 +541,9 @@ impl Library {
                 namespace => (format!("{CODE_SCHEME}{namespace}"), namespace),
             };
             let folder = self.add_generated(top, path, title, String::new(), true);
-            for kind in code.types().iter().filter(|t| t.namespace == namespace) {
-                self.add_generated(folder, format!("{CODE_SCHEME}{}", kind.key), &kind.title(), kind.page(), false);
+            for (index, kind) in code.types().iter().enumerate().filter(|(_, t)| t.namespace == namespace) {
+                let body = std::mem::take(&mut bodies[index]);
+                self.add_generated(folder, format!("{CODE_SCHEME}{}", kind.key), &kind.title(), body, false);
             }
         }
         self.code = code;

@@ -55,6 +55,8 @@ pub struct CodeType {
     pub assembly: String,
     pub summary: String,
     pub remarks: String,
+    /// The VoxDocs page its `[Documentation]` names, or nothing.
+    pub documentation: String,
     pub members: Vec<Member>,
 }
 
@@ -68,6 +70,8 @@ pub struct Member {
     pub declaration: String,
     pub summary: String,
     pub returns: String,
+    /// The VoxDocs page its `[Documentation]` or `[Excerpt]` names, or nothing.
+    pub documentation: String,
     pub parameters: Vec<Parameter>,
 }
 
@@ -121,12 +125,14 @@ impl CodeType {
     }
 
     /// Its page: how it is declared, what its comment says and where it is,
-    /// then its members, a section for each kind.
-    pub fn page(&self) -> String {
+    /// then its members, a section for each kind. `title_of` names the pages
+    /// `[Documentation]` points at, when they are there.
+    pub fn page(&self, title_of: &dyn Fn(&str) -> Option<String>) -> String {
         let mut page = format!("```csharp\n{}\n```\n\n{}\n\n", self.declaration, described(&self.summary));
         if !self.remarks.is_empty() {
             page += &format!("{}\n\n", self.remarks);
         }
+        page += &documented(&self.documentation, title_of);
         page += &match self.namespace.as_str() {
             "" => format!("In the global namespace, in {}.\n", self.assembly),
             namespace => format!("In the `{namespace}` namespace, in {}.\n", self.assembly),
@@ -138,7 +144,7 @@ impl CodeType {
             }
             page += &format!("\n## {heading}\n\n");
             for member in members {
-                page += &if kind == "value" { member.value() } else { member.section() };
+                page += &if kind == "value" { member.value() } else { member.section(title_of) };
             }
         }
         page
@@ -148,12 +154,13 @@ impl CodeType {
 impl Member {
     /// A method, property or the like: its heading, how it is declared, and
     /// what its comment says of it, its parameters and what it returns.
-    fn section(&self) -> String {
+    fn section(&self, title_of: &dyn Fn(&str) -> Option<String>) -> String {
         let mut section = format!(
-            "### {}\n\n```csharp\n{}\n```\n\n{}\n\n",
+            "### {}\n\n```csharp\n{}\n```\n\n{}\n\n{}",
             escaped(&self.name),
             self.declaration,
-            described(&self.summary)
+            described(&self.summary),
+            documented(&self.documentation, title_of)
         );
         let parameters: Vec<&Parameter> = self.parameters.iter().filter(|p| !p.text.is_empty()).collect();
         if !parameters.is_empty() {
@@ -175,6 +182,16 @@ impl Member {
             "" => format!("- `{}`\n", self.declaration),
             summary => format!("- `{}`: {summary}\n", self.declaration),
         }
+    }
+}
+
+/// The line saying which VoxDocs page explains it, linked by the page's
+/// title when the page is there, or nothing.
+fn documented(reference: &str, title_of: &dyn Fn(&str) -> Option<String>) -> String {
+    match title_of(reference) {
+        _ if reference.is_empty() => String::new(),
+        Some(title) => format!("Documented in [[{reference}|{title}]].\n\n"),
+        None => format!("Documented in [[{reference}]].\n\n"),
     }
 }
 
@@ -236,7 +253,7 @@ mod tests {
     #[test]
     fn a_page_shows_the_declaration_comments_and_members_by_kind() {
         let code = CodeReference::parse(SAMPLE).unwrap();
-        let page = code.types()[0].page();
+        let page = code.types()[0].page(&|_| None);
         assert!(page.starts_with("```csharp\npublic struct Prefab\n```\n\nA loaded prefab.\n\n"), "{page}");
         assert!(page.contains("In the `Voxear` namespace, in Voxear.Core."), "{page}");
         let fields = page.find("## Fields").unwrap();
@@ -246,7 +263,7 @@ mod tests {
         assert!(page.contains(none), "{page}");
         assert!(page.contains("- `path`: Where it is.\n"), "{page}");
         assert!(page.contains("**Returns** The prefab."), "{page}");
-        let values = code.types()[2].page();
+        let values = code.types()[2].page(&|_| None);
         assert!(values.contains("## Values\n\n- `Empty = 0`: Nothing there.\n"), "{values}");
     }
 

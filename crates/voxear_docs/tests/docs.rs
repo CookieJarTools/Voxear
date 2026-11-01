@@ -400,12 +400,15 @@ const CODE: &str = r#"{ "format": 1, "types": [
     { "key": "Hello.Spinner", "namespace": "Hello", "name": "Spinner", "kind": "class",
       "declaration": "public sealed class Spinner : Behaviour", "assembly": "Hello.Scripts",
       "summary": "Spins its Obj, as a [[code:Voxear.Prefab|Prefab]] might.", "remarks": "",
+      "documentation": "Combat/Damage",
       "members": [{ "kind": "field", "name": "degreesPerSecond", "summary": "How fast it turns.",
-                    "declaration": "[SerializeField] private float degreesPerSecond" }] },
+                    "declaration": "[SerializeField] private float degreesPerSecond",
+                    "documentation": "Combat/Damage#hits" }] },
     { "key": "Voxear.Prefab", "namespace": "Voxear", "name": "Prefab", "kind": "struct",
       "declaration": "public struct Prefab", "assembly": "Voxear.Core", "summary": "A loaded prefab.", "members": [] },
     { "key": "Voxear.Damage", "namespace": "Voxear", "name": "Damage", "kind": "struct",
-      "declaration": "public struct Damage", "assembly": "Voxear.Core", "summary": "", "members": [] }
+      "declaration": "public struct Damage", "assembly": "Voxear.Core", "summary": "", "members": [],
+      "documentation": "Combat/Armour" }
 ] }"#;
 
 #[test]
@@ -459,4 +462,41 @@ fn code_pages_are_read_but_not_written() {
     frame(&mut ui, &mut docs);
     assert!(ui.is_visible(edit));
     assert!(ui.take_warnings().is_empty(), "{:?}", ui.take_warnings());
+}
+
+#[test]
+fn code_points_at_pages_and_excerpts_show_their_sections() {
+    let dir = project();
+    let mut library = Library::open(dir.path(), "Hello");
+    library.set_code(CodeReference::parse(CODE).unwrap());
+    let damage = library.find("Combat/Damage").unwrap();
+    assert_eq!(
+        library.code_links(damage),
+        [
+            ("Spinner".to_string(), "docs:code:Hello.Spinner".to_string()),
+            ("Spinner.degreesPerSecond".to_string(), "docs:code:Hello.Spinner#degreespersecond".to_string()),
+        ],
+        "In the code, by type and member"
+    );
+    let spinner = library.find("code:Hello.Spinner").unwrap();
+    let body = &library.page(spinner).body;
+    assert!(body.contains("Documented in [[Combat/Damage|Damage]]."), "{body}");
+    assert!(body.contains("Documented in [[Combat/Damage#hits|Damage]]."), "a member's too: {body}");
+
+    // [Documentation] naming a page that is not there shows in Docs Health.
+    let health = voxear_docs::health::Health::check(&library);
+    let armour = library.find("code:Voxear.Damage").unwrap();
+    assert!(health.broken.contains(&(armour, "docs:Combat/Armour".to_string())), "{:?}", health.broken);
+
+    let hits = library.excerpt("Combat/Damage#hits").expect("a section");
+    assert_eq!((hits.page, hits.title.as_str()), (damage, "Hits"));
+    assert_eq!(voxear_docs::markdown::plain_text(&hits.blocks), "How hits are counted.\n");
+    assert_eq!(library.excerpt("Combat/Damage").unwrap().title, "Damage", "the whole page");
+    assert!(library.excerpt("Combat/Damage#nowhere").is_none() && library.excerpt("Combat/Armour").is_none());
+
+    let before = library.version();
+    library.save(damage, "## Hits\n\nCounted twice.\n").unwrap();
+    assert!(library.version() > before, "saving a page tells what shows it");
+    let hits = library.excerpt("Combat/Damage#hits").unwrap();
+    assert_eq!(voxear_docs::markdown::plain_text(&hits.blocks), "Counted twice.\n");
 }

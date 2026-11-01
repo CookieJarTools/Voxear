@@ -160,6 +160,19 @@ enum Control {
     Fixed(NodeId),
 }
 
+/// A fold `[Excerpt]` puts above a field, which the editor fills with the
+/// part of a VoxDocs page it names.
+pub struct ExcerptFold {
+    pub fold: NodeId,
+    /// The page, or section of one, as `[Excerpt]` names it.
+    pub reference: String,
+    /// The VoxDocs version last drawn in it, to draw it again when the
+    /// pages change.
+    pub shown: Option<u64>,
+    /// The field it is above, to keep it open while the sections are built again.
+    key: String,
+}
+
 /// What the sections shown were built from: the components and their
 /// values, whether the game was playing, and the Obj's locks.
 type Built = (Vec<(Part, Vec<Prop>)>, bool, Option<Locks>);
@@ -197,6 +210,12 @@ pub struct Inspector {
     closed_groups: std::collections::HashSet<String>,
     /// The `[PreviewField]` images shown: the field, the image and its size.
     previews: Vec<(Prop, NodeId, u32)>,
+    /// The book buttons `[Documentation]` puts on sections and fields, with
+    /// the VoxDocs page each opens.
+    doc_buttons: Vec<(NodeId, String)>,
+    /// The `[Excerpt]` folds shown, and the fields whose folds are open.
+    excerpts: Vec<ExcerptFold>,
+    open_excerpts: std::collections::HashSet<String>,
 }
 
 impl Inspector {
@@ -220,6 +239,9 @@ impl Inspector {
             tab_choices: std::collections::HashMap::new(),
             closed_groups: std::collections::HashSet::new(),
             previews: Vec::new(),
+            doc_buttons: Vec::new(),
+            excerpts: Vec::new(),
+            open_excerpts: std::collections::HashSet::new(),
         }
     }
 
@@ -276,10 +298,10 @@ impl Inspector {
         self.built.0.clear();
     }
 
-    /// Above a row: its `[Title]`, its `[InfoBox]`es that show, and an error
-    /// when a `[Required]` field is empty.
+    /// Above a row: its `[Title]`, its `[InfoBox]`es that show, an error
+    /// when a `[Required]` field is empty, and its `[Excerpt]`.
     fn decorate(
-        &self,
+        &mut self,
         ui: &mut Ui,
         container: NodeId,
         game: &Game,
@@ -302,11 +324,36 @@ impl Inspector {
             let message = message.map_or_else(|| format!("{label} is required"), str::to_string);
             info_box(ui, container, InfoKind::Error, &message);
         }
+        if let Some(reference) = &meta.excerpt {
+            let key = value.lock_key();
+            let fold = ui.foldout(container, reference, self.open_excerpts.contains(&key));
+            ui.add_class(fold, "excerpt");
+            ui.set_foldout_icon(fold, "book");
+            self.excerpts.push(ExcerptFold { fold, reference: reference.clone(), shown: None, key });
+        }
+    }
+
+    /// The VoxDocs page whose book button was clicked, as `[Documentation]`
+    /// names it.
+    pub fn clicked_documentation(&self, ui: &Ui) -> Option<&str> {
+        self.doc_buttons.iter().find(|(button, _)| ui.clicked(*button)).map(|(_, page)| page.as_str())
+    }
+
+    /// The `[Excerpt]` folds shown, for the editor to fill from VoxDocs.
+    pub fn excerpts_mut(&mut self) -> &mut [ExcerptFold] {
+        &mut self.excerpts
     }
 
     /// Keeps which tab each group of tabs shows and which foldouts are
     /// closed, for when the sections are built again.
     fn remember_groups(&mut self, ui: &Ui) {
+        for excerpt in &self.excerpts {
+            if ui.is_open(excerpt.fold) {
+                self.open_excerpts.insert(excerpt.key.clone());
+            } else {
+                self.open_excerpts.remove(&excerpt.key);
+            }
+        }
         for (name, tabs) in &self.group_tabs {
             self.tab_choices.insert(name.clone(), ui.selected_tab(*tabs));
         }
@@ -395,6 +442,8 @@ impl Inspector {
         self.headers.clear();
         self.rows.clear();
         self.previews.clear();
+        self.doc_buttons.clear();
+        self.excerpts.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
         let Some(entity) = self.shown else {
@@ -428,6 +477,15 @@ impl Inspector {
             };
             let (header, rows, _) = section(ui, self.root, part.title(), icon, true);
             self.headers.push((Some(part.clone()), header));
+            let documentation = match part {
+                Part::Behaviour(name) => self.types.behaviour(name).and_then(|b| b.documentation.clone()),
+                _ => None,
+            };
+            if let Some(page) = documentation {
+                let book = ui.icon_button(header, "book");
+                ui.add_class(book, "docs-link");
+                self.doc_buttons.push((book, page));
+            }
             // A locked component shows designers only its chosen values; in its
             // prefab, every value shows, those designers do not see dimmed.
             let shown_to_designers = locks.as_ref().and_then(|l| l.0.get(&part.lock_key())).cloned();
@@ -480,7 +538,7 @@ impl Inspector {
                 // An item of a list, or a list, gets its button beside its value, as a unit does.
                 let item = editable && props::is_item(value);
                 let list = editable && matches!(shown, Value::List(_));
-                let holder = if item || list || meta.suffix.is_some() {
+                let holder = if item || list || meta.suffix.is_some() || meta.documentation.is_some() {
                     let holder = ui.panel(row, Style::row());
                     ui.add_class(holder, "prop-value");
                     holder
@@ -499,6 +557,9 @@ impl Inspector {
                 };
                 let add = list.then(|| button(ui, "plus", "list-add"));
                 let remove = item.then(|| button(ui, "close", "list-remove"));
+                if let Some(page) = &meta.documentation {
+                    self.doc_buttons.push((button(ui, "book", "docs-link"), page.clone()));
+                }
                 if let (Some(size), Value::Asset(_)) = (meta.preview, &shown) {
                     let frame = ui.panel(container, Style::row());
                     ui.add_class(frame, "attr-preview");

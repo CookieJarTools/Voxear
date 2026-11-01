@@ -89,6 +89,7 @@ namespace Voxear.Scripting
 				json.WriteStringValue(contract.FullName);
 			}
 			json.WriteEndArray();
+			WriteDocumentation(json, type);
 			WriteFields(json, type, Activator.CreateInstance(type), types, ComponentLayout.Of(type));
 			json.WriteEndObject();
 		}
@@ -146,8 +147,19 @@ namespace Voxear.Scripting
 				json.WriteStringValue(contract.FullName);
 			}
 			json.WriteEndArray();
+			WriteDocumentation(json, type);
 			WriteFields(json, type, FieldDefaults.Create(type), types);
 			json.WriteEndObject();
+		}
+
+		/// <summary>The VoxDocs page a type's [Documentation] names, for the book button on its Inspector section.</summary>
+		private static void WriteDocumentation(Utf8JsonWriter json, Type type)
+		{
+			var documentation = type.GetCustomAttribute<DocumentationAttribute>(inherit: true);
+			if (documentation != null)
+			{
+				json.WriteString("documentation", documentation.Page);
+			}
 		}
 
 		/// <summary>

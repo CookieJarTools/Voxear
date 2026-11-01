@@ -143,6 +143,17 @@ pub fn plain_text(blocks: &[Block]) -> String {
     out
 }
 
+/// The section of a page under the heading `wanted` is the anchor of, down
+/// to the next heading as big or bigger, as `[Excerpt]` shows it: the
+/// heading's words, and the blocks after it.
+pub fn section(blocks: &[Block], wanted: &str) -> Option<(String, Vec<Block>)> {
+    let at = blocks.iter().position(|b| matches!(b, Block::Heading { anchor, .. } if anchor == wanted))?;
+    let Block::Heading { level, text, .. } = &blocks[at] else { return None };
+    let after = &blocks[at + 1..];
+    let end = after.iter().position(|b| matches!(b, Block::Heading { level: l, .. } if l <= level)).unwrap_or(after.len());
+    Some((text.text.clone(), after[..end].to_vec()))
+}
+
 /// What `#anchor` links a heading with: GitHub's way, lower case with
 /// dashes for spaces and other punctuation dropped.
 pub fn anchor(text: &str) -> String {
@@ -931,6 +942,16 @@ mod tests {
         assert_eq!((language.as_str(), code.as_str()), ("csharp", "var x = 1;"));
         let Block::Image { alt, url } = &blocks[11] else { unreachable!() };
         assert_eq!((alt.as_str(), url.as_str()), ("A cat", "images/cat.png"));
+    }
+
+    #[test]
+    fn a_section_runs_to_the_next_heading_as_big() {
+        let blocks = parse("# Damage\n\n## Hits\n\nHow hits count.\n\n### Criticals\n\nDouble.\n\n## Falloff\n\nLess.\n");
+        let (title, hits) = section(&blocks, "hits").unwrap();
+        assert_eq!(title, "Hits");
+        assert_eq!(plain_text(&hits), "How hits count.\nCriticals\nDouble.\n", "its own headings stay in it");
+        assert_eq!(plain_text(&section(&blocks, "falloff").unwrap().1), "Less.\n", "the last runs to the end");
+        assert!(section(&blocks, "nowhere").is_none());
     }
 
     #[test]

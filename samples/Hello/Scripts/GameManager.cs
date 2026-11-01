@@ -11,8 +11,10 @@ namespace Hello
 	/// survives every level change while the scenes around it come and go.
 	/// </summary>
 	[ExecutionOrder(-100)]
+	[Documentation("How Hello Works/The Day and Night Cycle")]
 	public sealed class GameManager : Behaviour, IInstance
 	{
+		[Excerpt("How Hello Works/The Day and Night Cycle#who-drives-it")]
 		[SerializeField] private LevelStop[] cycle = Array.Empty<LevelStop>();
 
 		public int Score { get; private set; }

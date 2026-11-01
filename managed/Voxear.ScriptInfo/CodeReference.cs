@@ -61,6 +61,7 @@ namespace Voxear.ScriptInfo
 			json.WriteString("assembly", type.Assembly.GetName().Name);
 			json.WriteString("summary", comments.Part(id, "summary"));
 			json.WriteString("remarks", comments.Part(id, "remarks"));
+			json.WriteString("documentation", Page(type));
 			json.WriteStartArray("members");
 			foreach (var member in Members(type).Where(m => !Routine(m, comments)))
 			{
@@ -80,6 +81,7 @@ namespace Voxear.ScriptInfo
 			json.WriteString("declaration", Signatures.Declaration(member));
 			json.WriteString("summary", comments.Part(id, "summary"));
 			json.WriteString("returns", comments.Part(id, "returns"));
+			json.WriteString("documentation", Page(member));
 			json.WriteStartArray("parameters");
 			foreach (var (name, text) in comments.Parameters(id))
 			{
@@ -91,6 +93,12 @@ namespace Voxear.ScriptInfo
 
 			json.WriteEndArray();
 			json.WriteEndObject();
+		}
+
+		/// <summary>The VoxDocs page a member's [Documentation] or [Excerpt] names, or nothing.</summary>
+		private static string Page(MemberInfo member)
+		{
+			return member.GetCustomAttribute<DocumentationAttribute>(true)?.Page ?? member.GetCustomAttribute<ExcerptAttribute>(true)?.Page ?? string.Empty;
 		}
 
 		/// <summary>A type's members as its page lists them, in the order they are declared within each kind.</summary>

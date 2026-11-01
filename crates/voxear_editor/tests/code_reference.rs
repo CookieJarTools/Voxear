@@ -1,7 +1,6 @@
-//! VoxDocs' Code Reference, made from a copy of Hello's scripts as the
-//! editor builds them: the folder after the project's pages, a namespace's
-//! folder, and a type's page with its `///` comments. Skips itself without a
-//! GPU or .NET.
+//! VoxDocs and the code, on a copy of Hello whose scripts the editor
+//! builds: the Code Reference made from them, and `[Documentation]` and
+//! `[Excerpt]` in the Inspector. Skips itself without a GPU or .NET.
 
 use voxear_core::logging::LogCapture;
 use voxear_engine::Project;
@@ -30,6 +29,34 @@ fn hello_copy() -> tempfile::TempDir {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     copy(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello"), dir.path());
     dir
+}
+
+/// The editor on a copy of Hello, once its scripts are described.
+fn open_described(renderer: &mut Renderer, dir: &tempfile::TempDir) -> voxear_editor::Editor {
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, renderer);
+    let started = std::time::Instant::now();
+    while !editor.scripts_described() {
+        assert!(started.elapsed().as_secs() < 300, "the scripts take too long to build");
+        frame(&mut editor, renderer);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    frame(&mut editor, renderer);
+    editor
+}
+
+/// A renderer, or why the test cannot run.
+fn renderer() -> Option<Renderer> {
+    if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
+        eprintln!("skipping: needs .NET and the managed build");
+        return None;
+    }
+    let renderer = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok();
+    if renderer.is_none() {
+        eprintln!("skipping: no usable GPU");
+    }
+    renderer
 }
 
 fn frame(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) {
@@ -70,25 +97,30 @@ fn click_text(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, class
     frame(editor, renderer);
 }
 
+/// The editor as it looks, saved when `VOXEAR_TEST_OUTPUT` names a folder.
+fn shot(renderer: &mut Renderer, name: &str) {
+    let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") else { return };
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+    let mut encoder = png::Encoder::new(file, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+}
+
+fn click(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: NodeId) {
+    let [x, y, w, h] = editor.ui.rect(node);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
 #[test]
 fn voxdocs_shows_the_scripts_code_reference() {
-    if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
-        return eprintln!("skipping: needs .NET and the managed build");
-    }
-    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else {
-        return eprintln!("skipping: no usable GPU");
-    };
+    let Some(mut renderer) = renderer() else { return };
     let dir = hello_copy();
-    let project = Project::open(dir.path()).unwrap();
-    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
-    frame(&mut editor, &mut renderer);
-    let started = std::time::Instant::now();
-    while !editor.scripts_described() {
-        assert!(started.elapsed().as_secs() < 300, "the scripts take too long to build");
-        frame(&mut editor, &mut renderer);
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    frame(&mut editor, &mut renderer);
+    let mut editor = open_described(&mut renderer, &dir);
 
     let root = editor.ui.root();
     let dock = editor.ui.find(root, "dock").unwrap();
@@ -107,4 +139,40 @@ fn voxdocs_shows_the_scripts_code_reference() {
     assert!(label(&editor.ui, root, "protected override void Awake()").is_some(), "and its members");
     let edit = editor.ui.find(root, "cb-edit").unwrap();
     assert!(!editor.ui.is_visible(edit), "a page made from the code is not written here");
+}
+
+#[test]
+fn the_inspector_shows_and_opens_what_code_documents() {
+    let Some(mut renderer) = renderer() else { return };
+    let dir = hello_copy();
+    let mut editor = open_described(&mut renderer, &dir);
+    let root = editor.ui.root();
+    let world = &editor.game.engine.world;
+    let manager = world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == "Game Manager");
+    editor.select(manager.map(|(entity, _)| entity));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    // [Excerpt] on its cycle: the section of the page, in a fold that starts closed.
+    let mut folds = Vec::new();
+    with_class(&editor.ui, root, "excerpt", &mut folds);
+    assert_eq!(folds.len(), 1, "one excerpt");
+    let header = editor.ui.foldout_header(folds[0]).unwrap();
+    assert!(label(&editor.ui, header, "Who drives it").is_some(), "titled by its heading");
+    assert!(!editor.ui.is_open(folds[0]));
+    click(&mut editor, &mut renderer, header);
+    let words = label(&editor.ui, folds[0], "The GameManager keeps the score").expect("the section's words");
+    assert!(editor.ui.is_visible(words));
+    shot(&mut renderer, "inspector-excerpt.png");
+
+    // [Documentation] on the class: its book button opens the page, which lists the code pointing at it.
+    let mut books = Vec::new();
+    with_class(&editor.ui, root, "docs-link", &mut books);
+    assert_eq!(books.len(), 1, "a book on the Game Manager's section");
+    click(&mut editor, &mut renderer, books[0]);
+    let docs = editor.ui.find(root, "docs").unwrap();
+    assert!(label(&editor.ui, docs, "Hello moves between two levels").is_some(), "the page opened in VoxDocs");
+    assert!(label(&editor.ui, docs, "In the code").is_some());
+    assert!(label(&editor.ui, docs, "GameManager.cycle").is_some(), "with what points at it");
+    shot(&mut renderer, "docs-in-the-code.png");
 }

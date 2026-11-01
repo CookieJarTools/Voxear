@@ -66,6 +66,18 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void DocumentationAndExcerptsNameTheirPages()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestGuide).Assembly));
+			var guide = document.RootElement.GetProperty("behaviours").EnumerateArray()
+				.Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestGuide");
+			Check.True(guide.GetProperty("documentation").GetString() == "Combat/Damage", "the behaviour's page");
+			var fields = guide.GetProperty("fields").EnumerateArray().ToDictionary(f => f.GetProperty("name").GetString()!);
+			Check.True(fields["damage"].GetProperty("inspector").GetProperty("documentation").GetString() == "Combat/Damage#hits", "a field's page and heading");
+			Check.True(fields["falloff"].GetProperty("inspector").GetProperty("excerpt").GetString() == "Combat/Damage#falloff", "an excerpt's");
+		}
+
+		[Test]
 		private static void InspectorAttributesAreWrittenWithTheirFields()
 		{
 			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestMover).Assembly));

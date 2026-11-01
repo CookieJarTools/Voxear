@@ -30,6 +30,11 @@ serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 
+# Files dragged onto the window on Wayland, which winit does not pass on there.
+[target.'cfg(target_os = "linux")'.dependencies]
+smithay-client-toolkit = { version = "0.19", default-features = false }
+wayland-backend = { version = "0.3", features = ["client_system"] }
+
 [features]
 # Profiling samples as Tracy zones: `cargo build --features tracy`.
 tracy = ["voxear_engine/tracy"]

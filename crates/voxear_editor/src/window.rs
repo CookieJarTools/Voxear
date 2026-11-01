@@ -1,5 +1,7 @@
 //! The editor's window: input to the editor, and the right mouse button over
-//! the Scene view flies its camera, as in Unity.
+//! the Scene view flies its camera, as in Unity. On Wayland, files dragged
+//! onto it are heard by `wayland_drops`, and passed on as winit passes them
+//! elsewhere: the pointer moving, then files dropped.
 
 use std::{sync::Arc, time::Instant};
 
@@ -11,7 +13,7 @@ use voxear_render::{Renderer, RendererSettings};
 use voxear_rhi::WindowHandles;
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalSize,
+    dpi::{LogicalSize, PhysicalPosition},
     event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::PhysicalKey,
@@ -19,6 +21,8 @@ use winit::{
 };
 
 use crate::editor::Editor;
+#[cfg(target_os = "linux")]
+use crate::wayland_drops::{Drag, WaylandDrops};
 
 /// Opens the editor on `project` in a window, until it is closed.
 pub fn run_editor(project: Project, settings: RendererSettings, log: LogCapture) -> Result<()> {
@@ -28,6 +32,8 @@ pub fn run_editor(project: Project, settings: RendererSettings, log: LogCapture)
         settings,
         log,
         editor: None,
+        #[cfg(target_os = "linux")]
+        drops: None,
         renderer: None,
         window: None,
         last: None,
@@ -42,6 +48,10 @@ struct App {
     settings: RendererSettings,
     log: LogCapture,
     editor: Option<Editor>,
+    /// Files dragged onto the window on Wayland. It borrows the window's
+    /// connection, so it goes before the window does.
+    #[cfg(target_os = "linux")]
+    drops: Option<WaylandDrops>,
     // Declared before the window so it is dropped first: the surface borrows the window.
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
@@ -64,6 +74,13 @@ impl App {
         // Copying and pasting reach the desktop's clipboard, not only the editor's own.
         editor.ui.set_clipboard(Box::new(voxear_engine::ui_input::SystemClipboard::default()));
         window.set_ime_allowed(true);
+        #[cfg(target_os = "linux")]
+        {
+            self.drops = WaylandDrops::new(window.display_handle()?.as_raw()).unwrap_or_else(|error| {
+                tracing::warn!("files dragged onto the window will not be heard: {error:#}");
+                None
+            });
+        }
         self.editor = Some(editor);
         self.renderer = Some(renderer);
         self.window = Some(window);
@@ -77,6 +94,10 @@ impl App {
         let (Some(editor), Some(renderer), Some(window)) = (&mut self.editor, &mut self.renderer, &self.window) else {
             return Ok(());
         };
+        #[cfg(target_os = "linux")]
+        if let Some(drops) = &mut self.drops {
+            pass_drags(editor, drops.poll(), window.scale_factor());
+        }
         let size = window.inner_size();
         editor.update(renderer, (size.width, size.height), window.scale_factor() as f32, delta)
     }
@@ -167,7 +188,30 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
+        #[cfg(target_os = "linux")]
+        {
+            self.drops = None;
+        }
         self.editor = None;
         self.renderer = None;
+    }
+}
+
+/// Hands the editor what drags of files did on Wayland, as winit hands over
+/// a drop elsewhere: where the drag is, as the pointer, then each file.
+#[cfg(target_os = "linux")]
+fn pass_drags(editor: &mut Editor, drags: Vec<Drag>, scale: f64) {
+    for drag in drags {
+        match drag {
+            Drag::Over(x, y) => {
+                let position = PhysicalPosition::new(x * scale, y * scale);
+                editor.handle(&WindowEvent::CursorMoved { device_id: DeviceId::dummy(), position });
+            }
+            Drag::Dropped(paths) => {
+                for path in paths {
+                    editor.handle(&WindowEvent::DroppedFile(path));
+                }
+            }
+        }
     }
 }

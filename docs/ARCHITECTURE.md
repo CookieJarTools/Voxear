@@ -598,7 +598,11 @@ This is the only way to load assets. It replaces Addressables and fixes the buil
   still where the model put it follows it *(implemented)*.
 - Files come in as Unity's do *(implemented)*. One dropped on the editor's window from outside is copied into
   the folder under the pointer in the Project panel, or the folder it shows, numbered if its name is taken, with
-  a `.meta` dropped beside it following it. When the window gets the focus back the editor compares the project's
+  a `.meta` dropped beside it following it. winit passes drops on X11, Windows and macOS but not on Wayland, so
+  there the editor binds a data device for each seat on winit's own connection, in an event queue of its own, takes
+  drags carrying `text/uri-list`, and hands the window the drag's position as the pointer moving and the files as
+  dropped files (`wayland_drops.rs`, with smithay-client-toolkit, which winit already uses). When the window gets the
+  focus back the editor compares the project's
   files with when it last looked: files that came or went show in the Project panel, and a model in use whose
   file, `.meta`, buffers or pictures changed is imported again. With the same parts it goes behind the handles it
   had; with others, as after a re-export that added a mesh, it is uploaded anew, the Objs drawing it move to the

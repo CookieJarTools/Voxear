@@ -2913,6 +2913,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "smithay-client-toolkit",
  "tempfile",
  "toml",
  "toml_edit",
@@ -2927,6 +2928,7 @@ dependencies = [
  "voxear_scene",
  "voxear_scripting",
  "voxear_ui",
+ "wayland-backend",
  "winit",
 ]
 

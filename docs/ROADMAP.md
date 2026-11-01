@@ -383,6 +383,9 @@ Still to do in M3:
   - [ ] custom inspectors that draw a whole behaviour, as Unity's `Editor`
 - A build option to compile the scripts ahead of time (Native AOT) as well as run them on CoreCLR, which needs the
   player and Voxear.Core built that way too, and an option to ship the .NET runtime with the game (M12).
+- A jobs API for fast parallel C#, Voxear's answer to Unity's job system without Burst: work split over the
+  engine's worker threads on `Span`s of plain structs, with dependencies between jobs, `System.Runtime.Intrinsics`
+  for SIMD, and an easy `Jobs.For(count, i => ...)` beside the advanced form. Heavy engine work stays in Rust.
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
 - **More of the Voxear Manual**: each part as it is built (input, audio, physics, animation and the rest),

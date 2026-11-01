@@ -71,6 +71,8 @@ mod props;
 pub mod scene_tools;
 mod settings;
 mod settings_panel;
+#[cfg(target_os = "linux")]
+mod wayland_drops;
 mod window;
 
 use std::path::Path;

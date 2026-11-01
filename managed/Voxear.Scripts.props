@@ -12,6 +12,9 @@
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>disable</ImplicitUsings>
 		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<!-- The scripts' /// comments, for VoxDocs' Code Reference. A public member without one is not a warning. -->
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
 	</PropertyGroup>
 	<!-- A build profile's symbols for #if, such as DEMO, which vox passes as VoxearDefines. -->
 	<PropertyGroup Condition="'$(VoxearDefines)' != ''">

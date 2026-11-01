@@ -8,6 +8,10 @@
 //! rules that set fields when the game runs (`BehaviourFields`), and writes
 //! `.voxear/Scripts/Behaviours.json`. [`cached`] reads the last one, and
 //! [`is_stale`] says whether a script changed since it was written.
+//!
+//! The tool writes the Code Reference beside it, `Code.json`: every public
+//! type of the scripts and of Voxear.Core, with its members and their `///`
+//! comments, which VoxDocs shows as pages ([`code_path`]).
 
 use std::{
     collections::BTreeMap,
@@ -27,6 +31,8 @@ const DESCRIBE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2 * 6
 
 /// The description's file, beside the scripts' build.
 const DESCRIPTION: &str = "Behaviours.json";
+/// The Code Reference's file, beside the description.
+const CODE: &str = "Code.json";
 
 /// The project's behaviours and C# components, the `[Serializable]` types
 /// their fields use, and the `[Command]` methods for the editor's palette.
@@ -297,6 +303,11 @@ pub fn description_path(project: &Project) -> Option<PathBuf> {
     Some(project.scripts_assembly(scripts::CONFIGURATION)?.parent()?.join(DESCRIPTION))
 }
 
+/// Where the Code Reference is kept, written with the description.
+pub fn code_path(project: &Project) -> Option<PathBuf> {
+    Some(description_path(project)?.with_file_name(CODE))
+}
+
 /// The scripts as last described, if they have been.
 pub fn cached(project: &Project) -> Option<ScriptTypes> {
     let text = std::fs::read_to_string(description_path(project)?).ok()?;
@@ -344,9 +355,10 @@ pub fn describe(project: &Project) -> Result<ScriptTypes> {
     let tool = core_assembly(scripts::CONFIGURATION).with_file_name("Voxear.ScriptInfo.dll");
     ensure!(tool.is_file(), "{} is missing; build managed/Voxear.slnx first", tool.display());
     let out = description_path(project).context("scripts project has no file name")?;
+    let code = code_path(project).context("scripts project has no file name")?;
     let dotnet = scripts::dotnet_exe()?;
     let mut command = Command::new(&dotnet);
-    command.arg(&tool).arg(&assembly).arg(&out).env("DOTNET_NOLOGO", "1");
+    command.arg(&tool).arg(&assembly).arg(&out).arg(&code).env("DOTNET_NOLOGO", "1");
     // The tool makes each behaviour to read its starting values, which runs the scripts' own constructors.
     let output = scripts::output_within(&mut command, DESCRIBE_LIMIT).context("describing the scripts")?;
     if !output.status.success() {
@@ -462,5 +474,11 @@ mod tests {
         );
         assert_eq!(types.fields_of("Hello.LevelStop").len(), 2);
         assert!(cached(&Project::open(&hello).unwrap()).is_some(), "and the description is kept");
+
+        // The Code Reference beside it: the scripts' public types and the engine's.
+        let code = std::fs::read_to_string(code_path(&Project::open(&hello).unwrap()).unwrap()).unwrap();
+        let code: serde_json::Value = serde_json::from_str(&code).unwrap();
+        let keys: Vec<&str> = code["types"].as_array().unwrap().iter().filter_map(|t| t["key"].as_str()).collect();
+        assert!(keys.contains(&"Hello.Spinner") && keys.contains(&"Voxear.Prefab"), "{keys:?}");
     }
 }

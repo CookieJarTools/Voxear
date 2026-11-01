@@ -24,6 +24,7 @@ namespace Voxear
 			set { SetEnabled(value); }
 		}
 
+		/// <summary>Whether it is destroyed, or will be at the end of the frame.</summary>
 		public bool IsDestroyed { get; private set; }
 
 		internal uint Handle => handle;
@@ -50,34 +51,48 @@ namespace Voxear
 			Native.Destroy(handle);
 		}
 
+		/// <summary>
+		/// Called once, first, after the fields the scene or prefab gives it are set. Everything created with it has its
+		/// Awake before any of it gets OnEnable, so this is the place to set up the behaviour itself.
+		/// </summary>
 		protected virtual void Awake()
 		{
 		}
 
+		/// <summary>Called after Awake, and again each time the behaviour is enabled.</summary>
 		protected virtual void OnEnable()
 		{
 		}
 
+		/// <summary>
+		/// Called once, before the first Update. Everything created with it has had Awake and OnEnable by then, so other
+		/// behaviours are ready to be asked for what they hold.
+		/// </summary>
 		protected virtual void Start()
 		{
 		}
 
+		/// <summary>Called at each fixed step, with physics, before Update. A frame can have none of them, or several.</summary>
 		protected virtual void FixedUpdate()
 		{
 		}
 
+		/// <summary>Called once a frame.</summary>
 		protected virtual void Update()
 		{
 		}
 
+		/// <summary>Called once a frame, after every behaviour's Update: for a camera that follows what Update moved.</summary>
 		protected virtual void LateUpdate()
 		{
 		}
 
+		/// <summary>Called when the behaviour is disabled, and when it is destroyed, before OnDestroy.</summary>
 		protected virtual void OnDisable()
 		{
 		}
 
+		/// <summary>Called once, last, at the end of the frame the behaviour is destroyed in.</summary>
 		protected virtual void OnDestroy()
 		{
 		}

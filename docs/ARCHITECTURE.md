@@ -1559,13 +1559,24 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   status says whether it is saved. **Save** or Ctrl+S writes it with today's date, and so do **Done** and opening
   another page, so nothing written is lost. A new title renames its file, or its folder, keeping its id, so links
   by id and Back and Forward still find it; tags are kept once each.
+- **The Code Reference** *(`code`)*: a page for every public type in the game's scripts and in Voxear.Core, in a
+  folder after the project's pages, with a folder for each namespace, the game's first. Each time the editor describes
+  the scripts, `Voxear.ScriptInfo` writes it beside their build as `Code.json`, from reflection and the XML the
+  compiler makes of the `///` comments. A type's page shows how it is declared and what its comment says, then its
+  constructors, values, fields, properties, methods and events, each with its declaration, comment, parameters and
+  what it returns. An override with no comment shows the comment of what it overrides, so a behaviour's `Update` says
+  when it runs. Equals, GetHashCode, ToString and constructors without parameters show only when they have a comment.
+  A `<see cref>` to a type with a page links to it. The find box finds the pages, after the project's own (the command
+  bar leaves them out, as they would crowd it), and they have no Edit: they change when the code does. Any page links
+  to a type as `[[code:Voxear.Prefab]]` or `[[code:Voxear.Prefab|Prefab]]`, and a link to a type that is gone shows in
+  Docs Health.
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
 **Still to come**, as the Unity Cookbook has them:
 - `[Documentation("id")]` on C# types and fields, with a button beside them in the Inspector, and excerpts of a
   page shown in it.
-- The **Code Reference**: a page for every public type, from its `///` comments, with notes kept in
-  `Docs/.code-notes`, and `[[code:Type]]` links.
+- **Notes on the Code Reference's pages**, written in VoxDocs beside what the comments say and kept in
+  `Docs/.code-notes`.
 - **Step-by-step guides**: `[DocsAction]` and `[DocsCheck]` methods, and built-in steps (make an asset,
   open a panel, run a menu item), as links a page runs and ticks, with each person's progress kept.
 - **Docs Health**'s checks of the code, once there is a Code Reference: code with no page yet and notes left for

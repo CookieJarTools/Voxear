@@ -374,7 +374,10 @@ impl Editor {
         inspector.show(&mut ui, &game, None, false);
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let docs_panel = find(&ui, "docs");
-        let docs = voxear_docs::VoxDocs::new(&mut ui, docs_panel, &root, game.project.name());
+        let mut docs = voxear_docs::VoxDocs::new(&mut ui, docs_panel, &root, game.project.name());
+        if let Some(code) = code_reference(&game.project) {
+            docs.set_code(&mut ui, code);
+        }
         let (panel, list, empty) = (find(&ui, "palette"), find(&ui, "palette-list"), find(&ui, "palette-empty"));
         let palette = Palette::new(&mut ui, nodes.command, panel, list, empty);
         let (tabs, view, filter) = (find(&ui, "settings-tabs"), find(&ui, "settings"), find(&ui, "settings-filter"));
@@ -789,9 +792,11 @@ impl Editor {
             playing,
             settings: &memory.settings,
             recent: &memory.recent,
+            // The project's own pages: the Code Reference's would crowd out everything else.
             docs: docs
                 .library()
                 .pages()
+                .filter(|(_, page)| !page.generated)
                 .map(|(_, page)| (page.title().to_string(), page.reference().to_string()))
                 .collect(),
             added,
@@ -1272,6 +1277,9 @@ impl Editor {
                     self.inspector.set_types(types);
                     self.describing = None;
                     self.reload_scripts();
+                    if let Some(code) = code_reference(&self.game.project) {
+                        self.docs.set_code(&mut self.ui, code);
+                    }
                 }
                 Ok(Err(error)) => {
                     tracing::warn!("the scripts could not be described: {error:#}");
@@ -1779,4 +1787,11 @@ fn script_namespace(project: &Project) -> String {
         Some(text[start..end].trim().to_string())
     });
     declared.unwrap_or_else(|| voxear_engine::new_project::namespace(project.name()))
+}
+
+/// The Code Reference for VoxDocs, as the scripts were last described, if
+/// they have been.
+fn code_reference(project: &Project) -> Option<voxear_docs::CodeReference> {
+    let path = script_types::code_path(project).filter(|path| path.is_file())?;
+    voxear_docs::CodeReference::read(&path).inspect_err(|error| tracing::warn!("VoxDocs: {error:#}")).ok()
 }

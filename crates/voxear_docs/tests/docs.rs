@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use voxear_docs::{Library, Target, VoxDocs};
+use voxear_docs::{CodeReference, Library, Target, VoxDocs};
 use voxear_ui::{NodeId, Style, Ui};
 
 const WIDTH: u32 = 1000;
@@ -392,4 +392,71 @@ fn home_lists_recent_pages_and_how_healthy_the_docs_are() {
     click(&mut ui, health);
     frame(&mut ui, &mut docs);
     assert!(label(&ui, page, "Docs Health").is_some(), "the line opens Docs Health");
+}
+
+/// A Code Reference as the scripts tool writes it: a type of the game's,
+/// and two of the engine's, one named as a page of the project's.
+const CODE: &str = r#"{ "format": 1, "types": [
+    { "key": "Hello.Spinner", "namespace": "Hello", "name": "Spinner", "kind": "class",
+      "declaration": "public sealed class Spinner : Behaviour", "assembly": "Hello.Scripts",
+      "summary": "Spins its Obj, as a [[code:Voxear.Prefab|Prefab]] might.", "remarks": "",
+      "members": [{ "kind": "field", "name": "degreesPerSecond", "summary": "How fast it turns.",
+                    "declaration": "[SerializeField] private float degreesPerSecond" }] },
+    { "key": "Voxear.Prefab", "namespace": "Voxear", "name": "Prefab", "kind": "struct",
+      "declaration": "public struct Prefab", "assembly": "Voxear.Core", "summary": "A loaded prefab.", "members": [] },
+    { "key": "Voxear.Damage", "namespace": "Voxear", "name": "Damage", "kind": "struct",
+      "declaration": "public struct Damage", "assembly": "Voxear.Core", "summary": "", "members": [] }
+] }"#;
+
+#[test]
+fn the_code_reference_is_pages_of_its_own_after_the_projects() {
+    let dir = project();
+    let mut library = Library::open(dir.path(), "Hello");
+    let damage = library.find("Damage").unwrap();
+    library.set_code(CodeReference::parse(CODE).unwrap());
+    let root = library.root();
+    let titles: Vec<&str> = library.page(root).children.iter().map(|c| library.page(*c).title()).collect();
+    assert_eq!(titles, ["Combat", "Guide", "Code Reference"]);
+    let code = library.find("code:").unwrap();
+    let namespaces: Vec<&str> = library.page(code).children.iter().map(|c| library.page(*c).title()).collect();
+    assert_eq!(namespaces, ["Hello", "Voxear"], "the game's first");
+
+    let spinner = library.find("code:Hello.Spinner").expect("a type's page, by its full name");
+    assert!(library.page(spinner).generated);
+    assert!(library.page(spinner).body.contains("How fast it turns."));
+    let prefab = library.find("code:Voxear.Prefab").unwrap();
+    assert_eq!(library.resolve("docs:code:Voxear.Prefab", spinner), Target::Page(prefab, None));
+    assert_eq!(library.resolve("docs:code:Voxear.Gone", spinner), Target::Missing("code:Voxear.Gone".into()));
+    assert_eq!(library.find("Damage"), Some(damage), "a page named as a type is still found by its title");
+    assert_eq!(library.search("damage")[0], damage, "and comes before it in a search");
+    assert!(library.save(spinner, "Changed").is_err(), "a type's page is not written");
+
+    // Made again, as after the scripts build, the project's pages keep their places.
+    library.set_code(CodeReference::default());
+    assert_eq!(library.find("code:Hello.Spinner"), None);
+    assert_eq!(library.find("Damage"), Some(damage));
+    let empty = tempfile::tempdir().unwrap();
+    let mut library = Library::open(empty.path(), "Empty");
+    library.set_code(CodeReference::parse(CODE).unwrap());
+    assert!(library.is_empty(), "the Code Reference alone is no pages of the project's");
+}
+
+#[test]
+fn code_pages_are_read_but_not_written() {
+    let dir = project();
+    let (mut ui, mut docs, host) = panel(dir.path());
+    docs.set_code(&mut ui, CodeReference::parse(CODE).unwrap());
+    assert!(docs.open_reference(&mut ui, "code:Hello.Spinner"));
+    frame(&mut ui, &mut docs);
+    assert!(label(&ui, host, "How fast it turns").is_some(), "the page shows its members");
+    let edit = ui.find(host, "cb-edit").unwrap();
+    assert!(!ui.is_visible(edit), "with no Edit");
+
+    // The scripts built again: the page stays open, and Edit comes back with the project's own pages.
+    docs.set_code(&mut ui, CodeReference::parse(CODE).unwrap());
+    assert_eq!(docs.library().page(docs.open_page()).title(), "Spinner");
+    assert!(docs.open_reference(&mut ui, "Writing Pages"));
+    frame(&mut ui, &mut docs);
+    assert!(ui.is_visible(edit));
+    assert!(ui.take_warnings().is_empty(), "{:?}", ui.take_warnings());
 }

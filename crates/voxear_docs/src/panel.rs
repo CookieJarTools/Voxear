@@ -19,6 +19,9 @@
 //! **Health** shows what needs looking after (see [`crate::health`]) in the
 //! page's place, each entry a link to the page or file it is about.
 //!
+//! The **Code Reference** comes last in the tree once the editor hands it
+//! over with [`set_code`]. Its pages are read only, so they have no Edit.
+//!
 //! **Pictures** are files beside a page, or anywhere in the project. The
 //! panel cannot read them into textures itself: [`wanted_pictures`] lists
 //! the files a page needs, and [`set_picture`] hands each back once the
@@ -26,6 +29,7 @@
 //!
 //! [`wanted_pictures`]: VoxDocs::wanted_pictures
 //! [`set_picture`]: VoxDocs::set_picture
+//! [`set_code`]: VoxDocs::set_code
 
 use std::{
     cell::RefCell,
@@ -38,8 +42,9 @@ use std::{
 use voxear_ui::{ImageRef, ItemFns, NodeId, TreeItems, Ui};
 
 use crate::{
+    code::{CODE_SCHEME, CodeReference},
     health::Health,
-    library::{Library, PageId, Target},
+    library::{Library, Page, PageId, Target},
     markdown::{self, PAGE_SCHEME},
     view::{self, Lookups, Picture, Rendered},
 };
@@ -94,8 +99,17 @@ impl TreeItems for PageTree {
         let library = self.0.borrow();
         let page = library.page(PageId(item as usize));
         let parts = ui.children(row);
-        ui.set_icon(parts[0], if page.is_folder { "folder" } else { "file" });
+        ui.set_icon(parts[0], page_icon(page));
         ui.set_text(parts[1], page.title());
+    }
+}
+
+/// A page's icon in lists: a folder, a page, or a type of the Code Reference.
+fn page_icon(page: &Page) -> &'static str {
+    match page {
+        page if page.is_folder => "folder",
+        page if page.generated => "code",
+        _ => "file",
     }
 }
 
@@ -223,7 +237,7 @@ impl VoxDocs {
                 let library = titles.borrow();
                 let page = library.page(id);
                 let parts = ui.children(row);
-                ui.set_icon(parts[0], if page.is_folder { "folder" } else { "file" });
+                ui.set_icon(parts[0], page_icon(page));
                 ui.set_text(parts[1], page.title());
                 let folder = page.parent.map(|p| library.page(p).title().to_string()).unwrap_or_default();
                 ui.set_text(parts[2], &folder);
@@ -354,6 +368,25 @@ impl VoxDocs {
             self.go(ui, page, anchor, true);
         }
         found.is_some()
+    }
+
+    /// Shows the Code Reference as `code` describes it, as the scripts were
+    /// last built. A page of it being read stays open if its type is still
+    /// there.
+    pub fn set_code(&mut self, ui: &mut Ui, code: CodeReference) {
+        let open = self.key(self.open);
+        self.library.borrow_mut().set_code(code);
+        let found = self.library.borrow().find(&open);
+        let gone = found.is_none();
+        self.open = found.unwrap_or(PageId(0));
+        ui.refresh_list(self.nodes.tree);
+        self.search(ui);
+        if !self.editing && !self.showing_health {
+            self.render(ui);
+        }
+        if gone {
+            self.select_in_tree(ui);
+        }
     }
 
     /// A file in the project that a link asked to show, once.
@@ -526,6 +559,8 @@ impl VoxDocs {
         match target {
             Target::Page(page, anchor) => self.go(ui, page, anchor, true),
             Target::Heading(anchor) => self.pending_anchor = Some(anchor),
+            // A type no longer in the code: there is nothing to write.
+            Target::Missing(name) if name.starts_with(CODE_SCHEME) => {}
             Target::Missing(name) => self.write_missing(ui, &name),
             Target::Web(url) => open_in_browser(&url),
             Target::File(path) => self.file_request = Some(path),
@@ -745,11 +780,11 @@ impl VoxDocs {
         }
         self.showing_health = false;
         ui.set_checked(self.nodes.health, false);
-        ui.set_visible(self.nodes.edit, true);
         self.page_tags.clear();
         self.show_path(ui);
         let library = self.library.borrow();
         let page = library.page(self.open);
+        ui.set_visible(self.nodes.edit, !page.generated);
 
         let title = ui.add_label(self.nodes.page, page.title());
         ui.add_class(title, "cb-title");
@@ -782,7 +817,7 @@ impl VoxDocs {
                 let child = library.page(child);
                 let row = ui.panel(self.nodes.page, voxear_ui::Style::row());
                 ui.add_class(row, "cb-child");
-                let icon = ui.icon(row, if child.is_folder { "folder" } else { "file" });
+                let icon = ui.icon(row, page_icon(child));
                 ui.add_class(icon, "cb-row-icon");
                 let mut link = voxear_ui::RichText::new();
                 link.push_link(child.title(), &format!("{PAGE_SCHEME}{}", child.reference()), Default::default());
@@ -936,7 +971,7 @@ fn show_home(ui: &mut Ui, parent: NodeId, library: &Library) -> NodeId {
             let page = library.page(id);
             let row = ui.panel(parent, voxear_ui::Style::row());
             ui.add_class(row, "cb-child");
-            let icon = ui.icon(row, if page.is_folder { "folder" } else { "file" });
+            let icon = ui.icon(row, page_icon(page));
             ui.add_class(icon, "cb-row-icon");
             let mut link = voxear_ui::RichText::new();
             link.push_link(page.title(), &format!("{PAGE_SCHEME}{}", page.reference()), Default::default());

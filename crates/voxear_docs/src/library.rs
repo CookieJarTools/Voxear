@@ -4,6 +4,9 @@
 //! titled by its file name unless its header gives a title. Pages are plain
 //! Markdown, so they can be written here or in any editor, and shared with
 //! git like any other file.
+//!
+//! The [Code Reference](crate::code)'s pages come after them, in a folder of
+//! their own, made from the code rather than read from files.
 
 use std::{
     collections::HashMap,
@@ -13,12 +16,24 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use crate::{
+    code::{CODE_SCHEME, CodeReference},
     header::{self, Header},
     markdown::{self, PAGE_SCHEME, Task},
 };
 
 pub const EXTENSION: &str = ".md";
 pub const FOLDER_FILE: &str = "_folder.md";
+
+/// The Code Reference's folder, and its words.
+const CODE_FOLDER: &str = "Code Reference";
+const CODE_ABOUT: &str = "Every public type in the game's scripts and in Voxear.Core, with what its `///` comments \
+say. These pages are made from the code each time the editor builds the scripts, so they are not written here: \
+change the comments instead.
+
+Any page can link to a type, as `[[code:Voxear.Prefab]]`, or `[[code:Voxear.Prefab|Prefab]]` to word the link \
+itself.";
+/// The path of the folder for types in the global namespace.
+const GLOBAL_NAMESPACE: &str = "code:global::";
 
 /// A page's place in its [`Library`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -34,6 +49,10 @@ pub struct Page {
     pub body: String,
     pub parent: Option<PageId>,
     pub children: Vec<PageId>,
+    /// Made from the code, as the Code Reference's pages are, rather than
+    /// read from a file: it is read but not written. Its path is how links
+    /// name it, `code:Voxear.Prefab`.
+    pub generated: bool,
     /// Its title, tags and words in lower case, for searching.
     words: String,
 }
@@ -89,6 +108,9 @@ pub struct Library {
     /// What the top folder is called when it has no title of its own.
     name: String,
     pages: Vec<Page>,
+    /// How many pages are read from `Docs`; the Code Reference's come after.
+    written: usize,
+    code: CodeReference,
     by_id: HashMap<String, PageId>,
     by_reference: HashMap<String, PageId>,
     by_title: HashMap<String, Vec<PageId>>,
@@ -103,6 +125,8 @@ impl Library {
             project: project.to_path_buf(),
             name: name.to_string(),
             pages: Vec::new(),
+            written: 0,
+            code: CodeReference::default(),
             by_id: HashMap::new(),
             by_reference: HashMap::new(),
             by_title: HashMap::new(),
@@ -121,6 +145,8 @@ impl Library {
         if self.pages[root.0].header.title.is_empty() {
             self.pages[root.0].header.title.clone_from(&self.name);
         }
+        self.written = self.pages.len();
+        self.add_code(root);
         for index in 0..self.pages.len() {
             self.index(PageId(index));
         }
@@ -142,8 +168,16 @@ impl Library {
         self.pages.len()
     }
 
+    /// Whether `Docs` has no pages, whatever the Code Reference has.
     pub fn is_empty(&self) -> bool {
-        self.pages.len() <= 1
+        self.written <= 1
+    }
+
+    /// Shows the code as `code` describes it, in place of what it showed.
+    /// The pages read from `Docs` keep their ids.
+    pub fn set_code(&mut self, code: CodeReference) {
+        self.code = code;
+        self.reload();
     }
 
     /// The `Docs` folder.
@@ -254,13 +288,20 @@ impl Library {
             .filter(|(_, page)| tagged(page) && words.iter().all(|w| page.words.contains(w.as_str())))
             .map(|(id, page)| (words.iter().all(|w| page.title().to_lowercase().contains(w.as_str())), id))
             .collect();
-        found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| self.page(a.1).title().cmp(self.page(b.1).title())));
+        // The project's own pages before the Code Reference's.
+        found.sort_by(|a, b| {
+            let (page_a, page_b) = (self.page(a.1), self.page(b.1));
+            b.0.cmp(&a.0).then(page_a.generated.cmp(&page_b.generated)).then_with(|| page_a.title().cmp(page_b.title()))
+        });
         found.into_iter().map(|(_, id)| id).collect()
     }
 
     /// Writes a page's Markdown, giving it an id if it has none and today's
     /// date as when it was updated.
     pub fn save(&mut self, id: PageId, body: &str) -> Result<()> {
+        if self.page(id).generated {
+            bail!("{} is made from the code, so it is not written here", self.page(id).title());
+        }
         let page = &mut self.pages[id.0];
         if page.header.id.is_empty() {
             page.header.id = header::new_id();
@@ -332,7 +373,11 @@ impl Library {
         if name.is_empty() {
             bail!("a page needs a name");
         }
-        let folder = if self.page(folder).is_folder { folder } else { self.page(folder).parent.unwrap_or(self.root()) };
+        let folder = match self.page(folder) {
+            page if page.generated => self.root(),
+            page if page.is_folder => folder,
+            page => page.parent.unwrap_or(self.root()),
+        };
         let path = join(&self.page(folder).path, &format!("{name}{EXTENSION}"));
         if let Some(found) = self.by_reference.get(path.strip_suffix(EXTENSION).unwrap_or(&path)) {
             return Ok(*found);
@@ -357,6 +402,7 @@ impl Library {
             body,
             parent,
             children: Vec::new(),
+            generated: false,
             words: String::new(),
         });
         let mut entries: Vec<(String, bool)> = std::fs::read_dir(&disk)
@@ -386,6 +432,7 @@ impl Library {
                     body,
                     parent: Some(id),
                     children: Vec::new(),
+                    generated: false,
                     words: String::new(),
                 };
                 self.add(page)
@@ -412,6 +459,45 @@ impl Library {
         PageId(self.pages.len() - 1)
     }
 
+    /// The Code Reference's folder, last in the top folder: a folder for
+    /// each namespace, and a page for each type in it.
+    fn add_code(&mut self, root: PageId) {
+        if self.code.types().is_empty() {
+            return;
+        }
+        let code = std::mem::take(&mut self.code);
+        let top = self.add_generated(root, CODE_SCHEME.to_string(), CODE_FOLDER, CODE_ABOUT.to_string(), true);
+        for namespace in code.namespaces() {
+            let (path, title) = match namespace {
+                "" => (GLOBAL_NAMESPACE.to_string(), "Global namespace"),
+                namespace => (format!("{CODE_SCHEME}{namespace}"), namespace),
+            };
+            let folder = self.add_generated(top, path, title, String::new(), true);
+            for kind in code.types().iter().filter(|t| t.namespace == namespace) {
+                self.add_generated(folder, format!("{CODE_SCHEME}{}", kind.key), &kind.title(), kind.page(), false);
+            }
+        }
+        self.code = code;
+    }
+
+    fn add_generated(&mut self, parent: PageId, path: String, title: &str, body: String, is_folder: bool) -> PageId {
+        let mut header = Header::default();
+        header.title = title.to_string();
+        let page = Page {
+            path,
+            is_folder,
+            header,
+            body,
+            parent: Some(parent),
+            children: Vec::new(),
+            generated: true,
+            words: String::new(),
+        };
+        let id = self.add(page);
+        self.pages[parent.0].children.push(id);
+        id
+    }
+
     /// Files a page under its id, path and title, and notes its words.
     fn index(&mut self, id: PageId) {
         let page = &self.pages[id.0];
@@ -425,8 +511,12 @@ impl Library {
         if !page.header.id.is_empty() {
             self.by_id.insert(page.header.id.clone(), id);
         }
+        // The Code Reference's pages are found by their paths alone, so a page
+        // named as a type is still found by its title.
         if !page.path.is_empty() {
             self.by_reference.insert(page.reference().to_string(), id);
+        }
+        if !page.path.is_empty() && !page.generated {
             let titles = self.by_title.entry(page.title().to_lowercase()).or_default();
             if !titles.contains(&id) {
                 titles.push(id);

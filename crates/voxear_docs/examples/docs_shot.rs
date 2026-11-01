@@ -1,10 +1,11 @@
 //! Renders the VoxDocs panel for a project's `Docs` to a PNG, without the
-//! editor: `cargo run -p voxear_docs --example docs_shot -- <project> <page> <out.png>`.
+//! editor: `cargo run -p voxear_docs --example docs_shot -- <project> <page> <out.png> [Code.json]`,
+//! with the Code Reference when given its file.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use voxear_docs::VoxDocs;
+use voxear_docs::{CodeReference, VoxDocs};
 use voxear_ecs::World;
 use voxear_render::{Camera, Renderer, RendererSettings};
 use voxear_scene::Transform;
@@ -15,6 +16,7 @@ fn main() -> Result<()> {
     let project = PathBuf::from(args.next().context("a project folder")?);
     let page = args.next().unwrap_or_default();
     let out = PathBuf::from(args.next().unwrap_or_else(|| "docs.png".into()));
+    let code = args.next().map(|path| CodeReference::read(path.as_ref())).transpose()?;
     let (width, height) = (1100, 760);
     let mut renderer = Renderer::new_offscreen(width, height, &RendererSettings::default())?;
     renderer.set_clear_color([0.004, 0.004, 0.005, 1.0]);
@@ -29,6 +31,9 @@ fn main() -> Result<()> {
         "border-radius: 8px; background-color: #191a1c; border: 1px solid #25272b; overflow: hidden",
     );
     let mut docs = VoxDocs::new(&mut ui, host, &project, "Hello");
+    if let Some(code) = code {
+        docs.set_code(&mut ui, code);
+    }
     if !page.is_empty() {
         docs.open_reference(&mut ui, &page);
     }

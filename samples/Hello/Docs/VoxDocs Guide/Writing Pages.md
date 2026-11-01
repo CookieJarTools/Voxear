@@ -16,6 +16,7 @@ Write **bold**, *italics*, ~~struck out~~, ==highlighted== and `inline code`. A 
 - To a page that does not exist yet: [[Level Streaming]]. Click it to write it.
 - To a heading on this page: [jump to Checklists](#checklists)
 - To a file in the project: [the Day level](Levels/Day.level)
+- To a type in the code: [[code:Hello.Spinner]], or [[code:Voxear.Prefab|a prefab]]
 - To the web: https://github.com/CookieJarTools
 
 ## Checklists
@@ -64,5 +65,6 @@ Put a picture in the page with `![what it shows](images/Day.png)`. Its path is f
 - **Back** and **forward** go through the pages you have read.
 - **Filter by tag** over the tree shows only the pages with every tag picked; a tag on a page picks it too.
 - **On this page** lists a long page's headings beside it, when there is room, and takes you to one.
+- **Code Reference**, last in the tree, has a page for every public type in the scripts and in Voxear.Core, made from their `///` comments each time the scripts build. Its pages are read here, not written: change the comments instead.
 - **Health** lists what needs looking after: pages out of date with the files they link to, links that go nowhere, and pictures that are missing or that no page shows.
 - **Edit** shows the page's title, tags and Markdown, with the page as it will read beside it. **Save** or Ctrl+S writes it to its file, and so do **Done** and opening another page.

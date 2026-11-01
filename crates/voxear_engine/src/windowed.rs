@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use anyhow::{Context, Result};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -18,7 +18,10 @@ use winit::{
 
 use voxear_ui::Key as UiKey;
 
-use crate::{dev_console::ConsoleAction, fly_camera::FlyCamera, game::Game, stats_overlay::StatsOverlay};
+use crate::{
+    dev_console::ConsoleAction, fly_camera::FlyCamera, game::Game, remote_console::RemoteConsole,
+    stats_overlay::StatsOverlay,
+};
 
 /// Called once the renderer exists, typically to load the start level.
 pub type Setup = Box<dyn FnOnce(&mut Game, &mut Renderer) -> Result<()>>;
@@ -37,12 +40,25 @@ pub struct WindowOptions {
     /// The fly camera, the stats overlay on F1, the debug views and RenderDoc
     /// captures: for working on a game, not for playing it.
     pub tools: bool,
+    /// Where `vox console` finds the game, with its tools: the folder the
+    /// console's address is kept in (see [`remote_console`]).
+    ///
+    /// [`remote_console`]: crate::remote_console
+    pub console: Option<PathBuf>,
 }
 
 impl WindowOptions {
     /// A window for working on a game, with every tool, as `vox run` opens.
     pub fn tools(title: &str) -> Self {
-        Self { title: title.to_string(), size: (1280, 720), fullscreen: false, frames: None, stats: false, tools: true }
+        Self {
+            title: title.to_string(),
+            size: (1280, 720),
+            fullscreen: false,
+            frames: None,
+            stats: false,
+            tools: true,
+            console: None,
+        }
     }
 }
 
@@ -50,7 +66,13 @@ impl WindowOptions {
 /// frames.
 pub fn run_windowed(game: Game, options: WindowOptions, settings: RendererSettings, setup: Setup) -> Result<()> {
     let event_loop = event_loop(settings.renderdoc || RenderDoc::is_loaded()).context("creating the event loop")?;
+    let remote = options.console.as_deref().filter(|_| options.tools).and_then(|folder| {
+        RemoteConsole::listen(folder)
+            .inspect_err(|error| tracing::warn!("vox console cannot reach this game: {error:#}"))
+            .ok()
+    });
     let mut app = App {
+        remote,
         game,
         settings,
         debug_view: DEBUG_VIEW_NONE,
@@ -85,6 +107,8 @@ fn event_loop(renderdoc: bool) -> Result<EventLoop<()>, winit::error::EventLoopE
 }
 
 struct App {
+    /// Lines `vox console` sends, while the game has its tools.
+    remote: Option<RemoteConsole>,
     game: Game,
     settings: RendererSettings,
     debug_view: u32,
@@ -147,6 +171,18 @@ impl App {
         self.game.tick(delta, self.renderer.as_mut());
         if self.options.tools && self.overlay.update_console(Some(&mut self.game.engine)) == Some(ConsoleAction::Quit) {
             event_loop.exit();
+        }
+        if let Some(remote) = &self.remote {
+            let (overlay, engine) = (&mut self.overlay, &mut self.game.engine);
+            let mut quit = false;
+            remote.poll(|line| {
+                let (said, action) = overlay.run_remote(line, engine);
+                quit |= action == Some(ConsoleAction::Quit);
+                said
+            });
+            if quit {
+                event_loop.exit();
+            }
         }
         if let (Some(renderer), Some(window)) = (self.renderer.as_mut(), &self.window) {
             self.overlay.update(delta, renderer);

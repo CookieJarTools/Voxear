@@ -137,6 +137,32 @@ impl DevConsole {
         }
     }
 
+    /// Runs a line from outside the window, as `vox console` sends one, and
+    /// returns what it logged, warnings and errors marked, with what it asks
+    /// of the window.
+    pub fn run_remote(&mut self, ui: &mut Ui, line: &str, engine: &mut Engine) -> (Vec<String>, Option<ConsoleAction>) {
+        let total = || logging::recent().lock().map_or(0, |log| log.total);
+        let before = total();
+        let action = self.run(ui, line, Some(engine));
+        let recent = logging::recent();
+        let Ok(log) = recent.lock() else { return (Vec::new(), action) };
+        let new = (log.total - before).min(log.lines.len() as u64) as usize;
+        let echo = format!("› {line}");
+        let said =
+            log.lines.iter().skip(log.lines.len() - new).filter(|l| !(l.target == "console" && l.message == echo));
+        let lines = said
+            .flat_map(|logged| {
+                let mark = match logged.level {
+                    Level::ERROR => "error: ",
+                    Level::WARN => "warning: ",
+                    _ => "",
+                };
+                logged.message.lines().map(move |text| format!("{mark}{text}")).collect::<Vec<_>>()
+            })
+            .collect();
+        (lines, action)
+    }
+
     fn run(&mut self, ui: &mut Ui, line: &str, engine: Option<&mut Engine>) -> Option<ConsoleAction> {
         let word = line.split_whitespace().next().unwrap_or_default().to_lowercase();
         // Cleared is empty, so clear is not echoed.
@@ -281,5 +307,19 @@ mod tests {
         assert_eq!(enter(&mut ui, &mut console, "quit"), Some(ConsoleAction::Quit));
         assert!(console.key(&mut ui, Key::Escape, None));
         assert!(!console.is_open(&ui), "Escape closes it");
+    }
+
+    #[test]
+    fn a_line_from_vox_gives_back_what_it_logged() {
+        let _log = tracing::subscriber::set_default(logging::capturing_only(logging::recent()));
+        let (mut ui, mut console) = console();
+        let mut engine = Engine::new();
+        let (said, action) = console.run_remote(&mut ui, "help", &mut engine);
+        assert!(said.contains(&"quit  Closes the game".to_string()), "{said:?}");
+        assert!(!said.iter().any(|line| line.starts_with('›')), "not the line itself: {said:?}");
+        assert_eq!(action, None);
+        let (said, _) = console.run_remote(&mut ui, "jump", &mut engine);
+        assert!(said.contains(&"warning: nothing is called jump; help lists what there is".to_string()), "{said:?}");
+        assert_eq!(console.run_remote(&mut ui, "quit", &mut engine).1, Some(ConsoleAction::Quit));
     }
 }

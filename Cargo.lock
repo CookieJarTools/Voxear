@@ -2866,6 +2866,7 @@ dependencies = [
  "toml",
  "toml_edit",
  "tracing",
+ "uuid",
  "voxear_assets",
  "voxear_core",
  "voxear_ecs",

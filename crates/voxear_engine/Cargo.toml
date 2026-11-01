@@ -25,6 +25,7 @@ toml.workspace = true
 toml_edit.workspace = true
 raw-window-handle.workspace = true
 voxear_assets.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 image.workspace = true

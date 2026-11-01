@@ -18,6 +18,7 @@ pub mod player_build;
 pub mod prefab;
 pub mod previews;
 mod project;
+pub mod remote_console;
 pub mod scene_file;
 pub mod script_types;
 pub mod scripts;

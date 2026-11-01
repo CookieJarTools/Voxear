@@ -2492,7 +2492,7 @@ them in a running game.
   - Albedo, normals, roughness and overdraw.
   - LOD and meshlet colouring, light complexity, GI voxels and shadow cascades.
   - Physics colliders, nav graphs, audio occlusion rays and AI paths.
-- **Dev console** *(implemented in the game window; `vox` to come)*.
+- **Dev console** *(implemented)*.
   - In a game window with its tools (`vox run`, and development builds), the key left of 1 opens a console over the
     top of the game, as games have had since Quake: the log as it comes, warnings and errors in their colours, and a
     line to type into, with Up and Down for what was typed and Tab to complete a name (`dev_console.rs`).
@@ -2502,7 +2502,11 @@ them in a running game.
     their help, `clear` empties what shows, and `quit` closes the game. Names match ignoring case.
   - Scripts parse and run the line (`DevConsole` in Voxear.Core), and what it did is logged, so the console shows it
     as it shows everything else; the latest log lines are kept for it in `voxear_core::logging::recent`.
-  - Still to come: reaching a running game's console through `vox`.
+  - `vox console "God true"` runs a line in a game running with its tools, from `vox run` (`--project`) or a
+    development build (`--player`, its Data folder), and prints what it logged, warnings and errors marked. The game
+    listens on the loopback address only, on a port the system picks, and keeps the address and a secret in a
+    `Console` file only its user can read, in the project's `.voxear` folder or the build's Data folder; it removes the
+    file when it closes. A connection without the secret runs nothing (`remote_console.rs`).
 - **Debuggers.**
   - Rider, Visual Studio or VS Code attach to the running engine to debug C#, since CoreCLR supports debugging a
     hosted runtime. The editor writes the launch configurations.

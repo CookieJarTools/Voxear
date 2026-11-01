@@ -107,6 +107,11 @@ impl StatsOverlay {
         self.console.update(&mut self.ui, engine)
     }
 
+    /// Runs a line `vox console` sent; see [`DevConsole::run_remote`].
+    pub fn run_remote(&mut self, line: &str, engine: &mut Engine) -> (Vec<String>, Option<ConsoleAction>) {
+        self.console.run_remote(&mut self.ui, line, engine)
+    }
+
     /// Hands the open console a key; returns whether it took it.
     pub fn console_key(&mut self, key: Key, engine: Option<&Engine>) -> bool {
         let took = self.console.key(&mut self.ui, key, engine);

@@ -367,7 +367,7 @@ Still to do in M3:
   - the memory profiler with snapshots and diffs
   - [x] debug draw: lines, arrows, boxes, spheres and text, from C# and Rust, hidden behind the scene or on top
   - [x] the dev console: commands with arguments and console variables, in the game window's development tools
-  - [ ] the dev console through `vox`, into a running game
+  - [x] the dev console through `vox`, into a running game: `vox console "line"`
   - [x] debug draw's texts in the player, as in the editor, from one shared piece
   - [x] a C# `Color` field in the Inspector: a swatch for the colour picker, set from hex or numbers in scenes
 - **C# ECS API**, the advanced path beside Behaviours (see "ECS and the Obj model" in the architecture):

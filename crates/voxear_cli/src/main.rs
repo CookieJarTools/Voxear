@@ -93,6 +93,19 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Run a line in the console of a game running with its tools, from `vox run` or a development build, and print
+    /// what it logged: `vox console "God true"`.
+    Console {
+        /// The line, as typed into the game's console; several words are joined with spaces.
+        #[arg(required = true, num_args = 1..)]
+        line: Vec<String>,
+        /// Project folder or its voxear.toml, for a game from `vox run`.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// A development build's Data folder, for a game run from a build instead.
+        #[arg(long, value_name = "DATA")]
+        player: Option<PathBuf>,
+    },
     /// List a project's assets, giving new ones a GUID (`.meta` file).
     Assets {
         /// Project folder or its voxear.toml.
@@ -271,6 +284,7 @@ fn main() -> Result<()> {
             new_project(&request, json)
         }
         Commands::Assets { project } => assets(&project),
+        Commands::Console { line, project, player } => console(&line.join(" "), &project, player.as_deref()),
         Commands::Upgrade { project, from, json } => upgrade(&project, from.as_deref(), json),
         Commands::Build { project, profile, progress, list } => build(&project, profile, progress == "json", list),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
@@ -308,6 +322,23 @@ fn main() -> Result<()> {
     }
 }
 
+/// Where a game from `vox run` keeps its console's address: the project's
+/// own `.voxear` folder.
+fn project_console(root: &Path) -> PathBuf {
+    root.join(".voxear")
+}
+
+fn console(line: &str, project: &Path, player: Option<&Path>) -> Result<()> {
+    let folder = match player {
+        Some(data) => data.to_path_buf(),
+        None => project_console(&Project::open(project)?.root),
+    };
+    for said in voxear_engine::remote_console::send(&folder, line)? {
+        println!("{said}");
+    }
+    Ok(())
+}
+
 fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, renderdoc: bool, stats: bool) -> Result<()> {
     let project = Project::open(path)?;
     let settings = RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(&project, renderdoc) };
@@ -318,7 +349,8 @@ fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, rende
         // A window is for playing while working on the game, so changed scripts reload into it.
         game.watch_scripts();
         let setup = Box::new(|game: &mut Game, renderer: &mut Renderer| game.start(Some(renderer)));
-        let options = WindowOptions { frames, stats, ..WindowOptions::tools(&title) };
+        let console = Some(project_console(&game.project.root));
+        let options = WindowOptions { frames, stats, console, ..WindowOptions::tools(&title) };
         return run_windowed(game, options, settings, setup);
     }
     game.start(None)?;

@@ -166,6 +166,7 @@ namespace Voxear.Scripting
 			BehaviourFields.Clear();
 			SceneComponentTypes.Clear();
 			InstanceRegistry.Clear();
+			InspectorDrawers.Forget();
 		}
 
 		/// <summary>Lets go of the old scripts, so they can leave memory once nothing runs them.</summary>

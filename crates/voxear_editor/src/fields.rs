@@ -227,6 +227,22 @@ pub fn set(
     change(world, types, entity, behaviour, path, |slot| *slot = new)
 }
 
+/// Sets the value at a path to one as a scene writes it. Returns whether it
+/// changed.
+pub fn set_raw_at(
+    world: &mut World,
+    types: &ScriptTypes,
+    entity: Entity,
+    behaviour: &str,
+    path: &[Step],
+    value: toml::Value,
+) -> bool {
+    if value_at(world, types, entity, behaviour, path).as_ref() == Some(&value) {
+        return false;
+    }
+    change(world, types, entity, behaviour, path, |slot| *slot = value)
+}
+
 /// Sets a top-level field for the scene to a value as a scene writes it,
 /// under the name the scene already uses for it, if any.
 pub fn set_raw(world: &mut World, entity: Entity, behaviour: &str, name: &str, value: toml::Value) -> bool {

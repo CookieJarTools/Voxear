@@ -1829,8 +1829,8 @@ still reads no assembly; a source generator can take its place later without the
   the file, the Obj and what is wrong, and the report keeps them; the build goes on. A prefab's instances in a
   scene are left to the prefab's own file.
 
-Still to come: buttons and callbacks while playing, on the running behaviour, `[ShowInInspector]`, `[AssetsOnly]`
-and `[SceneObjectsOnly]` (a Voxear field takes one or the other already), and custom drawers. A source generator, as
+Still to come: buttons and callbacks while playing, on the running behaviour, `[ShowInInspector]`, and `[AssetsOnly]`
+and `[SceneObjectsOnly]` (a Voxear field takes one or the other already). A source generator, as
 first planned, is not needed: ScriptInfo already gives the editor every attribute without the editor reading the
 assembly.
 
@@ -1848,9 +1848,25 @@ Names given with `nameof` are checked by the compiler already; these catch names
 kind. It is built against Roslyn 4.8, which newer compilers load, and tested by compiling snippets of game code in
 memory (`Voxear.Analyzers.Tests`).
 
-**Advanced.** Custom drawers in C#, built with Voxear UI: `ValueDrawer<T>` for a type, and
-`AttributeDrawer<TAttribute>` for your own attributes. Drawers chain as Odin's do, with each decorator wrapping the
-next, so `[InfoBox]` above a custom drawer still shows.
+**Custom drawers** *(implemented)* are C#, built with Voxear UI, the UI games draw theirs with: `ValueDrawer<T>`
+draws every field of a type, and `AttributeDrawer<TAttribute, T>` (or `AttributeDrawer<TAttribute>` for any type)
+the fields marked with an attribute of the game's own. A drawer gives its `Markup`, a `.vui` document, and a
+`Draw(value, ui)` that writes the value into the elements and gives it back as what was clicked leaves it, reading
+clicks with `WasClicked`. A list's drawers draw each item; a value a drawer draws has no rows of its own.
+- **The chain:** ScriptInfo writes each field's drawers by name, outermost first: one for each of its attributes,
+  in the order written, then its type's (`drawers`, or `item_drawers` for a list). Each is built in the `next`
+  element of the one around it, and the Inspector's own control goes in the innermost one's, or nowhere. The label,
+  groups, conditions and decorations stay the Inspector's, so `[InfoBox]` above a drawn field still shows.
+- **Running them** (`field_drawers.rs`): a drawn field shows its own control until the edit-mode scripts start.
+  Then the editor opens its drawers, which live in `Voxear.Core`'s `InspectorDrawers` until the Inspector is built
+  again, and builds their markup, with the project's sheets it names. A field is drawn, innermost drawer first, when
+  it is built, when its value changes elsewhere (undo, a callback), and when something in it is clicked or changed;
+  all of a frame's fields go in one call through the Inspector's JSON calls, so no interop version changed. While
+  they draw, the editor lends the scripts its UI as `ScriptServices` (`DrawerUi`), answering `UiDocument.Find` and
+  the element calls through the same `UiNumbers` the game's UI keeps, with numbers of its own from 2²⁴ up. A value
+  that comes back changed goes into the scene, typed as the field is, as part of the frame's step to undo, and
+  calls the field's `[OnValueChanged]`. A drawer that throws stops drawing until the Inspector is built again.
+- While playing, a drawn field shows its own control.
 
 ### The design
 

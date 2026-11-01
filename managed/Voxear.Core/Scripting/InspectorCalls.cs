@@ -15,7 +15,8 @@ namespace Voxear.Scripting
 	/// it, and lets it go. Requests and answers are JSON:
 	/// { "behaviour", "entity", "fields", "action": "call" | "validate" | "dropdown", "member", "field" }, answered with
 	/// { "changed": { field: value } }, { "valid", "message" } or { "options": [{ "label", "value" }] }, and
-	/// { "error" } when it could not be asked, which is logged.
+	/// { "error" } when it could not be asked, which is logged. The Inspector's drawers are opened and drawn through
+	/// here too, as InspectorDrawers says.
 	/// </summary>
 	internal static class InspectorCalls
 	{
@@ -46,9 +47,21 @@ namespace Voxear.Scripting
 
 		private static void Ask(Utf8JsonWriter json, JsonElement root)
 		{
+			var action = root.GetProperty("action").GetString();
+			if (action == "open")
+			{
+				InspectorDrawers.Open(json, root);
+				return;
+			}
+			if (action == "draw")
+			{
+				InspectorDrawers.Draw(json, root);
+				return;
+			}
+
 			var behaviour = Make(root);
 			var member = root.GetProperty("member").GetString() ?? string.Empty;
-			switch (root.GetProperty("action").GetString())
+			switch (action)
 			{
 				case "call":
 					Call(json, behaviour, member);

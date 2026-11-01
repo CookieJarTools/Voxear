@@ -240,6 +240,12 @@ pub struct FieldInspector {
     pub list: Option<ListSettings>,
     /// Colours `[ColorPalette]` offers, as hex.
     pub palette: Vec<String>,
+    /// The drawers scripts draw its value with, by type, outermost first:
+    /// an `AttributeDrawer` for each of its attributes that has one, then the
+    /// `ValueDrawer` of its type.
+    pub drawers: Vec<String>,
+    /// For a list, the drawers of each of its items.
+    pub item_drawers: Vec<String>,
 }
 
 /// A `[ListDrawerSettings]`: how many items show at a time, 0 for all, and

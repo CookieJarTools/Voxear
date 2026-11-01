@@ -8,11 +8,13 @@ namespace Voxear.Scripting
 	/// <summary>
 	/// What a field's inspector attributes ask of the editor, written beside its kind as an "inspector" object holding
 	/// only what is set, so the editor shows a tailored Inspector without reading the assembly itself. Condition
-	/// values are written as a scene writes the field's value, so the editor compares like with like.
+	/// values are written as a scene writes the field's value, so the editor compares like with like. The drawers
+	/// that draw the field are written by name, outermost first: "drawers" for its value, or "item_drawers" for each
+	/// item of a list.
 	/// </summary>
 	internal static class InspectorMetadata
 	{
-		public static void Write(Utf8JsonWriter json, FieldInfo field)
+		public static void Write(Utf8JsonWriter json, FieldInfo field, DrawerTable drawers)
 		{
 			var attributes = new List<Attribute>();
 			foreach (var attribute in field.GetCustomAttributes(inherit: true))
@@ -22,12 +24,17 @@ namespace Voxear.Scripting
 					attributes.Add(known);
 				}
 			}
-			if (attributes.Count == 0)
+			var item = DrawerTable.ItemType(field.FieldType);
+			var chain = item == null ? drawers.Chain(field, field.FieldType) : new List<Type>();
+			var items = item == null ? new List<Type>() : drawers.Chain(field, item);
+			if (attributes.Count == 0 && chain.Count == 0 && items.Count == 0)
 			{
 				return;
 			}
 
 			json.WriteStartObject("inspector");
+			WriteDrawers(json, "drawers", chain);
+			WriteDrawers(json, "item_drawers", items);
 			var infos = new List<InfoBoxAttribute>();
 			foreach (var attribute in attributes)
 			{
@@ -42,6 +49,21 @@ namespace Voxear.Scripting
 			}
 			WriteInfos(json, infos);
 			json.WriteEndObject();
+		}
+
+		private static void WriteDrawers(Utf8JsonWriter json, string name, List<Type> drawers)
+		{
+			if (drawers.Count == 0)
+			{
+				return;
+			}
+
+			json.WriteStartArray(name);
+			foreach (var drawer in drawers)
+			{
+				json.WriteStringValue(drawer.FullName);
+			}
+			json.WriteEndArray();
 		}
 
 		private static void WriteOne(Utf8JsonWriter json, Attribute attribute)

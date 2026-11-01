@@ -371,7 +371,8 @@ Still to do in M3:
   - [x] dragging a list's items by their labels to reorder them
   - [x] the analyzer: a wrong name or shape in an Inspector attribute is a compile error where it is written
     (`VOX0001` to `VOX0007`); the source generator is not needed, as ScriptInfo describes the scripts already
-  - [ ] custom drawers
+  - [x] custom drawers in C#: `ValueDrawer<T>` and `AttributeDrawer<TAttribute, T>`, built from `.vui` markup and
+    drawn through the C# UI API, chained through a `next` element around the Inspector's own control
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
 - **More of the Voxear Manual**: each part as it is built (input, audio, physics, animation and the rest),

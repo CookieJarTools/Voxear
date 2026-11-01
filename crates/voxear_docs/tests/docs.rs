@@ -689,3 +689,29 @@ fn health_counts_the_comments_the_projects_types_still_need() {
     assert_eq!(health.comment_gaps, [(spinner, 1, 2)], "the field has none; the engine's types are not counted");
     assert_eq!(health.problems(), 2, "nor are these among the things to look after");
 }
+
+#[test]
+fn files_dropped_while_writing_go_into_the_page() {
+    let dir = project();
+    let outside = tempfile::tempdir().unwrap();
+    let shot = outside.path().join("Arena Shot.png");
+    std::fs::write(&shot, "a picture").unwrap();
+    let (mut ui, mut docs, host) = panel(dir.path());
+    assert!(docs.open_reference(&mut ui, "Combat/Damage"));
+    frame(&mut ui, &mut docs);
+    assert!(!docs.drop_file(&mut ui, &shot), "not while reading");
+
+    let edit = ui.find(host, "cb-edit").unwrap();
+    click(&mut ui, edit);
+    frame(&mut ui, &mut docs);
+    frame(&mut ui, &mut docs);
+    assert!(docs.drop_file(&mut ui, &shot));
+    assert!(docs.drop_file(&mut ui, &dir.path().join("Models/Crate.gltf")));
+    frame(&mut ui, &mut docs);
+    let kept = dir.path().join("Docs/Combat/images/Arena Shot.png");
+    assert_eq!(std::fs::read_to_string(&kept).unwrap(), "a picture", "copied beside the page");
+    let source = ui.find(host, "cb-source").unwrap();
+    let text = ui.text(source);
+    assert!(text.contains("![Arena Shot](<images/Arena Shot.png>)\n"), "{text}");
+    assert!(text.contains("![Crate](Models/Crate.gltf)\n"), "a model in the project, shown live: {text}");
+}

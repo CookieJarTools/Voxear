@@ -432,6 +432,44 @@ impl VoxDocs {
         }
     }
 
+    /// A file dropped on the editor while a page is being written, put in
+    /// the page at the cursor. A picture from outside the project is copied
+    /// into an `images` folder beside the page; one in the project, or a
+    /// prefab, model or material, is shown from where it is; any other file
+    /// of the project is linked. Returns whether the page took it.
+    pub fn drop_file(&mut self, ui: &mut Ui, path: &Path) -> bool {
+        if !self.editing {
+            return false;
+        }
+        let library = self.library.borrow();
+        let in_project = path.strip_prefix(library.project()).ok().map(|p| p.to_string_lossy().replace('\\', "/"));
+        let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let shown = PICTURES.contains(&extension.as_str()) || LIVE.contains(&extension.as_str());
+        let markdown = match in_project {
+            Some(within) if shown => format!("![{name}]({})", address(&within)),
+            Some(within) => format!("[{name}]({})", address(&within)),
+            None if PICTURES.contains(&extension.as_str()) => {
+                let folder = library.folder().join(library.page(self.open).directory()).join("images");
+                match copy_into(path, &folder) {
+                    Ok(file) => format!("![{name}]({})", address(&format!("images/{file}"))),
+                    Err(error) => {
+                        tracing::error!("VoxDocs: could not keep {} with the page: {error:#}", path.display());
+                        return false;
+                    }
+                }
+            }
+            None => return false,
+        };
+        drop(library);
+        if ui.focused() != Some(self.nodes.source) {
+            ui.focus(self.nodes.source);
+            ui.caret_to_end(self.nodes.source);
+        }
+        ui.text_input(&format!("{markdown}\n"));
+        true
+    }
+
     /// The places under the open page's live assets for their fields, with
     /// each asset's file, for the editor to fill. They change whenever the
     /// page is drawn again.
@@ -1180,6 +1218,38 @@ impl VoxDocs {
         ui.set_scroll(self.nodes.page, [0.0, (top - view + scrolled - 8.0).max(0.0)]);
         self.pending_anchor = None;
     }
+}
+
+/// The pictures a page shows, and the assets it shows live, by their
+/// extensions.
+const PICTURES: [&str; 3] = ["png", "jpg", "jpeg"];
+const LIVE: [&str; 4] = ["prefab", "material", "gltf", "glb"];
+
+/// A path as a link writes it: in angle brackets when it has spaces.
+fn address(path: &str) -> String {
+    if path.contains(' ') { format!("<{path}>") } else { path.to_string() }
+}
+
+/// Copies a file into `folder` under its own name, or the name with a number
+/// when a different file has it there already. Returns the name it took.
+fn copy_into(file: &Path, folder: &Path) -> std::io::Result<String> {
+    std::fs::create_dir_all(folder)?;
+    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+    let extension = file.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let bytes = std::fs::read(file)?;
+    for number in 1.. {
+        let name = if number == 1 { format!("{stem}{extension}") } else { format!("{stem} {number}{extension}") };
+        let target = folder.join(&name);
+        match std::fs::read(&target) {
+            Ok(there) if there == bytes => return Ok(name),
+            Ok(_) => continue,
+            Err(_) => {
+                std::fs::write(&target, &bytes)?;
+                return Ok(name);
+            }
+        }
+    }
+    unreachable!("a free name is found")
 }
 
 /// Opens a web address in the system's browser.

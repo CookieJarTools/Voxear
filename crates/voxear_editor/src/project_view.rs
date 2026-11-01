@@ -3,12 +3,14 @@
 //! on the right, its folders first. With room, the right side shows tiles;
 //! narrower, it shows rows with each file's size. Selecting a folder in the
 //! tree opens it, as does double-clicking one on the right. Assets on the
-//! right can be dragged onto the Inspector's asset fields.
+//! right can be dragged onto the Inspector's asset fields, and prefabs,
+//! models and scenes onto the Hierarchy and the Scene view.
 //!
 //! Selecting an item shows it in the Inspector, and double-clicking a file
 //! opens it, through [`ProjectEvent`]s. A context click on an item, on the
-//! space around them, or on a folder in the tree offers Open, Show in Files,
-//! Copy Path, Rename, Duplicate and Delete, and new folders, scenes, levels,
+//! space around them, or on a folder in the tree offers Open (and for a
+//! scene, Open Additively, alongside the scenes open), Show in Files, Copy
+//! Path, Rename, Duplicate and Delete, and new folders, scenes, levels,
 //! materials and C# scripts (see `project_files`). Rename, and anything new,
 //! opens a bar over the files to type the name in: Enter keeps it, and going
 //! elsewhere leaves the old one.
@@ -53,6 +55,8 @@ pub enum ProjectEvent {
     Selected(ProjectItem),
     /// A file was opened: double-clicked, or Open from its menu.
     Open(ProjectItem),
+    /// A scene was opened alongside those open, from its menu.
+    OpenAdditively(ProjectItem),
     /// Files changed on disk: the editor looks at the assets again and calls
     /// [`ProjectView::refresh`], selecting `select`, and with `rename`,
     /// starting to rename it.
@@ -68,6 +72,7 @@ pub enum ProjectEvent {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum MenuAction {
     Open,
+    OpenAdditively,
     Reveal,
     CopyPath,
     Rename,
@@ -539,6 +544,13 @@ impl ProjectView {
         let is_root = entry == Some(Entry::Folder(0));
         if let Some(entry) = entry {
             add(MenuItem::new("Open"), Some(MenuAction::Open));
+            let contents = self.contents.borrow();
+            let scene =
+                matches!(entry, Entry::File(file) if contents.files[file].kind == FileKind::Asset(AssetKind::Scene));
+            drop(contents);
+            if scene {
+                add(MenuItem::new("Open Additively"), Some(MenuAction::OpenAdditively));
+            }
             add(MenuItem::new("Show in Files"), Some(MenuAction::Reveal));
             add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
             add(MenuItem::separator(), None);
@@ -580,6 +592,7 @@ impl ProjectView {
                 }
                 _ => vec![ProjectEvent::Open(item)],
             },
+            MenuAction::OpenAdditively => vec![ProjectEvent::OpenAdditively(item)],
             MenuAction::Reveal => {
                 let shown = if item.kind == ItemKind::Folder { item.path.as_str() } else { parent(&item.path) };
                 show_in_files(&self.root.join(shown));

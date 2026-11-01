@@ -15,6 +15,7 @@ mod play;
 mod prefab_mode;
 mod previews;
 mod scene_view;
+mod scenes;
 mod script_actions;
 mod tooltip;
 mod windows;
@@ -760,6 +761,7 @@ impl Editor {
         match event {
             ProjectEvent::Selected(item) => self.inspect_asset(&item),
             ProjectEvent::Open(item) => self.open_item(&item, renderer),
+            ProjectEvent::OpenAdditively(item) => self.open_scene_alongside(&item.path, renderer),
             ProjectEvent::Changed { select, rename } => {
                 if let Err(error) = self.game.content.rescan() {
                     tracing::warn!("could not look at the project's files again: {error:#}");
@@ -1156,8 +1158,11 @@ impl Editor {
     /// Each is a step to undo, except while playing, when only the played
     /// world changes.
     fn obj_action(&mut self, action: ObjAction, renderer: &mut Renderer) {
-        if let ObjAction::OpenPrefab(entity) = action {
-            return self.open_prefab_of(entity, renderer);
+        match action {
+            ObjAction::OpenPrefab(entity) => return self.open_prefab_of(entity, renderer),
+            ObjAction::AddToLevel(scene) => return self.add_scene_to_level(scene, renderer),
+            ObjAction::CloseScene(scene) => return self.close_scene(scene),
+            _ => {}
         }
         let position = self.new_obj_position();
         let game = &mut self.game;
@@ -1180,7 +1185,7 @@ impl Editor {
                 Some((before, after)) => (Edit::Moved { entity, before, after }, Some(entity)),
                 None => return,
             },
-            ObjAction::OpenPrefab(_) => return,
+            ObjAction::OpenPrefab(_) | ObjAction::AddToLevel(_) | ObjAction::CloseScene(_) => return,
         };
         if !self.is_playing() {
             self.history.record_step(edit);

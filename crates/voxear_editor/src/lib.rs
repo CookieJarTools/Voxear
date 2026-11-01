@@ -23,8 +23,8 @@
 //!   Ctrl snaps)
 //! - **editing Objs** in the Hierarchy: its + button and context menus make,
 //!   duplicate and delete them, and dragging one onto another reparents it;
-//!   a prefab dragged from the Project onto it or the Scene view places an
-//!   instance there
+//!   a prefab or model dragged from the Project onto it or the Scene view
+//!   places it there, and a scene opens alongside the level, additively
 //! - the **Inspector**, editing the selected Obj's name, Transform, whether
 //!   it is persistent, and components, its scripts' fields included, with Add
 //!   and Remove Component; while playing, a row's menu can keep its value

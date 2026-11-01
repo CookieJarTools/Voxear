@@ -1,15 +1,16 @@
 //! Placing prefabs and models, as Unity's drag from the Project window does:
 //! a prefab as an instance of it, a model as Objs drawing it (see
-//! `objs::place_model`). One dragged onto the Hierarchy lands where an Obj
-//! moved there would: inside the Obj it is let go of on, beside it near its
-//! edge, at the top of a scene on its header, and below the rows, at the top
-//! of the active scene. Let go of on the Scene view, it lands where the
-//! pointer meets what is under it, or the ground, on the snap grid across;
-//! failing both, in front of the camera, as a new Obj does. Either is one
-//! step to undo. Only while a prefab or model is dragged do the two take
-//! drops, so nothing else dragged lights them up. In a prefab open on its
-//! own, what would land at the top goes inside its root instead, keeping its
-//! place in the world, as a prefab has one root.
+//! `objs::place_model`); a scene dragged onto either opens alongside the
+//! scenes open instead (see `scenes`). One dragged onto the Hierarchy lands
+//! where an Obj moved there would: inside the Obj it is let go of on, beside
+//! it near its edge, at the top of a scene on its header, and below the
+//! rows, at the top of the active scene. Let go of on the Scene view, it
+//! lands where the pointer meets what is under it, or the ground, on the
+//! snap grid across; failing both, in front of the camera, as a new Obj
+//! does. Either is one step to undo. Only while a prefab, model or scene is
+//! dragged do the two take drops, so nothing else lights them up. In a
+//! prefab open on its own, what would land at the top goes inside its root
+//! instead, keeping its place in the world, as a prefab has one root.
 
 use std::collections::HashSet;
 
@@ -29,32 +30,42 @@ use crate::{
 
 impl Editor {
     /// Places what was let go of on the Hierarchy or the Scene view, and lets
-    /// them take drops while a prefab or model is dragged.
+    /// them take drops while a prefab, model or scene is dragged.
     pub(super) fn update_placing(&mut self, renderer: &mut Renderer) {
         if let Some((source, to)) = self.hierarchy.dropped_from_elsewhere(&self.ui)
             && let Some((path, kind)) = self.dragged_placeable(&source)
         {
-            let at = self.new_obj_position();
-            self.place(&path, kind, to, at, renderer);
+            match kind {
+                AssetKind::Scene => self.open_scene_alongside(&path, renderer),
+                _ => {
+                    let at = self.new_obj_position();
+                    self.place(&path, kind, to, at, renderer);
+                }
+            }
         }
         if let Some(source) = self.ui.dropped_onto(self.nodes.viewport)
             && let Some((path, kind)) = self.dragged_placeable(&source)
         {
-            let at = self.scene_landing(renderer);
-            self.place(&path, kind, None, at, renderer);
+            match kind {
+                AssetKind::Scene => self.open_scene_alongside(&path, renderer),
+                _ => {
+                    let at = self.scene_landing(renderer);
+                    self.place(&path, kind, None, at, renderer);
+                }
+            }
         }
         let placing = self.ui.dragging().is_some_and(|source| self.dragged_placeable(&source).is_some());
         self.hierarchy.take_drops(&mut self.ui, placing);
         self.ui.accept_drops(self.nodes.viewport, placing);
     }
 
-    /// The path of the prefab or model being dragged, when it is one from
-    /// the Project, and which it is.
+    /// The path of the prefab, model or scene being dragged, when it is one
+    /// from the Project, and which it is.
     fn dragged_placeable(&self, source: &DragSource) -> Option<(String, AssetKind)> {
         let path = self.project.dragged(source)?;
         let db = self.game.content.db();
         let kind = db.guid_of(&path).and_then(|guid| db.get(guid)).map(|entry| entry.kind)?;
-        matches!(kind, AssetKind::Prefab | AssetKind::Model).then_some((path, kind))
+        matches!(kind, AssetKind::Prefab | AssetKind::Model | AssetKind::Scene).then_some((path, kind))
     }
 
     /// Places an instance of a prefab, or a model's Objs, where `to` says, or

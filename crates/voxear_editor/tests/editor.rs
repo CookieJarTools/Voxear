@@ -3548,6 +3548,68 @@ fn an_fbx_model_shows_and_places_as_a_gltf_one_does() {
 }
 
 #[test]
+fn scenes_open_alongside_the_level_and_join_it_from_the_hierarchy() {
+    let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
+    let level = || std::fs::read_to_string(dir.path().join("Levels/Day.level")).unwrap();
+    let open =
+        |editor: &voxear_editor::Editor| editor.game.levels.loaded_scenes().map(str::to_string).collect::<Vec<_>>();
+    let badge =
+        |ui: &Ui| hierarchy_row(ui, "Night").and_then(|row| first_with(ui, row, "row-badge")).map(|b| ui.text(b));
+    open_folder(&mut editor, &mut renderer, "Scenes");
+    frame(&mut editor, &mut renderer);
+    // Dragged below the Hierarchy's rows, Night opens alongside Environment and Day, marked as not in the level.
+    let from = centre(&editor.ui, tile(&editor.ui, "Night.scene").expect("the Scenes folder shows"));
+    let tree = editor.ui.find(editor.ui.root(), "hierarchy-tree").unwrap();
+    let [x, y, w, h] = editor.ui.rect(tree);
+    drag_between(&mut editor, &mut renderer, from, [x + w / 2.0, y + h - 20.0]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(open(&editor), ["Scenes/Environment.scene", "Scenes/Day.scene", "Scenes/Night.scene"]);
+    assert!(hierarchy_names(&editor.ui).contains(&"Moon".to_string()), "its Objs show");
+    assert_eq!(badge(&editor.ui).as_deref(), Some("Not in level"));
+    assert_eq!(editor.game.levels.active_scene(), Some("Scenes/Day.scene"), "new Objs still go into Day");
+    let header = hierarchy_row(&editor.ui, "Night").unwrap();
+    context_click(&mut editor.ui, header);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "scene-alongside.png");
+    editor.ui.key_down(voxear_ui::Key::Escape);
+    frame(&mut editor, &mut renderer);
+
+    // Closed from its header's menu, then opened again from its own menu in the Project.
+    let header = hierarchy_row(&editor.ui, "Night").unwrap();
+    context_choose(&mut editor, &mut renderer, header, "Close Scene");
+    assert!(!open(&editor).contains(&"Scenes/Night.scene".to_string()));
+    assert!(!hierarchy_names(&editor.ui).contains(&"Moon".to_string()));
+    let scene_tile = tile(&editor.ui, "Night.scene").unwrap();
+    context_choose(&mut editor, &mut renderer, scene_tile, "Open Additively");
+    assert!(open(&editor).contains(&"Scenes/Night.scene".to_string()));
+
+    // Its Objs save to its own file, and the level is left as it was.
+    let moon = obj(&editor, "Moon").unwrap();
+    editor.game.engine.world.get_mut::<Name>(moon).unwrap().0 = "Full Moon".into();
+    editor.save();
+    let night = std::fs::read_to_string(dir.path().join("Scenes/Night.scene")).unwrap();
+    assert!(night.contains("name = \"Full Moon\""), "{night}");
+    assert!(!level().contains("Night"));
+
+    // Its header adds it to the level, which keeps every scene open.
+    frame(&mut editor, &mut renderer);
+    let header = hierarchy_row(&editor.ui, "Night").unwrap();
+    context_choose(&mut editor, &mut renderer, header, "Add to the Day Level");
+    assert!(level().contains("  # Scenes/Night.scene\n"), "{}", level());
+    assert_eq!(open(&editor), ["Scenes/Environment.scene", "Scenes/Day.scene", "Scenes/Night.scene"]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(badge(&editor.ui).as_deref(), Some(""), "one of the level's own now");
+
+    // Dragged onto the Scene view, a scene opens the same way.
+    let header = hierarchy_row(&editor.ui, "Night").unwrap();
+    context_choose(&mut editor, &mut renderer, header, "Close Scene");
+    let viewport = editor.ui.find(editor.ui.root(), "viewport").unwrap();
+    let (from, to) = (centre(&editor.ui, tile(&editor.ui, "Night.scene").unwrap()), centre(&editor.ui, viewport));
+    drag_between(&mut editor, &mut renderer, from, to);
+    assert!(open(&editor).contains(&"Scenes/Night.scene".to_string()));
+}
+
+#[test]
 fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
     let level = || std::fs::read_to_string(dir.path().join("Levels/Day.level")).unwrap();

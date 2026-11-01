@@ -366,6 +366,12 @@ and a positive pitch looks down.
     own.
   - The editor adds and takes out a level's own scenes, and sets `active` and `required`, from the Inspector (see
     the Inspector for assets); `stands_on` and `weight` are still written by hand.
+- **Scenes opened alongside** a level, additively, as Unity's Open Scene Additive (`Levels::open_scene_alongside`,
+  by `AssetGuid`): the scene loads with the open ones, nothing unloads, and the active scene keeps its sky and
+  post-processing. `Levels` remembers the scenes the level (or the scene opened on its own) asks for, so
+  `opened_alongside` tells the others apart; opening the same level again, as the editor does after changing it,
+  keeps them, and any other level or lone scene closes them. `Levels::close_scene` unloads one open scene,
+  persistent Objs included in edit mode, and moves the active scene to the last one open when it was that one.
 - **Scene Persistence:** Objs marked `persistent` (the `ScenePersistence` component) survive every level change,
   along with their children, like `DontDestroyOnLoad`. `obj.Persist()` will be the easy form in code.
   - **No duplicates on reload, unlike Unity.** Reloading the scene a persistent Obj came from does not create a
@@ -1419,6 +1425,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   it keeps stay as they are, unsaved edits included, and only those added load and those taken out unload. Taking
   out a scene with edits not saved asks for a second click first, and clears undo, whose steps may name its Objs.
   Not while playing.
+- **Scenes alongside the level in the editor** (`editor::scenes`): a scene's menu in the Project has Open
+  Additively, and a scene dragged onto the Hierarchy or the Scene view opens the same way. Its header in the
+  Hierarchy is marked "Not in level" while a level is open that does not list it, and its menu offers Add to the …
+  Level, which writes it into the level's file as Add Scene does; any header's menu, while more than one scene is
+  open, offers Close Scene, which asks for a second click when edits are not saved and clears undo. Saving writes
+  every open scene that changed. Not while playing, nor in prefab mode.
 - **The Scene view** renders into its panel through the editor's own camera, flown with the right mouse button
   as in Unity. The renderer draws the 3D view into a rectangle of the window (`Renderer::set_view_rect`), clears
   around it to the window's background (`Renderer::set_clear_color`), and looks through a chosen camera

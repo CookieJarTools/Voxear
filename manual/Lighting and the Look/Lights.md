@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# Lights
-
 Add a light with the Hierarchy's **+** button. There are three kinds:
 
 | Light | Shines | Like |

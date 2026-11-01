@@ -2,8 +2,6 @@
 order: 3
 ---
 
-# Step-by-Step Guides
-
 A guide is a page that walks someone through a task, such as setting up a new level or adding an enemy. Its steps can do part of the work for the reader, and tick themselves off once the work is done.
 
 A step is a link on a line of its own. There are two kinds:
@@ -71,7 +69,7 @@ namespace MyGame
 				return "Add an Obj called Sun.";
 			}
 
-			return sun.Position.Y > 0 ? null : "Move the Sun above the ground.";
+			return sun.Position.Y > 0 ? null : "Move the Sun up.";
 		}
 	}
 }

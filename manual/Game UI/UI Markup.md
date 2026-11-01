@@ -2,8 +2,6 @@
 order: 2
 ---
 
-# UI Markup
-
 A `.vui` file lists what is on screen, as elements inside elements, in a form like HTML. It always starts with `<vui>`:
 
 ```xml

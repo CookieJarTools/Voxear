@@ -2,8 +2,6 @@
 order: 4
 ---
 
-# The Entities Panel
-
 Under the Objs you see in the Hierarchy, the engine keeps everything in the world as **entities**: plain records that each hold a set of **components**, pieces of data such as a Transform. Every Obj is an entity, and your C# code can make entities that are not Objs, for things there are thousands of, such as bullets or grass.
 
 The Entities panel shows the world as the engine sees it. It is in the **Profiling** layout, beside the Profiler.

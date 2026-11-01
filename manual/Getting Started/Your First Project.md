@@ -2,8 +2,6 @@
 order: 2
 ---
 
-# Your First Project
-
 ## Making a project
 
 1. In the launcher, go to **Projects** and click **New project**, or press Ctrl+N.

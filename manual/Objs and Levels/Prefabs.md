@@ -2,8 +2,6 @@
 order: 3
 ---
 
-# Prefabs
-
 A **prefab** is an Obj saved as a file of its own, children and components included, so you can use it again and again. Make a lamp once as a prefab, and every lamp in your game can be a copy of it. Change the prefab, and every copy changes with it.
 
 Each copy is called an **instance**. An instance can still differ from its prefab: one lamp can glow red while the rest glow white.
@@ -36,7 +34,8 @@ namespace MyGame
 
 		protected override void Start()
 		{
-			lamp.Instantiate(new Vector3(0f, 0f, 5f), Quaternion.Identity);
+			var ahead = new Vector3(0f, 0f, 5f);
+			lamp.Instantiate(ahead, Quaternion.Identity);
 		}
 	}
 }
@@ -62,7 +61,11 @@ format = 1
 id = 1
 name = "Amber lamp"
 prefab = "Prefabs/Lamp.prefab"
-light = { type = "point", color = [1.0, 0.72, 0.3], intensity = 6.0, range = 5.0 }
+[obj.light]
+type = "point"
+color = [1.0, 0.72, 0.3]
+intensity = 6.0
+range = 5.0
 ```
 
 ## Locking components for designers

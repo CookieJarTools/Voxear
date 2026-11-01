@@ -2,8 +2,6 @@
 order: 7
 ---
 
-# Components and Systems
-
 Behaviours suit things there are a few of, each with its own mind: the player, a door, a boss. For things there are thousands of, such as bullets, birds or blades of grass, Voxear has a faster way: **components** and **systems**. This is often called an ECS, for entity, component, system.
 
 - A **component** is a small bundle of data, such as a speed or a health value. It has no methods of its own.
@@ -43,17 +41,21 @@ namespace MyGame
 	{
 		protected override void Update()
 		{
-			Query<Transform, Spin>().ForEach((ref Transform transform, ref Spin spin) =>
-			{
-				var turn = Quaternion.AngleAxis(spin.Speed * Time.Delta, Vector3.Up);
-				transform.Rotation = Quaternion.Normalize(transform.Rotation * turn);
-			});
+			Query<Transform, Spin>().ForEach(Turn);
+		}
+
+		private static void Turn(ref Transform transform, ref Spin spin)
+		{
+			var degrees = spin.Speed * Time.Delta;
+			var turn = Quaternion.AngleAxis(degrees, Vector3.Up);
+			var rotation = transform.Rotation * turn;
+			transform.Rotation = Quaternion.Normalize(rotation);
 		}
 	}
 }
 ```
 
-`Query<Transform, Spin>()` finds every entity with both a Transform and a Spin, and `ForEach` runs the code for each one, with `ref` so that changes are written back. See [[Queries]] for more ways to go through them.
+`Query<Transform, Spin>()` finds every entity with both a Transform and a Spin, and `ForEach` runs `Turn` for each one. Its parameters are `ref`, so changes are written back. See [[Queries]] for more ways to go through them.
 
 ## Giving Objs components
 
@@ -86,7 +88,9 @@ protected override void OnCreate()
 {
 	for (var i = 0; i < 1000; i++)
 	{
-		Entity.Create().Add(new Spot { Position = new Vector3(i, 0f, 0f) }).Add(new Drift { Velocity = Vector3.UnitY });
+		var spot = new Spot { Position = new Vector3(i, 0f, 0f) };
+		var drift = new Drift { Velocity = Vector3.UnitY };
+		Entity.Create().Add(spot).Add(drift);
 	}
 }
 ```

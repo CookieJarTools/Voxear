@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# The Console
-
 The Console shows every message written while you work: by your scripts, by the editor, by the engine, and by the C# compiler when your code has a mistake in it. It sits under the Scene view.
 
 Each row shows when the message was written, the message itself, and where it came from. Errors and warnings stand out in colours of their own.

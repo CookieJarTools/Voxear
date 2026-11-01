@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# Your First Script
-
 This page makes a script that spins a cube.
 
 ## Making the script
@@ -52,7 +50,8 @@ namespace MyGame
 
 		protected override void Update()
 		{
-			var turn = Quaternion.AngleAxis(degreesPerSecond * Time.Delta, Vector3.Up);
+			var degrees = degreesPerSecond * Time.Delta;
+			var turn = Quaternion.AngleAxis(degrees, Vector3.Up);
 			Obj.Rotation = Quaternion.Normalize(Obj.Rotation * turn);
 		}
 	}

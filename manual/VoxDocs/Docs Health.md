@@ -2,8 +2,6 @@
 order: 5
 ---
 
-# Docs Health
-
 Pages go out of date as a game changes. **Health**, at the top of VoxDocs, lists what needs looking after. The top page says how many things it found, and links to it.
 
 It finds:

@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# Your First Menu
-
 This page puts a score and a button on screen. It takes three files: the **markup**, which lists what is on screen; a **style sheet**, which says how it looks; and a **script**, which loads it and makes the button work.
 
 ## The markup

@@ -2,8 +2,6 @@
 order: 3
 ---
 
-# UI Style Sheets
-
 A `.vss` style sheet says how UI looks and where things go. It is written like CSS on the web, with a smaller set of rules:
 
 ```css

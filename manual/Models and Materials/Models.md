@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# Models
-
 Voxear reads models in **glTF**, the open format most modelling programs can export: either a `.gltf` file, or a single `.glb` file with everything packed inside. In Blender, use **File › Export › glTF 2.0**.
 
 ## Adding a model to your project

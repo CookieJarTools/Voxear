@@ -2,8 +2,6 @@
 order: 4
 ---
 
-# UI from Scripts
-
 ## Loading and closing
 
 ```csharp

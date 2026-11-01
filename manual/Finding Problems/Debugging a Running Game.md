@@ -2,8 +2,6 @@
 order: 5
 ---
 
-# Debugging a Running Game
-
 A game running on its own, outside the editor, has tools of its own built in. They are there in two cases:
 
 - **`vox run`**, which runs your project in a window of its own, straight from its files:

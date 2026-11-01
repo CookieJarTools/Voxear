@@ -2,8 +2,6 @@
 order: 2
 ---
 
-# Loading and Memory
-
 Your game only holds in memory what it is using. Loading a level reads what that level needs, and changing level lets go of what the new level does not use. Most games need nothing more than that.
 
 ## Loading prefabs

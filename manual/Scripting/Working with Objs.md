@@ -2,16 +2,19 @@
 order: 3
 ---
 
-# Working with Objs
-
 Inside a behaviour, `Obj` is the Obj it is on. These are the things you will do with it most.
 
 ## Moving and turning
 
 ```csharp
-Obj.Position += Vector3.Forward * 2f * Time.Delta;   // forward at 2 metres a second
-Obj.Rotation = Quaternion.AngleAxis(45f, Vector3.Up); // face 45° to the right
-Obj.LookAt(new Vector3(0f, 0f, 10f));                // face a point
+// Forward, at 2 metres a second:
+Obj.Position += Vector3.Forward * 2f * Time.Delta;
+
+// Face 45° to the right:
+Obj.Rotation = Quaternion.AngleAxis(45f, Vector3.Up);
+
+// Face a point:
+Obj.LookAt(new Vector3(0f, 0f, 10f));
 ```
 
 - `Position` and `Rotation` are measured from the Obj this one is inside, or from the middle of the world if it is inside none.
@@ -97,7 +100,8 @@ Obj.Destroy();
 `Debug` draws lines, shapes and words over the game for one frame, to show what your code is doing:
 
 ```csharp
-Debug.Line(Obj.WorldPosition, Obj.WorldPosition + Obj.Forward * 3f, Color.Green);
+var ahead = Obj.WorldPosition + Obj.Forward * 3f;
+Debug.Line(Obj.WorldPosition, ahead, Color.Green);
 Debug.Sphere(target, 0.5f, Color.Red);
 Debug.Text(Obj.WorldPosition, "Here");
 ```

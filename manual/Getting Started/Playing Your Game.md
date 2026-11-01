@@ -2,8 +2,6 @@
 order: 4
 ---
 
-# Playing Your Game
-
 Click **Play**, the triangle at the top of the window, to run the level you have open. The Game view comes to the front and your scripts start. Click it again to stop.
 
 The first time you play, the editor builds your C# scripts, so it takes a moment. The bar at the bottom says **Building scripts…** while it does. After that, starting is quick.

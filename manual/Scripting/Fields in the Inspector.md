@@ -2,8 +2,6 @@
 order: 4
 ---
 
-# Fields in the Inspector
-
 A behaviour's fields show in the Inspector, so you can set them for each Obj without changing the code. The values you set are saved in the scene.
 
 ```csharp
@@ -55,9 +53,14 @@ An Obj field can only point at an Obj in the same scene, or in the same prefab. 
 Attributes on a field change how the Inspector shows it. A few of the most useful:
 
 ```csharp
-[Range(0f, 10f)] public float Speed = 2f;         // a slider
-[Suffix("m/s")] public float TopSpeed = 8f;       // a unit after the value
-[Tooltip("How long the door takes to open")] public float OpenTime = 1f;
+[Range(0f, 10f)]
+public float Speed = 2f;
+
+[Suffix("m/s")]
+public float TopSpeed = 8f;
+
+[Tooltip("How long the door takes to open")]
+public float OpenTime = 1f;
 ```
 
 | Attribute | Does |
@@ -78,7 +81,7 @@ Attributes on a field change how the Inspector shows it. A few of the most usefu
 | `[Required]` | Shows an error while the field is empty. Builds warn about it too |
 | `[Button]` | On a method that takes nothing: a button that runs it while you edit |
 
-The Code Reference, in VoxDocs, has a page for every attribute: look in the **Inspector** folder under **Voxear**.
+The Code Reference, in VoxDocs, has a page for every attribute: look in the **Inspector** folder under **Voxear**. When no attribute shows a field the way you want, write your own drawer: see [[Custom Drawers]].
 
 ## When the code changes
 

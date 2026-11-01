@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# Objs and Components
-
 An **Obj** is one thing in your game's world, such as a crate, a light or the player. (In other engines it is called a game object or an entity.) Every Obj has a name and a **Transform**: where it is, which way it faces, and how big it is.
 
 What an Obj does comes from its **components**. A cube is an Obj with a Mesh Renderer, which draws its shape. A lamp might be an Obj with a Light, plus a script that makes it flicker.

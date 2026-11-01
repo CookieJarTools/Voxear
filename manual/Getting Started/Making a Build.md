@@ -2,8 +2,6 @@
 order: 5
 ---
 
-# Making a Build
-
 A build is your game on its own, as a program anyone can run without Voxear.
 
 ## Building

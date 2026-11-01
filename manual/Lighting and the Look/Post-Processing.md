@@ -2,8 +2,6 @@
 order: 4
 ---
 
-# Post-Processing
-
 Post-processing is what Voxear does to the picture after drawing it, the way a photo is finished: soft glow around bright lights, a gentle mist into the distance, smooth edges, and balanced colours.
 
 Every level gets the **Voxear Look** unless a scene says otherwise. It is made to look good from the start: smooth edges, a little glow, exposure that adapts to the light, rich but natural colour, darker corners, and a light mist.

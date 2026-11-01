@@ -2,8 +2,6 @@
 order: 2
 ---
 
-# The Sky
-
 The sky is a smooth blend of three colours: one straight up, one at the horizon, and one below it. The sun's disc is drawn in it, in the direction and colour of the level's sun.
 
 The sky also gives everything a soft light from all around, called **ambient light**: coloured like the sky from above, and like the ground from below. It is what keeps the shady side of things from going black.

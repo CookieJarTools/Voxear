@@ -2,8 +2,6 @@
 order: 5
 ---
 
-# Commands
-
 A command is a static method that the editor's command bar (Ctrl+K) can run. Use commands for jobs you do again and again while building levels, such as lining up a row of lamps or renaming a batch of Objs.
 
 ```csharp
@@ -20,7 +18,7 @@ namespace MyGame
 			var b = Obj.Find("Spinner B");
 			if (!a.IsValid || !b.IsValid)
 			{
-				Log.Warning("Swap Spinners needs Objs called Spinner A and Spinner B.");
+				Log.Warning("Spinner A or Spinner B is missing.");
 				return;
 			}
 

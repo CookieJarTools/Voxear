@@ -2,8 +2,6 @@
 order: 8
 ---
 
-# Queries
-
 A query finds the entities that have certain components, so a system can work through them. Inside a system, write `Query<…>()`; anywhere else, `World.Query<…>()`. A query names up to four components.
 
 ## Going through entities

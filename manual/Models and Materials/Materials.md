@@ -2,8 +2,6 @@
 order: 2
 ---
 
-# Materials
-
 A material says what a surface looks like. Every Mesh Renderer draws its shape with one.
 
 ## Making a material

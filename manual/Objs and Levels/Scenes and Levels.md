@@ -2,8 +2,6 @@
 order: 2
 ---
 
-# Scenes and Levels
-
 A **scene** is a file of Objs: a room, a stretch of landscape, the game's menus. A **level** is a list of scenes that load together, such as "the first floor of the castle". The game always loads a level, never a scene on its own.
 
 Splitting a level into scenes has two uses:

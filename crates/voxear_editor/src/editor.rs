@@ -6,6 +6,7 @@ mod color_popup;
 mod debug_texts;
 mod docs_links;
 mod docs_pictures;
+mod docs_steps;
 mod drawer;
 mod play;
 mod prefab_mode;
@@ -618,6 +619,7 @@ impl Editor {
             profile_scope!("VoxDocs");
             self.docs.update(&mut self.ui);
             self.update_docs_pictures(renderer);
+            self.update_docs_steps(renderer);
         }
         self.update_palette(renderer);
         let action = self.levels.update(&mut self.ui, self.game.levels.current(), self.game.loads.level_in_progress());

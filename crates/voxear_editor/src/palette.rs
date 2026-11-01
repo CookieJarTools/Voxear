@@ -315,6 +315,13 @@ pub enum PaletteKey {
     Escape,
 }
 
+/// The command a title names, as the palette shows it, ignoring case: the
+/// editor's own and those the scripts add, as a VoxDocs guide's step runs one.
+pub fn command_named(sources: &Sources, title: &str) -> Option<PaletteAction> {
+    let title = title.trim();
+    gather(sources).into_iter().find(|entry| entry.command && entry.title.eq_ignore_ascii_case(title)).map(|e| e.action)
+}
+
 /// Everything the palette offers: the commands first, those added by code,
 /// the settings, then Objs, levels, assets, and the VoxDocs pages.
 fn gather(sources: &Sources) -> Vec<Entry> {

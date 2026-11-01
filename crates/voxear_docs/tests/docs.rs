@@ -512,3 +512,52 @@ fn code_points_at_pages_and_excerpts_show_their_sections() {
     let hits = library.excerpt("Combat/Damage#hits").unwrap();
     assert_eq!(voxear_docs::markdown::plain_text(&hits.blocks), "Counted twice.\n");
 }
+
+#[test]
+fn a_guide_runs_its_actions_watches_its_checks_and_remembers() {
+    let dir = project();
+    let guide = "# Set up\n\n1. Light it.\n\n   [Add a light](<action:New Point Light>)\n\n[It is lit](check:obj/Sun)\n\n\
+                 [The lamp is there](check:file/Prefabs/Lamp.prefab)\n";
+    std::fs::write(dir.path().join("Docs/Guide/Set Up.md"), guide).unwrap();
+    let (mut ui, mut docs, host) = panel(dir.path());
+    assert!(docs.open_reference(&mut ui, "Set Up"));
+    frame(&mut ui, &mut docs);
+    let line = |ui: &Ui| {
+        let mut lines = Vec::new();
+        with_class(ui, host, "cb-progress-line", &mut lines);
+        lines.first().copied()
+    };
+    assert_eq!(ui.text(line(&ui).expect("how far the guide has got")), "0 of 3 steps done");
+    assert_eq!(docs.wanted_checks(), ["obj/Sun", "file/Prefabs/Lamp.prefab"]);
+
+    let mut buttons = Vec::new();
+    with_class(&ui, host, "md-step-action", &mut buttons);
+    click(&mut ui, buttons[0]);
+    frame(&mut ui, &mut docs);
+    assert_eq!(docs.take_action_request().as_deref(), Some("New Point Light"), "the command, by its title");
+    assert_eq!(docs.take_action_request(), None, "once");
+    docs.action_ran(&mut ui);
+    docs.set_check(&mut ui, "obj/Sun", Ok(()));
+    docs.set_check(&mut ui, "file/Prefabs/Lamp.prefab", Err("There is no Prefabs/Lamp.prefab yet".into()));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.text(line(&ui).unwrap()), "2 of 3 steps done");
+    let mut done = Vec::new();
+    with_class(&ui, host, "md-step-done", &mut done);
+    assert_eq!(done.len(), 2);
+    assert!(label(&ui, host, "There is no Prefabs/Lamp.prefab yet").is_some_and(|note| ui.is_visible(note)));
+
+    // Another session remembers the action; Reset starts the guide again.
+    let (mut ui, mut docs, host) = panel(dir.path());
+    let line = |ui: &Ui| {
+        let mut lines = Vec::new();
+        with_class(ui, host, "cb-progress-line", &mut lines);
+        lines.first().copied()
+    };
+    docs.open_reference(&mut ui, "Set Up");
+    frame(&mut ui, &mut docs);
+    assert_eq!(ui.text(line(&ui).unwrap()), "1 of 3 steps done", "the action is kept, checks look again");
+    let reset = label(&ui, host, "Reset").unwrap();
+    click(&mut ui, reset);
+    frame(&mut ui, &mut docs);
+    assert_eq!(ui.text(line(&ui).unwrap()), "0 of 3 steps done");
+}

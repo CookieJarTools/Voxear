@@ -25,6 +25,14 @@
 //! under **In the code**, and [`render_excerpt`] draws an excerpt for the
 //! Inspector.
 //!
+//! **Guides**: a link to an action or a check alone in its paragraph is a
+//! step. An action's button asks the editor to run the command it names
+//! ([`take_action_request`]), and is ticked once it has; a check ticks
+//! while what it looks for is there ([`wanted_checks`], [`set_check`]).
+//! A page with steps says how many are done, and Reset starts it again.
+//! What each person has done is kept on their machine (see
+//! [`crate::progress`]).
+//!
 //! **Pictures** are files beside a page, or anywhere in the project. The
 //! panel cannot read them into textures itself: [`wanted_pictures`] lists
 //! the files a page needs, and [`set_picture`] hands each back once the
@@ -33,6 +41,9 @@
 //! [`wanted_pictures`]: VoxDocs::wanted_pictures
 //! [`set_picture`]: VoxDocs::set_picture
 //! [`set_code`]: VoxDocs::set_code
+//! [`take_action_request`]: VoxDocs::take_action_request
+//! [`wanted_checks`]: VoxDocs::wanted_checks
+//! [`set_check`]: VoxDocs::set_check
 //! [`render_excerpt`]: VoxDocs::render_excerpt
 
 use std::{
@@ -48,9 +59,10 @@ use voxear_ui::{ImageRef, ItemFns, NodeId, TreeItems, Ui};
 use crate::{
     code::{CODE_SCHEME, CodeReference},
     health::Health,
-    library::{Excerpt, Library, Page, PageId, Target},
+    library::{Excerpt, Library, Page, PageId, Target, unescape},
     markdown::{self, PAGE_SCHEME},
-    view::{self, Lookups, Picture, Rendered},
+    progress::Progress,
+    view::{self, ACTION_SCHEME, CHECK_SCHEME, Lookups, Picture, Rendered},
 };
 
 const MARKUP: &str = include_str!("../ui/VoxDocs.vui");
@@ -183,6 +195,15 @@ pub struct VoxDocs {
     results: Rc<RefCell<Vec<PageId>>>,
     /// A file in the project a link asked to show, for the editor.
     file_request: Option<String>,
+    /// How far each guide has got, what the checks last found, by what
+    /// they look for, the action asked for, with its page and step, and
+    /// the one being run.
+    progress: Progress,
+    checks: HashMap<String, Result<(), String>>,
+    action_request: Option<(String, String, String)>,
+    running: Option<(String, String)>,
+    /// A guide's line saying how many steps are done, and its Reset.
+    progress_line: Option<(NodeId, NodeId)>,
 }
 
 impl VoxDocs {
@@ -273,6 +294,11 @@ impl VoxDocs {
             pending_anchor: None,
             results,
             file_request: None,
+            progress: Progress::open(project),
+            checks: HashMap::new(),
+            action_request: None,
+            running: None,
+            progress_line: None,
         };
         docs.show_editing(ui, false);
         docs.render(ui);
@@ -393,6 +419,64 @@ impl VoxDocs {
         }
     }
 
+    /// The command a step's button asked to run, by its title, once. Call
+    /// [`action_ran`](Self::action_ran) when it has.
+    pub fn take_action_request(&mut self) -> Option<String> {
+        let (page, step, command) = self.action_request.take()?;
+        self.running = Some((page, step));
+        Some(command)
+    }
+
+    /// Ticks the step whose command was asked for, as having run.
+    pub fn action_ran(&mut self, ui: &mut Ui) {
+        if let Some((page, step)) = self.running.take() {
+            self.progress.set_done(&page, &step);
+            self.show_steps(ui);
+        }
+    }
+
+    /// What the open page's checks look for, as `obj/Sun`, for the editor
+    /// to look at and answer with [`set_check`](Self::set_check).
+    pub fn wanted_checks(&self) -> Vec<String> {
+        if self.editing || self.showing_health {
+            return Vec::new();
+        }
+        let checks = self.rendered.steps.iter().filter_map(|step| step.url.strip_prefix(CHECK_SCHEME));
+        checks.map(unescape).collect()
+    }
+
+    /// What a check found: nothing wrong, or what is still to do.
+    pub fn set_check(&mut self, ui: &mut Ui, check: &str, found: Result<(), String>) {
+        if self.checks.get(check) != Some(&found) {
+            self.checks.insert(check.to_string(), found);
+            self.show_steps(ui);
+        }
+    }
+
+    /// Ticks the steps done, says what checks still want, and how far the
+    /// guide has got.
+    fn show_steps(&mut self, ui: &mut Ui) {
+        let page = self.key(self.open);
+        let mut done = 0;
+        for step in &self.rendered.steps {
+            let (passed, note) = match step.url.strip_prefix(CHECK_SCHEME) {
+                Some(check) => match self.checks.get(&unescape(check)) {
+                    Some(Ok(())) => (true, None),
+                    Some(Err(still)) => (false, Some(still.as_str())),
+                    None => (false, None),
+                },
+                None => (self.progress.is_done(&page, &step.url), None),
+            };
+            done += usize::from(passed);
+            ui.set_class(step.row, "md-step-done", passed);
+            ui.set_text(step.note, note.unwrap_or_default());
+            ui.set_visible(step.note, note.is_some());
+        }
+        if let Some((line, _)) = self.progress_line {
+            ui.set_text(line, &format!("{done} of {} steps done", self.rendered.steps.len()));
+        }
+    }
+
     /// A file in the project that a link asked to show, once.
     pub fn take_file_request(&mut self) -> Option<String> {
         self.file_request.take()
@@ -437,6 +521,15 @@ impl VoxDocs {
         }
         if !self.editing {
             self.tick_tasks(ui);
+        }
+        let asked = self.rendered.steps.iter().find(|step| step.button.is_some_and(|b| ui.clicked(b)));
+        if let Some(step) = asked {
+            let command = unescape(step.url.strip_prefix(ACTION_SCHEME).unwrap_or_default());
+            self.action_request = Some((self.key(self.open), step.url.clone(), command));
+        }
+        if self.progress_line.is_some_and(|(_, reset)| ui.clicked(reset)) {
+            self.progress.reset(&self.key(self.open));
+            self.show_steps(ui);
         }
         let copied = self.rendered.copies.iter().find(|(button, _)| ui.clicked(*button)).map(|(_, code)| code.clone());
         if let Some(code) = copied {
@@ -831,6 +924,16 @@ impl VoxDocs {
         let empty = library.is_empty() && self.open == library.root() && page.body.trim().is_empty();
         let body = if empty { EMPTY } else { &page.body };
         let blocks = markdown::parse(body);
+        self.progress_line = None;
+        if !view::steps_in(&blocks).is_empty() {
+            let row = ui.panel(self.nodes.page, voxear_ui::Style::row());
+            ui.add_class(row, "cb-progress");
+            let line = ui.add_label(row, "");
+            ui.add_class(line, "cb-progress-line");
+            let reset = ui.button(row, "Reset");
+            ui.add_class(reset, "cb-progress-reset");
+            self.progress_line = Some((line, reset));
+        }
         let open = self.open;
         let works = |url: &str| library.works(url, open);
         let pictures = |url: &str| self.picture(&library, open, url);
@@ -870,6 +973,7 @@ impl VoxDocs {
             self.home_health = Some(show_home(ui, self.nodes.page, &library));
         }
         drop(library);
+        self.show_steps(ui);
         self.show_toc(ui);
     }
     /// Docs Health in the page's place: how many things need looking after,
@@ -879,6 +983,7 @@ impl VoxDocs {
             ui.remove(child);
         }
         (self.toc, self.page_tags, self.rendered) = (Vec::new(), Vec::new(), Rendered::default());
+        self.progress_line = None;
         self.showing_health = true;
         ui.set_checked(self.nodes.health, true);
         ui.set_visible(self.nodes.edit, false);

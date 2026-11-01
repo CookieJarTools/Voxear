@@ -17,6 +17,7 @@ pub mod health;
 mod library;
 pub mod markdown;
 mod panel;
+mod progress;
 pub mod view;
 
 pub use code::CodeReference;

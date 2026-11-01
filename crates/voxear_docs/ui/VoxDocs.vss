@@ -547,3 +547,59 @@
 .cb-home-health:hover {
     color: var(--vx-accent-hover);
 }
+
+/* A guide's steps: a tick, then an action's button or a check's words, and
+   under a check what it still wants. */
+.md-step {
+    flex-shrink: 0;
+    margin: 4px 0px;
+    gap: 3px;
+}
+
+.md-step-line {
+    align-items: center;
+    gap: 8px;
+}
+
+.md-step-mark {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--vx-line-2);
+    color: transparent;
+}
+
+.md-step-done .md-step-mark {
+    color: var(--vx-on-accent);
+    background-color: var(--vx-accent);
+    border-color: var(--vx-accent);
+}
+
+.md-step-check {
+    color: var(--vx-text-2);
+}
+
+.md-step-done .md-step-check {
+    color: var(--vx-text);
+}
+
+.md-step-note {
+    margin-left: 24px;
+    color: var(--vx-muted);
+}
+
+/* How far a guide has got, over its words. */
+.cb-progress {
+    flex-shrink: 0;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-radius: 7px;
+    background-color: var(--vx-field);
+}
+
+.cb-progress-line {
+    flex-grow: 1;
+    color: var(--vx-text-2);
+}

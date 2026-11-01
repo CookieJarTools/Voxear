@@ -35,6 +35,52 @@ pub struct Rendered {
     pub tasks: Vec<(NodeId, Task)>,
     pub headings: Vec<Heading>,
     pub copies: Vec<(NodeId, String)>,
+    pub steps: Vec<Step>,
+}
+
+/// What a guide's step link starts with: an action runs a command, and a
+/// check looks at the project and ticks itself when it passes.
+pub const ACTION_SCHEME: &str = "action:";
+pub const CHECK_SCHEME: &str = "check:";
+
+/// A step of a guide, as drawn: a link to an action or a check alone in its
+/// paragraph. The panel ticks it and says what a check still wants.
+#[derive(Clone, Debug)]
+pub struct Step {
+    /// What it runs or looks at, as its link names it: `action:Play`.
+    pub url: String,
+    pub row: NodeId,
+    /// Its tick.
+    pub mark: NodeId,
+    /// An action's button.
+    pub button: Option<NodeId>,
+    /// Under it, what a check found still to do.
+    pub note: NodeId,
+}
+
+/// The words and link of a paragraph that is a step: one link to an action
+/// or a check, and nothing else.
+pub fn step_of(text: &RichText) -> Option<(&str, &str)> {
+    let [span] = text.spans.as_slice() else { return None };
+    let url = span.link.as_deref()?;
+    let whole = span.range.start == 0 && span.range.end == text.text.len();
+    let step = url.starts_with(ACTION_SCHEME) || url.starts_with(CHECK_SCHEME);
+    (whole && step).then_some((text.text.as_str(), url))
+}
+
+/// The steps in some blocks, in order, as their links name them, for how
+/// far a reader has got before the page is drawn.
+pub fn steps_in(blocks: &[Block]) -> Vec<String> {
+    let mut steps = Vec::new();
+    for block in blocks {
+        match block {
+            Block::Paragraph(text) => steps.extend(step_of(text).map(|(_, url)| url.to_string())),
+            Block::List { items, .. } => items.iter().for_each(|item| steps.extend(steps_in(&item.blocks))),
+            Block::Quote { blocks, .. } => steps.extend(steps_in(blocks)),
+            _ => {}
+        }
+    }
+    steps
 }
 
 /// A heading as drawn: its element, the anchor links reach it by, its
@@ -86,9 +132,10 @@ fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -
             ui.add_class(node, "md-h");
             out.headings.push(Heading { node, anchor: anchor.clone(), text: text.text.clone(), level: *level });
         }
-        Block::Paragraph(text) => {
-            rich(ui, parent, text, works, "md-p");
-        }
+        Block::Paragraph(text) => match step_of(text) {
+            Some((words, url)) => out.steps.push(step(ui, parent, words, url)),
+            None => drop(rich(ui, parent, text, works, "md-p")),
+        },
         Block::List { start, items } => {
             let list = classed(ui, parent, Style::column(), "md-list");
             for (index, item) in items.iter().enumerate() {
@@ -147,6 +194,28 @@ fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -
             classed(ui, parent, Style::default(), "md-rule");
         }
     }
+}
+
+/// A step's row: its tick, then an action's button or a check's words, and
+/// a line under it for what a check still wants.
+fn step(ui: &mut Ui, parent: NodeId, words: &str, url: &str) -> Step {
+    let row = classed(ui, parent, Style::column(), "md-step");
+    let line = classed(ui, row, Style::row(), "md-step-line");
+    let mark = ui.icon(line, "check");
+    ui.add_class(mark, "md-step-mark");
+    let button = if url.starts_with(ACTION_SCHEME) {
+        let button = ui.button(line, words);
+        ui.add_class(button, "md-step-action");
+        Some(button)
+    } else {
+        let label = ui.add_label(line, words);
+        ui.add_class(label, "md-step-check");
+        None
+    };
+    let note = ui.add_label(row, "");
+    ui.add_class(note, "md-step-note");
+    ui.set_visible(note, false);
+    Step { url: url.to_string(), row, mark, button, note }
 }
 
 fn list_item(

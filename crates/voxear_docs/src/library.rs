@@ -646,7 +646,7 @@ fn combine(folder: &str, relative: &str) -> Option<String> {
 }
 
 /// `%20` and the like, as links write spaces.
-fn unescape(text: &str) -> String {
+pub(crate) fn unescape(text: &str) -> String {
     let mut out = Vec::with_capacity(text.len());
     let bytes = text.as_bytes();
     let mut i = 0;

@@ -58,6 +58,10 @@ public sealed class Enemy : Behaviour
 
 Put a picture in the page with `![what it shows](images/Day.png)`. Its path is from the page's folder, as for pictures kept in an `images` folder beside the page, or from the project's folder. It shows at its own size, or narrower to fit the page. PNG and JPEG pictures show; [[The Day and Night Cycle]] has one. Name a prefab, model or material instead, as `![](Prefabs/Lamp.prefab)`, and the page shows its preview, as the Project panel does.
 
+## Guides
+
+A link to an action or a check on a line of its own is a step the reader can run or watch tick: see [[Step-by-Step Guides]].
+
 ## From the code
 
 Put `[Documentation("How Hello Works/The Day and Night Cycle")]` on a behaviour, or on one of its fields, and the Inspector shows a book button there that opens the page. `[Excerpt("How Hello Works/The Day and Night Cycle#who-drives-it")]` on a field shows that part of the page above it instead, and follows the page as it changes. Select the Game Manager to see both. A page lists the code that points at it under **In the code**.

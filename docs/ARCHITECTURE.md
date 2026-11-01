@@ -1604,14 +1604,23 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   lists the code pointing at it under **In the code**, each a link to its Code Reference page, and the Code Reference
   says which page documents a type or member, so an attribute naming a page that is not there shows in Docs Health.
   Hello's GameManager has both.
+- **Step-by-step guides**: a link to an action or a check on a line of its own is a step.
+  `[Add a light](<action:New Point Light>)` is a button that runs the command with that title, as the command bar
+  lists it: the editor's own, or a script's `[Command]`, run on the edited level and undone as one step. A check ticks itself while what it
+  looks for is there, and says under it what is still to do: `check:obj/Sun` for an Obj by name,
+  `check:component/Light` for an Obj with a component or a behaviour, and `check:file/Prefabs/Lamp.prefab` for a
+  file. The editor runs the actions and looks at the checks for the page being read. A page with steps says how many
+  are done, with Reset to start again; the actions each person has run are kept on their machine in
+  `.voxear/VoxDocs.toml`. Hello's VoxDocs Guide has one.
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
 **Still to come**, as the Unity Cookbook has them:
 - **Copy [Documentation] Attribute** on a page's menu in the tree, ready to paste into a script.
 - **Notes on the Code Reference's pages**, written in VoxDocs beside what the comments say and kept in
   `Docs/.code-notes`.
-- **Step-by-step guides**: `[DocsAction]` and `[DocsCheck]` methods, and built-in steps (make an asset,
-  open a panel, run a menu item), as links a page runs and ticks, with each person's progress kept.
+- **More for guides**: checks written in C# (`[DocsCheck]`, a static method returning whether it passes or what is
+  still wrong), which need the scripts to hand back a value; a step that makes an asset where the guide says; and
+  Action… while writing, to put a step in at the cursor.
 - **Docs Health**'s checks of the code, once there is a Code Reference: code with no page yet and notes left for
   code that is gone; and git's last change on a page.
 - **Pictures** dropped in, captured from the Scene view, or recorded as GIFs of the Scene or Game; and a live

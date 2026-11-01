@@ -303,6 +303,8 @@ Done so far:
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
+- **Step-by-step guides in VoxDocs:** steps that run a command by its title and checks that tick themselves for an
+  Obj, a component or a file, with how far each guide has got kept for each person.
 - **The Code Reference by folder:** inside each namespace, a type's page sits in the folders its source is in, read
   from the debug symbols, so the engine's 90-odd types are found by area rather than in one long list.
 - **`[Documentation]` and `[Excerpt]`:** a book button in the Inspector that opens a behaviour's or field's VoxDocs
@@ -332,9 +334,9 @@ Still to do in M3:
 - The rest of Sifter: its settings screen with a live sample of a row.
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering), Windows archives, and a workflow that builds and publishes releases.
-- **VoxDocs' next parts** (see "VoxDocs" in the architecture): notes on the Code Reference's pages, step-by-step
-  guides with actions and checks, Docs Health's checks of the code, pictures dropped in or captured and GIF
-  recordings, live assets' fields on the page, and Copy [Documentation] Attribute.
+- **VoxDocs' next parts** (see "VoxDocs" in the architecture): notes on the Code Reference's pages, checks written
+  in C# and more for guides, Docs Health's checks of the code, pictures dropped in or captured and GIF recordings,
+  live assets' fields on the page, and Copy [Documentation] Attribute.
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped
   with each engine version, covering every part of Voxear from first steps to the advanced paths. Written the way a
   person explains things: clear and short, plain words, each term explained where it first appears, an example

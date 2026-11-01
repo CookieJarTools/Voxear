@@ -3851,6 +3851,68 @@ fn an_fbx_model_shows_and_places_as_a_gltf_one_does() {
 }
 
 #[test]
+fn scenes_open_alongside_the_level_and_join_it_from_the_hierarchy() {
+    let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
+    let level = || std::fs::read_to_string(dir.path().join("Levels/Day.level")).unwrap();
+    let open =
+        |editor: &voxear_editor::Editor| editor.game.levels.loaded_scenes().map(str::to_string).collect::<Vec<_>>();
+    let badge =
+        |ui: &Ui| hierarchy_row(ui, "Night").and_then(|row| first_with(ui, row, "row-badge")).map(|b| ui.text(b));
+    open_folder(&mut editor, &mut renderer, "Scenes");
+    frame(&mut editor, &mut renderer);
+    // Dragged below the Hierarchy's rows, Night opens alongside Environment and Day, marked as not in the level.
+    let from = centre(&editor.ui, tile(&editor.ui, "Night.scene").expect("the Scenes folder shows"));
+    let tree = editor.ui.find(editor.ui.root(), "hierarchy-tree").unwrap();
+    let [x, y, w, h] = editor.ui.rect(tree);
+    drag_between(&mut editor, &mut renderer, from, [x + w / 2.0, y + h - 20.0]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(open(&editor), ["Scenes/Environment.scene", "Scenes/Day.scene", "Scenes/Night.scene"]);
+    assert!(hierarchy_names(&editor.ui).contains(&"Moon".to_string()), "its Objs show");
+    assert_eq!(badge(&editor.ui).as_deref(), Some("Not in level"));
+    assert_eq!(editor.game.levels.active_scene(), Some("Scenes/Day.scene"), "new Objs still go into Day");
+    let header = hierarchy_row(&editor.ui, "Night").unwrap();
+    context_click(&mut editor.ui, header);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "scene-alongside.png");
+    editor.ui.key_down(voxear_ui::Key::Escape);
+    frame(&mut editor, &mut renderer);
+
+    // Closed from its header's menu, then opened again from its own menu in the Project.
+    let header = hierarchy_row(&editor.ui, "Night").unwrap();
+    context_choose(&mut editor, &mut renderer, header, "Close Scene");
+    assert!(!open(&editor).contains(&"Scenes/Night.scene".to_string()));
+    assert!(!hierarchy_names(&editor.ui).contains(&"Moon".to_string()));
+    let scene_tile = tile(&editor.ui, "Night.scene").unwrap();
+    context_choose(&mut editor, &mut renderer, scene_tile, "Open Additively");
+    assert!(open(&editor).contains(&"Scenes/Night.scene".to_string()));
+
+    // Its Objs save to its own file, and the level is left as it was.
+    let moon = obj(&editor, "Moon").unwrap();
+    editor.game.engine.world.get_mut::<Name>(moon).unwrap().0 = "Full Moon".into();
+    editor.save();
+    let night = std::fs::read_to_string(dir.path().join("Scenes/Night.scene")).unwrap();
+    assert!(night.contains("name = \"Full Moon\""), "{night}");
+    assert!(!level().contains("Night"));
+
+    // Its header adds it to the level, which keeps every scene open.
+    frame(&mut editor, &mut renderer);
+    let header = hierarchy_row(&editor.ui, "Night").unwrap();
+    context_choose(&mut editor, &mut renderer, header, "Add to the Day Level");
+    assert!(level().contains("  # Scenes/Night.scene\n"), "{}", level());
+    assert_eq!(open(&editor), ["Scenes/Environment.scene", "Scenes/Day.scene", "Scenes/Night.scene"]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(badge(&editor.ui).as_deref(), Some(""), "one of the level's own now");
+
+    // Dragged onto the Scene view, a scene opens the same way.
+    let header = hierarchy_row(&editor.ui, "Night").unwrap();
+    context_choose(&mut editor, &mut renderer, header, "Close Scene");
+    let viewport = editor.ui.find(editor.ui.root(), "viewport").unwrap();
+    let (from, to) = (centre(&editor.ui, tile(&editor.ui, "Night.scene").unwrap()), centre(&editor.ui, viewport));
+    drag_between(&mut editor, &mut renderer, from, to);
+    assert!(open(&editor).contains(&"Scenes/Night.scene".to_string()));
+}
+
+#[test]
 fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
     let level = || std::fs::read_to_string(dir.path().join("Levels/Day.level")).unwrap();
@@ -3941,4 +4003,88 @@ fn the_persistent_box_marks_an_obj_to_stay_through_level_changes() {
     let saved = voxear_engine::scene_file::read(&dir.path().join("Scenes/Day.scene")).unwrap();
     let written = saved.objs.iter().find(|o| o.name == "Spinner A").unwrap();
     assert!(written.persistent, "saved as persistent = true");
+}
+
+/// The row in the Project's folder tree for the folder called `name`.
+fn folder_row(ui: &Ui, name: &str) -> Option<NodeId> {
+    let tree = ui.find(ui.root(), "project-folders")?;
+    let mut rows = Vec::new();
+    with_class(ui, tree, "folder-row", &mut rows);
+    rows.into_iter().find(|&row| ui.is_visible(row) && ui.children(row).get(1).is_some_and(|&n| ui.text(n) == name))
+}
+
+#[test]
+fn an_obj_dragged_into_the_project_becomes_an_instance_of_its_new_prefab() {
+    let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
+    let instance = |editor: &voxear_editor::Editor, name: &str| {
+        obj(editor, name).is_some_and(|e| editor.game.engine.world.has::<voxear_engine::prefab::PrefabInstance>(e))
+    };
+
+    // Chrome Ball, held over the Prefabs folder's tile, lights it up, and its prefab is made in that folder.
+    let row = hierarchy_row(&editor.ui, "Chrome Ball").unwrap();
+    let folder = tile(&editor.ui, "Prefabs").expect("the top folder shows its folders");
+    let (from, to) = (centre(&editor.ui, row), centre(&editor.ui, folder));
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(to[0], to[1]);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(to[0], to[1] + 1.0);
+    assert!(editor.ui.has_class(folder, "drop-hover"), "the folder it would go in lights up");
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Prefabs/Chrome Ball.prefab").is_file(), "made in the folder let go of on");
+    assert!(instance(&editor, "Chrome Ball"), "the Obj is an instance of it now");
+
+    // And it shows: the Hierarchy's prefab cube, tinted, and the Inspector's Prefab row.
+    let row = hierarchy_row(&editor.ui, "Chrome Ball").unwrap();
+    let icon = first_with(&editor.ui, row, "row-icon").unwrap();
+    assert!(editor.ui.has_class(icon, "prefab-root"));
+    let prefab = prop_row(&editor.ui, "Prefab").expect("a Prefab row for an instance");
+    let file = first_with(&editor.ui, prefab, "prefab-file").unwrap();
+    assert_eq!(editor.ui.text(file), "Chrome Ball.prefab");
+    shot(&mut renderer, "prefab-instance.png");
+
+    // Pyramid, onto the Models folder in the tree; the Obj inside it is part of the instance.
+    let (from, to) = (
+        centre(&editor.ui, hierarchy_row(&editor.ui, "Pyramid").unwrap()),
+        centre(&editor.ui, folder_row(&editor.ui, "Models").unwrap()),
+    );
+    drag_between(&mut editor, &mut renderer, from, to);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Models/Pyramid.prefab").is_file());
+    // Hello's Pyramid holds a model of the same name: the instance is the one selected.
+    let pyramid = editor.selected().unwrap();
+    let world = &editor.game.engine.world;
+    assert_eq!(world.get::<Name>(pyramid).map(|n| n.0.as_str()), Some("Pyramid"));
+    assert!(world.has::<voxear_engine::prefab::PrefabInstance>(pyramid));
+    let inside =
+        world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Parent)>().into_iter().find(|(_, p)| p.0 == pyramid);
+    editor.select(inside.map(|(e, _)| e));
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "In prefab").is_some(), "an Obj inside an instance names its prefab");
+
+    // The row's Select shows the prefab in the Project and the Inspector; its Open opens it on its own.
+    editor.save();
+    let ball = obj(&editor, "Chrome Ball");
+    editor.select(ball);
+    frame(&mut editor, &mut renderer);
+    let select = prefab_button(&editor.ui, "Select");
+    click(&mut editor.ui, select);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Prefabs/Chrome Ball.prefab"));
+    editor.select(ball);
+    frame(&mut editor, &mut renderer);
+    let open = prefab_button(&editor.ui, "Open");
+    click(&mut editor.ui, open);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.open_prefab_path(), Some("Prefabs/Chrome Ball.prefab"));
+}
+
+/// The Inspector's Prefab row's button labelled `label`.
+fn prefab_button(ui: &Ui, label: &str) -> NodeId {
+    let mut buttons = Vec::new();
+    with_class(ui, ui.root(), "prefab-button", &mut buttons);
+    buttons.into_iter().find(|&b| ui.text(b) == label).unwrap_or_else(|| panic!("no {label} button"))
 }

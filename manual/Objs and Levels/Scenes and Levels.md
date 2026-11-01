@@ -23,6 +23,21 @@ The level the game starts with is `start_level` in your project's `voxear.toml`.
 
 **Ctrl+S** saves the level you are editing. Only the scenes you changed are written. One scene in each level is its **active scene**: new Objs you make go into it.
 
+## Opening a scene alongside a level
+
+You can open another scene next to the ones already open, to see the two together or to change both at once. Unity calls this opening a scene additively.
+
+Right-click the scene in the Project panel and choose **Open Additively**. You can also drag the scene onto the Hierarchy or the Scene view.
+
+The scene opens with the others, and its Objs show in the Hierarchy under its name. While it is not part of the level, its name is marked **Not in level**. Change it and save it as you would any scene. New Objs still go into the level's active scene.
+
+Right-click the scene's name in the Hierarchy to choose what happens to it:
+
+- **Add to the … Level** makes the scene part of the level you are editing. The level opens it from now on.
+- **Close Scene** closes it, and any other scene you no longer need open. Save first, or its changes go with it.
+
+Opening another level closes the scenes you opened alongside.
+
 ## Making a level
 
 1. Right-click in the Project panel and choose **New Scene**, and type its name. Do the same with **New Level**.
@@ -30,6 +45,8 @@ The level the game starts with is `start_level` in your project's `voxear.toml`.
 3. Click **Add Scene** and pick your scene from the list.
 
 Add as many scenes as the level needs. To take one out, click the cross at the end of its row. The level's file changes straight away. If the level is open, the Hierarchy shows the change too.
+
+If the level is open, you can also open the scene alongside it and add it from the Hierarchy, as "Opening a scene alongside a level" above shows.
 
 Each scene in the list has two boxes:
 

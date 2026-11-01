@@ -34,6 +34,12 @@
 //!
 //! Objs created at runtime, such as instantiated prefabs, belong to the
 //! level's active scene and unload with it.
+//!
+//! The editor can also open a scene **alongside** the level, additively, as
+//! Unity's Open Scene Additive does ([`Levels::open_scene_alongside`]), and
+//! close one ([`Levels::close_scene`]). Opening the same level again, as the
+//! editor does after changing it, keeps the scenes opened alongside it;
+//! opening another level, or a scene on its own, closes them.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -160,6 +166,9 @@ pub struct Levels {
     active: Option<AssetGuid>,
     /// Persistent Objs that outlived their scene, by scene and path.
     persistent: HashMap<(AssetGuid, ObjPath), Entity>,
+    /// The scenes the open level, or the scene opened on its own, asks for;
+    /// any other open scene was opened alongside them.
+    wanted: Vec<AssetGuid>,
 }
 
 impl Levels {
@@ -198,8 +207,21 @@ impl Levels {
         level: &str,
         options: &LevelOptions,
     ) -> Result<LevelChange> {
-        let (level_path, targets, active) = read_level(content, level)?;
-        self.change(engine, content, renderer, (level_path, targets, active), options)
+        let (level_path, mut targets, active) = read_level(content, level)?;
+        let wanted: Vec<AssetGuid> = targets.iter().map(|t| t.guid).collect();
+        // The open level opened again keeps the scenes opened alongside it.
+        if self.current.as_deref() == Some(level_path.as_str()) {
+            let alongside = self.scenes.iter().filter(|s| !self.wanted.contains(&s.guid) && !wanted.contains(&s.guid));
+            targets.extend(alongside.map(|scene| Target {
+                guid: scene.guid,
+                path: scene.path.clone(),
+                reload: false,
+                required: false,
+            }));
+        }
+        let change = self.change(engine, content, renderer, (level_path, targets, active), options)?;
+        self.wanted = wanted;
+        Ok(change)
     }
 
     /// Opens one scene on its own, as the editor does for a scene that is in
@@ -215,7 +237,58 @@ impl Levels {
     ) -> Result<LevelChange> {
         let (guid, path) = find_scene(content, scene)?;
         let target = Target { guid, path: path.clone(), reload: false, required: true };
-        self.change(engine, content, renderer, (path, vec![target], Some(guid)), &LevelOptions::default())
+        let change =
+            self.change(engine, content, renderer, (path, vec![target], Some(guid)), &LevelOptions::default())?;
+        self.wanted = vec![guid];
+        Ok(change)
+    }
+
+    /// Opens a scene alongside those open, additively, as the editor does:
+    /// nothing else unloads, and the active scene stays as it was, its sky
+    /// and post-processing with it. Returns whether it opened, as a scene
+    /// open already is left as it is.
+    pub fn open_scene_alongside(
+        &mut self,
+        engine: &mut Engine,
+        content: &mut Content,
+        renderer: Option<&mut Renderer>,
+        scene: AssetGuid,
+    ) -> Result<bool> {
+        if self.scenes.iter().any(|s| s.guid == scene) {
+            return Ok(false);
+        }
+        let entry = content.db().get(scene).with_context(|| format!("no asset with GUID {scene}"))?;
+        ensure!(entry.kind == AssetKind::Scene, "{} is not a .scene file", entry.path);
+        let target = Target { guid: scene, path: entry.path.clone(), reload: false, required: true };
+        let loaded = self.load_scene(engine, content, renderer, &target)?;
+        self.scenes.push(loaded);
+        // Loading a scene puts its own sky up; the active scene's goes back.
+        self.apply_environment(engine)?;
+        Ok(true)
+    }
+
+    /// Closes one open scene, unloading its Objs; persistent ones stay only
+    /// while the game runs. If it was the active scene, the last one open is
+    /// now. Returns whether it was open.
+    pub fn close_scene(&mut self, engine: &mut Engine, scene: AssetGuid) -> Result<bool> {
+        let Some(at) = self.scenes.iter().position(|s| s.guid == scene) else { return Ok(false) };
+        self.adopt_runtime_objs(engine);
+        let closing = self.scenes.remove(at);
+        let keep_persistent = !engine.is_edit_mode();
+        for (id, entity) in unload(engine, &closing, keep_persistent) {
+            self.persistent.insert((closing.guid, id), entity);
+        }
+        if self.active == Some(scene) {
+            self.active = self.scenes.last().map(|s| s.guid);
+        }
+        self.apply_environment(engine)?;
+        Ok(true)
+    }
+
+    /// Whether an open scene was opened alongside the level, or the scene
+    /// opened on its own, rather than being one it asks for.
+    pub fn opened_alongside(&self, scene: AssetGuid) -> bool {
+        self.scenes.iter().any(|s| s.guid == scene) && !self.wanted.contains(&scene)
     }
 
     /// Moves from the scenes loaded now to those a level (its path, its
@@ -354,7 +427,8 @@ impl Levels {
         content: &mut Content,
         mut renderer: Option<&mut Renderer>,
     ) -> Result<Levels> {
-        let mut copy = Levels { current: self.current.clone(), active: self.active, ..Levels::default() };
+        let (current, active, wanted) = (self.current.clone(), self.active, self.wanted.clone());
+        let mut copy = Levels { current, active, wanted, ..Levels::default() };
         for scene in &self.scenes {
             let captured = scene_file::capture_scene(&edit.world, content, &scene.objs);
             let objs = scene_file::spawn(play, content, renderer.as_deref_mut(), &captured, &HashSet::new())

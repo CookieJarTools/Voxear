@@ -42,7 +42,10 @@ impl Editor {
         self.discard_armed = None;
         self.game.content.forget(path);
         self.levels.refresh(&mut self.ui, &mut self.game.content);
-        if let Some(item) = self.project.item(path) {
+        // The Inspector shows the change, when it shows the level.
+        if self.inspected_asset().is_some_and(|shown| shown.path == path)
+            && let Some(item) = self.project.item(path)
+        {
             self.inspector.show_asset(&mut self.ui, &self.game, &item);
         }
         if let Err(error) = self.open_level_again(renderer) {

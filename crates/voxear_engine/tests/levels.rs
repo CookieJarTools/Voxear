@@ -128,6 +128,50 @@ fn levels_keep_shared_scenes_and_persistent_objs() {
 }
 
 #[test]
+fn scenes_open_alongside_a_level_and_stay_while_it_opens_again() {
+    let dir = project();
+    let dusk = "format = 1\n[post]\npreset = \"cinematic\"\n[post.bloom]\nintensity = 0.5\n";
+    std::fs::write(dir.path().join("Scenes/Dusk.scene"), dusk).unwrap();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    engine.set_edit_mode(true);
+    let mut levels = Levels::default();
+    levels.load(&mut engine, &mut content, None, "Levels/Day.level").unwrap();
+    let night = content.db().guid_of("Scenes/Night.scene").unwrap();
+    let day = content.db().guid_of("Scenes/Day.scene").unwrap();
+
+    assert!(levels.open_scene_alongside(&mut engine, &mut content, None, night).unwrap());
+    assert!(!levels.open_scene_alongside(&mut engine, &mut content, None, night).unwrap(), "open already");
+    let open: Vec<&str> = levels.loaded_scenes().collect();
+    assert_eq!(open, ["Scenes/Environment.scene", "Scenes/Day.scene", "Scenes/Night.scene"]);
+    assert_eq!(levels.active_scene(), Some("Scenes/Day.scene"), "the active scene stays");
+    let dusk = content.db().guid_of("Scenes/Dusk.scene").unwrap();
+    levels.open_scene_alongside(&mut engine, &mut content, None, dusk).unwrap();
+    let post = engine.world.resource::<PostProcess>().unwrap();
+    assert_eq!(post.bloom.intensity, 0.1, "and so do its sky and post-processing, not Dusk's");
+    assert!(levels.close_scene(&mut engine, dusk).unwrap());
+    assert!(levels.opened_alongside(night) && !levels.opened_alongside(day));
+    let level = content.db().guid_of("Levels/Day.level").unwrap();
+    assert!(levels.open_scene_alongside(&mut engine, &mut content, None, level).is_err(), "only a scene");
+
+    // Opening the level again keeps it; another level closes it.
+    levels.load(&mut engine, &mut content, None, "Levels/Day.level").unwrap();
+    assert!(levels.loaded_scenes().any(|s| s == "Scenes/Night.scene"));
+    assert!(levels.opened_alongside(night));
+    levels.load(&mut engine, &mut content, None, "Levels/Night.level").unwrap();
+    assert!(!levels.opened_alongside(night), "one of Night's own now");
+    levels.load(&mut engine, &mut content, None, "Levels/Day.level").unwrap();
+    assert!(!levels.loaded_scenes().any(|s| s == "Scenes/Night.scene"));
+
+    // Closing a scene unloads its Objs, persistent ones too in edit mode, and moves the active scene on.
+    assert!(levels.close_scene(&mut engine, day).unwrap());
+    engine.tick(1.0 / 60.0);
+    assert_eq!(names(&engine), ["Floor", "Main Camera"]);
+    assert_eq!(levels.active_scene(), Some("Scenes/Environment.scene"));
+    assert!(!levels.close_scene(&mut engine, day).unwrap(), "closed already");
+}
+
+#[test]
 fn objs_created_at_runtime_unload_with_the_active_scene() {
     let dir = project();
     let mut content = Content::open(dir.path()).unwrap();

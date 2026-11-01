@@ -8,7 +8,15 @@ Each copy is called an **instance**. An instance can still differ from its prefa
 
 ## Making a prefab
 
-Drag an Obj from the Hierarchy onto the Project panel. Voxear writes it as a `.prefab` file in the folder the Project panel shows, named after the Obj, and the Obj in your level becomes an instance of it.
+Drag an Obj from the Hierarchy onto the Project panel. Voxear writes it as a `.prefab` file named after the Obj, and the Obj in your level becomes an instance of it.
+
+The prefab goes in the folder you let go on. That can be a folder's tile, a folder in the tree on the left, or the space around the files, which means the folder the Project panel shows. The folder lights up while the Obj is over it.
+
+## Telling an instance apart
+
+In the Hierarchy, an instance has a blue cube and a blue name. The Objs inside it are a lighter blue.
+
+Select an instance, and the Inspector shows a **Prefab** row with the prefab's name. For an Obj inside an instance, the row is called **In prefab**. Click **Open** to open the prefab on its own, or **Select** to find it in the Project panel.
 
 ## Seeing what is inside a prefab
 
@@ -18,7 +26,7 @@ Select a prefab in the Project panel to see the Objs it holds in the Inspector. 
 
 Double-click the prefab in the Project panel. It opens on its own in the Scene view, with a bar along the top. Change it as you would any Obj, and save with Ctrl+S. Click **Back** to return to your level, where every instance now shows the change.
 
-You can also open a prefab from one of its instances: right-click the instance in the Hierarchy and choose **Open Prefab**.
+You can also open a prefab from one of its instances: click **Open** on its **Prefab** row in the Inspector, or right-click the instance in the Hierarchy and choose **Open Prefab**.
 
 ## Placing more instances
 

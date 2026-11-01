@@ -8,7 +8,10 @@
 //!
 //! Its + button makes new Objs, as Unity's GameObject menu does. A context
 //! click on an Obj offers to duplicate or delete it, or make an Obj inside
-//! it; on a scene's header or the space below, to make one at the top.
+//! it; on a scene's header or the space below, to make one at the top. A
+//! scene opened alongside the open level is marked "Not in level", and its
+//! header's menu offers to add it to the level; any scene's, while more than
+//! one is open, to close it.
 //! Dragging an Obj onto the middle of another puts it inside; near another's
 //! top or bottom edge, beside it, before or after; onto a scene's header, at
 //! the top of that scene; and below the rest, at the top of its own scene.
@@ -70,8 +73,11 @@ struct Snapshot {
     roots: Vec<u64>,
     children: HashMap<u64, Vec<u64>>,
     rows: HashMap<u64, Row>,
-    /// Each header's scene.
+    /// Each header's scene, and those of scenes opened alongside the level.
     scenes: HashMap<u64, AssetGuid>,
+    alongside: HashSet<u64>,
+    /// The open level's name, when a level is open.
+    level: Option<String>,
 }
 
 impl Snapshot {
@@ -126,8 +132,10 @@ impl TreeItems for Items {
         ui.set_class(row, "scene-header", shown.header);
         ui.set_icon(parts[0], shown.icon);
         ui.set_text(parts[1], &shown.name);
-        ui.set_class(parts[1], "prefab-root", shown.prefab == Some(true));
-        ui.set_class(parts[1], "prefab-member", shown.prefab == Some(false));
+        for part in [parts[0], parts[1]] {
+            ui.set_class(part, "prefab-root", shown.prefab == Some(true));
+            ui.set_class(part, "prefab-member", shown.prefab == Some(false));
+        }
         ui.set_text(parts[2], shown.badge);
         ui.set_visible(parts[2], !shown.badge.is_empty());
         let inside = snapshot.children.get(&item).map_or(0, Vec::len);
@@ -137,7 +145,7 @@ impl TreeItems for Items {
     }
 }
 
-/// What the Hierarchy asks the editor to do to Objs.
+/// What the Hierarchy asks the editor to do to Objs and scenes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjAction {
     /// Make one of `NEW_OBJS`, inside an Obj, or at the top of a scene (the
@@ -153,6 +161,10 @@ pub enum ObjAction {
     Move(Entity, Destination),
     /// Open the prefab an Obj is an instance of, or part of one, on its own.
     OpenPrefab(Entity),
+    /// Add a scene opened alongside the level to the level's file.
+    AddToLevel(AssetGuid),
+    /// Close an open scene, unloading its Objs.
+    CloseScene(AssetGuid),
 }
 
 pub struct Hierarchy {
@@ -243,7 +255,22 @@ impl Hierarchy {
             Some(item) => (Some(Entity::from_bits(item)), None),
             None => (None, None),
         };
+        let header = on.filter(|&item| is_header(item));
+        let add_to_level = header.filter(|item| shown.alongside.contains(item)).and(shown.level.clone()).zip(scene);
+        let closes = header.and(scene).filter(|_| shown.scenes.len() > 1);
         drop(shown);
+        if let Some((level, scene)) = &add_to_level {
+            items.push(MenuItem::new(&format!("Add to the {level} Level")));
+            self.menu.push(Some(ObjAction::AddToLevel(*scene)));
+        }
+        if let Some(scene) = closes {
+            items.push(MenuItem::new("Close Scene"));
+            self.menu.push(Some(ObjAction::CloseScene(scene)));
+        }
+        if add_to_level.is_some() || closes.is_some() {
+            items.push(MenuItem::separator());
+            self.menu.push(None);
+        }
         if let Some(entity) = parent.filter(|_| in_prefab) {
             items.extend([MenuItem::new("Open Prefab"), MenuItem::separator()]);
             self.menu.extend([Some(ObjAction::OpenPrefab(entity)), None]);
@@ -402,13 +429,11 @@ fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -
         if !filter.is_empty() && !name.0.to_lowercase().contains(filter) {
             continue;
         }
-        let row = Row {
-            name: name.0.clone(),
-            icon: icon(camera.is_some(), light.is_some(), mesh.is_some()),
-            header: false,
-            badge: if is_instance(world, types, entity) { "Instance" } else { "" },
-            prefab: prefab(world, entity),
-        };
+        let prefab = prefab(world, entity);
+        // A prefab instance shows Unity's prefab cube, tinted.
+        let icon = if prefab == Some(true) { "cube" } else { icon(camera.is_some(), light.is_some(), mesh.is_some()) };
+        let badge = if is_instance(world, types, entity) { "Instance" } else { "" };
+        let row = Row { name: name.0.clone(), icon, header: false, badge, prefab };
         snapshot.rows.insert(entity.to_bits(), row);
         let (scene, at) = places.get(&entity).copied().unwrap_or((active, usize::MAX));
         all.push((entity, parent.map(|p| p.0), (scene, at, entity.index())));
@@ -418,12 +443,19 @@ fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -
         snapshot.roots = all.iter().map(|(entity, ..)| entity.to_bits()).collect();
         return snapshot;
     }
+    // A level's path ends in .level; a scene or prefab may be open on its own instead.
+    snapshot.level = levels.current().filter(|path| path.ends_with(".level")).map(|path| stem(path).to_string());
     for (index, (guid, path, _)) in scenes.iter().enumerate() {
         let header = index as u64 + 1;
-        let name = path.rsplit('/').next().unwrap_or(path);
-        let name = name.rsplit_once('.').map_or(name, |(stem, _)| stem).to_string();
-        snapshot.rows.insert(header, Row { name, icon: "scene", header: true, badge: "", prefab: None });
+        let alongside = snapshot.level.is_some() && levels.opened_alongside(*guid);
+        let badge = if alongside { "Not in level" } else { "" };
+        snapshot
+            .rows
+            .insert(header, Row { name: stem(path).to_string(), icon: "scene", header: true, badge, prefab: None });
         snapshot.scenes.insert(header, *guid);
+        if alongside {
+            snapshot.alongside.insert(header);
+        }
         snapshot.roots.push(header);
         snapshot.children.insert(header, Vec::new());
     }
@@ -439,6 +471,12 @@ fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -
         snapshot.children.entry(under).or_default().push(entity.to_bits());
     }
     snapshot
+}
+
+/// A file's name without its folder or extension.
+fn stem(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.rsplit_once('.').map_or(name, |(stem, _)| stem)
 }
 
 /// Where an Obj shows: its scene's place among the open scenes, its place in

@@ -14,6 +14,9 @@ pub struct Swapchain {
     /// because presentation holds the semaphore until that image comes back.
     pub present_ready: Vec<vk::Semaphore>,
     pub vsync: bool,
+    /// What its images can be used for: drawn into, and copied from where
+    /// the surface allows it, for the frame debugger.
+    pub usage: vk::ImageUsageFlags,
 }
 
 impl Swapchain {
@@ -27,6 +30,7 @@ impl Swapchain {
             views: Vec::new(),
             present_ready: Vec::new(),
             vsync,
+            usage: vk::ImageUsageFlags::empty(),
         };
         swapchain.build(gpu, width, height)?;
         Ok(swapchain)
@@ -85,6 +89,8 @@ impl Swapchain {
             image_count = image_count.min(caps.max_image_count);
         }
 
+        let copyable = caps.supported_usage_flags & vk::ImageUsageFlags::TRANSFER_SRC;
+        let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST | copyable;
         let old = self.handle;
         let info = vk::SwapchainCreateInfoKHR::default()
             .surface(self.surface)
@@ -93,7 +99,7 @@ impl Swapchain {
             .image_color_space(format.color_space)
             .image_extent(extent)
             .image_array_layers(1)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
+            .image_usage(usage)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(caps.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -108,6 +114,7 @@ impl Swapchain {
 
         self.format = format;
         self.extent = extent;
+        self.usage = usage;
         self.images = unsafe { gpu.swapchain_loader.get_swapchain_images(self.handle)? };
         for &image in &self.images {
             let view_info = vk::ImageViewCreateInfo::default()

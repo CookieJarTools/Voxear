@@ -121,6 +121,9 @@
                 <DockPanel id="entities" title="Entities" class="dock-content">
                     <Panel name="entities-panel" class="fill entities-panel" />
                 </DockPanel>
+                <DockPanel id="frames" title="Frame Debugger" class="dock-content">
+                    <Panel name="frame-debugger-panel" class="fill frame-debugger-panel" />
+                </DockPanel>
                 <DockPanel id="build" title="Build" class="dock-content">
                     <Panel name="build-panel" class="fill build-panel" />
                 </DockPanel>

@@ -11,6 +11,7 @@ mod alloc;
 mod assets;
 mod cooked;
 mod debug_pass;
+mod frame_debugger;
 mod gltf_import;
 mod gpu;
 mod graph;
@@ -41,6 +42,7 @@ use voxear_rhi::{
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use cooked::{COOKED_VERSION, CookedModel};
+pub use frame_debugger::{Channels, FrameImage, FrameLook, FramePass};
 pub use gltf_import::{
     ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
 };
@@ -197,6 +199,7 @@ pub struct Renderer {
     view: Option<[u32; 4]>,
     /// What the output is cleared to outside the view, linear.
     clear: [f32; 4],
+    frame_debugger: frame_debugger::FrameDebugger,
 }
 
 impl Renderer {
@@ -274,6 +277,7 @@ impl Renderer {
             gpu_decompression: true,
             view: None,
             clear: [0.0, 0.0, 0.0, 1.0],
+            frame_debugger: Default::default(),
         })
     }
 
@@ -573,8 +577,7 @@ impl Renderer {
         let (output_image, output_view, output_desc, output_last) = match &self.output {
             Output::Window(swapchain) => {
                 let acquired = acquired.as_ref().expect("acquired above");
-                let desc =
-                    ImageDesc::new(full.width, full.height, swapchain.format.format, vk::ImageUsageFlags::empty());
+                let desc = ImageDesc::new(full.width, full.height, swapchain.format.format, swapchain.usage);
                 (acquired.image, acquired.view, desc, ImageAccess::Undefined)
             }
             Output::Offscreen { image, last } => (image.handle, image.view, image.desc, *last),
@@ -592,6 +595,7 @@ impl Renderer {
             exposure,
             ui,
             previews,
+            frame_debugger,
             ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
@@ -599,6 +603,7 @@ impl Renderer {
         let lod_state = lod_state.as_ref().expect("LOD state lives until drop");
         let exposure = exposure.as_ref().expect("exposure lives until drop");
         let buffers = &buffers[frame.slot];
+        let timings = if frame_debugger.on { graph.timings().to_vec() } else { Vec::new() };
         let mut fg = graph.begin(gpu, frame.slot);
 
         let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
@@ -629,7 +634,7 @@ impl Renderer {
         } else {
             None
         };
-        let output = fg.import_image(output_image, output_view, output_desc, output_last);
+        let output = fg.import_image("output", (output_image, output_view), output_desc, output_last);
 
         let mut frame_data = extracted.frame;
         frame_data.instance_count = instance_count as u32;
@@ -725,10 +730,13 @@ impl Renderer {
         };
         debug_pass::record(&mut fg, pipelines.debug, push, &buffers.debug_lines, (output, view), depth);
         let preview_atlas = previews.record(&mut fg, (gpu, bindless), (pipelines, assets), frame.slot)?;
-        ui.record(&mut fg, (pipelines.ui, push), &buffers.ui, (output, full), preview_atlas, backdrop);
+        let debugger_view = frame_debugger.view_image(&mut fg, gpu, bindless)?;
+        let sampled: Vec<_> = preview_atlas.into_iter().chain(debugger_view).collect();
+        ui.record(&mut fg, (pipelines.ui, push), &buffers.ui, (output, full), &sampled, backdrop);
         if acquired.is_some() {
             fg.transition(output, ImageAccess::Present);
         }
+        frame_debugger.record(&mut fg, (gpu, bindless), (pipelines.frame_debug, push), debugger_view, &timings)?;
         fg.execute(gpu, frame.cmd, bindless);
         drop(recording);
 
@@ -773,6 +781,30 @@ impl Renderer {
         self.prev_models.extend(extracted.entities.iter().zip(&extracted.instances).map(|(e, i)| (*e, i.model)));
         let current = extracted.frame.unjittered_view_proj;
         extracted.frame.prev_view_proj = self.prev_view_proj.replace(current).unwrap_or(current);
+    }
+
+    /// Turns the frame debugger on or off, and says what it looks at. While
+    /// it is on, each frame notes its passes for [`frame_passes`]; given a
+    /// look, it copies that image after its pass for [`frame_debugger_view`].
+    ///
+    /// [`frame_passes`]: Self::frame_passes
+    /// [`frame_debugger_view`]: Self::frame_debugger_view
+    pub fn set_frame_debugger(&mut self, on: bool, look: Option<FrameLook>) {
+        self.frame_debugger.on = on;
+        self.frame_debugger.look = look;
+    }
+
+    /// The passes of the last frame drawn with the frame debugger on, in
+    /// order, with the images each used.
+    pub fn frame_passes(&self) -> &[FramePass] {
+        &self.frame_debugger.passes
+    }
+
+    /// The image the frame debugger looks at, for a UI `Image` to show, and
+    /// its size in pixels.
+    pub fn frame_debugger_view(&self) -> Option<(voxear_ui::ImageRef, [u32; 2])> {
+        let (texture, size) = self.frame_debugger.view?;
+        Some((voxear_ui::ImageRef { texture: texture.0, uv: [0.0, 0.0, 1.0, 1.0] }, size))
     }
 
     /// What the UI draws over every frame from now on, until replaced. An

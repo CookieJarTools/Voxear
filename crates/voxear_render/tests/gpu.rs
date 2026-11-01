@@ -339,6 +339,75 @@ fn the_games_ui_draws_in_its_area_under_the_windows() {
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "an empty frame takes the game's UI away");
 }
 
+/// The frame debugger lists the frame's passes and their images, and shows
+/// the one looked at as it stood after its pass, in the channels asked for.
+#[test]
+fn the_frame_debugger_shows_an_image_after_its_pass() {
+    use voxear_render::{Channels, FrameLook};
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let world = wall_scene(&mut renderer);
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.panel(root, Style::default().at(0.0, 0.0).width(100.0).height(100.0).background(Color::hex(0xff0000)));
+    let shown = ui.image(root);
+    ui.set_inline_style(shown, "position: absolute; left: 320px; top: 0px; width: 320px; height: 180px");
+    renderer.set_ui(&ui.frame(640, 360, 1.0)).unwrap();
+    renderer.set_frame_debugger(true, None);
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 1);
+
+    let passes = renderer.frame_passes();
+    let names: Vec<&str> = passes.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"Opaque (early)") && names.contains(&"Composite"), "{names:?}");
+    let opaque = passes.iter().find(|p| p.name == "Opaque (early)").unwrap();
+    let depth = opaque.images.iter().find(|i| i.name == "depth").expect("the opaque pass draws depth");
+    assert!(depth.writes && depth.depth && depth.channels == 1 && depth.viewable);
+    assert_eq!(depth.size, [640, 360]);
+    let ui_pass = passes.iter().position(|p| p.name == "UI").unwrap();
+    let output = passes[ui_pass].images.iter().position(|i| i.name == "output").unwrap();
+    assert_eq!(passes[ui_pass].images[output].used, "Drawn into");
+    assert!(renderer.frame_debugger_view().is_none(), "nothing looked at yet");
+
+    let look = FrameLook { pass: ui_pass, image: output, ..FrameLook::default() };
+    renderer.set_frame_debugger(true, Some(look));
+    run(&mut renderer, &world, &mut time, 1);
+    let (image, size) = renderer.frame_debugger_view().expect("a view of what is looked at");
+    assert_eq!(size, [640, 360]);
+    ui.set_image(shown, Some(image));
+    renderer.set_ui(&ui.frame(640, 360, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut time, 1);
+    let at = |pixels: &[u8], x: u32, y: u32| {
+        let i = ((y * 640 + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    assert_eq!(at(&pixels, 50, 50), [255, 0, 0], "the red panel itself");
+    let red = at(&pixels, 345, 25);
+    assert!(red[0] > 240 && red[1] < 16 && red[2] < 16, "the view of the window after the UI, at half size: {red:?}");
+
+    renderer.set_frame_debugger(true, Some(FrameLook { channels: Channels::Green, ..look }));
+    run(&mut renderer, &world, &mut time, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    assert!(at(&pixels, 345, 25).iter().all(|&c| c < 16), "red has no green, so the green channel is black");
+
+    // Depth, looked at with more exposure, shows the wall in grey.
+    let pass = renderer.frame_passes().iter().position(|p| p.name == "Opaque (early)").unwrap();
+    let image = renderer.frame_passes()[pass].images.iter().position(|i| i.name == "depth").unwrap();
+    let depth = FrameLook { pass, image, mip: 0, channels: Channels::Red, exposure: 8.0 };
+    renderer.set_frame_debugger(true, Some(depth));
+    run(&mut renderer, &world, &mut time, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let wall = at(&pixels, 400, 100);
+    assert!(wall[0] > 0 && wall[0] == wall[1] && wall[1] == wall[2], "the wall's depth as grey: {wall:?}");
+    assert_eq!(at(&pixels, 600, 20), [0, 0, 0], "the sky is as far as depth goes");
+
+    renderer.set_frame_debugger(false, None);
+    run(&mut renderer, &world, &mut time, 1);
+    assert!(renderer.frame_passes().is_empty() && renderer.frame_debugger_view().is_none(), "off, it keeps nothing");
+}
+
 /// A panel with `backdrop-filter` shows the view under it blurred: the
 /// wall's sharp edge behind it comes out soft, while beside it the edge stays
 /// sharp. Set `VOXEAR_TEST_OUTPUT` to a folder to keep the image.

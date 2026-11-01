@@ -1885,6 +1885,75 @@ fn texts_in(ui: &Ui, node: NodeId) -> Vec<String> {
 }
 
 #[test]
+fn the_frame_debugger_lists_the_passes_and_shows_a_picked_image() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();
+    let profiling = editor.ui.children(workspaces)[1];
+    click(&mut editor.ui, profiling);
+    frame(&mut editor, &mut renderer);
+    let open: Vec<String> = editor.ui.dock_panels(dock).into_iter().filter(|(.., o)| *o).map(|(id, ..)| id).collect();
+    assert!(open.contains(&"frames".to_string()), "Profiling has the Frame Debugger: {open:?}");
+    editor.ui.show_dock_panel(dock, "frames");
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+
+    let panel = editor.ui.find(editor.ui.root(), "frame-debugger-panel").unwrap();
+    let names = |editor: &voxear_editor::Editor, list: NodeId| -> Vec<String> {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, list, "entities-row", &mut rows);
+        let rows = rows.into_iter().filter(|&row| editor.ui.is_visible(row));
+        rows.map(|row| editor.ui.text(editor.ui.children(row)[0])).collect()
+    };
+    fn lists_in(ui: &Ui, node: NodeId, found: &mut Vec<NodeId>) {
+        if ui.kind(node) == Some(voxear_ui::Kind::ListView) {
+            found.push(node);
+        }
+        for child in ui.children(node) {
+            lists_in(ui, child, found);
+        }
+    }
+    let mut lists = Vec::new();
+    lists_in(&editor.ui, panel, &mut lists);
+    let passes = names(&editor, lists[0]);
+    assert!(passes.iter().any(|p| p == "Opaque (early)"), "{passes:?}");
+    let all: Vec<&str> = renderer.frame_passes().iter().map(|p| p.name.as_str()).collect();
+    assert!(all.contains(&"Composite") && all.contains(&"UI"), "the rest further down: {all:?}");
+    let summary = editor.ui.text(first_with(&editor.ui, panel, "entities-summary").unwrap());
+    assert!(summary.contains("passes") && summary.contains("objects drawn"), "{summary}");
+    let hint = first_with(&editor.ui, panel, "entities-hint").unwrap();
+    assert!(editor.ui.text(hint).starts_with("Pick a pass"), "{}", editor.ui.text(hint));
+
+    let opaque = passes.iter().position(|p| p == "Opaque (early)").unwrap();
+    editor.ui.set_selection(lists[0], &[opaque]);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let images = names(&editor, lists[1]);
+    assert!(images.contains(&"hdr".to_string()) && images.contains(&"depth".to_string()), "{images:?}");
+    let title = editor.ui.text(first_with(&editor.ui, panel, "frame-view-title").unwrap());
+    assert!(title.starts_with("hdr · ") && title.contains("RGBA16 float"), "what the pass made first: {title}");
+    let view = first_with(&editor.ui, panel, "frame-view-image").unwrap();
+    assert!(editor.ui.is_visible(view) && editor.ui.rect(view)[2] > 0.0, "the image shows");
+    shot(&mut renderer, "frame-debugger.png");
+
+    let depth = images.iter().position(|i| i == "depth").unwrap();
+    editor.ui.set_selection(lists[1], &[depth]);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let channels = editor.ui.children(first_with(&editor.ui, panel, "frame-view-controls").unwrap())[0];
+    assert_eq!(editor.ui.segment(channels), 1, "depth shows its one channel");
+    shot(&mut renderer, "frame-debugger-depth.png");
+
+    editor.ui.show_dock_panel(dock, "profiler");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(renderer.frame_passes().is_empty(), "hidden, it stops the renderer noting passes");
+}
+
+#[test]
 fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();

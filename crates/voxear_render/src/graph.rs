@@ -5,6 +5,13 @@
 //! Version one runs passes in declaration order on one queue. Transient
 //! images persist between frames (keyed by name) and keep their last state,
 //! so the first barrier of a frame also orders against the previous frame.
+//!
+//! Every graph-owned image can be copied from, so the frame debugger can
+//! copy any of them after the pass it is looking at (see [`recorded`] and
+//! [`insert_pass`]).
+//!
+//! [`recorded`]: FrameGraph::recorded
+//! [`insert_pass`]: FrameGraph::insert_pass
 
 use std::collections::HashMap;
 
@@ -29,6 +36,7 @@ pub enum ImageAccess {
     Sampled,
     StorageWrite,
     TransferSrc,
+    TransferDst,
     Present,
 }
 
@@ -79,6 +87,7 @@ impl ImageAccess {
             }
             Self::StorageWrite => (L::GENERAL, S::COMPUTE_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE),
             Self::TransferSrc => (L::TRANSFER_SRC_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_READ),
+            Self::TransferDst => (L::TRANSFER_DST_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_WRITE),
             Self::Present => (L::PRESENT_SRC_KHR, S::NONE, A::NONE),
         };
         State { layout, stage, access }
@@ -157,8 +166,17 @@ fn release(gpu: &Gpu, bindless: &mut Bindless, transient: Transient) {
 }
 
 enum GraphImage {
-    Imported { image: vk::Image, view: vk::ImageView, desc: ImageDesc, state: State },
+    Imported { name: String, image: vk::Image, view: vk::ImageView, desc: ImageDesc, state: State },
     Transient { name: String, first_use: bool },
+}
+
+/// A pass recorded so far, as the frame debugger lists it: where it is among
+/// the graph's passes, for [`FrameGraph::insert_pass`], its name, and the
+/// images it uses.
+pub struct RecordedPass {
+    pub at: usize,
+    pub name: String,
+    pub images: Vec<(ImageId, ImageAccess)>,
 }
 
 /// Buffers are reached through device addresses, so their barriers are
@@ -230,13 +248,33 @@ impl<'a> FrameGraph<'a> {
     /// was last used (`Undefined` to discard its contents).
     pub fn import_image(
         &mut self,
-        image: vk::Image,
-        view: vk::ImageView,
+        name: &str,
+        (image, view): (vk::Image, vk::ImageView),
         desc: ImageDesc,
         current: ImageAccess,
     ) -> ImageId {
-        self.images.push(GraphImage::Imported { image, view, desc, state: current.state() });
+        let name = name.to_string();
+        self.images.push(GraphImage::Imported { name, image, view, desc, state: current.state() });
         ImageId(self.images.len() - 1)
+    }
+
+    pub fn image_name(&self, id: ImageId) -> &str {
+        match &self.images[id.0] {
+            GraphImage::Imported { name, .. } | GraphImage::Transient { name, .. } => name,
+        }
+    }
+
+    pub fn image_desc(&self, id: ImageId) -> ImageDesc {
+        match &self.images[id.0] {
+            GraphImage::Imported { desc, .. } => *desc,
+            GraphImage::Transient { name, .. } => self.graph.transients[name].image.desc,
+        }
+    }
+
+    /// The passes recorded so far that do work, in order.
+    pub fn recorded(&self) -> Vec<RecordedPass> {
+        let passes = self.passes.iter().enumerate().filter(|(_, pass)| pass.record.is_some());
+        passes.map(|(at, pass)| RecordedPass { at, name: pass.name.clone(), images: pass.images.clone() }).collect()
     }
 
     /// A graph-owned image whose contents are discarded every frame.
@@ -263,6 +301,7 @@ impl<'a> FrameGraph<'a> {
         desc: ImageDesc,
         persistent: bool,
     ) -> Result<ImageId> {
+        let desc = ImageDesc { usage: desc.usage | vk::ImageUsageFlags::TRANSFER_SRC, ..desc };
         let stale = self.graph.transients.get(name).is_some_and(|t| t.image.desc != desc);
         if stale {
             // A resize: rare enough that waiting for the GPU is simpler than deferring.
@@ -325,6 +364,24 @@ impl<'a> FrameGraph<'a> {
             buffers: buffers.to_vec(),
             record: Some(Box::new(record)),
         });
+    }
+
+    /// Adds a pass at `at` among the passes recorded so far, before the one
+    /// there, as the frame debugger adds its copy after the pass it looks at.
+    pub fn insert_pass(
+        &mut self,
+        at: usize,
+        name: &str,
+        images: &[(ImageId, ImageAccess)],
+        record: impl FnOnce(&PassContext) + 'a,
+    ) {
+        let pass = Pass {
+            name: name.to_string(),
+            images: images.to_vec(),
+            buffers: Vec::new(),
+            record: Some(Box::new(record)),
+        };
+        self.passes.insert(at.min(self.passes.len()), pass);
     }
 
     /// Moves an image into a final state (e.g. `Present`) with no pass.

@@ -356,7 +356,8 @@ Still to do in M3:
 - Debug tools:
   - [x] the stats overlay's frame-time graph; the Profiler's timeline view and managed allocations (GC Alloc)
   - [ ] worker threads' samples in the Profiler, and Tracy behind it
-  - the frame debugger
+  - [x] the frame debugger: each pass of the frame with its GPU time and images, and an image as it stood after
+    its pass, at any mip, in one channel or all, with an exposure
   - [x] the ECS inspector: archetypes, entities and their components, the system schedule with timings, and a filter
     by components
   - [ ] the ECS inspector's editing of plain entities' values, and chunk occupancy

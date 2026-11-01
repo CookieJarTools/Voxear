@@ -253,6 +253,19 @@ float4 motionBlurFragment(PostOut input) : SV_Target
 // The 13-tap downsample from Call of Duty: Advanced Warfare (Jimenez 2014).
 // The first level weights each 2x2 group by brightness (Karis average) so a
 // single very bright pixel cannot become a flickering blob.
+// The frame debugger's view of an image: push.texture is a copy of one of its mips, push.textures.x
+// which channels to show (0 for RGB, 1 to 4 for red, green, blue or alpha, as grey) and
+// push.textures.y how much to scale them by, as float bits. Values show as they are held, so
+// negative ones, as in motion vectors, show by their size.
+[shader("fragment")]
+float4 frameDebugFragment(PostOut input) : SV_Target
+{
+    float4 value = textures[NonUniformResourceIndex(push.texture)].SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], input.uv, 0.0);
+    value = abs(value) * asfloat(push.textures.y);
+    float3 shown = push.textures.x == 0 ? value.rgb : float3(value[push.textures.x - 1]);
+    return float4(saturate(shown), 1.0);
+}
+
 [shader("fragment")]
 float4 bloomDownFragment(PostOut input) : SV_Target
 {

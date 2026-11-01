@@ -42,6 +42,8 @@ pub struct Pipelines {
     /// Writes the output directly, when nothing follows.
     pub composite: vk::Pipeline,
     pub finish: vk::Pipeline,
+    /// The frame debugger's view of an image.
+    pub frame_debug: vk::Pipeline,
     pub ui: vk::Pipeline,
     /// Debug draw's lines, over the finished frame.
     pub debug: vk::Pipeline,
@@ -128,6 +130,7 @@ impl Pipelines {
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
+            frame_debug: fullscreen("Frame debugger view", c"frameDebugFragment", hdr, Blend::Opaque)?,
             ui: graphics(&GraphicsPipelineDesc {
                 color_formats: output,
                 cull: vk::CullModeFlags::NONE,
@@ -180,6 +183,7 @@ impl Pipelines {
             self.composite_ldr,
             self.composite,
             self.finish,
+            self.frame_debug,
             self.ui,
             self.debug,
             self.preview,

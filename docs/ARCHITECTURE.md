@@ -2414,10 +2414,22 @@ them in a running game.
   - The render graph names every pass, resource and draw through `VK_EXT_debug_utils`, so a capture reads like the
     engine's own structure.
   - The same labels make Nsight Graphics, Radeon GPU Profiler and Intel GPA useful.
-- **Frame debugger**, like Unity's, lighter than RenderDoc and always available:
-  - Step through render graph passes inside the editor, with each pass's inputs and outputs.
-  - Inspect any texture (mip, slice, channel, exposure) or buffer.
-  - See culling results (instances and meshlets culled by frustum and occlusion, the LOD chosen) and pipeline state.
+- **Frame debugger**, like Unity's, lighter than RenderDoc and always available. *(Implemented: the Frame Debugger
+  panel, in the Profiling workspace.)*
+  - It lists the passes of the frame the editor just drew, in order, each with its GPU time, and the images the
+    picked pass used and how: drawn into, sampled, depth tested, copied.
+  - The picked image shows as it stood right after its pass, at any of its mips, in all its colour channels or one
+    of them as grey, and brighter or darker by an exposure in stops. Depth starts six stops brighter, since it is
+    held as small numbers.
+  - Above them, how many objects the frame drew and how many were left out as outside the view or hidden behind
+    others.
+  - Unity's steps through draws; this steps through the render graph's passes, which is how a Voxear frame is
+    described. The renderer notes the passes only while the panel shows (`Renderer::set_frame_debugger`). Looking
+    at an image costs one copy and one small pass a frame: after its pass, the graph copies the mip being looked
+    at, and a pass draws it into a view image with the channels and exposure asked for, which the panel shows as a
+    UI image (`FrameGraph::insert_pass`, `frame_debugger.rs`). The view is a frame behind for passes after the UI.
+  - Every image the graph owns can be copied from, and so can the window's own where the system allows it.
+  - Still to come: buffers, the meshlets culled and the LOD chosen, and pipeline state.
 - **CPU and GPU profiler.** *(The editor's Profiler has the hierarchy and timeline views, cost per system and per
   behaviour callback, scripts' own samples, managed allocations, and GPU time per pass; see the editor above.)*
   - Timeline and hierarchy views. The recorder keeps each run of a sample as a span, with when it started and ended

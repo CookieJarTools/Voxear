@@ -45,6 +45,7 @@ use crate::{
     console::Console,
     entities_panel::EntitiesPanel,
     fields::Pick,
+    frame_debugger_panel::FrameDebuggerPanel,
     gizmos,
     hierarchy::EditorOnly,
     hierarchy::Hierarchy,
@@ -131,6 +132,7 @@ struct Nodes {
     profiler_panel: NodeId,
     /// The Entities panel's content, the ECS inspector.
     entities_panel: NodeId,
+    frame_debugger_panel: NodeId,
     /// The Build window's panel.
     build_panel: NodeId,
     /// A script field's tooltip, shown under its label.
@@ -243,6 +245,7 @@ pub struct Editor {
     layout_checked: Instant,
     profiler: Profiler,
     entities: EntitiesPanel,
+    frame_debugger: FrameDebuggerPanel,
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
@@ -352,6 +355,7 @@ impl Editor {
             workspaces: find(&ui, "workspaces"),
             profiler_panel: find(&ui, "profiler-panel"),
             entities_panel: find(&ui, "entities-panel"),
+            frame_debugger_panel: find(&ui, "frame-debugger-panel"),
             build_panel: find(&ui, "build-panel"),
             tooltip: find(&ui, "tooltip"),
             debug_texts: find(&ui, "debug-texts"),
@@ -391,6 +395,7 @@ impl Editor {
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
+        let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
         let parts =
             ["picker", "picker-title", "picker-field", "picker-list", "picker-empty"].map(|name| find(&ui, name));
@@ -449,6 +454,7 @@ impl Editor {
             workspace_layouts: [None, None],
             profiler,
             entities,
+            frame_debugger,
             build_window,
             picker,
             color_popup,
@@ -605,6 +611,8 @@ impl Editor {
             if let Some(picked) = self.entities.update(&mut self.ui, entities_shown, &self.game, types, frame) {
                 self.select(Some(picked));
             }
+            let frames_shown = self.shown(self.nodes.frame_debugger_panel);
+            self.frame_debugger.update(&mut self.ui, frames_shown, renderer);
         }
         self.update_drawer();
         self.update_prefab_mode(renderer);

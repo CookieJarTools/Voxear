@@ -108,15 +108,16 @@ impl UiGpu {
     }
 
     /// Writes this frame's quads and adds the pass that draws them onto
-    /// `output`. `backdrop` is the view blurred, with its size, and where the
-    /// view is in the output, for quads that show it.
+    /// `output`. `sampled` are images drawn this frame that the UI shows, as
+    /// the preview atlas. `backdrop` is the view blurred, with its size, and
+    /// where the view is in the output, for quads that show it.
     pub fn record(
         &self,
         fg: &mut FrameGraph<'_>,
         (pipeline, push): (vk::Pipeline, Push),
         buffer: &Buffer,
         output: (ImageId, vk::Extent2D),
-        previews: Option<ImageId>,
+        sampled: &[ImageId],
         backdrop: Option<(ImageId, [u32; 2], vk::Rect2D)>,
     ) {
         let (games, windows) = (self.game.quads.len(), self.window.quads.len());
@@ -143,9 +144,8 @@ impl UiGpu {
         let game = Push { texture: self.game.texture(), list, level: 0, ..base };
         let window = Push { texture: self.window.texture(), list: 0, level: games as u32, ..base };
         let draws = [(game, games as u32), (window, windows as u32)];
-        // Images in the UI sample the preview atlas, which previews drew into this frame.
         let mut images = vec![(output, ImageAccess::ColorAttachment)];
-        images.extend(previews.map(|atlas| (atlas, ImageAccess::Sampled)));
+        images.extend(sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
         images.extend(backdrop.map(|(blurred, ..)| (blurred, ImageAccess::Sampled)));
         fg.add_pass("UI", &images, &[], move |ctx| {
             let color = [vk::RenderingAttachmentInfo::default()

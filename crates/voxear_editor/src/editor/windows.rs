@@ -6,8 +6,8 @@
 //! shared an area with.
 //!
 //! The top bar's workspaces are layouts of the same panels: World for
-//! building levels, and Profiling, with the Game view over the Profiler and
-//! the Entities panel.
+//! building levels, and Profiling, with the Game view over the Profiler, the
+//! Entities panel and the Frame Debugger.
 //! Each keeps the layout it was left in, as Blender's workspaces do, and
 //! the editor's memory keeps them and the workspace showing between
 //! sessions.
@@ -24,7 +24,7 @@ const LAYOUT_CHECK: Duration = Duration::from_secs(1);
 /// The layout each workspace starts with, in the top bar's order.
 const WORKSPACE_LAYOUTS: [&str; 2] = [
     LAYOUT,
-    "row(240, [hierarchy], column(45%, row(-300, [game, scene], [inspector]), [profiler, entities, console]))",
+    "row(240, [hierarchy], column(45%, row(-300, [game, scene], [inspector]), [profiler, entities, frames, console]))",
 ];
 
 impl Editor {

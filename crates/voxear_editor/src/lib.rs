@@ -45,6 +45,7 @@ mod console;
 mod editor;
 pub mod entities_panel;
 mod fields;
+mod frame_debugger_panel;
 mod gizmos;
 mod hierarchy;
 mod history;

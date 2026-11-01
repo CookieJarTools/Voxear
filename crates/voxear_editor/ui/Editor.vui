@@ -9,10 +9,7 @@
                     <Icon icon="logo-right" class="logo-right" />
                 </Panel>
                 <Label class="brand">Voxear</Label>
-                <Segmented name="workspaces" class="workspaces">
-                    <Segment text="World" />
-                    <Segment text="Profiling" />
-                </Segmented>
+                <Button name="layouts" class="layouts-button"><Icon icon="panels" /><Label name="layout-name">Default</Label><Icon icon="chevron-down" class="layouts-arrow" /></Button>
                 <Panel class="command">
                     <Icon icon="search" class="command-icon" />
                     <TextField name="command" class="command-field" placeholder="Search or run a command" />
@@ -86,6 +83,7 @@
                         <Icon icon="cube" class="prefab-icon" />
                         <Label name="prefab-name" class="prefab-name" />
                         <Label class="prefab-hint">Lock a component for designers from its menu</Label>
+                        <Button name="prefab-close" class="header-button prefab-close"><Icon icon="close" /><Label>Close Prefab</Label></Button>
                     </Panel>
                     <Panel name="viewport" class="viewport">
                         <Panel name="handles" class="handles" />
@@ -204,6 +202,14 @@
         <Panel name="palette" class="palette">
             <ListView name="palette-list" class="palette-list" item-height="28" />
             <Label name="palette-empty" class="palette-empty">Nothing matches</Label>
+        </Panel>
+        <!-- Save Layout As asks for the new layout's name here, under the Layout menu's button. -->
+        <Panel name="layout-prompt" class="layout-prompt">
+            <Label class="layout-prompt-title">Save the layout as</Label>
+            <Panel class="layout-prompt-row">
+                <TextField name="layout-prompt-name" class="search-field layout-prompt-name" placeholder="Layout name" />
+                <Button name="layout-prompt-save" class="primary">Save</Button>
+            </Panel>
         </Panel>
         <!-- A script field's tooltip, under its label. It takes no pointer, so it is after the palette. -->
         <Label name="tooltip" class="tooltip" />

@@ -133,8 +133,14 @@ struct Nodes {
     shading: NodeId,
     gizmos: NodeId,
     scene_maximize: NodeId,
-    /// The top bar's workspaces, and the Profiler's panel.
-    workspaces: NodeId,
+    /// The top bar's Layout menu button and the name on it, the box that
+    /// asks for a new layout's name with its field and Save button, and the
+    /// Profiler's panel.
+    layouts: NodeId,
+    layout_name: NodeId,
+    layout_prompt: NodeId,
+    layout_prompt_name: NodeId,
+    layout_prompt_save: NodeId,
     profiler_panel: NodeId,
     /// The Entities panel's content, the ECS inspector.
     entities_panel: NodeId,
@@ -152,6 +158,7 @@ struct Nodes {
     prefab_bar: NodeId,
     prefab_name: NodeId,
     prefab_back: NodeId,
+    prefab_close: NodeId,
 }
 
 /// What a shortcut asks of the editor, done in the next frame.
@@ -245,9 +252,11 @@ pub struct Editor {
     drawer: Option<Drawer>,
     /// The prefab open on its own to edit, if one is.
     prefab: Option<prefab_mode::OpenPrefab>,
-    /// The workspace showing, and the layout each was last left in.
-    workspace: usize,
-    workspace_layouts: [Option<String>; 2],
+    /// The layouts to pick from, the one showing, and whether Save Layout
+    /// As's box has yet to take the focus.
+    layouts: Vec<windows::Layout>,
+    layout: usize,
+    naming_layout: bool,
     /// When the layout was last looked at, to keep it in the memory.
     layout_checked: Instant,
     profiler: Profiler,
@@ -369,7 +378,11 @@ impl Editor {
             shading: find(&ui, "shading"),
             gizmos: find(&ui, "gizmos"),
             scene_maximize: find(&ui, "scene-maximize"),
-            workspaces: find(&ui, "workspaces"),
+            layouts: find(&ui, "layouts"),
+            layout_name: find(&ui, "layout-name"),
+            layout_prompt: find(&ui, "layout-prompt"),
+            layout_prompt_name: find(&ui, "layout-prompt-name"),
+            layout_prompt_save: find(&ui, "layout-prompt-save"),
             profiler_panel: find(&ui, "profiler-panel"),
             entities_panel: find(&ui, "entities-panel"),
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
@@ -381,6 +394,7 @@ impl Editor {
             prefab_bar: find(&ui, "prefab-bar"),
             prefab_name: find(&ui, "prefab-name"),
             prefab_back: find(&ui, "prefab-back"),
+            prefab_close: find(&ui, "prefab-close"),
         };
         let branch = git_branch(&root);
         let branch_name = find(&ui, "status-branch-name");
@@ -389,6 +403,7 @@ impl Editor {
         ui.set_visible(branch_shown, branch.is_some());
         ui.set_dock_layout_closing_rest(nodes.dock, LAYOUT).expect("the default layout is valid");
         ui.set_visible(nodes.drawer, false);
+        ui.set_visible(nodes.layout_prompt, false);
         ui.set_visible(nodes.prefab_bar, false);
         ui.set_visible(nodes.tooltip, false);
         let (tree, filter, add) =
@@ -471,8 +486,9 @@ impl Editor {
             tab_menu: None,
             drawer: None,
             prefab: None,
-            workspace: 0,
-            workspace_layouts: [None, None],
+            layouts: windows::built_in_layouts(),
+            layout: 0,
+            naming_layout: false,
             profiler,
             entities,
             frame_debugger,
@@ -631,7 +647,7 @@ impl Editor {
             self.run(command, renderer);
         }
         self.update_windows();
-        self.update_workspaces();
+        self.update_layouts();
         self.keep_layout();
         {
             profile_scope!("Profiler");

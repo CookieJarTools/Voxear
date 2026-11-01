@@ -1940,9 +1940,10 @@ fn a_prefab_opens_on_its_own_to_lock_components_for_designers() {
     assert_eq!(saved.objs.len(), 1, "the prefab's file has only its own Obj");
     assert_eq!(Some(saved.objs[0].locks.clone()), shown, "and keeps its locks");
 
-    // Back opens the level again, whose instance shows designers only what the prefab chose.
-    let back = editor.ui.find(editor.ui.root(), "prefab-back").unwrap();
-    click(&mut editor.ui, back);
+    // Close Prefab, as Back does, opens the level again, whose instance shows designers only what the prefab chose.
+    let close = editor.ui.find(editor.ui.root(), "prefab-close").unwrap();
+    assert!(editor.ui.is_visible(close));
+    click(&mut editor.ui, close);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.open_prefab_path(), None);
@@ -1985,9 +1986,7 @@ fn texts_in(ui: &Ui, node: NodeId) -> Vec<String> {
 fn the_frame_debugger_lists_the_passes_and_shows_a_picked_image() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
-    let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();
-    let profiling = editor.ui.children(workspaces)[1];
-    click(&mut editor.ui, profiling);
+    assert!(editor.use_layout("Profiling"));
     frame(&mut editor, &mut renderer);
     let open: Vec<String> = editor.ui.dock_panels(dock).into_iter().filter(|(.., o)| *o).map(|(id, ..)| id).collect();
     assert!(open.contains(&"frames".to_string()), "Profiling has the Frame Debugger: {open:?}");
@@ -2051,7 +2050,7 @@ fn the_frame_debugger_lists_the_passes_and_shows_a_picked_image() {
 }
 
 #[test]
-fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
+fn the_profiling_layout_shows_recent_frames_in_the_profiler() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
     let open_panels = |editor: &mut voxear_editor::Editor| -> Vec<String> {
@@ -2066,14 +2065,17 @@ fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
     editor.ui.close_dock_panel(dock, "console");
     frame(&mut editor, &mut renderer);
 
-    let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();
-    let segments = editor.ui.children(workspaces);
-    assert_eq!(segments.len(), 2, "World and Profiling; Animation waits until there is animation");
-    click(&mut editor.ui, segments[1]);
+    // The Layout menu lists the layouts, the one showing ticked.
+    let layouts = editor.ui.find(editor.ui.root(), "layouts").unwrap();
+    click(&mut editor.ui, layouts);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_item(&editor.ui, "Default").is_some() && menu_item(&editor.ui, "Save Layout As…").is_some());
+    let profiling = menu_item(&editor.ui, "Profiling").expect("Profiling in the Layout menu");
+    click(&mut editor.ui, profiling);
     for _ in 0..6 {
         frame(&mut editor, &mut renderer);
     }
-    assert_eq!(editor.workspace(), 1);
+    assert_eq!(editor.layout_name(), "Profiling");
     let panels = open_panels(&mut editor);
     for id in ["profiler", "game", "console", "inspector"] {
         assert!(panels.contains(&id.to_string()), "{id} in {panels:?}");
@@ -2183,9 +2185,9 @@ fn the_profiling_workspace_shows_recent_frames_in_the_profiler() {
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.profiler().samples().len(), count);
 
-    click(&mut editor.ui, segments[0]);
+    assert!(editor.use_layout("Default"));
     frame(&mut editor, &mut renderer);
-    assert_eq!(editor.workspace(), 0);
+    assert_eq!(editor.layout_name(), "Default");
     let panels = open_panels(&mut editor);
     assert!(!panels.contains(&"profiler".to_string()) && !panels.contains(&"console".to_string()), "{panels:?}");
     assert!(panels.contains(&"scene".to_string()));
@@ -2632,7 +2634,7 @@ fn ui_parent(ui: &Ui, node: NodeId) -> NodeId {
 }
 
 #[test]
-fn the_layout_and_workspace_are_kept_between_sessions() {
+fn layouts_are_kept_between_sessions() {
     let dir = hello_copy();
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,
@@ -2650,12 +2652,36 @@ fn the_layout_and_workspace_are_kept_between_sessions() {
     editor.ui.close_dock_panel(dock, "project");
     frame(&mut editor, &mut renderer);
     let world = editor.ui.dock_layout(dock);
-    editor.ui.set_segment(named(&editor, "workspaces"), 1);
+    assert!(editor.use_layout("Profiling"));
     frame(&mut editor, &mut renderer);
     editor.ui.close_dock_panel(dock, "console");
     frame(&mut editor, &mut renderer);
     let profiling = editor.ui.dock_layout(dock);
     assert_ne!(world, profiling);
+    // Save Layout As asks for a name under the Layout menu's button, and shows the new layout.
+    let layouts = named(&editor, "layouts");
+    click(&mut editor.ui, layouts);
+    frame(&mut editor, &mut renderer);
+    let save_as = menu_item(&editor.ui, "Save Layout As…").unwrap();
+    click(&mut editor.ui, save_as);
+    // Its field takes the focus once the box has been laid out, as it shows.
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.is_visible(named(&editor, "layout-prompt")), "a box for its name");
+    assert_eq!(editor.ui.focused(), Some(named(&editor, "layout-prompt-name")), "ready to type in");
+    editor.ui.text_input("Lighting");
+    frame(&mut editor, &mut renderer);
+    let save = named(&editor, "layout-prompt-save");
+    click(&mut editor.ui, save);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.layout_name(), "Lighting");
+    assert!(!editor.ui.is_visible(named(&editor, "layout-prompt")));
+    editor.ui.close_dock_panel(dock, "memory");
+    frame(&mut editor, &mut renderer);
+    let lighting = editor.ui.dock_layout(dock);
+    assert!(editor.use_layout("Profiling"));
+    frame(&mut editor, &mut renderer);
+    let profiling = editor.ui.dock_layout(dock);
     // The layout is looked at once a second.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     frame(&mut editor, &mut renderer);
@@ -2663,11 +2689,14 @@ fn the_layout_and_workspace_are_kept_between_sessions() {
 
     let mut editor = open(&mut renderer);
     let dock = named(&editor, "dock");
-    assert_eq!(editor.workspace(), 1, "the workspace it was closed in");
+    assert_eq!(editor.layout_name(), "Profiling", "the layout it was closed in");
     assert_eq!(editor.ui.dock_layout(dock), profiling);
-    editor.ui.set_segment(named(&editor, "workspaces"), 0);
+    assert!(editor.use_layout("Default"));
     frame(&mut editor, &mut renderer);
-    assert_eq!(editor.ui.dock_layout(dock), world, "and the other workspace's as it was left");
+    assert_eq!(editor.ui.dock_layout(dock), world, "and the others as they were left");
+    assert!(editor.use_layout("Lighting"), "a saved layout is kept too");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.ui.dock_layout(dock), lighting);
 }
 
 #[test]
@@ -3145,8 +3174,7 @@ fn voxdocs_shows_prefabs_and_materials_live() {
 #[test]
 fn the_memory_panel_takes_snapshots_and_compares_them() {
     let Some((mut renderer, mut editor)) = open() else { return };
-    let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();
-    editor.ui.set_segment(workspaces, 1);
+    assert!(editor.use_layout("Profiling"));
     frame(&mut editor, &mut renderer);
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
     editor.ui.show_dock_panel(dock, "memory");
@@ -3217,8 +3245,7 @@ fn the_memory_panel_takes_snapshots_and_compares_them() {
 #[test]
 fn the_entities_panel_lists_archetypes_entities_and_their_components() {
     let Some((mut renderer, mut editor)) = open() else { return };
-    let workspaces = editor.ui.find(editor.ui.root(), "workspaces").unwrap();
-    editor.ui.set_segment(workspaces, 1);
+    assert!(editor.use_layout("Profiling"));
     frame(&mut editor, &mut renderer);
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
     editor.ui.show_dock_panel(dock, "entities");

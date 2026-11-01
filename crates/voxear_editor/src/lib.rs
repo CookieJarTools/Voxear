@@ -3,7 +3,7 @@
 //!
 //! This first slice opens a project's start level in **edit mode** (no
 //! script runs), with:
-//! - a top bar: the mark, workspaces, the command bar with its palette
+//! - a top bar: the mark, the Layout menu, the command bar with its palette
 //!   (Ctrl+K) of commands, settings, Objs, levels, assets and docs, which
 //!   scripts' `[Command]` methods and [`PaletteCommand`]s add to, play
 //!   controls, the account and Build; and a rail of tool icons

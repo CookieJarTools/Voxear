@@ -1,6 +1,7 @@
 //! A prefab opened on its own to edit, as Unity's prefab mode does: its Objs
 //! load as a scene's would, in place of the level, a bar over the Scene view
-//! names it, and Back opens again what was open before. Save writes the
+//! names it, and Back, or Close Prefab at the bar's other end, opens again
+//! what was open before. Save writes the
 //! prefab, and what was read of it is then forgotten, so the level's
 //! instances show the change when it opens again. Only here can a component
 //! be locked for designers, and the values they still see chosen.
@@ -22,7 +23,7 @@ pub(super) struct OpenPrefab {
 
 impl Editor {
     pub(super) fn update_prefab_mode(&mut self, renderer: &mut Renderer) {
-        if self.ui.clicked(self.nodes.prefab_back) {
+        if self.ui.clicked(self.nodes.prefab_back) || self.ui.clicked(self.nodes.prefab_close) {
             self.close_prefab(renderer);
         }
     }

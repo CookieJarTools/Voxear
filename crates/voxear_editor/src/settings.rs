@@ -360,6 +360,15 @@ pub fn info(key: &str) -> Option<&'static SettingInfo> {
     SETTINGS.iter().find(|s| s.key == key)
 }
 
+/// A layout saved with Save Layout As: its name, and the arrangement it
+/// starts with and goes back to on Reset Layout.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedLayout {
+    pub name: String,
+    pub start: String,
+}
+
 /// What the editor remembers of a project: its settings, the keys of what
 /// the palette ran, most recent first, and how its panels were laid out.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -367,10 +376,12 @@ pub fn info(key: &str) -> Option<&'static SettingInfo> {
 pub struct Memory {
     pub settings: Settings,
     pub recent: Vec<String>,
-    /// The workspace showing, and each workspace's layout as the dock
-    /// writes it; empty for one never shown.
+    /// The layout showing, by its place, and each layout's arrangement as
+    /// it was left, as the dock writes it; empty for one never shown. The
+    /// built-in layouts come first, then those saved, in that order.
     pub workspace: usize,
     pub layouts: Vec<String>,
+    pub saved_layouts: Vec<SavedLayout>,
     /// Where it is kept, or `None` for an editor that remembers nothing.
     #[serde(skip)]
     path: Option<PathBuf>,

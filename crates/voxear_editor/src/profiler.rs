@@ -285,7 +285,7 @@ impl Profiler {
             self.picked = None;
         }
         // Held down on the chart, the frame under the pointer, so dragging goes through them.
-        if ui.is_pressed(self.chart) {
+        if ui.is_pressed(self.chart) || ui.clicked(self.chart) {
             self.picked = self.frame_at(ui).or(self.picked);
         }
         if self.picked.is_some() && self.shown_sample().is_none() {

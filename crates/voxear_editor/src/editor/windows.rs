@@ -5,11 +5,12 @@
 //! layout. A closed panel keeps its state, and opens again beside a panel it
 //! shared an area with.
 //!
-//! The top bar's workspaces are layouts of the same panels: World for
-//! building levels, and Profiling, with the Game view over the Profiler, the
-//! Entities panel, the Frame Debugger and the Memory panel.
-//! Each keeps the layout it was left in, as Blender's workspaces do, and
-//! the editor's memory keeps them and the workspace showing between
+//! Layouts are arrangements of the same panels, picked from the top bar's
+//! Layout menu: Default for building levels, Profiling with the Game view
+//! over the Profiler, the Entities panel, the Frame Debugger and the Memory
+//! panel, and any saved with Save Layout As. Each keeps the arrangement it
+//! was left in, as Blender's workspaces do, and Reset Layout puts it back as
+//! it started. The editor's memory keeps them, and the one showing, between
 //! sessions.
 
 use std::time::{Duration, Instant};
@@ -17,15 +18,32 @@ use std::time::{Duration, Instant};
 use voxear_ui::MenuItem;
 
 use super::{Editor, LAYOUT};
+use crate::settings::SavedLayout;
 
 /// How often the layout is looked at, to keep it once it has changed.
 const LAYOUT_CHECK: Duration = Duration::from_secs(1);
 
-/// The layout each workspace starts with, in the top bar's order.
-const WORKSPACE_LAYOUTS: [&str; 2] = [
-    LAYOUT,
-    "row(240, [hierarchy], column(45%, row(-300, [game, scene], [inspector]), [profiler, entities, frames, memory, console]))",
+/// The layouts every project has, with the arrangements they start with.
+const BUILT_IN: [(&str, &str); 2] = [
+    ("Default", LAYOUT),
+    (
+        "Profiling",
+        "row(240, [hierarchy], column(45%, row(-300, [game, scene], [inspector]), [profiler, entities, frames, memory, console]))",
+    ),
 ];
+
+/// A layout: its name, the arrangement it starts with (and goes back to on
+/// Reset Layout), and the one it was left in while another shows.
+pub(super) struct Layout {
+    name: String,
+    start: String,
+    kept: Option<String>,
+}
+
+/// The built-in layouts, as they start.
+pub(super) fn built_in_layouts() -> Vec<Layout> {
+    BUILT_IN.iter().map(|&(name, start)| Layout { name: name.into(), start: start.into(), kept: None }).collect()
+}
 
 impl Editor {
     pub(super) fn update_windows(&mut self) {
@@ -85,17 +103,91 @@ impl Editor {
         }
     }
 
-    /// Puts every panel back where the workspace starts with them.
+    /// Puts every panel back where the layout showing starts with them.
     pub(super) fn reset_layout(&mut self) {
-        let layout = WORKSPACE_LAYOUTS[self.workspace];
-        self.ui.set_dock_layout_closing_rest(self.nodes.dock, layout).expect("the workspaces' layouts are valid");
+        let start = self.layouts[self.layout].start.clone();
+        if self.ui.set_dock_layout_closing_rest(self.nodes.dock, &start).is_err() {
+            let fallback = LAYOUT;
+            self.ui.set_dock_layout_closing_rest(self.nodes.dock, fallback).expect("the default layout is valid");
+        }
     }
 
-    /// Changes to the workspace picked in the top bar, keeping the layout of
-    /// the one left for when it is picked again.
-    pub(super) fn update_workspaces(&mut self) {
-        let picked = self.ui.segment(self.nodes.workspaces).min(WORKSPACE_LAYOUTS.len() - 1);
-        if picked == self.workspace {
+    /// The top bar's Layout menu: the layouts to pick from, ticked for the
+    /// one showing, then Save Layout As, Delete Layout for one saved, and
+    /// Reset Layout. Save Layout As asks for a name in a box under the menu's
+    /// button; Enter or Save saves, and Escape or a click elsewhere does not.
+    pub(super) fn update_layouts(&mut self) {
+        let button = self.nodes.layouts;
+        if self.ui.clicked(button) {
+            let [x, y, _, height] = self.ui.rect(button);
+            let saved = self.layout >= BUILT_IN.len();
+            let mut items: Vec<MenuItem> = self
+                .layouts
+                .iter()
+                .enumerate()
+                .map(|(index, layout)| MenuItem::new(&layout.name).checked(index == self.layout))
+                .collect();
+            items.extend([
+                MenuItem::separator(),
+                MenuItem::new("Save Layout As…"),
+                MenuItem::new("Delete Layout").enabled(saved),
+                MenuItem::new("Reset Layout"),
+            ]);
+            self.ui.open_menu(button, (x, y + height + 4.0), &items);
+        }
+        if let Some(choice) = self.ui.menu_choice(button) {
+            let count = self.layouts.len();
+            match choice {
+                index if index < count => self.switch_layout(index),
+                // The separator is counted among the items.
+                index if index == count + 1 => self.ask_layout_name(),
+                index if index == count + 2 => self.delete_layout(),
+                _ => self.reset_layout(),
+            }
+        }
+        self.update_layout_prompt();
+    }
+
+    /// Shows the layout called `name`, keeping the one left as it is. False
+    /// when there is none by that name.
+    pub fn use_layout(&mut self, name: &str) -> bool {
+        let Some(index) = self.layouts.iter().position(|layout| layout.name == name) else { return false };
+        self.switch_layout(index);
+        true
+    }
+
+    /// The name of the layout showing.
+    pub fn layout_name(&self) -> &str {
+        &self.layouts[self.layout].name
+    }
+
+    /// Keeps the layout showing as it now is under `name`, as a new layout
+    /// or in place of a saved one by that name, and shows it.
+    pub fn save_layout_as(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if BUILT_IN.iter().any(|(built_in, _)| built_in.eq_ignore_ascii_case(name)) {
+            return self.notify(&format!("{name} is built in; save the layout under another name"));
+        }
+        let now = self.ui.dock_layout(self.nodes.dock);
+        match self.layouts.iter().position(|layout| layout.name == name) {
+            Some(index) => {
+                self.layouts[index].start = now;
+                self.layout = index;
+            }
+            None => {
+                self.layouts.push(Layout { name: name.to_string(), start: now, kept: None });
+                self.layout = self.layouts.len() - 1;
+            }
+        }
+        self.ui.set_text(self.nodes.layout_name, name);
+        self.notify(&format!("Saved the layout as {name}"));
+    }
+
+    fn switch_layout(&mut self, index: usize) {
+        if index == self.layout || index >= self.layouts.len() {
             return;
         }
         // Full screen belongs to the layout being left: it is put back first.
@@ -103,51 +195,110 @@ impl Editor {
             self.toggle_maximized("");
         }
         let dock = self.nodes.dock;
-        self.workspace_layouts[self.workspace] = Some(self.ui.dock_layout(dock));
-        self.workspace = picked;
-        let kept = self.workspace_layouts[picked].take();
+        self.layouts[self.layout].kept = Some(self.ui.dock_layout(dock));
+        self.layout = index;
+        let kept = self.layouts[index].kept.take();
         if kept.is_none_or(|layout| self.ui.set_dock_layout_closing_rest(dock, &layout).is_err()) {
             self.reset_layout();
         }
+        let name = self.layouts[index].name.clone();
+        self.ui.set_text(self.nodes.layout_name, &name);
     }
 
-    /// The workspace showing: 0 for World, 1 for Profiling.
-    pub fn workspace(&self) -> usize {
-        self.workspace
-    }
-
-    /// Puts back the workspace and layouts the editor was closed with. A
-    /// layout naming panels this version does not have is left for the
-    /// workspace's own.
-    pub(super) fn restore_layout(&mut self) {
-        let last = WORKSPACE_LAYOUTS.len() - 1;
-        for (index, layout) in self.memory.layouts.iter().enumerate().take(last + 1) {
-            self.workspace_layouts[index] = Some(layout.clone()).filter(|layout| !layout.is_empty());
+    /// Forgets the saved layout showing, and shows Default.
+    fn delete_layout(&mut self) {
+        if self.layout < BUILT_IN.len() {
+            return;
         }
-        self.workspace = self.memory.workspace.min(last);
-        self.ui.set_segment(self.nodes.workspaces, self.workspace);
-        let kept = self.workspace_layouts[self.workspace].take();
+        let gone = self.layouts.remove(self.layout).name;
+        self.layout = 0;
+        let kept = self.layouts[0].kept.take();
+        if kept.is_none_or(|layout| self.ui.set_dock_layout_closing_rest(self.nodes.dock, &layout).is_err()) {
+            self.reset_layout();
+        }
+        let name = self.layouts[0].name.clone();
+        self.ui.set_text(self.nodes.layout_name, &name);
+        self.notify(&format!("Deleted the layout {gone}"));
+    }
+
+    fn ask_layout_name(&mut self) {
+        let (prompt, field) = (self.nodes.layout_prompt, self.nodes.layout_prompt_name);
+        let [x, y, _, height] = self.ui.rect(self.nodes.layouts);
+        self.ui.set_inline_style(prompt, &format!("left: {x}px; top: {}px", y + height + 4.0));
+        self.ui.set_visible(prompt, true);
+        self.ui.set_text(field, "");
+        // Focused once it is laid out, which it is not while hidden.
+        self.naming_layout = true;
+    }
+
+    /// Saves under the name typed when Enter or Save is pressed, and closes
+    /// the box when its field loses the focus, as to a click elsewhere.
+    fn update_layout_prompt(&mut self) {
+        let (prompt, field) = (self.nodes.layout_prompt, self.nodes.layout_prompt_name);
+        if !self.ui.is_visible(prompt) {
+            return;
+        }
+        if self.ui.submitted(field) || self.ui.clicked(self.nodes.layout_prompt_save) {
+            let name = self.ui.text(field);
+            self.ui.set_visible(prompt, false);
+            return self.save_layout_as(&name);
+        }
+        if self.naming_layout {
+            self.ui.focus(field);
+            self.naming_layout = self.ui.focused() != Some(field);
+        } else if self.ui.focused() != Some(field) && !self.ui.is_pressed(prompt) {
+            self.ui.set_visible(prompt, false);
+        }
+    }
+
+    /// Puts back the layouts and the one showing that the editor was closed
+    /// with. A layout naming panels this version does not have starts again.
+    pub(super) fn restore_layout(&mut self) {
+        self.layouts = built_in_layouts();
+        let saved = self.memory.saved_layouts.iter().filter(|saved| !saved.name.is_empty());
+        self.layouts.extend(saved.map(|saved| Layout {
+            name: saved.name.clone(),
+            start: saved.start.clone(),
+            kept: None,
+        }));
+        for (layout, kept) in self.layouts.iter_mut().zip(&self.memory.layouts) {
+            layout.kept = Some(kept.clone()).filter(|kept| !kept.is_empty());
+        }
+        self.layout = self.memory.workspace.min(self.layouts.len() - 1);
+        let name = self.layouts[self.layout].name.clone();
+        self.ui.set_text(self.nodes.layout_name, &name);
+        let kept = self.layouts[self.layout].kept.take();
         if kept.is_none_or(|layout| self.ui.set_dock_layout_closing_rest(self.nodes.dock, &layout).is_err()) {
             self.reset_layout();
         }
     }
 
-    /// Keeps the workspace and layouts in the editor's memory once they
-    /// change, looking once a second. A panel shown full screen is not kept.
+    /// Keeps the layouts, and the one showing, in the editor's memory once
+    /// they change, looking once a second. A panel shown full screen is not
+    /// kept.
     pub(super) fn keep_layout(&mut self) {
         if self.maximized.is_some() || self.layout_checked.elapsed() < LAYOUT_CHECK {
             return;
         }
         self.layout_checked = Instant::now();
         let showing = self.ui.dock_layout(self.nodes.dock);
-        let layouts: Vec<String> = (0..WORKSPACE_LAYOUTS.len())
-            .map(|index| match index == self.workspace {
+        let arrangements: Vec<String> = self
+            .layouts
+            .iter()
+            .enumerate()
+            .map(|(index, layout)| match index == self.layout {
                 true => showing.clone(),
-                false => self.workspace_layouts[index].clone().unwrap_or_default(),
+                false => layout.kept.clone().unwrap_or_default(),
             })
             .collect();
-        if self.memory.workspace != self.workspace || self.memory.layouts != layouts {
-            (self.memory.workspace, self.memory.layouts) = (self.workspace, layouts);
+        let saved: Vec<SavedLayout> = self.layouts[BUILT_IN.len()..]
+            .iter()
+            .map(|layout| SavedLayout { name: layout.name.clone(), start: layout.start.clone() })
+            .collect();
+        let memory = &self.memory;
+        if memory.workspace != self.layout || memory.layouts != arrangements || memory.saved_layouts != saved {
+            (self.memory.workspace, self.memory.layouts, self.memory.saved_layouts) =
+                (self.layout, arrangements, saved);
             self.memory.save();
         }
     }

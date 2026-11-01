@@ -6,7 +6,7 @@ When your game runs slowly, the Profiler shows where the time goes. It records e
 
 ## Opening the Profiler
 
-Click **Profiling**, beside **World** at the top left of the editor. This switches to a layout made for finding slow spots, with the Game view at the top and the Profiler under it. Click **World** to go back; each layout stays as you left it.
+Open the **Layout** menu, at the top left of the editor, and pick **Profiling**. This switches to a layout made for finding slow spots, with the Game view at the top and the Profiler under it. Pick **Default** to go back; each layout stays as you left it.
 
 The Profiler records while its tab is showing and **Record** is on. It shares its place with the Entities panel, the Frame Debugger and the Console, so it stops recording while you look at one of those. Drag its tab elsewhere, or float it, to keep it recording while you use the others.
 

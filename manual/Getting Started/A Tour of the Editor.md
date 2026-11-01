@@ -57,7 +57,7 @@ Hold **Ctrl** while you drag to snap: moves go in steps of the size shown in the
 
 Drag a panel's tab to move it somewhere else in the window. Right-click a tab to close it, to float it in a window of its own, or to **Reset Layout**. The **Window** button at the top lists every panel, so you can bring back one you closed.
 
-**World** and **Profiling**, at the top left, are two layouts, each remembered on its own. Profiling holds the tools for finding out why a game runs slowly.
+The **Layout** button at the top left, which shows the name of the layout in use, switches between arrangements of the panels. **Default** is the one described here; **Profiling** holds the tools for finding out why a game runs slowly. Each layout stays as you left it. **Save Layout As** keeps your own arrangement under a name, to switch back to later, and **Reset Layout** puts the one in use back as it started.
 
 ## Editor shortcuts
 

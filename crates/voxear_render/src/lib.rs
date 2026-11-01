@@ -10,6 +10,7 @@
 mod alloc;
 mod assets;
 mod cooked;
+mod capture;
 mod debug_pass;
 mod frame_debugger;
 mod gltf_import;
@@ -42,6 +43,7 @@ use voxear_rhi::{
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use cooked::{COOKED_VERSION, CookedModel};
+pub use capture::{Capture, CapturedImage};
 pub use frame_debugger::{Channels, FrameImage, FrameLook, FramePass};
 pub use gltf_import::{
     ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
@@ -200,6 +202,7 @@ pub struct Renderer {
     /// What the output is cleared to outside the view, linear.
     clear: [f32; 4],
     frame_debugger: frame_debugger::FrameDebugger,
+    captures: capture::Captures,
 }
 
 impl Renderer {
@@ -278,6 +281,7 @@ impl Renderer {
             view: None,
             clear: [0.0, 0.0, 0.0, 1.0],
             frame_debugger: Default::default(),
+            captures: Default::default(),
         })
     }
 
@@ -539,6 +543,7 @@ impl Renderer {
         // This slot's previous frame has finished, and with it every frame that could use what was freed before it.
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
+        self.captures.finish(&self.gpu, frame.slot);
         // This slot's previous frame has finished, so its counters are final.
         let counters = bytemuck::cast_slice(&self.buffers[frame.slot].stats.read()[..stat::COUNT * 4]);
         let exposure = bytemuck::cast_slice(self.exposure.as_ref().expect("exposure lives until drop").read());
@@ -596,6 +601,7 @@ impl Renderer {
             ui,
             previews,
             frame_debugger,
+            captures,
             ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
@@ -732,7 +738,9 @@ impl Renderer {
         let preview_atlas = previews.record(&mut fg, (gpu, bindless), (pipelines, assets), frame.slot)?;
         let debugger_view = frame_debugger.view_image(&mut fg, gpu, bindless)?;
         let sampled: Vec<_> = preview_atlas.into_iter().chain(debugger_view).collect();
+        captures.record(&mut fg, gpu, (output, output_desc), true, frame.slot)?;
         ui.record(&mut fg, (pipelines.ui, push), &buffers.ui, (output, full), &sampled, backdrop);
+        captures.record(&mut fg, gpu, (output, output_desc), false, frame.slot)?;
         if acquired.is_some() {
             fg.transition(output, ImageAccess::Present);
         }
@@ -781,6 +789,19 @@ impl Renderer {
         self.prev_models.extend(extracted.entities.iter().zip(&extracted.instances).map(|(e, i)| (*e, i.model)));
         let current = extracted.frame.unjittered_view_proj;
         extracted.frame.prev_view_proj = self.prev_view_proj.replace(current).unwrap_or(current);
+    }
+
+    /// Asks for a picture of a coming frame: see [`Capture`]. It is ready
+    /// from [`take_capture`](Self::take_capture) a frame or two later, and
+    /// several asked for come in the order they were asked, one from each
+    /// frame that reaches their moment.
+    pub fn request_capture(&mut self, capture: Capture) {
+        self.captures.ask(capture);
+    }
+
+    /// The oldest capture that is ready, if one is.
+    pub fn take_capture(&mut self) -> Option<CapturedImage> {
+        self.captures.take()
     }
 
     /// Turns the frame debugger on or off, and says what it looks at. While
@@ -865,7 +886,7 @@ impl Drop for Renderer {
         for buffer in [self.visibility.take(), self.lod_state.take(), self.exposure.take()].into_iter().flatten() {
             self.frames.retire(Retired::Buffer(buffer));
         }
-        for buffer in self.previews.take_buffers() {
+        for buffer in self.previews.take_buffers().into_iter().chain(self.captures.take_buffers()) {
             self.frames.retire(Retired::Buffer(buffer));
         }
         self.graph.destroy(gpu, &mut self.bindless);

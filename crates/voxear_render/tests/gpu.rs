@@ -339,6 +339,39 @@ fn the_games_ui_draws_in_its_area_under_the_windows() {
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "an empty frame takes the game's UI away");
 }
 
+/// Captures read an area of the output back, before the UI draws or after,
+/// in the order asked for.
+#[test]
+fn captures_read_an_area_back_before_or_after_the_ui() {
+    use voxear_render::Capture;
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let world = wall_scene(&mut renderer);
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.panel(root, Style::default().at(0.0, 0.0).width(100.0).height(100.0).background(Color::hex(0xff0000)));
+    renderer.set_ui(&ui.frame(640, 360, 1.0)).unwrap();
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 1);
+    assert!(renderer.take_capture().is_none(), "none asked for");
+
+    renderer.request_capture(Capture { area: Some([10, 10, 40, 30]), before_ui: true });
+    renderer.request_capture(Capture { area: Some([10, 10, 40, 30]), before_ui: false });
+    renderer.request_capture(Capture { area: Some([600, 340, 100, 100]), before_ui: false });
+    run(&mut renderer, &world, &mut time, 3);
+    let under = renderer.take_capture().expect("the view before the UI");
+    let over = renderer.take_capture().expect("the window after it");
+    let edge = renderer.take_capture().expect("an area off the edge");
+    assert!(renderer.take_capture().is_none());
+
+    assert_eq!((under.width, under.height, under.rgba.len()), (40, 30, 40 * 30 * 4));
+    let first = |image: &voxear_render::CapturedImage| [image.rgba[0], image.rgba[1], image.rgba[2], image.rgba[3]];
+    assert_ne!(first(&under)[..3], [255, 0, 0], "under the panel, the scene");
+    assert_eq!(first(&over), [255, 0, 0, 255], "over it, the panel, opaque");
+    assert_eq!((edge.width, edge.height), (40, 20), "kept inside the output");
+}
+
 /// The frame debugger lists the frame's passes and their images, and shows
 /// the one looked at as it stood after its pass, in the channels asked for.
 #[test]

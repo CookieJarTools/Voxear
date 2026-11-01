@@ -2439,6 +2439,11 @@ them in a running game.
     UI image (`FrameGraph::insert_pass`, `frame_debugger.rs`). The view is a frame behind for passes after the UI.
   - Every image the graph owns can be copied from, and so can the window's own where the system allows it.
   - Still to come: buffers, the meshlets culled and the LOD chosen, and pipeline state.
+- **Captures** *(implemented)*: `renderer.request_capture(Capture { area, before_ui })` asks for an area of a coming
+  frame, as the view is before the UI draws over it or as the window shows it, and `take_capture()` hands it back as
+  RGBA8 sRGB a frame or two later, once the GPU is done with it (`capture.rs`). Several come in the order asked for,
+  so asking each frame makes a run of them, as for a GIF. It works in a window as well as offscreen, where the system
+  lets the window's image be copied. VoxDocs captures the Scene view into its pages this way.
 - **CPU and GPU profiler.** *(The editor's Profiler has the hierarchy and timeline views, cost per system and per
   behaviour callback, scripts' own samples, managed allocations, and GPU time per pass; see the editor above.)*
   - Timeline and hierarchy views. The recorder keeps each run of a sample as a span, with when it started and ended

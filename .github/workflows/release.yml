@@ -1,0 +1,217 @@
+# Builds a Voxear engine release for Linux and Windows, and can publish it for the launcher.
+#
+# Run it from the Actions tab: Release, then Run workflow, choosing the channel and, for a beta, the version.
+# Both platforms are packaged with `voxear-dist` under one version, and their archives are kept as this run's
+# artifacts. That is all it does unless Publish is ticked: the archives can then be signed and listed by hand with
+# the launcher repository's `voxear-release engine add`, as before.
+#
+# With Publish ticked, it also signs both archives and lists them in the launcher's release manifest with
+# `voxear-release`, uploads them with their signatures to an `engine-v<version>` release of VoxearReleases, and
+# pushes the manifest to its gh-pages branch, which is what the launcher reads. For a nightly it then keeps only the
+# last 30 nightlies in the manifest. Publishing needs three secrets on this repository:
+#
+# - VOXEAR_ENGINE_KEY: the engine release key, the whole text of engine.key. It stays encrypted.
+# - VOXEAR_SIGNING_PASSWORD: the password that unlocks it.
+# - VOXEAR_RELEASES_TOKEN: a token that can read CookieJarTools/VoxearLauncher, for voxear-release, and write to
+#   CookieJarTools/VoxearReleases, for its releases and its gh-pages branch.
+#
+# It runs only when asked, since each run builds the whole engine twice on paid runners.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Channel
+        type: choice
+        options: [nightly, beta, stable]
+        default: nightly
+      version:
+        description: Version, needed for a beta (0.2.0-beta.1); a stable takes the workspace's, a nightly today's
+        type: string
+        required: false
+      publish:
+        description: Sign the archives and publish them for the launcher
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One release at a time, since publishing adds to the one manifest.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SLANG_VERSION: "2026.18.2"
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+      # Worked out once, so both platforms are packaged as the same version even across midnight.
+      - id: version
+        name: Work out the version
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          base=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ -z "$VERSION" ]; then
+            case "$CHANNEL" in
+              stable) VERSION="$base" ;;
+              nightly) VERSION="$base-nightly.$(date -u +%Y%m%d)" ;;
+              *) echo "::error::A beta needs a version, such as $base-beta.1"; exit 1 ;;
+            esac
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Voxear $VERSION, $CHANNEL" >> "$GITHUB_STEP_SUMMARY"
+
+  package:
+    name: Package (${{ matrix.platform }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # An older Ubuntu, so the programs run on distributions with an older glibc than the newest.
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            slang: linux-x86_64-glibc-2.28
+          - os: windows-latest
+            platform: windows-x86_64
+            slang: windows-x86_64
+            # The C runtime inside the programs, as voxear-dist asks for on Windows, set here too so the tool
+            # and the programs share one build.
+            rustflags: -C target-feature=+crt-static
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install the Linux build packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev
+
+      # slangc compiles the shaders while the renderer builds.
+      - name: Install Slang
+        run: |
+          asset="slang-$SLANG_VERSION-${{ matrix.slang }}.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$asset" "https://github.com/shader-slang/slang/releases/download/v$SLANG_VERSION/$asset"
+          mkdir -p "$RUNNER_TEMP/slang"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/slang"
+          echo "$RUNNER_TEMP/slang/bin" >> "$GITHUB_PATH"
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "LD_LIBRARY_PATH=$RUNNER_TEMP/slang/lib" >> "$GITHUB_ENV"
+          fi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+
+      - name: Package
+        run: cargo run --release -p voxear_dist -- --channel "${{ needs.version.outputs.channel }}" --version "${{ needs.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxear-${{ needs.version.outputs.version }}-${{ matrix.platform }}
+          path: target/dist/*.tar.zst
+          if-no-files-found: error
+          # Already compressed with zstd.
+          compression-level: 0
+
+  publish:
+    name: Publish
+    needs: [version, package]
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      CHANNEL: ${{ needs.version.outputs.channel }}
+      GH_TOKEN: ${{ secrets.VOXEAR_RELEASES_TOKEN }}
+    steps:
+      - name: Check the secrets
+        env:
+          KEY: ${{ secrets.VOXEAR_ENGINE_KEY }}
+          PASSWORD: ${{ secrets.VOXEAR_SIGNING_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$KEY" ] || missing="$missing VOXEAR_ENGINE_KEY"
+          [ -n "$PASSWORD" ] || missing="$missing VOXEAR_SIGNING_PASSWORD"
+          [ -n "$GH_TOKEN" ] || missing="$missing VOXEAR_RELEASES_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::Publishing needs these secrets on this repository:$missing"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/checkout@v4
+        with:
+          repository: CookieJarTools/VoxearLauncher
+          token: ${{ secrets.VOXEAR_RELEASES_TOKEN }}
+          path: launcher
+
+      - uses: actions/checkout@v4
+        with:
+          repository: CookieJarTools/VoxearReleases
+          ref: gh-pages
+          token: ${{ secrets.VOXEAR_RELEASES_TOKEN }}
+          path: site
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The key is written only for as long as signing takes, readable by this job alone.
+      - name: Sign the archives and list them
+        env:
+          VOXEAR_ENGINE_KEY: ${{ secrets.VOXEAR_ENGINE_KEY }}
+          VOXEAR_SIGNING_PASSWORD: ${{ secrets.VOXEAR_SIGNING_PASSWORD }}
+        run: |
+          key="$RUNNER_TEMP/engine.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$VOXEAR_ENGINE_KEY" > "$key")
+          release() { cargo run --quiet --release --manifest-path launcher/Cargo.toml -p voxear_release -- "$@"; }
+          release engine add dist/*.tar.zst --site site --key "$key"
+          if [ "$CHANNEL" = nightly ]; then
+            release engine prune --site site --key "$key"
+          fi
+
+      # The archives go up before the manifest that points at them.
+      - name: Upload the archives
+        run: |
+          prerelease=""
+          [ "$CHANNEL" = stable ] || prerelease="--prerelease"
+          gh release create "engine-v$VERSION" dist/*.tar.zst dist/*.tar.zst.minisig \
+            --repo CookieJarTools/VoxearReleases --title "Voxear $VERSION" --notes "Voxear $VERSION, $CHANNEL." $prerelease
+
+      - name: Publish the manifest
+        working-directory: site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add engine
+          git commit -m "Engine $VERSION"
+          git push
+          echo "Published Voxear $VERSION for the launcher" >> "$GITHUB_STEP_SUMMARY"

@@ -303,6 +303,9 @@ Done so far:
   its base; its log filters by level, and a build finishing behind other windows says so on the desktop.
 - **VoxDocs' Code Reference:** a page for every public type of the game's scripts and of Voxear.Core, made from its
   `///` comments each time the scripts build, and linked to from any page as `[[code:Voxear.Prefab]]`.
+- **Windows archives and the release workflow:** `voxear-dist` packages for Windows when run there, and a
+  workflow builds both platforms under one version and, when asked and given the signing secrets, signs and
+  publishes them for the launcher. Neither has run yet: that needs GitHub's runners.
 - **The Console's settings screen**, as Sifter has it: a live sample drawn by the Console's own code over row
   height, colour by kind, alternating rows, how a category shows, the stack's parts, colours, and how many lines are
   held. That finishes what the Console takes from Sifter.
@@ -339,7 +342,7 @@ Still to do in M3:
   - [ ] list and table drawers, colour palettes, the build's check of every scene, the source generator and
     analyzer, and custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
-  rendering), Windows archives, and a workflow that builds and publishes releases.
+  rendering).
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): notes on the Code Reference's pages, checks written
   in C# and more for guides, Docs Health's checks of the code, pictures dropped in or captured and GIF recordings,
   live assets' fields on the page, and Copy [Documentation] Attribute.

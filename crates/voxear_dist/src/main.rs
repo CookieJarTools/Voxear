@@ -11,6 +11,12 @@
 //!
 //! The folder is an install in its own right, which `voxup locate` can point
 //! the launcher at.
+//!
+//! Run on Windows, it packages for Windows, `voxear-<version>-windows-x86_64`,
+//! with the C runtime linked into the programs so an install needs nothing
+//! else of Microsoft's. The release workflow (`.github/workflows/release.yml`)
+//! runs it on both platforms with one version, and can sign and publish the
+//! two archives together.
 
 use std::{
     fs::{self, File},
@@ -87,7 +93,7 @@ fn main() -> Result<()> {
     build_managed(&root)?;
     let out = root.join(&args.out);
     let install = out.join(&name);
-    let files = gather(&root, &engine_file(&version, args.channel, &commit))?;
+    let files = gather(&root, &target_dir(&root), &engine_file(&version, args.channel, &commit))?;
     stage(&install, &files)?;
     let archive = out.join(format!("{name}.tar.zst"));
     pack(&archive, &files)?;
@@ -152,15 +158,23 @@ fn commit(root: &Path) -> Result<String> {
     git(&["rev-parse", "--short", "HEAD"])
 }
 
+/// Where cargo builds: `CARGO_TARGET_DIR` when it is set, as on a CI
+/// runner with a cache, or the checkout's `target`.
+fn target_dir(root: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), |dir| root.join(PathBuf::from(dir)))
+}
+
 /// The programs, built in release, knowing their version.
 fn build_programs(root: &Path, version: &str) -> Result<()> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let status = Command::new(cargo)
-        .current_dir(root)
-        .args(["build", "--release", "-p", "voxear_cli"])
-        .env("VOXEAR_VERSION", version)
-        .status()
-        .context("running cargo")?;
+    let mut command = Command::new(cargo);
+    command.current_dir(root).args(["build", "--release", "-p", "voxear_cli"]).env("VOXEAR_VERSION", version);
+    // The C runtime inside the programs, so an install runs without the Visual C++ redistributable.
+    let flags = std::env::var("RUSTFLAGS").unwrap_or_default();
+    if cfg!(windows) && !flags.contains("crt-static") {
+        command.env("RUSTFLAGS", format!("{flags} -C target-feature=+crt-static").trim().to_string());
+    }
+    let status = command.status().context("running cargo")?;
     ensure!(status.success(), "building the programs failed");
     Ok(())
 }
@@ -205,7 +219,7 @@ struct Packed {
 /// read back: on an NTFS drive (Linux's ntfs3), small files freshly written
 /// sometimes read back as zeros, which is also why a file that reads as
 /// nothing but zeros is refused here.
-fn gather(root: &Path, engine: &str) -> Result<Vec<Packed>> {
+fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
     let mut files = vec![Packed { path: ENGINE_FILE.into(), bytes: engine.as_bytes().to_vec(), program: false }];
     let mut add = |source: &Path, path: PathBuf, program: bool| -> Result<()> {
         let bytes = fs::read(source).with_context(|| format!("reading {}", source.display()))?;
@@ -216,7 +230,7 @@ fn gather(root: &Path, engine: &str) -> Result<Vec<Packed>> {
     add(&root.join("LICENSE.md"), "LICENSE.md".into(), false)?;
     for program in PROGRAMS {
         let file = format!("{program}{}", std::env::consts::EXE_SUFFIX);
-        add(&root.join("target/release").join(&file), Path::new("bin").join(&file), true)?;
+        add(&target.join("release").join(&file), Path::new("bin").join(&file), true)?;
     }
     let managed = root.join("target/managed/Release");
     for entry in fs::read_dir(&managed).with_context(|| format!("reading {}", managed.display()))? {

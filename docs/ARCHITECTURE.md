@@ -2701,11 +2701,21 @@ through a small contract.
   release; lays out the install in `target/dist/voxear-<version>-<platform>/` with `engine.toml`, `bin/`,
   `managed/` (with the scripts props), `docs/` and the licence; and packs it as a `.tar.zst` with every entry at
   the root, in name order and without owners or times. A nightly is named for the day (`0.1.0-nightly.20261031`);
-  a beta names its version. The folder is an install too, which `voxup locate` can point the launcher at.
+  a beta names its version. The folder is an install too, which `voxup locate` can point the launcher at. Run on
+  Windows it packages for Windows (`voxear-<version>-windows-x86_64.tar.zst`), with the C runtime linked into the
+  programs so an install needs nothing else of Microsoft's; it builds wherever `CARGO_TARGET_DIR` points.
 - **Publishing** is by hand, with the launcher repository's `voxear-release`: `engine add` signs the archive with
   the engine key and lists it in the site's `engine/releases.toml`, then the archive and its `.minisig` go up as
   assets of the `engine-v<version>` release in VoxearReleases, and the site goes to its `gh-pages` branch.
-- **Not yet:** Windows archives, and a workflow that builds and publishes them.
+- **The release workflow** (`.github/workflows/release.yml`, run by hand from the Actions tab) packages both
+  platforms with one version, on Ubuntu 22.04 for an older glibc and on Windows, and keeps the archives as the run's
+  artifacts. With Publish ticked it also does what is otherwise done by hand: `voxear-release engine add` signs both
+  and lists them (pruning old nightlies), the archives and their signatures go up as the `engine-v<version>`
+  release of VoxearReleases, and the manifest is pushed to its `gh-pages` branch, archives first. Publishing needs
+  three secrets on the repository: the engine key's file, its password, and a token that can read the launcher
+  repository and write to VoxearReleases. Nothing runs on a schedule, since each run builds the engine twice on
+  paid runners.
+- **Not yet tried:** the workflow itself, and so the Windows build, which wait for a first run on GitHub.
 
 ## Platforms and GPU support
 

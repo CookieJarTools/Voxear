@@ -505,12 +505,36 @@
 }
 
 /* Prefab instances are tinted, as Unity tints them: the root, and lighter what is inside. */
-.row-name.prefab-root {
+.row-name.prefab-root, .row-icon.prefab-root, .obj-tile.prefab-root > Icon {
     color: var(--vx-prefab);
 }
 
-.row-name.prefab-member {
+.row-name.prefab-member, .row-icon.prefab-member {
     color: var(--vx-prefab-member);
+}
+
+/* The Inspector's Prefab row: the prefab an instance comes from, to open or show. */
+.prefab-icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    color: var(--vx-prefab);
+}
+
+.prefab-file {
+    flex-grow: 1;
+    min-width: 0px;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--vx-prefab);
+}
+
+.prefab-button {
+    height: 22px;
+    padding: 0px 8px;
+    flex-shrink: 0;
+    font-size: 11px;
 }
 
 /* The Scene panel: its area lets the 3D view show through, and its
@@ -1059,6 +1083,13 @@ DockSpace .project-split > .split-divider {
 
 .tile:checked {
     background-color: var(--vx-selected);
+}
+
+/* A folder, as a tile or in the tree, that an Obj dragged over it would be
+   made a prefab in. */
+.tile.drop-hover, .folder-row.drop-hover {
+    background-color: var(--vx-accent-soft);
+    border-radius: 6px;
 }
 
 .tile-icon {

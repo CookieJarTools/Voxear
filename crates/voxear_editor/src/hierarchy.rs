@@ -128,8 +128,10 @@ impl TreeItems for Items {
         ui.set_class(row, "scene-header", shown.header);
         ui.set_icon(parts[0], shown.icon);
         ui.set_text(parts[1], &shown.name);
-        ui.set_class(parts[1], "prefab-root", shown.prefab == Some(true));
-        ui.set_class(parts[1], "prefab-member", shown.prefab == Some(false));
+        for part in [parts[0], parts[1]] {
+            ui.set_class(part, "prefab-root", shown.prefab == Some(true));
+            ui.set_class(part, "prefab-member", shown.prefab == Some(false));
+        }
         ui.set_text(parts[2], shown.badge);
         ui.set_visible(parts[2], !shown.badge.is_empty());
         let inside = snapshot.children.get(&item).map_or(0, Vec::len);
@@ -389,13 +391,11 @@ fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -
         if !filter.is_empty() && !name.0.to_lowercase().contains(filter) {
             continue;
         }
-        let row = Row {
-            name: name.0.clone(),
-            icon: icon(camera.is_some(), light.is_some(), mesh.is_some()),
-            header: false,
-            badge: if is_instance(world, types, entity) { "Instance" } else { "" },
-            prefab: prefab(world, entity),
-        };
+        let prefab = prefab(world, entity);
+        // A prefab instance shows Unity's prefab cube, tinted.
+        let icon = if prefab == Some(true) { "cube" } else { icon(camera.is_some(), light.is_some(), mesh.is_some()) };
+        let badge = if is_instance(world, types, entity) { "Instance" } else { "" };
+        let row = Row { name: name.0.clone(), icon, header: false, badge, prefab };
         snapshot.rows.insert(entity.to_bits(), row);
         let (scene, at) = places.get(&entity).copied().unwrap_or((active, usize::MAX));
         all.push((entity, parent.map(|p| p.0), (scene, at, entity.index())));

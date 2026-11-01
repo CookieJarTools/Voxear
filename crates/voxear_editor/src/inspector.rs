@@ -1,6 +1,7 @@
 //! The Inspector: the selected Obj's header (its kind, name, whether it is
 //! persistent, staying through level changes, and the active, tag, layer
-//! and static settings to come), then a section for its
+//! and static settings to come; for a prefab instance or an Obj in one, the
+//! prefab, with Open and Select, as Unity's prefab bar), then a section for its
 //! Transform and for each component (see `props`), divided by lines. Values
 //! apply as they are typed or picked, and values that change elsewhere show
 //! here, except in the field being edited. When an Obj's components, or what
@@ -30,7 +31,7 @@ use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Name, ScenePersistence, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
-use voxear_engine::prefab::Locks;
+use voxear_engine::prefab::{FromPrefab, Locks, PrefabInstance};
 
 use voxear_scripting::{DrawRequest, Drawn};
 
@@ -99,6 +100,14 @@ impl Field {
             Field::Name | Field::Prop(_) => {}
         }
     }
+}
+
+/// What the Prefab row asks for: the prefab opened on its own, or shown in
+/// the Project, by its path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrefabAction {
+    Open(String),
+    Select(String),
 }
 
 /// What a menu in the Inspector asks for.
@@ -256,6 +265,9 @@ pub struct Inspector {
     item_handles: Vec<(NodeId, NodeId, Prop)>,
     /// The fields the scripts' drawers draw.
     drawers: FieldDrawers,
+    /// The Prefab row's Open and Select, and the prefab's path, for a prefab
+    /// instance or an Obj in one.
+    prefab_buttons: Option<(NodeId, NodeId, String)>,
 }
 
 impl Inspector {
@@ -292,6 +304,7 @@ impl Inspector {
             palette_swatches: Vec::new(),
             item_handles: Vec::new(),
             drawers: FieldDrawers::default(),
+            prefab_buttons: None,
         }
     }
 
@@ -434,6 +447,15 @@ impl Inspector {
 
     /// The VoxDocs page whose book button was clicked, as `[Documentation]`
     /// names it.
+    /// What the Prefab row's buttons asked for this frame.
+    pub fn prefab_clicked(&self, ui: &Ui) -> Option<PrefabAction> {
+        let (open, select, path) = self.prefab_buttons.as_ref()?;
+        if ui.clicked(*open) {
+            return Some(PrefabAction::Open(path.clone()));
+        }
+        ui.clicked(*select).then(|| PrefabAction::Select(path.clone()))
+    }
+
     pub fn clicked_documentation(&self, ui: &Ui) -> Option<&str> {
         self.doc_buttons.iter().find(|(button, _)| ui.clicked(*button)).map(|(_, page)| page.as_str())
     }
@@ -605,6 +627,7 @@ impl Inspector {
         self.pagers.clear();
         self.palette_swatches.clear();
         self.item_handles.clear();
+        self.prefab_buttons = None;
         self.drawers.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
@@ -613,7 +636,8 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
-        let (name_row, name, persistent) = header(ui, self.root, game, entity);
+        let (name_row, name, persistent, prefab_buttons) = header(ui, self.root, game, entity);
+        self.prefab_buttons = prefab_buttons;
 
         let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", false);
         let (position_row, position) = vector_row(ui, rows, "Position");
@@ -1561,10 +1585,17 @@ fn numbers(value: &Value) -> Vec<f32> {
 }
 
 /// The Obj's icon, its name field and whether it is active, then rows for
-/// its tag, layer, whether it is static and whether it is persistent.
-/// Returns the top row, the name field and the persistent box. Active, tag,
-/// layer and static show their defaults until Objs have them.
-fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, NodeId, NodeId) {
+/// its tag, layer, whether it is static and whether it is persistent, and
+/// for a prefab instance or an Obj in one, its prefab. Returns the top row,
+/// the name field, the persistent box, and the prefab row's Open and Select
+/// with the prefab's path. Active, tag, layer and static show their
+/// defaults until Objs have them.
+fn header(
+    ui: &mut Ui,
+    root: NodeId,
+    game: &Game,
+    entity: Entity,
+) -> (NodeId, NodeId, NodeId, Option<(NodeId, NodeId, String)>) {
     let world = &game.engine.world;
     let header = ui.panel(root, Style::column());
     ui.add_class(header, "inspector-header");
@@ -1577,7 +1608,11 @@ fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, No
         world.get::<Light>(entity).is_some(),
         world.get::<MeshRenderer>(entity).is_some(),
     );
-    ui.icon(tile, kind);
+    let prefab = prefab_of(game, entity);
+    // A prefab instance shows Unity's prefab cube, tinted.
+    let instance = prefab.as_ref().is_some_and(|(_, root)| *root);
+    ui.icon(tile, if instance { "cube" } else { kind });
+    ui.set_class(tile, "prefab-root", instance);
     let name = ui.text_field(top, &world.get::<Name>(entity).map(|n| n.0.clone()).unwrap_or_default());
     ui.add_class(name, "obj-name");
     ui.toggle(top, "", true);
@@ -1591,7 +1626,34 @@ fn header(ui: &mut Ui, root: NodeId, game: &Game, entity: Entity) -> (NodeId, No
     let row = prop(ui, header, "Persistent");
     let persistent = ui.toggle(row, "", world.has::<ScenePersistence>(entity));
     ui.add_class(persistent, "checkbox");
-    (top, name, persistent)
+    let buttons = prefab.map(|(path, root)| {
+        let row = prop(ui, header, if root { "Prefab" } else { "In prefab" });
+        let holder = ui.panel(row, Style::row());
+        ui.add_class(holder, "prop-value");
+        let icon = ui.icon(holder, "cube");
+        ui.add_class(icon, "prefab-icon");
+        let file = ui.add_label(holder, path.rsplit('/').next().unwrap_or(&path));
+        ui.add_class(file, "prefab-file");
+        let [open, select] = ["Open", "Select"].map(|label| {
+            let button = ui.button(holder, label);
+            ui.add_class(button, "prefab-button");
+            button
+        });
+        (open, select, path)
+    });
+    (top, name, persistent, buttons)
+}
+
+/// The prefab an Obj is an instance of, or the one whose instance it is
+/// in, by path, and whether the Obj is that instance's root.
+fn prefab_of(game: &Game, entity: Entity) -> Option<(String, bool)> {
+    let world = &game.engine.world;
+    let root = match world.has::<PrefabInstance>(entity) {
+        true => entity,
+        false => world.get::<FromPrefab>(entity)?.instance,
+    };
+    let PrefabInstance(guid) = *world.get::<PrefabInstance>(root)?;
+    Some((game.content.db().get(guid)?.path.clone(), root == entity))
 }
 
 /// A row of a label and three axis fields, X, Y and Z. Returns the row and

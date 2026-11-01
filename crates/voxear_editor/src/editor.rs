@@ -667,6 +667,9 @@ impl Editor {
             for event in self.project.update(&mut self.ui) {
                 self.project_event(event, renderer);
             }
+            // Folders take an Obj dragged from the Hierarchy, to make a prefab in.
+            let making = self.ui.dragging().is_some_and(|source| self.hierarchy.dragged(&source).is_some());
+            self.project.take_drops(&mut self.ui, making);
             if let Some(action) = self.inspector.update_asset(&mut self.ui) {
                 self.asset_action(action, renderer);
             }

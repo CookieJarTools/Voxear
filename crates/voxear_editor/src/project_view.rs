@@ -4,7 +4,9 @@
 //! narrower, it shows rows with each file's size. Selecting a folder in the
 //! tree opens it, as does double-clicking one on the right. Assets on the
 //! right can be dragged onto the Inspector's asset fields, and prefabs,
-//! models and scenes onto the Hierarchy and the Scene view.
+//! models and scenes onto the Hierarchy and the Scene view. An Obj dragged
+//! from the Hierarchy onto the files makes a prefab in the open folder, or
+//! onto a folder's tile or a folder in the tree, in that folder.
 //!
 //! Selecting an item shows it in the Inspector, and double-clicking a file
 //! opens it, through [`ProjectEvent`]s. A context click on an item, on the
@@ -63,8 +65,9 @@ pub enum ProjectEvent {
     Changed { select: Option<String>, rename: bool },
     /// Something to say in the status bar.
     Notice(String),
-    /// Something was dropped on the files, such as an Obj from the Hierarchy
-    /// to make a prefab of, here: in `folder` (from the project's folder).
+    /// Something was dropped on the files, a folder's tile or a folder in
+    /// the tree, such as an Obj from the Hierarchy to make a prefab of, in
+    /// `folder` (from the project's folder).
     Dropped { source: DragSource, folder: String },
 }
 
@@ -203,7 +206,10 @@ impl Contents {
 
 type Shared = Rc<RefCell<Contents>>;
 
-struct FolderItems(Shared);
+/// The folders' tree rows: each row's content, and the folder it shows.
+type FolderRows = Rc<RefCell<Vec<(NodeId, u64)>>>;
+
+struct FolderItems(Shared, FolderRows);
 
 impl TreeItems for FolderItems {
     fn children(&self, parent: Option<u64>) -> Vec<u64> {
@@ -218,15 +224,20 @@ impl TreeItems for FolderItems {
     }
 
     fn make(&mut self, ui: &mut Ui, row: NodeId) {
+        ui.add_class(row, "folder-row");
         let icon = ui.icon(row, "folder");
         ui.add_class(icon, "row-icon");
         let name = ui.add_label(row, "");
         ui.add_class(name, "row-name");
+        self.1.borrow_mut().push((row, 0));
     }
 
     fn bind(&mut self, ui: &mut Ui, row: NodeId, item: u64) {
         let parts = ui.children(row);
         ui.set_text(parts[1], &self.0.borrow().folders[item as usize].name);
+        if let Some(slot) = self.1.borrow_mut().iter_mut().find(|(node, _)| *node == row) {
+            slot.1 = item;
+        }
     }
 }
 
@@ -308,6 +319,7 @@ impl ListItems for TileRows {
 
 pub struct ProjectView {
     folder_tree: NodeId,
+    folder_rows: FolderRows,
     files: NodeId,
     path: NodeId,
     count: NodeId,
@@ -339,13 +351,15 @@ impl ProjectView {
         let (rename_bar, rename_field) = (find(ui, "project-rename"), find(ui, "project-rename-field"));
         ui.set_visible(rename_bar, false);
         let contents = Rc::new(RefCell::new(scan(name, root, db)));
-        ui.bind_tree(folder_tree, FolderItems(contents.clone()));
+        let folder_rows = FolderRows::default();
+        ui.bind_tree(folder_tree, FolderItems(contents.clone(), folder_rows.clone()));
         ui.set_expanded(folder_tree, 0, true);
         ui.bind_list(files, 0, FileRows(contents.clone()));
         ui.set_rows_draggable(files, true);
         ui.accept_drops(files, true);
         let mut view = Self {
             folder_tree,
+            folder_rows,
             files,
             path,
             count,
@@ -394,14 +408,47 @@ impl ProjectView {
         }
         self.open_menus(ui);
         events.extend(self.menu_choice(ui));
-        if let Some(source) = ui.dropped_onto(self.files) {
-            let folder = self.contents.borrow().folders[self.open].path.clone();
+        if let Some((source, folder)) = self.dropped(ui) {
             events.push(ProjectEvent::Dropped { source, folder });
         }
         if let Some(event) = self.update_rename(ui) {
             events.push(event);
         }
         events
+    }
+
+    /// Something let go of on the panel, and the folder it was let go of in:
+    /// a folder's tile or a folder in the tree, or else the open folder.
+    fn dropped(&self, ui: &Ui) -> Option<(DragSource, String)> {
+        let contents = self.contents.borrow();
+        let on_tile = contents.tiles.iter().find_map(|&(tile, at)| {
+            let source = ui.dropped_onto(tile)?;
+            match contents.listing.get(at?)? {
+                Entry::Folder(folder) => Some((source, *folder)),
+                Entry::File(_) => None,
+            }
+        });
+        let in_tree = || {
+            let rows = self.folder_rows.borrow();
+            rows.iter().find_map(|&(row, folder)| Some((ui.dropped_onto(row)?, folder as usize)))
+        };
+        let in_open = || Some((ui.dropped_onto(self.files)?, self.open));
+        let (source, folder) = on_tile.or_else(in_tree).or_else(in_open)?;
+        Some((source, contents.folders.get(folder)?.path.clone()))
+    }
+
+    /// Lets the folders, as tiles and in the tree, take what is dragged onto
+    /// them, or stops them: while an Obj is dragged from the Hierarchy, to
+    /// make a prefab in the folder it is let go of on.
+    pub fn take_drops(&self, ui: &mut Ui, take: bool) {
+        let contents = self.contents.borrow();
+        for &(tile, at) in &contents.tiles {
+            let folder = at.and_then(|at| contents.listing.get(at)).is_some_and(|e| matches!(e, Entry::Folder(_)));
+            ui.accept_drops(tile, take && folder);
+        }
+        for &(row, _) in self.folder_rows.borrow().iter() {
+            ui.accept_drops(row, take);
+        }
     }
 
     /// Reads the project's files again, as they are after something changed

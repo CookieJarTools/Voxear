@@ -3,7 +3,9 @@
 //! names it, and Back opens again what was open before. Save writes the
 //! prefab, and what was read of it is then forgotten, so the level's
 //! instances show the change when it opens again. Only here can a component
-//! be locked for designers, and the values they still see chosen.
+//! be locked for designers, and the values they still see chosen. The
+//! Inspector's Prefab row, on an instance or an Obj in one, opens its prefab
+//! the same way, or selects it in the Project.
 
 use voxear_assets::AssetKind;
 use voxear_ecs::Entity;
@@ -11,6 +13,7 @@ use voxear_engine::prefab::{FromPrefab, PrefabInstance};
 use voxear_render::Renderer;
 
 use super::Editor;
+use crate::inspector::PrefabAction;
 use crate::levels_panel::LevelAction;
 
 /// The prefab open on its own, and what Back opens again: nothing, when
@@ -24,6 +27,17 @@ impl Editor {
     pub(super) fn update_prefab_mode(&mut self, renderer: &mut Renderer) {
         if self.ui.clicked(self.nodes.prefab_back) {
             self.close_prefab(renderer);
+        }
+        match self.inspector.prefab_clicked(&self.ui) {
+            Some(PrefabAction::Open(path)) => self.open_prefab(&path, renderer),
+            Some(PrefabAction::Select(path)) => {
+                self.show_panel("project");
+                self.project.reveal(&mut self.ui, &path);
+                if let Some(item) = self.project.item(&path) {
+                    self.inspect_asset(&item);
+                }
+            }
+            None => {}
         }
     }
 

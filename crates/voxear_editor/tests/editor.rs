@@ -3701,3 +3701,87 @@ fn the_persistent_box_marks_an_obj_to_stay_through_level_changes() {
     let written = saved.objs.iter().find(|o| o.name == "Spinner A").unwrap();
     assert!(written.persistent, "saved as persistent = true");
 }
+
+/// The row in the Project's folder tree for the folder called `name`.
+fn folder_row(ui: &Ui, name: &str) -> Option<NodeId> {
+    let tree = ui.find(ui.root(), "project-folders")?;
+    let mut rows = Vec::new();
+    with_class(ui, tree, "folder-row", &mut rows);
+    rows.into_iter().find(|&row| ui.is_visible(row) && ui.children(row).get(1).is_some_and(|&n| ui.text(n) == name))
+}
+
+#[test]
+fn an_obj_dragged_into_the_project_becomes_an_instance_of_its_new_prefab() {
+    let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
+    let instance = |editor: &voxear_editor::Editor, name: &str| {
+        obj(editor, name).is_some_and(|e| editor.game.engine.world.has::<voxear_engine::prefab::PrefabInstance>(e))
+    };
+
+    // Chrome Ball, held over the Prefabs folder's tile, lights it up, and its prefab is made in that folder.
+    let row = hierarchy_row(&editor.ui, "Chrome Ball").unwrap();
+    let folder = tile(&editor.ui, "Prefabs").expect("the top folder shows its folders");
+    let (from, to) = (centre(&editor.ui, row), centre(&editor.ui, folder));
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(to[0], to[1]);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(to[0], to[1] + 1.0);
+    assert!(editor.ui.has_class(folder, "drop-hover"), "the folder it would go in lights up");
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Prefabs/Chrome Ball.prefab").is_file(), "made in the folder let go of on");
+    assert!(instance(&editor, "Chrome Ball"), "the Obj is an instance of it now");
+
+    // And it shows: the Hierarchy's prefab cube, tinted, and the Inspector's Prefab row.
+    let row = hierarchy_row(&editor.ui, "Chrome Ball").unwrap();
+    let icon = first_with(&editor.ui, row, "row-icon").unwrap();
+    assert!(editor.ui.has_class(icon, "prefab-root"));
+    let prefab = prop_row(&editor.ui, "Prefab").expect("a Prefab row for an instance");
+    let file = first_with(&editor.ui, prefab, "prefab-file").unwrap();
+    assert_eq!(editor.ui.text(file), "Chrome Ball.prefab");
+    shot(&mut renderer, "prefab-instance.png");
+
+    // Pyramid, onto the Models folder in the tree; the Obj inside it is part of the instance.
+    let (from, to) = (
+        centre(&editor.ui, hierarchy_row(&editor.ui, "Pyramid").unwrap()),
+        centre(&editor.ui, folder_row(&editor.ui, "Models").unwrap()),
+    );
+    drag_between(&mut editor, &mut renderer, from, to);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Models/Pyramid.prefab").is_file());
+    // Hello's Pyramid holds a model of the same name: the instance is the one selected.
+    let pyramid = editor.selected().unwrap();
+    let world = &editor.game.engine.world;
+    assert_eq!(world.get::<Name>(pyramid).map(|n| n.0.as_str()), Some("Pyramid"));
+    assert!(world.has::<voxear_engine::prefab::PrefabInstance>(pyramid));
+    let inside =
+        world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Parent)>().into_iter().find(|(_, p)| p.0 == pyramid);
+    editor.select(inside.map(|(e, _)| e));
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "In prefab").is_some(), "an Obj inside an instance names its prefab");
+
+    // The row's Select shows the prefab in the Project and the Inspector; its Open opens it on its own.
+    editor.save();
+    let ball = obj(&editor, "Chrome Ball");
+    editor.select(ball);
+    frame(&mut editor, &mut renderer);
+    let select = prefab_button(&editor.ui, "Select");
+    click(&mut editor.ui, select);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Prefabs/Chrome Ball.prefab"));
+    editor.select(ball);
+    frame(&mut editor, &mut renderer);
+    let open = prefab_button(&editor.ui, "Open");
+    click(&mut editor.ui, open);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.open_prefab_path(), Some("Prefabs/Chrome Ball.prefab"));
+}
+
+/// The Inspector's Prefab row's button labelled `label`.
+fn prefab_button(ui: &Ui, label: &str) -> NodeId {
+    let mut buttons = Vec::new();
+    with_class(ui, ui.root(), "prefab-button", &mut buttons);
+    buttons.into_iter().find(|&b| ui.text(b) == label).unwrap_or_else(|| panic!("no {label} button"))
+}

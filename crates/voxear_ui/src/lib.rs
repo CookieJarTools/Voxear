@@ -26,7 +26,8 @@
 //! - **Rich text** ([`RichText`]): labels with bold, italic, code,
 //!   struck-out and highlighted words, and links to click.
 //! - **Transitions** ease colours and opacity between styles.
-//! - **A default theme** in the editor's look, which sheets can override.
+//! - **A default theme** in the editor's look, which sheets can override,
+//!   and [`Theme`]s made from a base, an accent and a contrast.
 //!
 //! This is the foundation the editor and in-game UI build on.
 
@@ -52,6 +53,7 @@ mod scroll;
 mod selector;
 mod sheet;
 mod style;
+mod theme;
 mod tree;
 
 pub use color::Color;
@@ -69,6 +71,7 @@ pub use sheet::StyleSheet;
 pub use style::{
     Animated, Easing, Family, KeyframeAnimation, Overflow, Shadow, Style, TextAlign, TextStyle, Transition,
 };
+pub use theme::Theme;
 pub use tree::{Gradient, ImageRef};
 pub use tree::{Kind, NodeId, Ui};
 

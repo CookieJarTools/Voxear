@@ -35,7 +35,13 @@ impl Color {
     /// Colours outside sRGB are clipped.
     pub fn oklch(lightness: f32, chroma: f32, hue: f32, alpha: f32) -> Self {
         let (sin, cos) = hue.to_radians().sin_cos();
-        let (l, a, b) = (lightness, chroma * cos, chroma * sin);
+        Self::oklab(lightness, chroma * cos, chroma * sin, alpha)
+    }
+
+    /// OKLab, OKLCH as a point rather than an angle: `a` runs from green to
+    /// red and `b` from blue to yellow, so two colours mix by adding them.
+    pub fn oklab(lightness: f32, a: f32, b: f32, alpha: f32) -> Self {
+        let l = lightness;
         let cube = |v: f32| v * v * v;
         let l_ = cube(l + 0.396_337_78 * a + 0.215_803_76 * b);
         let m_ = cube(l - 0.105_561_346 * a - 0.063_854_17 * b);
@@ -49,15 +55,36 @@ impl Color {
         Self { r, g, b, a: (alpha.clamp(0.0, 1.0) * 255.0).round() as u8 }
     }
 
+    /// The colour in OKLCH, as [`oklch`](Self::oklch) takes it: lightness,
+    /// chroma, and hue in degrees. Alpha is left out.
+    pub fn to_oklch(self) -> [f32; 3] {
+        let [r, g, b] = [self.r, self.g, self.b].map(srgb_to_linear);
+        let l = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+        let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+        let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+        let lightness = 0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s;
+        let a = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
+        let b = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
+        [lightness, a.hypot(b), b.atan2(a).to_degrees().rem_euclid(360.0)]
+    }
+
+    /// As a sheet writes it: `#rrggbb`, or `#rrggbbaa` when see-through.
+    pub fn css(self) -> String {
+        let Self { r, g, b, a } = self;
+        if a == 0xff { format!("#{r:02x}{g:02x}{b:02x}") } else { format!("#{r:02x}{g:02x}{b:02x}{a:02x}") }
+    }
+
     /// Linear and premultiplied, which is how the GPU blends correctly.
     pub fn linear_premultiplied(self) -> [f32; 4] {
         let a = self.a as f32 / 255.0;
-        let linear = |c: u8| {
-            let c = c as f32 / 255.0;
-            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
-        };
-        [linear(self.r) * a, linear(self.g) * a, linear(self.b) * a, a]
+        let [r, g, b] = [self.r, self.g, self.b].map(srgb_to_linear);
+        [r * a, g * a, b * a, a]
     }
+}
+
+fn srgb_to_linear(c: u8) -> f32 {
+    let c = c as f32 / 255.0;
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
 
 fn linear_to_srgb(c: f32) -> f32 {

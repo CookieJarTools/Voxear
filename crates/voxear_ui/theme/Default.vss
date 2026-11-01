@@ -2,12 +2,14 @@
    darker window, thin borders, one periwinkle accent, and compact 24px rows,
    with shadows only on what floats. Every Ui starts with it on its root. A
    sheet of your own overrides any of it, and changing the variables is the
-   quickest way to retheme. */
+   quickest way to retheme. Theme (theme.rs) makes every colour here from a
+   base, an accent and a contrast, and gives these for its DARK. */
 
 :root {
     --vx-bg: #0c0e10;
     --vx-panel: #191a1c;
     --vx-overlay: rgba(28, 29, 33, 0.92);
+    --vx-glass: rgba(28, 29, 33, 0.6);
     --vx-line: #25272b;
     --vx-line-2: #2e3036;
     --vx-field: #212227;
@@ -23,6 +25,9 @@
     --vx-accent-soft: rgba(121, 136, 255, 0.2);
     --vx-on-accent: #ffffff;
     --vx-success: #4cb782;
+    --vx-warning: #e2b340;
+    --vx-prefab: #7cb1ff;
+    --vx-prefab-member: #a3c6f5;
     --vx-x: #eb5757;
     --vx-y: #4cb782;
     --vx-z: #5e8bf0;

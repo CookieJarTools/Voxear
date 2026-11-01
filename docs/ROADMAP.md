@@ -314,6 +314,9 @@ Done so far:
   page, a page's section shown above a field and kept up to date with the page, and each page's In the code. Voxear
   UI now breaks a padded label's words to its content width, so wrapped text in a narrow table cell no longer loses
   its last line.
+- **Themes in OKLCH:** every colour of the default theme made from a base, an accent and a contrast, as Linear makes
+  its themes, so dark, light and custom themes hold together. Dark gives the default theme's own colours; Light and
+  Custom are picked in the Settings drawer's Appearance group, a colour from its swatch.
 
 Still to do in M3:
 - UI core:
@@ -335,7 +338,6 @@ Still to do in M3:
     edit mode
   - [ ] list and table drawers, colour palettes, the build's check of every scene, the source generator and
     analyzer, and custom drawers
-- OKLCH theme tokens.
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering), Windows archives, and a workflow that builds and publishes releases.
 - **VoxDocs' next parts** (see "VoxDocs" in the architecture): notes on the Code Reference's pages, checks written

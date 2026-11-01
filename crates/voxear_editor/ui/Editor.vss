@@ -8,7 +8,7 @@
     --ed-logo-top: #aab3ff;
     --ed-logo-left: #7988ff;
     --ed-logo-right: #4c56b8;
-    --ed-warn: #e2b340;
+    --ed-warn: var(--vx-warning);
 }
 
 .editor {
@@ -506,11 +506,11 @@
 
 /* Prefab instances are tinted, as Unity tints them: the root, and lighter what is inside. */
 .row-name.prefab-root {
-    color: #7cb1ff;
+    color: var(--vx-prefab);
 }
 
 .row-name.prefab-member {
-    color: #a3c6f5;
+    color: var(--vx-prefab-member);
 }
 
 /* The Scene panel: its area lets the 3D view show through, and its
@@ -587,7 +587,7 @@
 .overlay {
     position: absolute;
     border-radius: 7px;
-    background-color: rgba(28, 29, 33, 0.6);
+    background-color: var(--vx-glass);
     backdrop-filter: blur(16px);
     border: 1px solid var(--vx-line-2);
     box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.35);

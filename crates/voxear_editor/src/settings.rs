@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use voxear_ui::{Color, Theme};
 
 /// The most items the palette remembers having run.
 const RECENT: usize = 8;
@@ -20,6 +21,10 @@ pub const SNAPS: [f32; 4] = [0.1, 0.25, 0.5, 1.0];
 /// The editors a stack frame can open in, as the Code editor setting lists
 /// them; the last opens the file as the desktop does, without its line.
 pub const CODE_EDITORS: [&str; 4] = ["VS Code", "Rider", "Zed", "System default"];
+
+/// The themes the Theme setting offers before Custom, which is whatever the
+/// base, accent and contrast were last set to.
+pub const THEMES: [(&str, Theme); 2] = [("Dark", Theme::DARK), ("Light", Theme::LIGHT)];
 
 /// What a setting holds, and so how it is shown and changed.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,6 +38,8 @@ pub enum SettingKind {
         max: f32,
         unit: &'static str,
     },
+    /// A colour, picked from its swatch.
+    Color,
 }
 
 /// One setting: the key it is kept and found by, what it is called, the
@@ -45,7 +52,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 18] = [
+pub const SETTINGS: [SettingInfo; 22] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -109,6 +116,20 @@ pub const SETTINGS: [SettingInfo; 18] = [
         group: "Console",
         kind: SettingKind::Choice(&CODE_EDITORS),
     },
+    SettingInfo {
+        key: "theme",
+        title: "Theme",
+        group: "Appearance",
+        kind: SettingKind::Choice(&["Dark", "Light", "Custom"]),
+    },
+    SettingInfo { key: "theme_base", title: "Base colour", group: "Appearance", kind: SettingKind::Color },
+    SettingInfo { key: "theme_accent", title: "Accent colour", group: "Appearance", kind: SettingKind::Color },
+    SettingInfo {
+        key: "theme_contrast",
+        title: "Contrast",
+        group: "Appearance",
+        kind: SettingKind::Number { min: 0.0, max: 100.0, unit: "%" },
+    },
 ];
 
 /// A setting's value, as the panel and palette show and change it.
@@ -117,6 +138,8 @@ pub enum SettingValue {
     Toggle(bool),
     Choice(usize),
     Number(f32),
+    /// `0xRRGGBB`.
+    Color(u32),
 }
 
 /// The editor's settings.
@@ -176,6 +199,13 @@ pub struct Settings {
     /// Colours chosen in place of the Console's own: `error`, `warning`, and
     /// a frame's `namespace`, `class`, `method`, `parameters` and `file`.
     pub console_colours: std::collections::BTreeMap<String, u32>,
+    /// Which of [`THEMES`] the editor wears, or past them, Custom.
+    pub theme: usize,
+    /// The theme's three choices (see [`Theme`]): its ground and accent as
+    /// `0xRRGGBB`, and its contrast from 0 to 100.
+    pub theme_base: u32,
+    pub theme_accent: u32,
+    pub theme_contrast: f32,
 }
 
 /// A Console filter saved by name, as Sifter keeps them: a search, and the
@@ -219,6 +249,10 @@ impl Default for Settings {
             console_category: 2,
             console_kept: 10_000,
             console_colours: std::collections::BTreeMap::new(),
+            theme: 0,
+            theme_base: 0x0c0e10,
+            theme_accent: 0x7988ff,
+            theme_contrast: 50.0,
         }
     }
 }
@@ -244,6 +278,10 @@ impl Settings {
             "console_namespaces" => SettingValue::Toggle(self.console_namespaces),
             "console_parameters" => SettingValue::Toggle(self.console_parameters),
             "code_editor" => SettingValue::Choice(self.code_editor),
+            "theme" => SettingValue::Choice(self.theme),
+            "theme_base" => SettingValue::Color(self.theme_base),
+            "theme_accent" => SettingValue::Color(self.theme_accent),
+            "theme_contrast" => SettingValue::Number(self.theme_contrast),
             _ => return None,
         })
     }
@@ -271,9 +309,35 @@ impl Settings {
             ("console_namespaces", SettingValue::Toggle(on)) => self.console_namespaces = on,
             ("console_parameters", SettingValue::Toggle(on)) => self.console_parameters = on,
             ("code_editor", SettingValue::Choice(i)) => self.code_editor = i.min(CODE_EDITORS.len() - 1),
+            ("theme", SettingValue::Choice(i)) => self.set_theme(i),
+            // Changing one of the three makes the theme Custom.
+            ("theme_base", SettingValue::Color(c)) if c != self.theme_base => (self.theme_base, self.theme) = (c, 2),
+            ("theme_accent", SettingValue::Color(c)) if c != self.theme_accent => {
+                (self.theme_accent, self.theme) = (c, 2)
+            }
+            ("theme_contrast", SettingValue::Number(n)) if n.clamp(0.0, 100.0) != self.theme_contrast => {
+                (self.theme_contrast, self.theme) = (n.clamp(0.0, 100.0), 2)
+            }
             _ => {}
         }
         *self != before
+    }
+
+    /// Wears one of [`THEMES`], its three choices with it, or Custom, which
+    /// keeps the choices as they are.
+    fn set_theme(&mut self, index: usize) {
+        self.theme = index.min(THEMES.len());
+        if let Some((_, theme)) = THEMES.get(index) {
+            let hex = |c: Color| u32::from_be_bytes([0, c.r, c.g, c.b]);
+            (self.theme_base, self.theme_accent) = (hex(theme.base), hex(theme.accent));
+            self.theme_contrast = theme.contrast * 100.0;
+        }
+    }
+
+    /// The theme the three choices make.
+    pub fn theme(&self) -> Theme {
+        let (base, accent) = (Color::hex(self.theme_base), Color::hex(self.theme_accent));
+        Theme { base, accent, contrast: self.theme_contrast / 100.0 }
     }
 
     /// A setting as words: "On", "0.25 m", "6 m/s".
@@ -286,6 +350,7 @@ impl Settings {
             (Some(SettingValue::Number(n)), SettingKind::Number { unit, .. }) => {
                 format!("{} {unit}", (n * 100.0).round() / 100.0)
             }
+            (Some(SettingValue::Color(c)), _) => Color::hex(c).css(),
             _ => String::new(),
         }
     }
@@ -377,6 +442,15 @@ mod tests {
         assert_eq!(again.recent, ["command:Save", "obj:Lamp"], "most recent first, once each");
         assert_eq!(again.settings.describe(info("snap").unwrap()), "1 m");
         assert_eq!(again.settings.describe(info("show_stats").unwrap()), "On");
+
+        let mut themed = Settings::default();
+        assert_eq!(themed.theme(), Theme::DARK, "the default theme's own choices");
+        assert!(themed.set("theme", SettingValue::Choice(1)));
+        assert_eq!(themed.theme(), Theme::LIGHT, "a theme brings its choices");
+        assert!(themed.set("theme_accent", SettingValue::Color(0xe2a04a)));
+        assert_eq!(themed.describe(info("theme").unwrap()), "Custom", "changing one makes it Custom");
+        assert_eq!(themed.theme().base, Theme::LIGHT.base, "keeping the rest");
+        assert!(!themed.set("theme_contrast", SettingValue::Number(50.0)), "the same contrast is no change");
 
         let forgetful = Memory::forgetful();
         forgetful.save();

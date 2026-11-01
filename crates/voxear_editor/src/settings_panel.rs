@@ -3,11 +3,11 @@
 //! settings, each changed in place. Searching shows the settings from every
 //! group whose names match, as the command palette matches. A setting the
 //! palette opens is shown in its group, scrolled to and marked (`found`) for
-//! a moment.
+//! a moment. A colour's swatch opens the colour picker (`color_popup`).
 
 use std::time::{Duration, Instant};
 
-use voxear_ui::{NodeId, Style, Ui};
+use voxear_ui::{Color, NodeId, Style, Ui};
 
 use crate::{
     palette::score,
@@ -33,6 +33,8 @@ enum Control {
     Toggle(NodeId),
     Choice(NodeId),
     Number(NodeId),
+    /// A swatch.
+    Color(NodeId),
 }
 
 pub struct SettingsPanel {
@@ -128,6 +130,14 @@ impl SettingsPanel {
         self.revealing = Some(key);
     }
 
+    /// The colour setting whose swatch was clicked this frame, and the swatch.
+    pub fn color_clicked(&self, ui: &Ui) -> Option<(&'static str, NodeId)> {
+        self.rows.iter().find_map(|row| match row.control {
+            Control::Color(swatch) if ui.clicked(swatch) => Some((row.key, swatch)),
+            _ => None,
+        })
+    }
+
     fn show_setting(&mut self, ui: &mut Ui, key: &str) {
         let Some(group) = self.rows.iter().find(|r| r.key == key).map(|r| r.group) else { return };
         self.group = group;
@@ -205,6 +215,11 @@ fn control(ui: &mut Ui, row: NodeId, kind: SettingKind, value: Option<SettingVal
             ui.add_class(unit, "setting-unit");
             Control::Number(field)
         }
+        (SettingKind::Color, _) => {
+            let swatch = ui.panel(row, Style::default());
+            ui.add_class(swatch, "swatch");
+            Control::Color(swatch)
+        }
     }
 }
 
@@ -231,6 +246,12 @@ fn show(ui: &mut Ui, control: &Control, value: SettingValue) {
             let text = format_number(n);
             if ui.focused() != Some(field) && ui.text(field) != text {
                 ui.set_text(field, &text);
+            }
+        }
+        (Control::Color(swatch), SettingValue::Color(c)) => {
+            let color = Color::hex(c);
+            if ui.style(swatch).and_then(|s| s.background) != Some(color) {
+                ui.set_inline_style(swatch, &format!("background-color: {}", color.css()));
             }
         }
         _ => {}

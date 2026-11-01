@@ -1,6 +1,7 @@
 //! The colour picker, opened from a colour's swatch: a Light's colour in the
-//! Inspector, or a material's Colour or Emission in the asset view, the
-//! emission being HDR, so the picker adds its intensity. It opens under the
+//! Inspector, a material's Colour or Emission in the asset view, the
+//! emission being HDR, so the picker adds its intensity, or a colour in
+//! Settings, such as the theme's. It opens under the
 //! swatch, what is picked shows at once, and an Obj's changes over the whole
 //! visit are one step to undo. A press outside it, or Escape, closes it.
 
@@ -13,6 +14,7 @@ use crate::{
     asset_inspector::MaterialColor,
     history::{Edit, ObjState},
     props::{self, Prop, Value},
+    settings::{self, SettingValue},
 };
 
 /// How far the picker keeps from the window's edges.
@@ -24,6 +26,8 @@ enum Target {
     Prop { entity: Entity, prop: Prop, before: Box<ObjState> },
     /// A colour of the material the Inspector shows.
     Material(MaterialColor),
+    /// A colour setting, by its key.
+    Setting(&'static str),
 }
 
 pub(super) struct ColorPopup {
@@ -75,6 +79,13 @@ impl Editor {
             let title = if which == MaterialColor::Base { "Colour" } else { "Emission" };
             return self.open_color(Target::Material(which), swatch, title, (color, which == MaterialColor::Emission));
         }
+        if let Some((key, swatch)) = self.settings_panel.color_clicked(&self.ui)
+            && let Some(SettingValue::Color(hex)) = self.memory.settings.get(key)
+        {
+            let title = settings::info(key).map_or(key, |info| info.title);
+            let srgb = [hex >> 16, hex >> 8, hex].map(|c| (c & 0xff) as f32 / 255.0);
+            return self.open_color(Target::Setting(key), swatch, title, (PickedColor::srgb(srgb), false));
+        }
         let Some(&(_, swatch)) = self.color_popup.open.as_ref() else { return };
         let (root, panel) = (self.ui.root(), self.color_popup.panel);
         if self.ui.is_pressed(root) && !self.ui.is_pressed(panel) && !self.ui.is_pressed(swatch) {
@@ -101,14 +112,22 @@ impl Editor {
                     self.asset_action(action, renderer);
                 }
             }
+            Some((Target::Setting(key), _)) => {
+                let [r, g, b] = color.srgb.map(|c| (c * 255.0).round() as u32);
+                self.memory.settings.set(key, SettingValue::Color(r << 16 | g << 8 | b));
+            }
             None => {}
         }
     }
 
-    /// Closes the picker. What it changed on an Obj is one step to undo.
+    /// Closes the picker. What it changed on an Obj is one step to undo, and
+    /// a setting is kept once picked rather than at every step of a drag.
     pub(super) fn close_color(&mut self) {
         let Some((target, _)) = self.color_popup.open.take() else { return };
         self.ui.set_visible(self.color_popup.panel, false);
+        if let Target::Setting(_) = target {
+            return self.memory.save();
+        }
         let Target::Prop { entity, before, .. } = target else { return };
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
         if after != *before && !self.is_playing() {

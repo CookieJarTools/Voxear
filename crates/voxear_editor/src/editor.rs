@@ -37,7 +37,7 @@ use voxear_engine::{
 };
 use voxear_render::{Camera, MeshRenderer, Renderer, ViewOptions};
 use voxear_scene::{Name, Transform};
-use voxear_ui::{Color, DragSource, NodeId, Shape, Ui};
+use voxear_ui::{Color, DragSource, NodeId, Shape, Theme, Ui};
 
 use crate::{
     asset_inspector::AssetAction,
@@ -71,8 +71,6 @@ const SHEET: &str = include_str!("../ui/Editor.vss");
 /// as in Unity, because its folders and files need the width.
 const LAYOUT: &str =
     "row(240, [hierarchy], row(-300, column(66%, [scene, game, docs], [project, console]), [inspector]))";
-/// The window's background, which the 3D view's surroundings are cleared to.
-const BACKGROUND: u32 = 0x0c0e10;
 /// How long a message stays in the status bar.
 const NOTICE_SECONDS: f32 = 4.0;
 /// How often the status bar's numbers change: each is the average over this
@@ -185,6 +183,9 @@ pub struct Editor {
     /// the panel that shows the settings.
     memory: Memory,
     settings_panel: SettingsPanel,
+    /// The theme the editor wears, which the default theme's own colours are
+    /// until the settings ask for another.
+    theme: Theme,
     /// The fly camera's speed as last seen, to tell the wheel's changes from
     /// the setting's.
     fly_speed: f32,
@@ -303,7 +304,8 @@ impl Editor {
         game.start(Some(renderer)).context("opening the start level")?;
         let camera = spawn_camera(&mut game);
         renderer.set_view_options(ViewOptions { camera: Some(camera), ..ViewOptions::default() });
-        renderer.set_clear_color(Color::hex(BACKGROUND).linear_premultiplied());
+        // The window's ground, which the theme's base colours.
+        renderer.set_clear_color(Theme::DARK.base.linear_premultiplied());
 
         let mut ui = Ui::new();
         let ui_root = ui.root();
@@ -417,6 +419,7 @@ impl Editor {
             fly_speed: memory.settings.fly_speed.clamp(0.25, 250.0),
             memory,
             settings_panel,
+            theme: Theme::DARK,
             levels,
             camera,
             play: play::Play::new(),
@@ -606,6 +609,12 @@ impl Editor {
         self.update_drawer();
         self.update_prefab_mode(renderer);
         self.update_settings();
+        let theme = self.memory.settings.theme();
+        if theme != self.theme {
+            self.ui.set_theme(&theme);
+            renderer.set_clear_color(theme.base.linear_premultiplied());
+            self.theme = theme;
+        }
         {
             profile_scope!("Scene Tools");
             self.update_scene_tools(renderer);

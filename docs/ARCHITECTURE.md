@@ -1230,6 +1230,26 @@ checkboxes, sliders, segmented controls, foldouts, list rows, split dividers, ta
 overrides any of it, and redefining the `--vx-*` variables is the quickest way to retheme. `Ui::bare()` starts
 without it.
 
+**Themes** *(implemented)*: a `Theme` makes every `--vx-*` colour from three choices, as Linear makes its themes: the
+base, the ground under every panel; the accent; and the contrast, from 0 to 1. The colours are worked out in OKLCH,
+where equal steps of lightness look equal whatever the hue, so any base and accent give a theme that holds together.
+- A dark base makes a dark theme and a light base a light one. Panels sit a little lighter than the base, text runs
+  from them towards white or black, and each surface and line lies a set distance along the way, so a field is
+  always a little further from its panel than a hover, and a line further still.
+- Surfaces take a faint tint from the base and the accent, as the default theme's do. The base's share is capped,
+  so a strongly coloured base does not colour every word.
+- Contrast moves text further from the panels and spreads the surfaces and lines apart. A light theme takes bigger
+  steps than a dark one, because small steps in lightness are harder to see near white.
+- Colours that mean something keep their hue: success, warning, prefabs and the axes. A light theme makes them
+  darker, so they read on white.
+- `Theme::DARK` gives the default theme's own colours, close enough that nobody could tell, and `Theme::LIGHT` is a
+  pale grey base with a deeper accent that reads on white. `ui.set_theme(&theme)` puts a theme on a UI, after the
+  default theme and before your own sheets, so they still win.
+
+```rust
+ui.set_theme(&Theme { base: Color::hex(0x1a1612), accent: Color::hex(0xe2a04a), contrast: 0.6 });
+```
+
 **The game's UI in C#** *(implemented)*. A script loads a `.vui` document from the project, and its `<Style src>`
 sheets from beside it, finds elements by name, and changes them:
 
@@ -1549,7 +1569,9 @@ The Odin-style inspector attributes come next.
 **Look.** Unity's modern dark concept crossed with Linear:
 - Surfaces are separated by elevation rather than heavy borders.
 - Themes are generated in OKLCH from three inputs (base, accent, contrast), as Linear does, so light, dark and
-  custom themes all stay consistent.
+  custom themes all stay consistent (see Themes under Voxear UI). The Settings drawer's Appearance group picks Dark,
+  Light, or Custom, which is whatever base, accent and contrast were last chosen; a colour opens the colour picker
+  from its swatch.
 - Inter and Inter Display fonts.
 - Subtle 1 px separators.
 - Animations take 100–180 ms with ease-out curves and never block input.

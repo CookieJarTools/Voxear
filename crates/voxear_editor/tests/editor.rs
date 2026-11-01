@@ -1504,7 +1504,7 @@ fn settings_open_in_the_drawer_with_a_tab_for_each_group() {
     let mut tabs = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "settings-tab", &mut tabs);
     let names: Vec<String> = tabs.iter().map(|&t| editor.ui.text(t)).collect();
-    assert_eq!(names, ["Scene view", "Play mode", "Console"]);
+    assert_eq!(names, ["Scene view", "Play mode", "Console", "Appearance"]);
     assert!(shown_settings(&editor.ui).contains(&"Snap distance".to_string()), "the first group shows");
     assert!(!shown_settings(&editor.ui).contains(&"Pause on error".to_string()), "and only it");
 
@@ -1526,6 +1526,57 @@ fn settings_open_in_the_drawer_with_a_tab_for_each_group() {
     click(&mut editor.ui, rail);
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.drawer(), None, "the same button closes it");
+}
+
+/// The Settings panel's row for `title`: its control.
+fn setting_control(ui: &Ui, title: &str) -> NodeId {
+    let mut rows = Vec::new();
+    with_class(ui, ui.root(), "setting", &mut rows);
+    let row = rows.into_iter().find(|&row| ui.text(ui.children(row)[0]) == title).unwrap();
+    ui.children(row)[1]
+}
+
+#[test]
+fn the_theme_is_chosen_in_settings_and_colours_the_editor() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let rail = editor.ui.find(editor.ui.root(), "rail-settings").unwrap();
+    click(&mut editor.ui, rail);
+    frame(&mut editor, &mut renderer);
+    let mut tabs = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "settings-tab", &mut tabs);
+    let appearance = tabs.into_iter().find(|&t| editor.ui.text(t) == "Appearance").unwrap();
+    click(&mut editor.ui, appearance);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(shown_settings(&editor.ui), ["Theme", "Base colour", "Accent colour", "Contrast"]);
+    let mut areas = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dock-area", &mut areas);
+    let panel = |editor: &voxear_editor::Editor| editor.ui.style(areas[0]).unwrap().background.unwrap();
+    assert_eq!(panel(&editor), voxear_ui::Color::hex(0x191a1c), "the default theme's panels");
+
+    let theme = setting_control(&editor.ui, "Theme");
+    choose(&mut editor, &mut renderer, theme, 1);
+    assert_eq!(editor.settings().theme(), voxear_ui::Theme::LIGHT);
+    for _ in 0..12 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(panel(&editor).to_oklch()[0] > 0.9, "light panels: {:?}", panel(&editor));
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    let [x, y, ..] = editor.ui.rect(editor.ui.root());
+    let at = ((y as u32 + 1) * width + x as u32 + 1) as usize * 4;
+    assert!(pixels[at] > 200, "the window's ground is light too");
+    shot(&mut renderer, "theme-light.png");
+
+    let accent = setting_control(&editor.ui, "Accent colour");
+    click(&mut editor.ui, accent);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.color_picker_open(), "an accent's swatch opens the colour picker");
+
+    click(&mut editor.ui, rail);
+    editor.select(obj(&editor, "Sun"));
+    for _ in 0..12 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "theme-light-editor.png");
 }
 
 /// Picks an option of a dropdown, as the pointer would.

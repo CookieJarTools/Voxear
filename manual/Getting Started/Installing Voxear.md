@@ -17,13 +17,30 @@ On Linux, install .NET with your package manager, as `sudo pacman -S dotnet-sdk`
 1. Open the launcher and go to **Installs**, in the side bar.
 2. Click **Install a version**.
 3. Pick a channel. **Stable** is for making games, **Beta** is the next stable version being tried out, and **Nightly** is built every day from the latest work.
-4. Click **Install** beside the version you want.
+4. Leave **Voxear Manual** ticked under the version to install this manual with it. You read the manual in VoxDocs, inside the editor.
+5. Click **Install** beside the version you want.
 
 The launcher checks every download before it unpacks it, so a damaged or tampered file is never installed.
 
 You can install as many versions as you like. Each project remembers which one it uses, so a new version never changes a project you have not moved to it yourself.
 
 To add a version you already have on disk, use **From a file…** for a downloaded archive, or **Locate an engine…** for an engine folder.
+
+## Adding or removing the Voxear Manual
+
+The manual is an optional part of each version. A version that has it shows a **Manual** tag in **Installs**.
+
+To add it later, open the version's menu in **Installs** and pick **Add the Voxear Manual**. **Remove the Voxear Manual** takes it away again. Without it, VoxDocs shows only your project's own docs.
+
+The launcher's command-line tool, `voxup`, does the same:
+
+```bash
+voxup install 0.1.0 --without-manual
+voxup manual add 0.1.0
+voxup manual remove 0.1.0
+```
+
+The launcher can only change versions it installed itself. An engine folder added with **Locate an engine…** keeps the files it has.
 
 ## Checking your computer
 

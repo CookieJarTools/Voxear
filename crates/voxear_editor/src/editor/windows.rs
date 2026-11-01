@@ -14,11 +14,14 @@
 //! panel, and any saved with Save Layout As. Each keeps the arrangement it
 //! was left in, as Blender's workspaces do, and Reset Layout puts it back as
 //! it started. The editor's memory keeps them, and the one showing, between
-//! sessions.
+//! sessions. A layout that names Scene views or Inspectors opened from a
+//! window's menu opens them as it shows, each Scene view looking from where
+//! it was left and shaded as it was, and those it does not name go for good,
+//! as closing them does.
 
 use std::time::{Duration, Instant};
 
-use voxear_ui::MenuItem;
+use voxear_ui::{MenuItem, UiError};
 
 use super::{Editor, LAYOUT};
 use crate::settings::SavedLayout;
@@ -183,10 +186,32 @@ impl Editor {
     /// Puts every panel back where the layout showing starts with them.
     pub(super) fn reset_layout(&mut self) {
         let start = self.layouts[self.layout].start.clone();
-        if self.ui.set_dock_layout_closing_rest(self.nodes.dock, &start).is_err() {
-            let fallback = LAYOUT;
-            self.ui.set_dock_layout_closing_rest(self.nodes.dock, fallback).expect("the default layout is valid");
+        if self.arrange(&start).is_err() {
+            self.arrange(LAYOUT).expect("the default layout is valid");
         }
+    }
+
+    /// Arranges the dock as `layout` says, closing the panels it leaves out.
+    /// The Scene views and Inspectors opened from a window's menu that it
+    /// names open first, and those it leaves out go for good, as closing
+    /// them from the menu does.
+    fn arrange(&mut self, layout: &str) -> Result<(), UiError> {
+        let named = opened_from_menu(layout);
+        for &panel in &named {
+            match panel.starts_with("scene-") {
+                true => self.reopen_scene_view(panel),
+                false => self.reopen_inspector(panel),
+            }
+        }
+        let dock = self.nodes.dock;
+        self.ui.set_dock_layout_closing_rest(dock, layout)?;
+        let panels = self.ui.dock_panels(dock).into_iter().map(|(id, ..)| id);
+        let left_out: Vec<String> =
+            panels.filter(|id| is_opened_from_menu(id) && !named.contains(&id.as_str())).collect();
+        for panel in left_out {
+            let _ = self.remove_inspector(&panel) || self.remove_scene_view(&panel);
+        }
+        Ok(())
     }
 
     /// The top bar's Layout menu: the layouts to pick from, ticked for the
@@ -275,7 +300,7 @@ impl Editor {
         self.layouts[self.layout].kept = Some(self.ui.dock_layout(dock));
         self.layout = index;
         let kept = self.layouts[index].kept.take();
-        if kept.is_none_or(|layout| self.ui.set_dock_layout_closing_rest(dock, &layout).is_err()) {
+        if kept.is_none_or(|layout| self.arrange(&layout).is_err()) {
             self.reset_layout();
         }
         let name = self.layouts[index].name.clone();
@@ -290,7 +315,7 @@ impl Editor {
         let gone = self.layouts.remove(self.layout).name;
         self.layout = 0;
         let kept = self.layouts[0].kept.take();
-        if kept.is_none_or(|layout| self.ui.set_dock_layout_closing_rest(self.nodes.dock, &layout).is_err()) {
+        if kept.is_none_or(|layout| self.arrange(&layout).is_err()) {
             self.reset_layout();
         }
         let name = self.layouts[0].name.clone();
@@ -329,7 +354,9 @@ impl Editor {
     }
 
     /// Puts back the layouts and the one showing that the editor was closed
-    /// with. A layout naming panels this version does not have starts again.
+    /// with, opening the Scene views and Inspectors it names that were
+    /// opened from a window's menu. A layout that cannot be read starts
+    /// again.
     pub(super) fn restore_layout(&mut self) {
         self.layouts = built_in_layouts();
         let saved = self.memory.saved_layouts.iter().filter(|saved| !saved.name.is_empty());
@@ -345,14 +372,14 @@ impl Editor {
         let name = self.layouts[self.layout].name.clone();
         self.ui.set_text(self.nodes.layout_name, &name);
         let kept = self.layouts[self.layout].kept.take();
-        if kept.is_none_or(|layout| self.ui.set_dock_layout_closing_rest(self.nodes.dock, &layout).is_err()) {
+        if kept.is_none_or(|layout| self.arrange(&layout).is_err()) {
             self.reset_layout();
         }
     }
 
-    /// Keeps the layouts, and the one showing, in the editor's memory once
-    /// they change, looking once a second. A panel shown full screen is not
-    /// kept.
+    /// Keeps the layouts, the one showing, and the Scene views opened from a
+    /// window's menu that they name, in the editor's memory once they
+    /// change, looking once a second. A panel shown full screen is not kept.
     pub(super) fn keep_layout(&mut self) {
         if self.maximized.is_some() || self.layout_checked.elapsed() < LAYOUT_CHECK {
             return;
@@ -372,11 +399,27 @@ impl Editor {
             .iter()
             .map(|layout| SavedLayout { name: layout.name.clone(), start: layout.start.clone() })
             .collect();
+        let starts = saved.iter().map(|layout| layout.start.as_str());
+        let named: Vec<&str> =
+            arrangements.iter().map(String::as_str).chain(starts).flat_map(opened_from_menu).collect();
+        let scene_views = self.kept_scene_views(&named);
         let memory = &self.memory;
-        if memory.workspace != self.layout || memory.layouts != arrangements || memory.saved_layouts != saved {
-            (self.memory.workspace, self.memory.layouts, self.memory.saved_layouts) =
-                (self.layout, arrangements, saved);
+        let changed = memory.workspace != self.layout || memory.layouts != arrangements;
+        if changed || memory.saved_layouts != saved || memory.scene_views != scene_views {
+            (self.memory.workspace, self.memory.layouts) = (self.layout, arrangements);
+            (self.memory.saved_layouts, self.memory.scene_views) = (saved, scene_views);
             self.memory.save();
         }
     }
+}
+
+/// The panels a layout names that were opened from a window's menu: Scene
+/// views and Inspectors past the first, as `scene-2` and `inspector-2`.
+fn opened_from_menu(layout: &str) -> Vec<&str> {
+    layout.split(|c: char| !c.is_ascii_alphanumeric() && c != '-').filter(|id| is_opened_from_menu(id)).collect()
+}
+
+fn is_opened_from_menu(panel: &str) -> bool {
+    let number = panel.strip_prefix("scene-").or_else(|| panel.strip_prefix("inspector-"));
+    number.and_then(|n| n.parse::<u32>().ok()).is_some_and(|n| n >= 2)
 }

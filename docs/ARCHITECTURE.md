@@ -1521,7 +1521,11 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   the editor's `scene`, so flying, handles, a click to select and a prefab dropped all go to it, and the others
   draw their gizmos and the selection's handles as they are. Prefab mode's bar shows over every Scene view. While
   playing, each flies a camera of its own in the world playing, and its camera in the edited level takes where it
-  flew to when play stops. One opened from the menu goes for good when it closes, its camera with it.
+  flew to when play stops. One opened from the menu goes for good when it closes, its camera with it. Layouts keep
+  the ones they show: the dock names each by its panel (`scene-2`), and the editor's memory keeps where each one's
+  camera was and how it was shaded (`Memory::scene_views`), so after a restart, or on going back to a layout that
+  names one, it opens again in its place and as it was left. A layout that leaves one out, Reset Layout included,
+  takes it away for good, as closing it does (`windows::arrange`).
 - **Scene view tools** (`scene_tools`), as Unity's. A click selects the nearest Obj under the pointer: a ray
   against each mesh's bounds in the Obj's own space (`Renderer::mesh_bounds`; cooked meshes keep only a sphere,
   so they use the box around it), or a light or camera close to where it shows; a click on nothing clears the
@@ -1559,7 +1563,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   The selection is the editor's own, which every Inspector not locked shows. Each runs the same Inspector's frame in
   turn, swapped in as the editor's `inspector`, so editing, menus, the object picker, buttons, callbacks and drawers
   act on the Obj it shows; each keeps its drawers apart by an owner number the scripts know. One opened from the
-  menu goes for good when it closes, and locked ones follow their Objs into the played world and back.
+  menu goes for good when it closes, and locked ones follow their Objs into the played world and back. A layout that
+  names one (`inspector-2`) opens it again in its place, after a restart or on going back to that layout, showing
+  the selection; a layout that leaves it out takes it away for good, as Scene views opened from the menu are.
 - **Components in the Inspector** (`props`): each component is a part, and each value in it a prop, read from the
   world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
   mesh it has) and its material (the default, or a `.material` in the project, which can also be dragged onto it from

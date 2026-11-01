@@ -5,7 +5,8 @@
 //! showed, as to compare two Objs. Each runs the same Inspector's frame in
 //! turn: while one does, it is the editor's `inspector`, so editing,
 //! menus, pickers, buttons, callbacks and drawers act on the Obj it shows.
-//! One opened from the menu goes for good when it closes.
+//! One opened from the menu goes for good when it closes, and opens again,
+//! following the selection, with a layout that names it (see `windows`).
 
 use voxear_ecs::Entity;
 use voxear_render::Renderer;
@@ -25,6 +26,21 @@ impl Editor {
     pub fn add_inspector(&mut self, beside: &str) -> String {
         let number = (2..).find(|n| !self.extra_inspectors.iter().any(|e| e.panel == format!("inspector-{n}")));
         let number = number.expect("there is always a free number");
+        self.open_inspector(number, beside)
+    }
+
+    /// Opens the Inspector a layout names as `panel` (`inspector-2`), unless
+    /// it is open.
+    pub(super) fn reopen_inspector(&mut self, panel: &str) {
+        let number = panel.strip_prefix("inspector-").and_then(|n| n.parse().ok());
+        if let Some(number) = number.filter(|_| !self.extra_inspectors.iter().any(|e| e.panel == panel)) {
+            self.open_inspector(number, "inspector");
+        }
+    }
+
+    /// Opens an Inspector numbered `number` beside `beside`, showing the
+    /// selection. Returns its panel.
+    fn open_inspector(&mut self, number: u32, beside: &str) -> String {
         let panel = format!("inspector-{number}");
         let content = self.ui.add_dock_panel_beside(self.nodes.dock, &panel, "Inspector", beside);
         self.ui.add_class(content, "dock-content");

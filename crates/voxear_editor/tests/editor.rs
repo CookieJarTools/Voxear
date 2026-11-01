@@ -3070,6 +3070,80 @@ fn layouts_are_kept_between_sessions() {
 }
 
 #[test]
+fn scene_views_and_inspectors_from_the_menu_come_back_with_their_layout() {
+    let dir = hello_copy();
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let open = |renderer: &mut Renderer| {
+        let project = Project::open(dir.path()).unwrap();
+        let mut editor = voxear_editor::Editor::open(project, renderer, LogCapture::default()).unwrap();
+        frame(&mut editor, renderer);
+        editor
+    };
+    let second = |editor: &voxear_editor::Editor| {
+        let cameras = editor.scene_view_cameras();
+        cameras.into_iter().find(|(panel, _)| panel == "scene-2").map(|(_, camera)| camera)
+    };
+    let place = |editor: &voxear_editor::Editor, camera| *editor.game.engine.world.get::<Transform>(camera).unwrap();
+    // The Scene views' shading menus, the first's first.
+    let shading_menus = |editor: &voxear_editor::Editor| {
+        let mut menus = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "shading", &mut menus);
+        menus
+    };
+
+    // A second Scene view, looking from somewhere of its own and shaded as Wireframe, and a second Inspector,
+    // floating.
+    let mut editor = open(&mut renderer);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    assert_eq!(editor.add_scene_view("scene"), "scene-2");
+    assert_eq!(editor.add_inspector("inspector"), "inspector-2");
+    editor.ui.float_dock_panel(dock, "inspector-2", None);
+    frame(&mut editor, &mut renderer);
+    let camera = second(&editor).unwrap();
+    let mut flown = place(&editor, camera);
+    flown.position += Vec3::new(3.0, 1.0, -2.0);
+    flown.rotation = voxear_core::math::Quat::from_rotation_y(0.7);
+    *editor.game.engine.world.get_mut::<Transform>(camera).unwrap() = flown;
+    let menu = shading_menus(&editor)[1];
+    choose(&mut editor, &mut renderer, menu, 2);
+    let layout = editor.ui.dock_layout(dock);
+    assert!(layout.contains("scene-2*]") && layout.contains("[inspector-2]"), "{layout}");
+    // The layout is looked at once a second.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    frame(&mut editor, &mut renderer);
+    drop(editor);
+
+    // Opened again, both are back in place, the Scene view looking from where it was left and shaded as it was.
+    let mut editor = open(&mut renderer);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    assert_eq!(editor.ui.dock_layout(dock), layout, "both where they were");
+    assert_eq!((editor.scene_view_count(), editor.inspector_count()), (2, 2));
+    let camera = second(&editor).expect("the second Scene view");
+    assert_eq!(place(&editor, camera).position, flown.position);
+    assert!(place(&editor, camera).rotation.abs_diff_eq(flown.rotation, 1e-6));
+    assert_eq!(editor.ui.selected_option(shading_menus(&editor)[1]), 2, "Wireframe");
+    assert_eq!(editor.settings().scene_shading, 0, "the first's shading stays its own");
+
+    // A layout that leaves them out takes them away for good, as closing them does; back on the one that names
+    // them, they open again as they were.
+    assert!(editor.use_layout("Profiling"));
+    frame(&mut editor, &mut renderer);
+    assert_eq!((editor.scene_view_count(), editor.inspector_count()), (1, 1));
+    let panels = editor.ui.dock_panels(dock);
+    assert!(!panels.iter().any(|(id, ..)| id == "scene-2" || id == "inspector-2"), "gone, not just closed");
+    assert!(!editor.game.engine.world.is_alive(camera), "its camera with it");
+    assert!(editor.use_layout("Default"));
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.ui.dock_layout(dock), layout);
+    let camera = second(&editor).expect("the second Scene view, again");
+    assert_eq!(place(&editor, camera).position, flown.position);
+    assert_eq!(editor.ui.selected_option(shading_menus(&editor)[1]), 2);
+}
+
+#[test]
 fn voxdocs_shows_a_pages_pictures() {
     let dir = hello_copy();
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {

@@ -10,7 +10,10 @@
 //! shared by all. The tools act in the Scene view the pointer is over: while
 //! it is, that one is the editor's `scene`, so flying, the handles, a click
 //! to select and a drop all go to it. One opened from the menu goes for good
-//! when it closes, its camera with it. Each is built from SceneView.vui.
+//! when it closes, its camera with it. The editor's memory keeps where each
+//! looked from and how it was shaded, so a layout that names it, after a
+//! restart or on coming back to it, opens it again as it was left (see
+//! `windows`). Each is built from SceneView.vui.
 
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Entity, World};
@@ -22,7 +25,7 @@ use voxear_scene::{Name, Transform};
 use voxear_ui::{Color, NodeId, Shape, Ui};
 
 use super::{Editor, GIZMO_END, GIZMO_MIDDLE, GIZMO_REACH};
-use crate::{gizmos, hierarchy::EditorOnly, scene_tools::ViewCamera};
+use crate::{gizmos, hierarchy::EditorOnly, scene_tools::ViewCamera, settings::KeptSceneView};
 
 /// What every Scene view is built from.
 const MARKUP: &str = include_str!("../../ui/SceneView.vui");
@@ -117,8 +120,14 @@ impl SceneView {
 
     /// Its place among the Scene views: 1 for the first, then as numbered.
     fn number(&self) -> u32 {
-        self.panel.strip_prefix("scene-").and_then(|n| n.parse().ok()).unwrap_or(1)
+        panel_number(&self.panel)
     }
+}
+
+/// A Scene view's place among them by its panel: 1 for the first's, `scene`,
+/// then as numbered.
+fn panel_number(panel: &str) -> u32 {
+    panel.strip_prefix("scene-").and_then(|n| n.parse().ok()).unwrap_or(1)
 }
 
 impl Editor {
@@ -128,15 +137,42 @@ impl Editor {
         let taken = |n: u32| self.all_scene_views().any(|view| view.number() == n);
         let number = (2..).find(|&n| !taken(n)).expect("there is always a free number");
         let panel = format!("scene-{number}");
-        let content = self.ui.add_dock_panel_beside(self.nodes.dock, &panel, "Scene", beside);
-        self.ui.set_dock_panel_icon(self.nodes.dock, &panel, "cube");
+        let place = self.game.engine.world.get::<Transform>(self.scene.camera).copied();
+        let place = place.unwrap_or(Transform::IDENTITY);
+        self.open_scene_view(&panel, beside, place, self.scene.shading, self.scene.show_gizmos);
+        panel
+    }
+
+    /// Opens the Scene view a layout names as `panel` (`scene-2`), unless
+    /// it is open: as the editor's memory kept it, or else looking from
+    /// where the Scene view in use looks, as Add Scene View opens one.
+    pub(super) fn reopen_scene_view(&mut self, panel: &str) {
+        if self.all_scene_views().any(|view| view.panel == panel) {
+            return;
+        }
+        let place = self.game.engine.world.get::<Transform>(self.scene.camera).copied();
+        let mut place = place.unwrap_or(Transform::IDENTITY);
+        let (shading, show_gizmos) = match self.memory.scene_views.iter().find(|kept| kept.panel == panel) {
+            Some(kept) => {
+                (place.position, place.rotation) = (Vec3::from(kept.position), Quat::from_array(kept.rotation));
+                (kept.shading, kept.show_gizmos)
+            }
+            None => (self.scene.shading, self.scene.show_gizmos),
+        };
+        self.open_scene_view(panel, FIRST, place, shading, show_gizmos);
+    }
+
+    /// Opens a Scene view as `panel` beside the panel `beside`, its camera
+    /// at `place` with the lens of the one in use.
+    fn open_scene_view(&mut self, panel: &str, beside: &str, place: Transform, shading: usize, show_gizmos: bool) {
+        let content = self.ui.add_dock_panel_beside(self.nodes.dock, panel, "Scene", beside);
+        self.ui.set_dock_panel_icon(self.nodes.dock, panel, "cube");
         let world = &mut self.game.engine.world;
-        let place = world.get::<Transform>(self.scene.camera).copied().unwrap_or(Transform::IDENTITY);
         let lens = world.get::<Camera>(self.scene.camera).copied().unwrap_or_default();
         let camera = world.spawn((Name("Scene Camera".into()), place, lens, EditorOnly));
-        let mut view = SceneView::build(&mut self.ui, content, &panel, camera);
+        let mut view = SceneView::build(&mut self.ui, content, panel, camera);
         view.fly.set_speed(self.scene.fly.speed());
-        (view.shading, view.show_gizmos) = (self.scene.shading, self.scene.show_gizmos);
+        (view.shading, view.show_gizmos) = (shading, show_gizmos);
         if let Some(open) = self.open_prefab_path() {
             let name = open.rsplit('/').next().unwrap_or(open).to_string();
             self.ui.set_text(view.prefab_name, &name);
@@ -144,7 +180,6 @@ impl Editor {
         }
         self.scene_views.push(view);
         self.apply_settings();
-        panel
     }
 
     /// Takes a Scene view opened from the menu away for good, as closing it
@@ -161,12 +196,42 @@ impl Editor {
         }
         let index = self.scene_views.iter().position(|view| view.panel == panel).expect("it is one of the others");
         let view = self.scene_views.remove(index);
+        // As it was left, for a layout that names it to open it again so.
+        let kept = self.kept_scene_view(&view);
+        self.memory.scene_views.retain(|other| other.panel != panel);
+        self.memory.scene_views.push(kept);
         self.game.engine.world.despawn(view.camera);
         if let Some(edit_camera) = view.edit_camera {
             self.despawn_in_edit_world(edit_camera);
         }
         self.ui.remove_dock_panel(self.nodes.dock, panel);
         true
+    }
+
+    /// A Scene view opened from the menu as it now is, for the editor's memory.
+    fn kept_scene_view(&self, view: &SceneView) -> KeptSceneView {
+        let place = self.game.engine.world.get::<Transform>(view.camera).copied().unwrap_or(Transform::IDENTITY);
+        KeptSceneView {
+            panel: view.panel.clone(),
+            position: place.position.to_array(),
+            rotation: place.rotation.to_array(),
+            shading: view.shading,
+            show_gizmos: view.show_gizmos,
+        }
+    }
+
+    /// The Scene views opened from the menu as they now are, and as they
+    /// were left those a layout not showing names, for the editor's memory.
+    /// Those no layout in `named` names are forgotten.
+    pub(super) fn kept_scene_views(&self, named: &[&str]) -> Vec<KeptSceneView> {
+        let open = self.all_scene_views().filter(|view| view.panel != FIRST);
+        let mut kept: Vec<KeptSceneView> = open.map(|view| self.kept_scene_view(view)).collect();
+        let left = self.memory.scene_views.iter().filter(|old| !kept.iter().any(|view| view.panel == old.panel));
+        let left: Vec<KeptSceneView> = left.cloned().collect();
+        kept.extend(left);
+        kept.retain(|view| named.contains(&view.panel.as_str()));
+        kept.sort_by_key(|view| panel_number(&view.panel));
+        kept
     }
 
     /// How many Scene views there are, the first included.

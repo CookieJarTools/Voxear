@@ -381,6 +381,27 @@ pub struct SavedLayout {
     pub start: String,
 }
 
+/// A Scene view opened from a window's menu, as it was left: its panel, by
+/// id (`scene-2`), where its camera was and which way it looked, and how it
+/// drew.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeptSceneView {
+    pub panel: String,
+    pub position: [f32; 3],
+    /// As a quaternion's x, y, z and w.
+    pub rotation: [f32; 4],
+    /// Lit, Unlit, Wireframe or Lit Wireframe, by index.
+    pub shading: usize,
+    pub show_gizmos: bool,
+}
+
+impl Default for KeptSceneView {
+    fn default() -> Self {
+        Self { panel: String::new(), position: [0.0; 3], rotation: [0.0, 0.0, 0.0, 1.0], shading: 0, show_gizmos: true }
+    }
+}
+
 /// What the editor remembers of a project: its settings, the keys of what
 /// the palette ran, most recent first, and how its panels were laid out.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -394,6 +415,9 @@ pub struct Memory {
     pub workspace: usize,
     pub layouts: Vec<String>,
     pub saved_layouts: Vec<SavedLayout>,
+    /// The Scene views opened from a window's menu that a layout names, so
+    /// they open again as they were left with the layout.
+    pub scene_views: Vec<KeptSceneView>,
     /// Where it is kept, or `None` for an editor that remembers nothing.
     #[serde(skip)]
     path: Option<PathBuf>,

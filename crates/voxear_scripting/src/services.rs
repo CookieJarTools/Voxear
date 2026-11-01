@@ -148,6 +148,32 @@ pub trait ScriptServices {
     fn ui_ask(&mut self, _element: u32, _ask: UiAsk<'_>) -> UiAnswer {
         UiAnswer::None
     }
+
+    /// What a save calls an Obj, so that a later run finds it again: the
+    /// GUID of the scene it was loaded from and its path there, as
+    /// `guid:3/2`. None for an Obj made while the game runs.
+    fn obj_key(&self, _entity: Entity) -> Option<String> {
+        None
+    }
+
+    /// The Obj a save's key names, when its scene is open.
+    fn obj_by_key(&self, _key: &str) -> Option<Entity> {
+        None
+    }
+
+    /// An asset's GUID, as a save keeps it.
+    fn asset_guid(&self, _asset: AssetName<'_>) -> Option<String> {
+        None
+    }
+}
+
+/// An asset a save names by GUID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssetName<'a> {
+    /// By project path or GUID, as a `Ref<T>` holds it.
+    Reference(&'a str),
+    /// A loaded prefab, by the id [`ScriptServices::load_prefab`] gave it.
+    Prefab(u32),
 }
 
 /// What a script asks of one of the game UI's elements.

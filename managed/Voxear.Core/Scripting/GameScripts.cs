@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using Voxear.Interop;
+using Voxear.Saving;
 
 namespace Voxear.Scripting
 {
@@ -36,6 +37,7 @@ namespace Voxear.Scripting
 			SceneComponentTypes.Clear();
 			BehaviourTypes.Clear();
 			BehaviourFields.Clear();
+			SaveTypes.Clear();
 			Log.Info($"Loaded game scripts from {path}");
 		}
 
@@ -167,6 +169,7 @@ namespace Voxear.Scripting
 			SceneComponentTypes.Clear();
 			InstanceRegistry.Clear();
 			InspectorDrawers.Forget();
+			SaveTypes.Clear();
 		}
 
 		/// <summary>Lets go of the old scripts, so they can leave memory once nothing runs them.</summary>
@@ -178,6 +181,7 @@ namespace Voxear.Scripting
 			}
 
 			Level.Forget(previous);
+			SaveTypes.Forget(previous);
 			MainThreadContext.Instance.Forget(previous);
 			previous.Unload();
 			retired.Add(new WeakReference(previous));

@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
-use voxear_scripting::{DotnetInstall, ScriptRuntime, find_dotnet};
+use voxear_scripting::{DotnetInstall, SaveSettings, ScriptRuntime, find_dotnet};
 
 use crate::{
     build_profile::host_platform,
@@ -155,7 +155,10 @@ pub fn start_for(project: &Project, configuration: &str) -> Result<Option<Script
         return Ok(None);
     }
     let assembly = project.scripts_assembly(configuration).context("scripts project has no file name")?;
-    start_assembly(&assembly, configuration).map(Some)
+    let mut scripts = start_assembly(&assembly, configuration)?;
+    // Saves go where the project's build keeps them by default, as JSON to read.
+    scripts.set_saves(SaveSettings { folder: crate::player::save_folder(None, project.name()), readable: true });
+    Ok(Some(scripts))
 }
 
 /// Starts the scripts in `assembly`, built in `configuration` with

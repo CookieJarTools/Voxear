@@ -7,7 +7,7 @@ use voxear_ecs::{Entity, World};
 use voxear_render::{MAX_PREVIEW_SIZE, MeshRenderer, PreviewId, PreviewOptions, Renderer};
 use voxear_scene::{Placement, Transform};
 use voxear_scripting::{
-    ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions,
+    AssetName, ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions,
     PreviewSource, PreviewState, SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab,
     UiAnswer, UiAsk,
 };
@@ -19,7 +19,7 @@ use crate::{
     game_ui::GameUi,
     levels::{LevelChange, LevelOptions, Levels},
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
-    prefab::PrefabId,
+    prefab::{ObjPath, PrefabId},
     previews::ScriptPreviews,
     project::Project,
     scripts::ScriptWatcher,
@@ -511,6 +511,24 @@ impl ScriptServices for GameServices<'_> {
 
     fn keep_prefab(&mut self, prefab: u32, keep: bool) {
         self.content.keep_prefab(PrefabId(prefab), keep);
+    }
+
+    fn obj_key(&self, entity: Entity) -> Option<String> {
+        let (scene, path) = self.levels.place_of(entity)?;
+        Some(format!("{scene}:{path}"))
+    }
+
+    fn obj_by_key(&self, key: &str) -> Option<Entity> {
+        let (scene, path) = key.split_once(':')?;
+        self.levels.obj_at(scene.parse().ok()?, &ObjPath::parse(path).ok()?)
+    }
+
+    fn asset_guid(&self, asset: AssetName<'_>) -> Option<String> {
+        let guid = match asset {
+            AssetName::Reference(reference) => self.content.parse(reference).ok()?.guid()?,
+            AssetName::Prefab(prefab) => self.content.prefab_guid(PrefabId(prefab))?,
+        };
+        Some(guid.to_string())
     }
 
     fn prefab_path(&self, prefab: u32) -> Option<String> {

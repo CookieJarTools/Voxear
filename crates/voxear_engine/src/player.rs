@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use voxear_render::{Renderer, RendererSettings};
-use voxear_scripting::ScriptRuntime;
+use voxear_scripting::{SaveSettings, ScriptRuntime};
 
 use crate::{
     Content, ContentSettings, Engine, Game, Project, ProjectFile, WindowOptions, project::ProjectInfo, run_windowed,
@@ -34,6 +34,8 @@ pub const PLAYER_FORMAT: u32 = 1;
 /// A player's log, and the one of the run before.
 pub const PLAYER_LOG: &str = "player.log";
 pub const PREVIOUS_LOG: &str = "player-prev.log";
+/// The folder of a game's saves, beside its log.
+pub const SAVES_FOLDER: &str = "Saves";
 
 /// `Data/player.toml`: what the player runs, and how, from the build profile
 /// it was built with.
@@ -90,6 +92,17 @@ impl PlayerSettings {
 /// company's name and its own, as `player.log`. Linux: `$XDG_DATA_HOME`, or
 /// `~/.local/share`; Windows: `%LOCALAPPDATA%`. `None` without a home.
 pub fn log_path(company: Option<&str>, product: &str) -> Option<PathBuf> {
+    Some(game_data_folder(company, product)?.join(PLAYER_LOG))
+}
+
+/// Where a game keeps its saves: `Saves`, beside its log. The editor and
+/// `vox run` use the project's name without a company, the folder a build
+/// whose profile leaves both names unset uses too.
+pub fn save_folder(company: Option<&str>, product: &str) -> Option<PathBuf> {
+    Some(game_data_folder(company, product)?.join(SAVES_FOLDER))
+}
+
+fn game_data_folder(company: Option<&str>, product: &str) -> Option<PathBuf> {
     let data = if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
     } else {
@@ -101,7 +114,7 @@ pub fn log_path(company: Option<&str>, product: &str) -> Option<PathBuf> {
         path.push(file_name(company));
     }
     path.push(file_name(product));
-    Some(path.join(PLAYER_LOG))
+    Some(path)
 }
 
 /// Opens a new log for the game in `data`, keeping the last run's as
@@ -152,6 +165,8 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
         let managed = data.join(MANAGED_FOLDER);
         let mut runtime = ScriptRuntime::start(&scripts::dotnet()?, &managed.join("Voxear.Core.dll"))?;
         runtime.load_game_assembly(&managed.join(assembly))?;
+        let folder = save_folder(settings.company_name.as_deref(), &settings.product_name);
+        runtime.set_saves(SaveSettings { folder, readable: false });
         engine.set_scripts(runtime);
     }
     let content = Content::open_bundles(data, &data.join(BUNDLES_FOLDER))?;

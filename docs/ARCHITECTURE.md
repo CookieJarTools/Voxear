@@ -578,6 +578,62 @@ directly.
 - A Roslyn suppressor for warning CS0649, which fires on `[SerializeField]` fields because the compiler cannot see
   the engine set them. Until it exists, game projects turn that warning off, as Hello's `.csproj` does.
 
+## Saves *(implemented; persistent Objs and pictures planned)*
+
+A game's saves, from `Voxear.Save` in C#. The work is split where it is cheapest: C# knows the values and their
+types, so it takes them apart and puts them back; Rust knows files, so it keeps the slots and writes them safely.
+
+- **Slots** (`voxear_scripting::saves`, `SaveFolder`): each slot is one file, `<slot>.save`, in the game's save
+  folder. The host sets the folder with `ScriptRuntime::set_saves`: a build uses `Saves` beside its `player.log`,
+  under the company and product names of its profile (`player::save_folder`); the editor and `vox run` use the
+  project's name without a company, which is where a build whose profile names neither lands too. Names are file
+  names on Linux and Windows alike (letters, digits, spaces, `-`, `_`, `.` and brackets, no device names, at most 64
+  characters), matched ignoring case on both, as Windows matches files.
+- **The file:** a 40-byte header (`VOXSAVE\0`, the file format, when it was written, the three parts' lengths and
+  a CRC-32 of them), then three parts: *info*, JSON that C# writes about the save (its format, its top type, its
+  version and summary); *picture*, a PNG for load menus, empty until the engine takes one; and *data*. Listing slots
+  reads only each header and info. Reading the data checks the length and the CRC, so a cut-short or changed file is
+  refused as damaged rather than read as nonsense.
+- **Writing:** the bytes go to `<slot>.save.writing`, are synced to disk, and are renamed over the slot's file,
+  which replaces it in one step on both systems; on Unix the folder is synced too, so the rename itself lasts. A
+  crash or a full disk at any point leaves the save before. Writes queue on one `save writer` thread and run in
+  order, each with a ticket that C# polls; every read, list and change waits for the writes queued before it, so a
+  script always reads what it last wrote, and dropping the `ScriptRuntime` waits for them all, so quitting right
+  after a save keeps it.
+- **Native calls** (API 28): `save_write`, `save_wait`, `save_read` (a part, with the file kept between the call
+  that asks its length and the one that copies it, so it is read once), `save_change` (delete, copy, rename,
+  exists) and `save_info` (the slots, the folder, the default format, the last failure's message). Failures are
+  numbers below 0, one per `SaveError` kind. `save_key` and `save_obj` turn Objs and assets into keys and back
+  through `ScriptServices::obj_key`, `obj_by_key` and `asset_guid`.
+- **Values** (`Voxear.Saving`): C# turns values into a `SaveNode` tree (null, bool, integer, float, text, bytes,
+  list, table), and a `SaveFormat` turns the tree into bytes: binary (`VSB` and a version byte, then every name and text once in a table at
+  the start, then tagged values, zigzag varints, floats in four bytes when that is exact), the default in builds,
+  or indented JSON, the default in the editor and `vox run`. The info names the format, so a save always reads
+  back with the one that wrote it, and a game's own formats, found by type like converters, read the same way.
+  Migrations and converters see the tree, never bytes, so they work the same in every format.
+- **The walk** (`SaveWriter`, `SaveReader`): a converter for the type comes first (added in code, then found in
+  the game scripts, then the engine's own for vectors, quaternions, colours, matrices, dates, times and GUIDs);
+  then plain values (enums by name); then the engine's things (an Obj as `<scene GUID>:<ObjPath>`, from
+  `Levels::place_of`, so it is found in a later run while its scene is open; a behaviour that another value points
+  to as its Obj; `Prefab` and `Ref<T>` as GUIDs); then dictionaries (a table when keys read as text, else
+  `[key, value]` pairs), collections and arrays; and then a type's members: public fields, `[SerializeField]`
+  private ones (readonly too), and public settable properties, init-only ones included, less `[NonSerialized]`,
+  `[DontSave]` and delegates. A behaviour at the top of a save is its fields, read back with `ReadInto`. A value
+  whose type differs from its field's records `$type`; a class reached twice is written once with `$id` and then
+  as `$ref`, so sharing and cycles survive. Classes are made with their constructor that takes nothing, or without
+  one for records, so members a save lacks keep their initial values. A value that does not fit warns, naming
+  where it is, and keeps its initial value, so one bad value never costs a player the rest of the save.
+- **Versions:** a type marked `[SaveVersion(n)]` writes `$version` in its table, and its static `[MigrateFrom(k)]`
+  methods (or `Save.AddMigration<T>`) change a table from version k to k+1 before it is read, one step at a time,
+  top-down, so a nested type migrates by its own version after its holder's. A table from a newer version than its
+  type's is refused with `SaveError.NewerVersion`.
+- **Easy and advanced:** `Save.Write(slot, data)` and `Save.Read<T>(slot)` need nothing set up; `Read(slot,
+  fallback)` and `TryRead` never throw. `Save.Write` waits for the disk; `WriteAsync` takes the values apart at
+  once and leaves only the disk to another thread, as a `SaveWrite` to await. `SaveFile` keeps several named parts
+  in one slot, with its own format, summary and version, and `Save.Slots` reads only the headers.
+- **Planned:** persistent Objs and scene state saved by marking fields or components; a picture of the game with
+  each save; a store interface for cloud saves (Steam's, with the platform API); and a Saves window in the editor.
+
 ## Content (assets, Bundles, loading)
 
 This is the only way to load assets. It replaces Addressables and fixes the build pain by making bundling automatic.

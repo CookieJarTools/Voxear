@@ -497,6 +497,24 @@ impl Levels {
         scene.objs.iter().find(|(p, _)| p == path).map(|(_, e)| *e)
     }
 
+    /// Where an Obj was loaded from: its scene and its path in that scene's
+    /// file, the same in every run, as a save names it. None for an Obj made
+    /// while the game runs.
+    pub fn place_of(&self, entity: Entity) -> Option<(AssetGuid, ObjPath)> {
+        let loaded = self.scenes.iter().find_map(|scene| {
+            scene.objs.iter().find(|(path, e)| *e == entity && !path.is_root()).map(|(path, _)| (scene.guid, path.clone()))
+        });
+        loaded.or_else(|| self.persistent.iter().find(|(_, e)| **e == entity).map(|(place, _)| place.clone()))
+    }
+
+    /// The Obj loaded from `path` in `scene`, while that scene is open or the
+    /// Obj outlived it as a persistent one.
+    pub fn obj_at(&self, scene: AssetGuid, path: &ObjPath) -> Option<Entity> {
+        let open = self.scenes.iter().find(|s| s.guid == scene);
+        let loaded = open.and_then(|s| s.objs.iter().find(|(p, _)| p == path).map(|(_, entity)| *entity));
+        loaded.or_else(|| self.persistent.get(&(scene, path.clone())).copied())
+    }
+
     /// The scene an Obj is kept in.
     pub fn scene_of(&self, entity: Entity) -> Option<AssetGuid> {
         self.scenes.iter().find(|scene| scene.objs.iter().any(|(_, e)| *e == entity)).map(|scene| scene.guid)

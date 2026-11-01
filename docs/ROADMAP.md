@@ -407,6 +407,24 @@ Still to do in M3:
   - [x] the dev console through `vox`, into a running game: `vox console "line"`
   - [x] debug draw's texts in the player, as in the editor, from one shared piece
   - [x] a C# `Color` field in the Inspector: a swatch for the colour picker, set from hex or numbers in scenes
+- **Saving**, built into the engine (see "Saves" in the architecture):
+  - [x] `Save.Write("slot1", data)` and `Save.Read<T>("slot1")` with nothing to set up, `Save.Slots` with each
+    save's time, version and summary, and slots deleted, copied and renamed
+  - [x] any value: numbers, text, enums, the math types, dates, arrays, lists, sets and dictionaries, and classes,
+    structs and records by their fields and properties, with shared and circular references and derived types
+  - [x] Objs by their scene and place, behaviours that values point to by their Obj, prefabs and `Ref<T>` by GUID,
+    and a behaviour's own fields, read back into it with `Save.ReadInto`
+  - [x] `SaveConverter<T>` for a type saved its own way, found in the scripts by itself
+  - [x] binary and JSON behind one `SaveFormat`, JSON in the editor and binary in builds, and formats of a game's
+    own, found by themselves
+  - [x] versions with `[SaveVersion]` and `[MigrateFrom]`, and saves from a newer version refused
+  - [x] slots in the game's own save folder, each written whole and renamed into place, and checked when read
+  - [x] `WriteAsync`, writing on a thread of its own while the game carries on
+  - [x] `SaveFile`, for several parts in one save
+  - [ ] persistent Objs and scene state, saved by marking fields or components (to decide with the user first)
+  - [ ] a picture of the game with each save, for load menus (the file already has room for one)
+  - [ ] a Saves window in the editor, to look into, change and delete the project's saves
+  - Later: a store for cloud saves, with Steam's in M11.
 - **C# ECS API**, the advanced path beside Behaviours (see "ECS and the Obj model" in the architecture):
   - [x] C# components as `unmanaged` structs, registered by name and layout, living in the same chunk memory as Rust
     components

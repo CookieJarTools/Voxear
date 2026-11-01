@@ -12,6 +12,7 @@ use voxear_scene::{BehaviourHandle, BehaviourHost, BehaviourSpec, Callbacks, Pha
 use crate::{
     hostfxr::{DotnetInstall, Runtime},
     interop::{self, BehaviourInfo, FLAG_GONE, FLAG_INSTANCE, ManagedApi, NativeApi, WorldScope},
+    saves::{self, SaveSettings},
 };
 
 const BOOTSTRAP_TYPE: &str = "Voxear.Interop.Bootstrap, Voxear.Core";
@@ -384,9 +385,24 @@ impl ScriptRuntime {
         &mut self.time
     }
 
+    /// Where `Voxear.Save` keeps the game's saves, and the format it writes
+    /// when scripts choose none. Until this is set, saving fails with a
+    /// message that there is nowhere to keep saves.
+    pub fn set_saves(&mut self, settings: SaveSettings) {
+        saves::configure(settings);
+    }
+
     /// Pairs the runtime with the world so the lifecycle can drive scripts.
     pub fn host<'a>(&'a self, world: &'a mut World) -> ScriptHost<'a> {
         ScriptHost { runtime: self, world }
+    }
+}
+
+impl Drop for ScriptRuntime {
+    /// Saves still being written finish first, so quitting right after a
+    /// save keeps it.
+    fn drop(&mut self) {
+        saves::flush();
     }
 }
 

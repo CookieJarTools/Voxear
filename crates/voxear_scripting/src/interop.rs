@@ -32,8 +32,9 @@ use crate::ecs::{
     component_has, component_register, component_remove, component_set, entity_alive, entity_create, entity_destroy,
     query_chunks,
 };
+use crate::saves::{save_change, save_info, save_read, save_wait, save_write};
 use crate::services::{
-    ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
+    AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
     SceneLoadOptions, SceneRequest, SpawnedPrefab, with_services,
 };
 use crate::ui::{
@@ -41,7 +42,7 @@ use crate::ui::{
     ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 27;
+pub(crate) const API_VERSION: u32 = 28;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -176,6 +177,35 @@ pub(crate) struct NativeApi {
     pub ui_create: unsafe extern "C" fn(parent: i32, kind: i32, text: *const u8, len: i32) -> i32,
     pub ui_remove: unsafe extern "C" fn(element: i32),
     pub ui_changed: unsafe extern "C" fn(element: i32) -> i32,
+    /// Saves, for `Voxear.Save` (see [`crate::saves`]): a slot's info and
+    /// data queued to be written, returning a ticket; whether a ticket's
+    /// write has finished (1) or still runs (0), waiting for it when asked;
+    /// a part of a slot read; a slot deleted, copied, renamed or looked for;
+    /// and what scripts ask about saves. Failures are below 0, each kind its
+    /// own number, with the message `save_info` gives.
+    pub save_write: unsafe extern "C" fn(
+        slot: *const u8,
+        slot_len: i32,
+        info: *const u8,
+        info_len: i32,
+        data: *const u8,
+        data_len: i64,
+    ) -> i32,
+    pub save_wait: unsafe extern "C" fn(ticket: i32, wait: i32) -> i32,
+    pub save_read:
+        unsafe extern "C" fn(slot: *const u8, slot_len: i32, part: i32, buffer: *mut u8, capacity: i64) -> i64,
+    pub save_change:
+        unsafe extern "C" fn(change: i32, slot: *const u8, slot_len: i32, other: *const u8, other_len: i32) -> i32,
+    pub save_info: unsafe extern "C" fn(what: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// What a save calls something, so a later run finds it again: an Obj
+    /// by its scene and its place there (`kind` 0, `id` its entity), an
+    /// asset by GUID from its project path or GUID (`kind` 1, `reference`),
+    /// or a loaded prefab by GUID (`kind` 2, `id`); written when it fits,
+    /// its length returned either way, or -1 for none. Then the Obj a key
+    /// names, or 0.
+    pub save_key:
+        unsafe extern "C" fn(kind: i32, id: u64, reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    pub save_obj: unsafe extern "C" fn(key: *const u8, len: i32) -> u64,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -396,6 +426,32 @@ unsafe extern "C" fn obj_find(name: *const u8, len: i32, out: *mut u64, capacity
         }
     }
     found.len() as i32
+}
+
+unsafe extern "C" fn save_key(
+    kind: i32,
+    id: u64,
+    reference: *const u8,
+    len: i32,
+    buffer: *mut u8,
+    capacity: i32,
+) -> i32 {
+    let reference = unsafe { utf8(reference, len) };
+    let key = match kind {
+        0 => with_services(|services| services.obj_key(Entity::from_bits(id))),
+        1 => with_services(|services| services.asset_guid(AssetName::Reference(&reference))),
+        _ => with_services(|services| services.asset_guid(AssetName::Prefab(id as u32))),
+    };
+    let Some(key) = key.flatten() else { return -1 };
+    if !buffer.is_null() && key.len() <= capacity.max(0) as usize {
+        unsafe { ptr::copy_nonoverlapping(key.as_ptr(), buffer, key.len()) };
+    }
+    key.len() as i32
+}
+
+unsafe extern "C" fn save_obj(key: *const u8, len: i32) -> u64 {
+    let key = unsafe { utf8(key, len) };
+    with_services(|services| services.obj_by_key(&key)).flatten().map_or(0, Entity::to_bits)
 }
 
 unsafe extern "C" fn preview_create(
@@ -905,6 +961,13 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         ui_create,
         ui_remove,
         ui_changed,
+        save_write,
+        save_wait,
+        save_read,
+        save_change,
+        save_info,
+        save_key,
+        save_obj,
     }
 }
 

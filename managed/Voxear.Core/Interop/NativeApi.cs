@@ -85,5 +85,12 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<int, int, byte*, int, int> UiCreate;
 		public delegate* unmanaged[Cdecl]<int, void> UiRemove;
 		public delegate* unmanaged[Cdecl]<int, int> UiChanged;
+		public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, byte*, long, int> SaveWrite;
+		public delegate* unmanaged[Cdecl]<int, int, int> SaveWait;
+		public delegate* unmanaged[Cdecl]<byte*, int, int, byte*, long, long> SaveRead;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, int> SaveChange;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, int> SaveInfo;
+		public delegate* unmanaged[Cdecl]<int, ulong, byte*, int, byte*, int, int> SaveKey;
+		public delegate* unmanaged[Cdecl]<byte*, int, ulong> SaveObj;
 	}
 }

@@ -172,7 +172,7 @@ fn build_programs(root: &Path, version: &str) -> Result<()> {
     // The C runtime inside the programs, so an install runs without the Visual C++ redistributable.
     let flags = std::env::var("RUSTFLAGS").unwrap_or_default();
     if cfg!(windows) && !flags.contains("crt-static") {
-        command.env("RUSTFLAGS", format!("{flags} -C target-feature=+crt-static").trim().to_string());
+        command.env("RUSTFLAGS", format!("{flags} -C target-feature=+crt-static").trim());
     }
     let status = command.status().context("running cargo")?;
     ensure!(status.success(), "building the programs failed");

@@ -173,6 +173,15 @@ float3 debugColor(uint index)
     return PALETTE[min(index, 5)];
 }
 
+// A mesh's edges over the lit scene, for the lit wireframe view: drawn as
+// lines by the edges pipeline, faint enough for the shading to read.
+[shader("fragment")]
+float4 edgeFragment(VertexOut input) : SV_Target0
+{
+    ditherLodFade(input);
+    return float4(0.0, 0.0, 0.0, 0.35);
+}
+
 [shader("fragment")]
 FragmentOut fragmentMain(VertexOut input)
 {

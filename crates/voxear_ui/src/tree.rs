@@ -128,6 +128,8 @@ pub(crate) struct Element {
     pub gradient: Option<Gradient>,
     /// Lines and circles drawn over its background.
     pub shapes: Vec<crate::Shape>,
+    /// A window onto what was drawn under the UI; see [`Ui::set_see_through`].
+    pub see_through: bool,
     /// How far its children are scrolled, and how far they can be.
     pub scroll: [f32; 2],
     pub scroll_max: [f32; 2],
@@ -163,6 +165,7 @@ impl Element {
             image: None,
             gradient: None,
             shapes: Vec::new(),
+            see_through: false,
             scroll: [0.0; 2],
             scroll_max: [0.0; 2],
             list: None,
@@ -411,6 +414,15 @@ impl Ui {
     pub fn set_shapes(&mut self, node: NodeId, shapes: Vec<crate::Shape>) {
         if let Some(element) = self.element_mut(node) {
             element.shapes = shapes;
+        }
+    }
+
+    /// Makes an element a window onto what the renderer drew under the UI,
+    /// such as a 3D view: the UI drawn before it is cut away inside it, so
+    /// what lies under a floating window does not show through its view.
+    pub fn set_see_through(&mut self, node: NodeId, see_through: bool) {
+        if let Some(element) = self.element_mut(node) {
+            element.see_through = see_through;
         }
     }
 

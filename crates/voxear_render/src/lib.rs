@@ -9,8 +9,8 @@
 
 mod alloc;
 mod assets;
-mod cooked;
 mod capture;
+mod cooked;
 mod debug_pass;
 mod fbx_import;
 mod frame_debugger;
@@ -43,15 +43,15 @@ use voxear_rhi::{
 
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
-pub use cooked::{COOKED_VERSION, CookedModel};
 pub use capture::{Capture, CapturedImage};
+pub use cooked::{COOKED_VERSION, CookedModel};
 pub use frame_debugger::{Channels, FrameImage, FrameLook, FramePass};
 pub use gltf_import::{
     ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
 };
 pub use gpu::{
-    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS,
-    DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
+    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE,
+    DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::MAX_LODS;
@@ -176,30 +176,16 @@ pub struct Renderer {
     pipelines: Pipelines,
     output_format: vk::Format,
     watcher: Option<ShaderWatcher>,
-    buffers: Vec<FrameBuffers>,
-    /// Which instances were visible last frame; drives the early pass.
-    visibility: Option<Buffer>,
-    /// Each instance's current and previous LOD and fade progress.
-    lod_state: Option<Buffer>,
-    /// Auto exposure's adapted EV and whether it has started.
-    exposure: Option<Buffer>,
-    /// Last frame's model matrices and camera, for motion vectors.
-    prev_models: HashMap<Entity, Mat4Cols>,
-    /// Last frame's Objs in their instances' order.
-    prev_entities: Vec<Entity>,
-    prev_view_proj: Option<Mat4Cols>,
-    /// The size TAA's history was rendered at; `None` when it is stale.
-    taa_history: Option<vk::Extent2D>,
+    /// The 3D views drawn each frame: the first, which the stats are of, and
+    /// any after it (see [`View`]).
+    views: Vec<View>,
     frame_index: u64,
     last_time: Option<f32>,
-    options: ViewOptions,
     stats: RenderStats,
     pending_size: Option<(u32, u32)>,
     ui: ui_pass::UiGpu,
     previews: previews::Previews,
     gpu_decompression: bool,
-    /// Where in the output the 3D view goes; all of it when `None`.
-    view: Option<[u32; 4]>,
     /// What the output is cleared to outside the view, linear.
     clear: [f32; 4],
     frame_debugger: frame_debugger::FrameDebugger,
@@ -239,18 +225,7 @@ impl Renderer {
             Output::Offscreen { image, .. } => image.desc.format,
         };
         let pipelines = Pipelines::new(&gpu, &bindless, output_format, &ShaderSet::embedded())?;
-        let buffers = (0..FRAMES_IN_FLIGHT).map(|slot| create_frame_buffers(&gpu, slot)).collect::<Result<_>>()?;
-        let persistent = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-        let visibility = gpu.create_buffer("visibility", MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
-        let lod_state = gpu.create_buffer("lod state", MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
-        // Host visible so the adapted exposure shows in the stats.
-        let exposure = gpu.create_buffer("exposure", 16, persistent, MemoryLocation::GpuToCpu)?;
-        // Nothing was visible, no LOD chosen and no exposure metered before the first frame.
-        gpu.immediate(|cmd| unsafe {
-            for buffer in [&visibility, &lod_state, &exposure] {
-                gpu.device.cmd_fill_buffer(cmd, buffer.handle, 0, vk::WHOLE_SIZE, 0);
-            }
-        })?;
+        let first = View::new(&gpu, 0)?;
         Ok(Self {
             renderdoc,
             show_capture: false,
@@ -263,23 +238,14 @@ impl Renderer {
             pipelines,
             output_format,
             watcher: if hot_reload { ShaderWatcher::new() } else { None },
-            buffers,
-            visibility: Some(visibility),
-            lod_state: Some(lod_state),
-            exposure: Some(exposure),
-            prev_models: HashMap::new(),
-            prev_entities: Vec::new(),
-            prev_view_proj: None,
-            taa_history: None,
+            views: vec![first],
             frame_index: 0,
             last_time: None,
-            options: ViewOptions::default(),
             stats: RenderStats::default(),
             pending_size: None,
             ui: ui_pass::UiGpu::default(),
             previews: previews::Previews::default(),
             gpu_decompression: true,
-            view: None,
             clear: [0.0, 0.0, 0.0, 1.0],
             frame_debugger: Default::default(),
             captures: Default::default(),
@@ -300,16 +266,35 @@ impl Renderer {
         self.stats
     }
 
+    /// The first 3D view's camera and look.
     pub fn set_view_options(&mut self, options: ViewOptions) {
-        self.options = options;
+        self.views[0].options = options;
+    }
+
+    /// The 3D views to draw after the first, each frame, until set again:
+    /// each into its rectangle of the output, through its camera, as the
+    /// editor's Game view beside its Scene view. Each keeps its own culling,
+    /// exposure and history from frame to frame, by its place in the list.
+    pub fn set_more_views(&mut self, views: &[([u32; 4], ViewOptions)]) -> Result<()> {
+        while self.views.len() > views.len() + 1 {
+            let view = self.views.pop().expect("more than one");
+            view.retire(&mut self.frames);
+        }
+        while self.views.len() < views.len() + 1 {
+            self.views.push(View::new(&self.gpu, self.views.len())?);
+        }
+        for (view, (rect, options)) in self.views[1..].iter_mut().zip(views) {
+            (view.rect, view.options) = (Some(*rect), *options);
+        }
+        Ok(())
     }
 
     /// Forgets last frame for TAA and motion vectors. Call on camera cuts,
     /// where blending with the old view would smear.
     pub fn reset_history(&mut self) {
-        self.taa_history = None;
-        self.prev_models.clear();
-        self.prev_view_proj = None;
+        for view in &mut self.views {
+            view.reset_history();
+        }
     }
 
     pub fn has_renderdoc(&self) -> bool {
@@ -485,26 +470,13 @@ impl Renderer {
     /// the output) instead of all of it, as the editor's Scene panel does.
     /// What lies outside is cleared, for the UI to draw over.
     pub fn set_view_rect(&mut self, rect: Option<[u32; 4]>) {
-        if rect != self.view {
-            self.view = rect;
-        }
+        self.views[0].rect = rect;
     }
 
     /// The colour around a view drawn into part of the output, as linear
     /// RGBA: the UI's background, so its gaps match what it paints.
     pub fn set_clear_color(&mut self, color: [f32; 4]) {
         self.clear = color;
-    }
-
-    /// The view rectangle within an output of `full`, at least a pixel each way.
-    fn view_rect(&self, full: vk::Extent2D) -> vk::Rect2D {
-        let Some([x, y, w, h]) = self.view else {
-            return vk::Rect2D { offset: vk::Offset2D::default(), extent: full };
-        };
-        let x = x.min(full.width - 1);
-        let y = y.min(full.height - 1);
-        let extent = vk::Extent2D { width: w.clamp(1, full.width - x), height: h.clamp(1, full.height - y) };
-        vk::Rect2D { offset: vk::Offset2D { x: x as i32, y: y as i32 }, extent }
     }
 
     fn extent(&self) -> vk::Extent2D {
@@ -552,8 +524,9 @@ impl Renderer {
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
         self.captures.finish(&self.gpu, frame.slot);
         // This slot's previous frame has finished, so its counters are final.
-        let counters = bytemuck::cast_slice(&self.buffers[frame.slot].stats.read()[..stat::COUNT * 4]);
-        let exposure = bytemuck::cast_slice(self.exposure.as_ref().expect("exposure lives until drop").read());
+        let first = &self.views[0];
+        let counters = bytemuck::cast_slice(&first.buffers[frame.slot].stats.read()[..stat::COUNT * 4]);
+        let exposure = bytemuck::cast_slice(first.exposure.read());
         self.stats = RenderStats::read(counters, exposure);
         let acquiring = profile_marker!("Acquire Image").scope();
         let acquired = match &self.output {
@@ -568,22 +541,10 @@ impl Renderer {
         };
         drop(acquiring);
 
-        // The 3D view fills the output, or the rectangle the editor gives it.
-        let view = self.view_rect(full);
-        let extent = view.extent;
-        let extracting = profile_marker!("Extract").scope();
-        let mut extracted = scene::extract(world, extent.width, extent.height, time, self.frame_index, &self.options);
         let delta_time = self.last_time.map_or(0.0, |last| (time - last).clamp(0.0, 0.25));
         self.last_time = Some(time);
-        let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
-        self.track_motion(&mut extracted);
-        let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
-        let taa_reset = self.taa_history != Some(extent);
-        self.taa_history = taa.then_some(extent);
         let frame_index = self.frame_index;
         self.frame_index += 1;
-        let light_count = extracted.lights.len().min(MAX_LIGHTS as usize);
-        drop(extracting);
 
         let recording = profile_marker!("Record Passes").scope();
         let (output_image, output_view, output_desc, output_last) = match &self.output {
@@ -596,157 +557,34 @@ impl Renderer {
         };
 
         let Self {
-            gpu,
-            graph,
-            bindless,
-            pipelines,
-            buffers,
-            assets,
-            visibility,
-            lod_state,
-            exposure,
-            ui,
-            previews,
-            frame_debugger,
-            captures,
-            ..
+            gpu, graph, bindless, pipelines, views, assets, ui, previews, frame_debugger, captures, clear, ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
-        let visibility = visibility.as_ref().expect("visibility lives until drop");
-        let lod_state = lod_state.as_ref().expect("LOD state lives until drop");
-        let exposure = exposure.as_ref().expect("exposure lives until drop");
-        let buffers = &buffers[frame.slot];
         let timings = if frame_debugger.on { graph.timings().to_vec() } else { Vec::new() };
         let mut fg = graph.begin(gpu, frame.slot);
-
-        let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
-        let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
-        let hdr = fg.create_image(
-            gpu,
-            bindless,
-            "hdr",
-            ImageDesc::new(extent.width, extent.height, HDR_FORMAT, color_usage),
-        )?;
-        let velocity = fg.create_image(
-            gpu,
-            bindless,
-            "velocity",
-            ImageDesc::new(extent.width, extent.height, VELOCITY_FORMAT, color_usage),
-        )?;
-        let depth = fg.create_image(
-            gpu,
-            bindless,
-            "depth",
-            ImageDesc::new(extent.width, extent.height, DEPTH_FORMAT, depth_usage),
-        )?;
-        let pyramid_desc = pyramid_desc(extent);
-        let pyramid = fg.create_image(gpu, bindless, "depth pyramid", pyramid_desc)?;
-        let shadows = if extracted.has_sun {
-            let desc = ImageDesc::new(ATLAS_RESOLUTION, ATLAS_RESOLUTION, DEPTH_FORMAT, depth_usage);
-            Some(fg.create_image(gpu, bindless, "shadow atlas", desc)?)
-        } else {
-            None
-        };
         let output = fg.import_image("output", (output_image, output_view), output_desc, output_last);
-
-        let mut frame_data = extracted.frame;
-        frame_data.instance_count = instance_count as u32;
-        frame_data.light_count = light_count as u32;
-        frame_data.hiz_texture = fg.texture(pyramid).0;
-        frame_data.hiz_size = [pyramid_desc.width, pyramid_desc.height];
-        frame_data.hiz_mips = pyramid_desc.mip_levels;
-        frame_data.shadow_texture = shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
-        frame_data.delta_time = delta_time;
-        frame_data.frame_index = frame_index as u32;
-        frame_data.taa_reset = u32::from(taa_reset);
-        buffers.frame.write(0, &[frame_data]);
-        buffers.pointers.write(
-            0,
-            &[GpuBuffers {
-                instances: buffers.instances.address,
-                meshes: assets.meshes.address,
-                vertices: assets.vertices.address,
-                materials: assets.materials.address,
-                lights: buffers.lights.address,
-                draws: buffers.draws.address,
-                draw_count: buffers.draw_count.address,
-                draw_instances: buffers.draw_instances.address,
-                visibility: visibility.address,
-                stats: buffers.stats.address,
-                clusters: buffers.clusters.address,
-                lod_state: lod_state.address,
-                exposure: exposure.address,
-                ui_quads: buffers.ui.address,
-                debug_lines: buffers.debug_lines.address,
-            }],
-        );
-        buffers.instances.write(0, &extracted.instances[..instance_count]);
-        buffers.lights.write(0, &extracted.lights[..light_count]);
-
-        let push = Push {
-            frame: buffers.frame.address,
-            buffers: buffers.pointers.address,
-            max_draws: MAX_INSTANCES as u32,
-            ..Default::default()
-        };
-        let targets = passes::Targets {
-            hdr,
-            velocity,
-            depth,
-            depth_texture: fg.texture(depth),
-            pyramid,
-            pyramid_texture: fg.texture(pyramid),
-            pyramid_mips: (0..pyramid_desc.mip_levels as usize).map(|mip| fg.storage(pyramid, mip)).collect(),
-            pyramid_size: [pyramid_desc.width, pyramid_desc.height],
-            shadows,
-        };
-        let draws = passes::Draws {
-            draws: fg.import_buffer(&buffers.draws),
-            count: fg.import_buffer(&buffers.draw_count),
-            instances: fg.import_buffer(&buffers.draw_instances),
-            visibility: fg.import_buffer(visibility),
-            lod_state: fg.import_buffer(lod_state),
-            stats: fg.import_buffer(&buffers.stats),
-            clusters: fg.import_buffer(&buffers.clusters),
-            draws_handle: buffers.draws.handle,
-            count_handle: buffers.draw_count.handle,
-            stats_handle: buffers.stats.handle,
-            index_buffer: assets.indices.handle,
-        };
-        let wireframe = self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME;
-        let frame_setup =
-            passes::Frame { pipelines: *pipelines, push, instance_count: instance_count as u32, extent, wireframe };
-        passes::record(&mut fg, &frame_setup, &targets, &draws);
-        let post = post_passes::PostInput {
-            pipelines: *pipelines,
-            push,
-            extent,
-            settings: extracted.post,
-            hdr,
-            velocity,
-            depth,
-            output,
-            output_rect: (view.extent != full).then_some(view),
-            clear: self.clear,
-            exposure: fg.import_buffer(exposure),
-            history: (frame_index % 2) as usize,
-            keep_ldr: ui.wants_backdrop(),
-        };
-        let finished = post_passes::record(&mut fg, gpu, bindless, &post)?;
-        let backdrop = match finished.filter(|_| post.keep_ldr) {
-            Some(view_image) => {
-                let (blurred, size) =
-                    post_passes::blur_for_backdrop(&mut fg, gpu, bindless, (*pipelines, push), view_image, extent)?;
-                Some((blurred, size, view))
+        // The UI's quads are the first view's buffer's, whichever view's pointers name them.
+        let ui_quads = views[0].buffers[frame.slot].ui.address;
+        let (mut backdrop, mut push) = (None, Push::default());
+        for (index, view) in views.iter_mut().enumerate() {
+            // A view after the first keeps images of its own, by name.
+            fg.set_prefix(&if index == 0 { String::new() } else { format!("view {index} ") });
+            let first = index == 0;
+            // The UI's backdrop blur is behind the first view's overlays.
+            let keep_ldr = first && ui.wants_backdrop();
+            let setup = ViewSetup { time, delta_time, frame_index, full, ui_quads, clear: *clear, first, keep_ldr };
+            let recorded =
+                view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
+            if first {
+                (backdrop, push) = (recorded.backdrop, recorded.push);
             }
-            None => None,
-        };
-        debug_pass::record(&mut fg, pipelines.debug, push, &buffers.debug_lines, (output, view), depth);
+        }
+        fg.set_prefix("");
         let preview_atlas = previews.record(&mut fg, (gpu, bindless), (pipelines, assets), frame.slot)?;
         let debugger_view = frame_debugger.view_image(&mut fg, gpu, bindless)?;
         let sampled: Vec<_> = preview_atlas.into_iter().chain(debugger_view).collect();
         captures.record(&mut fg, gpu, (output, output_desc), true, frame.slot)?;
-        ui.record(&mut fg, (pipelines.ui, push), &buffers.ui, (output, full), &sampled, backdrop);
+        ui.record(&mut fg, (pipelines.ui, push), &views[0].buffers[frame.slot].ui, (output, full), &sampled, backdrop);
         captures.record(&mut fg, gpu, (output, output_desc), false, frame.slot)?;
         if acquired.is_some() {
             fg.transition(output, ImageAccess::Present);
@@ -776,26 +614,6 @@ impl Renderer {
             self.show_capture = false;
         }
         Ok(())
-    }
-
-    /// Gives each instance last frame's model matrix and the frame last
-    /// frame's camera, so shaders can work out how far each pixel moved.
-    /// Objs seen for the first time count as still. An Obj in a place in the
-    /// list another held last frame is marked new there.
-    fn track_motion(&mut self, extracted: &mut scene::ExtractedFrame) {
-        for (index, (instance, entity)) in extracted.instances.iter_mut().zip(&extracted.entities).enumerate() {
-            if let Some(previous) = self.prev_models.get(entity) {
-                instance.prev_model = *previous;
-            }
-            if self.prev_entities.get(index) != Some(entity) {
-                instance.flags |= gpu::INSTANCE_NEW;
-            }
-        }
-        self.prev_entities.clone_from(&extracted.entities);
-        self.prev_models.clear();
-        self.prev_models.extend(extracted.entities.iter().zip(&extracted.instances).map(|(e, i)| (*e, i.model)));
-        let current = extracted.frame.unjittered_view_proj;
-        extracted.frame.prev_view_proj = self.prev_view_proj.replace(current).unwrap_or(current);
     }
 
     /// Asks for a picture of a coming frame: see [`Capture`]. It is ready
@@ -871,27 +689,8 @@ impl Drop for Renderer {
         self.gpu.wait_idle();
         let gpu = &self.gpu;
         self.pipelines.destroy(gpu);
-        for buffers in self.buffers.drain(..) {
-            let FrameBuffers {
-                frame,
-                instances,
-                lights,
-                draws,
-                draw_count,
-                draw_instances,
-                stats,
-                clusters,
-                pointers,
-                ui,
-                debug_lines,
-            } = buffers;
-            let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers, ui];
-            for buffer in all.into_iter().chain([debug_lines]) {
-                self.frames.retire(Retired::Buffer(buffer));
-            }
-        }
-        for buffer in [self.visibility.take(), self.lod_state.take(), self.exposure.take()].into_iter().flatten() {
-            self.frames.retire(Retired::Buffer(buffer));
+        for view in std::mem::take(&mut self.views) {
+            view.retire(&mut self.frames);
         }
         for buffer in self.previews.take_buffers().into_iter().chain(self.captures.take_buffers()) {
             self.frames.retire(Retired::Buffer(buffer));
@@ -910,6 +709,308 @@ impl Drop for Renderer {
     }
 }
 
+/// One 3D view drawn each frame: where in the output, through which camera,
+/// and what it keeps from frame to frame, so two views never share it: its
+/// buffers for each frame in flight, which instances it saw and the LOD each
+/// had, its exposure, and last frame's motion and TAA history.
+struct View {
+    /// Where in the output it goes; all of it when `None`.
+    rect: Option<[u32; 4]>,
+    options: ViewOptions,
+    buffers: Vec<FrameBuffers>,
+    /// Which instances were visible last frame; drives the early pass.
+    visibility: Buffer,
+    /// Each instance's current and previous LOD and fade progress.
+    lod_state: Buffer,
+    /// Auto exposure's adapted EV and whether it has started.
+    exposure: Buffer,
+    /// Last frame's model matrices and camera, for motion vectors.
+    prev_models: HashMap<Entity, Mat4Cols>,
+    /// Last frame's Objs in their instances' order.
+    prev_entities: Vec<Entity>,
+    prev_view_proj: Option<Mat4Cols>,
+    /// The size TAA's history was rendered at; `None` when it is stale.
+    taa_history: Option<vk::Extent2D>,
+}
+
+/// What every view's frame shares.
+struct ViewSetup {
+    time: f32,
+    delta_time: f32,
+    frame_index: u64,
+    full: vk::Extent2D,
+    /// The UI's quads, which every view's pointers name.
+    ui_quads: u64,
+    clear: [f32; 4],
+    /// The first view drawn, which clears around itself.
+    first: bool,
+    /// Keep the finished view for the UI's backdrop blur.
+    keep_ldr: bool,
+}
+
+/// What a view gives the frame after it: its push constants, which the UI
+/// and frame debugger use for the first view, and its finished image
+/// blurred for the UI's backdrop, when kept, with its size and place.
+struct ViewRecorded {
+    push: Push,
+    backdrop: Option<(ImageId, [u32; 2], vk::Rect2D)>,
+}
+
+impl View {
+    /// The `number`th view's buffers, nothing seen or metered yet.
+    fn new(gpu: &Gpu, number: usize) -> Result<Self> {
+        let named = |name: &str| if number == 0 { name.to_string() } else { format!("view {number} {name}") };
+        let buffers =
+            (0..FRAMES_IN_FLIGHT).map(|slot| create_frame_buffers(gpu, &named(""), slot)).collect::<Result<_>>()?;
+        let persistent = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        let visibility =
+            gpu.create_buffer(&named("visibility"), MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
+        let lod_state =
+            gpu.create_buffer(&named("lod state"), MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
+        // Host visible so the adapted exposure shows in the stats.
+        let exposure = gpu.create_buffer(&named("exposure"), 16, persistent, MemoryLocation::GpuToCpu)?;
+        // Nothing was visible, no LOD chosen and no exposure metered before the first frame.
+        gpu.immediate(|cmd| unsafe {
+            for buffer in [&visibility, &lod_state, &exposure] {
+                gpu.device.cmd_fill_buffer(cmd, buffer.handle, 0, vk::WHOLE_SIZE, 0);
+            }
+        })?;
+        Ok(Self {
+            rect: None,
+            options: ViewOptions::default(),
+            buffers,
+            visibility,
+            lod_state,
+            exposure,
+            prev_models: HashMap::new(),
+            prev_entities: Vec::new(),
+            prev_view_proj: None,
+            taa_history: None,
+        })
+    }
+
+    /// Lets its buffers go once no frame in flight uses them.
+    fn retire(self, frames: &mut Frames) {
+        for buffers in self.buffers {
+            let FrameBuffers {
+                frame,
+                instances,
+                lights,
+                draws,
+                draw_count,
+                draw_instances,
+                stats,
+                clusters,
+                pointers,
+                ui,
+                debug_lines,
+            } = buffers;
+            let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers, ui];
+            for buffer in all.into_iter().chain([debug_lines]) {
+                frames.retire(Retired::Buffer(buffer));
+            }
+        }
+        for buffer in [self.visibility, self.lod_state, self.exposure] {
+            frames.retire(Retired::Buffer(buffer));
+        }
+    }
+
+    fn reset_history(&mut self) {
+        self.taa_history = None;
+        self.prev_models.clear();
+        self.prev_view_proj = None;
+    }
+
+    /// Its rectangle within an output of `full`, at least a pixel each way.
+    fn rect_in(&self, full: vk::Extent2D) -> vk::Rect2D {
+        let Some([x, y, w, h]) = self.rect else {
+            return vk::Rect2D { offset: vk::Offset2D::default(), extent: full };
+        };
+        let x = x.min(full.width - 1);
+        let y = y.min(full.height - 1);
+        let extent = vk::Extent2D { width: w.clamp(1, full.width - x), height: h.clamp(1, full.height - y) };
+        vk::Rect2D { offset: vk::Offset2D { x: x as i32, y: y as i32 }, extent }
+    }
+
+    /// Gives each instance last frame's model matrix and the frame last
+    /// frame's camera, so shaders can work out how far each pixel moved.
+    /// Objs seen for the first time count as still. An Obj in a place in the
+    /// list another held last frame is marked new there.
+    fn track_motion(&mut self, extracted: &mut scene::ExtractedFrame) {
+        for (index, (instance, entity)) in extracted.instances.iter_mut().zip(&extracted.entities).enumerate() {
+            if let Some(previous) = self.prev_models.get(entity) {
+                instance.prev_model = *previous;
+            }
+            if self.prev_entities.get(index) != Some(entity) {
+                instance.flags |= gpu::INSTANCE_NEW;
+            }
+        }
+        self.prev_entities.clone_from(&extracted.entities);
+        self.prev_models.clear();
+        self.prev_models.extend(extracted.entities.iter().zip(&extracted.instances).map(|(e, i)| (*e, i.model)));
+        let current = extracted.frame.unjittered_view_proj;
+        extracted.frame.prev_view_proj = self.prev_view_proj.replace(current).unwrap_or(current);
+    }
+
+    /// Records the view's passes into its rectangle of `output`: culling,
+    /// the scene, post-processing and debug lines.
+    fn record(
+        &mut self,
+        fg: &mut FrameGraph<'_>,
+        (gpu, bindless, pipelines, assets): (&Gpu, &mut Bindless, &Pipelines, &Assets),
+        world: &World,
+        setup: &ViewSetup,
+        output: ImageId,
+        slot: usize,
+    ) -> Result<ViewRecorded> {
+        let view = self.rect_in(setup.full);
+        let extent = view.extent;
+        let extracting = profile_marker!("Extract").scope();
+        let mut extracted =
+            scene::extract(world, extent.width, extent.height, setup.time, setup.frame_index, &self.options);
+        let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
+        self.track_motion(&mut extracted);
+        let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
+        let taa_reset = self.taa_history != Some(extent);
+        self.taa_history = taa.then_some(extent);
+        let light_count = extracted.lights.len().min(MAX_LIGHTS as usize);
+        drop(extracting);
+
+        let buffers = &self.buffers[slot];
+        let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+        let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+        let hdr = fg.create_image(
+            gpu,
+            bindless,
+            "hdr",
+            ImageDesc::new(extent.width, extent.height, HDR_FORMAT, color_usage),
+        )?;
+        let velocity = fg.create_image(
+            gpu,
+            bindless,
+            "velocity",
+            ImageDesc::new(extent.width, extent.height, VELOCITY_FORMAT, color_usage),
+        )?;
+        let depth = fg.create_image(
+            gpu,
+            bindless,
+            "depth",
+            ImageDesc::new(extent.width, extent.height, DEPTH_FORMAT, depth_usage),
+        )?;
+        let pyramid_desc = pyramid_desc(extent);
+        let pyramid = fg.create_image(gpu, bindless, "depth pyramid", pyramid_desc)?;
+        let shadows = if extracted.has_sun {
+            let desc = ImageDesc::new(ATLAS_RESOLUTION, ATLAS_RESOLUTION, DEPTH_FORMAT, depth_usage);
+            Some(fg.create_image(gpu, bindless, "shadow atlas", desc)?)
+        } else {
+            None
+        };
+
+        let mut frame_data = extracted.frame;
+        frame_data.instance_count = instance_count as u32;
+        frame_data.light_count = light_count as u32;
+        frame_data.hiz_texture = fg.texture(pyramid).0;
+        frame_data.hiz_size = [pyramid_desc.width, pyramid_desc.height];
+        frame_data.hiz_mips = pyramid_desc.mip_levels;
+        frame_data.shadow_texture = shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
+        frame_data.delta_time = setup.delta_time;
+        frame_data.frame_index = setup.frame_index as u32;
+        frame_data.taa_reset = u32::from(taa_reset);
+        buffers.frame.write(0, &[frame_data]);
+        buffers.pointers.write(
+            0,
+            &[GpuBuffers {
+                instances: buffers.instances.address,
+                meshes: assets.meshes.address,
+                vertices: assets.vertices.address,
+                materials: assets.materials.address,
+                lights: buffers.lights.address,
+                draws: buffers.draws.address,
+                draw_count: buffers.draw_count.address,
+                draw_instances: buffers.draw_instances.address,
+                visibility: self.visibility.address,
+                stats: buffers.stats.address,
+                clusters: buffers.clusters.address,
+                lod_state: self.lod_state.address,
+                exposure: self.exposure.address,
+                ui_quads: setup.ui_quads,
+                debug_lines: buffers.debug_lines.address,
+            }],
+        );
+        buffers.instances.write(0, &extracted.instances[..instance_count]);
+        buffers.lights.write(0, &extracted.lights[..light_count]);
+
+        let push = Push {
+            frame: buffers.frame.address,
+            buffers: buffers.pointers.address,
+            max_draws: MAX_INSTANCES as u32,
+            ..Default::default()
+        };
+        let targets = passes::Targets {
+            hdr,
+            velocity,
+            depth,
+            depth_texture: fg.texture(depth),
+            pyramid,
+            pyramid_texture: fg.texture(pyramid),
+            pyramid_mips: (0..pyramid_desc.mip_levels as usize).map(|mip| fg.storage(pyramid, mip)).collect(),
+            pyramid_size: [pyramid_desc.width, pyramid_desc.height],
+            shadows,
+        };
+        let draws = passes::Draws {
+            draws: fg.import_buffer(&buffers.draws),
+            count: fg.import_buffer(&buffers.draw_count),
+            instances: fg.import_buffer(&buffers.draw_instances),
+            visibility: fg.import_buffer(&self.visibility),
+            lod_state: fg.import_buffer(&self.lod_state),
+            stats: fg.import_buffer(&buffers.stats),
+            clusters: fg.import_buffer(&buffers.clusters),
+            draws_handle: buffers.draws.handle,
+            count_handle: buffers.draw_count.handle,
+            stats_handle: buffers.stats.handle,
+            index_buffer: assets.indices.handle,
+        };
+        let wireframe = self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME;
+        let edges = self.options.debug_view == gpu::DEBUG_VIEW_LIT_WIREFRAME;
+        let frame_setup = passes::Frame {
+            pipelines: *pipelines,
+            push,
+            instance_count: instance_count as u32,
+            extent,
+            wireframe,
+            edges,
+        };
+        passes::record(fg, &frame_setup, &targets, &draws);
+        let post = post_passes::PostInput {
+            pipelines: *pipelines,
+            push,
+            extent,
+            settings: extracted.post,
+            hdr,
+            velocity,
+            depth,
+            output,
+            output_rect: (view.extent != setup.full).then_some(view),
+            clear: setup.clear,
+            clear_outside: setup.first,
+            exposure: fg.import_buffer(&self.exposure),
+            history: (setup.frame_index % 2) as usize,
+            keep_ldr: setup.keep_ldr,
+        };
+        let finished = post_passes::record(fg, gpu, bindless, &post)?;
+        let backdrop = match finished.filter(|_| post.keep_ldr) {
+            Some(view_image) => {
+                let (blurred, size) =
+                    post_passes::blur_for_backdrop(fg, gpu, bindless, (*pipelines, push), view_image, extent)?;
+                Some((blurred, size, view))
+            }
+            None => None,
+        };
+        debug_pass::record(fg, pipelines.debug, push, &buffers.debug_lines, (output, view), depth);
+        Ok(ViewRecorded { push, backdrop })
+    }
+}
+
 /// The depth pyramid starts at the largest power of two that fits inside the
 /// depth buffer, so each level halves exactly.
 fn pyramid_desc(extent: vk::Extent2D) -> ImageDesc {
@@ -924,59 +1025,70 @@ fn pyramid_desc(extent: vk::Extent2D) -> ImageDesc {
     }
 }
 
-fn create_frame_buffers(gpu: &Gpu, slot: usize) -> Result<FrameBuffers> {
+/// A view's buffers for one frame in flight, their names after `prefix`.
+fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuffers> {
     let host = MemoryLocation::CpuToGpu;
     let storage = vk::BufferUsageFlags::STORAGE_BUFFER;
     let indirect = storage | vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
     let lists = u64::from(LIST_COUNT);
     Ok(FrameBuffers {
-        frame: gpu.create_buffer(&format!("frame {slot}"), size_of::<GpuFrame>() as u64, storage, host)?,
+        frame: gpu.create_buffer(&format!("{prefix}frame {slot}"), size_of::<GpuFrame>() as u64, storage, host)?,
         instances: gpu.create_buffer(
-            &format!("instances {slot}"),
+            &format!("{prefix}instances {slot}"),
             MAX_INSTANCES * size_of::<GpuInstance>() as u64,
             storage,
             host,
         )?,
         lights: gpu.create_buffer(
-            &format!("lights {slot}"),
+            &format!("{prefix}lights {slot}"),
             MAX_LIGHTS * size_of::<GpuLight>() as u64,
             storage,
             host,
         )?,
         draws: gpu.create_buffer(
-            &format!("draws {slot}"),
+            &format!("{prefix}draws {slot}"),
             lists * MAX_INSTANCES * DRAW_COMMAND_SIZE,
             indirect,
             MemoryLocation::GpuOnly,
         )?,
-        draw_count: gpu.create_buffer(&format!("draw counts {slot}"), lists * 4, indirect, MemoryLocation::GpuOnly)?,
+        draw_count: gpu.create_buffer(
+            &format!("{prefix}draw counts {slot}"),
+            lists * 4,
+            indirect,
+            MemoryLocation::GpuOnly,
+        )?,
         draw_instances: gpu.create_buffer(
-            &format!("draw instances {slot}"),
+            &format!("{prefix}draw instances {slot}"),
             lists * MAX_INSTANCES * 4,
             storage,
             MemoryLocation::GpuOnly,
         )?,
         stats: gpu.create_buffer(
-            &format!("stats {slot}"),
+            &format!("{prefix}stats {slot}"),
             stat::COUNT as u64 * 4,
             storage | vk::BufferUsageFlags::TRANSFER_DST,
             MemoryLocation::GpuToCpu,
         )?,
         clusters: gpu.create_buffer(
-            &format!("light clusters {slot}"),
+            &format!("{prefix}light clusters {slot}"),
             u64::from(CLUSTER_COUNT) * u64::from(MAX_CLUSTER_LIGHTS + 1) * 4,
             storage,
             MemoryLocation::GpuOnly,
         )?,
-        pointers: gpu.create_buffer(&format!("pointers {slot}"), size_of::<GpuBuffers>() as u64, storage, host)?,
+        pointers: gpu.create_buffer(
+            &format!("{prefix}pointers {slot}"),
+            size_of::<GpuBuffers>() as u64,
+            storage,
+            host,
+        )?,
         ui: gpu.create_buffer(
-            &format!("ui quads {slot}"),
+            &format!("{prefix}ui quads {slot}"),
             ui_pass::MAX_UI_QUADS * size_of::<voxear_ui::Quad>() as u64,
             storage,
             host,
         )?,
         debug_lines: gpu.create_buffer(
-            &format!("debug lines {slot}"),
+            &format!("{prefix}debug lines {slot}"),
             debug_pass::MAX_DEBUG_LINES * size_of::<gpu::GpuDebugLine>() as u64,
             storage,
             host,

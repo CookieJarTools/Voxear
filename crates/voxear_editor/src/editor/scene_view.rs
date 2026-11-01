@@ -1,10 +1,11 @@
-//! The Scene view's header: the shading menu (Lit, Unlit or Wireframe), the
-//! Gizmos button, which shows or hides lights, cameras and what the selected
-//! one reaches (see `gizmos`), and full screen, which gives the dock to the
+//! The Scene view's header: the shading menu (Lit, Unlit, Wireframe, or Lit
+//! Wireframe, the lit scene with its meshes' edges over it), the Gizmos
+//! button, which shows or hides lights, cameras and what the selected one
+//! reaches (see `gizmos`), and full screen, which gives the dock to the
 //! Scene view alone until it is pressed again. Shading and Gizmos are
 //! settings, so they are kept.
 
-use voxear_render::{DEBUG_VIEW_NONE, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME};
+use voxear_render::{DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_NONE, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME};
 
 use super::Editor;
 
@@ -33,6 +34,7 @@ impl Editor {
         match self.memory.settings.scene_shading {
             1 => DEBUG_VIEW_UNLIT,
             2 => DEBUG_VIEW_WIREFRAME,
+            3 => DEBUG_VIEW_LIT_WIREFRAME,
             _ => DEBUG_VIEW_NONE,
         }
     }

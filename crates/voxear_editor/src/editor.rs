@@ -218,9 +218,9 @@ pub struct Editor {
     /// view it was told to show.
     view_camera: Option<Entity>,
     view_debug: u32,
-    /// The dock area showing the 3D view, made see-through, with a ring
+    /// The dock areas showing 3D views, made see-through, each with a ring
     /// around its edge that rounds the view's corners to the panel's.
-    viewport_area: Option<NodeId>,
+    viewport_areas: Vec<NodeId>,
     /// The camera's rotation as the gizmo last showed it.
     gizmo_shows: Option<Quat>,
     /// The pointer, in physical pixels, for whether it is over the viewport.
@@ -473,7 +473,7 @@ impl Editor {
             play: play::Play::new(),
             view_camera: Some(camera),
             view_debug: 0,
-            viewport_area: None,
+            viewport_areas: Vec::new(),
             gizmo_shows: None,
             pointer: None,
             scale: 1.0,
@@ -581,7 +581,7 @@ impl Editor {
                 self.game.tick(delta, Some(renderer));
             }
         }
-        let view = {
+        let views = {
             profile_scope!("Editor");
             self.update_panels(renderer, delta)
         };
@@ -591,13 +591,22 @@ impl Editor {
         };
         let rendered = {
             profile_scope!("Render");
-            renderer.set_view_rect(Some(self.viewport_rect(view.map(|(viewport, _)| viewport), size)));
+            renderer.set_view_rect(Some(self.viewport_rect(views.first().map(|(viewport, _)| *viewport), size)));
+            // Each view after the first, as the Game view beside the Scene view, through its own camera.
+            let more: Vec<([u32; 4], ViewOptions)> = views
+                .iter()
+                .skip(1)
+                .map(|&(viewport, camera)| {
+                    (self.viewport_rect(Some(viewport), size), self.view_options(viewport, camera))
+                })
+                .collect();
+            renderer.set_more_views(&more)?;
             {
                 profile_scope!("UI Upload");
                 renderer.set_ui(&frame)?;
                 // The game's own UI, over the Game view while it plays.
                 let in_game =
-                    view.is_some_and(|(viewport, _)| viewport == self.nodes.game_viewport) && self.is_playing();
+                    views.iter().any(|(viewport, _)| *viewport == self.nodes.game_viewport) && self.is_playing();
                 let area =
                     if in_game { self.viewport_rect(Some(self.nodes.game_viewport), size) } else { [0, 0, 0, 0] };
                 if in_game {
@@ -616,8 +625,8 @@ impl Editor {
     }
 
     /// The panels' frame, each a profiling sample of its own. Returns the
-    /// view the 3D renders into, with its camera.
-    fn update_panels(&mut self, renderer: &mut Renderer, delta: f32) -> Option<(NodeId, Entity)> {
+    /// views the 3D renders into, each with its camera, the first first.
+    fn update_panels(&mut self, renderer: &mut Renderer, delta: f32) -> Vec<(NodeId, Entity)> {
         let playing = self.is_playing();
         // Before the Inspector, so what is picked shows in this frame.
         self.update_picker(renderer);
@@ -737,38 +746,23 @@ impl Editor {
             profile_scope!("Previews");
             self.update_previews(renderer);
         }
-        let view = self.active_view();
-        // Why the Game view shows no game: no camera, or the Scene view drawing beside it, since one 3D view
-        // draws at a time for now.
-        let drawn_elsewhere = self.shown(self.nodes.game_viewport)
-            && view.is_some_and(|(viewport, _)| viewport != self.nodes.game_viewport);
-        let note = match (self.game_camera(), drawn_elsewhere) {
-            (None, _) => Some("No camera renders this level."),
-            (Some(_), true) => Some(
-                "One 3D view draws at a time for now, and the Scene view is drawing. Put the Game view in the \
-                 Scene view's area, or close the Scene view, to see the game here.",
-            ),
-            (Some(_), false) => None,
-        };
-        if let Some(note) = note {
-            self.ui.set_text(self.nodes.game_empty, note);
-        }
-        self.ui.set_visible(self.nodes.game_empty, note.is_some());
-        self.mark_viewport_area(view.map(|(viewport, _)| viewport));
+        let views = self.active_views();
+        let view = views.first().copied();
+        self.ui.set_visible(self.nodes.game_empty, self.game_camera().is_none());
+        self.mark_viewport_areas(&views);
         self.update_gizmo();
         self.update_status(renderer, delta);
         self.update_tooltip(delta);
         self.update_debug_draw(view, delta);
 
-        let camera = view.map(|(_, camera)| camera);
-        // The Scene view shades as its menu says; the Game view always lit.
-        let in_scene = view.is_some_and(|(viewport, _)| viewport == self.nodes.viewport);
-        let debug_view = if in_scene { self.scene_debug_view() } else { 0 };
-        if camera.is_some() && (camera != self.view_camera || debug_view != self.view_debug) {
-            renderer.set_view_options(ViewOptions { camera, debug_view, ..ViewOptions::default() });
-            (self.view_camera, self.view_debug) = (camera, debug_view);
+        if let Some((viewport, camera)) = view {
+            let options = self.view_options(viewport, camera);
+            if (options.camera, options.debug_view) != (self.view_camera, self.view_debug) {
+                renderer.set_view_options(options);
+                (self.view_camera, self.view_debug) = (options.camera, options.debug_view);
+            }
         }
-        view
+        views
     }
 
     /// The Profiler panel, and the frames it has taken.
@@ -1569,25 +1563,37 @@ impl Editor {
     /// mouse button flies the camera.
     pub fn over_viewport(&self) -> bool {
         let Some((x, y)) = self.pointer else { return false };
-        let Some((viewport, _)) = self.active_view().filter(|(viewport, _)| *viewport == self.nodes.viewport) else {
+        if !self.shown(self.nodes.viewport) {
             return false;
-        };
-        let [vx, vy, vw, vh] = self.viewport_rect(Some(viewport), (u32::MAX, u32::MAX));
+        }
+        let [vx, vy, vw, vh] = self.viewport_rect(Some(self.nodes.viewport), (u32::MAX, u32::MAX));
         (vx as f32..(vx + vw) as f32).contains(&x) && (vy as f32..(vy + vh) as f32).contains(&y)
     }
 
-    /// Where the 3D view goes this frame, and through which camera: the Game
-    /// view when it is showing and the level has a camera (first, while
-    /// playing), otherwise the Scene view, through the editor's camera.
-    fn active_view(&self) -> Option<(NodeId, Entity)> {
+    /// The 3D views drawn this frame, each with its camera: the Scene view,
+    /// through the editor's camera, when it shows, and the Game view, through
+    /// the level's first camera, when it shows and the level has one. Both
+    /// draw when both show, as one floating over the other.
+    fn active_views(&self) -> Vec<(NodeId, Entity)> {
+        let scene = self.shown(self.nodes.viewport).then_some((self.nodes.viewport, self.camera));
         let game = self.game_camera().filter(|_| self.shown(self.nodes.game_viewport));
-        let scene = self.shown(self.nodes.viewport).then_some(self.camera);
-        match (game, scene) {
-            (Some(game), Some(_)) if self.is_playing() => Some((self.nodes.game_viewport, game)),
-            (_, Some(scene)) => Some((self.nodes.viewport, scene)),
-            (Some(game), None) => Some((self.nodes.game_viewport, game)),
-            (None, None) => None,
-        }
+        let game = game.map(|camera| (self.nodes.game_viewport, camera));
+        let mut views: Vec<_> = scene.into_iter().chain(game).collect();
+        // Those in floating windows draw last, over the docked ones.
+        views.sort_by_key(|&(viewport, _)| self.floats(viewport));
+        views
+    }
+
+    /// Whether an element is in a floating window.
+    fn floats(&self, node: NodeId) -> bool {
+        std::iter::successors(self.ui.parent(node), |&n| self.ui.parent(n)).any(|n| self.ui.has_class(n, "dock-float"))
+    }
+
+    /// How a view draws: through its camera, and the Scene view shaded as
+    /// its menu says, the Game view always lit.
+    fn view_options(&self, viewport: NodeId, camera: Entity) -> ViewOptions {
+        let debug_view = if viewport == self.nodes.viewport { self.scene_debug_view() } else { 0 };
+        ViewOptions { camera: Some(camera), debug_view, ..ViewOptions::default() }
     }
 
     /// The camera the game looks through: the level's first.
@@ -1861,29 +1867,32 @@ impl Editor {
         true
     }
 
-    /// Makes the dock area around the 3D view see-through, wherever its
+    /// Makes the dock area around each 3D view see-through, wherever its
     /// panel has been docked, with a ring around its edge that rounds the
     /// view's corners to the panel's (`.viewport-area`). The ring is the
-    /// area's own, so a floating window over it covers it.
-    fn mark_viewport_area(&mut self, viewport: Option<NodeId>) {
-        let mut at = viewport.and_then(|viewport| self.ui.parent(viewport));
-        let mut area = None;
-        while let Some(node) = at {
-            if self.ui.has_class(node, "dock-area") {
-                area = Some(node);
-                break;
-            }
-            at = self.ui.parent(node);
+    /// area's own, so a floating window over it covers it. Each view is
+    /// see-through too, so what the UI drew under a floating one, such as
+    /// the Scene view's gizmos, does not show through it.
+    fn mark_viewport_areas(&mut self, views: &[(NodeId, Entity)]) {
+        for viewport in [self.nodes.viewport, self.nodes.game_viewport] {
+            self.ui.set_see_through(viewport, views.iter().any(|&(shown, _)| shown == viewport));
         }
-        if area != self.viewport_area {
-            if let Some(old) = self.viewport_area {
-                self.ui.remove_class(old, "viewport-area");
-            }
-            if let Some(new) = area {
-                self.ui.add_class(new, "viewport-area");
-            }
-            self.viewport_area = area;
+        let areas: Vec<NodeId> = views.iter().filter_map(|&(viewport, _)| self.area_of(viewport)).collect();
+        if areas == self.viewport_areas {
+            return;
         }
+        for &old in &self.viewport_areas {
+            self.ui.remove_class(old, "viewport-area");
+        }
+        for &new in &areas {
+            self.ui.add_class(new, "viewport-area");
+        }
+        self.viewport_areas = areas;
+    }
+
+    /// The dock area a panel's element is in.
+    fn area_of(&self, node: NodeId) -> Option<NodeId> {
+        std::iter::successors(self.ui.parent(node), |&n| self.ui.parent(n)).find(|&n| self.ui.has_class(n, "dock-area"))
     }
 
     /// Turns the axis gizmo with the Scene camera: each world axis drawn

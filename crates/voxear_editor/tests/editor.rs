@@ -1786,6 +1786,33 @@ fn the_scene_views_shading_gizmos_and_full_screen_work() {
     assert_eq!(editor.settings().scene_shading, 1, "Unlit");
     frame(&mut editor, &mut renderer);
     shot(&mut renderer, "unlit.png");
+
+    // Lit Wireframe is the lit scene with the meshes' edges over it: thin lines darker than either side.
+    let viewport = find(&editor, "viewport");
+    let thin_lines = |editor: &voxear_editor::Editor, renderer: &mut Renderer| {
+        let (width, _, pixels) = renderer.read_pixels().unwrap();
+        let [x, y, w, h] = editor.ui.rect(viewport).map(|v| v as usize);
+        let light = |row: usize, column: usize| {
+            let i = (row * width as usize + column) * 4;
+            u32::from(pixels[i]) + u32::from(pixels[i + 1]) + u32::from(pixels[i + 2])
+        };
+        let rows = (y + 100..y + h - 50).flat_map(|row| (x + 2..x + w - 2).map(move |column| (row, column)));
+        rows.filter(|&(row, column)| light(row, column) * 10 < light(row, column - 2).min(light(row, column + 2)) * 8)
+            .count()
+    };
+    choose(&mut editor, &mut renderer, shading, 0);
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    let lit = thin_lines(&editor, &mut renderer);
+    choose(&mut editor, &mut renderer, shading, 3);
+    assert_eq!(editor.settings().scene_shading, 3, "Lit Wireframe");
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "lit-wireframe.png");
+    let edged = thin_lines(&editor, &mut renderer);
+    assert!(edged > lit * 3 + 200, "the edges draw over the lit scene: {edged} thin lines against {lit}");
     choose(&mut editor, &mut renderer, shading, 0);
 
     // Gizmos are on to start with; the selected light shows which way it shines.
@@ -4171,20 +4198,37 @@ fn inspectors_open_more_than_once_and_lock_to_what_they_show() {
 }
 
 #[test]
-fn a_floating_game_view_says_why_the_game_is_not_drawn_there() {
+fn a_floating_game_view_draws_beside_the_scene_view() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
     let note = editor.ui.find(editor.ui.root(), "game-empty").unwrap();
-    // Docked beside the Scene view, it is drawn when it is the tab showing.
-    editor.ui.show_dock_panel(dock, "game");
-    frame(&mut editor, &mut renderer);
-    assert!(!editor.ui.is_visible(note), "the game draws there");
-
-    // Floating over the Scene view, which draws instead, it says why.
     editor.ui.float_dock_panel(dock, "game", None);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
-    assert!(editor.ui.is_visible(note));
-    assert!(editor.ui.text(note).starts_with("One 3D view draws at a time"), "{}", editor.ui.text(note));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(!editor.ui.is_visible(note), "the level has a camera, and the game draws");
     shot(&mut renderer, "float-game.png");
+
+    // The middle of each view is the 3D world, not the panels' dark grey: both draw, each through its camera.
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    let at = |node: NodeId| {
+        let [x, y, w, h] = editor.ui.rect(node);
+        let (x, y) = ((x + w / 2.0) as usize, (y + h * 0.2) as usize);
+        let i = (y * width as usize + x) * 4;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    let game = at(editor.ui.find(editor.ui.root(), "game-viewport").unwrap());
+    let scene = at(editor.ui.find(editor.ui.root(), "viewport").unwrap());
+    let bright = |rgb: [u8; 3]| rgb.iter().map(|&c| u32::from(c)).sum::<u32>() > 200;
+    assert!(bright(game), "the Game view shows the sky: {game:?}");
+    assert!(bright(scene), "and the Scene view too: {scene:?}");
+
+    // The Scene view's light gizmos, drawn under the floating window, do not show through it.
+    let [x, y, w, h] = editor.ui.rect(editor.ui.find(editor.ui.root(), "game-viewport").unwrap()).map(|v| v as usize);
+    let gizmo = [0xf2, 0xc9, 0x4c].map(i32::from);
+    let near_gizmo = (y..y + h)
+        .flat_map(|row| (x..x + w).map(move |column| (row * width as usize + column) * 4))
+        .filter(|&i| (0..3).all(|c| (i32::from(pixels[i + c]) - gizmo[c]).abs() < 24))
+        .count();
+    assert_eq!(near_gizmo, 0, "no light gizmo's yellow in the Game view");
 }

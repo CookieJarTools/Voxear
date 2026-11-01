@@ -71,6 +71,7 @@
                             <Option>Lit</Option>
                             <Option>Unlit</Option>
                             <Option>Wireframe</Option>
+                            <Option>Lit Wireframe</Option>
                         </Dropdown>
                         <Button name="gizmos" class="header-button">Gizmos</Button>
                         <Button name="scene-maximize" class="icon-button"><Icon icon="maximize" /></Button>

@@ -103,6 +103,8 @@ pub const DEBUG_VIEW_NORMALS: u32 = 4;
 pub const DEBUG_VIEW_UNLIT: u32 = 5;
 /// The meshes' edges, drawn as lines.
 pub const DEBUG_VIEW_WIREFRAME: u32 = 6;
+/// The scene lit as usual, with the meshes' edges drawn faintly over it.
+pub const DEBUG_VIEW_LIT_WIREFRAME: u32 = 7;
 
 /// Froxel grid for clustered lighting: screen tiles by depth slices.
 pub const CLUSTER_GRID: [u32; 3] = [16, 9, 24];

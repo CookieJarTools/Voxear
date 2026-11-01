@@ -19,6 +19,9 @@ pub const LDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 /// Slope-scaled bias for shadow casters. The forward pass also offsets
 /// lookups along the normal, so this only has to remove what that misses.
 const SHADOW_BIAS: (f32, f32) = (0.0, 1.5);
+/// Lifts a mesh's edges off its own faces, towards the camera (depth is
+/// reversed), so they are not lost in them.
+const EDGE_BIAS: (f32, f32) = (1.0, 1.0);
 
 #[derive(Clone, Copy)]
 pub struct Pipelines {
@@ -29,6 +32,9 @@ pub struct Pipelines {
     pub forward: vk::Pipeline,
     /// The forward pass's meshes as their edges, for the wireframe view.
     pub wireframe: vk::Pipeline,
+    /// The meshes' edges drawn faintly over the lit scene, for the lit
+    /// wireframe view.
+    pub edges: vk::Pipeline,
     pub sky: vk::Pipeline,
     pub fog: vk::Pipeline,
     pub taa: vk::Pipeline,
@@ -113,6 +119,16 @@ impl Pipelines {
                 polygon_mode: vk::PolygonMode::LINE,
                 ..GraphicsPipelineDesc::new("Wireframe", forward, c"vertexMain", c"fragmentMain")
             })?,
+            edges: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                polygon_mode: vk::PolygonMode::LINE,
+                blend: Blend::Alpha,
+                depth_bias: Some(EDGE_BIAS),
+                ..GraphicsPipelineDesc::new("Edges", forward, c"vertexMain", c"edgeFragment")
+            })?,
             sky: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
                 depth_format: Some(DEPTH_FORMAT),
@@ -172,6 +188,7 @@ impl Pipelines {
             self.shadow,
             self.forward,
             self.wireframe,
+            self.edges,
             self.sky,
             self.fog,
             self.taa,

@@ -141,7 +141,14 @@ impl RenderGraph {
     /// Starts recording a frame's passes. Call after the slot's fence wait.
     pub fn begin<'a>(&'a mut self, gpu: &Gpu, slot: usize) -> FrameGraph<'a> {
         self.timer.begin_frame(gpu, slot);
-        FrameGraph { graph: self, slot, images: Vec::new(), buffers: Vec::new(), passes: Vec::new() }
+        FrameGraph {
+            graph: self,
+            slot,
+            images: Vec::new(),
+            buffers: Vec::new(),
+            passes: Vec::new(),
+            prefix: String::new(),
+        }
     }
 
     /// Milliseconds per pass from the latest completed frame.
@@ -202,6 +209,9 @@ pub struct FrameGraph<'a> {
     images: Vec<GraphImage>,
     buffers: Vec<GraphBuffer>,
     passes: Vec<Pass<'a>>,
+    /// Put before the name of each image the graph keeps from now on, so a
+    /// second 3D view's images are its own rather than the first's.
+    prefix: String,
 }
 
 /// What a pass sees while recording.
@@ -293,6 +303,12 @@ impl<'a> FrameGraph<'a> {
         self.transient(gpu, bindless, name, desc, true)
     }
 
+    /// Names the images kept from here on with `prefix` before their own
+    /// names, as each 3D view after the first does, until set again.
+    pub fn set_prefix(&mut self, prefix: &str) {
+        self.prefix = prefix.to_string();
+    }
+
     fn transient(
         &mut self,
         gpu: &Gpu,
@@ -301,6 +317,8 @@ impl<'a> FrameGraph<'a> {
         desc: ImageDesc,
         persistent: bool,
     ) -> Result<ImageId> {
+        let prefixed = format!("{}{name}", self.prefix);
+        let name = prefixed.as_str();
         let desc = ImageDesc { usage: desc.usage | vk::ImageUsageFlags::TRANSFER_SRC, ..desc };
         let stale = self.graph.transients.get(name).is_some_and(|t| t.image.desc != desc);
         if stale {

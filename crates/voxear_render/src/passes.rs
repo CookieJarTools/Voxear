@@ -53,6 +53,8 @@ pub struct Frame {
     pub extent: vk::Extent2D,
     /// Opaque meshes are drawn as their edges.
     pub wireframe: bool,
+    /// Opaque meshes' edges are drawn faintly over them, lit as usual.
+    pub edges: bool,
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -179,6 +181,22 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         begin_rendering(ctx, extent, &color, Some(&depth));
         fullscreen(ctx, pipelines.sky, &push);
     });
+
+    if frame.edges {
+        let images = [(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::DepthRead)];
+        fg.add_pass("Edges", &images, &shading_buffers, move |ctx| {
+            let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+            let depth = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL, None);
+            begin_rendering(ctx, extent, &color, Some(&depth));
+            bind(ctx, pipelines.edges, vk::PipelineBindPoint::GRAPHICS, &shading_push);
+            // What both opaque passes drew.
+            for list in [LIST_EARLY, LIST_LATE] {
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, ..shading_push });
+                indirect.draw(ctx, list);
+            }
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
 }
 
 /// What the opaque passes draw into.

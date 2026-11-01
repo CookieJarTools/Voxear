@@ -44,6 +44,9 @@ pub struct PostInput {
     pub output_rect: Option<vk::Rect2D>,
     /// What lies outside `output_rect` is cleared to, linear.
     pub clear: [f32; 4],
+    /// Whether to clear it: for the first view drawn, not those after it,
+    /// which would clear the views before them.
+    pub clear_outside: bool,
     /// Auto exposure's adapted EV, which persists between frames.
     pub exposure: BufferId,
     /// Which of the two TAA history images this frame writes; the other
@@ -164,7 +167,7 @@ pub fn record(
     let buffers = [(input.exposure, BufferAccess::ShaderRead)];
     let composite = if finish { pipelines.composite_ldr } else { pipelines.composite };
     let rect = input.output_rect;
-    if rect.is_some() {
+    if rect.is_some() && input.clear_outside {
         let (output, color) = (input.output, input.clear);
         fg.add_pass("Clear output", &[(output, ImageAccess::ColorAttachment)], &[], move |ctx| {
             clear(ctx, output, color)

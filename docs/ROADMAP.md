@@ -423,6 +423,8 @@ Still to do in M3:
   - [x] script fields edited while playing, on the running behaviour, with its buttons and callbacks
   - [ ] references rather than strings: a level field, and a component field that takes an Obj with the component
   - [x] several Inspectors, each with a padlock, opened from a window's menu (Add Inspector)
+  - [x] the Scene and Game views drawn at once, each through its own camera, a floating one over the docked one
+  - [x] Lit Wireframe shading in the Scene view: the lit scene with its meshes' edges over it
   - [ ] several Hierarchies, Projects and Scene views, and windows a game's code can open more than once
   - [ ] windows dragged out of the editor into windows of the desktop's own
 

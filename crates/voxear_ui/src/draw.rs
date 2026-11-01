@@ -179,6 +179,9 @@ impl Draw<'_> {
         // Its own text is its content as much as its children are, so a label that
         // hides its overflow keeps a long line within it, as a table's cell does.
         let text_clip = if overflow == Overflow::Visible { clip } else { inside };
+        if element.see_through && !outside {
+            cut_out(self.quads, inside);
+        }
         if !outside {
             let rect = [x0, y0, x1 - x0, y1 - y0];
             if let Some(shadow) = &element.computed.shadow {
@@ -381,6 +384,33 @@ fn shadow_quad(
 
 /// Lines and circles in a content box (physical pixels: left, top, width
 /// and height), their coordinates scaled from logical ones.
+/// Takes away what is drawn so far inside `hole` (left, top, right and
+/// bottom): a quad partly in it is drawn as the parts around it, each
+/// clipped to its own band.
+fn cut_out(quads: &mut Vec<Quad>, hole: [f32; 4]) {
+    if hole[0] >= hole[2] || hole[1] >= hole[3] {
+        return;
+    }
+    for quad in std::mem::take(quads) {
+        let ([x, y, w, h], clip) = (quad.rect, quad.clip);
+        let shown = [clip[0].max(x), clip[1].max(y), clip[2].min(x + w), clip[3].min(y + h)];
+        let apart = shown[2] <= hole[0] || shown[0] >= hole[2] || shown[3] <= hole[1] || shown[1] >= hole[3];
+        if apart {
+            quads.push(quad);
+            continue;
+        }
+        let (top, bottom) = (hole[1].max(shown[1]), hole[3].min(shown[3]));
+        let around = [
+            [shown[0], shown[1], shown[2], hole[1]],
+            [shown[0], hole[3], shown[2], shown[3]],
+            [shown[0], top, hole[0], bottom],
+            [hole[2], top, shown[2], bottom],
+        ];
+        let parts = around.into_iter().filter(|part| part[0] < part[2] && part[1] < part[3]);
+        quads.extend(parts.map(|clip| Quad { clip, ..quad }));
+    }
+}
+
 fn shape_quads(shapes: &[Shape], content: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
     let at = |p: [f32; 2]| [content[0] + p[0] * scale, content[1] + p[1] * scale];
     for shape in shapes {

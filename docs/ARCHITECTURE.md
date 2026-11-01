@@ -730,6 +730,10 @@ decompression, background loading, unloading)*.
 **Frame structure.**
 - A **render graph** orders passes, places barriers automatically, aliases transient resources, and schedules async
   compute.
+- **Several views in one frame** *(implemented)*: each view keeps what it needs from frame to frame (its camera's
+  culling results, LOD fades, exposure and TAA history) and records its own passes into the same graph, its
+  transient images named apart (`FrameGraph::set_prefix`). The first view clears around itself; the UI, previews
+  and captures are drawn once, after every view.
 - Resources are fully bindless through descriptor indexing and buffer device address.
 
 **Geometry.** GPU-driven, with occlusion culling and LOD built in. See
@@ -1218,6 +1222,9 @@ other UI, which is what overlays over the view sit on; a frame with none pays no
 - **`z-index`** above 0 draws an element and its children after everything else, higher ones last, as for the
   split handles. The pointer still finds elements in tree order.
 - **Shapes** (`ui.set_shapes`): lines with round ends and circles drawn on any element, for gizmos and graphs.
+- **See-through elements** (`ui.set_see_through`): an element that is a window onto what the renderer drew under
+  the UI, such as a 3D view. What the UI drew before it is cut away inside it, a quad partly inside drawn as the
+  parts around it, so what lies under a floating window does not show through the view in it.
 - **Gradients** (`ui.set_gradient`): an element filled from one colour at the left to another at the right, and,
   if asked, down to a third at the bottom, rounded as its corners are. The colours blend in sRGB, as people see
   them, so a hue bar or a colour picker's square looks even.
@@ -1410,7 +1417,7 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Docked panels:** the Hierarchy (each open scene under its own header, its Objs by parent in the scene's order,
   with type icons, child counts, a badge on Objs with an `IInstance` behaviour, prefab instances tinted, and a
   filter), the Scene view and
-  the Game view (through the level's first camera, and the one drawn while playing when both show), the Project and
+  the Game view (through the level's first camera; both draw at once when both show, as in Unity), the Project and
   the Console under them, and the Inspector on the right at 300px. Each panel has a
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
   shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. Every window's options
@@ -1459,10 +1466,15 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **The Scene view** renders into its panel through the editor's own camera, flown with the right mouse button
   as in Unity. The renderer draws the 3D view into a rectangle of the window (`Renderer::set_view_rect`), clears
   around it to the window's background (`Renderer::set_clear_color`), and looks through a chosen camera
-  (`ViewOptions::camera`). A frame drawn over its edge rounds its corners to the panel's. Over it float a tool
+  (`ViewOptions::camera`). More views draw in the same frame, each into its own rectangle through its own camera
+  (`Renderer::set_more_views`), so the Game view draws beside the Scene view, or over it from a floating window:
+  the editor draws the views in floating windows last, and makes each view's element see-through
+  (`ui.set_see_through`), so the Scene view's gizmos under a floating Game view do not show through it. A frame
+  drawn over its edge rounds its corners to the panel's. Over it float a tool
   strip (select, move, rotate and scale, Pivot, Global and grid snap), a stats chip, and an axis gizmo that turns
-  with the camera. The header's **shading** menu draws it Lit, Unlit (base colours only) or as a Wireframe (the
-  renderer's debug views; the Game view is always lit). **Gizmos** (`gizmos`) draws a sun for each light and a
+  with the camera. The header's **shading** menu draws it Lit, Unlit (base colours only), as a Wireframe, or as Lit
+  Wireframe, the lit scene with its meshes' edges drawn faintly over it (the renderer's debug views; the Game view
+  is always lit). **Gizmos** (`gizmos`) draws a sun for each light and a
   camera body for each camera, which a click selects, and for the one selected, a light's reach (its range, or its
   spot's cone) and a camera's frustum; the button shows or hides them. **Full screen** gives the dock to the Scene
   view alone until it is pressed again.
@@ -2686,6 +2698,8 @@ them in a running game.
   - Calls are `[Conditional("DEBUG")]`, so scripts built for a release leave them out, and a release build of the
     player turns debug draw off.
 - **Debug views.**
+  - Unlit, wireframe, and lit wireframe: the lit scene, then each mesh's edges drawn over it as faint lines, a
+    little in front of its own faces so they are not lost in them (the Edges pass) *(implemented)*.
   - Albedo, normals, roughness and overdraw.
   - LOD and meshlet colouring, light complexity, GI voxels and shadow cascades.
   - Physics colliders, nav graphs, audio occlusion rays and AI paths.

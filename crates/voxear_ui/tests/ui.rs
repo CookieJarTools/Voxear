@@ -136,3 +136,28 @@ fn colours_are_linear_and_premultiplied() {
     assert_eq!((r, r), (g, b));
     assert_eq!(Color::hex(0x2a2b30), Color::rgb(0x2a, 0x2b, 0x30));
 }
+
+#[test]
+fn a_see_through_element_cuts_away_what_was_drawn_under_it() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.panel(root, Style::column().at(0.0, 0.0).width(300.0).height(200.0).background(Color::WHITE));
+    let window = ui.panel(root, Style::column().at(100.0, 50.0).width(100.0).height(100.0));
+    let view = ui.panel(window, Style::column().width(100.0).height(100.0));
+    ui.set_see_through(view, true);
+    ui.panel(view, Style::column().width(20.0).height(20.0).background(Color::WHITE));
+    let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+
+    let under_parts: Vec<&Quad> = shapes(&frame.quads).into_iter().filter(|q| q.rect[2] == 300.0).collect();
+    assert_eq!(under_parts.len(), 4, "the panel under it is drawn as the four bands around it");
+    let clips: Vec<[f32; 4]> = under_parts.iter().map(|q| q.clip).collect();
+    assert!(clips.contains(&[0.0, 0.0, 300.0, 50.0]), "above it, {clips:?}");
+    assert!(clips.contains(&[0.0, 150.0, 300.0, 200.0]), "below it, {clips:?}");
+    assert!(clips.contains(&[0.0, 50.0, 100.0, 150.0]), "left of it, {clips:?}");
+    assert!(clips.contains(&[200.0, 50.0, 300.0, 150.0]), "right of it, {clips:?}");
+    assert!(shapes(&frame.quads).iter().any(|q| q.rect == [100.0, 50.0, 20.0, 20.0]), "what is in it still draws");
+
+    ui.set_see_through(view, false);
+    let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(shapes(&frame.quads).iter().filter(|q| q.rect[2] == 300.0).count(), 1);
+}

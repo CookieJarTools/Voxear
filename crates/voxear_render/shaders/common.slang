@@ -42,6 +42,7 @@ static const uint DEBUG_VIEW_LIGHT_COMPLEXITY = 3;
 static const uint DEBUG_VIEW_NORMALS = 4;
 static const uint DEBUG_VIEW_UNLIT = 5;
 static const uint DEBUG_VIEW_WIREFRAME = 6;
+static const uint DEBUG_VIEW_LIT_WIREFRAME = 7;
 
 // A draw's instance index, with its LOD and fade role packed in the top byte.
 static const uint DRAW_INSTANCE_MASK = 0xFFFFFF;

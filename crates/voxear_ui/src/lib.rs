@@ -37,6 +37,7 @@ mod cascade;
 mod color;
 mod color_picker;
 mod controls;
+mod create;
 mod dock;
 mod drag;
 mod draw;
@@ -58,6 +59,7 @@ mod tree;
 
 pub use color::Color;
 pub use color_picker::{ColorPicker, PickedColor, hsv_to_srgb, srgb_to_hsv};
+pub use create::ElementKind;
 pub use drag::DragSource;
 pub use draw::Shape;
 pub use icons::NAMES as ICONS;

@@ -31,6 +31,43 @@ pub(crate) unsafe extern "C" fn ui_close(document: i32) {
     with_services(|services| services.ui_close(document as u32));
 }
 
+/// An empty document, for elements made from code, or -1.
+pub(crate) unsafe extern "C" fn ui_new() -> i32 {
+    match with_services(|services| services.ui_new()) {
+        Some(Ok(document)) => document as i32,
+        Some(Err(error)) => {
+            tracing::error!(target: "script", "UiDocument.Create(): {error:#}");
+            -1
+        }
+        None => {
+            tracing::error!(target: "script", "UiDocument.Create(): there is no UI while scripts are not running");
+            -1
+        }
+    }
+}
+
+/// Makes an element of `kind` at the end of `parent`, and returns it, or
+/// -1 when the parent is gone.
+pub(crate) unsafe extern "C" fn ui_create(parent: i32, kind: i32, text: *const u8, len: i32) -> i32 {
+    let text = unsafe { utf8(text, len) };
+    if parent < 0 {
+        return -1;
+    }
+    let created = with_services(|services| services.ui_create(parent as u32, kind, &text)).flatten();
+    created.map_or(-1, |element| element as i32)
+}
+
+pub(crate) unsafe extern "C" fn ui_remove(element: i32) {
+    if element >= 0 {
+        with_services(|services| services.ui_remove(element as u32));
+    }
+}
+
+/// Whether its value changed since the last frame.
+pub(crate) unsafe extern "C" fn ui_changed(element: i32) -> i32 {
+    i32::from(ask(element, UiAsk::Changed) == Some(UiAnswer::Yes(true)))
+}
+
 /// An element's text, written when it fits; its length in bytes either way,
 /// or -1 for none.
 pub(crate) unsafe extern "C" fn ui_text(element: i32, buffer: *mut u8, capacity: i32) -> i32 {

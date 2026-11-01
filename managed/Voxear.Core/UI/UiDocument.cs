@@ -4,10 +4,12 @@ using Voxear.Interop;
 namespace Voxear
 {
 	/// <summary>
-	/// A UI the game shows over its view: a .vui document from the project, with the sheets its Style elements name,
-	/// laid out by Voxear UI as the editor is. <c>var hud = UiDocument.Load("UI/Hud.vui");</c>, then
-	/// <c>hud.Find("score").Text = "10";</c> and <c>hud.Find("pause").Clicked += Pause;</c>. It shows over the whole
-	/// window in a built game and over the Game view in the editor, until it is closed or play mode stops.
+	/// A UI the game shows over its view, laid out by Voxear UI as the editor is: a .vui document from the project, with
+	/// the sheets its Style elements name, or one made empty and filled in code. <c>var hud = UiDocument.Load("UI/Hud.vui");</c>,
+	/// then <c>hud.Find("score").Text = "10";</c> and <c>hud.Find("pause").Clicked += Pause;</c>; or
+	/// <c>var hud = UiDocument.Create();</c> and <c>hud.Root.Add(new Button("Pause")).Clicked += Pause;</c>. It shows
+	/// over the whole window in a built game and over the Game view in the editor, until it is closed or play mode
+	/// stops.
 	/// </summary>
 	public sealed unsafe class UiDocument
 	{
@@ -38,6 +40,21 @@ namespace Voxear
 			{
 				id = Native.Api->UiLoad(text, bytes.Length);
 			}
+			return id < 0 ? null : new UiDocument(id);
+		}
+
+		/// <summary>
+		/// An empty document over the game, to fill with elements made in code: <c>var hud = UiDocument.Create();</c>,
+		/// then <c>hud.Root.Add(new Label("0"))</c>. Null when there is no UI to show it in, which the Console says.
+		/// </summary>
+		public static UiDocument? Create()
+		{
+			if (!Native.IsConnected)
+			{
+				return null;
+			}
+
+			var id = Native.Api->UiNew();
 			return id < 0 ? null : new UiDocument(id);
 		}
 

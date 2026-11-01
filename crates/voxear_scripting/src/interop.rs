@@ -37,10 +37,11 @@ use crate::services::{
     SceneLoadOptions, SceneRequest, SpawnedPrefab, with_services,
 };
 use crate::ui::{
-    ui_class, ui_clicked, ui_close, ui_find, ui_load, ui_set_text, ui_style, ui_text, ui_value, ui_visible,
+    ui_changed, ui_class, ui_clicked, ui_close, ui_create, ui_find, ui_load, ui_new, ui_remove, ui_set_text, ui_style,
+    ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 26;
+pub(crate) const API_VERSION: u32 = 27;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -168,6 +169,13 @@ pub(crate) struct NativeApi {
     pub scene_load_async: unsafe extern "C" fn(reference: *const u8, len: i32, options: *const SceneLoadOptions) -> i32,
     pub scene_unload: unsafe extern "C" fn(reference: *const u8, len: i32),
     pub scene_set_active: unsafe extern "C" fn(reference: *const u8, len: i32),
+    /// The game's UI made from code (see [`crate::ui`]): an empty document,
+    /// an element made at the end of another, one taken out, and whether
+    /// one's value changed.
+    pub ui_new: unsafe extern "C" fn() -> i32,
+    pub ui_create: unsafe extern "C" fn(parent: i32, kind: i32, text: *const u8, len: i32) -> i32,
+    pub ui_remove: unsafe extern "C" fn(element: i32),
+    pub ui_changed: unsafe extern "C" fn(element: i32) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -893,6 +901,10 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         scene_load_async,
         scene_unload,
         scene_set_active,
+        ui_new,
+        ui_create,
+        ui_remove,
+        ui_changed,
     }
 }
 

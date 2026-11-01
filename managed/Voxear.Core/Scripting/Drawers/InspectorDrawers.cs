@@ -142,7 +142,7 @@ namespace Voxear.Scripting
 			json.WriteStartArray("markups");
 			foreach (var drawer in field.Drawers)
 			{
-				json.WriteStringValue(drawer.Markup);
+				json.WriteStringValue(drawer.MarkupToBuild);
 			}
 			json.WriteEndArray();
 		}
@@ -166,7 +166,7 @@ namespace Voxear.Scripting
 			var before = Written(value, field.ValueType);
 			for (var i = Math.Min(documents.Count, field.Drawers.Count) - 1; i >= 0; i--)
 			{
-				value = field.Drawers[i].DrawValue(value, new UiDocument(documents[i]));
+				value = field.Drawers[i].Draw(value, new UiDocument(documents[i]));
 			}
 			var after = Written(value, field.ValueType);
 			json.WritePropertyName("value");

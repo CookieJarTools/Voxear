@@ -357,6 +357,10 @@ Still to do in M3:
   - [x] the C# UI API: `UiDocument.Load` and `Find`, text, classes, visibility, values and styles, and `Clicked`;
     the game's UI drawn over the Game view while playing, and over a player's window
   - [x] pack `.vui` and `.vss` files into built games: every document is a root, and its sheets ship with it
+  - [x] UI built in code, as Unity's UI Toolkit: `UiDocument.Create()`, `new Panel()`, `Label`, `Button`,
+    `Toggle`, `Slider`, `TextField`, `ScrollView`, `Foldout`, `Dropdown` and `Icon`, `Add`, `Remove` and `Clear`,
+    and `Changed` with each kind's own event
+  - [ ] list and tree views at runtime from C#, filled from code
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.
@@ -375,6 +379,8 @@ Still to do in M3:
     (`VOX0001` to `VOX0007`); the source generator is not needed, as ScriptInfo describes the scripts already
   - [x] custom drawers in C#: `ValueDrawer<T>` and `AttributeDrawer<TAttribute, T>`, built from `.vui` markup and
     drawn through the C# UI API, chained through a `next` element around the Inspector's own control
+  - [x] drawers built in code, in `Build(root)`, with markup optional
+  - [ ] custom inspectors that draw a whole behaviour, as Unity's `Editor`
 - A build option to compile the scripts ahead of time (Native AOT) as well as run them on CoreCLR, which needs the
   player and Voxear.Core built that way too, and an option to ship the .NET runtime with the game (M12).
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D

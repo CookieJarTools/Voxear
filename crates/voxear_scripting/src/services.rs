@@ -129,6 +129,20 @@ pub trait ScriptServices {
 
     fn ui_close(&mut self, _document: u32) {}
 
+    /// An empty document, for scripts to fill with elements made from code.
+    fn ui_new(&mut self) -> Result<u32> {
+        anyhow::bail!("there is no UI to show a document in here")
+    }
+
+    /// Makes an element at the end of `parent`: `kind` is its number among
+    /// `voxear_ui::ElementKind::ALL`, and `text` as `Ui::create` reads it.
+    fn ui_create(&mut self, _parent: u32, _kind: i32, _text: &str) -> Option<u32> {
+        None
+    }
+
+    /// Takes an element out, with everything in it.
+    fn ui_remove(&mut self, _element: u32) {}
+
     /// Something asked of an element: see [`UiAsk`]. The answer is what was
     /// read, or what is true after a change.
     fn ui_ask(&mut self, _element: u32, _ask: UiAsk<'_>) -> UiAnswer {
@@ -147,6 +161,9 @@ pub enum UiAsk<'a> {
     SetVisible(bool),
     /// Whether it was clicked since the last frame.
     Clicked,
+    /// Whether its value changed since the last frame: typed in, ticked,
+    /// moved or picked.
+    Changed,
     /// A slider's value, or a toggle's, 1 when ticked.
     Value,
     SetValue(f32),

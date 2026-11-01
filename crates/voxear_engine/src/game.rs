@@ -11,6 +11,7 @@ use voxear_scripting::{
     PreviewSource, PreviewState, SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab,
     UiAnswer, UiAsk,
 };
+use voxear_ui::ElementKind;
 
 use crate::{
     content::{Content, Reimported, Released},
@@ -419,6 +420,18 @@ impl ScriptServices for GameServices<'_> {
 
     fn ui_close(&mut self, document: u32) {
         self.ui.close(document);
+    }
+
+    fn ui_new(&mut self) -> Result<u32> {
+        Ok(self.ui.new_document())
+    }
+
+    fn ui_create(&mut self, parent: u32, kind: i32, text: &str) -> Option<u32> {
+        self.ui.create(parent, ElementKind::from_number(kind)?, text)
+    }
+
+    fn ui_remove(&mut self, element: u32) {
+        self.ui.remove(element);
     }
 
     fn ui_ask(&mut self, element: u32, ask: UiAsk<'_>) -> UiAnswer {

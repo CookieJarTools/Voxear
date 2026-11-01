@@ -81,5 +81,9 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<byte*, int, SceneLoadOptionsData*, int> SceneLoadAsync;
 		public delegate* unmanaged[Cdecl]<byte*, int, void> SceneUnload;
 		public delegate* unmanaged[Cdecl]<byte*, int, void> SceneSetActive;
+		public delegate* unmanaged[Cdecl]<int> UiNew;
+		public delegate* unmanaged[Cdecl]<int, int, byte*, int, int> UiCreate;
+		public delegate* unmanaged[Cdecl]<int, void> UiRemove;
+		public delegate* unmanaged[Cdecl]<int, int> UiChanged;
 	}
 }

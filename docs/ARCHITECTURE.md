@@ -1343,8 +1343,15 @@ hud.Close();
   with its atlas and moved to its area (`Renderer::set_game_ui`).
 - The pointer and keyboard reach it in the Game view while playing, and in a player when the fly camera is not
   looking around.
-- `Clicked` handlers run at the start of each frame, before the systems update, and a handler that throws is
-  logged without stopping the others. `WasClicked` asks the same without a handler.
+- `Clicked` and `Changed` handlers run at the start of each frame, before the systems update, and a handler that
+  throws is logged without stopping the others. `WasClicked` and `WasChanged` ask the same without a handler.
+- **Built in code** *(implemented)*, as Unity's UI Toolkit builds it: `UiDocument.Create()` shows an empty
+  document, and `new Panel()`, `Label`, `Button`, `Toggle`, `Slider`, `TextField`, `ScrollView`, `Foldout`,
+  `Dropdown` and `Icon` are added with `Add`, which gives the element back to keep. An element made with `new` lives
+  in C# until it is added to one on screen; what was set on it meanwhile (text, classes, style, visibility, value)
+  is sent then, and its children follow (`Ui::create`, `voxear_ui::ElementKind`, the `ui_create` call). `Remove`
+  takes one off with what is in it, keeping its text and value so it can be added again. The kinds have their own
+  events with the new value (`Toggled`, `Moved`, `Typed`, `Picked`), raised from `Changed`.
 - Stopping play takes the game's UI away; reloading scripts forgets the elements they held.
 - A built game packs every `.vui` document with the sheets it names (see the content build), since scripts load
   documents by a path the build cannot see. A sheet that is not there stops the build, naming both files.
@@ -2005,9 +2012,11 @@ memory (`Voxear.Analyzers.Tests`).
 
 **Custom drawers** *(implemented)* are C#, built with Voxear UI, the UI games draw theirs with: `ValueDrawer<T>`
 draws every field of a type, and `AttributeDrawer<TAttribute, T>` (or `AttributeDrawer<TAttribute>` for any type)
-the fields marked with an attribute of the game's own. A drawer gives its `Markup`, a `.vui` document, and a
-`Draw(value, ui)` that writes the value into the elements and gives it back as what was clicked leaves it, reading
-clicks with `WasClicked`. A list's drawers draw each item; a value a drawer draws has no rows of its own.
+the fields marked with an attribute of the game's own. A drawer builds its elements in code in `Build(root)`, once,
+or gives its `Markup`, a `.vui` document; and a `Draw(value, ui)` writes the value into the elements and gives it
+back as what was clicked leaves it, reading clicks with `WasClicked`. A drawer built in code draws the value alone,
+as the Inspector's own control goes only in a markup's `next` element; its elements' events are raised just before
+`Draw`. A list's drawers draw each item; a value a drawer draws has no rows of its own.
 - **The chain:** ScriptInfo writes each field's drawers by name, outermost first: one for each of its attributes,
   in the order written, then its type's (`drawers`, or `item_drawers` for a list). Each is built in the `next`
   element of the one around it, and the Inspector's own control goes in the innermost one's, or nowhere. The label,

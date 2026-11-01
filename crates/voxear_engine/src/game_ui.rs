@@ -1,6 +1,7 @@
 //! The game's own UI: documents its scripts load (`UiDocument.Load` in
-//! Voxear.Core), in a Voxear UI of their own, so a game's sheets never meet
-//! the editor's. The window draws it under its own UI, over the game's
+//! Voxear.Core) or make empty and fill with elements made from code (`new
+//! Button("Pause")`), in a Voxear UI of their own, so a game's sheets never
+//! meet the editor's. The window draws it under its own UI, over the game's
 //! view: the whole window in a player, the Game view in the editor. Scripts
 //! hold documents and elements as numbers, which [`UiNumbers`] keeps; the
 //! editor's Inspector keeps its own for the drawers scripts draw fields with.
@@ -10,7 +11,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use voxear_render::Renderer;
 use voxear_scripting::{UiAnswer, UiAsk};
-use voxear_ui::{Kind, NodeId, Ui, UiFrame};
+use voxear_ui::{ElementKind, Kind, NodeId, Style, Ui, UiFrame};
 
 use crate::Content;
 
@@ -32,8 +33,9 @@ pub struct UiNumbers {
     first: u32,
     /// Each document, by its number less `first`; `None` once closed.
     documents: Vec<Option<NodeId>>,
-    /// Each element scripts found, by its number less `first`.
-    elements: Vec<NodeId>,
+    /// Each element scripts found or made, by its number less `first`;
+    /// `None` once removed.
+    elements: Vec<Option<NodeId>>,
     numbers: HashMap<NodeId, u32>,
 }
 
@@ -77,14 +79,43 @@ impl UiNumbers {
         if let Some(&number) = self.numbers.get(&node) {
             return number;
         }
-        self.elements.push(node);
+        self.elements.push(Some(node));
         let number = self.first + self.elements.len() as u32 - 1;
         self.numbers.insert(node, number);
         number
     }
 
     pub fn node(&self, element: u32) -> Option<NodeId> {
-        self.elements.get(element.checked_sub(self.first)? as usize).copied()
+        *self.elements.get(element.checked_sub(self.first)? as usize)?
+    }
+
+    /// Makes an element of `kind` at the end of the element `parent` (see
+    /// [`Ui::create`] for `text`), and gives it a number scripts hold it by.
+    pub fn create(&mut self, ui: &mut Ui, parent: u32, kind: ElementKind, text: &str) -> Option<u32> {
+        let node = ui.create(self.node(parent)?, kind, text);
+        Some(self.number(node))
+    }
+
+    /// Takes an element out, with everything in it, whose numbers stand for
+    /// nothing after. A document's own container goes only when the
+    /// document closes.
+    pub fn remove(&mut self, ui: &mut Ui, element: u32) {
+        let Some(node) = self.node(element) else { return };
+        if self.documents.contains(&Some(node)) {
+            return;
+        }
+        let mut gone = vec![node];
+        let mut at = 0;
+        while let Some(&next) = gone.get(at) {
+            gone.extend(ui.children(next));
+            at += 1;
+        }
+        for node in gone {
+            if let Some(number) = self.numbers.remove(&node) {
+                self.elements[(number - self.first) as usize] = None;
+            }
+        }
+        ui.remove(node);
     }
 
     /// Answers what a script asks of an element: see [`UiAsk`].
@@ -105,6 +136,7 @@ impl UiNumbers {
             UiAsk::Visible => return UiAnswer::Yes(ui.is_visible(node)),
             UiAsk::SetVisible(visible) => ui.set_visible(node, visible),
             UiAsk::Clicked => return UiAnswer::Yes(ui.clicked(node)),
+            UiAsk::Changed => return UiAnswer::Yes(ui.changed(node)),
             UiAsk::Value => return UiAnswer::Number(value(ui, node)),
             UiAsk::SetValue(to) => set_value(ui, node, to),
             UiAsk::SetStyle(style) => ui.set_inline_style(node, style),
@@ -128,6 +160,7 @@ fn change_class(ui: &mut Ui, node: NodeId, class: &str, change: ClassChange) -> 
 fn value(ui: &Ui, node: NodeId) -> f32 {
     match ui.kind(node) {
         Some(Kind::Slider) => ui.slider_value(node),
+        Some(Kind::Dropdown) => ui.selected_option(node) as f32,
         _ => f32::from(u8::from(ui.is_checked(node))),
     }
 }
@@ -135,6 +168,7 @@ fn value(ui: &Ui, node: NodeId) -> f32 {
 fn set_value(ui: &mut Ui, node: NodeId, value: f32) {
     match ui.kind(node) {
         Some(Kind::Slider) => ui.set_slider_value(node, value),
+        Some(Kind::Dropdown) => ui.set_selected_option(node, value.max(0.0) as usize),
         _ => ui.set_checked(node, value != 0.0),
     }
 }
@@ -163,9 +197,27 @@ impl GameUi {
         Ok(self.numbers.add_document(document))
     }
 
+    /// An empty document over the game, to fill with elements made from
+    /// code, and the number scripts hold it by.
+    pub fn new_document(&mut self) -> u32 {
+        let root = self.ui.root();
+        let document = self.ui.panel(root, Style::cover());
+        self.numbers.add_document(document)
+    }
+
     /// The element named `name` in a document, as a number scripts hold.
     pub fn find(&mut self, document: u32, name: &str) -> Option<u32> {
         self.numbers.find(&self.ui, document, name)
+    }
+
+    /// Makes an element at the end of `parent`: see [`UiNumbers::create`].
+    pub fn create(&mut self, parent: u32, kind: ElementKind, text: &str) -> Option<u32> {
+        self.numbers.create(&mut self.ui, parent, kind, text)
+    }
+
+    /// Takes an element out: see [`UiNumbers::remove`].
+    pub fn remove(&mut self, element: u32) {
+        self.numbers.remove(&mut self.ui, element);
     }
 
     /// Takes a document off the screen, its elements with it.

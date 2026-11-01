@@ -15,7 +15,7 @@ use voxear_engine::{
     script_types::{FieldKind, ScriptTypes, same_field},
 };
 use voxear_scripting::{DrawRequest, DrawerField, Drawn, FieldStep, ScriptServices, UiAnswer, UiAsk};
-use voxear_ui::{LoadFile, NodeId, Style, Ui};
+use voxear_ui::{ElementKind, LoadFile, NodeId, Style, Ui};
 
 use crate::{fields::Step, props::Prop};
 
@@ -253,6 +253,14 @@ impl ScriptServices for DrawerUi<'_> {
 
     fn ui_ask(&mut self, element: u32, ask: UiAsk<'_>) -> UiAnswer {
         self.numbers.ask(self.ui, element, ask)
+    }
+
+    fn ui_create(&mut self, parent: u32, kind: i32, text: &str) -> Option<u32> {
+        self.numbers.create(self.ui, parent, ElementKind::from_number(kind)?, text)
+    }
+
+    fn ui_remove(&mut self, element: u32) {
+        self.numbers.remove(self.ui, element);
     }
 }
 

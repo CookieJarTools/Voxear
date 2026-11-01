@@ -1,6 +1,7 @@
 //! Drawers written in C#, on a copy of Hello whose Game Manager gains two
-//! fields: one its type's `ValueDrawer` draws whole, and one an
-//! `AttributeDrawer` draws around the Inspector's own control. A file of its
+//! fields: one its type's `ValueDrawer` draws whole, with elements it
+//! builds in code, and one an `AttributeDrawer` draws around the
+//! Inspector's own control, from markup. A file of its
 //! own, so it runs in a process of its own, since .NET starts only once per
 //! process. Skips itself without a GPU or .NET.
 
@@ -38,21 +39,27 @@ namespace Hello
         "StatDrawer.cs",
         r#"using Voxear;
 
-namespace Hello
-{
-	public sealed class StatDrawer : ValueDrawer<Stat>
-	{
-		public override string Markup => "<vui><Label name=\"text\" /><Button name=\"fill\">Fill</Button></vui>";
+namespace Hello;
 
-		protected override Stat Draw(Stat value, UiDocument ui)
+public sealed class StatDrawer : ValueDrawer<Stat>
+{
+	private Label text = null!;
+	private Button fill = null!;
+
+	protected override void Build(UiElement root)
+	{
+		text = root.Add(new Label());
+		fill = root.Add(new Button("Fill"));
+	}
+
+	protected override Stat Draw(Stat value, UiDocument ui)
+	{
+		if (fill.WasClicked)
 		{
-			if (ui.Find("fill")!.WasClicked)
-			{
-				value.Value = value.Max;
-			}
-			ui.Find("text")!.Text = $"{value.Value} / {value.Max}";
-			return value;
+			value.Value = value.Max;
 		}
+		text.Text = $"{value.Value} / {value.Max}";
+		return value;
 	}
 }
 "#,

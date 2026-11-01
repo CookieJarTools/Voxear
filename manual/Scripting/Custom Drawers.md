@@ -2,7 +2,7 @@
 order: 9
 ---
 
-When no attribute shows a field the way you want, write a **drawer**: a class that draws the field in the Inspector. It is built from the same markup and calls as a game's own UI ([[UI Markup]], [[UI from Scripts]]).
+When no attribute shows a field the way you want, write a **drawer**: a class that draws the field in the Inspector. It is built from the same elements and calls as a game's own UI ([[UI from Scripts]]).
 
 ## A drawer for a type
 
@@ -14,6 +14,40 @@ public struct Health
 	public int Max;
 }
 
+public sealed class HealthDrawer : ValueDrawer<Health>
+{
+	private Label text = null!;
+	private Button fill = null!;
+
+	protected override void Build(UiElement root)
+	{
+		text = root.Add(new Label());
+		fill = root.Add(new Button("Fill"));
+	}
+
+	protected override Health Draw(Health value, UiDocument ui)
+	{
+		if (fill.WasClicked)
+		{
+			value.Current = value.Max;
+		}
+		text.Text = $"{value.Current} / {value.Max}";
+		return value;
+	}
+}
+```
+
+Every `Health` field now shows as its two numbers and a **Fill** button, in place of its own fields. In a list of `Health`, each item shows that way.
+
+`Build` runs once, before the field is first drawn. It adds the drawer's elements to `root`, as a game builds its UI in code, and keeps them in fields.
+
+`Draw` gets the value and the document. It writes the value into the elements, and gives the value back, changed by whatever was clicked. The editor calls it when the field first shows, after something in it is clicked or changed, and when the value changes some other way, as on undo. A value given back changed is saved in the scene, and **Ctrl+Z** undoes it.
+
+## A drawer from markup
+
+A drawer can describe its elements in markup instead, as a `.vui` document written in the code. A raw string, between `"""` marks, keeps it readable, and `Find` reaches each element by its `name`:
+
+```csharp
 public sealed class HealthDrawer : ValueDrawer<Health>
 {
 	public override string Markup => """
@@ -35,11 +69,7 @@ public sealed class HealthDrawer : ValueDrawer<Health>
 }
 ```
 
-Every `Health` field now shows as its two numbers and a **Fill** button, in place of its own fields. In a list of `Health`, each item shows that way.
-
-`Markup` is a `.vui` document, written in the code; a raw string, between `"""` marks, keeps it readable. Sheets its `<Style src>` names are read from the project, by their path in it.
-
-`Draw` gets the value and the document. It writes the value into the elements, and gives the value back, changed by whatever was clicked. The editor calls it when the field first shows, after something in it is clicked or changed, and when the value changes some other way, as on undo. A value given back changed is saved in the scene, and **Ctrl+Z** undoes it.
+Sheets the markup's `<Style src>` names are read from the project, by their path in it. Markup is also the way to keep the field's usual control inside your drawer, with an element named `next`, as the next section shows. A drawer built in code always draws the whole field itself.
 
 ## A drawer for an attribute
 
@@ -93,7 +123,7 @@ With `[Step(5)] public int Lives = 3;`, the field shows its usual number box wit
 - A drawn field keeps its label, and the attributes around it still apply, so `[InfoBox]`, `[Tooltip]` and groups work as before.
 - A field can have several drawers: one for each of its attributes, in the order they are written, then the one for its type. Each is drawn inside the `next` element of the one before.
 - Drawers run while you edit. While the game plays, a drawn field shows its usual control.
-- In a drawer, check `WasClicked` in `Draw`. The `Clicked` event is not raised there.
+- In a drawer, check `WasClicked` and `WasChanged` in `Draw`. Events such as `Clicked` and `Moved` are raised too, for elements built in code, just before `Draw` runs.
 - A drawer that throws stops drawing its field until you select the Obj again; the Console shows what went wrong.
 
 Next: [[Your First Menu]], to build a game's own UI with the same markup.

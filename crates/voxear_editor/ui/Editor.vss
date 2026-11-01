@@ -2128,6 +2128,21 @@ DockSpace .project-split > .split-divider {
     font-size: 11px;
 }
 
+/* A field the scripts' drawers draw: their markup in a row, with the Inspector's own control in their "next" element. */
+.field-drawer-slot, .field-drawer, .field-drawer-next {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.field-drawer-slot > .value-input, .field-drawer-slot > .value-picker, .field-drawer-slot > .vector, .field-drawer-slot > .value,
+.field-drawer-next > .value-input, .field-drawer-next > .value-picker, .field-drawer-next > .vector, .field-drawer-next > .value {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
 /* The Entities panel, the ECS inspector: archetypes, their entities, the picked one's components, and the systems. */
 .entities-summary {
     flex-grow: 1;

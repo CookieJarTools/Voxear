@@ -19,7 +19,7 @@ use crate::Engine;
 const KEPT: usize = 2_000;
 /// What the console takes itself, before the scripts.
 const OWN: [(&str, &str); 3] =
-    [("help", "Lists what the console takes"), ("clear", "Empties the log shown here"), ("quit", "Closes the game")];
+    [("help", "Lists the commands you can type"), ("clear", "Clears the console's log"), ("quit", "Closes the game")];
 
 /// What a line asked of the game window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -290,7 +290,7 @@ mod tests {
         enter(&mut ui, &mut console, "help");
         let lines = shown(&console);
         assert!(lines.contains(&"› help".to_string()), "what was typed shows: {lines:?}");
-        assert!(lines.contains(&"clear  Empties the log shown here".to_string()), "{lines:?}");
+        assert!(lines.contains(&"clear  Clears the console's log".to_string()), "{lines:?}");
         enter(&mut ui, &mut console, "jump");
         assert!(shown(&console).iter().any(|l| l.contains("nothing is called jump")));
         assert_eq!(console.lines.borrow().last().map(|l| l.class), Some("warning"));

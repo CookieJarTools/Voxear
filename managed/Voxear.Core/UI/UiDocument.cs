@@ -13,7 +13,7 @@ namespace Voxear
 	{
 		private readonly int id;
 
-		private UiDocument(int id)
+		internal UiDocument(int id)
 		{
 			this.id = id;
 		}

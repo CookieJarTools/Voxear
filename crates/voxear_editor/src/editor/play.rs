@@ -81,6 +81,13 @@ impl Play {
         Self { mode: Mode::Editing, scripts: None, ready: false, error: None, command: None, start_only: false }
     }
 
+    /// The scripts edit mode runs the Inspector's code with, once they have
+    /// started, and while they are not playing.
+    pub fn edit_scripts(&mut self) -> Option<&mut ScriptRuntime> {
+        let started = matches!(self.mode, Mode::Editing) && self.error.is_none() && self.ready;
+        self.scripts.as_mut().filter(|_| started)
+    }
+
     /// What the status bar says the editor is doing.
     /// Whether the scripts are building for play to start.
     pub fn is_building(&self) -> bool {

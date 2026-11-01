@@ -1,6 +1,7 @@
 //! A behaviour's code, run for the Inspector while editing: `[Button]`s,
-//! `[OnValueChanged]` callbacks, `[ValidateInput]` checks and the values a
-//! `[ValueDropdown]` offers. The scripts start for it without playing, as a
+//! `[OnValueChanged]` callbacks, `[ValidateInput]` checks, the values a
+//! `[ValueDropdown]` offers, and the drawers fields are drawn with (see
+//! `field_drawers`). The scripts start for it without playing, as a
 //! guide's check starts them, and each call runs on a copy of the behaviour
 //! made from the Obj's scene values (see `voxear_scripting::InspectorAsk`).
 //! The fields a method changes go back into the scene: a callback's with
@@ -15,10 +16,11 @@ use voxear_engine::{
     script_types::{FieldKind, ScriptTypes},
 };
 use voxear_scene::BehaviourSpec;
-use voxear_scripting::{InspectorAnswer, InspectorAsk};
+use voxear_scripting::{DrawerField, InspectorAnswer, InspectorAsk};
 
 use super::Editor;
 use crate::{
+    field_drawers::ToOpen,
     fields,
     history::{Edit, ObjState},
     inspector::ScriptAnswers,
@@ -38,6 +40,45 @@ impl Editor {
         };
         for (behaviour, method) in calls {
             self.call_behaviour(entity, &behaviour, &method);
+        }
+        let after = ObjState::of(&self.game.engine.world, entity)?;
+        (before != after).then_some(Edit::Changed { entity, before, after })
+    }
+
+    /// Opens the shown fields' drawers once the scripts have started, and
+    /// draws those to be drawn this frame, folding what they change into
+    /// the frame's edit.
+    pub(super) fn run_inspector_drawers(&mut self, edit: Option<Edit>) -> Option<Edit> {
+        let Some(entity) = self.inspector.shown().filter(|_| !self.is_playing()) else { return edit };
+        if let Some(fields) = self.inspector.drawers_to_open() {
+            let asked: Vec<DrawerField> = fields.iter().map(ToOpen::field).collect();
+            let opened = self.with_edit_scripts(|scripts, game| scripts.open_drawers(&mut game.engine.world, &asked));
+            let answers = match opened {
+                // Opened once the scripts have started.
+                None => return edit,
+                Some(Ok(answers)) => answers,
+                Some(Err(error)) => {
+                    tracing::error!("{error:#}");
+                    asked.iter().map(|_| Err(format!("{error}"))).collect()
+                }
+            };
+            self.inspector.place_drawers(&mut self.ui, &mut self.game, answers);
+        }
+        let requests = self.inspector.drawer_requests(&self.ui, &self.game);
+        let Some(scripts) = self.play.edit_scripts().filter(|_| !requests.is_empty()) else { return edit };
+        let before = match &edit {
+            Some(Edit::Changed { before, .. }) => before.clone(),
+            _ => ObjState::of(&self.game.engine.world, entity)?,
+        };
+        let mut ui = self.inspector.drawer_ui(&mut self.ui);
+        let drawn = scripts.draw_fields(&mut self.game.engine.world, &mut ui, &requests);
+        match drawn {
+            Ok(answers) => {
+                for error in self.inspector.take_drawn(&mut self.game, answers) {
+                    self.notify(&error);
+                }
+            }
+            Err(error) => tracing::error!("{error:#}"),
         }
         let after = ObjState::of(&self.game.engine.world, entity)?;
         (before != after).then_some(Edit::Changed { entity, before, after })

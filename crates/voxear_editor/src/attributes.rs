@@ -267,6 +267,26 @@ pub fn page_key(behaviour: &str, list: &[Step]) -> String {
     format!("{behaviour}/{list:?}")
 }
 
+/// The drawers scripts draw a row's value with, outermost first: its
+/// field's, or for a list's item, those the list gives its items.
+pub fn drawers<'t>(types: &'t ScriptTypes, prop: &Prop) -> &'t [String] {
+    let Prop::Field { behaviour, path } = prop else { return &[] };
+    match path.split_last() {
+        Some((Step::Item(_), list)) => field_at(types, behaviour, list).map_or(&[], |meta| &meta.item_drawers),
+        _ => &of(types, prop).drawers,
+    }
+}
+
+/// Whether a row is inside a value drawers draw, which they draw whole, as
+/// a table's fields.
+pub fn drawn_by_drawer(types: &ScriptTypes, prop: &Prop) -> bool {
+    let Prop::Field { behaviour, path } = prop else { return false };
+    (1..path.len()).any(|at| {
+        let outer = Prop::Field { behaviour: behaviour.clone(), path: path[..at].to_vec() };
+        !drawers(types, &outer).is_empty()
+    })
+}
+
 /// When a row is a list's item, the list's `[ListDrawerSettings]`, if any,
 /// and the item's index.
 pub fn item_of(types: &ScriptTypes, prop: &Prop) -> Option<(Option<ListSettings>, usize)> {

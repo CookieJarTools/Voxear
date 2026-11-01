@@ -84,7 +84,7 @@ impl ScriptRuntime {
 
     /// Sends the request and returns the answer, asking for it again into a
     /// larger buffer when it did not fit, without running anything twice.
-    fn inspector_call(&mut self, world: &mut World, request: &str) -> Result<String> {
+    pub(crate) fn inspector_call(&mut self, world: &mut World, request: &str) -> Result<String> {
         let call = self.managed.inspector_call.expect("validated at start");
         let _scope = WorldScope::enter(world);
         let mut buffer = vec![0u8; 16 * 1024];
@@ -102,7 +102,7 @@ impl ScriptRuntime {
 
 /// A JSON value as a scene writes it; null, which TOML has no word for, is
 /// left out.
-fn to_toml(value: serde_json::Value) -> Option<toml::Value> {
+pub(crate) fn to_toml(value: serde_json::Value) -> Option<toml::Value> {
     Some(match value {
         serde_json::Value::Null => return None,
         serde_json::Value::Bool(b) => toml::Value::Boolean(b),

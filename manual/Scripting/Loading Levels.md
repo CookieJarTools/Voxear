@@ -2,8 +2,6 @@
 order: 6
 ---
 
-# Loading Levels
-
 Your scripts choose when the game moves to another level. There are two ways.
 
 ## All at once
@@ -46,7 +44,8 @@ Log.Info($"Loading: {loading.Progress:P0}");
 To fade out before the new level appears, hold the change until you are ready:
 
 ```csharp
-var loading = Level.LoadAsync("Levels/Night.level", LevelLoadOptions.Held);
+var held = LevelLoadOptions.Held;
+var loading = Level.LoadAsync("Levels/Night.level", held);
 await loading.Ready;      // everything is read in, and waiting
 await FadeOut();          // your own fade
 loading.Activate();       // let the new level in
@@ -56,7 +55,8 @@ await loading;            // and it is there
 To keep a loading screen up for a moment even when a level loads fast, set `LeastTime`, in seconds:
 
 ```csharp
-Level.LoadAsync("Levels/Night.level", new LevelLoadOptions { LeastTime = 1.5f });
+var options = new LevelLoadOptions { LeastTime = 1.5f };
+Level.LoadAsync("Levels/Night.level", options);
 ```
 
 ## What stays and what goes

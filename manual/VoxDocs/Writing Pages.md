@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# Writing Pages
-
 A page is a Markdown file in your project's `Docs` folder. Its file name is its title, and folders in `Docs` show as folders in the tree.
 
 ## Your first page
@@ -34,7 +32,7 @@ Plain text. A blank line starts a new paragraph.
 - [x] A ticked box
 
 > [!TIP]
-> A callout. NOTE, TIP, IMPORTANT, WARNING and CAUTION each have their own colour.
+> A callout: NOTE, TIP, IMPORTANT, WARNING or CAUTION.
 
 | Name | What it does |
 | --- | --- |
@@ -42,6 +40,8 @@ Plain text. A blank line starts a new paragraph.
 ```
 
 Ticking a box on a page saves the page, so a checklist remembers what is done.
+
+A callout is a box that stands out from the page, for a note or a warning. Each kind, NOTE, TIP, IMPORTANT, WARNING or CAUTION, has its own colour and icon.
 
 A block of code between three backticks keeps its spacing and gets a **Copy** button. Write the language after the backticks, as `csharp`, and its name shows over the block.
 

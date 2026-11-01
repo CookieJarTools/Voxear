@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# Models
-
 Voxear reads models in two formats:
 
 - **glTF**, the open format most modelling programs can export: either a `.gltf` file, or a single `.glb` file with everything packed inside. In Blender, use **File › Export › glTF 2.0**.
@@ -29,7 +27,7 @@ The new Obj is named after the model, and has a **Mesh Renderer** that draws the
 
 If you will use the model many times with the same settings, make it a prefab and place that instead. See [[Prefabs]].
 
-### In the scene file
+### A model in the scene file
 
 In the scene file, the Obj looks like this. You can also write it by hand:
 

@@ -159,7 +159,7 @@ fn the_inspector_shows_and_opens_what_code_documents() {
     with_class(&editor.ui, root, "excerpt", &mut folds);
     assert_eq!(folds.len(), 1, "one excerpt");
     let header = editor.ui.foldout_header(folds[0]).unwrap();
-    assert!(label(&editor.ui, header, "Who drives it").is_some(), "titled by its heading");
+    assert!(label(&editor.ui, header, "How the levels change").is_some(), "titled by its heading");
     assert!(!editor.ui.is_open(folds[0]));
     click(&mut editor, &mut renderer, header);
     let words = label(&editor.ui, folds[0], "The GameManager keeps the score").expect("the section's words");

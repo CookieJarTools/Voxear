@@ -2,8 +2,6 @@
 order: 3
 ---
 
-# The Frame Debugger
-
 The Frame Debugger shows how a frame is drawn, one step at a time. Voxear draws each frame in a series of **passes**: first the shadows, then the solid Objs, then the sky, then effects such as bloom, and last the editor's own panels. When something looks wrong on screen, the Frame Debugger shows which pass it goes wrong in.
 
 It is in the **Profiling** layout, beside the Profiler. It always shows the frame just drawn, and keeps up as frames go by.

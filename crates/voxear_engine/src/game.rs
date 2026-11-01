@@ -14,7 +14,7 @@ use voxear_scripting::{
 use crate::{
     content::{Content, Released},
     engine::Engine,
-    game_ui::{ClassChange, GameUi},
+    game_ui::GameUi,
     levels::{LevelChange, LevelOptions, Levels},
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
     prefab::PrefabId,
@@ -287,38 +287,7 @@ impl ScriptServices for GameServices<'_> {
     }
 
     fn ui_ask(&mut self, element: u32, ask: UiAsk<'_>) -> UiAnswer {
-        let ui = &mut *self.ui;
-        match ask {
-            UiAsk::Text => ui.text(element).map_or(UiAnswer::None, UiAnswer::Text),
-            UiAsk::SetText(text) => {
-                ui.set_text(element, text);
-                UiAnswer::None
-            }
-            UiAsk::Class(class, change) => {
-                let change = match change {
-                    0 => ClassChange::Remove,
-                    1 => ClassChange::Add,
-                    2 => ClassChange::Toggle,
-                    _ => ClassChange::Has,
-                };
-                UiAnswer::Yes(ui.class(element, class, change))
-            }
-            UiAsk::Visible => UiAnswer::Yes(ui.visible(element)),
-            UiAsk::SetVisible(visible) => {
-                ui.set_visible(element, visible);
-                UiAnswer::None
-            }
-            UiAsk::Clicked => UiAnswer::Yes(ui.clicked(element)),
-            UiAsk::Value => UiAnswer::Number(ui.value(element)),
-            UiAsk::SetValue(value) => {
-                ui.set_value(element, value);
-                UiAnswer::None
-            }
-            UiAsk::SetStyle(style) => {
-                ui.set_style(element, style);
-                UiAnswer::None
-            }
-        }
+        self.ui.ask(element, ask)
     }
 
     fn load_prefab(&mut self, reference: &str) -> Result<u32> {

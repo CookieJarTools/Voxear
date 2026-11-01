@@ -22,6 +22,7 @@ namespace Voxear.Scripting
 		{
 			var nested = new SortedSet<string>(StringComparer.Ordinal);
 			var types = new Dictionary<string, Type>();
+			var drawers = DrawerTable.Of(Loadable(assembly));
 			using var stream = new MemoryStream();
 			using (var json = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
 			{
@@ -29,17 +30,17 @@ namespace Voxear.Scripting
 				json.WriteStartArray("behaviours");
 				foreach (var behaviour in Behaviours(assembly))
 				{
-					WriteBehaviour(json, behaviour, types);
+					WriteBehaviour(json, behaviour, types, drawers);
 				}
 				json.WriteEndArray();
 				json.WriteStartArray("components");
 				foreach (var component in Components(assembly))
 				{
-					WriteComponent(json, component, types);
+					WriteComponent(json, component, types, drawers);
 				}
 				json.WriteEndArray();
 				WriteSystems(json, assembly);
-				WriteNestedTypes(json, types, nested);
+				WriteNestedTypes(json, types, nested, drawers);
 				WriteCommands(json, assembly);
 				WriteChecks(json, assembly);
 				json.WriteEndObject();
@@ -78,7 +79,7 @@ namespace Voxear.Scripting
 		}
 
 		/// <summary>A component, as a behaviour is described but with no bases: its fields start as the struct's zero value.</summary>
-		private static void WriteComponent(Utf8JsonWriter json, Type type, Dictionary<string, Type> types)
+		private static void WriteComponent(Utf8JsonWriter json, Type type, Dictionary<string, Type> types, DrawerTable drawers)
 		{
 			json.WriteStartObject();
 			json.WriteString("name", type.FullName);
@@ -91,7 +92,7 @@ namespace Voxear.Scripting
 			}
 			json.WriteEndArray();
 			WriteDocumentation(json, type);
-			WriteFields(json, type, Activator.CreateInstance(type), types, ComponentLayout.Of(type));
+			WriteFields(json, type, Activator.CreateInstance(type), types, drawers, ComponentLayout.Of(type));
 			json.WriteEndObject();
 		}
 
@@ -132,7 +133,7 @@ namespace Voxear.Scripting
 			}
 		}
 
-		private static void WriteBehaviour(Utf8JsonWriter json, Type type, Dictionary<string, Type> types)
+		private static void WriteBehaviour(Utf8JsonWriter json, Type type, Dictionary<string, Type> types, DrawerTable drawers)
 		{
 			json.WriteStartObject();
 			json.WriteString("name", type.FullName);
@@ -149,7 +150,7 @@ namespace Voxear.Scripting
 			}
 			json.WriteEndArray();
 			WriteDocumentation(json, type);
-			WriteFields(json, type, FieldDefaults.Create(type), types);
+			WriteFields(json, type, FieldDefaults.Create(type), types, drawers);
 			WriteButtons(json, type);
 			json.WriteEndObject();
 		}
@@ -189,7 +190,7 @@ namespace Voxear.Scripting
 		/// The fields scenes can set, each with its kind and the value it starts with in instance, and, for a component
 		/// whose layout is known, where it lies in its bytes.
 		/// </summary>
-		public static void WriteFields(Utf8JsonWriter json, Type type, object? instance, Dictionary<string, Type> types, Dictionary<FieldInfo, int>? layout = null)
+		public static void WriteFields(Utf8JsonWriter json, Type type, object? instance, Dictionary<string, Type> types, DrawerTable drawers, Dictionary<FieldInfo, int>? layout = null)
 		{
 			json.WriteStartArray("fields");
 			foreach (var field in BehaviourFields.Settable(type))
@@ -200,7 +201,7 @@ namespace Voxear.Scripting
 				FieldKinds.Write(json, field.FieldType, types);
 				json.WritePropertyName("default");
 				FieldDefaults.Write(json, instance == null ? null : field.GetValue(instance), field.FieldType);
-				InspectorMetadata.Write(json, field);
+				InspectorMetadata.Write(json, field, drawers);
 				if (layout != null && layout.TryGetValue(field, out var offset))
 				{
 					WriteLayout(json, field, offset);
@@ -225,14 +226,14 @@ namespace Voxear.Scripting
 		/// Each [Serializable] type the fields use, by name. Describing one can find more, so this goes on until every
 		/// type found has been written.
 		/// </summary>
-		private static void WriteNestedTypes(Utf8JsonWriter json, Dictionary<string, Type> types, SortedSet<string> written)
+		private static void WriteNestedTypes(Utf8JsonWriter json, Dictionary<string, Type> types, SortedSet<string> written, DrawerTable drawers)
 		{
 			json.WriteStartObject("types");
 			while (Next(types, written) is { } type)
 			{
 				written.Add(type.FullName!);
 				json.WriteStartObject(type.FullName!);
-				WriteFields(json, type, FieldDefaults.Create(type), types);
+				WriteFields(json, type, FieldDefaults.Create(type), types, drawers);
 				json.WriteEndObject();
 			}
 			json.WriteEndObject();

@@ -32,10 +32,13 @@ use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
 use voxear_engine::prefab::Locks;
 
+use voxear_scripting::{DrawRequest, Drawn};
+
 use crate::{
     asset_inspector::{AssetAction, AssetView},
     attributes,
-    fields::{Pick, Step},
+    field_drawers::{DrawerUi, FieldDrawers, ToOpen},
+    fields::{self, Pick, Step},
     history::{Edit, ObjState},
     project_view::ProjectItem,
     props::{self, Part, Prop, Value},
@@ -162,6 +165,8 @@ enum Control {
     Progress(NodeId, NodeId, NodeId, [f64; 2]),
     /// A label, for what is shown but not edited here.
     Fixed(NodeId),
+    /// Nothing of the Inspector's own: the scripts' drawers draw it all.
+    Drawn,
 }
 
 /// What a behaviour's code said about the shown Obj's fields, by behaviour
@@ -249,6 +254,8 @@ pub struct Inspector {
     /// A list's items shown: each one's row, which takes drops, its label,
     /// which drags it, and the item.
     item_handles: Vec<(NodeId, NodeId, Prop)>,
+    /// The fields the scripts' drawers draw.
+    drawers: FieldDrawers,
 }
 
 impl Inspector {
@@ -284,6 +291,7 @@ impl Inspector {
             pagers: Vec::new(),
             palette_swatches: Vec::new(),
             item_handles: Vec::new(),
+            drawers: FieldDrawers::default(),
         }
     }
 
@@ -484,6 +492,63 @@ impl Inspector {
         pickers.collect()
     }
 
+    /// The fields whose drawers are to be opened, once after each build.
+    pub fn drawers_to_open(&self) -> Option<Vec<ToOpen>> {
+        self.drawers.to_open()
+    }
+
+    /// Builds the drawers the scripts opened, from their markup and the
+    /// project's sheets it names, each field's own control inside them.
+    pub fn place_drawers(&mut self, ui: &mut Ui, game: &mut Game, answers: Vec<Result<Vec<String>, String>>) {
+        let content = &mut game.content;
+        let mut load = |src: &str| content.read_text(src).map_err(|error| format!("{error:#}"));
+        let placed = self.drawers.place(ui, answers, &mut load);
+        let Some(entity) = self.shown else { return };
+        for (index, next, editable) in placed {
+            let prop = self.rows[index].prop.clone();
+            let Some(next) = next else {
+                self.rows[index].control = Control::Drawn;
+                continue;
+            };
+            let meta = attributes::of(&self.types, &prop).clone();
+            let shown = props::get(game, &self.types, entity, &prop).unwrap_or(Value::Fixed(String::new()));
+            let offered = offered(&self.answers, &prop, &meta);
+            self.rows[index].control = control(ui, next, &shown, editable, (&meta, offered));
+        }
+    }
+
+    /// The drawn fields to draw this frame, each with its value now.
+    pub fn drawer_requests(&mut self, ui: &Ui, game: &Game) -> Vec<DrawRequest> {
+        let Some(entity) = self.shown else { return Vec::new() };
+        let (world, types) = (&game.engine.world, &self.types);
+        self.drawers.requests(ui, |prop| match prop {
+            Prop::Field { behaviour, path } => fields::value_at(world, types, entity, behaviour, path),
+            _ => None,
+        })
+    }
+
+    /// The UI as the drawers' code reaches it while they draw.
+    pub fn drawer_ui<'a>(&'a mut self, ui: &'a mut Ui) -> DrawerUi<'a> {
+        self.drawers.services(ui)
+    }
+
+    /// Writes what the drawers changed into the scene, and calls the
+    /// fields' `[OnValueChanged]` methods as for any change. Returns what the
+    /// drawers that threw said.
+    pub fn take_drawn(&mut self, game: &mut Game, answers: Vec<Result<Drawn, String>>) -> Vec<String> {
+        let Some(entity) = self.shown else { return Vec::new() };
+        let (changed, errors) = self.drawers.take(answers, &self.types);
+        for (prop, value) in changed {
+            let Prop::Field { behaviour, path } = &prop else { continue };
+            if fields::set_raw_at(&mut game.engine.world, &self.types, entity, behaviour, path, value)
+                && let Some(method) = &attributes::top(&self.types, &prop).on_changed
+            {
+                self.callbacks.push((behaviour.clone(), method.clone()));
+            }
+        }
+        errors
+    }
+
     pub fn types(&self) -> &ScriptTypes {
         &self.types
     }
@@ -540,6 +605,7 @@ impl Inspector {
         self.pagers.clear();
         self.palette_swatches.clear();
         self.item_handles.clear();
+        self.drawers.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
         let Some(entity) = self.shown else {
@@ -605,8 +671,10 @@ impl Inspector {
                 if !self.prefab_mode && !designers_see(value) {
                     continue;
                 }
+                // While playing, a drawn value shows as it would without its drawers.
                 if !attributes::shows(game, &self.types, entity, value)
                     || attributes::drawn_by_list(&self.types, value, &self.pages)
+                    || (!playing && attributes::drawn_by_drawer(&self.types, value))
                 {
                     continue;
                 }
@@ -641,21 +709,24 @@ impl Inspector {
                 // An item of a list, or a list, gets its button beside its value, as a unit does.
                 let item = editable && props::is_item(value);
                 let list = editable && matches!(shown, Value::List(_));
-                let holder = if item || list || meta.suffix.is_some() || meta.documentation.is_some() {
+                let drawers = attributes::drawers(&self.types, value);
+                let drawn = !playing && !drawers.is_empty();
+                let holder = if item || list || drawn || meta.suffix.is_some() || meta.documentation.is_some() {
                     let holder = ui.panel(row, Style::row());
                     ui.add_class(holder, "prop-value");
                     holder
                 } else {
                     row
                 };
-                let offered = match value {
-                    Prop::Field { behaviour, path } if meta.dropdown.is_some() => match path.as_slice() {
-                        [Step::Key(field)] => self.answers.options.get(&(behaviour.clone(), field.clone())),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                let control = control(ui, holder, &shown, editable, (&meta, offered.map(Vec::as_slice)));
+                // A drawn field's own control waits in a slot, where its drawers are built once the scripts start.
+                let slot = drawn.then(|| {
+                    let slot = ui.panel(holder, Style::row());
+                    ui.add_class(slot, "field-drawer-slot");
+                    self.drawers.add(value, self.rows.len(), slot, drawers, &label, editable);
+                    slot
+                });
+                let offered = offered(&self.answers, value, &meta);
+                let control = control(ui, slot.unwrap_or(holder), &shown, editable, (&meta, offered));
                 if let Some(suffix) = &meta.suffix {
                     let unit = ui.add_label(holder, suffix);
                     ui.add_class(unit, "attr-suffix");
@@ -1119,6 +1190,18 @@ fn layout(game: &Game, entity: Entity, types: &ScriptTypes) -> Vec<(Part, Vec<Pr
         .into_iter()
         .map(|part| (part.clone(), props::props(world, entity, &part, types)))
         .collect()
+}
+
+/// The values a `[ValueDropdown]` field offers, as its behaviour's code
+/// last answered.
+fn offered<'a>(answers: &'a ScriptAnswers, prop: &Prop, meta: &FieldInspector) -> Option<&'a [(String, Value)]> {
+    match prop {
+        Prop::Field { behaviour, path } if meta.dropdown.is_some() => match path.as_slice() {
+            [Step::Key(field)] => answers.options.get(&(behaviour.clone(), field.clone())).map(Vec::as_slice),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// The control for a value: a field, a toggle, three fields, a dropdown, or

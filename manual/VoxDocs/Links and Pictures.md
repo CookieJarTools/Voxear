@@ -2,8 +2,6 @@
 order: 2
 ---
 
-# Links and Pictures
-
 ## Links to pages
 
 Put a page's title in double square brackets to link to it:

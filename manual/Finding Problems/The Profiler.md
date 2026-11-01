@@ -2,11 +2,9 @@
 order: 2
 ---
 
-# The Profiler
-
 When your game runs slowly, the Profiler shows where the time goes. It records each frame the editor draws, the game's frames included while it plays, and breaks every frame down into the work done in it.
 
-## Opening it
+## Opening the Profiler
 
 Click **Profiling**, beside **World** at the top left of the editor. This switches to a layout made for finding slow spots, with the Game view at the top and the Profiler under it. Click **World** to go back; each layout stays as you left it.
 
@@ -65,11 +63,11 @@ using (Profiler.Sample("Find Path"))
 For code that runs very often, make a marker once and use it each time:
 
 ```csharp
-private static readonly ProfilerMarker FindPathMarker = new ProfilerMarker("Find Path");
+private static readonly ProfilerMarker Pathing = new("Find Path");
 
 private void Plan()
 {
-	using (FindPathMarker.Auto())
+	using (Pathing.Auto())
 	{
 		FindPath();
 	}

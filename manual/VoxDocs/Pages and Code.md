@@ -2,8 +2,6 @@
 order: 4
 ---
 
-# Pages and Code
-
 Pages and code can point at each other, so whoever reads one can find the other.
 
 ## The Code Reference

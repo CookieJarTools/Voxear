@@ -50,6 +50,9 @@ const WITH_FIELDS: [&str; 1] = ["material"];
 
 /// What a guide's step link starts with: an action runs a command, and a
 /// check looks at the project and ticks itself when it passes.
+/// How many columns a tab in a code block reaches to, as code editors show
+/// them.
+const TAB: usize = 4;
 pub const ACTION_SCHEME: &str = "action:";
 pub const CHECK_SCHEME: &str = "check:";
 
@@ -181,7 +184,7 @@ fn block_into(ui: &mut Ui, parent: NodeId, block: &Block, works: &dyn Fn(&str) -
             ui.add_class(name, "md-code-language");
             let copy = ui.icon_button(bar, "copy");
             out.copies.push((copy, code.clone()));
-            let text = ui.add_label(panel, code);
+            let text = ui.add_label(panel, &expand_tabs(code));
             ui.add_class(text, "md-code-text");
         }
         Block::Table { align, head, rows } => {
@@ -313,5 +316,37 @@ fn callout_icon(callout: Callout) -> &'static str {
         Callout::Note => "info",
         Callout::Tip => "light",
         Callout::Important | Callout::Warning | Callout::Caution => "alert",
+    }
+}
+
+/// Code as it shows: each tab out to the next of every [`TAB`] columns,
+/// since the fonts draw no tab of their own. Copy still gives the tabs.
+fn expand_tabs(code: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    for line in code.split_inclusive('\n') {
+        let mut column = 0;
+        for c in line.chars() {
+            if c == '\t' {
+                let spaces = TAB - column % TAB;
+                out.extend(std::iter::repeat_n(' ', spaces));
+                column += spaces;
+            } else {
+                out.push(c);
+                column += 1;
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tabs_in_code_show_as_spaces_to_the_next_stop() {
+        assert_eq!(expand_tabs("{\n\tint x;\n\t\treturn;\n}"), "{\n    int x;\n        return;\n}");
+        assert_eq!(expand_tabs("ab\tc"), "ab  c", "out to the next stop, not four more");
+        assert_eq!(expand_tabs("no tabs"), "no tabs");
     }
 }

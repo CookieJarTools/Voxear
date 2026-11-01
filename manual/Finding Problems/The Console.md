@@ -2,13 +2,11 @@
 order: 1
 ---
 
-# The Console
-
 The Console shows every message written while you work: by your scripts, by the editor, by the engine, and by the C# compiler when your code has a mistake in it. It sits under the Scene view.
 
 Each row shows when the message was written, the message itself, and where it came from. Errors and warnings stand out in colours of their own.
 
-## Writing to it
+## Writing to the Console
 
 ```csharp
 Log.Info("The door opened");
@@ -56,6 +54,6 @@ Right-click a message and choose **Mute this message** to stop it showing. **Mut
 
 When you start a build with **Run** in the Build panel, its messages come into the Console too, in the Player category. A build run on its own keeps its messages in a file; **Player Log** reads the last run of each build back into the Console.
 
-## Its settings
+## The Console's settings
 
 The gear at the end of the toolbar opens the Console's own settings, with a sample that shows each change as you make it: row height, colouring rows by kind, alternating rows, how categories show, which parts of a trace show, the colours of each part, how many messages are kept, and whether to clear the Console each time you press Play.

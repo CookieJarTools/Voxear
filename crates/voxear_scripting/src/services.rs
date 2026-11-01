@@ -8,59 +8,82 @@ use anyhow::Result;
 use voxear_ecs::{Entity, World};
 use voxear_scene::{BehaviourSpec, Placement};
 
+/// What scripts reach beyond the world. Each part has a default that says
+/// there is none of it here, so a host lends only what it has, as the
+/// Inspector lends only its UI to the drawers scripts draw fields with.
 pub trait ScriptServices {
     /// Loads a prefab by GUID or project path. Loading it again returns the
     /// same id.
-    fn load_prefab(&mut self, reference: &str) -> Result<u32>;
+    fn load_prefab(&mut self, reference: &str) -> Result<u32> {
+        anyhow::bail!("{reference}: there are no prefabs to load here")
+    }
 
     /// Creates a loaded prefab's Objs, without behaviours. The root goes
     /// under `parent`, and takes `placement`, relative to it, when it is
     /// given.
     fn spawn_prefab(
         &mut self,
-        world: &mut World,
-        prefab: u32,
-        parent: Option<Entity>,
-        placement: Option<Placement>,
-    ) -> Result<SpawnedPrefab>;
+        _world: &mut World,
+        _prefab: u32,
+        _parent: Option<Entity>,
+        _placement: Option<Placement>,
+    ) -> Result<SpawnedPrefab> {
+        anyhow::bail!("there are no prefabs to make here")
+    }
 
     /// Starts loading a level in the background that changes over as
     /// `options` say.
-    fn load_level(&mut self, reference: &str, options: LevelLoadOptions) -> Result<u32>;
+    fn load_level(&mut self, reference: &str, _options: LevelLoadOptions) -> Result<u32> {
+        anyhow::bail!("{reference}: there are no levels to load here")
+    }
 
     /// What scripts can ask about levels: see [`LevelInfo`]. `id` names a
     /// background load for the kinds that are about one.
-    fn level_info(&self, what: LevelInfo, id: u32) -> Option<String>;
+    fn level_info(&self, _what: LevelInfo, _id: u32) -> Option<String> {
+        None
+    }
 
     /// Starts loading a level (`level` true) or a prefab in the background.
-    fn load_async(&mut self, level: bool, reference: &str) -> Result<u32>;
+    fn load_async(&mut self, _level: bool, reference: &str) -> Result<u32> {
+        anyhow::bail!("{reference}: there is nothing to load here")
+    }
 
-    fn load_status(&self, id: u32) -> Option<LoadProgress>;
+    fn load_status(&self, _id: u32) -> Option<LoadProgress> {
+        None
+    }
 
-    fn allow_activation(&mut self, id: u32, allow: bool);
+    fn allow_activation(&mut self, _id: u32, _allow: bool) {}
 
     /// Keeps a loaded prefab across sweeps, or lets it go again.
-    fn keep_prefab(&mut self, prefab: u32, keep: bool);
+    fn keep_prefab(&mut self, _prefab: u32, _keep: bool) {}
 
     /// Frees what nothing uses at the end of the frame.
-    fn unload_unused(&mut self);
+    fn unload_unused(&mut self) {}
 
-    fn usage(&self) -> ContentStats;
+    fn usage(&self) -> ContentStats {
+        ContentStats::default()
+    }
 
     /// Asks for a preview of an asset, by GUID or project path, or of a
     /// loaded prefab, drawn as `options` say. It is drawn over the next
     /// frames.
-    fn create_preview(&mut self, source: PreviewSource<'_>, options: &PreviewOptions) -> Result<u32>;
+    fn create_preview(&mut self, _source: PreviewSource<'_>, _options: &PreviewOptions) -> Result<u32> {
+        anyhow::bail!("there are no previews here")
+    }
 
     /// Where a preview is drawn, once it is; `None` for one that does not
     /// exist.
-    fn preview_state(&mut self, preview: u32) -> Option<PreviewState>;
+    fn preview_state(&mut self, _preview: u32) -> Option<PreviewState> {
+        None
+    }
 
     /// Writes a preview to a PNG file at `path` once it is drawn and read
     /// back, a few frames from now.
-    fn save_preview(&mut self, preview: u32, path: &str) -> Result<()>;
+    fn save_preview(&mut self, _preview: u32, path: &str) -> Result<()> {
+        anyhow::bail!("{path}: there are no previews here")
+    }
 
-    fn free_preview(&mut self, preview: u32);
+    fn free_preview(&mut self, _preview: u32) {}
 
     /// The game's own UI (`Voxear.UiDocument`): a document loaded by project
     /// path, and its elements found by name, each a number scripts hold.

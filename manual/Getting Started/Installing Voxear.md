@@ -2,8 +2,6 @@
 order: 1
 ---
 
-# Installing Voxear
-
 You install Voxear, and keep it up to date, with the **Voxear Launcher**. The launcher holds every version of the engine you have installed, side by side, and opens each of your projects with the version it was made for.
 
 ## What you need

@@ -2,8 +2,6 @@
 order: 3
 ---
 
-# A Tour of the Editor
-
 When a project opens, the editor shows its first level, ready to change. Nothing in the game runs yet: your scripts start when you press Play.
 
 ## The parts of the window

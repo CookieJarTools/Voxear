@@ -2,8 +2,6 @@
 order: 2
 ---
 
-# How Scripts Run
-
 A behaviour has methods the engine calls at set times: when it first appears, every frame, and when it goes away. Write the ones you need, as `protected override`, and leave the rest out.
 
 ## When each method runs

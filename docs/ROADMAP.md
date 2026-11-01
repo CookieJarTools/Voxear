@@ -454,6 +454,28 @@ Still to do in M3:
   - [x] Lit Wireframe shading in the Scene view: the lit scene with its meshes' edges over it
   - [x] several Scene views, each with its own camera, shading and Gizmos, opened from a window's menu (Add Scene
     View)
+  - [x] handles for two axes at once: move's and scale's squares between each two axes, rotate's ring around the
+    view and turning freely inside the rings
+  - [ ] **A gizmo API for game code** (proposed; to build once agreed). Unity splits this into Gizmos, Handles and
+    Debug, each with its own shapes, and gizmos are editor-only and one pixel thin. Voxear would have one set:
+    - one drawing API callable from anywhere (Update, systems, worker threads), keeping today's `Debug.Line`,
+      `Box`, `Sphere`, `Arrow` and `Text` and adding the rest: polyline, ray, capsule, cylinder, cone, disc, arc,
+      frustum, bezier, grid, wire mesh and solid shapes; thick anti-aliased lines in pixels or metres, dimmed
+      rather than hidden behind geometry; labels in 3D and on screen; durations; batched so thousands of shapes
+      cost a few draws
+    - nestable scopes instead of global state: `using (Draw.Color(Color.Red))`, `Draw.InLocalSpace(this)`,
+      `Draw.Width(3)`, `Draw.Duration(2)`
+    - `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`
+      and `IsHovered`; its gizmos are clickable and select their Obj; a type's gizmos can be hidden from the
+      Gizmos menu, and `[GizmoIcon]` gives it an icon by typed reference
+    - attribute handles that edit fields in the Scene view with no code, undoable: `[PositionHandle]` (local
+      or world, every item of a list), `[RadiusHandle]`, `[BoundsHandle]`, `[ArcHandle]`, `[DirectionHandle]`
+      and `[SliderHandle]`
+    - for custom tools, handles that return the new value, with undo and change callbacks built in:
+      `target = Handles.Position(target)`, `Handles.Radius`, `Handles.Slider`, `Handles.Disc`,
+      `Handles.FreeMove` and `Handles.Button`, in `DrawGizmos` while selected
+    - in development builds, drawing shows in the game; release builds leave it out unless asked to keep it
+    - later: physics queries drawn with their hits, and a recorder to scrub back through what was drawn
   - [ ] several Hierarchies and Projects, and windows a game's code can open more than once
   - [ ] windows dragged out of the editor into windows of the desktop's own
 

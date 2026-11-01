@@ -14,13 +14,24 @@ Log.Warning("The door has no key set");
 Log.Error("The door could not find its frame");
 ```
 
+## Saying what a message is about
+
+Give a log call the Obj, behaviour or prefab the message is about, after the message:
+
+```csharp
+Log.Warning("This door has no key set", Obj);
+Log.Info("Spawning an enemy", enemyPrefab);
+```
+
+Clicking the message in the Console then shows that thing: an Obj lights up in the Hierarchy, and a prefab in the Project panel, opened to its folder. What you have selected stays as it was.
+
 ## Finding the code behind a message
 
 Click a message to see it in full below the list, with its **stack trace**: the chain of methods that were running when it was written, the last one first. Each part is coloured: the namespace, the class, the method, its parameters, and the file and line.
 
 - Click a file and line in the trace to open your code editor there.
 - Double-click a message to open the line that wrote it.
-- If the message is about an Obj, clicking the message selects that Obj.
+- If the message says what it is about, clicking the message lights that Obj or asset up for a moment.
 
 **My code only** folds away the parts of the trace that are not in your project, such as the engine's own code, so your own methods stand out. **Namespaces** and **Parameters** show or hide those parts of each line. **Hide libraries…** folds away a library you do not want to see in any trace. **Copy** puts the message and its trace on the clipboard.
 

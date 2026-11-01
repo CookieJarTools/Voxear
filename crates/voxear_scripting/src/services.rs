@@ -57,6 +57,12 @@ pub trait ScriptServices {
     /// Keeps a loaded prefab across sweeps, or lets it go again.
     fn keep_prefab(&mut self, _prefab: u32, _keep: bool) {}
 
+    /// The project path of the file a loaded prefab came from, as a log line
+    /// about it names it.
+    fn prefab_path(&self, _prefab: u32) -> Option<String> {
+        None
+    }
+
     /// Frees what nothing uses at the end of the frame.
     fn unload_unused(&mut self) {}
 

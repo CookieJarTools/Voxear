@@ -1092,6 +1092,12 @@ DockSpace .project-split > .split-divider {
     border-radius: 6px;
 }
 
+/* A row or tile a log line points at, lit for a moment, as Unity pings. */
+.list-row.pinged, .tile.pinged {
+    background-color: var(--vx-accent-soft);
+    color: var(--vx-text);
+}
+
 .tile-icon {
     width: 26px;
     height: 26px;

@@ -31,6 +31,8 @@ pub struct Entry {
     pub categories: Vec<String>,
     /// The Obj a script's line is about.
     pub context: Option<Entity>,
+    /// The asset a script's line is about, by its project path or GUID.
+    pub asset: Option<String>,
 }
 
 impl Entry {
@@ -58,6 +60,7 @@ impl Entry {
             mine,
             categories,
             context: line.context.map(Entity::from_bits),
+            asset: line.asset.clone(),
         }
     }
 

@@ -273,6 +273,66 @@ fn segmented_controls_keep_one_segment_on() {
     assert!(!ui.changed(tools), "clicking the one on changes nothing");
 }
 
+/// A button at the top left, as a panel built again would put it in the same place.
+fn button_at_top(ui: &mut Ui, text: &str) -> NodeId {
+    let root = ui.root();
+    let button = ui.button(root, text);
+    ui.set_inline_style(button, "position: absolute; left: 10px; top: 10px; width: 80px; height: 24px");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    button
+}
+
+#[test]
+fn a_press_on_something_built_again_before_the_release_clicks_what_is_there_now() {
+    let mut ui = Ui::new();
+    let old = button_at_top(&mut ui, "Apply");
+    let [x, y, w, h] = ui.rect(old);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_button(true);
+    // A value typed a moment before is taken in, and the panel is built again under the pointer.
+    ui.remove(old);
+    let new = button_at_top(&mut ui, "Apply");
+    ui.pointer_button(false);
+    assert!(ui.clicked(new), "the button built again in the same place is clicked");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+
+    ui.pointer_button(true);
+    ui.remove(new);
+    let again = button_at_top(&mut ui, "Apply");
+    ui.pointer_move(x + w / 2.0 + 30.0, y + h / 2.0);
+    ui.pointer_button(false);
+    assert!(!ui.clicked(again), "not when the pointer moved away before letting go");
+}
+
+#[test]
+fn a_double_click_is_two_clicks_close_in_time_and_place() {
+    let mut ui = Ui::new();
+    let first = button_at_top(&mut ui, "Folder");
+    ui.advance(0.0);
+    click(&mut ui, first);
+    // The first click selects, and selecting builds the item again.
+    ui.remove(first);
+    let second = button_at_top(&mut ui, "Folder");
+    ui.advance(0.1);
+    let [x, y, w, h] = ui.rect(second);
+    ui.pointer_move(x + w / 2.0 + 2.0, y + h / 2.0 + 1.0);
+    ui.pointer_button(true);
+    ui.pointer_button(false);
+    assert!(ui.double_clicked(second), "a second click soon after, a pixel or two away, on what is there now");
+
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let root = ui.root();
+    let far = ui.button(root, "Far");
+    ui.set_inline_style(far, "position: absolute; left: 200px; top: 10px; width: 80px; height: 24px");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.advance(0.5);
+    click(&mut ui, second);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.advance(0.1);
+    click(&mut ui, far);
+    assert!(ui.clicked(far) && !ui.double_clicked(far), "two quick clicks far apart are two clicks");
+}
+
 #[test]
 fn clicks_in_quick_succession_are_a_double_click() {
     let mut ui = Ui::new();

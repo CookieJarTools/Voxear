@@ -67,6 +67,27 @@ protected override async void Start()
 
 Code after an `await` always runs on the main thread, so it can change Objs as any other code can.
 
+## Code for the editor, a platform or a version
+
+Code between `#if` and `#endif` is only built when its symbol is defined. Voxear defines these for you:
+
+| Symbol | Defined when |
+| --- | --- |
+| `VOXEAR_EDITOR` | The scripts run from your project: in the editor, or with `vox run`. Never in a build |
+| `VOXEAR_DEVELOPMENT` | The scripts run in a development build |
+| `VOXEAR_LINUX`, `VOXEAR_WINDOWS` | The scripts run on that platform |
+| `VOXEAR_0_1` | The engine is version 0.1 |
+| `VOXEAR_0_1_OR_NEWER` | The engine is version 0.1 or newer |
+| `VOXEAR` | Always |
+
+```csharp
+#if VOXEAR_EDITOR
+	Log.Info("Only seen while working on the game");
+#endif
+```
+
+A build profile can define more of its own, such as `DEMO`, under **Defines**. See [[Making a Build]].
+
 ## How scripts differ from Unity
 
 - Lifecycle methods are `protected override`. A plain `void Update()` never runs.

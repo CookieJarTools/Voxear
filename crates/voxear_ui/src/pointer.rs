@@ -4,6 +4,11 @@
 
 use crate::{NodeId, Overflow, Ui, selector::States};
 
+/// How far apart, in logical pixels, a press and its release may be and
+/// still click what was built again in between, and two clicks may be and
+/// still be a double click.
+const CLICK_SLOP: f32 = 5.0;
+
 /// Keys held with the pointer, which change what a click on a list does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
@@ -19,6 +24,10 @@ pub(crate) struct Pointer {
     hovered: Vec<taffy::NodeId>,
     /// What the primary button went down on, and everything it is in.
     pub(crate) pressed: Vec<taffy::NodeId>,
+    /// Where it went down, and whether what it went down on was taken out
+    /// since, as when a panel is built again under the pointer.
+    press_at: Option<(f32, f32)>,
+    press_lost: bool,
     /// Elements clicked since the last frame.
     pub clicks: Vec<taffy::NodeId>,
     /// Elements clicked twice in quick succession since the last frame.
@@ -29,8 +38,8 @@ pub(crate) struct Pointer {
     /// elements context clicked since the last frame.
     context_pressed: Vec<taffy::NodeId>,
     pub context_clicks: Vec<taffy::NodeId>,
-    /// The last click: on what, and when, to tell a double click.
-    last_click: Option<(taffy::NodeId, f32)>,
+    /// Where and when the last click was, to tell a double click.
+    last_click: Option<((f32, f32), f32)>,
     /// A scrollbar being dragged: its element, and where on the thumb it was
     /// grabbed.
     dragging: Option<(NodeId, f32)>,
@@ -39,6 +48,7 @@ pub(crate) struct Pointer {
 impl Pointer {
     /// Drops a removed element from everything that refers to it.
     pub fn forget(&mut self, node: taffy::NodeId) {
+        self.press_lost |= self.pressed.contains(&node);
         let lists = [
             &mut self.hovered,
             &mut self.pressed,
@@ -117,6 +127,7 @@ impl Ui {
         if pressed {
             self.set_states(&path, States::ACTIVE, true);
             self.pointer.pressed = path.clone();
+            (self.pointer.press_at, self.pointer.press_lost) = (self.pointer.position, false);
             if let Some(point) = self.pointer.position {
                 self.press_controls(&path, point);
                 self.press_dock(&path, point);
@@ -125,20 +136,18 @@ impl Ui {
         } else {
             let pressed = std::mem::take(&mut self.pointer.pressed);
             self.set_states(&pressed, States::ACTIVE, false);
-            if let Some(&target) = pressed.last()
-                && path.contains(&target)
-                && !self.disabled(&pressed)
-            {
+            if let Some(target) = self.click_target(&pressed, &path) {
                 self.pointer.clicks.push(target);
-                let time = self.input.time;
-                let twice = self
-                    .pointer
-                    .last_click
-                    .is_some_and(|(at, when)| at == target && time - when <= crate::input::MULTI_CLICK);
+                // As desktops tell one: a second click soon after, in about the same place, on
+                // whatever is there now, since the first may have built it again.
+                let (time, here) = (self.input.time, self.pointer.position.unwrap_or_default());
+                let twice = self.pointer.last_click.is_some_and(|(at, when)| {
+                    time - when <= crate::input::MULTI_CLICK && (at.0 - here.0).hypot(at.1 - here.1) <= CLICK_SLOP
+                });
                 if twice {
                     self.pointer.double_clicks.push(target);
                 }
-                self.pointer.last_click = (!twice).then_some((target, time));
+                self.pointer.last_click = (!twice).then_some((here, time));
                 if let Some(point) = self.pointer.position
                     && let Some(url) = self.link_at(NodeId(target), point)
                 {
@@ -191,6 +200,20 @@ impl Ui {
     pub(crate) fn pointer_cancel(&mut self) {
         let pressed = std::mem::take(&mut self.pointer.pressed);
         self.set_states(&pressed, States::ACTIVE, false);
+    }
+
+    /// What a release clicks: what the press went down on, if the pointer is
+    /// still over it; or, when that was taken out and built again in the
+    /// meantime, as a panel rebuilt by a value typed a moment before, what
+    /// is under the pointer now, if it has hardly moved. Nothing disabled.
+    fn click_target(&mut self, pressed: &[taffy::NodeId], path: &[taffy::NodeId]) -> Option<taffy::NodeId> {
+        let from = self.pointer.press_at.take();
+        if std::mem::take(&mut self.pointer.press_lost) {
+            let (from, to) = (from?, self.pointer.position?);
+            let still = (from.0 - to.0).hypot(from.1 - to.1) <= CLICK_SLOP;
+            return path.last().copied().filter(|_| still && !self.disabled(path));
+        }
+        pressed.last().copied().filter(|target| path.contains(target) && !self.disabled(pressed))
     }
 
     /// Whether the pointer is over an element that takes it.

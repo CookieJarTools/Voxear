@@ -15,7 +15,10 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use voxear_scripting::{DotnetInstall, ScriptRuntime, find_dotnet};
 
-use crate::project::{Project, core_assembly, engine_root};
+use crate::{
+    build_profile::host_platform,
+    project::{Project, core_assembly, engine_root, engine_version},
+};
 
 /// The build configuration scripts are built and loaded in.
 pub const CONFIGURATION: &str = "Debug";
@@ -43,9 +46,54 @@ pub fn build(project: &Project) -> Result<()> {
     build_unlocked(project)
 }
 
-/// Builds the project's scripts in `configuration`, `Debug` or `Release`,
-/// with extra symbols for C#'s `#if`, as a build profile asks.
-pub fn build_for(project: &Project, configuration: &str, defines: &[String]) -> Result<()> {
+/// Where the scripts run, which the symbols they are built with say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptsFor {
+    /// From the project, in the editor or `vox run`.
+    Editor,
+    /// In a build: a development one, or one for players.
+    Build { development: bool },
+}
+
+/// The symbols every build of the scripts gets for C#'s `#if`, as Unity's
+/// `UNITY_EDITOR` and the like:
+///
+/// - `VOXEAR`, always;
+/// - the engine's version, `VOXEAR_0_1` for 0.1, and `VOXEAR_0_1_OR_NEWER`
+///   for it and each minor version before it, with `VOXEAR_1_OR_NEWER` and
+///   the like for each major version from 1;
+/// - the platform they run on, `VOXEAR_LINUX` or `VOXEAR_WINDOWS`;
+/// - `VOXEAR_EDITOR` when they run from the project, in the editor or `vox
+///   run`, and `VOXEAR_DEVELOPMENT` in a development build.
+pub fn built_in_defines(version: &str, platform: &str, place: ScriptsFor) -> Vec<String> {
+    let mut defines = vec!["VOXEAR".to_string()];
+    let mut numbers = version.split(['.', '-', '+']).map(|part| part.parse::<u32>().ok());
+    if let (Some(Some(major)), Some(Some(minor))) = (numbers.next(), numbers.next()) {
+        defines.push(format!("VOXEAR_{major}_{minor}"));
+        defines.extend((1..=major).map(|at| format!("VOXEAR_{at}_OR_NEWER")));
+        let first = if major == 0 { 1 } else { 0 };
+        defines.extend((first..=minor).map(|at| format!("VOXEAR_{major}_{at}_OR_NEWER")));
+    }
+    if platform.starts_with("windows") {
+        defines.push("VOXEAR_WINDOWS".into());
+    } else if platform.starts_with("linux") {
+        defines.push("VOXEAR_LINUX".into());
+    }
+    match place {
+        ScriptsFor::Editor => defines.push("VOXEAR_EDITOR".into()),
+        ScriptsFor::Build { development: true } => defines.push("VOXEAR_DEVELOPMENT".into()),
+        ScriptsFor::Build { development: false } => {}
+    }
+    defines
+}
+
+/// Builds the project's scripts for a build, in `configuration`, `Debug` or
+/// `Release`, with these symbols for C#'s `#if`: the built-in ones and a
+/// build profile's own. They go in a folder of their own,
+/// `.voxear/Scripts/Build/<configuration>`, so the editor's are never
+/// replaced by ones built without `VOXEAR_EDITOR`. Returns the scripts'
+/// assembly, or `None` for a project without scripts.
+pub fn build_for(project: &Project, configuration: &str, defines: &[String]) -> Result<Option<PathBuf>> {
     for define in defines {
         let mut chars = define.chars();
         let starts = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
@@ -55,9 +103,18 @@ pub fn build_for(project: &Project, configuration: &str, defines: &[String]) -> 
         );
     }
     let _building = lock();
-    let Some(csproj) = project.scripts_project() else { return Ok(()) };
+    let Some(csproj) = project.scripts_project() else { return Ok(None) };
+    let assembly = project.built_scripts_assembly(configuration).context("scripts project has no file name")?;
+    let output = BuildFolder { folder: assembly.parent().unwrap_or(&project.root), configuration };
     write_engine_props(project)?;
-    build_csproj(&dotnet()?, &csproj, configuration, defines)
+    build_csproj(&dotnet()?, &csproj, configuration, defines, Some(output))?;
+    Ok(Some(assembly))
+}
+
+/// Where a build's scripts are built to, apart from the editor's.
+struct BuildFolder<'a> {
+    folder: &'a Path,
+    configuration: &'a str,
 }
 
 /// Holds the scripts' build to this thread, for work that builds and then
@@ -70,7 +127,8 @@ pub(crate) fn lock() -> MutexGuard<'static, ()> {
 pub(crate) fn build_unlocked(project: &Project) -> Result<()> {
     let Some(csproj) = project.scripts_project() else { return Ok(()) };
     write_engine_props(project)?;
-    build_csproj(&dotnet()?, &csproj, CONFIGURATION, &[])
+    let defines = built_in_defines(engine_version(), host_platform(), ScriptsFor::Editor);
+    build_csproj(&dotnet()?, &csproj, CONFIGURATION, &defines, None)
 }
 
 fn write_engine_props(project: &Project) -> Result<()> {
@@ -96,10 +154,16 @@ pub fn start_for(project: &Project, configuration: &str) -> Result<Option<Script
     if project.scripts_project().is_none() {
         return Ok(None);
     }
-    let mut scripts = ScriptRuntime::start(&dotnet()?, &core_assembly(configuration))?;
     let assembly = project.scripts_assembly(configuration).context("scripts project has no file name")?;
-    scripts.load_game_assembly(&assembly)?;
-    Ok(Some(scripts))
+    start_assembly(&assembly, configuration).map(Some)
+}
+
+/// Starts the scripts in `assembly`, built in `configuration` with
+/// `Voxear.Core` built the same way, as a build's are.
+pub fn start_assembly(assembly: &Path, configuration: &str) -> Result<ScriptRuntime> {
+    let mut scripts = ScriptRuntime::start(&dotnet()?, &core_assembly(configuration))?;
+    scripts.load_game_assembly(assembly)?;
+    Ok(scripts)
 }
 
 /// Watches a project's scripts while its game runs outside the editor, as
@@ -211,7 +275,13 @@ pub(crate) fn dotnet() -> Result<DotnetInstall> {
     find_dotnet().context(".NET is not installed; run `vox doctor` for how to get it")
 }
 
-fn build_csproj(dotnet: &DotnetInstall, csproj: &Path, configuration: &str, defines: &[String]) -> Result<()> {
+fn build_csproj(
+    dotnet: &DotnetInstall,
+    csproj: &Path,
+    configuration: &str,
+    defines: &[String],
+    output: Option<BuildFolder<'_>>,
+) -> Result<()> {
     let exe = dotnet.root.join(if cfg!(windows) { "dotnet.exe" } else { "dotnet" });
     tracing::info!("building {}", csproj.display());
     let mut command = Command::new(&exe);
@@ -224,6 +294,11 @@ fn build_csproj(dotnet: &DotnetInstall, csproj: &Path, configuration: &str, defi
     if !defines.is_empty() {
         command.arg(format!("-p:VoxearDefines={}", defines.join("%3B")));
     }
+    // A build's scripts, with their own symbols, built and compiled apart from the editor's.
+    if let Some(output) = output {
+        command.arg(format!("-p:OutputPath={}{}", output.folder.display(), std::path::MAIN_SEPARATOR));
+        command.arg(format!("-p:IntermediateOutputPath=obj/Build/{}/", output.configuration));
+    }
     let output = output_within(&mut command, BUILD_LIMIT).with_context(|| format!("building {}", csproj.display()))?;
     // The compiler's errors go to the log, which the editor shows in its Console.
     if !output.status.success() {
@@ -234,6 +309,46 @@ fn build_csproj(dotnet: &DotnetInstall, csproj: &Path, configuration: &str, defi
     }
     ensure!(output.status.success(), "the C# scripts failed to build");
     Ok(())
+}
+
+#[cfg(test)]
+mod defines {
+    use super::*;
+
+    #[test]
+    fn scripts_know_the_engine_version_platform_and_where_they_run() {
+        let editor = built_in_defines("0.3.1-nightly.20261101", "linux-x64", ScriptsFor::Editor);
+        assert_eq!(
+            editor,
+            [
+                "VOXEAR",
+                "VOXEAR_0_3",
+                "VOXEAR_0_1_OR_NEWER",
+                "VOXEAR_0_2_OR_NEWER",
+                "VOXEAR_0_3_OR_NEWER",
+                "VOXEAR_LINUX",
+                "VOXEAR_EDITOR"
+            ]
+        );
+        let release = built_in_defines("1.2.0", "windows-x64", ScriptsFor::Build { development: false });
+        assert_eq!(
+            release,
+            [
+                "VOXEAR",
+                "VOXEAR_1_2",
+                "VOXEAR_1_OR_NEWER",
+                "VOXEAR_1_0_OR_NEWER",
+                "VOXEAR_1_1_OR_NEWER",
+                "VOXEAR_1_2_OR_NEWER",
+                "VOXEAR_WINDOWS"
+            ]
+        );
+        let development = built_in_defines("0.1.0", "linux-x64", ScriptsFor::Build { development: true });
+        assert!(
+            development.contains(&"VOXEAR_DEVELOPMENT".to_string())
+                && !development.contains(&"VOXEAR_EDITOR".to_string())
+        );
+    }
 }
 
 #[cfg(all(test, unix))]

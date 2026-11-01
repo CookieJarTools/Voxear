@@ -63,8 +63,8 @@ namespace Voxear.Interop
 			Api->ProfilerEndAlloc((ulong)Math.Max(allocated, 0));
 		}
 
-		/// <summary>A line for the engine log, with the stack that wrote it and the Obj it is about (0 for none).</summary>
-		public static void Log(LogLevel level, string message, string stack, ulong context)
+		/// <summary>A line for the engine log, with the stack that wrote it and what it is about.</summary>
+		public static void Log(LogLevel level, string message, string stack, LogContext context)
 		{
 			if (!IsConnected)
 			{
@@ -74,10 +74,12 @@ namespace Voxear.Interop
 
 			var bytes = Encoding.UTF8.GetBytes(message);
 			var trace = Encoding.UTF8.GetBytes(stack);
+			var asset = Encoding.UTF8.GetBytes(context.Asset ?? string.Empty);
 			fixed (byte* text = bytes)
 			fixed (byte* frames = trace)
+			fixed (byte* about = asset)
 			{
-				Api->Log((int)level, text, bytes.Length, frames, trace.Length, context);
+				Api->Log((int)level, text, bytes.Length, frames, trace.Length, context.Obj, context.Prefab - 1, about, asset.Length);
 			}
 		}
 

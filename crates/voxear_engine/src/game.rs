@@ -358,6 +358,11 @@ impl ScriptServices for GameServices<'_> {
         self.content.keep_prefab(PrefabId(prefab), keep);
     }
 
+    fn prefab_path(&self, prefab: u32) -> Option<String> {
+        let guid = self.content.prefab_guid(PrefabId(prefab))?;
+        Some(self.content.db().get(guid)?.path.clone())
+    }
+
     fn unload_unused(&mut self) {
         *self.unload_requested = true;
     }

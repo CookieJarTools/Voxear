@@ -84,6 +84,8 @@ enum MenuAction {
     New(NewFile),
 }
 
+/// How long a pinged file stays lit, in seconds.
+const PING: f32 = 1.5;
 /// A tile's width with the gap after it, and a row of tiles' height.
 const TILE: f32 = 72.0;
 const TILE_ROW: f32 = 76.0;
@@ -134,6 +136,8 @@ struct Contents {
     /// Tiles across a row, or 0 for rows.
     columns: usize,
     selected: Option<Entry>,
+    /// The entry lit by a ping, as a log line about it asks.
+    pinged: Option<Entry>,
     /// Each tile made, with the place in `listing` it shows, for clicks.
     tiles: Vec<(NodeId, Option<usize>)>,
     /// Previews drawn so far, by path, shown in place of icons.
@@ -276,6 +280,7 @@ impl ListItems for FileRows {
             Entry::File(file) => file_size(contents.files[file].size),
         };
         ui.set_text(parts[2], &size);
+        ui.set_class(row, "pinged", contents.pinged == Some(entry));
     }
 }
 
@@ -313,6 +318,7 @@ impl ListItems for TileRows {
             contents.show_thumb(ui, parts[0], entry);
             ui.set_text(parts[1], contents.name(entry));
             ui.set_checked(tile, contents.selected == Some(entry));
+            ui.set_class(tile, "pinged", contents.pinged == Some(entry));
         }
     }
 }
@@ -339,6 +345,8 @@ pub struct ProjectView {
     /// The open context menu: what it was opened on (nothing for the open
     /// folder), and what each of its items does.
     menu: Option<(NodeId, Option<Entry>, Vec<Option<MenuAction>>)>,
+    /// How many seconds the pinged entry stays lit.
+    ping_left: f32,
 }
 
 impl ProjectView {
@@ -373,6 +381,7 @@ impl ProjectView {
             renaming: None,
             focus_rename: false,
             menu: None,
+            ping_left: 0.0,
         };
         view.open(ui, 0);
         view
@@ -677,31 +686,55 @@ impl ProjectView {
     /// Opens the folder a file is in and selects the file, as a link to it
     /// from VoxDocs does. `path` is from the project's folder.
     pub fn reveal(&mut self, ui: &mut Ui, path: &str) {
-        let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
-        let name = parts.pop().unwrap_or_default();
-        let mut folder = 0;
-        for part in parts {
-            let contents = self.contents.borrow();
-            let Some(&child) = contents.folders[folder].folders.iter().find(|&&f| contents.folders[f].name == part)
-            else {
-                return;
-            };
-            drop(contents);
-            folder = child;
-        }
-        self.open(ui, folder);
-        let contents = self.contents.borrow();
-        let found = contents.listing.iter().position(|e| contents.name(*e) == name);
-        let entry = found.map(|index| (index, contents.listing[index]));
-        let columns = contents.columns;
-        drop(contents);
-        let Some((index, entry)) = entry else { return };
+        let Some((index, entry)) = self.open_folder_of(ui, path) else { return };
+        let columns = self.contents.borrow().columns;
         self.contents.borrow_mut().selected = Some(entry);
         if columns == 0 {
             ui.set_selection(self.files, &[index]);
         }
         ui.scroll_to_index(self.files, index.checked_div(columns).unwrap_or(index));
         ui.refresh_list(self.files);
+    }
+
+    /// Opens the folder a file is in and lights the file for a moment,
+    /// leaving what is selected as it is, as a log line about it asks.
+    pub fn ping(&mut self, ui: &mut Ui, path: &str) {
+        let Some((index, entry)) = self.open_folder_of(ui, path) else { return };
+        let columns = self.contents.borrow().columns;
+        self.contents.borrow_mut().pinged = Some(entry);
+        self.ping_left = PING;
+        ui.scroll_to_index(self.files, index.checked_div(columns).unwrap_or(index));
+        ui.refresh_list(self.files);
+    }
+
+    /// Counts a ping down by a frame's `delta` seconds, and puts its light
+    /// out once it is over.
+    pub fn fade_ping(&mut self, ui: &mut Ui, delta: f32) {
+        if self.ping_left <= 0.0 {
+            return;
+        }
+        self.ping_left -= delta;
+        if self.ping_left <= 0.0 {
+            self.contents.borrow_mut().pinged = None;
+            ui.refresh_list(self.files);
+        }
+    }
+
+    /// Opens the folder `path` is in, and finds the file there: its place
+    /// in the listing, and its entry.
+    fn open_folder_of(&mut self, ui: &mut Ui, path: &str) -> Option<(usize, Entry)> {
+        let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        let name = parts.pop().unwrap_or_default();
+        let mut folder = 0;
+        for part in parts {
+            let contents = self.contents.borrow();
+            let child = contents.folders[folder].folders.iter().find(|&&f| contents.folders[f].name == part)?;
+            folder = *child;
+        }
+        self.open(ui, folder);
+        let contents = self.contents.borrow();
+        let index = contents.listing.iter().position(|e| contents.name(*e) == name)?;
+        Some((index, contents.listing[index]))
     }
 
     /// Shows what is in `folder`, and marks it in the tree.
@@ -809,6 +842,7 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         listing: Vec::new(),
         columns: 0,
         selected: None,
+        pinged: None,
         tiles: Vec::new(),
         previews: HashMap::new(),
     };

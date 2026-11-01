@@ -1580,7 +1580,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   and line. My code only folds runs of frames not in the project's folder into a line that unfolds them;
   Namespaces and Parameters can be hidden. A frame's file and line, or a double click on a line, open the file at
   its line in the code editor the settings name (VS Code, Rider, Zed or the system's default;
-  `Editor::set_source_opener` replaces it). Selecting a line about an Obj selects the Obj, Copy puts the line and its
+  `Editor::set_source_opener` replaces it). A script says what a line is about after its message, `Log.Info("Opened", door)`,
+  with an Obj, a behaviour, a `Prefab` or a `Ref<Prefab>` (`LogContext`, native API 24, which names a prefab by
+  its file); picking the line pings it as Unity does, lighting its row in the Hierarchy or its file in the Project
+  panel for a moment, its folders opened and scrolled to, without changing the selection. Copy puts the line and its
   stack on the clipboard, and a context click copies a line or mutes its message until Muted brings them back.
   - **Category colours**: each row shows its first category, in the colour the project gave it. A context click on
     a line colours its category from a palette; the colours are kept in the project's `Settings/Console.toml`, since
@@ -2672,7 +2675,13 @@ them in a running game.
 
 `vox build` *(implemented)* turns a project into a game players can run, in three stages
 (`voxear_engine::player_build`):
-1. **Scripts**: the game's C# in Release, or in Debug for a development build, with the profile's defines.
+1. **Scripts**: the game's C# in Release, or in Debug for a development build, with the profile's defines and
+   the built-in ones (`scripts::built_in_defines`): `VOXEAR`, the engine's version (`VOXEAR_0_1`, and
+   `VOXEAR_0_1_OR_NEWER` for it and each minor version before it in its major, with `VOXEAR_1_OR_NEWER` and the like
+   from major 1), the platform (`VOXEAR_LINUX`, `VOXEAR_WINDOWS`), and `VOXEAR_DEVELOPMENT` for a development build.
+   The editor's own build, which `vox run` shares, has `VOXEAR_EDITOR` in place of that. A build's scripts are
+   built into `.voxear/Scripts/Build/<configuration>` with their own intermediate folder, so a build never replaces
+   the editor's copy with one built without `VOXEAR_EDITOR`.
 2. **Content**: the bundles the profile's levels need (see the content build), with the `[ContentRoot]`s of the
    scripts just built. Cooked models come from the content cache, so an unchanged model is not cooked again.
 3. **Player**: the player program, named after the game, with `Voxear.Core` and the scripts beside it.

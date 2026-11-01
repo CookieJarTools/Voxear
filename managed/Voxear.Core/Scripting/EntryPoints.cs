@@ -252,7 +252,7 @@ namespace Voxear.Scripting
 				}
 				foreach (var (level, text) in printed)
 				{
-					Native.Log(level, text, string.Empty, 0);
+					Native.Log(level, text, string.Empty, default);
 				}
 				return 0;
 			}

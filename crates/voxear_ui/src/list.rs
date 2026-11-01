@@ -295,6 +295,16 @@ impl Ui {
         true
     }
 
+    /// Scrolls a tree to one item, if it is among the open rows, leaving
+    /// the selection as it is.
+    pub fn scroll_to_item(&mut self, tree: NodeId, item: u64) -> bool {
+        let Some(state) = self.list_state(tree) else { return false };
+        let Source::Tree(tree_state) = &state.source else { return false };
+        let Some(index) = tree_state.open.iter().position(|open| open.0 == item) else { return false };
+        self.scroll_to_index(tree, index);
+        true
+    }
+
     pub fn set_selection(&mut self, list: NodeId, indices: &[usize]) {
         let Some(state) = self.list_state(list) else { return };
         let mut selection: Vec<usize> = indices.iter().copied().filter(|&i| i < state.count).collect();

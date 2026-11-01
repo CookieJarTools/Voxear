@@ -35,8 +35,11 @@ use crate::services::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
     SpawnedPrefab, with_services,
 };
+use crate::ui::{
+    ui_class, ui_clicked, ui_close, ui_find, ui_load, ui_set_text, ui_style, ui_text, ui_value, ui_visible,
+};
 
-pub(crate) const API_VERSION: u32 = 19;
+pub(crate) const API_VERSION: u32 = 20;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -126,6 +129,20 @@ pub(crate) struct NativeApi {
     /// Ends the last sample begun, with the managed bytes allocated while it
     /// ran, as the Profiler's GC Alloc column shows them.
     pub profiler_end_alloc: unsafe extern "C" fn(bytes: u64),
+    /// The game's UI, for `Voxear.UiDocument` and `UiElement` (see
+    /// [`crate::ui`]): a document loaded, an element found, a document
+    /// closed; an element's text, read and set; its classes, visibility,
+    /// clicks, value and style.
+    pub ui_load: unsafe extern "C" fn(path: *const u8, len: i32) -> i32,
+    pub ui_find: unsafe extern "C" fn(document: i32, name: *const u8, len: i32) -> i32,
+    pub ui_close: unsafe extern "C" fn(document: i32),
+    pub ui_text: unsafe extern "C" fn(element: i32, buffer: *mut u8, capacity: i32) -> i32,
+    pub ui_set_text: unsafe extern "C" fn(element: i32, text: *const u8, len: i32),
+    pub ui_class: unsafe extern "C" fn(element: i32, class: *const u8, len: i32, change: i32) -> i32,
+    pub ui_visible: unsafe extern "C" fn(element: i32, set: i32) -> i32,
+    pub ui_clicked: unsafe extern "C" fn(element: i32) -> i32,
+    pub ui_value: unsafe extern "C" fn(element: i32, set: i32, value: f32) -> f32,
+    pub ui_style: unsafe extern "C" fn(element: i32, style: *const u8, len: i32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -762,6 +779,16 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         debug_sphere,
         debug_text,
         profiler_end_alloc,
+        ui_load,
+        ui_find,
+        ui_close,
+        ui_text,
+        ui_set_text,
+        ui_class,
+        ui_visible,
+        ui_clicked,
+        ui_value,
+        ui_style,
     }
 }
 

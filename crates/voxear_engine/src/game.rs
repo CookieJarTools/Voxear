@@ -8,12 +8,13 @@ use voxear_render::{MAX_PREVIEW_SIZE, PreviewId, PreviewOptions, Renderer};
 use voxear_scene::Placement;
 use voxear_scripting::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions as ScriptPreviewOptions, PreviewSource,
-    PreviewState, ScriptServices, ServicesScope, SpawnedPrefab,
+    PreviewState, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
 };
 
 use crate::{
     content::{Content, Released},
     engine::Engine,
+    game_ui::{ClassChange, GameUi},
     levels::{LevelChange, LevelOptions, Levels},
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
     prefab::PrefabId,
@@ -38,6 +39,8 @@ pub struct Game {
     watcher: Option<ScriptWatcher>,
     /// Previews scripts asked for.
     previews: ScriptPreviews,
+    /// The game's own UI, which its scripts load documents into.
+    pub ui: GameUi,
 }
 
 impl Game {
@@ -59,6 +62,7 @@ impl Game {
             unload_requested: false,
             watcher: None,
             previews: ScriptPreviews::default(),
+            ui: GameUi::default(),
         }
     }
 
@@ -166,6 +170,7 @@ impl Game {
             models,
             unload_requested,
             previews: &mut self.previews,
+            ui: &mut self.ui,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.switch_level_through_scripts(level);
@@ -204,6 +209,7 @@ impl Game {
             models,
             unload_requested,
             previews: &mut self.previews,
+            ui: &mut self.ui,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.instantiate(&template, parent, placement)
@@ -229,6 +235,7 @@ impl Game {
                 models,
                 unload_requested,
                 previews: &mut self.previews,
+                ui: &mut self.ui,
             };
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
@@ -263,9 +270,57 @@ struct GameServices<'a> {
     models: ModelWork,
     unload_requested: &'a mut bool,
     previews: &'a mut ScriptPreviews,
+    ui: &'a mut GameUi,
 }
 
 impl ScriptServices for GameServices<'_> {
+    fn ui_load(&mut self, path: &str) -> Result<u32> {
+        self.ui.load(self.content, path)
+    }
+
+    fn ui_find(&mut self, document: u32, name: &str) -> Option<u32> {
+        self.ui.find(document, name)
+    }
+
+    fn ui_close(&mut self, document: u32) {
+        self.ui.close(document);
+    }
+
+    fn ui_ask(&mut self, element: u32, ask: UiAsk<'_>) -> UiAnswer {
+        let ui = &mut *self.ui;
+        match ask {
+            UiAsk::Text => ui.text(element).map_or(UiAnswer::None, UiAnswer::Text),
+            UiAsk::SetText(text) => {
+                ui.set_text(element, text);
+                UiAnswer::None
+            }
+            UiAsk::Class(class, change) => {
+                let change = match change {
+                    0 => ClassChange::Remove,
+                    1 => ClassChange::Add,
+                    2 => ClassChange::Toggle,
+                    _ => ClassChange::Has,
+                };
+                UiAnswer::Yes(ui.class(element, class, change))
+            }
+            UiAsk::Visible => UiAnswer::Yes(ui.visible(element)),
+            UiAsk::SetVisible(visible) => {
+                ui.set_visible(element, visible);
+                UiAnswer::None
+            }
+            UiAsk::Clicked => UiAnswer::Yes(ui.clicked(element)),
+            UiAsk::Value => UiAnswer::Number(ui.value(element)),
+            UiAsk::SetValue(value) => {
+                ui.set_value(element, value);
+                UiAnswer::None
+            }
+            UiAsk::SetStyle(style) => {
+                ui.set_style(element, style);
+                UiAnswer::None
+            }
+        }
+    }
+
     fn load_prefab(&mut self, reference: &str) -> Result<u32> {
         Ok(self.content.prefab(self.renderer.as_deref_mut(), reference)?.0)
     }

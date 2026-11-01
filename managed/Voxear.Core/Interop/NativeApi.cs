@@ -64,5 +64,15 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<Vector3*, float, Color*, float, int, void> DebugSphere;
 		public delegate* unmanaged[Cdecl]<Vector3*, byte*, int, Color*, float, void> DebugText;
 		public delegate* unmanaged[Cdecl]<ulong, void> ProfilerEndAlloc;
+		public delegate* unmanaged[Cdecl]<byte*, int, int> UiLoad;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, int> UiFind;
+		public delegate* unmanaged[Cdecl]<int, void> UiClose;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, int> UiText;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, void> UiSetText;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, int, int> UiClass;
+		public delegate* unmanaged[Cdecl]<int, int, int> UiVisible;
+		public delegate* unmanaged[Cdecl]<int, int> UiClicked;
+		public delegate* unmanaged[Cdecl]<int, int, float, float> UiValue;
+		public delegate* unmanaged[Cdecl]<int, byte*, int, void> UiStyle;
 	}
 }

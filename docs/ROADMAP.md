@@ -321,7 +321,9 @@ Still to do in M3:
   - [x] floating windows: Float on a tab's menu, or a tab dropped outside every area; moved by the bar, resized by
     the corner, docked again by a tab, and kept with the layout
   - [x] backdrop blur behind the viewport overlays (`backdrop-filter: blur()`)
-  - the C# UI API
+  - [x] the C# UI API: `UiDocument.Load` and `Find`, text, classes, visibility, values and styles, and `Clicked`;
+    the game's UI drawn over the Game view while playing, and over a player's window
+  - [ ] pack `.vui` and `.vss` files into built games
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.

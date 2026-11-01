@@ -303,6 +303,42 @@ fn the_ui_draws_over_the_frame() {
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "an empty frame clears the UI");
 }
 
+/// The game's UI is laid out for its own area and drawn moved there, under
+/// the window's UI, each with its own glyph atlas.
+#[test]
+fn the_games_ui_draws_in_its_area_under_the_windows() {
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let (width, height) = (640, 360);
+    let mut game = Ui::new();
+    let root = game.root();
+    game.panel(root, Style::default().at(10.0, 10.0).width(60.0).height(60.0).background(Color::hex(0xff0000)));
+    renderer.set_game_ui(&game.frame(300, 200, 1.0), [200, 100]).unwrap();
+    let mut window = Ui::new();
+    let root = window.root();
+    window.panel(root, Style::default().at(240.0, 100.0).width(20.0).height(200.0).background(Color::hex(0x0000ff)));
+    renderer.set_ui(&window.frame(width, height, 1.0)).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let at = |x: u32, y: u32| {
+        let i = ((y * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    assert_eq!(at(225, 135), [255, 0, 0], "the game's panel, moved to its area at 200, 100");
+    assert_ne!(at(35, 35), [255, 0, 0], "not where it would be in the window's own space");
+    assert_eq!(at(250, 135), [0, 0, 255], "the window's UI over it");
+
+    renderer.set_game_ui(&voxear_ui::UiFrame::default(), [0, 0]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let i = ((135 * width + 225) * 4) as usize;
+    assert_ne!(pixels[i..i + 3], [255, 0, 0], "an empty frame takes the game's UI away");
+}
+
 /// A panel with `backdrop-filter` shows the view under it blurred: the
 /// wall's sharp edge behind it comes out soft, while beside it the edge stays
 /// sharp. Set `VOXEAR_TEST_OUTPUT` to a folder to keep the image.

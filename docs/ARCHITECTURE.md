@@ -931,7 +931,7 @@ variants inherit from a parent and override only what differs.
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
-## UI (Voxear UI) *(implemented: tree, layout incl. grid, text, drawing, markup, style sheets, transitions, pointer and keyboard, scroll/list/tree views, input controls, split views, tabs, dropdowns, docking, default theme; C# planned)*
+## UI (Voxear UI) *(implemented: tree, layout incl. grid, text, drawing, markup, style sheets, transitions, pointer and keyboard, scroll/list/tree views, input controls, split views, tabs, dropdowns, docking, default theme, the game's UI in C#; data binding planned)*
 
 **Recommendation from research.** Build our own retained-mode UI on the Linebender and Servo crates, rendered by our
 own Vulkan code.
@@ -1230,10 +1230,35 @@ checkboxes, sliders, segmented controls, foldouts, list rows, split dividers, ta
 overrides any of it, and redefining the `--vx-*` variables is the quickest way to retheme. `Ui::bare()` starts
 without it.
 
+**The game's UI in C#** *(implemented)*. A script loads a `.vui` document from the project, and its `<Style src>`
+sheets from beside it, finds elements by name, and changes them:
+
+```csharp
+var hud = UiDocument.Load("UI/Hud.vui");      // null if it cannot be read, with the reason in the Console
+var score = hud.Find("score");                // null if there is no such element
+score.Text = "0";
+hud.Find("bar").AddClass("full");             // RemoveClass, ToggleClass and HasClass too
+hud.Find("pause").Clicked += () => Paused = true;
+hud.Find("volume").Value = 0.8f;              // a Slider's value; Checked for a Toggle
+hud.Find("hint").Visible = false;
+hud.Close();
+```
+
+- The game's documents live in a Voxear UI of their own, with its own glyph atlas, so a game's sheets never touch
+  the editor's and the editor's never touch the game's. The default theme is on its root as on any other.
+- It is laid out for the game's area and drawn there, under the window's own UI and over the game's view: the
+  whole window in a player, the Game view in the editor while it plays. The renderer draws both in one pass, each
+  with its atlas and moved to its area (`Renderer::set_game_ui`).
+- The pointer and keyboard reach it in the Game view while playing, and in a player when the fly camera is not
+  looking around.
+- `Clicked` handlers run at the start of each frame, before the systems update, and a handler that throws is
+  logged without stopping the others. `WasClicked` asks the same without a handler.
+- Stopping play takes the game's UI away; reloading scripts forgets the elements they held.
+- Built games do not pack `.vui` and `.vss` files yet, so for now the game's UI shows when run from the project.
+
 **Still to come.**
-- Keyframe animations, beyond transitions.
-- Floating windows that panels can be torn off into.
-- The C# API, so game UI and editor extensions are written in C#.
+- Packing `.vui` and `.vss` files into built games.
+- Editor extensions written in C# with the same API.
 - Data binding to C#, using source generators instead of reflection.
 - A live-reloading UI builder in the editor.
 

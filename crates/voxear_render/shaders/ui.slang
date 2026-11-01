@@ -2,8 +2,10 @@
 // icons from the glyph atlas in push.texture, soft shadows and lines. Each quad is six vertices; see
 // src/ui_pass.rs. A shape with UI_BACKDROP shows the view blurred under its background: push.textures
 // is the blurred view, where the view is in the output (x | y << 16), its size, and the blurred
-// image's size, the same way packed. Colours arrive linear and premultiplied, and the output is
-// sRGB, so blending happens in linear light.
+// image's size, the same way packed. push.list is where the layer's area starts in the output
+// (x | y << 16): the game's UI is laid out for its own area, as the Game view. push.level is the
+// layer's first quad, since SV_VertexID counts from the draw's first vertex. Colours arrive
+// linear and premultiplied, and the output is sRGB, so blending happens in linear light.
 
 #include "common.slang"
 
@@ -32,14 +34,15 @@ struct UiOut
 [shader("vertex")]
 UiOut uiVertex(uint vertexId : SV_VertexID)
 {
-    uint index = vertexId / 6;
+    uint index = push.level + vertexId / 6;
     UiQuad q = buffers().uiQuads[index];
     float2 corner = UI_CORNERS[vertexId % 6];
     // Trimmed to its clip, so what lies outside is never rasterised; a quad
     // wholly outside collapses to nothing.
     float2 pixel = clamp(q.rect.xy + corner * q.rect.zw, q.clip.xy, q.clip.zw);
+    float2 origin = float2(push.list & 0xFFFF, push.list >> 16);
     UiOut o;
-    o.position = float4(pixel / float2(push.size) * 2.0 - 1.0, 0.0, 1.0);
+    o.position = float4((pixel + origin) / float2(push.size) * 2.0 - 1.0, 0.0, 1.0);
     o.local = pixel - q.rect.xy;
     o.quad = index;
     return o;
@@ -182,7 +185,8 @@ float4 uiFragment(UiOut i) : SV_Target
     if ((q.flags & UI_BACKDROP) != 0 && push.textures.x != NO_TEXTURE)
     {
         // The background over what is behind, blurred: frosted glass, opaque.
-        fill = float4(backdrop(pixel) * (1.0 - q.color.a) + q.color.rgb, 1.0);
+        float2 origin = float2(push.list & 0xFFFF, push.list >> 16);
+        fill = float4(backdrop(pixel + origin) * (1.0 - q.color.a) + q.color.rgb, 1.0);
     }
     return fill * inner + q.borderColor * edge;
 }

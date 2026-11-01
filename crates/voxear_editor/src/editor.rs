@@ -537,6 +537,15 @@ impl Editor {
             {
                 profile_scope!("UI Upload");
                 renderer.set_ui(&frame)?;
+                // The game's own UI, over the Game view while it plays.
+                let in_game =
+                    view.is_some_and(|(viewport, _)| viewport == self.nodes.game_viewport) && self.is_playing();
+                let area =
+                    if in_game { self.viewport_rect(Some(self.nodes.game_viewport), size) } else { [0, 0, 0, 0] };
+                match in_game {
+                    true => self.game.ui.draw(renderer, delta, area, scale)?,
+                    false => renderer.set_game_ui(&voxear_ui::UiFrame::default(), [0, 0])?,
+                }
             }
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)
         };
@@ -1463,6 +1472,9 @@ impl Editor {
     /// to the command bar.
     pub fn handle(&mut self, event: &winit::event::WindowEvent) -> bool {
         use winit::event::{ElementState, WindowEvent};
+        if self.game_ui_takes(event) {
+            return true;
+        }
         match event {
             WindowEvent::CursorMoved { position, .. } => self.pointer = Some((position.x as f32, position.y as f32)),
             WindowEvent::Focused(focused) => self.build_window.set_window_focused(*focused),
@@ -1640,6 +1652,35 @@ impl Editor {
 
     /// A viewport's rectangle in physical pixels, within `size`; a pixel
     /// in the corner when no view shows.
+    /// Hands the game's UI what happens over the Game view while it plays,
+    /// in the view's own pixels: the pointer, and keys while one of its text
+    /// fields has them. Returns whether it took the event.
+    fn game_ui_takes(&mut self, event: &winit::event::WindowEvent) -> bool {
+        use winit::event::WindowEvent;
+        if !self.is_playing() || !self.shown(self.nodes.game_viewport) || self.game.ui.is_empty() {
+            return false;
+        }
+        let [x, y, w, h] = self.ui.rect(self.nodes.game_viewport).map(|v| v * self.scale);
+        let ui = self.game.ui.ui();
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                let (px, py) = (position.x as f32, position.y as f32);
+                match px >= x && px < x + w && py >= y && py < y + h {
+                    true => ui.pointer_move(px - x, py - y),
+                    false => ui.pointer_leave(),
+                }
+                false
+            }
+            WindowEvent::MouseInput { button: winit::event::MouseButton::Left, state, .. } => {
+                ui.pointer_button(*state == winit::event::ElementState::Pressed)
+            }
+            WindowEvent::KeyboardInput { .. } | WindowEvent::Ime(_) if ui.wants_keyboard() => {
+                voxear_engine::ui_input::handle(ui, event)
+            }
+            _ => false,
+        }
+    }
+
     fn viewport_rect(&self, viewport: Option<NodeId>, size: (u32, u32)) -> [u32; 4] {
         let Some(viewport) = viewport else { return [0, 0, 1, 1] };
         let [x, y, w, h] = self.ui.rect(viewport);

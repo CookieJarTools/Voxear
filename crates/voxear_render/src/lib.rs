@@ -781,6 +781,14 @@ impl Renderer {
         self.ui.set(&self.gpu, &mut self.bindless, frame)
     }
 
+    /// The game's own UI, laid out for an area that starts at `origin` in
+    /// the output, drawn under the UI [`set_ui`](Self::set_ui) gives: a
+    /// player's whole window, or the editor's Game view. An empty frame draws
+    /// nothing.
+    pub fn set_game_ui(&mut self, frame: &voxear_ui::UiFrame, origin: [u32; 2]) -> Result<()> {
+        self.ui.set_game(&self.gpu, &mut self.bindless, frame, origin)
+    }
+
     /// Reads back the last rendered offscreen frame as RGBA8 (sRGB).
     pub fn read_pixels(&mut self) -> Result<(u32, u32, Vec<u8>)> {
         let Output::Offscreen { image, last } = &mut self.output else {

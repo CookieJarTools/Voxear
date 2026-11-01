@@ -8,6 +8,7 @@ mod dev_console;
 mod engine;
 mod fly_camera;
 mod game;
+pub mod game_ui;
 mod levels;
 mod loading;
 pub mod new_project;

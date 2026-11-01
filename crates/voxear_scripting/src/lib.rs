@@ -11,10 +11,11 @@ mod hostfxr;
 mod interop;
 mod runtime;
 mod services;
+mod ui;
 
 pub use hostfxr::{DotnetInstall, find_dotnet};
 pub use runtime::{ConsoleName, CreatedBehaviour, Reloaded, ScriptHost, ScriptRuntime};
 pub use services::{
     ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
-    ScriptServices, ServicesScope, SpawnedPrefab,
+    ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
 };

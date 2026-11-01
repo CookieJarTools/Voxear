@@ -61,6 +61,52 @@ pub trait ScriptServices {
     fn save_preview(&mut self, preview: u32, path: &str) -> Result<()>;
 
     fn free_preview(&mut self, preview: u32);
+
+    /// The game's own UI (`Voxear.UiDocument`): a document loaded by project
+    /// path, and its elements found by name, each a number scripts hold.
+    /// Without a UI to show it in, there is none.
+    fn ui_load(&mut self, path: &str) -> Result<u32> {
+        anyhow::bail!("{path}: there is no UI to show it in here")
+    }
+
+    fn ui_find(&mut self, _document: u32, _name: &str) -> Option<u32> {
+        None
+    }
+
+    fn ui_close(&mut self, _document: u32) {}
+
+    /// Something asked of an element: see [`UiAsk`]. The answer is what was
+    /// read, or what is true after a change.
+    fn ui_ask(&mut self, _element: u32, _ask: UiAsk<'_>) -> UiAnswer {
+        UiAnswer::None
+    }
+}
+
+/// What a script asks of one of the game UI's elements.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UiAsk<'a> {
+    Text,
+    SetText(&'a str),
+    /// Adds (1), removes (0), toggles (2) or only looks for (3) a class.
+    Class(&'a str, u8),
+    Visible,
+    SetVisible(bool),
+    /// Whether it was clicked since the last frame.
+    Clicked,
+    /// A slider's value, or a toggle's, 1 when ticked.
+    Value,
+    SetValue(f32),
+    /// Declarations that win over its sheets.
+    SetStyle(&'a str),
+}
+
+/// What an element answered.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UiAnswer {
+    None,
+    Text(String),
+    Yes(bool),
+    Number(f32),
 }
 
 /// What a script asks for a preview of.

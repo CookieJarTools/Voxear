@@ -250,8 +250,9 @@ impl Editor {
     /// brings back the level as it was edited.
     pub fn stop(&mut self, renderer: &mut Renderer) {
         let Mode::Playing(run) = std::mem::replace(&mut self.play.mode, Mode::Editing) else { return };
-        // What the game drew goes with it.
+        // What the game drew goes with it, and its UI.
         voxear_core::debug_draw::clear();
+        self.game.ui = voxear_engine::game_ui::GameUi::default();
         let Run { edit, levels, camera, .. } = *run;
         let selected = self.inspector.shown().and_then(|entity| self.game.levels.counterpart(entity, &levels));
         // The values to keep, read before the played world goes.

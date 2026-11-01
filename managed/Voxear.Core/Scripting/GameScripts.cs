@@ -69,6 +69,7 @@ namespace Voxear.Scripting
 			var live = Enabled(handles, enabled);
 			Dispatch(live, Phase.OnDisable);
 			Systems.Destroy();
+			UiElements.Forget();
 			Swap(next, loaded);
 			var transfer = new StateTransfer(previous ?? next, assemblies);
 			var gone = BehaviourTable.Replace(transfer);

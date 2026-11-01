@@ -151,7 +151,10 @@ impl App {
         if let (Some(renderer), Some(window)) = (self.renderer.as_mut(), &self.window) {
             self.overlay.update(delta, renderer);
             let size = window.inner_size();
-            self.overlay.draw(renderer, (size.width, size.height), window.scale_factor() as f32)?;
+            let scale = window.scale_factor() as f32;
+            // The game's own UI over the whole window, under the tools.
+            self.game.ui.draw(renderer, delta, [0, 0, size.width, size.height], scale)?;
+            self.overlay.draw(renderer, (size.width, size.height), scale)?;
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)?;
         }
         if self.options.frames.is_some_and(|limit| self.game.engine.time().frame >= limit) {
@@ -225,6 +228,10 @@ impl ApplicationHandler for App {
             return;
         }
         if self.options.tools && !(pointer && self.fly.is_looking()) && self.overlay.handle(&event) {
+            return;
+        }
+        // Then the game's own UI, which takes what is over it.
+        if !self.fly.is_looking() && !self.game.ui.is_empty() && crate::ui_input::handle(self.game.ui.ui(), &event) {
             return;
         }
         match event {

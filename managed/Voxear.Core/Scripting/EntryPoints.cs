@@ -72,6 +72,7 @@ namespace Voxear.Scripting
 			try
 			{
 				Loading.Update();
+				UiElements.Dispatch();
 				MainThreadContext.Instance.Run();
 				GameScripts.Settle();
 			}

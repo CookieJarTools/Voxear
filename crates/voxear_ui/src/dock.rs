@@ -15,6 +15,13 @@
 //! number, or the first's share of the whole as a percentage (`57%`), which
 //! it keeps as the window resizes; `[...]` is an area's panels, by id, with
 //! `*` on the one showing when it is not the first.
+//!
+//! A panel can also float, in a window of its own over the dock: Float on
+//! its tab's menu ([`Ui::float_dock_panel`](crate::Ui::float_dock_panel)),
+//! or its tab dropped outside every area. Dragging the window's bar moves
+//! it, its corner resizes it, and its tabs dock again as any tab does;
+//! other tabs dropped on it join it. Floating windows follow the tree in
+//! the text form, each with its place and size: `float(600, 80, 420, 320, [inspector])`.
 
 use crate::{
     NodeId, Style, Ui, UiError,
@@ -24,6 +31,11 @@ use crate::{
 
 /// How far the pointer moves on a pressed tab before it becomes a drag.
 const DRAG_START: f32 = 6.0;
+/// A floating window's size when it first floats, and the least it can be.
+const FLOAT_SIZE: (f32, f32) = (420.0, 320.0);
+const FLOAT_MIN: (f32, f32) = (180.0, 120.0);
+/// The square in a floating window's corner that resizes it.
+const GRIP: f32 = 14.0;
 /// The share of an area along each edge that splits it, rather than joining it.
 const EDGE: f32 = 0.25;
 
@@ -66,8 +78,24 @@ pub(crate) struct DockPanel {
     pub content: taffy::NodeId,
 }
 
+/// A floating window of panels over the dock: an area of its own, placed
+/// anywhere.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Floating {
+    pub id: u32,
+    pub panels: Vec<String>,
+    pub selected: usize,
+    /// Left, top, width and height in logical pixels, from the dock's top left.
+    pub rect: [f32; 4],
+    /// The window, its tabs, and the grip in its corner, as built.
+    pub window: Option<taffy::NodeId>,
+    pub tabs: Option<taffy::NodeId>,
+    pub grip: Option<taffy::NodeId>,
+}
+
 pub(crate) struct DockState {
     pub layout: DockNode,
+    pub floating: Vec<Floating>,
     pub panels: Vec<DockPanel>,
     /// Panels closed, each with one it shared an area with, to go back
     /// beside when opened again.
@@ -79,7 +107,8 @@ pub(crate) struct DockState {
     pub next_area: u32,
 }
 
-/// A press on a tab that may become a drag.
+/// A press on a tab that may become a drag, or on a floating window's bar
+/// or grip, which moves or resizes it.
 pub(crate) struct DockDrag {
     pub dock: taffy::NodeId,
     pub panel: String,
@@ -88,6 +117,37 @@ pub(crate) struct DockDrag {
     pub ghost: Option<taffy::NodeId>,
     pub preview: Option<taffy::NodeId>,
     pub target: Option<(u32, Zone)>,
+    pub window: Option<WindowDrag>,
+}
+
+/// A floating window being moved or resized: its area, whether it is
+/// resized, and its place when pressed.
+pub(crate) type WindowDrag = (u32, bool, [f32; 4]);
+
+impl DockState {
+    /// Every panel placed, docked or floating.
+    fn placed(&self) -> Vec<String> {
+        let floating = self.floating.iter().flat_map(|f| f.panels.iter().cloned());
+        self.layout.panels().into_iter().map(str::to_owned).chain(floating).collect()
+    }
+
+    /// Takes a panel out wherever it is; a floating window left empty goes.
+    fn remove_panel(&mut self, panel: &str) {
+        self.layout.remove(panel);
+        for floating in &mut self.floating {
+            if let Some(index) = floating.panels.iter().position(|p| p == panel) {
+                floating.panels.remove(index);
+                floating.selected = floating.selected.min(floating.panels.len().saturating_sub(1));
+            }
+        }
+        self.floating.retain(|f| !f.panels.is_empty());
+    }
+
+    /// The panels sharing an area or a floating window with `panel`, it included.
+    fn area_with(&self, panel: &str) -> Option<Vec<String>> {
+        area_with(&self.layout, panel)
+            .or_else(|| self.floating.iter().find(|f| f.panels.iter().any(|p| p == panel)).map(|f| f.panels.clone()))
+    }
 }
 
 impl DockNode {
@@ -220,15 +280,46 @@ impl DockNode {
     }
 }
 
-/// Reads the text form of a layout.
-fn parse_layout(text: &str, next_area: &mut u32) -> Result<DockNode, String> {
+/// Reads the text form of a layout: the tree, then any floating windows.
+fn parse_layout(text: &str, next_area: &mut u32) -> Result<(DockNode, Vec<Floating>), String> {
     let mut reader = Reader { text: text.as_bytes(), at: 0 };
     let node = reader.node(next_area)?;
-    reader.space();
-    if reader.at != reader.text.len() {
-        return Err(format!("unexpected '{}' after the layout", &text[reader.at..]));
+    let mut floating = Vec::new();
+    loop {
+        reader.space();
+        if reader.at == reader.text.len() {
+            break;
+        }
+        if reader.word() != "float" {
+            return Err(format!("unexpected '{}' after the layout", &text[reader.at..]));
+        }
+        reader.expect(b'(')?;
+        let mut rect = [0.0; 4];
+        for (index, value) in rect.iter_mut().enumerate() {
+            let word = reader.word();
+            *value = word.parse().map_err(|_| format!("float needs its left, top, width and height, not '{word}'"))?;
+            if index < 3 {
+                reader.expect(b',')?;
+            }
+        }
+        reader.expect(b',')?;
+        let DockNode::Area { id, panels, selected, .. } = reader.node(next_area)? else {
+            return Err("a floating window holds an area's panels, as [inspector]".to_string());
+        };
+        reader.expect(b')')?;
+        floating.push(Floating { id, panels, selected, rect, window: None, tabs: None, grip: None });
     }
-    Ok(node)
+    Ok((node, floating))
+}
+
+/// The text form of the floating windows, to follow the tree's.
+fn write_floating(floating: &[Floating], out: &mut String) {
+    for window in floating {
+        let [x, y, w, h] = window.rect.map(f32::round);
+        out.push_str(&format!(" float({x}, {y}, {w}, {h}, "));
+        DockNode::area(window.id, window.panels.clone(), window.selected).write(out);
+        out.push(')');
+    }
 }
 
 struct Reader<'a> {
@@ -322,6 +413,7 @@ impl Ui {
         let dock = self.add(parent, Element::new(Kind::DockSpace, style));
         let state = DockState {
             layout: DockNode::area(1, Vec::new(), 0),
+            floating: Vec::new(),
             panels: Vec::new(),
             closed: Vec::new(),
             headers: Vec::new(),
@@ -342,7 +434,7 @@ impl Ui {
         self.add_class(content, "dock-panel");
         let Some(state) = self.dock_state(dock) else { return content };
         state.panels.push(DockPanel { id: id.to_string(), title: title.to_string(), icon: None, content: content.0 });
-        if !state.layout.panels().contains(&id)
+        if !state.placed().iter().any(|p| p == id)
             && let DockNode::Area { panels, .. } = state.layout.first_area()
         {
             panels.push(id.to_string());
@@ -376,8 +468,9 @@ impl Ui {
     fn arrange_dock(&mut self, dock: NodeId, layout: &str, close_rest: bool) -> Result<(), UiError> {
         let Some(state) = self.dock_state(dock) else { return Err(UiError("not a dock space".into())) };
         let mut next = state.next_area;
-        let mut node = parse_layout(layout, &mut next).map_err(|e| UiError(format!("dock layout: {e}")))?;
-        let named: Vec<String> = node.panels().iter().map(|p| p.to_string()).collect();
+        let (mut node, floating) = parse_layout(layout, &mut next).map_err(|e| UiError(format!("dock layout: {e}")))?;
+        let floats = floating.iter().flat_map(|f| f.panels.iter().cloned());
+        let named: Vec<String> = node.panels().iter().map(|p| p.to_string()).chain(floats).collect();
         state.closed.clear();
         for panel in state.panels.iter().filter(|p| !named.contains(&p.id)) {
             if close_rest {
@@ -387,6 +480,7 @@ impl Ui {
             }
         }
         state.layout = node;
+        state.floating = floating;
         state.next_area = next;
         self.rebuild_dock(dock);
         Ok(())
@@ -397,12 +491,14 @@ impl Ui {
     /// placed stays.
     pub fn close_dock_panel(&mut self, dock: NodeId, id: &str) {
         let Some(state) = self.dock_state(dock) else { return };
-        let placed = state.layout.panels();
-        if !placed.contains(&id) || placed.len() == 1 {
+        let placed = state.placed();
+        let docked = state.layout.panels();
+        let last_docked = docked == [id];
+        if !placed.iter().any(|p| p == id) || placed.len() == 1 || last_docked {
             return;
         }
-        let neighbour = area_with(&state.layout, id).and_then(|area| area.into_iter().find(|p| p != id));
-        state.layout.remove(id);
+        let neighbour = state.area_with(id).and_then(|area| area.into_iter().find(|p| p != id));
+        state.remove_panel(id);
         state.closed.push((id.to_string(), neighbour));
         self.rebuild_dock(dock);
     }
@@ -424,7 +520,7 @@ impl Ui {
 
     fn open_dock_panel_near(&mut self, dock: NodeId, id: &str, beside: Option<&str>) {
         let Some(state) = self.dock_state(dock) else { return };
-        if !state.layout.panels().contains(&id) && state.panels.iter().any(|p| p.id == id) {
+        if !state.placed().iter().any(|p| p == id) && state.panels.iter().any(|p| p.id == id) {
             let neighbour = state.closed.iter().find(|(closed, _)| closed == id).and_then(|(_, n)| n.clone());
             state.closed.retain(|(closed, _)| closed != id);
             let target = neighbour.and_then(|n| area_id_with(&state.layout, &n));
@@ -442,7 +538,7 @@ impl Ui {
     /// Every panel, in the order added: its id, title, and whether it is open.
     pub fn dock_panels(&mut self, dock: NodeId) -> Vec<(String, String, bool)> {
         let Some(state) = self.dock_state(dock) else { return Vec::new() };
-        let placed: Vec<String> = state.layout.panels().iter().map(|p| p.to_string()).collect();
+        let placed = state.placed();
         state.panels.iter().map(|p| (p.id.clone(), p.title.clone(), placed.contains(&p.id))).collect()
     }
 
@@ -457,7 +553,7 @@ impl Ui {
     /// The other panels in the area a panel is in.
     pub fn dock_panel_neighbours(&mut self, dock: NodeId, id: &str) -> Vec<String> {
         let Some(state) = self.dock_state(dock) else { return Vec::new() };
-        area_with(&state.layout, id).unwrap_or_default().into_iter().filter(|p| p != id).collect()
+        state.area_with(id).unwrap_or_default().into_iter().filter(|p| p != id).collect()
     }
 
     /// The layout as it is now, with any divider moves and tab choices, in
@@ -467,6 +563,7 @@ impl Ui {
         let mut out = String::new();
         if let Some(state) = self.dock_state(dock) {
             state.layout.write(&mut out);
+            write_floating(&state.floating, &mut out);
         }
         out
     }
@@ -490,6 +587,11 @@ impl Ui {
     fn sync_dock(&mut self, dock: NodeId) {
         let Some(mut state) = self.take_dock(dock) else { return };
         self.sync_node(&mut state.layout);
+        for floating in &mut state.floating {
+            if let Some(tabs) = floating.tabs {
+                floating.selected = self.selected_tab(NodeId(tabs));
+            }
+        }
         self.put_dock(dock, state);
     }
 
@@ -539,11 +641,22 @@ impl Ui {
         if let Some(old) = state.structure.take() {
             self.remove(NodeId(old));
         }
+        for floating in &mut state.floating {
+            if let Some(window) = floating.window.take() {
+                self.remove(NodeId(window));
+            }
+        }
         state.headers.clear();
         let mut layout = std::mem::replace(&mut state.layout, DockNode::area(0, Vec::new(), 0));
         let structure = self.build_dock(dock, &mut layout, &mut state);
         state.layout = layout;
         state.structure = Some(structure.0);
+        // Floating windows after the tree, so they are over it and the pointer finds them first.
+        let mut floating = std::mem::take(&mut state.floating);
+        for window in &mut floating {
+            self.build_floating(dock, window, &mut state);
+        }
+        state.floating = floating;
         // Panels the layout does not place stay out of sight, still alive.
         for panel in &state.panels {
             if self.tree.parent(panel.content).is_none() {
@@ -570,19 +683,8 @@ impl Ui {
                 split
             }
             DockNode::Area { panels, selected, element, .. } => {
-                let tabs = self.tabs(parent);
-                self.add_class(tabs, "dock-area");
+                let tabs = self.build_area(parent, panels, *selected, state);
                 *element = Some(tabs.0);
-                for id in panels.iter() {
-                    let Some(panel) = state.panels.iter().find(|p| &p.id == id) else { continue };
-                    let page = self.add_tab_with_icon(tabs, &panel.title, panel.icon.as_deref());
-                    let _ = self.tree.add_child(page.0, panel.content);
-                    self.set_visible(NodeId(panel.content), true);
-                    let bar = self.children(tabs)[0];
-                    let header = *self.children(bar).last().expect("add_tab added a tab");
-                    state.headers.push((header.0, id.clone()));
-                }
-                self.set_selected_tab(tabs, *selected);
                 tabs
             }
         };
@@ -591,6 +693,103 @@ impl Ui {
         style.layout.flex_basis = taffy::Dimension::length(0.0);
         self.set_style(built, style);
         built
+    }
+
+    /// An area's tabs, a page for each of its panels, with the panels' own
+    /// elements moved in.
+    fn build_area(&mut self, parent: NodeId, panels: &[String], selected: usize, state: &mut DockState) -> NodeId {
+        let tabs = self.tabs(parent);
+        self.add_class(tabs, "dock-area");
+        for id in panels {
+            let Some(panel) = state.panels.iter().find(|p| &p.id == id) else { continue };
+            let page = self.add_tab_with_icon(tabs, &panel.title, panel.icon.as_deref());
+            let _ = self.tree.add_child(page.0, panel.content);
+            self.set_visible(NodeId(panel.content), true);
+            let bar = self.children(tabs)[0];
+            let header = *self.children(bar).last().expect("add_tab added a tab");
+            state.headers.push((header.0, id.clone()));
+        }
+        self.set_selected_tab(tabs, selected);
+        tabs
+    }
+
+    /// A floating window: an area's tabs in a card of its own over the dock,
+    /// with a grip in its corner.
+    fn build_floating(&mut self, dock: NodeId, floating: &mut Floating, state: &mut DockState) {
+        let [x, y, w, h] = floating.rect;
+        let window = self.panel(dock, absolute(x, y, Some((w, h))));
+        self.add_class(window, "dock-float");
+        let tabs = self.build_area(window, &floating.panels, floating.selected, state);
+        let mut style = self.element(tabs).map(|e| e.base.clone()).unwrap_or_default();
+        style.layout.flex_grow = 1.0;
+        self.set_style(tabs, style);
+        let mut corner = Style::default();
+        corner.layout.position = taffy::Position::Absolute;
+        corner.layout.inset.right = taffy::LengthPercentageAuto::length(0.0);
+        corner.layout.inset.bottom = taffy::LengthPercentageAuto::length(0.0);
+        corner.layout.size =
+            taffy::Size { width: taffy::Dimension::length(GRIP), height: taffy::Dimension::length(GRIP) };
+        let grip = self.panel(window, corner);
+        self.add_class(grip, "dock-float-grip");
+        (floating.window, floating.tabs, floating.grip) = (Some(window.0), Some(tabs.0), Some(grip.0));
+    }
+
+    /// Floats a panel in a window of its own over the dock, at `at` (where
+    /// the pointer let go of its tab, in logical pixels) or else in the
+    /// dock's middle. The last panel docked stays docked.
+    pub fn float_dock_panel(&mut self, dock: NodeId, id: &str, at: Option<(f32, f32)>) {
+        self.sync_dock(dock);
+        let [dx, dy, dw, dh] = self.rect(dock);
+        let Some(state) = self.dock_state(dock) else { return };
+        let docked = state.layout.panels();
+        if !state.panels.iter().any(|p| p.id == id) || docked == [id] {
+            return;
+        }
+        let (w, h) = FLOAT_SIZE;
+        let (x, y) = match at {
+            Some((px, py)) => (px - dx - 40.0, py - dy - 12.0),
+            None => ((dw - w) / 2.0, (dh - h) / 3.0),
+        };
+        state.remove_panel(id);
+        state.closed.retain(|(closed, _)| closed != id);
+        state.layout.forget_elements();
+        state.next_area += 1;
+        let rect = [x.clamp(0.0, (dw - w).max(0.0)), y.clamp(0.0, (dh - h).max(0.0)), w, h];
+        let floating = Floating {
+            id: state.next_area,
+            panels: vec![id.to_string()],
+            selected: 0,
+            rect,
+            window: None,
+            tabs: None,
+            grip: None,
+        };
+        state.floating.push(floating);
+        self.rebuild_dock(dock);
+        self.mark_changed(dock);
+    }
+
+    /// Whether a panel is in a floating window.
+    pub fn dock_panel_floating(&mut self, dock: NodeId, id: &str) -> bool {
+        self.dock_state(dock).is_some_and(|state| state.floating.iter().any(|f| f.panels.iter().any(|p| p == id)))
+    }
+
+    /// Docks a floating panel again, as a tab in the first area.
+    pub fn dock_floating_panel(&mut self, dock: NodeId, id: &str) {
+        self.sync_dock(dock);
+        let Some(state) = self.dock_state(dock) else { return };
+        if !state.floating.iter().any(|f| f.panels.iter().any(|p| p == id)) {
+            return;
+        }
+        state.remove_panel(id);
+        let target = match state.layout.first_area() {
+            DockNode::Area { id, .. } => *id,
+            DockNode::Split { .. } => 0,
+        };
+        state.layout.insert(target, Zone::Center, id, 0.0, 0);
+        state.layout.forget_elements();
+        self.rebuild_dock(dock);
+        self.mark_changed(dock);
     }
 
     /// A press on a dock tab, which may become a drag.
@@ -607,7 +806,7 @@ impl Ui {
             }
             None
         });
-        self.dock_drag = found.map(|(dock, panel)| DockDrag {
+        let drag = |dock, panel, window| DockDrag {
             dock,
             panel,
             start: point,
@@ -615,7 +814,53 @@ impl Ui {
             ghost: None,
             preview: None,
             target: None,
+            window,
+        };
+        self.dock_drag = match found {
+            Some((dock, panel)) => Some(drag(dock, panel, None)),
+            None => self.window_pressed(path).map(|(dock, window)| drag(dock, String::new(), Some(window))),
+        };
+    }
+
+    /// The floating window whose bar or grip `path` presses, if any: its
+    /// dock, area, whether the grip was pressed, and its place.
+    fn window_pressed(&mut self, path: &[taffy::NodeId]) -> Option<(taffy::NodeId, WindowDrag)> {
+        let dock = path.iter().copied().find(|&node| {
+            matches!(self.tree.get_node_context(node).and_then(|e| e.control.as_ref()), Some(Control::Dock(_)))
+        })?;
+        let windows = self.dock_state(NodeId(dock))?.floating.clone();
+        let pressed = path.last().copied();
+        let found = windows.into_iter().find_map(|window| {
+            let bar = window.tabs.and_then(|tabs| self.tree.children(tabs).ok()?.first().copied());
+            if pressed.is_some() && pressed == window.grip {
+                return Some((window.id, true, window.rect));
+            }
+            (pressed.is_some() && pressed == bar).then_some((window.id, false, window.rect))
         });
+        found.map(|window| (dock, window))
+    }
+
+    /// A floating window's bar or grip dragged: it moves, or resizes, with
+    /// the pointer, kept inside the dock.
+    fn drag_window(&mut self, dock: NodeId, (area, resize, from): WindowDrag, delta: (f32, f32)) {
+        let [_, _, dock_w, dock_h] = self.rect(dock);
+        let Some(state) = self.dock_state(dock) else { return };
+        let Some(floating) = state.floating.iter_mut().find(|f| f.id == area) else { return };
+        let [x, y, w, h] = from;
+        floating.rect = if resize {
+            let (w, h) = ((w + delta.0).max(FLOAT_MIN.0), (h + delta.1).max(FLOAT_MIN.1));
+            [x, y, w.min((dock_w - x).max(FLOAT_MIN.0)), h.min((dock_h - y).max(FLOAT_MIN.1))]
+        } else {
+            [(x + delta.0).clamp(0.0, (dock_w - w).max(0.0)), (y + delta.1).clamp(0.0, (dock_h - h).max(0.0)), w, h]
+        };
+        let ([x, y, w, h], window) = (floating.rect, floating.window);
+        if let Some(window) = window {
+            let mut style = self.element(NodeId(window)).map(|e| e.base.clone()).unwrap_or_default();
+            style.layout.inset.left = taffy::LengthPercentageAuto::length(x);
+            style.layout.inset.top = taffy::LengthPercentageAuto::length(y);
+            style.layout.size = taffy::Size { width: taffy::Dimension::length(w), height: taffy::Dimension::length(h) };
+            self.set_style(NodeId(window), style);
+        }
     }
 
     /// The pointer moved with a dock tab pressed: past a few pixels it
@@ -628,6 +873,14 @@ impl Ui {
             return;
         }
         let (dock, panel) = (NodeId(drag.dock), drag.panel.clone());
+        if let Some(window) = drag.window {
+            let delta = (point.0 - drag.start.0, point.1 - drag.start.1);
+            if let Some(drag) = self.dock_drag.as_mut() {
+                drag.dragging = true;
+            }
+            self.pointer_cancel();
+            return self.drag_window(dock, window, delta);
+        }
         if !drag.dragging {
             let title =
                 self.dock_state(dock).and_then(|s| s.panels.iter().find(|p| p.id == panel)).map(|p| p.title.clone());
@@ -668,8 +921,17 @@ impl Ui {
         }
     }
 
-    /// The area and zone under `point`, and the rectangle the panel would fill.
+    /// The area and zone under `point`, and the rectangle the panel would
+    /// fill. A floating window, over the rest, takes a panel as a tab.
     fn dock_target(&mut self, dock: NodeId, point: (f32, f32)) -> Option<((u32, Zone), [f32; 4])> {
+        let windows: Vec<(u32, taffy::NodeId)> =
+            self.dock_state(dock)?.floating.iter().rev().filter_map(|f| Some((f.id, f.window?))).collect();
+        for (area, window) in windows {
+            let [x, y, w, h] = self.rect(NodeId(window));
+            if (x..x + w).contains(&point.0) && (y..y + h).contains(&point.1) {
+                return Some(((area, Zone::Center), [x, y, w, h]));
+            }
+        }
         let mut areas = Vec::new();
         self.dock_state(dock)?.layout.areas(&mut areas);
         areas.into_iter().find_map(|(id, element, _)| {
@@ -705,26 +967,47 @@ impl Ui {
             return false;
         }
         let dock = NodeId(drag.dock);
-        if let Some((area, zone)) = drag.target {
-            self.sync_dock(dock);
-            let size = self.dock_area_size(dock, area, zone);
-            if let Some(state) = self.dock_state(dock) {
-                let alone = matches!(find_area(&state.layout, area), Some(panels) if panels == [drag.panel.clone()]);
-                if !alone {
-                    state.next_area += 1;
-                    let new_area = state.next_area;
-                    let mut layout = state.layout.clone();
-                    layout.remove(&drag.panel);
-                    if layout.insert(area, zone, &drag.panel, size, new_area) {
-                        // What was built no longer matches, so nothing is read back from it.
-                        layout.forget_elements();
-                        state.layout = layout;
+        if drag.window.is_some() {
+            // Moved or resized as it went; the layout already has it.
+            self.mark_changed(dock);
+            return true;
+        }
+        let Some((area, zone)) = drag.target else {
+            // Let go outside every area: it floats there.
+            if let Some(point) = self.pointer_position() {
+                self.float_dock_panel(dock, &drag.panel, Some(point));
+            }
+            return true;
+        };
+        self.sync_dock(dock);
+        let size = self.dock_area_size(dock, area, zone);
+        if let Some(state) = self.dock_state(dock) {
+            let in_window = state.floating.iter().position(|f| f.id == area);
+            // Dropped back on its own window, it stays as it was.
+            let alone = match in_window {
+                Some(index) => state.floating[index].panels.contains(&drag.panel),
+                None => matches!(find_area(&state.layout, area), Some(panels) if panels == [drag.panel.clone()]),
+            };
+            let last_docked = state.layout.panels() == [drag.panel.as_str()];
+            if !alone && !(in_window.is_some() && last_docked) {
+                state.remove_panel(&drag.panel);
+                match state.floating.iter_mut().find(|f| f.id == area) {
+                    Some(window) => {
+                        window.panels.push(drag.panel.clone());
+                        window.selected = window.panels.len() - 1;
+                    }
+                    None => {
+                        state.next_area += 1;
+                        let new_area = state.next_area;
+                        state.layout.insert(area, zone, &drag.panel, size, new_area);
                     }
                 }
+                // What was built no longer matches, so nothing is read back from it.
+                state.layout.forget_elements();
             }
-            self.rebuild_dock(dock);
-            self.mark_changed(dock);
         }
+        self.rebuild_dock(dock);
+        self.mark_changed(dock);
         true
     }
 
@@ -782,11 +1065,22 @@ mod tests {
     fn layouts_read_and_write_the_same() {
         let text = "row(240, [hierarchy, project], column(420, [scene, game*], [console]))";
         let mut next = 0;
-        let layout = parse_layout(text, &mut next).unwrap();
+        let (layout, floating) = parse_layout(text, &mut next).unwrap();
         let mut out = String::new();
         layout.write(&mut out);
         assert_eq!(out, text);
         assert_eq!(next, 3, "three areas");
+        assert!(floating.is_empty());
+
+        // Floating windows follow the tree, each with its place and size.
+        let floats = "row(240, [a], [b]) float(600, 80, 420, 320, [c, d*]) float(10, 20, 200, 150, [e])";
+        let (layout, floating) = parse_layout(floats, &mut next).unwrap();
+        let mut out = String::new();
+        layout.write(&mut out);
+        write_floating(&floating, &mut out);
+        assert_eq!(out, floats);
+        assert_eq!((floating[0].rect, floating[0].selected), ([600.0, 80.0, 420.0, 320.0], 1));
+        assert!(parse_layout("[a] float(1, 2, [b])", &mut next).unwrap_err().contains("left, top, width and height"));
         assert!(parse_layout("row(240, [a])", &mut next).unwrap_err().contains("expected ','"));
         assert!(parse_layout("grid(1, [a], [b])", &mut next).unwrap_err().contains("expected row, column or ["));
     }
@@ -794,7 +1088,7 @@ mod tests {
     #[test]
     fn removing_folds_empty_areas_and_inserting_splits() {
         let mut next = 0;
-        let mut layout = parse_layout("row(200, [a], column(300, [b], [c]))", &mut next).unwrap();
+        let (mut layout, _) = parse_layout("row(200, [a], column(300, [b], [c]))", &mut next).unwrap();
         layout.remove("b");
         let mut out = String::new();
         layout.write(&mut out);

@@ -183,3 +183,83 @@ fn panels_close_and_open_again_beside_where_they_were() {
     ui.open_dock_panel(dock, "inspector");
     assert!(ui.dock_layout(dock).contains("inspector"), "and they open again");
 }
+
+/// The first element with `class` in `node`.
+fn with_class(ui: &Ui, node: NodeId, class: &str) -> Option<NodeId> {
+    if ui.has_class(node, class) {
+        return Some(node);
+    }
+    ui.children(node).into_iter().find_map(|child| with_class(ui, child, class))
+}
+
+/// A floating window's place and size, as the layout writes it.
+fn floated(layout: &str) -> Vec<f32> {
+    let inside = layout.split("float(").nth(1).expect("a floating window");
+    inside.split(',').take(4).map(|n| n.trim().parse().unwrap()).collect()
+}
+
+#[test]
+fn panels_float_in_windows_that_move_resize_and_dock_again() {
+    let (mut ui, dock) = editor();
+    let name = ui.find(dock, "name").unwrap();
+    ui.set_text(name, "Lamp (edited)");
+    ui.float_dock_panel(dock, "inspector", None);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let layout = ui.dock_layout(dock);
+    assert!(layout.starts_with("row(240, [hierarchy, project], [scene]) float("), "{layout}");
+    assert!(layout.ends_with("[inspector])"), "{layout}");
+    assert!(ui.dock_panel_floating(dock, "inspector"));
+    assert_eq!((ui.find(dock, "name"), ui.text(name).as_str()), (Some(name), "Lamp (edited)"), "moved, not rebuilt");
+
+    // Its bar moves it; its corner resizes it.
+    let window = with_class(&ui, dock, "dock-float").unwrap();
+    let bar = with_class(&ui, window, "tab-bar").unwrap();
+    let [bx, by, bw, bh] = ui.rect(bar);
+    let before = floated(&layout);
+    drag(&mut ui, (bx + bw - 20.0, by + bh / 2.0), (bx + bw + 30.0, by + bh / 2.0 + 20.0));
+    let moved = floated(&ui.dock_layout(dock));
+    assert_eq!((moved[0] - before[0], moved[1] - before[1]), (50.0, 20.0), "{moved:?} from {before:?}");
+    let grip = with_class(&ui, window, "dock-float-grip").unwrap();
+    let from = centre(&ui, grip);
+    drag(&mut ui, from, (from.0 + 40.0, from.1 + 30.0));
+    let sized = floated(&ui.dock_layout(dock));
+    assert_eq!((sized[2] - moved[2], sized[3] - moved[3]), (40.0, 30.0));
+
+    // A tab dropped on it joins it; one of its tabs dropped on an area docks there.
+    let window = with_class(&ui, dock, "dock-float").unwrap();
+    let into = centre(&ui, window);
+    let project = centre(&ui, tab(&ui, dock, "Project"));
+    drag(&mut ui, project, into);
+    assert!(ui.dock_layout(dock).ends_with("[inspector, project*])"), "{}", ui.dock_layout(dock));
+    let inspector = centre(&ui, tab(&ui, dock, "Inspector"));
+    drag(&mut ui, inspector, (inspector.0 + 10.0, inspector.1 + 40.0));
+    assert!(ui.dock_layout(dock).ends_with("[inspector, project*])"), "dropped on its own window, it stays");
+    let hierarchy_area = ui.parent(ui.parent(tab(&ui, dock, "Hierarchy")).unwrap()).unwrap();
+    let target = centre(&ui, hierarchy_area);
+    let inspector = centre(&ui, tab(&ui, dock, "Inspector"));
+    drag(&mut ui, inspector, target);
+    let layout = ui.dock_layout(dock);
+    assert!(layout.starts_with("row(240, [hierarchy, inspector*], [scene]) float("), "{layout}");
+    assert!(layout.ends_with("[project])"), "{layout}");
+
+    // A tab let go outside every area floats there.
+    let hierarchy = centre(&ui, tab(&ui, dock, "Hierarchy"));
+    drag(&mut ui, hierarchy, (hierarchy.0, HEIGHT as f32 + 80.0));
+    let layout = ui.dock_layout(dock);
+    assert_eq!(layout.matches("float(").count(), 2, "{layout}");
+    assert!(layout.starts_with("row(240, [inspector], [scene]) float("), "{layout}");
+
+    // The layout reads back the same, and a floating panel docks again from code.
+    ui.set_dock_layout(dock, &layout).unwrap();
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.dock_layout(dock), layout);
+    ui.dock_floating_panel(dock, "project");
+    assert!(!ui.dock_panel_floating(dock, "project"));
+    assert!(
+        ui.dock_layout(dock).starts_with("row(240, [inspector, project*], [scene]) float("),
+        "{}",
+        ui.dock_layout(dock)
+    );
+    let warnings = ui.take_warnings();
+    assert!(warnings.is_empty(), "{warnings:?}");
+}

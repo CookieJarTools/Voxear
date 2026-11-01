@@ -1120,6 +1120,13 @@ tabbed areas of panels.
   elements stay alive out of sight; `open_dock_panel` brings it back as a tab beside a panel it shared an area
   with, or in the first area. `dock_panels` lists every panel with whether it is open, and
   `dock_tab_context_clicked` says whose tab was context-clicked, for a menu.
+- **Floating windows** *(implemented)*. A panel floats in a window of its own over the dock with
+  `float_dock_panel`, Float on its tab's menu in the editor, or its tab let go outside every area. Dragging the
+  window's bar moves it, the grip in its corner resizes it, and both stay inside the dock. Its tabs dock again as
+  any tab does (or with Dock on the menu, `dock_floating_panel`); other tabs dropped on it join it. A window is the
+  dock's last child, so it is drawn over the areas yet under menus opened from it, and the last panel docked stays
+  docked. Floating windows follow the tree in the layout's text, each with its place and size:
+  `row(240, [hierarchy], [scene]) float(600, 80, 420, 320, [inspector])`, so they are kept between sessions too.
 
   ```xml
   <DockSpace layout="row(240, [hierarchy], [scene, inspector])">

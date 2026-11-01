@@ -1463,6 +1463,27 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     frame(&mut editor, &mut renderer);
     let tab = dock_tab(&editor.ui, "Console").expect("open again");
     assert!(editor.ui.is_checked(tab), "and showing");
+
+    // Float, from a tab's menu: a window of its own over the dock; Dock puts it back.
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    let inspector = dock_tab(&editor.ui, "Inspector").unwrap();
+    context_click(&mut editor.ui, inspector);
+    frame(&mut editor, &mut renderer);
+    let float = menu_item(&editor.ui, "Float").expect("a docked panel can float");
+    click(&mut editor.ui, float);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(editor.ui.dock_panel_floating(dock, "inspector"));
+    assert!(editor.ui.dock_layout(dock).ends_with("[inspector])"), "{}", editor.ui.dock_layout(dock));
+    shot(&mut renderer, "floating-window.png");
+    let inspector = dock_tab(&editor.ui, "Inspector").unwrap();
+    context_click(&mut editor.ui, inspector);
+    frame(&mut editor, &mut renderer);
+    let back = menu_item(&editor.ui, "Dock").expect("a floating panel can dock again");
+    click(&mut editor.ui, back);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.ui.dock_panel_floating(dock, "inspector"));
 }
 
 /// The settings rows on screen, by their labels.

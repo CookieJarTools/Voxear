@@ -1,5 +1,6 @@
 //! The dock's panels as windows. A context click on a panel's tab offers
-//! Close, Close Other Tabs and Reset Layout; the top bar's Window button
+//! Close, Close Other Tabs, Float (or Dock, for one floating in a window of
+//! its own) and Reset Layout; the top bar's Window button
 //! lists every panel, ticked while open, to open or close, and resets the
 //! layout. A closed panel keeps its state, and opens again beside a panel it
 //! shared an area with.
@@ -31,9 +32,11 @@ impl Editor {
         let dock = self.nodes.dock;
         if let Some((panel, at)) = self.ui.dock_tab_context_clicked(dock) {
             let others = !self.ui.dock_panel_neighbours(dock, &panel).is_empty();
+            let floating = self.ui.dock_panel_floating(dock, &panel);
             let items = [
                 MenuItem::new("Close"),
                 MenuItem::new("Close Other Tabs").enabled(others),
+                MenuItem::new(if floating { "Dock" } else { "Float" }),
                 MenuItem::separator(),
                 MenuItem::new("Reset Layout"),
             ];
@@ -49,6 +52,8 @@ impl Editor {
                         self.ui.close_dock_panel(dock, &other);
                     }
                 }
+                2 if self.ui.dock_panel_floating(dock, &panel) => self.ui.dock_floating_panel(dock, &panel),
+                2 => self.ui.float_dock_panel(dock, &panel, None),
                 _ => self.reset_layout(),
             }
         }

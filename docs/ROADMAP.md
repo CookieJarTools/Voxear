@@ -313,7 +313,8 @@ Done so far:
 Still to do in M3:
 - UI core:
   - [x] keyframe animations
-  - floating windows
+  - [x] floating windows: Float on a tab's menu, or a tab dropped outside every area; moved by the bar, resized by
+    the corner, docked again by a tab, and kept with the layout
   - backdrop blur behind the viewport overlays
   - the C# UI API
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):

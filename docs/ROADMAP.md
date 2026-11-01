@@ -359,7 +359,9 @@ Still to do in M3:
   - [x] the build's check of every scene and prefab: `[Required]` and `[ValidateInput]` problems listed as the
     build's warnings, and kept in its report
   - [x] dragging a list's items by their labels to reorder them
-  - [ ] the source generator and analyzer, and custom drawers
+  - [x] the analyzer: a wrong name or shape in an Inspector attribute is a compile error where it is written
+    (`VOX0001` to `VOX0007`); the source generator is not needed, as ScriptInfo describes the scripts already
+  - [ ] custom drawers
 - For the launcher: the first-person, third-person, top-down and 2D templates (after an input API and 2D
   rendering).
 - **The engine's documentation in VoxDocs** *(later)*: a section of its own beside the project's pages, shipped

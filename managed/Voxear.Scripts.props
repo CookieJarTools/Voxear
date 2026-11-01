@@ -4,7 +4,8 @@
 		and Voxear.Core itself. The editor and vox pass the engine's folder as VoxearHome when they build scripts, so a
 		project can live anywhere. In an install this file sits beside Voxear.Core.dll and references it; in a source
 		checkout it references the Voxear.Core project instead, so a solution build builds that first. Either way the
-		game does not ship its own copy, since Voxear.Core is shared from the engine.
+		game does not ship its own copy, since Voxear.Core is shared from the engine. Voxear.Analyzers comes the same
+		way, so a wrong name in an Inspector attribute is an error where it is written.
 	-->
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
@@ -25,8 +26,10 @@
 			<HintPath>$(MSBuildThisFileDirectory)Voxear.Core.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
+		<Analyzer Include="$(MSBuildThisFileDirectory)Voxear.Analyzers.dll" Condition="Exists('$(MSBuildThisFileDirectory)Voxear.Analyzers.dll')" />
 	</ItemGroup>
 	<ItemGroup Condition="!Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
 		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Core/Voxear.Core.csproj" Private="false" />
+		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Analyzers/Voxear.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
 	</ItemGroup>
 </Project>

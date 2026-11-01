@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<!--
+		Compile-time checks of the Inspector's attributes: a condition, callback, check or dropdown that names a member
+		the type does not have, or one of the wrong shape, is an error where it is written rather than a puzzle in the
+		editor. Game scripts get it through Voxear.Scripts.props. Built against an older Roslyn than the SDK's, which
+		loads it, as analyzers are.
+	-->
+	<PropertyGroup>
+		<TargetFramework>netstandard2.0</TargetFramework>
+		<LangVersion>latest</LangVersion>
+		<Nullable>enable</Nullable>
+		<IsRoslynComponent>true</IsRoslynComponent>
+		<EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+		<OutputPath>$(VoxearRoot)target/managed/$(Configuration)/</OutputPath>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+		<AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+		<AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+	</ItemGroup>
+</Project>

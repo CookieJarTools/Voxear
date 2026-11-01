@@ -1763,8 +1763,8 @@ at runtime.
 - **Actions:** `[Button]` on methods, `[OnValueChanged]`.
 
 Conditions and callbacks name members with `nameof`, so renames carry through and the compiler catches typos.
-A source generator turns the attributes into inspector metadata at compile time, so the editor reads no
-reflection, and an analyzer reports a condition that names a missing member as a compile error.
+Voxear.ScriptInfo describes each build of the scripts in a process of its own, so the editor reads no reflection,
+and an analyzer makes a wrong name or shape a compile error where the attribute is written (see below).
 
 **What exists now.** The attributes are in `Voxear.Core` (`Inspector/`: Layout, Conditions, Values, Help).
 `Voxear.ScriptInfo`, which already describes each build of the scripts in a process of its own, writes what each
@@ -1815,8 +1815,23 @@ still reads no assembly; a source generator can take its place later without the
   scene are left to the prefab's own file.
 
 Still to come: buttons and callbacks while playing, on the running behaviour, `[ShowInInspector]`, `[AssetsOnly]`
-and `[SceneObjectsOnly]` (a Voxear field takes one or the other already), the source generator and analyzer, and
-custom drawers.
+and `[SceneObjectsOnly]` (a Voxear field takes one or the other already), and custom drawers. A source generator, as
+first planned, is not needed: ScriptInfo already gives the editor every attribute without the editor reading the
+assembly.
+
+**The analyzer** *(implemented)*, `Voxear.Analyzers`, comes with every game's scripts through
+`Voxear.Scripts.props`, so a mistake shows where it is written, in the build and in a code editor:
+- `VOX0001`: a condition, or `[InfoBox]`'s `visibleIf`, names no field of its type.
+- `VOX0002`: `[OnValueChanged]` names no method of its type that takes nothing.
+- `VOX0003`: `[ValidateInput]` names no method that takes the field's value and returns `bool` or `string`.
+- `VOX0004`: `[ValueDropdown]` names no method taking nothing, property or field that gives a list.
+- `VOX0005`: `[Button]` is on a method that takes parameters.
+- `VOX0006` (a warning): `[Range]`, `[MinValue]`, `[MaxValue]` or `[ProgressBar]` is on a field that is not a number.
+- `VOX0007`: a `[ColorPalette]` colour is not `#rrggbb`.
+
+Names given with `nameof` are checked by the compiler already; these catch names in quotes and members of the wrong
+kind. It is built against Roslyn 4.8, which newer compilers load, and tested by compiling snippets of game code in
+memory (`Voxear.Analyzers.Tests`).
 
 **Advanced.** Custom drawers in C#, built with Voxear UI: `ValueDrawer<T>` for a type, and
 `AttributeDrawer<TAttribute>` for your own attributes. Drawers chain as Odin's do, with each decorator wrapping the

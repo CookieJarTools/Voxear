@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<!--
+		Tests for the Inspector attributes' analyzer: snippets of game code compiled in memory against Voxear.Core,
+		and what the analyzer says about them. Run them with dotnet run from this folder. Apart from Voxear.Core.Tests,
+		which needs no NuGet packages, since this one needs Roslyn.
+	-->
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<LangVersion>latest</LangVersion>
+		<Nullable>enable</Nullable>
+		<RootNamespace>Voxear.Analyzers.Tests</RootNamespace>
+		<OutputPath>$(VoxearRoot)target/managed-tests/analyzers/$(Configuration)/</OutputPath>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+		<ProjectReference Include="../Voxear.Analyzers/Voxear.Analyzers.csproj" />
+		<ProjectReference Include="../Voxear.Core/Voxear.Core.csproj" />
+	</ItemGroup>
+</Project>

@@ -8,7 +8,9 @@
 //! `grid-auto-columns`, `grid-auto-rows`, `grid-auto-flow`, `grid-column`
 //! and `grid-row`, in CSS's syntax (`120px 1fr`, `repeat(3, 40px)`,
 //! `minmax(...)`, `span 2`, `1 / 3`), read by taffy itself. Motion:
-//! `transition` (`background-color 150ms ease-out, opacity 0.1s`). Look: `background-color`, `border`, `border-width`,
+//! `transition` (`background-color 150ms ease-out, opacity 0.1s`) and
+//! `animation` (`pulse 1.2s ease-in-out infinite alternate`, playing a
+//! sheet's `@keyframes`). Look: `background-color`, `border`, `border-width`,
 //! `border-color`, `border-style` (`solid` or `dashed`), `border-radius`, `box-shadow` (`0 16px 40px #0006`,
 //! with an optional spread, or `none`), `opacity`, `z-index` (above 0 draws over everything), `pointer-events`,
 //! `overflow`
@@ -34,7 +36,9 @@ use taffy::{
 
 use taffy::{GridAutoTracks, GridPlacement, GridTemplateComponent, GridTemplateTracks, Line};
 
-use crate::{Animated, Color, Easing, Family, Overflow, Shadow, Style, TextAlign, TextStyle, Transition};
+use crate::{
+    Animated, Color, Easing, Family, KeyframeAnimation, Overflow, Shadow, Style, TextAlign, TextStyle, Transition,
+};
 
 /// Applies one declaration, after replacing its variables. Errors say what
 /// was wrong, for the caller to report with the declaration's place.
@@ -121,6 +125,7 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "grid-column" => layout.grid_column = grid_line(input)?,
         "grid-row" => layout.grid_row = grid_line(input)?,
         "transition" => style.transitions = transitions(input)?,
+        "animation" => style.animation = animation(input)?,
         "position" => {
             let positions =
                 [("relative", Position::Relative), ("absolute", Position::Absolute), ("static", Position::Static)];
@@ -354,6 +359,45 @@ fn transitions(input: &mut Parser) -> Parsed<Vec<Transition>> {
         cssparser::ParseErrorKind::Custom(message) => message,
         _ => "expected a property, a time and an easing".to_string(),
     })
+}
+
+/// `animation: <name> <time> [easing] [delay] [<count> | infinite] [alternate | normal]`,
+/// or `none`.
+fn animation(input: &mut Parser) -> Parsed<Option<KeyframeAnimation>> {
+    let name = input.expect_ident_cloned().map_err(|_| "expected the name of a @keyframes".to_string())?.to_string();
+    if name.eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    let duration = seconds(input)?;
+    let mut played = KeyframeAnimation {
+        name,
+        duration,
+        easing: Easing::default(),
+        delay: 0.0,
+        iterations: Some(1.0),
+        alternate: false,
+    };
+    while !input.is_exhausted() {
+        let token = input.next().map_err(|_| "expected more of the animation".to_string())?.clone();
+        match token {
+            Token::Ident(word) => match &*word.to_ascii_lowercase() {
+                "infinite" => played.iterations = None,
+                "alternate" => played.alternate = true,
+                "normal" => played.alternate = false,
+                "linear" => played.easing = Easing::Linear,
+                "ease" => played.easing = Easing::Ease,
+                "ease-in" => played.easing = Easing::EaseIn,
+                "ease-out" => played.easing = Easing::EaseOut,
+                "ease-in-out" => played.easing = Easing::EaseInOut,
+                other => return Err(format!("'{other}' is not an easing, a count or a direction")),
+            },
+            Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("ms") => played.delay = value / 1000.0,
+            Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("s") => played.delay = value,
+            Token::Number { value, .. } if value > 0.0 => played.iterations = Some(value),
+            other => return Err(format!("could not read {other:?} in an animation")),
+        }
+    }
+    Ok(Some(played))
 }
 
 /// A time in `s` or `ms`, as seconds.
@@ -631,6 +675,18 @@ mod tests {
         assert!(applied("transition", "none").unwrap().0.transitions.is_empty());
         assert_eq!((Easing::EaseOut.at(0.0), Easing::EaseOut.at(1.0)), (0.0, 1.0));
         assert!(Easing::EaseOut.at(0.5) > 0.5 && Easing::EaseIn.at(0.5) < 0.5, "out starts fast, in starts slow");
+    }
+
+    #[test]
+    fn animations_name_keyframes_with_a_time_and_how_they_play() {
+        let (style, _) = applied("animation", "pulse 1.2s ease-in-out 200ms infinite alternate").unwrap();
+        let played = style.animation.unwrap();
+        assert_eq!((played.name.as_str(), played.duration, played.delay), ("pulse", 1.2, 0.2));
+        assert_eq!((played.easing, played.iterations, played.alternate), (Easing::EaseInOut, None, true));
+        let (style, _) = applied("animation", "fade 300ms 3").unwrap();
+        assert_eq!(style.animation.unwrap().iterations, Some(3.0));
+        assert!(applied("animation", "none").unwrap().0.animation.is_none());
+        assert!(applied("animation", "pulse 1s sideways").unwrap_err().contains("'sideways' is not"));
     }
 
     #[test]

@@ -139,6 +139,8 @@ pub(crate) struct Element {
     pub control: Option<crate::controls::Control>,
     /// Properties easing to new values.
     pub animations: Vec<crate::animation::Animation>,
+    /// The keyframes its `animation` plays, and since when.
+    pub keyframes: Option<crate::animation::Playing>,
     /// The cascade has styled it at least once, so changes from now on may animate.
     pub styled: bool,
 }
@@ -167,6 +169,7 @@ impl Element {
             row_of: None,
             control: None,
             animations: Vec::new(),
+            keyframes: None,
             styled: false,
         }
     }
@@ -646,14 +649,17 @@ impl Ui {
         self.element(node).map(|e| &e.computed)
     }
 
-    /// Whether anything is mid-transition, so a caller that only redraws on
-    /// change knows to keep drawing.
+    /// Whether anything is mid-transition or playing keyframes, so a caller
+    /// that only redraws on change knows to keep drawing.
     pub fn is_animating(&self) -> bool {
         self.animating(self.root)
     }
 
     fn animating(&self, node: taffy::NodeId) -> bool {
-        let busy = self.tree.get_node_context(node).is_some_and(|e| !e.animations.is_empty());
+        let now = self.input.time;
+        let busy = self.tree.get_node_context(node).is_some_and(|e| {
+            !e.animations.is_empty() || e.keyframes.as_ref().is_some_and(|played| !played.finished(now))
+        });
         busy || self.tree.children(node).unwrap_or_default().into_iter().any(|child| self.animating(child))
     }
 

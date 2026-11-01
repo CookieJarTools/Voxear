@@ -76,6 +76,69 @@ fn transitions_ease_between_styles_but_not_on_creation() {
 }
 
 #[test]
+fn keyframes_play_over_and_over_or_a_few_times() {
+    let mut ui = Ui::bare();
+    ui.advance(0.0);
+    let root = ui.root();
+    let sheet = r#"
+        :root { --lit: #ffffff; }
+        @keyframes pulse { from { background-color: #000000; } to { background-color: var(--lit); } }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        .dot { background-color: #000000; animation: pulse 100ms linear infinite alternate; }
+        .once { background-color: #ff0000; animation: pulse 100ms linear 50ms 2; }
+        .wink { background-color: #ffffff; animation: blink 200ms linear infinite; }
+    "#;
+    ui.add_sheet(root, StyleSheet::parse("Pulse.vss", sheet));
+    assert!(ui.take_warnings().is_empty());
+    let node = ui.panel(root, Style::default().at(0.0, 0.0).width(10.0).height(10.0));
+    ui.add_class(node, "dot");
+    let quad = |ui: &mut Ui| *ui.frame(WIDTH, HEIGHT, 1.0).quads.iter().find(|q| q.kind == Quad::SHAPE).unwrap();
+    let red = |ui: &mut Ui| quad(ui).color[0];
+    assert_eq!(red(&mut ui), 0.0, "it starts at its first keyframe");
+    assert!(ui.is_animating(), "and plays over and over");
+    ui.advance(0.05);
+    assert!((red(&mut ui) - 0.5).abs() < 0.02, "halfway between them, var() and all");
+    ui.advance(0.05);
+    assert_eq!(red(&mut ui), 1.0);
+    ui.advance(0.05);
+    assert!((red(&mut ui) - 0.5).abs() < 0.02, "alternate goes back the other way");
+    assert!(ui.take_warnings().is_empty());
+
+    // Twice, after a delay, then its own colour again.
+    ui.remove_class(node, "dot");
+    ui.add_class(node, "once");
+    assert_eq!(quad(&mut ui).color[..3], [1.0, 0.0, 0.0], "its own colour during the delay");
+    ui.advance(0.1);
+    assert!((red(&mut ui) - 0.5).abs() < 0.02, "then plays");
+    ui.advance(0.2);
+    assert_eq!(quad(&mut ui).color[..3], [1.0, 0.0, 0.0], "played twice, it shows its own colour");
+    assert!(!ui.is_animating());
+
+    // Opacity, with a stop at both ends.
+    ui.remove_class(node, "once");
+    ui.add_class(node, "wink");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.advance(0.1);
+    assert!(quad(&mut ui).color[3] < 0.02, "faded out at the middle stop");
+
+    // Mistakes say what was wrong.
+    let broken = StyleSheet::parse(
+        "Broken.vss",
+        "@keyframes spin { from { width: 10px; } } @media print {} .a { animation: nope 1s; }",
+    );
+    assert!(
+        broken.warnings().iter().any(|w| w.contains("@media is not something a sheet can hold")),
+        "{:?}",
+        broken.warnings()
+    );
+    ui.add_sheet(root, broken);
+    ui.add_class(node, "a");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let warnings = ui.take_warnings();
+    assert!(warnings.iter().any(|w| w.contains("no @keyframes named 'nope'")), "{warnings:?}");
+}
+
+#[test]
 fn split_views_drag_their_divider_within_limits() {
     let mut ui = Ui::new();
     let root = ui.root();

@@ -79,6 +79,11 @@ impl Play {
     }
 
     /// What the status bar says the editor is doing.
+    /// Whether the scripts are building for play to start.
+    pub fn is_building(&self) -> bool {
+        matches!(self.mode, Mode::Building(_))
+    }
+
     pub fn status(&self) -> &str {
         match (&self.mode, &self.error) {
             (Mode::Building(_), _) => "Building scripts…",

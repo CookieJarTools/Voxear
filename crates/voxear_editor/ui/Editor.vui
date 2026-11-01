@@ -133,7 +133,7 @@
             </DockSpace>
         </Panel>
         <Panel class="statusbar">
-            <Panel class="status-dot" />
+            <Panel name="status-dot" class="status-dot" />
             <Label name="status-left" class="status-text">Ready</Label>
             <Label name="status-time" />
             <Panel class="spacer" />

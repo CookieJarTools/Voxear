@@ -37,6 +37,8 @@ pub struct Style {
     pub caret: Option<Color>,
     /// Which changes animate rather than jump, and how.
     pub transitions: Vec<Transition>,
+    /// Keyframes it plays, as CSS's `animation` does.
+    pub animation: Option<KeyframeAnimation>,
 }
 
 /// A blurred copy of an element's box, drawn under it, as CSS's
@@ -62,6 +64,23 @@ pub struct Transition {
     pub duration: f32,
     pub delay: f32,
     pub easing: Easing,
+}
+
+/// Keyframes a sheet's `@keyframes` names, played over and over or a few
+/// times, as CSS's `animation: pulse 1.2s ease-in-out infinite alternate`
+/// does. Colours and opacity animate, as they transition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyframeAnimation {
+    pub name: String,
+    /// One play through, in seconds.
+    pub duration: f32,
+    /// Between each two keyframes, as CSS eases them.
+    pub easing: Easing,
+    pub delay: f32,
+    /// How many times it plays; `None` for over and over.
+    pub iterations: Option<f32>,
+    /// Every other play goes backwards, so it swings to and fro.
+    pub alternate: bool,
 }
 
 /// The properties that can transition.
@@ -143,6 +162,7 @@ impl Default for Style {
             selection: Color::hex(0x8b93ff).with_alpha(0x66),
             caret: None,
             transitions: Vec::new(),
+            animation: None,
         }
     }
 }

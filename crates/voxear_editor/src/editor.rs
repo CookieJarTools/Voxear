@@ -137,6 +137,8 @@ struct Nodes {
     tooltip: NodeId,
     /// Over the window, where debug draw's texts show.
     debug_texts: NodeId,
+    /// The status bar's dot, which pulses while the scripts build.
+    status_dot: NodeId,
     /// The bar over the Scene view while a prefab is open on its own.
     prefab_bar: NodeId,
     prefab_name: NodeId,
@@ -349,6 +351,7 @@ impl Editor {
             build_panel: find(&ui, "build-panel"),
             tooltip: find(&ui, "tooltip"),
             debug_texts: find(&ui, "debug-texts"),
+            status_dot: find(&ui, "status-dot"),
             prefab_bar: find(&ui, "prefab-bar"),
             prefab_name: find(&ui, "prefab-name"),
             prefab_back: find(&ui, "prefab-back"),
@@ -1730,6 +1733,8 @@ impl Editor {
             None => self.play.status().to_string(),
         };
         self.ui.set_text(self.nodes.status_left, &status);
+        let busy = self.play.is_building() || self.describing.is_some();
+        self.ui.set_class(self.nodes.status_dot, "busy", busy);
         self.status.0 += 1;
         self.status.1 += delta;
         if self.status.1 < STATUS_INTERVAL && self.status.0 > 1 {

@@ -66,7 +66,9 @@ pub use menu::MenuItem;
 pub use pointer::Modifiers;
 pub use rich::{Marks, RichText, Span};
 pub use sheet::StyleSheet;
-pub use style::{Animated, Easing, Family, Overflow, Shadow, Style, TextAlign, TextStyle, Transition};
+pub use style::{
+    Animated, Easing, Family, KeyframeAnimation, Overflow, Shadow, Style, TextAlign, TextStyle, Transition,
+};
 pub use tree::{Gradient, ImageRef};
 pub use tree::{Kind, NodeId, Ui};
 

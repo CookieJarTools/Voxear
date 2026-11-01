@@ -9,7 +9,9 @@ use std::{collections::HashMap, rc::Rc};
 use taffy::Display;
 
 use crate::{
-    Overflow, TextStyle, Ui, animation, properties,
+    Animated, KeyframeAnimation, Overflow, Style, TextStyle, Ui,
+    animation::{self, Playing, Track},
+    properties,
     selector::{Facts, States},
     sheet::{Declaration, StyleSheet},
 };
@@ -95,10 +97,20 @@ impl Ui {
         }
 
         let (now, clock) = (self.input.time, self.input.clock);
+        let tracks = style.animation.as_ref().map(|played| keyframes(played, &sheets, &style, &text, &vars, warnings));
         let element = self.tree.get_node_context_mut(node).expect("every node has an element");
         if clock {
             animation::start(element, &style, &text, now);
         }
+        // Keyframes go on from when they began, unless the animation itself changed.
+        element.keyframes = match (style.animation.clone(), tracks) {
+            (Some(spec), Some(tracks)) => {
+                let kept = element.keyframes.take().filter(|played| played.spec == spec);
+                let start = kept.map_or(now, |played| played.start);
+                Some(Playing { spec, tracks, start })
+            }
+            _ => None,
+        };
         element.styled = true;
         let layout = (element.computed.layout != style.layout).then(|| style.layout.clone());
         element.computed = style;
@@ -123,6 +135,57 @@ impl Ui {
         }
         path.pop();
     }
+}
+
+/// The keyframes an animation names, from the nearest sheet that has them,
+/// as each animated property's value at each stop. A stop's values are read
+/// as the element's own would be, `var()` and all.
+fn keyframes(
+    played: &KeyframeAnimation,
+    sheets: &[(Rc<StyleSheet>, usize)],
+    style: &Style,
+    text: &TextStyle,
+    vars: &HashMap<String, String>,
+    warnings: &mut Vec<String>,
+) -> Vec<Track> {
+    let found = sheets.iter().rev().find_map(|(sheet, _)| {
+        sheet.keyframes.iter().rev().find(|k| k.name == played.name).map(|keyframes| (sheet, keyframes))
+    });
+    let Some((sheet, keyframes)) = found else {
+        warnings.push(format!("no @keyframes named '{}' for an animation to play", played.name));
+        return Vec::new();
+    };
+    let mut tracks: Vec<Track> = Vec::new();
+    for (at, declarations) in &keyframes.stops {
+        for declaration in declarations {
+            let property = match declaration.name.as_str() {
+                "background-color" => Animated::Background,
+                "border-color" => Animated::BorderColor,
+                "color" => Animated::Color,
+                "opacity" => Animated::Opacity,
+                other => {
+                    warnings.push(format!(
+                        "{}:{}: {other} does not animate; colours and opacity do",
+                        sheet.source, declaration.line
+                    ));
+                    continue;
+                }
+            };
+            let (mut keyed, mut keyed_text) = (style.clone(), *text);
+            if let Err(message) =
+                properties::apply(&mut keyed, &mut keyed_text, &declaration.name, &declaration.value, vars)
+            {
+                warnings.push(format!("{}:{}: {message}", sheet.source, declaration.line));
+                continue;
+            }
+            let value = animation::resting(&keyed, &keyed_text, property);
+            match tracks.iter_mut().find(|t| t.property == property) {
+                Some(track) => track.stops.push((*at, value)),
+                None => tracks.push(Track { property, stops: vec![(*at, value)] }),
+            }
+        }
+    }
+    tracks
 }
 
 /// Every declaration that applies to the last element of `path`, in the

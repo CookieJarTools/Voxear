@@ -1371,6 +1371,17 @@ DockSpace .project-split > .split-divider {
     background-color: var(--vx-success);
 }
 
+/* While the scripts build, the dot breathes in the accent colour. */
+@keyframes busy-pulse {
+    from { opacity: 1; }
+    to { opacity: 0.25; }
+}
+
+.status-dot.busy {
+    background-color: var(--vx-accent);
+    animation: busy-pulse 700ms ease-in-out infinite alternate;
+}
+
 .status-text {
     color: var(--vx-text-2);
 }
@@ -2133,7 +2144,6 @@ DockSpace .project-split > .split-divider {
 .entities-hint {
     color: var(--vx-muted);
 }
-
 
 /* The Profiler's Timeline: the frame's runs as bars, the one pointed at named above. */
 .profiler-view {

@@ -79,11 +79,13 @@ pub(crate) fn measure(
         style,
         |_, _| 0.0,
         |known, available| {
-            let max = known.width.or(match available.width {
+            // The available width, not the known one: taffy gives the known width with the
+            // padding still in it, and text broken to that is a line short in a padded box.
+            let max = match available.width {
                 AvailableSpace::Definite(width) => Some(width),
                 AvailableSpace::MinContent => Some(0.0),
                 AvailableSpace::MaxContent => None,
-            });
+            };
             let layout = text.shaped(fonts, layouts, scale);
             layout.break_all_lines(max.filter(|_| text_style.wrap).map(|w| w * scale));
             Size {
@@ -159,7 +161,7 @@ impl Draw<'_> {
         let mut look = Look::of(&element.computed);
         let mut text_color = element.text_style.color.linear_premultiplied();
         let mut own_opacity = element.computed.opacity;
-        if !element.animations.is_empty() {
+        if !element.animations.is_empty() || element.keyframes.is_some() {
             look.background = animation::showing(element, Animated::Background, self.time);
             look.border_color = animation::showing(element, Animated::BorderColor, self.time);
             text_color = animation::showing(element, Animated::Color, self.time);

@@ -2,6 +2,9 @@
 //! properties Voxear UI knows (see [`crate::properties`]). Custom properties
 //! (`--accent: #8b93ff`) are the theme tokens, read back with `var()`.
 //!
+//! `@keyframes name { from { ... } 50% { ... } to { ... } }` names keyframes
+//! for the `animation` property to play.
+//!
 //! A rule or declaration that does not parse is skipped with a warning, as a
 //! browser would, so one typo never loses a whole sheet.
 
@@ -18,7 +21,22 @@ use crate::selector::{Combinator, Compound, Selector, States};
 pub struct StyleSheet {
     pub(crate) source: String,
     pub(crate) rules: Vec<Rule>,
+    pub(crate) keyframes: Vec<Keyframes>,
     warnings: Vec<String>,
+}
+
+/// `@keyframes name { ... }`: each stop's place from 0 to 1, and its
+/// declarations, in the order written.
+#[derive(Debug)]
+pub(crate) struct Keyframes {
+    pub name: String,
+    pub stops: Vec<(f32, Vec<Declaration>)>,
+}
+
+/// What the top of a sheet holds.
+enum Item {
+    Rule(Rule),
+    Keyframes(Keyframes),
 }
 
 #[derive(Debug)]
@@ -44,11 +62,12 @@ impl StyleSheet {
         let mut input = ParserInput::new(text);
         let mut parser = Parser::new(&mut input);
         let mut rules = TopLevel { source, warnings: Vec::new() };
-        let mut parsed = Vec::new();
+        let (mut parsed, mut keyframes) = (Vec::new(), Vec::new());
         let mut skipped = Vec::new();
         for result in StyleSheetParser::new(&mut parser, &mut rules) {
             match result {
-                Ok(rule) => parsed.push(rule),
+                Ok(Item::Rule(rule)) => parsed.push(rule),
+                Ok(Item::Keyframes(named)) => keyframes.push(named),
                 Err((error, text)) => {
                     let message = describe(&error, text);
                     skipped.push(format!("{source}:{}: {message}", error.location.line + 1));
@@ -57,7 +76,7 @@ impl StyleSheet {
         }
         let mut warnings = rules.warnings;
         warnings.extend(skipped);
-        Self { source: source.to_string(), rules: parsed, warnings }
+        Self { source: source.to_string(), rules: parsed, keyframes, warnings }
     }
 
     /// What was skipped while parsing.
@@ -73,8 +92,8 @@ fn describe(error: &ParseError<String>, text: &str) -> String {
     }
 }
 
-/// Parses rules at the top of a sheet. At-rules have no meaning yet, so the
-/// defaults reject them.
+/// Parses rules at the top of a sheet, and `@keyframes`; other at-rules
+/// have no meaning yet.
 struct TopLevel<'a> {
     source: &'a str,
     warnings: Vec<String>,
@@ -82,7 +101,7 @@ struct TopLevel<'a> {
 
 impl<'i> QualifiedRuleParser<'i> for TopLevel<'_> {
     type Prelude = Vec<Selector>;
-    type QualifiedRule = Rule;
+    type QualifiedRule = Item;
     type Error = String;
 
     fn parse_prelude<'t>(&mut self, input: &mut Parser<'i, 't>) -> Result<Vec<Selector>, ParseError<'i, String>> {
@@ -94,7 +113,15 @@ impl<'i> QualifiedRuleParser<'i> for TopLevel<'_> {
         selectors: Vec<Selector>,
         _start: &ParserState,
         input: &mut Parser<'i, 't>,
-    ) -> Result<Rule, ParseError<'i, String>> {
+    ) -> Result<Item, ParseError<'i, String>> {
+        let declarations = self.declarations(input);
+        Ok(Item::Rule(Rule { selectors, declarations }))
+    }
+}
+
+impl TopLevel<'_> {
+    /// A block's declarations, each that does not parse warned of.
+    fn declarations(&mut self, input: &mut Parser) -> Vec<Declaration> {
         let mut declarations = Vec::new();
         for result in RuleBodyParser::new(input, &mut Declarations) {
             match result {
@@ -105,14 +132,103 @@ impl<'i> QualifiedRuleParser<'i> for TopLevel<'_> {
                 }
             }
         }
-        Ok(Rule { selectors, declarations })
+        declarations
     }
 }
 
 impl<'i> AtRuleParser<'i> for TopLevel<'_> {
-    type Prelude = ();
-    type AtRule = Rule;
+    /// The keyframes' name.
+    type Prelude = String;
+    type AtRule = Item;
     type Error = String;
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<String, ParseError<'i, String>> {
+        if !name.eq_ignore_ascii_case("keyframes") {
+            return Err(input.new_custom_error(format!("@{name} is not something a sheet can hold")));
+        }
+        let named = input.expect_ident_cloned().map_err(|_| input.new_custom_error("@keyframes needs a name"))?;
+        Ok(named.to_string())
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        name: String,
+        _start: &ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Item, ParseError<'i, String>> {
+        let (mut stops, mut skipped) = (Vec::new(), Vec::new());
+        let mut parser = Stops { top: self };
+        for result in RuleBodyParser::new(input, &mut parser) {
+            match result {
+                Ok(stop) => stops.extend(stop),
+                Err((error, text)) => skipped.push((error.location.line + 1, describe(&error, text))),
+            }
+        }
+        for (line, message) in skipped {
+            self.warnings.push(format!("{}:{line}: {message}", self.source));
+        }
+        stops.sort_by(|a: &(f32, Vec<Declaration>), b| a.0.total_cmp(&b.0));
+        Ok(Item::Keyframes(Keyframes { name, stops }))
+    }
+}
+
+/// Parses `from`, `to` and `50%` stops in a `@keyframes`, each with its
+/// declarations. A stop listing several places (`0%, 100%`) is each of them.
+struct Stops<'a, 'b> {
+    top: &'a mut TopLevel<'b>,
+}
+
+impl<'i> QualifiedRuleParser<'i> for Stops<'_, '_> {
+    type Prelude = Vec<f32>;
+    type QualifiedRule = Vec<(f32, Vec<Declaration>)>;
+    type Error = String;
+
+    fn parse_prelude<'t>(&mut self, input: &mut Parser<'i, 't>) -> Result<Vec<f32>, ParseError<'i, String>> {
+        input.parse_comma_separated(|input| {
+            let location = input.current_source_location();
+            match input.next()?.clone() {
+                Token::Ident(word) if word.eq_ignore_ascii_case("from") => Ok(0.0),
+                Token::Ident(word) if word.eq_ignore_ascii_case("to") => Ok(1.0),
+                Token::Percentage { unit_value, .. } if (0.0..=1.0).contains(&unit_value) => Ok(unit_value),
+                other => Err(location.new_custom_error(format!("{other:?} is not a keyframe; use from, to or a %"))),
+            }
+        })
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        places: Vec<f32>,
+        _start: &ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Vec<(f32, Vec<Declaration>)>, ParseError<'i, String>> {
+        let declarations = self.top.declarations(input);
+        Ok(places.into_iter().map(|place| (place, declarations.clone())).collect())
+    }
+}
+
+impl<'i> AtRuleParser<'i> for Stops<'_, '_> {
+    type Prelude = ();
+    type AtRule = Vec<(f32, Vec<Declaration>)>;
+    type Error = String;
+}
+
+impl<'i> DeclarationParser<'i> for Stops<'_, '_> {
+    type Declaration = Vec<(f32, Vec<Declaration>)>;
+    type Error = String;
+}
+
+impl<'i> RuleBodyItemParser<'i, Vec<(f32, Vec<Declaration>)>, String> for Stops<'_, '_> {
+    fn parse_declarations(&self) -> bool {
+        false
+    }
+
+    fn parse_qualified(&self) -> bool {
+        true
+    }
 }
 
 /// Parses a rule's declarations, keeping each value's text.

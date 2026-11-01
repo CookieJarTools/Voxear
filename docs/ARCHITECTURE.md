@@ -1136,6 +1136,22 @@ the first time an element is styled. Transitions run on the UI's clock, which `u
 frame; until it is first called, styles change at once, so a caller without a clock never sees a colour stuck
 mid-fade.
 
+**Keyframe animations** *(implemented)*: a sheet names keyframes as CSS does, and `animation` plays them:
+
+```css
+@keyframes busy-pulse { from { opacity: 1; } to { opacity: 0.25; } }
+.status-dot.busy { animation: busy-pulse 700ms ease-in-out infinite alternate; }
+```
+
+- Stops are `from`, `to` or percentages, and several may share a block (`0%, 100% { ... }`). Colours and opacity
+  animate, as they transition, and a stop's values are read as the element's own are, `var()` included. A stop
+  left out at either end shows the element's own value.
+- `animation: <name> <time> [easing] [delay] [<count> | infinite] [alternate]`: the easing applies between each two
+  stops, as CSS's does; a count plays it that many times and then the element shows its own value again.
+- An animation goes on from when it began while the element is styled again, and starts over only when the
+  animation itself changes. `ui.is_animating()` is true while one plays. The editor's status dot breathes this way
+  while the scripts build.
+
 **Icons and shapes** *(implemented)*:
 - **Icons** are Voxear's own line icons (`voxear_ui::ICONS`: chevrons, play controls, tools, object and asset
   kinds, the Voxear mark), drawn on a 24-unit grid as SVG path data. Each is rasterised by swash's zeno into the
@@ -1570,11 +1586,19 @@ are in `Dev/CookieJar` (`Assets/CookieJarTools/Cookbook`, and the guide in `Docs
   bar leaves them out, as they would crowd it), and they have no Edit: they change when the code does. Any page links
   to a type as `[[code:Voxear.Prefab]]` or `[[code:Voxear.Prefab|Prefab]]`, and a link to a type that is gone shows in
   Docs Health.
+- **Code that points at pages**: `[Documentation("Combat/Damage")]` on a behaviour, component, field, property or
+  method names a page by its path or id, with a heading after a hash if wanted. The Inspector shows a book button on
+  a documented behaviour's section and beside a documented field, which opens VoxDocs at the page.
+  `[Excerpt("Combat/Damage#falloff")]` on a field shows that section of the page above it instead, in a fold that
+  starts closed: the section runs to the next heading as big or bigger, and is drawn with the page's own look, again
+  whenever the pages change, so writing the page shows in the Inspector at once. A link in it opens VoxDocs. A page
+  lists the code pointing at it under **In the code**, each a link to its Code Reference page, and the Code Reference
+  says which page documents a type or member, so an attribute naming a page that is not there shows in Docs Health.
+  Hello's GameManager has both.
 - `samples/Hello/Docs` shows it: how the sample works, and the guide to writing pages.
 
 **Still to come**, as the Unity Cookbook has them:
-- `[Documentation("id")]` on C# types and fields, with a button beside them in the Inspector, and excerpts of a
-  page shown in it.
+- **Copy [Documentation] Attribute** on a page's menu in the tree, ready to paste into a script.
 - **Notes on the Code Reference's pages**, written in VoxDocs beside what the comments say and kept in
   `Docs/.code-notes`.
 - **Step-by-step guides**: `[DocsAction]` and `[DocsCheck]` methods, and built-in steps (make an asset,
@@ -1663,7 +1687,7 @@ still reads no assembly; a source generator can take its place later without the
   `[PreviewField]` (a larger preview of the asset, under the field).
 - **Help and validation:** `[InfoBox]` (a note, warning or error, shown while a field holds if given),
   `[Tooltip]` (under the label once the pointer rests on it for half a second), and `[Required]`, an error above
-  an empty reference.
+  an empty reference. `[Documentation]` and `[Excerpt]` link a behaviour or field to VoxDocs (see "VoxDocs").
 
 Still to come: `[Button]` and `[OnValueChanged]`, which run a behaviour's code in edit mode, `[ValidateInput]`
 and `[ValueDropdown]`, which ask it for answers, `[ShowInInspector]`, `[ColorPalette]` (once C# has a `Color`),

@@ -58,5 +58,18 @@ Right-click a component's title to **Remove Component**, or, for a behaviour, to
 
 The same menu copies a component, as Unity's does. Choose **Copy Component**, select another Obj, and right-click one of its components' titles: **Paste Component Values** puts the copied values over the same component, and **Paste Component As New** adds it to an Obj that does not have it yet. For a behaviour, its field values are copied. A LOD Group cannot be copied, as its levels are the Objs inside its own.
 
+## An Obj's layer
+
+Every Obj is on one of 32 layers, as in Unity, chosen from **Layer** at the top of the Inspector. An Obj starts on **Default**. Physics uses layers to keep some Objs apart, such as ghosts that walk through walls, and a ray can look for some layers only.
+
+Your project names its layers in `voxear.toml`, in number order from layer 0. An empty name is a layer you don't use:
+
+```toml
+[layers]
+names = ["Default", "", "Player", "Enemy", "Pickup"]
+```
+
+A scene file writes an Obj's layer by its name, as `layer = "Player"`. A script reads and sets `Obj.Layer` by number, and `LayerMask.NameToLayer("Player")` finds a layer's number by its name.
+
 > [!NOTE]
-> The Inspector also shows **Tag**, **Layer** and **Static** for an Obj, and a switch to turn it on and off. These are not used yet, and are not saved. **Persistent**, beside Static, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].
+> The Inspector also shows **Tag** and **Static** for an Obj, and a switch to turn it on and off. These are not used yet, and are not saved. **Persistent**, beside Static, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].

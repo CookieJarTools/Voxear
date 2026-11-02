@@ -14,6 +14,36 @@ pub struct ProjectFile {
     pub project: ProjectInfo,
     #[serde(default)]
     pub content: ContentSettings,
+    #[serde(default)]
+    pub layers: LayerSettings,
+    #[serde(default)]
+    pub physics: PhysicsSettings,
+}
+
+/// The project's layers' names, by number from layer 0, as Unity's Tags
+/// and Layers name them; an empty name is a layer not used.
+///
+/// ```toml
+/// [layers]
+/// names = ["Default", "Ignore Raycast", "Player", "Enemy"]
+/// ```
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LayerSettings {
+    pub names: Vec<String>,
+}
+
+/// Physics for the whole project: the pairs of layers whose Objs pass
+/// through each other, every other pair colliding.
+///
+/// ```toml
+/// [physics]
+/// ignore = [["Player", "Player"], ["Enemy", "Pickup"]]
+/// ```
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PhysicsSettings {
+    pub ignore: Vec<[String; 2]>,
 }
 
 /// What the content build treats as roots, beside every level and prefab.
@@ -95,6 +125,19 @@ impl Project {
         &self.file.project.name
     }
 
+    /// The project's layers, and which collide. A pair naming a layer the
+    /// project does not have is left out, with a warning.
+    pub fn layers(&self) -> voxear_scene::Layers {
+        let mut layers = voxear_scene::Layers::named(&self.file.layers.names);
+        for [a, b] in &self.file.physics.ignore {
+            match (layers.find(a), layers.find(b)) {
+                (Some(a), Some(b)) => layers.set_collide(a, b, false),
+                _ => tracing::warn!("{PROJECT_FILE}: [physics] ignores {a} and {b}, but there is no such layer"),
+            }
+        }
+        layers
+    }
+
     pub fn scripts_project(&self) -> Option<PathBuf> {
         self.file.project.scripts.as_ref().map(|p| self.root.join(p))
     }
@@ -174,5 +217,16 @@ mod tests {
         std::fs::write(folder.path().join(ENGINE_FILE), "format = 1\n").unwrap();
         assert!(is_install(folder.path()));
         assert!(!is_install(&engine_root()), "tests run from the source checkout");
+    }
+
+    #[test]
+    fn a_project_names_its_layers_and_the_pairs_that_pass_through_each_other() {
+        let folder = tempfile::tempdir().unwrap();
+        let text = "[project]\nname = \"Orbit\"\n\n[layers]\nnames = [\"\", \"Player\", \"Ghost\"]\n\n\
+                    [physics]\nignore = [[\"Ghost\", \"Player\"], [\"Ghost\", \"Nobody\"]]\n";
+        std::fs::write(folder.path().join(PROJECT_FILE), text).unwrap();
+        let layers = Project::open(folder.path()).unwrap().layers();
+        assert_eq!((layers.name(0), layers.find("Ghost")), ("Default", Some(2)));
+        assert!(!layers.collide(1, 2) && layers.collide(2, 2) && layers.collide(0, 1));
     }
 }

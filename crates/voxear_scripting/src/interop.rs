@@ -256,6 +256,11 @@ pub(crate) struct NativeApi {
         state: *mut crate::physics::CharacterMoveData,
     ) -> i32,
     pub joint_connected: unsafe extern "C" fn(entity: u64, set: i32, other: u64) -> u64,
+    /// Layers (see [`crate::layers`]): an Obj's, a layer's name, and the
+    /// layer a name names.
+    pub obj_layer: unsafe extern "C" fn(entity: u64, set: i32, layer: i32) -> i32,
+    pub layer_name: unsafe extern "C" fn(layer: i32, buffer: *mut u8, capacity: i32) -> i32,
+    pub layer_find: unsafe extern "C" fn(name: *const u8, len: i32) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -1055,6 +1060,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         physics_overlap: crate::physics::physics_overlap,
         character_move: crate::physics::character_move,
         joint_connected: crate::physics::joint_connected,
+        obj_layer: crate::layers::obj_layer,
+        layer_name: crate::layers::layer_name,
+        layer_find: crate::layers::layer_find,
     }
 }
 

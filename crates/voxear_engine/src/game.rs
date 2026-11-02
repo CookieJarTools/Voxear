@@ -111,6 +111,7 @@ impl Game {
             input: voxear_input::Input::new(),
         };
         game.load_input_actions();
+        game.engine.world.insert_resource(game.project.layers());
         game
     }
 

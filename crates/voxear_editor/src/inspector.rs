@@ -31,7 +31,7 @@ use voxear_engine::{
     script_types::{BehaviourType, FieldInspector, InfoKind, ScriptTypes},
 };
 use voxear_render::{LodGroup, Renderer};
-use voxear_scene::{Name, ScenePersistence, Transform};
+use voxear_scene::{Layer, Layers, Name, ScenePersistence, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
 use voxear_engine::prefab::{FromPrefab, Locks, PrefabInstance};
@@ -56,6 +56,8 @@ use crate::{
 struct Fields {
     name: NodeId,
     persistent: NodeId,
+    /// The Layer dropdown, and the layer each of its choices is.
+    layer: (NodeId, Vec<u8>),
     position: [NodeId; 3],
     rotation: [NodeId; 3],
     scale: [NodeId; 3],
@@ -816,7 +818,8 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
-        let (name_row, name, persistent, prefab_buttons) = header(ui, self.root, game, entity, self.also.len() + 1);
+        let (name_row, name, persistent, layer, prefab_buttons) =
+            header(ui, self.root, game, entity, self.also.len() + 1);
         self.prefab_buttons = prefab_buttons;
 
         let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", false);
@@ -829,7 +832,7 @@ impl Inspector {
             (Field::Rotation, rotation_row),
             (Field::Scale, scale_row),
         ];
-        self.fields = Some(Fields { name, persistent, position, rotation, scale, rows });
+        self.fields = Some(Fields { name, persistent, layer, position, rotation, scale, rows });
         self.transform_menu = menu;
         self.headers.push((None, transform));
 
@@ -1464,6 +1467,21 @@ impl Inspector {
             }
         }
         ui.set_checked(fields.persistent, world.has::<ScenePersistence>(entity));
+        // A layer picked goes on every Obj edited; Default is no Layer at all.
+        let (dropdown, numbers) = &fields.layer;
+        if ui.changed(*dropdown) {
+            let layer = numbers.get(ui.selected_option(*dropdown)).copied().unwrap_or_default();
+            for target in std::iter::once(entity).chain(self.also.iter().copied()) {
+                match layer {
+                    0 => drop(world.remove::<Layer>(target)),
+                    _ => drop(world.insert(target, Layer(layer))),
+                }
+            }
+        }
+        let now = world.get::<Layer>(entity).map_or(0, |layer| layer.0);
+        if let Some(at) = numbers.iter().position(|&number| number == now) {
+            ui.set_selected_option(*dropdown, at);
+        }
         let (y, x, z) = transform.rotation.to_euler(EulerRot::YXZ);
         let euler = Vec3::new(x, y, z) * (180.0 / std::f32::consts::PI);
         let mut edited = transform;
@@ -2235,7 +2253,7 @@ fn header(
     game: &Game,
     entity: Entity,
     editing: usize,
-) -> (NodeId, NodeId, NodeId, Option<PrefabButtons>) {
+) -> (NodeId, NodeId, NodeId, (NodeId, Vec<u8>), Option<PrefabButtons>) {
     let world = &game.engine.world;
     let header = ui.panel(root, Style::column());
     ui.add_class(header, "inspector-header");
@@ -2258,11 +2276,18 @@ fn header(
     ui.toggle(top, "", true);
     let tags = ui.panel(header, Style::row());
     ui.add_class(tags, "header-tags");
-    for (label, choice) in [("Tag", "Untagged"), ("Layer", "Default")] {
-        let label = ui.add_label(tags, label);
-        ui.add_class(label, "header-label");
-        ui.dropdown(tags, &[choice], 0);
-    }
+    let label = ui.add_label(tags, "Tag");
+    ui.add_class(label, "header-label");
+    ui.dropdown(tags, &["Untagged"], 0);
+    // The layers the project names, in number order, an Obj without one on Default.
+    let label = ui.add_label(tags, "Layer");
+    ui.add_class(label, "header-label");
+    let layers = world.resource::<Layers>().cloned().unwrap_or_default();
+    let (numbers, names): (Vec<u8>, Vec<&str>) = layers.used().unzip();
+    let now = world.get::<Layer>(entity).map_or(0, |layer| layer.0);
+    let shown = numbers.iter().position(|&number| number == now).unwrap_or_default();
+    let layer = ui.dropdown(tags, &names, shown);
+    ui.set_name(layer, "obj-layer");
     let checks = ui.panel(header, Style::row());
     ui.add_class(checks, "header-checks");
     let fixed = ui.toggle(checks, "Static", false);
@@ -2290,7 +2315,7 @@ fn header(
         let overrides = root.then(|| button("Overrides"));
         PrefabButtons { open, select, overrides, path }
     });
-    (top, name, persistent, buttons)
+    (top, name, persistent, (layer, numbers), buttons)
 }
 
 /// The Prefab row's Open, Select and, on an instance's root, Overrides, and

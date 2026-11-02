@@ -67,7 +67,7 @@ use crate::{
     lod_groups::LodGroupData,
     physics::{CharacterController, Collider, Rigidbody},
     physics2d::{Collider2D, Rigidbody2D},
-    scene_file::{MaterialRef, ObjData, default_material, light_component},
+    scene_file::{LayerRef, MaterialRef, ObjData, default_material, light_component},
 };
 
 pub const PREFAB_FORMAT: u32 = 1;
@@ -364,6 +364,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     if instance.lod_group.is_some() {
         root.lod_group = instance.lod_group.clone();
     }
+    if instance.layer.is_some() {
+        root.layer = instance.layer.clone();
+    }
     root.collider = instance.collider.or(root.collider);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
     root.character = instance.character.or(root.character);
@@ -400,6 +403,8 @@ pub struct TemplateObj {
     pub collider: Option<Collider>,
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
+    /// Its layer by name, found in the world it is spawned into.
+    pub layer: Option<LayerRef>,
     /// Its connected Obj by path, bound to an entity when spawned.
     pub joint: Option<JointData>,
     pub collider2d: Option<Collider2D>,
@@ -514,6 +519,9 @@ impl Template {
             }
             if let Some(audio) = obj.audio {
                 world.insert(entity, audio);
+            }
+            if let Some(layer) = obj.layer.as_ref().map(|layer| layer.layer(world)).filter(|layer| layer.0 != 0) {
+                world.insert(entity, layer);
             }
             if let Some(collider) = obj.collider {
                 world.insert(entity, collider);
@@ -670,6 +678,7 @@ pub(crate) fn resolve_obj(
         collider: data.collider,
         rigidbody: data.rigidbody,
         character: data.character,
+        layer: data.layer.clone(),
         joint: data.joint.clone(),
         collider2d: data.collider2d,
         rigidbody2d: data.rigidbody2d,

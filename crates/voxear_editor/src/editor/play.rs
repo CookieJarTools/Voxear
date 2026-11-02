@@ -480,6 +480,8 @@ impl Editor {
     /// Copies the level into a new engine with the scripts and swaps it in.
     fn start_run(&mut self, renderer: &mut Renderer) {
         let mut engine = Engine::new();
+        // The project's layers, as the copied level's Objs name theirs.
+        engine.world.insert_resource(self.game.project.layers());
         if let Some(scripts) = self.play.scripts.take() {
             engine.set_scripts(scripts);
         }

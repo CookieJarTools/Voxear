@@ -2924,6 +2924,32 @@ fn physics_components_show_what_their_shape_uses() {
 }
 
 #[test]
+fn the_inspector_puts_objs_on_the_layers_the_project_names() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project_file = dir.path().join("voxear.toml");
+    let text = std::fs::read_to_string(&project_file).unwrap() + "\n[layers]\nnames = [\"Default\", \"\", \"Player\", \"Enemy\"]\n";
+    std::fs::write(&project_file, text).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    let layer = editor.ui.find(editor.ui.root(), "obj-layer").unwrap();
+    assert_eq!(editor.ui.selected_option(layer), 0, "Default to start with");
+
+    // The named layers in number order, the unnamed one left out: Enemy is the third.
+    choose(&mut editor, &mut renderer, layer, 2);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.engine.world.get::<voxear_scene::Layer>(spinner), Some(&voxear_scene::Layer(3)));
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.game.engine.world.get::<voxear_scene::Layer>(spinner).is_none(), "undone, back on Default");
+    let layer = editor.ui.find(editor.ui.root(), "obj-layer").unwrap();
+    assert_eq!(editor.ui.selected_option(layer), 0);
+}
+
+#[test]
 fn the_object_picker_searches_what_a_reference_can_take() {
     use voxear_editor::PaletteKey;
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };

@@ -224,6 +224,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new CharacterController(this);
 	}
 
+	/// <summary>
+	/// The Obj's layer, by number from 0 to 31, as Unity's GameObject.layer: what physics keeps apart and asks after.
+	/// LayerMask.NameToLayer finds one by the name the project gives it.
+	/// </summary>
+	public int Layer
+	{
+		get { return NativeLayers.Of(this); }
+		set { NativeLayers.Set(this, value); }
+	}
+
 	/// <summary>The Obj's Joint, which holds its Rigidbody to another or to the world. Not valid when it has none.</summary>
 	public Joint Joint => new Joint(this);
 

@@ -5,10 +5,12 @@
 //! guarantees Awake → OnEnable → Start ordering.
 
 mod hierarchy;
+mod layers;
 mod lifecycle;
 mod obj;
 
 pub use hierarchy::{Parent, WorldTransform, propagate_transforms, world_matrix};
+pub use layers::{LAYER_COUNT, Layer, Layers};
 pub use lifecycle::{Adopted, BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};
 pub use obj::{
     AttachedBehaviour, BehaviourSpec, Behaviours, Destroying, EditorOnly, InstanceMarker, Name, Placement,

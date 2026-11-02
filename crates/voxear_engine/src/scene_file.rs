@@ -30,7 +30,9 @@
 //! An Obj's `[obj.audio]` is an Audio Source, and `audio_listener = true`
 //! hears the game from it (see [`crate::audio`]). `[obj.lod_group]` is a
 //! LOD Group, which shows one of its levels' Objs at a time (see
-//! [`crate::lod_groups`]). `[obj.collider]`, `[obj.rigidbody]` and
+//! [`crate::lod_groups`]). `layer = "Player"` puts an Obj on a layer, by
+//! its name, or by its number for a layer the project has not named (see
+//! [`LayerRef`]). `[obj.collider]`, `[obj.rigidbody]` and
 //! `[obj.character]` are its physics (see [`crate::physics`]), with
 //! `[obj.joint]` holding it to another (see [`crate::joints`]), and
 //! `[obj.collider2d]` and `[obj.rigidbody2d]` its 2D physics (see
@@ -53,7 +55,9 @@ use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{Camera, Light, LightKind, LodGroup, MAX_TRANSITIONS, MeshRenderer, PostProcess, Renderer, Sky};
-use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, ScenePersistence, Transform};
+use voxear_scene::{
+    BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
+};
 
 use crate::{
     audio::{AudioListener, AudioSource, AudioSourceData, audio_source_data},
@@ -152,6 +156,9 @@ pub struct ObjData {
     /// A LOD Group, which shows one of its levels' Objs at a time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lod_group: Option<LodGroupData>,
+    /// Its layer, when not Default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<LayerRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<Collider>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +201,7 @@ impl ObjData {
             renderer: None,
             audio: None,
             audio_listener: false,
+            layer: None,
             collider: None,
             rigidbody: None,
             character: None,
@@ -527,6 +535,9 @@ fn capture_instance(
     if root.lod_group.is_some() && root.lod_group != prefab_root.lod_group {
         instance.lod_group = root.lod_group.clone();
     }
+    if root.layer != prefab_root.layer {
+        instance.layer = Some(root.layer.clone().unwrap_or(LayerRef::Number(0)));
+    }
     if root.collider.is_some() && root.collider != prefab_root.collider {
         instance.collider = root.collider;
     }
@@ -612,6 +623,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if actual.audio_listener != expected.audio_listener {
         put("audio_listener", actual.audio_listener.into());
+    }
+    if actual.layer != expected.layer {
+        put("layer", toml::Value::try_from(actual.layer.clone().unwrap_or(LayerRef::Number(0)))?);
     }
     // Each written whole, as an override merges into the prefab's and a value left out would keep the prefab's.
     if let Some(collider) = actual.collider.filter(|c| Some(*c) != expected.collider) {
@@ -826,6 +840,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     });
     obj.audio = world.get::<AudioSource>(entity).map(|source| audio_source_data(content, source));
     obj.audio_listener = world.has::<AudioListener>(entity);
+    obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::of(world, *layer));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.rigidbody = world.get::<Rigidbody>(entity).copied();
     obj.character = world.get::<CharacterController>(entity).copied();
@@ -869,6 +884,41 @@ fn light_data(light: &Light) -> LightData {
             inner_angle: light.spot_inner_degrees,
             outer_angle: light.spot_outer_degrees,
         },
+    }
+}
+
+/// An Obj's layer as a file writes it: its name, or its number when the
+/// project has not named it, as `layer = "Player"` or `layer = 7`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LayerRef {
+    Number(u8),
+    Name(String),
+}
+
+impl LayerRef {
+    /// A layer as the world's project names it.
+    pub fn of(world: &World, layer: Layer) -> Self {
+        let name = world.resource::<Layers>().map(|layers| layers.name(layer.0).to_string()).unwrap_or_default();
+        match name.is_empty() {
+            true => Self::Number(layer.0),
+            false => Self::Name(name),
+        }
+    }
+
+    /// The layer it names in the world's project; one it does not have is
+    /// Default, with a warning.
+    pub fn layer(&self, world: &World) -> Layer {
+        match self {
+            Self::Number(number) => Layer(*number % voxear_scene::LAYER_COUNT as u8),
+            Self::Name(name) => {
+                let found = world.resource::<Layers>().and_then(|layers| layers.find(name));
+                if found.is_none() {
+                    tracing::warn!("there is no layer {name}; the Obj is on Default");
+                }
+                Layer(found.unwrap_or_default())
+            }
+        }
     }
 }
 

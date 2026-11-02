@@ -199,6 +199,8 @@ pub fn build(
         engine: engine_version().to_string(),
         profile: name.to_string(),
         commit: commit.clone(),
+        layers: project.file.layers.names.clone(),
+        ignore: project.file.physics.ignore.clone(),
     };
     settings.write(&data)?;
     timed("player", stage);

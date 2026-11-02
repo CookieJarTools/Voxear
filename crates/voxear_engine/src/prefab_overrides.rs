@@ -19,7 +19,7 @@ use anyhow::{Context, Result, bail};
 use voxear_assets::AssetGuid;
 use voxear_ecs::{Entity, World};
 use voxear_render::{Camera, Light, LodGroup, MeshRenderer, Renderer};
-use voxear_scene::{BehaviourSpec, Name, ScenePersistence};
+use voxear_scene::{BehaviourSpec, Layer, Name, ScenePersistence};
 
 use crate::{
     EditBehaviours,
@@ -212,6 +212,8 @@ pub fn put(
     }
     set::<AudioSource>(world, entity, obj.audio);
     set(world, entity, obj.audio_listener.then_some(AudioListener));
+    let layer = obj.layer.as_ref().map(|layer| layer.layer(world)).filter(|layer| layer.0 != 0);
+    set::<Layer>(world, entity, layer);
     set::<Collider>(world, entity, obj.collider);
     set::<Rigidbody>(world, entity, obj.rigidbody);
     set::<CharacterController>(world, entity, obj.character);

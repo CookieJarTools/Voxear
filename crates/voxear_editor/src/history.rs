@@ -19,7 +19,7 @@ use voxear_engine::{
     prefab::{FromPrefab, Locks, PrefabInstance},
 };
 use voxear_render::{Camera, Light, LodGroup, MeshRenderer, Renderer};
-use voxear_scene::{Name, ScenePersistence, Transform};
+use voxear_scene::{Layer, Name, ScenePersistence, Transform};
 
 use crate::objs::{self, Placing, Taken};
 
@@ -35,6 +35,7 @@ pub struct ObjState {
     pub name: String,
     pub transform: Transform,
     pub persistent: bool,
+    pub layer: Option<Layer>,
     pub renderer: Option<MeshRenderer>,
     /// Lights and Audio Sources are boxed: few Objs have one, and every
     /// undo step holds two states.
@@ -61,6 +62,7 @@ impl ObjState {
             name: world.get::<Name>(entity)?.0.clone(),
             transform: *world.get::<Transform>(entity)?,
             persistent: world.has::<ScenePersistence>(entity),
+            layer: world.get::<Layer>(entity).copied(),
             renderer: world.get::<MeshRenderer>(entity).copied(),
             light: world.get::<Light>(entity).copied().map(Box::new),
             camera: world.get::<Camera>(entity).copied(),
@@ -98,6 +100,7 @@ impl ObjState {
             *transform = self.transform;
         }
         put(world, entity, self.persistent.then_some(ScenePersistence));
+        put(world, entity, self.layer);
         put(world, entity, self.renderer);
         put(world, entity, self.light.as_deref().copied());
         put(world, entity, self.camera);

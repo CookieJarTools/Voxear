@@ -19,8 +19,9 @@ use voxear_render::{Renderer, RendererSettings};
 use voxear_scripting::{SaveSettings, ScriptRuntime};
 
 use crate::{
-    Content, ContentSettings, Engine, Game, Project, ProjectFile, WindowOptions, project::ProjectInfo, run_windowed,
-    scripts,
+    Content, ContentSettings, Engine, Game, Project, ProjectFile, WindowOptions,
+    project::{LayerSettings, PhysicsSettings, ProjectInfo},
+    run_windowed, scripts,
 };
 
 /// The folder beside a player's program that holds its game, and what is in
@@ -64,6 +65,12 @@ pub struct PlayerSettings {
     pub engine: String,
     pub profile: String,
     pub commit: Option<String>,
+    /// The project's layers by number, and the pairs that pass through each
+    /// other, as its `voxear.toml` has them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<[String; 2]>,
 }
 
 impl PlayerSettings {
@@ -180,6 +187,8 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
                 engine: None,
             },
             content: ContentSettings::default(),
+            layers: LayerSettings { names: settings.layers.clone() },
+            physics: PhysicsSettings { ignore: settings.ignore.clone() },
         },
     };
     let mut game = Game::with_content(project, engine, content);

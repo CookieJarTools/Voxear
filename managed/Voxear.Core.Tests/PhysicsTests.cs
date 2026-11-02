@@ -56,6 +56,16 @@ internal static class PhysicsTests
 	}
 
 	[Test]
+	private static void LayerMasksHoldLayersByNumber()
+	{
+		Check.True(Obj.None.Layer == 0 && LayerMask.LayerToName(0) == "Default", "Default without the engine");
+		Check.True(LayerMask.NameToLayer("Nobody") == -1 && LayerMask.GetMask("Default", "Nobody").Value == 1, "unknown names are left out");
+		LayerMask mask = (1 << 3) | (1 << 5);
+		Check.True(mask.Contains(5) && !mask.Contains(4) && !mask.Contains(40), "by bit");
+		Check.True(LayerMask.Everything.Contains(31) && !LayerMask.Nothing.Contains(0), "every one, and none");
+	}
+
+	[Test]
 	private static void PhysicsComponentsAreFieldsOfOtherObjs()
 	{
 		Check.True(typeof(IObjComponent).IsAssignableFrom(typeof(Rigidbody)), "a Rigidbody field holds another Obj's");

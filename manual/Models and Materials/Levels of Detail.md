@@ -24,18 +24,19 @@ A **LOD Group** shows one of several Objs at a time, chosen by how big the group
 To make one:
 
 1. Make an Obj to hold the group, and put the Obj for each level inside it, the most detailed first. Each Obj a level shows is shown with everything inside it.
-2. Select the holding Obj, click **Add Component** and choose **LOD Group**. Each Obj inside it becomes a level, in the order the Hierarchy shows them.
+2. Select the holding Obj, click **Add Component** and choose **LOD Group**. The Objs inside it become its levels, in the order the Hierarchy shows them. Objs named as a model's LODs, such as `Rock_LOD0` and `Rock_LOD1`, go in the level of their number, and Objs of the same name share a level, as a model's parts often do.
 
 The Inspector shows the group's levels as a bar, as Unity does, the most detailed on the left. The camera mark above it shows where the Scene view sees the group now: how much of the screen it covers, or how far away it is.
 
 - **Click** a level on the bar to select it. Its settings show under the bar.
 - **Drag** the edge between two levels to move where one ends.
 - **Right-click** a level to **Insert Before** or **Delete** it, or the **Culled** part to **Insert** a level at the end. A new level shows the first Obj inside the group that no level shows yet.
+- **Drag** Objs from the Hierarchy onto a level to put them in it, as in Unity. With several Objs selected, dragging one of them puts them all there.
 
 | Setting | What it does |
 | --- | --- |
 | **Switch by** | **Screen size** switches by how much of the screen's height the group covers, as Unity does. **Distance** switches by how far the camera is from the group's Obj. |
-| **Objs** | The Objs the selected level shows, as Unity's LOD lists its renderers. Pick one into **Add Obj** to add it, from the Objs inside the group, and pick **None** on one to take it out. |
+| **Objs** | The Objs the selected level shows, as Unity's LOD lists its renderers. Pick one into **Add Obj** to add it, from the Objs inside the group, and pick **None** on one to take it out. An Obj in another level says which, and moves here when picked: an Obj shows in one level at a time. |
 | **Transition** | Where the selected level ends: a share of the screen in percent, or a distance in metres. Past it, the next level shows. |
 | **Culled** | Whether nothing shows past the last level. Turned off, the last level stays. |
 

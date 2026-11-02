@@ -1444,6 +1444,16 @@ impl Editor {
             RowAction::ResetLodTransitions => {
                 props::set_lod_transitions(&mut self.game.engine.world, entity, None);
             }
+            // The Obj dragged, or every Obj selected when it is one of them.
+            RowAction::DropOnLodLevel(level, source) => {
+                if let Some(obj) = self.dragged_obj(&source) {
+                    let selected = self.selected_objs();
+                    let objs = if selected.contains(&obj) { selected } else { vec![obj] };
+                    if !props::put_in_lod_level(&mut self.game, entity, level, &objs) {
+                        self.notify("A LOD Group's levels take Objs inside its Obj");
+                    }
+                }
+            }
             RowAction::InsertLodLevel(at) => {
                 props::insert_lod_level(&mut self.game, entity, at);
             }

@@ -59,6 +59,7 @@ pub use gpu::{
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
+pub use model_lods::lod_of;
 pub use mesh::{MeshData, Primitive, Vertex};
 pub use post::{
     AntiAliasing, AntiAliasingMode, Bloom, DepthOfField, Exposure, Fog, Grading, Grain, MotionBlur, PostProcess,

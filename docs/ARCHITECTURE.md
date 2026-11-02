@@ -920,7 +920,10 @@ cost nothing. The CPU never touches visibility.
   LOD Group does (`lod_group.rs`). Each view chooses for its own camera while extracting (`LodChoices`), and what a
   level not shown holds is neither drawn nor lit; its scripts run on. Files write it as `[obj.lod_group]`, levels
   naming Objs as other references do (`objs = [2, 5]`, with a lone `obj` read from older files), so prefabs map them into each instance (`lod_groups.rs` in the engine). Add
-  Component makes a level of each child in Hierarchy order. The Inspector edits it as Unity's does, on the bar
+  Component makes levels of the children in Hierarchy order: those named as a model's LODs (`_LOD0`, read by
+  `lod_of`, as model import does) by their number, the rest a level for each name, so a model's parts of one name
+  share one. An Obj is in one level at a time (`LodGroup::put`), and Objs dragged from the Hierarchy onto a level
+  of the bar, or the whole selection when the dragged one is in it, go in that level. The Inspector edits it as Unity's does, on the bar
   (`lod_inspector.rs`): a click selects a level, whose rows alone show, a drag on an edge moves where it ends, a
   right-click inserts or deletes one, and a camera mark shows where the Scene view sees the group.
 - **HLOD:** distant groups of objects merge into one proxy mesh, generated per level.

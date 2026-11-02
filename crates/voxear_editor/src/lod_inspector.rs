@@ -15,7 +15,7 @@ use voxear_render::{
     screen_share,
 };
 use voxear_scene::{Transform, WorldTransform};
-use voxear_ui::{NodeId, Style, Ui};
+use voxear_ui::{DragSource, NodeId, Style, Ui};
 
 
 /// How much of a bar measured by distance is left for what is past the last
@@ -343,6 +343,10 @@ impl GroupLods {
         let segments: Vec<NodeId> = (0..group.levels.len())
             .map(|level| segment(ui, &format!("LOD {level}"), &format!("lod-level-{}", level % COLOURS)))
             .collect();
+        // An Obj dragged from the Hierarchy and let go on a level goes in it, as in Unity.
+        for &segment in &segments {
+            ui.accept_drops(segment, true);
+        }
         if let Some(&chosen) = segments.get(selected) {
             ui.add_class(chosen, "lod-selected");
         }
@@ -360,6 +364,11 @@ impl GroupLods {
         ui.add_class(marker, "lod-marker");
         let styled = HashMap::new();
         Self { bar, segments, culled, edges, marker, eye, eye_text, measure: group.measure, drag: None, styled }
+    }
+
+    /// The level something was dragged onto, and what.
+    pub fn dropped(&self, ui: &Ui) -> Option<(usize, DragSource)> {
+        self.segments.iter().enumerate().find_map(|(level, &segment)| Some((level, ui.dropped_onto(segment)?)))
     }
 
     /// The level whose part of the bar was clicked.

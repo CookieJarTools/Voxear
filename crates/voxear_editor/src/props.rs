@@ -371,7 +371,7 @@ pub fn depth(prop: &Prop) -> usize {
 
 /// A component as an Obj gets it from Add Component: a grey cube, a point
 /// light, a camera, an Audio Source with no sound yet, an Audio Listener, a
-/// LOD Group with a level for each Obj inside it, in the Hierarchy's order,
+/// LOD Group with levels of the Objs inside it (see `lod_levels_inside`),
 /// or a script (a behaviour or, as `types` tell, a C# component) with every
 /// field as it starts.
 pub fn add(
@@ -390,7 +390,7 @@ pub fn add(
         return Ok(());
     }
     if *part == Part::LodGroup {
-        let group = LodGroup::of(&children(game, entity));
+        let group = LodGroup::of_levels(lod_levels_inside(game, entity));
         game.engine.world.insert(entity, group);
         return Ok(());
     }
@@ -612,21 +612,17 @@ pub fn pick(
             };
             with(&mut game.engine.world, entity, |source: &mut AudioSource| source.sound = sound)
         }
-        // None takes an Obj out of its level; another takes its place.
+        // None takes an Obj out of its level; another takes its place, leaving any level it was in.
         (Prop::LodObj(level, index), Pick::Obj(obj)) => with(&mut game.engine.world, entity, |group: &mut LodGroup| {
-            let Some(at) = group.levels.get_mut(*level).filter(|at| *index < at.objs.len()) else { return };
-            match obj {
-                Some(obj) => at.objs[*index] = *obj,
-                None => {
-                    at.objs.remove(*index);
-                }
+            let Some(was) = group.levels.get(*level).and_then(|at| at.objs.get(*index)).copied() else { return };
+            group.levels[*level].objs.retain(|&o| o != was);
+            if let Some(obj) = obj {
+                group.put(*level, &[*obj]);
             }
         }),
-        (Prop::LodAdd(level), Pick::Obj(Some(obj))) => with(&mut game.engine.world, entity, |group: &mut LodGroup| {
-            if let Some(at) = group.levels.get_mut(*level).filter(|at| !at.objs.contains(obj)) {
-                at.objs.push(*obj);
-            }
-        }),
+        (Prop::LodAdd(level), Pick::Obj(Some(obj))) => {
+            with(&mut game.engine.world, entity, |group: &mut LodGroup| group.put(*level, &[*obj]))
+        }
         (Prop::Field { behaviour, path }, choice) => {
             fields::pick(&mut game.engine.world, types, entity, behaviour, path, choice)
         }
@@ -655,6 +651,45 @@ pub fn children(game: &Game, entity: Entity) -> Vec<Entity> {
     let order: Vec<Entity> = game.levels.scene_order().into_iter().flat_map(|(.., objs)| objs).collect();
     inside.sort_by_key(|child| (order.iter().position(|e| e == child).unwrap_or(usize::MAX), child.index()));
     inside
+}
+
+/// The levels Add Component gives a LOD Group, from the Objs directly
+/// inside its Obj, in the Hierarchy's order: those named as a model's LODs
+/// are (`Rock_LOD0`, `Rock_LOD1`) in the level of their number, and the rest
+/// share a level with those of the same name, as a model's parts often do,
+/// a level for each name.
+pub fn lod_levels_inside(game: &Game, entity: Entity) -> Vec<Vec<Entity>> {
+    let world = &game.engine.world;
+    let name = |obj: Entity| world.get::<Name>(obj).map_or_else(String::new, |n| n.0.clone());
+    let inside = children(game, entity);
+    let numbered: Vec<(Entity, u32)> =
+        inside.iter().filter_map(|&obj| voxear_render::lod_of(&name(obj)).map(|(_, level)| (obj, level))).collect();
+    if !numbered.is_empty() {
+        let deepest = numbered.iter().map(|&(_, level)| level as usize).max().unwrap_or(0);
+        let mut levels = vec![Vec::new(); deepest + 1];
+        for (obj, level) in numbered {
+            levels[level as usize].push(obj);
+        }
+        levels.retain(|level| !level.is_empty());
+        return levels;
+    }
+    let mut names: Vec<(String, Vec<Entity>)> = Vec::new();
+    for obj in inside {
+        let named = name(obj);
+        match names.iter_mut().find(|(n, _)| *n == named) {
+            Some((_, objs)) => objs.push(obj),
+            None => names.push((named, vec![obj])),
+        }
+    }
+    names.into_iter().map(|(_, objs)| objs).collect()
+}
+
+/// Puts Objs in a LOD Group's level, as dropping them on it does, each
+/// leaving any other level it was in. Only Objs inside the group's Obj.
+pub fn put_in_lod_level(game: &mut Game, entity: Entity, level: usize, objs: &[Entity]) -> bool {
+    let inside = descendants(game, entity);
+    let objs: Vec<Entity> = objs.iter().copied().filter(|obj| inside.contains(obj)).collect();
+    !objs.is_empty() && with(&mut game.engine.world, entity, |group: &mut LodGroup| group.put(level, &objs))
 }
 
 /// Every Obj inside an Obj, at any depth, each before what is inside it,
@@ -755,13 +790,20 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
             return fields::asset_choices(game, &kind);
         }
-        // A level shows Objs inside the group's Obj, at any depth.
-        Prop::LodObj(..) | Prop::LodAdd(_) => {
+        // A level shows Objs inside the group's Obj, at any depth: those not in it already, each in another
+        // level saying which, as picking it moves it here.
+        Prop::LodObj(level, _) | Prop::LodAdd(level) => {
             let world = &game.engine.world;
+            let group = world.get::<LodGroup>(entity);
             let mut found = vec![("None".to_string(), Pick::Obj(None))];
             for inside in descendants(game, entity) {
                 let name = world.get::<Name>(inside).map_or_else(|| "Obj".into(), |n| n.0.clone());
-                found.push((name, Pick::Obj(Some(inside))));
+                let label = match group.and_then(|group| group.level_of(inside)) {
+                    Some(at) if at == *level => continue,
+                    Some(at) => format!("{name} · LOD {at}"),
+                    None => name,
+                };
+                found.push((label, Pick::Obj(Some(inside))));
             }
             return found;
         }

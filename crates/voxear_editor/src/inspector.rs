@@ -155,6 +155,8 @@ pub enum RowAction {
     ForceLod(Option<u8>),
     /// Let the engine switch the Mesh Renderer's LODs again.
     ResetLodTransitions,
+    /// Put what was dragged onto a LOD Group's level in it.
+    DropOnLodLevel(usize, DragSource),
 }
 
 /// A component value's row and the control that edits it.
@@ -1408,6 +1410,10 @@ impl Inspector {
         });
         if let Some((prop, source)) = dropped {
             return Some(RowAction::Dropped(prop, source));
+        }
+        if let Some((level, source)) = self.group_lods.as_ref().and_then(|lods| lods.dropped(ui)) {
+            self.lod_level = level;
+            return Some(RowAction::DropOnLodLevel(level, source));
         }
         if let Some(level) = self.mesh_lods.as_ref().and_then(|lods| lods.clicked(ui)) {
             return Some(RowAction::ViewLod(level));

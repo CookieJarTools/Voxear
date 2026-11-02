@@ -79,6 +79,36 @@ impl LodGroup {
         Self { levels, ..Self::default() }
     }
 
+    /// A group measured by screen size with a level for each list of Objs,
+    /// ending at 60%, 30%, 15% and so on of the screen.
+    pub fn of_levels(levels: Vec<Vec<Entity>>) -> Self {
+        let levels = levels
+            .into_iter()
+            .enumerate()
+            .map(|(index, objs)| LodLevel { objs, until: default_until(LodMeasure::ScreenSize, index) })
+            .collect();
+        Self { levels, ..Self::default() }
+    }
+
+    /// Puts Objs in a level, taking each out of any other level it was in,
+    /// as an Obj shows at one level of a group.
+    pub fn put(&mut self, level: usize, objs: &[Entity]) {
+        for (_, other) in self.levels.iter_mut().enumerate().filter(|(at, _)| *at != level) {
+            other.objs.retain(|obj| !objs.contains(obj));
+        }
+        let Some(at) = self.levels.get_mut(level) else { return };
+        for &obj in objs {
+            if !at.objs.contains(&obj) {
+                at.objs.push(obj);
+            }
+        }
+    }
+
+    /// The level an Obj is in, if any.
+    pub fn level_of(&self, obj: Entity) -> Option<usize> {
+        self.levels.iter().position(|level| level.objs.contains(&obj))
+    }
+
     /// The level a view shows, or `None` when the group shows nothing.
     pub fn level_for(&self, view: LodView) -> Option<usize> {
         let within = |level: &LodLevel| match self.measure {

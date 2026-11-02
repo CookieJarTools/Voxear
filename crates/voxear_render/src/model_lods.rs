@@ -25,7 +25,7 @@ use crate::{
 
 /// The name a part has without its LOD's suffix, and which LOD it is, for
 /// names such as `Rock_LOD2` or `Rock_lod0`.
-pub(crate) fn lod_of(name: &str) -> Option<(&str, u32)> {
+pub fn lod_of(name: &str) -> Option<(&str, u32)> {
     let at = name.to_ascii_lowercase().rfind("_lod")?;
     let level = name[at + 4..].parse().ok()?;
     Some((&name[..at], level))

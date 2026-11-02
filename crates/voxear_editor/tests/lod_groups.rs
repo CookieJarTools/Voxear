@@ -43,8 +43,65 @@ parent = 901
 mesh = "builtin:plane"
 "#;
 
+/// A gate of three parts of one name and a card for far away, and a tree
+/// with LODs named as a model's.
+const GATE_AND_TREE: &str = r#"
+[[obj]]
+id = 911
+name = "Gate"
+position = [3.0, 1.0, 0.0]
+
+[[obj]]
+id = 912
+name = "Gate Part"
+parent = 911
+[obj.renderer]
+mesh = "builtin:cube"
+
+[[obj]]
+id = 913
+name = "Gate Part"
+parent = 911
+[obj.renderer]
+mesh = "builtin:cube"
+
+[[obj]]
+id = 914
+name = "Gate Part"
+parent = 911
+[obj.renderer]
+mesh = "builtin:cube"
+
+[[obj]]
+id = 915
+name = "Gate Card"
+parent = 911
+[obj.renderer]
+mesh = "builtin:plane"
+
+[[obj]]
+id = 921
+name = "Tree"
+position = [-3.0, 1.0, 0.0]
+
+[[obj]]
+id = 922
+name = "Tree_LOD1"
+parent = 921
+
+[[obj]]
+id = 923
+name = "Tree_LOD0"
+parent = 921
+"#;
+
 /// A copy of Hello, inside the repository, with the rock in its Day scene.
 fn hello_with_a_rock() -> tempfile::TempDir {
+    hello_with(ROCK)
+}
+
+/// A copy of Hello, inside the repository, with `objs` added to its Day scene.
+fn hello_with(objs: &str) -> tempfile::TempDir {
     fn copy(from: &std::path::Path, to: &std::path::Path) {
         std::fs::create_dir_all(to).unwrap();
         for entry in std::fs::read_dir(from).unwrap().flatten() {
@@ -63,7 +120,7 @@ fn hello_with_a_rock() -> tempfile::TempDir {
     copy(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello"), dir.path());
     let day = dir.path().join("Scenes/Day.scene");
     let scene = std::fs::read_to_string(&day).unwrap();
-    std::fs::write(&day, scene + ROCK).unwrap();
+    std::fs::write(&day, scene + objs).unwrap();
     dir
 }
 
@@ -317,12 +374,14 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     let list = editor.ui.find(editor.ui.root(), "picker-list").unwrap();
     let mut rows = Vec::new();
     with_class(&editor.ui, list, "list-row", &mut rows);
-    let card_row = rows.into_iter().find(|&row| editor.ui.text(editor.ui.children(row)[1]) == "Rock Card").unwrap();
-    click(&mut editor.ui, card_row);
+    // The card is in the last level, so it says so, and moves from there.
+    let card_row = rows.into_iter().find(|&row| editor.ui.text(editor.ui.children(row)[1]) == "Rock Card · LOD 2");
+    click(&mut editor.ui, card_row.unwrap());
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
     }
     assert_eq!(group(&editor, rock).unwrap().levels[1].objs, [low, card]);
+    assert!(group(&editor, rock).unwrap().levels[2].objs.is_empty(), "it left the level it was in");
     let shown = renderer.lod_choices(&editor.game.engine.world, LodCamera::new(Vec3::new(0.0, 1.0, -2.5), 60.0));
     if shown.groups[&rock].1 == Some(1) {
         assert!(!shown.hidden.contains(&low) && !shown.hidden.contains(&card), "both of the level's Objs show");
@@ -375,4 +434,130 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     assert_eq!(group(&editor, rock).unwrap().levels[1].until, 0.3, "the typing undone");
     editor.undo(&mut renderer);
     assert!(group(&editor, rock).is_none(), "and then the LOD Group");
+}
+
+fn objs_named(editor: &voxear_editor::Editor, name: &str) -> Vec<Entity> {
+    let world = &editor.game.engine.world;
+    let mut found: Vec<Entity> =
+        world.query_ref::<(Entity, &Name)>().into_iter().filter(|(_, n)| n.0 == name).map(|(e, _)| e).collect();
+    found.sort_by_key(|e| e.index());
+    found
+}
+
+/// The Hierarchy's row showing an Obj called `name`.
+fn hierarchy_row(ui: &Ui, name: &str) -> Option<NodeId> {
+    let tree = ui.find(ui.root(), "hierarchy-tree")?;
+    let mut names = Vec::new();
+    with_class(ui, tree, "row-name", &mut names);
+    let label = names.into_iter().find(|&n| ui.is_visible(n) && ui.text(n) == name)?;
+    let mut at = Some(label);
+    while let Some(node) = at {
+        if ui.has_class(node, "list-row") {
+            return Some(node);
+        }
+        at = ui.parent(node);
+    }
+    None
+}
+
+/// Adds a LOD Group to the Obj selected, through Add Component's search.
+fn add_lod_group(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) {
+    let add = first_with(&editor.ui, editor.ui.root(), "add-component").unwrap();
+    click(&mut editor.ui, add);
+    frame(editor, renderer);
+    frame(editor, renderer);
+    editor.ui.text_input("LOD Group");
+    frame(editor, renderer);
+    let list = editor.ui.find(editor.ui.root(), "picker-list").unwrap();
+    let mut rows = Vec::new();
+    with_class(&editor.ui, list, "list-row", &mut rows);
+    let item = rows.into_iter().find(|&row| editor.ui.text(editor.ui.children(row)[1]) == "LOD Group").unwrap();
+    click(&mut editor.ui, item);
+    for _ in 0..3 {
+        frame(editor, renderer);
+    }
+}
+
+#[test]
+fn a_lod_groups_levels_hold_several_objs_grouped_by_name_and_dropped_on() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_with(GATE_AND_TREE);
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let (gate, tree, card) = (obj(&editor, "Gate"), obj(&editor, "Tree"), obj(&editor, "Gate Card"));
+    let parts = objs_named(&editor, "Gate Part");
+    let levels = |editor: &voxear_editor::Editor, of: Entity| -> Vec<Vec<Entity>> {
+        group(editor, of).expect("a LOD Group").levels.iter().map(|level| level.objs.clone()).collect()
+    };
+
+    // Parts of one name share a level, as a model's often do; LODs named as a model's go by their number.
+    editor.select(Some(gate));
+    frame(&mut editor, &mut renderer);
+    add_lod_group(&mut editor, &mut renderer);
+    assert_eq!(levels(&editor, gate), [parts.clone(), vec![card]]);
+    editor.select(Some(tree));
+    frame(&mut editor, &mut renderer);
+    add_lod_group(&mut editor, &mut renderer);
+    assert_eq!(levels(&editor, tree), [vec![obj(&editor, "Tree_LOD0")], vec![obj(&editor, "Tree_LOD1")]]);
+
+    // An Obj dragged from the Hierarchy onto a level of the bar goes in it, leaving the level it was in.
+    editor.select(Some(card));
+    frame(&mut editor, &mut renderer);
+    editor.select(Some(gate));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let bar = first_with(&editor.ui, editor.ui.root(), "lod-bar").unwrap();
+    let mut segments = Vec::new();
+    with_class(&editor.ui, bar, "lod-segment", &mut segments);
+    let row = hierarchy_row(&editor.ui, "Gate Card").expect("the card's row");
+    let ([rx, ry, rw, rh], [sx, sy, sw, sh]) = (editor.ui.rect(row), editor.ui.rect(segments[0]));
+    editor.ui.pointer_move(rx + rw / 3.0, ry + rh / 2.0);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(rx + rw / 3.0 + 30.0, ry + rh / 2.0 + 30.0);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(sx + sw / 3.0, sy + sh / 2.0);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let mut first = parts.clone();
+    first.push(card);
+    assert_eq!(levels(&editor, gate), [first, vec![]]);
+
+    // Add Obj lists the Objs not in the level, each in another saying which, and picked, moves it here.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(levels(&editor, gate), [parts.clone(), vec![card]]);
+    let bar = first_with(&editor.ui, editor.ui.root(), "lod-bar").unwrap();
+    let mut segments = Vec::new();
+    with_class(&editor.ui, bar, "lod-segment", &mut segments);
+    let [x, y, w, h] = editor.ui.rect(segments[1]);
+    editor.ui.pointer_move(x + w / 3.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let add = first_with(&editor.ui, prop_rows(&editor.ui, "Add Obj")[0], "picker-arrow").unwrap();
+    click(&mut editor.ui, add);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let list = editor.ui.find(editor.ui.root(), "picker-list").unwrap();
+    let mut rows = Vec::new();
+    with_class(&editor.ui, list, "list-row", &mut rows);
+    let labels: Vec<String> = rows.iter().map(|&row| editor.ui.text(editor.ui.children(row)[1])).collect();
+    assert!(labels.contains(&"Gate Part · LOD 0".to_string()) && !labels.iter().any(|l| l.starts_with("Gate Card")), "{labels:?}");
+    let part = rows.into_iter().find(|&row| editor.ui.text(editor.ui.children(row)[1]) == "Gate Part · LOD 0").unwrap();
+    click(&mut editor.ui, part);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let after = levels(&editor, gate);
+    assert_eq!((after[0].len(), after[1].len()), (2, 2), "one part moved to the card's level: {after:?}");
 }

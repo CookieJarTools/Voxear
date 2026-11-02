@@ -24,11 +24,15 @@ pub(crate) fn thumb(viewport: f32, max: f32, offset: f32) -> Option<(f32, f32)> 
 
 impl Ui {
     /// Scrolls the innermost scrolling element under the pointer that can
-    /// still move this way. `dx` and `dy` are logical pixels, positive
+    /// still move this way, unless an element under it takes the wheel
+    /// itself ([`take_wheel`](Self::take_wheel)). `dx` and `dy` are logical pixels, positive
     /// towards the end (right, down). Returns whether anything scrolled, so
     /// the game can leave the wheel alone.
     pub fn pointer_scroll(&mut self, dx: f32, dy: f32) -> bool {
         let path = self.hit_path();
+        if self.take_wheel_turn(&path, dx, dy) {
+            return true;
+        }
         for &node in path.iter().rev() {
             if self.scroll_field(NodeId(node), dy) {
                 return true;

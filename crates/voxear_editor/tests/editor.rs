@@ -2556,6 +2556,29 @@ fn the_profiling_layout_shows_recent_frames_in_the_profiler() {
     frame(&mut editor, &mut renderer);
     let hovered = editor.ui.text(first_with(&editor.ui, panel, "profiler-hovered").unwrap());
     assert!(hovered.contains("ms, from"), "the bar pointed at is described: {hovered}");
+
+    // The wheel zooms in around the pointer, so the left edge then shows a later part of the frame,
+    // and a double click shows the whole frame again.
+    let from = |editor: &voxear_editor::Editor| -> f32 {
+        let text = editor.ui.text(first_with(&editor.ui, panel, "profiler-hovered").unwrap());
+        let after = text.split("ms, from ").nth(1).unwrap_or_default();
+        after.split(' ').next().and_then(|ms| ms.parse().ok()).unwrap_or(-1.0)
+    };
+    let edge = from(&editor);
+    let [_, _, width, _] = editor.ui.rect(canvas);
+    editor.ui.pointer_move(x + width / 2.0, y + 9.0);
+    assert!(editor.ui.pointer_scroll(0.0, -400.0), "the timeline takes the wheel");
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(x + 2.0, y + 9.0);
+    frame(&mut editor, &mut renderer);
+    assert!(from(&editor) > edge, "zoomed in, the left edge is later in the frame: {} after {edge}", from(&editor));
+    assert!(editor.profiler().timeline_zoom() < 0.5, "{}", editor.profiler().timeline_zoom());
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.profiler().timeline_zoom(), 1.0, "a double click shows the whole frame again");
     shot(&mut renderer, "profiler-timeline.png");
 
     // A worker thread's samples show in a lane of their own, titled with its name, while it works.

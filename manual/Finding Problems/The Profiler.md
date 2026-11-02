@@ -41,6 +41,8 @@ Open **Game** to see the game's own work: **FixedUpdate**, **Update**, **LateUpd
 
 **Timeline** shows the same frame as bars across time, so you can see what ran when, and what ran inside what. Point at a bar to see its name, how long it took, and when in the frame it started. Script work is purple, the engine's blue, drawing green, and waiting grey.
 
+To see short runs, zoom in: turn the mouse wheel over the bars, and the part of the frame under the pointer grows. Drag to move along the frame while zoomed in, and double-click to see the whole frame again.
+
 Work on other threads, such as loading a level in the background, shows in lanes of its own under the main thread.
 
 ## Drawing passes and what a frame drew

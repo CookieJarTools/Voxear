@@ -82,6 +82,10 @@ pub(crate) struct Input {
     pub last_press: Option<(taffy::NodeId, f32, u32)>,
     /// A text field or slider the pointer is dragging in.
     pub dragging: Option<taffy::NodeId>,
+    /// Elements that take the wheel themselves rather than scroll what they
+    /// are in, and how far it turned over each since the last frame.
+    pub wheel_takers: std::collections::HashSet<taffy::NodeId>,
+    pub wheeled: Vec<(taffy::NodeId, [f32; 2])>,
 }
 
 impl Default for Input {
@@ -96,6 +100,8 @@ impl Default for Input {
             submitted: Vec::new(),
             last_press: None,
             dragging: None,
+            wheel_takers: std::collections::HashSet::new(),
+            wheeled: Vec::new(),
         }
     }
 }
@@ -335,5 +341,32 @@ impl Ui {
     pub(crate) fn clear_input_events(&mut self) {
         self.input.changed.clear();
         self.input.submitted.clear();
+        self.input.wheeled.clear();
+    }
+
+    /// Lets code use the wheel over `node` itself, as a timeline zooms with
+    /// it, rather than have it scroll what `node` is in; [`wheeled`](Self::wheeled)
+    /// then says how far it turned.
+    pub fn take_wheel(&mut self, node: NodeId, take: bool) {
+        match take {
+            true => self.input.wheel_takers.insert(node.0),
+            false => self.input.wheel_takers.remove(&node.0),
+        };
+    }
+
+    /// How far the wheel turned over `node` since the last frame, in logical
+    /// pixels, positive towards the end (right, down), for an element that
+    /// takes the wheel; zero when it did not turn.
+    pub fn wheeled(&self, node: NodeId) -> [f32; 2] {
+        let turns = self.input.wheeled.iter().filter(|(over, _)| *over == node.0);
+        turns.fold([0.0; 2], |sum, (_, [dx, dy])| [sum[0] + dx, sum[1] + dy])
+    }
+
+    /// The wheel turned over an element that takes it, if one is under the
+    /// pointer before anything that scrolls. Returns whether one took it.
+    pub(crate) fn take_wheel_turn(&mut self, path: &[taffy::NodeId], dx: f32, dy: f32) -> bool {
+        let Some(&taker) = path.iter().rev().find(|node| self.input.wheel_takers.contains(node)) else { return false };
+        self.input.wheeled.push((taker, [dx, dy]));
+        true
     }
 }

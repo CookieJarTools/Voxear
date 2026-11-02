@@ -430,3 +430,23 @@ fn arrow_keys_move_through_lists_and_open_and_close_trees() {
     ui.key_down(Key::Down);
     assert_eq!(ui.selected_items(tree), [2]);
 }
+
+#[test]
+fn an_element_can_take_the_wheel_rather_than_scroll() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let scroller = ui.panel(root, Style::column().scroll().at(0.0, 0.0).width(200.0).height(100.0));
+    let canvas = ui.panel(scroller, Style::default().width(200.0).height(400.0));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.pointer_move(50.0, 50.0);
+    assert!(ui.pointer_scroll(0.0, 30.0));
+    assert_eq!(ui.scroll_offset(scroller), [0.0, 30.0], "without taking it, the wheel scrolls");
+
+    ui.take_wheel(canvas, true);
+    assert!(ui.pointer_scroll(0.0, -20.0));
+    assert!(ui.pointer_scroll(0.0, -5.0));
+    assert_eq!(ui.wheeled(canvas), [0.0, -25.0], "the turns since the last frame");
+    assert_eq!(ui.scroll_offset(scroller), [0.0, 30.0], "and nothing scrolls");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.wheeled(canvas), [0.0, 0.0], "a frame forgets them");
+}

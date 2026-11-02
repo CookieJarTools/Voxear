@@ -1837,7 +1837,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   samples scripts take themselves. Beside it are the renderer's passes as the GPU timed them (`Renderer::timings`)
   and what the frame drew and culled, by LOD, with memory and what is loaded. A click on the chart picks a frame,
   and dragging along it goes through the frames; Live goes back to the newest, and Record stops and starts taking
-  frames. The Timeline scrolls when its lanes are more than fit. Samples are taken only while the panel
+  frames. The Timeline scrolls when its lanes are more than fit; the wheel zooms it around the pointer (it takes
+  the wheel with `Ui::take_wheel` and reads `Ui::wheeled`), a drag moves along the frame, and a double click shows
+  it whole. Samples are taken only while the panel
   shows and records.
 - **Profiling samples** (`voxear_core::profiling`): named spans of a frame's work, nested as they ran, merged by name
   under the same parent as Unity's Hierarchy merges them. Sampling is per thread and off until the Profiler turns

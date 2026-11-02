@@ -113,6 +113,12 @@ pub struct Profiler {
     /// How wide the timeline was drawn, to draw it again when that changes,
     /// as when it first shows.
     timeline_width: f32,
+    /// The part of the frame the timeline shows, as fractions of it: where
+    /// its left edge is, and how much of the frame fits across. The wheel
+    /// zooms it, a drag moves along it, and a double click shows it whole.
+    timeline_view: TimelineView,
+    /// Where the pointer was last frame while a drag moves the timeline.
+    timeline_drag: Option<f32>,
     clear: NodeId,
     live: NodeId,
     summary: NodeId,
@@ -199,12 +205,13 @@ impl Profiler {
         let timeline = ui.panel(lower, Style::default());
         ui.add_class(timeline, "profiler-hierarchy");
         ui.add_class(timeline, "profiler-timeline");
-        let timeline_hovered = ui.add_label(timeline, "Point at a bar to see what it is.");
+        let timeline_hovered = ui.add_label(timeline, HOVER_HINT);
         ui.add_class(timeline_hovered, "profiler-hovered");
         let timeline_scroller = ui.panel(timeline, Style::column().scroll());
         ui.add_class(timeline_scroller, "fill");
         let timeline_canvas = ui.panel(timeline_scroller, Style::default());
         ui.add_class(timeline_canvas, "profiler-canvas");
+        ui.take_wheel(timeline_canvas, true);
         ui.set_visible(timeline, false);
         let side = ui.panel(lower, Style::default());
         ui.add_class(side, "profiler-side");
@@ -226,6 +233,8 @@ impl Profiler {
             timeline_names: Vec::new(),
             hovered_span: None,
             timeline_width: 0.0,
+            timeline_view: TimelineView::WHOLE,
+            timeline_drag: None,
             clear,
             live,
             summary,
@@ -262,6 +271,12 @@ impl Profiler {
 
     pub fn samples(&self) -> &VecDeque<Sample> {
         &self.samples
+    }
+
+    /// How much of the frame the Timeline shows across, from 1 for all of it
+    /// down as it is zoomed in.
+    pub fn timeline_zoom(&self) -> f32 {
+        self.timeline_view.span
     }
 
     /// The frame broken down: the one picked, or the newest.
@@ -311,6 +326,7 @@ impl Profiler {
         }
         self.draw_chart(ui);
         if ui.is_visible(self.timeline) {
+            self.move_timeline(ui);
             self.hover_timeline(ui);
         }
         let Some(sample) = self.shown_sample() else { return };
@@ -526,11 +542,17 @@ impl Profiler {
         // As tall as its lanes, so the view around it scrolls to the last.
         let height = bars.iter().map(|bar| bar.top + LANE).fold(0.0, f32::max) + 4.0;
         ui.set_inline_style(self.timeline_canvas, &format!("height: {height}px"));
-        let x = |ns: u64| ns as f32 / length * width;
+        let view = self.timeline_view;
+        let x = |ns: u64| (ns as f32 / length - view.start) / view.span * width;
         let mut shapes = Vec::with_capacity(bars.len());
         let mut named: Vec<(String, [f32; 3])> = Vec::new();
         for (index, bar) in bars.iter().enumerate() {
             let (left, right) = (x(bar.span.start_ns), x(bar.span.end_ns));
+            // Zoomed in, only what is in view, cut at its edges.
+            if right < 0.0 || left > width {
+                continue;
+            }
+            let (left, right) = (left.max(0.0), right.min(width));
             let name = bar.span.marker.name();
             let lit = self.hovered_span == Some(index);
             let fill = Color::hex(bar_color(&name)).with_alpha(if lit { 255 } else { 210 });
@@ -563,6 +585,38 @@ impl Profiler {
         }
     }
 
+    /// Zooms the timeline with the wheel, around the pointer, moves along it
+    /// while it is dragged, and shows the whole frame again on a double click.
+    fn move_timeline(&mut self, ui: &mut Ui) {
+        let [x, _, width, _] = ui.rect(self.timeline_canvas);
+        if width <= 0.0 {
+            return;
+        }
+        let pointer = ui.pointer_position().map(|(px, _)| ((px - x) / width).clamp(0.0, 1.0));
+        let [_, turned] = ui.wheeled(self.timeline_canvas);
+        if turned != 0.0
+            && let Some(across) = pointer
+        {
+            // Turned towards you zooms out, away zooms in, keeping the time under the pointer where it is.
+            let at = self.timeline_view.start + across * self.timeline_view.span;
+            let span = (self.timeline_view.span * (turned * ZOOM_PER_PIXEL).exp()).clamp(NARROWEST, 1.0);
+            self.timeline_view.set(at - across * span, span);
+        }
+        match (ui.is_pressed(self.timeline_canvas), ui.pointer_position()) {
+            (true, Some((px, _))) => {
+                if let Some(last) = self.timeline_drag {
+                    let span = self.timeline_view.span;
+                    self.timeline_view.set(self.timeline_view.start - (px - last) / width * span, span);
+                }
+                self.timeline_drag = Some(px);
+            }
+            _ => self.timeline_drag = None,
+        }
+        if ui.double_clicked(self.timeline_canvas) {
+            self.timeline_view = TimelineView { moved: true, ..TimelineView::WHOLE };
+        }
+    }
+
     /// Names the run under the pointer, and lights its bar.
     fn hover_timeline(&mut self, ui: &mut Ui) {
         let Some(sample) = self.shown_sample().cloned() else { return };
@@ -572,19 +626,21 @@ impl Profiler {
         let shows = |px: f32, py: f32| px >= x && px < x + width && py >= view_top && py < view_top + view_height;
         let hovered = ui.pointer_position().filter(|&(px, py)| shows(px, py));
         let (bars, _, length) = bars(&sample.cpu);
+        let view = self.timeline_view;
         let found = hovered.and_then(|(px, py)| {
-            let at = ((px - x) / width * length) as u64;
+            let at = ((view.start + (px - x) / width * view.span) * length) as u64;
             let top = py - y;
             bars.iter().rposition(|bar| {
                 bar.top <= top && top < bar.top + LANE && bar.span.start_ns <= at && at <= bar.span.end_ns
             })
         });
-        if found == self.hovered_span && width == self.timeline_width {
+        if found == self.hovered_span && width == self.timeline_width && !self.timeline_view.moved {
             return;
         }
+        self.timeline_view.moved = false;
         self.hovered_span = found;
         let text = found.map_or_else(
-            || "Point at a bar to see what it is.".to_string(),
+            || HOVER_HINT.to_string(),
             |index| {
                 let bar = &bars[index];
                 let span = bar.span;
@@ -641,6 +697,34 @@ fn bar_color(name: &str) -> u32 {
         RENDER
     } else {
         ENGINE
+    }
+}
+
+/// What the Timeline says while the pointer is on no bar.
+const HOVER_HINT: &str = "Point at a bar to see what it is. The wheel zooms in, a drag moves along, and a double click shows the whole frame.";
+
+/// How much one pixel of the wheel zooms the timeline by, as a power of e.
+const ZOOM_PER_PIXEL: f32 = 0.004;
+/// The least of the frame the timeline zooms to: a thousandth of it.
+const NARROWEST: f32 = 0.001;
+
+/// The part of the frame the timeline shows, as fractions of the frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TimelineView {
+    start: f32,
+    span: f32,
+    /// Changed since it was last drawn.
+    moved: bool,
+}
+
+impl TimelineView {
+    const WHOLE: Self = Self { start: 0.0, span: 1.0, moved: false };
+
+    /// Shows `span` of the frame from `start`, kept within the frame.
+    fn set(&mut self, start: f32, span: f32) {
+        let start = start.clamp(0.0, 1.0 - span);
+        self.moved |= start != self.start || span != self.span;
+        (self.start, self.span) = (start, span);
     }
 }
 

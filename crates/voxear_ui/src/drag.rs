@@ -203,7 +203,7 @@ impl Ui {
             DragSource::Element(node) => node.0,
         };
         let text = self.first_text(dragged).unwrap_or_default();
-        let layer = self.popup_layer();
+        let layer = self.popup_layer_here();
         let mut style = Style { pickable: false, ..Style::row() };
         style.layout.position = Position::Absolute;
         let ghost = self.panel(layer, style);

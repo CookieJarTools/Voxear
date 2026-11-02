@@ -241,7 +241,7 @@ fn draw_into(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: Ima
 }
 
 /// Clears all of `target` to `color`, before a view drawn into part of it.
-fn clear(ctx: &PassContext, target: ImageId, color: [f32; 4]) {
+pub(crate) fn clear(ctx: &PassContext, target: ImageId, color: [f32; 4]) {
     let color = [vk::RenderingAttachmentInfo::default()
         .image_view(ctx.view(target))
         .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)

@@ -339,6 +339,56 @@ fn the_games_ui_draws_in_its_area_under_the_windows() {
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "an empty frame takes the game's UI away");
 }
 
+/// A second output, as the window of a panel floated on the desktop, draws
+/// the views put there and a UI of its own, and is cleared for its UI when
+/// no view draws into it.
+#[test]
+fn a_second_output_draws_its_own_views_and_ui() {
+    use voxear_render::OutputId;
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let camera = world.spawn((Camera::default(), Transform::IDENTITY));
+    let magenta = [255, 0, 255];
+    renderer.set_clear_color([1.0, 0.0, 1.0, 1.0]);
+    renderer.set_view_rect(Some([0, 0, 100, 100]));
+    let (width, height) = (320, 200);
+    let second = renderer.add_offscreen_output(width, height).unwrap();
+    assert_eq!(renderer.outputs(), [OutputId::MAIN, second]);
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.panel(root, Style::default().at(20.0, 20.0).width(60.0).height(60.0).background(Color::hex(0xff0000)));
+    renderer.set_output_ui(second, &ui.frame(width, height, 1.0)).unwrap();
+    let options = ViewOptions { camera: Some(camera), ..ViewOptions::default() };
+    renderer.set_more_views_in(&[(second, [100, 0, 200, 200], options)]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+
+    let (w, h, pixels) = renderer.read_output_pixels(second).unwrap();
+    assert_eq!((w, h), (width, height));
+    let at = |pixels: &[u8], width: u32, x: u32, y: u32| {
+        let i = ((y * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    assert_eq!(at(&pixels, width, 50, 50), [255, 0, 0], "its own UI");
+    assert_eq!(at(&pixels, width, 10, 150), magenta, "cleared around its view");
+    assert_ne!(at(&pixels, width, 200, 100), magenta, "its view is drawn");
+    let (main_width, _, main) = renderer.read_pixels().unwrap();
+    assert_ne!(at(&main, main_width, 50, 50), [255, 0, 0], "the first output has none of its UI");
+    assert_eq!(at(&main, main_width, 200, 100), magenta, "nor its view");
+
+    renderer.set_more_views_in(&[]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_output_pixels(second).unwrap();
+    assert_eq!(at(&pixels, width, 200, 100), magenta, "with no view it is cleared for its UI");
+    assert_eq!(at(&pixels, width, 50, 50), [255, 0, 0]);
+
+    renderer.remove_output(second);
+    run(&mut renderer, &world, &mut 0.0, 1);
+    assert!(renderer.read_output_pixels(second).is_err(), "gone");
+    assert_eq!(renderer.outputs(), [OutputId::MAIN]);
+}
+
 /// Captures read an area of the output back, before the UI draws or after,
 /// in the order asked for.
 #[test]

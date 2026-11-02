@@ -851,6 +851,18 @@ decompression, background loading, unloading)*.
   culling results, LOD fades, exposure and TAA history) and records its own passes into the same graph, its
   transient images named apart (`FrameGraph::set_prefix`). The first view clears around itself; the UI, previews
   and captures are drawn once, after every view.
+- **Several outputs** *(implemented)*: besides the window or image it was made with (`OutputId::MAIN`), the
+  renderer draws into windows added since (`add_window_output`), as the editor does for panels floated onto the
+  desktop, or images for tests (`add_offscreen_output`, read back with `read_output_pixels`). Each output has its
+  own UI (`set_output_ui`, and `set_output_game_ui` for the game's), and each view names the output it draws into
+  (`set_view_output` for the first, `set_more_views_in` for the rest). All share the device, the graph and one
+  submit, which presents every window drawn. The first view drawn into an output clears around itself, and an
+  output no view drew into is cleared for its UI. The UI's quads live in a buffer of their own, every output's
+  one after another, named by pointers of their own, so a UI draws whether or not any view did. Another window's
+  swapchain takes the first's format, so the same pipelines draw into it (`Swapchain::new_matching`), and does
+  not wait for the display: its image is acquired without waiting (`Frames::try_acquire`, with a semaphore of its
+  own for each frame in flight), so a window the desktop is not showing never holds up the rest, and it presents
+  with mailbox where it can.
 - Resources are fully bindless through descriptor indexing and buffer device address.
 
 **Geometry.** GPU-driven, with occlusion culling and LOD built in. See
@@ -1301,6 +1313,29 @@ tabbed areas of panels.
   window is the dock's last child, so it is drawn over the areas yet under menus opened from it. Floating windows
   follow the tree in the layout's text, each with its place and size:
   `row(240, [hierarchy], [scene]) float(600, 80, 420, 320, [inspector])`, so they are kept between sessions too.
+- **Desktop windows** *(implemented)*. A floating window can be a window of the desktop's own instead, out of the
+  main window altogether: `float_dock_panel_in_window` (Float in Its Own Window in the editor), which takes a
+  floating window out whole or else the panel alone at its area's size; a tab let go past the window's edge it
+  was dragged in, or a floating window's bar let go past the main window's edge; or a tab dragged out of a desktop
+  window that holds others. `dock_windows` lists them (`DockWindow`: its `DesktopWindow` id, panels, the title
+  showing, its size and, where the desktop says, its place), for whoever owns the windows to open one for each,
+  and `set_dock_window_size` and `set_dock_window_place` tell the dock what the desktop did to it. The desktop
+  moves and resizes it, so it has no grip, and a press on its bar is handed over (`take_window_move`) for the
+  desktop to move it while the button is down. Its tabs dragged onto the main window dock there, and tabs dragged
+  onto its bar join it, as any floating window's do. In the layout's text it has its size, and its place when
+  the desktop said: `window(420, 320, [inspector])` or `window(420, 320, 1600, 90, [inspector])`.
+
+  Underneath, an element shown in a desktop window stays in the one tree, styled and laid out with everything
+  else, so nothing in it is rebuilt as it moves out and back. It is placed at the screen's top left at its
+  window's size (moved there after a layout, as only a layout says where its parent is), so its coordinates are
+  its window's own: `rect` of anything in it, and the pointer in that window, need no converting. `frame` leaves
+  it out and `window_frame` draws it, with its own glyph atlas upload. `set_pointer_window` says which window the
+  pointer is in before its moves and presses there; it then finds only what that window shows. Menus and
+  dropdowns opened there open in a layer of that window's (`window_of` says which window an element is in), a
+  dragged tab's ghost and preview follow the pointer from window to window, and `show_over_window` moves the
+  caller's own overlays, such as the editor's object picker, over the window of the field that opened them, and
+  back. Everything in the UI is drawn at the main window's display scale, so a desktop window on a screen of
+  another scale shows it at the first screen's size.
 
   ```xml
   <DockSpace layout="row(240, [hierarchy], [scene, inspector])">
@@ -1567,9 +1602,30 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
   shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. Every window's options
   button, at its header's right end (the Game and Scene views' too), and a context click on a tab or its bar,
-  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, Add Hierarchy, Add Inspector, Add Scene View
-  and Add Project (another of the windows there can be more than one of, as Unity's Add Tab), and Reset Layout; a closed panel keeps its state, and opens again
-  from the Window button, beside a panel it shared an area with.
+  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, Float in Its Own Window, Add Hierarchy, Add
+  Inspector, Add Scene View and Add Project (another of the windows there can be more than one of, as Unity's Add
+  Tab), and Reset Layout; a closed panel keeps its state, and opens again from the Window button, beside a panel it
+  shared an area with.
+- **Windows of the desktop's own** *(implemented)*. Float in Its Own Window, or a tab or floating window let go
+  past the main window's edge, takes a panel out of the editor's window into a desktop window of its own (see
+  the UI's desktop windows). The editor asks for the windows the dock wants (`Editor::wanted_windows`), and its
+  window code opens a winit window for each, with an output of the renderer, and hands it over
+  (`open_desktop_window`); a test does the same with offscreen outputs. Each frame the editor gives each window its
+  UI, draws each Scene or Game view into the window it is in, and the game's own UI over the Game view wherever it
+  is. Events come in with the window they came from (`handle_in`), and the right button flies a Scene view in any
+  window. Closing one from its frame closes its panels, as Close does, and a panel dragged out of it or docked
+  again with Dock takes it away once it is empty. The layout keeps it, with its size, so it opens again next time.
+  Its title is the tab showing and the project's name, and its app id is `voxear-editor-panel`, for desktops'
+  rules about which windows float.
+  - While the left button is held, the window it went down in keeps the pointer's moves wherever it goes. On X11
+    and Windows, which say where windows are, a move over another of the editor's windows is handed to that
+    window, from its own top left, so a tab drags from one window to another with the dock's preview showing where
+    it lands; a window torn off opens under the pointer, and opens where it was left next time.
+  - Wayland never says where windows are, so there a tab dragged out past its window's edge becomes the desktop's
+    own drag and drop (`wayland_drops`), of a type of the editor's own (`application/x-voxear-panel`). The window
+    it passes over hears it from its own top left, so its preview shows, and a drop there docks it; let go
+    anywhere else, it gets a desktop window of its own. The desktop places new windows itself, and a press on a
+    desktop window's bar asks the desktop to move it (`xdg_toplevel.move`), as its own title bar would.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
   or more, they show as tiles; narrower, as rows with each file's size. Selecting a folder in the tree opens it,

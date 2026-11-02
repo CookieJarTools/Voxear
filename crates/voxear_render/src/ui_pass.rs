@@ -6,7 +6,8 @@
 //! game's UI, over the game's view (`set_game`), and over it the window's
 //! own, the editor or a player's tools (`set`). Both share the buffer, the
 //! game's quads first, and draw in one pass, each moved to where its area is
-//! in the output.
+//! in the output. Each output has its two layers, and their quads follow the
+//! outputs before them in the buffer.
 
 use anyhow::Result;
 use voxear_rhi::{Bindless, Buffer, Gpu, Image, ImageDesc, TextureId, vk};
@@ -107,25 +108,32 @@ impl UiGpu {
         quads.into_iter().any(|q| q.kind == Quad::SHAPE && q.flags & Quad::BACKDROP != 0)
     }
 
-    /// Writes this frame's quads and adds the pass that draws them onto
-    /// `output`. `sampled` are images drawn this frame that the UI shows, as
+    /// Writes this frame's quads into `buffer` from its `first` quad on and
+    /// adds the pass that draws them onto `output`, returning how many it
+    /// wrote. `sampled` are images drawn this frame that the UI shows, as
     /// the preview atlas. `backdrop` is the view blurred, with its size, and
     /// where the view is in the output, for quads that show it.
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &self,
         fg: &mut FrameGraph<'_>,
         (pipeline, push): (vk::Pipeline, Push),
         buffer: &Buffer,
+        first: usize,
         output: (ImageId, vk::Extent2D),
         sampled: &[ImageId],
         backdrop: Option<(ImageId, [u32; 2], vk::Rect2D)>,
-    ) {
-        let (games, windows) = (self.game.quads.len(), self.window.quads.len());
+    ) -> usize {
+        // Every output's UI shares the buffer; what does not fit is left out.
+        let room = (MAX_UI_QUADS as usize).saturating_sub(first);
+        let games = self.game.quads.len().min(room);
+        let windows = self.window.quads.len().min(room - games);
         if games + windows == 0 {
-            return;
+            return 0;
         }
-        buffer.write(0, &self.game.quads);
-        buffer.write((games * size_of::<Quad>()) as u64, &self.window.quads);
+        let quad = size_of::<Quad>();
+        buffer.write((first * quad) as u64, &self.game.quads[..games]);
+        buffer.write(((first + games) * quad) as u64, &self.window.quads[..windows]);
         let (output, extent) = output;
         let pack = |a: u32, b: u32| a.min(0xffff) | b.min(0xffff) << 16;
         let textures = match backdrop {
@@ -141,8 +149,8 @@ impl UiGpu {
         // and its first quad in `level`.
         let base = Push { size: [extent.width, extent.height], textures, ..push };
         let list = pack(self.game.origin[0], self.game.origin[1]);
-        let game = Push { texture: self.game.texture(), list, level: 0, ..base };
-        let window = Push { texture: self.window.texture(), list: 0, level: games as u32, ..base };
+        let game = Push { texture: self.game.texture(), list, level: first as u32, ..base };
+        let window = Push { texture: self.window.texture(), list: 0, level: (first + games) as u32, ..base };
         let draws = [(game, games as u32), (window, windows as u32)];
         let mut images = vec![(output, ImageAccess::ColorAttachment)];
         images.extend(sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
@@ -160,6 +168,7 @@ impl UiGpu {
             }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
+        games + windows
     }
 
     /// The caller makes sure the GPU is idle.

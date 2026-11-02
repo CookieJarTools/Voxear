@@ -150,6 +150,25 @@ impl Gpu {
         Ok((gpu, surface))
     }
 
+    /// A surface for another window on the display the device was made
+    /// for, to present to as well, as a panel the editor floats on the
+    /// desktop is.
+    ///
+    /// # Safety
+    /// The window handles must stay valid until the surface is destroyed.
+    pub unsafe fn create_surface(&self, window: WindowHandles) -> Result<vk::SurfaceKHR> {
+        let surface =
+            unsafe { ash_window::create_surface(&self.entry, &self.instance, window.display, window.window, None)? };
+        let presents = unsafe {
+            self.surface_loader.get_physical_device_surface_support(self.physical, self.queue_family, surface)
+        };
+        if presents != Ok(true) {
+            unsafe { self.surface_loader.destroy_surface(surface, None) };
+            bail!("{} cannot show images in this window", self.info.name);
+        }
+        Ok(surface)
+    }
+
     pub fn wait_idle(&self) {
         unsafe {
             let _ = self.device.device_wait_idle();

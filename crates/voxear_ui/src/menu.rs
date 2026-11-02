@@ -65,7 +65,8 @@ impl Ui {
     /// the menu.
     pub fn open_menu(&mut self, owner: NodeId, at: (f32, f32), items: &[MenuItem]) {
         self.close_popup();
-        let layer = self.popup_layer();
+        // On the screen the pointer is on, as a menu from a tab in a desktop window opens in it.
+        let layer = self.popup_layer_here();
         let mut style = Style::column();
         style.layout.position = Position::Absolute;
         style.layout.inset.left = LengthPercentageAuto::length(at.0);
@@ -136,7 +137,7 @@ impl Ui {
         }
         let popup = NodeId(popup);
         let [x, y, width, height] = self.rect(popup);
-        let (screen_width, screen_height) = (self.viewport.0, self.viewport.1);
+        let (screen_width, screen_height) = self.screen_size_of(popup);
         let left = x.min(screen_width - width - MARGIN).max(MARGIN);
         let top = if y + height + MARGIN <= screen_height {
             y

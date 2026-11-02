@@ -268,6 +268,14 @@ pub struct Ui {
     pub(crate) row_landings: Vec<crate::list::RowLanding>,
     pub(crate) draggables: std::collections::HashSet<taffy::NodeId>,
     pub(crate) drop_targets: std::collections::HashSet<taffy::NodeId>,
+    /// Elements shown in desktop windows of their own, the window the
+    /// pointer is in, and one whose bar was pressed to move it; see
+    /// [`desktop`](crate::desktop).
+    pub(crate) desktop: Vec<crate::desktop::Shown>,
+    pub(crate) pointer_window: Option<crate::DesktopWindow>,
+    pub(crate) window_move: Option<crate::DesktopWindow>,
+    /// Elements moved over a desktop window, each with where it came from.
+    pub(crate) visitors: Vec<(taffy::NodeId, taffy::NodeId)>,
 }
 
 impl Default for Ui {
@@ -315,6 +323,10 @@ impl Ui {
             row_landings: Vec::new(),
             draggables: Default::default(),
             drop_targets: Default::default(),
+            desktop: Vec::new(),
+            pointer_window: None,
+            window_move: None,
+            visitors: Vec::new(),
         }
         .with_theme()
     }
@@ -704,6 +716,10 @@ impl Ui {
 
     /// Removes an element and everything in it.
     pub fn remove(&mut self, node: NodeId) {
+        if !self.visitors.is_empty() {
+            self.send_visitors_home(node.0);
+        }
+        self.visitors.retain(|&(visitor, home)| visitor != node.0 && home != node.0);
         if self.open_popup.is_some_and(|(dropdown, _)| dropdown == node.0) {
             self.close_popup();
         }
@@ -720,6 +736,7 @@ impl Ui {
         self.lists.retain(|&n| n != node.0);
         self.scrollers.retain(|&n| n != node.0);
         self.fields.retain(|&n| n != node.0);
+        self.desktop.retain(|shown| shown.node != node.0);
         if self.input.focused == Some(node.0) {
             self.input.focused = None;
         }
@@ -787,7 +804,8 @@ impl Ui {
     /// Restyles what changed, lays the tree out for a screen `width` by
     /// `height` physical pixels at `scale` physical pixels per logical one,
     /// and returns what to draw. Clicks seen since the last frame are
-    /// forgotten after this.
+    /// forgotten after this. What is shown in desktop windows of its own is
+    /// left out, for [`window_frame`](Self::window_frame) to draw.
     pub fn frame(&mut self, width: u32, height: u32, scale: f32) -> UiFrame {
         if !self.restyles.is_empty() {
             self.cascade();
@@ -816,6 +834,7 @@ impl Ui {
         let scale = self.viewport.2;
         let (focused, caret_on, time) = (self.input.focused, self.caret_on(), self.input.time);
         let mut quads = Vec::new();
+        let skip: Vec<taffy::NodeId> = self.desktop.iter().map(|shown| shown.node).collect();
         voxear_core::profile_scope!("Draw");
         // An atlas that filled up starts again part way through, so the
         // glyphs drawn before then are drawn once more.
@@ -832,6 +851,7 @@ impl Ui {
                 time,
                 raised: Vec::new(),
                 lifting: false,
+                skip: skip.clone(),
             };
             draw.all(self.root);
             if !self.atlas.restarted {
@@ -865,6 +885,17 @@ impl Ui {
     }
 
     fn layout(&mut self, width: u32, height: u32, scale: f32) {
+        self.compute_layout(width, height, scale);
+        // A desktop window's element goes at the screen's top left, which only a layout says how far that is.
+        if self.place_windows() {
+            if !self.restyles.is_empty() {
+                self.cascade();
+            }
+            self.compute_layout(width, height, scale);
+        }
+    }
+
+    fn compute_layout(&mut self, width: u32, height: u32, scale: f32) {
         voxear_core::profile_scope!("Layout");
         let scale = scale.max(0.25);
         let viewport = (width as f32 / scale, height as f32 / scale, scale);

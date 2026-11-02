@@ -4,6 +4,7 @@
 
 mod color_popup;
 mod debug_texts;
+mod desktop_windows;
 mod docs_capture;
 mod docs_links;
 mod docs_pictures;
@@ -49,7 +50,7 @@ use voxear_engine::{
     debug_texts::DebugTexts,
     script_types::{self, ScriptTypes},
 };
-use voxear_render::{Camera, MeshRenderer, Renderer, ViewOptions};
+use voxear_render::{Camera, MeshRenderer, OutputId, Renderer, ViewOptions};
 use voxear_scene::{Name, Transform};
 use voxear_ui::{DragSource, NodeId, Theme, Ui};
 
@@ -291,6 +292,9 @@ pub struct Editor {
     extra_projects: Vec<projects::ExtraProject>,
     /// The game's own windows written in C#, opened from a window's menu.
     script_windows: script_windows::ScriptWindows,
+    /// The desktop windows open for panels floated out of the editor's
+    /// window; see `desktop_windows`.
+    desktop: Vec<desktop_windows::Opened>,
     /// Previews of assets, of a Mesh Renderer's own mesh and material, and
     /// the Inspector's large one; see `previews`.
     asset_previews: AssetPreviews,
@@ -519,6 +523,7 @@ impl Editor {
             extra_hierarchies: Vec::new(),
             extra_projects: Vec::new(),
             script_windows: script_windows::ScriptWindows::default(),
+            desktop: Vec::new(),
             asset_previews: AssetPreviews::default(),
             imports: importing::Imports::new(&root),
             live_assets: Vec::new(),
@@ -603,37 +608,63 @@ impl Editor {
         };
         let rendered = {
             profile_scope!("Render");
-            renderer.set_view_rect(Some(self.viewport_rect(views.first().map(|(viewport, _)| *viewport), size)));
+            // Each view into the window it is in: the main one, or a desktop window a panel floated out in.
+            let first = views.first().and_then(|&(viewport, _)| Some((viewport, self.output_of(viewport, size)?)));
+            let (output, rect) = match first {
+                Some((viewport, (output, output_size))) => (output, self.viewport_rect(Some(viewport), output_size)),
+                None => (OutputId::MAIN, self.viewport_rect(None, size)),
+            };
+            renderer.set_view_output(output);
+            renderer.set_view_rect(Some(rect));
             // Each view after the first, as the Game view beside the Scene view, through its own camera.
-            let more: Vec<([u32; 4], ViewOptions)> = views
+            let more: Vec<(OutputId, [u32; 4], ViewOptions)> = views
                 .iter()
                 .skip(1)
-                .map(|&(viewport, camera)| {
-                    (self.viewport_rect(Some(viewport), size), self.view_options(viewport, camera))
+                .filter_map(|&(viewport, camera)| {
+                    let (output, output_size) = self.output_of(viewport, size)?;
+                    Some((output, self.viewport_rect(Some(viewport), output_size), self.view_options(viewport, camera)))
                 })
                 .collect();
-            renderer.set_more_views(&more)?;
+            renderer.set_more_views_in(&more)?;
             {
                 profile_scope!("UI Upload");
                 renderer.set_ui(&frame)?;
-                // The game's own UI, over the Game view while it plays.
-                let in_game =
-                    views.iter().any(|(viewport, _)| *viewport == self.nodes.game_viewport) && self.is_playing();
-                let area =
-                    if in_game { self.viewport_rect(Some(self.nodes.game_viewport), size) } else { [0, 0, 0, 0] };
-                if in_game {
-                    // Scripts' Screen.Width and Height are the Game view's.
-                    (self.game.display.width, self.game.display.height) = (area[2], area[3]);
-                }
-                match in_game {
-                    true => self.game.ui.draw(renderer, delta, area, scale)?,
-                    false => renderer.set_game_ui(&voxear_ui::UiFrame::default(), [0, 0])?,
-                }
+                self.draw_desktop_windows(renderer)?;
+                self.draw_game_ui(renderer, &views, size, delta)?;
             }
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)
         };
         self.profiler.record(profiling::end_frame(), delta * 1000.0, renderer);
         rendered
+    }
+
+    /// The game's own UI, over the Game view while it plays, in whichever
+    /// window the Game view is in, and none in the others.
+    fn draw_game_ui(
+        &mut self,
+        renderer: &mut Renderer,
+        views: &[(NodeId, Entity)],
+        size: (u32, u32),
+        delta: f32,
+    ) -> Result<()> {
+        let game = self.nodes.game_viewport;
+        let in_game = views.iter().any(|(viewport, _)| *viewport == game) && self.is_playing();
+        let shown = self.output_of(game, size).filter(|_| in_game);
+        let empty = voxear_ui::UiFrame::default();
+        for output in std::iter::once(OutputId::MAIN).chain(self.desktop_outputs()) {
+            if shown.is_none_or(|(there, _)| there != output) {
+                renderer.set_output_game_ui(output, &empty, [0, 0])?;
+            }
+        }
+        let Some((output, output_size)) = shown else { return Ok(()) };
+        let area = self.viewport_rect(Some(game), output_size);
+        // Scripts' Screen.Width and Height are the Game view's.
+        (self.game.display.width, self.game.display.height) = (area[2], area[3]);
+        let frame = match self.game.ui.is_empty() {
+            true => empty,
+            false => self.game.ui.frame(delta, (area[2], area[3]), self.scale),
+        };
+        renderer.set_output_game_ui(output, &frame, [area[0], area[1]])
     }
 
     /// The panels' frame, each a profiling sample of its own. Returns the
@@ -1930,6 +1961,11 @@ impl Editor {
     fn game_ui_takes(&mut self, event: &winit::event::WindowEvent) -> bool {
         use winit::event::WindowEvent;
         if !self.is_playing() || !self.shown(self.nodes.game_viewport) || self.game.ui.is_empty() {
+            return false;
+        }
+        // The pointer is where the Game view is only in the window it is in.
+        let pointing = matches!(event, WindowEvent::CursorMoved { .. } | WindowEvent::MouseInput { .. });
+        if pointing && self.ui.window_of(self.nodes.game_viewport) != self.ui.pointer_window() {
             return false;
         }
         let [x, y, w, h] = self.ui.rect(self.nodes.game_viewport).map(|v| v * self.scale);

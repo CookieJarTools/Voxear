@@ -155,8 +155,10 @@ impl Editor {
     /// Under the swatch, kept inside the window: above it when there is no
     /// room below.
     fn place_color(&mut self, swatch: NodeId) {
+        // Over the window the swatch is in, a desktop window of a panel floated out too.
+        self.ui.show_over_window(self.color_popup.panel, self.ui.window_of(swatch));
         let [x, y, _, height] = self.ui.rect(swatch);
-        let [_, _, window_width, window_height] = self.ui.rect(self.ui.root());
+        let (window_width, window_height) = self.ui.screen_size(swatch);
         let [_, _, width, own_height] = self.ui.rect(self.color_popup.panel);
         let left = x.min(window_width - width - MARGIN).max(MARGIN);
         let below = y + height + 4.0;

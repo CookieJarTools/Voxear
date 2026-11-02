@@ -39,8 +39,8 @@ use anyhow::{Result, ensure};
 use voxear_core::{profile_marker, profile_scope};
 use voxear_ecs::{Entity, World};
 use voxear_rhi::{
-    Bindless, Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, GpuInfo, Image, ImageDesc, MemoryLocation, RenderDoc, Retired,
-    Swapchain, WindowHandles, full_mip_count, vk,
+    Acquire, Acquired, Bindless, Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, GpuInfo, Image, ImageDesc, MemoryLocation,
+    RenderDoc, Retired, Swapchain, WindowHandles, full_mip_count, vk,
 };
 
 pub use assets::AssetUsage;
@@ -146,10 +146,62 @@ fn attach_renderdoc(settings: &RendererSettings) -> Option<RenderDoc> {
     Some(renderdoc)
 }
 
-enum Output {
+/// Something the renderer draws into: the window or image it was made with
+/// ([`OutputId::MAIN`]), or one added since, as the window of a panel the
+/// editor floats on the desktop. Views and UIs name the one they draw into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OutputId(u32);
+
+impl OutputId {
+    /// The window or image the renderer was made with.
+    pub const MAIN: Self = Self(0);
+}
+
+enum Target {
     Window(Swapchain),
-    // Destroyed explicitly in `Drop`, which needs the GPU.
+    // Destroyed explicitly, which needs the GPU.
     Offscreen { image: ManuallyDrop<Image>, last: ImageAccess },
+}
+
+/// A window or image drawn into each frame, with the UI drawn over it.
+struct Output {
+    id: OutputId,
+    target: Target,
+    /// A window's new size, its swapchain made again at it before the next frame.
+    pending_size: Option<(u32, u32)>,
+    ui: ui_pass::UiGpu,
+    /// For a window after the first, signalled when its image may be drawn
+    /// into, one for each frame in flight. The first uses the frame's own.
+    ready: Vec<vk::Semaphore>,
+}
+
+impl Output {
+    fn extent(&self) -> vk::Extent2D {
+        match &self.target {
+            Target::Window(swapchain) => swapchain.extent,
+            Target::Offscreen { image, .. } => image.desc.extent(),
+        }
+    }
+
+    /// The caller makes sure the GPU is idle.
+    fn destroy(&mut self, gpu: &Gpu, bindless: &mut Bindless) {
+        self.ui.destroy(gpu, bindless);
+        for semaphore in self.ready.drain(..) {
+            unsafe { gpu.device.destroy_semaphore(semaphore, None) };
+        }
+        match &mut self.target {
+            Target::Window(swapchain) => swapchain.destroy(gpu),
+            Target::Offscreen { image, .. } => gpu.destroy_image(unsafe { ManuallyDrop::take(image) }),
+        }
+    }
+}
+
+/// The UI's quads for one frame in flight, every output's together, and
+/// pointers that name them for the UI's shader, so the UI draws whether or
+/// not any view did.
+struct UiBuffers {
+    quads: Buffer,
+    pointers: Buffer,
 }
 
 struct FrameBuffers {
@@ -162,7 +214,6 @@ struct FrameBuffers {
     stats: Buffer,
     clusters: Buffer,
     pointers: Buffer,
-    ui: Buffer,
     debug_lines: Buffer,
 }
 
@@ -170,7 +221,9 @@ pub struct Renderer {
     renderdoc: Option<RenderDoc>,
     show_capture: bool,
     gpu: Gpu,
-    output: Output,
+    /// What it draws into, the one it was made with first.
+    outputs: Vec<Output>,
+    next_output: u32,
     frames: Frames,
     bindless: Bindless,
     graph: RenderGraph,
@@ -184,8 +237,7 @@ pub struct Renderer {
     frame_index: u64,
     last_time: Option<f32>,
     stats: RenderStats,
-    pending_size: Option<(u32, u32)>,
-    ui: ui_pass::UiGpu,
+    ui_buffers: Vec<UiBuffers>,
     previews: previews::Previews,
     gpu_decompression: bool,
     /// What the output is cleared to outside the view, linear.
@@ -204,7 +256,7 @@ impl Renderer {
         let (gpu, surface) = unsafe { Gpu::new(window)? };
         let vsync = std::env::var("VOXEAR_VSYNC").map(|v| v != "0").unwrap_or(true);
         let swapchain = Swapchain::new(&gpu, surface, width, height, vsync)?;
-        Self::build(gpu, Output::Window(swapchain), renderdoc, settings.hot_reload)
+        Self::build(gpu, Target::Window(swapchain), renderdoc, settings.hot_reload)
     }
 
     /// Renders into an image with no window, for screenshots, tests and tools.
@@ -213,26 +265,30 @@ impl Renderer {
         let gpu = Gpu::new_headless()?;
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC;
         let image = gpu.create_image("output", ImageDesc::new(width, height, OFFSCREEN_FORMAT, usage))?;
-        let output = Output::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined };
+        let output = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined };
         Self::build(gpu, output, renderdoc, settings.hot_reload)
     }
 
-    fn build(gpu: Gpu, output: Output, renderdoc: Option<RenderDoc>, hot_reload: bool) -> Result<Self> {
+    fn build(gpu: Gpu, target: Target, renderdoc: Option<RenderDoc>, hot_reload: bool) -> Result<Self> {
         let frames = Frames::new(&gpu)?;
         let mut bindless = Bindless::new(&gpu)?;
         let graph = RenderGraph::new(&gpu, FRAMES_IN_FLIGHT)?;
         let assets = Assets::new(&gpu, &mut bindless)?;
-        let output_format = match &output {
-            Output::Window(swapchain) => swapchain.format.format,
-            Output::Offscreen { image, .. } => image.desc.format,
+        let output_format = match &target {
+            Target::Window(swapchain) => swapchain.format.format,
+            Target::Offscreen { image, .. } => image.desc.format,
         };
         let pipelines = Pipelines::new(&gpu, &bindless, output_format, &ShaderSet::embedded())?;
         let first = View::new(&gpu, 0)?;
+        let ui_buffers = (0..FRAMES_IN_FLIGHT).map(|slot| create_ui_buffers(&gpu, slot)).collect::<Result<_>>()?;
+        let main =
+            Output { id: OutputId::MAIN, target, pending_size: None, ui: ui_pass::UiGpu::default(), ready: Vec::new() };
         Ok(Self {
             renderdoc,
             show_capture: false,
             gpu,
-            output,
+            outputs: vec![main],
+            next_output: 1,
             frames,
             bindless,
             graph,
@@ -244,8 +300,7 @@ impl Renderer {
             frame_index: 0,
             last_time: None,
             stats: RenderStats::default(),
-            pending_size: None,
-            ui: ui_pass::UiGpu::default(),
+            ui_buffers,
             previews: previews::Previews::default(),
             gpu_decompression: true,
             clear: [0.0, 0.0, 0.0, 1.0],
@@ -278,6 +333,14 @@ impl Renderer {
     /// editor's Game view beside its Scene view. Each keeps its own culling,
     /// exposure and history from frame to frame, by its place in the list.
     pub fn set_more_views(&mut self, views: &[([u32; 4], ViewOptions)]) -> Result<()> {
+        let views: Vec<_> = views.iter().map(|&(rect, options)| (OutputId::MAIN, rect, options)).collect();
+        self.set_more_views_in(&views)
+    }
+
+    /// The views after the first as [`set_more_views`](Self::set_more_views)
+    /// sets them, each drawn into an output of its own choosing: a Scene
+    /// view in a window the editor floats on the desktop goes there.
+    pub fn set_more_views_in(&mut self, views: &[(OutputId, [u32; 4], ViewOptions)]) -> Result<()> {
         while self.views.len() > views.len() + 1 {
             let view = self.views.pop().expect("more than one");
             view.retire(&mut self.frames);
@@ -285,8 +348,100 @@ impl Renderer {
         while self.views.len() < views.len() + 1 {
             self.views.push(View::new(&self.gpu, self.views.len())?);
         }
-        for (view, (rect, options)) in self.views[1..].iter_mut().zip(views) {
-            (view.rect, view.options) = (Some(*rect), *options);
+        for (view, (output, rect, options)) in self.views[1..].iter_mut().zip(views) {
+            (view.output, view.rect, view.options) = (*output, Some(*rect), *options);
+        }
+        Ok(())
+    }
+
+    /// The output the first 3D view draws into, the main one until set.
+    pub fn set_view_output(&mut self, output: OutputId) {
+        self.views[0].output = output;
+    }
+
+    /// Adds a window to draw into as well, as a panel the editor floats on
+    /// the desktop has. Its UI is set with [`set_output_ui`](Self::set_output_ui),
+    /// and views go there with [`set_more_views_in`](Self::set_more_views_in).
+    /// It never waits for the display: a frame its window is not ready for
+    /// leaves it as it was, so one the desktop is not showing never holds up
+    /// the others.
+    ///
+    /// # Safety
+    /// The window must outlive its output: remove it with
+    /// [`remove_output`](Self::remove_output) before the window closes.
+    pub unsafe fn add_window_output(&mut self, window: WindowHandles, width: u32, height: u32) -> Result<OutputId> {
+        let surface = unsafe { self.gpu.create_surface(window)? };
+        let swapchain = match Swapchain::new_matching(&self.gpu, surface, (width, height), false, self.output_format) {
+            Ok(swapchain) => swapchain,
+            Err(error) => {
+                unsafe { self.gpu.surface_loader.destroy_surface(surface, None) };
+                return Err(error);
+            }
+        };
+        let mut ready = Vec::with_capacity(FRAMES_IN_FLIGHT);
+        for _ in 0..FRAMES_IN_FLIGHT {
+            ready.push(unsafe { self.gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)? });
+        }
+        Ok(self.push_output(Target::Window(swapchain), ready))
+    }
+
+    /// Adds an image to draw into as well, as [`add_window_output`](Self::add_window_output)
+    /// adds a window: for tests and tools, read back with
+    /// [`read_output_pixels`](Self::read_output_pixels).
+    pub fn add_offscreen_output(&mut self, width: u32, height: u32) -> Result<OutputId> {
+        let image = self.create_output_image(width, height)?;
+        let target = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined };
+        Ok(self.push_output(target, Vec::new()))
+    }
+
+    fn create_output_image(&self, width: u32, height: u32) -> Result<Image> {
+        let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC;
+        self.gpu.create_image("output", ImageDesc::new(width.max(1), height.max(1), self.output_format, usage))
+    }
+
+    fn push_output(&mut self, target: Target, ready: Vec<vk::Semaphore>) -> OutputId {
+        let id = OutputId(self.next_output);
+        self.next_output += 1;
+        self.outputs.push(Output { id, target, pending_size: None, ui: ui_pass::UiGpu::default(), ready });
+        id
+    }
+
+    /// Stops drawing into an output added since the renderer was made, and
+    /// lets its window go. Views that drew there draw nowhere until moved.
+    pub fn remove_output(&mut self, id: OutputId) {
+        let Some(index) = self.outputs.iter().position(|o| o.id == id).filter(|_| id != OutputId::MAIN) else { return };
+        self.gpu.wait_idle();
+        let mut output = self.outputs.remove(index);
+        output.destroy(&self.gpu, &mut self.bindless);
+    }
+
+    /// The outputs drawn into, the main one first.
+    pub fn outputs(&self) -> Vec<OutputId> {
+        self.outputs.iter().map(|o| o.id).collect()
+    }
+
+    /// An output's size in pixels.
+    pub fn output_size(&self, id: OutputId) -> Option<(u32, u32)> {
+        let extent = self.outputs.iter().find(|o| o.id == id)?.extent();
+        Some((extent.width, extent.height))
+    }
+
+    /// Gives an output a new size, as its window was resized: a window's
+    /// from the next frame, an image's at once.
+    pub fn resize_output(&mut self, id: OutputId, width: u32, height: u32) -> Result<()> {
+        let Some(index) = self.outputs.iter().position(|o| o.id == id) else { return Ok(()) };
+        if let Target::Window(_) = self.outputs[index].target {
+            self.outputs[index].pending_size = Some((width, height));
+            return Ok(());
+        }
+        if self.outputs[index].extent() == (vk::Extent2D { width, height }) {
+            return Ok(());
+        }
+        let image = self.create_output_image(width, height)?;
+        self.gpu.wait_idle();
+        if let Target::Offscreen { image: old, last } = &mut self.outputs[index].target {
+            self.gpu.destroy_image(unsafe { ManuallyDrop::take(old) });
+            (*old, *last) = (ManuallyDrop::new(image), ImageAccess::Undefined);
         }
         Ok(())
     }
@@ -328,7 +483,7 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.pending_size = Some((width, height));
+        self.outputs[0].pending_size = Some((width, height));
     }
 
     pub fn primitive(&mut self, primitive: Primitive) -> Result<MeshHandle> {
@@ -491,13 +646,6 @@ impl Renderer {
         self.clear = color;
     }
 
-    fn extent(&self) -> vk::Extent2D {
-        match &self.output {
-            Output::Window(swapchain) => swapchain.extent,
-            Output::Offscreen { image, .. } => image.desc.extent(),
-        }
-    }
-
     /// Swaps in recompiled shaders when the watcher saw a change.
     fn reload_shaders(&mut self) {
         let started = std::time::Instant::now();
@@ -516,14 +664,18 @@ impl Renderer {
         }
     }
 
-    /// Draws the world's cameras, lights and mesh renderers.
+    /// Draws the world's cameras, lights and mesh renderers, into each output.
     pub fn render(&mut self, world: &World, time: f32) -> Result<()> {
         self.reload_shaders();
-        if let (Some((width, height)), Output::Window(swapchain)) = (self.pending_size.take(), &mut self.output) {
-            swapchain.recreate(&self.gpu, width, height)?;
+        for output in &mut self.outputs {
+            if let (Some((width, height)), Target::Window(swapchain)) = (output.pending_size.take(), &mut output.target)
+            {
+                swapchain.recreate(&self.gpu, width, height)?;
+            }
         }
-        let full = self.extent();
-        if full.width == 0 || full.height == 0 {
+        // A window shrunk to nothing, as when minimised, is left out, the first too.
+        let mut drawn: Vec<bool> = self.outputs.iter().map(|o| o.extent().width > 0 && o.extent().height > 0).collect();
+        if !drawn.contains(&true) {
             return Ok(());
         }
 
@@ -540,19 +692,14 @@ impl Renderer {
         let counters = bytemuck::cast_slice(&first.buffers[frame.slot].stats.read()[..stat::COUNT * 4]);
         let exposure = bytemuck::cast_slice(first.exposure.read());
         self.stats = RenderStats::read(counters, exposure);
-        // Acquiring the next image waits for the display, as vsync paces the frames.
-        let acquiring = profile_marker!("Wait for Display").scope();
-        let acquired = match &self.output {
-            Output::Window(swapchain) => match self.frames.acquire(&self.gpu, swapchain)? {
-                Some(acquired) => Some(acquired),
-                None => {
-                    self.pending_size = Some((full.width, full.height));
-                    return Ok(());
-                }
-            },
-            Output::Offscreen { .. } => None,
+        let acquired = {
+            profile_scope!("Acquire Image");
+            let acquired = self.acquire_images(&mut drawn)?;
+            if !drawn.contains(&true) {
+                return Ok(());
+            }
+            acquired
         };
-        drop(acquiring);
 
         let delta_time = self.last_time.map_or(0.0, |last| (time - last).clamp(0.0, 0.25));
         self.last_time = Some(time);
@@ -560,65 +707,128 @@ impl Renderer {
         self.frame_index += 1;
 
         let recording = profile_marker!("Record Passes").scope();
-        let (output_image, output_view, output_desc, output_last) = match &self.output {
-            Output::Window(swapchain) => {
-                let acquired = acquired.as_ref().expect("acquired above");
-                let desc = ImageDesc::new(full.width, full.height, swapchain.format.format, swapchain.usage);
-                (acquired.image, acquired.view, desc, ImageAccess::Undefined)
-            }
-            Output::Offscreen { image, last } => (image.handle, image.view, image.desc, *last),
-        };
-
         let Self {
-            gpu, graph, bindless, pipelines, views, assets, ui, previews, frame_debugger, captures, clear, ..
+            gpu,
+            graph,
+            bindless,
+            pipelines,
+            views,
+            assets,
+            outputs,
+            ui_buffers,
+            previews,
+            frame_debugger,
+            captures,
+            clear,
+            ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
         let timings = if frame_debugger.on { graph.timings().to_vec() } else { Vec::new() };
         let mut fg = graph.begin(gpu, frame.slot);
-        let output = fg.import_image("output", (output_image, output_view), output_desc, output_last);
-        // The UI's quads are the first view's buffer's, whichever view's pointers name them.
-        let ui_quads = views[0].buffers[frame.slot].ui.address;
-        let (mut backdrop, mut push) = (None, Push::default());
+        // Each output drawn this frame, as the graph knows it.
+        let images: Vec<Option<(ImageId, ImageDesc)>> = outputs
+            .iter()
+            .zip(&acquired)
+            .zip(&drawn)
+            .map(|((output, acquired), &drawn)| {
+                let full = output.extent();
+                let (image, view, desc, last) = match (&output.target, acquired) {
+                    _ if !drawn => return None,
+                    (Target::Window(swapchain), Some(acquired)) => {
+                        let desc = ImageDesc::new(full.width, full.height, swapchain.format.format, swapchain.usage);
+                        (acquired.image, acquired.view, desc, ImageAccess::Undefined)
+                    }
+                    (Target::Offscreen { image, last }, _) => (image.handle, image.view, image.desc, *last),
+                    (Target::Window(_), None) => return None,
+                };
+                let name =
+                    if output.id == OutputId::MAIN { "output".to_string() } else { format!("output {}", output.id.0) };
+                Some((fg.import_image(&name, (image, view), desc, last), desc))
+            })
+            .collect();
+        let ui = &ui_buffers[frame.slot];
+        let ui_push = Push { buffers: ui.pointers.address, ..Push::default() };
+        // The first view drawn into each output clears around itself, and keeps the view for its UI's backdrop.
+        let mut backdrops = vec![None; outputs.len()];
+        let mut cleared = vec![false; outputs.len()];
+        let mut push = None;
         for (index, view) in views.iter_mut().enumerate() {
+            let Some(at) = outputs.iter().position(|o| o.id == view.output) else { continue };
+            let Some((output, desc)) = images[at] else { continue };
             // A view after the first keeps images of its own, by name.
             fg.set_prefix(&if index == 0 { String::new() } else { format!("view {index} ") });
-            let first = index == 0;
-            // The UI's backdrop blur is behind the first view's overlays.
-            let keep_ldr = first && ui.wants_backdrop();
+            let first = !std::mem::replace(&mut cleared[at], true);
+            let keep_ldr = first && outputs[at].ui.wants_backdrop();
+            let full = desc.extent();
+            let ui_quads = ui.quads.address;
             let setup = ViewSetup { time, delta_time, frame_index, full, ui_quads, clear: *clear, first, keep_ldr };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
             if first {
-                (backdrop, push) = (recorded.backdrop, recorded.push);
+                backdrops[at] = recorded.backdrop;
+            }
+            if index == 0 {
+                push = Some(recorded.push);
             }
         }
         fg.set_prefix("");
+        // An output no view drew into is cleared for its UI.
+        for (&image, cleared) in images.iter().zip(&cleared) {
+            if let (Some((output, _)), false) = (image, cleared) {
+                let color = *clear;
+                fg.add_pass("Clear output", &[(output, ImageAccess::ColorAttachment)], &[], move |ctx| {
+                    post_passes::clear(ctx, output, color)
+                });
+            }
+        }
         let preview_atlas = previews.record(&mut fg, (gpu, bindless), (pipelines, assets), frame.slot)?;
         let debugger_view = frame_debugger.view_image(&mut fg, gpu, bindless)?;
         let sampled: Vec<_> = preview_atlas.into_iter().chain(debugger_view).collect();
-        captures.record(&mut fg, gpu, (output, output_desc), true, frame.slot)?;
-        ui.record(&mut fg, (pipelines.ui, push), &views[0].buffers[frame.slot].ui, (output, full), &sampled, backdrop);
-        captures.record(&mut fg, gpu, (output, output_desc), false, frame.slot)?;
-        if acquired.is_some() {
-            fg.transition(output, ImageAccess::Present);
+        let main = images[0];
+        if let Some((output, desc)) = main {
+            captures.record(&mut fg, gpu, (output, desc), true, frame.slot)?;
         }
+        let mut first_quad = 0;
+        for ((output, image), backdrop) in outputs.iter().zip(&images).zip(backdrops) {
+            let Some((image, desc)) = *image else { continue };
+            let target = (image, desc.extent());
+            first_quad +=
+                output.ui.record(&mut fg, (pipelines.ui, ui_push), &ui.quads, first_quad, target, &sampled, backdrop);
+        }
+        if let Some((output, desc)) = main {
+            captures.record(&mut fg, gpu, (output, desc), false, frame.slot)?;
+        }
+        for (image, acquired) in images.iter().zip(&acquired) {
+            if let (Some((output, _)), Some(_)) = (image, acquired) {
+                fg.transition(*output, ImageAccess::Present);
+            }
+        }
+        let push = push.unwrap_or(ui_push);
         frame_debugger.record(&mut fg, (gpu, bindless), (pipelines.frame_debug, push), debugger_view, &timings)?;
         fg.execute(gpu, frame.cmd, bindless);
         drop(recording);
 
         profile_scope!("Submit");
-        let needs_resize = match (&mut self.output, acquired) {
-            (Output::Window(swapchain), Some(acquired)) => {
-                self.frames.submit(&self.gpu, frame, Some((swapchain, acquired)))?
+        let mut presents = Vec::new();
+        let mut presented = Vec::new();
+        for ((index, output), acquired) in self.outputs.iter().enumerate().zip(acquired) {
+            if let (Target::Window(swapchain), Some(acquired)) = (&output.target, acquired) {
+                presents.push((swapchain, acquired));
+                presented.push(index);
             }
-            (Output::Offscreen { last, .. }, _) => {
+        }
+        let recreate = self.frames.submit_presenting(&self.gpu, frame, presents)?;
+        for (index, recreate) in presented.into_iter().zip(recreate) {
+            let output = &mut self.outputs[index];
+            if recreate {
+                let full = output.extent();
+                output.pending_size = Some((full.width, full.height));
+            }
+        }
+        for (output, drawn) in self.outputs.iter_mut().zip(drawn) {
+            if let (Target::Offscreen { last, .. }, true) = (&mut output.target, drawn) {
                 *last = ImageAccess::ColorAttachment;
-                self.frames.submit(&self.gpu, frame, None)?
             }
-            (Output::Window(_), None) => unreachable!("windows always acquire"),
-        };
-        if needs_resize {
-            self.pending_size = Some((full.width, full.height));
         }
         if self.show_capture
             && let Some(renderdoc) = self.renderdoc.as_ref().filter(|r| !r.is_capturing())
@@ -627,6 +837,41 @@ impl Renderer {
             self.show_capture = false;
         }
         Ok(())
+    }
+
+    /// Acquires an image of each window's swapchain to draw into, leaving
+    /// out a window that has none ready (`drawn` becomes false for it). The
+    /// first window waits for its image; the others do not.
+    fn acquire_images(&mut self, drawn: &mut [bool]) -> Result<Vec<Option<Acquired>>> {
+        let mut acquired = Vec::with_capacity(self.outputs.len());
+        for (output, drawn) in self.outputs.iter_mut().zip(drawn.iter_mut()) {
+            let Target::Window(swapchain) = &output.target else {
+                acquired.push(None);
+                continue;
+            };
+            let result = match output.id {
+                _ if !*drawn => Acquire::NotReady,
+                OutputId::MAIN => match self.frames.acquire(&self.gpu, swapchain)? {
+                    Some(image) => Acquire::Ready(image),
+                    None => Acquire::OutOfDate,
+                },
+                _ => self.frames.try_acquire(&self.gpu, swapchain, output.ready[self.frames.slot()])?,
+            };
+            acquired.push(match result {
+                Acquire::Ready(image) => Some(image),
+                Acquire::OutOfDate => {
+                    let full = output.extent();
+                    output.pending_size = Some((full.width, full.height));
+                    *drawn = false;
+                    None
+                }
+                Acquire::NotReady => {
+                    *drawn = false;
+                    None
+                }
+            });
+        }
+        Ok(acquired)
     }
 
     /// Asks for a picture of a coming frame: see [`Capture`]. It is ready
@@ -669,7 +914,7 @@ impl Renderer {
     /// What the UI draws over every frame from now on, until replaced. An
     /// empty frame draws nothing.
     pub fn set_ui(&mut self, frame: &voxear_ui::UiFrame) -> Result<()> {
-        self.ui.set(&self.gpu, &mut self.bindless, frame)
+        self.set_output_ui(OutputId::MAIN, frame)
     }
 
     /// The game's own UI, laid out for an area that starts at `origin` in
@@ -677,12 +922,32 @@ impl Renderer {
     /// player's whole window, or the editor's Game view. An empty frame draws
     /// nothing.
     pub fn set_game_ui(&mut self, frame: &voxear_ui::UiFrame, origin: [u32; 2]) -> Result<()> {
-        self.ui.set_game(&self.gpu, &mut self.bindless, frame, origin)
+        self.set_output_game_ui(OutputId::MAIN, frame, origin)
+    }
+
+    /// What the UI draws over an output, as [`set_ui`](Self::set_ui) sets
+    /// the main one's.
+    pub fn set_output_ui(&mut self, id: OutputId, frame: &voxear_ui::UiFrame) -> Result<()> {
+        let Some(output) = self.outputs.iter_mut().find(|o| o.id == id) else { return Ok(()) };
+        output.ui.set(&self.gpu, &mut self.bindless, frame)
+    }
+
+    /// The game's own UI over an output, as [`set_game_ui`](Self::set_game_ui)
+    /// sets the main one's: over the Game view, wherever it is.
+    pub fn set_output_game_ui(&mut self, id: OutputId, frame: &voxear_ui::UiFrame, origin: [u32; 2]) -> Result<()> {
+        let Some(output) = self.outputs.iter_mut().find(|o| o.id == id) else { return Ok(()) };
+        output.ui.set_game(&self.gpu, &mut self.bindless, frame, origin)
     }
 
     /// Reads back the last rendered offscreen frame as RGBA8 (sRGB).
     pub fn read_pixels(&mut self) -> Result<(u32, u32, Vec<u8>)> {
-        let Output::Offscreen { image, last } = &mut self.output else {
+        self.read_output_pixels(OutputId::MAIN)
+    }
+
+    /// Reads back what was last drawn into an offscreen output as RGBA8 (sRGB).
+    pub fn read_output_pixels(&mut self, id: OutputId) -> Result<(u32, u32, Vec<u8>)> {
+        let output = self.outputs.iter_mut().find(|o| o.id == id).ok_or_else(|| anyhow::anyhow!("no such output"))?;
+        let Target::Offscreen { image, last } = &mut output.target else {
             anyhow::bail!("only offscreen renderers can read pixels back");
         };
         ensure!(*last != ImageAccess::Undefined, "nothing has been rendered yet");
@@ -708,17 +973,19 @@ impl Drop for Renderer {
         for buffer in self.previews.take_buffers().into_iter().chain(self.captures.take_buffers()) {
             self.frames.retire(Retired::Buffer(buffer));
         }
+        for buffers in self.ui_buffers.drain(..) {
+            self.frames.retire(Retired::Buffer(buffers.quads));
+            self.frames.retire(Retired::Buffer(buffers.pointers));
+        }
         self.graph.destroy(gpu, &mut self.bindless);
-        self.ui.destroy(gpu, &mut self.bindless);
+        for output in &mut self.outputs {
+            output.destroy(gpu, &mut self.bindless);
+        }
         if let Some(assets) = self.assets.take() {
             assets.destroy(gpu, &mut self.bindless);
         }
         self.frames.destroy(gpu);
         self.bindless.destroy(gpu);
-        match &mut self.output {
-            Output::Window(swapchain) => swapchain.destroy(gpu),
-            Output::Offscreen { image, .. } => gpu.destroy_image(unsafe { ManuallyDrop::take(image) }),
-        }
     }
 }
 
@@ -727,7 +994,8 @@ impl Drop for Renderer {
 /// buffers for each frame in flight, which instances it saw and the LOD each
 /// had, its exposure, and last frame's motion and TAA history.
 struct View {
-    /// Where in the output it goes; all of it when `None`.
+    /// The output it draws into, and where in it; all of it when `None`.
+    output: OutputId,
     rect: Option<[u32; 4]>,
     options: ViewOptions,
     buffers: Vec<FrameBuffers>,
@@ -789,6 +1057,7 @@ impl View {
             }
         })?;
         Ok(Self {
+            output: OutputId::MAIN,
             rect: None,
             options: ViewOptions::default(),
             buffers,
@@ -815,10 +1084,9 @@ impl View {
                 stats,
                 clusters,
                 pointers,
-                ui,
                 debug_lines,
             } = buffers;
-            let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers, ui];
+            let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             for buffer in all.into_iter().chain([debug_lines]) {
                 frames.retire(Retired::Buffer(buffer));
             }
@@ -1039,6 +1307,17 @@ fn pyramid_desc(extent: vk::Extent2D) -> ImageDesc {
     }
 }
 
+/// The UI's buffers for one frame in flight: its quads, and pointers naming
+/// them, which never change.
+fn create_ui_buffers(gpu: &Gpu, slot: usize) -> Result<UiBuffers> {
+    let (storage, host) = (vk::BufferUsageFlags::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
+    let size = ui_pass::MAX_UI_QUADS * size_of::<voxear_ui::Quad>() as u64;
+    let quads = gpu.create_buffer(&format!("ui quads {slot}"), size, storage, host)?;
+    let pointers = gpu.create_buffer(&format!("ui pointers {slot}"), size_of::<GpuBuffers>() as u64, storage, host)?;
+    pointers.write(0, &[GpuBuffers { ui_quads: quads.address, ..bytemuck::Zeroable::zeroed() }]);
+    Ok(UiBuffers { quads, pointers })
+}
+
 /// A view's buffers for one frame in flight, their names after `prefix`.
 fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuffers> {
     let host = MemoryLocation::CpuToGpu;
@@ -1092,12 +1371,6 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         pointers: gpu.create_buffer(
             &format!("{prefix}pointers {slot}"),
             size_of::<GpuBuffers>() as u64,
-            storage,
-            host,
-        )?,
-        ui: gpu.create_buffer(
-            &format!("{prefix}ui quads {slot}"),
-            ui_pass::MAX_UI_QUADS * size_of::<voxear_ui::Quad>() as u64,
             storage,
             host,
         )?,

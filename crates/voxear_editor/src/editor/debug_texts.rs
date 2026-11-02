@@ -19,6 +19,9 @@ impl Editor {
         let camera = view
             .and_then(|(viewport, camera)| ViewCamera::new(&self.game.engine.world, camera, self.ui.rect(viewport)));
         let rect = camera.as_ref().map_or([0.0; 4], |camera| camera.rect);
+        // Over the window the view is in, a desktop window of a panel floated out too.
+        let window = view.and_then(|(viewport, _)| self.ui.window_of(viewport));
+        self.ui.show_over_window(self.nodes.debug_texts, window);
         let project = camera.as_ref().map(|camera| move |point| camera.project(point));
         let project = project.as_ref().map(|p| p as &dyn Fn(_) -> Option<[f32; 2]>);
         self.debug_texts.update(&mut self.ui, project, rect);

@@ -26,6 +26,18 @@ pub struct Acquired {
     pub image: vk::Image,
     pub view: vk::ImageView,
     suboptimal: bool,
+    /// Signalled once the image may be drawn into.
+    ready: vk::Semaphore,
+}
+
+/// What asking another window's swapchain for an image gave.
+pub enum Acquire {
+    Ready(Acquired),
+    /// The swapchain must be recreated first.
+    OutOfDate,
+    /// No image is free yet, as for a window the desktop is not showing;
+    /// that window waits for a later frame.
+    NotReady,
 }
 
 /// Paces the CPU at most [`FRAMES_IN_FLIGHT`] frames ahead of the GPU, and
@@ -77,20 +89,24 @@ impl Frames {
     /// Acquires the next swapchain image. `None` means the swapchain is out
     /// of date and must be recreated; the recorded frame is then dropped.
     pub fn acquire(&mut self, gpu: &Gpu, swapchain: &Swapchain) -> Result<Option<Acquired>> {
-        let slot = &self.slots[self.current];
-        let acquired = unsafe {
-            gpu.swapchain_loader.acquire_next_image(swapchain.handle, u64::MAX, slot.image_available, vk::Fence::null())
-        };
-        match acquired {
-            Ok((index, suboptimal)) => Ok(Some(Acquired {
-                index,
-                image: swapchain.images[index as usize],
-                view: swapchain.views[index as usize],
-                suboptimal,
-            })),
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(None),
-            Err(error) => Err(error.into()),
+        let ready = self.slots[self.current].image_available;
+        match acquire(gpu, swapchain, ready, u64::MAX)? {
+            Acquire::Ready(acquired) => Ok(Some(acquired)),
+            Acquire::OutOfDate | Acquire::NotReady => Ok(None),
         }
+    }
+
+    /// Acquires the next image of another window's swapchain, signalling
+    /// `ready`, which the window keeps one of for each frame in flight
+    /// ([`slot`](Frame::slot)). It does not wait for an image, so a window
+    /// the desktop is not showing never holds up the others.
+    pub fn try_acquire(&mut self, gpu: &Gpu, swapchain: &Swapchain, ready: vk::Semaphore) -> Result<Acquire> {
+        acquire(gpu, swapchain, ready, 0)
+    }
+
+    /// The frame being recorded's slot, for semaphores kept per frame in flight.
+    pub fn slot(&self) -> usize {
+        self.current
     }
 
     /// Defers destroying a resource until this slot comes round again.
@@ -101,43 +117,56 @@ impl Frames {
     /// Submits the frame, and presents when it rendered to a swapchain image.
     /// Returns `true` when the swapchain should be recreated.
     pub fn submit(&mut self, gpu: &Gpu, frame: Frame, present: Option<(&Swapchain, Acquired)>) -> Result<bool> {
+        let recreate = self.submit_presenting(gpu, frame, present.into_iter().collect())?;
+        Ok(recreate.first().copied().unwrap_or(false))
+    }
+
+    /// Submits the frame and presents each swapchain image it rendered to,
+    /// one for each window. Returns, for each, whether its swapchain should
+    /// be recreated.
+    pub fn submit_presenting(
+        &mut self,
+        gpu: &Gpu,
+        frame: Frame,
+        presents: Vec<(&Swapchain, Acquired)>,
+    ) -> Result<Vec<bool>> {
         let slot = &self.slots[frame.slot];
         self.current = (self.current + 1) % self.slots.len();
+        let stage = vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT;
+        let waits: Vec<_> = presents
+            .iter()
+            .map(|(_, acquired)| vk::SemaphoreSubmitInfo::default().semaphore(acquired.ready).stage_mask(stage))
+            .collect();
+        let present_ready: Vec<_> =
+            presents.iter().map(|(swapchain, acquired)| swapchain.present_ready[acquired.index as usize]).collect();
+        let signals: Vec<_> = present_ready
+            .iter()
+            .map(|&ready| vk::SemaphoreSubmitInfo::default().semaphore(ready).stage_mask(stage))
+            .collect();
         unsafe {
             gpu.device.end_command_buffer(frame.cmd)?;
             // Reset only now that a submit is certain, or the next wait would never finish.
             gpu.device.reset_fences(&[slot.done])?;
             let commands = [vk::CommandBufferSubmitInfo::default().command_buffer(frame.cmd)];
-            let Some((swapchain, acquired)) = present else {
-                let submit = vk::SubmitInfo2::default().command_buffer_infos(&commands);
-                gpu.device.queue_submit2(gpu.queue, &[submit], slot.done)?;
-                return Ok(false);
-            };
-
-            let present_ready = swapchain.present_ready[acquired.index as usize];
-            let waits = [vk::SemaphoreSubmitInfo::default()
-                .semaphore(slot.image_available)
-                .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
-            let signals = [vk::SemaphoreSubmitInfo::default()
-                .semaphore(present_ready)
-                .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
             let submit = vk::SubmitInfo2::default()
                 .wait_semaphore_infos(&waits)
                 .command_buffer_infos(&commands)
                 .signal_semaphore_infos(&signals);
             gpu.device.queue_submit2(gpu.queue, &[submit], slot.done)?;
-
-            let wait = [present_ready];
-            let swapchains = [swapchain.handle];
-            let indices = [acquired.index];
+        }
+        // Each on its own, so one window's swapchain going out of date leaves the others presented.
+        let mut recreate = Vec::with_capacity(presents.len());
+        for ((swapchain, acquired), ready) in presents.iter().zip(present_ready) {
+            let (wait, swapchains, indices) = ([ready], [swapchain.handle], [acquired.index]);
             let info =
                 vk::PresentInfoKHR::default().wait_semaphores(&wait).swapchains(&swapchains).image_indices(&indices);
-            match gpu.swapchain_loader.queue_present(gpu.queue, &info) {
-                Ok(suboptimal) => Ok(suboptimal || acquired.suboptimal),
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(true),
-                Err(error) => Err(error.into()),
-            }
+            recreate.push(match unsafe { gpu.swapchain_loader.queue_present(gpu.queue, &info) } {
+                Ok(suboptimal) => suboptimal || acquired.suboptimal,
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => true,
+                Err(error) => return Err(error.into()),
+            });
         }
+        Ok(recreate)
     }
 
     pub fn destroy(&mut self, gpu: &Gpu) {
@@ -152,5 +181,22 @@ impl Frames {
                 gpu.device.destroy_command_pool(slot.pool, None);
             }
         }
+    }
+}
+
+fn acquire(gpu: &Gpu, swapchain: &Swapchain, ready: vk::Semaphore, timeout: u64) -> Result<Acquire> {
+    let acquired =
+        unsafe { gpu.swapchain_loader.acquire_next_image(swapchain.handle, timeout, ready, vk::Fence::null()) };
+    match acquired {
+        Ok((index, suboptimal)) => Ok(Acquire::Ready(Acquired {
+            index,
+            image: swapchain.images[index as usize],
+            view: swapchain.views[index as usize],
+            suboptimal,
+            ready,
+        })),
+        Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(Acquire::OutOfDate),
+        Err(vk::Result::NOT_READY | vk::Result::TIMEOUT) => Ok(Acquire::NotReady),
+        Err(error) => Err(error.into()),
     }
 }

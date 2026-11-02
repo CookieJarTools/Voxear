@@ -289,7 +289,9 @@ fn panels_float_in_windows_that_move_resize_and_dock_again() {
 
     // A tab let go outside every area floats there.
     let hierarchy = centre(&ui, tab(&ui, dock, "Hierarchy"));
-    drag(&mut ui, hierarchy, (hierarchy.0, HEIGHT as f32 + 80.0));
+    let scene_area = ui.parent(ui.parent(tab(&ui, dock, "Scene")).unwrap()).unwrap();
+    let middle = centre(&ui, scene_area);
+    drag(&mut ui, hierarchy, middle);
     let layout = ui.dock_layout(dock);
     assert_eq!(layout.matches("float(").count(), 2, "{layout}");
     assert!(layout.starts_with("row(240, [inspector], [scene]) float("), "{layout}");
@@ -341,4 +343,154 @@ fn panels_are_added_beside_others_and_removed_for_good() {
     assert!(!ui.dock_layout(dock).contains("inspector-2"));
     assert!(!ui.dock_panels(dock).iter().any(|(id, ..)| id == "inspector-2"), "gone, not closed");
     assert_eq!(ui.find(dock, "nothing"), None);
+}
+
+/// The dock's one desktop window.
+fn desktop_window(ui: &mut Ui, dock: NodeId) -> voxear_ui::DockWindow {
+    let windows = ui.dock_windows(dock);
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    windows.into_iter().next().unwrap()
+}
+
+/// Whether a frame draws a quad of `color`, as sRGB bytes.
+fn draws(frame: &voxear_ui::UiFrame, color: voxear_ui::Color) -> bool {
+    let wanted = color.linear_premultiplied();
+    frame.quads.iter().any(|quad| quad.color.iter().zip(wanted).all(|(a, b)| (a - b).abs() < 0.001))
+}
+
+/// A panel floated in a desktop window of its own stays in the tree, laid out
+/// at its window's size from that window's top left, drawn in a frame of its
+/// own and found by the pointer only in that window. Menus opened there open
+/// there, and the layout keeps it.
+#[test]
+fn panels_float_out_in_desktop_windows_of_their_own() {
+    use voxear_ui::{Color, Style};
+
+    let (mut ui, dock) = editor();
+    let name = ui.find(dock, "name").unwrap();
+    let content = ui.parent(name).unwrap();
+    let marker = Color::hex(0x12ab34);
+    let swatch = ui.panel(content, Style::default().width(30.0).height(30.0).background(marker));
+    ui.float_dock_panel_in_window(dock, "inspector");
+    let window = desktop_window(&mut ui, dock);
+    assert_eq!((window.panels.as_slice(), window.title.as_str()), (["inspector".to_string()].as_slice(), "Inspector"));
+    assert!(window.size.0 >= 180.0 && window.size.1 >= 120.0, "as big as its area was: {:?}", window.size);
+    assert!(ui.dock_panel_in_window(dock, "inspector") && ui.dock_panel_floating(dock, "inspector"));
+    ui.set_dock_window_size(dock, window.window, (300.0, 200.0));
+    let main = ui.frame(WIDTH, HEIGHT, 1.0);
+    let element = ui.window_element(window.window).unwrap();
+    assert_eq!(ui.rect(element), [0.0, 0.0, 300.0, 200.0], "at its window's top left, at its size");
+    assert_eq!(ui.window_of(name), Some(window.window));
+    assert_eq!(ui.find(dock, "name"), Some(name), "moved, not rebuilt");
+    assert!(!draws(&main, marker), "the main window does not draw it");
+    assert!(draws(&ui.window_frame(window.window), marker), "its own window does");
+    assert_eq!(ui.dock_layout(dock), "row(240, [hierarchy, project], [scene]) window(300, 200, [inspector])");
+
+    // The pointer finds it only in its window, where it finds nothing else.
+    let (x, y) = centre(&ui, swatch);
+    ui.pointer_move(x, y);
+    assert!(!ui.is_hovered(swatch), "not from the main window");
+    ui.set_pointer_window(Some(window.window));
+    ui.pointer_move(x, y);
+    assert!(ui.is_hovered(swatch));
+    let hierarchy = centre(&ui, tab(&ui, dock, "Hierarchy"));
+    ui.pointer_move(hierarchy.0, hierarchy.1);
+    assert!(!ui.is_hovered(tab(&ui, dock, "Hierarchy")), "the main window's tabs are not in it");
+
+    // Its bar asks the desktop to move it; a menu opened there opens in it.
+    let bar = with_class(&ui, element, "tab-bar").unwrap();
+    let [bx, by, bw, bh] = ui.rect(bar);
+    ui.pointer_move(bx + bw - 60.0, by + bh / 2.0);
+    ui.pointer_button(true);
+    assert_eq!(ui.take_window_move(), Some(window.window));
+    ui.cancel_press();
+    ui.pointer_button(false);
+    ui.open_menu(dock, (20.0, 40.0), &[voxear_ui::MenuItem::new("Close")]);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let menu = with_class(&ui, ui.root(), "menu-popup").unwrap();
+    assert_eq!(ui.window_of(menu), Some(window.window));
+    ui.close_popup();
+
+    // The layout reads back the same, with where the desktop put it when it says.
+    ui.set_dock_window_place(dock, window.window, Some((1600, 90)));
+    let layout = ui.dock_layout(dock);
+    assert!(layout.ends_with(" window(300, 200, 1600, 90, [inspector])"), "{layout}");
+    ui.set_dock_layout(dock, &layout).unwrap();
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.dock_layout(dock), layout);
+    let window = desktop_window(&mut ui, dock);
+    assert_eq!((window.size, window.screen_at), ((300.0, 200.0), Some((1600, 90))));
+
+    // Docked again, its window goes.
+    ui.set_pointer_window(None);
+    ui.dock_floating_panel(dock, "inspector");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(ui.dock_windows(dock).is_empty() && ui.desktop_windows().is_empty());
+    assert_eq!(ui.window_of(name), None);
+    assert!(draws(&ui.frame(WIDTH, HEIGHT, 1.0), marker), "the main window draws it again");
+    let warnings = ui.take_warnings();
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+/// A tab let go past the main window's edge goes out in a desktop window;
+/// one dragged from there onto the main window docks there, and its window
+/// goes; one dragged out of a desktop window that holds others gets its own.
+#[test]
+fn tabs_dragged_past_the_edge_go_out_and_come_back() {
+    let (mut ui, dock) = editor();
+    let inspector = centre(&ui, tab(&ui, dock, "Inspector"));
+    drag(&mut ui, inspector, (WIDTH as f32 + 40.0, 200.0));
+    let window = desktop_window(&mut ui, dock);
+    assert_eq!(window.panels, ["inspector"]);
+    assert_eq!(ui.dock_layout(dock).split(" window(").next(), Some("row(240, [hierarchy, project], [scene])"));
+
+    // From its window onto the main window: the pointer goes there mid-drag, as the desktop hands it over.
+    ui.set_dock_window_size(dock, window.window, (300.0, 200.0));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    ui.set_pointer_window(Some(window.window));
+    let from = centre(&ui, tab(&ui, dock, "Inspector"));
+    ui.pointer_move(from.0, from.1);
+    ui.pointer_button(true);
+    ui.pointer_move(from.0 + 30.0, from.1 + 30.0);
+    assert_eq!(ui.dragged_dock_tab(), Some("inspector"));
+    ui.pointer_move(from.0 + 400.0, from.1 + 30.0);
+    ui.pointer_leave();
+    ui.set_pointer_window(None);
+    let scene_area = ui.parent(ui.parent(tab(&ui, dock, "Scene")).unwrap()).unwrap();
+    let target = bar_of(&ui, scene_area);
+    ui.pointer_move(target.0, target.1);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let ghost = with_class(&ui, ui.root(), "dock-ghost").unwrap();
+    assert_eq!(ui.window_of(ghost), None, "the ghost follows the pointer to the main window");
+    ui.pointer_button(false);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.dock_layout(dock), "row(240, [hierarchy, project], [scene, inspector*])");
+    assert!(ui.dock_windows(dock).is_empty(), "its emptied window goes");
+
+    // Two tabs in a desktop window: one dragged out of it gets a window of its own.
+    ui.float_dock_panel_in_window(dock, "inspector");
+    let window = desktop_window(&mut ui, dock);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let project = centre(&ui, tab(&ui, dock, "Project"));
+    ui.pointer_move(project.0, project.1);
+    ui.pointer_button(true);
+    ui.pointer_move(project.0 + 20.0, project.1 + 20.0);
+    ui.set_pointer_window(Some(window.window));
+    let element = ui.window_element(window.window).unwrap();
+    let into = bar_of(&ui, ui.children(element)[0]);
+    ui.pointer_move(into.0, into.1);
+    ui.pointer_button(false);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(desktop_window(&mut ui, dock).panels, ["inspector", "project"], "dropped on its bar, a tab joins it");
+    let from = centre(&ui, tab(&ui, dock, "Project"));
+    drag(&mut ui, from, (from.0 + 30.0, -60.0));
+    let windows = ui.dock_windows(dock);
+    let panels: Vec<_> = windows.iter().map(|w| w.panels.clone()).collect();
+    assert_eq!(panels, [vec!["inspector".to_string()], vec!["project".to_string()]]);
+    // Alone in its window, a tab let go outside it stays.
+    ui.set_pointer_window(Some(windows[1].window));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let from = centre(&ui, tab(&ui, dock, "Project"));
+    drag(&mut ui, from, (from.0 + 30.0, -60.0));
+    assert_eq!(ui.dock_windows(dock).len(), 2);
 }

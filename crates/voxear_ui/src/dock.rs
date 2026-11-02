@@ -22,9 +22,22 @@
 //! it, its corner resizes it, and its tabs dock again as any tab does;
 //! other tabs dropped on it join it. Floating windows follow the tree in
 //! the text form, each with its place and size: `float(600, 80, 420, 320, [inspector])`.
+//!
+//! A floating window can be a desktop window too, out of the main window
+//! altogether (see [`desktop`](crate::desktop)): from
+//! [`Ui::float_dock_panel_in_window`](crate::Ui::float_dock_panel_in_window),
+//! or a tab or floating window let go past the main window's edge, or a tab
+//! dragged out of a desktop window that holds others. Whoever owns the
+//! windows opens one for each [`DockWindow`] and gives the UI its size; the
+//! desktop moves and resizes it, so its bar asks the desktop to move it
+//! ([`Ui::take_window_move`](crate::Ui::take_window_move)) and it has no
+//! grip. Its tabs dragged onto the main window dock there, and those of the
+//! main window dragged onto its bar join it. In the text form it has its
+//! size, and where the desktop put it when the desktop says (Wayland never
+//! does): `window(420, 320, [inspector])` or `window(420, 320, 1600, 90, [inspector])`.
 
 use crate::{
-    NodeId, Style, Ui, UiError,
+    DesktopWindow, NodeId, Style, Ui, UiError,
     controls::Control,
     tree::{Element, Kind},
 };
@@ -91,6 +104,25 @@ pub(crate) struct Floating {
     pub window: Option<taffy::NodeId>,
     pub tabs: Option<taffy::NodeId>,
     pub grip: Option<taffy::NodeId>,
+    /// Shown in a desktop window instead, `rect`'s size being the window's,
+    /// with where the desktop put it in physical pixels, when it says.
+    pub desktop: bool,
+    pub screen_at: Option<(i32, i32)>,
+}
+
+/// A floating window of the dock's in a desktop window of its own, for
+/// whoever owns the windows to open, size and close.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DockWindow {
+    pub window: DesktopWindow,
+    /// Its panels by id, and the title of the one showing, for the window's
+    /// own title.
+    pub panels: Vec<String>,
+    pub title: String,
+    /// Its size in logical pixels, and where it was on the screen, in
+    /// physical pixels, when the desktop said.
+    pub size: (f32, f32),
+    pub screen_at: Option<(i32, i32)>,
 }
 
 pub(crate) struct DockState {
@@ -121,6 +153,8 @@ pub(crate) struct DockDrag {
     pub preview: Option<taffy::NodeId>,
     pub target: Option<(u32, Zone)>,
     pub window: Option<WindowDrag>,
+    /// The window the ghost and preview are shown in, which follows the pointer's.
+    pub shown_in: Option<DesktopWindow>,
 }
 
 /// A floating window being moved or resized: its area, whether it is
@@ -293,24 +327,48 @@ fn parse_layout(text: &str, next_area: &mut u32) -> Result<(DockNode, Vec<Floati
         if reader.at == reader.text.len() {
             break;
         }
-        if reader.word() != "float" {
-            return Err(format!("unexpected '{}' after the layout", &text[reader.at..]));
-        }
+        let kind = reader.word();
+        let desktop = match kind.as_str() {
+            "float" => false,
+            "window" => true,
+            _ => return Err(format!("unexpected '{}' after the layout", &text[reader.at - kind.len()..])),
+        };
         reader.expect(b'(')?;
-        let mut rect = [0.0; 4];
-        for (index, value) in rect.iter_mut().enumerate() {
-            let word = reader.word();
-            *value = word.parse().map_err(|_| format!("float needs its left, top, width and height, not '{word}'"))?;
-            if index < 3 {
-                reader.expect(b',')?;
+        // A floating window's left, top, width and height; a desktop window's width and height, then maybe where.
+        let mut numbers = Vec::new();
+        loop {
+            reader.space();
+            if reader.text.get(reader.at) == Some(&b'[') {
+                break;
             }
+            let word = reader.word();
+            numbers.push(
+                word.parse::<f32>().map_err(|_| format!("{kind} needs numbers before its panels, not '{word}'"))?,
+            );
+            reader.expect(b',')?;
         }
-        reader.expect(b',')?;
+        let (rect, screen_at) = match (desktop, &numbers[..]) {
+            (false, &[x, y, w, h]) => ([x, y, w, h], None),
+            (true, &[w, h]) => ([0.0, 0.0, w, h], None),
+            (true, &[w, h, x, y]) => ([0.0, 0.0, w, h], Some((x as i32, y as i32))),
+            (false, _) => return Err("float needs its left, top, width and height".to_string()),
+            (true, _) => return Err("window needs its width and height, and maybe its left and top".to_string()),
+        };
         let DockNode::Area { id, panels, selected, .. } = reader.node(next_area)? else {
             return Err("a floating window holds an area's panels, as [inspector]".to_string());
         };
         reader.expect(b')')?;
-        floating.push(Floating { id, panels, selected, rect, window: None, tabs: None, grip: None });
+        floating.push(Floating {
+            id,
+            panels,
+            selected,
+            rect,
+            window: None,
+            tabs: None,
+            grip: None,
+            desktop,
+            screen_at,
+        });
     }
     Ok((node, floating))
 }
@@ -319,7 +377,11 @@ fn parse_layout(text: &str, next_area: &mut u32) -> Result<(DockNode, Vec<Floati
 fn write_floating(floating: &[Floating], out: &mut String) {
     for window in floating {
         let [x, y, w, h] = window.rect.map(f32::round);
-        out.push_str(&format!(" float({x}, {y}, {w}, {h}, "));
+        match (window.desktop, window.screen_at) {
+            (false, _) => out.push_str(&format!(" float({x}, {y}, {w}, {h}, ")),
+            (true, None) => out.push_str(&format!(" window({w}, {h}, ")),
+            (true, Some((x, y))) => out.push_str(&format!(" window({w}, {h}, {x}, {y}, ")),
+        }
         DockNode::area(window.id, window.panels.clone(), window.selected).write(out);
         out.push(')');
     }
@@ -825,6 +887,13 @@ impl Ui {
         corner.layout.inset.bottom = taffy::LengthPercentageAuto::length(0.0);
         corner.layout.size =
             taffy::Size { width: taffy::Dimension::length(GRIP), height: taffy::Dimension::length(GRIP) };
+        if floating.desktop {
+            // Out on the desktop, which resizes its windows itself, so it has no grip.
+            self.add_class(window, "dock-window");
+            self.show_in_window(window, Some((DesktopWindow(floating.id), (w, h))));
+            (floating.window, floating.tabs, floating.grip) = (Some(window.0), Some(tabs.0), None);
+            return;
+        }
         let grip = self.panel(window, corner);
         self.add_class(grip, "dock-float-grip");
         (floating.window, floating.tabs, floating.grip) = (Some(window.0), Some(tabs.0), Some(grip.0));
@@ -859,10 +928,132 @@ impl Ui {
             window: None,
             tabs: None,
             grip: None,
+            desktop: false,
+            screen_at: None,
         };
         state.floating.push(floating);
         self.rebuild_dock(dock);
         self.mark_changed(dock);
+    }
+
+    /// Floats a panel out of the main window, in a desktop window of its
+    /// own: the floating window it is in over the dock goes, its other tabs
+    /// with it, or else it goes alone, as big as the area it was docked in.
+    /// The last panel docked stays docked.
+    pub fn float_dock_panel_in_window(&mut self, dock: NodeId, id: &str) {
+        let Some(state) = self.dock_state(dock) else { return };
+        if let Some(floating) = state.floating.iter_mut().find(|f| !f.desktop && f.panels.iter().any(|p| p == id)) {
+            floating.desktop = true;
+            self.rebuild_dock(dock);
+            self.mark_changed(dock);
+            return;
+        }
+        self.tear_off(dock, id);
+    }
+
+    /// Takes a panel out into a new desktop window, as big as it is now. One
+    /// alone in a desktop window already, or the last docked, stays.
+    fn tear_off(&mut self, dock: NodeId, id: &str) {
+        self.sync_dock(dock);
+        let (w, h) = self.dock_panel_size(dock, id);
+        let Some(state) = self.dock_state(dock) else { return };
+        let alone = state.floating.iter().any(|f| f.desktop && f.panels == [id]);
+        if !state.panels.iter().any(|p| p.id == id) || state.layout.panels() == [id] || alone {
+            return;
+        }
+        state.remove_panel(id);
+        state.closed.retain(|(closed, _)| closed != id);
+        state.layout.forget_elements();
+        state.next_area += 1;
+        state.floating.push(Floating {
+            id: state.next_area,
+            panels: vec![id.to_string()],
+            selected: 0,
+            rect: [0.0, 0.0, w, h],
+            window: None,
+            tabs: None,
+            grip: None,
+            desktop: true,
+            screen_at: None,
+        });
+        self.rebuild_dock(dock);
+        self.mark_changed(dock);
+    }
+
+    /// How big a panel is now: its area where it is docked, or its floating
+    /// window, and never smaller than a floating window can be.
+    fn dock_panel_size(&mut self, dock: NodeId, id: &str) -> (f32, f32) {
+        let Some(state) = self.dock_state(dock) else { return FLOAT_SIZE };
+        let floating = state.floating.iter().find(|f| f.panels.iter().any(|p| p == id)).map(|f| (f.rect[2], f.rect[3]));
+        let mut areas = Vec::new();
+        state.layout.areas(&mut areas);
+        let area = area_id_with(&state.layout, id);
+        let element = areas.iter().find(|(found, ..)| Some(*found) == area).map(|&(_, element, _)| element);
+        let docked = element.map(|element| self.rect(NodeId(element))).map(|[_, _, w, h]| (w, h));
+        let (w, h) = floating.or(docked).filter(|&(w, h)| w > 0.0 && h > 0.0).unwrap_or(FLOAT_SIZE);
+        (w.max(FLOAT_MIN.0), h.max(FLOAT_MIN.1))
+    }
+
+    /// The dock's floating windows that are desktop windows, for whoever owns
+    /// the windows to open one for each.
+    pub fn dock_windows(&mut self, dock: NodeId) -> Vec<DockWindow> {
+        self.sync_dock(dock);
+        let Some(state) = self.dock_state(dock) else { return Vec::new() };
+        let title = |f: &Floating| {
+            let showing = f.panels.get(f.selected).and_then(|id| state.panels.iter().find(|p| &p.id == id));
+            showing.map(|panel| panel.title.clone()).unwrap_or_default()
+        };
+        let windows = state.floating.iter().filter(|f| f.desktop);
+        windows
+            .map(|f| DockWindow {
+                window: DesktopWindow(f.id),
+                panels: f.panels.clone(),
+                title: title(f),
+                size: (f.rect[2], f.rect[3]),
+                screen_at: f.screen_at,
+            })
+            .collect()
+    }
+
+    /// Whether a panel is in a desktop window.
+    pub fn dock_panel_in_window(&mut self, dock: NodeId, id: &str) -> bool {
+        let Some(state) = self.dock_state(dock) else { return false };
+        state.floating.iter().any(|f| f.desktop && f.panels.iter().any(|p| p == id))
+    }
+
+    /// Tells the dock how big a desktop window is, in logical pixels, as the
+    /// desktop sized it.
+    pub fn set_dock_window_size(&mut self, dock: NodeId, window: DesktopWindow, size: (f32, f32)) {
+        let Some(state) = self.dock_state(dock) else { return };
+        let Some(floating) = state.floating.iter_mut().find(|f| f.desktop && f.id == window.0) else { return };
+        if (floating.rect[2], floating.rect[3]) != size {
+            (floating.rect[2], floating.rect[3]) = size;
+            self.resize_window(window, size);
+        }
+    }
+
+    /// Tells the dock where a desktop window is on the screen, in physical
+    /// pixels, where the desktop says, to open it there again next time.
+    pub fn set_dock_window_place(&mut self, dock: NodeId, window: DesktopWindow, at: Option<(i32, i32)>) {
+        let Some(state) = self.dock_state(dock) else { return };
+        if let Some(floating) = state.floating.iter_mut().find(|f| f.desktop && f.id == window.0) {
+            floating.screen_at = at;
+        }
+    }
+
+    /// The panel whose tab is being dragged, once the press became a drag.
+    pub fn dragged_dock_tab(&self) -> Option<&str> {
+        self.dock_drag.as_ref().filter(|drag| drag.dragging && drag.window.is_none()).map(|drag| drag.panel.as_str())
+    }
+
+    /// Whether `point` is on the screen the pointer is on: inside the main
+    /// window, or the desktop window it is in.
+    fn on_screen(&self, (x, y): (f32, f32)) -> bool {
+        let (width, height) = match self.pointer_window.and_then(|w| self.desktop.iter().find(|s| s.window == w)) {
+            Some(shown) => shown.size,
+            None => (self.viewport.0, self.viewport.1),
+        };
+        (0.0..width).contains(&x) && (0.0..height).contains(&y)
     }
 
     /// Whether a panel is in a floating window.
@@ -902,6 +1093,7 @@ impl Ui {
             }
             None
         });
+        let shown_in = self.pointer_window;
         let drag = |dock, panel, window| DockDrag {
             dock,
             panel,
@@ -911,6 +1103,7 @@ impl Ui {
             preview: None,
             target: None,
             window,
+            shown_in,
         };
         self.dock_drag = match found {
             Some((dock, panel)) => Some(drag(dock, panel, None)),
@@ -929,11 +1122,18 @@ impl Ui {
         let found = windows.into_iter().find_map(|window| {
             let bar = window.tabs.and_then(|tabs| self.tree.children(tabs).ok()?.first().copied());
             if pressed.is_some() && pressed == window.grip {
-                return Some((window.id, true, window.rect));
+                return Some(((window.id, true, window.rect), window.desktop));
             }
-            (pressed.is_some() && pressed == bar).then_some((window.id, false, window.rect))
+            (pressed.is_some() && pressed == bar).then_some(((window.id, false, window.rect), window.desktop))
         });
-        found.map(|window| (dock, window))
+        match found? {
+            // The desktop moves its own windows, so it is asked to while the button is down.
+            ((id, ..), true) => {
+                self.window_move = Some(DesktopWindow(id));
+                None
+            }
+            (window, false) => Some((dock, window)),
+        }
     }
 
     /// A floating window's bar or grip dragged: it moves, or resizes, with
@@ -980,7 +1180,7 @@ impl Ui {
         if !drag.dragging {
             let title =
                 self.dock_state(dock).and_then(|s| s.panels.iter().find(|p| p.id == panel)).map(|p| p.title.clone());
-            let layer = self.popup_layer();
+            let layer = self.popup_layer_here();
             let ghost = self.add(
                 layer,
                 Element {
@@ -999,6 +1199,16 @@ impl Ui {
         }
         let Some(drag) = self.dock_drag.as_ref() else { return };
         let (ghost, preview) = (drag.ghost.map(NodeId), drag.preview.map(NodeId));
+        // Shown on whichever window the pointer has gone to.
+        if drag.shown_in != self.pointer_window {
+            let layer = self.popup_layer_here();
+            for node in [ghost, preview].into_iter().flatten() {
+                self.move_into(node, layer);
+            }
+            if let Some(drag) = self.dock_drag.as_mut() {
+                drag.shown_in = self.pointer_window;
+            }
+        }
         if let Some(ghost) = ghost {
             self.set_style(ghost, absolute(point.0 + 12.0, point.1 + 8.0, None));
         }
@@ -1008,7 +1218,8 @@ impl Ui {
             let (w, h) = FLOAT_SIZE;
             let rect = target.map_or([point.0 - 40.0, point.1 - 12.0, w, h], |(_, rect)| rect);
             self.set_style(preview, absolute(rect[0], rect[1], Some((rect[2], rect[3]))));
-            self.set_visible(preview, true);
+            // Past the window's edge it goes out on the desktop, which is not drawn on.
+            self.set_visible(preview, target.is_some() || self.on_screen(point));
         }
         if let Some(drag) = self.dock_drag.as_mut() {
             drag.target = target.map(|(target, _)| target);
@@ -1022,11 +1233,17 @@ impl Ui {
     /// it came from, where it stays.
     fn dock_target(&mut self, dock: NodeId, panel: &str, point: (f32, f32)) -> Option<((u32, Zone), [f32; 4])> {
         let inside = |[x, y, w, h]: [f32; 4]| (x..x + w).contains(&point.0) && (y..y + h).contains(&point.1);
+        let here = self.pointer_window;
         let state = self.dock_state(dock)?;
+        // Only the windows on the screen the pointer is on: in a desktop window, it alone.
         let windows: Vec<(u32, taffy::NodeId, taffy::NodeId, bool)> = state
             .floating
             .iter()
             .rev()
+            .filter(|f| match here {
+                Some(window) => f.desktop && f.id == window.0,
+                None => !f.desktop,
+            })
             .filter_map(|f| Some((f.id, f.window?, f.tabs?, f.panels.iter().any(|p| p == panel))))
             .collect();
         for (area, window, tabs, own) in windows {
@@ -1035,6 +1252,9 @@ impl Ui {
                 let on_bar = self.children(NodeId(tabs)).first().is_some_and(|&bar| inside(self.rect(bar)));
                 return (on_bar || own).then_some(((area, Zone::Center), rect));
             }
+        }
+        if here.is_some() {
+            return None;
         }
         let mut areas = Vec::new();
         self.dock_state(dock)?.layout.areas(&mut areas);
@@ -1078,15 +1298,28 @@ impl Ui {
             return false;
         }
         let dock = NodeId(drag.dock);
-        if drag.window.is_some() {
-            // Moved or resized as it went; the layout already has it.
+        let point = self.pointer_position();
+        if let Some((area, ..)) = drag.window {
+            // Moved or resized as it went; the layout already has it. Let go past
+            // the main window's edge, it goes out on the desktop.
+            if !point.is_some_and(|point| self.on_screen(point))
+                && let Some(window) = self.dock_state(dock).and_then(|s| s.floating.iter_mut().find(|f| f.id == area))
+            {
+                window.desktop = true;
+                self.rebuild_dock(dock);
+            }
             self.mark_changed(dock);
             return true;
         }
         let Some((area, zone)) = drag.target else {
-            // Let go outside every area: it floats there.
-            if let Some(point) = self.pointer_position() {
-                self.float_dock_panel(dock, &drag.panel, Some(point));
+            match point {
+                // Let go outside every area of the main window: it floats there.
+                Some(point) if self.pointer_window.is_none() && self.on_screen(point) => {
+                    self.float_dock_panel(dock, &drag.panel, Some(point));
+                }
+                // Past the edge of the window it was dragged in, or where the pointer is
+                // not known, it goes out on the desktop in a window of its own.
+                _ => self.tear_off(dock, &drag.panel),
             }
             return true;
         };

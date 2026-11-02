@@ -502,7 +502,10 @@ Still to do in M3:
   - [x] windows a game's code can open more than once: `EditorWindow`, built with Voxear UI, opened from any
     window's menu as often as wanted, each its own instance, updated while editing and while playing, and kept
     with the layout
-  - [ ] windows dragged out of the editor into windows of the desktop's own
+  - [x] windows dragged out of the editor into windows of the desktop's own: Float in Its Own Window on a window's
+    menu, or a tab or floating window let go past the main window's edge; its UI and a Scene or Game view's 3D
+    drawn there, input routed to it, closed from its own frame, docked again by dragging its tab onto the main
+    window (through the desktop's drag and drop on Wayland), and kept with the layout
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
 

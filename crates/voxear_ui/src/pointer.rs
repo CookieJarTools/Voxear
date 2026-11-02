@@ -195,6 +195,14 @@ impl Ui {
         self.pointer.position
     }
 
+    /// Forgets the press in progress, so letting go is no click, as when the
+    /// desktop took the press over to move a window.
+    pub fn cancel_press(&mut self) {
+        self.pointer_cancel();
+        self.dock_drag = None;
+        self.pointer.dragging = None;
+    }
+
     /// Forgets the press in progress, so letting go is no click: for a press
     /// that turned into a drag.
     pub(crate) fn pointer_cancel(&mut self) {
@@ -262,9 +270,14 @@ impl Ui {
 
     /// The topmost pickable element under the pointer and everything it is
     /// in, from the root down; empty when there is none.
+    /// In a desktop window, only what it shows is found.
     pub(crate) fn hit_path(&self) -> Vec<taffy::NodeId> {
         let Some(point) = self.pointer.position else { return Vec::new() };
-        let Some(target) = self.hit(self.root, (0.0, 0.0), point) else { return Vec::new() };
+        let found = match self.pointer_window {
+            Some(window) => self.window_node(window).and_then(|node| self.hit(node, self.parent_origin(node), point)),
+            None => self.hit(self.root, (0.0, 0.0), point),
+        };
+        let Some(target) = found else { return Vec::new() };
         let mut path = vec![target];
         while let Some(parent) = self.tree.parent(*path.last().expect("starts with one")) {
             path.push(parent);
@@ -275,7 +288,7 @@ impl Ui {
 
     fn hit(&self, node: taffy::NodeId, parent: (f32, f32), point: (f32, f32)) -> Option<taffy::NodeId> {
         let element = self.tree.get_node_context(node)?;
-        if element.computed.layout.display == taffy::Display::None {
+        if element.computed.layout.display == taffy::Display::None || self.hidden_from_pointer(node) {
             return None;
         }
         let layout = self.tree.layout(node).ok()?;

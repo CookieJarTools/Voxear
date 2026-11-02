@@ -124,13 +124,23 @@ pub(crate) struct Draw<'a> {
     pub raised: Vec<Raised>,
     /// Drawing the raised elements now, so they are not put off again.
     pub lifting: bool,
+    /// Elements shown in desktop windows, which only their own windows draw.
+    pub skip: Vec<taffy::NodeId>,
 }
 
 impl Draw<'_> {
     /// Draws the whole tree from `root`, then what is raised over it, the
     /// lowest `z-index` first.
     pub fn all(&mut self, root: taffy::NodeId) {
-        self.node(root, (0.0, 0.0), 1.0, Quad::UNCLIPPED);
+        self.subtree(root, (0.0, 0.0));
+    }
+
+    /// Draws `node` and what is in it, its parent's place on screen at
+    /// `parent`, unclipped by what it is in, then what is raised in it: a
+    /// desktop window's element, drawn alone.
+    pub fn subtree(&mut self, node: taffy::NodeId, parent: (f32, f32)) {
+        self.skip.retain(|&skipped| skipped != node);
+        self.node(node, parent, 1.0, Quad::UNCLIPPED);
         let mut raised = std::mem::take(&mut self.raised);
         raised.sort_by_key(|(z, ..)| *z);
         self.lifting = true;
@@ -143,7 +153,7 @@ impl Draw<'_> {
     /// Draws `node` at `parent`'s position, faded by the opacity of the
     /// elements it is in and kept within `clip` (physical pixels).
     pub fn node(&mut self, node: taffy::NodeId, parent: (f32, f32), opacity: f32, clip: [f32; 4]) {
-        if self.tree.style(node).is_ok_and(|s| s.display == Display::None) {
+        if self.tree.style(node).is_ok_and(|s| s.display == Display::None) || self.skip.contains(&node) {
             return;
         }
         let z = self.tree.get_node_context(node).map_or(0, |e| e.computed.z_index);

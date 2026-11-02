@@ -641,6 +641,19 @@ DockSpace .split-column > .split-divider {
     border: 1px solid var(--vx-line-2);
 }
 
+/* A floating window out on the desktop, in a window of its own: the desktop
+   draws the window's edge and shadow, so the card fills it, square. */
+.dock-window {
+    border-radius: 0px;
+    box-shadow: none;
+    background-color: var(--vx-panel);
+}
+
+.dock-window > .dock-area {
+    border-radius: 0px;
+    border: 0px transparent;
+}
+
 .dock-float-grip {
     border-radius: 4px;
 }

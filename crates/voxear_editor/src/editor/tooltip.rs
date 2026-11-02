@@ -26,6 +26,7 @@ impl Editor {
         if self.ui.text(tooltip) != text {
             self.ui.set_text(tooltip, &text);
         }
+        self.ui.show_over_window(tooltip, self.ui.window_of(label));
         let [x, y, _, height] = self.ui.rect(label);
         self.ui.set_inline_style(tooltip, &format!("left: {x}px; top: {}px", y + height + 4.0));
         self.ui.set_visible(tooltip, true);

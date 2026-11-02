@@ -19,7 +19,7 @@ mod timer;
 pub use ash::vk;
 pub use bindless::{Bindless, MAX_TEXTURES, PUSH_CONSTANT_SIZE, StorageImageId, TextureId, samplers};
 pub use device::{Gpu, GpuInfo, WindowHandles, enumerate_gpus};
-pub use frame::{Acquired, FRAMES_IN_FLIGHT, Frame, Frames};
+pub use frame::{Acquire, Acquired, FRAMES_IN_FLIGHT, Frame, Frames};
 pub use gpu_allocator::MemoryLocation;
 pub use pipeline::{Blend, GraphicsPipelineDesc, ShaderModule, create_compute_pipeline, create_graphics_pipeline};
 pub use renderdoc::RenderDoc;

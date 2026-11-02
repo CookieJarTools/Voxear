@@ -322,7 +322,7 @@ impl Ui {
         let Some(Control::Dropdown(state)) = self.element(dropdown).and_then(|e| e.control.as_ref()) else { return };
         let (options, selected, fixed) = (state.options.clone(), state.selected, state.popup_width);
         let [x, y, width, height] = self.rect(dropdown);
-        let layer = self.popup_layer();
+        let layer = self.popup_layer_in(self.window_of(dropdown));
         let mut style = Style::column();
         style.layout.position = Position::Absolute;
         style.layout.inset.left = LengthPercentageAuto::length(x);

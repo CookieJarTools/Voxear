@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use ash::vk;
 
 use crate::device::Gpu;
@@ -17,10 +17,36 @@ pub struct Swapchain {
     /// What its images can be used for: drawn into, and copied from where
     /// the surface allows it, for the frame debugger.
     pub usage: vk::ImageUsageFlags,
+    /// The format its images must have, for a window drawn with pipelines
+    /// made for another's.
+    matching: Option<vk::Format>,
 }
 
 impl Swapchain {
     pub fn new(gpu: &Gpu, surface: vk::SurfaceKHR, width: u32, height: u32, vsync: bool) -> Result<Self> {
+        Self::create(gpu, surface, (width, height), vsync, None)
+    }
+
+    /// A swapchain for another window, its images in `format`, as the first
+    /// window's are, so the same pipelines draw into both. Fails when the
+    /// window's surface does not offer it.
+    pub fn new_matching(
+        gpu: &Gpu,
+        surface: vk::SurfaceKHR,
+        (width, height): (u32, u32),
+        vsync: bool,
+        format: vk::Format,
+    ) -> Result<Self> {
+        Self::create(gpu, surface, (width, height), vsync, Some(format))
+    }
+
+    fn create(
+        gpu: &Gpu,
+        surface: vk::SurfaceKHR,
+        (width, height): (u32, u32),
+        vsync: bool,
+        matching: Option<vk::Format>,
+    ) -> Result<Self> {
         let mut swapchain = Self {
             surface,
             handle: vk::SwapchainKHR::null(),
@@ -31,6 +57,7 @@ impl Swapchain {
             present_ready: Vec::new(),
             vsync,
             usage: vk::ImageUsageFlags::empty(),
+            matching,
         };
         swapchain.build(gpu, width, height)?;
         Ok(swapchain)
@@ -72,14 +99,18 @@ impl Swapchain {
         }
 
         let formats = unsafe { gpu.surface_loader.get_physical_device_surface_formats(gpu.physical, self.surface)? };
-        let format = formats
-            .iter()
-            .copied()
-            .find(|f| {
-                matches!(f.format, vk::Format::B8G8R8A8_SRGB | vk::Format::R8G8B8A8_SRGB)
-                    && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
-            })
-            .unwrap_or(formats[0]);
+        let srgb = |f: &vk::SurfaceFormatKHR| f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR;
+        let format = match self.matching {
+            Some(wanted) => match formats.iter().copied().find(|f| f.format == wanted && srgb(f)) {
+                Some(format) => format,
+                None => bail!("the window cannot show images in {wanted:?}, as the editor's first window does"),
+            },
+            None => formats
+                .iter()
+                .copied()
+                .find(|f| matches!(f.format, vk::Format::B8G8R8A8_SRGB | vk::Format::R8G8B8A8_SRGB) && srgb(f))
+                .unwrap_or(formats[0]),
+        };
         let modes =
             unsafe { gpu.surface_loader.get_physical_device_surface_present_modes(gpu.physical, self.surface)? };
         let present_mode = choose_present_mode(&modes, self.vsync);

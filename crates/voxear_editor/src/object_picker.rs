@@ -264,8 +264,10 @@ impl ObjectPicker {
     /// the window: above the field when there is no room below.
     fn place(&self, ui: &mut Ui) {
         let Some(opened) = &self.opened else { return };
+        // Over the window its field is in, a desktop window of a panel floated out too.
+        ui.show_over_window(self.panel, ui.window_of(opened.anchor));
         let [x, y, width, height] = ui.rect(opened.anchor);
-        let [_, _, window_width, window_height] = ui.rect(ui.root());
+        let (window_width, window_height) = ui.screen_size(opened.anchor);
         let [_, _, _, own_height] = ui.rect(self.panel);
         let wide = width.max(WIDTH);
         let left = x.min(window_width - wide - MARGIN).max(MARGIN);

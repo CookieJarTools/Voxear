@@ -1,12 +1,13 @@
 //! The dock's panels as windows. Each window's options button, at its tab
 //! bar's right end, and a context click on a tab or its bar, offer Maximize
 //! (or Restore), Close, Close Other Tabs, Float (or Dock, for one floating
-//! in a window of its own), another of each window there can be more than
-//! one of (as Unity's Add Tab: an Inspector or a Scene view), and Reset
-//! Layout. The top bar's Window button lists every panel, ticked while open,
-//! to open or close, and resets the layout. Any panel can close, and a
-//! closed one keeps its state and opens again beside a panel it shared an
-//! area with.
+//! over the dock or out on the desktop), Float in Its Own Window, which
+//! takes it out of the editor's window onto the desktop (see
+//! `desktop_windows`), another of each window there can be more than one of
+//! (as Unity's Add Tab: an Inspector or a Scene view), and Reset Layout. The
+//! top bar's Window button lists every panel, ticked while open, to open or
+//! close, and resets the layout. Any panel can close, and a closed one keeps
+//! its state and opens again beside a panel it shared an area with.
 //!
 //! Layouts are arrangements of the same panels, picked from the top bar's
 //! Layout menu: Default for building levels, Profiling with the Game view
@@ -55,6 +56,8 @@ pub(super) enum WindowAction {
     CloseOthers,
     /// Floats it in a window of its own, or docks it again.
     Float,
+    /// Floats it out of the editor's window, in a desktop window of its own.
+    FloatOut,
     /// Opens another Inspector beside it.
     AddInspector,
     /// Opens another Scene view beside it.
@@ -114,14 +117,18 @@ impl Editor {
         let dock = self.nodes.dock;
         let others = !self.ui.dock_panel_neighbours(dock, &panel).is_empty();
         let floating = self.ui.dock_panel_floating(dock, &panel);
+        let out = self.ui.dock_panel_in_window(dock, &panel);
         let maximized = self.maximized.is_some();
         let mut items = vec![
             (MenuItem::new(if maximized { "Restore" } else { "Maximize" }), Some(WindowAction::Maximize)),
             (MenuItem::new("Close"), Some(WindowAction::Close)),
             (MenuItem::new("Close Other Tabs").enabled(others), Some(WindowAction::CloseOthers)),
             (MenuItem::new(if floating { "Dock" } else { "Float" }), Some(WindowAction::Float)),
-            (MenuItem::separator(), None),
         ];
+        if !out {
+            items.push((MenuItem::new("Float in Its Own Window"), Some(WindowAction::FloatOut)));
+        }
+        items.push((MenuItem::separator(), None));
         items.extend([
             (MenuItem::new("Add Hierarchy"), Some(WindowAction::AddHierarchy)),
             (MenuItem::new("Add Inspector"), Some(WindowAction::AddInspector)),
@@ -160,6 +167,7 @@ impl Editor {
             }
             WindowAction::Float if self.ui.dock_panel_floating(dock, panel) => self.ui.dock_floating_panel(dock, panel),
             WindowAction::Float => self.ui.float_dock_panel(dock, panel, None),
+            WindowAction::FloatOut => self.ui.float_dock_panel_in_window(dock, panel),
             WindowAction::AddInspector => {
                 self.add_inspector(panel);
             }
@@ -246,7 +254,7 @@ impl Editor {
 
     /// Takes a window opened from the menu away for good. False for a panel
     /// that is not one.
-    fn remove_opened_from_menu(&mut self, panel: &str) -> bool {
+    pub(super) fn remove_opened_from_menu(&mut self, panel: &str) -> bool {
         self.remove_inspector(panel)
             || self.remove_scene_view(panel)
             || self.remove_hierarchy(panel)

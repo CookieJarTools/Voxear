@@ -3417,6 +3417,7 @@ dependencies = [
  "voxear_core",
  "voxear_ecs",
  "voxear_input",
+ "voxear_physics",
  "voxear_render",
  "voxear_rhi",
  "voxear_scene",

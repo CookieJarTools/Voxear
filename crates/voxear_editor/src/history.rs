@@ -14,6 +14,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_engine::{
     EditBehaviours, Game,
     audio::{AudioListener, AudioSource},
+    physics::{CharacterController, Collider, Rigidbody},
     prefab::{FromPrefab, Locks, PrefabInstance},
 };
 use voxear_render::{Camera, Light, LodGroup, MeshRenderer, Renderer};
@@ -41,6 +42,9 @@ pub struct ObjState {
     pub audio: Option<Box<AudioSource>>,
     pub listener: bool,
     pub lod_group: Option<Box<LodGroup>>,
+    pub collider: Option<Collider>,
+    pub rigidbody: Option<Rigidbody>,
+    pub character: Option<CharacterController>,
     pub behaviours: Option<EditBehaviours>,
     /// Components locked for designers, when this is a prefab's Obj.
     pub locks: Option<Locks>,
@@ -58,6 +62,9 @@ impl ObjState {
             audio: world.get::<AudioSource>(entity).copied().map(Box::new),
             listener: world.has::<AudioListener>(entity),
             lod_group: world.get::<LodGroup>(entity).cloned().map(Box::new),
+            collider: world.get::<Collider>(entity).copied(),
+            rigidbody: world.get::<Rigidbody>(entity).copied(),
+            character: world.get::<CharacterController>(entity).copied(),
             behaviours: world.get::<EditBehaviours>(entity).cloned(),
             locks: world.get::<Locks>(entity).cloned(),
         })
@@ -86,6 +93,9 @@ impl ObjState {
         put(world, entity, self.audio.as_deref().copied());
         put(world, entity, self.listener.then_some(AudioListener));
         put(world, entity, self.lod_group.as_deref().cloned());
+        put(world, entity, self.collider);
+        put(world, entity, self.rigidbody);
+        put(world, entity, self.character);
         put(world, entity, self.behaviours.clone());
         put(world, entity, self.locks.clone());
     }

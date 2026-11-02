@@ -10,6 +10,7 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
     audio::{AudioBus, AudioListener, AudioSource, SoundSpace},
+    physics::{CharacterController, Collider, ColliderShape, Rigidbody},
     linear,
     prefab::Locks,
     scene_file::{default_light, default_material},
@@ -38,6 +39,9 @@ pub enum Part {
     Audio,
     Listener,
     LodGroup,
+    Collider,
+    Rigidbody,
+    Character,
     /// A script, by its full type name.
     Behaviour(String),
 }
@@ -53,6 +57,9 @@ impl Part {
             Part::Audio => "audio".into(),
             Part::Listener => "audio_listener".into(),
             Part::LodGroup => "lod_group".into(),
+            Part::Collider => "collider".into(),
+            Part::Rigidbody => "rigidbody".into(),
+            Part::Character => "character".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -65,6 +72,9 @@ impl Part {
             Part::Audio => "Audio Source",
             Part::Listener => "Audio Listener",
             Part::LodGroup => "LOD Group",
+            Part::Collider => "Collider",
+            Part::Rigidbody => "Rigidbody",
+            Part::Character => "Character Controller",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -76,6 +86,9 @@ impl Part {
             Part::Camera => "camera",
             Part::Audio | Part::Listener => "audio",
             Part::LodGroup => "lod",
+            Part::Collider => "box",
+            Part::Rigidbody => "move",
+            Part::Character => "obj",
             Part::Behaviour(_) => "code",
         }
     }
@@ -117,6 +130,29 @@ pub enum Prop {
     LodAdd(usize),
     /// Where a LOD Group's level ends, by the level's index.
     LodUntil(usize),
+    /// A collider's shape, where its middle is, and the sizes its shape
+    /// uses; whether it is a trigger; and its friction and bounciness.
+    ColliderShape,
+    ColliderCenter,
+    ColliderSize,
+    ColliderRadius,
+    ColliderHeight,
+    ColliderTrigger,
+    Friction,
+    Bounciness,
+    /// A Rigidbody's mass, whether the game moves it, whether gravity pulls
+    /// it, its drags, and whether it sweeps as it moves.
+    Mass,
+    Kinematic,
+    UseGravity,
+    Drag,
+    AngularDrag,
+    Continuous,
+    /// A Character Controller's size, steepest slope and highest step.
+    CharacterHeight,
+    CharacterRadius,
+    SlopeLimit,
+    StepOffset,
     /// A script field, or a value inside one: its behaviour's type name,
     /// and the path to it from the field.
     Field {
@@ -146,6 +182,18 @@ impl Prop {
             Prop::LodMeasure | Prop::LodCull | Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => {
                 Part::LodGroup
             }
+            Prop::ColliderShape
+            | Prop::ColliderCenter
+            | Prop::ColliderSize
+            | Prop::ColliderRadius
+            | Prop::ColliderHeight
+            | Prop::ColliderTrigger
+            | Prop::Friction
+            | Prop::Bounciness => Part::Collider,
+            Prop::Mass | Prop::Kinematic | Prop::UseGravity | Prop::Drag | Prop::AngularDrag | Prop::Continuous => {
+                Part::Rigidbody
+            }
+            Prop::CharacterHeight | Prop::CharacterRadius | Prop::SlopeLimit | Prop::StepOffset => Part::Character,
             Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
         }
     }
@@ -178,6 +226,22 @@ impl Prop {
             Prop::LodMeasure => "measure",
             Prop::LodCull => "cull",
             Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => "levels",
+            Prop::ColliderShape => "shape",
+            Prop::ColliderCenter => "center",
+            Prop::ColliderSize => "size",
+            Prop::ColliderRadius | Prop::CharacterRadius => "radius",
+            Prop::ColliderHeight | Prop::CharacterHeight => "height",
+            Prop::ColliderTrigger => "trigger",
+            Prop::Friction => "friction",
+            Prop::Bounciness => "bounciness",
+            Prop::Mass => "mass",
+            Prop::Kinematic => "kinematic",
+            Prop::UseGravity => "gravity",
+            Prop::Drag => "drag",
+            Prop::AngularDrag => "angular_drag",
+            Prop::Continuous => "continuous",
+            Prop::SlopeLimit => "slope_limit",
+            Prop::StepOffset => "step_offset",
             Prop::Field { path, .. } => match path.first() {
                 Some(crate::fields::Step::Key(field)) => return field.clone(),
                 _ => "",
@@ -235,6 +299,15 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<LodGroup>(entity) {
         parts.push(Part::LodGroup);
     }
+    if world.has::<Collider>(entity) {
+        parts.push(Part::Collider);
+    }
+    if world.has::<Rigidbody>(entity) {
+        parts.push(Part::Rigidbody);
+    }
+    if world.has::<CharacterController>(entity) {
+        parts.push(Part::Character);
+    }
     parts.extend(specs(world, entity).into_iter().map(|spec| Part::Behaviour(spec.type_name)));
     parts
 }
@@ -278,6 +351,22 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props
         }
         Part::Listener => Vec::new(),
+        // A collider shows the sizes its shape uses.
+        Part::Collider => {
+            let shape = world.get::<Collider>(entity).map_or(ColliderShape::Box, |c| c.shape);
+            let mut props = vec![Prop::ColliderShape, Prop::ColliderCenter];
+            props.extend(match shape {
+                ColliderShape::Box => vec![Prop::ColliderSize],
+                ColliderShape::Sphere => vec![Prop::ColliderRadius],
+                ColliderShape::Capsule => vec![Prop::ColliderRadius, Prop::ColliderHeight],
+            });
+            props.extend([Prop::ColliderTrigger, Prop::Friction, Prop::Bounciness]);
+            props
+        }
+        Part::Rigidbody => {
+            vec![Prop::Mass, Prop::Kinematic, Prop::UseGravity, Prop::Drag, Prop::AngularDrag, Prop::Continuous]
+        }
+        Part::Character => vec![Prop::CharacterHeight, Prop::CharacterRadius, Prop::SlopeLimit, Prop::StepOffset],
         // Each level's Objs and a place to add another, then where it ends, which the last has only when the
         // group hides past it.
         Part::LodGroup => {
@@ -340,6 +429,22 @@ pub fn label(prop: &Prop) -> String {
         Prop::LodObj(..) => "",
         Prop::LodAdd(_) => "Add Obj",
         Prop::LodUntil(_) => "Transition",
+        Prop::ColliderShape => "Shape",
+        Prop::ColliderCenter => "Center",
+        Prop::ColliderSize => "Size",
+        Prop::ColliderRadius | Prop::CharacterRadius => "Radius",
+        Prop::ColliderHeight | Prop::CharacterHeight => "Height",
+        Prop::ColliderTrigger => "Is trigger",
+        Prop::Friction => "Friction",
+        Prop::Bounciness => "Bounciness",
+        Prop::Mass => "Mass",
+        Prop::Kinematic => "Is kinematic",
+        Prop::UseGravity => "Use gravity",
+        Prop::Drag => "Drag",
+        Prop::AngularDrag => "Angular drag",
+        Prop::Continuous => "Continuous",
+        Prop::SlopeLimit => "Slope limit",
+        Prop::StepOffset => "Step offset",
         Prop::Field { path, .. } => {
             return match path.last() {
                 Some(Step::Key(name)) => nice_name(name),
@@ -409,6 +514,15 @@ pub fn add(
         Part::Listener => {
             world.insert(entity, AudioListener);
         }
+        Part::Collider => {
+            world.insert(entity, Collider::default());
+        }
+        Part::Rigidbody => {
+            world.insert(entity, Rigidbody::default());
+        }
+        Part::Character => {
+            world.insert(entity, CharacterController::default());
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -431,6 +545,9 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Audio => drop(world.remove::<AudioSource>(entity)),
         Part::Listener => drop(world.remove::<AudioListener>(entity)),
         Part::LodGroup => drop(world.remove::<LodGroup>(entity)),
+        Part::Collider => drop(world.remove::<Collider>(entity)),
+        Part::Rigidbody => drop(world.remove::<Rigidbody>(entity)),
+        Part::Character => drop(world.remove::<CharacterController>(entity)),
         Part::Behaviour(name) => {
             let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return };
             kept.0.retain(|spec| spec.type_name != *name);
@@ -449,7 +566,32 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     let camera = || world.get::<Camera>(entity);
     let audio = || world.get::<AudioSource>(entity);
     let lod = || world.get::<LodGroup>(entity);
+    let collider = || world.get::<Collider>(entity);
+    let body = || world.get::<Rigidbody>(entity);
+    let character = || world.get::<CharacterController>(entity);
     Some(match prop {
+        Prop::ColliderShape => {
+            let shape = collider()?.shape;
+            let index = ColliderShape::ALL.iter().position(|s| *s == shape).unwrap_or_default();
+            Value::Choice(index, ColliderShape::ALL.iter().map(|s| s.label().to_string()).collect())
+        }
+        Prop::ColliderCenter => Value::Vector(collider()?.center.to_vec()),
+        Prop::ColliderSize => Value::Vector(collider()?.size.to_vec()),
+        Prop::ColliderRadius => Value::Number(collider()?.radius),
+        Prop::ColliderHeight => Value::Number(collider()?.height),
+        Prop::ColliderTrigger => Value::Toggle(collider()?.trigger),
+        Prop::Friction => Value::Number(collider()?.friction),
+        Prop::Bounciness => Value::Number(collider()?.bounciness),
+        Prop::Mass => Value::Number(body()?.mass),
+        Prop::Kinematic => Value::Toggle(body()?.kinematic),
+        Prop::UseGravity => Value::Toggle(body()?.gravity),
+        Prop::Drag => Value::Number(body()?.drag),
+        Prop::AngularDrag => Value::Number(body()?.angular_drag),
+        Prop::Continuous => Value::Toggle(body()?.continuous),
+        Prop::CharacterHeight => Value::Number(character()?.height),
+        Prop::CharacterRadius => Value::Number(character()?.radius),
+        Prop::SlopeLimit => Value::Number(character()?.slope_limit),
+        Prop::StepOffset => Value::Number(character()?.step_offset),
         Prop::Mesh => {
             let reference = game.content.mesh_ref(world.get::<MeshRenderer>(entity)?.mesh)?.to_string();
             match BUILTIN_MESHES.iter().find(|(_, r)| *r == reference) {
@@ -881,7 +1023,40 @@ pub fn is_item(prop: &Prop) -> bool {
 /// Lights, cameras and Audio Sources, whose values are plain numbers,
 /// switches and choices on the component.
 fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -> bool {
+    let three = |values: &[f32]| [0, 1, 2].map(|at| values.get(at).copied().unwrap_or_default());
     match (prop, value) {
+        (Prop::ColliderShape, Value::Choice(index, _)) => with(world, entity, |c: &mut Collider| {
+            c.shape = ColliderShape::ALL[index.min(ColliderShape::ALL.len() - 1)];
+        }),
+        (Prop::ColliderCenter, Value::Vector(v)) => with(world, entity, |c: &mut Collider| c.center = three(&v)),
+        (Prop::ColliderSize, Value::Vector(v)) => {
+            with(world, entity, |c: &mut Collider| c.size = three(&v).map(|side| side.max(0.001)))
+        }
+        (Prop::ColliderRadius, Value::Number(n)) => with(world, entity, |c: &mut Collider| c.radius = n.max(0.001)),
+        (Prop::ColliderHeight, Value::Number(n)) => with(world, entity, |c: &mut Collider| c.height = n.max(0.001)),
+        (Prop::ColliderTrigger, Value::Toggle(on)) => with(world, entity, |c: &mut Collider| c.trigger = on),
+        (Prop::Friction, Value::Number(n)) => with(world, entity, |c: &mut Collider| c.friction = n.max(0.0)),
+        (Prop::Bounciness, Value::Number(n)) => {
+            with(world, entity, |c: &mut Collider| c.bounciness = n.clamp(0.0, 1.0))
+        }
+        (Prop::Mass, Value::Number(n)) => with(world, entity, |b: &mut Rigidbody| b.mass = n.max(0.001)),
+        (Prop::Kinematic, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody| b.kinematic = on),
+        (Prop::UseGravity, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody| b.gravity = on),
+        (Prop::Drag, Value::Number(n)) => with(world, entity, |b: &mut Rigidbody| b.drag = n.max(0.0)),
+        (Prop::AngularDrag, Value::Number(n)) => with(world, entity, |b: &mut Rigidbody| b.angular_drag = n.max(0.0)),
+        (Prop::Continuous, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody| b.continuous = on),
+        (Prop::CharacterHeight, Value::Number(n)) => {
+            with(world, entity, |c: &mut CharacterController| c.height = n.max(c.radius * 2.0))
+        }
+        (Prop::CharacterRadius, Value::Number(n)) => {
+            with(world, entity, |c: &mut CharacterController| c.radius = n.clamp(0.01, c.height * 0.5))
+        }
+        (Prop::SlopeLimit, Value::Number(n)) => {
+            with(world, entity, |c: &mut CharacterController| c.slope_limit = n.clamp(0.0, 90.0))
+        }
+        (Prop::StepOffset, Value::Number(n)) => {
+            with(world, entity, |c: &mut CharacterController| c.step_offset = n.max(0.0))
+        }
         (Prop::LightKind, Value::Choice(index, _)) => with(world, entity, |light: &mut Light| {
             let kind = [LightKind::Directional, LightKind::Point, LightKind::Spot][index.min(2)];
             // What the old kind did not use starts as a new light of this kind has it.

@@ -30,7 +30,8 @@
 //! An Obj's `[obj.audio]` is an Audio Source, and `audio_listener = true`
 //! hears the game from it (see [`crate::audio`]). `[obj.lod_group]` is a
 //! LOD Group, which shows one of its levels' Objs at a time (see
-//! [`crate::lod_groups`]).
+//! [`crate::lod_groups`]). `[obj.collider]`, `[obj.rigidbody]` and
+//! `[obj.character]` are its physics (see [`crate::physics`]).
 //!
 //! An optional `[sky]` sets the sky colours and `[post]` the
 //! post-processing (see [`PostProcess`]). Like Unity's global volume, the
@@ -53,6 +54,7 @@ use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, Sce
 
 use crate::{
     audio::{AudioListener, AudioSource, AudioSourceData, audio_source_data},
+    physics::{CharacterController, Collider, Rigidbody},
     content::{Content, MaterialData, MaterialSource, linear, srgb},
     engine::{EditBehaviours, Engine},
     lod_groups::LodGroupData,
@@ -145,6 +147,12 @@ pub struct ObjData {
     /// A LOD Group, which shows one of its levels' Objs at a time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lod_group: Option<LodGroupData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collider: Option<Collider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rigidbody: Option<Rigidbody>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character: Option<CharacterController>,
     /// Changes to Objs inside a prefab instance, by path (`"2"`, `"3/2"`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, toml::Table>,
@@ -175,6 +183,9 @@ impl ObjData {
             renderer: None,
             audio: None,
             audio_listener: false,
+            collider: None,
+            rigidbody: None,
+            character: None,
             lod_group: None,
             overrides: BTreeMap::new(),
             locks: BTreeMap::new(),
@@ -502,6 +513,15 @@ fn capture_instance(
     if root.lod_group.is_some() && root.lod_group != prefab_root.lod_group {
         instance.lod_group = root.lod_group.clone();
     }
+    if root.collider.is_some() && root.collider != prefab_root.collider {
+        instance.collider = root.collider;
+    }
+    if root.rigidbody.is_some() && root.rigidbody != prefab_root.rigidbody {
+        instance.rigidbody = root.rigidbody;
+    }
+    if root.character.is_some() && root.character != prefab_root.character {
+        instance.character = root.character;
+    }
 
     for inner in expected.iter().filter(|o| !o.path.is_root()) {
         let Some(&entity) = members.get(&inner.path) else { continue };
@@ -512,6 +532,16 @@ fn capture_instance(
         }
     }
     Ok(instance)
+}
+
+/// A component's every value as a table, those at their defaults too, as
+/// an override writes it so that none of the prefab's stays.
+fn whole<T: Serialize>(value: &T, defaults: &T) -> Result<toml::Value> {
+    let mut table = toml::Table::try_from(value)?;
+    for (key, default) in toml::Table::try_from(defaults)? {
+        table.entry(key).or_insert(default);
+    }
+    Ok(toml::Value::Table(table))
 }
 
 /// The fields of `actual` that differ from `expected`, as an override.
@@ -559,6 +589,16 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if actual.audio_listener != expected.audio_listener {
         put("audio_listener", actual.audio_listener.into());
+    }
+    // Each written whole, as an override merges into the prefab's and a value left out would keep the prefab's.
+    if let Some(collider) = actual.collider.filter(|c| Some(*c) != expected.collider) {
+        put("collider", whole(&collider, &crate::physics::Collider::default())?);
+    }
+    if let Some(body) = actual.rigidbody.filter(|b| Some(*b) != expected.rigidbody) {
+        put("rigidbody", whole(&body, &crate::physics::Rigidbody::default())?);
+    }
+    if let Some(character) = actual.character.filter(|c| Some(*c) != expected.character) {
+        put("character", whole(&character, &crate::physics::CharacterController::default())?);
     }
     if let Some(lod) = actual.lod_group.as_ref().filter(|l| Some(*l) != expected.lod_group.as_ref()) {
         put("lod_group", lod.whole()?);
@@ -754,6 +794,9 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     });
     obj.audio = world.get::<AudioSource>(entity).map(|source| audio_source_data(content, source));
     obj.audio_listener = world.has::<AudioListener>(entity);
+    obj.collider = world.get::<Collider>(entity).copied();
+    obj.rigidbody = world.get::<Rigidbody>(entity).copied();
+    obj.character = world.get::<CharacterController>(entity).copied();
     obj.lod_group = world.get::<LodGroup>(entity).map(|lod| LodGroupData::of(lod, &|e| file_path(world, ids, e)));
     obj
 }

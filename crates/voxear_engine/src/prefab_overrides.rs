@@ -24,6 +24,7 @@ use voxear_scene::{BehaviourSpec, Name, ScenePersistence};
 use crate::{
     EditBehaviours,
     audio::{AudioListener, AudioSource},
+    physics::{CharacterController, Collider, Rigidbody},
     content::Content,
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabFile, PrefabInstance},
     scene_file::{self, ObjData},
@@ -210,6 +211,9 @@ pub fn put(
     }
     set::<AudioSource>(world, entity, obj.audio);
     set(world, entity, obj.audio_listener.then_some(AudioListener));
+    set::<Collider>(world, entity, obj.collider);
+    set::<Rigidbody>(world, entity, obj.rigidbody);
+    set::<CharacterController>(world, entity, obj.character);
     set::<LodGroup>(world, entity, obj.lod_group.map(|lod| lod.bind(&lookup)));
     set(world, entity, (!behaviours.is_empty()).then_some(EditBehaviours(behaviours)));
     Ok(())

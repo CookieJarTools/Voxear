@@ -32,6 +32,11 @@ pub struct Engine {
     fixed_accumulator: f32,
     /// The editor's edit mode: behaviours are kept as data, and no script runs.
     edit_mode: bool,
+    /// Physics for the Objs with colliders, made when the first is there
+    /// while the game plays.
+    physics: Option<crate::physics::PhysicsScene>,
+    /// The contacts and trigger crossings this frame's physics steps found.
+    physics_events: Vec<crate::physics::PhysicsEvent>,
 }
 
 /// An Obj's behaviours and C# components in edit mode, as data: what the
@@ -75,13 +80,19 @@ impl Engine {
             time: Time::default(),
             fixed_accumulator: 0.0,
             edit_mode: false,
+            physics: None,
+            physics_events: Vec::new(),
         }
     }
 
     /// Edit mode, as in Unity's editor when not playing: Objs load with their
     /// behaviours as [`EditBehaviours`], and no script runs, so a project
-    /// opens without its scripts built.
+    /// opens without its scripts built. Play starts and ends with physics
+    /// made afresh.
     pub fn set_edit_mode(&mut self, edit_mode: bool) {
+        if edit_mode != self.edit_mode {
+            self.physics = None;
+        }
         self.edit_mode = edit_mode;
     }
 
@@ -415,6 +426,7 @@ impl Engine {
     /// `voxear_core::profiling`), with each behaviour's callback in it.
     pub fn tick(&mut self, unscaled_delta: f32) {
         self.time.advance(unscaled_delta);
+        self.physics_events.clear();
         // Last frame's debug draw has been seen; its shapes count down.
         voxear_core::debug_draw::advance(self.time.delta);
         self.sync_script_time(self.time.delta);
@@ -438,6 +450,7 @@ impl Engine {
             self.run_phase(Phase::FixedUpdate);
             self.run_stage("FixedUpdate");
             self.flush();
+            self.step_physics();
             self.fixed_accumulator -= self.time.fixed_delta;
             steps += 1;
         }
@@ -483,6 +496,49 @@ impl Engine {
             }
         }
         self.schedule.run_stage(stage, &mut self.world);
+    }
+
+    /// Moves physics on by a fixed step, after FixedUpdate as in Unity,
+    /// while the game plays and something has physics.
+    fn step_physics(&mut self) {
+        if self.edit_mode {
+            return;
+        }
+        if self.physics.is_none() {
+            let colliders = self.world.query_ref::<&crate::physics::Collider>().into_iter().next().is_some();
+            let walkers = self.world.query_ref::<&crate::physics::CharacterController>().into_iter().next().is_some();
+            if !colliders && !walkers {
+                return;
+            }
+            self.physics = Some(crate::physics::PhysicsScene::new());
+        }
+        profile_scope!("Physics");
+        let dt = self.time.fixed_delta;
+        if let Some(physics) = self.physics.as_mut() {
+            physics.step(&mut self.world, dt);
+            self.physics_events.extend(physics.take_events());
+        }
+    }
+
+    /// The contacts and trigger crossings this frame's physics steps found.
+    pub fn physics_events(&self) -> &[crate::physics::PhysicsEvent] {
+        &self.physics_events
+    }
+
+    /// Physics, once something with physics has played a step.
+    pub fn physics(&self) -> Option<&crate::physics::PhysicsScene> {
+        self.physics.as_ref()
+    }
+
+    pub fn physics_mut(&mut self) -> Option<&mut crate::physics::PhysicsScene> {
+        self.physics.as_mut()
+    }
+
+    /// The world and physics together, made if need be, as moving a
+    /// Character Controller from a script needs both.
+    pub fn world_and_physics(&mut self) -> (&mut World, &mut crate::physics::PhysicsScene) {
+        let physics = self.physics.get_or_insert_with(crate::physics::PhysicsScene::new);
+        (&mut self.world, physics)
     }
 
     /// Awake, OnEnable, Start, OnDisable and OnDestroy for what changed.

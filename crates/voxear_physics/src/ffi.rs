@@ -113,6 +113,7 @@ unsafe extern "C" {
     pub fn vx_contacts(world: *mut VxWorld, out: *mut VxContact, capacity: c_int) -> c_int;
 
     pub fn vx_character_add(world: *mut VxWorld, desc: *const VxCharacterDesc) -> u32;
+    pub fn vx_character_body(world: *mut VxWorld, character: u32) -> u32;
     pub fn vx_character_remove(world: *mut VxWorld, character: u32);
     pub fn vx_character_move(
         world: *mut VxWorld,

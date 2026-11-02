@@ -3,10 +3,12 @@
 //! where the Obj is, so they can be seen and clicked; and for the selected
 //! one, what it reaches: a camera's frustum, a directional light's direction,
 //! a spot light's cone and a point light's range. The Gizmos button shows or
-//! hides them all, and its menu lights' or cameras'.
+//! hides them all, and its menu lights' or cameras'. The selected Obj's
+//! Collider and Character Controller are drawn in green, as Unity's are.
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
+use voxear_engine::physics::{CharacterController, Collider, ColliderShape};
 use voxear_render::{Camera, Light, LightKind};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
@@ -26,6 +28,9 @@ const FRUSTUM_DEPTH: f32 = 3.0;
 const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
 /// How long a directional light's direction is drawn, on screen.
 const DIRECTION: f32 = 70.0;
+const COLLIDER: u32 = 0x91f48b;
+/// How many pieces a capsule's half circle is drawn in.
+const CAP_SEGMENTS: usize = 16;
 
 /// The gizmos for every light and camera in view whose markers show, in the
 /// view's own coordinates (from its top left).
@@ -57,7 +62,93 @@ pub fn shapes(world: &World, camera: &ViewCamera, selected: Option<Entity>, mark
             }
         }
     }
+    if markers.colliders
+        && let Some(entity) = selected
+    {
+        colliders(&mut shapes, world, camera, entity);
+    }
     shapes
+}
+
+/// The selected Obj's Collider, where physics puts it, and its Character
+/// Controller's capsule, standing on the Obj's position.
+fn colliders(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let Some(transform) = world.get::<Transform>(entity) else { return };
+    let (scale, rotation, position) = match world.get::<WorldTransform>(entity) {
+        Some(WorldTransform(matrix)) => matrix.to_scale_rotation_translation(),
+        None => (transform.scale, transform.rotation, transform.position),
+    };
+    let color = Color::hex(COLLIDER);
+    let scale = scale.abs().max(Vec3::splat(1e-4));
+    if let Some(collider) = world.get::<Collider>(entity) {
+        let middle = position + rotation * (Vec3::from(collider.center) * scale);
+        match collider.shape {
+            ColliderShape::Box => {
+                wire_box(shapes, camera, middle, rotation, Vec3::from(collider.size) * scale * 0.5, color)
+            }
+            ColliderShape::Sphere => {
+                let radius = collider.radius * scale.max_element();
+                for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                    polyline(shapes, camera, &ring(camera, middle, rotation * axis, radius), color);
+                }
+            }
+            ColliderShape::Capsule => {
+                let radius = collider.radius * scale.x.max(scale.z);
+                let half = (collider.height * scale.y * 0.5 - radius).max(0.01);
+                capsule(shapes, camera, middle, rotation, half, radius, color);
+            }
+        }
+    }
+    if let Some(character) = world.get::<CharacterController>(entity) {
+        let half = (character.height * 0.5 - character.radius).max(0.01);
+        let middle = position + Vec3::Y * (half + character.radius);
+        capsule(shapes, camera, middle, Quat::IDENTITY, half, character.radius, color);
+    }
+}
+
+/// A box's twelve edges, about its middle.
+fn wire_box(shapes: &mut Vec<Shape>, camera: &ViewCamera, middle: Vec3, rotation: Quat, half: Vec3, color: Color) {
+    let corner = |i: usize| {
+        let sign = |bit: usize| if i & bit == 0 { -1.0 } else { 1.0 };
+        middle + rotation * (half * Vec3::new(sign(1), sign(2), sign(4)))
+    };
+    for i in 0..8 {
+        for bit in [1, 2, 4] {
+            if i & bit == 0 {
+                line(shapes, camera, corner(i), corner(i | bit), color);
+            }
+        }
+    }
+}
+
+/// A capsule upright in its rotation: a ring at each end of its middle,
+/// four lines between them, and the half circles of its caps.
+fn capsule(
+    shapes: &mut Vec<Shape>,
+    camera: &ViewCamera,
+    middle: Vec3,
+    rotation: Quat,
+    half: f32,
+    radius: f32,
+    color: Color,
+) {
+    let (up, right, forward) = (rotation * Vec3::Y, rotation * Vec3::X, rotation * Vec3::Z);
+    for end in [-1.0, 1.0] {
+        let at = middle + up * half * end;
+        polyline(shapes, camera, &ring(camera, at, up, radius), color);
+        for across in [right, forward] {
+            let cap: Vec<[f32; 2]> = (0..=CAP_SEGMENTS)
+                .filter_map(|i| {
+                    let angle = i as f32 / CAP_SEGMENTS as f32 * std::f32::consts::PI;
+                    camera.project(at + (across * angle.cos() + up * end * angle.sin()) * radius)
+                })
+                .collect();
+            polyline(shapes, camera, &cap, color);
+        }
+    }
+    for side in [right, -right, forward, -forward] {
+        line(shapes, camera, middle + side * radius - up * half, middle + side * radius + up * half, color);
+    }
 }
 
 /// Where an Obj is and which way it faces in the world.
@@ -152,5 +243,46 @@ fn polyline(shapes: &mut Vec<Shape>, camera: &ViewCamera, points: &[[f32; 2]], c
     let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
     for pair in points.windows(2) {
         shapes.push(Shape::Line { from: local(pair[0]), to: local(pair[1]), width: 1.5, color });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A camera ten metres back, looking at the middle of the world, and an
+    /// Obj there.
+    fn looking_at_an_obj() -> (World, ViewCamera, Entity) {
+        let mut world = World::new();
+        let transform = Transform::new(Vec3::new(0.0, 0.0, -10.0), Quat::IDENTITY, Vec3::ONE);
+        let lens = world.spawn((Camera::default(), transform));
+        let camera = ViewCamera::new(&world, lens, [0.0, 0.0, 800.0, 600.0]).unwrap();
+        let obj = world.spawn((Transform::IDENTITY,));
+        (world, camera, obj)
+    }
+
+    fn green_lines(shapes: &[Shape]) -> usize {
+        let green = Color::hex(COLLIDER);
+        shapes.iter().filter(|shape| matches!(shape, Shape::Line { color, .. } if *color == green)).count()
+    }
+
+    #[test]
+    fn the_selected_objs_colliders_are_drawn_in_green() {
+        let (mut world, camera, obj) = looking_at_an_obj();
+        let shown = Markers { lights: true, cameras: true, colliders: true };
+        world.insert(obj, Collider::default());
+        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown)), 12, "a box's edges");
+        assert_eq!(green_lines(&shapes(&world, &camera, None, shown)), 0, "only the selected Obj's");
+        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), Markers::NONE)), 0, "nor with gizmos hidden");
+
+        world.insert(obj, Collider { shape: ColliderShape::Sphere, ..Collider::default() });
+        let sphere = green_lines(&shapes(&world, &camera, Some(obj), shown));
+        world.insert(obj, Collider { shape: ColliderShape::Capsule, ..Collider::default() });
+        let capsule = green_lines(&shapes(&world, &camera, Some(obj), shown));
+        assert!(sphere > 12 && capsule > sphere, "three rings, then two rings, four caps and four sides");
+
+        world.remove::<Collider>(obj);
+        world.insert(obj, CharacterController::default());
+        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown)), capsule, "a character is a capsule");
     }
 }

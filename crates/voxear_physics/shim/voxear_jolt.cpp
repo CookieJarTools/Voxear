@@ -117,7 +117,8 @@ struct VxWorld {
 	BroadLayers broad_layers;
 	LayerVsBroad layer_vs_broad;
 	Contacts contacts;
-	TempAllocatorImpl temp { 16 * 1024 * 1024 };
+	// Scratch memory for a step, falling back to the heap when a busy step needs more.
+	TempAllocatorImplWithMallocFallback temp { 16 * 1024 * 1024 };
 	JobSystemThreadPool jobs;
 	PhysicsSystem system;
 	std::vector<RefConst<Shape>> shapes;
@@ -126,7 +127,9 @@ struct VxWorld {
 
 	VxWorld(uint32_t max_bodies)
 		: jobs(cMaxPhysicsJobs, cMaxPhysicsBarriers, int(std::max(1u, std::thread::hardware_concurrency() - 1))) {
-		system.Init(max_bodies, 0, max_bodies, max_bodies, broad_layers, layer_vs_broad, layer_pairs);
+		// Touching pairs past these are dropped for the step, which a busy scene can afford.
+		uint32_t max_contacts = std::min<uint32_t>(max_bodies, 10240);
+		system.Init(max_bodies, 0, max_bodies, max_contacts, broad_layers, layer_vs_broad, layer_pairs);
 		system.SetContactListener(&contacts);
 	}
 };
@@ -463,6 +466,10 @@ uint32_t vx_character_add(VxWorld *world, const VxCharacterDesc *desc) {
 	// The capsule stands on the character's position, at its feet.
 	settings->mShape = RotatedTranslatedShapeSettings(Vec3(0, half + desc->radius, 0), Quat::sIdentity(),
 		new CapsuleShape(half, desc->radius)).Create().Get();
+	// A kinematic body inside follows the character, so that triggers notice
+	// it and bodies thrown at it hit it; its own moves pass over it.
+	settings->mInnerBodyShape = settings->mShape;
+	settings->mInnerBodyLayer = MOVING;
 	settings->mMaxSlopeAngle = DegreesToRadians(desc->max_slope_degrees);
 	settings->mMass = desc->mass;
 	settings->mSupportingVolume = Plane(Vec3::sAxisY(), -desc->radius);
@@ -472,6 +479,13 @@ uint32_t vx_character_add(VxWorld *world, const VxCharacterDesc *desc) {
 		Quat::sIdentity(), 0, &world->system);
 	world->characters.push_back(character);
 	return uint32_t(world->characters.size());
+}
+
+uint32_t vx_character_body(VxWorld *world, uint32_t character) {
+	if (character == 0 || character > world->characters.size() || world->characters[character - 1].inner == nullptr) {
+		return BodyID::cInvalidBodyID;
+	}
+	return world->characters[character - 1].inner->GetInnerBodyID().GetIndexAndSequenceNumber();
 }
 
 void vx_character_remove(VxWorld *world, uint32_t character) {

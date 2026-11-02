@@ -578,7 +578,17 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [ ] Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
     acceleration structures exist.
   - [ ] the audio debugger: active voices in the viewport
-- Jolt integration (bodies, joints, character controller, queries, events) and Box2D v3.
+- Physics:
+  - [x] Jolt 5.6 vendored and built behind Voxear's own C shim: shapes, static, kinematic and dynamic bodies,
+    raycasts and overlaps, contacts, joints and a character controller
+  - [x] Collider (box, sphere, capsule, trigger), Rigidbody and Character Controller components, in scene files and
+    prefabs, in the Inspector under Add Component's Physics folder, and outlined in the Scene view
+  - [x] bodies kept in step with their Objs as the game plays, stepped after `FixedUpdate`; contacts and trigger
+    crossings that last through sleep, and characters that triggers notice
+  - [ ] C#: `Rigidbody` velocities and forces, `Physics.Raycast` and overlaps, `CharacterController.Move`, and
+    `OnCollisionEnter`/`Exit` and `OnTriggerEnter`/`Exit`
+  - [ ] mesh and convex colliders from models, joints as components, and layers that choose what collides
+  - [ ] Box2D v3 for 2D games
 - **Built-in vehicle physics**, on Jolt's vehicle constraints *(later, once the physics above is in)*:
   - wheeled vehicles (cars, trucks, motorbikes) with suspension, tyre friction curves, engine and gearbox, and
     differentials

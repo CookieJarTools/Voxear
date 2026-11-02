@@ -8,6 +8,7 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours,
     audio::{AudioListener, AudioSource},
+    physics::{CharacterController, Collider, Rigidbody},
 };
 use voxear_render::{Camera, Light, MeshRenderer};
 use voxear_scene::BehaviourSpec;
@@ -23,6 +24,9 @@ pub(super) enum Copied {
     Camera(Camera),
     Audio(Box<AudioSource>),
     Listener,
+    Collider(Collider),
+    Rigidbody(Rigidbody),
+    Character(CharacterController),
     Behaviour(BehaviourSpec),
 }
 
@@ -36,6 +40,9 @@ impl Copied {
             Part::Audio => Self::Audio(Box::new(*world.get::<AudioSource>(entity)?)),
             Part::Listener => world.has::<AudioListener>(entity).then_some(Self::Listener)?,
             Part::LodGroup => return None,
+            Part::Collider => Self::Collider(*world.get::<Collider>(entity)?),
+            Part::Rigidbody => Self::Rigidbody(*world.get::<Rigidbody>(entity)?),
+            Part::Character => Self::Character(*world.get::<CharacterController>(entity)?),
             Part::Behaviour(name) => {
                 let specs = &world.get::<EditBehaviours>(entity)?.0;
                 Self::Behaviour(specs.iter().find(|spec| spec.type_name == *name)?.clone())
@@ -51,6 +58,9 @@ impl Copied {
             Self::Camera(camera) => drop(world.insert(entity, *camera)),
             Self::Audio(audio) => drop(world.insert(entity, **audio)),
             Self::Listener => drop(world.insert(entity, AudioListener)),
+            Self::Collider(collider) => drop(world.insert(entity, *collider)),
+            Self::Rigidbody(body) => drop(world.insert(entity, *body)),
+            Self::Character(character) => drop(world.insert(entity, *character)),
             Self::Behaviour(copied) => match world.get_mut::<EditBehaviours>(entity) {
                 Some(kept) => match kept.0.iter_mut().find(|spec| spec.type_name == copied.type_name) {
                     Some(spec) => spec.fields = copied.fields.clone(),

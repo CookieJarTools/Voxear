@@ -420,6 +420,13 @@ impl PhysicsWorld {
         CharacterId(unsafe { ffi::vx_character_add(self.world, &raw) })
     }
 
+    /// The kinematic body inside a character, which follows it, for
+    /// triggers to notice and bodies to hit.
+    pub fn character_body(&self, character: CharacterId) -> Option<BodyId> {
+        let body = unsafe { ffi::vx_character_body(self.world, character.0) };
+        (body != u32::MAX).then_some(BodyId(body))
+    }
+
     pub fn remove_character(&mut self, character: CharacterId) {
         unsafe { ffi::vx_character_remove(self.world, character.0) };
     }
@@ -427,7 +434,13 @@ impl PhysicsWorld {
     /// Moves a character on for `dt` seconds at `velocity`, climbing steps
     /// up to `step_height`. Gravity is the caller's to add to the velocity,
     /// so that a jump is a velocity up.
-    pub fn move_character(&mut self, character: CharacterId, velocity: Vec3, dt: f32, step_height: f32) -> CharacterState {
+    pub fn move_character(
+        &mut self,
+        character: CharacterId,
+        velocity: Vec3,
+        dt: f32,
+        step_height: f32,
+    ) -> CharacterState {
         let mut state = ffi::VxCharacterState::default();
         let velocity = velocity.to_array();
         unsafe { ffi::vx_character_move(self.world, character.0, velocity.as_ptr(), dt, step_height, &mut state) };
@@ -474,7 +487,8 @@ mod tests {
     /// Ground a metre below the origin and a crate dropped from 5 metres.
     fn ground_and_crate(world: &mut PhysicsWorld) -> (BodyId, BodyId) {
         let floor = world.box_shape(Vec3::new(50.0, 0.5, 50.0));
-        let ground = world.add_body(&BodyDesc::new(floor, Motion::Static).at(Vec3::new(0.0, -1.5, 0.0), Quat::IDENTITY));
+        let ground =
+            world.add_body(&BodyDesc::new(floor, Motion::Static).at(Vec3::new(0.0, -1.5, 0.0), Quat::IDENTITY));
         let shape = world.box_shape(Vec3::splat(0.5));
         let mut desc = BodyDesc::new(shape, Motion::Dynamic).at(Vec3::new(0.0, 5.0, 0.0), Quat::IDENTITY);
         desc.user_data = 42;
@@ -517,7 +531,8 @@ mod tests {
         world.add_body(&BodyDesc::new(floor, Motion::Static).at(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY));
         let wall = world.box_shape(Vec3::new(0.5, 2.0, 5.0));
         world.add_body(&BodyDesc::new(wall, Motion::Static).at(Vec3::new(3.0, 2.0, 0.0), Quat::IDENTITY));
-        let character = world.add_character(&CharacterDesc { position: Vec3::new(0.0, 0.05, 0.0), ..Default::default() });
+        let character =
+            world.add_character(&CharacterDesc { position: Vec3::new(0.0, 0.05, 0.0), ..Default::default() });
         let mut state = None;
         for _ in 0..120 {
             state = Some(world.move_character(character, Vec3::new(3.0, -1.0, 0.0), 1.0 / 60.0, 0.3));

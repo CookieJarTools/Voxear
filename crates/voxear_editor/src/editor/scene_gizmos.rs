@@ -123,10 +123,10 @@ impl Editor {
     }
 
     /// The lights' and cameras' markers that show in a Scene view, as its
-    /// Gizmos button and their menu say.
+    /// Gizmos button and their menu say, and the selected Obj's colliders.
     pub(super) fn markers(&self, view_shows: bool) -> Markers {
         let settings = &self.memory.settings;
-        let shown = Markers { lights: settings.light_gizmos, cameras: settings.camera_gizmos };
+        let shown = Markers { lights: settings.light_gizmos, cameras: settings.camera_gizmos, colliders: true };
         if view_shows { shown } else { Markers::NONE }
     }
 

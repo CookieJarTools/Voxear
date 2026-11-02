@@ -2767,7 +2767,7 @@ fn add_component_is_a_search_with_folders() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let labels = |ui: &Ui| picker_rows(ui).into_iter().map(|(label, _)| label).collect::<Vec<_>>();
-    assert_eq!(labels(&editor.ui), ["Rendering", "Audio", "Scripts", "Effects"], "folders first, as in Unity");
+    assert_eq!(labels(&editor.ui), ["Rendering", "Audio", "Physics", "Scripts", "Effects"], "folders first, as in Unity");
     shot(&mut renderer, "add-component.png");
 
     // A folder opens on a click, its scripts past the namespace they share, with a back button.
@@ -2799,6 +2799,53 @@ fn add_component_is_a_search_with_folders() {
     assert_eq!(kept.0[0].type_name, "Game.Enemies.Orc");
     editor.undo(&mut renderer);
     assert!(editor.game.engine.world.get::<voxear_engine::EditBehaviours>(ground).is_none());
+}
+
+#[test]
+fn physics_components_show_what_their_shape_uses() {
+    use voxear_engine::physics::{CharacterController, Collider, ColliderShape, Rigidbody};
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let ground = obj(&editor, "Ground").unwrap();
+    editor.select(Some(ground));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    // A Collider starts as a box, and shows its size.
+    add_component(&mut editor, &mut renderer, "Collider");
+    assert!(editor.game.engine.world.has::<Collider>(ground));
+    assert!(prop_row(&editor.ui, "Size").is_some() && prop_row(&editor.ui, "Radius").is_none());
+
+    // A sphere shows its radius instead, and a capsule its height too.
+    let shape = |ui: &Ui| first_with(ui, prop_row(ui, "Shape").unwrap(), "value-choice").unwrap();
+    let dropdown = shape(&editor.ui);
+    choose(&mut editor, &mut renderer, dropdown, 1);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.engine.world.get::<Collider>(ground).unwrap().shape, ColliderShape::Sphere);
+    assert!(prop_row(&editor.ui, "Radius").is_some() && prop_row(&editor.ui, "Size").is_none());
+    let dropdown = shape(&editor.ui);
+    choose(&mut editor, &mut renderer, dropdown, 2);
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "Radius").is_some() && prop_row(&editor.ui, "Height").is_some());
+
+    // A Rigidbody and a Character Controller come from the same folder,
+    // Add Component scrolled to below the sections.
+    for name in ["Rigidbody", "Character Controller"] {
+        let add = first_with(&editor.ui, editor.ui.root(), "add-component").unwrap();
+        scroll_to(&mut editor, &mut renderer, add);
+        add_component(&mut editor, &mut renderer, name);
+    }
+    let world = &editor.game.engine.world;
+    assert!(world.has::<Rigidbody>(ground) && world.has::<CharacterController>(ground));
+    assert!(prop_row(&editor.ui, "Mass").is_some() && prop_row(&editor.ui, "Slope limit").is_some());
+    shot(&mut renderer, "physics-inspector.png");
+
+    // Each is undone.
+    for _ in 0..4 {
+        editor.undo(&mut renderer);
+        frame(&mut editor, &mut renderer);
+    }
+    let world = &editor.game.engine.world;
+    assert!(!world.has::<Collider>(ground) && !world.has::<Rigidbody>(ground) && !world.has::<CharacterController>(ground));
 }
 
 #[test]
@@ -4245,7 +4292,7 @@ fn prefabs_dragged_from_the_project_place_instances() {
     let point = [x + w * 0.2, y + h * 0.85];
     let world = &editor.game.engine.world;
     let ground = obj(&editor, "Ground").unwrap();
-    let markers = voxear_editor::scene_tools::Markers { lights: true, cameras: true };
+    let markers = voxear_editor::scene_tools::Markers { lights: true, cameras: true, colliders: true };
     let picked = voxear_editor::scene_tools::pick(world, &renderer, &camera, point, markers);
     assert_eq!(picked, Some(ground), "only ground there");
     let (origin, direction) = camera.ray(point);

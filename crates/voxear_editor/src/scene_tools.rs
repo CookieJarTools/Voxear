@@ -152,10 +152,12 @@ impl ViewCamera {
 pub struct Markers {
     pub lights: bool,
     pub cameras: bool,
+    /// The selected Obj's colliders.
+    pub colliders: bool,
 }
 
 impl Markers {
-    pub const NONE: Self = Self { lights: false, cameras: false };
+    pub const NONE: Self = Self { lights: false, cameras: false, colliders: false };
 
     /// Whether an Obj with a light, a camera or both has a marker that shows.
     pub fn show(self, light: bool, camera: bool) -> bool {

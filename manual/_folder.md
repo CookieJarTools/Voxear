@@ -21,6 +21,7 @@ Then read [[Objs and Components]] and [[Your First Script]].
 - **[[Lighting and the Look]]**: lights, the sky, and the finishing touches on the picture.
 - **[[Game UI]]**: menus and on-screen displays.
 - **[[Sound]]**: sound effects, ambience and music, in 2D and placed in the world.
+- **[[Physics]]**: things that fall, tumble and bump into each other, and characters that walk.
 - **[[Content and Builds]]**: what goes into a build, and how the game loads things and lets them go.
 - **[[Finding Problems]]**: the Console, the Profiler, and the other tools for finding out why.
 - **[[VoxDocs]]**: writing your project's own pages, guides that do the work for the reader, and linking code to pages.

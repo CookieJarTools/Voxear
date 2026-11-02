@@ -74,6 +74,7 @@ use crate::{
     project_view::{ItemKind, ProjectEvent, ProjectItem, ProjectView},
     props::{self, Part, Prop},
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
+    script_handles::ScriptHandles,
     settings::{self, Memory, SNAPS, SettingKind, SettingValue, Settings},
     settings_panel::SettingsPanel,
 };
@@ -227,6 +228,8 @@ pub struct Editor {
     /// and the Obj as it was when a drag of one began, for undo.
     field_handles: FieldHandles,
     field_drag_start: Option<ObjState>,
+    /// The handles behaviours' gizmos show for tools of their own.
+    script_handles: ScriptHandles,
     /// The Obj under the pointer in the Scene view in use, for gizmos.
     hovered_obj: Option<Entity>,
     hovered_handle: Option<Handle>,
@@ -469,6 +472,7 @@ impl Editor {
             tools: SceneTools::new(),
             field_handles: FieldHandles::default(),
             field_drag_start: None,
+            script_handles: ScriptHandles::default(),
             hovered_obj: None,
             hovered_handle: None,
             pressed_handle: None,
@@ -1128,15 +1132,18 @@ impl Editor {
         let world = &self.game.engine.world;
         // The fields' handles are edited, not played: only while editing.
         let editing = (!self.is_playing()).then_some(selected).flatten();
-        if let (Some(point), Some(entity)) = (self.pressed_handle.take(), selected) {
-            match self.tools.handle_at(world, renderer, &camera, entity, point) {
-                Some(handle) => self.tools.begin(world, renderer, &camera, entity, handle, point),
-                None if editing.is_some()
-                    && self.field_handles.begin(world, self.inspector.types(), &camera, entity, point) =>
-                {
-                    self.field_drag_start = ObjState::of(world, entity);
-                }
-                None => {}
+        if let Some(point) = self.pressed_handle.take() {
+            let tool = selected.and_then(|e| Some((e, self.tools.handle_at(world, renderer, &camera, e, point)?)));
+            let types = self.inspector.types();
+            if let Some((entity, handle)) = tool {
+                self.tools.begin(world, renderer, &camera, entity, handle, point);
+            } else if let Some(entity) =
+                editing.filter(|&entity| self.field_handles.begin(world, types, &camera, entity, point))
+            {
+                self.field_drag_start = ObjState::of(world, entity);
+            } else if let Some(owner) = self.script_handles.begin(&camera, point) {
+                // The gizmos' own handles may be on any Obj, and are dragged while playing too.
+                self.field_drag_start = ObjState::of(world, owner);
             }
         }
         if self.tools.is_dragging()
@@ -1151,6 +1158,11 @@ impl Editor {
             let types = self.inspector.types().clone();
             self.field_handles.drag_to(&mut self.game.engine.world, &types, &camera, point, snap);
         }
+        if self.script_handles.is_dragging()
+            && let Some(point) = point
+        {
+            self.script_handles.drag_to(&camera, point, (self.control, self.tools.snap));
+        }
         if std::mem::take(&mut self.released_handle) {
             self.end_drag();
         }
@@ -1162,6 +1174,7 @@ impl Editor {
             self.tools.hover(self.hovered_handle);
             let over_field = over.filter(|_| self.hovered_handle.is_none());
             self.field_handles.hover(world, self.inspector.types(), &camera, editing, over_field);
+            self.script_handles.hover(&camera, over_field.filter(|_| !self.field_handles.is_hovered()));
             self.hovered_obj = over.and_then(|point| pick(world, renderer, &camera, point));
             self.click_to_select(renderer, &camera, point);
         }
@@ -1170,6 +1183,7 @@ impl Editor {
         let mut shapes =
             if self.scene.show_gizmos { gizmos::shapes(world, &camera, self.selected()) } else { Vec::new() };
         shapes.extend(self.field_handles.shapes(world, self.inspector.types(), &camera, editing));
+        shapes.extend(self.script_handles.shapes(&camera));
         shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
         self.ui.set_shapes(self.scene.handles, shapes);
     }
@@ -1189,7 +1203,7 @@ impl Editor {
 
     /// Lets go of a handle; the drag is one step to undo.
     fn end_drag(&mut self) {
-        if let Some(entity) = self.field_handles.end() {
+        if let Some(entity) = self.field_handles.end().or_else(|| self.script_handles.end()) {
             return self.end_field_drag(entity);
         }
         let Some((entity, start)) = self.tools.end() else { return };
@@ -1201,14 +1215,15 @@ impl Editor {
         }
     }
 
-    /// Lets go of a field's handle: the fields it changed are one step to
-    /// undo, from the Obj as it was when the drag began.
+    /// Lets go of a field's handle, or a gizmo's: the fields it changed are
+    /// one step to undo, from the Obj as it was when the drag began. While
+    /// playing, only the played world changed.
     fn end_field_drag(&mut self, entity: Entity) {
         let (Some(before), Some(after)) = (self.field_drag_start.take(), ObjState::of(&self.game.engine.world, entity))
         else {
             return;
         };
-        if before != after {
+        if before != after && !self.is_playing() {
             self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
         }
@@ -1659,13 +1674,15 @@ impl Editor {
         if let WindowEvent::MouseInput { state, button: winit::event::MouseButton::Left, .. } = event {
             let pressed = *state == ElementState::Pressed;
             // A handle takes the press before the UI sees it, so it is not also a click.
-            let over_handle = self.hovered_handle.is_some() || self.field_handles.is_hovered();
+            let over_handle =
+                self.hovered_handle.is_some() || self.field_handles.is_hovered() || self.script_handles.is_hovered();
             if pressed && over_handle && self.over_viewport() {
                 self.pressed_handle = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
                 return true;
             }
             // A press and release inside one frame still ends the drag the press begins.
-            let dragging = self.tools.is_dragging() || self.field_handles.is_dragging();
+            let dragging =
+                self.tools.is_dragging() || self.field_handles.is_dragging() || self.script_handles.is_dragging();
             if !pressed && (dragging || self.pressed_handle.is_some()) {
                 self.released_handle = true;
                 return true;

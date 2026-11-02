@@ -73,7 +73,53 @@ The editor calls it every frame, for every Obj with the behaviour, while you edi
 
 Gizmos show in the Scene view while its **Gizmos** button is on. They never show in the Game view or in your built game. Any shape and scope from `Draw` works in a gizmo.
 
-To drag a value in the Scene view instead of drawing it, see "Editing fields in the Scene view" in [[Fields in the Inspector]].
+To drag a value in the Scene view instead of drawing it, a handle attribute on the field is often enough: see "Editing fields in the Scene view" in [[Fields in the Inspector]]. For anything those do not cover, use `Handles`.
+
+## Handles
+
+`Handles` puts things to drag in the Scene view, from inside `DrawGizmos`. Each takes a value as it is now and gives it back as the drag has left it, so all your code does is assign it back:
+
+```csharp
+public sealed class Patrol : Behaviour
+{
+	public List<Vector3> Points = [new(0f, 0f, 0f), new(3f, 0f, 0f)];
+	public float WaitRange = 1f;
+
+	protected override void DrawGizmos(Gizmo gizmo)
+	{
+		for (var i = 1; i < Points.Count; i++)
+		{
+			Draw.Line(Points[i - 1], Points[i], Color.Cyan);
+		}
+		if (!gizmo.IsSelected)
+		{
+			return;
+		}
+		for (var i = 0; i < Points.Count; i++)
+		{
+			Points[i] = Handles.Position(Points[i]);
+		}
+		WaitRange = Handles.Radius(Points[0], WaitRange);
+		if (Handles.Button(Points[^1] + new Vector3(1f, 0f, 0f), Color.Green))
+		{
+			Points.Add(Points[^1] + new Vector3(2f, 0f, 0f));
+		}
+	}
+}
+```
+
+| Handle | What you drag | What it gives back |
+| --- | --- | --- |
+| `Handles.Position(point)` | A dot, across the view | The point it was dragged to |
+| `Handles.Radius(center, radius)` | A dot on the edge of a sphere, which it draws | The new radius |
+| `Handles.Slider(origin, direction, distance)` | A dot along a line, which it draws | How far along the line it is |
+| `Handles.Button(point)` | A square you click | `true` in the frame it was clicked |
+
+Points are in the world. Each handle also takes a colour. Holding Ctrl while you drag snaps a point to the grid's snap distance, and a radius or distance to tenths of a metre.
+
+While you edit, a drag changes the behaviour's values in the scene, just as typing them into the Inspector would: the whole drag is one step to undo, and a field's `[OnValueChanged]` method runs when a handle changes it. So does a click on a button, so adding a point with the button above can be undone too. While the game plays, a drag changes the running behaviour, and stopping the game puts it back as it was.
+
+Handles are told apart by the order `DrawGizmos` shows them in. Show the same handles in the same order each frame, or a drag may jump from one to another.
 
 ## Where drawings show
 

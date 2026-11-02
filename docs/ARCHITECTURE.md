@@ -2127,6 +2127,16 @@ move, rotate and scale handles: a press on one is taken before the UI, as theirs
 through the same path the Inspector uses (`fields::set_raw_at`), and the Obj before the drag and after is one step
 to undo. Ctrl snaps points to the snap distance, lengths to tenths, and angles to 5°.
 
+**Handles in code** *(implemented)*, for tools of a game's own: `Handles.Position`, `Radius`, `Slider` and `Button`
+in `DrawGizmos`, each taking a value and giving it back as the drag left it. Voxear.Core lists the handles shown
+each frame, named by the behaviour's Obj and type and the order it showed them in, and gives the gizmo call's answer
+that list; the editor's `script_handles` draws their dots, takes a press on one before the UI, and sends the next
+gizmo call which handle is held and where to, or which button was clicked. Only while one of its handles is held
+are a behaviour's fields compared before and after its gizmos run, so `DrawGizmos` changing a field on its own never
+reaches the scene; the changed fields' `[OnValueChanged]` methods run, and while editing the fields come back to be
+written into the scene through `fields::set_raw`, with the Obj before the drag and after as one step to undo. While
+playing, the running behaviour simply keeps its new value.
+
 **Custom drawers** *(implemented)* are C#, built with Voxear UI, the UI games draw theirs with: `ValueDrawer<T>`
 draws every field of a type, and `AttributeDrawer<TAttribute, T>` (or `AttributeDrawer<TAttribute>` for any type)
 the fields marked with an attribute of the game's own. A drawer builds its elements in code in `Build(root)`, once,

@@ -132,15 +132,21 @@ impl Engine {
         scripts.set_live_field(&mut self.world, handle, field, value)
     }
 
-    /// Calls a method that takes nothing on a running behaviour, as a
-    /// `[Button]` or `[OnValueChanged]` does while the game plays.
     /// Draws the running behaviours' gizmos, as the editor's Scene views
-    /// show them while the game plays.
-    pub fn draw_live_gizmos(&mut self, selected: Option<Entity>, hovered: Option<Entity>) -> anyhow::Result<()> {
-        let Some(scripts) = self.scripts.as_mut() else { return Ok(()) };
-        scripts.draw_live_gizmos(&mut self.world, selected, hovered)
+    /// show them while the game plays, with what its pointer does to their
+    /// handles.
+    pub fn draw_live_gizmos(
+        &mut self,
+        selected: Option<Entity>,
+        hovered: Option<Entity>,
+        input: &voxear_scripting::HandleInput,
+    ) -> anyhow::Result<voxear_scripting::GizmoAnswer> {
+        let Some(scripts) = self.scripts.as_mut() else { return Ok(Default::default()) };
+        scripts.draw_live_gizmos(&mut self.world, selected, hovered, input)
     }
 
+    /// Calls a method that takes nothing on a running behaviour, as a
+    /// `[Button]` or `[OnValueChanged]` does while the game plays.
     pub fn call_live(&mut self, handle: BehaviourHandle, method: &str) -> anyhow::Result<()> {
         let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
         scripts.call_live(&mut self.world, handle, method)

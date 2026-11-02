@@ -70,6 +70,7 @@ mod project_files;
 mod project_view;
 mod props;
 pub mod scene_tools;
+mod script_handles;
 mod settings;
 mod settings_panel;
 #[cfg(target_os = "linux")]

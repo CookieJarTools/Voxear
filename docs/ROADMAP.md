@@ -480,9 +480,10 @@ Still to do in M3:
       `[DirectionHandle]` and `[SliderHandle]`
     - [ ] the same with several Objs selected, and the move, rotate and scale handles on points inside an Obj,
       such as a path's points, picked by clicking them
-    - [ ] for custom tools, handles that return the new value, with undo and change callbacks built in:
-      `target = Handles.Position(target)`, `Handles.Radius`, `Handles.Slider`, `Handles.Disc`,
-      `Handles.FreeMove` and `Handles.Button`, in `DrawGizmos` while selected
+    - [x] for custom tools, handles that return the new value, with undo and `[OnValueChanged]` built in:
+      `Target = Handles.Position(Target)` (dragged across the view, so it is also Unity's `FreeMove`),
+      `Handles.Radius`, `Handles.Slider` and `Handles.Button`, in `DrawGizmos`, while editing and while playing
+    - [ ] `Handles.Disc` for turning, and `Handles.Position` with move arrows along each axis
     - [x] in development builds, drawing shows in the game; release builds leave it out unless asked to keep it
     - [ ] later: physics queries drawn with their hits, and a recorder to scrub back through what was drawn
   - [x] several Hierarchies and Project panels, opened from a window's menu (Add Hierarchy, Add Project), and a click

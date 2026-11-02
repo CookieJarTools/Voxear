@@ -66,12 +66,12 @@ namespace Voxear.Scripting
 			}
 			if (action == "gizmos")
 			{
-				SceneGizmos.DrawKept(root);
+				SceneGizmos.DrawKept(json, root);
 				return;
 			}
 			if (action == "live-gizmos")
 			{
-				SceneGizmos.DrawLive(root);
+				SceneGizmos.DrawLive(json, root);
 				return;
 			}
 
@@ -195,7 +195,8 @@ namespace Voxear.Scripting
 		}
 
 		/// <summary>Each field scenes can set, as a scene writes its value, to tell what a call changed.</summary>
-		private static Dictionary<string, string> Values(Behaviour behaviour)
+		/// <summary>Each field scenes can set, as a scene writes it, by name.</summary>
+		internal static Dictionary<string, string> Values(Behaviour behaviour)
 		{
 			var values = new Dictionary<string, string>();
 			foreach (var field in BehaviourFields.Settable(behaviour.GetType()))

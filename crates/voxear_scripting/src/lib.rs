@@ -23,7 +23,7 @@ mod ui;
 pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 pub use display::CursorLock;
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
-pub use gizmos::GizmoTarget;
+pub use gizmos::{GizmoAnswer, GizmoTarget, HandleId, HandleInput, ScriptHandle, ScriptHandleKind};
 pub use hostfxr::{DotnetInstall, find_dotnet};
 pub use inspector::{InspectorAnswer, InspectorAsk};
 pub use runtime::{ConsoleName, CreatedBehaviour, ManagedMemory, Reloaded, ScriptHost, ScriptRuntime};

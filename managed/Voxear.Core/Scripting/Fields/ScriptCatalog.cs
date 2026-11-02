@@ -156,6 +156,10 @@ namespace Voxear.Scripting
 			{
 				json.WriteBoolean("gizmos", true);
 			}
+			if (type.GetCustomAttribute<GizmoIconAttribute>(inherit: true) is { } icon)
+			{
+				json.WriteString("icon", IconNames.Of(icon.Icon));
+			}
 			json.WriteEndObject();
 		}
 

@@ -1598,8 +1598,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   Wireframe, the lit scene with its meshes' edges drawn faintly over it (the renderer's debug views; the Game view
   is always lit). **Gizmos** (`gizmos`) draws a sun for each light and a
   camera body for each camera, which a click selects, and for the one selected, a light's reach (its range, or its
-  spot's cone) and a camera's frustum; the button shows or hides them. **Full screen** gives the dock to the Scene
-  view alone until it is pressed again.
+  spot's cone) and a camera's frustum; the button shows or hides them, and the menu beside it lights', cameras' and each
+  behaviour type's (settings `light_gizmos`, `camera_gizmos` and `hidden_gizmos`, for every Scene view). **Full screen**
+  gives the dock to the Scene view alone until it is pressed again.
 - **Several Scene views** (`editor::scene_views`), as Unity's: Add Scene View on a window's menu opens another
   beside it, looking from where the Scene view in use looks. Each is built from `SceneView.vui`, looks through a
   camera of its own, which the Hierarchy leaves out and which flies on its own, and has its own shading menu and
@@ -2116,7 +2117,12 @@ scene's values, so Voxear.Core's `SceneGizmos` keeps a copy of each type that dr
 `gizmos` on the behaviour), bound to its Obj and filled again only when its values change, and asks it through the
 Inspector's JSON calls; while playing, the running behaviours draw theirs. Their lines are marked as gizmos (a bit
 in the line call's flags, `Line::gizmo`), and a view draws them only when its `ViewOptions::gizmos` is on: a Scene
-view with its Gizmos button on, never the Game view. A gizmo that throws is logged once, not every frame.
+view with its Gizmos button on, never the Game view. A gizmo that throws is logged once, not every frame. Voxear.Core
+counts the gizmo lines each behaviour draws (`Draw.GizmoLines`) and answers with them by Obj, so the editor keeps each
+line with its Obj until the next frame's (`GizmoLines`) and a click within 5 pixels of one selects that Obj ahead of
+picking meshes. `[GizmoIcon]` names one of Voxear UI's icons through the `IconName` enum; ScriptInfo writes it as the
+type's `icon`, and the Scene views draw it where each Obj with the behaviour is, in a disc a click selects
+(`Shape::Icon`, an icon drawn as a shape).
 
 **Handles on fields** *(implemented)*, so a value is dragged where it belongs with no editor code:
 `[PositionHandle]` (a `Vector3`, or every point of a list joined as a path), `[RadiusHandle]`, `[DirectionHandle]`,

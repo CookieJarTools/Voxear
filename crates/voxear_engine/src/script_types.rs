@@ -125,6 +125,10 @@ pub struct BehaviourType {
     /// Whether it draws gizmos: it overrides `DrawGizmos`.
     #[serde(default)]
     pub gizmos: bool,
+    /// The icon its `[GizmoIcon]` shows in the Scene view where its Obj is,
+    /// by Voxear UI's name for it.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 /// A `[Button]` method, which takes nothing, and what its button says, or

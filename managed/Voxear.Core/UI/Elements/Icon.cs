@@ -10,6 +10,10 @@ namespace Voxear
 			this.name = name;
 		}
 
+		public Icon(IconName name) : this(IconNames.Of(name))
+		{
+		}
+
 		private protected override string MadeFrom => name;
 	}
 }

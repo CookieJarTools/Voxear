@@ -3,7 +3,7 @@
 //! where the Obj is, so they can be seen and clicked; and for the selected
 //! one, what it reaches: a camera's frustum, a directional light's direction,
 //! a spot light's cone and a point light's range. The Gizmos button shows or
-//! hides them all.
+//! hides them all, and its menu lights' or cameras'.
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
@@ -11,7 +11,7 @@ use voxear_render::{Camera, Light, LightKind};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
-use crate::scene_tools::{ViewCamera, ring};
+use crate::scene_tools::{Markers, ViewCamera, ring};
 
 /// A marker's size, in logical pixels: the sun's disc and the camera's body.
 const MARKER: f32 = 5.0;
@@ -27,9 +27,9 @@ const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
 /// How long a directional light's direction is drawn, on screen.
 const DIRECTION: f32 = 70.0;
 
-/// The gizmos for every light and camera in view, in the view's own
-/// coordinates (from its top left).
-pub fn shapes(world: &World, camera: &ViewCamera, selected: Option<Entity>) -> Vec<Shape> {
+/// The gizmos for every light and camera in view whose markers show, in the
+/// view's own coordinates (from its top left).
+pub fn shapes(world: &World, camera: &ViewCamera, selected: Option<Entity>, markers: Markers) -> Vec<Shape> {
     let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
     let mut shapes = Vec::new();
     let marked = world
@@ -37,6 +37,7 @@ pub fn shapes(world: &World, camera: &ViewCamera, selected: Option<Entity>) -> V
         .without::<EditorOnly>()
         .without::<Destroying>();
     for (entity, transform, placed, light, lens) in marked {
+        let (light, lens) = (light.filter(|_| markers.lights), lens.filter(|_| markers.cameras));
         if light.is_none() && lens.is_none() {
             continue;
         }

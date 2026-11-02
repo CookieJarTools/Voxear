@@ -232,6 +232,8 @@ pub struct Editor {
     script_handles: ScriptHandles,
     /// The Obj under the pointer in the Scene view in use, for gizmos.
     hovered_obj: Option<Entity>,
+    /// Behaviours' gizmo lines, each with its Obj, for a click to select.
+    gizmo_lines: scene_gizmos::GizmoLines,
     hovered_handle: Option<Handle>,
     pressed_handle: Option<[f32; 2]>,
     released_handle: bool,
@@ -474,6 +476,7 @@ impl Editor {
             field_drag_start: None,
             script_handles: ScriptHandles::default(),
             hovered_obj: None,
+            gizmo_lines: Default::default(),
             hovered_handle: None,
             pressed_handle: None,
             released_handle: false,
@@ -1175,13 +1178,16 @@ impl Editor {
             let over_field = over.filter(|_| self.hovered_handle.is_none());
             self.field_handles.hover(world, self.inspector.types(), &camera, editing, over_field);
             self.script_handles.hover(&camera, over_field.filter(|_| !self.field_handles.is_hovered()));
-            self.hovered_obj = over.and_then(|point| pick(world, renderer, &camera, point));
+            let markers = self.markers(self.scene.show_gizmos);
+            self.hovered_obj = over.and_then(|point| pick(world, renderer, &camera, point, markers));
             self.click_to_select(renderer, &camera, point);
         }
         // Gizmos go under the handles, which are drawn last.
         let world = &self.game.engine.world;
-        let mut shapes =
-            if self.scene.show_gizmos { gizmos::shapes(world, &camera, self.selected()) } else { Vec::new() };
+        let mut shapes = gizmos::shapes(world, &camera, self.selected(), self.markers(self.scene.show_gizmos));
+        if self.scene.show_gizmos {
+            shapes.extend(scene_gizmos::icon_shapes(&self.gizmo_icons(), &camera, self.selected()));
+        }
         shapes.extend(self.field_handles.shapes(world, self.inspector.types(), &camera, editing));
         shapes.extend(self.script_handles.shapes(&camera));
         shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
@@ -1197,7 +1203,10 @@ impl Editor {
             return;
         }
         let Some(point) = point else { return };
-        let picked = pick(&self.game.engine.world, renderer, camera, point);
+        // A behaviour's gizmo is drawn over its Obj, so a click on its icon or one of its lines is meant for it.
+        let gizmo = self.scene.show_gizmos.then(|| self.gizmo_under(camera, point)).flatten();
+        let markers = self.markers(self.scene.show_gizmos);
+        let picked = gizmo.or_else(|| pick(&self.game.engine.world, renderer, camera, point, markers));
         self.select(picked);
     }
 

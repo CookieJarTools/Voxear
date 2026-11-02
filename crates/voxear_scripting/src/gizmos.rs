@@ -67,13 +67,15 @@ pub struct ScriptHandle {
     pub color: Option<[f32; 4]>,
 }
 
-/// What drawing the gizmos gave back: the handles shown, and the fields
-/// the pointer's handle changed on a behaviour kept as data, as a scene
-/// writes them, by Obj and behaviour.
+/// What drawing the gizmos gave back: the handles shown; the fields the
+/// pointer's handle changed on a behaviour kept as data, as a scene writes
+/// them, by Obj and behaviour; and how many gizmo lines each Obj's
+/// behaviours drew, in the order they drew them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GizmoAnswer {
     pub handles: Vec<ScriptHandle>,
     pub changed: Vec<(Entity, String, toml::Table)>,
+    pub drawn: Vec<(Entity, usize)>,
 }
 
 impl ScriptRuntime {
@@ -99,20 +101,23 @@ impl ScriptRuntime {
         self.ask_gizmos(world, json!({ "action": "gizmos", "behaviours": behaviours }), input)
     }
 
-    /// Draws the running behaviours' gizmos while the game plays.
+    /// Draws the running behaviours' gizmos while the game plays, but for
+    /// the types `hidden` names.
     pub fn draw_live_gizmos(
         &mut self,
         world: &mut World,
-        selected: Option<Entity>,
-        hovered: Option<Entity>,
+        (selected, hovered): (Option<Entity>, Option<Entity>),
+        hidden: &[String],
         input: &HandleInput,
     ) -> Result<GizmoAnswer> {
         let bits = |entity: Option<Entity>| entity.map_or(0, Entity::to_bits);
-        self.ask_gizmos(
-            world,
-            json!({ "action": "live-gizmos", "selected": bits(selected), "hovered": bits(hovered) }),
-            input,
-        )
+        let request = json!({
+            "action": "live-gizmos",
+            "selected": bits(selected),
+            "hovered": bits(hovered),
+            "hidden": hidden,
+        });
+        self.ask_gizmos(world, request, input)
     }
 
     fn ask_gizmos(
@@ -181,7 +186,10 @@ fn read_answer(mut answer: serde_json::Value) -> GizmoAnswer {
             let fields = fields.into_iter().filter_map(|(name, value)| Some((name, to_toml(value)?))).collect();
             Some((entity(&change)?, change["behaviour"].as_str()?.to_string(), fields))
         });
-    GizmoAnswer { handles, changed: changed.collect() }
+    let drawn = answer["drawn"].as_array().into_iter().flatten().filter_map(|pair| {
+        Some((Entity::from_bits(pair.get(0)?.as_u64()?), usize::try_from(pair.get(1)?.as_u64()?).ok()?))
+    });
+    GizmoAnswer { handles, changed: changed.collect(), drawn: drawn.collect() }
 }
 
 #[cfg(test)]
@@ -197,6 +205,7 @@ mod tests {
                 { "entity": 7, "behaviour": "Hello.Guard", "id": 2, "kind": 9, "at": [0, 0, 0], "direction": [0, 0, 0], "number": 0 },
             ],
             "changed": [{ "entity": 7, "behaviour": "Hello.Guard", "fields": { "Target": [1.5, 2, 3], "Note": null } }],
+            "drawn": [[7, 96], [9, 12]],
         });
         let answer = read_answer(answer);
         assert_eq!(answer.handles.len(), 2, "a kind it does not know is left out");
@@ -207,5 +216,6 @@ mod tests {
         assert_eq!((*entity, behaviour.as_str()), (Entity::from_bits(7), "Hello.Guard"));
         assert_eq!(fields.len(), 1, "null has no TOML, so it is left out");
         assert_eq!(fields["Target"].as_array().map(Vec::len), Some(3));
+        assert_eq!(answer.drawn, [(Entity::from_bits(7), 96), (Entity::from_bits(9), 12)]);
     }
 }

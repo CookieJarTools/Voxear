@@ -133,16 +133,17 @@ impl Engine {
     }
 
     /// Draws the running behaviours' gizmos, as the editor's Scene views
-    /// show them while the game plays, with what its pointer does to their
-    /// handles.
+    /// show them while the game plays, but for the types `hidden` names,
+    /// with what its pointer does to their handles. `objs` are the Obj
+    /// selected and the one under the pointer.
     pub fn draw_live_gizmos(
         &mut self,
-        selected: Option<Entity>,
-        hovered: Option<Entity>,
+        objs: (Option<Entity>, Option<Entity>),
+        hidden: &[String],
         input: &voxear_scripting::HandleInput,
     ) -> anyhow::Result<voxear_scripting::GizmoAnswer> {
         let Some(scripts) = self.scripts.as_mut() else { return Ok(Default::default()) };
-        scripts.draw_live_gizmos(&mut self.world, selected, hovered, input)
+        scripts.draw_live_gizmos(&mut self.world, objs, hidden, input)
     }
 
     /// Calls a method that takes nothing on a running behaviour, as a

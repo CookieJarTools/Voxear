@@ -81,7 +81,8 @@ impl Editor {
         if !(left..left + width).contains(&x) || !(top..top + height).contains(&y) {
             return None;
         }
-        let hit = scene_tools::pick(&self.game.engine.world, renderer, &camera, [x, y])?;
+        let markers = scene_tools::Markers::NONE;
+        let hit = scene_tools::pick(&self.game.engine.world, renderer, &camera, [x, y], markers)?;
         self.game.engine.world.has::<MeshRenderer>(hit).then_some(hit)
     }
 

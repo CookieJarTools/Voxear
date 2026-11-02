@@ -166,6 +166,11 @@ pub struct Settings {
     /// Lights and cameras are drawn in the Scene view, and what the selected
     /// one reaches.
     pub show_gizmos: bool,
+    /// Which gizmos the Gizmos menu leaves on: lights' and cameras', and
+    /// the behaviour types whose gizmos it hides, by full name.
+    pub light_gizmos: bool,
+    pub camera_gizmos: bool,
+    pub hidden_gizmos: Vec<String>,
     /// How the Scene view shades: lit, unlit, or as wireframe.
     pub scene_shading: usize,
     /// Prefabs in the Project panel open out to their Objs, as models open
@@ -239,6 +244,9 @@ impl Default for Settings {
             show_stats: true,
             show_axis_gizmo: true,
             show_gizmos: true,
+            light_gizmos: true,
+            camera_gizmos: true,
+            hidden_gizmos: Vec::new(),
             scene_shading: 0,
             prefab_parts: false,
             start_paused: false,

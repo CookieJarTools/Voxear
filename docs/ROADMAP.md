@@ -473,8 +473,8 @@ Still to do in M3:
       `Draw.Width(3)`, `Draw.Duration(2)`, `Draw.OnTop()` and `Draw.InGame()`
     - [x] `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`
       and `IsHovered`, while editing and while playing, in the Scene views only
-    - [ ] gizmos that are clickable and select their Obj; a type's gizmos hidden from the Gizmos menu; and
-      `[GizmoIcon]` giving it an icon by typed reference
+    - [x] gizmos that are clickable and select their Obj; a type's gizmos hidden from the Gizmos menu; and
+      `[GizmoIcon(IconName.Audio)]` giving it an icon by typed reference
     - [x] attribute handles that edit fields in the Scene view with no code, undoable: `[PositionHandle]` (local or
       world, every item of a list joined as a path), `[RadiusHandle]`, `[BoundsHandle]`, `[ArcHandle]`,
       `[DirectionHandle]` and `[SliderHandle]`

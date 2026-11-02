@@ -17,15 +17,20 @@
 
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_engine::FlyCamera;
+use voxear_engine::{FlyCamera, script_types::ScriptTypes};
 use voxear_render::{
     Camera, DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_NONE, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME, Renderer,
 };
 use voxear_scene::{Name, Transform};
-use voxear_ui::{Color, NodeId, Shape, Ui};
+use voxear_ui::{Color, MenuItem, NodeId, Shape, Ui};
 
 use super::{Editor, GIZMO_END, GIZMO_MIDDLE, GIZMO_REACH};
-use crate::{gizmos, hierarchy::EditorOnly, scene_tools::ViewCamera, settings::KeptSceneView};
+use crate::{
+    gizmos,
+    hierarchy::EditorOnly,
+    scene_tools::ViewCamera,
+    settings::{KeptSceneView, Settings},
+};
 
 /// What every Scene view is built from.
 const MARKUP: &str = include_str!("../../ui/SceneView.vui");
@@ -49,9 +54,11 @@ pub(super) struct SceneView {
     /// The axis gizmo's box, and the element its axes are drawn on.
     pub(super) view_gizmo: NodeId,
     pub(super) gizmo: NodeId,
-    /// The header's shading menu, Gizmos button and full screen button.
+    /// The header's shading menu, Gizmos button, the menu of which gizmos
+    /// show, and full screen button.
     pub(super) shading_menu: NodeId,
     pub(super) gizmos_button: NodeId,
+    pub(super) gizmos_menu: NodeId,
     pub(super) maximize: NodeId,
     /// The bar naming a prefab open on its own, with Back and Close Prefab.
     pub(super) prefab_bar: NodeId,
@@ -92,6 +99,7 @@ impl SceneView {
             gizmo: find(ui, "gizmo"),
             shading_menu: find(ui, "shading"),
             gizmos_button: find(ui, "gizmos"),
+            gizmos_menu: find(ui, "gizmos-menu"),
             maximize: find(ui, "scene-maximize"),
             prefab_bar: find(ui, "prefab-bar"),
             prefab_name: find(ui, "prefab-name"),
@@ -309,6 +317,7 @@ impl Editor {
     /// shading and Gizmos are settings, so they are kept. Returns whether a
     /// setting changed.
     pub(super) fn update_scene_headers(&mut self) -> bool {
+        let gizmo_types = gizmo_types(self.inspector.types());
         let (ui, settings) = (&mut self.ui, &mut self.memory.settings);
         let mut changed = false;
         let mut maximize = None;
@@ -327,6 +336,13 @@ impl Editor {
                     settings.show_gizmos = view.show_gizmos;
                     changed = true;
                 }
+            }
+            if ui.clicked(view.gizmos_menu) {
+                let [x, y, _, height] = ui.rect(view.gizmos_menu);
+                ui.open_menu(view.gizmos_menu, (x, y + height + 4.0), &gizmos_menu(settings, &gizmo_types));
+            }
+            if let Some(choice) = ui.menu_choice(view.gizmos_menu) {
+                changed |= toggle_gizmos(settings, &gizmo_types, choice);
             }
             if ui.clicked(view.maximize) {
                 maximize = Some(view.panel.clone());
@@ -376,6 +392,7 @@ impl Editor {
     /// which only show them; the one in use draws its own as it takes the
     /// pointer.
     pub(super) fn draw_other_scene_views(&mut self, renderer: &Renderer) {
+        let (markers, icons) = (self.markers(true), self.gizmo_icons());
         let (ui, world, tools) = (&mut self.ui, &self.game.engine.world, &self.tools);
         let selected = self.selection;
         for view in &self.scene_views {
@@ -385,7 +402,11 @@ impl Editor {
                 ui.set_shapes(view.handles, Vec::new());
                 continue;
             };
-            let mut shapes = if view.show_gizmos { gizmos::shapes(world, &camera, selected) } else { Vec::new() };
+            let markers = if view.show_gizmos { markers } else { crate::scene_tools::Markers::NONE };
+            let mut shapes = gizmos::shapes(world, &camera, selected, markers);
+            if view.show_gizmos {
+                shapes.extend(super::scene_gizmos::icon_shapes(&icons, &camera, selected));
+            }
             shapes.extend(tools.shapes(world, renderer, &camera, selected));
             ui.set_shapes(view.handles, shapes);
         }
@@ -488,4 +509,49 @@ fn axis_shapes(rotation: Quat) -> Vec<Shape> {
         shapes.push(Shape::Circle { center: end, radius: GIZMO_END, fill: colors[i], border: None });
     }
     shapes
+}
+
+/// The behaviour types whose gizmos the Gizmos menu lists: those that draw
+/// any, or have an icon, by full name and as the menu says it.
+fn gizmo_types(types: &ScriptTypes) -> Vec<(String, String)> {
+    let mut listed: Vec<(String, String)> = (types.behaviours.iter().chain(&types.components))
+        .filter(|t| t.gizmos || t.icon.is_some())
+        .map(|t| (t.name.clone(), t.short_name().to_string()))
+        .collect();
+    listed.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    listed
+}
+
+/// The Gizmos menu: lights, cameras and each behaviour type with gizmos,
+/// ticked while they show.
+fn gizmos_menu(settings: &Settings, types: &[(String, String)]) -> Vec<MenuItem> {
+    let mut items = vec![
+        MenuItem::new("Lights").checked(settings.light_gizmos),
+        MenuItem::new("Cameras").checked(settings.camera_gizmos),
+        MenuItem::separator(),
+    ];
+    for (name, label) in types {
+        items.push(MenuItem::new(label).checked(!settings.hidden_gizmos.contains(name)));
+    }
+    if types.is_empty() {
+        items.push(MenuItem::new("No scripts draw gizmos").enabled(false));
+    }
+    items
+}
+
+/// Shows or hides what the Gizmos menu's `choice` names. Returns whether a
+/// setting changed.
+fn toggle_gizmos(settings: &mut Settings, types: &[(String, String)], choice: usize) -> bool {
+    match choice {
+        0 => settings.light_gizmos = !settings.light_gizmos,
+        1 => settings.camera_gizmos = !settings.camera_gizmos,
+        _ => {
+            let Some((name, _)) = types.get(choice - 3) else { return false };
+            match settings.hidden_gizmos.iter().position(|hidden| hidden == name) {
+                Some(index) => _ = settings.hidden_gizmos.remove(index),
+                None => settings.hidden_gizmos.push(name.clone()),
+            }
+        }
+    }
+    true
 }

@@ -42,6 +42,9 @@ namespace Voxear
 		/// <summary>Where lines go instead of the engine, for tests: from, to, colour, duration and flags.</summary>
 		internal static Action<Vector3, Vector3, Color, float, int>? Sink { get; set; }
 
+		/// <summary>How many lines have been drawn as gizmos, so the editor can tell whose gizmo a click is on.</summary>
+		[field: ThreadStatic] internal static int GizmoLines { get; private set; }
+
 		private static ref DrawState State
 		{
 			get
@@ -393,6 +396,10 @@ namespace Voxear
 			var shade = color ?? now.Color;
 			flags |= (now.OnTop ? OnTopFlag : 0) | (now.InGame ? InGameFlag : 0) | (now.Gizmo ? GizmoFlag : 0);
 			flags |= (int)MathF.Round(Math.Min(now.Width, 4095f) * 16f) << WidthShift;
+			if (now.Gizmo)
+			{
+				GizmoLines++;
+			}
 			if (Sink != null)
 			{
 				Sink(a, b, shade, now.Duration, flags);

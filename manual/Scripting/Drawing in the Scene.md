@@ -73,6 +73,25 @@ The editor calls it every frame, for every Obj with the behaviour, while you edi
 
 Gizmos show in the Scene view while its **Gizmos** button is on. They never show in the Game view or in your built game. Any shape and scope from `Draw` works in a gizmo.
 
+Clicking a gizmo's line selects the Obj that drew it, so an Obj you cannot see, such as a trigger or a spawn point, can still be picked out in the Scene view.
+
+### Gizmo icons
+
+An Obj with nothing to see can show an icon where it is, as lights and cameras do. Give the behaviour `[GizmoIcon]`:
+
+```csharp
+[GizmoIcon(IconName.Audio)]
+public sealed class Ambience : Behaviour
+{
+}
+```
+
+Every Obj with the behaviour shows the icon in the Scene view, and a click on the icon selects the Obj. `IconName` lists Voxear's icons, so a mistyped name will not compile.
+
+### The Gizmos menu
+
+The arrow beside the **Gizmos** button opens a menu of which gizmos show: lights, cameras, and every behaviour type that draws gizmos or has an icon. Untick one to hide it in every Scene view. A hidden gizmo cannot be clicked either, and the editor remembers the choice.
+
 To drag a value in the Scene view instead of drawing it, a handle attribute on the field is often enough: see "Editing fields in the Scene view" in [[Fields in the Inspector]]. For anything those do not cover, use `Handles`.
 
 ## Handles

@@ -10,6 +10,7 @@
             <Option>Lit Wireframe</Option>
         </Dropdown>
         <Button name="gizmos" class="header-button">Gizmos</Button>
+        <Button name="gizmos-menu" class="icon-button"><Icon icon="chevron-down" /></Button>
         <Button name="scene-maximize" class="icon-button"><Icon icon="maximize" /></Button>
     </Panel>
     <!-- Over the view while a prefab is open on its own, as Unity's prefab mode. -->

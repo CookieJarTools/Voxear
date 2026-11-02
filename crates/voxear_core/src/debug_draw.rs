@@ -197,6 +197,17 @@ pub fn lines() -> Vec<Line> {
     shapes().lines.iter().map(|(line, _)| *line).collect()
 }
 
+/// How many lines there are to draw now: where the next one drawn will be
+/// in [`lines`], so [`lines_from`] gives what is drawn after.
+pub fn line_count() -> usize {
+    shapes().lines.len()
+}
+
+/// The lines to draw now from the `start`th on.
+pub fn lines_from(start: usize) -> Vec<Line> {
+    shapes().lines.iter().skip(start).map(|(line, _)| *line).collect()
+}
+
 /// The texts to draw now.
 pub fn texts() -> Vec<Text> {
     shapes().texts.iter().map(|(text, _)| text.clone()).collect()

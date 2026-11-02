@@ -417,6 +417,11 @@ impl Ui {
         }
     }
 
+    /// The shapes drawn on an element.
+    pub fn shapes(&self, node: NodeId) -> &[crate::Shape] {
+        self.element(node).map_or(&[], |element| element.shapes.as_slice())
+    }
+
     /// Makes an element a window onto what the renderer drew under the UI,
     /// such as a 3D view: the UI drawn before it is cut away inside it, so
     /// what lies under a floating window does not show through its view.

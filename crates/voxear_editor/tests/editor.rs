@@ -4070,7 +4070,9 @@ fn prefabs_dragged_from_the_project_place_instances() {
     let point = [x + w * 0.2, y + h * 0.85];
     let world = &editor.game.engine.world;
     let ground = obj(&editor, "Ground").unwrap();
-    assert_eq!(voxear_editor::scene_tools::pick(world, &renderer, &camera, point), Some(ground), "only ground there");
+    let markers = voxear_editor::scene_tools::Markers { lights: true, cameras: true };
+    let picked = voxear_editor::scene_tools::pick(world, &renderer, &camera, point, markers);
+    assert_eq!(picked, Some(ground), "only ground there");
     let (origin, direction) = camera.ray(point);
     let hit = origin + direction * (-origin.y / direction.y);
     editor.ui.pointer_move(from[0], from[1]);

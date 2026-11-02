@@ -1,0 +1,55 @@
+namespace Voxear
+{
+	/// <summary>
+	/// Voxear UI's icons, by name, for an <see cref="Icon"/> or a behaviour's <see cref="GizmoIconAttribute"/>, so a
+	/// misspelt one is a compile error rather than an empty space.
+	/// </summary>
+	public enum IconName
+	{
+		Alert,
+		Audio,
+		Book,
+		Box,
+		Branch,
+		Camera,
+		Check,
+		ChevronDown,
+		ChevronLeft,
+		ChevronRight,
+		Close,
+		Code,
+		Copy,
+		Cube,
+		Edit,
+		Eye,
+		File,
+		Folder,
+		Globe,
+		Grid,
+		Info,
+		Level,
+		Light,
+		Lock,
+		Material,
+		Maximize,
+		More,
+		Move,
+		Obj,
+		Panels,
+		Pause,
+		Pivot,
+		Play,
+		Plus,
+		Profiler,
+		Rotate,
+		Scale,
+		Scene,
+		Search,
+		Select,
+		Settings,
+		Step,
+		Stop,
+		Texture,
+		Transform,
+	}
+}

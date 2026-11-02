@@ -1,9 +1,9 @@
 //! Behaviours' gizmos, on a copy of Hello whose Spinner B gains a Beacon
 //! that draws a sphere around itself, yellow while selected, and while
-//! selected shows handles for its reach, a target and a button. A file of
-//! its own, so it runs in a process of its own, since .NET starts only once
-//! per process, and debug draw keeps one list for the process. Skips itself
-//! without a GPU or .NET.
+//! selected shows handles for its reach, a target and a button, and has an
+//! icon. A file of its own, so it runs in a process of its own, since .NET
+//! starts only once per process, and debug draw keeps one list for the
+//! process. Skips itself without a GPU or .NET.
 
 use voxear_core::{debug_draw, logging::LogCapture, math::Vec3};
 use voxear_ecs::Entity;
@@ -18,6 +18,7 @@ using Voxear;
 
 namespace Hello;
 
+[GizmoIcon(IconName.Audio)]
 public sealed class Beacon : Behaviour
 {
 	public float Reach = 1.5f;
@@ -135,6 +136,45 @@ fn on_screen(editor: &voxear_editor::Editor, point: Vec3) -> [f32; 2] {
     editor.scene_camera().expect("the Scene view shows").project(point).expect("in front of the camera")
 }
 
+/// Clicks a point in the Scene view, a frame for the press and one for the release.
+fn click_at(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, at: [f32; 2]) {
+    pointer_to(editor, at);
+    frame(editor, renderer);
+    editor.ui.pointer_button(true);
+    frame(editor, renderer);
+    editor.ui.pointer_button(false);
+    frame(editor, renderer);
+}
+
+fn with_class(ui: &voxear_ui::Ui, node: voxear_ui::NodeId, class: &str, found: &mut Vec<voxear_ui::NodeId>) {
+    if ui.has_class(node, class) {
+        found.push(node);
+    }
+    for child in ui.children(node) {
+        with_class(ui, child, class, found);
+    }
+}
+
+/// Opens the first Scene view's Gizmos menu and chooses the item that says `label`.
+fn gizmos_menu(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label: &str) {
+    let button = editor.ui.find(editor.ui.root(), "gizmos-menu").expect("the Gizmos menu's button");
+    let [x, y, w, h] = editor.ui.rect(button);
+    click_at(editor, renderer, [x + w / 2.0, y + h / 2.0]);
+    let mut items = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "menu-item", &mut items);
+    let ui = &editor.ui;
+    let item = items.into_iter().find(|&item| ui.children(item).iter().any(|&part| ui.text(part) == label));
+    let [x, y, w, h] = editor.ui.rect(item.unwrap_or_else(|| panic!("the Gizmos menu lists {label}")));
+    click_at(editor, renderer, [x + w / 2.0, y + h / 2.0]);
+}
+
+/// How many of the Beacon's audio icons the Scene view shows.
+fn icons(editor: &voxear_editor::Editor) -> usize {
+    let handles = editor.ui.find(editor.ui.root(), "handles").expect("the Scene view's handles layer");
+    let shapes = editor.ui.shapes(handles);
+    shapes.iter().filter(|shape| matches!(shape, voxear_ui::Shape::Icon { name: "audio", .. })).count()
+}
+
 /// The gizmo lines drawn this frame in this colour.
 fn gizmo_lines(color: [f32; 4]) -> usize {
     debug_draw::lines().iter().filter(|line| line.gizmo && line.color == color).count()
@@ -210,6 +250,27 @@ fn behaviours_draw_their_gizmos_while_editing_and_while_playing() {
     drag(&mut editor, &mut renderer, button, button);
     let pings = beacon_field(&editor, beacon, "pings").and_then(|value| value.as_integer());
     assert_eq!(pings, Some(1), "one click, one ping");
+
+    // A click on the gizmo's sphere selects the Obj it is drawn for, though nothing else is there.
+    editor.select(None);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(icons(&editor), 1, "the Beacon's icon shows where its Obj is");
+    let reach = number(&beacon_field(&editor, beacon, "reach").unwrap());
+    let top = on_screen(&editor, centre + Vec3::Y * reach);
+    click_at(&mut editor, &mut renderer, top);
+    assert_eq!(editor.selected(), Some(beacon), "a click on the top of the sphere selects Spinner B");
+
+    // The Gizmos menu hides the Beacon's gizmos and icon, and shows them again.
+    editor.select(None);
+    gizmos_menu(&mut editor, &mut renderer, "Beacon");
+    frame(&mut editor, &mut renderer);
+    assert_eq!((gizmo_lines(cyan), icons(&editor)), (0, 0), "hidden from the Gizmos menu");
+    assert!(editor.settings().hidden_gizmos.iter().any(|t| t == "Hello.Beacon"), "and the setting is kept");
+    click_at(&mut editor, &mut renderer, top);
+    assert_eq!(editor.selected(), None, "a hidden gizmo cannot be clicked");
+    gizmos_menu(&mut editor, &mut renderer, "Beacon");
+    until_drawn(&mut editor, &mut renderer, cyan, "the Beacon's gizmo, shown again");
+    assert_eq!(icons(&editor), 1);
 
     // While playing, the running Beacon draws its own.
     editor.select(None);

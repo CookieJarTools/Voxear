@@ -10,7 +10,8 @@ namespace Voxear.Scripting
 	/// Behaviours' gizmos, which the editor asks for each frame. In edit mode a behaviour is only its scene's values, so
 	/// a copy of each that draws gizmos is kept, bound to its Obj, and filled again only when its values change:
 	/// { "action": "gizmos", "behaviours": [{ "behaviour", "entity", "fields", "selected", "hovered" }] }. While the
-	/// game plays, the running behaviours draw theirs: { "action": "live-gizmos", "selected", "hovered" }, by entity.
+	/// game plays, the running behaviours draw theirs: { "action": "live-gizmos", "selected", "hovered", "hidden" }, by
+	/// entity, but for the types the Gizmos menu hides.
 	/// What they draw is marked as gizmos. A behaviour whose gizmos throw is logged once, not every frame.
 	/// <para>
 	/// Both carry what the editor's pointer does to Handles, each named by the behaviour that showed it, by "entity"
@@ -18,6 +19,10 @@ namespace Voxear.Scripting
 	/// "handles" shown, and, in edit mode, the fields that dragging or clicking one "changed" on a copy, by entity and
 	/// behaviour, for the editor to write into the scene, after calling each changed field's [OnValueChanged] method,
 	/// as the Inspector does. What DrawGizmos changes on its own is not kept.
+	/// </para>
+	/// <para>
+	/// The answer also says how many gizmo lines each behaviour "drew", in order, by entity, so a click on a line in
+	/// the Scene view can select the Obj whose gizmo it is.
 	/// </para>
 	/// </summary>
 	internal static class SceneGizmos
@@ -33,6 +38,7 @@ namespace Voxear.Scripting
 			BeginHandles(request);
 			var seen = new HashSet<(ulong, string)>();
 			var changed = new List<(ulong Entity, string Type, Dictionary<string, string> Fields)>();
+			var drawn = new List<(ulong Entity, int Lines)>();
 			using (Draw.Gizmos())
 			{
 				foreach (var asked in request.GetProperty("behaviours").EnumerateArray())
@@ -47,10 +53,12 @@ namespace Voxear.Scripting
 					}
 					var selected = asked.GetProperty("selected").GetBoolean();
 					var hovered = asked.GetProperty("hovered").GetBoolean();
+					var lines = Draw.GizmoLines;
 					if (RunHeld(copy.Copy, key, selected, hovered) is { } different)
 					{
 						changed.Add((key.Item1, key.Item2, different));
 					}
+					drawn.Add((key.Item1, Draw.GizmoLines - lines));
 				}
 			}
 			// Copies of behaviours no longer asked for, gone or deselected from the scene, are let go.
@@ -62,6 +70,7 @@ namespace Voxear.Scripting
 				}
 			}
 			WriteHandles(json);
+			WriteDrawn(json, drawn);
 			json.WriteStartArray("changed");
 			foreach (var (entity, type, fields) in changed)
 			{
@@ -85,18 +94,30 @@ namespace Voxear.Scripting
 			BeginHandles(request);
 			var selected = request.GetProperty("selected").GetUInt64();
 			var hovered = request.GetProperty("hovered").GetUInt64();
+			var hidden = new HashSet<string>();
+			if (request.TryGetProperty("hidden", out var named))
+			{
+				foreach (var type in named.EnumerateArray())
+				{
+					hidden.Add(type.GetString() ?? string.Empty);
+				}
+			}
+			var drawn = new List<(ulong Entity, int Lines)>();
 			using (Draw.Gizmos())
 			{
 				foreach (var behaviour in BehaviourTable.Live())
 				{
-					if (!behaviour.IsDestroyed && Behaviour.DrawsGizmos(behaviour.GetType()))
+					if (!behaviour.IsDestroyed && Behaviour.DrawsGizmos(behaviour.GetType()) && !hidden.Contains(behaviour.GetType().FullName ?? string.Empty))
 					{
 						var entity = behaviour.Obj.Entity.Bits;
+						var lines = Draw.GizmoLines;
 						RunHeld(behaviour, (entity, behaviour.GetType().FullName ?? string.Empty), entity == selected, entity == hovered);
+						drawn.Add((entity, Draw.GizmoLines - lines));
 					}
 				}
 			}
 			WriteHandles(json);
+			WriteDrawn(json, drawn);
 		}
 
 		/// <summary>Lets go of every copy, as when the scripts reload, so the old scripts can leave memory.</summary>
@@ -153,6 +174,22 @@ namespace Voxear.Scripting
 					json.WriteEndArray();
 				}
 				json.WriteEndObject();
+			}
+			json.WriteEndArray();
+		}
+
+		private static void WriteDrawn(Utf8JsonWriter json, List<(ulong Entity, int Lines)> drawn)
+		{
+			json.WriteStartArray("drawn");
+			foreach (var (entity, lines) in drawn)
+			{
+				if (lines > 0)
+				{
+					json.WriteStartArray();
+					json.WriteNumberValue(entity);
+					json.WriteNumberValue(lines);
+					json.WriteEndArray();
+				}
 			}
 			json.WriteEndArray();
 		}

@@ -147,9 +147,31 @@ impl ViewCamera {
     }
 }
 
+/// Which markers show, and can be clicked: lights', cameras', both or neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Markers {
+    pub lights: bool,
+    pub cameras: bool,
+}
+
+impl Markers {
+    pub const NONE: Self = Self { lights: false, cameras: false };
+
+    /// Whether an Obj with a light, a camera or both has a marker that shows.
+    pub fn show(self, light: bool, camera: bool) -> bool {
+        (light && self.lights) || (camera && self.cameras)
+    }
+}
+
 /// The Obj under a point in the Scene view: the nearest mesh the ray
-/// enters, by its box, or a light or camera whose place is close by.
-pub fn pick(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32; 2]) -> Option<Entity> {
+/// enters, by its box, or a light or camera whose marker shows close by.
+pub fn pick(
+    world: &World,
+    renderer: &Renderer,
+    camera: &ViewCamera,
+    point: [f32; 2],
+    markers: Markers,
+) -> Option<Entity> {
     let (origin, direction) = camera.ray(point);
     let mut best: Option<(f32, Entity)> = None;
     let mut consider = |distance: f32, entity: Entity| {
@@ -165,7 +187,7 @@ pub fn pick(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32
         .without::<EditorOnly>()
         .without::<Destroying>();
     for (entity, transform, placed, light, lens) in marked {
-        if light.is_none() && lens.is_none() {
+        if !markers.show(light.is_some(), lens.is_some()) {
             continue;
         }
         let at = placed.map_or(transform.position, |w| w.0.w_axis.truncate());
@@ -708,7 +730,7 @@ fn distance(a: [f32; 2], b: [f32; 2]) -> f32 {
 }
 
 /// How far a point is from a segment on screen.
-fn to_segment(point: [f32; 2], from: [f32; 2], to: [f32; 2]) -> f32 {
+pub(crate) fn to_segment(point: [f32; 2], from: [f32; 2], to: [f32; 2]) -> f32 {
     let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
     let length = dx * dx + dy * dy;
     let t = if length < 1e-6 {

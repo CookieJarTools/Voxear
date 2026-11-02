@@ -22,6 +22,9 @@ pub enum Shape {
     /// A filled rectangle, left, top, width and height, with rounded
     /// corners, as a timeline's bars are drawn.
     Rect { rect: [f32; 4], radius: f32, fill: Color },
+    /// One of the icons ([`ICONS`](crate::ICONS)), `size` pixels square,
+    /// centred on a point, as the Scene view marks Objs.
+    Icon { name: &'static str, center: [f32; 2], size: f32, color: Color },
 }
 
 /// How big an icon is when nothing sizes it.
@@ -209,7 +212,7 @@ impl Draw<'_> {
                 });
             }
             let content = [origin[0], origin[1], inner * self.scale, inner_height * self.scale];
-            shape_quads(&element.shapes, content, self.scale, opacity, clip, self.quads);
+            shape_quads(&element.shapes, content, self.scale, opacity, clip, (self.atlas, self.quads));
             if let Some(icon) = element.icon {
                 let color = text_color.map(|c| c * opacity);
                 icon_quad(icon, content, self.scale, color, clip, (self.atlas, self.quads));
@@ -411,7 +414,14 @@ fn cut_out(quads: &mut Vec<Quad>, hole: [f32; 4]) {
     }
 }
 
-fn shape_quads(shapes: &[Shape], content: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
+fn shape_quads(
+    shapes: &[Shape],
+    content: [f32; 4],
+    scale: f32,
+    opacity: f32,
+    clip: [f32; 4],
+    (atlas, quads): (&mut GlyphAtlas, &mut Vec<Quad>),
+) {
     let at = |p: [f32; 2]| [content[0] + p[0] * scale, content[1] + p[1] * scale];
     for shape in shapes {
         match *shape {
@@ -453,6 +463,11 @@ fn shape_quads(shapes: &[Shape], content: [f32; 4], scale: f32, opacity: f32, cl
                     radius,
                 };
                 shape_quad(&look, [corner[0], corner[1], w * scale, h * scale], scale, opacity, clip, quads);
+            }
+            Shape::Icon { name, center, size, color } => {
+                let (c, size) = (at(center), size * scale);
+                let color = color.linear_premultiplied().map(|c| c * opacity);
+                icon_quad(name, [c[0] - size / 2.0, c[1] - size / 2.0, size, size], scale, color, clip, (atlas, quads));
             }
         }
     }

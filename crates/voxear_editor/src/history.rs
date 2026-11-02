@@ -14,7 +14,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_engine::{
     EditBehaviours, Game,
     audio::{AudioListener, AudioSource},
-    prefab::Locks,
+    prefab::{FromPrefab, Locks, PrefabInstance},
 };
 use voxear_render::{Camera, Light, LodGroup, MeshRenderer, Renderer};
 use voxear_scene::{Name, ScenePersistence, Transform};
@@ -118,6 +118,40 @@ pub enum Edit {
     Moved { entity: Entity, before: Placing, after: Placing },
     /// Edits that are one step, such as values kept from play.
     Group(Vec<Edit>),
+    /// Objs linked to prefab instances otherwise, as unpacking one does.
+    Linked(Vec<Link>),
+}
+
+/// An Obj's link to a prefab instance, before and after: the instance it
+/// is in, and the prefab it is the root of an instance of.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Link {
+    pub entity: Entity,
+    pub before: (Option<FromPrefab>, Option<PrefabInstance>),
+    pub after: (Option<FromPrefab>, Option<PrefabInstance>),
+}
+
+impl Link {
+    /// Puts the link on, as it is before the change or after.
+    pub fn apply(&self, world: &mut World, after: bool) {
+        let (from, instance) = if after { &self.after } else { &self.before };
+        match from {
+            Some(from) => world.insert(self.entity, from.clone()),
+            None => world.remove::<FromPrefab>(self.entity).is_some(),
+        };
+        match instance {
+            Some(instance) => world.insert(self.entity, *instance),
+            None => world.remove::<PrefabInstance>(self.entity).is_some(),
+        };
+    }
+
+    fn remap(&mut self, renamed: &HashMap<Entity, Entity>) {
+        let follow = |entity: &mut Entity| *entity = renamed.get(entity).copied().unwrap_or(*entity);
+        follow(&mut self.entity);
+        for from in [&mut self.before.0, &mut self.after.0].into_iter().flatten() {
+            follow(&mut from.instance);
+        }
+    }
 }
 
 impl Edit {
@@ -151,6 +185,10 @@ impl Edit {
             Edit::Moved { entity, before, after } => {
                 (if undo { before } else { after }).apply(game, *entity);
                 (Some(*entity), HashMap::new())
+            }
+            Edit::Linked(links) => {
+                links.iter().for_each(|link| link.apply(&mut game.engine.world, !undo));
+                (links.first().map(|link| link.entity), HashMap::new())
             }
             Edit::Group(edits) => {
                 let mut renderer = renderer;
@@ -192,6 +230,7 @@ impl Edit {
                 after.remap(renamed);
             }
             Edit::Group(edits) => edits.iter_mut().for_each(|edit| edit.remap(renamed)),
+            Edit::Linked(links) => links.iter_mut().for_each(|link| link.remap(renamed)),
         }
     }
 }

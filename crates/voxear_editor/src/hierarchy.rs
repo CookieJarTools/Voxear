@@ -8,7 +8,9 @@
 //!
 //! Its + button makes new Objs, as Unity's GameObject menu does. A context
 //! click on an Obj offers to duplicate or delete it, or make an Obj inside
-//! it; on a scene's header or the space below, to make one at the top. A
+//! it, and on a prefab instance's root to unpack it; on a scene's header or
+//! the space below, to make one at the top. A double click on an Obj frames
+//! it in the Scene view. A
 //! scene opened alongside the open level is marked "Not in level", and its
 //! header's menu offers to add it to the level; any scene's, while more than
 //! one is open, to close it.
@@ -162,6 +164,10 @@ pub enum ObjAction {
     Move(Entity, Destination),
     /// Open the prefab an Obj is an instance of, or part of one, on its own.
     OpenPrefab(Entity),
+    /// Make a prefab instance's Objs Objs of the scene, by its root.
+    Unpack(Entity),
+    /// Show an Obj in the Scene view, as Frame Selected does.
+    Frame(Entity),
     /// Add a scene opened alongside the level to the level's file.
     AddToLevel(AssetGuid),
     /// Close an open scene, unloading its Objs.
@@ -202,6 +208,10 @@ impl Hierarchy {
         if ui.clicked(self.add) {
             let [x, y, _, height] = ui.rect(self.add);
             self.open_menu(ui, self.add, (x, y + height + 4.0), None);
+        } else if let Some(item) = ui.item_at_pointer(self.tree).filter(|&item| !is_header(item))
+            && ui.double_clicked(self.tree)
+        {
+            return Some(ObjAction::Frame(Entity::from_bits(item)));
         } else if ui.clicked(self.tree) && ui.item_at_pointer(self.tree).is_none() {
             // A click on the space below the rows selects nothing, as in Unity.
             self.clear(ui);
@@ -254,6 +264,7 @@ impl Hierarchy {
         let row = on.and_then(|item| shown.rows.get(&item));
         let name = row.map(|row| row.name.clone()).unwrap_or_default();
         let in_prefab = row.is_some_and(|row| row.prefab.is_some());
+        let instance_root = row.is_some_and(|row| row.prefab == Some(true));
         let (parent, scene) = match on {
             Some(item) if is_header(item) => (None, shown.scenes.get(&item).copied()),
             Some(item) => (Some(Entity::from_bits(item)), None),
@@ -276,8 +287,14 @@ impl Hierarchy {
             self.menu.push(None);
         }
         if let Some(entity) = parent.filter(|_| in_prefab) {
-            items.extend([MenuItem::new("Open Prefab"), MenuItem::separator()]);
-            self.menu.extend([Some(ObjAction::OpenPrefab(entity)), None]);
+            items.push(MenuItem::new("Open Prefab"));
+            self.menu.push(Some(ObjAction::OpenPrefab(entity)));
+            if instance_root {
+                items.push(MenuItem::new("Unpack Prefab"));
+                self.menu.push(Some(ObjAction::Unpack(entity)));
+            }
+            items.push(MenuItem::separator());
+            self.menu.push(None);
         }
         if let Some(entity) = parent {
             let entries = [

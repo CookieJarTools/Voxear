@@ -78,6 +78,10 @@ To do either for everything an instance changes, select its root and click **Ove
 
 Apply works on the prefab's own Objs. To change an Obj that comes from another prefab inside it, such as a lamp in a street, open that prefab on its own.
 
+## Unpacking an instance
+
+Right-click an instance's root in the Hierarchy and choose **Unpack Prefab** to make its Objs plain Objs of the scene, which follow the prefab no more. Instances of other prefabs inside it stay instances. **Ctrl+Z** packs it again.
+
 ## Prefabs inside prefabs
 
 A prefab can hold instances of other prefabs: a street prefab can hold several lamp prefabs. Changing the lamp prefab changes the lamps in every street.

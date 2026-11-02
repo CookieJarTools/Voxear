@@ -312,6 +312,36 @@ pub fn follow_prefab(
     Ok(changed)
 }
 
+/// What unpacking the instance whose root is `root` makes of its Objs'
+/// links, as Unity's Unpack Prefab: each Obj's instance and the prefab its
+/// root is an instance of, for every Obj that changes. The instance's Objs
+/// become Objs of the scene; those of a prefab nested in it stay that
+/// prefab's instance, rooted at its own root. Nothing changes until the
+/// links are put on.
+pub fn unpacked(world: &World, root: Entity) -> Vec<(Entity, Option<FromPrefab>, Option<PrefabInstance>)> {
+    let inside = members(world, root);
+    let nested: Vec<(&ObjPath, Entity)> = inside
+        .iter()
+        .filter(|(path, entity)| !path.is_root() && world.has::<PrefabInstance>(**entity))
+        .map(|(path, &entity)| (path, entity))
+        .collect();
+    let mut links = vec![(root, None, None)];
+    for (path, &entity) in inside.iter().filter(|(path, _)| !path.is_root()) {
+        // The innermost nested instance it lies in, if any.
+        let holder = nested
+            .iter()
+            .filter(|(at, _)| path.strip(at).is_some())
+            .max_by_key(|(at, _)| at.ids().len());
+        let link = match holder {
+            Some((at, _)) if *at == path => None,
+            Some((at, instance)) => Some(FromPrefab { instance: *instance, path: path.strip(at).unwrap_or_default() }),
+            None => None,
+        };
+        links.push((entity, link, world.get::<PrefabInstance>(entity).copied()));
+    }
+    links
+}
+
 /// The roots of the instances of `prefab` in the world.
 pub fn instances_of(world: &World, prefab: AssetGuid) -> Vec<Entity> {
     let roots = world.query_ref::<(Entity, &PrefabInstance)>();

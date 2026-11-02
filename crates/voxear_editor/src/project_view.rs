@@ -78,6 +78,9 @@ pub enum ProjectEvent {
     /// A model was opened out before its parts were known: the editor reads
     /// them and hands them to [`ProjectView::set_parts`].
     WantsParts(String),
+    /// Import New Asset was chosen: the editor asks for files to copy into
+    /// `folder` (from the project's folder).
+    Import { folder: String },
 }
 
 /// A part of a model, or an Obj of a prefab, shown after it when it is
@@ -101,6 +104,7 @@ enum MenuAction {
     Rename,
     Duplicate,
     Delete,
+    Import,
     New(NewFile),
 }
 
@@ -750,6 +754,8 @@ impl ProjectView {
             add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
         }
         add(MenuItem::separator(), None);
+        add(MenuItem::new("Import New Asset…"), Some(MenuAction::Import));
+        add(MenuItem::separator(), None);
         for kind in NewFile::ALL {
             add(MenuItem::new(kind.label()), Some(MenuAction::New(kind)));
         }
@@ -805,6 +811,7 @@ impl ProjectView {
                 ],
                 Err(error) => failed(error),
             },
+            MenuAction::Import => vec![ProjectEvent::Import { folder: self.contents.borrow().folders[folder].path.clone() }],
             MenuAction::New(kind) => {
                 let at = self.contents.borrow().folders[folder].path.clone();
                 match project_files::create(&self.root, &at, kind, &self.namespace) {

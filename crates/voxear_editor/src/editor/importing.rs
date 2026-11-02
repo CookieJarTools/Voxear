@@ -12,6 +12,10 @@
 //! - Files dropped on the window from outside the editor are copied into the
 //!   folder under the pointer in the Project panel, or else the folder it
 //!   shows, unless a VoxDocs page being written takes them.
+//! - Import New Asset, from the Project panel's menu, asks for files with
+//!   the desktop's file chooser (zenity, or KDE's kdialog), on a thread of
+//!   its own so the editor keeps drawing, and copies them into the folder
+//!   the menu was opened on, as a drop would.
 //! - When the window gets the focus back, the editor looks at the project's
 //!   files: files that came or went show in the Project panel, and a model
 //!   in use whose file, `.meta`, buffers or pictures changed is imported
@@ -20,6 +24,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver, TryRecvError},
     time::SystemTime,
 };
 
@@ -42,6 +47,9 @@ pub(super) struct Imports {
     dropped: Vec<(PathBuf, Option<String>)>,
     /// Whether to look at the files again, as after the window got the focus.
     look: bool,
+    /// The file chooser open for Import New Asset, and the folder its files
+    /// go into.
+    choosing: Option<(Receiver<std::io::Result<Vec<PathBuf>>>, String)>,
 }
 
 impl Imports {
@@ -143,9 +151,39 @@ impl Editor {
         self.imports.dropped.push((path.to_path_buf(), folder));
     }
 
+    /// Opens the desktop's file chooser for files to copy into `folder`.
+    pub(super) fn choose_imports(&mut self, folder: String) {
+        if self.imports.choosing.is_some() {
+            return self.notify("A file chooser is open already");
+        }
+        let (send, chosen) = mpsc::channel();
+        let started = std::thread::Builder::new().name("file chooser".into()).spawn(move || {
+            let _ = send.send(choose_files("Import New Asset"));
+        });
+        match started {
+            Ok(_) => self.imports.choosing = Some((chosen, folder)),
+            Err(error) => self.notify(&format!("Could not open a file chooser: {error}")),
+        }
+    }
+
     /// Brings in the files dropped since the last frame, and looks at the
     /// project's files when the window got the focus back.
     pub(super) fn update_imports(&mut self, renderer: &mut Renderer) {
+        if let Some((chosen, folder)) = &self.imports.choosing {
+            match chosen.try_recv() {
+                Ok(Ok(files)) => {
+                    let folder = Some(folder.clone());
+                    self.imports.dropped.extend(files.into_iter().map(|file| (file, folder.clone())));
+                    self.imports.choosing = None;
+                }
+                Ok(Err(error)) => {
+                    self.imports.choosing = None;
+                    self.notify(&format!("Could not open a file chooser: {error}"));
+                }
+                Err(TryRecvError::Disconnected) => self.imports.choosing = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
         if !self.imports.dropped.is_empty() {
             self.bring_in_dropped(renderer);
         }
@@ -248,4 +286,26 @@ fn file_times(root: &Path) -> HashMap<String, SystemTime> {
     let mut times = HashMap::new();
     walk(root, "", &mut times);
     times
+}
+
+/// Files picked in the desktop's file chooser, or none when it is closed
+/// without picking: zenity's, as GNOME and most desktops have, or else
+/// KDE's kdialog.
+fn choose_files(title: &str) -> std::io::Result<Vec<PathBuf>> {
+    let choosers: [(&str, &[&str]); 2] = [
+        ("zenity", &["--file-selection", "--multiple", "--separator=\n", "--title", title]),
+        ("kdialog", &["--getopenfilename", ".", "--multiple", "--separate-output", "--title", title]),
+    ];
+    for (program, args) in choosers {
+        match std::process::Command::new(program).args(args).output() {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                return Ok(text.lines().filter(|line| !line.is_empty()).map(PathBuf::from).collect());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    let missing = "no file chooser was found; install zenity, or drag the files onto the Project panel";
+    Err(std::io::Error::new(std::io::ErrorKind::NotFound, missing))
 }

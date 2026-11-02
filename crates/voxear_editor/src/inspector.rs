@@ -165,6 +165,10 @@ pub enum RowAction {
     /// The same for every value the whole instance changes.
     RevertAll,
     ApplyAll,
+    /// Copy a component's values, or paste those copied over it or onto
+    /// the Obj as a new component.
+    CopyComponent(Part),
+    PasteComponent,
 }
 
 /// A component value's row and the control that edits it.
@@ -312,6 +316,8 @@ pub struct Inspector {
     prefab_buttons: Option<PrefabButtons>,
     /// What the Obj shown changes from its prefab, as the editor last found.
     overrides: Vec<ValuePath>,
+    /// The component copied, for pasting.
+    copied: Option<Part>,
     /// The other Objs selected with the one shown, which an edit made here
     /// goes to as well, each that has what was edited.
     also: Vec<Entity>,
@@ -370,6 +376,7 @@ impl Inspector {
             inspected: Vec::new(),
             prefab_buttons: None,
             overrides: Vec::new(),
+            copied: None,
             also: Vec::new(),
             mesh_lods: None,
             group_lods: None,
@@ -481,7 +488,24 @@ impl Inspector {
         }
         let removable = !(playing && matches!(part, Part::Behaviour(_))) && !fixed;
         items.push((MenuItem::new("Remove Component").enabled(removable), Some(RowAction::Remove(part.clone()))));
+        items.push((MenuItem::separator(), None));
+        let copies = *part != Part::LodGroup;
+        items.push((MenuItem::new("Copy Component").enabled(copies), Some(RowAction::CopyComponent(part.clone()))));
+        let has = |copied: &Part| self.built.0.iter().any(|(p, _)| p == copied);
+        let pastes = |over: bool| {
+            let copied = self.copied.as_ref().filter(|_| !playing && !fixed);
+            copied.is_some_and(|copied| if over { copied == part } else { !has(copied) })
+        };
+        let values = MenuItem::new("Paste Component Values").enabled(pastes(true));
+        let new = MenuItem::new("Paste Component As New").enabled(pastes(false));
+        items.push((values, Some(RowAction::PasteComponent)));
+        items.push((new, Some(RowAction::PasteComponent)));
         items
+    }
+
+    /// The component copied, which a component's menu pastes.
+    pub fn set_copied(&mut self, part: Option<Part>) {
+        self.copied = part;
     }
 
     /// Colours code a script shows for a dark theme or a light one.

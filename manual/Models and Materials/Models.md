@@ -13,7 +13,9 @@ If you can choose, pick glTF: it says more about how materials should look. Both
 
 Drag the model file from your file manager onto the Project panel, with any pictures it uses. The files are copied into the folder you let go on: a folder's tile, a folder in the tree, or the space around the files, which means the folder the Project panel shows. A `Models` folder is a good place. If a file of that name is already there, the copy is numbered, as in `Ship 1.glb`.
 
-On Linux, some desktops cannot pass a drag from an X11 program to the editor. If a drop does nothing, open your file manager on its own, not from another program such as the Unity editor, and drag from there.
+You can also right-click a folder, or the space around the files, and choose **Import New Asset…** to pick the files in your desktop's file chooser. They are copied into that folder. On Linux this uses zenity, which most desktops have, or KDE's kdialog.
+
+On Linux, some desktops cannot pass a drag from an X11 program to the editor. If a drop does nothing, open your file manager on its own, not from another program such as the Unity editor, and drag from there, or use **Import New Asset…**.
 
 You can also copy files into the project's folder yourself. The editor sees them when you come back to it. In the same way, when you export a model again over its file, Voxear imports it again when you come back to the editor, and everything drawing it shows the change.
 

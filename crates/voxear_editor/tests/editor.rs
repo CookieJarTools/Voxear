@@ -1956,11 +1956,16 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
         frame(&mut editor, &mut renderer);
     }
     assert!(editor.ui.dock_panel_in_window(dock, "inspector"), "{}", editor.ui.dock_layout(dock));
+    // Its tab is in that window now, where the pointer has to be.
     let inspector = dock_tab(&editor.ui, "Inspector").unwrap();
+    let window = editor.ui.window_of(inspector);
+    assert!(window.is_some(), "the tab is in a desktop window");
+    editor.ui.set_pointer_window(window);
     context_click(&mut editor.ui, inspector);
     frame(&mut editor, &mut renderer);
     let back = menu_item(&editor.ui, "Dock").expect("a floating panel can dock again");
     click(&mut editor.ui, back);
+    editor.ui.set_pointer_window(None);
     frame(&mut editor, &mut renderer);
     assert!(!editor.ui.dock_panel_floating(dock, "inspector"));
 }

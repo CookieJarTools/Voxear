@@ -34,6 +34,8 @@ Hold the **right mouse button** over the Scene view to fly:
 
 Move the mouse while you hold the button to look around. Let go to stop flying.
 
+To find an Obj, select it and press **F**, or double-click it in the Hierarchy. The camera glides to show it whole, looking the same way it did. **Ctrl+Shift+F** does the opposite, as in Unity: it moves the selected Objs to where the camera is, facing the way it looks, which is handy for placing a camera or a light just where you are looking from.
+
 ## Selecting and moving Objs
 
 Click an Obj in the Scene or the Hierarchy to select it. Then pick a tool, at the top left of the Scene view:
@@ -80,5 +82,7 @@ The **Layout** button at the top left, which shows the name of the layout in use
 | Ctrl+D | Duplicate the selection |
 | Delete | Delete the selection |
 | Q, W, E, R | Select, Move, Rotate and Scale tools |
+| F | Frame the selection in the Scene view |
+| Ctrl+Shift+F | Move the selection to the Scene view's camera |
 
 Next: [[Playing Your Game]].

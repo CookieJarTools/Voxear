@@ -56,5 +56,7 @@ Click **Add Component**, under the last one, to add another. As in Unity, a sear
 
 Right-click a component's title to **Remove Component**, or, for a behaviour, to **Move Up** or **Move Down**. Behaviours on an Obj run in the order they are listed.
 
+The same menu copies a component, as Unity's does. Choose **Copy Component**, select another Obj, and right-click one of its components' titles: **Paste Component Values** puts the copied values over the same component, and **Paste Component As New** adds it to an Obj that does not have it yet. For a behaviour, its field values are copied. A LOD Group cannot be copied, as its levels are the Objs inside its own.
+
 > [!NOTE]
 > The Inspector also shows **Tag**, **Layer** and **Static** for an Obj, and a switch to turn it on and off. These are not used yet, and are not saved. **Persistent**, beside Static, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].

@@ -3,6 +3,7 @@
 //! which looks through the level's. Play mode is in [`play`].
 
 mod color_popup;
+mod component_clipboard;
 mod debug_texts;
 mod desktop_windows;
 mod docs_capture;
@@ -10,6 +11,7 @@ mod docs_links;
 mod docs_pictures;
 mod docs_steps;
 mod drawer;
+mod framing;
 mod hierarchies;
 mod importing;
 mod inspectors;
@@ -168,6 +170,10 @@ pub(crate) enum Command {
     Redo,
     Duplicate,
     Delete,
+    /// Show the selection in the Scene view, as Unity's F does.
+    Frame,
+    /// Move the selection to where the Scene view looks from.
+    AlignWithView,
 }
 
 /// How far in front of the Scene camera a new Obj goes.
@@ -284,6 +290,10 @@ pub struct Editor {
     overrides_seen: Option<(Entity, ObjState)>,
     /// What is being placed live under the pointer over a Scene view.
     live_place: Option<placing::LivePlace>,
+    /// The Scene view's camera on its way to frame the selection.
+    glide: Option<framing::Glide>,
+    /// The component Copy Component copied.
+    copied: Option<component_clipboard::Copied>,
     /// A material shown on an Obj while it is dragged over it from the Project.
     material_preview: Option<material_drops::MaterialPreview>,
     /// The Obj selected, which every Inspector not locked shows: the active
@@ -527,6 +537,8 @@ impl Editor {
             picker_picks: Vec::new(),
             overrides_seen: None,
             live_place: None,
+            glide: None,
+            copied: None,
             material_preview: None,
             selection: None,
             others: Vec::new(),
@@ -727,6 +739,7 @@ impl Editor {
         self.update_side_bar();
         self.update_prefab_mode(renderer);
         self.update_overrides();
+        self.update_glide(delta);
         self.update_settings();
         let theme = self.memory.settings.theme();
         if theme != self.theme {
@@ -871,6 +884,7 @@ impl Editor {
                     self.make_prefab(entity, &folder, renderer);
                 }
             }
+            ProjectEvent::Import { folder } => self.choose_imports(folder),
             ProjectEvent::WantsParts(path) => {
                 let parts = objs::model_parts(&mut self.game, renderer, &path);
                 if parts.is_empty() {
@@ -1335,6 +1349,11 @@ impl Editor {
     fn obj_action(&mut self, action: ObjAction, renderer: &mut Renderer) {
         match action {
             ObjAction::OpenPrefab(entity) => return self.open_prefab_of(entity, renderer),
+            ObjAction::Unpack(entity) => return self.unpack_prefab(entity),
+            ObjAction::Frame(entity) => {
+                self.select(Some(entity));
+                return self.frame(&[entity], renderer);
+            }
             ObjAction::AddToLevel(scene) => return self.add_scene_to_level(scene, renderer),
             ObjAction::CloseScene(scene) => return self.close_scene(scene),
             _ => {}
@@ -1360,7 +1379,11 @@ impl Editor {
                 Some((before, after)) => (Edit::Moved { entity, before, after }, Some(entity)),
                 None => return,
             },
-            ObjAction::OpenPrefab(_) | ObjAction::AddToLevel(_) | ObjAction::CloseScene(_) => return,
+            ObjAction::OpenPrefab(_)
+            | ObjAction::Unpack(_)
+            | ObjAction::Frame(_)
+            | ObjAction::AddToLevel(_)
+            | ObjAction::CloseScene(_) => return,
         };
         if !self.is_playing() {
             self.history.record_step(edit);
@@ -1408,6 +1431,7 @@ impl Editor {
             RowAction::ApplyOverrides(paths) => return self.apply_overrides(&[(entity, paths.clone())], renderer),
             RowAction::ApplyAll => return self.apply_instance(entity, renderer),
             RowAction::RevertAll => return self.revert_instance(entity, renderer),
+            RowAction::CopyComponent(part) => return self.copy_component(entity, part),
             _ => {}
         }
         if let RowAction::Keep(field) = action {
@@ -1484,7 +1508,11 @@ impl Editor {
                 props::delete_lod_level(&mut self.game.engine.world, entity, at);
             }
             RowAction::RevertOverrides(paths) => self.revert_overrides(entity, &paths, renderer),
-            RowAction::ApplyOverrides(_) | RowAction::ApplyAll | RowAction::RevertAll => {}
+            RowAction::PasteComponent => self.paste_component(entity),
+            RowAction::ApplyOverrides(_)
+            | RowAction::ApplyAll
+            | RowAction::RevertAll
+            | RowAction::CopyComponent(_) => {}
         }
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
         if before != after && !self.is_playing() {
@@ -1669,6 +1697,7 @@ impl Editor {
                     self.obj_action(ObjAction::Duplicate(entity), renderer);
                 }
             }
+            Command::Frame => self.frame(&self.selected_objs(), renderer),
             Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {
@@ -1679,6 +1708,7 @@ impl Editor {
                 self.notify("Stop playing to save or undo; edits while playing are not kept");
             }
             Command::Save => self.save(),
+            Command::AlignWithView => self.align_with_view(),
             Command::Undo | Command::Redo => {
                 // A field being typed in would keep its text over the undone value.
                 self.ui.blur();
@@ -1895,6 +1925,17 @@ impl Editor {
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
             && key.state == ElementState::Pressed
+            && !self.control
+            && !self.ui.wants_keyboard()
+            && !self.fly().is_looking()
+            && let winit::keyboard::Key::Character(text) = &key.logical_key
+            && text.to_lowercase() == "f"
+        {
+            self.commands.push(Command::Frame);
+            return true;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
             && self.control
             && let winit::keyboard::Key::Character(text) = &key.logical_key
         {
@@ -1911,6 +1952,7 @@ impl Editor {
                 ("d", _) => Some(Command::Duplicate),
                 ("z", false) => Some(Command::Undo),
                 ("z", true) | ("y", _) => Some(Command::Redo),
+                ("f", true) => Some(Command::AlignWithView),
                 ("k", _) => {
                     self.ui.focus(self.nodes.command);
                     self.ui.key_down(voxear_ui::Key::Char('a'));

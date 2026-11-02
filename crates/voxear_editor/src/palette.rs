@@ -438,6 +438,8 @@ fn commands(playing: bool) -> Vec<Entry> {
         ("Redo", "Ctrl+Y", "chevron-right", Command::Redo),
         ("Duplicate", "Ctrl+D", "copy", Command::Duplicate),
         ("Delete", "Delete", "close", Command::Delete),
+        ("Frame Selected", "F", "maximize", Command::Frame),
+        ("Align With View", "Ctrl+Shift+F", "camera", Command::AlignWithView),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

@@ -129,6 +129,10 @@ pub struct BehaviourType {
     /// by Voxear UI's name for it.
     #[serde(default)]
     pub icon: Option<String>,
+    /// The `BehaviourInspector` that draws it whole in the Inspector, in
+    /// place of its fields, by its full name.
+    #[serde(default)]
+    pub inspector: Option<String>,
 }
 
 /// A `[Button]` method, which takes nothing, and what its button says, or

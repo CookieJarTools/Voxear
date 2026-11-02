@@ -108,6 +108,13 @@ pub fn target(world: &World, types: &ScriptTypes, entity: Entity, behaviour: &st
     }
 }
 
+/// The fields the scene sets on an Obj's behaviour, as a table, for its
+/// inspector; those left as the script starts them are not in it.
+pub fn scene_fields(world: &World, entity: Entity, behaviour: &str) -> Option<toml::Value> {
+    let spec = specs(world, entity).into_iter().find(|s| s.type_name == behaviour)?;
+    Some(toml::Value::Table((*spec.fields).clone()))
+}
+
 /// The value at a path as it is now: what the scene set, or what the script
 /// starts it as. `None` for nothing, as a reference starts.
 pub fn value_at(

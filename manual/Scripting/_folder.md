@@ -12,7 +12,7 @@ You write your game's code in C#. A script that you put on an Obj is called a **
 6. [[Loading Levels]]
 7. [[Components and Systems]], for when there are thousands of something
 8. [[Queries]]
-9. [[Custom Drawers]], to draw a field in the Inspector your own way
+9. [[Custom Drawers]], to draw a field, or a whole behaviour, in the Inspector your own way
 10. [[The Window and the Mouse]], its size and the pointer
 11. [[Saving the Game]], to keep progress between runs
 12. [[Drawing in the Scene]], lines, shapes and labels to see what your code is doing

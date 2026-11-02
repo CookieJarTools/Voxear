@@ -118,11 +118,50 @@ With `[Step(5)] public int Lives = 3;`, the field shows its usual number box wit
 - The element named `next` is where the field's usual control goes. A drawer without one draws the whole field itself.
 - `AttributeDrawer<TAttribute, T>` draws fields of type `T`. `AttributeDrawer<TAttribute>`, with no type, draws any field with the attribute, and gets its value as an `object`.
 
+## An inspector for a whole behaviour
+
+To draw a whole behaviour your own way, in place of its list of fields, write a `BehaviourInspector` for it, as you would write a custom `Editor` in Unity:
+
+```csharp
+public sealed class Tower : Behaviour
+{
+	public int Floors = 3;
+	public float Height;
+}
+
+public sealed class TowerInspector : BehaviourInspector<Tower>
+{
+	public override string Markup => """
+		<vui>
+			<Label name="summary" />
+			<Button name="raise">Add a floor</Button>
+			<Panel name="next" />
+		</vui>
+		""";
+
+	protected override void Draw(Tower tower, UiDocument ui)
+	{
+		if (ui.Find("raise")!.WasClicked)
+		{
+			tower.Floors++;
+			tower.Height = tower.Floors * 2.5f;
+		}
+		ui.Find("summary")!.Text = $"{tower.Floors} floors on {tower.Obj.Name}";
+	}
+}
+```
+
+The Tower's section now says how many floors it has, with an **Add a floor** button, and its usual fields below them.
+
+- `Draw` gets a copy of the behaviour made from the scene's values, on its Obj, so `tower.Obj` is the Obj it is on. Whatever `Draw` changes in the copy's fields is saved in the scene, all of it as one step for **Ctrl+Z** to undo.
+- The element named `next` is where the behaviour's usual fields and buttons go. Leave it out to draw the behaviour entirely yourself. As with drawers, you can build the elements in `Build` instead of writing markup.
+- An inspector also draws the behaviours derived from its type, unless they have an inspector of their own.
+
 ## How drawers behave
 
 - A drawn field keeps its label, and the attributes around it still apply, so `[InfoBox]`, `[Tooltip]` and groups work as before.
 - A field can have several drawers: one for each of its attributes, in the order they are written, then the one for its type. Each is drawn inside the `next` element of the one before.
-- Drawers run while you edit. While the game plays, a drawn field shows its usual control.
+- Drawers and inspectors run while you edit. While the game plays, a drawn field shows its usual control, and a behaviour with an inspector shows its usual fields.
 - In a drawer, check `WasClicked` and `WasChanged` in `Draw`. Events such as `Clicked` and `Moved` are raised too, for elements built in code, just before `Draw` runs.
 - A drawer that throws stops drawing its field until you select the Obj again; the Console shows what went wrong.
 

@@ -276,8 +276,13 @@ pub struct Inspector {
     /// A list's items shown: each one's row, which takes drops, its label,
     /// which drags it, and the item.
     item_handles: Vec<(NodeId, NodeId, Prop)>,
-    /// The fields the scripts' drawers draw.
+    /// The fields the scripts' drawers draw, and the behaviours their
+    /// inspectors draw whole.
     drawers: FieldDrawers,
+    /// Each behaviour its inspector draws, with the panel its usual fields
+    /// are built in, which goes into the inspector's `next` element, or out
+    /// of sight when it has none.
+    inspected: Vec<(String, NodeId)>,
     /// The Prefab row's Open and Select, and the prefab's path, for a prefab
     /// instance or an Obj in one.
     prefab_buttons: Option<(NodeId, NodeId, String)>,
@@ -326,6 +331,7 @@ impl Inspector {
             palette_swatches: Vec::new(),
             item_handles: Vec::new(),
             drawers: FieldDrawers::new(owner),
+            inspected: Vec::new(),
             prefab_buttons: None,
         }
     }
@@ -579,8 +585,17 @@ impl Inspector {
         let mut load = |src: &str| content.read_text(src).map_err(|error| format!("{error:#}"));
         let placed = self.drawers.place(ui, answers, &mut load);
         let Some(entity) = self.shown else { return };
-        for (index, next, editable) in placed {
-            let prop = self.rows[index].prop.clone();
+        for (prop, index, next, editable) in placed {
+            let Some(index) = index else {
+                // A behaviour's inspector: its usual fields go into its "next", or out of sight without one.
+                let Prop::Field { behaviour, .. } = &prop else { continue };
+                let Some(&(_, fields)) = self.inspected.iter().find(|(name, _)| name == behaviour) else { continue };
+                match next {
+                    Some(next) => ui.move_into(fields, next),
+                    None => ui.set_visible(fields, false),
+                }
+                continue;
+            };
             let Some(next) = next else {
                 self.rows[index].control = Control::Drawn;
                 continue;
@@ -597,6 +612,7 @@ impl Inspector {
         let Some(entity) = self.shown else { return Vec::new() };
         let (world, types) = (&game.engine.world, &self.types);
         self.drawers.requests(ui, |prop| match prop {
+            Prop::Field { behaviour, path } if path.is_empty() => fields::scene_fields(world, entity, behaviour),
             Prop::Field { behaviour, path } => fields::value_at(world, types, entity, behaviour, path),
             _ => None,
         })
@@ -682,6 +698,7 @@ impl Inspector {
         self.item_handles.clear();
         self.prefab_buttons = None;
         self.drawers.clear();
+        self.inspected.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
         let Some(entity) = self.shown else {
@@ -716,6 +733,25 @@ impl Inspector {
             };
             let (header, rows, _) = section(ui, self.root, part.title(), icon, true);
             self.headers.push((Some(part.clone()), header));
+            // A behaviour its inspector draws gets a slot for it, its usual fields built in a panel after,
+            // which goes into the inspector's "next" once it is built. While playing, it shows its fields.
+            let inspector = match part {
+                Part::Behaviour(name) if !playing => self.types.behaviour(name).and_then(|b| b.inspector.clone()),
+                _ => None,
+            };
+            let rows = match (part, inspector) {
+                (Part::Behaviour(name), Some(inspector)) => {
+                    let slot = ui.panel(rows, Style::column());
+                    ui.add_class(slot, "behaviour-inspector-slot");
+                    let whole = Prop::Field { behaviour: name.clone(), path: Vec::new() };
+                    self.drawers.add(&whole, None, slot, &[inspector], part.title(), true);
+                    let fields = ui.panel(rows, Style::column());
+                    ui.add_class(fields, "behaviour-fields");
+                    self.inspected.push((name.clone(), fields));
+                    fields
+                }
+                _ => rows,
+            };
             let documentation = match part {
                 Part::Behaviour(name) => self.types.behaviour(name).and_then(|b| b.documentation.clone()),
                 _ => None,
@@ -801,7 +837,7 @@ impl Inspector {
                 let slot = drawn.then(|| {
                     let slot = ui.panel(holder, Style::row());
                     ui.add_class(slot, "field-drawer-slot");
-                    self.drawers.add(value, self.rows.len(), slot, drawers, &label, editable);
+                    self.drawers.add(value, Some(self.rows.len()), slot, drawers, &label, editable);
                     slot
                 });
                 let offered = offered(&self.answers, value, &meta);

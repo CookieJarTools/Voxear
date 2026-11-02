@@ -381,7 +381,8 @@ Still to do in M3:
   - [x] custom drawers in C#: `ValueDrawer<T>` and `AttributeDrawer<TAttribute, T>`, built from `.vui` markup and
     drawn through the C# UI API, chained through a `next` element around the Inspector's own control
   - [x] drawers built in code, in `Build(root)`, with markup optional
-  - [ ] custom inspectors that draw a whole behaviour, as Unity's `Editor`
+  - [x] custom inspectors that draw a whole behaviour, as Unity's `Editor`: `BehaviourInspector<T>`, with the
+    behaviour's usual fields in its `next` element
 - A build option to compile the scripts ahead of time (Native AOT) as well as run them on CoreCLR, which needs the
   player and Voxear.Core built that way too, and an option to ship the .NET runtime with the game (M12).
 - A jobs API for fast parallel C#, Voxear's answer to Unity's job system without Burst: work split over the

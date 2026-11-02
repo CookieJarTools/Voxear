@@ -82,7 +82,7 @@ public float OpenTime = 1f;
 | `[Required]` | Shows an error while the field is empty. Builds warn about it too |
 | `[Button]` | On a method that takes nothing: a button that runs it while you edit |
 
-The Code Reference, in VoxDocs, has a page for every attribute: look in the **Inspector** folder under **Voxear**. When no attribute shows a field the way you want, write your own drawer: see [[Custom Drawers]].
+The Code Reference, in VoxDocs, has a page for every attribute: look in the **Inspector** folder under **Voxear**. When no attribute shows a field the way you want, write your own drawer, or an inspector that draws the whole behaviour: see [[Custom Drawers]].
 
 ## Editing fields in the Scene view
 

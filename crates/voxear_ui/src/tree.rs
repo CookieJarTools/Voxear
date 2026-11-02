@@ -688,6 +688,20 @@ impl Ui {
         false
     }
 
+    /// Moves an element, and everything in it, to the end of `parent`.
+    /// Nothing moves into itself or into what is inside it.
+    pub fn move_into(&mut self, node: NodeId, parent: NodeId) {
+        if self.is_within(parent, node) {
+            return;
+        }
+        if let Some(old) = self.tree.parent(node.0) {
+            let _ = self.tree.remove_child(old, node.0);
+        }
+        let _ = self.tree.add_child(parent.0, node.0);
+        // What is above it, which selectors see, changed.
+        self.restyle(node.0, true);
+    }
+
     /// Removes an element and everything in it.
     pub fn remove(&mut self, node: NodeId) {
         if self.open_popup.is_some_and(|(dropdown, _)| dropdown == node.0) {

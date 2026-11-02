@@ -240,3 +240,29 @@ fn only_what_changed_is_styled_again_and_the_change_reaches_what_it_should() {
     ui.frame(WIDTH, HEIGHT, 1.0);
     assert_eq!(ui.children(inner), [label]);
 }
+
+#[test]
+fn a_moved_element_is_styled_as_its_new_place_says() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.add_sheet(
+        root,
+        StyleSheet::parse("Places.vss", ".warm Label { color: #ff8800; } .cold Label { color: #0088ff; }"),
+    );
+    let warm = ui.panel(root, voxear_ui::Style::default());
+    ui.add_class(warm, "warm");
+    let cold = ui.panel(root, voxear_ui::Style::default());
+    ui.add_class(cold, "cold");
+    let label = ui.add_label(warm, "Moving");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.text_style(label).unwrap().color, Color::hex(0xff8800));
+
+    ui.move_into(label, cold);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.children(cold), [label]);
+    assert!(ui.children(warm).is_empty());
+    assert_eq!(ui.text_style(label).unwrap().color, Color::hex(0x0088ff), "styled where it is now");
+
+    ui.move_into(cold, label);
+    assert_eq!(ui.parent(cold), Some(root), "nothing moves into what is inside it");
+}

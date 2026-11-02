@@ -7,12 +7,14 @@ namespace Voxear.Scripting
 	/// <summary>
 	/// The drawers an assembly holds, and which of them draw a field: one for each of its attributes that has one, in
 	/// the order they are written, then the one for its type. A list's drawers draw each of its items, so they are
-	/// matched against the item's type. The catalog writes each field's drawers by name, outermost first.
+	/// matched against the item's type. The catalog writes each field's drawers by name, outermost first, and each
+	/// behaviour's inspector.
 	/// </summary>
 	internal sealed class DrawerTable
 	{
 		private readonly Dictionary<Type, Type> values = new Dictionary<Type, Type>();
 		private readonly List<(Type Attribute, Type Value, Type Drawer)> attributes = new List<(Type, Type, Type)>();
+		private readonly Dictionary<Type, Type> inspectors = new Dictionary<Type, Type>();
 
 		public static DrawerTable Of(IEnumerable<Type?> types)
 		{
@@ -22,6 +24,10 @@ namespace Voxear.Scripting
 				if (type != null && Usable(type) && KindOf(type) is { } kind)
 				{
 					table.Add(type, kind.Attribute, kind.Value);
+				}
+				if (type != null && Usable(type) && Inspects(type) is { } behaviour)
+				{
+					table.inspectors.TryAdd(behaviour, type);
 				}
 			}
 			return table;
@@ -40,6 +46,32 @@ namespace Voxear.Scripting
 				{
 					var arguments = type.GetGenericArguments();
 					return (arguments[0], arguments[1]);
+				}
+			}
+			return null;
+		}
+
+		/// <summary>The behaviour type an inspector draws, if it is a BehaviourInspector.</summary>
+		public static Type? Inspects(Type inspector)
+		{
+			for (var type = inspector.BaseType; type != null; type = type.BaseType)
+			{
+				if (FieldValues.IsGeneric(type, typeof(BehaviourInspector<>)))
+				{
+					return type.GetGenericArguments()[0];
+				}
+			}
+			return null;
+		}
+
+		/// <summary>The inspector that draws a behaviour: its own type's, or the nearest base class's.</summary>
+		public Type? Inspector(Type behaviour)
+		{
+			for (var type = behaviour; type != null; type = type.BaseType)
+			{
+				if (inspectors.TryGetValue(type, out var inspector))
+				{
+					return inspector;
 				}
 			}
 			return null;

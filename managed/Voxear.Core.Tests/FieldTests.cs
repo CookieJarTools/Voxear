@@ -70,6 +70,21 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void ABehaviourInspectorDrawsItsTypeAndThoseDerivedFromIt()
+		{
+			using var document = System.Text.Json.JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestLighthouse).Assembly));
+			var behaviours = document.RootElement.GetProperty("behaviours").EnumerateArray().ToList();
+			string? InspectorOf(string name)
+			{
+				var behaviour = behaviours.Single(b => b.GetProperty("name").GetString() == name);
+				return behaviour.TryGetProperty("inspector", out var inspector) ? inspector.GetString() : null;
+			}
+			Check.True(InspectorOf("Voxear.Tests.TestLighthouse") == "Voxear.Tests.TestLighthouseInspector", "its own type");
+			Check.True(InspectorOf("Voxear.Tests.TestTallLighthouse") == "Voxear.Tests.TestLighthouseInspector", "a type derived from it");
+			Check.True(InspectorOf("Voxear.Tests.TestRadio") == null, "and no other");
+		}
+
+		[Test]
 		private static void BadNestedValuesKeepTheirDefaultsAndTheRestStillLoads()
 		{
 			var spawner = new TestSpawner();

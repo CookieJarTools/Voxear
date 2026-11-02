@@ -8,7 +8,7 @@
 
 use anyhow::{Result, bail};
 use serde_json::json;
-use voxear_ecs::World;
+use voxear_ecs::{Entity, World};
 
 use crate::{ScriptRuntime, ScriptServices, ServicesScope, inspector::to_toml};
 
@@ -50,13 +50,15 @@ pub struct Drawn {
 }
 
 impl ScriptRuntime {
-    /// Opens the drawers of each field for the Inspector `owner`, letting go
-    /// of those it opened before, and gives each field's markups, outermost
-    /// first, or why it could not be opened, which is logged.
+    /// Opens the drawers of each field of `entity` for the Inspector
+    /// `owner`, letting go of those it opened before, and gives each field's
+    /// markups, outermost first, or why it could not be opened, which is
+    /// logged. A field with no path is its behaviour, drawn by its inspector.
     pub fn open_drawers(
         &mut self,
         world: &mut World,
         owner: u32,
+        entity: Entity,
         fields: &[DrawerField],
     ) -> Result<Vec<Result<Vec<String>, String>>> {
         let fields: Vec<serde_json::Value> = fields
@@ -73,7 +75,8 @@ impl ScriptRuntime {
                 json!({ "type": field.type_name, "path": path, "drawers": field.drawers, "label": field.label })
             })
             .collect();
-        let answers = self.ask_drawers(world, &json!({ "action": "open", "owner": owner, "fields": fields }))?;
+        let opening = json!({ "action": "open", "owner": owner, "entity": entity.to_bits(), "fields": fields });
+        let answers = self.ask_drawers(world, &opening)?;
         Ok(answers
             .into_iter()
             .map(|answer| {

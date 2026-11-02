@@ -62,8 +62,8 @@ impl Editor {
         if let Some(fields) = self.inspector.drawers_to_open() {
             let asked: Vec<DrawerField> = fields.iter().map(ToOpen::field).collect();
             let owner = self.inspector.drawer_owner();
-            let opened =
-                self.with_edit_scripts(|scripts, game| scripts.open_drawers(&mut game.engine.world, owner, &asked));
+            let opened = self
+                .with_edit_scripts(|scripts, game| scripts.open_drawers(&mut game.engine.world, owner, entity, &asked));
             let answers = match opened {
                 // Opened once the scripts have started.
                 None => return edit,

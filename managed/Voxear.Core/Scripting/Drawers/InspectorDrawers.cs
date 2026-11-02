@@ -14,10 +14,14 @@ namespace Voxear.Scripting
 	/// on a field, and is given each one's markup to build; then, when something in a field's drawers was clicked or
 	/// changed, or its value changed elsewhere, it draws them with the value, innermost first, each with the document
 	/// its markup became. Requests and answers are JSON, through InspectorCalls:
-	/// { "action": "open", "fields": [{ "type", "path": ["items", 2], "drawers", "label" }] }, answered with
+	/// { "action": "open", "entity", "fields": [{ "type", "path": ["items", 2], "drawers", "label" }] }, answered with
 	/// { "fields": [{ "markups" }] }, and { "action": "draw", "fields": [{ "field", "documents", "value" }] }, answered
 	/// with { "fields": [{ "value", "changed" }] }. A field that could not be opened or drawn is answered with { "error" }, which
 	/// is logged.
+	/// <para>
+	/// A behaviour's inspector draws it whole, as a field with no path. Its value is the table of fields the scene
+	/// sets, and its answer the table of those the inspector changed.
+	/// </para>
 	/// </summary>
 	internal static class InspectorDrawers
 	{
@@ -28,13 +32,14 @@ namespace Voxear.Scripting
 		{
 			var fields = Of(request);
 			fields.Clear();
+			var obj = request.TryGetProperty("entity", out var entity) ? new Obj(entity.GetUInt64()) : Obj.None;
 			json.WriteStartArray("fields");
 			foreach (var asked in request.GetProperty("fields").EnumerateArray())
 			{
 				json.WriteStartObject();
 				try
 				{
-					var field = OpenOne(asked);
+					var field = OpenOne(asked, obj);
 					WriteMarkups(json, field);
 					fields.Add(field);
 				}
@@ -87,7 +92,7 @@ namespace Voxear.Scripting
 			return fields;
 		}
 
-		private static DrawnField OpenOne(JsonElement asked)
+		private static DrawnField OpenOne(JsonElement asked, Obj obj)
 		{
 			var (field, valueType) = Resolve(asked.GetProperty("type").GetString() ?? string.Empty, asked.GetProperty("path"));
 			var label = asked.TryGetProperty("label", out var named) ? named.GetString() ?? string.Empty : string.Empty;
@@ -96,19 +101,19 @@ namespace Voxear.Scripting
 			{
 				drawers.Add(Make(name.GetString() ?? string.Empty, field, label));
 			}
-			return new DrawnField(valueType, drawers);
+			return new DrawnField(valueType, drawers, obj);
 		}
 
 		/// <summary>A drawer of the type named, given the field's attribute when it draws for one.</summary>
-		private static Drawer Make(string name, FieldInfo field, string label)
+		private static Drawer Make(string name, FieldInfo? field, string label)
 		{
 			var type = FindType(name) ?? throw new ArgumentException($"There is no drawer {name}.");
 			var drawer = (Drawer)Activator.CreateInstance(type, nonPublic: true)!;
 			drawer.Label = label;
 			if (DrawerTable.KindOf(type)?.Attribute is { } attributeType)
 			{
-				var attribute = field.GetCustomAttribute(attributeType, inherit: true)
-					?? throw new ArgumentException($"{field.Name} is not marked with {attributeType.Name}, which {type.Name} draws.");
+				var attribute = field?.GetCustomAttribute(attributeType, inherit: true)
+					?? throw new ArgumentException($"{field?.Name ?? label} is not marked with {attributeType.Name}, which {type.Name} draws.");
 				drawer.Attach(attribute);
 			}
 			return drawer;
@@ -116,9 +121,9 @@ namespace Voxear.Scripting
 
 		/// <summary>
 		/// The field a path ends at, from the behaviour or component type it starts on, and the type of the value there:
-		/// a name steps into a field, and a number into a list's item.
+		/// a name steps into a field, and a number into a list's item. No path is the behaviour itself, for its inspector.
 		/// </summary>
-		private static (FieldInfo Field, Type Value) Resolve(string typeName, JsonElement path)
+		private static (FieldInfo? Field, Type Value) Resolve(string typeName, JsonElement path)
 		{
 			var current = FindType(typeName) ?? throw new ArgumentException($"There is no type {typeName}.");
 			FieldInfo? field = null;
@@ -134,7 +139,11 @@ namespace Voxear.Scripting
 					?? throw new ArgumentException($"{current.Name} has no field {step.GetString()}.");
 				current = field.FieldType;
 			}
-			return (field ?? throw new ArgumentException("A drawn field needs a path."), current);
+			if (field == null && !typeof(Behaviour).IsAssignableFrom(current))
+			{
+				throw new ArgumentException($"{current.Name} is not a behaviour, which only an inspector draws whole.");
+			}
+			return (field, current);
 		}
 
 		private static void WriteMarkups(Utf8JsonWriter json, DrawnField field)
@@ -157,6 +166,11 @@ namespace Voxear.Scripting
 			}
 
 			var given = asked.GetProperty("value");
+			if (field.IsBehaviour)
+			{
+				DrawBehaviour(json, given, field, asked.GetProperty("documents"));
+				return;
+			}
 			var value = given.ValueKind == JsonValueKind.Null ? null : FieldValues.Read(given, field.ValueType, field.Drawers[0].Label);
 			var documents = new List<int>();
 			foreach (var document in asked.GetProperty("documents").EnumerateArray())
@@ -172,6 +186,39 @@ namespace Voxear.Scripting
 			json.WritePropertyName("value");
 			json.WriteRawValue(after);
 			json.WriteBoolean("changed", after != before);
+		}
+
+		/// <summary>
+		/// Draws a behaviour's inspector with a copy of the behaviour made from the fields the scene sets, on its Obj,
+		/// and answers with the fields it changed, as a scene writes them.
+		/// </summary>
+		private static void DrawBehaviour(Utf8JsonWriter json, JsonElement given, DrawnField field, JsonElement documents)
+		{
+			var behaviour = (Behaviour)Activator.CreateInstance(field.ValueType, nonPublic: true)!;
+			behaviour.Attach(field.Obj, 0, 0);
+			if (given.ValueKind == JsonValueKind.Object)
+			{
+				BehaviourFields.Fill(behaviour, given, $"{field.ValueType.Name} on {field.Obj.Name}");
+			}
+			var before = InspectorCalls.Values(behaviour);
+			foreach (var document in documents.EnumerateArray())
+			{
+				field.Drawers[0].Draw(behaviour, new UiDocument(document.GetInt32()));
+				break;
+			}
+			var changed = false;
+			json.WriteStartObject("value");
+			foreach (var (name, value) in InspectorCalls.Values(behaviour))
+			{
+				if (before[name] != value)
+				{
+					json.WritePropertyName(name);
+					json.WriteRawValue(value);
+					changed = true;
+				}
+			}
+			json.WriteEndObject();
+			json.WriteBoolean("changed", changed);
 		}
 
 		/// <summary>A value as a scene writes it, to tell whether the drawers changed it.</summary>

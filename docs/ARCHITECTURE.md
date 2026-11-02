@@ -2177,6 +2177,13 @@ as the Inspector's own control goes only in a markup's `next` element; its eleme
   that comes back changed goes into the scene, typed as the field is, as part of the frame's step to undo, and
   calls the field's `[OnValueChanged]`. A drawer that throws stops drawing until the Inspector is built again.
 - While playing, a drawn field shows its own control.
+- **Behaviour inspectors** *(implemented)*: a `BehaviourInspector<T>` draws a whole behaviour, of type `T` or
+  derived from it, in place of its fields, as Unity's custom `Editor` does. ScriptInfo names it on the behaviour
+  (`inspector`), and it runs as a drawer of a field with no path: the editor opens it with the shown Obj, its value
+  is the table of fields the scene sets, and its `Draw(behaviour, ui)` gets a copy of the behaviour made from them
+  on its Obj, as `[Button]`s do. The fields the copy ends with changed come back as a table, each set in the scene
+  as part of the frame's one step to undo. The behaviour's usual rows are built in a panel after the inspector,
+  which moves into its markup's `next` element (`Ui::move_into`), or out of sight without one.
 
 ### The design
 

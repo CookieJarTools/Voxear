@@ -9,6 +9,10 @@
 //! What they give back goes into the scene, as one step to undo with the
 //! rest of the frame's edits. While the drawers draw, the scripts reach
 //! their elements through [`DrawerUi`], by numbers of the Inspector's own.
+//!
+//! A behaviour's inspector (`BehaviourInspector`) is drawn the same way, as
+//! a field with no path: its value is the table of fields the scene sets,
+//! and what it gives back the table of those it changed.
 
 use voxear_engine::{
     game_ui::UiNumbers,
@@ -28,8 +32,9 @@ const NUMBERS_EACH: u32 = 1 << 20;
 /// A field the Inspector draws with drawers.
 struct DrawnRow {
     prop: Prop,
-    /// Its place among the Inspector's rows, for its control.
-    row: usize,
+    /// Its place among the Inspector's rows, for its control; none for a
+    /// whole behaviour.
+    row: Option<usize>,
     slot: NodeId,
     drawers: Vec<String>,
     label: String,
@@ -99,8 +104,17 @@ impl FieldDrawers {
     }
 
     /// Notes that a field is drawn by `drawers`, on the Inspector's row
-    /// `row`, whose control is in `slot` until they are built there.
-    pub fn add(&mut self, prop: &Prop, row: usize, slot: NodeId, drawers: &[String], label: &str, editable: bool) {
+    /// `row`, whose control is in `slot` until they are built there, or that
+    /// a whole behaviour is, with no row.
+    pub fn add(
+        &mut self,
+        prop: &Prop,
+        row: Option<usize>,
+        slot: NodeId,
+        drawers: &[String],
+        label: &str,
+        editable: bool,
+    ) {
         self.rows.push(DrawnRow {
             prop: prop.clone(),
             row,
@@ -130,16 +144,16 @@ impl FieldDrawers {
     }
 
     /// Builds each field's drawers from the markups the scripts gave, in its
-    /// slot. Returns each row whose drawers were built, with the element its
-    /// own control goes into, if one does, and whether it is editable. A
-    /// field whose drawers could not be opened or built keeps its own
-    /// control.
+    /// slot. Returns each field whose drawers were built, with its row, the
+    /// element its own control goes into, if one does, and whether it is
+    /// editable. A field whose drawers could not be opened or built keeps
+    /// its own control.
     pub fn place(
         &mut self,
         ui: &mut Ui,
         answers: Vec<Result<Vec<String>, String>>,
         load: &mut LoadFile,
-    ) -> Vec<(usize, Option<NodeId>, bool)> {
+    ) -> Vec<(Prop, Option<usize>, Option<NodeId>, bool)> {
         self.opened = true;
         let mut placed = Vec::new();
         for (row, answer) in self.rows.iter_mut().zip(answers) {
@@ -178,7 +192,7 @@ impl FieldDrawers {
             for warning in ui.take_warnings() {
                 tracing::warn!(target: "script", "{warning}");
             }
-            placed.push((row.row, parent, row.editable));
+            placed.push((row.prop.clone(), row.row, parent, row.editable));
         }
         placed
     }
@@ -220,6 +234,17 @@ impl FieldDrawers {
         for (&index, answer) in self.asked.iter().zip(answers) {
             let row = &mut self.rows[index];
             match answer {
+                Ok(Drawn { value: Some(toml::Value::Table(fields)), changed: true }) if row.whole() => {
+                    let Prop::Field { behaviour, .. } = &row.prop else { continue };
+                    // Drawn again next frame, with the scene's fields as they are now.
+                    row.drawn = None;
+                    for (name, value) in fields {
+                        let path = vec![Step::Key(name)];
+                        let kind = crate::fields::kind_at(types, behaviour, &path);
+                        let value = kind.map_or(value.clone(), |kind| typed(types, &kind, value));
+                        changed.push((Prop::Field { behaviour: behaviour.clone(), path }, value));
+                    }
+                }
                 Ok(Drawn { value: Some(value), changed: true }) if row.editable => {
                     let Prop::Field { behaviour, path } = &row.prop else { continue };
                     let kind = crate::fields::kind_at(types, behaviour, path);
@@ -231,11 +256,19 @@ impl FieldDrawers {
                 Ok(_) => {}
                 Err(error) => {
                     row.failed = true;
-                    errors.push(format!("{}'s drawer threw: {error}", row.label));
+                    let drawer = if row.whole() { "inspector" } else { "drawer" };
+                    errors.push(format!("{}'s {drawer} threw: {error}", row.label));
                 }
             }
         }
         (changed, errors)
+    }
+}
+
+impl DrawnRow {
+    /// Whether it is a whole behaviour, drawn by its inspector.
+    fn whole(&self) -> bool {
+        matches!(&self.prop, Prop::Field { path, .. } if path.is_empty())
     }
 }
 

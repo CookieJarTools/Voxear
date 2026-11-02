@@ -21,6 +21,7 @@ mod hot_reload;
 mod lod;
 mod mesh;
 mod mesh_tools;
+mod model_lods;
 mod passes;
 mod payload;
 mod pipelines;

@@ -64,6 +64,7 @@ pub struct ModelFields {
     smoothing_angle: NodeId,
     tangents: NodeId,
     lods: NodeId,
+    own_lods: NodeId,
     materials: NodeId,
     buttons: Buttons,
 }
@@ -80,6 +81,7 @@ impl ModelFields {
             normals: choice(ui, rows, "Normals", &Self::SOURCES),
             smoothing_angle: number_field(ui, rows, "Smoothing angle"),
             tangents: choice(ui, rows, "Tangents", &Self::SOURCES),
+            own_lods: toggle(ui, rows, "Use its own LODs"),
             lods: toggle(ui, rows, "Make LODs"),
             materials: toggle(ui, rows, "Import materials"),
             buttons: Buttons::new(ui, rows),
@@ -97,6 +99,7 @@ impl ModelFields {
         ui.set_text(self.smoothing_angle, &number(settings.smoothing_angle));
         ui.set_selected_option(self.tangents, usize::from(settings.tangents == Tangents::Calculate));
         ui.set_checked(self.lods, settings.lods);
+        ui.set_checked(self.own_lods, settings.own_lods);
         ui.set_checked(self.materials, settings.materials);
         self.enable(ui, settings);
     }
@@ -116,6 +119,7 @@ impl ModelFields {
             smoothing_angle: read(self.smoothing_angle, self.applied.smoothing_angle).clamp(0.0, 180.0),
             tangents: if calculate(self.tangents) { Tangents::Calculate } else { Tangents::Import },
             lods: ui.is_checked(self.lods),
+            own_lods: ui.is_checked(self.own_lods),
             materials: ui.is_checked(self.materials),
         }
     }

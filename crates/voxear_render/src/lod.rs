@@ -21,6 +21,7 @@ const MIN_PROGRESS: f32 = 0.15;
 /// How strongly normals hold vertices in place, relative to position error.
 const NORMAL_WEIGHT: f32 = 0.5;
 
+#[derive(Clone)]
 pub struct Lod {
     pub indices: Vec<u32>,
     /// Largest distance, in mesh units, between this LOD and the original
@@ -69,6 +70,34 @@ pub fn build_lods(mesh: &MeshData) -> Vec<Lod> {
         lods.push(Lod { indices: optimize_vertex_cache(&indices, vertex_count), error });
     }
     lods
+}
+
+/// How far from a mesh's surface a simplification of it to `triangles`
+/// triangles strays, in mesh units, as meshoptimizer measures it: the error
+/// a model's own LOD of that many triangles is given (see `model_lods`).
+pub fn error_at(mesh: &MeshData, triangles: usize) -> f32 {
+    if triangles * 3 >= mesh.indices.len() {
+        return 0.0;
+    }
+    let Ok(adapter) = VertexDataAdapter::new(bytemuck::cast_slice(&mesh.vertices), size_of::<Vertex>(), 0) else {
+        return 0.0;
+    };
+    let normals: Vec<f32> = mesh.vertices.iter().flat_map(|v| v.normal).collect();
+    let locks = vec![false; mesh.vertices.len()];
+    let mut error = 0.0;
+    simplify_with_attributes_and_locks(
+        &mesh.indices,
+        &adapter,
+        &normals,
+        &[NORMAL_WEIGHT; 3],
+        3 * size_of::<f32>(),
+        &locks,
+        triangles * 3,
+        f32::MAX,
+        SimplifyOptions::ErrorAbsolute,
+        Some(&mut error),
+    );
+    error
 }
 
 /// LOD 0 alone, the mesh in full with its triangles reordered for the

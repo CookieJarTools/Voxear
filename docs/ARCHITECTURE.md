@@ -880,6 +880,11 @@ cost nothing. The CPU never touches visibility.
 **LOD.**
 - **Generated on import** with meshoptimizer. Simplification keeps UV seams, normals and silhouettes.
   Far LODs use more aggressive simplification. Every LOD is meshletised.
+- **A model's own LODs** *(implemented)*: parts named `Rock_LOD0`, `Rock_LOD1` and on, as Unity names them,
+  fold into one part, `Rock`, whose mesh takes the later LODs' vertices after its own, each LOD's triangles
+  pointing into its share (`model_lods.rs`). Each is given the error a meshoptimizer simplification of the first
+  to as many triangles would have, so the GPU picks it where it would pick a made LOD of that size. The import
+  setting `own_lods` (on by default) chooses them over made ones; either way the later LODs are not parts.
 - **Selected on the GPU by screen-space error**, not by distance. The same mesh picks the right LOD at any FOV or
   resolution.
 - **Transitions are dithered cross-fades**, smoothed by TAA, so LOD changes do not pop. Each instance's LOD

@@ -189,8 +189,15 @@ pub fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
     prepare_with(path, read, &settings.unwrap_or_default())
 }
 
-/// [`prepare`], with the import settings given.
+/// [`prepare`], with the import settings given. A model's own LODs, as
+/// parts named `Rock_LOD0` and on, become its meshes' LODs (see `model_lods`).
 pub(crate) fn prepare_with(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result<PreparedModel> {
+    let mut model = read_model(path, read, settings)?;
+    crate::model_lods::fold(&mut model, settings);
+    Ok(model)
+}
+
+fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result<PreparedModel> {
     if fbx_import::is_fbx(path) {
         return fbx_import::prepare(path, read, settings).with_context(|| format!("reading {path}"));
     }
@@ -716,6 +723,21 @@ mod tests {
         assert_eq!((model.textures[0].width, model.textures[0].height), (64, 32), "without settings, its own size");
         model.compress_textures();
         assert_eq!(model.textures[0].format, TextureFormat::Bc7, "and compressed");
+    }
+
+    #[test]
+    fn a_models_own_lods_are_read_as_one_parts_lods() {
+        // The quad twice, as its own LOD 0 and LOD 1, as an artist's file names them.
+        let gltf = String::from_utf8(quad()).unwrap();
+        let nodes = r#""nodes": [{ "name": "Quad_LOD0", "mesh": 0 }, { "name": "Quad_LOD1", "mesh": 0 }]"#;
+        let scenes = r#""scenes": [{ "nodes": [0, 1] }]"#;
+        let gltf = gltf
+            .replace(r#""nodes": [{ "name": "Quad", "mesh": 0, "translation": [1, 2, 3] }]"#, nodes)
+            .replace(r#""scenes": [{ "nodes": [0] }]"#, scenes);
+        let model = prepare("Models/Quad.gltf", &mut |_| Ok(gltf.clone().into_bytes())).unwrap();
+        let names: Vec<&str> = model.nodes.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(names, ["Quad"], "one part, by the name before the suffix");
+        assert_eq!(model.meshes[0].1.len(), 2, "with the file's two LODs");
     }
 
     #[test]

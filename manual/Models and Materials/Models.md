@@ -17,7 +17,9 @@ You can also copy files into the project's folder yourself. The editor sees them
 
 Select the model in the Project panel to see it in the Inspector. Drag the preview to turn it.
 
-When a model is first used, Voxear makes simpler copies of it, called **levels of detail**, for when it is far away and small on screen. You do not need to set anything up: the engine picks the right one as the camera moves, and blends smoothly between them. To leave them out, turn off **Make LODs** in the model's import settings.
+When a model is first used, Voxear makes simpler copies of it, called **levels of detail** (LODs), for when it is far away and small on screen. You do not need to set anything up, and there is no component to add: the engine picks the right one as the camera moves, and blends smoothly between them. To leave them out, turn off **Make LODs** in the model's import settings.
+
+A model that comes with LODs of its own uses those instead. Name each mesh's versions as Unity reads them: `Rock_LOD0` for the full one, then `Rock_LOD1`, `Rock_LOD2` and so on, each simpler than the last. The model then has one part, `Rock`, drawn with your LODs at the distances the engine's own would be used. To have the engine make them from `Rock_LOD0` instead, turn off **Use its own LODs**. Either way, the later LODs are not parts of their own.
 
 ## Putting a model in a level
 
@@ -64,6 +66,7 @@ Select a model in the Project panel, and the Inspector shows its **Import Settin
 | **Normals** | Which way each surface faces, for lighting. **From the file** uses the file's, and works them out for a mesh that has none. **Calculate** always works them out. |
 | **Smoothing angle** | For calculated normals: an edge whose faces meet at less than this many degrees is smooth, and a sharper one stays hard. |
 | **Tangents** | What normal maps need. **From the file** uses the file's, and works them out for a mesh that has none. **Calculate** always works them out. They are worked out whenever the normals are. |
+| **Use its own LODs** | For a model whose meshes come with LODs of their own, named `_LOD0`, `_LOD1` and on: whether it is drawn with those. Turned off, the engine makes them from the first, as **Make LODs** says. |
 | **Make LODs** | Whether the simpler copies for far away are made. Turn it off for a model that must always be drawn in full. |
 | **Import materials** | Whether the model is drawn with its own materials. Turned off, each part is drawn plain grey, and fields that name one of its materials still work. |
 

@@ -37,6 +37,11 @@ pub struct ModelImport {
     /// Whether simpler versions of each mesh are made, drawn when it is far
     /// away. Without them the mesh is always drawn in full.
     pub lods: bool,
+    /// Whether a model that has LODs of its own, as parts named `Rock_LOD0`,
+    /// `Rock_LOD1` and on, as Unity names them, draws with those, rather
+    /// than with LODs made from its first. Either way its later LODs are not
+    /// parts of their own.
+    pub own_lods: bool,
     /// Whether the file's materials are used. Without them every part draws
     /// in the default material, and the parts' material references still
     /// work.
@@ -52,6 +57,7 @@ impl Default for ModelImport {
             smoothing_angle: 60.0,
             tangents: Tangents::Import,
             lods: true,
+            own_lods: true,
             materials: true,
         }
     }

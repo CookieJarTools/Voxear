@@ -72,7 +72,8 @@ The original M1 scope:
   - cascaded shadow maps
 - **GPU culling:** frustum culling plus two-phase Hi-Z occlusion culling per instance, with no CPU readback.
 - **Built-in LOD:** LODs generated on import, selected on the GPU by screen-space error, with dithered
-  cross-fades.
+  cross-fades. A model's own LODs (`Rock_LOD0`, `Rock_LOD1`…) are used in their place, unless its import
+  settings turn off Use its own LODs.
 - Debug views (wireframe, normals, overdraw), GPU timestamps, and Vulkan debug names on every pass and resource.
 - One-button RenderDoc capture through its in-app API.
 

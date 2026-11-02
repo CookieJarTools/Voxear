@@ -693,7 +693,8 @@ impl Renderer {
         let exposure = bytemuck::cast_slice(first.exposure.read());
         self.stats = RenderStats::read(counters, exposure);
         let acquired = {
-            profile_scope!("Acquire Image");
+            // Acquiring the next image waits for the display, as vsync paces the frames.
+            profile_scope!("Wait for Display");
             let acquired = self.acquire_images(&mut drawn)?;
             if !drawn.contains(&true) {
                 return Ok(());

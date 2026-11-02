@@ -70,7 +70,7 @@ use crate::{
     inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
     memory_panel::MemoryPanel,
-    object_picker::{self, ObjectPicker, PickFor},
+    object_picker::{self, Chosen, ObjectPicker, PickFor},
     objs,
     palette::{Added, Keys, Palette, PaletteAction, PaletteCommand, PaletteKey, Picked, Sources},
     profiler::{self, Profiler},
@@ -274,7 +274,7 @@ pub struct Editor {
     debug_texts: DebugTexts,
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
-    picker_picks: Vec<(PickFor, Pick)>,
+    picker_picks: Vec<(PickFor, Chosen)>,
     /// A material shown on an Obj while it is dragged over it from the Project.
     material_preview: Option<material_drops::MaterialPreview>,
     /// The Obj selected, which every Inspector not locked shows: the active
@@ -443,9 +443,9 @@ impl Editor {
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
         let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
-        let parts =
-            ["picker", "picker-title", "picker-field", "picker-list", "picker-empty"].map(|name| find(&ui, name));
-        let picker = ObjectPicker::new(&mut ui, parts[0], parts[1], parts[2], parts[3], parts[4]);
+        let parts = ["picker", "picker-back", "picker-title", "picker-field", "picker-list", "picker-empty"]
+            .map(|name| find(&ui, name));
+        let picker = ObjectPicker::new(&mut ui, parts[0], (parts[1], parts[2]), parts[3], parts[4], parts[5]);
         let (color_panel, color_title) = (find(&ui, "color-popup"), find(&ui, "color-title"));
         let color_popup = color_popup::ColorPopup::new(&mut ui, color_panel, color_title);
         let scene_panel = find(&ui, "scene-panel");
@@ -1375,6 +1375,11 @@ impl Editor {
         if let RowAction::ViewLod(level) = action {
             return self.view_lod(entity, level, renderer);
         }
+        if let RowAction::BrowseComponents(anchor) = action {
+            let choices = self.inspector.component_choices(self.is_playing());
+            let target = (PickFor::AddComponent(entity), anchor);
+            return self.picker.open(&mut self.ui, target, "Add Component", choices, "");
+        }
         if let RowAction::Keep(field) = action {
             let label = field.label();
             let kept = (entity, field);
@@ -1425,7 +1430,7 @@ impl Editor {
             RowAction::ShowToDesigners(prop, shown) => {
                 props::show_to_designers(&mut self.game.engine.world, entity, &prop, shown);
             }
-            RowAction::ViewLod(_) => {}
+            RowAction::ViewLod(_) | RowAction::BrowseComponents(_) => {}
             RowAction::ForceLod(lod) => {
                 props::set_forced_lod(&mut self.game.engine.world, entity, lod);
             }
@@ -1795,6 +1800,10 @@ impl Editor {
             && let winit::keyboard::Key::Named(named) = &key.logical_key
         {
             use winit::keyboard::NamedKey;
+            let sideways = matches!(named, NamedKey::ArrowLeft | NamedKey::ArrowRight);
+            if sideways && self.picker.side_key(&mut self.ui, *named == NamedKey::ArrowRight) {
+                return true;
+            }
             let palette_key = match named {
                 NamedKey::ArrowUp => Some(PaletteKey::Up),
                 NamedKey::ArrowDown => Some(PaletteKey::Down),
@@ -1910,21 +1919,27 @@ impl Editor {
             Some(props::Value::Asset(now) | props::Value::Obj(now)) => now,
             _ => String::new(),
         };
-        self.picker.open(&mut self.ui, (PickFor::Field(entity, prop), anchor), &title, choices, &now);
+        self.picker.open(&mut self.ui, (PickFor::Field(entity, prop), anchor), &format!("Select {title}"), choices, &now);
     }
 
     /// The object picker's frame, and what it or its keys picked: for the
     /// Obj it was opened for, while it is there, or a level's scene.
     fn update_picker(&mut self, renderer: &mut Renderer) {
         let clicked = self.picker.update(&mut self.ui);
-        for (target, pick) in std::mem::take(&mut self.picker_picks).into_iter().chain(clicked) {
-            match target {
+        for (target, picked) in std::mem::take(&mut self.picker_picks).into_iter().chain(clicked) {
+            let alive = |entity: Entity| self.game.engine.world.is_alive(entity);
+            match (target, picked) {
                 // By whichever Inspector it was opened from.
-                PickFor::Field(entity, prop) if self.game.engine.world.is_alive(entity) => {
+                (PickFor::Field(entity, prop), Chosen::Value(pick)) if alive(entity) => {
                     self.row_action_on(entity, RowAction::Pick(prop, pick), renderer);
                 }
-                PickFor::Field(..) => {}
-                PickFor::LevelScene { level, at } => self.pick_level_scene(&level, at, &pick, renderer),
+                (PickFor::LevelScene { level, at }, Chosen::Value(pick)) => {
+                    self.pick_level_scene(&level, at, &pick, renderer);
+                }
+                (PickFor::AddComponent(entity), Chosen::Component(part)) if alive(entity) => {
+                    self.row_action_on(entity, RowAction::Add(part), renderer);
+                }
+                _ => {}
             }
         }
     }

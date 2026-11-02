@@ -78,7 +78,7 @@ impl Editor {
         let choices = object_picker::decorate(&self.game, choices);
         let target = PickFor::LevelScene { level: level.to_string(), at };
         let now = now.rsplit('/').next().unwrap_or_default().to_string();
-        self.picker.open(&mut self.ui, (target, anchor), "Scene", choices, &now);
+        self.picker.open(&mut self.ui, (target, anchor), "Select Scene", choices, &now);
     }
 
     /// Puts a scene picked for a level in: in place of the one at `at`, or

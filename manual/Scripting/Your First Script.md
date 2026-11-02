@@ -66,7 +66,7 @@ When you save, the editor builds your scripts in the background. If something is
 ## Putting the Spinner on a cube
 
 1. Make a cube: the **+** at the top of the Hierarchy, then **Cube**.
-2. With the cube selected, click **Add Component** in the Inspector and pick **Spinner**.
+2. With the cube selected, click **Add Component** in the Inspector, type `spin` and pick **Spinner**.
 3. Click **Play**.
 
 The cube spins. Change **Degrees Per Second** in the Inspector while it plays to try other speeds. Remember that changes made while playing go away when you stop; see [[Playing Your Game]].

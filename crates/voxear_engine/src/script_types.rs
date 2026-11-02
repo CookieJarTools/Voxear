@@ -155,6 +155,10 @@ pub struct BehaviourType {
     /// place of its fields, by its full name.
     #[serde(default)]
     pub inspector: Option<String>,
+    /// Where its `[AddComponentMenu]` lists it in Add Component: folders and
+    /// a name, separated by slashes, or empty to leave it out.
+    #[serde(default)]
+    pub menu: Option<String>,
 }
 
 /// A `[Button]` method, which takes nothing, and what its button says, or

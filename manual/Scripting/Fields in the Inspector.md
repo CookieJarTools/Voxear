@@ -107,6 +107,17 @@ Points and directions move and turn with the Obj, unless you give them `Space = 
 
 Each drag is one step to undo. Hold **Ctrl** while dragging to snap: points to the snap distance shown in the Scene view, other values to tenths of a metre, and angles to 5°. The handles show while you edit, not while the game plays, and the move, rotate and scale handles sit on top of them. Choose the Select tool to reach a dot underneath.
 
+## Where Add Component lists a script
+
+Add Component lists your scripts under **Scripts**, in a folder for each part of their namespace past the one all your scripts share. `[AddComponentMenu]` puts one where you say instead, as in Unity:
+
+```csharp
+[AddComponentMenu("Effects/Camp Fire")]
+public class CampFire : Behaviour { }
+```
+
+The last part is the name it shows. `[AddComponentMenu("")]` leaves a script out, for one only ever added from code.
+
 ## When a script's fields change
 
 When you save a script, the editor builds it and shows its fields as they now are. If the build fails, the Inspector keeps showing the fields from the last good build, and the Console says what is wrong.

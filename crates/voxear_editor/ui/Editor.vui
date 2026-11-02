@@ -123,7 +123,10 @@
         </Panel>
         <!-- A reference field's search, under the field it opened from. -->
         <Panel name="picker" class="palette picker">
-            <Label name="picker-title" class="picker-title" />
+            <Panel class="picker-head">
+                <Button name="picker-back" class="picker-back"><Icon icon="chevron-left" /></Button>
+                <Label name="picker-title" class="picker-title" />
+            </Panel>
             <Panel class="search picker-search">
                 <Icon icon="search" class="search-icon" />
                 <TextField name="picker-field" class="search-field" placeholder="Search" />

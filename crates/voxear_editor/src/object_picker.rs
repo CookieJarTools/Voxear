@@ -9,6 +9,12 @@
 //! or a click picks, and Escape or a click elsewhere closes it. Materials,
 //! prefabs, models and meshes show previews in place of their icons once
 //! the editor has them drawn.
+//!
+//! It also lists what Add Component offers, in folders as Unity's does:
+//! with nothing typed, the folder open shows its folders, then what is in
+//! it, and a folder picked (or Right) opens it, with a back button (or
+//! Left) to the one it is in. Typing searches everything in every folder,
+//! each row saying which folder it is in.
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -17,7 +23,12 @@ use voxear_ecs::Entity;
 use voxear_engine::{AssetPreviews, Game};
 use voxear_ui::{ImageRef, ItemFns, NodeId, Style, Ui};
 
-use crate::{fields::Pick, hierarchy, palette::PaletteKey, palette::score, props::Prop};
+use crate::{
+    fields::Pick,
+    hierarchy,
+    palette::{PaletteKey, score},
+    props::{Part, Prop},
+};
 
 /// How tall a row is, as `item-height` gives it in Editor.vui, and the
 /// tallest the list grows before it scrolls.
@@ -30,17 +41,29 @@ const MARGIN: f32 = 8.0;
 /// How big a row's preview shows, as Editor.vss sizes `picker-thumb`.
 pub const PREVIEW: f32 = 22.0;
 
-/// One thing a field can point at.
+/// One row of the picker.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Choice {
     pub label: String,
     /// Where it is: an asset's folder, an Obj's scene.
     pub detail: String,
     pub icon: &'static str,
-    pub pick: Pick,
+    pub pick: Chosen,
     /// What to show a preview of in place of the icon, when it has one: an
     /// asset's path, or a built-in mesh.
     pub preview: Option<String>,
+    /// The folder it is listed in, as `Scripts/Enemies`, or empty for the
+    /// top, where a field's choices all are.
+    pub folder: String,
+}
+
+/// What picking a row does: points a reference at what it is, adds a
+/// component, or opens the folder it names.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Chosen {
+    Value(Pick),
+    Component(Part),
+    Folder(String),
 }
 
 /// What a pick is for: a reference of an Obj's, or a scene of a level's.
@@ -51,6 +74,8 @@ pub enum PickFor {
     /// The level, by its path, and the place of the scene to change, or
     /// none for a scene to add.
     LevelScene { level: String, at: Option<usize> },
+    /// The Obj to add a component to.
+    AddComponent(Entity),
 }
 
 /// What the picker is open for, and the field it opened from.
@@ -61,6 +86,7 @@ struct Opened {
 
 pub struct ObjectPicker {
     panel: NodeId,
+    back: NodeId,
     title: NodeId,
     field: NodeId,
     list: NodeId,
@@ -71,6 +97,9 @@ pub struct ObjectPicker {
     previews: Rc<RefCell<HashMap<String, ImageRef>>>,
     current: usize,
     opened: Option<Opened>,
+    /// What the picker was opened as, and the folder open, empty at the top.
+    heading: String,
+    folder: String,
     /// The search box can take focus only once it has been laid out, a
     /// frame or so after the picker shows; until it has, the picker stays
     /// open whatever has focus.
@@ -78,7 +107,7 @@ pub struct ObjectPicker {
 }
 
 impl ObjectPicker {
-    pub fn new(ui: &mut Ui, panel: NodeId, title: NodeId, field: NodeId, list: NodeId, empty: NodeId) -> Self {
+    pub fn new(ui: &mut Ui, panel: NodeId, (back, title): (NodeId, NodeId), field: NodeId, list: NodeId, empty: NodeId) -> Self {
         let shown: Rc<RefCell<Vec<Choice>>> = Rc::default();
         let previews: Rc<RefCell<HashMap<String, ImageRef>>> = Rc::default();
         let (bound, drawn) = (shown.clone(), previews.clone());
@@ -111,8 +140,10 @@ impl ObjectPicker {
         };
         ui.bind_list(list, 0, items);
         ui.set_visible(panel, false);
+        ui.set_visible(back, false);
         Self {
             panel,
+            back,
             title,
             field,
             list,
@@ -122,6 +153,8 @@ impl ObjectPicker {
             previews,
             current: 0,
             opened: None,
+            heading: String::new(),
+            folder: String::new(),
             focusing: false,
         }
     }
@@ -144,8 +177,9 @@ impl ObjectPicker {
         ui.refresh_list(self.list);
     }
 
-    /// Opens under `anchor` for `target`, offering `choices`, with the one
-    /// called `now` highlighted.
+    /// Opens under `anchor` for `target`, headed `title`, offering
+    /// `choices`, at the top of their folders, with the one called `now`
+    /// highlighted.
     pub fn open(
         &mut self,
         ui: &mut Ui,
@@ -156,10 +190,10 @@ impl ObjectPicker {
     ) {
         self.every = choices;
         self.opened = Some(Opened { target, anchor });
-        ui.set_text(self.title, &format!("Select {title}"));
+        self.heading = title.to_string();
         ui.set_text(self.field, "");
         ui.set_visible(self.panel, true);
-        self.filter(ui);
+        self.open_folder(ui, String::new());
         let at = self.every.iter().position(|c| c.label == now || c.label.rsplit('/').next() == Some(now));
         self.highlight(ui, at.unwrap_or(0));
         self.place(ui);
@@ -168,8 +202,11 @@ impl ObjectPicker {
 
     /// Narrows as the search is typed in, and closes when focus goes
     /// elsewhere. Returns a click's pick, with what it is for.
-    pub fn update(&mut self, ui: &mut Ui) -> Option<(PickFor, Pick)> {
+    pub fn update(&mut self, ui: &mut Ui) -> Option<(PickFor, Chosen)> {
         self.opened.as_ref()?;
+        if ui.clicked(self.back) {
+            self.up(ui);
+        }
         if ui.clicked(self.list) {
             self.current = ui.selection(self.list).first().copied().unwrap_or(self.current);
             return self.pick(ui);
@@ -193,8 +230,25 @@ impl ObjectPicker {
         None
     }
 
+    /// Left goes back to the folder the open one is in, and Right opens the
+    /// folder highlighted, while nothing is typed. Returns whether it did.
+    pub fn side_key(&mut self, ui: &mut Ui, right: bool) -> bool {
+        if self.opened.is_none() || !ui.text(self.field).is_empty() {
+            return false;
+        }
+        if !right {
+            return self.up(ui);
+        }
+        let folder = match self.shown.borrow().get(self.current) {
+            Some(Choice { pick: Chosen::Folder(folder), .. }) => folder.clone(),
+            _ => return false,
+        };
+        self.open_folder(ui, folder);
+        true
+    }
+
     /// Up and Down move the highlight; Enter picks it; Escape closes.
-    pub fn key(&mut self, ui: &mut Ui, key: PaletteKey) -> Option<(PickFor, Pick)> {
+    pub fn key(&mut self, ui: &mut Ui, key: PaletteKey) -> Option<(PickFor, Chosen)> {
         let count = self.shown.borrow().len();
         match key {
             PaletteKey::Up => self.highlight(ui, self.current.saturating_sub(1)),
@@ -205,11 +259,46 @@ impl ObjectPicker {
         None
     }
 
-    fn pick(&mut self, ui: &mut Ui) -> Option<(PickFor, Pick)> {
+    /// Picks the row highlighted, or opens it when it is a folder.
+    fn pick(&mut self, ui: &mut Ui) -> Option<(PickFor, Chosen)> {
         let choice = self.shown.borrow().get(self.current).map(|c| c.pick.clone());
+        if let Some(Chosen::Folder(folder)) = choice {
+            ui.set_text(self.field, "");
+            self.open_folder(ui, folder);
+            return None;
+        }
         let opened = self.opened.take();
         self.close(ui);
         Some((opened?.target, choice?))
+    }
+
+    /// Goes back to the folder the open one is in. False at the top.
+    fn up(&mut self, ui: &mut Ui) -> bool {
+        if self.folder.is_empty() {
+            return false;
+        }
+        let from = std::mem::take(&mut self.folder);
+        let parent = from.rsplit_once('/').map_or(String::new(), |(parent, _)| parent.to_string());
+        self.open_folder(ui, parent);
+        // On the folder it came out of, as a file browser does.
+        let at = self.shown.borrow().iter().position(|c| c.pick == Chosen::Folder(from.clone()));
+        self.highlight(ui, at.unwrap_or(0));
+        true
+    }
+
+    /// Lists a folder, its name the title and the back button showing
+    /// inside one. The search keeps focus, which a click on a folder or the
+    /// back button took, so the picker stays open.
+    fn open_folder(&mut self, ui: &mut Ui, folder: String) {
+        if !self.focusing {
+            ui.focus(self.field);
+        }
+        let name = folder.rsplit('/').next().unwrap_or_default().to_string();
+        ui.set_text(self.title, if folder.is_empty() { &self.heading } else { &name });
+        ui.set_visible(self.back, !folder.is_empty());
+        self.folder = folder;
+        self.filter(ui);
+        self.highlight(ui, 0);
     }
 
     fn close(&mut self, ui: &mut Ui) {
@@ -221,13 +310,15 @@ impl ObjectPicker {
         }
     }
 
-    /// What is typed against every choice, best first; with nothing typed,
-    /// all of them in their order.
+    /// What is typed against every choice in every folder, best first;
+    /// with nothing typed, the open folder's folders, then what is in it.
     fn filter(&mut self, ui: &mut Ui) {
         let query = ui.text(self.field);
         let query = query.trim();
         let shown: Vec<Choice> = if query.is_empty() {
-            self.every.clone()
+            let mut shown = subfolders(&self.every, &self.folder);
+            shown.extend(self.every.iter().filter(|c| c.folder == self.folder).cloned());
+            shown
         } else {
             let mut ranked: Vec<(i32, usize)> = self
                 .every
@@ -235,12 +326,20 @@ impl ObjectPicker {
                 .enumerate()
                 .filter_map(|(at, c)| {
                     let by_name = score(query, &c.label);
-                    let by_place = score(query, &format!("{} {}", c.detail, c.label)).map(|s| s - 64 * 20);
+                    let place = format!("{} {} {}", c.folder.replace('/', " "), c.detail, c.label);
+                    let by_place = score(query, &place).map(|s| s - 64 * 20);
                     Some((by_name.max(by_place)?, at))
                 })
                 .collect();
             ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-            ranked.into_iter().map(|(_, at)| self.every[at].clone()).collect()
+            // Found in a folder, a row says which.
+            let placed = |mut choice: Choice| {
+                if choice.detail.is_empty() {
+                    choice.detail.clone_from(&choice.folder);
+                }
+                choice
+            };
+            ranked.into_iter().map(|(_, at)| placed(self.every[at].clone())).collect()
         };
         let count = shown.len();
         *self.shown.borrow_mut() = shown;
@@ -277,6 +376,28 @@ impl ObjectPicker {
     }
 }
 
+/// The folders directly inside `folder` that hold any choice, in the
+/// order their first choice comes.
+fn subfolders(every: &[Choice], folder: &str) -> Vec<Choice> {
+    let mut found: Vec<Choice> = Vec::new();
+    for choice in every {
+        let inside = match folder {
+            "" => Some(choice.folder.as_str()),
+            _ => choice.folder.strip_prefix(folder).and_then(|rest| rest.strip_prefix('/')),
+        };
+        let Some(next) = inside.and_then(|rest| rest.split('/').next()).filter(|next| !next.is_empty()) else {
+            continue;
+        };
+        let path = if folder.is_empty() { next.to_string() } else { format!("{folder}/{next}") };
+        if !found.iter().any(|f| f.pick == Chosen::Folder(path.clone())) {
+            let pick = Chosen::Folder(path);
+            let (label, detail) = (next.to_string(), "›".to_string());
+            found.push(Choice { label, detail, icon: "folder", pick, preview: None, folder: folder.into() });
+        }
+    }
+    found
+}
+
 /// The choices as the picker lists them: an Obj with the icon the
 /// Hierarchy gives it and its scene, an asset with its kind's icon and its
 /// folder, and a built-in mesh as built in.
@@ -304,7 +425,7 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 }
                 _ => None,
             };
-            Choice { label, detail, icon, pick, preview }
+            Choice { label, detail, icon, pick: Chosen::Value(pick), preview, folder: String::new() }
         })
         .collect()
 }

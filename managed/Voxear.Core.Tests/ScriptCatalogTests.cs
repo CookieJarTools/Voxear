@@ -140,6 +140,17 @@ internal static class ScriptCatalogTests
 	}
 
 	[Test]
+	private static void AddComponentMenuPlacesABehaviour()
+	{
+		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestCampFire).Assembly));
+		var behaviours = document.RootElement.GetProperty("behaviours").EnumerateArray().ToList();
+		var fire = behaviours.Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestCampFire");
+		Check.True(fire.GetProperty("menu").GetString() == "Effects/Camp Fire", "[AddComponentMenu]'s path");
+		var guide = behaviours.Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestGuide");
+		Check.True(!guide.TryGetProperty("menu", out _), "none without the attribute");
+	}
+
+	[Test]
 	private static void InspectorAttributesAreWrittenWithTheirFields()
 	{
 		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestMover).Assembly));

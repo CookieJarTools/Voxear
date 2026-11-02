@@ -933,14 +933,7 @@ fn the_inspector_edits_components_and_script_fields() {
 
     // Add Component: a light, whose intensity is then edited, then removed.
     frame(&mut editor, &mut renderer);
-    let mut add = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "add-component", &mut add);
-    click(&mut editor.ui, add[0]);
-    frame(&mut editor, &mut renderer);
-    let target = menu_item(&editor.ui, "Light").expect("Add Component offers a light");
-    click(&mut editor.ui, target);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Light");
     let light = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<voxear_render::Light>(spinner).copied();
     assert!(light(&editor).is_some(), "the light was added");
     let intensity = prop_field(&editor.ui, "Intensity").expect("and shows its values");
@@ -1029,14 +1022,7 @@ fn references_take_objs_and_assets_dragged_onto_them() {
     assert_eq!(leader.get("entity").and_then(toml::Value::as_integer), Some(spinner_a.to_bits() as i64));
 
     // A FireflySpawner's prefab, dragged from the Project's Prefabs folder.
-    let mut add = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "add-component", &mut add);
-    click(&mut editor.ui, add[0]);
-    frame(&mut editor, &mut renderer);
-    let target = menu_item(&editor.ui, "FireflySpawner").expect("the project's scripts are offered");
-    click(&mut editor.ui, target);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "FireflySpawner");
     let folder = tile(&editor.ui, "Prefabs").expect("the Project shows its folders as tiles");
     let [x, y, w, h] = editor.ui.rect(folder);
     editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
@@ -1273,14 +1259,7 @@ fn a_sound_shows_what_it_holds_plays_in_the_editor_and_goes_on_an_audio_source()
     let ground = obj(&editor, "Ground").unwrap();
     editor.select(Some(ground));
     frame(&mut editor, &mut renderer);
-    let mut add = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "add-component", &mut add);
-    click(&mut editor.ui, add[0]);
-    frame(&mut editor, &mut renderer);
-    let target = menu_item(&editor.ui, "Audio Source").expect("Add Component offers an Audio Source");
-    click(&mut editor.ui, target);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Audio Source");
     let source = |editor: &voxear_editor::Editor| {
         editor.game.engine.world.get::<voxear_engine::audio::AudioSource>(ground).copied()
     };
@@ -2672,11 +2651,83 @@ fn click_across_frames(editor: &mut voxear_editor::Editor, renderer: &mut Render
     editor.ui.pointer_button(false);
 }
 
+/// Adds a component as a user does: Add Component, its name typed into the
+/// search, and a click on it.
+fn add_component(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name: &str) {
+    let add = first_with(&editor.ui, editor.ui.root(), "add-component").expect("Add Component");
+    click(&mut editor.ui, add);
+    frame(editor, renderer);
+    frame(editor, renderer);
+    assert!(editor.picker_open(), "Add Component opens its search");
+    editor.ui.text_input(name);
+    frame(editor, renderer);
+    let row = picker_row(&editor.ui, name).unwrap_or_else(|| panic!("{name} is offered: {:?}", picker_rows(&editor.ui)));
+    click(&mut editor.ui, row);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
 /// The object picker's row that says `label`.
 fn picker_row(ui: &Ui, label: &str) -> Option<NodeId> {
     let list = ui.find(ui.root(), "picker-list")?;
     let rows = ui.children(list).into_iter().filter(|&r| ui.has_class(r, "list-row") && ui.is_visible(r));
     rows.into_iter().find(|&row| ui.text(ui.children(row)[1]) == label)
+}
+
+/// Scripts in namespaces past the one they share, one placed by its
+/// `[AddComponentMenu]`, and one it leaves out.
+const SCRIPTS_IN_FOLDERS: &str = r##"{"behaviours": [
+  {"name": "Game.Spinner", "bases": [], "interfaces": [], "fields": []},
+  {"name": "Game.Enemies.Orc", "bases": [], "interfaces": [], "fields": []},
+  {"name": "Game.CampFire", "bases": [], "interfaces": [], "fields": [], "menu": "Effects/Camp Fire"},
+  {"name": "Game.Spawned", "bases": [], "interfaces": [], "fields": [], "menu": ""}
+], "types": {}, "commands": []}"##;
+
+#[test]
+fn add_component_is_a_search_with_folders() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    editor.set_script_types(voxear_engine::script_types::parse(SCRIPTS_IN_FOLDERS).unwrap());
+    let ground = obj(&editor, "Ground").unwrap();
+    editor.select(Some(ground));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let add = first_with(&editor.ui, editor.ui.root(), "add-component").unwrap();
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let labels = |ui: &Ui| picker_rows(ui).into_iter().map(|(label, _)| label).collect::<Vec<_>>();
+    assert_eq!(labels(&editor.ui), ["Rendering", "Audio", "Scripts", "Effects"], "folders first, as in Unity");
+    shot(&mut renderer, "add-component.png");
+
+    // A folder opens on a click, its scripts past the namespace they share, with a back button.
+    let scripts = picker_row(&editor.ui, "Scripts").unwrap();
+    click(&mut editor.ui, scripts);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(labels(&editor.ui), ["Enemies", "Spinner"]);
+    shot(&mut renderer, "add-component-scripts.png");
+    let back = editor.ui.find(editor.ui.root(), "picker-back").unwrap();
+    assert!(editor.ui.is_visible(back));
+    click(&mut editor.ui, back);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(labels(&editor.ui)[0], "Rendering", "back at the top");
+
+    // Typing searches every folder, each row saying where it is; an empty menu path is left out.
+    editor.ui.text_input("fire");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(picker_rows(&editor.ui), [("Camp Fire".to_string(), "Effects".to_string())]);
+    let search = editor.ui.find(editor.ui.root(), "picker-field").unwrap();
+    type_into(&mut editor.ui, search, "spawn");
+    frame(&mut editor, &mut renderer);
+    assert!(labels(&editor.ui).is_empty(), "{:?}", picker_rows(&editor.ui));
+    editor.picker_key(voxear_editor::PaletteKey::Escape);
+    frame(&mut editor, &mut renderer);
+
+    // Picked, a component is added, as one step to undo.
+    add_component(&mut editor, &mut renderer, "Orc");
+    let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(ground).unwrap();
+    assert_eq!(kept.0[0].type_name, "Game.Enemies.Orc");
+    editor.undo(&mut renderer);
+    assert!(editor.game.engine.world.get::<voxear_engine::EditBehaviours>(ground).is_none());
 }
 
 #[test]
@@ -3734,14 +3785,7 @@ fn csharp_components_are_added_edited_and_saved_like_scripts() {
     editor.select(Some(chrome));
     frame(&mut editor, &mut renderer);
 
-    let mut add = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "add-component", &mut add);
-    click(&mut editor.ui, add[0]);
-    frame(&mut editor, &mut renderer);
-    let spin = menu_item(&editor.ui, "Spin").expect("Add Component offers the project's components");
-    click(&mut editor.ui, spin);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Spin");
     let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(chrome).unwrap();
     assert_eq!((kept.0[0].type_name.as_str(), kept.0[0].component), ("Hello.Spin", true));
 

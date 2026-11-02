@@ -27,7 +27,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::Entity;
 use voxear_engine::{
     Game,
-    script_types::{FieldInspector, InfoKind, ScriptTypes},
+    script_types::{BehaviourType, FieldInspector, InfoKind, ScriptTypes},
 };
 use voxear_render::{LodGroup, Renderer};
 use voxear_scene::{Name, ScenePersistence, Transform};
@@ -44,6 +44,7 @@ use crate::{
     fields::{self, Pick, Step},
     history::{Edit, ObjState},
     lod_inspector::{GroupLods, LodEye, MeshLods},
+    object_picker::{Choice, Chosen},
     project_view::ProjectItem,
     props::{self, Part, Prop, Value},
 };
@@ -148,6 +149,8 @@ pub enum RowAction {
     DeleteLodLevel(usize),
     /// Move the Scene view to where it draws this LOD of the mesh.
     ViewLod(usize),
+    /// Open Add Component's search under its button.
+    BrowseComponents(NodeId),
     /// Make the Mesh Renderer draw this LOD at every distance, or none.
     ForceLod(Option<u8>),
 }
@@ -1394,11 +1397,10 @@ impl Inspector {
         }
         let at = ui.pointer_position().unwrap_or_default();
         let mut items: Vec<(MenuItem, Option<RowAction>)>;
-        let (owner, at) = if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
-            items = self.add_items(playing);
-            let [x, y, _, height] = ui.rect(add);
-            (add, (x, y + height + 4.0))
-        } else if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {
+        if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
+            return Some(RowAction::BrowseComponents(add));
+        }
+        let (owner, at) = if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {
             items = vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))];
             let [x, y, _, height] = ui.rect(button);
             (button, (x, y + height + 4.0))
@@ -1469,28 +1471,82 @@ impl Inspector {
         })
     }
 
-    /// What Add Component offers: the components the Obj has not got, then
-    /// the project's behaviours and its C# components, which are added in
-    /// edit mode.
-    fn add_items(&self, playing: bool) -> Vec<(MenuItem, Option<RowAction>)> {
+    /// What Add Component offers, as the picker lists it in folders, as
+    /// Unity's does: the built-in components the Obj has not got, in
+    /// Rendering and Audio, then in edit mode the project's scripts not on
+    /// it, where their `[AddComponentMenu]` puts them or else under Scripts,
+    /// by namespace past the one every script shares.
+    pub fn component_choices(&self, playing: bool) -> Vec<Choice> {
         let has = |part: &Part| self.built.0.iter().any(|(p, _)| p == part);
-        let mut items: Vec<(MenuItem, Option<RowAction>)> =
-            [Part::Renderer, Part::Light, Part::Camera, Part::Audio, Part::Listener, Part::LodGroup]
-                .into_iter()
-                .map(|part| (MenuItem::new(part.title()).enabled(!has(&part)), Some(RowAction::Add(part))))
-                .collect();
-        for scripts in [&self.types.behaviours, &self.types.components] {
-            if !scripts.is_empty() {
-                items.push((MenuItem::separator(), None));
-            }
-            for script in scripts {
-                let part = Part::Behaviour(script.name.clone());
-                let item = MenuItem::new(script.short_name()).enabled(!playing && !has(&part));
-                items.push((item, Some(RowAction::Add(part))));
+        let choice = |part: Part, label: &str, folder: &str, icon: &'static str| Choice {
+            label: label.to_string(),
+            detail: String::new(),
+            icon,
+            pick: Chosen::Component(part),
+            preview: None,
+            folder: folder.to_string(),
+        };
+        let built_in = [
+            (Part::Renderer, "Rendering"),
+            (Part::Light, "Rendering"),
+            (Part::Camera, "Rendering"),
+            (Part::LodGroup, "Rendering"),
+            (Part::Audio, "Audio"),
+            (Part::Listener, "Audio"),
+        ];
+        let mut choices: Vec<Choice> = built_in
+            .into_iter()
+            .filter(|(part, _)| !has(part))
+            .map(|(part, folder)| choice(part.clone(), part.title(), folder, part.icon()))
+            .collect();
+        if playing {
+            return choices;
+        }
+        let shared = shared_namespace(self.types.behaviours.iter().chain(&self.types.components));
+        for (scripts, icon) in [(&self.types.behaviours, "code"), (&self.types.components, "box")] {
+            for script in scripts.iter().filter(|script| !has(&Part::Behaviour(script.name.clone()))) {
+                if let Some((folder, label)) = menu_place(script, &shared) {
+                    choices.push(choice(Part::Behaviour(script.name.clone()), &label, &folder, icon));
+                }
             }
         }
-        items
+        choices
     }
+}
+
+/// The namespace every script is in, as `Hello`, which Add Component's
+/// folders leave out; empty when they differ.
+fn shared_namespace<'a>(scripts: impl Iterator<Item = &'a BehaviourType>) -> Vec<String> {
+    let mut shared: Option<Vec<String>> = None;
+    for script in scripts {
+        let mut namespace: Vec<String> = script.name.split('.').map(str::to_string).collect();
+        namespace.pop();
+        shared = Some(match shared {
+            None => namespace,
+            Some(so_far) => so_far.into_iter().zip(namespace).take_while(|(a, b)| a == b).map(|(a, _)| a).collect(),
+        });
+    }
+    shared.unwrap_or_default()
+}
+
+/// Where Add Component lists a script, as its folder and name: where its
+/// `[AddComponentMenu]` puts it, or else under Scripts in a folder for each
+/// part of its namespace past the `shared` one. `None` leaves it out, as an
+/// empty menu path asks.
+fn menu_place(script: &BehaviourType, shared: &[String]) -> Option<(String, String)> {
+    if let Some(path) = &script.menu {
+        let path = path.trim().trim_matches('/');
+        return match path.rsplit_once('/') {
+            _ if path.is_empty() => None,
+            Some((folder, name)) => Some((folder.to_string(), name.to_string())),
+            None => Some((String::new(), path.to_string())),
+        };
+    }
+    let parts: Vec<&str> = script.name.split('.').collect();
+    let namespace = &parts[..parts.len().saturating_sub(1)];
+    let inner = namespace.iter().skip(shared.len()).copied().collect::<Vec<_>>();
+    let folder = std::iter::once("Scripts").chain(inner).collect::<Vec<_>>().join("/");
+    Some((folder, script.short_name().to_string()))
 }
 
 /// A LOD Group bar's menu, as Unity's: on a level, Insert Before and

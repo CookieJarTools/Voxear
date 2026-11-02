@@ -200,7 +200,7 @@ The advanced path beside behaviours, for things there are hundreds or thousands 
   behaviours, with their values in the same `fields` tables: `components = ["Game.Spin"]` and
   `[obj.fields."Game.Spin"] speed = 90.0`. They are kept and edited as behaviours are (a spec with a `component`
   flag), so prefab overrides, locks and undo work for them too, and ScriptInfo describes `IComponent` structs as
-  `components` beside the behaviours, so the Inspector shows their fields, and Add Component lists them after the
+  `components` beside the behaviours, so the Inspector shows their fields, and Add Component lists them with the
   behaviours. When the game runs, each Obj's components are made from their values before any of its behaviours
   wakes, Obj references in them included, and `SceneComponents` keeps what was given for the Inspector and saving.
 - **Live values.** While playing, the Inspector shows a component's values as the game has them now, and edits
@@ -1798,8 +1798,12 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   While playing, a running behaviour's fields are read from its instance each frame and show as they are now, a
   value changed in the Inspector is given to the instance (and goes with the played world when play stops, unless
   kept), and its `[Button]`s and `[OnValueChanged]` callbacks run on it (`LiveFields` in Voxear.Core, through the
-  Inspector's JSON calls). **Add Component** offers a Mesh Renderer, Light or
-  Camera the Obj lacks, and the project's scripts; a context click on a component's header removes it, or moves a
+  Inspector's JSON calls). **Add Component** is a search in the object picker, in folders as Unity's: the
+  built-in components the Obj lacks in Rendering and Audio, and the project's scripts under Scripts, a folder for
+  each part of their namespace past the one all share, or where `[AddComponentMenu]` puts them (the catalog's
+  `menu`; empty leaves one out). Picker rows say what picking does (`Chosen`: a value, a component, or a folder to
+  open), and with nothing typed the open folder lists its folders, then what is in it; typing searches every
+  folder. A context click on a component's header removes it, or moves a
   script up or down among the Obj's scripts, which is the order they run and save in, and on a script field's row
   resets it to the script's value. Every change is a step to undo.
 - **Reference fields**, as Unity's object fields: a click pings what one points at, lighting an Obj's row in the

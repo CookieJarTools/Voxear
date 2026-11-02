@@ -57,7 +57,7 @@ public sealed class SpinSystem : SystemBase
 
 ## Giving Objs components
 
-Add a component to an Obj in the Inspector, with **Add Component**: your components are listed after your behaviours, and their fields show as a behaviour's do. Or add it from code:
+Add a component to an Obj in the Inspector, with **Add Component**: your components are under **Scripts** with your behaviours, and their fields show as a behaviour's do. Or add it from code:
 
 ```csharp
 Obj.Find("Fan").Add(new Spin { Speed = 90f });

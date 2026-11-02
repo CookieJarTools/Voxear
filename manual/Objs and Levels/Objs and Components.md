@@ -52,7 +52,7 @@ Under the Transform, the Inspector shows each component, each with its own setti
 
 Your own scripts are components too. They are called **behaviours**; see [[Your First Script]].
 
-Click **Add Component**, under the last one, to add another: the built-in ones the Obj does not have yet, then your behaviours. Your behaviours appear once your scripts have built.
+Click **Add Component**, under the last one, to add another. As in Unity, a search opens: type part of a name, or open a folder. The built-in components are in **Rendering** and **Audio**, and your behaviours in **Scripts**, once your scripts have built, in folders for their namespaces. To list a script somewhere else, give it `[AddComponentMenu("Effects/Camp Fire")]`; an empty path leaves it out.
 
 Right-click a component's title to **Remove Component**, or, for a behaviour, to **Move Up** or **Move Down**. Behaviours on an Obj run in the order they are listed.
 

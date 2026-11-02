@@ -230,8 +230,14 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     let add = first_with(&editor.ui, editor.ui.root(), "add-component").unwrap();
     click(&mut editor.ui, add);
     frame(&mut editor, &mut renderer);
-    let item = menu_item(&editor.ui, "LOD Group").expect("Add Component offers a LOD Group");
-    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    editor.ui.text_input("LOD Group");
+    frame(&mut editor, &mut renderer);
+    let list = editor.ui.find(editor.ui.root(), "picker-list").unwrap();
+    let mut rows = Vec::new();
+    with_class(&editor.ui, list, "list-row", &mut rows);
+    let item = rows.into_iter().find(|&row| editor.ui.text(editor.ui.children(row)[1]) == "LOD Group");
+    click(&mut editor.ui, item.expect("Add Component offers a LOD Group"));
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
     }

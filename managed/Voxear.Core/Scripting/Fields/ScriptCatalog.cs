@@ -93,6 +93,7 @@ internal static class ScriptCatalog
 		}
 		json.WriteEndArray();
 		WriteDocumentation(json, type);
+		WriteMenu(json, type);
 		WriteFields(json, type, Activator.CreateInstance(type), types, drawers, ComponentLayout.Of(type));
 		json.WriteEndObject();
 	}
@@ -151,6 +152,7 @@ internal static class ScriptCatalog
 		}
 		json.WriteEndArray();
 		WriteDocumentation(json, type);
+		WriteMenu(json, type);
 		WriteFields(json, type, FieldDefaults.Create(type), types, drawers);
 		WriteButtons(json, type);
 		if (drawers.Inspector(type) is { } inspector)
@@ -187,6 +189,15 @@ internal static class ScriptCatalog
 			json.WriteEndObject();
 		}
 		json.WriteEndArray();
+	}
+
+	/// <summary>Where a type's [AddComponentMenu] lists it in Add Component, when it has one.</summary>
+	private static void WriteMenu(Utf8JsonWriter json, Type type)
+	{
+		if (type.GetCustomAttribute<AddComponentMenuAttribute>(inherit: false) is { } menu)
+		{
+			json.WriteString("menu", menu.Path);
+		}
 	}
 
 	/// <summary>The VoxDocs page a type's [Documentation] names, for the book button on its Inspector section.</summary>

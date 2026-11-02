@@ -1,9 +1,8 @@
 //! The dock's panels as windows. Each window's options button, at its tab
 //! bar's right end, and a context click on a tab or its bar, offer Maximize
-//! (or Restore), Close, Close Other Tabs, Float (or Dock, for one floating
-//! over the dock or out on the desktop), Float in Its Own Window, which
-//! takes it out of the editor's window onto the desktop (see
-//! `desktop_windows`), another of each window there can be more than one of
+//! (or Restore), Close, Close Other Tabs, Float, which takes it out of the
+//! editor's window onto the desktop (see `desktop_windows`), or Dock, for
+//! one floating already, another of each window there can be more than one of
 //! (as Unity's Add Tab: an Inspector or a Scene view), and Reset Layout. The
 //! top bar's Window button lists every panel, ticked while open, to open or
 //! close, and resets the layout. Any panel can close, and a closed one keeps
@@ -54,10 +53,10 @@ pub(super) enum WindowAction {
     Maximize,
     Close,
     CloseOthers,
-    /// Floats it in a window of its own, or docks it again.
-    Float,
+    /// Docks it again, from a window of its own.
+    Dock,
     /// Floats it out of the editor's window, in a desktop window of its own.
-    FloatOut,
+    Float,
     /// Opens another Inspector beside it.
     AddInspector,
     /// Opens another Scene view beside it.
@@ -111,7 +110,7 @@ impl Editor {
 
     /// A window's menu, from its options button or a context click on its
     /// tab or tab bar: Maximize (or Restore), Close, Close Other Tabs, Float
-    /// (or Dock), another of each window there can be more than one of, and
+    /// or Dock, another of each window there can be more than one of, and
     /// Reset Layout. Closed panels open from the top bar's Window button.
     fn open_window_menu(&mut self, panel: String, at: (f32, f32)) {
         let dock = self.nodes.dock;
@@ -123,10 +122,13 @@ impl Editor {
             (MenuItem::new(if maximized { "Restore" } else { "Maximize" }), Some(WindowAction::Maximize)),
             (MenuItem::new("Close"), Some(WindowAction::Close)),
             (MenuItem::new("Close Other Tabs").enabled(others), Some(WindowAction::CloseOthers)),
-            (MenuItem::new(if floating { "Dock" } else { "Float" }), Some(WindowAction::Float)),
         ];
+        if floating {
+            items.push((MenuItem::new("Dock"), Some(WindowAction::Dock)));
+        }
+        // One floating over the dock, as older layouts kept them, can still go out on the desktop.
         if !out {
-            items.push((MenuItem::new("Float in Its Own Window"), Some(WindowAction::FloatOut)));
+            items.push((MenuItem::new("Float"), Some(WindowAction::Float)));
         }
         items.push((MenuItem::separator(), None));
         items.extend([
@@ -165,9 +167,8 @@ impl Editor {
                     }
                 }
             }
-            WindowAction::Float if self.ui.dock_panel_floating(dock, panel) => self.ui.dock_floating_panel(dock, panel),
-            WindowAction::Float => self.ui.float_dock_panel(dock, panel, None),
-            WindowAction::FloatOut => self.ui.float_dock_panel_in_window(dock, panel),
+            WindowAction::Dock => self.ui.dock_floating_panel(dock, panel),
+            WindowAction::Float => self.ui.float_dock_panel_in_window(dock, panel),
             WindowAction::AddInspector => {
                 self.add_inspector(panel);
             }

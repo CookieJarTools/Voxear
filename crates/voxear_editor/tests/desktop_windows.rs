@@ -107,7 +107,7 @@ fn float_out(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, opened
     button(editor, window, MouseButton::Right, true);
     button(editor, window, MouseButton::Right, false);
     frame(editor, renderer, opened);
-    let item = menu_item(&editor.ui, "Float in Its Own Window").expect("a docked panel can float out");
+    let item = menu_item(&editor.ui, "Float").expect("a docked panel can float out");
     let at = centre(&editor.ui, item);
     pointer_to(editor, window, at);
     button(editor, window, MouseButton::Left, true);

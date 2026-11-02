@@ -1967,7 +1967,7 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     let tab = dock_tab(&editor.ui, "Console").expect("open again");
     assert!(editor.ui.is_checked(tab), "and showing");
 
-    // Float, from a tab's menu: a window of its own over the dock; Dock puts it back.
+    // Float, from a tab's menu: a window of its own on the desktop; Dock puts it back.
     let inspector = dock_tab(&editor.ui, "Inspector").unwrap();
     context_click(&mut editor.ui, inspector);
     frame(&mut editor, &mut renderer);
@@ -1976,9 +1976,7 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
     }
-    assert!(editor.ui.dock_panel_floating(dock, "inspector"));
-    assert!(editor.ui.dock_layout(dock).ends_with("[inspector])"), "{}", editor.ui.dock_layout(dock));
-    shot(&mut renderer, "floating-window.png");
+    assert!(editor.ui.dock_panel_in_window(dock, "inspector"), "{}", editor.ui.dock_layout(dock));
     let inspector = dock_tab(&editor.ui, "Inspector").unwrap();
     context_click(&mut editor.ui, inspector);
     frame(&mut editor, &mut renderer);

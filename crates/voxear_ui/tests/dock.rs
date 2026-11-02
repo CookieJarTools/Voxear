@@ -91,18 +91,31 @@ fn dragging_a_tab_into_an_area_joins_it_and_keeps_the_panel_alive() {
 }
 
 #[test]
-fn a_tab_let_go_in_the_middle_of_another_area_floats() {
+fn a_tab_let_go_in_the_middle_of_another_area_goes_out_in_a_window_of_its_own() {
     let (mut ui, dock) = editor();
     let inspector = tab(&ui, dock, "Inspector");
     let scene_area = ui.parent(ui.parent(tab(&ui, dock, "Scene")).unwrap()).unwrap();
     let (from, middle) = (centre(&ui, inspector), centre(&ui, scene_area));
     drag(&mut ui, from, middle);
     assert!(
-        ui.dock_panel_floating(dock, "inspector"),
-        "out on its own, not a tab of the Scene's: {}",
+        ui.dock_panel_in_window(dock, "inspector"),
+        "out on the desktop, as Unity's floating windows are, not a tab of the Scene's: {}",
         ui.dock_layout(dock)
     );
-    assert!(ui.dock_layout(dock).starts_with("row(240, [hierarchy, project], [scene]) float("));
+    assert!(ui.dock_layout(dock).starts_with("row(240, [hierarchy, project], [scene]) window("));
+}
+
+#[test]
+fn a_tab_let_go_in_the_middle_of_a_floating_window_goes_out_in_a_window_of_its_own() {
+    let (mut ui, dock) = editor();
+    ui.float_dock_panel(dock, "inspector", None);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let window = with_class(&ui, dock, "dock-float").unwrap();
+    let (from, middle) = (centre(&ui, tab(&ui, dock, "Project")), centre(&ui, window));
+    drag(&mut ui, from, middle);
+    let layout = ui.dock_layout(dock);
+    assert!(ui.dock_panel_in_window(dock, "project"), "{layout}");
+    assert!(layout.contains("[inspector])"), "not a tab of the floating window: {layout}");
 }
 
 #[test]
@@ -287,13 +300,13 @@ fn panels_float_in_windows_that_move_resize_and_dock_again() {
     assert!(layout.starts_with("row(240, [hierarchy, inspector*], [scene]) float("), "{layout}");
     assert!(layout.ends_with("[project])"), "{layout}");
 
-    // A tab let go outside every area floats there.
+    // A tab let go outside every area goes out on the desktop.
     let hierarchy = centre(&ui, tab(&ui, dock, "Hierarchy"));
     let scene_area = ui.parent(ui.parent(tab(&ui, dock, "Scene")).unwrap()).unwrap();
     let middle = centre(&ui, scene_area);
     drag(&mut ui, hierarchy, middle);
     let layout = ui.dock_layout(dock);
-    assert_eq!(layout.matches("float(").count(), 2, "{layout}");
+    assert_eq!((layout.matches("float(").count(), layout.matches("window(").count()), (1, 1), "{layout}");
     assert!(layout.starts_with("row(240, [inspector], [scene]) float("), "{layout}");
 
     // The layout reads back the same, and a floating panel docks again from code.
@@ -309,9 +322,10 @@ fn panels_float_in_windows_that_move_resize_and_dock_again() {
         windows += usize::from(ui.has_class(node, "dock-float"));
         stack.extend(ui.children(node));
     }
-    assert_eq!(windows, layout.matches("float(").count() - 1, "a window emptied by docking goes with it");
+    let floating = layout.matches("float(").count() + layout.matches("window(").count();
+    assert_eq!(windows, floating - 1, "a window emptied by docking goes with it");
     assert!(
-        ui.dock_layout(dock).starts_with("row(240, [inspector, project*], [scene]) float("),
+        ui.dock_layout(dock).starts_with("row(240, [inspector, project*], [scene]) window("),
         "{}",
         ui.dock_layout(dock)
     );

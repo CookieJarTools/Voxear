@@ -16,9 +16,8 @@
 //! it keeps as the window resizes; `[...]` is an area's panels, by id, with
 //! `*` on the one showing when it is not the first.
 //!
-//! A panel can also float, in a window of its own over the dock: Float on
-//! its tab's menu ([`Ui::float_dock_panel`](crate::Ui::float_dock_panel)),
-//! or its tab dropped outside every area. Dragging the window's bar moves
+//! A panel can also float, in a window of its own over the dock
+//! ([`Ui::float_dock_panel`](crate::Ui::float_dock_panel)). Dragging the window's bar moves
 //! it, its corner resizes it, and its tabs dock again as any tab does;
 //! other tabs dropped on it join it. Floating windows follow the tree in
 //! the text form, each with its place and size: `float(600, 80, 420, 320, [inspector])`.
@@ -26,8 +25,9 @@
 //! A floating window can be a desktop window too, out of the main window
 //! altogether (see [`desktop`](crate::desktop)): from
 //! [`Ui::float_dock_panel_in_window`](crate::Ui::float_dock_panel_in_window),
-//! or a tab or floating window let go past the main window's edge, or a tab
-//! dragged out of a desktop window that holds others. Whoever owns the
+//! or a tab let go outside every area, or a tab or floating window let go
+//! past the main window's edge, or a tab dragged out of a desktop window
+//! that holds others. Whoever owns the
 //! windows opens one for each [`DockWindow`] and gives the UI its size; the
 //! desktop moves and resizes it, so its bar asks the desktop to move it
 //! ([`Ui::take_window_move`](crate::Ui::take_window_move)) and it has no
@@ -1311,16 +1311,10 @@ impl Ui {
             self.mark_changed(dock);
             return true;
         }
+        // Let go outside every area, or past the edge of the window it was dragged in,
+        // it goes out on the desktop in a window of its own.
         let Some((area, zone)) = drag.target else {
-            match point {
-                // Let go outside every area of the main window: it floats there.
-                Some(point) if self.pointer_window.is_none() && self.on_screen(point) => {
-                    self.float_dock_panel(dock, &drag.panel, Some(point));
-                }
-                // Past the edge of the window it was dragged in, or where the pointer is
-                // not known, it goes out on the desktop in a window of its own.
-                _ => self.tear_off(dock, &drag.panel),
-            }
+            self.tear_off(dock, &drag.panel);
             return true;
         };
         self.sync_dock(dock);

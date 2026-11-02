@@ -634,7 +634,7 @@ DockSpace .split-column > .split-divider {
    put it over menus opened from it too. */
 .dock-float {
     border-radius: 9px;
-    box-shadow: 0px 18px 48px rgba(0, 0, 0, 0.55);
+    box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .dock-float > .dock-area {

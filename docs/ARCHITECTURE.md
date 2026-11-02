@@ -1315,19 +1315,20 @@ tabbed areas of panels.
   part is one on its tab showing.
 - **Where a dragged tab lands.** Over a tab bar it joins that area or floating window as a tab; near an area's
   edge (its outer quarter) it splits the area; in the middle of another area or window there is nowhere to dock,
-  so it floats there in a window of its own, whose place the preview shows. In the middle of where it came from,
-  it stays.
+  so it goes out on the desktop in a window of its own, as Unity's floating windows do. In the middle of where it
+  came from, it stays.
 - **Floating windows** *(implemented)*. A panel floats in a window of its own over the dock with
-  `float_dock_panel`, Float on its tab's menu in the editor, or its tab let go outside every area. Dragging the
+  `float_dock_panel`, which the editor no longer offers (its Float goes out on the desktop), though layouts that
+  hold such windows still open them, with Float to take them out and Dock to put them back. Dragging the
   window's bar moves it, the grip in its corner resizes it, and both stay inside the dock. Its tabs dock again as
   any tab does (or with Dock on the menu, `dock_floating_panel`); other tabs dropped on its tab bar join it. A
   window is the dock's last child, so it is drawn over the areas yet under menus opened from it. Floating windows
   follow the tree in the layout's text, each with its place and size:
   `row(240, [hierarchy], [scene]) float(600, 80, 420, 320, [inspector])`, so they are kept between sessions too.
 - **Desktop windows** *(implemented)*. A floating window can be a window of the desktop's own instead, out of the
-  main window altogether: `float_dock_panel_in_window` (Float in Its Own Window in the editor), which takes a
-  floating window out whole or else the panel alone at its area's size; a tab let go past the window's edge it
-  was dragged in, or a floating window's bar let go past the main window's edge; or a tab dragged out of a desktop
+  main window altogether: `float_dock_panel_in_window` (Float on a tab's menu in the editor), which takes a
+  floating window out whole or else the panel alone at its area's size; a tab let go outside every area or past
+  the window's edge it was dragged in, or a floating window's bar let go past the main window's edge; or a tab dragged out of a desktop
   window that holds others. `dock_windows` lists them (`DockWindow`: its `DesktopWindow` id, panels, the title
   showing, its size and, where the desktop says, its place), for whoever owns the windows to open one for each,
   and `set_dock_window_size` and `set_dock_window_place` tell the dock what the desktop did to it. The desktop

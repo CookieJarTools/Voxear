@@ -57,9 +57,9 @@ To select several Objs, hold **Ctrl** and click each in the Scene view or the Hi
 
 ## Arranging the editor's panels
 
-Drag a panel's tab to move it somewhere else in the window. Right-click a tab to close it, to float it over the other panels, or to **Reset Layout**. The **Window** button at the top lists every panel, so you can bring back one you closed.
+Drag a panel's tab to move it somewhere else in the window. Right-click a tab to close it, to float it in a window of its own, or to **Reset Layout**. The **Window** button at the top lists every panel, so you can bring back one you closed.
 
-**Float in Its Own Window**, on the same menu, takes a panel out of the editor into a window of its own, which you can put anywhere, on another screen too. Dragging a tab past the edge of the editor's window does the same. A Scene or Game view keeps drawing there. Drag the tab back onto the editor to dock it again, or close the window to close its panels. The editor remembers the window with the layout, so it opens again next time.
+**Float**, on the same menu, takes a panel out of the editor into a window of its own, which you can put anywhere, on another screen too. Letting go of a dragged tab where it cannot dock does the same, as does dragging it past the edge of the editor's window. A Scene or Game view keeps drawing there. Drag the tab back onto the editor to dock it again, or close the window to close its panels. The editor remembers the window with the layout, so it opens again next time.
 
 To see the level from two places at once, choose **Add Scene View** from a panel's options button (the **⋯** at the right end of its tabs) or from a right-click on a tab. Each Scene view has its own camera and its own shading menu, so one can show Wireframe while another shows Lit. The tools work in whichever Scene view the pointer is over. **Add Inspector** works the same way, and each extra Inspector has a padlock that keeps it on the Obj it shows. **Add Hierarchy** opens another Hierarchy, with its own filter, and **Add Project** opens another Project panel, so you can have two folders open and drag between them. An extra window is gone for good once you close it.
 

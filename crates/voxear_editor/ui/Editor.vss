@@ -2294,6 +2294,78 @@ TextField.build-title:focus {
     color: var(--vx-text);
 }
 
+/* A LOD Group's levels as a bar, most detailed on the left, marked where
+   a camera sees the group now. */
+.lod-bar {
+    flex-direction: row;
+    height: 34px;
+    gap: 2px;
+    margin: 4px 0px 2px 0px;
+    border-radius: 5px;
+    overflow: hidden;
+    border: 1px solid var(--vx-field-line);
+    background-color: var(--vx-field);
+}
+
+.lod-segment {
+    flex-basis: 0px;
+    min-width: 0px;
+    justify-content: center;
+    padding: 0px 6px;
+    overflow: hidden;
+}
+
+.lod-segment-name {
+    font-size: 11px;
+    color: var(--vx-text);
+}
+
+.lod-segment-end {
+    font-family: mono;
+    font-size: 10px;
+    color: var(--vx-muted);
+}
+
+.lod-level-0 { background-color: rgba(76, 183, 130, 0.30); }
+.lod-level-1 { background-color: rgba(64, 170, 190, 0.30); }
+.lod-level-2 { background-color: rgba(94, 139, 240, 0.30); }
+.lod-level-3 { background-color: rgba(140, 120, 240, 0.30); }
+.lod-level-4 { background-color: rgba(200, 110, 210, 0.30); }
+.lod-level-5 { background-color: rgba(226, 179, 64, 0.30); }
+
+.lod-culled {
+    background-color: rgba(235, 87, 87, 0.18);
+}
+
+.lod-segment.lod-shown > .lod-segment-name {
+    color: var(--vx-accent);
+}
+
+.lod-marker {
+    position: absolute;
+    top: 0px;
+    bottom: 0px;
+    width: 2px;
+    margin-left: -1px;
+    background-color: var(--vx-text);
+}
+
+.lod-now, .lod-hint {
+    font-size: 11px;
+    color: var(--vx-muted);
+    margin-bottom: 4px;
+}
+
+.lod-buttons {
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.lod-buttons > .attr-button {
+    flex-grow: 1;
+    flex-basis: 0px;
+}
+
 .attr-preview {
     justify-content: flex-end;
     padding: 4px 0px;

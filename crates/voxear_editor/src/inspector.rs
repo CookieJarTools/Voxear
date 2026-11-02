@@ -29,7 +29,7 @@ use voxear_engine::{
     Game,
     script_types::{FieldInspector, InfoKind, ScriptTypes},
 };
-use voxear_render::Renderer;
+use voxear_render::{LodGroup, Renderer};
 use voxear_scene::{Name, ScenePersistence, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
@@ -43,6 +43,7 @@ use crate::{
     field_drawers::{DrawerUi, FieldDrawers, ToOpen},
     fields::{self, Pick, Step},
     history::{Edit, ObjState},
+    lod_inspector::{GroupLods, LodEye, MeshLods},
     project_view::ProjectItem,
     props::{self, Part, Prop, Value},
 };
@@ -141,6 +142,9 @@ pub enum RowAction {
     Lock(Part, bool),
     /// Show a locked component's value to designers, or hide it from them.
     ShowToDesigners(Prop, bool),
+    /// Add a level to a LOD Group, or take its last one away.
+    AddLodLevel,
+    RemoveLodLevel,
 }
 
 /// A component value's row and the control that edits it.
@@ -289,6 +293,11 @@ pub struct Inspector {
     /// The other Objs selected with the one shown, which an edit made here
     /// goes to as well, each that has what was edited.
     also: Vec<Entity>,
+    /// What the Mesh Renderer and the LOD Group show of levels of detail,
+    /// and the camera they say it of.
+    mesh_lods: Option<MeshLods>,
+    group_lods: Option<GroupLods>,
+    lod_eye: Option<LodEye>,
 }
 
 impl Inspector {
@@ -337,6 +346,9 @@ impl Inspector {
             inspected: Vec::new(),
             prefab_buttons: None,
             also: Vec::new(),
+            mesh_lods: None,
+            group_lods: None,
+            lod_eye: None,
         }
     }
 
@@ -553,10 +565,13 @@ impl Inspector {
     /// The `[Tooltip]` of the field whose label the pointer is on, and the
     /// label.
     pub fn hovered_tooltip(&self, ui: &Ui) -> Option<(String, NodeId)> {
-        self.rows.iter().find_map(|row| {
-            let tooltip = row.tooltip.as_ref()?;
-            let label = *ui.children(row.row).first()?;
-            ui.is_hovered(label).then(|| (tooltip.clone(), label))
+        let lods = self.mesh_lods.as_ref().and_then(|lods| lods.hovered_tooltip(ui));
+        lods.or_else(|| {
+            self.rows.iter().find_map(|row| {
+                let tooltip = row.tooltip.as_ref()?;
+                let label = *ui.children(row.row).first()?;
+                ui.is_hovered(label).then(|| (tooltip.clone(), label))
+            })
         })
     }
 
@@ -705,6 +720,7 @@ impl Inspector {
         self.inspected.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
+        (self.mesh_lods, self.group_lods) = (None, None);
         let Some(entity) = self.shown else {
             let hint = ui.add_label(self.root, "Select an Obj in the Hierarchy to see it here.");
             ui.add_class(hint, "placeholder");
@@ -787,6 +803,12 @@ impl Inspector {
                 let label = ui.add_label(row, name);
                 ui.add_class(label, "value");
             }
+            // A LOD Group's bar of its levels comes first, as in Unity.
+            if *part == Part::LodGroup
+                && let Some(group) = world.get::<LodGroup>(entity)
+            {
+                self.group_lods = Some(GroupLods::new(ui, rows, group));
+            }
             let values = attributes::ordered(&self.types, values);
             let mut groups = attributes::Groups::new(rows);
             for value in &values {
@@ -802,7 +824,10 @@ impl Inspector {
                 }
                 let mut meta = attributes::of(&self.types, value).clone();
                 let container = groups.container(ui, attributes::top(&self.types, value).group.as_ref());
-                let mut label = meta.label.clone().unwrap_or_else(|| props::label(value));
+                let mut label = meta.label.clone().unwrap_or_else(|| props::label_on(world, entity, value));
+                if meta.suffix.is_none() {
+                    meta.suffix = props::unit_on(world, entity, value).map(str::to_string);
+                }
                 // A [ListDrawerSettings] list labels its items by index, or not at all.
                 if let Some((Some(settings), index)) = attributes::item_of(&self.types, value) {
                     label = index.to_string();
@@ -906,6 +931,11 @@ impl Inspector {
             if let Part::Behaviour(name) = part {
                 let waits = playing && !crate::live::is_running(&game.engine.world, entity, name);
                 self.add_buttons(ui, rows, name, waits);
+            }
+            match (part, &mut self.group_lods, game.engine.world.get::<LodGroup>(entity)) {
+                (Part::Renderer, ..) => self.mesh_lods = Some(MeshLods::new(ui, rows)),
+                (Part::LodGroup, Some(lods), Some(group)) => lods.finish(ui, rows, group),
+                _ => {}
             }
             let prefix = part.lock_key();
             for (name, tabs) in groups.tabs {
@@ -1078,8 +1108,6 @@ impl Inspector {
         }
     }
 
-    /// Applies what was typed or picked, and shows changes made elsewhere.
-    /// Returns what was edited this frame, for undo.
     /// The sections shown for `entity`: its own, and with other Objs
     /// selected, only those every one of them has too, as Unity's Inspector
     /// shows only the components all of them share.
@@ -1088,6 +1116,12 @@ impl Inspector {
         let world = &game.engine.world;
         parts.retain(|(part, _)| self.also.iter().all(|&other| props::parts(world, other).contains(part)));
         parts
+    }
+
+    /// The camera the Mesh Renderer and the LOD Group say what is drawn
+    /// through, if there is one to say it of.
+    pub fn set_lod_eye(&mut self, eye: Option<LodEye>) {
+        self.lod_eye = eye;
     }
 
     /// Makes edits here go to `others` too, the other Objs selected with the
@@ -1099,6 +1133,8 @@ impl Inspector {
         }
     }
 
+    /// Applies what was typed or picked, and shows changes made elsewhere.
+    /// Returns what was edited this frame, for undo.
     pub fn update(
         &mut self,
         ui: &mut Ui,
@@ -1115,7 +1151,15 @@ impl Inspector {
         self.remember_groups(ui);
         let layout = self.layout_for(game, entity);
         let conditions = attributes::key(game, &self.types, entity, &layout);
-        if layout != self.built.0 || playing != self.built.1 || locks != self.built.2 || conditions != self.conditions {
+        // A LOD Group measured another way labels where its levels end another way.
+        let measure = game.engine.world.get::<LodGroup>(entity).map(|group| group.measure);
+        let remeasured = self.group_lods.as_ref().is_some_and(|lods| Some(lods.measure) != measure);
+        if layout != self.built.0
+            || playing != self.built.1
+            || locks != self.built.2
+            || conditions != self.conditions
+            || remeasured
+        {
             self.show(ui, game, Some(entity), playing);
             return None;
         }
@@ -1164,6 +1208,7 @@ impl Inspector {
                 show_mixed(ui, row.row, &row.control, &now, &theirs);
             }
         }
+        self.update_lods(ui, game, entity, renderer.as_deref());
         let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);
         let world = &game.engine.world;
         let mut edits: Vec<Edit> = (before != after).then_some(Edit::Changed { entity, before, after }).into_iter().collect();
@@ -1175,6 +1220,19 @@ impl Inspector {
         match edits.len() {
             0 | 1 => edits.pop(),
             _ => Some(Edit::Group(edits)),
+        }
+    }
+
+    /// Shows which LOD the camera sees, of the mesh and of the LOD Group.
+    fn update_lods(&mut self, ui: &mut Ui, game: &Game, entity: Entity, renderer: Option<&Renderer>) {
+        let Some(renderer) = renderer else { return };
+        let world = &game.engine.world;
+        if let Some(lods) = &mut self.mesh_lods {
+            lods.update(ui, world, entity, renderer, self.lod_eye);
+        }
+        if let (Some(lods), Some(group)) = (&mut self.group_lods, world.get::<LodGroup>(entity)) {
+            let view = self.lod_eye.and_then(|eye| renderer.lod_choices(world, eye.camera).groups.get(&entity).copied());
+            lods.update(ui, group, view, self.lod_eye);
         }
     }
 
@@ -1292,6 +1350,11 @@ impl Inspector {
         if let Some((prop, source)) = dropped {
             return Some(RowAction::Dropped(prop, source));
         }
+        match self.group_lods.as_ref().map(|lods| lods.clicked(ui)) {
+            Some((true, _)) => return Some(RowAction::AddLodLevel),
+            Some((_, true)) => return Some(RowAction::RemoveLodLevel),
+            _ => {}
+        }
         let at = ui.pointer_position().unwrap_or_default();
         let mut items: Vec<(MenuItem, Option<RowAction>)>;
         let (owner, at) = if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
@@ -1363,7 +1426,7 @@ impl Inspector {
     fn add_items(&self, playing: bool) -> Vec<(MenuItem, Option<RowAction>)> {
         let has = |part: &Part| self.built.0.iter().any(|(p, _)| p == part);
         let mut items: Vec<(MenuItem, Option<RowAction>)> =
-            [Part::Renderer, Part::Light, Part::Camera, Part::Audio, Part::Listener]
+            [Part::Renderer, Part::Light, Part::Camera, Part::Audio, Part::Listener, Part::LodGroup]
                 .into_iter()
                 .map(|part| (MenuItem::new(part.title()).enabled(!has(&part)), Some(RowAction::Add(part))))
                 .collect();

@@ -16,7 +16,7 @@ use voxear_engine::{
     audio::{AudioListener, AudioSource},
     prefab::Locks,
 };
-use voxear_render::{Camera, Light, MeshRenderer, Renderer};
+use voxear_render::{Camera, Light, LodGroup, MeshRenderer, Renderer};
 use voxear_scene::{Name, ScenePersistence, Transform};
 
 use crate::objs::{self, Placing, Taken};
@@ -40,6 +40,7 @@ pub struct ObjState {
     pub camera: Option<Camera>,
     pub audio: Option<Box<AudioSource>>,
     pub listener: bool,
+    pub lod_group: Option<Box<LodGroup>>,
     pub behaviours: Option<EditBehaviours>,
     /// Components locked for designers, when this is a prefab's Obj.
     pub locks: Option<Locks>,
@@ -56,9 +57,19 @@ impl ObjState {
             camera: world.get::<Camera>(entity).copied(),
             audio: world.get::<AudioSource>(entity).copied().map(Box::new),
             listener: world.has::<AudioListener>(entity),
+            lod_group: world.get::<LodGroup>(entity).cloned().map(Box::new),
             behaviours: world.get::<EditBehaviours>(entity).cloned(),
             locks: world.get::<Locks>(entity).cloned(),
         })
+    }
+
+    /// Follows Objs brought back as new entities, as its LOD Group's levels
+    /// point at them.
+    fn remap(&mut self, renamed: &HashMap<Entity, Entity>) {
+        let levels = self.lod_group.iter_mut().flat_map(|group| group.levels.iter_mut());
+        for obj in levels.filter_map(|level| level.obj.as_mut()) {
+            *obj = renamed.get(obj).copied().unwrap_or(*obj);
+        }
     }
 
     pub fn apply(&self, world: &mut World, entity: Entity) {
@@ -74,6 +85,7 @@ impl ObjState {
         put(world, entity, self.camera);
         put(world, entity, self.audio.as_deref().copied());
         put(world, entity, self.listener.then_some(AudioListener));
+        put(world, entity, self.lod_group.as_deref().cloned());
         put(world, entity, self.behaviours.clone());
         put(world, entity, self.locks.clone());
     }
@@ -163,7 +175,11 @@ impl Edit {
         }
         let follow = |entity: &mut Entity| *entity = renamed.get(entity).copied().unwrap_or(*entity);
         match self {
-            Edit::Changed { entity, .. } => follow(entity),
+            Edit::Changed { entity, before, after } => {
+                follow(entity);
+                before.remap(renamed);
+                after.remap(renamed);
+            }
             Edit::Exists { root, taken } => {
                 follow(root);
                 if let Some(taken) = taken {

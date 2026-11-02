@@ -17,7 +17,7 @@ You can also copy files into the project's folder yourself. The editor sees them
 
 Select the model in the Project panel to see it in the Inspector. Drag the preview to turn it.
 
-When a model is first used, Voxear makes simpler copies of it, called **levels of detail** (LODs), for when it is far away and small on screen. You do not need to set anything up, and there is no component to add: the engine picks the right one as the camera moves, and blends smoothly between them. To leave them out, turn off **Make LODs** in the model's import settings.
+When a model is first used, Voxear makes simpler copies of it, called **levels of detail** (LODs), for when it is far away and small on screen. You do not need to set anything up, and there is no component to add: the engine picks the right one as the camera moves, and blends smoothly between them. To leave them out, turn off **Make LODs** in the model's import settings. The Inspector shows them on the Obj's Mesh Renderer, and a **LOD Group** swaps whole Objs as they get further away; see [[Levels of Detail]].
 
 A model that comes with LODs of its own uses those instead. Name each mesh's versions as Unity reads them: `Rock_LOD0` for the full one, then `Rock_LOD1`, `Rock_LOD2` and so on, each simpler than the last. The model then has one part, `Rock`, drawn with your LODs at the distances the engine's own would be used. To have the engine make them from `Rock_LOD0` instead, turn off **Use its own LODs**. Either way, the later LODs are not parts of their own.
 

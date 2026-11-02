@@ -7,6 +7,7 @@ use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use crate::{
     assets::{MaterialHandle, MeshHandle},
+    lod_group::{LodCamera, LodChoices},
     gpu::{
         CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_NONE, GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT,
         MAX_CLUSTER_LIGHTS, NO_TEXTURE, cols, vec3,
@@ -143,14 +144,14 @@ impl Default for Sky {
     }
 }
 
-/// `frame_index` picks TAA's sub-pixel camera offset.
+/// `frame_index` picks TAA's sub-pixel camera offset. `sphere` gives a
+/// mesh's bounding sphere, which LOD Groups measure their size from.
 pub fn extract(
     world: &World,
-    width: u32,
-    height: u32,
-    time: f32,
-    frame_index: u64,
+    (width, height): (u32, u32),
+    (time, frame_index): (f32, u64),
     options: &ViewOptions,
+    sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>,
 ) -> ExtractedFrame {
     let aspect = width as f32 / height.max(1) as f32;
     let (camera, position, rotation) = world
@@ -221,9 +222,12 @@ pub fn extract(
         ..Default::default()
     };
 
+    // What LOD Groups hide from this camera is neither drawn nor lit.
+    let lods = LodChoices::new(world, LodCamera::new(position, camera.fov_y_degrees), sphere);
     let mut lights = Vec::new();
     let mut sun_found = false;
-    for (light, transform) in world.query_ref::<(&Light, &Transform)>().without::<Destroying>() {
+    let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
+    for (_, light, transform) in shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity)) {
         let forward = transform.rotation * Vec3::Z;
         let radiance = light.color * light.intensity;
         match light.kind {
@@ -263,6 +267,7 @@ pub fn extract(
         .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| !lods.hidden.contains(entity))
         .map(|(entity, renderer, transform, world_transform)| {
             entities.push(entity);
             let model = world_transform.map_or_else(

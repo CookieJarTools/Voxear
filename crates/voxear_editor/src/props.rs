@@ -16,8 +16,8 @@ use voxear_engine::{
     script_types::ScriptTypes,
     srgb,
 };
-use voxear_render::{Camera, Light, LightKind, MeshRenderer, Renderer};
-use voxear_scene::{BehaviourSpec, Behaviours, SceneComponents};
+use voxear_render::{Camera, Light, LightKind, LodGroup, LodLevel, LodMeasure, MeshRenderer, Renderer};
+use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
 use crate::fields::{self, Pick, Step};
 
@@ -27,6 +27,7 @@ const BUILTIN_MESHES: [(&str, &str); 3] =
 const LIGHT_KINDS: [&str; 3] = ["Directional", "Point", "Spot"];
 const SOUND_SPACES: [&str; 2] = ["3D", "2D"];
 const AUDIO_BUSES: [&str; 2] = ["Effects", "Music"];
+const LOD_MEASURES: [&str; 2] = ["Screen size", "Distance"];
 
 /// A component the Inspector shows as a section of its own.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -36,13 +37,14 @@ pub enum Part {
     Camera,
     Audio,
     Listener,
+    LodGroup,
     /// A script, by its full type name.
     Behaviour(String),
 }
 
 impl Part {
     /// The component as a prefab's locks name it: a behaviour by its type, or
-    /// `renderer`, `light`, `camera`, `audio` or `audio_listener`.
+    /// `renderer`, `light`, `camera`, `audio`, `audio_listener` or `lod_group`.
     pub fn lock_key(&self) -> String {
         match self {
             Part::Renderer => "renderer".into(),
@@ -50,6 +52,7 @@ impl Part {
             Part::Camera => "camera".into(),
             Part::Audio => "audio".into(),
             Part::Listener => "audio_listener".into(),
+            Part::LodGroup => "lod_group".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -61,6 +64,7 @@ impl Part {
             Part::Camera => "Camera",
             Part::Audio => "Audio Source",
             Part::Listener => "Audio Listener",
+            Part::LodGroup => "LOD Group",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -71,6 +75,7 @@ impl Part {
             Part::Light => "light",
             Part::Camera => "camera",
             Part::Audio | Part::Listener => "audio",
+            Part::LodGroup => "lod",
             Part::Behaviour(_) => "code",
         }
     }
@@ -99,6 +104,14 @@ pub enum Prop {
     MinDistance,
     MaxDistance,
     SoundBus,
+    /// What a LOD Group's levels are measured by.
+    LodMeasure,
+    /// Whether a LOD Group shows nothing past its last level.
+    LodCull,
+    /// The Obj a LOD Group's level shows, by the level's index.
+    LodObj(usize),
+    /// Where a LOD Group's level ends, by the level's index.
+    LodUntil(usize),
     /// A script field, or a value inside one: its behaviour's type name,
     /// and the path to it from the field.
     Field {
@@ -125,6 +138,7 @@ impl Prop {
             | Prop::MinDistance
             | Prop::MaxDistance
             | Prop::SoundBus => Part::Audio,
+            Prop::LodMeasure | Prop::LodCull | Prop::LodObj(_) | Prop::LodUntil(_) => Part::LodGroup,
             Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
         }
     }
@@ -153,6 +167,9 @@ impl Prop {
             Prop::MinDistance => "min_distance",
             Prop::MaxDistance => "max_distance",
             Prop::SoundBus => "bus",
+            Prop::LodMeasure => "measure",
+            Prop::LodCull => "cull",
+            Prop::LodObj(_) | Prop::LodUntil(_) => "levels",
             Prop::Field { path, .. } => match path.first() {
                 Some(crate::fields::Step::Key(field)) => return field.clone(),
                 _ => "",
@@ -207,6 +224,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<AudioListener>(entity) {
         parts.push(Part::Listener);
     }
+    if world.has::<LodGroup>(entity) {
+        parts.push(Part::LodGroup);
+    }
     parts.extend(specs(world, entity).into_iter().map(|spec| Part::Behaviour(spec.type_name)));
     parts
 }
@@ -250,6 +270,19 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props
         }
         Part::Listener => Vec::new(),
+        // Each level's Obj, then where it ends, which the last has only when the group hides past it.
+        Part::LodGroup => {
+            let Some(group) = world.get::<LodGroup>(entity) else { return Vec::new() };
+            let mut props = vec![Prop::LodMeasure];
+            for level in 0..group.levels.len() {
+                props.push(Prop::LodObj(level));
+                if group.cull || level + 1 < group.levels.len() {
+                    props.push(Prop::LodUntil(level));
+                }
+            }
+            props.push(Prop::LodCull);
+            props
+        }
         Part::Behaviour(behaviour) => {
             let mut rows = Vec::new();
             let declared = types.behaviour(behaviour);
@@ -289,6 +322,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::MinDistance => "Min distance",
         Prop::MaxDistance => "Max distance",
         Prop::SoundBus => "Bus",
+        Prop::LodMeasure => "Switch by",
+        Prop::LodCull => "Culled",
+        Prop::LodObj(level) => return format!("LOD {level}"),
+        Prop::LodUntil(_) => "Until",
         Prop::Field { path, .. } => {
             return match path.last() {
                 Some(Step::Key(name)) => nice_name(name),
@@ -300,16 +337,38 @@ pub fn label(prop: &Prop) -> String {
     label.to_string()
 }
 
-/// How deep a value sits inside its script field: 0 for a field itself.
+/// What a prop's row says on an Obj, where that depends on the Obj: where
+/// a LOD Group's level ends reads as a size or a distance.
+pub fn label_on(world: &World, entity: Entity, prop: &Prop) -> String {
+    match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
+        (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => "Down to".into(),
+        (Prop::LodUntil(_), Some(LodMeasure::Distance)) => "Out to".into(),
+        _ => label(prop),
+    }
+}
+
+/// The unit after a prop's value on an Obj, if it has one.
+pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static str> {
+    match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
+        (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("% of the screen"),
+        (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
+        _ => None,
+    }
+}
+
+/// How deep a value sits inside its script field: 0 for a field itself. A
+/// LOD Group's level's end sits under its Obj.
 pub fn depth(prop: &Prop) -> usize {
     match prop {
         Prop::Field { path, .. } => path.len().saturating_sub(1),
+        Prop::LodUntil(_) => 1,
         _ => 0,
     }
 }
 
 /// A component as an Obj gets it from Add Component: a grey cube, a point
-/// light, a camera, an Audio Source with no sound yet, an Audio Listener,
+/// light, a camera, an Audio Source with no sound yet, an Audio Listener, a
+/// LOD Group with a level for each Obj inside it, in the Hierarchy's order,
 /// or a script (a behaviour or, as `types` tell, a C# component) with every
 /// field as it starts.
 pub fn add(
@@ -327,9 +386,14 @@ pub fn add(
         game.engine.world.insert(entity, MeshRenderer { mesh, material });
         return Ok(());
     }
+    if *part == Part::LodGroup {
+        let group = LodGroup::of(&children(game, entity));
+        game.engine.world.insert(entity, group);
+        return Ok(());
+    }
     let world = &mut game.engine.world;
     match part {
-        Part::Renderer => {}
+        Part::Renderer | Part::LodGroup => {}
         Part::Light => {
             world.insert(entity, default_light(LightKind::Point));
         }
@@ -363,6 +427,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::Audio => drop(world.remove::<AudioSource>(entity)),
         Part::Listener => drop(world.remove::<AudioListener>(entity)),
+        Part::LodGroup => drop(world.remove::<LodGroup>(entity)),
         Part::Behaviour(name) => {
             let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return };
             kept.0.retain(|spec| spec.type_name != *name);
@@ -380,6 +445,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     let light = || world.get::<Light>(entity);
     let camera = || world.get::<Camera>(entity);
     let audio = || world.get::<AudioSource>(entity);
+    let lod = || world.get::<LodGroup>(entity);
     Some(match prop {
         Prop::Mesh => {
             let reference = game.content.mesh_ref(world.get::<MeshRenderer>(entity)?.mesh)?.to_string();
@@ -433,6 +499,24 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             let index = usize::from(audio()?.bus == AudioBus::Music);
             Value::Choice(index, AUDIO_BUSES.iter().map(|k| k.to_string()).collect())
         }
+        Prop::LodMeasure => {
+            let index = usize::from(lod()?.measure == LodMeasure::Distance);
+            Value::Choice(index, LOD_MEASURES.iter().map(|k| k.to_string()).collect())
+        }
+        Prop::LodCull => Value::Toggle(lod()?.cull),
+        Prop::LodObj(level) => {
+            let obj = lod()?.levels.get(*level)?.obj;
+            Value::Obj(obj.and_then(|obj| world.get::<Name>(obj)).map_or_else(|| "None".into(), |n| n.0.clone()))
+        }
+        // Screen sizes show as percentages, and distances in metres.
+        Prop::LodUntil(level) => {
+            let group = lod()?;
+            let until = group.levels.get(*level)?.until;
+            Value::Number(match group.measure {
+                LodMeasure::ScreenSize => (until * 1e4).round() / 1e2,
+                LodMeasure::Distance => (until * 1e2).round() / 1e2,
+            })
+        }
         Prop::Field { behaviour, path } => {
             specs(world, entity).iter().find(|s| s.type_name == *behaviour)?;
             fields::get(game, types, entity, behaviour, path)
@@ -453,8 +537,8 @@ pub fn set(
         return false;
     }
     match (prop, value) {
-        // A mesh, material or sound kept after play comes back by its name, as its list has it.
-        (Prop::Mesh | Prop::Material | Prop::Sound, Value::Asset(label)) => {
+        // A mesh, material, sound or level's Obj kept after play comes back by its name, as its list has it.
+        (Prop::Mesh | Prop::Material | Prop::Sound, Value::Asset(label)) | (Prop::LodObj(_), Value::Obj(label)) => {
             let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| pick(game, renderer, types, entity, prop, &choice))
         }
@@ -514,11 +598,56 @@ pub fn pick(
             };
             with(&mut game.engine.world, entity, |source: &mut AudioSource| source.sound = sound)
         }
+        (Prop::LodObj(level), Pick::Obj(obj)) => with(&mut game.engine.world, entity, |group: &mut LodGroup| {
+            if let Some(at) = group.levels.get_mut(*level) {
+                at.obj = *obj;
+            }
+        }),
         (Prop::Field { behaviour, path }, choice) => {
             fields::pick(&mut game.engine.world, types, entity, behaviour, path, choice)
         }
         _ => false,
     }
+}
+
+/// The Obj a reference that is not a script field points at, as a LOD
+/// Group's level's.
+pub fn obj_target(world: &World, entity: Entity, prop: &Prop) -> Option<Entity> {
+    match prop {
+        Prop::LodObj(level) => world.get::<LodGroup>(entity)?.levels.get(*level)?.obj,
+        _ => None,
+    }
+}
+
+/// The Objs directly inside an Obj, in the order the Hierarchy shows them.
+pub fn children(game: &Game, entity: Entity) -> Vec<Entity> {
+    let world = &game.engine.world;
+    let mut inside: Vec<Entity> = world
+        .query_ref::<(Entity, &Parent)>()
+        .into_iter()
+        .filter(|(_, parent)| parent.0 == entity)
+        .map(|(child, _)| child)
+        .collect();
+    let order: Vec<Entity> = game.levels.scene_order().into_iter().flat_map(|(.., objs)| objs).collect();
+    inside.sort_by_key(|child| (order.iter().position(|e| e == child).unwrap_or(usize::MAX), child.index()));
+    inside
+}
+
+/// Adds a level to a LOD Group, showing the first Obj inside its Obj that
+/// no level shows yet, or takes its last level away.
+pub fn add_lod_level(game: &mut Game, entity: Entity) -> bool {
+    let inside = children(game, entity);
+    with(&mut game.engine.world, entity, |group: &mut LodGroup| {
+        let obj = inside.into_iter().find(|child| group.levels.iter().all(|level| level.obj != Some(*child)));
+        let until = group.next_until();
+        group.levels.push(LodLevel { obj, until });
+    })
+}
+
+pub fn remove_lod_level(world: &mut World, entity: Entity) -> bool {
+    with(world, entity, |group: &mut LodGroup| {
+        group.levels.pop();
+    })
 }
 
 /// What a reference can point at, each with what it is called: the built-in
@@ -546,6 +675,16 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
             return fields::asset_choices(game, &kind);
         }
+        // A level shows an Obj inside the group's Obj.
+        Prop::LodObj(_) => {
+            let world = &game.engine.world;
+            let mut found = vec![("None".to_string(), Pick::Obj(None))];
+            for child in children(game, entity) {
+                let name = world.get::<Name>(child).map_or_else(|| "Obj".into(), |n| n.0.clone());
+                found.push((name, Pick::Obj(Some(child))));
+            }
+            return found;
+        }
         _ => {}
     }
     let Prop::Field { behaviour, path } = prop else { return Vec::new() };
@@ -561,6 +700,9 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
 
 /// Why a reference cannot take what was dropped on it.
 pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, choice: &Pick) -> String {
+    if let Prop::LodObj(_) = prop {
+        return format!("{} takes an Obj inside the LOD Group's Obj", label(prop));
+    }
     let Prop::Field { behaviour, path } = prop else {
         return format!("The {} takes a {} from its list", label(prop), title(types, prop));
     };
@@ -575,6 +717,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Mesh => "Mesh".into(),
         Prop::Material => "Material".into(),
         Prop::Sound => "Sound".into(),
+        Prop::LodObj(_) => "Obj".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),
@@ -661,6 +804,19 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::SoundBus, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
             a.bus = if index == 1 { AudioBus::Music } else { AudioBus::Effects };
+        }),
+        (Prop::LodMeasure, Value::Choice(index, _)) => with(world, entity, |group: &mut LodGroup| {
+            group.set_measure(if index == 1 { LodMeasure::Distance } else { LodMeasure::ScreenSize });
+        }),
+        (Prop::LodCull, Value::Toggle(on)) => with(world, entity, |group: &mut LodGroup| group.cull = on),
+        (Prop::LodUntil(level), Value::Number(n)) => with(world, entity, |group: &mut LodGroup| {
+            let measure = group.measure;
+            if let Some(at) = group.levels.get_mut(*level) {
+                at.until = match measure {
+                    LodMeasure::ScreenSize => (n / 100.0).clamp(0.0, 1.0),
+                    LodMeasure::Distance => n.max(0.0),
+                };
+            }
         }),
         _ => false,
     }

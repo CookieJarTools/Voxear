@@ -29,6 +29,31 @@ pub struct Lod {
     pub error: f32,
 }
 
+/// One of a mesh's LODs, as the editor shows it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LodInfo {
+    pub triangles: u32,
+    /// As [`Lod::error`].
+    pub error: f32,
+}
+
+impl LodInfo {
+    /// How far from a mesh's bounding sphere a camera first draws this LOD,
+    /// in metres: where its error, at `scale`, shrinks to `threshold` pixels
+    /// with `pixels_per_metre` pixels a metre away, as the GPU picks.
+    pub fn from_distance(&self, scale: f32, pixels_per_metre: f32, threshold: f32) -> f32 {
+        self.error * scale * pixels_per_metre / threshold.max(1e-6)
+    }
+}
+
+/// The LOD the GPU draws `distance` metres from a mesh's bounding sphere:
+/// the coarsest whose error stays within `threshold` pixels.
+pub fn lod_at(lods: &[LodInfo], distance: f32, scale: f32, pixels_per_metre: f32, threshold: f32) -> usize {
+    let distance = distance.max(1e-4);
+    let fits = |lod: &LodInfo| lod.error * scale * pixels_per_metre / distance <= threshold;
+    lods.iter().skip(1).take_while(|lod| fits(lod)).count()
+}
+
 /// LOD 0 is the original mesh with its triangles reordered for the vertex
 /// cache; each further LOD has about half the triangles of the one before.
 pub fn build_lods(mesh: &MeshData) -> Vec<Lod> {

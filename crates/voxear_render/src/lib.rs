@@ -19,6 +19,7 @@ mod gpu;
 mod graph;
 mod hot_reload;
 mod lod;
+mod lod_group;
 mod mesh;
 mod mesh_tools;
 mod model_lods;
@@ -56,7 +57,8 @@ pub use gpu::{
     DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
-pub use lod::MAX_LODS;
+pub use lod::{LodInfo, MAX_LODS, lod_at};
+pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use mesh::{MeshData, Primitive, Vertex};
 pub use post::{
     AntiAliasing, AntiAliasingMode, Bloom, DepthOfField, Exposure, Fog, Grading, Grain, MotionBlur, PostProcess,
@@ -581,6 +583,21 @@ impl Renderer {
     /// box of its bounding sphere for a mesh uploaded cooked.
     pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
         self.assets.as_ref()?.mesh_bounds(mesh)
+    }
+
+    /// A mesh's bounding sphere in its own space, centre and radius.
+    pub fn mesh_sphere(&self, mesh: MeshHandle) -> Option<(voxear_core::math::Vec3, f32)> {
+        self.assets.as_ref()?.mesh_sphere(mesh)
+    }
+
+    /// A mesh's LODs, the most detailed first.
+    pub fn mesh_lods(&self, mesh: MeshHandle) -> Option<Vec<LodInfo>> {
+        self.assets.as_ref()?.mesh_lods(mesh)
+    }
+
+    /// What every LOD Group shows to `camera`, as a view through it chooses.
+    pub fn lod_choices(&self, world: &voxear_ecs::World, camera: LodCamera) -> LodChoices {
+        LodChoices::new(world, camera, &|mesh| self.mesh_sphere(mesh))
     }
 
     /// Asks for a preview of an object, its parts drawn as `options` say.
@@ -1149,7 +1166,9 @@ impl View {
         let extent = view.extent;
         let extracting = profile_marker!("Extract").scope();
         let mut extracted =
-            scene::extract(world, extent.width, extent.height, setup.time, setup.frame_index, &self.options);
+            scene::extract(world, (extent.width, extent.height), (setup.time, setup.frame_index), &self.options, &|mesh| {
+                assets.mesh_sphere(mesh)
+            });
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         self.track_motion(&mut extracted);
         let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;

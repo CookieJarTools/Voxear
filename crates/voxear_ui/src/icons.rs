@@ -59,6 +59,7 @@ pub const NAMES: &[&str] = &[
     "texture",
     "eye",
     "transform",
+    "lod",
     "maximize",
     "chevron-left",
     "book",
@@ -147,6 +148,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
             "M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12ZM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6Z",
             STROKE,
         )],
+        // Three of one shape, each smaller: levels of detail.
+        "lod" => &[("M2.5 7.5h9v9h-9ZM14 9.5h5v5h-5ZM21 11h1.5v2H21Z", STROKE)],
         "transform" => &[("M5.5 4v14.5H20M5.5 18.5l10-10M15.5 8.5h-4M15.5 8.5v4", STROKE)],
         "maximize" => &[("M4.5 9.5v-5h5M14.5 4.5h5v5M19.5 14.5v5h-5M9.5 19.5h-5v-5", STROKE)],
         "chevron-left" => &[("M14.5 6l-6 6 6 6", STROKE)],

@@ -36,7 +36,7 @@ use voxear_engine::{
     prefab::{FromPrefab, PrefabInstance},
     script_types::ScriptTypes,
 };
-use voxear_render::{Camera, Light, MeshRenderer};
+use voxear_render::{Camera, Light, LodGroup, MeshRenderer};
 use voxear_scene::{Destroying, InstanceMarker, Name, Parent};
 use voxear_ui::{DragSource, DropPlace, MenuItem, NodeId, TreeItems, Ui};
 
@@ -416,8 +416,8 @@ fn destination(shown: &Snapshot, target: u64, place: DropPlace) -> Option<Destin
     })
 }
 
-/// The icon for an Obj with a camera, a light, a mesh or an Audio Source,
-/// the first it has in that order, or else the plain Obj's.
+/// The icon for an Obj with a camera, a light, a mesh, an Audio Source or
+/// a LOD Group, the first it has in that order, or else the plain Obj's.
 pub fn icon(world: &World, entity: Entity) -> &'static str {
     if world.has::<Camera>(entity) {
         "camera"
@@ -427,6 +427,8 @@ pub fn icon(world: &World, entity: Entity) -> &'static str {
         "cube"
     } else if world.has::<AudioSource>(entity) {
         "audio"
+    } else if world.has::<LodGroup>(entity) {
+        "lod"
     } else {
         "obj"
     }

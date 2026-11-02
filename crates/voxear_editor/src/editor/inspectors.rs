@@ -9,11 +9,14 @@
 //! following the selection, with a layout that names it (see `windows`).
 
 use voxear_ecs::Entity;
-use voxear_render::Renderer;
+use voxear_render::{Camera, LodCamera, Renderer, ViewOptions};
 use voxear_ui::{NodeId, Style};
 
 use super::Editor;
-use crate::inspector::{Field, Inspector};
+use crate::{
+    inspector::{Field, Inspector},
+    lod_inspector::LodEye,
+};
 
 /// An Inspector opened from a window's menu: its panel's id, and itself.
 pub(super) struct ExtraInspector {
@@ -100,6 +103,7 @@ impl Editor {
         let others = if self.inspector.is_locked() { Vec::new() } else { self.others.clone() };
         self.inspector.set_also(&mut self.ui, &self.game, others, playing);
         let live = self.pull_live_fields();
+        self.inspector.set_lod_eye(self.lod_eye());
         let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
         let edit = self.run_inspector_drawers(edit);
         // Before the callbacks, so a running behaviour's has the value it was called for.
@@ -119,6 +123,23 @@ impl Editor {
         if let Some(action) = self.inspector.menus(&mut self.ui, &self.game, playing, can_keep, &kept) {
             self.row_action(action, renderer);
         }
+    }
+
+    /// The camera the Inspector says which LOD is drawn through: the game's
+    /// while playing with the Game view showing, and otherwise the Scene
+    /// view's, when it shows.
+    fn lod_eye(&self) -> Option<LodEye> {
+        let game = self.game_camera().filter(|_| self.is_playing() && self.shown(self.nodes.game_viewport));
+        let game = game.map(|camera| (camera, self.nodes.game_viewport, "the game"));
+        let scene = self.shown(self.scene.viewport).then_some((self.scene.camera, self.scene.viewport, "the Scene view"));
+        let (camera, viewport, name) = game.or(scene)?;
+        let world = &self.game.engine.world;
+        let lens = world.get::<Camera>(camera)?;
+        let position = voxear_scene::world_matrix(world, camera).w_axis.truncate();
+        let eye = LodCamera::new(position, lens.fov_y_degrees);
+        let height = self.ui.rect(viewport)[3] * self.scale;
+        let threshold = ViewOptions::default().lod_threshold;
+        Some(LodEye { camera: eye, pixels_per_metre: height / (2.0 * eye.tan_half_fov), threshold, name })
     }
 
     /// Shows the selection in every Inspector not locked.

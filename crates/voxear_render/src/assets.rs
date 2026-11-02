@@ -18,7 +18,7 @@ use crate::{
     alloc::{RangeAllocator, SlotAllocator},
     cooked::{CookedMesh, CookedModel, CookedTexture},
     gpu::{GpuMaterial, GpuMesh, GpuMeshLod, MATERIAL_NORMAL_MAP},
-    lod::{Lod, build_lods},
+    lod::{Lod, LodInfo, MAX_LODS, build_lods},
     mesh::{MeshData, Primitive, Vertex},
     payload::{Payload, tile_len},
 };
@@ -99,6 +99,25 @@ struct MeshRanges {
     indices: (u64, u64),
     first_lod: u32,
     sphere: (Vec3, f32),
+    /// Each LOD's triangles and error, for the editor to show.
+    lods: [LodInfo; MAX_LODS],
+    lod_count: u8,
+}
+
+impl MeshRanges {
+    fn new(vertices: (u64, u64), indices: (u64, u64)) -> Self {
+        let lods = [LodInfo::default(); MAX_LODS];
+        Self { vertices, indices, first_lod: 0, sphere: (Vec3::ZERO, 0.0), lods, lod_count: 0 }
+    }
+
+    /// Keeps what the editor shows of a mesh's LODs.
+    fn keep_lods(&mut self, lods: impl Iterator<Item = LodInfo>) {
+        self.lod_count = 0;
+        for (slot, lod) in self.lods.iter_mut().zip(lods) {
+            *slot = lod;
+            self.lod_count += 1;
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -202,7 +221,7 @@ impl Assets {
         let old = *self.mesh_ranges.get(&mesh).context("the mesh to replace is not loaded")?;
         let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
         let (vertices, indices) = self.reserve_space(data.vertices.len() as u64, index_count)?;
-        let ranges = MeshRanges { vertices, indices, first_lod: 0, sphere: (Vec3::ZERO, 0.0) };
+        let ranges = MeshRanges::new(vertices, indices);
         self.mesh_ranges.insert(mesh, ranges);
         self.mesh_bounds.remove(&mesh);
         self.write_mesh(gpu, mesh, ranges, data, lods)?;
@@ -225,6 +244,7 @@ impl Assets {
         if let (Some(ranges), Some(lod)) = (self.mesh_ranges.get_mut(&handle), lods.first()) {
             ranges.first_lod = lod.indices.len() as u32;
             ranges.sphere = mesh.bounds();
+            ranges.keep_lods(lods.iter().map(|lod| LodInfo { triangles: lod.indices.len() as u32 / 3, error: lod.error }));
         }
 
         gpu.upload_buffer(
@@ -284,6 +304,12 @@ impl Assets {
         Some(self.mesh_ranges.get(&mesh)?.sphere)
     }
 
+    /// A mesh's LODs, the most detailed first.
+    pub fn mesh_lods(&self, mesh: MeshHandle) -> Option<Vec<LodInfo>> {
+        let ranges = self.mesh_ranges.get(&mesh)?;
+        Some(ranges.lods[..usize::from(ranges.lod_count)].to_vec())
+    }
+
     /// Takes vertex and index space and a mesh table slot, all or nothing.
     fn reserve_mesh(&mut self, vertex_count: u64, index_count: u64) -> Result<(MeshHandle, MeshRanges)> {
         let (vertices, indices) = self.reserve_space(vertex_count, index_count)?;
@@ -292,7 +318,7 @@ impl Assets {
             self.index_space.free(indices.0, indices.1);
             anyhow::bail!("too many meshes");
         };
-        let ranges = MeshRanges { vertices, indices, first_lod: 0, sphere: (Vec3::ZERO, 0.0) };
+        let ranges = MeshRanges::new(vertices, indices);
         self.mesh_ranges.insert(MeshHandle(slot), ranges);
         Ok((MeshHandle(slot), ranges))
     }
@@ -356,6 +382,7 @@ impl Assets {
             self.mesh_bounds.insert(*handle, (mesh.center - reach, mesh.center + reach));
             if let (Some(ranges), Some(&(_, count))) = (self.mesh_ranges.get_mut(handle), mesh.lods.first()) {
                 (ranges.first_lod, ranges.sphere) = (count, (mesh.center, mesh.radius));
+                ranges.keep_lods(mesh.lods.iter().map(|&(error, count)| LodInfo { triangles: count / 3, error }));
             }
         }
         let table = source.len().next_multiple_of(16) as u64;

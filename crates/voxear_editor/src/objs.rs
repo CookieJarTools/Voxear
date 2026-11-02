@@ -19,7 +19,7 @@ use voxear_engine::{
     prefab::{PREFAB_FORMAT, PrefabFile},
     scene_file::{self, SceneFile},
 };
-use voxear_render::Renderer;
+use voxear_render::{LodGroup, Renderer};
 use voxear_scene::{Destroying, Name, Parent, Transform};
 
 use crate::project_view::AssetPart;
@@ -498,6 +498,14 @@ pub fn bring_back(
         let Some(&child) = renamed.get(child) else { continue };
         if world.is_alive(parent) && !world.has::<Destroying>(parent) && !world.has::<Parent>(child) {
             world.insert(child, Parent(parent));
+        }
+    }
+    // A LOD Group that stayed shows the levels' Objs that came back.
+    let groups: Vec<Entity> = world.query_ref::<(Entity, &LodGroup)>().into_iter().map(|(e, _)| e).collect();
+    for group in groups {
+        let Some(group) = world.get_mut::<LodGroup>(group) else { continue };
+        for obj in group.levels.iter_mut().filter_map(|level| level.obj.as_mut()) {
+            *obj = renamed.get(obj).copied().unwrap_or(*obj);
         }
     }
     renamed.get(&taken.root).context("the top Obj came back")?;

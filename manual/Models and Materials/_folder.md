@@ -6,3 +6,4 @@ A **model** is a 3D shape made in a modelling program such as Blender. A **mater
 
 1. [[Models]]
 2. [[Materials]]
+3. [[Levels of Detail]]

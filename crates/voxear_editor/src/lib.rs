@@ -61,6 +61,7 @@ mod inspector;
 mod level_files;
 mod levels_panel;
 mod live;
+mod lod_inspector;
 pub mod memory_panel;
 mod object_picker;
 mod objs;

@@ -903,6 +903,16 @@ cost nothing. The CPU never touches visibility.
   history is kept by its place in the frame's list of instances, so an Obj new to its place (`INSTANCE_NEW`, set
   when another Obj had the place last frame, as when a scene opens in place of another) starts afresh rather than
   fading in from the LOD another Obj was drawn at there.
+- **The Inspector shows a mesh's chain** *(implemented)*: under its Mesh Renderer, the LOD the Scene view draws,
+  worked out on the CPU as the GPU picks (`lod::lod_at`, from the chain `Assets` keeps for each mesh), with each
+  LOD's triangles as the row's tooltip.
+- **LOD Groups** *(implemented)*: a `LodGroup` on an Obj shows one of its levels' Objs at a time, each with its
+  children, by the share of the screen's height its meshes cover or by its distance from the camera, as Unity's
+  LOD Group does (`lod_group.rs`). Each view chooses for its own camera while extracting (`LodChoices`), and what a
+  level not shown holds is neither drawn nor lit; its scripts run on. Files write it as `[obj.lod_group]`, levels
+  naming Objs as other references do, so prefabs map them into each instance (`lod_groups.rs` in the engine). Add
+  Component makes a level of each child in Hierarchy order, and the Inspector shows the levels as Unity's bar,
+  marked where the Scene view sees the group.
 - **HLOD:** distant groups of objects merge into one proxy mesh, generated per level.
 - **Impostors:** octahedral impostors for foliage and far props, generated automatically.
 

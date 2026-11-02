@@ -48,6 +48,7 @@ Under the Transform, the Inspector shows each component, each with its own setti
 - **Mesh Renderer** draws a model with a material, which gives it its colour and surface.
 - **Light** shines on everything around it.
 - **Camera** is what the Game view, and the player, see through.
+- **LOD Group** shows one of the Objs inside it at a time, by how big it is on screen or how far away it is. See [[Levels of Detail]].
 
 Your own scripts are components too. They are called **behaviours**; see [[Your First Script]].
 

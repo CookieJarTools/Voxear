@@ -63,6 +63,7 @@ use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Tra
 use crate::{
     audio::{AudioListener, AudioSource, audio_source},
     content::{Content, MaterialSource},
+    lod_groups::LodGroupData,
     scene_file::{MaterialRef, ObjData, default_material, light_component},
 };
 
@@ -187,7 +188,7 @@ fn expand_instance(
     let guid = content.parse(reference)?.guid().with_context(|| format!("`{reference}` is not a prefab"))?;
     let mut objs = expand_prefab_inner(content, guid, stack)?;
     for obj in &mut objs {
-        map_refs(&mut obj.data.fields, &|target| path.join(target))?;
+        map_obj_refs(&mut obj.data, &|target| path.join(target))?;
     }
     for (key, changes) in &instance.overrides {
         let target = ObjPath::parse(key)?;
@@ -223,7 +224,7 @@ fn expand_prefab_inner(content: &mut Content, guid: AssetGuid, stack: &mut Vec<A
     for obj in &mut objs {
         obj.path = rebase(std::mem::take(&mut obj.path));
         obj.parent = obj.parent.take().map(rebase);
-        map_refs(&mut obj.data.fields, &|target| rebase(target.clone()))?;
+        map_obj_refs(&mut obj.data, &|target| rebase(target.clone()))?;
     }
     let root = objs.iter_mut().find(|o| o.path.is_root()).expect("the root was expanded");
     root.prefab = Some(guid);
@@ -249,6 +250,16 @@ pub(crate) fn ref_value(path: &ObjPath) -> toml::Value {
     match path.ids() {
         [id] => toml::Value::Integer(i64::from(*id)),
         _ => toml::Value::String(path.to_string()),
+    }
+}
+
+/// Rewrites every Obj reference an Obj holds: in its behaviours' fields,
+/// and its LOD Group's levels.
+pub(crate) fn map_obj_refs(data: &mut ObjData, f: &dyn Fn(&ObjPath) -> ObjPath) -> Result<()> {
+    map_refs(&mut data.fields, f)?;
+    match &mut data.lod_group {
+        Some(lod) => lod.map_refs(f),
+        None => Ok(()),
     }
 }
 
@@ -344,6 +355,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
         root.audio = instance.audio.clone();
     }
     root.audio_listener |= instance.audio_listener;
+    if instance.lod_group.is_some() {
+        root.lod_group = instance.lod_group.clone();
+    }
 }
 
 /// Expanded Objs with their meshes and materials loaded, ready to spawn any
@@ -369,6 +383,8 @@ pub struct TemplateObj {
     pub renderer: Option<MeshRenderer>,
     pub audio: Option<AudioSource>,
     pub audio_listener: bool,
+    /// Its levels by path, bound to entities when spawned.
+    pub lod_group: Option<LodGroupData>,
     /// Set on the root of each prefab instance.
     pub prefab: Option<AssetGuid>,
     /// Components the prefab locks (see [`Locks`]).
@@ -492,9 +508,13 @@ impl Template {
             }
             entities.push(entity);
         }
+        let lookup = |path: &ObjPath| self.paths.get(path).map(|&i| entities[i]);
         for (obj, &entity) in self.objs.iter().zip(&entities) {
             if let Some(parent) = obj.parent.map(|index| entities[index]).or(parent) {
                 world.insert(entity, Parent(parent));
+            }
+            if let Some(lod) = &obj.lod_group {
+                world.insert(entity, lod.bind(&lookup));
             }
         }
         link_instances(world, &self.objs, &entities);
@@ -511,6 +531,10 @@ fn check_refs(obj: &FlatObj, index: &HashMap<&ObjPath, usize>) -> Result<()> {
         if let Some(missing) = refs.iter().find(|r| !index.contains_key(r)) {
             bail!("a field of {behaviour} refers to Obj {missing}, which is not in the same file");
         }
+    }
+    let levels = obj.data.lod_group.as_ref().map(LodGroupData::refs).transpose()?.unwrap_or_default();
+    if let Some(missing) = levels.iter().find(|r| !index.contains_key(r)) {
+        bail!("a level of its LOD Group is Obj {missing}, which is not in the same file");
     }
     Ok(())
 }
@@ -595,6 +619,7 @@ fn resolve_obj(
         renderer,
         audio: data.audio.as_ref().map(|audio| audio_source(content, audio)).transpose()?,
         audio_listener: data.audio_listener,
+        lod_group: data.lod_group.clone(),
         prefab: obj.prefab,
         locks: data.locks.clone(),
     })

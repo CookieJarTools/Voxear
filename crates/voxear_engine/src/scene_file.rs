@@ -28,7 +28,9 @@
 //! ```
 //!
 //! An Obj's `[obj.audio]` is an Audio Source, and `audio_listener = true`
-//! hears the game from it (see [`crate::audio`]).
+//! hears the game from it (see [`crate::audio`]). `[obj.lod_group]` is a
+//! LOD Group, which shows one of its levels' Objs at a time (see
+//! [`crate::lod_groups`]).
 //!
 //! An optional `[sky]` sets the sky colours and `[post]` the
 //! post-processing (see [`PostProcess`]). Like Unity's global volume, the
@@ -46,13 +48,14 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{Camera, Light, LightKind, MeshRenderer, PostProcess, Renderer, Sky};
+use voxear_render::{Camera, Light, LightKind, LodGroup, MeshRenderer, PostProcess, Renderer, Sky};
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, ScenePersistence, Transform};
 
 use crate::{
     audio::{AudioListener, AudioSource, AudioSourceData, audio_source_data},
     content::{Content, MaterialData, MaterialSource, linear, srgb},
     engine::{EditBehaviours, Engine},
+    lod_groups::LodGroupData,
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabInstance, Template},
 };
 
@@ -139,6 +142,9 @@ pub struct ObjData {
     /// Hears the game's sound from here rather than from the camera.
     #[serde(default, skip_serializing_if = "is_false")]
     pub audio_listener: bool,
+    /// A LOD Group, which shows one of its levels' Objs at a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lod_group: Option<LodGroupData>,
     /// Changes to Objs inside a prefab instance, by path (`"2"`, `"3/2"`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, toml::Table>,
@@ -169,6 +175,7 @@ impl ObjData {
             renderer: None,
             audio: None,
             audio_listener: false,
+            lod_group: None,
             overrides: BTreeMap::new(),
             locks: BTreeMap::new(),
         }
@@ -411,7 +418,7 @@ fn capture_instance(
     let mut expected = prefab::expand_prefab(content, guid)?;
     // Inside the prefab, references read from its root; in this file, from the instance.
     for obj in &mut expected {
-        prefab::map_refs(&mut obj.data.fields, &|target| ObjPath::new(root.id).join(target))?;
+        prefab::map_obj_refs(&mut obj.data, &|target| ObjPath::new(root.id).join(target))?;
     }
     let mut instance = ObjData::new(root.id, "");
     // By path, as scenes are written by hand; the GUID only when the asset is not in the database.
@@ -450,6 +457,9 @@ fn capture_instance(
         instance.audio = root.audio.clone();
     }
     instance.audio_listener = root.audio_listener && !prefab_root.audio_listener;
+    if root.lod_group.is_some() && root.lod_group != prefab_root.lod_group {
+        instance.lod_group = root.lod_group.clone();
+    }
 
     for inner in expected.iter().filter(|o| !o.path.is_root()) {
         let Some(&entity) = members.get(&inner.path) else { continue };
@@ -507,6 +517,9 @@ fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Resul
     }
     if actual.audio_listener != expected.audio_listener {
         put("audio_listener", actual.audio_listener.into());
+    }
+    if let Some(lod) = actual.lod_group.as_ref().filter(|l| Some(*l) != expected.lod_group.as_ref()) {
+        put("lod_group", lod.whole()?);
     }
     Ok(changes)
 }
@@ -676,6 +689,7 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
     });
     obj.audio = world.get::<AudioSource>(entity).map(|source| audio_source_data(content, source));
     obj.audio_listener = world.has::<AudioListener>(entity);
+    obj.lod_group = world.get::<LodGroup>(entity).map(|lod| LodGroupData::of(lod, &|e| file_path(world, ids, e)));
     obj
 }
 

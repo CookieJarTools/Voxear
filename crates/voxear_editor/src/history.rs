@@ -15,6 +15,7 @@ use voxear_engine::{
     EditBehaviours, Game,
     audio::{AudioListener, AudioSource},
     physics::{CharacterController, Collider, Rigidbody},
+    physics2d::{Collider2D, Rigidbody2D},
     prefab::{FromPrefab, Locks, PrefabInstance},
 };
 use voxear_render::{Camera, Light, LodGroup, MeshRenderer, Renderer};
@@ -45,6 +46,8 @@ pub struct ObjState {
     pub collider: Option<Collider>,
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
+    pub collider2d: Option<Collider2D>,
+    pub rigidbody2d: Option<Rigidbody2D>,
     pub behaviours: Option<EditBehaviours>,
     /// Components locked for designers, when this is a prefab's Obj.
     pub locks: Option<Locks>,
@@ -65,6 +68,8 @@ impl ObjState {
             collider: world.get::<Collider>(entity).copied(),
             rigidbody: world.get::<Rigidbody>(entity).copied(),
             character: world.get::<CharacterController>(entity).copied(),
+            collider2d: world.get::<Collider2D>(entity).copied(),
+            rigidbody2d: world.get::<Rigidbody2D>(entity).copied(),
             behaviours: world.get::<EditBehaviours>(entity).cloned(),
             locks: world.get::<Locks>(entity).cloned(),
         })
@@ -96,6 +101,8 @@ impl ObjState {
         put(world, entity, self.collider);
         put(world, entity, self.rigidbody);
         put(world, entity, self.character);
+        put(world, entity, self.collider2d);
+        put(world, entity, self.rigidbody2d);
         put(world, entity, self.behaviours.clone());
         put(world, entity, self.locks.clone());
     }

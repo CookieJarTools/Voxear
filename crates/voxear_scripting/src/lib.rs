@@ -26,6 +26,7 @@ mod windows;
 
 pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 pub use display::CursorLock;
+pub use physics::PhysicsEventData;
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use gizmos::{GizmoAnswer, GizmoTarget, HandleId, HandleInput, ScriptHandle, ScriptHandleKind};
 pub use hostfxr::{DotnetInstall, find_dotnet};

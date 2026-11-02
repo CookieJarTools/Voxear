@@ -8,10 +8,11 @@ use voxear_scene::{
     Lifecycle, Name, Parent, Phase, Placement, SceneComponents, Transform, propagate_transforms,
     register_obj_components,
 };
-use voxear_scripting::{Reloaded, ScriptRuntime};
+use voxear_scripting::{PhysicsEventData, Reloaded, ScriptRuntime};
 
 use crate::{
     physics::{PhysicsEvent, PhysicsScene},
+    physics2d::{PhysicsEvent2D, PhysicsScene2D},
     prefab::{FromPrefab, PrefabInstance, Template},
 };
 
@@ -37,6 +38,7 @@ pub struct Engine {
     edit_mode: bool,
     /// The contacts and trigger crossings this frame's physics steps found.
     physics_events: Vec<PhysicsEvent>,
+    physics_events_2d: Vec<PhysicsEvent2D>,
 }
 
 /// An Obj's behaviours and C# components in edit mode, as data: what the
@@ -81,6 +83,7 @@ impl Engine {
             fixed_accumulator: 0.0,
             edit_mode: false,
             physics_events: Vec::new(),
+            physics_events_2d: Vec::new(),
         }
     }
 
@@ -91,6 +94,7 @@ impl Engine {
     pub fn set_edit_mode(&mut self, edit_mode: bool) {
         if edit_mode != self.edit_mode {
             self.world.remove_resource::<PhysicsScene>();
+            self.world.remove_resource::<PhysicsScene2D>();
         }
         self.edit_mode = edit_mode;
     }
@@ -426,6 +430,7 @@ impl Engine {
     pub fn tick(&mut self, unscaled_delta: f32) {
         self.time.advance(unscaled_delta);
         self.physics_events.clear();
+        self.physics_events_2d.clear();
         // Last frame's debug draw has been seen; its shapes count down.
         voxear_core::debug_draw::advance(self.time.delta);
         self.sync_script_time(self.time.delta);
@@ -498,31 +503,54 @@ impl Engine {
     }
 
     /// Moves physics on by a fixed step, after FixedUpdate as in Unity,
-    /// while the game plays and something has physics. The scene is kept
-    /// in the world, where scripts reach it, and taken out for the step.
+    /// while the game plays and something has physics, 3D or 2D. Each
+    /// scene is kept in the world, where scripts reach it, and taken out
+    /// for the step.
     fn step_physics(&mut self) {
         if self.edit_mode {
             return;
         }
-        let mut physics = match self.world.remove_resource::<PhysicsScene>() {
-            Some(physics) => physics,
-            None if PhysicsScene::wanted(&self.world) => PhysicsScene::new(),
-            None => return,
-        };
-        {
-            profile_scope!("Physics");
-            physics.step(&mut self.world, self.time.fixed_delta);
+        let dt = self.time.fixed_delta;
+        let mut told = Vec::new();
+        let scene = self.world.remove_resource::<PhysicsScene>();
+        if let Some(mut physics) = scene.or_else(|| PhysicsScene::wanted(&self.world).then(PhysicsScene::new)) {
+            {
+                profile_scope!("Physics");
+                physics.step(&mut self.world, dt);
+            }
+            let events = physics.take_events();
+            self.world.insert_resource(physics);
+            told.extend(events.iter().flat_map(PhysicsEventData::both));
+            self.physics_events.extend(events);
         }
-        let events = physics.take_events();
-        self.world.insert_resource(physics);
+        let scene = self.world.remove_resource::<PhysicsScene2D>();
+        if let Some(mut physics) = scene.or_else(|| PhysicsScene2D::wanted(&self.world).then(PhysicsScene2D::new)) {
+            {
+                profile_scope!("Physics 2D");
+                physics.step(&mut self.world, dt);
+            }
+            let events = physics.take_events();
+            self.world.insert_resource(physics);
+            told.extend(events.iter().flat_map(PhysicsEventData::both_2d));
+            self.physics_events_2d.extend(events);
+        }
         // As in Unity, OnCollisionEnter and the rest come straight after the step.
-        if let Some(scripts) = self.scripts.as_mut().filter(|_| !events.is_empty()) {
+        if let Some(scripts) = self.scripts.as_mut().filter(|_| !told.is_empty()) {
             profile_scope!("Physics Messages");
-            scripts.physics_events(&mut self.world, &events);
+            scripts.physics_events(&mut self.world, &told);
             self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
             self.flush();
         }
-        self.physics_events.extend(events);
+    }
+
+    /// The 2D contacts and trigger crossings this frame's physics steps found.
+    pub fn physics_events_2d(&self) -> &[PhysicsEvent2D] {
+        &self.physics_events_2d
+    }
+
+    /// 2D physics, once something with a Collider 2D has played a step.
+    pub fn physics_2d(&self) -> Option<&PhysicsScene2D> {
+        self.world.resource::<PhysicsScene2D>()
     }
 
     /// The contacts and trigger crossings this frame's physics steps found.

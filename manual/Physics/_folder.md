@@ -6,3 +6,4 @@ Voxear's physics is Jolt, the physics engine made for Horizon Forbidden West, bu
 
 1. [[Colliders and Rigidbodies]]: giving Objs shapes that bump into each other, and letting physics move them
 2. [[Physics from Scripts]]: pushing bodies, hearing what touches what, asking what a ray meets, and walking a character
+3. [[2D Physics]]: flat colliders and bodies for 2D games, on Box2D

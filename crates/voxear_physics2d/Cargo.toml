@@ -1,0 +1,16 @@
+[package]
+name = "voxear_physics2d"
+description = "2D physics: Box2D v3, built from source by boxdd-sys, and the components that put Objs in it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+voxear_ecs.workspace = true
+voxear_scene.workspace = true
+boxdd-sys.workspace = true
+glam.workspace = true
+serde.workspace = true
+tracing.workspace = true

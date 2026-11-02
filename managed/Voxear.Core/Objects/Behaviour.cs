@@ -1,3 +1,4 @@
+using System.Numerics;
 using Voxear.Interop;
 using Voxear.Scripting;
 
@@ -123,14 +124,40 @@ public abstract class Behaviour
 	{
 	}
 
+	/// <summary>Called when the Obj's Collider2D first touches another, as OnCollisionEnter does in 3D.</summary>
+	protected virtual void OnCollisionEnter2D(Collision2D collision)
+	{
+	}
+
+	/// <summary>Called when the Obj's Collider2D stops touching another.</summary>
+	protected virtual void OnCollisionExit2D(Collision2D collision)
+	{
+	}
+
+	/// <summary>Called when a Collider2D enters the Obj's 2D trigger, or the Obj enters another's: a coin collected.</summary>
+	protected virtual void OnTriggerEnter2D(Collider2D other)
+	{
+	}
+
+	/// <summary>Called when a Collider2D leaves the Obj's 2D trigger, or the Obj leaves another's.</summary>
+	protected virtual void OnTriggerExit2D(Collider2D other)
+	{
+	}
+
 	internal void Collide(uint kind, Collision collision)
 	{
+		var (point, normal) = (collision.Point, collision.Normal);
+		var flat = new Collision2D(collision.Obj, new Vector2(point.X, point.Y), new Vector2(normal.X, normal.Y));
 		switch (kind)
 		{
 			case PhysicsEventData.CollisionEnter: OnCollisionEnter(collision); break;
 			case PhysicsEventData.CollisionExit: OnCollisionExit(collision); break;
 			case PhysicsEventData.TriggerEnter: OnTriggerEnter(collision.Collider); break;
 			case PhysicsEventData.TriggerExit: OnTriggerExit(collision.Collider); break;
+			case PhysicsEventData.CollisionEnter2D: OnCollisionEnter2D(flat); break;
+			case PhysicsEventData.CollisionExit2D: OnCollisionExit2D(flat); break;
+			case PhysicsEventData.TriggerEnter2D: OnTriggerEnter2D(flat.Collider); break;
+			case PhysicsEventData.TriggerExit2D: OnTriggerExit2D(flat.Collider); break;
 		}
 	}
 

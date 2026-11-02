@@ -137,3 +137,54 @@ fn edit_mode_leaves_physics_alone() {
     assert_eq!(crate_at, Vec3::new(0.0, 5.0, 0.0));
     assert!(engine.physics().is_none());
 }
+
+const PLATFORMS: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Floor"
+position = [0.0, -0.5, 0.0]
+collider2d = { size = [20.0, 1.0] }
+
+[[obj]]
+id = 2
+name = "Coin"
+position = [0.0, 2.0, 0.0]
+collider2d = { shape = "circle", radius = 0.25, trigger = true }
+
+[[obj]]
+id = 3
+name = "Hero"
+position = [0.0, 5.0, 1.0]
+collider2d = { shape = "capsule", radius = 0.3, height = 1.2 }
+rigidbody2d = { mass = 60.0, fixed_rotation = true }
+"#;
+
+#[test]
+fn a_2d_scene_plays_in_the_xy_plane_and_saves_back() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Platforms.scene"), PLATFORMS).unwrap();
+    let mut content = Content::open(dir.path()).unwrap();
+    let scene = scene_file::read(&dir.path().join("Platforms.scene")).unwrap();
+    let mut engine = Engine::new();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+
+    let mut events = Vec::new();
+    for _ in 0..150 {
+        engine.tick(1.0 / 60.0);
+        events.extend_from_slice(engine.physics_events_2d());
+    }
+    let hero = find(&engine, "Hero");
+    let at = engine.world.get::<Transform>(hero).unwrap().position;
+    assert!((at.y - 0.6).abs() < 0.03 && at.z == 1.0, "standing on the floor, in front of it: {at}");
+    let coin = find(&engine, "Coin");
+    let picked = events.iter().any(|e| e.trigger && e.began && [e.a, e.b].contains(&coin));
+    assert!(picked, "the hero fell through the coin: {events:?}");
+    assert!(engine.physics().is_none(), "3D physics is not made for a 2D game");
+
+    let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();
+    let text = toml::to_string(&scene_file::capture(&engine.world, &mut content, &entities)).unwrap();
+    assert!(text.contains("fixed_rotation = true") && text.contains("shape = \"capsule\""), "{text}");
+    assert!(!text.contains("gravity_scale"), "defaults are left out: {text}");
+}

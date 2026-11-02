@@ -4,11 +4,15 @@
 //! one, what it reaches: a camera's frustum, a directional light's direction,
 //! a spot light's cone and a point light's range. The Gizmos button shows or
 //! hides them all, and its menu lights' or cameras'. The selected Obj's
-//! Collider and Character Controller are drawn in green, as Unity's are.
+//! Collider, Character Controller and Collider 2D are drawn in green, as
+//! Unity's are.
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_engine::physics::{CharacterController, Collider, ColliderShape};
+use voxear_engine::{
+    physics::{CharacterController, Collider, ColliderShape},
+    physics2d::{Collider2D, ColliderShape2D},
+};
 use voxear_render::{Camera, Light, LightKind};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
@@ -103,6 +107,58 @@ fn colliders(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity
         let half = (character.height * 0.5 - character.radius).max(0.01);
         let middle = position + Vec3::Y * (half + character.radius);
         capsule(shapes, camera, middle, Quat::IDENTITY, half, character.radius, color);
+    }
+    if let Some(collider) = world.get::<Collider2D>(entity) {
+        flat_collider(shapes, camera, collider, position, rotation, scale, color);
+    }
+}
+
+/// A Collider 2D flat in the XY plane, where 2D physics puts it: turned
+/// only about Z.
+fn flat_collider(
+    shapes: &mut Vec<Shape>,
+    camera: &ViewCamera,
+    collider: &Collider2D,
+    position: Vec3,
+    rotation: Quat,
+    scale: Vec3,
+    color: Color,
+) {
+    let across = rotation * Vec3::X;
+    let turn = Quat::from_rotation_z(across.y.atan2(across.x));
+    let flat = Vec3::new(scale.x, scale.y, 1.0);
+    let middle = position + turn * (Vec2::from(collider.offset).extend(0.0) * flat);
+    match collider.shape {
+        ColliderShape2D::Box => {
+            let half = Vec2::from(collider.size) * Vec2::new(scale.x, scale.y) * 0.5;
+            let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+                .map(|(x, y)| middle + turn * Vec3::new(x * half.x, y * half.y, 0.0));
+            for i in 0..4 {
+                line(shapes, camera, corners[i], corners[(i + 1) % 4], color);
+            }
+        }
+        ColliderShape2D::Circle => {
+            let radius = collider.radius * scale.x.max(scale.y);
+            polyline(shapes, camera, &ring(camera, middle, Vec3::Z, radius), color);
+        }
+        ColliderShape2D::Capsule => {
+            let radius = collider.radius * scale.x;
+            let half = (collider.height * scale.y * 0.5 - radius).max(0.01);
+            let (up, right) = (turn * Vec3::Y, turn * Vec3::X);
+            for end in [-1.0, 1.0] {
+                let at = middle + up * half * end;
+                let cap: Vec<[f32; 2]> = (0..=CAP_SEGMENTS)
+                    .filter_map(|i| {
+                        let angle = i as f32 / CAP_SEGMENTS as f32 * std::f32::consts::PI;
+                        camera.project(at + (right * angle.cos() + up * end * angle.sin()) * radius)
+                    })
+                    .collect();
+                polyline(shapes, camera, &cap, color);
+            }
+            for side in [right, -right] {
+                line(shapes, camera, middle + side * radius - up * half, middle + side * radius + up * half, color);
+            }
+        }
     }
 }
 
@@ -284,5 +340,9 @@ mod tests {
         world.remove::<Collider>(obj);
         world.insert(obj, CharacterController::default());
         assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown)), capsule, "a character is a capsule");
+
+        world.remove::<CharacterController>(obj);
+        world.insert(obj, Collider2D::default());
+        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown)), 4, "a 2D box is flat");
     }
 }

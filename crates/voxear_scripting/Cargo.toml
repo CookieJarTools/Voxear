@@ -13,6 +13,7 @@ voxear_ecs.workspace = true
 voxear_scene.workspace = true
 voxear_input.workspace = true
 voxear_physics.workspace = true
+voxear_physics2d.workspace = true
 libloading.workspace = true
 serde_json.workspace = true
 toml.workspace = true

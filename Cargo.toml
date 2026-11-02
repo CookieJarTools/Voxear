@@ -24,6 +24,7 @@ voxear_editor = { path = "crates/voxear_editor" }
 voxear_docs = { path = "crates/voxear_docs" }
 voxear_input = { path = "crates/voxear_input" }
 voxear_physics = { path = "crates/voxear_physics" }
+voxear_physics2d = { path = "crates/voxear_physics2d" }
 
 anyhow = "1"
 ash = "0.38"
@@ -73,6 +74,8 @@ symphonia = { version = "0.6", default-features = false, features = ["opt-simd",
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Gamepads: XInput on Windows, evdev through udev on Linux, as SDL reads them.
 gilrs = "0.11"
+# 2D physics: Box2D v3, built from its C source, with ready-made bindings (no libclang needed).
+boxdd-sys = "0.6"
 
 # Keep dependencies fast in debug builds so the engine stays usable while iterating.
 [profile.dev.package."*"]

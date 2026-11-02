@@ -1604,7 +1604,7 @@ impl Inspector {
 
     /// What Add Component offers, as the picker lists it in folders, as
     /// Unity's does: the built-in components the Obj has not got, in
-    /// Rendering, Audio and Physics, then in edit mode the project's scripts not on
+    /// Rendering, Audio, Physics and Physics 2D, then in edit mode the project's scripts not on
     /// it, where their `[AddComponentMenu]` puts them or else under Scripts,
     /// by namespace past the one every script shares.
     pub fn component_choices(&self, playing: bool) -> Vec<Choice> {
@@ -1627,6 +1627,8 @@ impl Inspector {
             (Part::Collider, "Physics"),
             (Part::Rigidbody, "Physics"),
             (Part::Character, "Physics"),
+            (Part::Collider2D, "Physics 2D"),
+            (Part::Rigidbody2D, "Physics 2D"),
         ];
         let mut choices: Vec<Choice> = built_in
             .into_iter()
@@ -2272,6 +2274,8 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Collider) => "collider",
         Some(Part::Rigidbody) => "rigidbody",
         Some(Part::Character) => "character",
+        Some(Part::Collider2D) => "collider2d",
+        Some(Part::Rigidbody2D) => "rigidbody2d",
         Some(Part::Behaviour(name)) => return vec![ValuePath::new(&["fields", name])],
     };
     vec![ValuePath::new(&[key])]

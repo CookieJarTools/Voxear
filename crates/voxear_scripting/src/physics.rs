@@ -1,5 +1,7 @@
 //! Physics for C#: `Collider`, `Rigidbody`, `CharacterController` and
-//! `Physics` in Voxear.Core (see `voxear_physics::scene`). A component's
+//! `Physics` in Voxear.Core (see `voxear_physics::scene`), and in 2D
+//! `Collider2D`, `Rigidbody2D` and `Physics2D` (see
+//! `voxear_physics2d::scene`), through the same calls. A component's
 //! values are read and written through one call, by number, each up to
 //! four floats; pushes, rays, overlaps and a character's move have calls
 //! of their own. The scene lives in the world as a resource, made the
@@ -8,11 +10,15 @@
 //! The contacts and trigger crossings of each step go the other way, to
 //! `PhysicsMessages` in C#, as [`PhysicsEventData`].
 
-use voxear_core::math::Vec3;
+use voxear_core::math::{Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_physics::{
     Ground, Push,
     scene::{CharacterController, Collider, ColliderShape, PhysicsEvent, PhysicsScene, Rigidbody},
+};
+use voxear_physics2d::{
+    Push2D,
+    scene::{Collider2D, ColliderShape2D, PhysicsEvent2D, PhysicsScene2D, Rigidbody2D},
 };
 
 use crate::interop::with_world;
@@ -56,6 +62,34 @@ const CHARACTER_VELOCITY: i32 = 48;
 const CHARACTER_GROUND_NORMAL: i32 = 49;
 // The world's:
 const GRAVITY: i32 = 60;
+// A Collider 2D's:
+const COLLIDER_2D_HAS: i32 = 100;
+const COLLIDER_2D_ADD: i32 = 101;
+const COLLIDER_2D_REMOVE: i32 = 102;
+const COLLIDER_2D_SHAPE: i32 = 103;
+const COLLIDER_2D_OFFSET: i32 = 104;
+const COLLIDER_2D_SIZE: i32 = 105;
+const COLLIDER_2D_RADIUS: i32 = 106;
+const COLLIDER_2D_HEIGHT: i32 = 107;
+const COLLIDER_2D_TRIGGER: i32 = 108;
+const COLLIDER_2D_FRICTION: i32 = 109;
+const COLLIDER_2D_BOUNCINESS: i32 = 110;
+// A Rigidbody 2D's; turning is in radians, as Box2D has it:
+const BODY_2D_HAS: i32 = 120;
+const BODY_2D_ADD: i32 = 121;
+const BODY_2D_REMOVE: i32 = 122;
+const BODY_2D_MASS: i32 = 123;
+const BODY_2D_KINEMATIC: i32 = 124;
+const BODY_2D_GRAVITY_SCALE: i32 = 125;
+const BODY_2D_DRAG: i32 = 126;
+const BODY_2D_ANGULAR_DRAG: i32 = 127;
+const BODY_2D_FIXED_ROTATION: i32 = 128;
+const BODY_2D_CONTINUOUS: i32 = 129;
+const BODY_2D_VELOCITY: i32 = 130;
+const BODY_2D_ANGULAR_VELOCITY: i32 = 131;
+const BODY_2D_AWAKE: i32 = 132;
+// The 2D world's:
+const GRAVITY_2D: i32 = 160;
 
 /// `physics_push` kinds, as Unity's ForceMode for a force, then torques.
 const PUSH_FORCE: i32 = 0;
@@ -64,9 +98,15 @@ const PUSH_IMPULSE: i32 = 2;
 const PUSH_VELOCITY_CHANGE: i32 = 3;
 const PUSH_TORQUE: i32 = 4;
 const PUSH_ANGULAR_IMPULSE: i32 = 5;
+// And in 2D, a torque being the amount's X:
+const PUSH_2D_FORCE: i32 = 10;
+const PUSH_2D_IMPULSE: i32 = 11;
+const PUSH_2D_TORQUE: i32 = 12;
+const PUSH_2D_ANGULAR_IMPULSE: i32 = 13;
 
-/// Query flags: 1 counts triggers too.
+/// Query flags: 1 counts triggers too, and 2 asks 2D physics, in the XY plane.
 const QUERY_TRIGGERS: i32 = 1;
+const QUERY_2D: i32 = 2;
 
 /// Where a ray met a collider, as C# reads it.
 #[repr(C)]
@@ -97,7 +137,8 @@ const _: () = assert!(size_of::<CharacterMoveData>() == 40, "CharacterMoveData i
 
 /// A contact or trigger crossing, for each of the Objs in it: `kind` is 0
 /// when a collision began, 1 when it ended, 2 when a trigger was entered,
-/// and 3 when it was left. The normal points from `b` towards `a`.
+/// and 3 when it was left, and 4 to 7 the same in 2D. The normal points
+/// from `b` towards `a`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PhysicsEventData {
@@ -131,6 +172,32 @@ impl PhysicsEventData {
         };
         [told(event.a, event.b, -event.normal), told(event.b, event.a, event.normal)]
     }
+
+    /// A 2D event as each Obj in it is told, in the XY plane.
+    pub fn both_2d(event: &PhysicsEvent2D) -> [Self; 2] {
+        let flat = PhysicsEvent {
+            began: event.began,
+            trigger: event.trigger,
+            a: event.a,
+            b: event.b,
+            point: event.point.extend(0.0),
+            normal: event.normal.extend(0.0),
+        };
+        Self::both(&flat).map(|told| Self { kind: told.kind + 4, ..told })
+    }
+}
+
+/// The world's 2D physics scene, made if need be, ready as [`with_scene`]'s.
+fn with_scene_2d<R>(world: &mut World, f: impl FnOnce(&mut World, &mut PhysicsScene2D) -> R) -> R {
+    let mut scene = world.remove_resource::<PhysicsScene2D>().unwrap_or_default();
+    scene.ready(world);
+    let result = f(world, &mut scene);
+    world.insert_resource(scene);
+    result
+}
+
+fn flat(value: Vec2) -> [f32; 4] {
+    [value.x, value.y, 0.0, 0.0]
 }
 
 /// The world's physics scene, made if need be, with its bodies where
@@ -180,8 +247,14 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
     if what == GRAVITY {
         return Some(vector(world.resource::<PhysicsScene>().map_or(Vec3::new(0.0, -9.81, 0.0), |s| s.gravity())));
     }
+    if what == GRAVITY_2D {
+        return Some(flat(world.resource::<PhysicsScene2D>().map_or(Vec2::new(0.0, -9.81), |s| s.gravity())));
+    }
     if !world.is_alive(entity) {
         return None;
+    }
+    if what >= COLLIDER_2D_HAS {
+        return read_2d(world, entity, what);
     }
     let collider = || world.get::<Collider>(entity);
     let body = || world.get::<Rigidbody>(entity);
@@ -240,13 +313,118 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
     })
 }
 
+fn read_2d(world: &World, entity: Entity, what: i32) -> Option<[f32; 4]> {
+    let collider = || world.get::<Collider2D>(entity);
+    let body = || world.get::<Rigidbody2D>(entity);
+    Some(match what {
+        COLLIDER_2D_HAS => flag(collider().is_some()),
+        COLLIDER_2D_SHAPE => {
+            let shape = collider()?.shape;
+            number(ColliderShape2D::ALL.iter().position(|s| *s == shape).unwrap_or_default() as f32)
+        }
+        COLLIDER_2D_OFFSET => flat(collider()?.offset.into()),
+        COLLIDER_2D_SIZE => flat(collider()?.size.into()),
+        COLLIDER_2D_RADIUS => number(collider()?.radius),
+        COLLIDER_2D_HEIGHT => number(collider()?.height),
+        COLLIDER_2D_TRIGGER => flag(collider()?.trigger),
+        COLLIDER_2D_FRICTION => number(collider()?.friction),
+        COLLIDER_2D_BOUNCINESS => number(collider()?.bounciness),
+        BODY_2D_HAS => flag(body().is_some()),
+        BODY_2D_MASS => number(body()?.mass),
+        BODY_2D_KINEMATIC => flag(body()?.kinematic),
+        BODY_2D_GRAVITY_SCALE => number(body()?.gravity_scale),
+        BODY_2D_DRAG => number(body()?.drag),
+        BODY_2D_ANGULAR_DRAG => number(body()?.angular_drag),
+        BODY_2D_FIXED_ROTATION => flag(body()?.fixed_rotation),
+        BODY_2D_CONTINUOUS => flag(body()?.continuous),
+        BODY_2D_VELOCITY | BODY_2D_ANGULAR_VELOCITY | BODY_2D_AWAKE => {
+            body()?;
+            let found = world.resource::<PhysicsScene2D>().and_then(|scene| Some((scene, scene.body(entity)?)));
+            // A body physics has not made yet is still, and awake.
+            let Some((scene, id)) = found else {
+                return Some(if what == BODY_2D_AWAKE { flag(true) } else { flat(Vec2::ZERO) });
+            };
+            let (linear, angular) = scene.world().velocity(id);
+            match what {
+                BODY_2D_VELOCITY => flat(linear),
+                BODY_2D_ANGULAR_VELOCITY => number(angular),
+                _ => flag(scene.world().is_awake(id)),
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn write_2d(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool {
+    let on = value[0] != 0.0;
+    let n = value[0];
+    let two = Vec2::new(value[0], value[1]);
+    match what {
+        COLLIDER_2D_ADD => {
+            if !world.has::<Collider2D>(entity) {
+                let shape = ColliderShape2D::ALL.get(n as usize).copied().unwrap_or_default();
+                world.insert(entity, Collider2D { shape, ..Collider2D::default() });
+            }
+            true
+        }
+        COLLIDER_2D_REMOVE => world.remove::<Collider2D>(entity).is_some(),
+        BODY_2D_ADD => {
+            if !world.has::<Rigidbody2D>(entity) {
+                world.insert(entity, Rigidbody2D::default());
+            }
+            true
+        }
+        BODY_2D_REMOVE => world.remove::<Rigidbody2D>(entity).is_some(),
+        COLLIDER_2D_SHAPE => change(world, entity, |c: &mut Collider2D| {
+            c.shape = ColliderShape2D::ALL.get(n as usize).copied().unwrap_or_default();
+        }),
+        COLLIDER_2D_OFFSET => change(world, entity, |c: &mut Collider2D| c.offset = two.into()),
+        COLLIDER_2D_SIZE => change(world, entity, |c: &mut Collider2D| c.size = two.max(Vec2::splat(0.001)).into()),
+        COLLIDER_2D_RADIUS => change(world, entity, |c: &mut Collider2D| c.radius = n.max(0.001)),
+        COLLIDER_2D_HEIGHT => change(world, entity, |c: &mut Collider2D| c.height = n.max(0.001)),
+        COLLIDER_2D_TRIGGER => change(world, entity, |c: &mut Collider2D| c.trigger = on),
+        COLLIDER_2D_FRICTION => change(world, entity, |c: &mut Collider2D| c.friction = n.max(0.0)),
+        COLLIDER_2D_BOUNCINESS => change(world, entity, |c: &mut Collider2D| c.bounciness = n.clamp(0.0, 1.0)),
+        BODY_2D_MASS => change(world, entity, |b: &mut Rigidbody2D| b.mass = n.max(0.001)),
+        BODY_2D_KINEMATIC => change(world, entity, |b: &mut Rigidbody2D| b.kinematic = on),
+        BODY_2D_GRAVITY_SCALE => change(world, entity, |b: &mut Rigidbody2D| b.gravity_scale = n),
+        BODY_2D_DRAG => change(world, entity, |b: &mut Rigidbody2D| b.drag = n.max(0.0)),
+        BODY_2D_ANGULAR_DRAG => change(world, entity, |b: &mut Rigidbody2D| b.angular_drag = n.max(0.0)),
+        BODY_2D_FIXED_ROTATION => change(world, entity, |b: &mut Rigidbody2D| b.fixed_rotation = on),
+        BODY_2D_CONTINUOUS => change(world, entity, |b: &mut Rigidbody2D| b.continuous = on),
+        BODY_2D_VELOCITY | BODY_2D_ANGULAR_VELOCITY | BODY_2D_AWAKE => {
+            if !world.has::<Rigidbody2D>(entity) {
+                return false;
+            }
+            with_scene_2d(world, |world, scene| {
+                let Some(id) = scene.body_now(world, entity) else { return false };
+                let (linear, angular) = scene.world().velocity(id);
+                match what {
+                    BODY_2D_VELOCITY => scene.world_mut().set_velocity(id, two, angular),
+                    BODY_2D_ANGULAR_VELOCITY => scene.world_mut().set_velocity(id, linear, n),
+                    _ => scene.world_mut().set_awake(id, on),
+                }
+                true
+            })
+        }
+        _ => false,
+    }
+}
+
 fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool {
     if what == GRAVITY {
         with_scene(world, |_, scene| scene.set_gravity(Vec3::from_array(three(value))));
         return true;
     }
+    if what == GRAVITY_2D {
+        with_scene_2d(world, |_, scene| scene.set_gravity(Vec2::new(value[0], value[1])));
+        return true;
+    }
     if !world.is_alive(entity) {
         return false;
+    }
+    if what >= COLLIDER_2D_HAS {
+        return write_2d(world, entity, what, value);
     }
     let on = value[0] != 0.0;
     let n = value[0];
@@ -336,6 +514,9 @@ pub(crate) unsafe extern "C" fn physics_push(
     let amount = Vec3::from_array(unsafe { *amount });
     let at = (!at.is_null()).then(|| Vec3::from_array(unsafe { *at }));
     let entity = Entity::from_bits(entity);
+    if kind >= PUSH_2D_FORCE {
+        return i32::from(push_2d(entity, kind, amount, at).is_some());
+    }
     let pushed = with_world(|world| {
         let mass = world.get::<Rigidbody>(entity)?.mass;
         let push = match kind {
@@ -356,6 +537,21 @@ pub(crate) unsafe extern "C" fn physics_push(
     i32::from(pushed.is_some())
 }
 
+fn push_2d(entity: Entity, kind: i32, amount: Vec3, at: Option<Vec3>) -> Option<()> {
+    let (amount, at) = (amount.truncate(), at.map(Vec3::truncate));
+    let push = match kind {
+        PUSH_2D_FORCE => Push2D::Force(amount, at),
+        PUSH_2D_IMPULSE => Push2D::Impulse(amount, at),
+        PUSH_2D_TORQUE => Push2D::Torque(amount.x),
+        PUSH_2D_ANGULAR_IMPULSE => Push2D::AngularImpulse(amount.x),
+        _ => return None,
+    };
+    with_world(|world| {
+        world.get::<Rigidbody2D>(entity)?;
+        with_scene_2d(world, |world, scene| scene.push(world, entity, push).then_some(()))
+    })
+}
+
 /// The first collider a ray meets within `distance` metres: 1 with the
 /// hit written, 0 when it meets none.
 pub(crate) unsafe extern "C" fn physics_raycast(
@@ -369,8 +565,18 @@ pub(crate) unsafe extern "C" fn physics_raycast(
         return 0;
     }
     let (origin, direction) = unsafe { (Vec3::from_array(*origin), Vec3::from_array(*direction)) };
-    let found = with_world(|world| {
-        with_scene(world, |_, scene| scene.raycast(origin, direction, distance, flags & QUERY_TRIGGERS != 0))
+    let triggers = flags & QUERY_TRIGGERS != 0;
+    let found = with_world(|world| match flags & QUERY_2D != 0 {
+        false => with_scene(world, |_, scene| scene.raycast(origin, direction, distance, triggers)),
+        true => with_scene_2d(world, |_, scene| {
+            let found = scene.raycast(origin.truncate(), direction.truncate(), distance, triggers)?;
+            Some(voxear_physics::scene::SceneHit {
+                obj: found.obj,
+                point: found.point.extend(0.0),
+                normal: found.normal.extend(0.0),
+                distance: found.distance,
+            })
+        }),
     });
     let Some(found) = found else { return 0 };
     unsafe {
@@ -385,8 +591,8 @@ pub(crate) unsafe extern "C" fn physics_raycast(
     1
 }
 
-/// The Objs whose colliders a sphere overlaps, as many as fit; returns how
-/// many there are, which may be more.
+/// The Objs whose colliders a sphere overlaps, or in 2D a circle, as many
+/// as fit; returns how many there are, which may be more.
 pub(crate) unsafe extern "C" fn physics_overlap(
     center: *const [f32; 3],
     radius: f32,
@@ -398,8 +604,12 @@ pub(crate) unsafe extern "C" fn physics_overlap(
         return 0;
     }
     let center = Vec3::from_array(unsafe { *center });
+    let triggers = flags & QUERY_TRIGGERS != 0;
     let found = with_world(|world| {
-        Some(with_scene(world, |_, scene| scene.overlap_sphere(center, radius, flags & QUERY_TRIGGERS != 0)))
+        Some(match flags & QUERY_2D != 0 {
+            false => with_scene(world, |_, scene| scene.overlap_sphere(center, radius, triggers)),
+            true => with_scene_2d(world, |_, scene| scene.overlap_circle(center.truncate(), radius, triggers)),
+        })
     });
     let found = found.unwrap_or_default();
     if !objs.is_null() {

@@ -1,6 +1,7 @@
 //! Scripts and physics: a crate a script kicks sideways falls through a
 //! trigger onto the floor, its behaviour told of each, after a ray and a
-//! sphere asked what is where; and a character walks across the floor.
+//! sphere asked what is where; a character walks across the floor; and in
+//! 2D, a ball kicked up lands on a ledge.
 //! Builds a copy of Hello with these added; skips itself without .NET and
 //! the managed build.
 
@@ -64,6 +65,29 @@ public sealed class Walk : Behaviour
 }
 "#;
 
+const HOP: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+public sealed class Hop : Behaviour
+{
+	protected override void Start()
+	{
+		if (Physics2D.Raycast(new Vector2(20f, 10f), -Vector2.UnitY, out var hit))
+		{
+			Log.Info($"2D ray met {hit.Obj.Name} at {hit.Point.Y:0.0}");
+		}
+		Obj.Rigidbody2D.AddForce(Vector2.UnitY * 2f, ForceMode2D.Impulse);
+	}
+
+	protected override void OnCollisionEnter2D(Collision2D collision)
+	{
+		Log.Info($"2D hit {collision.Obj.Name}, pushed up {collision.Normal.Y:0}");
+	}
+}
+"#;
+
 const OBJS: &str = r#"
 [[obj]]
 id = 30
@@ -91,6 +115,20 @@ name = "Walker"
 position = [-5.0, 0.0, 0.0]
 character = {}
 behaviours = ["Hello.Walk"]
+
+[[obj]]
+id = 34
+name = "Ledge"
+position = [20.0, -0.5, 0.0]
+collider2d = { size = [4.0, 1.0] }
+
+[[obj]]
+id = 35
+name = "Pip"
+position = [20.0, 1.0, 0.0]
+collider2d = { shape = "circle", radius = 0.25 }
+rigidbody2d = { mass = 2.0 }
+behaviours = ["Hello.Hop"]
 "#;
 
 /// A copy of Hello, inside the repository, where its scripts find the
@@ -125,6 +163,7 @@ fn scripts_ask_push_and_hear_physics() {
     let dir = hello_copy();
     std::fs::write(dir.path().join("Scripts/Bump.cs"), BUMP).unwrap();
     std::fs::write(dir.path().join("Scripts/Walk.cs"), WALK).unwrap();
+    std::fs::write(dir.path().join("Scripts/Hop.cs"), HOP).unwrap();
     let scene = dir.path().join("Scenes/Environment.scene");
     let text = std::fs::read_to_string(&scene).unwrap() + OBJS;
     std::fs::write(&scene, text).unwrap();
@@ -147,6 +186,8 @@ fn scripts_ask_push_and_hear_physics() {
     assert!(said("entered Gate") && said("left Gate"), "{lines:?}");
     assert!(said("hit Floor, pushed up 1"), "{lines:?}");
     assert!(said("walker grounded True, at 2.0"), "{lines:?}");
+    assert!(said("2D ray met Pip at 1.3"), "{lines:?}");
+    assert!(said("2D hit Ledge, pushed up 1"), "the ball came down on the ledge: {lines:?}");
 
     // The kick sideways moved the crate along X as it fell.
     let world = &game.engine.world;

@@ -62,9 +62,10 @@ use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Tra
 
 use crate::{
     audio::{AudioListener, AudioSource, audio_source},
-    physics::{CharacterController, Collider, Rigidbody},
     content::{Content, MaterialSource},
     lod_groups::LodGroupData,
+    physics::{CharacterController, Collider, Rigidbody},
+    physics2d::{Collider2D, Rigidbody2D},
     scene_file::{MaterialRef, ObjData, default_material, light_component},
 };
 
@@ -362,6 +363,8 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.collider = instance.collider.or(root.collider);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
     root.character = instance.character.or(root.character);
+    root.collider2d = instance.collider2d.or(root.collider2d);
+    root.rigidbody2d = instance.rigidbody2d.or(root.rigidbody2d);
 }
 
 /// Expanded Objs with their meshes and materials loaded, ready to spawn any
@@ -390,6 +393,8 @@ pub struct TemplateObj {
     pub collider: Option<Collider>,
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
+    pub collider2d: Option<Collider2D>,
+    pub rigidbody2d: Option<Rigidbody2D>,
     /// Its levels by path, bound to entities when spawned.
     pub lod_group: Option<LodGroupData>,
     /// Set on the root of each prefab instance.
@@ -509,6 +514,12 @@ impl Template {
             }
             if let Some(character) = obj.character {
                 world.insert(entity, character);
+            }
+            if let Some(collider) = obj.collider2d {
+                world.insert(entity, collider);
+            }
+            if let Some(body) = obj.rigidbody2d {
+                world.insert(entity, body);
             }
             if obj.audio_listener {
                 world.insert(entity, AudioListener);
@@ -643,6 +654,8 @@ pub(crate) fn resolve_obj(
         collider: data.collider,
         rigidbody: data.rigidbody,
         character: data.character,
+        collider2d: data.collider2d,
+        rigidbody2d: data.rigidbody2d,
         lod_group: data.lod_group.clone(),
         prefab: obj.prefab,
         locks: data.locks.clone(),

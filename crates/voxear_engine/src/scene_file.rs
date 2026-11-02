@@ -31,7 +31,9 @@
 //! hears the game from it (see [`crate::audio`]). `[obj.lod_group]` is a
 //! LOD Group, which shows one of its levels' Objs at a time (see
 //! [`crate::lod_groups`]). `[obj.collider]`, `[obj.rigidbody]` and
-//! `[obj.character]` are its physics (see [`crate::physics`]).
+//! `[obj.character]` are its physics (see [`crate::physics`]), and
+//! `[obj.collider2d]` and `[obj.rigidbody2d]` its 2D physics (see
+//! [`crate::physics2d`]).
 //!
 //! An optional `[sky]` sets the sky colours and `[post]` the
 //! post-processing (see [`PostProcess`]). Like Unity's global volume, the
@@ -54,10 +56,11 @@ use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, Sce
 
 use crate::{
     audio::{AudioListener, AudioSource, AudioSourceData, audio_source_data},
-    physics::{CharacterController, Collider, Rigidbody},
     content::{Content, MaterialData, MaterialSource, linear, srgb},
     engine::{EditBehaviours, Engine},
     lod_groups::LodGroupData,
+    physics::{CharacterController, Collider, Rigidbody},
+    physics2d::{Collider2D, Rigidbody2D},
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabInstance, Template},
 };
 
@@ -153,6 +156,10 @@ pub struct ObjData {
     pub rigidbody: Option<Rigidbody>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<CharacterController>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collider2d: Option<Collider2D>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rigidbody2d: Option<Rigidbody2D>,
     /// Changes to Objs inside a prefab instance, by path (`"2"`, `"3/2"`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, toml::Table>,
@@ -186,6 +193,8 @@ impl ObjData {
             collider: None,
             rigidbody: None,
             character: None,
+            collider2d: None,
+            rigidbody2d: None,
             lod_group: None,
             overrides: BTreeMap::new(),
             locks: BTreeMap::new(),
@@ -522,6 +531,12 @@ fn capture_instance(
     if root.character.is_some() && root.character != prefab_root.character {
         instance.character = root.character;
     }
+    if root.collider2d.is_some() && root.collider2d != prefab_root.collider2d {
+        instance.collider2d = root.collider2d;
+    }
+    if root.rigidbody2d.is_some() && root.rigidbody2d != prefab_root.rigidbody2d {
+        instance.rigidbody2d = root.rigidbody2d;
+    }
 
     for inner in expected.iter().filter(|o| !o.path.is_root()) {
         let Some(&entity) = members.get(&inner.path) else { continue };
@@ -599,6 +614,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(character) = actual.character.filter(|c| Some(*c) != expected.character) {
         put("character", whole(&character, &crate::physics::CharacterController::default())?);
+    }
+    if let Some(collider) = actual.collider2d.filter(|c| Some(*c) != expected.collider2d) {
+        put("collider2d", whole(&collider, &Collider2D::default())?);
+    }
+    if let Some(body) = actual.rigidbody2d.filter(|b| Some(*b) != expected.rigidbody2d) {
+        put("rigidbody2d", whole(&body, &Rigidbody2D::default())?);
     }
     if let Some(lod) = actual.lod_group.as_ref().filter(|l| Some(*l) != expected.lod_group.as_ref()) {
         put("lod_group", lod.whole()?);
@@ -797,6 +818,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.collider = world.get::<Collider>(entity).copied();
     obj.rigidbody = world.get::<Rigidbody>(entity).copied();
     obj.character = world.get::<CharacterController>(entity).copied();
+    obj.collider2d = world.get::<Collider2D>(entity).copied();
+    obj.rigidbody2d = world.get::<Rigidbody2D>(entity).copied();
     obj.lod_group = world.get::<LodGroup>(entity).map(|lod| LodGroupData::of(lod, &|e| file_path(world, ids, e)));
     obj
 }

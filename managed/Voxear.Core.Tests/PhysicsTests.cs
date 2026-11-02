@@ -33,6 +33,19 @@ internal static class PhysicsTests
 	}
 
 	[Test]
+	private static void TwoDimensionalPhysicsReadsAsTheDefaultsToo()
+	{
+		var collider = Obj.None.Collider2D;
+		Check.True(!collider.IsValid && collider.Shape == ColliderShape2D.Box && collider.Size == Vector2.One, "no Collider2D");
+		var body = Obj.None.Rigidbody2D;
+		Check.True(!body.IsValid && !body.FixedRotation && body.Velocity == Vector2.Zero, "no Rigidbody2D");
+		Check.Near(1f, body.GravityScale);
+		body.AddForce(Vector2.UnitX, ForceMode2D.Impulse);
+		Check.True(Physics2D.Gravity == new Vector2(0f, -9.81f), "gravity starts down");
+		Check.True(!Physics2D.Raycast(Vector2.Zero, Vector2.UnitX, out _) && Physics2D.OverlapCircle(Vector2.Zero, 1f).Length == 0, "nothing is found");
+	}
+
+	[Test]
 	private static void PhysicsComponentsAreFieldsOfOtherObjs()
 	{
 		Check.True(typeof(IObjComponent).IsAssignableFrom(typeof(Rigidbody)), "a Rigidbody field holds another Obj's");

@@ -14,6 +14,7 @@ use voxear_engine::{
     EditBehaviours, Game,
     audio::AudioSource,
     physics::{CharacterController, Collider, Rigidbody},
+    physics2d::{Collider2D, Rigidbody2D},
     script_types::{FieldKind, ScriptTypes, nice_name, same_field},
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Destroying, EditorOnly, Name};
@@ -550,6 +551,8 @@ fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "Collider" => world.has::<Collider>(entity),
         "Rigidbody" => world.has::<Rigidbody>(entity),
         "CharacterController" => world.has::<CharacterController>(entity),
+        "Collider2D" => world.has::<Collider2D>(entity),
+        "Rigidbody2D" => world.has::<Rigidbody2D>(entity),
         _ => false,
     }
 }

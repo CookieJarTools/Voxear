@@ -13,6 +13,10 @@ internal struct PhysicsEventData
 	public const uint CollisionExit = 1;
 	public const uint TriggerEnter = 2;
 	public const uint TriggerExit = 3;
+	public const uint CollisionEnter2D = 4;
+	public const uint CollisionExit2D = 5;
+	public const uint TriggerEnter2D = 6;
+	public const uint TriggerExit2D = 7;
 
 	public ulong A;
 	public ulong B;

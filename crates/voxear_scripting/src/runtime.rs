@@ -367,14 +367,13 @@ impl ScriptRuntime {
     /// Tells behaviours of a physics step's contacts and trigger
     /// crossings, as `OnCollisionEnter`, `OnTriggerExit` and the rest,
     /// each Obj in one told of it.
-    pub fn physics_events(&mut self, world: &mut World, events: &[voxear_physics::scene::PhysicsEvent]) {
+    pub fn physics_events(&mut self, world: &mut World, events: &[PhysicsEventData]) {
         if events.is_empty() {
             return;
         }
         let send = self.managed.physics_events.expect("validated at start");
-        let data: Vec<PhysicsEventData> = events.iter().flat_map(PhysicsEventData::both).collect();
         let _scope = WorldScope::enter(world);
-        unsafe { send(data.as_ptr(), data.len() as i32) };
+        unsafe { send(events.as_ptr(), events.len() as i32) };
     }
 
     /// Objs scripts asked to destroy since the last call.

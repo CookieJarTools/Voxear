@@ -11,6 +11,7 @@ use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
     audio::{AudioBus, AudioListener, AudioSource, SoundSpace},
     physics::{CharacterController, Collider, ColliderShape, Rigidbody},
+    physics2d::{Collider2D, ColliderShape2D, Rigidbody2D},
     linear,
     prefab::Locks,
     scene_file::{default_light, default_material},
@@ -42,6 +43,8 @@ pub enum Part {
     Collider,
     Rigidbody,
     Character,
+    Collider2D,
+    Rigidbody2D,
     /// A script, by its full type name.
     Behaviour(String),
 }
@@ -60,6 +63,8 @@ impl Part {
             Part::Collider => "collider".into(),
             Part::Rigidbody => "rigidbody".into(),
             Part::Character => "character".into(),
+            Part::Collider2D => "collider2d".into(),
+            Part::Rigidbody2D => "rigidbody2d".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -75,6 +80,8 @@ impl Part {
             Part::Collider => "Collider",
             Part::Rigidbody => "Rigidbody",
             Part::Character => "Character Controller",
+            Part::Collider2D => "Collider 2D",
+            Part::Rigidbody2D => "Rigidbody 2D",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -89,6 +96,8 @@ impl Part {
             Part::Collider => "box",
             Part::Rigidbody => "move",
             Part::Character => "obj",
+            Part::Collider2D => "box",
+            Part::Rigidbody2D => "move",
             Part::Behaviour(_) => "code",
         }
     }
@@ -153,6 +162,24 @@ pub enum Prop {
     CharacterRadius,
     SlopeLimit,
     StepOffset,
+    /// A Collider 2D's, as a Collider's, in the XY plane.
+    Shape2D,
+    Offset2D,
+    Size2D,
+    Radius2D,
+    Height2D,
+    Trigger2D,
+    Friction2D,
+    Bounciness2D,
+    /// A Rigidbody 2D's mass, whether the game moves it, how hard gravity
+    /// pulls it, its drags, whether it never turns, and whether it sweeps.
+    Mass2D,
+    Kinematic2D,
+    GravityScale,
+    Drag2D,
+    AngularDrag2D,
+    FixedRotation,
+    Continuous2D,
     /// A script field, or a value inside one: its behaviour's type name,
     /// and the path to it from the field.
     Field {
@@ -194,6 +221,21 @@ impl Prop {
                 Part::Rigidbody
             }
             Prop::CharacterHeight | Prop::CharacterRadius | Prop::SlopeLimit | Prop::StepOffset => Part::Character,
+            Prop::Shape2D
+            | Prop::Offset2D
+            | Prop::Size2D
+            | Prop::Radius2D
+            | Prop::Height2D
+            | Prop::Trigger2D
+            | Prop::Friction2D
+            | Prop::Bounciness2D => Part::Collider2D,
+            Prop::Mass2D
+            | Prop::Kinematic2D
+            | Prop::GravityScale
+            | Prop::Drag2D
+            | Prop::AngularDrag2D
+            | Prop::FixedRotation
+            | Prop::Continuous2D => Part::Rigidbody2D,
             Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
         }
     }
@@ -242,6 +284,21 @@ impl Prop {
             Prop::Continuous => "continuous",
             Prop::SlopeLimit => "slope_limit",
             Prop::StepOffset => "step_offset",
+            Prop::Shape2D => "shape",
+            Prop::Offset2D => "offset",
+            Prop::Size2D => "size",
+            Prop::Radius2D => "radius",
+            Prop::Height2D => "height",
+            Prop::Trigger2D => "trigger",
+            Prop::Friction2D => "friction",
+            Prop::Bounciness2D => "bounciness",
+            Prop::Mass2D => "mass",
+            Prop::Kinematic2D => "kinematic",
+            Prop::GravityScale => "gravity_scale",
+            Prop::Drag2D => "drag",
+            Prop::AngularDrag2D => "angular_drag",
+            Prop::FixedRotation => "fixed_rotation",
+            Prop::Continuous2D => "continuous",
             Prop::Field { path, .. } => match path.first() {
                 Some(crate::fields::Step::Key(field)) => return field.clone(),
                 _ => "",
@@ -308,6 +365,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<CharacterController>(entity) {
         parts.push(Part::Character);
     }
+    if world.has::<Collider2D>(entity) {
+        parts.push(Part::Collider2D);
+    }
+    if world.has::<Rigidbody2D>(entity) {
+        parts.push(Part::Rigidbody2D);
+    }
     parts.extend(specs(world, entity).into_iter().map(|spec| Part::Behaviour(spec.type_name)));
     parts
 }
@@ -367,6 +430,26 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             vec![Prop::Mass, Prop::Kinematic, Prop::UseGravity, Prop::Drag, Prop::AngularDrag, Prop::Continuous]
         }
         Part::Character => vec![Prop::CharacterHeight, Prop::CharacterRadius, Prop::SlopeLimit, Prop::StepOffset],
+        Part::Collider2D => {
+            let shape = world.get::<Collider2D>(entity).map_or(ColliderShape2D::Box, |c| c.shape);
+            let mut props = vec![Prop::Shape2D, Prop::Offset2D];
+            props.extend(match shape {
+                ColliderShape2D::Box => vec![Prop::Size2D],
+                ColliderShape2D::Circle => vec![Prop::Radius2D],
+                ColliderShape2D::Capsule => vec![Prop::Radius2D, Prop::Height2D],
+            });
+            props.extend([Prop::Trigger2D, Prop::Friction2D, Prop::Bounciness2D]);
+            props
+        }
+        Part::Rigidbody2D => vec![
+            Prop::Mass2D,
+            Prop::Kinematic2D,
+            Prop::GravityScale,
+            Prop::Drag2D,
+            Prop::AngularDrag2D,
+            Prop::FixedRotation,
+            Prop::Continuous2D,
+        ],
         // Each level's Objs and a place to add another, then where it ends, which the last has only when the
         // group hides past it.
         Part::LodGroup => {
@@ -445,6 +528,21 @@ pub fn label(prop: &Prop) -> String {
         Prop::Continuous => "Continuous",
         Prop::SlopeLimit => "Slope limit",
         Prop::StepOffset => "Step offset",
+        Prop::Shape2D => "Shape",
+        Prop::Offset2D => "Offset",
+        Prop::Size2D => "Size",
+        Prop::Radius2D => "Radius",
+        Prop::Height2D => "Height",
+        Prop::Trigger2D => "Is trigger",
+        Prop::Friction2D => "Friction",
+        Prop::Bounciness2D => "Bounciness",
+        Prop::Mass2D => "Mass",
+        Prop::Kinematic2D => "Is kinematic",
+        Prop::GravityScale => "Gravity scale",
+        Prop::Drag2D => "Drag",
+        Prop::AngularDrag2D => "Angular drag",
+        Prop::FixedRotation => "Fixed rotation",
+        Prop::Continuous2D => "Continuous",
         Prop::Field { path, .. } => {
             return match path.last() {
                 Some(Step::Key(name)) => nice_name(name),
@@ -523,6 +621,12 @@ pub fn add(
         Part::Character => {
             world.insert(entity, CharacterController::default());
         }
+        Part::Collider2D => {
+            world.insert(entity, Collider2D::default());
+        }
+        Part::Rigidbody2D => {
+            world.insert(entity, Rigidbody2D::default());
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -548,6 +652,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Collider => drop(world.remove::<Collider>(entity)),
         Part::Rigidbody => drop(world.remove::<Rigidbody>(entity)),
         Part::Character => drop(world.remove::<CharacterController>(entity)),
+        Part::Collider2D => drop(world.remove::<Collider2D>(entity)),
+        Part::Rigidbody2D => drop(world.remove::<Rigidbody2D>(entity)),
         Part::Behaviour(name) => {
             let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return };
             kept.0.retain(|spec| spec.type_name != *name);
@@ -569,7 +675,28 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     let collider = || world.get::<Collider>(entity);
     let body = || world.get::<Rigidbody>(entity);
     let character = || world.get::<CharacterController>(entity);
+    let collider2d = || world.get::<Collider2D>(entity);
+    let body2d = || world.get::<Rigidbody2D>(entity);
     Some(match prop {
+        Prop::Shape2D => {
+            let shape = collider2d()?.shape;
+            let index = ColliderShape2D::ALL.iter().position(|s| *s == shape).unwrap_or_default();
+            Value::Choice(index, ColliderShape2D::ALL.iter().map(|s| s.label().to_string()).collect())
+        }
+        Prop::Offset2D => Value::Vector(collider2d()?.offset.to_vec()),
+        Prop::Size2D => Value::Vector(collider2d()?.size.to_vec()),
+        Prop::Radius2D => Value::Number(collider2d()?.radius),
+        Prop::Height2D => Value::Number(collider2d()?.height),
+        Prop::Trigger2D => Value::Toggle(collider2d()?.trigger),
+        Prop::Friction2D => Value::Number(collider2d()?.friction),
+        Prop::Bounciness2D => Value::Number(collider2d()?.bounciness),
+        Prop::Mass2D => Value::Number(body2d()?.mass),
+        Prop::Kinematic2D => Value::Toggle(body2d()?.kinematic),
+        Prop::GravityScale => Value::Number(body2d()?.gravity_scale),
+        Prop::Drag2D => Value::Number(body2d()?.drag),
+        Prop::AngularDrag2D => Value::Number(body2d()?.angular_drag),
+        Prop::FixedRotation => Value::Toggle(body2d()?.fixed_rotation),
+        Prop::Continuous2D => Value::Toggle(body2d()?.continuous),
         Prop::ColliderShape => {
             let shape = collider()?.shape;
             let index = ColliderShape::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -1024,7 +1151,31 @@ pub fn is_item(prop: &Prop) -> bool {
 /// switches and choices on the component.
 fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -> bool {
     let three = |values: &[f32]| [0, 1, 2].map(|at| values.get(at).copied().unwrap_or_default());
+    let two = |values: &[f32]| [0, 1].map(|at| values.get(at).copied().unwrap_or_default());
     match (prop, value) {
+        (Prop::Shape2D, Value::Choice(index, _)) => with(world, entity, |c: &mut Collider2D| {
+            c.shape = ColliderShape2D::ALL[index.min(ColliderShape2D::ALL.len() - 1)];
+        }),
+        (Prop::Offset2D, Value::Vector(v)) => with(world, entity, |c: &mut Collider2D| c.offset = two(&v)),
+        (Prop::Size2D, Value::Vector(v)) => {
+            with(world, entity, |c: &mut Collider2D| c.size = two(&v).map(|side| side.max(0.001)))
+        }
+        (Prop::Radius2D, Value::Number(n)) => with(world, entity, |c: &mut Collider2D| c.radius = n.max(0.001)),
+        (Prop::Height2D, Value::Number(n)) => with(world, entity, |c: &mut Collider2D| c.height = n.max(0.001)),
+        (Prop::Trigger2D, Value::Toggle(on)) => with(world, entity, |c: &mut Collider2D| c.trigger = on),
+        (Prop::Friction2D, Value::Number(n)) => with(world, entity, |c: &mut Collider2D| c.friction = n.max(0.0)),
+        (Prop::Bounciness2D, Value::Number(n)) => {
+            with(world, entity, |c: &mut Collider2D| c.bounciness = n.clamp(0.0, 1.0))
+        }
+        (Prop::Mass2D, Value::Number(n)) => with(world, entity, |b: &mut Rigidbody2D| b.mass = n.max(0.001)),
+        (Prop::Kinematic2D, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody2D| b.kinematic = on),
+        (Prop::GravityScale, Value::Number(n)) => with(world, entity, |b: &mut Rigidbody2D| b.gravity_scale = n),
+        (Prop::Drag2D, Value::Number(n)) => with(world, entity, |b: &mut Rigidbody2D| b.drag = n.max(0.0)),
+        (Prop::AngularDrag2D, Value::Number(n)) => {
+            with(world, entity, |b: &mut Rigidbody2D| b.angular_drag = n.max(0.0))
+        }
+        (Prop::FixedRotation, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody2D| b.fixed_rotation = on),
+        (Prop::Continuous2D, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody2D| b.continuous = on),
         (Prop::ColliderShape, Value::Choice(index, _)) => with(world, entity, |c: &mut Collider| {
             c.shape = ColliderShape::ALL[index.min(ColliderShape::ALL.len() - 1)];
         }),

@@ -224,6 +224,26 @@ public readonly struct Obj : IEquatable<Obj>
 		return new CharacterController(this);
 	}
 
+	/// <summary>The Obj's Collider2D, its flat shape for 2D physics. Not valid when it has none.</summary>
+	public Collider2D Collider2D => new Collider2D(this);
+
+	/// <summary>Gives the Obj a Collider2D of a shape, unless it has one, and returns it.</summary>
+	public Collider2D AddCollider2D(ColliderShape2D shape = ColliderShape2D.Box)
+	{
+		NativePhysics.Set(this, NativePhysics.Collider2DAdd, new Vector4((int)shape, 0f, 0f, 0f));
+		return new Collider2D(this);
+	}
+
+	/// <summary>The Obj's Rigidbody2D, which hands it to 2D physics. Not valid when it has none.</summary>
+	public Rigidbody2D Rigidbody2D => new Rigidbody2D(this);
+
+	/// <summary>Gives the Obj a Rigidbody2D, unless it has one, and returns it. It needs a Collider2D too, for a shape.</summary>
+	public Rigidbody2D AddRigidbody2D()
+	{
+		NativePhysics.Set(this, NativePhysics.Body2DAdd, Vector4.Zero);
+		return new Rigidbody2D(this);
+	}
+
 	/// <summary>The Obj's Audio Source, which plays a sound from it. Not valid when it has none.</summary>
 	public AudioSource AudioSource => new AudioSource(this);
 

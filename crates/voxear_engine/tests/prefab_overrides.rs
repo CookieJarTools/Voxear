@@ -82,7 +82,7 @@ fn an_instances_changes_are_listed_reverted_and_applied_to_its_prefab() {
         .unwrap();
     engine.world.get_mut::<Transform>(bulb).unwrap().position.y = 1.5;
     let color = ValuePath::new(&["light", "color"]);
-    assert_eq!(prefab_overrides::overrides(&engine.world, &mut content, red), [color.clone()]);
+    assert_eq!(prefab_overrides::overrides(&engine.world, &mut content, red), std::slice::from_ref(&color));
     assert_eq!(prefab_overrides::overrides(&engine.world, &mut content, bulb), [ValuePath::new(&["position"])]);
     let all = prefab_overrides::instance_overrides(&engine.world, &mut content, red);
     assert_eq!(all.len(), 2, "the root and its bulb: {all:?}");

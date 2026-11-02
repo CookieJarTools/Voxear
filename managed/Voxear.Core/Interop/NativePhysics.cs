@@ -47,14 +47,47 @@ internal static unsafe class NativePhysics
 
 	public const int Gravity = 60;
 
+	public const int Collider2DHas = 100;
+	public const int Collider2DAdd = 101;
+	public const int Collider2DRemove = 102;
+	public const int Collider2DShape = 103;
+	public const int Collider2DOffset = 104;
+	public const int Collider2DSize = 105;
+	public const int Collider2DRadius = 106;
+	public const int Collider2DHeight = 107;
+	public const int Collider2DTrigger = 108;
+	public const int Collider2DFriction = 109;
+	public const int Collider2DBounciness = 110;
+
+	public const int Body2DHas = 120;
+	public const int Body2DAdd = 121;
+	public const int Body2DRemove = 122;
+	public const int Body2DMass = 123;
+	public const int Body2DKinematic = 124;
+	public const int Body2DGravityScale = 125;
+	public const int Body2DDrag = 126;
+	public const int Body2DAngularDrag = 127;
+	public const int Body2DFixedRotation = 128;
+	public const int Body2DContinuous = 129;
+	public const int Body2DVelocity = 130;
+	public const int Body2DAngularVelocity = 131;
+	public const int Body2DAwake = 132;
+
+	public const int Gravity2D = 160;
+
 	public const int PushForce = 0;
 	public const int PushAcceleration = 1;
 	public const int PushImpulse = 2;
 	public const int PushVelocityChange = 3;
 	public const int PushTorque = 4;
 	public const int PushAngularImpulse = 5;
+	public const int Push2DForce = 10;
+	public const int Push2DImpulse = 11;
+	public const int Push2DTorque = 12;
+	public const int Push2DAngularImpulse = 13;
 
 	public const int QueryTriggers = 1;
+	public const int Query2D = 2;
 
 	/// <summary>A value of an Obj's physics, or false when the Obj has no such component.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)
@@ -86,6 +119,11 @@ internal static unsafe class NativePhysics
 		return Get(obj, what, out var value) ? new Vector3(value.X, value.Y, value.Z) : missing;
 	}
 
+	public static Vector2 Vector2(Obj obj, int what, Vector2 missing)
+	{
+		return Get(obj, what, out var value) ? new Vector2(value.X, value.Y) : missing;
+	}
+
 	public static bool Push(Obj obj, int kind, Vector3 amount)
 	{
 		return Native.IsConnected && Native.Api->PhysicsPush(obj.Id, kind, (float*)&amount, null) == 1;
@@ -98,8 +136,18 @@ internal static unsafe class NativePhysics
 
 	public static bool Raycast(Vector3 origin, Vector3 direction, float distance, bool triggers, out RaycastHitData hit)
 	{
+		return Raycast(origin, direction, distance, triggers ? QueryTriggers : 0, out hit);
+	}
+
+	public static bool Raycast2D(Vector2 origin, Vector2 direction, float distance, bool triggers, out RaycastHitData hit)
+	{
+		var flags = Query2D | (triggers ? QueryTriggers : 0);
+		return Raycast(new Vector3(origin, 0f), new Vector3(direction, 0f), distance, flags, out hit);
+	}
+
+	private static bool Raycast(Vector3 origin, Vector3 direction, float distance, int flags, out RaycastHitData hit)
+	{
 		var found = default(RaycastHitData);
-		var flags = triggers ? QueryTriggers : 0;
 		var met = Native.IsConnected
 			&& Native.Api->PhysicsRaycast((float*)&origin, (float*)&direction, distance, flags, &found) == 1;
 		hit = found;
@@ -109,12 +157,22 @@ internal static unsafe class NativePhysics
 	/// <summary>The Objs whose colliders a sphere overlaps, each once.</summary>
 	public static Obj[] Overlap(Vector3 center, float radius, bool triggers)
 	{
+		return Overlap(center, radius, triggers ? QueryTriggers : 0);
+	}
+
+	/// <summary>The Objs whose 2D colliders a circle overlaps, each once.</summary>
+	public static Obj[] Overlap2D(Vector2 center, float radius, bool triggers)
+	{
+		return Overlap(new Vector3(center, 0f), radius, Query2D | (triggers ? QueryTriggers : 0));
+	}
+
+	private static Obj[] Overlap(Vector3 center, float radius, int flags)
+	{
 		if (!Native.IsConnected)
 		{
 			return Array.Empty<Obj>();
 		}
 
-		var flags = triggers ? QueryTriggers : 0;
 		Span<ulong> some = stackalloc ulong[32];
 		int count;
 		fixed (ulong* written = some)

@@ -589,7 +589,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     (`Move`, `SimpleMove`, grounded), `Physics.Raycast`, `Linecast`, `OverlapSphere` and gravity, and
     `OnCollisionEnter`/`Exit` and `OnTriggerEnter`/`Exit` straight after each step
   - [ ] mesh and convex colliders from models, joints as components, and layers that choose what collides
-  - [ ] Box2D v3 for 2D games
+  - [x] 2D physics on Box2D v3 (through `boxdd-sys`): Collider 2D (box, circle, capsule, trigger) and Rigidbody 2D
+    in scenes, prefabs, the Inspector and the Scene view, and `Collider2D`, `Rigidbody2D`, `Physics2D` and the
+    `On…2D` messages in C#
 - **Built-in vehicle physics**, on Jolt's vehicle constraints *(later, once the physics above is in)*:
   - wheeled vehicles (cars, trucks, motorbikes) with suspension, tyre friction curves, engine and gearbox, and
     differentials

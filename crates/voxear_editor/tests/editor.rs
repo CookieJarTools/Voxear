@@ -2767,7 +2767,7 @@ fn add_component_is_a_search_with_folders() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let labels = |ui: &Ui| picker_rows(ui).into_iter().map(|(label, _)| label).collect::<Vec<_>>();
-    assert_eq!(labels(&editor.ui), ["Rendering", "Audio", "Physics", "Scripts", "Effects"], "folders first, as in Unity");
+    assert_eq!(labels(&editor.ui), ["Rendering", "Audio", "Physics", "Physics 2D", "Scripts", "Effects"], "folders first, as in Unity");
     shot(&mut renderer, "add-component.png");
 
     // A folder opens on a click, its scripts past the namespace they share, with a back button.
@@ -2846,6 +2846,20 @@ fn physics_components_show_what_their_shape_uses() {
     }
     let world = &editor.game.engine.world;
     assert!(!world.has::<Collider>(ground) && !world.has::<Rigidbody>(ground) && !world.has::<CharacterController>(ground));
+
+    // The 2D ones have a folder of their own, and a circle shows its radius.
+    for name in ["Collider 2D", "Rigidbody 2D"] {
+        let add = first_with(&editor.ui, editor.ui.root(), "add-component").unwrap();
+        scroll_to(&mut editor, &mut renderer, add);
+        add_component(&mut editor, &mut renderer, name);
+    }
+    let world = &editor.game.engine.world;
+    assert!(world.has::<voxear_engine::physics2d::Collider2D>(ground));
+    assert!(prop_row(&editor.ui, "Gravity scale").is_some() && prop_row(&editor.ui, "Size").is_some());
+    let dropdown = shape(&editor.ui);
+    choose(&mut editor, &mut renderer, dropdown, 1);
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "Radius").is_some() && prop_row(&editor.ui, "Size").is_none());
 }
 
 #[test]

@@ -121,6 +121,8 @@ impl Editor {
     /// Shows the selection in every Inspector not locked.
     pub(super) fn show_selection(&mut self, entity: Option<Entity>) {
         self.selection = entity;
+        // The active Obj is not among the others, and with nothing active nothing else is selected.
+        self.others.retain(|&other| entity.is_some() && Some(other) != entity);
         let playing = self.is_playing();
         let (ui, game) = (&mut self.ui, &self.game);
         let extras = self.extra_inspectors.iter_mut().map(|extra| &mut extra.inspector);

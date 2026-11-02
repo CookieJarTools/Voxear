@@ -345,6 +345,20 @@ impl Hierarchy {
         Some(item.map(Entity::from_bits))
     }
 
+    /// Every Obj selected, in the tree's order; a scene's header is none.
+    pub fn selected_objs(&self, ui: &Ui) -> Vec<Entity> {
+        ui.selected_items(self.tree).into_iter().filter(|&item| !is_header(item)).map(Entity::from_bits).collect()
+    }
+
+    /// Selects these Objs, opening their scenes and the Objs they are in.
+    pub fn select_many(&mut self, ui: &mut Ui, world: &World, entities: &[Entity]) {
+        for &entity in entities {
+            self.open_to(ui, world, entity);
+        }
+        let items: Vec<u64> = entities.iter().map(|entity| entity.to_bits()).collect();
+        ui.select_items(self.tree, &items);
+    }
+
     /// Selects the Obj, opening its scene and the Objs it is in.
     pub fn select(&mut self, ui: &mut Ui, world: &World, entity: Entity) {
         self.open_to(ui, world, entity);

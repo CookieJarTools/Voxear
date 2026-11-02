@@ -47,6 +47,8 @@ Click an Obj in the Scene or the Hierarchy to select it. Then pick a tool, at th
 
 Hold **Ctrl** while you drag to snap: moves go in steps of the size shown in the Scene view (0.25 m to begin with), turns in steps of 15°, and scaling in tenths. **Pivot** and **Global**, beside the tools, choose where the handles sit and which way they point.
 
+To select several Objs, hold **Ctrl** and click each in the Scene view or the Hierarchy; Ctrl and a click on one already selected takes it out again, and **Shift** and a click in the Hierarchy selects every Obj between. You can also drag a box over the Scene view from an empty spot: everything it touches is selected, added to what was with Ctrl or Shift held. The handles sit on the Obj you selected first, and the rest move, turn and scale with it, all as one step to undo. **Delete** and **Ctrl+D** act on them all, and the Scene view outlines each one while there are several.
+
 ## Undo and saving
 
 - **Ctrl+Z** undoes and **Ctrl+Y** redoes. A whole drag is one step.

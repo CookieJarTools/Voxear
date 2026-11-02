@@ -107,9 +107,27 @@ impl Editor {
     /// and the Inspectors, when it is not the one there already.
     fn hear_hierarchy_selection(&mut self) {
         let Some(selected) = self.hierarchy.selection_changed(&self.ui) else { return };
-        if selected != self.selected() {
+        let had_others = !self.others.is_empty();
+        if self.hear_hierarchy_many() {
+            return;
+        }
+        if selected != self.selected() || had_others {
             self.select_in_other_hierarchies(selected);
             self.show_selection(selected);
+        }
+    }
+
+    /// Shows several Objs selected in every Hierarchy.
+    pub(super) fn select_many_in_hierarchies(&mut self, entities: &[Entity]) {
+        self.hierarchy.select_many(&mut self.ui, &self.game.engine.world, entities);
+        self.select_many_in_other_hierarchies(entities);
+    }
+
+    /// Shows several Objs selected in every Hierarchy but the editor's `hierarchy`.
+    pub(super) fn select_many_in_other_hierarchies(&mut self, entities: &[Entity]) {
+        let (ui, world) = (&mut self.ui, &self.game.engine.world);
+        for extra in &mut self.extra_hierarchies {
+            extra.hierarchy.select_many(ui, world, entities);
         }
     }
 
@@ -123,7 +141,7 @@ impl Editor {
     }
 
     /// Shows the selection in every Hierarchy but the editor's `hierarchy`.
-    fn select_in_other_hierarchies(&mut self, selected: Option<Entity>) {
+    pub(super) fn select_in_other_hierarchies(&mut self, selected: Option<Entity>) {
         let (ui, world) = (&mut self.ui, &self.game.engine.world);
         for extra in &mut self.extra_hierarchies {
             match selected {

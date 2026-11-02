@@ -1642,6 +1642,13 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   camera was and how it was shaded (`Memory::scene_views`), so after a restart, or on going back to a layout that
   names one, it opens again in its place and as it was left. A layout that leaves one out, Reset Layout included,
   takes it away for good, as closing it does (`windows::arrange`).
+- **Several Objs selected** *(implemented)* (`editor/selection.rs`): Ctrl and a click in the Scene view or the
+  Hierarchy adds an Obj or takes it out, Shift adds (or in the Hierarchy selects the rows between), and a box
+  dragged over the Scene view from a press on nothing selects what its bounds on screen touch. The first selected
+  is the active Obj, which the Inspector shows and the handles sit on; the others follow what a drag does to it,
+  its change in the world applied to each about where the active Obj stands, and the drag is one `Edit::Group`
+  to undo. Delete and Duplicate act on the outermost of them, and each one's bounds are drawn while there are
+  several.
 - **Scene view tools** (`scene_tools`), as Unity's. A click selects the nearest Obj under the pointer: a ray
   against each mesh's bounds in the Obj's own space (`Renderer::mesh_bounds`; cooked meshes keep only a sphere,
   so they use the box around it), or a light or camera close to where it shows; a click on nothing clears the

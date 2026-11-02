@@ -23,6 +23,7 @@ mod scene_gizmos;
 mod scene_views;
 mod scenes;
 mod script_actions;
+mod selection;
 mod script_windows;
 mod tooltip;
 mod windows;
@@ -275,8 +276,14 @@ pub struct Editor {
     picker_picks: Vec<(PickFor, Pick)>,
     /// A material shown on an Obj while it is dragged over it from the Project.
     material_preview: Option<material_drops::MaterialPreview>,
-    /// The Obj selected, which every Inspector not locked shows.
+    /// The Obj selected, which every Inspector not locked shows: the active
+    /// one when several are (see `selection`).
     selection: Option<Entity>,
+    /// The other Objs selected with it, a box being dragged over the Scene
+    /// view, and where the others were as the handles began a drag.
+    others: Vec<Entity>,
+    marquee: Option<selection::Marquee>,
+    followers: Option<selection::Followers>,
     /// The Inspectors opened from a window's menu, after the first.
     extra_inspectors: Vec<inspectors::ExtraInspector>,
     /// The Hierarchies and Project panels opened from a window's menu, past the first.
@@ -505,6 +512,9 @@ impl Editor {
             picker_picks: Vec::new(),
             material_preview: None,
             selection: None,
+            others: Vec::new(),
+            marquee: None,
+            followers: None,
             extra_inspectors: Vec::new(),
             extra_hierarchies: Vec::new(),
             extra_projects: Vec::new(),
@@ -536,6 +546,7 @@ impl Editor {
 
     /// Selects an Obj, as a click in the Hierarchy does, or nothing.
     pub fn select(&mut self, entity: Option<Entity>) {
+        self.others.clear();
         // An Obj made this frame is in the Hierarchies once they have looked again.
         self.refresh_hierarchies();
         self.select_in_hierarchies(entity);
@@ -1148,6 +1159,7 @@ impl Editor {
             let types = self.inspector.types();
             if let Some((entity, handle)) = tool {
                 self.tools.begin(world, renderer, &camera, entity, handle, point);
+                self.begin_following();
             } else if let Some(entity) =
                 editing.filter(|&entity| self.field_handles.begin(world, types, &camera, entity, point))
             {
@@ -1161,6 +1173,7 @@ impl Editor {
             && let Some(point) = point
         {
             self.tools.drag_to(&mut self.game.engine.world, &camera, point, self.control);
+            self.follow_active();
         }
         if self.field_handles.is_dragging()
             && let Some(point) = point
@@ -1188,7 +1201,10 @@ impl Editor {
             self.script_handles.hover(&camera, over_field.filter(|_| !self.field_handles.is_hovered()));
             let markers = self.markers(self.scene.show_gizmos);
             self.hovered_obj = over.and_then(|point| pick(world, renderer, &camera, point, markers));
-            self.click_to_select(renderer, &camera, point);
+            // Letting go of a box is not also a click.
+            if !self.update_marquee(renderer, &camera, point) {
+                self.click_to_select(renderer, &camera, point);
+            }
         }
         // Gizmos go under the handles, which are drawn last.
         let world = &self.game.engine.world;
@@ -1198,6 +1214,7 @@ impl Editor {
         }
         shapes.extend(self.field_handles.shapes(world, self.inspector.types(), &camera, editing));
         shapes.extend(self.script_handles.shapes(&camera));
+        shapes.extend(self.selection_shapes(renderer, &camera));
         shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
         self.ui.set_shapes(self.scene.handles, shapes);
     }
@@ -1215,7 +1232,12 @@ impl Editor {
         let gizmo = self.scene.show_gizmos.then(|| self.gizmo_under(camera, point)).flatten();
         let markers = self.markers(self.scene.show_gizmos);
         let picked = gizmo.or_else(|| pick(&self.game.engine.world, renderer, camera, point, markers));
-        self.select(picked);
+        // Shift adds what was clicked to the selection, and Ctrl adds or takes it out.
+        match (picked, self.control || self.shift) {
+            (Some(entity), true) => self.add_to_selection(entity, self.control),
+            (None, true) => {}
+            (picked, false) => self.select(picked),
+        }
     }
 
     /// Lets go of a handle; the drag is one step to undo.
@@ -1224,10 +1246,16 @@ impl Editor {
             return self.end_field_drag(entity);
         }
         let Some((entity, start)) = self.tools.end() else { return };
+        // The other selected Objs that followed it, as one step with it.
+        let mut edits = self.end_following();
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
         let before = ObjState { transform: start, ..after.clone() };
-        if before != after && !self.is_playing() {
-            self.history.record_step(Edit::Changed { entity, before, after });
+        if before != after {
+            edits.insert(0, Edit::Changed { entity, before, after });
+        }
+        if !edits.is_empty() && !self.is_playing() {
+            let edit = if edits.len() == 1 { edits.remove(0) } else { Edit::Group(edits) };
+            self.history.record_step(edit);
             self.unsaved = true;
         }
     }
@@ -1541,11 +1569,13 @@ impl Editor {
     fn run(&mut self, command: Command, renderer: &mut Renderer) {
         let selected = self.selected();
         match command {
+            Command::Duplicate if self.duplicate_many(renderer) => {}
             Command::Duplicate => {
                 if let Some(entity) = selected {
                     self.obj_action(ObjAction::Duplicate(entity), renderer);
                 }
             }
+            Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {
                     self.obj_action(ObjAction::Delete(entity), renderer);

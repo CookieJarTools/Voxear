@@ -298,6 +298,19 @@ impl Ui {
         true
     }
 
+    /// Selects these items of a tree, those among the open rows, and scrolls
+    /// to the first. Returns how many were selected.
+    pub fn select_items(&mut self, tree: NodeId, items: &[u64]) -> usize {
+        let Some(state) = self.list_state(tree) else { return 0 };
+        let Source::Tree(tree_state) = &state.source else { return 0 };
+        let rows: Vec<usize> = items.iter().filter_map(|item| tree_state.open.iter().position(|o| o.0 == *item)).collect();
+        self.set_selection(tree, &rows);
+        if let Some(&first) = rows.first() {
+            self.scroll_to_index(tree, first);
+        }
+        rows.len()
+    }
+
     /// Scrolls a tree to one item, if it is among the open rows, leaving
     /// the selection as it is.
     pub fn scroll_to_item(&mut self, tree: NodeId, item: u64) -> bool {

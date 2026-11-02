@@ -36,7 +36,7 @@ use std::{
 
 pub use mixer::{Bus, MAX_VOICES, Mixer, VoiceId, VoiceParams};
 pub use sound::{Sound, SoundInfo, probe};
-pub use spatial::{Distance, Listener, gains, pan};
+pub use spatial::{Distance, Listener, SPEED_OF_SOUND, doppler, gains, pan};
 use voxear_core::math::Vec3;
 
 use crate::{
@@ -218,6 +218,17 @@ impl Audio {
 
     pub fn set_distance(&mut self, voice: VoiceId, distance: Distance) {
         self.change(voice, Command::Distance(voice, distance));
+    }
+
+    /// How fast a 3D voice moves, in metres a second, for the Doppler effect.
+    pub fn set_velocity(&mut self, voice: VoiceId, velocity: Vec3) {
+        self.change(voice, Command::Velocity(voice, velocity));
+    }
+
+    /// How strongly the Doppler effect changes a 3D voice's pitch: 1 as in
+    /// the world, 0 not at all.
+    pub fn set_doppler(&mut self, voice: VoiceId, level: f32) {
+        self.change(voice, Command::Doppler(voice, level));
     }
 
     /// Whether a voice is playing: started, not paused, and not yet at its

@@ -172,6 +172,10 @@ pub struct AudioSource {
     /// ...and silent from this many.
     pub max_distance: f32,
     pub bus: AudioBus,
+    /// How strongly a 3D source's pitch rises as it and the listener come
+    /// together and falls as they part, as Unity's Doppler Level: 1 as in
+    /// the world, 0 not at all.
+    pub doppler: f32,
 }
 impl Component for AudioSource {}
 
@@ -194,6 +198,8 @@ impl AudioSource {
             looping: self.looping,
             bus: self.bus.bus(),
             spatial: (self.space == SoundSpace::ThreeD).then(|| (at, self.distance())),
+            doppler: self.doppler,
+            ..VoiceParams::default()
         }
     }
 }
@@ -227,6 +233,8 @@ pub struct AudioSourceData {
     pub max_distance: f32,
     #[serde(default, skip_serializing_if = "is_default")]
     pub bus: AudioBus,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub doppler: f32,
 }
 
 impl Default for AudioSourceData {
@@ -254,6 +262,7 @@ impl AudioSourceData {
             put("min_distance", f64::from(data.min_distance).into());
             put("max_distance", f64::from(data.max_distance).into());
             put("bus", toml::Value::try_from(data.bus).expect("a name"));
+            put("doppler", f64::from(data.doppler).into());
             table
         };
         let mut changes = table(self);
@@ -277,6 +286,7 @@ impl From<AudioSourceData> for AudioSource {
             min_distance: data.min_distance.max(0.0),
             max_distance: data.max_distance.max(data.min_distance),
             bus: data.bus,
+            doppler: data.doppler.clamp(0.0, 5.0),
         }
     }
 }
@@ -302,6 +312,7 @@ pub fn audio_source_data(content: &Content, source: &AudioSource) -> AudioSource
         min_distance: source.min_distance,
         max_distance: source.max_distance,
         bus: source.bus,
+        doppler: source.doppler,
     }
 }
 
@@ -381,6 +392,8 @@ struct Playback {
     held: bool,
     /// The settings the voice last had.
     applied: AudioSource,
+    /// Where its Obj was last frame, to tell how fast it moves.
+    was: Option<Vec3>,
 }
 
 /// What a script asks of an Audio Source.
@@ -398,6 +411,8 @@ pub struct GameAudio {
     sources: HashMap<Entity, Playback>,
     /// The game ran last frame, rather than being edited.
     running: bool,
+    /// Where the listener was last frame, to tell how fast it moves.
+    listener_was: Option<Vec3>,
     /// The editor's preview of a sound asset, while it plays, and the
     /// sound's project path.
     preview: VoiceId,
@@ -412,22 +427,33 @@ impl Default for GameAudio {
 
 impl GameAudio {
     pub fn new(audio: Audio) -> Self {
-        Self { audio, sources: HashMap::new(), running: false, preview: 0, preview_path: String::new() }
+        Self {
+            audio,
+            sources: HashMap::new(),
+            running: false,
+            listener_was: None,
+            preview: 0,
+            preview_path: String::new(),
+        }
     }
 
     /// Once a frame, after the game's update: hears which voices ended, and
     /// unless the game is only being edited, brings every Audio Source's
-    /// voice in line with it and moves the listener.
-    pub fn update(&mut self, world: &World, content: &mut Content, running: bool) {
+    /// voice in line with it and moves the listener. `dt` is the frame's
+    /// time, by which how far each moved since the last tells its speed.
+    pub fn update(&mut self, world: &World, content: &mut Content, running: bool, dt: f32) {
         self.audio.update();
         if !running {
             if std::mem::take(&mut self.running) {
                 self.stop_game();
             }
+            self.listener_was = None;
             return;
         }
         self.running = true;
-        if let Some(listener) = listener(world) {
+        if let Some(mut listener) = listener(world) {
+            listener.velocity = velocity(self.listener_was, listener.position, dt);
+            self.listener_was = Some(listener.position);
             self.audio.set_listener(listener);
         }
         let found: Vec<(Entity, AudioSource, Vec3)> = world
@@ -443,7 +469,11 @@ impl GameAudio {
         self.sources.retain(|entity, _| alive.contains(entity));
         for (entity, source, at) in found {
             let playback = *self.sources.entry(entity).or_insert_with(|| Playback::new(&source, source.play_on_start));
-            let playback = self.bring_in_line(content, playback, &source, at);
+            let mut playback = self.bring_in_line(content, playback, &source, at);
+            if source.space == SoundSpace::ThreeD && playback.voice != 0 {
+                self.audio.set_velocity(playback.voice, velocity(playback.was, at, dt));
+            }
+            playback.was = Some(at);
             self.sources.insert(entity, playback);
         }
     }
@@ -535,6 +565,7 @@ impl GameAudio {
             looping: false,
             bus: shot.bus.bus(),
             spatial: shot.at,
+            ..VoiceParams::default()
         };
         Ok(self.audio.play(&loaded, params))
     }
@@ -654,6 +685,7 @@ impl GameAudio {
                 SourceValue::MaxDistance => source.max_distance = value.max(source.min_distance),
                 SourceValue::Bus => source.bus = if value != 0.0 { AudioBus::Music } else { AudioBus::Effects },
                 SourceValue::PlayOnStart => source.play_on_start = value != 0.0,
+                SourceValue::Doppler => source.doppler = value.clamp(0.0, 5.0),
                 _ => {}
             }
         }
@@ -667,6 +699,7 @@ impl GameAudio {
             SourceValue::MaxDistance => source.max_distance,
             SourceValue::Bus => flag(source.bus == AudioBus::Music),
             SourceValue::PlayOnStart => flag(source.play_on_start),
+            SourceValue::Doppler => source.doppler,
             _ => 0.0,
         })
     }
@@ -721,7 +754,7 @@ impl GameAudio {
 impl Playback {
     fn new(source: &AudioSource, playing: bool) -> Self {
         let state = if playing { State::Playing } else { State::Stopped };
-        Self { voice: 0, state, restart: false, held: false, applied: *source }
+        Self { voice: 0, state, restart: false, held: false, applied: *source, was: None }
     }
 }
 
@@ -763,6 +796,18 @@ fn apply(audio: &mut Audio, voice: VoiceId, was: &AudioSource, now: &AudioSource
     if was.distance() != now.distance() {
         audio.set_distance(voice, now.distance());
     }
+    if was.doppler != now.doppler {
+        audio.set_doppler(voice, now.doppler);
+    }
+}
+
+/// How fast something moved, in metres a second, from where it was last
+/// frame to where it is: still on its first frame.
+fn velocity(was: Option<Vec3>, now: Vec3, dt: f32) -> Vec3 {
+    match was {
+        Some(was) if dt > 0.0 => (now - was) / dt,
+        _ => Vec3::ZERO,
+    }
 }
 
 fn position(local: &Transform, placed: Option<&WorldTransform>) -> Vec3 {
@@ -776,9 +821,9 @@ pub fn listener(world: &World) -> Option<Listener> {
     let placed = |local: &Transform, placed: Option<&WorldTransform>| match placed {
         Some(placed) => {
             let (_, rotation, position) = placed.0.to_scale_rotation_translation();
-            Listener { position, rotation }
+            Listener { position, rotation, ..Listener::default() }
         }
-        None => Listener { position: local.position, rotation: local.rotation },
+        None => Listener { position: local.position, rotation: local.rotation, ..Listener::default() },
     };
     let listeners = world
         .query_ref::<(Entity, &AudioListener, &Transform, Option<&WorldTransform>)>()

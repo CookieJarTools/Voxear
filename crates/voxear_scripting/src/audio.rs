@@ -90,6 +90,7 @@ pub enum SourceValue {
     MaxDistance,
     Bus,
     PlayOnStart,
+    Doppler,
 }
 
 impl SourceValue {
@@ -110,6 +111,7 @@ impl SourceValue {
             12 => Self::MaxDistance,
             13 => Self::Bus,
             14 => Self::PlayOnStart,
+            15 => Self::Doppler,
             _ => return None,
         })
     }

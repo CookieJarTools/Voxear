@@ -31,6 +31,7 @@ position = [10.0, 0.0, 0.0]
 sound = "Sounds/Tone.wav"
 loop = true
 max_distance = 40.0
+doppler = 0.5
 
 [[obj]]
 id = 3
@@ -101,7 +102,7 @@ fn sources_play_on_start_from_where_their_objs_are() {
     let (waterfall, chime) = (obj(&game, "Waterfall"), obj(&game, "Chime"));
     let source = *game.engine.world.get::<AudioSource>(waterfall).unwrap();
     assert!(source.sound.is_some() && source.looping && source.play_on_start);
-    assert_eq!((source.space, source.max_distance), (SoundSpace::ThreeD, 40.0));
+    assert_eq!((source.space, source.max_distance, source.doppler), (SoundSpace::ThreeD, 40.0, 0.5));
     let world = &game.engine.world;
     assert!(game.audio.is_source_playing(world, waterfall), "playing on start from the moment it is in the game");
     assert!(!game.audio.is_source_playing(world, chime));
@@ -200,6 +201,7 @@ fn scenes_save_audio_sources_and_listeners_back() {
     assert!(saved.audio_listener);
     let text = toml::to_string(&scene).unwrap();
     assert!(text.contains("loop = true") && !text.contains("volume"), "only what differs: {text}");
+    assert!(text.contains("doppler = 0.5"), "{text}");
     assert!(text.contains("mode = \"2d\"") && text.contains("bus = \"music\""), "{text}");
 
     // It reads back the same.

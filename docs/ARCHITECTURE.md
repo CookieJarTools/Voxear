@@ -2506,7 +2506,8 @@ silence at a max distance and pan with equal power from the listener; voices tha
 pitch without clicks, resampled to the device's rate; and long sounds decoded a block ahead on a streaming thread.
 The output follows the system's default device: when that device goes away or another becomes the default, as when
 headphones are unplugged, the output thread opens the default again, and with none it mixes quietly until one turns
-up. Effects, snapshots, ducking and Doppler are next.)*
+up; and Doppler on 3D voices, from each source's and the listener's speed frame to frame, with a level per source.
+Effects, snapshots and ducking are next.)*
 
 **Sounds** are assets: WAV, OGG Vorbis, FLAC and MP3, decoded by Symphonia. Their `.meta` says whether one loads whole
 or streams (by default by its length) and its volume. An **Audio Source** component plays one from its Obj, and the

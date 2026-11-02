@@ -29,6 +29,7 @@ internal static unsafe class NativeAudio
 	public const int SourceMaxDistance = 12;
 	public const int SourceBus = 13;
 	public const int SourcePlayOnStart = 14;
+	public const int SourceDoppler = 15;
 
 	public const int BusMaster = 0;
 	public const int BusEffects = 1;

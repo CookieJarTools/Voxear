@@ -52,11 +52,24 @@ pub struct VoiceParams {
     /// Where a 3D voice is and how it fades with distance; `None` for a 2D
     /// one, which plays as the sound is, the same wherever the listener is.
     pub spatial: Option<(Vec3, Distance)>,
+    /// How fast a 3D voice moves, in metres a second, and how strongly the
+    /// Doppler effect changes its pitch from that and the listener's: 1 as
+    /// in the world, 0 not at all.
+    pub velocity: Vec3,
+    pub doppler: f32,
 }
 
 impl Default for VoiceParams {
     fn default() -> Self {
-        Self { volume: 1.0, pitch: 1.0, looping: false, bus: Bus::Effects, spatial: None }
+        Self {
+            volume: 1.0,
+            pitch: 1.0,
+            looping: false,
+            bus: Bus::Effects,
+            spatial: None,
+            velocity: Vec3::ZERO,
+            doppler: 1.0,
+        }
     }
 }
 
@@ -74,6 +87,8 @@ pub(crate) enum Command {
     Looping(VoiceId, bool),
     Position(VoiceId, Vec3),
     Distance(VoiceId, Distance),
+    Velocity(VoiceId, Vec3),
+    Doppler(VoiceId, f32),
     Bus(Bus, f32),
     Master(f32),
     Listener(Listener),
@@ -217,6 +232,8 @@ impl Mixer {
                         *fade = distance;
                     }
                 }),
+                Command::Velocity(id, velocity) => self.with(id, |voice| voice.params.velocity = velocity),
+                Command::Doppler(id, level) => self.with(id, |voice| voice.params.doppler = level.max(0.0)),
                 Command::Bus(Bus::Music, volume) => self.music = volume,
                 Command::Bus(Bus::Effects, volume) => self.effects = volume,
                 Command::Bus(Bus::Preview, _) => {}
@@ -289,7 +306,7 @@ impl Mixer {
     fn play(&mut self, index: usize, frames: usize) -> Played {
         let target = self.target(&self.voices[index]);
         let held = self.held(&self.voices[index]);
-        let output_rate = f64::from(self.sample_rate);
+        let (output_rate, listener) = (f64::from(self.sample_rate), self.listener);
         let voice = &mut self.voices[index];
         let from = voice.gains.unwrap_or(target);
         let silent = from == [0.0; 2] && target == [0.0; 2];
@@ -302,8 +319,12 @@ impl Mixer {
             voice.gains = Some(target);
             return Played::Going;
         }
-        let step = f64::from(voice.rate) / output_rate
-            * f64::from(voice.params.pitch.clamp(VoiceParams::MIN_PITCH, VoiceParams::MAX_PITCH));
+        let shift = match voice.params.spatial {
+            Some((at, _)) => spatial::doppler(&listener, at, voice.params.velocity, voice.params.doppler),
+            None => 1.0,
+        };
+        let pitch = (voice.params.pitch * shift).clamp(VoiceParams::MIN_PITCH, VoiceParams::MAX_PITCH);
+        let step = f64::from(voice.rate) / output_rate * f64::from(pitch);
         let spatial = voice.params.spatial.is_some();
         let per_frame = [(target[0] - from[0]) / frames.max(1) as f32, (target[1] - from[1]) / frames.max(1) as f32];
         let mut gains = from;

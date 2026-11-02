@@ -590,7 +590,8 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] sound moves to the new default output device when the old one goes away
   - [x] C#: `Audio.Play(sound)` and `Audio.Play(sound, at:)`, `Sound`, `AudioSource` and the bus volumes; builds pack
     the sounds they use
-  - [ ] effects, snapshots and ducking on the buses, and Doppler
+  - [x] Doppler on 3D sources, from their and the listener's speed, with a Doppler Level per Audio Source
+  - [ ] effects, snapshots and ducking on the buses
   - [ ] Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
     acceleration structures exist.
   - [ ] the audio debugger: active voices in the viewport

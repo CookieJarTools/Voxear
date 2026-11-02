@@ -44,6 +44,7 @@ You can also make one with the Hierarchy's **+** button and **Audio Source**, or
 | Bus | Effects or Music: which volume setting it follows (see below) |
 | Mode | 3D or 2D (see below) |
 | Min distance, Max distance | How far a 3D sound carries, in metres (see below) |
+| Doppler level | How much a 3D sound's pitch changes as it moves towards or away from the listener (see below) |
 
 Audio Sources only play while the game runs. In the editor, **Pause** holds every sound the game is playing, and **Stop** silences them.
 
@@ -56,6 +57,8 @@ A **3D** sound comes from where its Obj is. It gets quieter as the listener move
 - At **Max distance**, it has faded to nothing.
 
 Give a loud thing a larger min distance: a waterfall might be at full volume within 5 metres and carry 60, and a ticking clock within half a metre and carry 8. A sound out of reach keeps playing silently, so it is in the right place when the listener comes back.
+
+A 3D sound moving towards the listener sounds higher, and one moving away sounds lower, as a passing car's engine drops in pitch as it goes by. This is the Doppler effect, and it comes from how fast the sound's Obj and the listener move. **Doppler level** sets how strong it is: 1 is as in the world, 0 turns it off, and higher makes it stronger, which can help a slow game feel fast.
 
 A **2D** sound plays the same wherever the listener is. Use 2D for music, for interface sounds, and for anything the player should hear from everywhere.
 

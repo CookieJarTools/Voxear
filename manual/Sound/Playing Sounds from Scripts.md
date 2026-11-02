@@ -83,7 +83,7 @@ public sealed class Radio : Behaviour
 | `Stop()` | Stops the sound; the next `Play` starts from the beginning |
 | `IsPlaying` | Whether it is playing |
 | `Sound`, `Volume`, `Pitch`, `Loop`, `PlayOnStart` | The settings the Inspector shows |
-| `Is3D`, `MinDistance`, `MaxDistance`, `Bus` | The same |
+| `Is3D`, `MinDistance`, `MaxDistance`, `DopplerLevel`, `Bus` | The same |
 
 `Play`, `Pause` and `Stop` happen at the end of the frame, together with everything else that changes the sound. `IsPlaying` changes straight away, so you can check it on the next line.
 

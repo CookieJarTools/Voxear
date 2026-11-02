@@ -155,6 +155,27 @@ fn a_looping_voice_starts_again_at_its_end() {
 }
 
 #[test]
+fn a_voice_coming_towards_the_listener_plays_faster() {
+    let (mut audio, mut mixer) = Audio::offline(RATE);
+    let ahead = Some((Vec3::new(0.0, 0.0, 10.0), Distance { min: 20.0, max: 50.0 }));
+    let closing = Vec3::new(0.0, 0.0, -343.0 / 3.0);
+    let params = VoiceParams { spatial: ahead, velocity: closing, ..VoiceParams::default() };
+    let coming = audio.play(&level(1.0, 400, RATE), params);
+    let still = audio.play(&level(1.0, 400, RATE), VoiceParams { spatial: ahead, ..VoiceParams::default() });
+    // At 343 / (343 - 114.3), half as fast again, its 400 frames last about 267.
+    render(&mut mixer, 300);
+    audio.update();
+    assert!(!audio.exists(coming) && audio.exists(still), "the one coming closer ended first");
+
+    // With its Doppler level at 0, it plays as it is.
+    let off = VoiceParams { spatial: ahead, velocity: closing, doppler: 0.0, ..VoiceParams::default() };
+    let level_off = audio.play(&level(1.0, 400, RATE), off);
+    render(&mut mixer, 300);
+    audio.update();
+    assert!(audio.exists(level_off));
+}
+
+#[test]
 fn sounds_at_another_rate_or_pitch_are_resampled() {
     let (mut audio, mut mixer) = Audio::offline(RATE);
     // 100 frames at half the output's rate last 200 output frames.
@@ -188,7 +209,7 @@ fn a_3d_voice_pans_and_fades_from_the_listener() {
     assert!(close(out[0], 0.0) && close(out[1], fade), "on the right, faded: {:?}", &out[..2]);
 
     // The listener turns to face it: now it is ahead, on both sides.
-    audio.set_listener(Listener { position: Vec3::ZERO, rotation: Quat::from_rotation_y(90f32.to_radians()) });
+    audio.set_listener(Listener { rotation: Quat::from_rotation_y(90f32.to_radians()), ..Listener::default() });
     render(&mut mixer, 10);
     let out = render(&mut mixer, 10);
     assert!(close(out[0], out[1]) && out[0] > 0.0, "{:?}", &out[..2]);

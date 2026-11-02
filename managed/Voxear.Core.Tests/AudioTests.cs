@@ -35,6 +35,7 @@ internal static class AudioTests
 		Check.True(!source.IsValid && !source.IsPlaying, "no source on None");
 		Check.True(source.Sound == Sound.None, "and no sound");
 		Check.Near(1f, source.Pitch);
+		Check.Near(1f, source.DopplerLevel);
 		Check.True(source.Bus == AudioBus.Effects && !source.Loop, "the defaults it reads as");
 		source.Play();
 	}

@@ -131,6 +131,8 @@ pub enum Prop {
     SoundSpace,
     MinDistance,
     MaxDistance,
+    /// How strongly a 3D source's pitch follows its and the listener's speed.
+    DopplerLevel,
     SoundBus,
     /// What a LOD Group's levels are measured by.
     LodMeasure,
@@ -220,6 +222,7 @@ impl Prop {
             | Prop::SoundSpace
             | Prop::MinDistance
             | Prop::MaxDistance
+            | Prop::DopplerLevel
             | Prop::SoundBus => Part::Audio,
             Prop::LodMeasure | Prop::LodCull | Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => {
                 Part::LodGroup
@@ -287,6 +290,7 @@ impl Prop {
             Prop::SoundSpace => "mode",
             Prop::MinDistance => "min_distance",
             Prop::MaxDistance => "max_distance",
+            Prop::DopplerLevel => "doppler",
             Prop::SoundBus => "bus",
             Prop::LodMeasure => "measure",
             Prop::LodCull => "cull",
@@ -441,7 +445,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
             props.push(Prop::SoundSpace);
             if world.get::<AudioSource>(entity).is_none_or(|source| source.space == SoundSpace::ThreeD) {
-                props.extend([Prop::MinDistance, Prop::MaxDistance]);
+                props.extend([Prop::MinDistance, Prop::MaxDistance, Prop::DopplerLevel]);
             }
             props
         }
@@ -552,6 +556,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::SoundSpace => "Mode",
         Prop::MinDistance => "Min distance",
         Prop::MaxDistance => "Max distance",
+        Prop::DopplerLevel => "Doppler level",
         Prop::SoundBus => "Bus",
         Prop::LodMeasure => "Switch by",
         Prop::LodCull => "Culled",
@@ -847,6 +852,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         }
         Prop::MinDistance => Value::Number(audio()?.min_distance),
         Prop::MaxDistance => Value::Number(audio()?.max_distance),
+        Prop::DopplerLevel => Value::Number(audio()?.doppler),
         Prop::SoundBus => {
             let index = usize::from(audio()?.bus == AudioBus::Music);
             Value::Choice(index, AUDIO_BUSES.iter().map(|k| k.to_string()).collect())
@@ -1383,6 +1389,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::MaxDistance, Value::Number(n)) => {
             with(world, entity, |a: &mut AudioSource| a.max_distance = n.max(a.min_distance))
+        }
+        (Prop::DopplerLevel, Value::Number(n)) => {
+            with(world, entity, |a: &mut AudioSource| a.doppler = n.clamp(0.0, 5.0))
         }
         (Prop::SoundBus, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
             a.bus = if index == 1 { AudioBus::Music } else { AudioBus::Effects };

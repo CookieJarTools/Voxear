@@ -90,6 +90,16 @@ public readonly struct AudioSource : IEquatable<AudioSource>, IObjComponent
 		set { Set(NativeAudio.SourceMaxDistance, value); }
 	}
 
+	/// <summary>
+	/// How strongly a 3D source's pitch rises as it and the listener come together and falls as they part, as a
+	/// passing car's engine drops: 1 as in the world, 0 not at all, up to 5.
+	/// </summary>
+	public float DopplerLevel
+	{
+		get { return Get(NativeAudio.SourceDoppler, 1f); }
+		set { Set(NativeAudio.SourceDoppler, value); }
+	}
+
 	/// <summary>Whether it plays through the effects bus or the music bus.</summary>
 	public AudioBus Bus
 	{

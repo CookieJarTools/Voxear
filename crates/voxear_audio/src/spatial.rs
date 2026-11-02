@@ -1,9 +1,17 @@
 //! Where a 3D voice is heard from: how much quieter its distance makes it,
-//! and how far to the listener's left or right it sits.
+//! how far to the listener's left or right it sits, and how much higher or
+//! lower it sounds as it and the listener come together or move apart.
 
 use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_4};
 
 use voxear_core::math::{Quat, Vec3};
+
+/// How fast sound goes through air, in metres a second.
+pub const SPEED_OF_SOUND: f32 = 343.0;
+
+/// The most and least the Doppler effect changes a voice's pitch by, so a
+/// teleport, which moves faster than sound, is not heard as one.
+const DOPPLER_RANGE: (f32, f32) = (0.5, 2.0);
 
 /// Who hears the game: the camera, or an Obj with an Audio Listener. Like
 /// every Obj it faces its +Z, with +X to its right.
@@ -11,12 +19,32 @@ use voxear_core::math::{Quat, Vec3};
 pub struct Listener {
     pub position: Vec3,
     pub rotation: Quat,
+    /// How fast it moves, in metres a second, for the Doppler effect.
+    pub velocity: Vec3,
 }
 
 impl Default for Listener {
     fn default() -> Self {
-        Self { position: Vec3::ZERO, rotation: Quat::IDENTITY }
+        Self { position: Vec3::ZERO, rotation: Quat::IDENTITY, velocity: Vec3::ZERO }
     }
+}
+
+/// How much faster a 3D voice at `at`, moving at `velocity`, plays from the
+/// Doppler effect: above 1 as it and the listener come together, below as
+/// they part, as a passing car's engine drops in pitch. `level` scales it,
+/// 0 turning it off, as Unity's Doppler Level does.
+pub fn doppler(listener: &Listener, at: Vec3, velocity: Vec3, level: f32) -> f32 {
+    let offset = at - listener.position;
+    let length = offset.length();
+    if level <= 0.0 || length < 1e-4 {
+        return 1.0;
+    }
+    // Towards the voice: the listener's speed along it closes the gap, the voice's opens it.
+    let toward = offset / length;
+    let listener_closing = listener.velocity.dot(toward) * level;
+    let voice_opening = velocity.dot(toward) * level;
+    let shift = (SPEED_OF_SOUND + listener_closing) / (SPEED_OF_SOUND + voice_opening).max(1.0);
+    shift.clamp(DOPPLER_RANGE.0, DOPPLER_RANGE.1)
 }
 
 /// How a 3D voice fades with distance: at full volume out to `min`, then
@@ -124,6 +152,22 @@ mod tests {
         // And one at -Z is on its right.
         let [left, right] = pan(&turned, Vec3::new(0.0, 0.0, -10.0), &distance);
         assert!(right > 0.99 && left < 0.01, "{left} {right}");
+    }
+
+    #[test]
+    fn a_voice_coming_closer_sounds_higher_and_one_going_away_lower() {
+        let listener = Listener::default();
+        let ahead = Vec3::new(0.0, 0.0, 20.0);
+        assert_eq!(doppler(&listener, ahead, Vec3::ZERO, 1.0), 1.0, "still");
+        let coming = doppler(&listener, ahead, Vec3::new(0.0, 0.0, -30.0), 1.0);
+        let going = doppler(&listener, ahead, Vec3::new(0.0, 0.0, 30.0), 1.0);
+        assert!(close(coming, 343.0 / 313.0) && close(going, 343.0 / 373.0), "{coming} {going}");
+        let passing = doppler(&listener, ahead, Vec3::new(30.0, 0.0, 0.0), 1.0);
+        assert!(close(passing, 1.0), "across, neither nearer nor further: {passing}");
+        let walking = Listener { velocity: Vec3::new(0.0, 0.0, 30.0), ..listener };
+        assert!(doppler(&walking, ahead, Vec3::ZERO, 1.0) > 1.0, "the listener coming closer too");
+        assert_eq!(doppler(&listener, ahead, Vec3::new(0.0, 0.0, -30.0), 0.0), 1.0, "level 0 turns it off");
+        assert_eq!(doppler(&listener, ahead, Vec3::new(0.0, 0.0, -9000.0), 1.0), 2.0, "a teleport is held in");
     }
 
     #[test]

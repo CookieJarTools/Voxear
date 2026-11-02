@@ -474,7 +474,7 @@ impl Game {
         {
             profile_scope!("Audio");
             let running = !self.engine.is_edit_mode();
-            self.audio.update(&self.engine.world, &mut self.content, running);
+            self.audio.update(&self.engine.world, &mut self.content, running, delta);
         }
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);

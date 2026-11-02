@@ -1,7 +1,6 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal class TestLighthouse : Behaviour
 {
-	internal class TestLighthouse : Behaviour
-	{
-		public int Floors = 3;
-	}
+	public int Floors = 3;
 }

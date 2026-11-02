@@ -1,8 +1,7 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal struct TestStats
 {
-	internal struct TestStats
-	{
-		public int Strength;
-		public float Speed;
-	}
+	public int Strength;
+	public float Speed;
 }

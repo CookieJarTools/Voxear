@@ -1,191 +1,190 @@
 using Voxear.Interop;
 using Voxear.Scripting;
 
-namespace Voxear
+namespace Voxear;
+
+/// <summary>
+/// Script logic attached to an Obj, like a MonoBehaviour. The engine guarantees the order of the
+/// lifecycle: every behaviour gets Awake, then OnEnable, then Start, and everything created together
+/// finishes one phase before any of it begins the next. No Start runs while anything is still
+/// waiting for its Awake or OnEnable.
+/// </summary>
+public abstract class Behaviour
 {
 	/// <summary>
-	/// Script logic attached to an Obj, like a MonoBehaviour. The engine guarantees the order of the
-	/// lifecycle: every behaviour gets Awake, then OnEnable, then Start, and everything created together
-	/// finishes one phase before any of it begins the next. No Start runs while anything is still
-	/// waiting for its Awake or OnEnable.
+	/// The Obj this behaviour is attached to. It is returned by reference so that Obj.Position = value
+	/// works the way transform.position does in Unity.
 	/// </summary>
-	public abstract class Behaviour
+	public ref readonly Obj Obj => ref obj;
+
+	/// <summary>Takes effect between phases: OnDisable, or OnEnable followed by Start the first time.</summary>
+	public bool Enabled
 	{
-		/// <summary>
-		/// The Obj this behaviour is attached to. It is returned by reference so that Obj.Position = value
-		/// works the way transform.position does in Unity.
-		/// </summary>
-		public ref readonly Obj Obj => ref obj;
+		get { return enabled; }
+		set { SetEnabled(value); }
+	}
 
-		/// <summary>Takes effect between phases: OnDisable, or OnEnable followed by Start the first time.</summary>
-		public bool Enabled
+	/// <summary>Whether it is destroyed, or will be at the end of the frame.</summary>
+	public bool IsDestroyed { get; private set; }
+
+	internal uint Handle => handle;
+
+	/// <summary>The type's ExecutionOrder, which orders behaviours within a phase.</summary>
+	internal int Order { get; private set; }
+
+	/// <summary>Field values from the scene or prefab, as JSON, waiting to be set before Awake.</summary>
+	internal string? PendingFields { get; set; }
+
+	private Obj obj;
+	private uint handle;
+	private bool enabled = true;
+
+	/// <summary>Destroys this behaviour at the end of the frame, after OnDisable and OnDestroy.</summary>
+	public void Destroy()
+	{
+		if (IsDestroyed)
 		{
-			get { return enabled; }
-			set { SetEnabled(value); }
+			return;
 		}
 
-		/// <summary>Whether it is destroyed, or will be at the end of the frame.</summary>
-		public bool IsDestroyed { get; private set; }
+		IsDestroyed = true;
+		Native.Destroy(handle);
+	}
 
-		internal uint Handle => handle;
+	/// <summary>
+	/// Called once, first, after the fields the scene or prefab gives it are set. Everything created with it has its
+	/// Awake before any of it gets OnEnable, so this is the place to set up the behaviour itself.
+	/// </summary>
+	protected virtual void Awake()
+	{
+	}
 
-		/// <summary>The type's ExecutionOrder, which orders behaviours within a phase.</summary>
-		internal int Order { get; private set; }
+	/// <summary>Called after Awake, and again each time the behaviour is enabled.</summary>
+	protected virtual void OnEnable()
+	{
+	}
 
-		/// <summary>Field values from the scene or prefab, as JSON, waiting to be set before Awake.</summary>
-		internal string? PendingFields { get; set; }
+	/// <summary>
+	/// Called once, before the first Update. Everything created with it has had Awake and OnEnable by then, so other
+	/// behaviours are ready to be asked for what they hold.
+	/// </summary>
+	protected virtual void Start()
+	{
+	}
 
-		private Obj obj;
-		private uint handle;
-		private bool enabled = true;
+	/// <summary>Called at each fixed step, with physics, before Update. A frame can have none of them, or several.</summary>
+	protected virtual void FixedUpdate()
+	{
+	}
 
-		/// <summary>Destroys this behaviour at the end of the frame, after OnDisable and OnDestroy.</summary>
-		public void Destroy()
+	/// <summary>Called once a frame.</summary>
+	protected virtual void Update()
+	{
+	}
+
+	/// <summary>Called once a frame, after every behaviour's Update: for a camera that follows what Update moved.</summary>
+	protected virtual void LateUpdate()
+	{
+	}
+
+	/// <summary>Called when the behaviour is disabled, and when it is destroyed, before OnDestroy.</summary>
+	protected virtual void OnDisable()
+	{
+	}
+
+	/// <summary>Called once, last, at the end of the frame the behaviour is destroyed in.</summary>
+	protected virtual void OnDestroy()
+	{
+	}
+
+	/// <summary>
+	/// Draws the behaviour's gizmos with Draw, each frame, in the editor's Scene views: in edit mode, from the values
+	/// the scene gives it, and while the game plays. They show while the Scene view's Gizmos button is on, and never
+	/// in the Game view or a build. One callback in place of Unity's two: gizmo.IsSelected says whether to show more.
+	/// <code>
+	/// protected override void DrawGizmos(Gizmo gizmo)
+	/// {
+	///     Draw.WireSphere(Obj.WorldPosition, Range, gizmo.IsSelected ? Color.Yellow : Color.Grey);
+	/// }
+	/// </code>
+	/// </summary>
+	protected virtual void DrawGizmos(Gizmo gizmo)
+	{
+	}
+
+	internal void RunGizmos(Gizmo gizmo)
+	{
+		DrawGizmos(gizmo);
+	}
+
+	/// <summary>Whether a behaviour type draws gizmos: it, or a class between it and Behaviour, overrides DrawGizmos.</summary>
+	internal static bool DrawsGizmos(System.Type type)
+	{
+		const System.Reflection.BindingFlags Instance =
+			System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+		var method = type.GetMethod(nameof(DrawGizmos), Instance, [typeof(Gizmo)]);
+		return method != null && method.DeclaringType != typeof(Behaviour);
+	}
+
+	internal void Attach(Obj obj, uint handle, int order)
+	{
+		this.obj = obj;
+		this.handle = handle;
+		Order = order;
+	}
+
+	/// <summary>Takes the place of the same behaviour from the scripts' last build: its Obj, handle and state.</summary>
+	internal void TakeOver(Behaviour previous, int order)
+	{
+		obj = previous.obj;
+		handle = previous.handle;
+		enabled = previous.enabled;
+		IsDestroyed = previous.IsDestroyed;
+		PendingFields = previous.PendingFields;
+		Order = order;
+	}
+
+	internal void ApplyFields()
+	{
+		if (PendingFields == null)
 		{
-			if (IsDestroyed)
-			{
-				return;
-			}
-
-			IsDestroyed = true;
-			Native.Destroy(handle);
+			return;
 		}
 
-		/// <summary>
-		/// Called once, first, after the fields the scene or prefab gives it are set. Everything created with it has its
-		/// Awake before any of it gets OnEnable, so this is the place to set up the behaviour itself.
-		/// </summary>
-		protected virtual void Awake()
+		var fields = PendingFields;
+		PendingFields = null;
+		BehaviourFields.Apply(this, fields);
+	}
+
+	internal void Detach()
+	{
+		obj = Obj.None;
+		IsDestroyed = true;
+	}
+
+	internal void Dispatch(Phase phase)
+	{
+		switch (phase)
 		{
+			case Phase.Awake: Awake(); break;
+			case Phase.OnEnable: OnEnable(); break;
+			case Phase.Start: Start(); break;
+			case Phase.FixedUpdate: FixedUpdate(); break;
+			case Phase.Update: Update(); break;
+			case Phase.LateUpdate: LateUpdate(); break;
+			case Phase.OnDisable: OnDisable(); break;
+			case Phase.OnDestroy: OnDestroy(); break;
+		}
+	}
+
+	private void SetEnabled(bool value)
+	{
+		if (enabled == value || IsDestroyed)
+		{
+			return;
 		}
 
-		/// <summary>Called after Awake, and again each time the behaviour is enabled.</summary>
-		protected virtual void OnEnable()
-		{
-		}
-
-		/// <summary>
-		/// Called once, before the first Update. Everything created with it has had Awake and OnEnable by then, so other
-		/// behaviours are ready to be asked for what they hold.
-		/// </summary>
-		protected virtual void Start()
-		{
-		}
-
-		/// <summary>Called at each fixed step, with physics, before Update. A frame can have none of them, or several.</summary>
-		protected virtual void FixedUpdate()
-		{
-		}
-
-		/// <summary>Called once a frame.</summary>
-		protected virtual void Update()
-		{
-		}
-
-		/// <summary>Called once a frame, after every behaviour's Update: for a camera that follows what Update moved.</summary>
-		protected virtual void LateUpdate()
-		{
-		}
-
-		/// <summary>Called when the behaviour is disabled, and when it is destroyed, before OnDestroy.</summary>
-		protected virtual void OnDisable()
-		{
-		}
-
-		/// <summary>Called once, last, at the end of the frame the behaviour is destroyed in.</summary>
-		protected virtual void OnDestroy()
-		{
-		}
-
-		/// <summary>
-		/// Draws the behaviour's gizmos with Draw, each frame, in the editor's Scene views: in edit mode, from the values
-		/// the scene gives it, and while the game plays. They show while the Scene view's Gizmos button is on, and never
-		/// in the Game view or a build. One callback in place of Unity's two: gizmo.IsSelected says whether to show more.
-		/// <code>
-		/// protected override void DrawGizmos(Gizmo gizmo)
-		/// {
-		///     Draw.WireSphere(Obj.WorldPosition, Range, gizmo.IsSelected ? Color.Yellow : Color.Grey);
-		/// }
-		/// </code>
-		/// </summary>
-		protected virtual void DrawGizmos(Gizmo gizmo)
-		{
-		}
-
-		internal void RunGizmos(Gizmo gizmo)
-		{
-			DrawGizmos(gizmo);
-		}
-
-		/// <summary>Whether a behaviour type draws gizmos: it, or a class between it and Behaviour, overrides DrawGizmos.</summary>
-		internal static bool DrawsGizmos(System.Type type)
-		{
-			const System.Reflection.BindingFlags Instance =
-				System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
-			var method = type.GetMethod(nameof(DrawGizmos), Instance, [typeof(Gizmo)]);
-			return method != null && method.DeclaringType != typeof(Behaviour);
-		}
-
-		internal void Attach(Obj obj, uint handle, int order)
-		{
-			this.obj = obj;
-			this.handle = handle;
-			Order = order;
-		}
-
-		/// <summary>Takes the place of the same behaviour from the scripts' last build: its Obj, handle and state.</summary>
-		internal void TakeOver(Behaviour previous, int order)
-		{
-			obj = previous.obj;
-			handle = previous.handle;
-			enabled = previous.enabled;
-			IsDestroyed = previous.IsDestroyed;
-			PendingFields = previous.PendingFields;
-			Order = order;
-		}
-
-		internal void ApplyFields()
-		{
-			if (PendingFields == null)
-			{
-				return;
-			}
-
-			var fields = PendingFields;
-			PendingFields = null;
-			BehaviourFields.Apply(this, fields);
-		}
-
-		internal void Detach()
-		{
-			obj = Obj.None;
-			IsDestroyed = true;
-		}
-
-		internal void Dispatch(Phase phase)
-		{
-			switch (phase)
-			{
-				case Phase.Awake: Awake(); break;
-				case Phase.OnEnable: OnEnable(); break;
-				case Phase.Start: Start(); break;
-				case Phase.FixedUpdate: FixedUpdate(); break;
-				case Phase.Update: Update(); break;
-				case Phase.LateUpdate: LateUpdate(); break;
-				case Phase.OnDisable: OnDisable(); break;
-				case Phase.OnDestroy: OnDestroy(); break;
-			}
-		}
-
-		private void SetEnabled(bool value)
-		{
-			if (enabled == value || IsDestroyed)
-			{
-				return;
-			}
-
-			enabled = value;
-			Native.SetEnabled(handle, value);
-		}
+		enabled = value;
+		Native.SetEnabled(handle, value);
 	}
 }

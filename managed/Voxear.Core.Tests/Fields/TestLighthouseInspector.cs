@@ -1,9 +1,8 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal sealed class TestLighthouseInspector : BehaviourInspector<TestLighthouse>
 {
-	internal sealed class TestLighthouseInspector : BehaviourInspector<TestLighthouse>
+	protected override void Draw(TestLighthouse behaviour, UiDocument ui)
 	{
-		protected override void Draw(TestLighthouse behaviour, UiDocument ui)
-		{
-		}
 	}
 }

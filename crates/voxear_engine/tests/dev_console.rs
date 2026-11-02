@@ -11,20 +11,19 @@ use voxear_scene::{Name, Transform};
 
 const CHEATS: &str = r#"using Voxear;
 
-namespace Hello
-{
-	public static class Cheats
-	{
-		[ConsoleVariable("How much faster the spinners turn")]
-		public static float SpinBoost = 1f;
+namespace Hello;
 
-		[Command("Raise")]
-		public static string Raise(string name, float height)
-		{
-			var obj = Obj.Find(name);
-			obj.Position = obj.Position with { Y = height };
-			return $"{name} is at {height}";
-		}
+public static class Cheats
+{
+	[ConsoleVariable("How much faster the spinners turn")]
+	public static float SpinBoost = 1f;
+
+	[Command("Raise")]
+	public static string Raise(string name, float height)
+	{
+		var obj = Obj.Find(name);
+		obj.Position = obj.Position with { Y = height };
+		return $"{name} is at {height}";
 	}
 }
 "#;

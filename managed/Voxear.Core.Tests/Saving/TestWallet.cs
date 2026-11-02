@@ -1,10 +1,9 @@
 using System.Collections.Generic;
 
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal sealed class TestWallet
 {
-	internal sealed class TestWallet
-	{
-		public TestMoney Cash;
-		public List<TestMoney> History = new List<TestMoney>();
-	}
+	public TestMoney Cash;
+	public List<TestMoney> History = new List<TestMoney>();
 }

@@ -1,9 +1,8 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal enum TestDifficulty
 {
-	internal enum TestDifficulty
-	{
-		Easy,
-		Normal,
-		Hard,
-	}
+	Easy,
+	Normal,
+	Hard,
 }

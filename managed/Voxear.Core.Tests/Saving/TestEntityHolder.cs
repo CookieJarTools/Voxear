@@ -1,8 +1,7 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal sealed class TestEntityHolder
 {
-	internal sealed class TestEntityHolder
-	{
-		public int Count;
-		public Entity Thing;
-	}
+	public int Count;
+	public Entity Thing;
 }

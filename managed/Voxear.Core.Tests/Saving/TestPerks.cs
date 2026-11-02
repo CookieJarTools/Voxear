@@ -1,13 +1,12 @@
 using System;
 
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+[Flags]
+internal enum TestPerks
 {
-	[Flags]
-	internal enum TestPerks
-	{
-		None = 0,
-		Swift = 1,
-		Sturdy = 2,
-		Lucky = 4,
-	}
+	None = 0,
+	Swift = 1,
+	Sturdy = 2,
+	Lucky = 4,
 }

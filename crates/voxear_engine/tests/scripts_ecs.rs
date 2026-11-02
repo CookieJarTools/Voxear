@@ -17,120 +17,119 @@ use voxear_scene::{Name, Transform};
 const SYSTEMS: &str = r##"using System.Numerics;
 using Voxear;
 
-namespace EcsCheck
+namespace EcsCheck;
+
+public struct Spot : IComponent { public Vector3 Position; }
+public struct Drift : IComponent { public Vector3 Velocity; }
+public struct Spin : IComponent { public float Speed; public Obj Leader; }
+public struct Gone : IComponent { }
+public struct Tally : IComponent { public int Frames; public int ChangedSpots; public int ChangedDrifts; }
+
+[UpdateIn(Stage.First)]
+public sealed class Setup : SystemBase
 {
-	public struct Spot : IComponent { public Vector3 Position; }
-	public struct Drift : IComponent { public Vector3 Velocity; }
-	public struct Spin : IComponent { public float Speed; public Obj Leader; }
-	public struct Gone : IComponent { }
-	public struct Tally : IComponent { public int Frames; public int ChangedSpots; public int ChangedDrifts; }
-
-	[UpdateIn(Stage.First)]
-	public sealed class Setup : SystemBase
+	protected override void OnCreate()
 	{
-		protected override void OnCreate()
+		for (var i = 0; i < 1000; i++)
 		{
-			for (var i = 0; i < 1000; i++)
-			{
-				Entity.Create().Add(new Spot { Position = new Vector3(i, 0f, 0f) }).Add(new Drift { Velocity = Vector3.UnitY });
-			}
-			Entity.Create().Add<Tally>();
-			Obj.Find("Spinner A").Add(new Spin { Speed = 1f });
+			Entity.Create().Add(new Spot { Position = new Vector3(i, 0f, 0f) }).Add(new Drift { Velocity = Vector3.UnitY });
 		}
-
-		protected override void Update()
-		{
-		}
+		Entity.Create().Add<Tally>();
+		Obj.Find("Spinner A").Add(new Spin { Speed = 1f });
 	}
 
-	public sealed class DriftSystem : SystemBase
+	protected override void Update()
 	{
-		protected override void Update()
+	}
+}
+
+public sealed class DriftSystem : SystemBase
+{
+	protected override void Update()
+	{
+		foreach (var chunk in Query<Spot, Drift>())
 		{
-			foreach (var chunk in Query<Spot, Drift>())
+			var spots = chunk.Write<Spot>();
+			var drifts = chunk.Read<Drift>();
+			for (var i = 0; i < chunk.Count; i++)
 			{
-				var spots = chunk.Write<Spot>();
-				var drifts = chunk.Read<Drift>();
-				for (var i = 0; i < chunk.Count; i++)
+				spots[i].Position += drifts[i].Velocity;
+			}
+		}
+	}
+}
+
+// After DriftSystem, by name: destroys every entity at an even X and tags the rest, once each.
+[ExecutionOrder(10)]
+public sealed class CullSystem : SystemBase
+{
+	protected override void Update()
+	{
+		foreach (var chunk in Query<Spot>().Without<Gone>())
+		{
+			var spots = chunk.Read<Spot>();
+			var entities = chunk.Entities;
+			for (var i = 0; i < chunk.Count; i++)
+			{
+				if ((int)spots[i].Position.X % 2 == 0)
 				{
-					spots[i].Position += drifts[i].Velocity;
+					entities[i].Destroy();
+				}
+				else
+				{
+					entities[i].Add<Gone>();
 				}
 			}
 		}
 	}
+}
 
-	// After DriftSystem, by name: destroys every entity at an even X and tags the rest, once each.
-	[ExecutionOrder(10)]
-	public sealed class CullSystem : SystemBase
+[UpdateIn(Stage.PostUpdate)]
+public sealed class SpinSystem : SystemBase
+{
+	protected override void Update()
 	{
-		protected override void Update()
+		Query<Transform, Spin>().ForEach((ref Transform transform, ref Spin spin) => transform.Scale = new Vector3(2f));
+	}
+}
+
+// Debug draw from C#, each frame.
+public sealed class DrawSystem : SystemBase
+{
+	protected override void Update()
+	{
+		Debug.Line(Vector3.Zero, Vector3.UnitY, Color.Red);
+		Debug.Sphere(Vector3.One, 0.5f, Color.Hex("#00ff00"), 0f, true);
+		Debug.Text(Vector3.UnitY, "spun", Color.Yellow);
+		using (Draw.Width(4f))
+		using (Draw.InGame())
 		{
-			foreach (var chunk in Query<Spot>().Without<Gone>())
-			{
-				var spots = chunk.Read<Spot>();
-				var entities = chunk.Entities;
-				for (var i = 0; i < chunk.Count; i++)
-				{
-					if ((int)spots[i].Position.X % 2 == 0)
-					{
-						entities[i].Destroy();
-					}
-					else
-					{
-						entities[i].Add<Gone>();
-					}
-				}
-			}
+			Draw.Line(Vector3.Zero, Vector3.UnitX, Color.Blue);
 		}
 	}
+}
 
-	[UpdateIn(Stage.PostUpdate)]
-	public sealed class SpinSystem : SystemBase
+[UpdateIn(Stage.Last)]
+public sealed class TallySystem : SystemBase
+{
+	protected override void Update()
 	{
-		protected override void Update()
+		var spots = Query<Spot>().Changed<Spot>().Count();
+		var drifts = Query<Drift>().Changed<Drift>().Count();
+		var frames = 0;
+		foreach (var chunk in Query<Tally>())
 		{
-			Query<Transform, Spin>().ForEach((ref Transform transform, ref Spin spin) => transform.Scale = new Vector3(2f));
+			var tally = chunk.Write<Tally>();
+			tally[0].Frames++;
+			tally[0].ChangedSpots = spots;
+			tally[0].ChangedDrifts = drifts;
+			frames = tally[0].Frames;
 		}
-	}
 
-	// Debug draw from C#, each frame.
-	public sealed class DrawSystem : SystemBase
-	{
-		protected override void Update()
-		{
-			Debug.Line(Vector3.Zero, Vector3.UnitY, Color.Red);
-			Debug.Sphere(Vector3.One, 0.5f, Color.Hex("#00ff00"), 0f, true);
-			Debug.Text(Vector3.UnitY, "spun", Color.Yellow);
-			using (Draw.Width(4f))
-			using (Draw.InGame())
-			{
-				Draw.Line(Vector3.Zero, Vector3.UnitX, Color.Blue);
-			}
-		}
-	}
-
-	[UpdateIn(Stage.Last)]
-	public sealed class TallySystem : SystemBase
-	{
-		protected override void Update()
-		{
-			var spots = Query<Spot>().Changed<Spot>().Count();
-			var drifts = Query<Drift>().Changed<Drift>().Count();
-			var frames = 0;
-			foreach (var chunk in Query<Tally>())
-			{
-				var tally = chunk.Write<Tally>();
-				tally[0].Frames++;
-				tally[0].ChangedSpots = spots;
-				tally[0].ChangedDrifts = drifts;
-				frames = tally[0].Frames;
-			}
-
-			var spinner = Obj.Find("Spinner A");
-			var spin = spinner.Get<Spin>();
-			spin.Speed = frames;
-			spinner.Set(spin);
-		}
+		var spinner = Obj.Find("Spinner A");
+		var spin = spinner.Get<Spin>();
+		spin.Speed = frames;
+		spinner.Set(spin);
 	}
 }
 "##;

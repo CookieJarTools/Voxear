@@ -22,32 +22,31 @@ const SHEET: &str = ".hud { position: absolute; left: 20px; top: 20px; gap: 8px;
 
 const SCRIPT: &str = r#"using Voxear;
 
-namespace Hello
+namespace Hello;
+
+public sealed class HudSystem : SystemBase
 {
-	public sealed class HudSystem : SystemBase
+	private UiElement? score;
+	private int clicks;
+
+	protected override void OnCreate()
 	{
-		private UiElement? score;
-		private int clicks;
-
-		protected override void OnCreate()
+		var hud = UiDocument.Load("UI/Hud.vui")!;
+		score = hud.Find("score");
+		hud.Find("bar")!.AddClass("full");
+		hud.Find("button")!.Clicked += () =>
 		{
-			var hud = UiDocument.Load("UI/Hud.vui")!;
-			score = hud.Find("score");
-			hud.Find("bar")!.AddClass("full");
-			hud.Find("button")!.Clicked += () =>
-			{
-				clicks++;
-				score!.Text = $"Clicked {clicks}";
-			};
-			if (UiDocument.Load("UI/Missing.vui") != null || hud.Find("nothing") != null)
-			{
-				Log.Error("a missing document or element should be null");
-			}
-		}
-
-		protected override void Update()
+			clicks++;
+			score!.Text = $"Clicked {clicks}";
+		};
+		if (UiDocument.Load("UI/Missing.vui") != null || hud.Find("nothing") != null)
 		{
+			Log.Error("a missing document or element should be null");
 		}
+	}
+
+	protected override void Update()
+	{
 	}
 }
 "#;

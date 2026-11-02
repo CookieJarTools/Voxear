@@ -11,24 +11,23 @@ use voxear_scene::{Name, Transform};
 
 const CHECKS: &str = r#"using Voxear;
 
-namespace Hello
+namespace Hello;
+
+public static class TutorialChecks
 {
-	public static class TutorialChecks
+	public static bool SunIsThere()
 	{
-		public static bool SunIsThere()
-		{
-			return Obj.Find("Sun").IsValid;
-		}
+		return Obj.Find("Sun").IsValid;
+	}
 
-		public static string SpinnerRaised()
-		{
-			return Obj.Find("Spinner A").Position.Y > 3f ? "" : "Spinner A is still near the ground";
-		}
+	public static string SpinnerRaised()
+	{
+		return Obj.Find("Spinner A").Position.Y > 3f ? "" : "Spinner A is still near the ground";
+	}
 
-		public static bool Broken()
-		{
-			throw new System.InvalidOperationException("this check is broken");
-		}
+	public static bool Broken()
+	{
+		throw new System.InvalidOperationException("this check is broken");
 	}
 }
 "#;

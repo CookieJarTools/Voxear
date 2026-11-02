@@ -1,28 +1,27 @@
 using Voxear.Interop;
 
-namespace Voxear
+namespace Voxear;
+
+/// <summary>A prefab loading in the background, from Prefab.LoadAsync. Awaiting it gives the prefab.</summary>
+public sealed class PrefabLoad : AsyncLoad
 {
-	/// <summary>A prefab loading in the background, from Prefab.LoadAsync. Awaiting it gives the prefab.</summary>
-	public sealed class PrefabLoad : AsyncLoad
+	internal PrefabLoad(int id) : base(id)
 	{
-		internal PrefabLoad(int id) : base(id)
-		{
-		}
+	}
 
-		/// <summary>The loaded prefab, or None until the load is done (and if it fails).</summary>
-		public Prefab Prefab { get; private set; }
+	/// <summary>The loaded prefab, or None until the load is done (and if it fails).</summary>
+	public Prefab Prefab { get; private set; }
 
-		public PrefabLoadAwaiter GetAwaiter()
-		{
-			return new PrefabLoadAwaiter(this);
-		}
+	public PrefabLoadAwaiter GetAwaiter()
+	{
+		return new PrefabLoadAwaiter(this);
+	}
 
-		internal override void Read(LoadProgress status)
+	internal override void Read(LoadProgress status)
+	{
+		if (status.Prefab >= 0)
 		{
-			if (status.Prefab >= 0)
-			{
-				Prefab = Prefab.FromEngine(status.Prefab);
-			}
+			Prefab = Prefab.FromEngine(status.Prefab);
 		}
 	}
 }

@@ -12,34 +12,33 @@ use voxear_ui::{Key, Modifiers, NodeId, Ui};
 
 const COUNTER: &str = r#"using Voxear;
 
-namespace Hello
+namespace Hello;
+
+public sealed class Counter : Behaviour
 {
-	public sealed class Counter : Behaviour
+	[OnValueChanged(nameof(Changed))]
+	public int Step = 1;
+
+	public int Total;
+
+	public int Changes;
+
+	public int Ticks;
+
+	protected override void Update()
 	{
-		[OnValueChanged(nameof(Changed))]
-		public int Step = 1;
+		Ticks++;
+	}
 
-		public int Total;
+	[Button]
+	private void Add()
+	{
+		Total += Step;
+	}
 
-		public int Changes;
-
-		public int Ticks;
-
-		protected override void Update()
-		{
-			Ticks++;
-		}
-
-		[Button]
-		private void Add()
-		{
-			Total += Step;
-		}
-
-		private void Changed()
-		{
-			Changes++;
-		}
+	private void Changed()
+	{
+		Changes++;
 	}
 }
 "#;

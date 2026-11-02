@@ -1,6 +1,5 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal sealed class TestPlainWindow : EditorWindow
 {
-	internal sealed class TestPlainWindow : EditorWindow
-	{
-	}
 }

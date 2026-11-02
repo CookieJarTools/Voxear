@@ -7,22 +7,21 @@ use voxear_engine::{Engine, Game, Project, scripts};
 
 const SCRIPT: &str = r#"using Voxear;
 
-namespace Hello
-{
-	public sealed class LogAbout : SystemBase
-	{
-		protected override void OnCreate()
-		{
-			var spinner = Obj.Find("Spinner A");
-			Log.Info("about the spinner", spinner);
-			Log.Warning("about the lamp", Prefab.Load("Prefabs/Lamp.prefab"));
-			Log.Info("about the rare firefly", new Ref<Prefab>("Prefabs/RareFirefly.prefab"));
-			Log.Info("about nothing");
-		}
+namespace Hello;
 
-		protected override void Update()
-		{
-		}
+public sealed class LogAbout : SystemBase
+{
+	protected override void OnCreate()
+	{
+		var spinner = Obj.Find("Spinner A");
+		Log.Info("about the spinner", spinner);
+		Log.Warning("about the lamp", Prefab.Load("Prefabs/Lamp.prefab"));
+		Log.Info("about the rare firefly", new Ref<Prefab>("Prefabs/RareFirefly.prefab"));
+		Log.Info("about nothing");
+	}
+
+	protected override void Update()
+	{
 	}
 }
 "#;

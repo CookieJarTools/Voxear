@@ -1,7 +1,6 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal class TestItem
 {
-	internal class TestItem
-	{
-		public string Name = string.Empty;
-	}
+	public string Name = string.Empty;
 }

@@ -1,14 +1,13 @@
 using System;
 
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+[Serializable]
+internal struct Wave
 {
-	[Serializable]
-	internal struct Wave
-	{
-		public int Count;
+	public int Count;
 
-		[SerializeField] private float delay;
+	[SerializeField] private float delay;
 
-		public float Delay => delay;
-	}
+	public float Delay => delay;
 }

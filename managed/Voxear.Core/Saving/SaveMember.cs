@@ -1,47 +1,46 @@
 using System;
 using System.Reflection;
 
-namespace Voxear.Saving
+namespace Voxear.Saving;
+
+/// <summary>A field or property a save keeps, by the name it keeps it under.</summary>
+internal sealed class SaveMember
 {
-	/// <summary>A field or property a save keeps, by the name it keeps it under.</summary>
-	internal sealed class SaveMember
+	private readonly FieldInfo? field;
+	private readonly PropertyInfo? property;
+
+	public SaveMember(string name, FieldInfo field)
 	{
-		private readonly FieldInfo? field;
-		private readonly PropertyInfo? property;
+		Name = name;
+		this.field = field;
+		Type = field.FieldType;
+	}
 
-		public SaveMember(string name, FieldInfo field)
+	public SaveMember(PropertyInfo property)
+	{
+		Name = property.Name;
+		this.property = property;
+		Type = property.PropertyType;
+	}
+
+	public string Name { get; }
+
+	public Type Type { get; }
+
+	public object? Get(object target)
+	{
+		return field != null ? field.GetValue(target) : property!.GetValue(target);
+	}
+
+	public void Set(object target, object? value)
+	{
+		if (field != null)
 		{
-			Name = name;
-			this.field = field;
-			Type = field.FieldType;
+			field.SetValue(target, value);
 		}
-
-		public SaveMember(PropertyInfo property)
+		else
 		{
-			Name = property.Name;
-			this.property = property;
-			Type = property.PropertyType;
-		}
-
-		public string Name { get; }
-
-		public Type Type { get; }
-
-		public object? Get(object target)
-		{
-			return field != null ? field.GetValue(target) : property!.GetValue(target);
-		}
-
-		public void Set(object target, object? value)
-		{
-			if (field != null)
-			{
-				field.SetValue(target, value);
-			}
-			else
-			{
-				property!.SetValue(target, value);
-			}
+			property!.SetValue(target, value);
 		}
 	}
 }

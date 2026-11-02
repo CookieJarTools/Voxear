@@ -9,22 +9,21 @@ use voxear_scripting::CursorLock;
 
 const SCRIPT: &str = r#"using Voxear;
 
-namespace Hello
-{
-	public sealed class Settings : SystemBase
-	{
-		protected override void OnCreate()
-		{
-			Log.Info($"window {Screen.Width}x{Screen.Height}, full screen {Screen.Fullscreen}");
-			Screen.SetResolution(800, 600, false);
-			Cursor.Lock = CursorLock.Locked;
-			Cursor.Visible = false;
-			Log.Info($"cursor {Cursor.Lock}, visible {Cursor.Visible}");
-		}
+namespace Hello;
 
-		protected override void Update()
-		{
-		}
+public sealed class Settings : SystemBase
+{
+	protected override void OnCreate()
+	{
+		Log.Info($"window {Screen.Width}x{Screen.Height}, full screen {Screen.Fullscreen}");
+		Screen.SetResolution(800, 600, false);
+		Cursor.Lock = CursorLock.Locked;
+		Cursor.Visible = false;
+		Log.Info($"cursor {Cursor.Lock}, visible {Cursor.Visible}");
+	}
+
+	protected override void Update()
+	{
 	}
 }
 "#;

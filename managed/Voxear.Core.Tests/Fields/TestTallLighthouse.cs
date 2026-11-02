@@ -1,6 +1,5 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal sealed class TestTallLighthouse : TestLighthouse
 {
-	internal sealed class TestTallLighthouse : TestLighthouse
-	{
-	}
 }

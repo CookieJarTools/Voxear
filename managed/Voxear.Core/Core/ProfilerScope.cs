@@ -1,24 +1,23 @@
 using System;
 using Voxear.Interop;
 
-namespace Voxear
+namespace Voxear;
+
+/// <summary>A sample that ends when disposed, from <see cref="Profiler.Sample"/> or <see cref="ProfilerMarker.Auto"/>.</summary>
+public readonly struct ProfilerScope : IDisposable
 {
-	/// <summary>A sample that ends when disposed, from <see cref="Profiler.Sample"/> or <see cref="ProfilerMarker.Auto"/>.</summary>
-	public readonly struct ProfilerScope : IDisposable
+	private readonly bool recorded;
+
+	internal ProfilerScope(bool recorded)
 	{
-		private readonly bool recorded;
+		this.recorded = recorded;
+	}
 
-		internal ProfilerScope(bool recorded)
+	public void Dispose()
+	{
+		if (recorded)
 		{
-			this.recorded = recorded;
-		}
-
-		public void Dispose()
-		{
-			if (recorded)
-			{
-				Native.ProfilerEnd();
-			}
+			Native.ProfilerEnd();
 		}
 	}
 }

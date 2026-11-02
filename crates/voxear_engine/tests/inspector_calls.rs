@@ -13,35 +13,34 @@ use voxear_scripting::{InspectorAnswer, InspectorAsk};
 const TOWER: &str = r#"using System.Collections.Generic;
 using Voxear;
 
-namespace Hello
+namespace Hello;
+
+public sealed class Tower : Behaviour
 {
-	public sealed class Tower : Behaviour
+	[OnValueChanged(nameof(Rebuild))]
+	public int Floors = 3;
+
+	public float Height;
+
+	[ValidateInput(nameof(IsColour), "Pick a colour the tower has")]
+	[ValueDropdown(nameof(Colours))]
+	public string Paint = "Red";
+
+	[Button("Rebuild the tower")]
+	private void Rebuild()
 	{
-		[OnValueChanged(nameof(Rebuild))]
-		public int Floors = 3;
+		Height = Floors * 2.5f + Obj.Position.Y;
+	}
 
-		public float Height;
+	private bool IsColour(string paint)
+	{
+		return paint == "Red" || paint == "Blue";
+	}
 
-		[ValidateInput(nameof(IsColour), "Pick a colour the tower has")]
-		[ValueDropdown(nameof(Colours))]
-		public string Paint = "Red";
-
-		[Button("Rebuild the tower")]
-		private void Rebuild()
-		{
-			Height = Floors * 2.5f + Obj.Position.Y;
-		}
-
-		private bool IsColour(string paint)
-		{
-			return paint == "Red" || paint == "Blue";
-		}
-
-		private IEnumerable<ValueDropdownItem> Colours()
-		{
-			yield return new ValueDropdownItem("Brick red", "Red");
-			yield return new ValueDropdownItem("Sky blue", "Blue");
-		}
+	private IEnumerable<ValueDropdownItem> Colours()
+	{
+		yield return new ValueDropdownItem("Brick red", "Red");
+		yield return new ValueDropdownItem("Sky blue", "Blue");
 	}
 }
 "#;

@@ -1,8 +1,7 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal sealed class TestTraveller : Behaviour
 {
-	internal sealed class TestTraveller : Behaviour
-	{
-		public LevelAsset Next;
-		public SceneAsset Room;
-	}
+	public LevelAsset Next;
+	public SceneAsset Room;
 }

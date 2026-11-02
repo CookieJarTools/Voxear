@@ -24,14 +24,13 @@ const SCRIPTS: [(&str, &str); 4] = [
         "Stat.cs",
         "using System;
 
-namespace Hello
+namespace Hello;
+
+[Serializable]
+public struct Stat
 {
-	[Serializable]
-	public struct Stat
-	{
-		public int Value;
-		public int Max;
-	}
+	public int Value;
+	public int Max;
 }
 ",
     ),
@@ -68,18 +67,17 @@ public sealed class StatDrawer : ValueDrawer<Stat>
         "StepperAttribute.cs",
         "using System;
 
-namespace Hello
-{
-	[AttributeUsage(AttributeTargets.Field)]
-	public sealed class StepperAttribute : Attribute
-	{
-		public StepperAttribute(int step)
-		{
-			Step = step;
-		}
+namespace Hello;
 
-		public int Step { get; }
+[AttributeUsage(AttributeTargets.Field)]
+public sealed class StepperAttribute : Attribute
+{
+	public StepperAttribute(int step)
+	{
+		Step = step;
 	}
+
+	public int Step { get; }
 }
 ",
     ),
@@ -87,24 +85,23 @@ namespace Hello
         "StepperDrawer.cs",
         r#"using Voxear;
 
-namespace Hello
-{
-	public sealed class StepperDrawer : AttributeDrawer<StepperAttribute, int>
-	{
-		public override string Markup => "<vui><Button name=\"down\">-</Button><Panel name=\"next\" /><Button name=\"up\">+</Button></vui>";
+namespace Hello;
 
-		protected override int Draw(int value, UiDocument ui)
+public sealed class StepperDrawer : AttributeDrawer<StepperAttribute, int>
+{
+	public override string Markup => "<vui><Button name=\"down\">-</Button><Panel name=\"next\" /><Button name=\"up\">+</Button></vui>";
+
+	protected override int Draw(int value, UiDocument ui)
+	{
+		if (ui.Find("up")!.WasClicked)
 		{
-			if (ui.Find("up")!.WasClicked)
-			{
-				value += Attribute.Step;
-			}
-			if (ui.Find("down")!.WasClicked)
-			{
-				value -= Attribute.Step;
-			}
-			return value;
+			value += Attribute.Step;
 		}
+		if (ui.Find("down")!.WasClicked)
+		{
+			value -= Attribute.Step;
+		}
+		return value;
 	}
 }
 "#,

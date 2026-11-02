@@ -1,21 +1,20 @@
 using System;
 
-namespace Voxear
+namespace Voxear;
+
+/// <summary>A box to tick, with its label.</summary>
+public class Toggle : UiElement
 {
-	/// <summary>A box to tick, with its label.</summary>
-	public class Toggle : UiElement
+	public Toggle(string label = "", bool on = false) : base(UiKind.Toggle, label)
 	{
-		public Toggle(string label = "", bool on = false) : base(UiKind.Toggle, label)
-		{
-			Checked = on;
-		}
+		Checked = on;
+	}
 
-		/// <summary>Runs with whether it is ticked, each time it is ticked or unticked on screen.</summary>
-		public event Action<bool>? Toggled;
+	/// <summary>Runs with whether it is ticked, each time it is ticked or unticked on screen.</summary>
+	public event Action<bool>? Toggled;
 
-		private protected override void OnChanged()
-		{
-			Toggled?.Invoke(Checked);
-		}
+	private protected override void OnChanged()
+	{
+		Toggled?.Invoke(Checked);
 	}
 }

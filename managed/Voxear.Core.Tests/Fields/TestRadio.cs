@@ -1,7 +1,6 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal sealed class TestRadio : Behaviour
 {
-	internal sealed class TestRadio : Behaviour
-	{
-		public AudioSource Speaker;
-	}
+	public AudioSource Speaker;
 }

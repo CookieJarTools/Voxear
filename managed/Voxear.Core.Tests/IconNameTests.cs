@@ -1,12 +1,11 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal static class IconNameTests
 {
-	internal static class IconNameTests
+	[Test]
+	private static void IconNamesAreWrittenAsVoxearUiNamesThem()
 	{
-		[Test]
-		private static void IconNamesAreWrittenAsVoxearUiNamesThem()
-		{
-			Check.True(IconNames.Of(IconName.Audio) == "audio", IconNames.Of(IconName.Audio));
-			Check.True(IconNames.Of(IconName.ChevronDown) == "chevron-down", IconNames.Of(IconName.ChevronDown));
-		}
+		Check.True(IconNames.Of(IconName.Audio) == "audio", IconNames.Of(IconName.Audio));
+		Check.True(IconNames.Of(IconName.ChevronDown) == "chevron-down", IconNames.Of(IconName.ChevronDown));
 	}
 }

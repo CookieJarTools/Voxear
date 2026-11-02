@@ -1,23 +1,22 @@
 using System.Text;
 
-namespace Voxear
+namespace Voxear;
+
+/// <summary>An <see cref="IconName"/> as Voxear UI names the icon: ChevronDown is "chevron-down".</summary>
+internal static class IconNames
 {
-	/// <summary>An <see cref="IconName"/> as Voxear UI names the icon: ChevronDown is "chevron-down".</summary>
-	internal static class IconNames
+	public static string Of(IconName icon)
 	{
-		public static string Of(IconName icon)
+		var name = icon.ToString();
+		var written = new StringBuilder(name.Length + 4);
+		for (var i = 0; i < name.Length; i++)
 		{
-			var name = icon.ToString();
-			var written = new StringBuilder(name.Length + 4);
-			for (var i = 0; i < name.Length; i++)
+			if (i > 0 && char.IsUpper(name[i]))
 			{
-				if (i > 0 && char.IsUpper(name[i]))
-				{
-					written.Append('-');
-				}
-				written.Append(char.ToLowerInvariant(name[i]));
+				written.Append('-');
 			}
-			return written.ToString();
+			written.Append(char.ToLowerInvariant(name[i]));
 		}
+		return written.ToString();
 	}
 }

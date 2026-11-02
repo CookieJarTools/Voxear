@@ -1,8 +1,7 @@
-namespace Voxear.Tests
+namespace Voxear.Tests;
+
+internal enum MoveMode
 {
-	internal enum MoveMode
-	{
-		Walk,
-		Fly,
-	}
+	Walk,
+	Fly,
 }

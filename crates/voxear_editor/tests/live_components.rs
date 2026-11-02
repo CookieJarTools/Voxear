@@ -16,26 +16,25 @@ const SIZE: (u32, u32) = (1280, 800);
 /// frames in it.
 const WOBBLE: &str = r#"using Voxear;
 
-namespace Hello
-{
-	public struct Wobble : IComponent
-	{
-		public float Speed;
-		public int Frames;
-		public bool Steady;
-	}
+namespace Hello;
 
-	public sealed class WobbleSystem : SystemBase
+public struct Wobble : IComponent
+{
+	public float Speed;
+	public int Frames;
+	public bool Steady;
+}
+
+public sealed class WobbleSystem : SystemBase
+{
+	protected override void Update()
 	{
-		protected override void Update()
+		foreach (var chunk in Query<Wobble>())
 		{
-			foreach (var chunk in Query<Wobble>())
+			var wobbles = chunk.Write<Wobble>();
+			for (var i = 0; i < chunk.Count; i++)
 			{
-				var wobbles = chunk.Write<Wobble>();
-				for (var i = 0; i < chunk.Count; i++)
-				{
-					wobbles[i].Frames++;
-				}
+				wobbles[i].Frames++;
 			}
 		}
 	}

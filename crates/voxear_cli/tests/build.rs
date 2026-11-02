@@ -36,7 +36,7 @@ fn a_profile_builds_a_player_that_runs_the_game() {
     let dir = hello_copy();
     build_profile::write_default_profiles(dir.path()).unwrap();
     // A gate whose door is required, and left empty in the scene, for the build's check to find.
-    let gate = "using Voxear;\n\nnamespace Hello\n{\n\tpublic sealed class Gate : Behaviour\n\t{\n\t\t[Required]\n\t\tpublic Obj Door;\n\t}\n}\n";
+    let gate = "using Voxear;\n\nnamespace Hello;\n\npublic sealed class Gate : Behaviour\n{\n\t[Required]\n\tpublic Obj Door;\n}\n";
     std::fs::write(dir.path().join("Scripts/Gate.cs"), gate).unwrap();
     let scene = dir.path().join("Scenes/Day.scene");
     let text = std::fs::read_to_string(&scene).unwrap();

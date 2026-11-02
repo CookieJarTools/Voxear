@@ -16,33 +16,32 @@ use voxear_scene::Name;
 const SCRIPT: &str = r#"using System.Numerics;
 using Voxear;
 
-namespace Hello
+namespace Hello;
+
+public sealed class Noises : SystemBase
 {
-	public sealed class Noises : SystemBase
+	protected override void OnCreate()
 	{
-		protected override void OnCreate()
-		{
-			var chime = Sound.Load("Sounds/Chime.wav");
-			Log.Info($"chime {chime.IsValid}, {chime.Length:0.00} s, {chime.Channels} channel, {chime.SampleRate} Hz, streamed {chime.IsStreamed}");
-			var shot = Audio.Play(chime, at: new Vector3(-3f, 0f, 0f), volume: 0.5f);
-			Log.Info($"shot playing {shot.IsPlaying}, volume {shot.Volume}, pitch {shot.Pitch}");
+		var chime = Sound.Load("Sounds/Chime.wav");
+		Log.Info($"chime {chime.IsValid}, {chime.Length:0.00} s, {chime.Channels} channel, {chime.SampleRate} Hz, streamed {chime.IsStreamed}");
+		var shot = Audio.Play(chime, at: new Vector3(-3f, 0f, 0f), volume: 0.5f);
+		Log.Info($"shot playing {shot.IsPlaying}, volume {shot.Volume}, pitch {shot.Pitch}");
 
-			var source = Obj.Find("Ground").AddAudioSource(chime);
-			source.Loop = true;
-			source.Is3D = false;
-			source.Volume = 0.25f;
-			source.Bus = AudioBus.Music;
-			source.Play();
-			Log.Info($"source {source.IsValid}, playing {source.IsPlaying}, loop {source.Loop}, 3D {source.Is3D}, volume {source.Volume}, same sound {source.Sound == chime}");
-			Log.Info($"the camera has one: {Obj.Find("Main Camera").AudioSource.IsValid}");
+		var source = Obj.Find("Ground").AddAudioSource(chime);
+		source.Loop = true;
+		source.Is3D = false;
+		source.Volume = 0.25f;
+		source.Bus = AudioBus.Music;
+		source.Play();
+		Log.Info($"source {source.IsValid}, playing {source.IsPlaying}, loop {source.Loop}, 3D {source.Is3D}, volume {source.Volume}, same sound {source.Sound == chime}");
+		Log.Info($"the camera has one: {Obj.Find("Main Camera").AudioSource.IsValid}");
 
-			Audio.MusicVolume = 0.5f;
-			Log.Info($"music at {Audio.MusicVolume}");
-		}
+		Audio.MusicVolume = 0.5f;
+		Log.Info($"music at {Audio.MusicVolume}");
+	}
 
-		protected override void Update()
-		{
-		}
+	protected override void Update()
+	{
 	}
 }
 "#;

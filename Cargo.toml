@@ -81,6 +81,9 @@ boxdd-sys = "0.6"
 # parley's text segmentation.
 icu_locale_core = "2.4"
 icu_locale_fallback = "2.4"
+# Plural rules (one, few, many…) and numbers written as each language writes them, for localized text.
+icu_plurals = "2.4"
+icu_decimal = "2.4"
 
 # Keep dependencies fast in debug builds so the engine stays usable while iterating.
 [profile.dev.package."*"]

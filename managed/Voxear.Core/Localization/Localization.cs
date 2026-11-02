@@ -56,7 +56,9 @@ public static class Localization
 
 	/// <summary>
 	/// A key's text with the values it names filled in: "{player} found {count} coins" takes the values named player
-	/// and count. A name given no value is left as it is.
+	/// and count. As in ICU's MessageFormat, "{count, plural, one {# coin} other {# coins}}" picks its words by the
+	/// language's plural rules, "{g, select, female {her} other {their}}" by the value, and "{count, number}" writes a
+	/// number as the language does. A name given no value is left as it is.
 	/// </summary>
 	public static string Format(string key, params (string Name, object? Value)[] values)
 	{

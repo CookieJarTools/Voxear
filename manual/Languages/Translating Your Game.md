@@ -77,6 +77,23 @@ public sealed class MainMenu : Behaviour
 var found = Localization.Format("loot.found", ("player", name), ("count", coins));
 ```
 
+### Plurals, choices and numbers
+
+Languages count differently. English has "1 coin" and "2 coins", but Polish has a third form for 2 to 4, and Arabic has six. A text can hold every form, and the game picks the right one for the number and the language, as ICU's MessageFormat does:
+
+```toml
+[[entry]]
+key = "loot.found"
+en = "{player} found {count, plural, =0 {no coins} one {# coin} other {# coins}}"
+pl = "{player} znalazł {count, plural, one {# monetę} few {# monety} many {# monet} other {# monety}}"
+```
+
+- `{count, plural, …}` picks a form by the language's plural rules: `zero`, `one`, `two`, `few`, `many` and `other`. Each language uses only some of them, and `other` is used when nothing else fits. `=0` picks an exact number before the rules do. Inside a form, `#` is the number.
+- `{gender, select, female {her} male {his} other {their}}` picks a form by the value itself.
+- `{count, number}` writes a number as the language writes them: `1,234.5` in English, `1 234,5` in French.
+
+The forms can hold more forms inside them. To write a brace or a `#` as itself, put it in apostrophes, `'{'`, and write an apostrophe as two, `''`.
+
 A language changes with `Localization.Language`, such as from a settings menu. `Localization.Languages` lists your project's languages, and `Localization.Changed` tells you when the language changed, so you can show your text again:
 
 ```csharp

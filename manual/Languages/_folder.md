@@ -7,4 +7,4 @@ Your game's text can be in several languages, and players see it in theirs. Each
 1. [[Translating Your Game]]: your project's languages, string tables, and text from scripts
 
 > [!NOTE]
-> Plurals ("1 coin", "2 coins"), translated pictures and sounds, and right-to-left languages come in a later version of Voxear.
+> Translated pictures and sounds, dates and currencies written as each language writes them, and right-to-left languages come in a later version of Voxear.

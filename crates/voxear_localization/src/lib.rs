@@ -8,8 +8,10 @@
 //! A key no language has shows as `⟦menu.play⟧` while the game is made,
 //! with a warning, and as the key itself in a shipped game.
 //!
-//! A text may name values to put in it, as `{player} found {count} coins`;
-//! [`Localization::format`] fills them in.
+//! A text may name values to put in it, as `{player} found {count} coins`,
+//! and pick its words by them, as ICU MessageFormat does:
+//! `{count, plural, one {# coin} other {# coins}}` follows each language's
+//! plural rules. [`Localization::format`] fills them in (see [`message`]).
 //!
 //! Pseudo-localisation ([`Localization::set_pseudo`]) shows every text
 //! accented, a third longer and in brackets, as `[Ƥļåý !!!]`, so text that
@@ -17,6 +19,7 @@
 //! before translation starts.
 
 pub mod csv;
+pub mod message;
 pub mod table;
 
 use std::{
@@ -209,28 +212,32 @@ impl Localization {
         }
     }
 
-    /// A key's text with the values it names filled in: `{player}` takes
-    /// the value named `player`. A name with no value is left as it is.
+    /// A key's text with the values it names filled in, in the game's
+    /// language's ways: `{player}` takes the value named `player`, and
+    /// plurals, selects and numbers are as [`message`] says. A name with no
+    /// value is left as it is.
     pub fn format(&self, key: &str, values: &[(&str, &str)]) -> String {
-        fill(&self.text(key), values)
+        message::format(&self.text(key), values, &self.language)
     }
 }
 
 /// Text pseudo-localised: each letter accented, a third longer with `!`s,
-/// and in brackets, the `{names}` it holds left as they are, so values
-/// still fill them.
+/// and in brackets, the `{names}` it holds and how they are used left as
+/// they are, so values still fill them and plurals still pick.
 pub fn pseudo(text: &str) -> String {
     const PLAIN: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const ACCENTED: &str = "åƀçđéƒĝĥîĵķļɱñöƥǫŕšŧûṽŵẋýžÅƁÇĐÉƑĜĤÎĴĶĻṀÑÖƤǪŔŠŦÛṼŴẊÝŽ";
     let mut out = String::from("[");
-    let mut in_name = false;
+    // Inside one brace is a name and how it is used; inside two, a plural's or a select's words again.
+    let mut depth = 0usize;
     for c in text.chars() {
-        in_name = match c {
-            '{' => true,
-            '}' => false,
-            _ => in_name,
-        };
-        let accented = (!in_name).then(|| PLAIN.find(c)).flatten().and_then(|at| ACCENTED.chars().nth(at));
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        let words = depth.is_multiple_of(2) && c != '{' && c != '}';
+        let accented = words.then(|| PLAIN.find(c)).flatten().and_then(|at| ACCENTED.chars().nth(at));
         out.push(accented.unwrap_or(c));
     }
     let longer = (text.chars().count() as f32 * 0.3).round().max(1.0) as usize;

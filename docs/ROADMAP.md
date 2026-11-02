@@ -566,7 +566,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] fallback chains as ICU makes them (`pt-BR`, then `pt`, then the project's own); the game starts in the system's
     language on Linux; missing keys marked `⟦key⟧` while the game is made
   - [ ] asset tables
-  - [ ] ICU smart strings (plurals, gender, number and date formatting)
+  - [x] ICU smart strings: plurals by each language's rules (ICU4X), exact numbers, select (as for gender), and numbers
+    written as the language writes them
+  - [ ] dates and currencies in smart strings
   - [x] binding through `@key` in UI markup and in an element's `Text` from a script, shown again when the language or
     the text changes
   - [x] `LocalizedString` fields, picked in the Inspector from the project's keys beside their text, saved as the key

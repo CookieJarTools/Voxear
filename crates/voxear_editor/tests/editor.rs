@@ -2928,7 +2928,8 @@ fn the_inspector_puts_objs_on_the_layers_the_project_names() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
     let dir = hello_copy();
     let project_file = dir.path().join("voxear.toml");
-    let text = std::fs::read_to_string(&project_file).unwrap() + "\n[layers]\nnames = [\"Default\", \"\", \"Player\", \"Enemy\"]\n";
+    let text = std::fs::read_to_string(&project_file).unwrap()
+        + "\n[layers]\nnames = [\"Default\", \"\", \"Player\", \"Enemy\"]\n";
     std::fs::write(&project_file, text).unwrap();
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
@@ -2947,6 +2948,47 @@ fn the_inspector_puts_objs_on_the_layers_the_project_names() {
     assert!(editor.game.engine.world.get::<voxear_scene::Layer>(spinner).is_none(), "undone, back on Default");
     let layer = editor.ui.find(editor.ui.root(), "obj-layer").unwrap();
     assert_eq!(editor.ui.selected_option(layer), 0);
+
+    // Add Layer…, after the layers, shows the project's in the Inspector.
+    choose(&mut editor, &mut renderer, layer, 3);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.selected(), None);
+    let name = editor.ui.find(editor.ui.root(), "layer-name-4").expect("the Layers view");
+    // A layer named and let go of is written to voxear.toml, and is in the matrix.
+    type_into(&mut editor.ui, name, "Ghost");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    let written = std::fs::read_to_string(&project_file).unwrap();
+    assert!(written.contains("names = [\"Default\", \"\", \"Player\", \"Enemy\", \"Ghost\"]"), "{written}");
+    assert!(written.starts_with("[project]"), "the rest of the file kept: {written}");
+    let layers = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<voxear_scene::Layers>().cloned();
+    assert_eq!(layers(&editor).unwrap().find("Ghost"), Some(4));
+    // A tick taken off keeps Enemy and Ghost apart.
+    let tick = editor.ui.find(editor.ui.root(), "layer-collide-3-4").expect("a tick for Enemy and Ghost");
+    let inspector = first_with(&editor.ui, editor.ui.root(), "inspector").unwrap();
+    let [_, top, ..] = editor.ui.rect(inspector);
+    let [_, at, ..] = editor.ui.rect(tick);
+    editor.ui.set_scroll(inspector, [0.0, at - top - 120.0]);
+    frame(&mut editor, &mut renderer);
+    click(&mut editor.ui, tick);
+    frame(&mut editor, &mut renderer);
+    let written = std::fs::read_to_string(&project_file).unwrap();
+    assert!(written.contains("ignore = [[\"Enemy\", \"Ghost\"]]"), "{written}");
+    assert!(!layers(&editor).unwrap().collide(3, 4) && layers(&editor).unwrap().collide(4, 4));
+    // A name another layer has is refused.
+    let name = editor.ui.find(editor.ui.root(), "layer-name-5").unwrap();
+    type_into(&mut editor.ui, name, "Enemy");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    assert_eq!((layers(&editor).unwrap().name(5), editor.ui.text(name).as_str()), ("", ""));
+    let [x, y, w, h] = editor.ui.rect(tick);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    frame(&mut editor, &mut renderer);
+    let pair = first_with(&editor.ui, editor.ui.root(), "layer-pair").unwrap();
+    assert_eq!(editor.ui.text(pair), "Enemy · Ghost", "the pair under the pointer");
+    shot(&mut renderer, "layers.png");
 }
 
 #[test]

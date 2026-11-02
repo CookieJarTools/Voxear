@@ -68,7 +68,8 @@ public sealed class Jumper : Behaviour
 - `Obj.Collider2D` and `Obj.Rigidbody2D` reach the components, and `AddCollider2D` and `AddRigidbody2D` add them.
 - `AddForce` and `AddTorque` take `ForceMode2D.Force` or `ForceMode2D.Impulse`. `AngularVelocity` is in degrees per second, as in Unity.
 - `OnCollisionEnter2D`, `OnCollisionExit2D`, `OnTriggerEnter2D` and `OnTriggerExit2D` arrive straight after each physics step.
-- `Physics2D.Raycast`, `Physics2D.Linecast` and `Physics2D.OverlapCircle` ask what is where, passing over triggers unless you pass `hitTriggers: true`. `Physics2D.Gravity` is which way everything falls.
+- `Physics2D.Raycast`, `Physics2D.Linecast` and `Physics2D.OverlapCircle` ask what is where, passing over triggers unless you pass `hitTriggers: true`, and take a layer mask as the 3D ones do. `Physics2D.Gravity` is which way everything falls.
+- 2D bodies follow the same layers and Collision Matrix as 3D ones (see [[Colliders and Rigidbodies]]).
 
 ## In scene files
 

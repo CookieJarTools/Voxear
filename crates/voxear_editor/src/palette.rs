@@ -441,6 +441,7 @@ fn commands(playing: bool) -> Vec<Entry> {
         ("Delete", "Delete", "close", Command::Delete),
         ("Frame Selected", "F", "maximize", Command::Frame),
         ("Align With View", "Ctrl+Shift+F", "camera", Command::AlignWithView),
+        ("Edit Layers", "", "layers", Command::Layers),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

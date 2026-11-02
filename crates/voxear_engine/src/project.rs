@@ -138,6 +138,38 @@ impl Project {
         layers
     }
 
+    /// Writes the project's layers into `voxear.toml`: each one's name, up
+    /// to the last named, and the named pairs that do not collide, by name.
+    /// The rest of the file is kept as it is, comments and all.
+    pub fn set_layers(&mut self, layers: &voxear_scene::Layers) -> Result<()> {
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let used = layers.names().iter().rposition(|name| !name.is_empty()).map_or(0, |last| last + 1);
+        let names: Vec<String> = layers.names()[..used].to_vec();
+        let mut ignore: Vec<[String; 2]> = Vec::new();
+        for (a, first) in layers.used() {
+            for (b, second) in layers.used().filter(|(b, _)| *b >= a) {
+                if !layers.collide(a, b) {
+                    ignore.push([first.to_string(), second.to_string()]);
+                }
+            }
+        }
+        let list =
+            |items: &mut dyn Iterator<Item = toml_edit::Value>| toml_edit::value(toml_edit::Array::from_iter(items));
+        let only_default = names.len() <= 1;
+        set_key(&mut document, "layers", "names", (!only_default).then(|| list(&mut names.iter().map(|n| n.into()))));
+        let pairs = (!ignore.is_empty()).then(|| {
+            list(&mut ignore.iter().map(|[a, b]| toml_edit::Value::Array(toml_edit::Array::from_iter([a, b]))))
+        });
+        set_key(&mut document, "physics", "ignore", pairs);
+        std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
+        self.file.layers.names = if only_default { Vec::new() } else { names };
+        self.file.physics.ignore = ignore;
+        Ok(())
+    }
+
     pub fn scripts_project(&self) -> Option<PathBuf> {
         self.file.project.scripts.as_ref().map(|p| self.root.join(p))
     }
@@ -201,6 +233,28 @@ pub fn core_assembly(configuration: &str) -> PathBuf {
     root.join("target").join("managed").join(configuration).join("Voxear.Core.dll")
 }
 
+/// Sets a key in a table of the file, making the table when it has none,
+/// or takes it out, and the table with it once it is empty.
+fn set_key(document: &mut toml_edit::DocumentMut, table: &str, key: &str, value: Option<toml_edit::Item>) {
+    match value {
+        Some(value) => {
+            let section = document.entry(table).or_insert_with(toml_edit::table);
+            if let Some(section) = section.as_table_like_mut() {
+                section.insert(key, value);
+            }
+        }
+        None => {
+            let emptied = document.get_mut(table).and_then(|t| t.as_table_like_mut()).is_some_and(|section| {
+                section.remove(key);
+                section.is_empty()
+            });
+            if emptied {
+                document.remove(table);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +282,29 @@ mod tests {
         let layers = Project::open(folder.path()).unwrap().layers();
         assert_eq!((layers.name(0), layers.find("Ghost")), ("Default", Some(2)));
         assert!(!layers.collide(1, 2) && layers.collide(2, 2) && layers.collide(0, 1));
+    }
+
+    #[test]
+    fn layers_are_written_into_the_project_file_keeping_the_rest() {
+        let folder = tempfile::tempdir().unwrap();
+        let text = "# Orbit's settings\n[project]\nname = \"Orbit\"\n\n[physics]\nignore = [[\"Ghost\", \"Ghost\"]]\n";
+        std::fs::write(folder.path().join(PROJECT_FILE), text).unwrap();
+        let mut project = Project::open(folder.path()).unwrap();
+        let mut layers =
+            voxear_scene::Layers::named(&["Default".into(), String::new(), "Player".into(), "Ghost".into()]);
+        layers.set_collide(2, 3, false);
+        layers.set_collide(3, 3, false);
+        project.set_layers(&layers).unwrap();
+        let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert!(written.starts_with("# Orbit's settings\n[project]"), "{written}");
+        assert!(written.contains("names = [\"Default\", \"\", \"Player\", \"Ghost\"]"), "{written}");
+        assert!(written.contains("ignore = [[\"Player\", \"Ghost\"], [\"Ghost\", \"Ghost\"]]"), "{written}");
+        assert_eq!(Project::open(folder.path()).unwrap().layers(), layers, "read back as written");
+        assert_eq!(project.layers(), layers, "and as the project now has them");
+
+        // With only Default, and every pair colliding, the tables go.
+        project.set_layers(&voxear_scene::Layers::default()).unwrap();
+        let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert!(!written.contains("[layers]") && !written.contains("[physics]"), "{written}");
     }
 }

@@ -23,6 +23,7 @@ mod play;
 mod prefab_mode;
 mod prefab_overrides;
 mod previews;
+mod project_layers;
 mod projects;
 mod scene_gizmos;
 mod scene_views;
@@ -174,6 +175,8 @@ pub(crate) enum Command {
     Frame,
     /// Move the selection to where the Scene view looks from.
     AlignWithView,
+    /// Show the project's layers in the Inspector.
+    Layers,
 }
 
 /// How far in front of the Scene camera a new Obj goes.
@@ -1713,6 +1716,7 @@ impl Editor {
                 }
             }
             Command::Frame => self.frame(&self.selected_objs(), renderer),
+            Command::Layers => self.inspect_layers(),
             Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {

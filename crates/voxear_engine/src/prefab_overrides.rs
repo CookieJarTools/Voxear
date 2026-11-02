@@ -101,6 +101,7 @@ pub fn prefab_form(world: &World, content: &mut Content, entity: Entity) -> Resu
     let obj = objs.into_iter().find(|obj| obj.path == member.path).context("the prefab no longer has this Obj")?;
     let mut data = obj.data;
     prefab::map_obj_refs(&mut data, &|target| ObjPath::new(ROOT).join(target))?;
+    data.layer = scene_file::LayerRef::as_saved(&data.layer, world);
     Ok(data)
 }
 

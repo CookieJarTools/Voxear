@@ -2,6 +2,12 @@
 //! physics or by the game, the contacts and sensor crossings each step
 //! found, and rays and circles that ask what is where. Box2D's ids are
 //! plain values, so the world is too, and it goes away when dropped.
+//!
+//! Each body is on one of Voxear's 32 layers, and collides with the
+//! layers its `collides` mask holds: its shape's category is its layer's
+//! bit, and its mask that one. A query's category is a bit of its own
+//! that every shape accepts, so a ray meets a body whatever it collides
+//! with, on the layers in the ray's mask.
 
 use std::{os::raw::c_void, sync::Mutex};
 
@@ -81,6 +87,18 @@ pub struct BodyDesc2D {
     /// Checked along its whole path each step, so that it cannot pass through thin things.
     pub bullet: bool,
     pub user_data: u64,
+    /// Its layer, from 0 to 31.
+    pub layer: u8,
+    /// The layers it collides with, a bit each.
+    pub collides: u32,
+}
+
+/// The category every shape accepts as well as the layers it collides
+/// with, that queries are made as.
+const QUERY: u64 = 1 << 63;
+
+fn query_filter(mask: u32) -> b2::b2QueryFilter {
+    b2::b2QueryFilter { categoryBits: QUERY, maskBits: u64::from(mask) }
 }
 
 impl BodyDesc2D {
@@ -100,6 +118,8 @@ impl BodyDesc2D {
             fixed_rotation: false,
             bullet: false,
             user_data: 0,
+            layer: 0,
+            collides: u32::MAX,
         }
     }
 }
@@ -209,6 +229,8 @@ impl PhysicsWorld2D {
         shape.material.friction = desc.friction;
         shape.material.restitution = desc.restitution;
         shape.isSensor = desc.sensor;
+        shape.filter.categoryBits = 1 << (desc.layer % 32);
+        shape.filter.maskBits = u64::from(desc.collides) | QUERY;
         shape.enableSensorEvents = true;
         shape.enableContactEvents = true;
         unsafe {
@@ -301,8 +323,9 @@ impl PhysicsWorld2D {
     }
 
     /// The first shape a ray from `origin` meets along `translation`, whose
-    /// length is how far it reaches, passing over sensors unless `sensors`.
-    pub fn raycast(&self, origin: Vec2, translation: Vec2, sensors: bool) -> Option<RayHit2D> {
+    /// length is how far it reaches, on the layers in `mask`, passing over
+    /// sensors unless `sensors`.
+    pub fn raycast(&self, origin: Vec2, translation: Vec2, mask: u32, sensors: bool) -> Option<RayHit2D> {
         unsafe extern "C" fn met(
             shape: b2::b2ShapeId,
             point: b2::b2Pos,
@@ -320,14 +343,15 @@ impl PhysicsWorld2D {
             fraction
         }
         let mut nearest: (Option<RayHit2D>, bool) = (None, sensors);
-        let filter = unsafe { b2::b2DefaultQueryFilter() };
+        let filter = query_filter(mask);
         let context = (&mut nearest as *mut (Option<RayHit2D>, bool)).cast();
         unsafe { b2::b2World_CastRay(self.id, vec(origin), vec(translation), filter, Some(met), context) };
         nearest.0
     }
 
-    /// The user data of each shape a circle overlaps, sensors with them when `sensors`.
-    pub fn overlap_circle(&self, center: Vec2, radius: f32, sensors: bool) -> Vec<u64> {
+    /// The user data of each shape on the layers in `mask` a circle
+    /// overlaps, sensors with them when `sensors`.
+    pub fn overlap_circle(&self, center: Vec2, radius: f32, mask: u32, sensors: bool) -> Vec<u64> {
         unsafe extern "C" fn found(shape: b2::b2ShapeId, context: *mut c_void) -> bool {
             let (seen, sensors) = unsafe { &mut *context.cast::<(Vec<u64>, bool)>() };
             if *sensors || !unsafe { b2::b2Shape_IsSensor(shape) } {
@@ -337,7 +361,7 @@ impl PhysicsWorld2D {
         }
         let mut seen: (Vec<u64>, bool) = (Vec::new(), sensors);
         let point = vec(Vec2::ZERO);
-        let filter = unsafe { b2::b2DefaultQueryFilter() };
+        let filter = query_filter(mask);
         unsafe {
             let proxy = b2::b2MakeProxy(&point, 1, radius.max(1e-4));
             let context = (&mut seen as *mut (Vec<u64>, bool)).cast();
@@ -437,13 +461,13 @@ mod tests {
     fn rays_and_circles_find_what_is_where() {
         let mut world = PhysicsWorld2D::default();
         ground_and_crate(&mut world);
-        let hit = world.raycast(Vec2::new(0.0, 10.0), Vec2::new(0.0, -20.0), false).expect("a hit");
+        let hit = world.raycast(Vec2::new(0.0, 10.0), Vec2::new(0.0, -20.0), u32::MAX, false).expect("a hit");
         assert_eq!(hit.user_data, 2);
         assert!((hit.point.y - 4.5).abs() < 0.01 && hit.normal.y > 0.99, "{hit:?}");
-        let mut found = world.overlap_circle(Vec2::new(0.0, 0.0), 0.2, false);
+        let mut found = world.overlap_circle(Vec2::new(0.0, 0.0), 0.2, u32::MAX, false);
         found.sort();
         assert_eq!(found, [1]);
-        assert!(world.overlap_circle(Vec2::new(5.0, 10.0), 0.5, false).is_empty());
+        assert!(world.overlap_circle(Vec2::new(5.0, 10.0), 0.5, u32::MAX, false).is_empty());
     }
 
     #[test]

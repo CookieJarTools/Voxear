@@ -59,6 +59,7 @@ mod hierarchy;
 mod history;
 mod import_fields;
 mod inspector;
+mod layers_view;
 mod level_files;
 mod levels_panel;
 mod live;

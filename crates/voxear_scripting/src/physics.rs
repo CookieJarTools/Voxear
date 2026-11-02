@@ -610,12 +610,13 @@ fn push_2d(entity: Entity, kind: i32, amount: Vec3, at: Option<Vec3>) -> Option<
     })
 }
 
-/// The first collider a ray meets within `distance` metres: 1 with the
-/// hit written, 0 when it meets none.
+/// The first collider a ray meets within `distance` metres, on an Obj on
+/// a layer in `mask`: 1 with the hit written, 0 when it meets none.
 pub(crate) unsafe extern "C" fn physics_raycast(
     origin: *const [f32; 3],
     direction: *const [f32; 3],
     distance: f32,
+    mask: u32,
     flags: i32,
     hit: *mut RaycastHitData,
 ) -> i32 {
@@ -625,9 +626,9 @@ pub(crate) unsafe extern "C" fn physics_raycast(
     let (origin, direction) = unsafe { (Vec3::from_array(*origin), Vec3::from_array(*direction)) };
     let triggers = flags & QUERY_TRIGGERS != 0;
     let found = with_world(|world| match flags & QUERY_2D != 0 {
-        false => with_scene(world, |_, scene| scene.raycast(origin, direction, distance, triggers)),
+        false => with_scene(world, |_, scene| scene.raycast(origin, direction, distance, mask, triggers)),
         true => with_scene_2d(world, |_, scene| {
-            let found = scene.raycast(origin.truncate(), direction.truncate(), distance, triggers)?;
+            let found = scene.raycast(origin.truncate(), direction.truncate(), distance, mask, triggers)?;
             Some(voxear_physics::scene::SceneHit {
                 obj: found.obj,
                 point: found.point.extend(0.0),
@@ -649,11 +650,13 @@ pub(crate) unsafe extern "C" fn physics_raycast(
     1
 }
 
-/// The Objs whose colliders a sphere overlaps, or in 2D a circle, as many
-/// as fit; returns how many there are, which may be more.
+/// The Objs on layers in `mask` whose colliders a sphere overlaps, or in
+/// 2D a circle, as many as fit; returns how many there are, which may be
+/// more.
 pub(crate) unsafe extern "C" fn physics_overlap(
     center: *const [f32; 3],
     radius: f32,
+    mask: u32,
     flags: i32,
     objs: *mut u64,
     capacity: i32,
@@ -665,8 +668,8 @@ pub(crate) unsafe extern "C" fn physics_overlap(
     let triggers = flags & QUERY_TRIGGERS != 0;
     let found = with_world(|world| {
         Some(match flags & QUERY_2D != 0 {
-            false => with_scene(world, |_, scene| scene.overlap_sphere(center, radius, triggers)),
-            true => with_scene_2d(world, |_, scene| scene.overlap_circle(center.truncate(), radius, triggers)),
+            false => with_scene(world, |_, scene| scene.overlap_sphere(center, radius, mask, triggers)),
+            true => with_scene_2d(world, |_, scene| scene.overlap_circle(center.truncate(), radius, mask, triggers)),
         })
     });
     let found = found.unwrap_or_default();

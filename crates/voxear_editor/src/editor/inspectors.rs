@@ -119,6 +119,7 @@ impl Editor {
             self.unsaved = true;
         }
         self.run_inspector_button();
+        self.update_project_layers();
         self.ask_inspector_answers();
         self.update_docs_links();
         let shown = self.inspector.shown();

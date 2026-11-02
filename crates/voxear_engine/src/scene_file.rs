@@ -30,8 +30,9 @@
 //! An Obj's `[obj.audio]` is an Audio Source, and `audio_listener = true`
 //! hears the game from it (see [`crate::audio`]). `[obj.lod_group]` is a
 //! LOD Group, which shows one of its levels' Objs at a time (see
-//! [`crate::lod_groups`]). `layer = "Player"` puts an Obj on a layer, by
-//! its name, or by its number for a layer the project has not named (see
+//! [`crate::lod_groups`]). `layer = 3` puts an Obj on a layer by its
+//! number, which stays the same when the project renames it; a file
+//! written by hand may name it instead, as `layer = "Player"` (see
 //! [`LayerRef`]). `[obj.collider]`, `[obj.rigidbody]` and
 //! `[obj.character]` are its physics (see [`crate::physics`]), with
 //! `[obj.joint]` holding it to another (see [`crate::joints`]), and
@@ -494,6 +495,7 @@ fn capture_instance(
     // Inside the prefab, references read from its root; in this file, from the instance.
     for obj in &mut expected {
         prefab::map_obj_refs(&mut obj.data, &|target| ObjPath::new(root.id).join(target))?;
+        obj.data.layer = LayerRef::as_saved(&obj.data.layer, world);
     }
     let mut instance = ObjData::new(root.id, "");
     // By path, as scenes are written by hand; the GUID only when the asset is not in the database.
@@ -840,7 +842,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     });
     obj.audio = world.get::<AudioSource>(entity).map(|source| audio_source_data(content, source));
     obj.audio_listener = world.has::<AudioListener>(entity);
-    obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::of(world, *layer));
+    obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.rigidbody = world.get::<Rigidbody>(entity).copied();
     obj.character = world.get::<CharacterController>(entity).copied();
@@ -887,8 +889,9 @@ fn light_data(light: &Light) -> LightData {
     }
 }
 
-/// An Obj's layer as a file writes it: its name, or its number when the
-/// project has not named it, as `layer = "Player"` or `layer = 7`.
+/// An Obj's layer as a file has it: by number, as a save writes it, so
+/// that renaming a layer keeps its Objs on it, or by the name the project
+/// gives it, as one may write by hand: `layer = 7` or `layer = "Player"`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LayerRef {
@@ -897,28 +900,29 @@ pub enum LayerRef {
 }
 
 impl LayerRef {
-    /// A layer as the world's project names it.
-    pub fn of(world: &World, layer: Layer) -> Self {
-        let name = world.resource::<Layers>().map(|layers| layers.name(layer.0).to_string()).unwrap_or_default();
-        match name.is_empty() {
-            true => Self::Number(layer.0),
-            false => Self::Name(name),
-        }
-    }
-
     /// The layer it names in the world's project; one it does not have is
     /// Default, with a warning.
     pub fn layer(&self, world: &World) -> Layer {
-        match self {
-            Self::Number(number) => Layer(*number % voxear_scene::LAYER_COUNT as u8),
-            Self::Name(name) => {
-                let found = world.resource::<Layers>().and_then(|layers| layers.find(name));
-                if found.is_none() {
-                    tracing::warn!("there is no layer {name}; the Obj is on Default");
-                }
-                Layer(found.unwrap_or_default())
-            }
+        let found = self.find(world);
+        if let (None, Self::Name(name)) = (found, self) {
+            tracing::warn!("there is no layer {name}; the Obj is on Default");
         }
+        found.unwrap_or_default()
+    }
+
+    fn find(&self, world: &World) -> Option<Layer> {
+        match self {
+            Self::Number(number) => Some(Layer(*number % voxear_scene::LAYER_COUNT as u8)),
+            Self::Name(name) => world.resource::<Layers>().and_then(|layers| layers.find(name)).map(Layer),
+        }
+    }
+
+    /// An Obj's layer as a save writes it, by number and left out for
+    /// Default, so that a prefab's file naming its layer and an instance
+    /// on the same one compare alike.
+    pub fn as_saved(layer: &Option<Self>, world: &World) -> Option<Self> {
+        let layer = layer.as_ref().and_then(|layer| layer.find(world))?;
+        (layer.0 != 0).then_some(Self::Number(layer.0))
     }
 }
 

@@ -44,6 +44,19 @@ internal static unsafe class NativeLayers
 		}
 	}
 
+	public static bool Collide(int a, int b)
+	{
+		return !Native.IsConnected || Native.Api->LayerCollide(a, b, 0, 0) != 0;
+	}
+
+	public static void SetCollide(int a, int b, bool on)
+	{
+		if (Native.IsConnected)
+		{
+			Native.Api->LayerCollide(a, b, 1, on ? 1 : 0);
+		}
+	}
+
 	public static int Find(string name)
 	{
 		if (!Native.IsConnected)

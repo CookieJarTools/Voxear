@@ -77,6 +77,21 @@ A collider with **Is trigger** turned on is a zone rather than a solid thing. No
 
 A trigger notices only colliders that physics moves: Objs with a Rigidbody, and characters. Two still colliders never touch each other.
 
+## Layers that pass through each other
+
+Every Obj is on a layer (see [[Objs and Components]]), and the project's **Collision Matrix** says which layers collide. Open it with **Edit Layers** from the command palette. It has a row for each layer you have named, and a tick for each pair: take a tick off and Objs on those two layers pass through each other. Hold the pointer over a tick to see which two layers it is for.
+
+A ghost on a Ghost layer that does not collide with Walls walks through walls but still stands on the ground. A character collides as its Obj's layer does, so a Character Controller on Ghost walks through Walls too. Triggers follow the matrix as well.
+
+The editor saves the pairs that don't collide in `voxear.toml`, by the layers' names:
+
+```toml
+[physics]
+ignore = [["Ghost", "Walls"]]
+```
+
+A script can change the matrix while the game plays with `Physics.IgnoreLayerCollision`. The change lasts until the game stops.
+
 ## In scene files
 
 Each component is a table on its Obj, and leaves out the settings you didn't change:

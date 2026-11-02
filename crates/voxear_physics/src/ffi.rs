@@ -24,6 +24,7 @@ pub struct VxBodyDesc {
     pub sensor: u32,
     pub continuous: u32,
     pub user_data: u64,
+    pub layer: u32,
 }
 
 #[repr(C)]
@@ -44,6 +45,7 @@ pub struct VxCharacterDesc {
     pub max_slope_degrees: f32,
     pub step_height: f32,
     pub mass: f32,
+    pub layer: u32,
 }
 
 #[repr(C)]
@@ -69,6 +71,7 @@ unsafe extern "C" {
     pub fn vx_world_create(max_bodies: u32) -> *mut VxWorld;
     pub fn vx_world_destroy(world: *mut VxWorld);
     pub fn vx_world_set_gravity(world: *mut VxWorld, x: f32, y: f32, z: f32);
+    pub fn vx_world_set_layers(world: *mut VxWorld, collide: *const u32);
     pub fn vx_world_step(world: *mut VxWorld, dt: f32, steps: c_int);
 
     pub fn vx_shape_box(world: *mut VxWorld, hx: f32, hy: f32, hz: f32) -> u32;
@@ -109,6 +112,7 @@ unsafe extern "C" {
         direction: *const f32,
         ignore: u32,
         flags: u32,
+        mask: u32,
         hit: *mut VxHit,
     ) -> c_int;
     pub fn vx_overlap_point(world: *mut VxWorld, point: *const f32, bodies: *mut u32, capacity: c_int) -> c_int;
@@ -117,6 +121,7 @@ unsafe extern "C" {
         center: *const f32,
         radius: f32,
         flags: u32,
+        mask: u32,
         bodies: *mut u32,
         capacity: c_int,
     ) -> c_int;

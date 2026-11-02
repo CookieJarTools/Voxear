@@ -17,14 +17,15 @@
 //! with a Collider 2D, as the 3D scene does for Jolt: still ones moved
 //! where the game puts them, kinematic ones moved over the step, and
 //! dynamic ones writing their place back to their Objs' Transforms, which
-//! keep their Z.
+//! keep their Z. Each body is on its Obj's [`Layer`], and Objs on layers
+//! the world's [`Layers`] keep apart pass through each other.
 
 use std::collections::{HashMap, HashSet};
 
 use glam::{Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use voxear_ecs::{Component, Entity, World};
-use voxear_scene::{Destroying, Parent, Transform};
+use voxear_scene::{Destroying, Layer, Layers, Parent, Transform};
 
 use crate::{Body2D, BodyDesc2D, Motion2D, PhysicsWorld2D, Push2D, Shape2D};
 
@@ -140,6 +141,10 @@ struct BodyKey {
     collider: Collider2D,
     rigidbody: Option<Rigidbody2D>,
     scale: Vec2,
+    layer: u8,
+    /// The layers its layer collides with, so that a body is made again
+    /// when the project's matrix changes.
+    collides: u32,
 }
 
 struct Kept {
@@ -271,23 +276,31 @@ impl PhysicsScene2D {
     }
 
     /// The first Collider 2D a ray from `origin` meets along `direction`
-    /// within `distance` metres, passing over triggers unless `triggers`.
-    pub fn raycast(&self, origin: Vec2, direction: Vec2, distance: f32, triggers: bool) -> Option<SceneHit2D> {
+    /// within `distance` metres, on an Obj on a layer in `mask`, passing
+    /// over triggers unless `triggers`.
+    pub fn raycast(
+        &self,
+        origin: Vec2,
+        direction: Vec2,
+        distance: f32,
+        mask: u32,
+        triggers: bool,
+    ) -> Option<SceneHit2D> {
         let direction = direction.normalize_or_zero();
         if direction == Vec2::ZERO || distance.is_nan() || distance <= 0.0 {
             return None;
         }
         let reach = distance.min(FOREVER);
-        let hit = self.world.raycast(origin, direction * reach, triggers)?;
+        let hit = self.world.raycast(origin, direction * reach, mask, triggers)?;
         let obj = Entity::from_bits(hit.user_data);
         Some(SceneHit2D { obj, point: hit.point, normal: hit.normal, distance: hit.fraction * reach })
     }
 
-    /// The Objs whose Collider 2D a circle overlaps, each once, with
-    /// triggers when `triggers`.
-    pub fn overlap_circle(&self, center: Vec2, radius: f32, triggers: bool) -> Vec<Entity> {
+    /// The Objs on layers in `mask` whose Collider 2D a circle overlaps,
+    /// each once, with triggers when `triggers`.
+    pub fn overlap_circle(&self, center: Vec2, radius: f32, mask: u32, triggers: bool) -> Vec<Entity> {
         let mut objs: Vec<Entity> = Vec::new();
-        for data in self.world.overlap_circle(center, radius, triggers) {
+        for data in self.world.overlap_circle(center, radius, mask, triggers) {
             let obj = Entity::from_bits(data);
             if !objs.contains(&obj) {
                 objs.push(obj);
@@ -341,7 +354,9 @@ impl PhysicsScene2D {
         // Rounded, as a scale read back from a turned Obj's matrix is a hair off, and the body would be
         // made again each step it turns.
         let scale = (scale.truncate() * 1e4).round() / 1e4;
-        let key = BodyKey { collider, rigidbody: world.get::<Rigidbody2D>(entity).copied(), scale };
+        let layer = world.get::<Layer>(entity).map_or(0, |layer| layer.0);
+        let collides = world.resource::<Layers>().map_or(u32::MAX, |layers| layers.matrix()[usize::from(layer % 32)]);
+        let key = BodyKey { collider, rigidbody: world.get::<Rigidbody2D>(entity).copied(), scale, layer, collides };
         let Some(kept) = self.bodies.get_mut(&entity).filter(|kept| kept.key == key) else {
             if let Some(kept) = self.bodies.remove(&entity) {
                 self.world.remove_body(kept.body);
@@ -456,6 +471,7 @@ fn desc(entity: Entity, key: &BodyKey, place: (Vec2, f32)) -> BodyDesc2D {
     desc.restitution = collider.bounciness;
     desc.sensor = collider.trigger;
     desc.user_data = entity.to_bits();
+    (desc.layer, desc.collides) = (key.layer, key.collides);
     if let Some(body) = key.rigidbody {
         desc.mass = body.mass;
         desc.gravity_scale = body.gravity_scale;
@@ -561,17 +577,53 @@ mod tests {
         assert_eq!((crossed(true), crossed(false)), (1, 1), "in and out of the gate: {events:?}");
 
         // A ray and a circle find what is where.
-        let hit = physics.raycast(Vec2::new(0.0, 10.0), Vec2::NEG_Y, f32::INFINITY, false).unwrap();
+        let hit = physics.raycast(Vec2::new(0.0, 10.0), Vec2::NEG_Y, f32::INFINITY, u32::MAX, false).unwrap();
         assert_eq!(hit.obj, ball);
-        let trigger = physics.raycast(Vec2::new(0.0, 10.0), Vec2::NEG_Y, f32::INFINITY, true).unwrap();
+        let trigger = physics.raycast(Vec2::new(0.0, 10.0), Vec2::NEG_Y, f32::INFINITY, u32::MAX, true).unwrap();
         assert_eq!(trigger.obj, gate, "when triggers are asked for");
         assert!((hit.distance - 9.0).abs() < 0.02, "{hit:?}");
-        assert_eq!(physics.overlap_circle(Vec2::new(0.0, 2.0), 0.1, true), [gate]);
+        assert_eq!(physics.overlap_circle(Vec2::new(0.0, 2.0), 0.1, u32::MAX, true), [gate]);
 
         // Made again, a body keeps touching what it touched, untold.
         world.get_mut::<Collider2D>(ball).unwrap().friction = 0.2;
         physics.step(&mut world, 1.0 / 60.0);
         physics.step(&mut world, 1.0 / 60.0);
         assert!(physics.take_events().is_empty() && physics.touching(ground, ball));
+    }
+
+    #[test]
+    fn objs_on_layers_kept_apart_pass_through_and_rays_ask_after_some_layers() {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let mut layers = Layers::named(&["Default".into(), "Ground".into(), "Ghost".into()]);
+        layers.set_collide(1, 2, false);
+        world.insert_resource(layers);
+        let ground = obj(&mut world, Vec3::new(0.0, -0.5, 0.0), Collider2D { size: [20.0, 1.0], ..Default::default() });
+        world.insert(ground, Layer(1));
+        let falling = |world: &mut World, x: f32, layer: u8| {
+            let ball = obj(world, Vec3::new(x, 4.0, 0.0), Collider2D::default());
+            world.insert(ball, Rigidbody2D::default());
+            world.insert(ball, Layer(layer));
+            ball
+        };
+        let (solid, ghost) = (falling(&mut world, 0.0, 0), falling(&mut world, 3.0, 2));
+        let mut physics = PhysicsScene2D::new();
+        for _ in 0..90 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        let y = |world: &World, obj: Entity| world.get::<Transform>(obj).unwrap().position.y;
+        assert!((y(&world, solid) - 0.5).abs() < 0.05 && y(&world, ghost) < -2.0);
+        let down = |x: f32, mask: u32| physics.raycast(Vec2::new(x, 10.0), Vec2::NEG_Y, 30.0, mask, false);
+        assert_eq!(down(0.0, u32::MAX).map(|hit| hit.obj), Some(solid));
+        assert_eq!(down(0.0, 1 << 1).map(|hit| hit.obj), Some(ground), "past the Obj on Default");
+        assert_eq!(down(3.0, 1 << 2).map(|hit| hit.obj), Some(ghost), "a ray meets what passes through the ground");
+
+        // Once the project lets them collide, the ghost is made again and lands, from where it is now.
+        world.get_mut::<Transform>(ghost).unwrap().position = Vec3::new(3.0, 4.0, 0.0);
+        world.resource_mut::<Layers>().unwrap().set_collide(1, 2, true);
+        for _ in 0..90 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        assert!((y(&world, ghost) - 0.5).abs() < 0.05, "{}", y(&world, ghost));
     }
 }

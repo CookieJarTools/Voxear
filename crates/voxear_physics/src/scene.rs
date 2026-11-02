@@ -24,13 +24,16 @@
 //! dynamic, moved by physics, its Transform following. Each fixed step
 //! moves them all on (see `Engine::tick`), and the contacts that began and
 //! ended come after, for scripts.
+//!
+//! Each body is on its Obj's [`Layer`], and Objs on layers the world's
+//! [`Layers`] keep apart pass through each other.
 
 use std::collections::{HashMap, HashSet};
 
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use voxear_ecs::{Component, Entity, World};
-use voxear_scene::{Destroying, Parent, Transform};
+use voxear_scene::{Destroying, Layer, Layers, Parent, Transform};
 
 use crate::{
     BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, ShapeId,
@@ -223,6 +226,7 @@ struct BodyKey {
     collider: Collider,
     rigidbody: Option<Rigidbody>,
     scale: Vec3,
+    layer: u8,
 }
 
 struct Kept {
@@ -238,6 +242,7 @@ struct Kept {
 struct Walker {
     id: CharacterId,
     controller: CharacterController,
+    layer: u8,
     placed: Vec3,
     state: Option<CharacterState>,
 }
@@ -286,6 +291,8 @@ pub struct PhysicsScene {
     joints: HashMap<Entity, (JointId, JointKey)>,
     events: Vec<PhysicsEvent>,
     gravity: Vec3,
+    /// Which layers collide, as the world was told last.
+    collide: [u32; 32],
     /// Whether it has stepped: until then, a script's question brings its
     /// bodies to where their Objs are first.
     stepped: bool,
@@ -295,6 +302,11 @@ pub struct PhysicsScene {
     /// went to sleep, or was made again. Each counts the steps since both
     /// were awake.
     unsure: HashMap<(Entity, Entity), u8>,
+}
+
+/// The layer an Obj is on, 0 without one.
+fn layer(world: &World, entity: Entity) -> u8 {
+    world.get::<Layer>(entity).map_or(0, |layer| layer.0)
 }
 
 /// Two Objs as a pair, the same whichever comes first.
@@ -318,6 +330,7 @@ impl PhysicsScene {
             joints: HashMap::new(),
             events: Vec::new(),
             gravity: Vec3::new(0.0, -9.81, 0.0),
+            collide: [u32::MAX; 32],
             stepped: false,
             touching: HashSet::new(),
             unsure: HashMap::new(),
@@ -359,24 +372,25 @@ impl PhysicsScene {
     }
 
     /// The first collider a ray from `origin` meets along `direction`
-    /// within `distance` metres, passing over triggers unless `triggers`.
-    /// As in Unity, a ray that starts inside a collider passes out of it.
-    pub fn raycast(&self, origin: Vec3, direction: Vec3, distance: f32, triggers: bool) -> Option<SceneHit> {
+    /// within `distance` metres, on an Obj on a layer in `mask`, passing
+    /// over triggers unless `triggers`. As in Unity, a ray that starts
+    /// inside a collider passes out of it.
+    pub fn raycast(&self, origin: Vec3, direction: Vec3, distance: f32, mask: u32, triggers: bool) -> Option<SceneHit> {
         let direction = direction.normalize_or_zero();
         if direction == Vec3::ZERO || distance.is_nan() || distance <= 0.0 {
             return None;
         }
         let reach = distance.min(FOREVER);
-        let hit = self.world.raycast(origin, direction * reach, None, triggers)?;
+        let hit = self.world.raycast(origin, direction * reach, mask, None, triggers)?;
         let obj = self.owner(hit.body)?;
         Some(SceneHit { obj, point: hit.point, normal: hit.normal, distance: hit.fraction * reach })
     }
 
-    /// The Objs whose colliders a sphere overlaps, each once, with
-    /// triggers when `triggers`.
-    pub fn overlap_sphere(&self, center: Vec3, radius: f32, triggers: bool) -> Vec<Entity> {
+    /// The Objs on layers in `mask` whose colliders a sphere overlaps, each
+    /// once, with triggers when `triggers`.
+    pub fn overlap_sphere(&self, center: Vec3, radius: f32, mask: u32, triggers: bool) -> Vec<Entity> {
         let mut objs: Vec<Entity> = Vec::new();
-        for body in self.world.bodies_in_sphere(center, radius, triggers) {
+        for body in self.world.bodies_in_sphere(center, radius, mask, triggers) {
             if let Some(obj) = self.owner(body).filter(|obj| !objs.contains(obj)) {
                 objs.push(obj);
             }
@@ -429,6 +443,11 @@ impl PhysicsScene {
     }
 
     fn sync(&mut self, world: &World, dt: f32) {
+        let collide = world.resource::<Layers>().map_or([u32::MAX; 32], Layers::matrix);
+        if collide != self.collide {
+            self.collide = collide;
+            self.world.set_layers(&collide);
+        }
         let colliders: Vec<(Entity, Collider)> = world
             .query_ref::<(Entity, &Collider)>()
             .without::<Destroying>()
@@ -512,7 +531,8 @@ impl PhysicsScene {
         // The scale is rounded, as one read back from a turned body's matrix is a hair off what was set,
         // and the body would be made again, losing its speed, each step it turns.
         let scale = (scale * 1e4).round() / 1e4;
-        let key = BodyKey { collider, rigidbody: world.get::<Rigidbody>(entity).copied(), scale };
+        let (rigidbody, layer) = (world.get::<Rigidbody>(entity).copied(), layer(world, entity));
+        let key = BodyKey { collider, rigidbody, scale, layer };
         let Some(kept) = self.bodies.get_mut(&entity).filter(|kept| kept.key == key) else {
             if self.bodies.contains_key(&entity) {
                 self.doubt(entity);
@@ -543,6 +563,7 @@ impl PhysicsScene {
         desc.restitution = key.collider.bounciness;
         desc.sensor = key.collider.trigger;
         desc.user_data = entity.to_bits();
+        desc.layer = key.layer;
         if let Some(body) = key.rigidbody {
             desc.mass = body.mass.max(1e-3);
             desc.linear_damping = body.drag;
@@ -716,11 +737,12 @@ impl PhysicsScene {
     }
 
     /// Brings an Obj's character to its Character Controller, made again
-    /// when that changed, and to where the game put the Obj.
+    /// when that or its layer changed, and to where the game put the Obj.
     fn sync_character(&mut self, world: &World, entity: Entity, controller: CharacterController) {
         let position = voxear_scene::world_matrix(world, entity).w_axis.truncate();
+        let layer = layer(world, entity);
         match self.characters.get_mut(&entity) {
-            Some(walker) if walker.controller == controller => {
+            Some(walker) if walker.controller == controller && walker.layer == layer => {
                 if !walker.placed.abs_diff_eq(position, 1e-4) {
                     walker.placed = position;
                     let id = walker.id;
@@ -738,13 +760,14 @@ impl PhysicsScene {
             radius: controller.radius,
             max_slope: controller.slope_limit,
             step_height: controller.step_offset,
+            layer,
             ..CharacterDesc::default()
         };
         let character = self.world.add_character(&desc);
         if let Some(body) = self.world.character_body(character) {
             self.owners.insert(body, entity);
         }
-        self.characters.insert(entity, Walker { id: character, controller, placed: position, state: None });
+        self.characters.insert(entity, Walker { id: character, controller, layer, placed: position, state: None });
     }
 
     /// Moves an Obj's Character Controller at `velocity` for `dt` seconds,
@@ -999,5 +1022,42 @@ mod tests {
         world.remove::<CharacterController>(walker);
         physics.step(&mut world, 1.0 / 60.0);
         assert!(physics.take_events().is_empty() && physics.owners.values().all(|e| *e != walker));
+    }
+
+    #[test]
+    fn objs_on_layers_kept_apart_pass_through_and_rays_ask_after_some_layers() {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let mut layers = Layers::named(&["Default".into(), "Ground".into(), "Ghost".into()]);
+        layers.set_collide(1, 2, false);
+        world.insert_resource(layers);
+        let ground = world.spawn((Transform::from_position(Vec3::new(0.0, -0.5, 0.0)), Layer(1)));
+        world.insert(ground, Collider { size: [20.0, 1.0, 20.0], ..Collider::default() });
+        let falling = |world: &mut World, x: f32, layer: u8| {
+            let obj = world.spawn((Transform::from_position(Vec3::new(x, 4.0, 0.0)), Layer(layer)));
+            world.insert(obj, Collider::default());
+            world.insert(obj, Rigidbody::default());
+            obj
+        };
+        let (solid, ghost) = (falling(&mut world, 0.0, 0), falling(&mut world, 3.0, 2));
+        let mut physics = PhysicsScene::new();
+        for _ in 0..90 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        let y = |world: &World, obj: Entity| world.get::<Transform>(obj).unwrap().position.y;
+        assert!((y(&world, solid) - 0.5).abs() < 0.05 && y(&world, ghost) < -2.0);
+
+        let down = |x: f32, mask: u32| physics.raycast(Vec3::new(x, 10.0, 0.0), Vec3::NEG_Y, 30.0, mask, false);
+        assert_eq!(down(0.0, u32::MAX).map(|hit| hit.obj), Some(solid));
+        assert_eq!(down(0.0, 1 << 1).map(|hit| hit.obj), Some(ground), "past the Obj on Default");
+        assert_eq!(physics.overlap_sphere(Vec3::new(0.0, 0.0, 0.0), 0.8, 1 << 1, false), [ground]);
+
+        // Moved onto Default, the ghost's body is made again and lands on what is under it.
+        world.get_mut::<Transform>(ghost).unwrap().position = Vec3::new(3.0, 4.0, 0.0);
+        world.insert(ghost, Layer(0));
+        for _ in 0..90 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        assert!((y(&world, ghost) - 0.5).abs() < 0.05, "{}", y(&world, ghost));
     }
 }

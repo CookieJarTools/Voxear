@@ -15,10 +15,13 @@
 //! - **Joints** hold two bodies together: fixed, a point both turn about, a
 //!   hinge, or a distance.
 //!
-//! [`PhysicsWorld::step`] moves everything on; contacts that began or ended
-//! come after, from [`PhysicsWorld::take_contacts`]. Ray casts and point
-//! overlaps ask what is where. Y is up, and units are metres, kilograms and
-//! seconds.
+//! Bodies and characters are each on one of 32 layers, and
+//! [`PhysicsWorld::set_layers`] says which layers collide; what does not
+//! move never collides with itself. [`PhysicsWorld::step`] moves everything
+//! on; contacts that began or ended come after, from
+//! [`PhysicsWorld::take_contacts`]. Ray casts and overlaps ask what is
+//! where, on the layers in a mask. Y is up, and units are metres,
+//! kilograms and seconds.
 //!
 //! [`scene`] puts Objs in a world: their Collider, Rigidbody and Character
 //! Controller components, and the [`PhysicsScene`](scene::PhysicsScene)
@@ -78,6 +81,8 @@ pub struct BodyDesc {
     pub continuous: bool,
     /// A number of the game's, such as its Obj's entity.
     pub user_data: u64,
+    /// Its layer, from 0 to 31.
+    pub layer: u8,
 }
 
 impl BodyDesc {
@@ -96,6 +101,7 @@ impl BodyDesc {
             sensor: false,
             continuous: false,
             user_data: 0,
+            layer: 0,
         }
     }
 
@@ -151,13 +157,19 @@ pub struct CharacterDesc {
     pub step_height: f32,
     /// What it pushes other bodies with, in kilograms.
     pub mass: f32,
+    /// Its layer, from 0 to 31: it walks through bodies on layers its own
+    /// does not collide with.
+    pub layer: u8,
 }
 
 impl Default for CharacterDesc {
     fn default() -> Self {
-        Self { position: Vec3::ZERO, height: 1.8, radius: 0.3, max_slope: 45.0, step_height: 0.3, mass: 70.0 }
+        Self { position: Vec3::ZERO, height: 1.8, radius: 0.3, max_slope: 45.0, step_height: 0.3, mass: 70.0, layer: 0 }
     }
 }
+
+/// A layer mask with every layer in it.
+pub const EVERY_LAYER: u32 = u32::MAX;
 
 /// What a character stands on after it moved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,6 +247,12 @@ impl PhysicsWorld {
         unsafe { ffi::vx_world_set_gravity(self.world, gravity.x, gravity.y, gravity.z) };
     }
 
+    /// Which layers collide: bit `b` of `collide[a]` set when bodies on
+    /// layers `a` and `b` do. Every pair collides until this is set.
+    pub fn set_layers(&mut self, collide: &[u32; 32]) {
+        unsafe { ffi::vx_world_set_layers(self.world, collide.as_ptr()) };
+    }
+
     /// Moves everything on by `dt` seconds, in `steps` collision steps:
     /// one is enough at 60 a second, and more keep a slower step stable.
     pub fn step(&mut self, dt: f32, steps: u32) {
@@ -307,6 +325,7 @@ impl PhysicsWorld {
             sensor: u32::from(desc.sensor),
             continuous: u32::from(desc.continuous),
             user_data: desc.user_data,
+            layer: u32::from(desc.layer % 32),
         };
         let body = unsafe { ffi::vx_body_add(self.world, &raw) };
         (body != u32::MAX).then_some(BodyId(body))
@@ -375,16 +394,23 @@ impl PhysicsWorld {
     }
 
     /// The first body a ray meets from `origin`, going `direction`, whose
-    /// length is how far it reaches, passing over `ignore`, and over
-    /// sensors unless `sensors`. As in Unity, a ray that starts inside a
-    /// shape passes out of it without meeting it.
-    pub fn raycast(&self, origin: Vec3, direction: Vec3, ignore: Option<BodyId>, sensors: bool) -> Option<RayHit> {
+    /// length is how far it reaches, on the layers in `mask`, passing over
+    /// `ignore`, and over sensors unless `sensors`. As in Unity, a ray that
+    /// starts inside a shape passes out of it without meeting it.
+    pub fn raycast(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        mask: u32,
+        ignore: Option<BodyId>,
+        sensors: bool,
+    ) -> Option<RayHit> {
         let mut hit = ffi::VxHit::default();
         let (origin, direction) = (origin.to_array(), direction.to_array());
         let ignore = ignore.map_or(u32::MAX, |body| body.0);
         let flags = u32::from(sensors);
         let found =
-            unsafe { ffi::vx_raycast(self.world, origin.as_ptr(), direction.as_ptr(), ignore, flags, &mut hit) };
+            unsafe { ffi::vx_raycast(self.world, origin.as_ptr(), direction.as_ptr(), ignore, flags, mask, &mut hit) };
         (found != 0).then(|| RayHit {
             body: BodyId(hit.body),
             fraction: hit.fraction,
@@ -406,12 +432,14 @@ impl PhysicsWorld {
         found.into_iter().map(BodyId).collect()
     }
 
-    /// The bodies a sphere overlaps, each once, with sensors when `sensors`.
-    pub fn bodies_in_sphere(&self, center: Vec3, radius: f32, sensors: bool) -> Vec<BodyId> {
+    /// The bodies a sphere overlaps on the layers in `mask`, each once,
+    /// with sensors when `sensors`.
+    pub fn bodies_in_sphere(&self, center: Vec3, radius: f32, mask: u32, sensors: bool) -> Vec<BodyId> {
         let center = center.to_array();
         let flags = u32::from(sensors);
         let overlap = |found: &mut Vec<u32>| unsafe {
-            ffi::vx_overlap_sphere(self.world, center.as_ptr(), radius, flags, found.as_mut_ptr(), found.len() as i32)
+            let (out, capacity) = (found.as_mut_ptr(), found.len() as i32);
+            ffi::vx_overlap_sphere(self.world, center.as_ptr(), radius, flags, mask, out, capacity)
         };
         let mut found = vec![0u32; 32];
         let count = overlap(&mut found);
@@ -451,6 +479,7 @@ impl PhysicsWorld {
             max_slope_degrees: desc.max_slope,
             step_height: desc.step_height,
             mass: desc.mass,
+            layer: u32::from(desc.layer % 32),
         };
         CharacterId(unsafe { ffi::vx_character_add(self.world, &raw) })
     }
@@ -554,12 +583,12 @@ mod tests {
         let mut world = PhysicsWorld::new(1024);
         let (ground, crate_) = ground_and_crate(&mut world);
         let down = Vec3::new(0.0, -20.0, 0.0);
-        let hit = world.raycast(Vec3::new(0.0, 10.0, 0.0), down, None, false).expect("a hit");
+        let hit = world.raycast(Vec3::new(0.0, 10.0, 0.0), down, EVERY_LAYER, None, false).expect("a hit");
         assert_eq!(hit.body, crate_);
         assert!((hit.point.y - 5.5).abs() < 0.01 && hit.normal.y > 0.99, "{hit:?}");
-        let past = world.raycast(Vec3::new(0.0, 10.0, 0.0), down, Some(crate_), false).unwrap();
+        let past = world.raycast(Vec3::new(0.0, 10.0, 0.0), down, EVERY_LAYER, Some(crate_), false).unwrap();
         assert_eq!(past.body, ground, "past the crate when it is passed over");
-        let inside = world.raycast(Vec3::new(0.0, 5.0, 0.0), down, None, false).unwrap();
+        let inside = world.raycast(Vec3::new(0.0, 5.0, 0.0), down, EVERY_LAYER, None, false).unwrap();
         assert_eq!(inside.body, ground, "out of the crate it starts in, as in Unity");
         assert_eq!(world.bodies_at(Vec3::new(0.0, 5.0, 0.0)), [crate_]);
 
@@ -568,13 +597,13 @@ mod tests {
         let mut desc = BodyDesc::new(zone, Motion::Static).at(Vec3::new(0.0, 8.0, 0.0), Quat::IDENTITY);
         desc.sensor = true;
         let zone = world.add_body(&desc).unwrap();
-        assert_eq!(world.bodies_in_sphere(Vec3::new(0.0, 6.0, 0.0), 1.2, false), [crate_]);
-        let mut both = world.bodies_in_sphere(Vec3::new(0.0, 6.0, 0.0), 1.2, true);
+        assert_eq!(world.bodies_in_sphere(Vec3::new(0.0, 6.0, 0.0), 1.2, EVERY_LAYER, false), [crate_]);
+        let mut both = world.bodies_in_sphere(Vec3::new(0.0, 6.0, 0.0), 1.2, EVERY_LAYER, true);
         both.sort();
         let mut expected = [crate_, zone];
         expected.sort();
         assert_eq!(both, expected);
-        assert_eq!(world.raycast(Vec3::new(0.0, 10.0, 0.0), down, None, true).unwrap().body, zone);
+        assert_eq!(world.raycast(Vec3::new(0.0, 10.0, 0.0), down, EVERY_LAYER, None, true).unwrap().body, zone);
     }
 
     #[test]
@@ -594,6 +623,49 @@ mod tests {
         assert_eq!(state.ground, Ground::Ground, "{state:?}");
         assert!(state.position.x < 2.5 && state.position.x > 2.0, "stopped by the wall: {state:?}");
         assert!(state.position.y.abs() < 0.05, "on the floor: {state:?}");
+    }
+
+    #[test]
+    fn layers_that_do_not_collide_pass_through_and_masks_choose_what_rays_meet() {
+        let mut world = PhysicsWorld::new(1024);
+        let (ground, crate_) = ground_and_crate(&mut world);
+        let shape = world.box_shape(Vec3::splat(0.5));
+        let mut desc = BodyDesc::new(shape, Motion::Dynamic).at(Vec3::new(3.0, 5.0, 0.0), Quat::IDENTITY);
+        desc.layer = 3;
+        let ghost = world.add_body(&desc).unwrap();
+        let mut collide = [EVERY_LAYER; 32];
+        collide[0] &= !(1 << 3);
+        collide[3] &= !1;
+        world.set_layers(&collide);
+        for _ in 0..120 {
+            world.step(1.0 / 60.0, 1);
+        }
+        assert!(world.transform(crate_).0.y > -0.6, "the crate on layer 0 lands");
+        assert!(world.transform(ghost).0.y < -2.0, "the one on layer 3 falls through the ground");
+
+        // A ray meets what is on its mask's layers only.
+        let down = Vec3::new(0.0, -40.0, 0.0);
+        let at_ghost = Vec3::new(3.0, world.transform(ghost).0.y + 5.0, 0.0);
+        assert_eq!(world.raycast(at_ghost, down, EVERY_LAYER, None, false).unwrap().body, ghost);
+        assert_eq!(world.raycast(at_ghost, down, !(1 << 3), None, false).map(|hit| hit.body), None);
+        assert_eq!(world.raycast(Vec3::new(0.0, 10.0, 0.0), down, 1 << 3, None, false).map(|hit| hit.body), None);
+        assert_eq!(world.raycast(Vec3::new(0.0, 10.0, 0.0), down, 1, Some(crate_), false).unwrap().body, ground);
+
+        // A character walks through a wall on a layer its own does not collide with.
+        let wall = world.box_shape(Vec3::new(0.5, 2.0, 5.0));
+        let mut desc = BodyDesc::new(wall, Motion::Static).at(Vec3::new(-3.0, 1.0, 0.0), Quat::IDENTITY);
+        desc.layer = 4;
+        world.add_body(&desc);
+        collide[4] &= !(1 << 5);
+        collide[5] &= !(1 << 4);
+        world.set_layers(&collide);
+        let walker = CharacterDesc { position: Vec3::new(0.0, -0.95, 2.0), layer: 5, ..Default::default() };
+        let walker = world.add_character(&walker);
+        let mut state = None;
+        for _ in 0..120 {
+            state = Some(world.move_character(walker, Vec3::new(-3.0, -1.0, 0.0), 1.0 / 60.0, 0.3));
+        }
+        assert!(state.unwrap().position.x < -4.0, "through the wall: {state:?}");
     }
 
     #[test]

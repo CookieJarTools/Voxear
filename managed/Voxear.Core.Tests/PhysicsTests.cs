@@ -63,6 +63,8 @@ internal static class PhysicsTests
 		LayerMask mask = (1 << 3) | (1 << 5);
 		Check.True(mask.Contains(5) && !mask.Contains(4) && !mask.Contains(40), "by bit");
 		Check.True(LayerMask.Everything.Contains(31) && !LayerMask.Nothing.Contains(0), "every one, and none");
+		Check.True(!Physics.Raycast(Vector3.Zero, Vector3.UnitX, out _, 10f, LayerMask.GetMask("Default")), "a ray takes a mask");
+		Check.True(!Physics.GetIgnoreLayerCollision(0, 3) && !Physics2D.GetIgnoreLayerCollision(1, 2), "every layer collides without the engine");
 	}
 
 	[Test]

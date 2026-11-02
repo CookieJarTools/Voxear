@@ -1,5 +1,6 @@
-//! Layers for C#: an Obj's layer, read and set, and the project's layers'
-//! names, for `Obj.Layer` and `LayerMask` (see `voxear_scene::Layers`).
+//! Layers for C#: an Obj's layer, read and set, the project's layers'
+//! names, for `Obj.Layer` and `LayerMask`, and which layers collide, for
+//! `Physics.IgnoreLayerCollision` (see `voxear_scene::Layers`).
 
 use voxear_ecs::Entity;
 use voxear_scene::{LAYER_COUNT, Layer, Layers};
@@ -37,6 +38,22 @@ pub(crate) unsafe extern "C" fn layer_name(layer: i32, buffer: *mut u8, capacity
         unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), buffer, name.len()) };
     }
     name.len() as i32
+}
+
+/// Whether Objs on two layers collide, set to `on` first when `set`, for
+/// as long as the game plays: 1 when they do.
+pub(crate) unsafe extern "C" fn layer_collide(a: i32, b: i32, set: i32, on: i32) -> i32 {
+    let (a, b) = (a.clamp(0, LAYER_COUNT as i32 - 1) as u8, b.clamp(0, LAYER_COUNT as i32 - 1) as u8);
+    let collide = with_world(|world| {
+        if set != 0 {
+            if world.resource::<Layers>().is_none() {
+                world.insert_resource(Layers::default());
+            }
+            world.resource_mut::<Layers>()?.set_collide(a, b, on != 0);
+        }
+        Some(world.resource::<Layers>().is_none_or(|layers| layers.collide(a, b)))
+    });
+    i32::from(collide.unwrap_or(true))
 }
 
 /// The layer with a name, or -1 when the project has none by it.

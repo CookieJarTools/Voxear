@@ -72,6 +72,7 @@ pub const NAMES: &[&str] = &[
     "panels",
     "lock",
     "grip",
+    "layers",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -182,6 +183,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
              M7.5 18a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0ZM13.5 18a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0Z",
             FILL,
         )],
+        // Three sheets stacked, for layers.
+        "layers" => &[("M12 4l8 4-8 4-8-4ZM4 12l8 4 8-4M4 16l8 4 8-4", STROKE)],
         // Two sliders, for settings.
         "settings" => &[(
             "M4 7.5h8.5M17.5 7.5H20M4 16.5h2.5M11.5 16.5H20\

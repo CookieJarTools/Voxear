@@ -45,6 +45,7 @@ use crate::{
     field_drawers::{DrawerUi, FieldDrawers, ToOpen},
     fields::{self, Pick, Step},
     history::{Edit, ObjState},
+    layers_view::{LayersEdit, LayersView},
     lod_inspector::{GroupLods, LodEdge, LodEye, MeshLods},
     object_picker::{Choice, Chosen},
     project_view::ProjectItem,
@@ -300,6 +301,11 @@ pub struct Inspector {
     menu: Option<(NodeId, Vec<Option<RowAction>>)>,
     /// What is selected in the Project panel, when that is what it shows.
     asset: Option<AssetView>,
+    /// The project's layers, when that is what it shows.
+    layers: Option<LayersView>,
+    /// Add Layer… was picked from the Layer menu, for the editor to show
+    /// the project's layers.
+    wants_layers: bool,
     /// What the attributes' conditions came to when the sections were
     /// built, to build them again when it changes.
     conditions: Vec<bool>,
@@ -391,6 +397,8 @@ impl Inspector {
             prefab_mode: false,
             menu: None,
             asset: None,
+            layers: None,
+            wants_layers: false,
             conditions: Vec::new(),
             group_tabs: Vec::new(),
             group_foldouts: Vec::new(),
@@ -759,7 +767,37 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
+        self.layers = None;
         self.asset = Some(AssetView::build(ui, self.root, item, game, &self.types, self.dark));
+    }
+
+    /// Shows the project's layers, and which collide, in place of an Obj,
+    /// as Unity's Tags and Layers does (see `layers_view`).
+    pub fn show_layers(&mut self, ui: &mut Ui, layers: &Layers) {
+        self.shown = None;
+        (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
+        self.headers.clear();
+        self.rows.clear();
+        self.asset = None;
+        for child in ui.children(self.root) {
+            ui.remove(child);
+        }
+        self.layers = Some(LayersView::build(ui, self.root, layers));
+    }
+
+    /// The change made to the project's layers this frame, when it shows them.
+    pub fn update_layers(&mut self, ui: &mut Ui) -> Option<LayersEdit> {
+        self.layers.as_mut()?.update(ui)
+    }
+
+    /// The project's layers shown, when they are.
+    pub fn layers_view(&mut self) -> Option<&mut LayersView> {
+        self.layers.as_mut()
+    }
+
+    /// Whether Add Layer… was picked from the Layer menu since the last call.
+    pub fn take_wants_layers(&mut self) -> bool {
+        std::mem::take(&mut self.wants_layers)
     }
 
     /// What the asset shown asks of the editor this frame.
@@ -787,6 +825,7 @@ impl Inspector {
 
     pub fn show(&mut self, ui: &mut Ui, game: &Game, entity: Option<Entity>, playing: bool) {
         self.asset = None;
+        self.layers = None;
         for child in ui.children(self.root) {
             ui.remove(child);
         }
@@ -1467,9 +1506,12 @@ impl Inspector {
             }
         }
         ui.set_checked(fields.persistent, world.has::<ScenePersistence>(entity));
-        // A layer picked goes on every Obj edited; Default is no Layer at all.
+        // A layer picked goes on every Obj edited; Default is no Layer at all. Add Layer…, after the
+        // layers, shows the project's.
         let (dropdown, numbers) = &fields.layer;
-        if ui.changed(*dropdown) {
+        if ui.changed(*dropdown) && ui.selected_option(*dropdown) >= numbers.len() {
+            self.wants_layers = true;
+        } else if ui.changed(*dropdown) {
             let layer = numbers.get(ui.selected_option(*dropdown)).copied().unwrap_or_default();
             for target in std::iter::once(entity).chain(self.also.iter().copied()) {
                 match layer {
@@ -2283,7 +2325,8 @@ fn header(
     let label = ui.add_label(tags, "Layer");
     ui.add_class(label, "header-label");
     let layers = world.resource::<Layers>().cloned().unwrap_or_default();
-    let (numbers, names): (Vec<u8>, Vec<&str>) = layers.used().unzip();
+    let (numbers, mut names): (Vec<u8>, Vec<&str>) = layers.used().unzip();
+    names.push("Add Layer…");
     let now = world.get::<Layer>(entity).map_or(0, |layer| layer.0);
     let shown = numbers.iter().position(|&number| number == now).unwrap_or_default();
     let layer = ui.dropdown(tags, &names, shown);

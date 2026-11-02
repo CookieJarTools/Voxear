@@ -1184,6 +1184,57 @@
     padding-left: 2px;
 }
 
+/* The project's layers: layer 0's name, which stays Default, and the
+   Layer Collision Matrix, a triangle of ticks under the layers' numbers. */
+.layer-fixed {
+    padding-left: 7px;
+    color: var(--vx-text-2);
+}
+
+.layer-matrix {
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0px 2px 0px;
+}
+
+.layer-matrix-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 2px;
+}
+
+.layer-matrix-name {
+    width: 104px;
+    flex-shrink: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    color: var(--vx-muted);
+}
+
+.layer-matrix-number {
+    width: 20px;
+    flex-shrink: 0;
+    text-align: center;
+    font-size: 10px;
+    color: var(--vx-muted);
+}
+
+.layer-matrix-name.lit, .layer-matrix-number.lit {
+    color: var(--vx-accent);
+}
+
+.layer-matrix-check {
+    width: 20px;
+    flex-shrink: 0;
+    justify-content: center;
+}
+
+.layer-pair {
+    min-height: 18px;
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
 .level-weight-label {
     font-size: 11px;
     color: var(--vx-muted);

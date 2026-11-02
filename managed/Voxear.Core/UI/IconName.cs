@@ -29,6 +29,7 @@ public enum IconName
 	Grid,
 	Grip,
 	Info,
+	Layers,
 	Level,
 	Light,
 	Lock,

@@ -142,39 +142,39 @@ internal static unsafe class NativePhysics
 		return Native.IsConnected && Native.Api->PhysicsPush(obj.Id, kind, (float*)&amount, (float*)&at) == 1;
 	}
 
-	public static bool Raycast(Vector3 origin, Vector3 direction, float distance, bool triggers, out RaycastHitData hit)
+	public static bool Raycast(Vector3 origin, Vector3 direction, float distance, int mask, bool triggers, out RaycastHitData hit)
 	{
-		return Raycast(origin, direction, distance, triggers ? QueryTriggers : 0, out hit);
+		return Raycast(origin, direction, distance, mask, triggers ? QueryTriggers : 0, out hit);
 	}
 
-	public static bool Raycast2D(Vector2 origin, Vector2 direction, float distance, bool triggers, out RaycastHitData hit)
+	public static bool Raycast2D(Vector2 origin, Vector2 direction, float distance, int mask, bool triggers, out RaycastHitData hit)
 	{
 		var flags = Query2D | (triggers ? QueryTriggers : 0);
-		return Raycast(new Vector3(origin, 0f), new Vector3(direction, 0f), distance, flags, out hit);
+		return Raycast(new Vector3(origin, 0f), new Vector3(direction, 0f), distance, mask, flags, out hit);
 	}
 
-	private static bool Raycast(Vector3 origin, Vector3 direction, float distance, int flags, out RaycastHitData hit)
+	private static bool Raycast(Vector3 origin, Vector3 direction, float distance, int mask, int flags, out RaycastHitData hit)
 	{
 		var found = default(RaycastHitData);
 		var met = Native.IsConnected
-			&& Native.Api->PhysicsRaycast((float*)&origin, (float*)&direction, distance, flags, &found) == 1;
+			&& Native.Api->PhysicsRaycast((float*)&origin, (float*)&direction, distance, (uint)mask, flags, &found) == 1;
 		hit = found;
 		return met;
 	}
 
-	/// <summary>The Objs whose colliders a sphere overlaps, each once.</summary>
-	public static Obj[] Overlap(Vector3 center, float radius, bool triggers)
+	/// <summary>The Objs on the layers in mask whose colliders a sphere overlaps, each once.</summary>
+	public static Obj[] Overlap(Vector3 center, float radius, int mask, bool triggers)
 	{
-		return Overlap(center, radius, triggers ? QueryTriggers : 0);
+		return Overlap(center, radius, mask, triggers ? QueryTriggers : 0);
 	}
 
-	/// <summary>The Objs whose 2D colliders a circle overlaps, each once.</summary>
-	public static Obj[] Overlap2D(Vector2 center, float radius, bool triggers)
+	/// <summary>The Objs on the layers in mask whose 2D colliders a circle overlaps, each once.</summary>
+	public static Obj[] Overlap2D(Vector2 center, float radius, int mask, bool triggers)
 	{
-		return Overlap(new Vector3(center, 0f), radius, Query2D | (triggers ? QueryTriggers : 0));
+		return Overlap(new Vector3(center, 0f), radius, mask, Query2D | (triggers ? QueryTriggers : 0));
 	}
 
-	private static Obj[] Overlap(Vector3 center, float radius, int flags)
+	private static Obj[] Overlap(Vector3 center, float radius, int mask, int flags)
 	{
 		if (!Native.IsConnected)
 		{
@@ -185,14 +185,15 @@ internal static unsafe class NativePhysics
 		int count;
 		fixed (ulong* written = some)
 		{
-			count = Native.Api->PhysicsOverlap((float*)&center, radius, flags, written, some.Length);
+			count = Native.Api->PhysicsOverlap((float*)&center, radius, (uint)mask, flags, written, some.Length);
 		}
 		var ids = count <= some.Length ? some[..count].ToArray() : new ulong[count];
 		if (count > some.Length)
 		{
 			fixed (ulong* written = ids)
 			{
-				count = Math.Min(count, Native.Api->PhysicsOverlap((float*)&center, radius, flags, written, ids.Length));
+				var again = Native.Api->PhysicsOverlap((float*)&center, radius, (uint)mask, flags, written, ids.Length);
+				count = Math.Min(count, again);
 			}
 		}
 		return Array.ConvertAll(ids[..count], id => new Obj(id));

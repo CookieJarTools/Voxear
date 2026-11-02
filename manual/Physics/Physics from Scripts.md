@@ -117,6 +117,15 @@ if (Physics.Raycast(Obj.WorldPosition, -Vector3.UnitY, out var hit, 2f))
 
 These questions see colliders where the last physics step left them, and they pass over triggers. Pass `hitTriggers: true` to find triggers as well. That is the one place Voxear differs from Unity, where rays find triggers unless you tell them not to.
 
+Each question also takes a layer mask, as in Unity, and then only looks at Objs on those layers. Leave it out to look at every layer. `LayerMask.GetMask` makes one from the layers' names:
+
+```csharp
+var ground = LayerMask.GetMask("Ground", "Platforms");
+var grounded = Physics.Raycast(Obj.WorldPosition, -Vector3.UnitY, out var hit, 1.1f, ground);
+```
+
+A mask is a bit for each layer, so `1 << 8` is layer 8 alone and `~0` is every layer. A ray finds Objs on its mask's layers whether or not those layers collide with anything.
+
 `Physics.Gravity` is which way and how hard everything falls. It starts at 9.81 metres per second per second, downwards.
 
 ## Walking a character

@@ -62,14 +62,16 @@ The same menu copies a component, as Unity's does. Choose **Copy Component**, se
 
 Every Obj is on one of 32 layers, as in Unity, chosen from **Layer** at the top of the Inspector. An Obj starts on **Default**. Physics uses layers to keep some Objs apart, such as ghosts that walk through walls, and a ray can look for some layers only.
 
-Your project names its layers in `voxear.toml`, in number order from layer 0. An empty name is a layer you don't use:
+To name your project's layers, choose **Add Layer…** at the bottom of the Layer menu, or run **Edit Layers** from the command palette. The Inspector shows all 32 layers. Type a name beside a layer to use it, or clear the name to stop using it. Layer 0 is always Default, and no two layers can share a name. Under the names is the **Collision Matrix**, which says which layers collide (see [[Colliders and Rigidbodies]]).
+
+The editor saves the names in `voxear.toml`, in number order from layer 0, with an empty name for a layer you don't use:
 
 ```toml
 [layers]
 names = ["Default", "", "Player", "Enemy", "Pickup"]
 ```
 
-A scene file writes an Obj's layer by its name, as `layer = "Player"`. A script reads and sets `Obj.Layer` by number, and `LayerMask.NameToLayer("Player")` finds a layer's number by its name.
+A scene file writes an Obj's layer by its number, as `layer = 3`, so renaming a layer keeps its Objs on it. When you write a scene by hand you can use the name instead, as `layer = "Player"`. A script reads and sets `Obj.Layer` by number, and `LayerMask.NameToLayer("Player")` finds a layer's number by its name.
 
 > [!NOTE]
 > The Inspector also shows **Tag** and **Static** for an Obj, and a switch to turn it on and off. These are not used yet, and are not saved. **Persistent**, beside Static, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].

@@ -52,6 +52,13 @@ impl Layers {
         self.names.get(usize::from(layer)).map_or("", String::as_str)
     }
 
+    /// Names a layer, or with an empty name leaves it unused. Layer 0 is
+    /// Default whatever it is named.
+    pub fn set_name(&mut self, layer: u8, name: &str) {
+        let at = usize::from(layer) % LAYER_COUNT;
+        self.names[at] = if at == 0 { "Default".to_string() } else { name.trim().to_string() };
+    }
+
     /// Every layer's name, by number, empty for one not used.
     pub fn names(&self) -> &[String] {
         &self.names

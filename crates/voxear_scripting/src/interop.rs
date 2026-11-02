@@ -244,11 +244,18 @@ pub(crate) struct NativeApi {
         origin: *const [f32; 3],
         direction: *const [f32; 3],
         distance: f32,
+        mask: u32,
         flags: i32,
         hit: *mut crate::physics::RaycastHitData,
     ) -> i32,
-    pub physics_overlap:
-        unsafe extern "C" fn(center: *const [f32; 3], radius: f32, flags: i32, objs: *mut u64, capacity: i32) -> i32,
+    pub physics_overlap: unsafe extern "C" fn(
+        center: *const [f32; 3],
+        radius: f32,
+        mask: u32,
+        flags: i32,
+        objs: *mut u64,
+        capacity: i32,
+    ) -> i32,
     pub character_move: unsafe extern "C" fn(
         entity: u64,
         motion: *const [f32; 3],
@@ -261,6 +268,7 @@ pub(crate) struct NativeApi {
     pub obj_layer: unsafe extern "C" fn(entity: u64, set: i32, layer: i32) -> i32,
     pub layer_name: unsafe extern "C" fn(layer: i32, buffer: *mut u8, capacity: i32) -> i32,
     pub layer_find: unsafe extern "C" fn(name: *const u8, len: i32) -> i32,
+    pub layer_collide: unsafe extern "C" fn(a: i32, b: i32, set: i32, on: i32) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -1063,6 +1071,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         obj_layer: crate::layers::obj_layer,
         layer_name: crate::layers::layer_name,
         layer_find: crate::layers::layer_find,
+        layer_collide: crate::layers::layer_collide,
     }
 }
 

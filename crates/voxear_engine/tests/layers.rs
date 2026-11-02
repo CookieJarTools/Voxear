@@ -1,6 +1,6 @@
 //! Layers from a project's `voxear.toml` through scene files and prefabs:
-//! an Obj's layer named in its file, read into the world by number, and
-//! written back by name, or by number for a layer with none.
+//! an Obj's layer named or numbered in its file, read into the world by
+//! number, and written back by number, so that a rename keeps it.
 
 use voxear_ecs::Entity;
 use voxear_engine::{Engine, Game, Project, scene_file};
@@ -58,12 +58,18 @@ fn objs_are_on_the_layers_their_files_name() {
     assert_eq!(layer(&game, "Stranger"), None, "a name the project lacks is Default");
     assert_eq!(layer(&game, "Grunt"), Some(Layer(2)), "an instance's layer over its prefab's");
 
-    // Saved, each is written by its name, or its number; the instance keeps its own.
+    // Saved, each is written by its number; the instance keeps its own.
     game.engine.world.insert(find(&game, "Hero"), Layer(3));
     let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();
     let saved = scene_file::capture(&game.engine.world, &mut game.content, &entities);
     let text = toml::to_string(&saved).unwrap();
-    assert!(text.contains("layer = \"Enemy\"") && text.contains("layer = 9"), "{text}");
+    assert!(text.contains("layer = 3") && text.contains("layer = 9") && !text.contains("Enemy"), "{text}");
     let grunt = saved.objs.iter().find(|o| o.name == "Grunt" || o.prefab.is_some()).unwrap();
-    assert_eq!(grunt.layer, Some(scene_file::LayerRef::Name("Player".into())), "{text}");
+    assert_eq!(grunt.layer, Some(scene_file::LayerRef::Number(2)), "{text}");
+
+    // An instance on the layer its prefab's file names has no layer of its own.
+    game.engine.world.insert(find(&game, "Grunt"), Layer(3));
+    let saved = scene_file::capture(&game.engine.world, &mut game.content, &entities);
+    let grunt = saved.objs.iter().find(|o| o.prefab.is_some()).unwrap();
+    assert_eq!(grunt.layer, None, "{saved:?}");
 }

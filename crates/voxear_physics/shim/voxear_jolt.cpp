@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -44,21 +45,34 @@ using namespace JPH;
 
 namespace {
 
-// Two object layers: what does not move, and what does. What does not move
-// never collides with itself.
+// Each of Voxear's 32 layers is two object layers, what does not move on it
+// and what does: an object layer is the Voxear layer times two, plus one
+// when it moves. What does not move never collides with itself, and two
+// layers collide as the project's matrix says. The broad phase keeps only
+// the still and the moving apart.
 constexpr ObjectLayer STILL = 0;
 constexpr ObjectLayer MOVING = 1;
-constexpr uint32_t LAYERS = 2;
+constexpr uint32_t BROAD_LAYERS = 2;
+constexpr uint32_t VOXEAR_LAYERS = 32;
+
+static ObjectLayer object_layer(uint32_t layer, bool moving) {
+	return ObjectLayer((layer % VOXEAR_LAYERS) * 2 + (moving ? 1 : 0));
+}
 
 class LayerPairs final : public ObjectLayerPairFilter {
 public:
-	bool ShouldCollide(ObjectLayer a, ObjectLayer b) const override { return a == MOVING || b == MOVING; }
+	LayerPairs() { std::fill(std::begin(collide), std::end(collide), 0xffffffffu); }
+	bool ShouldCollide(ObjectLayer a, ObjectLayer b) const override {
+		return ((a & 1) || (b & 1)) && (collide[a >> 1] >> (b >> 1) & 1u);
+	}
+	// Bit `b` of `collide[a]` is set when layers `a` and `b` collide.
+	uint32_t collide[VOXEAR_LAYERS];
 };
 
 class BroadLayers final : public BroadPhaseLayerInterface {
 public:
-	uint GetNumBroadPhaseLayers() const override { return LAYERS; }
-	BroadPhaseLayer GetBroadPhaseLayer(ObjectLayer layer) const override { return BroadPhaseLayer(BroadPhaseLayer::Type(layer)); }
+	uint GetNumBroadPhaseLayers() const override { return BROAD_LAYERS; }
+	BroadPhaseLayer GetBroadPhaseLayer(ObjectLayer layer) const override { return BroadPhaseLayer(BroadPhaseLayer::Type(layer & 1)); }
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
 	const char *GetBroadPhaseLayerName(BroadPhaseLayer layer) const override { return layer.GetValue() == STILL ? "Still" : "Moving"; }
 #endif
@@ -67,8 +81,18 @@ public:
 class LayerVsBroad final : public ObjectVsBroadPhaseLayerFilter {
 public:
 	bool ShouldCollide(ObjectLayer layer, BroadPhaseLayer broad) const override {
-		return layer == MOVING || broad.GetValue() == MOVING;
+		return (layer & 1) || broad.GetValue() == MOVING;
 	}
+};
+
+// What a query asks after: the Voxear layers in its mask.
+class LayerMaskFilter final : public ObjectLayerFilter {
+public:
+	explicit LayerMaskFilter(uint32_t mask) : mask(mask) {}
+	bool ShouldCollide(ObjectLayer layer) const override { return mask >> (layer >> 1) & 1u; }
+
+private:
+	uint32_t mask;
 };
 
 struct Contact {
@@ -109,6 +133,8 @@ public:
 struct Character {
 	Ref<CharacterVirtual> inner;
 	float height_offset;
+	// Its Voxear layer, as it moves.
+	uint32_t layer;
 };
 
 } // namespace
@@ -151,6 +177,7 @@ struct VxBodyDesc {
 	uint32_t sensor;
 	uint32_t continuous;
 	uint64_t user_data;
+	uint32_t layer; // 0 to 31, Voxear's
 };
 
 struct VxHit {
@@ -167,6 +194,7 @@ struct VxCharacterDesc {
 	float max_slope_degrees;
 	float step_height;
 	float mass;
+	uint32_t layer;
 };
 
 struct VxCharacterState {
@@ -190,6 +218,12 @@ VxWorld *vx_world_create(uint32_t max_bodies) {
 void vx_world_destroy(VxWorld *world) { delete world; }
 
 void vx_world_set_gravity(VxWorld *world, float x, float y, float z) { world->system.SetGravity(Vec3(x, y, z)); }
+
+// Which of Voxear's layers collide: bit `b` of `collide[a]` set when `a`
+// and `b` do.
+void vx_world_set_layers(VxWorld *world, const uint32_t collide[32]) {
+	std::copy(collide, collide + VOXEAR_LAYERS, world->layer_pairs.collide);
+}
 
 void vx_world_step(VxWorld *world, float dt, int steps) {
 	world->system.Update(dt, std::max(1, steps), &world->temp, &world->jobs);
@@ -291,7 +325,7 @@ uint32_t vx_body_add(VxWorld *world, const VxBodyDesc *desc) {
 	EMotionType motion = desc->motion == 0 ? EMotionType::Static : desc->motion == 1 ? EMotionType::Kinematic : EMotionType::Dynamic;
 	BodyCreationSettings settings(shape, RVec3(desc->position[0], desc->position[1], desc->position[2]),
 		Quat(desc->rotation[0], desc->rotation[1], desc->rotation[2], desc->rotation[3]).Normalized(), motion,
-		motion == EMotionType::Static ? STILL : MOVING);
+		object_layer(desc->layer, motion != EMotionType::Static));
 	settings.mFriction = desc->friction;
 	settings.mRestitution = desc->restitution;
 	settings.mLinearDamping = desc->linear_damping;
@@ -423,14 +457,15 @@ constexpr uint32_t QUERY_SENSORS = 1;
 
 // The nearest body a ray meets. As in Unity, a ray that starts inside a
 // shape passes out of it without meeting it.
-int vx_raycast(VxWorld *world, const float origin[3], const float direction[3], uint32_t ignore, uint32_t flags, VxHit *hit) {
+int vx_raycast(VxWorld *world, const float origin[3], const float direction[3], uint32_t ignore, uint32_t flags, uint32_t mask, VxHit *hit) {
 	RRayCast ray { RVec3(origin[0], origin[1], origin[2]), Vec3(direction[0], direction[1], direction[2]) };
 	RayCastSettings settings;
 	settings.mTreatConvexAsSolid = false;
 	settings.SetBackFaceMode(EBackFaceMode::IgnoreBackFaces);
 	ClosestHitCollisionCollector<CastRayCollector> found;
 	QueryFilter filter(ignore, (flags & QUERY_SENSORS) != 0);
-	world->system.GetNarrowPhaseQuery().CastRay(ray, settings, found, {}, {}, filter);
+	LayerMaskFilter layers(mask);
+	world->system.GetNarrowPhaseQuery().CastRay(ray, settings, found, {}, layers, filter);
 	if (!found.HadHit()) {
 		return 0;
 	}
@@ -464,14 +499,15 @@ int vx_overlap_point(VxWorld *world, const float point[3], uint32_t *bodies, int
 }
 
 // The bodies a sphere overlaps, each once, up to `capacity`; returns how many.
-int vx_overlap_sphere(VxWorld *world, const float center[3], float radius, uint32_t flags, uint32_t *bodies, int capacity) {
+int vx_overlap_sphere(VxWorld *world, const float center[3], float radius, uint32_t flags, uint32_t mask, uint32_t *bodies, int capacity) {
 	SphereShape sphere(std::max(radius, 1.0e-4f));
 	sphere.SetEmbedded();
 	CollideShapeSettings settings;
 	AllHitCollisionCollector<CollideShapeCollector> found;
 	QueryFilter filter(BodyID::cInvalidBodyID, (flags & QUERY_SENSORS) != 0);
+	LayerMaskFilter layers(mask);
 	RMat44 at = RMat44::sTranslation(RVec3(center[0], center[1], center[2]));
-	world->system.GetNarrowPhaseQuery().CollideShape(&sphere, Vec3::sOne(), at, settings, RVec3::sZero(), found, {}, {}, filter);
+	world->system.GetNarrowPhaseQuery().CollideShape(&sphere, Vec3::sOne(), at, settings, RVec3::sZero(), found, {}, layers, filter);
 	std::vector<BodyID> seen;
 	for (const CollideShapeResult &hit : found.mHits) {
 		if (std::find(seen.begin(), seen.end(), hit.mBodyID2) != seen.end()) {
@@ -521,12 +557,13 @@ uint32_t vx_character_add(VxWorld *world, const VxCharacterDesc *desc) {
 	// A kinematic body inside follows the character, so that triggers notice
 	// it and bodies thrown at it hit it; its own moves pass over it.
 	settings->mInnerBodyShape = settings->mShape;
-	settings->mInnerBodyLayer = MOVING;
+	settings->mInnerBodyLayer = object_layer(desc->layer, true);
 	settings->mMaxSlopeAngle = DegreesToRadians(desc->max_slope_degrees);
 	settings->mMass = desc->mass;
 	settings->mSupportingVolume = Plane(Vec3::sAxisY(), -desc->radius);
 	Character character;
 	character.height_offset = 0.0f;
+	character.layer = desc->layer;
 	character.inner = new CharacterVirtual(settings, RVec3(desc->position[0], desc->position[1], desc->position[2]),
 		Quat::sIdentity(), 0, &world->system);
 	world->characters.push_back(character);
@@ -557,8 +594,9 @@ void vx_character_move(VxWorld *world, uint32_t character, const float velocity[
 	CharacterVirtual::ExtendedUpdateSettings settings;
 	settings.mWalkStairsStepUp = Vec3(0, step_height, 0);
 	settings.mStickToFloorStepDown = Vec3(0, -step_height, 0);
-	DefaultBroadPhaseLayerFilter broad(world->layer_vs_broad, MOVING);
-	DefaultObjectLayerFilter layers(world->layer_pairs, MOVING);
+	ObjectLayer layer = object_layer(world->characters[character - 1].layer, true);
+	DefaultBroadPhaseLayerFilter broad(world->layer_vs_broad, layer);
+	DefaultObjectLayerFilter layers(world->layer_pairs, layer);
 	inner.ExtendedUpdate(dt, world->system.GetGravity(), settings, broad, layers, {}, {}, world->temp);
 	RVec3 at = inner.GetPosition();
 	Vec3 moving = inner.GetLinearVelocity();

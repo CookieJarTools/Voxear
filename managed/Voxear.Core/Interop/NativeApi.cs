@@ -107,11 +107,12 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, int, int, int, byte*, int, int> InputChange;
 	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> PhysicsValue;
 	public delegate* unmanaged[Cdecl]<ulong, int, float*, float*, int> PhysicsPush;
-	public delegate* unmanaged[Cdecl]<float*, float*, float, int, RaycastHitData*, int> PhysicsRaycast;
-	public delegate* unmanaged[Cdecl]<float*, float, int, ulong*, int, int> PhysicsOverlap;
+	public delegate* unmanaged[Cdecl]<float*, float*, float, uint, int, RaycastHitData*, int> PhysicsRaycast;
+	public delegate* unmanaged[Cdecl]<float*, float, uint, int, ulong*, int, int> PhysicsOverlap;
 	public delegate* unmanaged[Cdecl]<ulong, float*, float, CharacterMoveData*, int> CharacterMove;
 	public delegate* unmanaged[Cdecl]<ulong, int, ulong, ulong> JointConnected;
 	public delegate* unmanaged[Cdecl]<ulong, int, int, int> ObjLayer;
 	public delegate* unmanaged[Cdecl]<int, byte*, int, int> LayerName;
 	public delegate* unmanaged[Cdecl]<byte*, int, int> LayerFind;
+	public delegate* unmanaged[Cdecl]<int, int, int, int, int> LayerCollide;
 }

@@ -74,6 +74,30 @@ namespace Voxear
 			return LoadAsync(scene, new SceneLoadOptions { Reload = true });
 		}
 
+		/// <summary>Loads the scene a field holds in the background, alongside those loaded, as LoadAsync(string) does.</summary>
+		public static SceneLoad LoadAsync(SceneAsset scene, SceneLoadOptions? options = null)
+		{
+			return LoadAsync(scene.Reference, options);
+		}
+
+		/// <summary>Loads the scene a field holds again, in the background, as ReloadAsync(string) does.</summary>
+		public static SceneLoad ReloadAsync(SceneAsset scene)
+		{
+			return ReloadAsync(scene.Reference);
+		}
+
+		/// <summary>Unloads the scene a field holds at the end of the frame, as Unload(string) does.</summary>
+		public static void Unload(SceneAsset scene)
+		{
+			Unload(scene.Reference);
+		}
+
+		/// <summary>Makes the scene a field holds the active one at the end of the frame.</summary>
+		public static void SetActive(SceneAsset scene)
+		{
+			SetActive(scene.Reference);
+		}
+
 		/// <summary>Lets the scene coming in arrive, when it was asked to hold. Does nothing otherwise.</summary>
 		public static void Activate()
 		{

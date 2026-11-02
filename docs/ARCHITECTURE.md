@@ -529,6 +529,10 @@ behaviour with field values always gets Awake dispatched, even if its type does 
   script or scene gave it. A C# component's `Color` is edited the same way while playing.
 - arrays and `List<T>` of any of these
 - **`Prefab`** and **`Sound`:** a direct reference, loaded with the Obj, before Awake.
+- **`LevelAsset`** and **`SceneAsset`:** a level or scene of the project, picked in the Inspector from the project's
+  levels or scenes or dropped there from the Project, and handed to `Level.LoadAsync` or `Scene.LoadAsync`. They
+  hold the GUID or path and read nothing until the level or scene loads, so a field never needs a path typed in a
+  string *(implemented)*.
 - **`Ref<T>`:** a lazy reference, like an Addressables AssetReference. It holds the path or GUID, and
   `rareFirefly.Load()` loads it when the game first needs it. `T` is any `IAsset<T>`, which `Prefab` and `Sound` are
   today.

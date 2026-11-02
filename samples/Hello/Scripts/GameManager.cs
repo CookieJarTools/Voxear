@@ -56,7 +56,7 @@ namespace Hello
 			next = (next + 1) % cycle.Length;
 		}
 
-		private async void SwitchLevel(string level)
+		private async void SwitchLevel(LevelAsset level)
 		{
 			loading = Level.LoadAsync(level);
 			try

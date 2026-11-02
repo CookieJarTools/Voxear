@@ -1,4 +1,5 @@
 using System;
+using Voxear;
 
 namespace Hello
 {
@@ -6,7 +7,7 @@ namespace Hello
 	[Serializable]
 	public struct LevelStop
 	{
-		public string Level;
+		public LevelAsset Level;
 		public float Seconds;
 	}
 }

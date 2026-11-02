@@ -475,8 +475,8 @@ pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
         Some("Material") => Some(AssetKind::Material),
         Some("Texture") => Some(AssetKind::Texture),
         Some("Model") => Some(AssetKind::Model),
-        Some("Scene") => Some(AssetKind::Scene),
-        Some("Level") => Some(AssetKind::Level),
+        Some("Scene" | "SceneAsset") => Some(AssetKind::Scene),
+        Some("Level" | "LevelAsset") => Some(AssetKind::Level),
         Some("Sound") => Some(AssetKind::Sound),
         _ => None,
     };

@@ -127,6 +127,21 @@ namespace Voxear
 			return LoadAsync(level, activate ? LevelLoadOptions.Straight : LevelLoadOptions.Held);
 		}
 
+		/// <summary>Changes to the level a field holds, at the end of the frame, as Load(string) does.</summary>
+		public static void Load(LevelAsset level)
+		{
+			Load(level.Reference);
+		}
+
+		/// <summary>
+		/// Loads the level a field holds in the background, as the options say, as LoadAsync(string) does. A field with
+		/// no level picked gives a change that failed, which the Console says.
+		/// </summary>
+		public static LevelLoad LoadAsync(LevelAsset level, LevelLoadOptions? options = null)
+		{
+			return LoadAsync(level.Reference, options);
+		}
+
 		internal static void Progressed(LevelLoad load)
 		{
 			Raise(SwitchProgressed, load);

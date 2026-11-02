@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Numerics;
 using Voxear.Scripting;
 
@@ -34,6 +35,23 @@ namespace Voxear.Tests
 			Check.True(lamp.Tint == new Color(0f, 1f, 0f, 128 / 255f), "hex, with alpha");
 			Check.True(lamp.Glow == new Color(0.25f, 0.5f, 1f), "three numbers are opaque");
 			Check.True(lamp.Shade == new Color(1f, 0f, 0f, 0.5f), "four numbers, alpha last");
+		}
+
+		[Test]
+		private static void LevelAndSceneFieldsAreReferencesToTheirFiles()
+		{
+			var traveller = new TestTraveller();
+			BehaviourFields.Apply(traveller, """{ "next": "Levels/Night.level", "room": "Scenes/Cellar.scene" }""");
+			Check.True(traveller.Next.IsSet && traveller.Next.Reference == "Levels/Night.level", "the level, as written");
+			Check.True(traveller.Room == SceneAsset.Load("Scenes/Cellar.scene"), "the scene, as written");
+			Check.True(!new TestTraveller().Next.IsSet, "an unset field names no level");
+
+			using var document = System.Text.Json.JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestTraveller).Assembly));
+			var behaviour = document.RootElement.GetProperty("behaviours").EnumerateArray()
+				.Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestTraveller");
+			var next = behaviour.GetProperty("fields").EnumerateArray().Single(f => f.GetProperty("name").GetString() == "Next");
+			Check.True(next.GetProperty("type").GetProperty("kind").GetString() == "asset", "described as an asset field");
+			Check.True(next.GetProperty("type").GetProperty("asset").GetString() == "Voxear.LevelAsset", "of levels");
 		}
 
 		[Test]

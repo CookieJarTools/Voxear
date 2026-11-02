@@ -4,6 +4,21 @@ order: 6
 
 Your scripts choose when the game moves to another level. There are two ways.
 
+## Choosing the level in the Inspector
+
+Give your script a `LevelAsset` field, and pick the level in the Inspector, or drag it there from the Project panel:
+
+```csharp
+public sealed class Door : Behaviour
+{
+	public LevelAsset Next;
+
+	public void Open() => Level.LoadAsync(Next);
+}
+```
+
+The field holds the level by its ID, so renaming or moving the level file keeps it working, where a path typed in a string would break. The examples below write a path, which works too, for code that builds one.
+
 ## Loading a level all at once
 
 ```csharp
@@ -112,6 +127,8 @@ Levels are the easy way to load scenes. When you want more say, load scenes one 
 ```csharp
 await Scene.LoadAsync("Scenes/Cellar.scene");
 ```
+
+As with levels, a `SceneAsset` field lets you pick the scene in the Inspector, and `Scene.LoadAsync`, `Scene.Unload` and `Scene.SetActive` take it as well as a path.
 
 Pass options to change how it comes in:
 

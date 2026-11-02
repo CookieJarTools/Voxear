@@ -453,7 +453,9 @@ Still to do in M3:
     Layout), the same on a tab's or its bar's context click, any panel can close, and a tab dropped in the middle
     of a panel floats rather than joining it
   - [x] script fields edited while playing, on the running behaviour, with its buttons and callbacks
-  - [ ] references rather than strings: a level field, and a component field that takes an Obj with the component
+  - [x] references rather than strings for levels and scenes: `LevelAsset` and `SceneAsset` fields, picked and
+    dropped as prefabs are, and taken by `Level.LoadAsync` and `Scene.LoadAsync`; Hello's level cycle uses them
+  - [ ] a component field that takes an Obj with the component, as an `AudioSource` field
   - [x] several Inspectors, each with a padlock, opened from a window's menu (Add Inspector)
   - [x] the Scene and Game views drawn at once, each through its own camera, a floating one over the docked one
   - [x] Lit Wireframe shading in the Scene view: the lit scene with its meshes' edges over it

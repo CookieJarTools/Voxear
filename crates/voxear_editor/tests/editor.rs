@@ -859,12 +859,31 @@ fn script_fields_pick_references_and_edit_lists() {
         let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(manager).unwrap();
         kept.0[0].fields.get("cycle").and_then(|c| c.as_array().cloned()).unwrap()
     };
+    // Each item's Level is a reference to a level, not a path to type: the picker offers the project's levels.
+    let level = first_with(&editor.ui, prop_rows(&editor.ui, "Level")[0], "value-picker").expect("a level picker");
+    assert_eq!(editor.ui.text(first_with(&editor.ui, level, "picker-label").unwrap()), "Night.level");
+    let arrow = first_with(&editor.ui, level, "picker-arrow").unwrap();
+    click(&mut editor.ui, arrow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
+    assert!(offered.contains(&"World.level".to_string()) && !offered.iter().any(|o| o.ends_with(".scene")), "{offered:?}");
+    let world_row = picker_row(&editor.ui, "World.level").unwrap();
+    click(&mut editor.ui, world_row);
+    frame(&mut editor, &mut renderer);
+    let picked = cycle_now(&editor)[0].get("level").and_then(|l| l.as_str().map(str::to_string)).unwrap_or_default();
+    assert!(picked.ends_with("World.level"), "picked by its path: {picked}");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+
     let field = first_with(&editor.ui, prop_rows(&editor.ui, "Seconds")[1], "value-input").unwrap();
     type_into(&mut editor.ui, field, "7");
     frame(&mut editor, &mut renderer);
     editor.ui.blur();
     assert_eq!(cycle_now(&editor)[1].get("seconds"), Some(&toml::Value::Float(7.0)), "a value inside an item");
 
+    // Found again, as the pick above built the Inspector anew.
+    let cycle = prop_row(&editor.ui, "Cycle").unwrap();
     let add = first_with(&editor.ui, cycle, "list-add").expect("the list can grow");
     click(&mut editor.ui, add);
     frame(&mut editor, &mut renderer);

@@ -15,6 +15,7 @@ mod framing;
 mod hierarchies;
 mod importing;
 mod inspectors;
+mod languages;
 mod level_edits;
 mod material_drops;
 mod model_materials;
@@ -177,6 +178,8 @@ pub(crate) enum Command {
     AlignWithView,
     /// Show the project's layers in the Inspector.
     Layers,
+    /// Show the game's text pseudo-localised, or as written.
+    PseudoText,
 }
 
 /// How far in front of the Scene camera a new Obj goes.
@@ -979,6 +982,8 @@ impl Editor {
                 self.asset_changed(renderer, &path);
             }
             AssetAction::EditLevel(path, edit) => self.edit_level(&path, &edit, renderer),
+            AssetAction::SaveStrings { path, table, rebuild } => self.save_strings(&path, &table, rebuild),
+            AssetAction::Notice(text) => self.notify(&text),
             AssetAction::Import(path, settings) => self.apply_import_settings(&path, &settings, renderer),
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
@@ -1719,6 +1724,7 @@ impl Editor {
             }
             Command::Frame => self.frame(&self.selected_objs(), renderer),
             Command::Layers => self.inspect_layers(),
+            Command::PseudoText => self.toggle_pseudo_text(),
             Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {

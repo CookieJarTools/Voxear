@@ -2424,7 +2424,8 @@ Every piece of text can be bound to a key. When the language changes, everything
 no reload. This works like Unity's Localization package, but with the setup done for you. *(Built so far: string
 tables as `.strings` files, `voxear_localization` finding a key's text through ICU's fallback chains, the system
 language on Linux, `Localization.Get`, `Format` with plain `{name}` values, `Language` and `Changed` in C#, UI text
-bound with `@key`, and `LocalizedString` fields.)*
+bound with `@key`, `LocalizedString` fields, CSV export and import through `vox loc`, pseudo-localisation from the
+palette, and string tables edited in the Inspector.)*
 
 ```csharp
 // Easy: bind once, and the text follows the language

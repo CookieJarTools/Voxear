@@ -571,8 +571,14 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     the text changes
   - [x] `LocalizedString` fields, picked in the Inspector from the project's keys beside their text, saved as the key
   - [ ] a `LocalizedText` component (once there is text in the world), and observable `Localized(key)`
-  - [ ] CSV import from a file or URL with a diff preview, and CSV export
-  - [ ] the Localization Tables editor window, with pseudo-localisation
+  - [x] CSV export, and import from a file with what it adds, changes and takes away shown first (`vox loc export` and
+    `vox loc import`)
+  - [ ] CSV import from a URL, and from the editor
+  - [x] pseudo-localisation from the palette, accented, a third longer and in brackets, while editing and playing
+  - [x] string tables edited in the Inspector: each entry's key, its text in each language and its comment, missing
+    text and text past its limit marked, entries dragged into a new order
+  - [ ] a Localization Tables window: every table's keys against the languages, with search, find usages, and
+    renaming a key everywhere it is used
   - [ ] the saved choice, the store's language and Windows' languages in language detection
   - [ ] RTL mirroring and per-locale fonts
 - Audio:

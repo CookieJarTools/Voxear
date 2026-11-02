@@ -27,7 +27,7 @@
 //! to listen to it, which plays it outside the game's volumes.
 
 use voxear_assets::{AssetDb, AssetGuid, AssetKind, MaterialRemap};
-use voxear_engine::{Game, MaterialData, MaterialMap, script_types::ScriptTypes};
+use voxear_engine::{Game, MaterialData, MaterialMap, localization::StringTable, script_types::ScriptTypes};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -36,6 +36,7 @@ use crate::{
     inspector::{color_row, number, prop},
     level_files::{self, LevelEdit},
     project_view::{ItemKind, ProjectItem},
+    strings_inspector::{StringsChange, StringsFields},
 };
 
 /// How many lines of a file's code the Inspector shows.
@@ -110,6 +111,15 @@ pub enum AssetAction {
     /// Write the model's materials out as `.material` assets, and draw it
     /// with them.
     ExtractMaterials(String),
+    /// Write a string table to the file at this path, and when its entries
+    /// came, went or moved, show it again.
+    SaveStrings {
+        path: String,
+        table: voxear_engine::localization::StringTable,
+        rebuild: bool,
+    },
+    /// Say something in the status bar.
+    Notice(String),
 }
 
 pub struct AssetView {
@@ -124,6 +134,7 @@ pub struct AssetView {
     preview: Option<(NodeId, NodeId)>,
     /// A sound's play button, and whether it shows that the sound plays.
     listen: Option<(Listen, bool)>,
+    strings: Option<StringsFields>,
 }
 
 /// A sound's play button, with its icon and its words.
@@ -206,6 +217,11 @@ impl AssetView {
         self.level.as_ref().map(|level| level.items)
     }
 
+    /// A string table's box of entries, when it shows one.
+    pub fn strings_items(&self) -> Option<NodeId> {
+        self.strings.as_ref().map(StringsFields::items)
+    }
+
     /// Shows `item` in `root`, which is emptied first.
     pub fn build(ui: &mut Ui, root: NodeId, item: &ProjectItem, game: &Game, types: &ScriptTypes, dark: bool) -> Self {
         for child in ui.children(root) {
@@ -255,6 +271,7 @@ impl AssetView {
             remaps: None,
             preview,
             listen: None,
+            strings: None,
         };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game.content.db()),
@@ -281,6 +298,19 @@ impl AssetView {
             ItemKind::Asset(AssetKind::Prefab) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Scene) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Level) => view.level = scenes(ui, root, &file, game),
+            ItemKind::Asset(AssetKind::Strings) => {
+                let read = std::fs::read_to_string(&file).map_err(anyhow::Error::from);
+                match read.and_then(|text| StringTable::parse(&text)) {
+                    Ok(table) => {
+                        let languages = &game.project.file.localization.languages;
+                        view.strings = Some(StringsFields::build(ui, root, table, languages));
+                    }
+                    Err(error) => {
+                        text_row(ui, rows, "Error", &format!("{error:#}"));
+                        code(ui, root, &file, "toml", dark);
+                    }
+                }
+            }
             _ => {}
         }
         let opens = matches!(
@@ -313,6 +343,7 @@ impl AssetView {
             remaps: None,
             preview: None,
             listen: None,
+            strings: None,
         })
     }
 
@@ -339,6 +370,21 @@ impl AssetView {
         }
         if let Some(action) = self.remaps.as_ref().and_then(|remaps| remaps.update(ui, &self.item.path)) {
             return Some(action);
+        }
+        if let Some(strings) = self.strings.as_mut() {
+            let path = self.item.path.clone();
+            return match strings.update(ui)? {
+                StringsChange::Typed => {
+                    Some(AssetAction::SaveStrings { path, table: strings.table.clone(), rebuild: false })
+                }
+                StringsChange::Entries => {
+                    Some(AssetAction::SaveStrings { path, table: strings.table.clone(), rebuild: true })
+                }
+                StringsChange::Refused(key) => Some(AssetAction::Notice(match key.is_empty() {
+                    true => "A key cannot be empty".to_string(),
+                    false => format!("Another entry has the key {key}"),
+                })),
+            };
         }
         let fields = self.material.as_mut()?;
         for (map, (slot, path)) in MaterialMap::ALL.into_iter().zip(&fields.maps) {

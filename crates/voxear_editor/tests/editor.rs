@@ -3870,6 +3870,80 @@ fn a_localized_string_field_picks_a_key_beside_its_text() {
     assert_eq!(editor.ui.text(label), "menu.quit");
 }
 
+#[test]
+fn a_string_table_is_edited_in_the_inspector() {
+    use voxear_engine::localization::{Localization, StringTable};
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project_file = dir.path().join("voxear.toml");
+    let text = std::fs::read_to_string(&project_file).unwrap() + "\n[localization]\nlanguages = [\"en\", \"fr\"]\n";
+    std::fs::write(&project_file, text).unwrap();
+    let table = "[[entry]]\nkey = \"menu.play\"\nlimit = 5\nen = \"Play\"\n\n[[entry]]\nkey = \"menu.quit\"\nen = \"Quit\"\nfr = \"Quitter\"\n";
+    std::fs::write(dir.path().join("Menu.strings"), table).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let menu = tile(&editor.ui, "Menu.strings").expect("the table in the Project panel");
+    click(&mut editor.ui, menu);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Menu.strings"));
+    let read = || StringTable::parse(&std::fs::read_to_string(dir.path().join("Menu.strings")).unwrap()).unwrap();
+    let mut fields = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "value-input", &mut fields);
+    let text_of = |editor: &voxear_editor::Editor, shown: &str| {
+        fields.iter().copied().find(|&f| editor.ui.text(f) == shown).unwrap_or_else(|| panic!("a field showing {shown}"))
+    };
+    // French has no text for menu.play: its field says so.
+    let missing = fields.iter().copied().filter(|&f| editor.ui.has_class(f, "missing")).count();
+    assert_eq!(missing, 1, "menu.play has no French");
+    shot(&mut renderer, "string-table.png");
+
+    // A text typed and let go of is written, and the game has it.
+    let quit = text_of(&editor, "Quitter");
+    type_into(&mut editor.ui, quit, "Sortir");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    assert_eq!(read().entries[1].text("fr"), Some("Sortir"));
+    let mut french = editor.game.engine.world.resource::<Localization>().unwrap().clone();
+    assert!(french.set_language("fr") && french.find("menu.quit") == Some("Sortir"), "read again");
+
+    // A key another entry has is refused; Add Entry makes a new one.
+    let key = text_of(&editor, "menu.quit");
+    type_into(&mut editor.ui, key, "menu.play");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    assert_eq!((read().entries[1].key.as_str(), editor.ui.text(key).as_str()), ("menu.quit", "menu.quit"));
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").unwrap();
+    scroll_to(&mut editor, &mut renderer, add);
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let keys: Vec<String> = read().entries.into_iter().map(|e| e.key).collect();
+    assert_eq!(keys, ["menu.play", "menu.quit", "new.key"]);
+}
+
+#[test]
+fn the_palette_pseudo_localises_the_games_text() {
+    use voxear_editor::PaletteKey;
+    use voxear_engine::localization::Localization;
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    let pseudo = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<Localization>().unwrap().pseudo();
+    for on in [true, false] {
+        editor.ui.focus(field);
+        frame(&mut editor, &mut renderer);
+        editor.ui.text_input("pseudo");
+        frame(&mut editor, &mut renderer);
+        assert_eq!(palette_results(&editor.ui).first().map(String::as_str), Some("Pseudo-localise Text"));
+        editor.palette_key(PaletteKey::Enter);
+        frame(&mut editor, &mut renderer);
+        assert_eq!(pseudo(&editor), on);
+    }
+}
+
 const SPINNER_WITH_COLOUR: &str = r#"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
   {"name": "tint", "type": {"kind": "color"}, "default": [1.0, 0.5, 0.0, 0.5]}
 ]}], "types": {}, "commands": []}"#;

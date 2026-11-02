@@ -38,7 +38,9 @@ fr = "{player} a trouvé {count} pièces"
 
 `comment` tells a translator where the text shows, and `limit` is the most characters there is room for. Both are optional. Every table goes into every build, so no table needs to be in a level.
 
-The editor reads your tables again whenever one changes.
+Select a table in the Project panel to edit it in the Inspector. Each entry shows its key, a box for each of your languages and its comment, saved as you leave each box. A language with no text for the key says **Missing** in a yellow box, and text longer than the key's `limit` turns yellow. Drag an entry by its grip to move it, and use **Add Entry** for a new one.
+
+The editor reads your tables again whenever one changes, from the Inspector or from another program.
 
 ## Text in UI documents
 
@@ -102,6 +104,22 @@ public sealed class Sign : Behaviour
 
 The scene saves the key, so a sign placed in a level reads in whatever language the player picks. `Message.Format(("player", name))` fills in values, as `Localization.Format` does.
 
+## Translating in a spreadsheet
+
+Translators often work in a spreadsheet. `vox loc export` writes a string table as a CSV file, with a row for each key and a column for each language, in the order your project lists them:
+
+```bash
+vox loc export Text/Menu.strings
+```
+
+This writes `Text/Menu.csv` beside the table. Open it in any spreadsheet, such as LibreOffice Calc or Google Sheets, fill in the empty cells, and save it as CSV again. `vox loc import` then says what the sheet would change:
+
+```bash
+vox loc import Menu.csv Text/Menu.strings
+```
+
+It lists each key the sheet adds (`+`), changes (`~`, with the languages that changed) and takes away (`-`). When that is what you want, run it again with `--apply` to keep it. The sheet replaces the table, so a row deleted from the sheet takes that key away.
+
 ## Which language the game starts in
 
 The game starts in the language the player's computer is set to, when your project has it. When it doesn't, the game takes the nearest language your project has, so a player in Portugal (`pt-PT`) gets `pt` when you have it. Otherwise the game is in your own language, the first you listed.
@@ -110,6 +128,10 @@ A key with no text in the game's language falls back the same way: `pt-BR`, then
 
 > [!NOTE]
 > On Windows the game starts in your own language for now. Reading Windows' language settings comes in a later version of Voxear.
+
+## Text that won't fit
+
+Translated text is often longer than English, and German can be a third longer. Before anything is translated, run **Pseudo-localise Text** from the command palette. Every text from your tables then shows accented, a third longer and in brackets, as `[Ƥļåý ŧĥé ĝåɱé !!!!]`, both in the editor and while you play. A label that cuts its text off, or a button that spills over, shows straight away. So does any text your game shows that isn't in a table, as it stays plain. Run the command again to go back.
 
 ## Missing text
 

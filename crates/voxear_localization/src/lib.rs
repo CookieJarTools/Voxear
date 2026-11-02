@@ -10,7 +10,13 @@
 //!
 //! A text may name values to put in it, as `{player} found {count} coins`;
 //! [`Localization::format`] fills them in.
+//!
+//! Pseudo-localisation ([`Localization::set_pseudo`]) shows every text
+//! accented, a third longer and in brackets, as `[Ƥļåý !!!]`, so text that
+//! is not in the tables, and text that will not fit once translated, show
+//! before translation starts.
 
+pub mod csv;
 pub mod table;
 
 use std::{
@@ -36,6 +42,7 @@ pub struct Localization {
     /// Each key's text, by language.
     texts: HashMap<String, HashMap<String, String>>,
     mark_missing: bool,
+    pseudo: bool,
     /// Counts each change of language or text, for text shown from it to
     /// tell when to look again.
     version: u64,
@@ -51,6 +58,7 @@ impl Clone for Localization {
             chain: self.chain.clone(),
             texts: self.texts.clone(),
             mark_missing: self.mark_missing,
+            pseudo: self.pseudo,
             version: self.version,
             warned: Mutex::default(),
         }
@@ -79,6 +87,7 @@ impl Localization {
             languages,
             texts: HashMap::new(),
             mark_missing: true,
+            pseudo: false,
             version: 0,
             warned: Mutex::default(),
         }
@@ -151,6 +160,18 @@ impl Localization {
         self.mark_missing = mark;
     }
 
+    /// Whether every text shows pseudo-localised, as `[Ƥļåý !!!]`.
+    pub fn pseudo(&self) -> bool {
+        self.pseudo
+    }
+
+    pub fn set_pseudo(&mut self, pseudo: bool) {
+        if pseudo != self.pseudo {
+            self.pseudo = pseudo;
+            self.version += 1;
+        }
+    }
+
     /// Counts each change of language or text.
     pub fn version(&self) -> u64 {
         self.version
@@ -176,7 +197,7 @@ impl Localization {
     /// as missing, warned of once.
     pub fn text(&self, key: &str) -> Cow<'_, str> {
         if let Some(text) = self.find(key) {
-            return Cow::Borrowed(text);
+            return if self.pseudo { Cow::Owned(pseudo(text)) } else { Cow::Borrowed(text) };
         }
         let first = self.warned.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(key.to_string());
         if first {
@@ -193,6 +214,30 @@ impl Localization {
     pub fn format(&self, key: &str, values: &[(&str, &str)]) -> String {
         fill(&self.text(key), values)
     }
+}
+
+/// Text pseudo-localised: each letter accented, a third longer with `!`s,
+/// and in brackets, the `{names}` it holds left as they are, so values
+/// still fill them.
+pub fn pseudo(text: &str) -> String {
+    const PLAIN: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const ACCENTED: &str = "åƀçđéƒĝĥîĵķļɱñöƥǫŕšŧûṽŵẋýžÅƁÇĐÉƑĜĤÎĴĶĻṀÑÖƤǪŔŠŦÛṼŴẊÝŽ";
+    let mut out = String::from("[");
+    let mut in_name = false;
+    for c in text.chars() {
+        in_name = match c {
+            '{' => true,
+            '}' => false,
+            _ => in_name,
+        };
+        let accented = (!in_name).then(|| PLAIN.find(c)).flatten().and_then(|at| ACCENTED.chars().nth(at));
+        out.push(accented.unwrap_or(c));
+    }
+    let longer = (text.chars().count() as f32 * 0.3).round().max(1.0) as usize;
+    out.push(' ');
+    out.push_str(&"!".repeat(longer));
+    out.push(']');
+    out
 }
 
 /// `text` with each `{name}` it holds replaced by the value of that name.
@@ -306,6 +351,11 @@ mod tests {
         texts.add_table(&menu());
         assert_eq!(texts.format("loot", &[("player", "Ana"), ("count", "3")]), "Ana found 3 coins");
         assert_eq!(fill("{a} and {b} and {", &[("a", "x")]), "x and {b} and {");
+
+        // Pseudo-localised, the names are kept for the values to fill.
+        texts.set_pseudo(true);
+        assert_eq!(texts.format("loot", &[("player", "Ana"), ("count", "3")]), "[Ana ƒöûñđ 3 çöîñš !!!!!!!!]");
+        assert_eq!(pseudo("Play the game"), "[Ƥļåý ŧĥé ĝåɱé !!!!]");
         assert_eq!(
             (normalize("C.UTF-8"), normalize("fr_CA@euro"), normalize("zh-hant-tw")),
             ("".into(), "fr-CA".into(), "zh-Hant-TW".into())

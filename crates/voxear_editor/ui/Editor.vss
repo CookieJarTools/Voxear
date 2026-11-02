@@ -1184,6 +1184,16 @@
     padding-left: 2px;
 }
 
+/* A string table's text: a language without the key's text has a border in
+   the warning colour, and text past the key's limit is in it. */
+.value-input.missing {
+    border-color: var(--vx-warning);
+}
+
+.value-input.too-long {
+    color: var(--vx-warning);
+}
+
 /* The project's layers: layer 0's name, which stays Default, and the
    Layer Collision Matrix, a triangle of ticks under the layers' numbers. */
 .layer-fixed {

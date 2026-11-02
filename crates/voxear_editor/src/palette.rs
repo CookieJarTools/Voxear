@@ -443,6 +443,7 @@ fn commands(playing: bool) -> Vec<Entry> {
         ("Frame Selected", "F", "maximize", Command::Frame),
         ("Align With View", "Ctrl+Shift+F", "camera", Command::AlignWithView),
         ("Edit Layers", "", "layers", Command::Layers),
+        ("Pseudo-localise Text", "", "globe", Command::PseudoText),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

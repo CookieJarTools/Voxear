@@ -19,6 +19,7 @@ use voxear_engine::{
     Content, Engine, Game, PROJECT_FILE, Project, StatsOverlay, WindowOptions, build_profile,
     content_build::{self, CodeRoot},
     core_assembly,
+    localization::{self, StringTable},
     player_build::{self, BUILD_STAGES, BuildEvent},
     run_windowed,
     scripts::{self, CONFIGURATION},
@@ -48,6 +49,28 @@ enum ContentCommand {
         /// Project folder or its voxear.toml.
         #[arg(default_value = ".")]
         project: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum LocCommand {
+    /// Write a string table as a CSV sheet for translators, a row a key and a column a language.
+    Export {
+        /// The `.strings` file.
+        table: PathBuf,
+        /// Where to write the sheet (default: beside the table, as a `.csv`).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Read a CSV sheet into a string table, saying what it adds, changes and takes away.
+    Import {
+        /// The sheet, with a header naming `key`, `comment`, `limit` and each language's column.
+        sheet: PathBuf,
+        /// The `.strings` file it goes into.
+        table: PathBuf,
+        /// Keep the sheet's text; without it, only say what would change.
+        #[arg(long)]
+        apply: bool,
     },
 }
 
@@ -135,6 +158,11 @@ enum Commands {
     Content {
         #[command(subcommand)]
         command: ContentCommand,
+    },
+    /// Move string tables to and from the CSV sheets translators work in.
+    Loc {
+        #[command(subcommand)]
+        command: LocCommand,
     },
     /// Run a project in a window, or headless for a number of frames.
     Run {
@@ -292,6 +320,8 @@ fn main() -> Result<()> {
         Commands::Upgrade { project, from, json } => upgrade(&project, from.as_deref(), json),
         Commands::Build { project, profile, progress, list } => build(&project, profile, progress == "json", list),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
+        Commands::Loc { command: LocCommand::Export { table, out } } => export_strings(&table, out.as_deref()),
+        Commands::Loc { command: LocCommand::Import { sheet, table, apply } } => import_strings(&sheet, &table, apply),
         Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays, stats } => {
             let prepare = Prepare { build: !no_build, bundles, overlays };
             run(&project, headless, frames, prepare, renderdoc, stats)
@@ -472,6 +502,61 @@ fn start_game(project: Project, prepare: Prepare) -> Result<Game> {
         content.mount(&dir)?;
     }
     Ok(Game::with_content(project, engine, content))
+}
+
+/// Writes a string table as a sheet, its columns in the order its
+/// project lists its languages.
+fn export_strings(table: &Path, out: Option<&Path>) -> Result<()> {
+    let text = std::fs::read_to_string(table).with_context(|| format!("reading {}", table.display()))?;
+    let strings = StringTable::parse(&text).with_context(|| format!("reading {}", table.display()))?;
+    let languages = project_of(table).map(|p| p.file.localization.languages).unwrap_or_default();
+    let out = out.map_or_else(|| table.with_extension("csv"), Path::to_path_buf);
+    std::fs::write(&out, localization::csv::to_csv(&strings, &languages))
+        .with_context(|| format!("writing {}", out.display()))?;
+    println!("{}: {} keys, written to {}", table.display(), strings.entries.len(), out.display());
+    Ok(())
+}
+
+/// Reads a sheet into a string table, or with `apply` unset, says what it
+/// would add, change and take away.
+fn import_strings(sheet: &Path, table: &Path, apply: bool) -> Result<()> {
+    let text = std::fs::read_to_string(sheet).with_context(|| format!("reading {}", sheet.display()))?;
+    let new = localization::csv::from_csv(&text).with_context(|| format!("reading {}", sheet.display()))?;
+    let old = match std::fs::read_to_string(table) {
+        Ok(text) => StringTable::parse(&text).with_context(|| format!("reading {}", table.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => StringTable::default(),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", table.display())),
+    };
+    let changes = localization::csv::changes(&old, &new);
+    println!("{}, from {}:", table.display(), sheet.display());
+    for key in &changes.added {
+        println!("  + {key}");
+    }
+    for (key, languages) in &changes.changed {
+        let which = if languages.is_empty() { String::new() } else { format!(" ({})", languages.join(", ")) };
+        println!("  ~ {key}{which}");
+    }
+    for key in &changes.removed {
+        println!("  - {key}");
+    }
+    let (added, changed, removed) = (changes.added.len(), changes.changed.len(), changes.removed.len());
+    match (changes.is_empty(), apply) {
+        (true, _) => println!("Nothing changes."),
+        (false, false) => println!("{added} added, {changed} changed, {removed} removed. Run with --apply to keep it."),
+        (false, true) => {
+            std::fs::write(table, new.write()).with_context(|| format!("writing {}", table.display()))?;
+            println!("{added} added, {changed} changed, {removed} removed, and kept.");
+        }
+    }
+    Ok(())
+}
+
+/// The project a file is in: the nearest folder above it with a
+/// `voxear.toml`.
+fn project_of(file: &Path) -> Option<Project> {
+    let file = std::path::absolute(file).ok()?;
+    let root = file.ancestors().skip(1).find(|folder| folder.join(PROJECT_FILE).is_file())?;
+    Project::open(root).ok()
 }
 
 fn build_content(path: &Path) -> Result<()> {

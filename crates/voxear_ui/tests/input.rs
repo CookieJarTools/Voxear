@@ -259,3 +259,27 @@ fn text_fields_undo_a_word_at_a_time_and_redo() {
     undo(&mut ui);
     assert_eq!(ui.text(field), "set from code", "text set from code starts the history again");
 }
+
+#[test]
+fn a_pressed_button_keeps_no_focus_ring_and_tab_shows_one() {
+    let (mut ui, field, button, _, _) = form();
+    let sheet = "Button { border: 1px solid #000000; } Button:focus-visible { border-color: #ff0000; } \
+                 TextField { border: 1px solid #000000; } TextField:focus-visible { border-color: #ff0000; }";
+    let root = ui.root();
+    ui.add_sheet(root, voxear_ui::StyleSheet::parse("Rings.vss", sheet));
+    let ringed = |ui: &mut Ui, node: NodeId| {
+        let [x, y, ..] = ui.rect(node);
+        let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+        let red = |q: &&Quad| q.border > 0.0 && q.border_color[0] > 0.9 && q.border_color[1] < 0.1;
+        frame.quads.iter().filter(red).any(|q| (q.rect[0] - x).abs() < 1.0 && (q.rect[1] - y).abs() < 1.0)
+    };
+
+    click(&mut ui, button);
+    assert_eq!(ui.focused(), Some(button), "a press still focuses it, so Enter and Space work it");
+    assert!(!ringed(&mut ui, button), "but shows no ring, as if marking what was pressed last");
+    click(&mut ui, field);
+    assert!(ringed(&mut ui, field), "a text field shows its ring however it got focus, as it takes typing");
+    ui.key_down(Key::Tab);
+    assert_eq!(ui.focused(), Some(button));
+    assert!(ringed(&mut ui, button), "reached with Tab, the button shows its ring");
+}

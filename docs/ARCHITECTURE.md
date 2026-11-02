@@ -1147,7 +1147,7 @@ how they look, as UXML and USS do in Unity:
 - **Elements:** `Panel`, `Label` and `Button`, each with `name`, `class` and `style` (declarations that win over
   sheets). Text is the element's content. `<Style src>` attaches a sheet to the element it is in.
 - **Selectors:** USS's set, which is types, `.class`, `#name`, `*`, the states `:hover`, `:active`, `:focus`,
-  `:disabled` and `:checked`, and descendant and `>` combinators. `:root` is the element a sheet is attached to,
+  `:focus-visible`, `:disabled` and `:checked`, and descendant and `>` combinators. `:root` is the element a sheet is attached to,
   so each document keeps its theme tokens at its own top.
 - **The cascade:** the style given in code first, then matching rules from least to most specific (a nearer
   sheet, then a later rule, wins a tie), then inline declarations. Text styles and custom properties
@@ -1214,7 +1214,9 @@ every part:
 - **Segmented**: a row of segments, each text, an icon or both, exactly one on, for modes such as the transform
   tool or the pivot (`<Segmented value="1"><Segment icon="move" />...</Segmented>`).
 - **Focus and the keyboard:** clicking a control focuses it, Tab and Shift+Tab walk the controls in tree order
-  (skipping hidden and disabled ones), and the focused one matches `:focus`. Enter and Space press a focused
+  (skipping hidden and disabled ones), and the focused one matches `:focus`. It matches `:focus-visible` too when
+  Tab reached it, or when it is a text field, as in browsers; the default theme draws focus rings on that, so a
+  button pressed with the pointer keeps no ring as if marking what was pressed last. Enter and Space press a focused
   button or toggle, and Escape lets go. While a text field has focus, keys belong to it (`wants_keyboard`),
   so typing a W never moves the camera, and in the editor Ctrl+Z, Ctrl+Y and Ctrl+D are the field's, not the
   scene's.

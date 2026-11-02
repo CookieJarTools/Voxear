@@ -64,7 +64,8 @@ Button:active {
     background-color: var(--vx-selected);
 }
 
-Button:focus {
+/* Only when reached with Tab: a button pressed with the pointer keeps no ring. */
+Button:focus-visible {
     border-color: var(--vx-accent);
 }
 
@@ -165,7 +166,7 @@ Toggle:checked .toggle-box {
     background-color: var(--vx-accent);
 }
 
-Toggle:focus .toggle-box {
+Toggle:focus-visible .toggle-box {
     border: 1px solid var(--vx-accent);
     padding: 1px;
 }
@@ -258,7 +259,7 @@ Slider {
     font-weight: 600;
 }
 
-Foldout:focus .foldout-title {
+Foldout:focus-visible .foldout-title {
     color: var(--vx-accent);
 }
 
@@ -403,7 +404,7 @@ Dropdown:hover {
     border-color: var(--vx-line-2);
 }
 
-Dropdown:focus {
+Dropdown:focus-visible {
     border-color: var(--vx-accent);
 }
 

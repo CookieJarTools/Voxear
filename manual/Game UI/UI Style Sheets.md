@@ -31,7 +31,7 @@ A `.vss` style sheet says how UI looks and where things go. It is written like C
 | `*` | Every element |
 | `:root` | The element the sheet is linked to |
 
-Add a state to style an element only while it is in it: `:hover` (the pointer is over it), `:active` (being pressed), `:focus`, `:checked` (a toggle that is on), `:selected` and `:disabled`.
+Add a state to style an element only while it is in it: `:hover` (the pointer is over it), `:active` (being pressed), `:focus`, `:focus-visible` (focused, and reached with the keyboard, or a text field: the state for a focus ring), `:checked` (a toggle that is on), `:selected` and `:disabled`.
 
 When rules disagree, the more specific one wins: a name beats a class, which beats a kind. Text settings, such as `color` and `font-size`, pass down from an element to what is inside it.
 

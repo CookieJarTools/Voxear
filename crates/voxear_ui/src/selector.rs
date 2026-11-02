@@ -1,7 +1,9 @@
 //! Selectors, the part of a style rule that says which elements it styles.
 //! The set is USS's: types (`Button`), classes (`.primary`), names
-//! (`#title`), `*`, the states `:hover`, `:active`, `:focus`, `:disabled`,
-//! `:checked` and `:selected`, `:root` (the element the sheet is attached to), and the
+//! (`#title`), `*`, the states `:hover`, `:active`, `:focus`,
+//! `:focus-visible` (focused, and to be shown so: reached with the keyboard,
+//! or a text field, as in browsers), `:disabled`, `:checked` and
+//! `:selected`, `:root` (the element the sheet is attached to), and the
 //! descendant and child (`>`) combinators.
 
 /// States an element can be in, which `:hover` and the like select on.
@@ -16,6 +18,10 @@ impl States {
     pub const CHECKED: States = States(16);
     /// A selected row of a list or tree.
     pub const SELECTED: States = States(32);
+    /// Focused, and to be shown so: reached with Tab, or a text field. A
+    /// button pressed with the pointer is focused without it, so its ring
+    /// does not stay on as if marking what was pressed last.
+    pub const FOCUS_VISIBLE: States = States(64);
 
     pub fn contains(self, other: States) -> bool {
         self.0 & other.0 == other.0
@@ -30,6 +36,7 @@ impl States {
             "hover" => Self::HOVER,
             "active" => Self::ACTIVE,
             "focus" => Self::FOCUS,
+            "focus-visible" => Self::FOCUS_VISIBLE,
             "disabled" => Self::DISABLED,
             "checked" => Self::CHECKED,
             "selected" => Self::SELECTED,

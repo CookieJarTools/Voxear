@@ -101,7 +101,7 @@ Like `Clicked`, these run at the start of the next frame.
 
 ## Using UI with the keyboard
 
-In a running game, Tab and Shift+Tab move between buttons, text fields, toggles, sliders and dropdowns. Enter or Space clicks a button or flips a toggle, the arrow keys move a slider or a dropdown's choice, and Escape lets go. The element you are on matches `:focus` in your style sheet.
+In a running game, Tab and Shift+Tab move between buttons, text fields, toggles, sliders and dropdowns. Enter or Space clicks a button or flips a toggle, the arrow keys move a slider or a dropdown's choice, and Escape lets go. The element you are on matches `:focus` in your style sheet, and `:focus-visible` too when you reached it with Tab, or when it is a text field. Style the focus ring with `:focus-visible`, so a button you click does not keep a ring as if marking what was pressed last.
 
 The editor's Game view passes on less: the pointer, the left mouse button, and typing into a text field. To try keyboard control, run the game with `vox run`, or as a build.
 

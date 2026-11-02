@@ -152,11 +152,16 @@ impl Ui {
         self.input.focused = Some(node.0);
         self.input.blink_from = self.input.time;
         self.set_state(node, States::FOCUS, true);
+        // A text field shows it is focused however it got there, as it takes typing.
+        if self.kind(node) == Some(Kind::TextField) {
+            self.set_state(node, States::FOCUS_VISIBLE, true);
+        }
     }
 
     pub fn blur(&mut self) {
         if let Some(node) = self.input.focused.take() {
             self.set_state(NodeId(node), States::FOCUS, false);
+            self.set_state(NodeId(node), States::FOCUS_VISIBLE, false);
             self.edit(NodeId(node), |driver| driver.collapse_selection());
         }
     }
@@ -302,6 +307,7 @@ impl Ui {
         };
         let node = NodeId(order[next]);
         self.focus(node);
+        self.set_state(node, States::FOCUS_VISIBLE, true);
         if self.kind(node) == Some(Kind::TextField) {
             self.edit(node, |driver| driver.select_all());
         }

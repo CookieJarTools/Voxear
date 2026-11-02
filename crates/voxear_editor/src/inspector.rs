@@ -142,9 +142,10 @@ pub enum RowAction {
     Lock(Part, bool),
     /// Show a locked component's value to designers, or hide it from them.
     ShowToDesigners(Prop, bool),
-    /// Add a level to a LOD Group, or take its last one away.
-    AddLodLevel,
-    RemoveLodLevel,
+    /// Put a new level into a LOD Group before the one at this place, or
+    /// after its last; or take the level at this place out.
+    InsertLodLevel(usize),
+    DeleteLodLevel(usize),
 }
 
 /// A component value's row and the control that edits it.
@@ -298,6 +299,8 @@ pub struct Inspector {
     mesh_lods: Option<MeshLods>,
     group_lods: Option<GroupLods>,
     lod_eye: Option<LodEye>,
+    /// The LOD Group level selected on its bar, whose settings show.
+    lod_level: usize,
 }
 
 impl Inspector {
@@ -349,6 +352,7 @@ impl Inspector {
             mesh_lods: None,
             group_lods: None,
             lod_eye: None,
+            lod_level: 0,
         }
     }
 
@@ -703,7 +707,11 @@ impl Inspector {
             ui.remove(child);
         }
         let world = &game.engine.world;
+        let before = self.shown;
         self.shown = entity.filter(|&e| world.get::<Transform>(e).is_some());
+        if self.shown != before {
+            self.lod_level = 0;
+        }
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -726,12 +734,7 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
-        let (name_row, name, persistent, prefab_buttons) = header(ui, self.root, game, entity);
-        if !self.also.is_empty() {
-            let count = self.also.len() + 1;
-            let many = ui.add_label(self.root, &format!("Editing {count} Objs: a change goes to each that has it."));
-            ui.add_class(many, "inspector-many");
-        }
+        let (name_row, name, persistent, prefab_buttons) = header(ui, self.root, game, entity, self.also.len() + 1);
         self.prefab_buttons = prefab_buttons;
 
         let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", false);
@@ -803,16 +806,22 @@ impl Inspector {
                 let label = ui.add_label(row, name);
                 ui.add_class(label, "value");
             }
-            // A LOD Group's bar of its levels comes first, as in Unity.
+            // A LOD Group's bar of its levels comes first, as in Unity, and only the selected level's settings show.
             if *part == Part::LodGroup
                 && let Some(group) = world.get::<LodGroup>(entity)
             {
-                self.group_lods = Some(GroupLods::new(ui, rows, group));
+                self.lod_level = self.lod_level.min(group.levels.len().saturating_sub(1));
+                self.group_lods = Some(GroupLods::new(ui, rows, group, self.lod_level));
             }
             let values = attributes::ordered(&self.types, values);
             let mut groups = attributes::Groups::new(rows);
             for value in &values {
                 if !self.prefab_mode && !designers_see(value) {
+                    continue;
+                }
+                if let Prop::LodObj(level) | Prop::LodUntil(level) = value
+                    && *level != self.lod_level
+                {
                     continue;
                 }
                 // While playing, a drawn value shows as it would without its drawers.
@@ -824,7 +833,7 @@ impl Inspector {
                 }
                 let mut meta = attributes::of(&self.types, value).clone();
                 let container = groups.container(ui, attributes::top(&self.types, value).group.as_ref());
-                let mut label = meta.label.clone().unwrap_or_else(|| props::label_on(world, entity, value));
+                let mut label = meta.label.clone().unwrap_or_else(|| props::label(value));
                 if meta.suffix.is_none() {
                     meta.suffix = props::unit_on(world, entity, value).map(str::to_string);
                 }
@@ -932,10 +941,8 @@ impl Inspector {
                 let waits = playing && !crate::live::is_running(&game.engine.world, entity, name);
                 self.add_buttons(ui, rows, name, waits);
             }
-            match (part, &mut self.group_lods, game.engine.world.get::<LodGroup>(entity)) {
-                (Part::Renderer, ..) => self.mesh_lods = Some(MeshLods::new(ui, rows)),
-                (Part::LodGroup, Some(lods), Some(group)) => lods.finish(ui, rows, group),
-                _ => {}
+            if *part == Part::Renderer {
+                self.mesh_lods = Some(MeshLods::new(ui, rows));
             }
             let prefix = part.lock_key();
             for (name, tabs) in groups.tabs {
@@ -1208,7 +1215,10 @@ impl Inspector {
                 show_mixed(ui, row.row, &row.control, &now, &theirs);
             }
         }
-        self.update_lods(ui, game, entity, renderer.as_deref());
+        let selected = self.update_lods(ui, game, entity, renderer.as_deref());
+        if selected {
+            self.show(ui, game, Some(entity), playing);
+        }
         let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);
         let world = &game.engine.world;
         let mut edits: Vec<Edit> = (before != after).then_some(Edit::Changed { entity, before, after }).into_iter().collect();
@@ -1223,17 +1233,35 @@ impl Inspector {
         }
     }
 
-    /// Shows which LOD the camera sees, of the mesh and of the LOD Group.
-    fn update_lods(&mut self, ui: &mut Ui, game: &Game, entity: Entity, renderer: Option<&Renderer>) {
-        let Some(renderer) = renderer else { return };
+    /// The LOD Group's bar: a level clicked is selected, and a dragged edge
+    /// moves where its level ends, on every Obj edited. Then shows which
+    /// LOD the camera sees, of the mesh and of the group. Returns whether
+    /// another level was selected, so its settings show.
+    fn update_lods(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, renderer: Option<&Renderer>) -> bool {
+        let Some(lods) = &mut self.group_lods else { return self.update_mesh_lods(ui, game, entity, renderer) };
+        if let Some(level) = lods.clicked_level(ui).filter(|&level| level != self.lod_level) {
+            self.lod_level = level;
+            return true;
+        }
+        let dragged = game.engine.world.get::<LodGroup>(entity).and_then(|group| lods.dragged(ui, group));
+        if let Some((level, until)) = dragged {
+            for edited in std::iter::once(entity).chain(self.also.iter().copied()) {
+                props::set_lod_until(&mut game.engine.world, edited, level, until);
+            }
+        }
         let world = &game.engine.world;
-        if let Some(lods) = &mut self.mesh_lods {
-            lods.update(ui, world, entity, renderer, self.lod_eye);
-        }
-        if let (Some(lods), Some(group)) = (&mut self.group_lods, world.get::<LodGroup>(entity)) {
+        if let (Some(renderer), Some(group)) = (renderer, world.get::<LodGroup>(entity)) {
             let view = self.lod_eye.and_then(|eye| renderer.lod_choices(world, eye.camera).groups.get(&entity).copied());
-            lods.update(ui, group, view, self.lod_eye);
+            lods.update(ui, group, view);
         }
+        self.update_mesh_lods(ui, game, entity, renderer)
+    }
+
+    fn update_mesh_lods(&mut self, ui: &mut Ui, game: &Game, entity: Entity, renderer: Option<&Renderer>) -> bool {
+        if let (Some(lods), Some(renderer)) = (&mut self.mesh_lods, renderer) {
+            lods.update(ui, &game.engine.world, entity, renderer, self.lod_eye);
+        }
+        false
     }
 
     fn update_transform(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, transform: Transform) {
@@ -1341,7 +1369,14 @@ impl Inspector {
         if let Some((owner, actions)) = &self.menu
             && let Some(index) = ui.menu_choice(*owner)
         {
-            return actions.get(index).cloned().flatten();
+            let action = actions.get(index).cloned().flatten();
+            // A level inserted is selected; deleting one selects the one before.
+            match action {
+                Some(RowAction::InsertLodLevel(at)) => self.lod_level = at,
+                Some(RowAction::DeleteLodLevel(at)) => self.lod_level = at.saturating_sub(1),
+                _ => {}
+            }
+            return action;
         }
         let dropped = self.rows.iter().find_map(|row| match row.control {
             Control::Picker(picker, ..) => ui.dropped_onto(picker).map(|source| (row.prop.clone(), source)),
@@ -1349,11 +1384,6 @@ impl Inspector {
         });
         if let Some((prop, source)) = dropped {
             return Some(RowAction::Dropped(prop, source));
-        }
-        match self.group_lods.as_ref().map(|lods| lods.clicked(ui)) {
-            Some((true, _)) => return Some(RowAction::AddLodLevel),
-            Some((_, true)) => return Some(RowAction::RemoveLodLevel),
-            _ => {}
         }
         let at = ui.pointer_position().unwrap_or_default();
         let mut items: Vec<(MenuItem, Option<RowAction>)>;
@@ -1369,6 +1399,9 @@ impl Inspector {
             return Some(action);
         } else if let Some((prop, swatch)) = self.swatch_clicked(ui) {
             return Some(RowAction::EditColor(prop, swatch));
+        } else if let Some((level, clicked)) = self.group_lods.as_ref().and_then(|lods| lods.context_clicked(ui)) {
+            items = lod_level_items(level, self.shown.and_then(|e| game.engine.world.get::<LodGroup>(e)));
+            (clicked, at)
         } else if let Some((part, header)) = self.headers.iter().find(|(_, h)| ui.context_clicked(*h)) {
             items = match part {
                 None => vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))],
@@ -1442,6 +1475,19 @@ impl Inspector {
         }
         items
     }
+}
+
+/// A LOD Group bar's menu, as Unity's: on a level, Insert Before and
+/// Delete; past the last, Insert, which adds one at the end.
+fn lod_level_items(level: usize, group: Option<&LodGroup>) -> Vec<(MenuItem, Option<RowAction>)> {
+    let count = group.map_or(0, |group| group.levels.len());
+    if level >= count {
+        return vec![(MenuItem::new("Insert"), Some(RowAction::InsertLodLevel(count)))];
+    }
+    vec![
+        (MenuItem::new("Insert Before"), Some(RowAction::InsertLodLevel(level))),
+        (MenuItem::new("Delete"), Some(RowAction::DeleteLodLevel(level))),
+    ]
 }
 
 /// A row's menu: while playing, keeping its value, for any but a script's
@@ -1902,11 +1948,15 @@ fn numbers(value: &Value) -> Vec<f32> {
 /// the name field, the persistent box, and the prefab row's Open and Select
 /// with the prefab's path. Active, tag, layer and static show their
 /// defaults until Objs have them.
+/// The Obj's name, its switch, and the rows Unity shows under them. With
+/// `editing` more than one, a chip by the name says how many Objs an edit
+/// goes to.
 fn header(
     ui: &mut Ui,
     root: NodeId,
     game: &Game,
     entity: Entity,
+    editing: usize,
 ) -> (NodeId, NodeId, NodeId, Option<(NodeId, NodeId, String)>) {
     let world = &game.engine.world;
     let header = ui.panel(root, Style::column());
@@ -1923,6 +1973,10 @@ fn header(
     ui.set_class(tile, "prefab-root", instance);
     let name = ui.text_field(top, &world.get::<Name>(entity).map(|n| n.0.clone()).unwrap_or_default());
     ui.add_class(name, "obj-name");
+    if editing > 1 {
+        let many = ui.add_label(top, &format!("{editing} Objs"));
+        ui.add_class(many, "inspector-many");
+    }
     ui.toggle(top, "", true);
     for (label, choice) in [("Tag", "Untagged"), ("Layer", "Default")] {
         let row = prop(ui, header, label);

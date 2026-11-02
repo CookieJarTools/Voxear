@@ -1422,11 +1422,11 @@ impl Editor {
             RowAction::ShowToDesigners(prop, shown) => {
                 props::show_to_designers(&mut self.game.engine.world, entity, &prop, shown);
             }
-            RowAction::AddLodLevel => {
-                props::add_lod_level(&mut self.game, entity);
+            RowAction::InsertLodLevel(at) => {
+                props::insert_lod_level(&mut self.game, entity, at);
             }
-            RowAction::RemoveLodLevel => {
-                props::remove_lod_level(&mut self.game.engine.world, entity);
+            RowAction::DeleteLodLevel(at) => {
+                props::delete_lod_level(&mut self.game.engine.world, entity, at);
             }
         }
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };

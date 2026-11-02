@@ -1,13 +1,13 @@
-//! What the Inspector shows of levels of detail. Under a Mesh Renderer, the
-//! LOD of its mesh a camera draws now, of how many, with every LOD's
-//! triangles when the pointer rests on it.
-//! Under a LOD Group, a bar of its levels as Unity's LOD Group shows them,
-//! marked where a camera sees the group now, with buttons to add and take
-//! away levels.
+//! What the Inspector shows of levels of detail, laid out as Unity does.
+//! Under a Mesh Renderer, a strip of its mesh's LODs, each with its
+//! triangles, the one a camera draws lit. Under a LOD Group, the bar of its
+//! levels: a click selects a level, a drag on an edge moves where it ends, a
+//! right-click inserts or deletes one, and a camera mark shows where the
+//! Scene view sees the group.
 
 use std::collections::HashMap;
 
-use voxear_core::math::Vec3;
+use voxear_core::math::{Mat4, Vec3, Vec4};
 use voxear_ecs::{Entity, World};
 use voxear_render::{LodCamera, LodGroup, LodInfo, LodMeasure, LodView, MeshRenderer, Renderer, lod_at};
 use voxear_scene::{Transform, WorldTransform};
@@ -19,8 +19,11 @@ use crate::inspector::prop;
 /// level, so the culled part shows.
 const PAST_THE_LAST: f32 = 0.2;
 
-/// The camera the Inspector says what is drawn through: the Scene view's in
-/// edit mode, and the game's while playing.
+/// The colours the bar and the strip have, one a level, repeating.
+const COLOURS: usize = 6;
+
+/// The camera the Inspector shows LODs for: the Scene view's in edit mode,
+/// and the game's while playing.
 #[derive(Clone, Copy, Debug)]
 pub struct LodEye {
     pub camera: LodCamera,
@@ -30,169 +33,205 @@ pub struct LodEye {
     pub pixels_per_metre: f32,
     /// The LOD error the view allows, in pixels.
     pub threshold: f32,
-    /// Where the camera is, as the readouts name it: "the Scene view" or
-    /// "the game".
-    pub name: &'static str,
 }
 
-/// A Mesh Renderer's row for its mesh's LODs: the one drawn now, of how
-/// many, and every LOD's triangles as the label's tooltip.
+/// A Mesh Renderer's LODs row: a cell for each LOD of its mesh with its
+/// triangles, the one drawn now lit.
 pub struct MeshLods {
-    label: NodeId,
-    value: NodeId,
-    chain: String,
+    strip: NodeId,
+    cells: Vec<NodeId>,
+    lods: Vec<LodInfo>,
 }
 
 impl MeshLods {
     pub fn new(ui: &mut Ui, rows: NodeId) -> Self {
         let row = prop(ui, rows, "LODs");
-        let value = ui.add_label(row, "");
-        ui.add_class(value, "value");
-        Self { label: ui.children(row)[0], value, chain: String::new() }
+        let strip = ui.panel(row, Style::row());
+        ui.add_class(strip, "lod-strip");
+        Self { strip, cells: Vec::new(), lods: Vec::new() }
     }
 
     pub fn update(&mut self, ui: &mut Ui, world: &World, entity: Entity, renderer: &Renderer, eye: Option<LodEye>) {
         let Some(mesh) = world.get::<MeshRenderer>(entity).map(|r| r.mesh) else { return };
         let lods = renderer.mesh_lods(mesh).unwrap_or_default();
-        self.chain = chain(&lods);
+        if lods != self.lods {
+            for cell in self.cells.drain(..) {
+                ui.remove(cell);
+            }
+            for (level, lod) in lods.iter().enumerate() {
+                let cell = ui.add_label(self.strip, &short_count(lod.triangles));
+                ui.add_class(cell, "lod-cell");
+                ui.add_class(cell, &format!("lod-level-{}", level % COLOURS));
+                self.cells.push(cell);
+            }
+            self.lods = lods;
+        }
         let drawn = match (eye, renderer.mesh_sphere(mesh)) {
-            (Some(eye), Some((center, radius))) if !lods.is_empty() => {
+            (Some(eye), Some((center, radius))) if !self.lods.is_empty() => {
                 let model = model(world, entity);
                 let scale = max_scale(model);
                 let away = model.transform_point3(center).distance(eye.camera.position) - radius * scale;
-                Some(lod_at(&lods, away, scale, eye.pixels_per_metre, eye.threshold))
+                Some(lod_at(&self.lods, away, scale, eye.pixels_per_metre, eye.threshold))
             }
             _ => None,
         };
-        let text = match (drawn, lods.as_slice()) {
-            (_, []) => "Not loaded yet".to_string(),
-            (_, [only]) => format!("1, of {} triangles", thousands(only.triangles)),
-            (Some(lod), _) => format!("LOD {lod} of {}: {} triangles", lods.len(), thousands(lods[lod].triangles)),
-            (None, [first, ..]) => format!("{}, the first of {} triangles", lods.len(), thousands(first.triangles)),
-        };
-        ui.set_text(self.value, &text);
+        for (level, &cell) in self.cells.iter().enumerate() {
+            ui.set_class(cell, "lod-drawn", drawn == Some(level));
+        }
     }
 
-    /// Every LOD's triangles, while the pointer rests on the row's label.
+    /// A cell's LOD and triangles, while the pointer rests on it.
     pub fn hovered_tooltip(&self, ui: &Ui) -> Option<(String, NodeId)> {
-        (ui.is_hovered(self.label) && !self.chain.is_empty()).then(|| (self.chain.clone(), self.label))
+        let (level, &cell) = self.cells.iter().enumerate().find(|(_, cell)| ui.is_hovered(**cell))?;
+        Some((format!("LOD {level}: {} triangles", thousands(self.lods[level].triangles)), cell))
     }
 }
 
-/// "12,480, 6,240 and 3,120 triangles, the most detailed first", or for a
-/// mesh too small to need LODs, its triangles alone.
-fn chain(lods: &[LodInfo]) -> String {
-    let counts: Vec<String> = lods.iter().map(|lod| thousands(lod.triangles)).collect();
-    match counts.as_slice() {
-        [] => String::new(),
-        [only] => format!("One LOD, of {only} triangles"),
-        [rest @ .., last] => format!("{} and {last} triangles, the most detailed first", rest.join(", ")),
-    }
-}
-
-/// A LOD Group's bar, its marker and what it says, and its buttons.
+/// A LOD Group's bar, its edges and the camera's mark.
 pub struct GroupLods {
+    bar: NodeId,
     segments: Vec<NodeId>,
     culled: NodeId,
+    /// The edge at the end of each level, which a drag moves.
+    edges: Vec<NodeId>,
     marker: NodeId,
-    readout: NodeId,
-    add: Option<NodeId>,
-    remove: Option<NodeId>,
+    eye: NodeId,
+    eye_text: NodeId,
     /// What its levels were measured by when it was built.
     pub measure: LodMeasure,
+    /// The level whose edge is being dragged, and the metres the bar ran
+    /// over when the drag began, so the bar holds still under the pointer.
+    drag: Option<(usize, f32)>,
     /// The inline style each part was last given, so an unchanged one is
     /// not styled again every frame.
     styled: HashMap<NodeId, String>,
 }
 
 impl GroupLods {
-    /// The bar and what it says, at the top of the group's section. Its
-    /// buttons go at the bottom, with [`finish`](Self::finish).
-    pub fn new(ui: &mut Ui, rows: NodeId, group: &LodGroup) -> Self {
+    /// The bar, with `selected` lit, and the ruler over it for the camera.
+    pub fn new(ui: &mut Ui, rows: NodeId, group: &LodGroup, selected: usize) -> Self {
+        let ruler = ui.panel(rows, Style::row());
+        ui.add_class(ruler, "lod-ruler");
+        let eye = ui.panel(ruler, Style::row());
+        ui.add_class(eye, "lod-eye");
+        let icon = ui.icon(eye, "camera");
+        ui.add_class(icon, "lod-eye-icon");
+        let eye_text = ui.add_label(eye, "");
+        ui.add_class(eye_text, "lod-eye-text");
+
         let bar = ui.panel(rows, Style::row());
         ui.add_class(bar, "lod-bar");
         let segment = |ui: &mut Ui, text: &str, class: &str| {
             let segment = ui.panel(bar, Style::column());
             ui.add_class(segment, "lod-segment");
             ui.add_class(segment, class);
-            let label = ui.add_label(segment, text);
-            ui.add_class(label, "lod-segment-name");
+            let name = ui.add_label(segment, text);
+            ui.add_class(name, "lod-segment-name");
             let end = ui.add_label(segment, "");
             ui.add_class(end, "lod-segment-end");
             segment
         };
-        let segments = (0..group.levels.len())
-            .map(|level| segment(ui, &format!("LOD {level}"), &format!("lod-level-{}", level.min(5))))
+        let segments: Vec<NodeId> = (0..group.levels.len())
+            .map(|level| segment(ui, &format!("LOD {level}"), &format!("lod-level-{}", level % COLOURS)))
             .collect();
+        if let Some(&chosen) = segments.get(selected) {
+            ui.add_class(chosen, "lod-selected");
+        }
         let culled = segment(ui, "Culled", "lod-culled");
+        let edges = (0..group.levels.len())
+            .map(|_| {
+                let edge = ui.panel(bar, Style::column());
+                ui.add_class(edge, "lod-edge");
+                let line = ui.panel(edge, Style::default());
+                ui.add_class(line, "lod-edge-line");
+                edge
+            })
+            .collect();
         let marker = ui.panel(bar, Style::default());
         ui.add_class(marker, "lod-marker");
-        let readout = ui.add_label(rows, "");
-        ui.add_class(readout, "lod-now");
-        let (add, remove, measure, styled) = (None, None, group.measure, HashMap::new());
-        Self { segments, culled, marker, readout, add, remove, measure, styled }
+        let styled = HashMap::new();
+        Self { bar, segments, culled, edges, marker, eye, eye_text, measure: group.measure, drag: None, styled }
     }
 
-    /// The buttons that add and take away levels, under the group's values,
-    /// and while it has none, what to do first.
-    pub fn finish(&mut self, ui: &mut Ui, rows: NodeId, group: &LodGroup) {
-        if group.levels.is_empty() {
-            let hint = "Put an Obj for each level inside this Obj, the most detailed first, then add a level for each.";
-            let hint = ui.add_label(rows, hint);
-            ui.add_class(hint, "lod-hint");
-        }
-        let buttons = ui.panel(rows, Style::row());
-        ui.add_class(buttons, "lod-buttons");
-        let add = ui.button(buttons, "Add Level");
-        let remove = ui.button(buttons, "Remove Last Level");
-        for button in [add, remove] {
-            ui.add_class(button, "attr-button");
-        }
-        ui.set_class(remove, "disabled", group.levels.is_empty());
-        (self.add, self.remove) = (Some(add), Some(remove));
+    /// The level whose part of the bar was clicked.
+    pub fn clicked_level(&self, ui: &Ui) -> Option<usize> {
+        self.segments.iter().position(|&segment| ui.clicked(segment))
     }
 
-    /// Whether Add Level or Remove Last Level was clicked.
-    pub fn clicked(&self, ui: &Ui) -> (bool, bool) {
-        let clicked = |button: Option<NodeId>| button.is_some_and(|button| ui.clicked(button));
-        (clicked(self.add), clicked(self.remove))
+    /// The level right-clicked, on its part of the bar or its edge, or one
+    /// past the last for the culled part or an empty bar, and what was
+    /// clicked.
+    pub fn context_clicked(&self, ui: &Ui) -> Option<(usize, NodeId)> {
+        let on = |parts: &[NodeId]| parts.iter().position(|&part| ui.context_clicked(part)).map(|at| (at, parts[at]));
+        on(&self.edges)
+            .or_else(|| on(&self.segments))
+            .or_else(|| ui.context_clicked(self.bar).then_some((self.segments.len(), self.bar)))
+    }
+
+    /// While an edge is dragged, its level and where the level now ends,
+    /// kept between the levels on either side.
+    pub fn dragged(&mut self, ui: &Ui, group: &LodGroup) -> Option<(usize, f32)> {
+        let Some(level) = self.edges.iter().position(|&edge| ui.is_pressed(edge)) else {
+            self.drag = None;
+            return None;
+        };
+        let span = self.drag.filter(|(at, _)| *at == level).map_or_else(|| distance_span(group), |(_, span)| span);
+        self.drag = Some((level, span));
+        let (x, _) = ui.pointer_position()?;
+        let [left, _, width, _] = ui.rect(self.bar);
+        let along = ((x - left) / width.max(1.0)).clamp(0.0, 1.0);
+        let until = |at: usize| group.levels.get(at).map(|l| l.until);
+        let until = match group.measure {
+            LodMeasure::ScreenSize => {
+                let (above, below) = (level.checked_sub(1).and_then(until).unwrap_or(1.0), until(level + 1).unwrap_or(0.0));
+                (1.0 - along).clamp(below + 0.001, (above - 0.001).max(below + 0.001))
+            }
+            LodMeasure::Distance => {
+                let (nearer, further) = (level.checked_sub(1).and_then(until).unwrap_or(0.0), until(level + 1));
+                let furthest = further.map_or(f32::MAX, |f| f - 0.01);
+                (along * span).clamp(nearer + 0.01, furthest.max(nearer + 0.01))
+            }
+        };
+        Some((level, until))
     }
 
     /// Sizes the bar's levels to where each ends, and marks where `eye`
     /// sees the group, if it is given.
-    pub fn update(
-        &mut self,
-        ui: &mut Ui,
-        group: &LodGroup,
-        view: Option<(LodView, Option<usize>)>,
-        eye: Option<LodEye>,
-    ) {
+    pub fn update(&mut self, ui: &mut Ui, group: &LodGroup, view: Option<(LodView, Option<usize>)>) {
         let ends = bar_ends(group);
         let mut from = 0.0;
         for (level, (&segment, &end)) in self.segments.clone().iter().zip(&ends).enumerate() {
-            self.style(ui, segment, format!("flex-grow: {:.4}", (end - from).max(0.001)));
+            self.style(ui, segment, span_style(from, end));
             // Without culling, the last level has no end.
             let ends_here = group.cull || level + 1 < group.levels.len();
             let text = group.levels.get(level).filter(|_| ends_here).map_or_else(String::new, |l| until(group, l.until));
             let label = ui.children(segment)[1];
             ui.set_text(label, &text);
+            if let Some(&edge) = self.edges.get(level) {
+                ui.set_visible(edge, ends_here);
+                self.style(ui, edge, format!("left: {:.2}%", end * 100.0));
+            }
             from = end;
         }
-        let past = (1.0 - from).max(0.0);
-        ui.set_visible(self.culled, group.cull && past > 0.0);
-        self.style(ui, self.culled, format!("flex-grow: {:.4}", past.max(0.001)));
+        ui.set_visible(self.culled, group.cull && from < 1.0);
+        self.style(ui, self.culled, span_style(from, 1.0));
 
-        let Some(((view, level), eye)) = view.zip(eye) else {
+        let Some((view, level)) = view else {
             ui.set_visible(self.marker, false);
-            ui.set_text(self.readout, "Open a Scene view to see which level it shows.");
+            ui.set_visible(self.eye, false);
             return;
         };
         let at = place(group, view).clamp(0.0, 1.0);
         ui.set_visible(self.marker, true);
+        ui.set_visible(self.eye, true);
         self.style(ui, self.marker, format!("left: {:.2}%", at * 100.0));
-        let shown = level.map_or_else(|| "nothing, past its last level".to_string(), |level| format!("LOD {level}"));
-        let measured = format!("{:.0}% of the screen, {:.1} m away", view.size * 100.0, view.distance);
-        ui.set_text(self.readout, &format!("{} sees it at {measured}: it shows {shown}.", capital(eye.name)));
+        // The mark stays inside the ruler near its right end.
+        self.style(ui, self.eye, format!("left: {:.2}%", at.min(0.86) * 100.0));
+        let reading = match group.measure {
+            LodMeasure::ScreenSize => format!("{}%", trim(view.size * 100.0)),
+            LodMeasure::Distance => format!("{} m", trim(view.distance)),
+        };
+        ui.set_text(self.eye_text, &reading);
         for (index, &segment) in self.segments.iter().enumerate() {
             ui.set_class(segment, "lod-shown", level == Some(index));
         }
@@ -236,6 +275,12 @@ fn distance_span(group: &LodGroup) -> f32 {
     if group.cull { furthest / (1.0 - PAST_THE_LAST) } else { furthest }
 }
 
+/// Places a part of the bar from one point along it to another, exactly,
+/// so the edges dragged between levels sit on their boundaries.
+fn span_style(from: f32, to: f32) -> String {
+    format!("left: {:.3}%; width: {:.3}%", from * 100.0, (to - from).max(0.0) * 100.0)
+}
+
 /// Where along the bar a view falls.
 fn place(group: &LodGroup, view: LodView) -> f32 {
     match group.measure {
@@ -244,7 +289,7 @@ fn place(group: &LodGroup, view: LodView) -> f32 {
     }
 }
 
-/// Where a level ends, as its segment of the bar says it.
+/// Where a level ends, as its part of the bar says it.
 fn until(group: &LodGroup, until: f32) -> String {
     match group.measure {
         LodMeasure::ScreenSize => format!("{}%", trim(until * 100.0)),
@@ -255,11 +300,6 @@ fn until(group: &LodGroup, until: f32) -> String {
 fn trim(value: f32) -> String {
     let text = format!("{value:.1}");
     text.strip_suffix(".0").map_or(text.clone(), str::to_string)
-}
-
-fn capital(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
 
 /// 12480 as "12,480".
@@ -275,16 +315,27 @@ fn thousands(count: u32) -> String {
     out
 }
 
-fn model(world: &World, entity: Entity) -> voxear_core::math::Mat4 {
-    match (world.get::<WorldTransform>(entity), world.get::<Transform>(entity)) {
-        (Some(world), _) => world.0,
-        (None, Some(local)) => local.matrix(),
-        (None, None) => voxear_core::math::Mat4::IDENTITY,
+/// A triangle count short enough for a cell: 512, 4.1k, 41k, 1.2M.
+fn short_count(count: u32) -> String {
+    let count = count as f32;
+    match count {
+        c if c < 1000.0 => format!("{c}"),
+        c if c < 10_000.0 => format!("{}k", trim(c / 1000.0)),
+        c if c < 1_000_000.0 => format!("{:.0}k", c / 1000.0),
+        c => format!("{}M", trim(c / 1_000_000.0)),
     }
 }
 
-fn max_scale(model: voxear_core::math::Mat4) -> f32 {
-    let axis = |axis: voxear_core::math::Vec4| Vec3::new(axis.x, axis.y, axis.z).length();
+fn model(world: &World, entity: Entity) -> Mat4 {
+    match (world.get::<WorldTransform>(entity), world.get::<Transform>(entity)) {
+        (Some(world), _) => world.0,
+        (None, Some(local)) => local.matrix(),
+        (None, None) => Mat4::IDENTITY,
+    }
+}
+
+fn max_scale(model: Mat4) -> f32 {
+    let axis = |axis: Vec4| Vec3::new(axis.x, axis.y, axis.z).length();
     axis(model.x_axis).max(axis(model.y_axis)).max(axis(model.z_axis))
 }
 
@@ -293,13 +344,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counts_read_with_commas_and_chains_as_a_list() {
+    fn counts_read_short_in_cells_and_whole_in_tooltips() {
         assert_eq!(thousands(12480), "12,480");
         assert_eq!(thousands(1_560_000), "1,560,000");
         assert_eq!(thousands(12), "12");
-        let lod = |triangles| LodInfo { triangles, error: 0.0 };
-        assert_eq!(chain(&[lod(12480), lod(6240), lod(3120)]), "12,480, 6,240 and 3,120 triangles, the most detailed first");
-        assert_eq!(chain(&[lod(12)]), "One LOD, of 12 triangles");
+        assert_eq!(short_count(321), "321");
+        assert_eq!(short_count(4096), "4.1k");
+        assert_eq!(short_count(2000), "2k");
+        assert_eq!(short_count(41_200), "41k");
+        assert_eq!(short_count(1_250_000), "1.2M");
     }
 
     #[test]

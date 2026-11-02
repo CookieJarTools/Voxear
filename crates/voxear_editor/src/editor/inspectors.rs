@@ -130,16 +130,16 @@ impl Editor {
     /// view's, when it shows.
     fn lod_eye(&self) -> Option<LodEye> {
         let game = self.game_camera().filter(|_| self.is_playing() && self.shown(self.nodes.game_viewport));
-        let game = game.map(|camera| (camera, self.nodes.game_viewport, "the game"));
-        let scene = self.shown(self.scene.viewport).then_some((self.scene.camera, self.scene.viewport, "the Scene view"));
-        let (camera, viewport, name) = game.or(scene)?;
+        let game = game.map(|camera| (camera, self.nodes.game_viewport));
+        let scene = self.shown(self.scene.viewport).then_some((self.scene.camera, self.scene.viewport));
+        let (camera, viewport) = game.or(scene)?;
         let world = &self.game.engine.world;
         let lens = world.get::<Camera>(camera)?;
         let position = voxear_scene::world_matrix(world, camera).w_axis.truncate();
         let eye = LodCamera::new(position, lens.fov_y_degrees);
         let height = self.ui.rect(viewport)[3] * self.scale;
         let threshold = ViewOptions::default().lod_threshold;
-        Some(LodEye { camera: eye, pixels_per_metre: height / (2.0 * eye.tan_half_fov), threshold, name })
+        Some(LodEye { camera: eye, pixels_per_metre: height / (2.0 * eye.tan_half_fov), threshold })
     }
 
     /// Shows the selection in every Inspector not locked.

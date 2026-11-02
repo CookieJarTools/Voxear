@@ -133,7 +133,7 @@ fn several_objs_are_selected_moved_and_deleted_together() {
         }
         found
     };
-    assert!(says(&editor, "Editing 2 Objs: a change goes to each that has it."));
+    assert!(says(&editor, "2 Objs"), "the name row says how many Objs it edits");
     let mut numbers = Vec::new();
     let mut stack = vec![editor.ui.root()];
     while let Some(node) = stack.pop() {

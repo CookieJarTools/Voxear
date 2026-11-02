@@ -795,6 +795,17 @@
     font-weight: 600;
 }
 
+/* How many Objs an edit goes to, beside the name, with several selected. */
+.inspector-many {
+    flex-shrink: 0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--vx-text-2);
+    background-color: var(--vx-selected);
+}
+
 .prop-label {
     color: var(--vx-muted);
 }
@@ -2294,13 +2305,39 @@ TextField.build-title:focus {
     color: var(--vx-text);
 }
 
-/* A LOD Group's levels as a bar, most detailed on the left, marked where
-   a camera sees the group now. */
+/* A LOD Group's levels as a bar, as Unity draws it: most detailed on the
+   left, edges to drag between levels, the selected level outlined, and the
+   camera's mark on a ruler above. */
+.lod-ruler {
+    height: 16px;
+    margin-top: 2px;
+}
+
+.lod-eye {
+    position: absolute;
+    top: 0px;
+    pointer-events: none;
+    align-items: center;
+    gap: 3px;
+    margin-left: -6px;
+}
+
+.lod-eye-icon {
+    width: 12px;
+    height: 12px;
+    color: var(--vx-text-2);
+}
+
+.lod-eye-text {
+    font-family: mono;
+    font-size: 10px;
+    color: var(--vx-text-2);
+}
+
 .lod-bar {
     flex-direction: row;
-    height: 34px;
-    gap: 2px;
-    margin: 4px 0px 2px 0px;
+    height: 36px;
+    margin-bottom: 6px;
     border-radius: 5px;
     overflow: hidden;
     border: 1px solid var(--vx-field-line);
@@ -2308,21 +2345,29 @@ TextField.build-title:focus {
 }
 
 .lod-segment {
-    flex-basis: 0px;
-    min-width: 0px;
+    position: absolute;
+    top: 0px;
+    bottom: 0px;
     justify-content: center;
-    padding: 0px 6px;
+    padding: 0px 7px;
     overflow: hidden;
+    border: 1px solid transparent;
+}
+
+.lod-segment.lod-selected {
+    border-color: var(--vx-accent);
 }
 
 .lod-segment-name {
     font-size: 11px;
+    white-space: nowrap;
     color: var(--vx-text);
 }
 
 .lod-segment-end {
     font-family: mono;
     font-size: 10px;
+    white-space: nowrap;
     color: var(--vx-muted);
 }
 
@@ -2337,8 +2382,23 @@ TextField.build-title:focus {
     background-color: rgba(235, 87, 87, 0.18);
 }
 
-.lod-segment.lod-shown > .lod-segment-name {
-    color: var(--vx-accent);
+.lod-edge {
+    position: absolute;
+    top: 0px;
+    bottom: 0px;
+    width: 8px;
+    margin-left: -4px;
+    align-items: center;
+}
+
+.lod-edge-line {
+    width: 2px;
+    height: 100%;
+    background-color: var(--vx-panel);
+}
+
+.lod-edge:hover > .lod-edge-line {
+    background-color: var(--vx-accent);
 }
 
 .lod-marker {
@@ -2348,22 +2408,34 @@ TextField.build-title:focus {
     width: 2px;
     margin-left: -1px;
     background-color: var(--vx-text);
+    pointer-events: none;
 }
 
-.lod-now, .lod-hint {
-    font-size: 11px;
-    color: var(--vx-muted);
-    margin-bottom: 4px;
+/* A mesh's LODs: a cell for each, the one drawn now lit. */
+.lod-strip {
+    flex-direction: row;
+    flex-grow: 1;
+    min-width: 0px;
+    gap: 2px;
 }
 
-.lod-buttons {
-    gap: 4px;
-    margin-top: 6px;
-}
-
-.lod-buttons > .attr-button {
+.lod-cell {
     flex-grow: 1;
     flex-basis: 0px;
+    min-width: 0px;
+    height: 20px;
+    padding-top: 3px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    text-align: center;
+    font-family: mono;
+    font-size: 10px;
+    color: var(--vx-muted);
+}
+
+.lod-cell.lod-drawn {
+    border-color: var(--vx-accent);
+    color: var(--vx-text);
 }
 
 .attr-preview {

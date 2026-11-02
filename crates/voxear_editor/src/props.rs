@@ -325,7 +325,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::LodMeasure => "Switch by",
         Prop::LodCull => "Culled",
         Prop::LodObj(level) => return format!("LOD {level}"),
-        Prop::LodUntil(_) => "Until",
+        Prop::LodUntil(_) => "Transition",
         Prop::Field { path, .. } => {
             return match path.last() {
                 Some(Step::Key(name)) => nice_name(name),
@@ -337,31 +337,20 @@ pub fn label(prop: &Prop) -> String {
     label.to_string()
 }
 
-/// What a prop's row says on an Obj, where that depends on the Obj: where
-/// a LOD Group's level ends reads as a size or a distance.
-pub fn label_on(world: &World, entity: Entity, prop: &Prop) -> String {
-    match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
-        (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => "Down to".into(),
-        (Prop::LodUntil(_), Some(LodMeasure::Distance)) => "Out to".into(),
-        _ => label(prop),
-    }
-}
-
-/// The unit after a prop's value on an Obj, if it has one.
+/// The unit after a prop's value on an Obj, if it has one: a LOD Group's
+/// transitions are a share of the screen or a distance.
 pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static str> {
     match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
-        (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("% of the screen"),
+        (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
         _ => None,
     }
 }
 
-/// How deep a value sits inside its script field: 0 for a field itself. A
-/// LOD Group's level's end sits under its Obj.
+/// How deep a value sits inside its script field: 0 for a field itself.
 pub fn depth(prop: &Prop) -> usize {
     match prop {
         Prop::Field { path, .. } => path.len().saturating_sub(1),
-        Prop::LodUntil(_) => 1,
         _ => 0,
     }
 }
@@ -633,20 +622,46 @@ pub fn children(game: &Game, entity: Entity) -> Vec<Entity> {
     inside
 }
 
-/// Adds a level to a LOD Group, showing the first Obj inside its Obj that
-/// no level shows yet, or takes its last level away.
-pub fn add_lod_level(game: &mut Game, entity: Entity) -> bool {
+/// Puts a new level into a LOD Group before the level at `at`, or after the
+/// last, showing the first Obj inside the group's Obj that no level shows
+/// yet. Before a level, it takes the nearer half of that level's part of
+/// the bar, as Unity's Insert Before does.
+pub fn insert_lod_level(game: &mut Game, entity: Entity, at: usize) -> bool {
     let inside = children(game, entity);
     with(&mut game.engine.world, entity, |group: &mut LodGroup| {
         let obj = inside.into_iter().find(|child| group.levels.iter().all(|level| level.obj != Some(*child)));
-        let until = group.next_until();
-        group.levels.push(LodLevel { obj, until });
+        let at = at.min(group.levels.len());
+        let until = match (group.levels.get(at), group.measure) {
+            (None, _) => group.next_until(),
+            (Some(level), LodMeasure::ScreenSize) => {
+                let above = at.checked_sub(1).map_or(1.0, |before| group.levels[before].until);
+                (above + level.until) * 0.5
+            }
+            (Some(level), LodMeasure::Distance) => {
+                let nearer = at.checked_sub(1).map_or(0.0, |before| group.levels[before].until);
+                (nearer + level.until) * 0.5
+            }
+        };
+        group.levels.insert(at, LodLevel { obj, until });
     })
 }
 
-pub fn remove_lod_level(world: &mut World, entity: Entity) -> bool {
+/// Takes the level at `at` out of a LOD Group.
+pub fn delete_lod_level(world: &mut World, entity: Entity, at: usize) -> bool {
     with(world, entity, |group: &mut LodGroup| {
-        group.levels.pop();
+        if at < group.levels.len() {
+            group.levels.remove(at);
+        }
+    })
+}
+
+/// Moves where a LOD Group's level ends, in the group's own terms: a share
+/// of the screen from 0 to 1, or metres.
+pub fn set_lod_until(world: &mut World, entity: Entity, at: usize, until: f32) -> bool {
+    with(world, entity, |group: &mut LodGroup| {
+        if let Some(level) = group.levels.get_mut(at) {
+            level.until = until;
+        }
     })
 }
 

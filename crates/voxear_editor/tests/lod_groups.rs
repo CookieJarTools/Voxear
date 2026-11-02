@@ -1,7 +1,8 @@
 //! LOD Groups and a mesh's LODs in the Inspector, on a copy of Hello with a
 //! rock of three levels added: Add Component makes a level of each Obj
-//! inside, the bar and its readout say what the Scene view sees, a level's
-//! end is typed in, and undo takes it all back. Skips itself without a GPU.
+//! inside, and the bar, as in Unity, selects a level, drags its edge and
+//! deletes one from its menu, each a step to undo. Skips itself without a
+//! GPU.
 
 use voxear_core::{logging::LogCapture, math::Vec3};
 use voxear_ecs::Entity;
@@ -170,16 +171,17 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     let (rock, high, low, card) =
         (obj(&editor, "Rock"), obj(&editor, "Rock High"), obj(&editor, "Rock Low"), obj(&editor, "Rock Card"));
 
-    // A mesh's LODs show on its Mesh Renderer: the one the Scene view draws, of how many.
+    // A mesh's LODs show on its Mesh Renderer as a strip of cells, the one the Scene view draws lit.
     editor.select(Some(high));
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     shot(&mut renderer, "mesh-lods.png");
-    let drawn = row_text(&editor.ui, prop_rows(&editor.ui, "LODs")[0]);
-    let lods = renderer.mesh_lods(editor.game.engine.world.get::<voxear_render::MeshRenderer>(high).unwrap().mesh);
-    let count = lods.expect("the sphere's LODs").len();
-    assert!(drawn.starts_with("LOD ") && drawn.contains(&format!(" of {count}: ")), "{drawn}");
-    assert!(drawn.ends_with(" triangles"), "{drawn}");
+    let mesh = editor.game.engine.world.get::<voxear_render::MeshRenderer>(high).unwrap().mesh;
+    let lods = renderer.mesh_lods(mesh).expect("the sphere's LODs");
+    let mut cells = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "lod-cell", &mut cells);
+    assert_eq!(cells.len(), lods.len(), "a cell for each LOD");
+    assert_eq!(cells.iter().filter(|&&cell| editor.ui.has_class(cell, "lod-drawn")).count(), 1, "one drawn now");
 
     // Add Component makes a level of each Obj inside the rock, in the Hierarchy's order.
     editor.select(Some(rock));
@@ -196,18 +198,17 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     assert_eq!(made.levels.iter().map(|l| l.obj).collect::<Vec<_>>(), [Some(high), Some(low), Some(card)]);
     assert_eq!(made.levels.iter().map(|l| l.until).collect::<Vec<_>>(), [0.6, 0.3, 0.15]);
 
-    // Each level shows its Obj and where it ends; the bar and its readout say what the Scene view sees.
-    let shown = row_text(&editor.ui, prop_rows(&editor.ui, "LOD 1")[0]);
-    assert_eq!(shown, "Rock Low");
-    let ends = prop_rows(&editor.ui, "Down to");
-    assert_eq!(ends.len(), 3, "the last level ends too, as the group hides past it");
-    assert_eq!(row_text(&editor.ui, ends[0]), "60 % of the screen");
+    // As in Unity, only the selected level's settings show under the bar, the first to begin with.
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "LOD 0")[0]), "Rock High");
+    assert!(prop_rows(&editor.ui, "LOD 1").is_empty());
+    let transition = prop_rows(&editor.ui, "Transition");
+    assert_eq!(transition.len(), 1);
+    assert_eq!(row_text(&editor.ui, transition[0]), "60 %");
     let bar = first_with(&editor.ui, editor.ui.root(), "lod-bar").expect("the bar of levels");
     assert!(says(&editor.ui, "Culled") && editor.ui.rect(bar)[2] > 100.0);
     shot(&mut renderer, "lod-group.png");
-    let readout = first_with(&editor.ui, editor.ui.root(), "lod-now").expect("the readout");
-    let readout = editor.ui.text(readout);
-    assert!(readout.starts_with("The Scene view sees it at"), "{readout}");
+    let eye = first_with(&editor.ui, editor.ui.root(), "lod-eye-text").expect("the camera's mark");
+    assert!(editor.ui.text(eye).ends_with('%'), "the mark reads a share of the screen: {}", editor.ui.text(eye));
 
     // Close up the Scene view sees the first level; far away, nothing.
     let world = &editor.game.engine.world;
@@ -218,28 +219,56 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     assert_eq!(far.groups[&rock].1, None);
     assert!([high, low, card].iter().all(|level| far.hidden.contains(level)));
 
-    // A level's end is typed in as a percentage of the screen.
-    let field = first_with(&editor.ui, ends[0], "value-input").unwrap();
-    type_into(&mut editor.ui, field, "50");
+    // A click on the bar selects a level, and its transition is typed in as a percentage of the screen.
+    let mut segments = Vec::new();
+    with_class(&editor.ui, bar, "lod-segment", &mut segments);
+    click(&mut editor.ui, segments[1]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "LOD 1")[0]), "Rock Low");
+    let transition = prop_rows(&editor.ui, "Transition")[0];
+    let field = first_with(&editor.ui, transition, "value-input").unwrap();
+    type_into(&mut editor.ui, field, "25");
     frame(&mut editor, &mut renderer);
     editor.ui.blur();
     frame(&mut editor, &mut renderer);
-    assert_eq!(group(&editor, rock).unwrap().levels[0].until, 0.5);
+    assert_eq!(group(&editor, rock).unwrap().levels[1].until, 0.25);
 
-    // Remove Last Level takes the card's level away, and undo puts it back.
-    let mut buttons = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "attr-button", &mut buttons);
-    let remove = buttons.into_iter().find(|&b| editor.ui.text(b) == "Remove Last Level").unwrap();
-    click(&mut editor.ui, remove);
+    // Dragging the first level's edge to the middle of the bar ends it at half the screen.
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    let bar = first_with(&editor.ui, editor.ui.root(), "lod-bar").unwrap();
+    let edge = first_with(&editor.ui, bar, "lod-edge").unwrap();
+    let ([ex, ey, ew, eh], [bx, _, bw, _]) = (editor.ui.rect(edge), editor.ui.rect(bar));
+    editor.ui.pointer_move(ex + ew / 2.0, ey + eh / 2.0);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(bx + bw / 2.0, ey + eh / 2.0);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let first = group(&editor, rock).unwrap().levels[0].until;
+    assert!((first - 0.5).abs() < 0.02, "{first}");
+
+    // A right-click on a level offers Delete, as in Unity; undo puts it back, then the drag, the typing
+    // and the LOD Group itself go, each a step.
+    let mut segments = Vec::new();
+    with_class(&editor.ui, bar, "lod-segment", &mut segments);
+    let [x, y, w, h] = editor.ui.rect(segments[2]);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_secondary(true);
+    editor.ui.pointer_secondary(false);
+    frame(&mut editor, &mut renderer);
+    let delete = menu_item(&editor.ui, "Delete").expect("the level's menu");
+    click(&mut editor.ui, delete);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert_eq!(group(&editor, rock).unwrap().levels.len(), 2);
-    assert_eq!(prop_rows(&editor.ui, "LOD 2").len(), 0, "its row went with it");
     editor.undo(&mut renderer);
-    frame(&mut editor, &mut renderer);
     assert_eq!(group(&editor, rock).unwrap().levels.len(), 3);
     editor.undo(&mut renderer);
-    assert_eq!(group(&editor, rock).unwrap().levels[0].until, 0.6, "undo takes the typed end back");
+    assert_eq!(group(&editor, rock).unwrap().levels[0].until, 0.6, "the drag undone");
+    editor.undo(&mut renderer);
+    assert_eq!(group(&editor, rock).unwrap().levels[1].until, 0.3, "the typing undone");
     editor.undo(&mut renderer);
     assert!(group(&editor, rock).is_none(), "and then the LOD Group");
 }

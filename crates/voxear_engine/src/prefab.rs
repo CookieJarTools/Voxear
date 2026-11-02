@@ -541,7 +541,7 @@ fn check_refs(obj: &FlatObj, index: &HashMap<&ObjPath, usize>) -> Result<()> {
 
 /// A copy of `fields` with each reference replaced by its entity, or `None`
 /// when there are no references, so most behaviours share their fields.
-fn bind_refs(fields: &toml::Table, lookup: &dyn Fn(&ObjPath) -> Option<Entity>) -> Option<toml::Table> {
+pub(crate) fn bind_refs(fields: &toml::Table, lookup: &dyn Fn(&ObjPath) -> Option<Entity>) -> Option<toml::Table> {
     let mut refs = Vec::new();
     fields.values().try_for_each(|v| collect_refs(v, &mut refs)).ok()?;
     if refs.is_empty() {
@@ -584,7 +584,7 @@ fn link_instances(world: &mut World, objs: &[TemplateObj], entities: &[Entity]) 
     }
 }
 
-fn resolve_obj(
+pub(crate) fn resolve_obj(
     content: &mut Content,
     renderer: Option<&mut Renderer>,
     obj: &FlatObj,

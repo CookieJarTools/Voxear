@@ -27,6 +27,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::Entity;
 use voxear_engine::{
     Game,
+    prefab_overrides::ValuePath,
     script_types::{BehaviourType, FieldInspector, InfoKind, ScriptTypes},
 };
 use voxear_render::{LodGroup, Renderer};
@@ -157,6 +158,13 @@ pub enum RowAction {
     ResetLodTransitions,
     /// Put what was dragged onto a LOD Group's level in it.
     DropOnLodLevel(usize, DragSource),
+    /// Put the prefab's values at these paths back on the Obj, or write the
+    /// Obj's into the prefab.
+    RevertOverrides(Vec<ValuePath>),
+    ApplyOverrides(Vec<ValuePath>),
+    /// The same for every value the whole instance changes.
+    RevertAll,
+    ApplyAll,
 }
 
 /// A component value's row and the control that edits it.
@@ -299,9 +307,11 @@ pub struct Inspector {
     /// are built in, which goes into the inspector's `next` element, or out
     /// of sight when it has none.
     inspected: Vec<(String, NodeId)>,
-    /// The Prefab row's Open and Select, and the prefab's path, for a prefab
+    /// The Prefab row's buttons and the prefab's path, for a prefab
     /// instance or an Obj in one.
-    prefab_buttons: Option<(NodeId, NodeId, String)>,
+    prefab_buttons: Option<PrefabButtons>,
+    /// What the Obj shown changes from its prefab, as the editor last found.
+    overrides: Vec<ValuePath>,
     /// The other Objs selected with the one shown, which an edit made here
     /// goes to as well, each that has what was edited.
     also: Vec<Entity>,
@@ -359,6 +369,7 @@ impl Inspector {
             drawers: FieldDrawers::new(owner),
             inspected: Vec::new(),
             prefab_buttons: None,
+            overrides: Vec::new(),
             also: Vec::new(),
             mesh_lods: None,
             group_lods: None,
@@ -539,11 +550,11 @@ impl Inspector {
     /// names it.
     /// What the Prefab row's buttons asked for this frame.
     pub fn prefab_clicked(&self, ui: &Ui) -> Option<PrefabAction> {
-        let (open, select, path) = self.prefab_buttons.as_ref()?;
-        if ui.clicked(*open) {
-            return Some(PrefabAction::Open(path.clone()));
+        let buttons = self.prefab_buttons.as_ref()?;
+        if ui.clicked(buttons.open) {
+            return Some(PrefabAction::Open(buttons.path.clone()));
         }
-        ui.clicked(*select).then(|| PrefabAction::Select(path.clone()))
+        ui.clicked(buttons.select).then(|| PrefabAction::Select(buttons.path.clone()))
     }
 
     pub fn clicked_documentation(&self, ui: &Ui) -> Option<&str> {
@@ -976,6 +987,43 @@ impl Inspector {
         self.add = Some(add);
         self.conditions = attributes::key(game, &self.types, entity, &layout);
         self.built = (layout, playing, locks);
+        self.mark_overrides(ui);
+    }
+
+    /// Marks the rows and sections whose values the Obj shown changes from
+    /// its prefab, as Unity does: a bar beside each, and its label bold.
+    pub fn show_overrides(&mut self, ui: &mut Ui, overrides: Vec<ValuePath>) {
+        if overrides != self.overrides {
+            self.overrides = overrides;
+            self.mark_overrides(ui);
+        }
+    }
+
+    fn mark_overrides(&self, ui: &mut Ui) {
+        let changed = |under: &[ValuePath]| self.overrides.iter().any(|o| under.iter().any(|u| u.overlaps(o)));
+        let rows = self.fields.iter().flat_map(|fields| fields.rows.iter().cloned());
+        let rows = rows.chain(self.rows.iter().map(|row| (Field::Prop(row.prop.clone()), row.row)));
+        for (field, row) in rows {
+            ui.set_class(row, "overridden", changed(&[value_path(&field)]));
+        }
+        for (part, header) in &self.headers {
+            ui.set_class(*header, "overridden", changed(&part_paths(part.as_ref())));
+        }
+    }
+
+    /// Apply and Revert for the overrides under `under`, when there are any.
+    fn override_items(&self, under: &[ValuePath], playing: bool) -> Vec<(MenuItem, Option<RowAction>)> {
+        let paths: Vec<ValuePath> =
+            self.overrides.iter().filter(|o| under.iter().any(|u| u.overlaps(o))).cloned().collect();
+        let Some(buttons) = self.prefab_buttons.as_ref().filter(|_| !paths.is_empty() && !playing) else {
+            return Vec::new();
+        };
+        let name = buttons.path.rsplit('/').next().unwrap_or(&buttons.path);
+        let name = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+        vec![
+            (MenuItem::new(&format!("Apply to Prefab '{name}'")), Some(RowAction::ApplyOverrides(paths.clone()))),
+            (MenuItem::new("Revert"), Some(RowAction::RevertOverrides(paths))),
+        ]
     }
 
     /// A `[TableList]`: a column for each field of the list's values and a
@@ -1423,8 +1471,16 @@ impl Inspector {
         if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
             return Some(RowAction::BrowseComponents(add));
         }
+        let overrides_button = self.prefab_buttons.as_ref().and_then(|buttons| buttons.overrides);
         let (owner, at) = if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {
             items = vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))];
+            let [x, y, _, height] = ui.rect(button);
+            (button, (x, y + height + 4.0))
+        } else if let Some(button) = overrides_button.filter(|&b| ui.clicked(b)) {
+            items = vec![
+                (MenuItem::new("Revert All").enabled(!playing), Some(RowAction::RevertAll)),
+                (MenuItem::new("Apply All").enabled(!playing), Some(RowAction::ApplyAll)),
+            ];
             let [x, y, _, height] = ui.rect(button);
             (button, (x, y + height + 4.0))
         } else if let Some(action) = self.picker_clicked(ui) {
@@ -1453,6 +1509,11 @@ impl Inspector {
                 None => vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))],
                 Some(part) => self.header_items(game, part, playing),
             };
+            let changes = self.override_items(&part_paths(part.as_ref()), playing);
+            if !changes.is_empty() && !items.is_empty() {
+                items.push((MenuItem::separator(), None));
+            }
+            items.extend(changes);
             (*header, at)
         } else if let Some((field, row)) = rows.iter().find(|(_, row)| ui.context_clicked(*row)) {
             items = row_items(field, playing, can_keep, kept.contains(field));
@@ -1466,6 +1527,11 @@ impl Inspector {
                 let toggle = MenuItem::new("Show to Designers").checked(seen);
                 items.push((toggle, Some(RowAction::ShowToDesigners(prop.clone(), !seen))));
             }
+            let changes = self.override_items(&[value_path(field)], playing);
+            if !changes.is_empty() && !items.is_empty() {
+                items.push((MenuItem::separator(), None));
+            }
+            items.extend(changes);
             (*row, at)
         } else {
             return None;
@@ -2059,7 +2125,7 @@ fn header(
     game: &Game,
     entity: Entity,
     editing: usize,
-) -> (NodeId, NodeId, NodeId, Option<(NodeId, NodeId, String)>) {
+) -> (NodeId, NodeId, NodeId, Option<PrefabButtons>) {
     let world = &game.engine.world;
     let header = ui.panel(root, Style::column());
     ui.add_class(header, "inspector-header");
@@ -2104,14 +2170,68 @@ fn header(
         ui.add_class(icon, "prefab-icon");
         let file = ui.add_label(holder, path.rsplit('/').next().unwrap_or(&path));
         ui.add_class(file, "prefab-file");
-        let [open, select] = ["Open", "Select"].map(|label| {
+        let mut button = |label: &str| {
             let button = ui.button(holder, label);
             ui.add_class(button, "prefab-button");
             button
-        });
-        (open, select, path)
+        };
+        let (open, select) = (button("Open"), button("Select"));
+        // As in Unity, on the instance's root only.
+        let overrides = root.then(|| button("Overrides"));
+        PrefabButtons { open, select, overrides, path }
     });
     (top, name, persistent, buttons)
+}
+
+/// The Prefab row's Open, Select and, on an instance's root, Overrides, and
+/// the prefab's path.
+struct PrefabButtons {
+    open: NodeId,
+    select: NodeId,
+    overrides: Option<NodeId>,
+    path: String,
+}
+
+/// Where a row's value is in a scene file's Obj, as overrides name it.
+fn value_path(field: &Field) -> ValuePath {
+    let prop = match field {
+        Field::Name => return ValuePath::new(&["name"]),
+        Field::Position => return ValuePath::new(&["position"]),
+        Field::Rotation => return ValuePath::new(&["rotation"]),
+        Field::Scale => return ValuePath::new(&["scale"]),
+        Field::Prop(prop) => prop,
+    };
+    let mut path = part_paths(Some(&prop.part())).swap_remove(0);
+    let key = match prop {
+        Prop::LightKind => "type".to_string(),
+        Prop::SpotInner => "inner_angle".to_string(),
+        Prop::SpotOuter => "outer_angle".to_string(),
+        Prop::FieldOfView => "fov".to_string(),
+        Prop::Exposure => "exposure".to_string(),
+        Prop::Near => "near".to_string(),
+        Prop::LodMeasure | Prop::LodCull | Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => return path,
+        _ => prop.lock_key(),
+    };
+    if !key.is_empty() {
+        path.0.push(key);
+    }
+    path
+}
+
+/// Where a component's values are in a scene file's Obj: the Transform's
+/// for none.
+fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
+    let key = match part {
+        None => return ["position", "rotation", "scale"].map(|key| ValuePath::new(&[key])).to_vec(),
+        Some(Part::Renderer) => "renderer",
+        Some(Part::Light) => "light",
+        Some(Part::Camera) => "camera",
+        Some(Part::Audio) => "audio",
+        Some(Part::Listener) => "audio_listener",
+        Some(Part::LodGroup) => "lod_group",
+        Some(Part::Behaviour(name)) => return vec![ValuePath::new(&["fields", name])],
+    };
+    vec![ValuePath::new(&[key])]
 }
 
 /// The prefab an Obj is an instance of, or the one whose instance it is

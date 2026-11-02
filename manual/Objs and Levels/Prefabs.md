@@ -68,6 +68,16 @@ Point the `lamp` field at the prefab in the Inspector. See [[Fields in the Inspe
 
 Change an instance in the Inspector, and the change belongs to that instance alone. Everything you have not changed still follows the prefab.
 
+As in Unity, the Inspector marks each value an instance changes with a bar beside it and its label in bold, and the component's title in bold. Where an instance stands and its name are not marked: they place it, and every instance has its own.
+
+To undo a change, right-click its value, or the component's title, and choose **Revert**: the prefab's value comes back. **Ctrl+Z** brings your change back again.
+
+To give the change to every instance, right-click it and choose **Apply to Prefab**. The prefab's file is written, and the other instances in the open scenes take the new value, unless they changed it themselves. **Ctrl+Z** does not take back an apply: change the value back and apply it again.
+
+To do either for everything an instance changes, select its root and click **Overrides** on its **Prefab** row, then **Revert All** or **Apply All**.
+
+Apply works on the prefab's own Objs. To change an Obj that comes from another prefab inside it, such as a lamp in a street, open that prefab on its own.
+
 ## Prefabs inside prefabs
 
 A prefab can hold instances of other prefabs: a street prefab can hold several lamp prefabs. Changing the lamp prefab changes the lamps in every street.

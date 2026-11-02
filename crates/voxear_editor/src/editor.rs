@@ -19,6 +19,7 @@ mod model_materials;
 mod placing;
 mod play;
 mod prefab_mode;
+mod prefab_overrides;
 mod previews;
 mod projects;
 mod scene_gizmos;
@@ -279,6 +280,8 @@ pub struct Editor {
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
     picker_picks: Vec<(PickFor, Chosen)>,
+    /// The Obj whose prefab overrides the Inspector last marked, as it was.
+    overrides_seen: Option<(Entity, ObjState)>,
     /// What is being placed live under the pointer over a Scene view.
     live_place: Option<placing::LivePlace>,
     /// A material shown on an Obj while it is dragged over it from the Project.
@@ -522,6 +525,7 @@ impl Editor {
             hovered_tooltip: None,
             debug_texts,
             picker_picks: Vec::new(),
+            overrides_seen: None,
             live_place: None,
             material_preview: None,
             selection: None,
@@ -722,6 +726,7 @@ impl Editor {
         self.update_drawer();
         self.update_side_bar();
         self.update_prefab_mode(renderer);
+        self.update_overrides();
         self.update_settings();
         let theme = self.memory.settings.theme();
         if theme != self.theme {
@@ -1399,6 +1404,12 @@ impl Editor {
             let target = (PickFor::AddComponent(entity), anchor);
             return self.picker.open(&mut self.ui, target, "Add Component", choices, "");
         }
+        match &action {
+            RowAction::ApplyOverrides(paths) => return self.apply_overrides(&[(entity, paths.clone())], renderer),
+            RowAction::ApplyAll => return self.apply_instance(entity, renderer),
+            RowAction::RevertAll => return self.revert_instance(entity, renderer),
+            _ => {}
+        }
         if let RowAction::Keep(field) = action {
             let label = field.label();
             let kept = (entity, field);
@@ -1472,6 +1483,8 @@ impl Editor {
             RowAction::DeleteLodLevel(at) => {
                 props::delete_lod_level(&mut self.game.engine.world, entity, at);
             }
+            RowAction::RevertOverrides(paths) => self.revert_overrides(entity, &paths, renderer),
+            RowAction::ApplyOverrides(_) | RowAction::ApplyAll | RowAction::RevertAll => {}
         }
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
         if before != after && !self.is_playing() {

@@ -20,6 +20,7 @@ pub mod new_project;
 pub mod player;
 pub mod player_build;
 pub mod prefab;
+pub mod prefab_overrides;
 pub mod previews;
 mod project;
 pub mod remote_console;

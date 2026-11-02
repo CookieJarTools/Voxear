@@ -860,6 +860,19 @@
     color: var(--vx-accent);
 }
 
+/* A value a prefab instance changes from its prefab, as Unity marks one: a
+   bar beside it, and its label bold. */
+.prop.overridden > .prop-label {
+    border-left: 2px solid var(--vx-accent);
+    padding-left: 4px;
+    color: var(--vx-text);
+    font-weight: 600;
+}
+
+.overridden > .foldout-title {
+    font-weight: 600;
+}
+
 .divider {
     height: 1px;
     flex-shrink: 0;

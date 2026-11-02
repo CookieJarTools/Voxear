@@ -515,7 +515,7 @@ fn capture_instance(
 }
 
 /// The fields of `actual` that differ from `expected`, as an override.
-fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Result<toml::Table> {
+pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Result<toml::Table> {
     let mut changes = toml::Table::new();
     let mut put = |key: &str, value: toml::Value| {
         changes.insert(key.to_string(), value);
@@ -707,7 +707,7 @@ fn nearly_equal(a: [f32; 3], b: [f32; 3]) -> bool {
     a.iter().zip(&b).all(|(a, b)| (a - b).abs() < 1e-3)
 }
 
-fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<Entity, u32>) -> ObjData {
+pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<Entity, u32>) -> ObjData {
     let name = world.get::<Name>(entity).map_or("Obj", |n| n.0.as_str());
     // Objs inside a prefab instance have no id of their own in the file.
     let mut obj = ObjData::new(ids.get(&entity).copied().unwrap_or_default(), name);

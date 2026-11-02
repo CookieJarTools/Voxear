@@ -12,7 +12,8 @@ use voxear_core::math::{EulerRot, Quat};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game,
-    script_types::{FieldKind, ScriptTypes, same_field},
+    audio::AudioSource,
+    script_types::{FieldKind, ScriptTypes, nice_name, same_field},
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Destroying, EditorOnly, Name};
 
@@ -95,7 +96,7 @@ pub enum Target {
 pub fn target(world: &World, types: &ScriptTypes, entity: Entity, behaviour: &str, path: &[Step]) -> Option<Target> {
     let value = value_at(world, types, entity, behaviour, path)?;
     match kind_at(types, behaviour, path)? {
-        FieldKind::Obj | FieldKind::Behaviour { .. } => {
+        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Component { .. } => {
             let bits = value.as_table()?.get("entity")?.as_integer().filter(|&bits| bits != 0)?;
             let target = Entity::from_bits(bits as u64);
             world.is_alive(target).then_some(Target::Obj(target))
@@ -190,7 +191,9 @@ pub(crate) fn typed(world: &World, kind: &FieldKind, value: Option<&toml::Value>
             let [r, g, b, _] = color(value);
             Value::Color([r, g, b].map(|c| (c * 1000.0).round() / 1000.0))
         }
-        FieldKind::Obj | FieldKind::Behaviour { .. } => Value::Obj(reference(world, value)),
+        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Component { .. } => {
+            Value::Obj(reference(world, value))
+        }
         FieldKind::Asset { .. } | FieldKind::Ref { .. } => {
             Value::Asset(value.and_then(toml::Value::as_str).filter(|p| !p.is_empty()).unwrap_or("None").to_string())
         }
@@ -435,15 +438,16 @@ fn blank(types: &ScriptTypes, kind: &FieldKind) -> toml::Value {
                 .map(|f| (f.name.clone(), f.default.clone().unwrap_or_else(|| blank(types, &f.kind))))
                 .collect(),
         ),
-        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Unsupported { .. } => {
+        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Component { .. } | FieldKind::Unsupported { .. } => {
             toml::Value::Table(toml::Table::new())
         }
     }
 }
 
-/// What an Obj or behaviour reference can point at: Objs in the same scene
-/// as the Obj it is on, as a scene can only save those, and for a
-/// behaviour, those with a behaviour of its type. Nothing comes first.
+/// What an Obj, behaviour or component reference can point at: Objs in the
+/// same scene as the Obj it is on, as a scene can only save those, and for
+/// a behaviour or component, those that have one of its type. Nothing comes
+/// first.
 pub fn obj_choices(game: &Game, types: &ScriptTypes, entity: Entity, kind: &FieldKind) -> Vec<(String, Pick)> {
     let world = &game.engine.world;
     let scene = game.levels.scene_of(entity);
@@ -451,6 +455,7 @@ pub fn obj_choices(game: &Game, types: &ScriptTypes, entity: Entity, kind: &Fiel
         FieldKind::Behaviour { name } => specs(world, target)
             .iter()
             .any(|s| s.type_name == *name || types.behaviour(&s.type_name).is_some_and(|b| b.is_a(name))),
+        FieldKind::Component { name } => has_component(world, target, name),
         _ => true,
     };
     let mut found: Vec<(String, Pick)> = world
@@ -506,6 +511,9 @@ pub fn why_not(game: &Game, entity: Entity, kind: &FieldKind, pick: &Pick) -> St
         (Pick::Obj(Some(target)), FieldKind::Behaviour { name }) => {
             format!("{} has no {}", name_of(world, *target), short(name))
         }
+        (Pick::Obj(Some(target)), FieldKind::Component { name }) => {
+            format!("{} has no {}", name_of(world, *target), nice_name(short(name)))
+        }
         (Pick::Asset(Some(path)), FieldKind::Asset { asset } | FieldKind::Ref { asset }) => {
             format!("{} is not a {}", path.rsplit('/').next().unwrap_or(path), short(asset))
         }
@@ -521,8 +529,17 @@ pub fn why_not(game: &Game, entity: Entity, kind: &FieldKind, pick: &Pick) -> St
 pub fn takes(kind: &FieldKind) -> &str {
     match kind {
         FieldKind::Asset { asset } | FieldKind::Ref { asset } => short(asset),
-        FieldKind::Behaviour { name } => short(name),
+        FieldKind::Behaviour { name } | FieldKind::Component { name } => short(name),
         _ => "Obj",
+    }
+}
+
+/// Whether an Obj has the engine component a component field names by its
+/// C# type, as `Voxear.AudioSource`.
+fn has_component(world: &World, entity: Entity, name: &str) -> bool {
+    match short(name) {
+        "AudioSource" => world.has::<AudioSource>(entity),
+        _ => false,
     }
 }
 

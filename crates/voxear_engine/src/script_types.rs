@@ -390,6 +390,11 @@ pub enum FieldKind {
     Behaviour {
         name: String,
     },
+    /// An engine component of another Obj, as an `AudioSource`: an Obj that
+    /// has one, by the component's C# type.
+    Component {
+        name: String,
+    },
     /// An asset loaded with the scene, such as a `Prefab`, by its type.
     Asset {
         asset: String,

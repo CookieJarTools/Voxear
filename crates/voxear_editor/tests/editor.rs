@@ -867,7 +867,10 @@ fn script_fields_pick_references_and_edit_lists() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
-    assert!(offered.contains(&"World.level".to_string()) && !offered.iter().any(|o| o.ends_with(".scene")), "{offered:?}");
+    assert!(
+        offered.contains(&"World.level".to_string()) && !offered.iter().any(|o| o.ends_with(".scene")),
+        "{offered:?}"
+    );
     let world_row = picker_row(&editor.ui, "World.level").unwrap();
     click(&mut editor.ui, world_row);
     frame(&mut editor, &mut renderer);

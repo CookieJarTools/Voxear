@@ -27,8 +27,7 @@ pub(super) struct ExtraHierarchy {
 /// Builds a Hierarchy from its markup in a dock panel's `content`.
 pub(super) fn build(ui: &mut Ui, content: NodeId) -> Hierarchy {
     let mut load = |path: &str| Err(format!("{path} is not built in"));
-    let root =
-        ui.load_markup(content, "Hierarchy.vui", MARKUP, &mut load).expect("the Hierarchy's markup is built in");
+    let root = ui.load_markup(content, "Hierarchy.vui", MARKUP, &mut load).expect("the Hierarchy's markup is built in");
     let find = |ui: &Ui, name: &str| ui.find(root, name).unwrap_or_else(|| panic!("Hierarchy.vui has no {name}"));
     let (tree, filter, add) = (find(ui, "hierarchy-tree"), find(ui, "hierarchy-filter"), find(ui, "hierarchy-add"));
     Hierarchy::new(ui, tree, filter, add)

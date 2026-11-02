@@ -97,6 +97,10 @@ namespace Voxear.Scripting
 
 		private static object? ReadReferenceOrNested(JsonElement value, Type type, string path)
 		{
+			if (typeof(IObjComponent).IsAssignableFrom(type))
+			{
+				return ReadComponent(value, type);
+			}
 			if (typeof(Behaviour).IsAssignableFrom(type) || type.IsInterface)
 			{
 				return ReadBehaviour(value, type);
@@ -121,6 +125,22 @@ namespace Voxear.Scripting
 				return null;
 			}
 			return obj.GetBehaviour(type) ?? throw new FormatException($"{obj.Name} has no {type.Name}.");
+		}
+
+		/// <summary>
+		/// An engine component of another Obj, as an AudioSource, written as that Obj: { obj = 3 }. The Obj's own
+		/// components are made with it, before any behaviour reads its fields, so one that is missing is a mistake.
+		/// </summary>
+		private static object ReadComponent(JsonElement value, Type type)
+		{
+			var obj = ReadObj(value);
+			var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+			var component = (IObjComponent)Activator.CreateInstance(type, flags, null, new object[] { obj }, null)!;
+			if (obj.IsValid && !component.IsValid)
+			{
+				throw new FormatException($"{obj.Name} has no {type.Name}.");
+			}
+			return component;
 		}
 
 		/// <summary>A [Serializable] class or struct, written as a table of its fields.</summary>

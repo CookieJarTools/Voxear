@@ -97,6 +97,21 @@ hum.Play();
 
 `AudioSource.IsValid` is false when an Obj has no Audio Source.
 
+## Playing through another Obj's Audio Source
+
+A field of type `AudioSource` takes another Obj that has an Audio Source. Pick it in the Inspector, which lists only the Objs that have one, or drag it there from the Hierarchy:
+
+```csharp
+public sealed class Doorbell : Behaviour
+{
+	public AudioSource Chime;
+
+	public void Ring() => Chime.Play();
+}
+```
+
+The scene saves which Obj the field points at, as it does for an `Obj` field.
+
 ## Music
 
 For music, put a 2D Audio Source on an Obj that stays loaded. Set its bus to **Music** and turn on **Loop**. Its sound streams if it is long, as music is, so it takes little memory.

@@ -68,7 +68,7 @@ namespace Voxear.Scripting
 			return type == typeof(Quaternion) ? "rotation" : type == typeof(Obj) ? "obj" : null;
 		}
 
-		/// <summary>Vectors, assets, lists, references to behaviours and [Serializable] types.</summary>
+		/// <summary>Vectors, assets, lists, references to behaviours and components, and [Serializable] types.</summary>
 		private static bool WriteStructured(Utf8JsonWriter json, Type type, Dictionary<string, Type> types)
 		{
 			var size = type == typeof(Vector2) ? 2 : type == typeof(Vector3) ? 3 : type == typeof(Vector4) ? 4 : 0;
@@ -96,6 +96,12 @@ namespace Voxear.Scripting
 				json.WriteString("kind", "list");
 				json.WritePropertyName("element");
 				Write(json, element, types);
+				return true;
+			}
+			if (typeof(IObjComponent).IsAssignableFrom(type))
+			{
+				json.WriteString("kind", "component");
+				json.WriteString("name", type.FullName);
 				return true;
 			}
 			if (typeof(Behaviour).IsAssignableFrom(type) || type.IsInterface)

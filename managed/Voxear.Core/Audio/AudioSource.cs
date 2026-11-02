@@ -12,7 +12,7 @@ namespace Voxear
 	/// what was asked straight away.
 	/// </para>
 	/// </summary>
-	public readonly struct AudioSource : IEquatable<AudioSource>
+	public readonly struct AudioSource : IEquatable<AudioSource>, IObjComponent
 	{
 		public static readonly AudioSource None = default;
 

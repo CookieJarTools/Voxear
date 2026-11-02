@@ -55,6 +55,21 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void AComponentFieldTakesAnObjWithTheComponent()
+		{
+			var radio = new TestRadio();
+			BehaviourFields.Apply(radio, """{ "speaker": {} }""");
+			Check.True(radio.Speaker.Equals(AudioSource.None), "an Obj not saved with the scene reads as none");
+
+			using var document = System.Text.Json.JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestRadio).Assembly));
+			var behaviour = document.RootElement.GetProperty("behaviours").EnumerateArray()
+				.Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestRadio");
+			var speaker = behaviour.GetProperty("fields").EnumerateArray().Single(f => f.GetProperty("name").GetString() == "Speaker");
+			Check.True(speaker.GetProperty("type").GetProperty("kind").GetString() == "component", "described as a component field");
+			Check.True(speaker.GetProperty("type").GetProperty("name").GetString() == "Voxear.AudioSource", "of Audio Sources");
+		}
+
+		[Test]
 		private static void BadNestedValuesKeepTheirDefaultsAndTheRestStillLoads()
 		{
 			var spawner = new TestSpawner();

@@ -456,7 +456,8 @@ Still to do in M3:
   - [x] script fields edited while playing, on the running behaviour, with its buttons and callbacks
   - [x] references rather than strings for levels and scenes: `LevelAsset` and `SceneAsset` fields, picked and
     dropped as prefabs are, and taken by `Level.LoadAsync` and `Scene.LoadAsync`; Hello's level cycle uses them
-  - [ ] a component field that takes an Obj with the component, as an `AudioSource` field
+  - [x] a component field that takes an Obj with the component: an `AudioSource` field offers the Objs with an
+    Audio Source
   - [x] several Inspectors, each with a padlock, opened from a window's menu (Add Inspector)
   - [x] the Scene and Game views drawn at once, each through its own camera, a floating one over the docked one
   - [x] Lit Wireframe shading in the Scene view: the lit scene with its meshes' edges over it

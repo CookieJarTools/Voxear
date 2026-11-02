@@ -529,6 +529,10 @@ behaviour with field values always gets Awake dispatched, even if its type does 
   script or scene gave it. A C# component's `Color` is edited the same way while playing.
 - arrays and `List<T>` of any of these
 - **`Prefab`** and **`Sound`:** a direct reference, loaded with the Obj, before Awake.
+- **Component fields:** a field of an engine component reached through an Obj, as `AudioSource` is (the internal
+  `IObjComponent`), takes an Obj that has one. The catalog describes it as `{ kind = "component", name }`, the
+  Inspector's picker offers only Objs with that component, and a scene saves the Obj, as for an `Obj` field
+  *(implemented)*.
 - **`LevelAsset`** and **`SceneAsset`:** a level or scene of the project, picked in the Inspector from the project's
   levels or scenes or dropped there from the Project, and handed to `Level.LoadAsync` or `Scene.LoadAsync`. They
   hold the GUID or path and read nothing until the level or scene loads, so a field never needs a path typed in a

@@ -12,6 +12,7 @@ mod drawers;
 mod ecs;
 mod gizmos;
 mod hostfxr;
+mod input;
 mod inspector;
 mod interop;
 mod playing;

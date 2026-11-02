@@ -1,5 +1,5 @@
 ---
-order: 12
+order: 13
 ---
 
 `Draw` puts lines, shapes and labels in the 3D view, so you can see what your code is doing: where an enemy is looking, how far a sound carries, the path a character means to take. You can call it from anywhere, at any time.

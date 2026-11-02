@@ -518,6 +518,7 @@ impl ApplicationHandler for App {
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
         if let (DeviceEvent::MouseMotion { delta }, Some(editor)) = (event, self.editor.as_mut()) {
             editor.fly_mut().look(delta.0, delta.1);
+            editor.game_mouse_moved(delta.0, delta.1);
         }
     }
 

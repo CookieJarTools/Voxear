@@ -212,6 +212,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Texture) => "texture",
                 FileKind::Asset(AssetKind::Ui) => "panels",
                 FileKind::Asset(AssetKind::Sound) => "audio",
+                FileKind::Asset(AssetKind::InputActions) => "gamepad",
             },
         }
     }

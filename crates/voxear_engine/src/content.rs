@@ -426,6 +426,13 @@ impl Content {
         }
     }
 
+    /// Forgets what was read of every asset of a kind, as after files of it
+    /// changed, so each is read again when next used.
+    pub fn forget_kind(&mut self, kind: AssetKind) {
+        let db = &self.db;
+        self.texts.retain(|guid, _| db.get(*guid).is_none_or(|entry| entry.kind != kind));
+    }
+
     /// Looks at the project's folder again after files came or went, as the
     /// editor's Project panel makes and removes them, giving new ones their
     /// GUIDs. Content read from bundles does not change.

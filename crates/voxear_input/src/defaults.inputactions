@@ -1,0 +1,74 @@
+# Voxear's input actions, for a project that has none of its own: what most
+# games need, on the keyboard and mouse and on a gamepad. Copy this file into
+# your project as a starting point (Assets › Create › Input Actions does).
+format = 1
+
+[[map]]
+name = "Player"
+
+[[map.action]]
+name = "Move"
+type = "vector2"
+bindings = [
+    { up = "Keyboard/W", down = "Keyboard/S", left = "Keyboard/A", right = "Keyboard/D" },
+    { up = "Keyboard/ArrowUp", down = "Keyboard/ArrowDown", left = "Keyboard/ArrowLeft", right = "Keyboard/ArrowRight" },
+    "Gamepad/LeftStick",
+]
+
+# The mouse in pixels this frame, and the stick from -1 to 1 each way.
+[[map.action]]
+name = "Look"
+type = "vector2"
+bindings = ["Mouse/Delta", "Gamepad/RightStick"]
+
+[[map.action]]
+name = "Jump"
+bindings = ["Keyboard/Space", "Gamepad/South"]
+
+[[map.action]]
+name = "Sprint"
+bindings = ["Keyboard/ShiftLeft", "Gamepad/LeftStickPress"]
+
+[[map.action]]
+name = "Crouch"
+bindings = ["Keyboard/C", "Gamepad/East"]
+
+[[map.action]]
+name = "Interact"
+bindings = ["Keyboard/E", "Gamepad/North"]
+
+[[map.action]]
+name = "Attack"
+bindings = ["Mouse/Left", "Gamepad/RightTrigger"]
+
+[[map.action]]
+name = "Aim"
+bindings = ["Mouse/Right", "Gamepad/LeftTrigger"]
+
+[[map.action]]
+name = "Reload"
+bindings = ["Keyboard/R", "Gamepad/West"]
+
+[[map.action]]
+name = "Pause"
+bindings = ["Keyboard/Escape", "Gamepad/Start"]
+
+[[map]]
+name = "UI"
+
+[[map.action]]
+name = "Navigate"
+type = "vector2"
+bindings = [
+    { up = "Keyboard/ArrowUp", down = "Keyboard/ArrowDown", left = "Keyboard/ArrowLeft", right = "Keyboard/ArrowRight" },
+    { up = "Gamepad/DpadUp", down = "Gamepad/DpadDown", left = "Gamepad/DpadLeft", right = "Gamepad/DpadRight" },
+    "Gamepad/LeftStick",
+]
+
+[[map.action]]
+name = "Submit"
+bindings = ["Keyboard/Enter", "Gamepad/South"]
+
+[[map.action]]
+name = "Cancel"
+bindings = ["Keyboard/Escape", "Gamepad/East"]

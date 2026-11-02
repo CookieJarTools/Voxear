@@ -39,6 +39,7 @@ pub const NAMES: &[&str] = &[
     "box",
     "code",
     "audio",
+    "gamepad",
     "profiler",
     "branch",
     "select",
@@ -99,6 +100,15 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "box" => &[("M4 8.5h16V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1ZM3 4.5h18v4H3ZM10 12.5h4", STROKE)],
         "code" => &[("M8.5 7l-5 5 5 5M15.5 7l5 5-5 5M13.5 4.5l-3 15", STROKE)],
         "audio" => &[("M4 9.5h3.5L12 5.5v13l-4.5-4H4ZM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11", STROKE)],
+        // A gamepad: its body, a cross on the left and two buttons on the right.
+        "gamepad" => &[
+            (
+                "M7 6.5h10a4 4 0 0 1 3.95 3.4l.8 5.3a2.6 2.6 0 0 1-4.5 2.2L15.5 15.5h-7l-1.75 1.9a2.6 2.6 0 0 1-4.5-2.2\
+                 l.8-5.3A4 4 0 0 1 7 6.5ZM8 9.5v4M6 11.5h4",
+                STROKE,
+            ),
+            ("M15.25 10.25a1 1 0 1 0 2 0a1 1 0 1 0-2 0ZM17.25 12.75a1 1 0 1 0 2 0a1 1 0 1 0-2 0Z", FILL),
+        ],
         "profiler" => &[("M3 12.5h4l3-7.5 4 14 3-6.5h4", STROKE)],
         "branch" => &[(
             "M6.5 3.5v11M17.5 8.5a2.5 2.5 0 1 0 0-5a2.5 2.5 0 1 0 0 5ZM6.5 20.5a2.5 2.5 0 1 0 0-5a2.5 2.5 0 1 0 0 5Z\

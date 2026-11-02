@@ -77,6 +77,11 @@ pub trait ScriptServices {
     /// A size and full screen scripts ask the game's window for.
     fn set_resolution(&mut self, _width: u32, _height: u32, _fullscreen: bool) {}
 
+    /// The game's input, for `Input`, `Keyboard`, `Mouse` and `Gamepad`.
+    fn input(&mut self) -> Option<&mut voxear_input::Input> {
+        None
+    }
+
     /// Whether the mouse shows, and how it is held.
     fn cursor(&self) -> (bool, CursorLock) {
         (true, CursorLock::None)

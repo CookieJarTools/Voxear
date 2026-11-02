@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use voxear_assets::AssetGuid;
+use voxear_assets::{AssetGuid, AssetKind};
 use voxear_core::{
     math::{Quat, Vec2, Vec3},
     profile_scope,
@@ -49,6 +49,9 @@ pub struct Game {
     pub display: Display,
     /// The game's sound, and what its Audio Sources play.
     pub audio: GameAudio,
+    /// The keyboard, the mouse and gamepads, read as the project's input
+    /// actions; whatever shows the game hands it the window's events.
+    pub input: voxear_input::Input,
 }
 
 /// The game's window as scripts see it and ask for it, through `Screen` and
@@ -92,7 +95,7 @@ impl Game {
 
     /// A game reading assets from `content`, such as built bundles.
     pub fn with_content(project: Project, engine: Engine, content: Content) -> Self {
-        Self {
+        let mut game = Self {
             engine,
             content,
             levels: Levels::default(),
@@ -105,6 +108,25 @@ impl Game {
             ui: GameUi::default(),
             display: Display::default(),
             audio: GameAudio::default(),
+            input: voxear_input::Input::new(),
+        };
+        game.load_input_actions();
+        game
+    }
+
+    /// Reads the project's input actions: its `.inputactions` file, the
+    /// first by path when it has several, or else Voxear's own.
+    pub fn load_input_actions(&mut self) {
+        let db = self.content.db();
+        let mut files: Vec<(String, AssetGuid)> = (db.entries())
+            .filter(|entry| entry.kind == AssetKind::InputActions)
+            .map(|entry| (entry.path.clone(), entry.guid))
+            .collect();
+        files.sort();
+        let Some((path, guid)) = files.into_iter().next() else { return };
+        let read = self.content.asset_text(guid, AssetKind::InputActions);
+        if let Err(error) = read.and_then(|(text, _)| self.input.load_actions(&text)) {
+            tracing::error!("{path}: {error:#}; the game uses Voxear's own input actions");
         }
     }
 
@@ -277,6 +299,7 @@ impl Game {
             ui: &mut self.ui,
             display: &mut self.display,
             audio: &mut self.audio,
+            input: &mut self.input,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.switch_level_through_scripts(level);
@@ -318,6 +341,7 @@ impl Game {
             ui: &mut self.ui,
             display: &mut self.display,
             audio: &mut self.audio,
+            input: &mut self.input,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.instantiate(&template, parent, placement)
@@ -330,6 +354,8 @@ impl Game {
             profile_scope!("Script Reload Check");
             self.reload_changed_scripts();
         }
+        // Read once, before the scripts that ask about it.
+        self.input.update(delta);
         self.models = ModelWork::for_renderer(renderer.as_deref());
         {
             let renderer = renderer.as_deref_mut();
@@ -346,6 +372,7 @@ impl Game {
                 ui: &mut self.ui,
                 display: &mut self.display,
                 audio: &mut self.audio,
+                input: &mut self.input,
             };
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
@@ -365,6 +392,7 @@ impl Game {
                 ui: &mut self.ui,
                 display: &mut self.display,
                 audio: &mut self.audio,
+                input: &mut self.input,
             };
             if let Err(error) = self.engine.fill_ui_rows(&mut services, &rows) {
                 tracing::error!(target: "script", "{error:#}");
@@ -428,9 +456,14 @@ struct GameServices<'a> {
     ui: &'a mut GameUi,
     display: &'a mut Display,
     audio: &'a mut GameAudio,
+    input: &'a mut voxear_input::Input,
 }
 
 impl ScriptServices for GameServices<'_> {
+    fn input(&mut self) -> Option<&mut voxear_input::Input> {
+        Some(self.input)
+    }
+
     fn load_sound(&mut self, reference: &str) -> Result<u32> {
         let reference = self.content.parse(reference)?;
         Ok(self.content.sound(&reference)?.0)

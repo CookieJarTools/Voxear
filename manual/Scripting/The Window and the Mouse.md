@@ -1,5 +1,5 @@
 ---
-order: 10
+order: 11
 ---
 
 A build profile sets how big the game's window is when it starts, and whether it fills the screen. Your scripts can read the window's size, change it while the game runs, and hide or hold the mouse pointer.

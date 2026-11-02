@@ -22,6 +22,7 @@ voxear_scripting = { path = "crates/voxear_scripting" }
 voxear_engine = { path = "crates/voxear_engine" }
 voxear_editor = { path = "crates/voxear_editor" }
 voxear_docs = { path = "crates/voxear_docs" }
+voxear_input = { path = "crates/voxear_input" }
 
 anyhow = "1"
 ash = "0.38"
@@ -69,6 +70,8 @@ cpal = "0.18"
 # Decodes sound files, with only the formats Voxear imports: WAV, OGG Vorbis, FLAC and MP3.
 symphonia = { version = "0.6", default-features = false, features = ["opt-simd", "wav", "pcm", "adpcm", "ogg", "vorbis", "flac", "mp3"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Gamepads: XInput on Windows, evdev through udev on Linux, as SDL reads them.
+gilrs = "0.11"
 
 # Keep dependencies fast in debug builds so the engine stays usable while iterating.
 [profile.dev.package."*"]

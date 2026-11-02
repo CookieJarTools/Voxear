@@ -1,5 +1,5 @@
 ---
-order: 11
+order: 12
 ---
 
 `Save` keeps your game's progress between runs. Give it a name for the save, called a **slot**, and the values to keep. Nothing needs setting up first.

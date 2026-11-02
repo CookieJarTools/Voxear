@@ -30,6 +30,8 @@ pub enum AssetKind {
     Ui,
     /// A sound file: WAV, OGG Vorbis, FLAC or MP3.
     Sound,
+    /// A `.inputactions` file: the game's input actions, in maps.
+    InputActions,
 }
 
 impl AssetKind {
@@ -44,6 +46,7 @@ impl AssetKind {
             "prefab" => Self::Prefab,
             "vui" => Self::Ui,
             "wav" | "ogg" | "flac" | "mp3" => Self::Sound,
+            "inputactions" => Self::InputActions,
             _ => return None,
         })
     }

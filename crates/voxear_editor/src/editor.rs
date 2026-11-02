@@ -294,6 +294,9 @@ pub struct Editor {
     glide: Option<framing::Glide>,
     /// The component Copy Component copied.
     copied: Option<component_clipboard::Copied>,
+    /// The Game view has the focus while playing, so the game's input hears
+    /// the keyboard and the mouse.
+    game_focused: bool,
     /// A material shown on an Obj while it is dragged over it from the Project.
     material_preview: Option<material_drops::MaterialPreview>,
     /// The Obj selected, which every Inspector not locked shows: the active
@@ -542,6 +545,7 @@ impl Editor {
             live_place: None,
             glide: None,
             copied: None,
+            game_focused: false,
             material_preview: None,
             selection: None,
             others: Vec::new(),
@@ -868,6 +872,9 @@ impl Editor {
                 if let Err(error) = self.game.content.rescan() {
                     tracing::warn!("could not look at the project's files again: {error:#}");
                 }
+                // An .inputactions file may have come, gone or changed.
+                self.game.content.forget_kind(voxear_assets::AssetKind::InputActions);
+                self.game.load_input_actions();
                 self.files_seen();
                 // Files moved or went, so previews are made again for the paths they have now.
                 self.asset_previews.clear(renderer);
@@ -1834,6 +1841,9 @@ impl Editor {
         if self.game_ui_takes(event) {
             return true;
         }
+        if self.game_input_takes(event) {
+            return true;
+        }
         match event {
             WindowEvent::CursorMoved { position, .. } => self.pointer = Some((position.x as f32, position.y as f32)),
             WindowEvent::Focused(focused) => {
@@ -2115,6 +2125,63 @@ impl Editor {
                 voxear_engine::ui_input::handle(ui, event)
             }
             _ => false,
+        }
+    }
+
+    /// Hands the game's input what the player does while it plays, as
+    /// Unity's Game view does: the pointer over the view, in its own pixels,
+    /// and while the view has the focus, which a press on it gives and a
+    /// press elsewhere takes, the mouse's buttons and wheel and the keys.
+    /// Keys go no further, so the editor's shortcuts do not fire, but for
+    /// those with Ctrl, and keys a text field of the editor's has.
+    fn game_input_takes(&mut self, event: &winit::event::WindowEvent) -> bool {
+        use winit::event::{ElementState, WindowEvent};
+        if !self.is_playing() || !self.shown(self.nodes.game_viewport) {
+            self.game_focused = false;
+            return false;
+        }
+        let in_window = self.ui.window_of(self.nodes.game_viewport) == self.ui.pointer_window();
+        let [x, y, w, h] = self.ui.rect(self.nodes.game_viewport).map(|v| v * self.scale);
+        let over = |px: f32, py: f32| in_window && px >= x && px < x + w && py >= y && py < y + h;
+        let pointer = self.pointer.filter(|&(px, py)| over(px, py));
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                let (px, py) = (position.x as f32, position.y as f32);
+                if over(px, py) {
+                    self.game.input.devices_mut().set_pointer(px - x, py - y);
+                }
+                false
+            }
+            WindowEvent::MouseInput { state, .. } => {
+                if *state == ElementState::Pressed {
+                    self.game_focused = pointer.is_some();
+                }
+                if self.game_focused {
+                    self.game.input.handle(event);
+                }
+                false
+            }
+            WindowEvent::MouseWheel { .. } if self.game_focused && pointer.is_some() => {
+                self.game.input.handle(event);
+                true
+            }
+            WindowEvent::KeyboardInput { .. } if self.game_focused && !self.ui.wants_keyboard() => {
+                self.game.input.handle(event);
+                !self.control
+            }
+            WindowEvent::Focused(false) => {
+                self.game.input.release_all();
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// The mouse's moves from the device, which the game hears while its
+    /// view has the focus.
+    pub fn game_mouse_moved(&mut self, dx: f64, dy: f64) {
+        if self.game_focused && self.is_playing() {
+            self.game.input.mouse_moved(dx, dy);
         }
     }
 

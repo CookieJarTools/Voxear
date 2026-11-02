@@ -316,6 +316,10 @@ impl ApplicationHandler for App {
         if !self.fly.is_looking() && !self.game.ui.is_empty() && crate::ui_input::handle(self.game.ui.ui(), &event) {
             return;
         }
+        // Then the game's input, unless the tools' camera is flying.
+        if !self.fly.is_looking() {
+            self.game.input.handle(&event);
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -355,6 +359,11 @@ impl ApplicationHandler for App {
     }
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if let DeviceEvent::MouseMotion { delta } = event
+            && !self.fly.is_looking()
+        {
+            self.game.input.mouse_moved(delta.0, delta.1);
+        }
         if let DeviceEvent::MouseMotion { delta } = event
             && self.options.tools
         {

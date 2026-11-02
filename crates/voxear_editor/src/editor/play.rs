@@ -306,6 +306,8 @@ impl Editor {
         voxear_core::debug_draw::clear();
         self.game.ui = voxear_engine::game_ui::GameUi::default();
         self.game.audio.stop_game();
+        self.game.input.release_all();
+        self.game_focused = false;
         let Run { edit, levels, .. } = *run;
         let selected = self.selected().and_then(|entity| self.game.levels.counterpart(entity, &levels));
         let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
@@ -489,6 +491,9 @@ impl Editor {
             self.console.clear(&mut self.ui);
         }
         self.game.audio.pause_game(paused);
+        // As in Unity, the Game view has the focus as play starts, so the game hears the keys at once.
+        self.game.input.release_all();
+        self.game_focused = true;
         let run = Run { edit, levels, paused, step: false };
         self.play.mode = Mode::Playing(Box::new(run));
         self.after_swap(selected, "game");

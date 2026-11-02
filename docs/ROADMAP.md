@@ -547,9 +547,16 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
 ## M4 — Input, localization, audio and physics (in progress)
 
 - Input:
-  - actions, schemes and auto-switching
-  - the rebinding UI
-  - prompt glyphs per scheme, device and locale
+  - [x] actions in maps, from the project's `.inputactions` file or Voxear's own: buttons, values and vectors;
+    composites such as WASD; deadzone, invert and scale processors; hold and tap interactions
+  - [x] the keyboard, the mouse and gamepads (gilrs), read raw too, through `Keyboard`, `Mouse` and `Gamepad`
+  - [x] control schemes switching to the device used last, and `Started`, `Performed` and `Canceled` events
+  - [x] rebinding: to a control named, or the next one pressed; conflicts found; bindings saved and read back
+  - [x] prompts as text per scheme and pad family, with keys as this keyboard's layout types them
+  - [x] the Game view hears the keyboard and mouse while it has the focus
+  - [ ] the Input Actions editor window, with listening for a binding
+  - [ ] a ready-made, themeable rebinding screen
+  - [ ] prompt glyphs (icons) per device family, and local multiplayer pairing
 - **Localization:**
   - string and asset tables
   - ICU smart strings (plurals, gender, number and date formatting)

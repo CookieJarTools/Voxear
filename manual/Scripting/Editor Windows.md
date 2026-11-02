@@ -1,5 +1,5 @@
 ---
-order: 13
+order: 14
 ---
 
 An **editor window** is a window of your own in the editor: a panel for the tools you build your levels with, such as a checklist of what is still to place, or buttons that line things up. You write it in C#, with the same elements a game's UI is made of ([[UI from Scripts]]).

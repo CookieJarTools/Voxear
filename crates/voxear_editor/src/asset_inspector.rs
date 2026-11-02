@@ -829,6 +829,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Texture) => "Texture",
         ItemKind::Asset(AssetKind::Ui) => "UI document",
         ItemKind::Asset(AssetKind::Sound) => "Sound",
+        ItemKind::Asset(AssetKind::InputActions) => "Input actions",
     }
 }
 
@@ -844,6 +845,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Texture) => "texture",
         ItemKind::Asset(AssetKind::Ui) => "panels",
         ItemKind::Asset(AssetKind::Sound) => "audio",
+        ItemKind::Asset(AssetKind::InputActions) => "gamepad",
     }
 }
 

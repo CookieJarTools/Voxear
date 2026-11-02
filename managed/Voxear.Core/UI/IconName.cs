@@ -24,6 +24,7 @@ public enum IconName
 	Eye,
 	File,
 	Folder,
+	Gamepad,
 	Globe,
 	Grid,
 	Info,

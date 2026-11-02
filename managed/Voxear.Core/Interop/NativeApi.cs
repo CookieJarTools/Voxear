@@ -100,4 +100,9 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<ulong, int, int, float, float> SourceValue;
 	public delegate* unmanaged[Cdecl]<int, int, float, float> AudioBus;
 	public delegate* unmanaged[Cdecl]<int, int, ulong*, float, void> UiItems;
+	public delegate* unmanaged[Cdecl]<byte*, int, int> InputAction;
+	public delegate* unmanaged[Cdecl]<int, InputActionData*, int> InputState;
+	public delegate* unmanaged[Cdecl]<byte*, int, float*, int> InputControl;
+	public delegate* unmanaged[Cdecl]<int, int, byte*, int, int> InputText;
+	public delegate* unmanaged[Cdecl]<int, int, int, int, byte*, int, int> InputChange;
 }

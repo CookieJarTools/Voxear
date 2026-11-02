@@ -226,6 +226,15 @@ pub(crate) struct NativeApi {
     /// are and how tall each row is, and for a tree, each item's id and its
     /// parent's (0 at the top), `count` pairs in order (see [`crate::ui`]).
     pub ui_items: unsafe extern "C" fn(element: i32, count: i32, parents: *const u64, item_height: f32),
+    /// Input, for `Input` and the devices (see [`crate::input`]): an action
+    /// found by name, an action this frame, a control by its path, text
+    /// about input, and a change to it.
+    pub input_action: unsafe extern "C" fn(name: *const u8, len: i32) -> i32,
+    pub input_state: unsafe extern "C" fn(action: i32, out: *mut crate::input::InputActionData) -> i32,
+    pub input_control: unsafe extern "C" fn(path: *const u8, len: i32, value: *mut [f32; 2]) -> i32,
+    pub input_text: unsafe extern "C" fn(what: i32, action: i32, buffer: *mut u8, capacity: i32) -> i32,
+    pub input_change:
+        unsafe extern "C" fn(what: i32, action: i32, binding: i32, extra: i32, text: *const u8, len: i32) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -1010,6 +1019,11 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         source_value,
         audio_bus,
         ui_items,
+        input_action: crate::input::input_action,
+        input_state: crate::input::input_state,
+        input_control: crate::input::input_control,
+        input_text: crate::input::input_text,
+        input_change: crate::input::input_change,
     }
 }
 

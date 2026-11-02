@@ -48,17 +48,16 @@ Your scripts can make instances while the game runs, which is how you spawn bull
 using System.Numerics;
 using Voxear;
 
-namespace MyGame
-{
-	public sealed class LampMaker : Behaviour
-	{
-		[SerializeField] private Prefab lamp;
+namespace MyGame;
 
-		protected override void Start()
-		{
-			var ahead = new Vector3(0f, 0f, 5f);
-			lamp.Instantiate(ahead, Quaternion.Identity);
-		}
+public sealed class LampMaker : Behaviour
+{
+	[SerializeField] private Prefab lamp;
+
+	protected override void Start()
+	{
+		var ahead = new Vector3(0f, 0f, 5f);
+		lamp.Instantiate(ahead, Quaternion.Identity);
 	}
 }
 ```

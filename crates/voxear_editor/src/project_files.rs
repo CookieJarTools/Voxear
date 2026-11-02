@@ -204,11 +204,12 @@ fn unique(folder: &Path, stem: &str, extension: &str) -> String {
         .expect("some number is free")
 }
 
-/// A new behaviour, named for its file.
+/// A new behaviour, named for its file, in today's C#: a namespace for the
+/// whole file, on one line.
 fn script(namespace: &str, class: &str) -> String {
     format!(
-        "using Voxear;\n\nnamespace {namespace}\n{{\n\tpublic sealed class {class} : Behaviour\n\t{{\n\t\tprotected override void \
-         Start()\n\t\t{{\n\t\t}}\n\n\t\tprotected override void Update()\n\t\t{{\n\t\t}}\n\t}}\n}}\n"
+        "using Voxear;\n\nnamespace {namespace};\n\npublic sealed class {class} : Behaviour\n{{\n\tprotected override void \
+         Start()\n\t{{\n\t}}\n\n\tprotected override void Update()\n\t{{\n\t}}\n}}\n"
     )
 }
 

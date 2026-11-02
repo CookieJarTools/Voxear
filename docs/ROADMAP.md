@@ -117,6 +117,10 @@ Done so far:
   System.Numerics types, through C# 14 extension members. Also Obj world position and rotation, the
   Forward/Right/Up directions and `LookAt`, all tested in `managed/Voxear.Core.Tests`.
 
+- **Today's C# in what a game's author reads:** the new-script and new-project templates, Hello's scripts and the
+  manual's examples have a namespace for the whole file on one line (`namespace MyGame;`) and collection
+  expressions (`private Obj[] lamps = [];`), as a game written now would.
+
 - **Content build:**
   - `vox content build` walks the dependency graph from levels, prefabs and field-named assets, and groups assets by
     usage set into LZ4 bundles.

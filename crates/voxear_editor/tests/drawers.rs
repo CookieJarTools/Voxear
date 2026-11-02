@@ -136,7 +136,7 @@ fn hello_copy() -> tempfile::TempDir {
     }
     let manager = scripts.join("GameManager.cs");
     let text = std::fs::read_to_string(&manager).unwrap();
-    let cycle = "private LevelStop[] cycle = Array.Empty<LevelStop>();\n";
+    let cycle = "private LevelStop[] cycle = [];\n";
     assert!(text.contains(cycle), "the Game Manager's cycle is where the fields go");
     std::fs::write(&manager, text.replace(cycle, &format!("{cycle}{FIELDS}"))).unwrap();
     dir

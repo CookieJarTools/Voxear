@@ -45,30 +45,29 @@ Beside it, make `Hud.vss`:
 ```csharp
 using Voxear;
 
-namespace MyGame
+namespace MyGame;
+
+public sealed class ScoreHud : Behaviour
 {
-	public sealed class ScoreHud : Behaviour
+	private UiElement? score;
+	private int points;
+
+	protected override void Start()
 	{
-		private UiElement? score;
-		private int points;
-
-		protected override void Start()
+		var hud = UiDocument.Load("UI/Hud.vui");
+		if (hud == null)
 		{
-			var hud = UiDocument.Load("UI/Hud.vui");
-			if (hud == null)
-			{
-				return;
-			}
-
-			score = hud.Find("score");
-			hud.Find("add")!.Clicked += AddPoint;
+			return;
 		}
 
-		private void AddPoint()
-		{
-			points++;
-			score!.Text = $"Score: {points}";
-		}
+		score = hud.Find("score");
+		hud.Find("add")!.Clicked += AddPoint;
+	}
+
+	private void AddPoint()
+	{
+		points++;
+		score!.Text = $"Score: {points}";
 	}
 }
 ```

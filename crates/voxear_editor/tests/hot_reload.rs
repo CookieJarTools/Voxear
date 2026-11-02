@@ -92,10 +92,10 @@ fn scripts_changed_while_playing_reload_into_the_running_game() {
     // Spinner says what it holds the first frame after it changes.
     let file = dir.path().join("Scripts/Spinner.cs");
     let source = std::fs::read_to_string(&file).unwrap();
-    let told = "private bool told;\n\n\t\tprotected override void Update()\n\t\t{\n\t\t\tif (!told)\n\t\t\t{\n\t\t\t\ttold = true;\n\
-                \t\t\t\tLog.Info($\"Reloaded {Obj.Name}: {degreesPerSecond} degrees, leader {leader?.Obj.Name ?? \"none\"}, \
-                score {Instance<GameManager>.Current?.Score}\");\n\t\t\t}\n";
-    let changed = source.replace("protected override void Update()\n\t\t{\n", told);
+    let told = "private bool told;\n\n\tprotected override void Update()\n\t{\n\t\tif (!told)\n\t\t{\n\t\t\ttold = true;\n\
+                \t\t\tLog.Info($\"Reloaded {Obj.Name}: {degreesPerSecond} degrees, leader {leader?.Obj.Name ?? \"none\"}, \
+                score {Instance<GameManager>.Current?.Score}\");\n\t\t}\n";
+    let changed = source.replace("protected override void Update()\n\t{\n", told);
     assert_ne!(changed, source, "Spinner.cs has an Update to change");
     std::fs::write(&file, changed).unwrap();
     frames_until_logged(&mut editor, &mut renderer, &log, "Reloaded Spinner A");

@@ -17,12 +17,11 @@ A component is a `struct` marked `IComponent`, holding only plain values: number
 ```csharp
 using Voxear;
 
-namespace MyGame
+namespace MyGame;
+
+public struct Spin : IComponent
 {
-	public struct Spin : IComponent
-	{
-		public float Speed;
-	}
+	public float Speed;
 }
 ```
 
@@ -34,23 +33,22 @@ A system is a class that derives from `SystemBase`. Voxear finds and runs every 
 using System.Numerics;
 using Voxear;
 
-namespace MyGame
-{
-	[UpdateIn(Stage.PostUpdate)]
-	public sealed class SpinSystem : SystemBase
-	{
-		protected override void Update()
-		{
-			Query<Transform, Spin>().ForEach(Turn);
-		}
+namespace MyGame;
 
-		private static void Turn(ref Transform transform, ref Spin spin)
-		{
-			var degrees = spin.Speed * Time.Delta;
-			var turn = Quaternion.AngleAxis(degrees, Vector3.Up);
-			var rotation = transform.Rotation * turn;
-			transform.Rotation = Quaternion.Normalize(rotation);
-		}
+[UpdateIn(Stage.PostUpdate)]
+public sealed class SpinSystem : SystemBase
+{
+	protected override void Update()
+	{
+		Query<Transform, Spin>().ForEach(Turn);
+	}
+
+	private static void Turn(ref Transform transform, ref Spin spin)
+	{
+		var degrees = spin.Speed * Time.Delta;
+		var turn = Quaternion.AngleAxis(degrees, Vector3.Up);
+		var rotation = transform.Rotation * turn;
+		transform.Rotation = Quaternion.Normalize(rotation);
 	}
 }
 ```

@@ -280,17 +280,16 @@ fn turner(namespace: &str) -> String {
         r#"using System.Numerics;
 using Voxear;
 
-namespace {namespace}
-{{
-	/// <summary>Turns its Obj around the up axis. Change the speed in the Inspector, or this script while playing.</summary>
-	public sealed class Turner : Behaviour
-	{{
-		[SerializeField] private float degreesPerSecond = 45f;
+namespace {namespace};
 
-		protected override void Update()
-		{{
-			Obj.Rotation = Quaternion.Normalize(Obj.Rotation * Quaternion.AngleAxis(degreesPerSecond * Time.Delta, Vector3.Up));
-		}}
+/// <summary>Turns its Obj around the up axis. Change the speed in the Inspector, or this script while playing.</summary>
+public sealed class Turner : Behaviour
+{{
+	[SerializeField] private float degreesPerSecond = 45f;
+
+	protected override void Update()
+	{{
+		Obj.Rotation = Quaternion.Normalize(Obj.Rotation * Quaternion.AngleAxis(degreesPerSecond * Time.Delta, Vector3.Up));
 	}}
 }}
 "#

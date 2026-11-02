@@ -51,9 +51,9 @@ fn a_running_game_reloads_its_scripts_when_one_changes() {
     // Spinner says so the first frame after it changes.
     let file = dir.path().join("Scripts/Spinner.cs");
     let source = std::fs::read_to_string(&file).unwrap();
-    let told = "private bool told;\n\n\t\tprotected override void Update()\n\t\t{\n\t\t\tif (!told)\n\t\t\t{\n\t\t\t\t\
-                told = true;\n\t\t\t\tLog.Info($\"Changed {Obj.Name}\");\n\t\t\t}\n";
-    let changed = source.replace("protected override void Update()\n\t\t{\n", told);
+    let told = "private bool told;\n\n\tprotected override void Update()\n\t{\n\t\tif (!told)\n\t\t{\n\t\t\t\
+                told = true;\n\t\t\tLog.Info($\"Changed {Obj.Name}\");\n\t\t}\n";
+    let changed = source.replace("protected override void Update()\n\t{\n", told);
     assert_ne!(changed, source, "Spinner.cs has an Update to change");
     std::fs::write(&file, changed).unwrap();
 

@@ -56,21 +56,20 @@ When none of these fit, write the check in C#. Make it a static method that take
 ```csharp
 using Voxear;
 
-namespace MyGame
-{
-	internal static class Tools
-	{
-		[DocsCheck("The sun is up")]
-		private static string? SunIsUp()
-		{
-			var sun = Obj.Find("Sun");
-			if (!sun.IsValid)
-			{
-				return "Add an Obj called Sun.";
-			}
+namespace MyGame;
 
-			return sun.Position.Y > 0 ? null : "Move the Sun up.";
+internal static class Tools
+{
+	[DocsCheck("The sun is up")]
+	private static string? SunIsUp()
+	{
+		var sun = Obj.Find("Sun");
+		if (!sun.IsValid)
+		{
+			return "Add an Obj called Sun.";
 		}
+
+		return sun.Position.Y > 0 ? null : "Move the Sun up.";
 	}
 }
 ```

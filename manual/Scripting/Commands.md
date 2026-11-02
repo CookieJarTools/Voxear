@@ -7,23 +7,22 @@ A command is a static method that the editor's command bar (Ctrl+K) can run. Use
 ```csharp
 using Voxear;
 
-namespace MyGame
-{
-	internal static class Tools
-	{
-		[Command("Swap Spinners", Keys = "Ctrl+Shift+X")]
-		private static void SwapSpinners()
-		{
-			var a = Obj.Find("Spinner A");
-			var b = Obj.Find("Spinner B");
-			if (!a.IsValid || !b.IsValid)
-			{
-				Log.Warning("Spinner A or Spinner B is missing.");
-				return;
-			}
+namespace MyGame;
 
-			(a.Position, b.Position) = (b.Position, a.Position);
+internal static class Tools
+{
+	[Command("Swap Spinners", Keys = "Ctrl+Shift+X")]
+	private static void SwapSpinners()
+	{
+		var a = Obj.Find("Spinner A");
+		var b = Obj.Find("Spinner B");
+		if (!a.IsValid || !b.IsValid)
+		{
+			Log.Warning("Spinner A or Spinner B is missing.");
+			return;
 		}
+
+		(a.Position, b.Position) = (b.Position, a.Position);
 	}
 }
 ```

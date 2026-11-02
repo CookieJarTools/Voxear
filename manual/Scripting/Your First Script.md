@@ -18,17 +18,16 @@ The new script looks like this, with your project's name in place of `MyGame`:
 ```csharp
 using Voxear;
 
-namespace MyGame
-{
-	public sealed class Spinner : Behaviour
-	{
-		protected override void Start()
-		{
-		}
+namespace MyGame;
 
-		protected override void Update()
-		{
-		}
+public sealed class Spinner : Behaviour
+{
+	protected override void Start()
+	{
+	}
+
+	protected override void Update()
+	{
 	}
 }
 ```
@@ -41,19 +40,18 @@ Change it to this, and save:
 using System.Numerics;
 using Voxear;
 
-namespace MyGame
-{
-	/// <summary>Spins its Obj around the up axis.</summary>
-	public sealed class Spinner : Behaviour
-	{
-		[SerializeField] private float degreesPerSecond = 90f;
+namespace MyGame;
 
-		protected override void Update()
-		{
-			var degrees = degreesPerSecond * Time.Delta;
-			var turn = Quaternion.AngleAxis(degrees, Vector3.Up);
-			Obj.Rotation = Quaternion.Normalize(Obj.Rotation * turn);
-		}
+/// <summary>Spins its Obj around the up axis.</summary>
+public sealed class Spinner : Behaviour
+{
+	[SerializeField] private float degreesPerSecond = 90f;
+
+	protected override void Update()
+	{
+		var degrees = degreesPerSecond * Time.Delta;
+		var turn = Quaternion.AngleAxis(degrees, Vector3.Up);
+		Obj.Rotation = Quaternion.Normalize(Obj.Rotation * turn);
 	}
 }
 ```

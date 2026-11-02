@@ -2439,35 +2439,14 @@ TextField.build-title:focus {
     pointer-events: none;
 }
 
-/* A mesh's LODs: a cell for each, the one drawn now lit. */
-.lod-strip {
-    flex-direction: row;
-    flex-grow: 1;
-    min-width: 0px;
-    gap: 2px;
-}
-
-.lod-cell {
-    flex-grow: 1;
-    flex-basis: 0px;
-    min-width: 0px;
-    height: 20px;
-    padding-top: 3px;
-    border-radius: 4px;
-    border: 1px solid transparent;
-    text-align: center;
-    font-family: mono;
-    font-size: 10px;
-    color: var(--vx-muted);
-}
-
-.lod-cell.lod-drawn {
+/* A mesh's LODs on the same bar: the one drawn now outlined, and one forced
+   filled. */
+.lod-segment.lod-drawn {
     border-color: var(--vx-accent);
-    color: var(--vx-text);
 }
 
-.lod-cell.lod-forced {
-    background-color: var(--vx-accent-soft);
+.lod-segment.lod-forced > .lod-segment-name {
+    color: var(--vx-accent);
 }
 
 .attr-preview {

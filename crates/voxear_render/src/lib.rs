@@ -57,7 +57,7 @@ pub use gpu::{
     DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
-pub use lod::{LodInfo, MAX_LODS, lod_at};
+pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use mesh::{MeshData, Primitive, Vertex};
 pub use post::{
@@ -67,7 +67,7 @@ pub use post::{
 pub use previews::{
     MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
 };
-pub use scene::{Camera, Light, LightKind, MeshRenderer, Sky, ViewOptions};
+pub use scene::{Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, ViewOptions};
 pub use voxear_rhi::TextureId;
 
 use crate::{

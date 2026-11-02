@@ -119,12 +119,17 @@ struct Instance
     uint material;
     uint flags;
     float lodBias;
+    // With INSTANCE_LOD_SCREEN, the share of the screen's height each LOD shows down to.
+    float4 lodScreen0;
+    float4 lodScreen1;
 };
 
 // An instance whose place in the list another Obj held last frame.
 static const uint INSTANCE_NEW = 1;
 // Where an instance's forced LOD, plus one, sits in its flags.
 static const uint INSTANCE_LOD_SHIFT = 8;
+// An instance whose LODs switch by how much of the screen it covers, at its lodScreen.
+static const uint INSTANCE_LOD_SCREEN = 2;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;

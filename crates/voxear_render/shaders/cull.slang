@@ -39,14 +39,30 @@ uint selectLod(Mesh mesh, float scale, float pixelsPerUnit, float threshold)
     return lod;
 }
 
-// The LOD an instance draws: the one its renderer forces, or else the
-// coarsest within the threshold, scaled by its renderer's bias.
-uint instanceLod(Instance instance, Mesh mesh, float scale, float pixelsPerUnit, float threshold)
+// The LOD an instance draws: the one its renderer forces; or where its
+// renderer says each LOD ends, by the share of the screen's height it covers;
+// or else the coarsest within the threshold, scaled by its renderer's bias.
+uint instanceLod(Frame* frame, Instance instance, Mesh mesh, float3 center, float radius, float scale, float pixelsPerUnit, float threshold)
 {
+    uint last = max(mesh.lodCount, 1) - 1;
     uint forced = (instance.flags >> INSTANCE_LOD_SHIFT) & 0xFF;
     if (forced != 0)
     {
-        return min(forced - 1, max(mesh.lodCount, 1) - 1);
+        return min(forced - 1, last);
+    }
+    if ((instance.flags & INSTANCE_LOD_SCREEN) != 0)
+    {
+        // From the main camera, so shadows draw the LOD the view does.
+        float tanHalf = float(frame->viewport.y) / (2.0 * frame->lodScale);
+        float share = radius / (max(length(center - frame->cameraPosition), frame->near) * tanHalf);
+        float ends[8] = { instance.lodScreen0.x, instance.lodScreen0.y, instance.lodScreen0.z, instance.lodScreen0.w,
+                          instance.lodScreen1.x, instance.lodScreen1.y, instance.lodScreen1.z, instance.lodScreen1.w };
+        uint lod = 0;
+        while (lod < last && share < ends[lod])
+        {
+            lod++;
+        }
+        return lod;
     }
     return selectLod(mesh, scale, pixelsPerUnit, threshold * exp2(instance.lodBias));
 }
@@ -161,7 +177,7 @@ void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 cen
         return;
     }
     Instance drawn = buffers()->instances[instance];
-    uint lod = instanceLod(drawn, mesh, scale, 1.0 / frame->cascadeTexel[cascade], frame->lodThreshold);
+    uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, 1.0 / frame->cascadeTexel[cascade], frame->lodThreshold);
     emit(LIST_SHADOW + cascade, instance, mesh, lod, 0);
     count(STAT_SHADOW_DRAWS);
 }
@@ -190,7 +206,7 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     }
 
     float distance = max(length(center - frame->cameraPosition) - radius, frame->near);
-    uint lod = instanceLod(instance, mesh, scale, frame->lodScale / distance, frame->lodThreshold);
+    uint lod = instanceLod(frame, instance, mesh, center, radius, scale, frame->lodScale / distance, frame->lodThreshold);
     bool inFrustum = insidePlanes(frame->planes, center, radius);
 
     if (list == LIST_EARLY)

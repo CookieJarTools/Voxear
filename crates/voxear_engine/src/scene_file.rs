@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{Camera, Light, LightKind, LodGroup, MeshRenderer, PostProcess, Renderer, Sky};
+use voxear_render::{Camera, Light, LightKind, LodGroup, MAX_TRANSITIONS, MeshRenderer, PostProcess, Renderer, Sky};
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, ScenePersistence, Transform};
 
 use crate::{
@@ -253,6 +253,11 @@ pub struct RendererData {
     /// A LOD drawn at every distance. Left out, or -1, the distance picks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force_lod: Option<i32>,
+    /// Where each LOD ends, as the share of the screen's height each shows
+    /// down to (see `MeshRenderer::lod_transitions`). Left out, or empty, the
+    /// engine switches them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lod_transitions: Vec<f32>,
 }
 
 impl RendererData {
@@ -260,6 +265,29 @@ impl RendererData {
     pub fn forced_lod(&self) -> Option<u8> {
         self.force_lod.filter(|lod| *lod >= 0).map(|lod| lod.min(255) as u8)
     }
+
+    /// Where its LODs end, as the renderer keeps them: those not written end
+    /// at nothing, so the LOD before shows all the way down.
+    pub fn transitions(&self) -> Option<[f32; MAX_TRANSITIONS]> {
+        if self.lod_transitions.is_empty() {
+            return None;
+        }
+        let mut ends = [0.0; MAX_TRANSITIONS];
+        for (end, &written) in ends.iter_mut().zip(&self.lod_transitions) {
+            *end = written.clamp(0.0, 1.0);
+        }
+        Some(ends)
+    }
+}
+
+/// Where a renderer's LODs end, as a file writes them: rounded, with the
+/// ends at nothing after the last that says something left out.
+fn written_transitions(ends: Option<[f32; MAX_TRANSITIONS]>) -> Vec<f32> {
+    let mut written: Vec<f32> = ends.map_or_else(Vec::new, |ends| ends.map(|end| (end * 1e4).round() / 1e4).to_vec());
+    while written.last() == Some(&0.0) && written.len() > 1 {
+        written.pop();
+    }
+    written
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -567,6 +595,12 @@ fn renderer_changes(
     } else {
         changes.remove("force_lod");
     }
+    // Empty, as an override writes the engine switching them again.
+    if actual.transitions() != expected.transitions() {
+        changes.insert("lod_transitions".into(), toml::Value::try_from(&actual.lod_transitions)?);
+    } else {
+        changes.remove("lod_transitions");
+    }
     if let (Some(toml::Value::Table(material)), Some(toml::Value::Table(was))) =
         (changes.get_mut("material"), before.get("material"))
     {
@@ -660,7 +694,7 @@ fn same_renderer(content: &Content, a: &Option<RendererData>, b: &Option<Rendere
         (Some(a), Some(b)) => {
             parse(&a.mesh) == parse(&b.mesh)
                 && material(&a.material) == material(&b.material)
-                && (a.lod_bias, a.forced_lod()) == (b.lod_bias, b.forced_lod())
+                && (a.lod_bias, a.forced_lod(), a.transitions()) == (b.lod_bias, b.forced_lod(), b.transitions())
         }
         (None, None) => true,
         _ => false,
@@ -714,7 +748,9 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
             Some(MaterialSource::Inline(data)) => Some(MaterialRef::Inline(*data)),
             None => None,
         };
-        Some(RendererData { mesh, material, lod_bias: r.lod_bias, force_lod: r.forced_lod.map(i32::from) })
+        let (lod_bias, force_lod, lod_transitions) =
+            (r.lod_bias, r.forced_lod.map(i32::from), written_transitions(r.lod_transitions));
+        Some(RendererData { mesh, material, lod_bias, force_lod, lod_transitions })
     });
     obj.audio = world.get::<AudioSource>(entity).map(|source| audio_source_data(content, source));
     obj.audio_listener = world.has::<AudioListener>(entity);
@@ -848,5 +884,10 @@ mod tests {
 
         let unforced: RendererData = toml::from_str("mesh = \"builtin:sphere\"\nforce_lod = -1").unwrap();
         assert_eq!(unforced.forced_lod(), None, "-1, as an override writes it, picks by distance again");
+
+        let ends: RendererData = toml::from_str("mesh = \"builtin:sphere\"\nlod_transitions = [0.5, 0.25]").unwrap();
+        assert_eq!(ends.transitions(), Some([0.5, 0.25, 0.0, 0.0, 0.0]), "LODs not written end at nothing");
+        assert_eq!(written_transitions(ends.transitions()), [0.5, 0.25], "and are left out again");
+        assert_eq!(written_transitions(None), Vec::<f32>::new());
     }
 }

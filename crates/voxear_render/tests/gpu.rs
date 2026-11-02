@@ -120,10 +120,22 @@ fn a_renderer_can_force_a_lod_or_bias_the_pick() {
     assert!(forced.lods[2] > 0 && forced.lods[0] == 0, "{forced:?}");
 
     // A large bias lets far more error through, so a simpler LOD comes sooner.
-    let ball = world.get_mut::<MeshRenderer>(ball).unwrap();
-    (ball.forced_lod, ball.lod_bias) = (None, 6.0);
+    fn renderer_of(world: &mut World, ball: voxear_ecs::Entity) -> &mut MeshRenderer {
+        world.get_mut::<MeshRenderer>(ball).unwrap()
+    }
+    let settings = renderer_of(&mut world, ball);
+    (settings.forced_lod, settings.lod_bias) = (None, 6.0);
     let biased = run(&mut renderer, &world, &mut time, 30);
     assert_eq!(biased.lods[0], 0, "{biased:?}");
+
+    // Where its LODs end, by how much of the screen it covers: close up it covers more than all of it, so ends
+    // past the whole screen send it to its simplest, and ends at nothing keep it at its most detailed.
+    renderer_of(&mut world, ball).lod_transitions = Some([3.0, 2.9, 2.8, 2.7, 2.6]);
+    let simplest = run(&mut renderer, &world, &mut time, 30);
+    assert_eq!(simplest.lods[0], 0, "{simplest:?}");
+    renderer_of(&mut world, ball).lod_transitions = Some([0.0; 5]);
+    let detailed = run(&mut renderer, &world, &mut time, 30);
+    assert!(detailed.lods[0] > 0 && detailed.lods[1..].iter().all(|&n| n == 0), "{detailed:?}");
 }
 
 #[test]

@@ -1441,6 +1441,9 @@ impl Editor {
             RowAction::ForceLod(lod) => {
                 props::set_forced_lod(&mut self.game.engine.world, entity, lod);
             }
+            RowAction::ResetLodTransitions => {
+                props::set_lod_transitions(&mut self.game.engine.world, entity, None);
+            }
             RowAction::InsertLodLevel(at) => {
                 props::insert_lod_level(&mut self.game, entity, at);
             }

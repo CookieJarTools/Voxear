@@ -153,6 +153,8 @@ pub enum RowAction {
     BrowseComponents(NodeId),
     /// Make the Mesh Renderer draw this LOD at every distance, or none.
     ForceLod(Option<u8>),
+    /// Let the engine switch the Mesh Renderer's LODs again.
+    ResetLodTransitions,
 }
 
 /// A component value's row and the control that edits it.
@@ -1264,9 +1266,24 @@ impl Inspector {
         self.update_mesh_lods(ui, game, entity, renderer)
     }
 
-    fn update_mesh_lods(&mut self, ui: &mut Ui, game: &Game, entity: Entity, renderer: Option<&Renderer>) -> bool {
-        if let (Some(lods), Some(renderer)) = (&mut self.mesh_lods, renderer) {
+    /// A dragged edge of the mesh's LOD bar gives every Obj edited where its
+    /// LODs end; then the bar shows them, and which the camera sees.
+    fn update_mesh_lods(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, renderer: Option<&Renderer>) -> bool {
+        let Some(lods) = &mut self.mesh_lods else { return false };
+        if let Some(ends) = lods.dragged(ui) {
+            for edited in std::iter::once(entity).chain(self.also.iter().copied()) {
+                props::set_lod_transitions(&mut game.engine.world, edited, Some(ends));
+            }
+        }
+        if let Some(renderer) = renderer {
             lods.update(ui, &game.engine.world, entity, renderer, self.lod_eye);
+        }
+        // A renderer that says where its LODs end has no use for a bias. Hidden rather than built
+        // again, which would let go of an edge being dragged.
+        let world = &game.engine.world;
+        let custom = world.get::<voxear_render::MeshRenderer>(entity).is_some_and(|r| r.lod_transitions.is_some());
+        if let Some(bias) = self.rows.iter().find(|row| row.prop == Prop::LodBias) {
+            ui.set_visible(bias.row, !custom);
         }
         false
     }
@@ -1408,13 +1425,18 @@ impl Inspector {
             return Some(action);
         } else if let Some((prop, swatch)) = self.swatch_clicked(ui) {
             return Some(RowAction::EditColor(prop, swatch));
-        } else if let Some((level, cell, forced)) = self.mesh_lods.as_ref().and_then(|lods| lods.context_clicked(ui)) {
+        } else if let Some((level, cell, forced, custom)) =
+            self.mesh_lods.as_ref().and_then(|lods| lods.context_clicked(ui))
+        {
             items = vec![match forced == Some(level) {
                 true => (MenuItem::new("Stop Forcing"), Some(RowAction::ForceLod(None))),
                 false => (MenuItem::new(&format!("Force LOD {level}")), Some(RowAction::ForceLod(Some(level as u8)))),
             }];
             if forced.is_some_and(|forced| forced != level) {
                 items.push((MenuItem::new("Stop Forcing"), Some(RowAction::ForceLod(None))));
+            }
+            if custom {
+                items.push((MenuItem::new("Reset Transitions"), Some(RowAction::ResetLodTransitions)));
             }
             (cell, at)
         } else if let Some((level, clicked)) = self.group_lods.as_ref().and_then(|lods| lods.context_clicked(ui)) {

@@ -16,7 +16,7 @@ use voxear_engine::{
     script_types::ScriptTypes,
     srgb,
 };
-use voxear_render::{Camera, Light, LightKind, LodGroup, LodLevel, LodMeasure, MeshRenderer, Renderer};
+use voxear_render::{Camera, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, Renderer};
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
 use crate::fields::{self, Pick, Step};
@@ -690,6 +690,12 @@ pub fn insert_lod_level(game: &mut Game, entity: Entity, at: usize) -> bool {
         };
         group.levels.insert(at, LodLevel { objs: obj.into_iter().collect(), until });
     })
+}
+
+/// Says where each LOD of a Mesh Renderer's mesh ends, as a share of the
+/// screen's height, or lets the engine switch them again.
+pub fn set_lod_transitions(world: &mut World, entity: Entity, ends: Option<[f32; MAX_TRANSITIONS]>) -> bool {
+    with(world, entity, |renderer: &mut MeshRenderer| renderer.lod_transitions = ends)
 }
 
 /// Makes a Mesh Renderer draw one LOD of its mesh at every distance, or

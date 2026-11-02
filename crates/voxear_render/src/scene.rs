@@ -89,20 +89,33 @@ pub struct MeshRenderer {
     pub lod_bias: f32,
     /// A LOD of its mesh drawn at every distance, as Unity's Forced LOD.
     pub forced_lod: Option<u8>,
+    /// Where each LOD of its mesh ends, as a LOD Group's levels do: the
+    /// share of the screen's height, from 0 to 1, each shows down to, the
+    /// next showing below it. `None` leaves it to the engine, which switches
+    /// by how much detail would show (and `lod_bias`).
+    pub lod_transitions: Option<[f32; MAX_TRANSITIONS]>,
 }
 impl Component for MeshRenderer {}
+
+/// How many LODs a renderer can say the end of: every one but the last.
+pub const MAX_TRANSITIONS: usize = crate::lod::MAX_LODS - 1;
 
 impl MeshRenderer {
     /// A mesh drawn with a material, its LODs picked by distance.
     pub fn new(mesh: MeshHandle, material: MaterialHandle) -> Self {
-        Self { mesh, material, lod_bias: 0.0, forced_lod: None }
+        Self { mesh, material, lod_bias: 0.0, forced_lod: None, lod_transitions: None }
     }
 
     /// Its LOD settings as the GPU reads them: flags with the forced LOD in,
-    /// and the bias.
-    pub(crate) fn lod_bits(&self) -> (u32, f32) {
-        let forced = self.forced_lod.map_or(0, |lod| u32::from(lod) + 1);
-        (forced << crate::gpu::INSTANCE_LOD_SHIFT, self.lod_bias)
+    /// the bias, and where each LOD ends when it says.
+    pub(crate) fn lod_bits(&self) -> (u32, f32, [[f32; 4]; 2]) {
+        let forced = self.forced_lod.map_or(0, |lod| u32::from(lod) + 1) << crate::gpu::INSTANCE_LOD_SHIFT;
+        let Some(ends) = self.lod_transitions else { return (forced, self.lod_bias, [[0.0; 4]; 2]) };
+        let mut screen = [[0.0; 4]; 2];
+        for (at, end) in ends.into_iter().enumerate() {
+            screen[at / 4][at % 4] = end;
+        }
+        (forced | crate::gpu::INSTANCE_LOD_SCREEN, self.lod_bias, screen)
     }
 }
 
@@ -303,6 +316,7 @@ pub fn extract(
                 material: renderer.material.0,
                 flags: renderer.lod_bits().0,
                 lod_bias: renderer.lod_bits().1,
+                lod_screen: renderer.lod_bits().2,
             }
         })
         .collect();

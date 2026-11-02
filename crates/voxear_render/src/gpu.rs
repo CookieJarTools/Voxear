@@ -74,6 +74,9 @@ pub struct GpuInstance {
     /// Scales the LOD error it allows by two to this power: above 0 it
     /// switches to simpler LODs sooner.
     pub lod_bias: f32,
+    /// With `INSTANCE_LOD_SCREEN`, the share of the screen's height each LOD
+    /// shows down to, the first five of eight; the next LOD shows below it.
+    pub lod_screen: [[f32; 4]; 2],
 }
 
 /// An instance whose place in the list another Obj held last frame, so the
@@ -83,6 +86,10 @@ pub const INSTANCE_NEW: u32 = 1;
 /// Where an instance's forced LOD, plus one, sits in its flags; 0 there
 /// leaves the LOD to the distance.
 pub const INSTANCE_LOD_SHIFT: u32 = 8;
+
+/// An instance whose LODs switch where its `lod_screen` says, by how much
+/// of the screen it covers, rather than by their error.
+pub const INSTANCE_LOD_SCREEN: u32 = 2;
 
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;
@@ -316,7 +323,8 @@ mod tests {
     fn layouts_match_the_shaders() {
         assert_eq!(size_of::<GpuMesh>(), 32 + 16 * MAX_LODS);
         assert_eq!(size_of::<GpuMaterial>(), 64);
-        assert_eq!(size_of::<GpuInstance>(), 192);
+        // Three matrices, ids and flags, then where its LODs end.
+        assert_eq!(size_of::<GpuInstance>(), 192 + 32);
         assert_eq!(size_of::<GpuLight>(), 64);
         // Two matrices, six planes, nine 16-byte rows, the cascades, then the
         // view matrix and three rows of clustering and timing.

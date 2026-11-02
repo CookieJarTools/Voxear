@@ -907,7 +907,11 @@ cost nothing. The CPU never touches visibility.
   triangles, the one the Scene view draws outlined, worked out on the CPU as the GPU picks (`lod::lod_at`, from
   the chain `Assets` keeps for each mesh). A click moves the Scene view to where that LOD is drawn.
 - **Per-renderer LOD settings** *(implemented)*, as Unity 6's Mesh LOD: `MeshRenderer::lod_bias` scales the
-  error the GPU allows it by two to that power, and `forced_lod` draws one LOD at every distance. Each instance
+  error the GPU allows it by two to that power, and `forced_lod` draws one LOD at every distance. With
+  `lod_transitions`, the share of the screen's height each LOD shows down to, the GPU picks by how much of the
+  screen the mesh covers from the main camera instead (`INSTANCE_LOD_SCREEN`, with the ends in
+  `GpuInstance::lod_screen`), and the Inspector edits them on a bar as a LOD Group's, dragged from where the
+  engine's own switching puts them for the Scene view. Each instance
   carries them to the cull shader (`GpuInstance::lod_bias`, and the forced LOD plus one in its flags above
   `INSTANCE_LOD_SHIFT`); shadows pick the same way. Scene files write `lod_bias` and `force_lod` on
   `[obj.renderer]`, and the Inspector edits them as LOD Bias and with Force on a LOD cell's menu.

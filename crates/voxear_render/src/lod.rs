@@ -54,6 +54,19 @@ pub fn lod_at(lods: &[LodInfo], distance: f32, scale: f32, pixels_per_metre: f32
     lods.iter().skip(1).take_while(|lod| fits(lod)).count()
 }
 
+/// How much of the screen's height a sphere of `radius` covers `distance`
+/// metres from a camera whose vertical field of view has `tan_half_fov`.
+pub fn screen_share(radius: f32, distance: f32, tan_half_fov: f32) -> f32 {
+    radius / (distance.max(1e-4) * tan_half_fov.max(1e-4))
+}
+
+/// The LOD a renderer that says where its LODs end draws at `share` of the
+/// screen: the first whose end it has not passed, of `count`.
+pub fn lod_at_share(ends: &[f32], count: usize, share: f32) -> usize {
+    let last = count.saturating_sub(1);
+    ends.iter().take(last).take_while(|&&end| share < end).count()
+}
+
 /// LOD 0 is the original mesh with its triangles reordered for the vertex
 /// cache; each further LOD has about half the triangles of the one before.
 pub fn build_lods(mesh: &MeshData) -> Vec<Lod> {

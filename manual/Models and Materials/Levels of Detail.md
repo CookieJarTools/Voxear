@@ -8,13 +8,14 @@ Something far away covers only a few pixels on screen, so drawing it in full det
 
 Every model gets simpler copies of its meshes when it is imported, or uses the ones it comes with (see [[Models]]). The engine picks one for each Obj every frame, by how much detail would show at that size on screen, and fades between them so the change does not pop. There is nothing to set up.
 
-Select an Obj with a **Mesh Renderer** to see its mesh's levels in the Inspector. The **LODs** row has a cell for each level, with its triangles, most detailed first. The level the Scene view draws now is outlined; while the game plays, it is the one the game's camera draws.
+Select an Obj with a **Mesh Renderer** to see its mesh's levels in the Inspector, as a bar like a LOD Group's: a part for each level, the most detailed on the left, with its triangles and where it ends as a share of the screen. The level the Scene view draws now is outlined, and the camera mark above shows how much of the screen the mesh covers from there; while the game plays, it is the game's camera.
 
-- **Click** a cell to move the Scene view to where that level is drawn, looking at the Obj.
-- **Right-click** a cell to **Force** that level, which is then drawn at every distance, as Unity's Forced LOD. **Stop Forcing** goes back to picking by distance.
-- **LOD Bias**, above the cells, changes when the levels switch, as Unity's LOD Selection Bias does. At 1, simpler levels come sooner; at -1, later. 0 leaves it to the engine.
+- **Click** a level to move the Scene view to where that level is drawn, looking at the Obj.
+- **Drag** the edge between two levels to choose where one ends, as in a LOD Group. The renderer then switches its levels where you say, by how much of the screen it covers. **Reset Transitions**, on a level's right-click, lets the engine switch them again.
+- **Right-click** a level to **Force** it, so it is drawn at every distance, as Unity's Forced LOD. **Stop Forcing** goes back.
+- **LOD Bias** changes when the engine switches levels, as Unity's LOD Selection Bias does. At 1, simpler levels come sooner; at -1, later. It shows only while the engine switches them.
 
-A scene file writes these on the Obj's `[obj.renderer]` as `lod_bias = 1.0` and `force_lod = 2`.
+A scene file writes these on the Obj's `[obj.renderer]`: `lod_transitions = [0.5, 0.25, 0.1]`, `lod_bias = 1.0` and `force_lod = 2`.
 
 ## LOD Groups
 

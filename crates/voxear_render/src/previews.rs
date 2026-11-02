@@ -442,6 +442,7 @@ impl Previews {
                     material: part.material.0,
                     flags: 0,
                     lod_bias: 0.0,
+                    lod_screen: [[0.0; 4]; 2],
                 });
                 draws.push((draws.len(), *lod));
             }

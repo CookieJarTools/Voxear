@@ -10,11 +10,13 @@ use std::collections::HashMap;
 
 use voxear_core::math::{EulerRot, Mat4, Quat, Vec3, Vec4};
 use voxear_ecs::{Entity, World};
-use voxear_render::{LodCamera, LodGroup, LodInfo, LodMeasure, LodView, MeshRenderer, Renderer, lod_at};
+use voxear_render::{
+    LodCamera, LodGroup, LodInfo, LodMeasure, LodView, MAX_TRANSITIONS, MeshRenderer, Renderer, lod_at, lod_at_share,
+    screen_share,
+};
 use voxear_scene::{Transform, WorldTransform};
 use voxear_ui::{NodeId, Style, Ui};
 
-use crate::inspector::prop;
 
 /// How much of a bar measured by distance is left for what is past the last
 /// level, so the culled part shows.
@@ -44,74 +46,210 @@ impl LodEye {
     }
 }
 
-/// A Mesh Renderer's LODs row: a cell for each LOD of its mesh with its
-/// triangles, the one drawn now lit.
+/// A Mesh Renderer's LODs as a bar, as a LOD Group's levels show: a part
+/// for each LOD of its mesh with its triangles, from the whole screen at
+/// the left to nothing at the right, the one drawn now outlined and the
+/// camera's mark over it. Its edges show where the engine switches LODs
+/// for the camera, until one is dragged, which gives the renderer ends of
+/// its own.
 pub struct MeshLods {
-    strip: NodeId,
-    cells: Vec<NodeId>,
+    bar: NodeId,
+    eye: NodeId,
+    eye_text: NodeId,
+    marker: NodeId,
+    segments: Vec<NodeId>,
+    edges: Vec<NodeId>,
     lods: Vec<LodInfo>,
+    /// Where each LOD but the last ends, as shown now, as a share of the
+    /// screen's height.
+    ends: Vec<f32>,
+    /// Its renderer says where its LODs end, rather than the engine.
+    custom: bool,
     /// The LOD its renderer forces, if any.
     forced: Option<usize>,
+    /// The edge being dragged.
+    drag: Option<usize>,
+    styled: HashMap<NodeId, String>,
 }
 
 impl MeshLods {
     pub fn new(ui: &mut Ui, rows: NodeId) -> Self {
-        let row = prop(ui, rows, "LODs");
-        let strip = ui.panel(row, Style::row());
-        ui.add_class(strip, "lod-strip");
-        Self { strip, cells: Vec::new(), lods: Vec::new(), forced: None }
+        let ruler = ui.panel(rows, Style::row());
+        ui.add_class(ruler, "lod-ruler");
+        let eye = ui.panel(ruler, Style::row());
+        ui.add_class(eye, "lod-eye");
+        let icon = ui.icon(eye, "camera");
+        ui.add_class(icon, "lod-eye-icon");
+        let eye_text = ui.add_label(eye, "");
+        ui.add_class(eye_text, "lod-eye-text");
+        let bar = ui.panel(rows, Style::row());
+        ui.add_class(bar, "lod-bar");
+        let marker = ui.panel(bar, Style::default());
+        ui.add_class(marker, "lod-marker");
+        Self {
+            bar,
+            eye,
+            eye_text,
+            marker,
+            segments: Vec::new(),
+            edges: Vec::new(),
+            lods: Vec::new(),
+            ends: Vec::new(),
+            custom: false,
+            forced: None,
+            drag: None,
+            styled: HashMap::new(),
+        }
     }
 
     pub fn update(&mut self, ui: &mut Ui, world: &World, entity: Entity, renderer: &Renderer, eye: Option<LodEye>) {
-        let Some(mesh) = world.get::<MeshRenderer>(entity).map(|r| r.mesh) else { return };
-        let lods = renderer.mesh_lods(mesh).unwrap_or_default();
-        if lods != self.lods {
-            for cell in self.cells.drain(..) {
-                ui.remove(cell);
-            }
-            for (level, lod) in lods.iter().enumerate() {
-                let cell = ui.add_label(self.strip, &short_count(lod.triangles));
-                ui.add_class(cell, "lod-cell");
-                ui.add_class(cell, &format!("lod-level-{}", level % COLOURS));
-                self.cells.push(cell);
-            }
-            self.lods = lods;
+        let Some(settings) = world.get::<MeshRenderer>(entity).copied() else { return };
+        let lods = renderer.mesh_lods(settings.mesh).unwrap_or_default();
+        if lods.len() != self.segments.len() {
+            self.build(ui, lods.len());
         }
-        let settings = world.get::<MeshRenderer>(entity).copied();
-        let forced = settings.and_then(|r| r.forced_lod).map(|lod| usize::from(lod).min(self.lods.len().saturating_sub(1)));
-        let drawn = match (eye.zip(settings), renderer.mesh_sphere(mesh)) {
-            _ if forced.is_some() => forced,
-            (Some((eye, settings)), Some((center, radius))) if !self.lods.is_empty() => {
-                let model = model(world, entity);
-                let scale = max_scale(model);
-                let away = model.transform_point3(center).distance(eye.camera.position) - radius * scale;
+        self.lods = lods;
+        let count = self.lods.len();
+        let sphere = renderer.mesh_sphere(settings.mesh);
+        let model = model(world, entity);
+        let scale = max_scale(model);
+        // The mesh's sphere in the world, and how much of the screen the camera sees it cover.
+        let (center, radius) = sphere.map_or((Vec3::ZERO, 0.0), |(c, r)| (model.transform_point3(c), r * scale));
+        let share = eye.map(|eye| screen_share(radius, center.distance(eye.camera.position), eye.camera.tan_half_fov));
+        self.custom = settings.lod_transitions.is_some();
+        self.ends = match (settings.lod_transitions, eye) {
+            (Some(ends), _) => ends[..count.saturating_sub(1).min(MAX_TRANSITIONS)].to_vec(),
+            // Where the engine switches, for this camera: where each LOD's error shrinks to the threshold.
+            (None, Some(eye)) => {
                 let eye = eye.biased(settings.lod_bias);
-                Some(lod_at(&self.lods, away, scale, eye.pixels_per_metre, eye.threshold))
+                let start = |lod: &LodInfo| lod.from_distance(scale, eye.pixels_per_metre, eye.threshold) + radius;
+                self.lods.iter().skip(1).map(|lod| screen_share(radius, start(lod), eye.camera.tan_half_fov)).collect()
             }
-            _ => None,
+            (None, None) => (1..count).map(|lod| 1.0 - lod as f32 / count as f32).collect(),
         };
-        for (level, &cell) in self.cells.iter().enumerate() {
-            ui.set_class(cell, "lod-drawn", drawn == Some(level));
-            ui.set_class(cell, "lod-forced", forced == Some(level));
+        self.forced = settings.forced_lod.map(|lod| usize::from(lod).min(count.saturating_sub(1)));
+        let drawn = match (self.forced, share) {
+            (Some(forced), _) => Some(forced),
+            (None, Some(share)) if self.custom => Some(lod_at_share(&self.ends, count, share)),
+            (None, Some(_)) => eye.map(|eye| {
+                let eye = eye.biased(settings.lod_bias);
+                let away = center.distance(eye.camera.position) - radius;
+                lod_at(&self.lods, away, scale, eye.pixels_per_metre, eye.threshold)
+            }),
+            (None, None) => None,
+        };
+        self.show(ui, drawn, share);
+    }
+
+    /// A part and an edge for each LOD, the last with no edge.
+    fn build(&mut self, ui: &mut Ui, count: usize) {
+        for node in self.segments.drain(..).chain(self.edges.drain(..)) {
+            ui.remove(node);
         }
-        self.forced = forced;
+        self.styled.clear();
+        for level in 0..count {
+            let segment = ui.panel(self.bar, Style::column());
+            ui.add_class(segment, "lod-segment");
+            ui.add_class(segment, &format!("lod-level-{}", level % COLOURS));
+            let name = ui.add_label(segment, &format!("LOD {level}"));
+            ui.add_class(name, "lod-segment-name");
+            let end = ui.add_label(segment, "");
+            ui.add_class(end, "lod-segment-end");
+            self.segments.push(segment);
+        }
+        for _ in 1..count {
+            let edge = ui.panel(self.bar, Style::column());
+            ui.add_class(edge, "lod-edge");
+            let line = ui.panel(edge, Style::default());
+            ui.add_class(line, "lod-edge-line");
+            self.edges.push(edge);
+        }
+        // The marker over the parts, as it was before them.
+        let marker = ui.panel(self.bar, Style::default());
+        ui.add_class(marker, "lod-marker");
+        ui.remove(self.marker);
+        self.marker = marker;
     }
 
-    /// The LOD whose cell was right-clicked, the cell, and the LOD forced now.
-    pub fn context_clicked(&self, ui: &Ui) -> Option<(usize, NodeId, Option<usize>)> {
-        let level = self.cells.iter().position(|&cell| ui.context_clicked(cell))?;
-        Some((level, self.cells[level], self.forced))
+    fn show(&mut self, ui: &mut Ui, drawn: Option<usize>, share: Option<f32>) {
+        let mut from = 0.0f32;
+        for level in 0..self.segments.len() {
+            let to = self.ends.get(level).map_or(1.0, |end| (1.0 - end.clamp(0.0, 1.0)).max(from));
+            let segment = self.segments[level];
+            self.style(ui, segment, span_style(from, to));
+            let triangles = short_count(self.lods.get(level).map_or(0, |lod| lod.triangles));
+            let text = match self.ends.get(level) {
+                Some(&end) => format!("{triangles} · {}%", trim(end * 100.0)),
+                None => triangles,
+            };
+            let label = ui.children(segment)[1];
+            ui.set_text(label, &text);
+            ui.set_class(segment, "lod-drawn", drawn == Some(level));
+            ui.set_class(segment, "lod-forced", self.forced == Some(level));
+            if let Some(&edge) = self.edges.get(level) {
+                self.style(ui, edge, format!("left: {:.2}%", to * 100.0));
+            }
+            from = to;
+        }
+        let Some(share) = share else {
+            ui.set_visible(self.marker, false);
+            ui.set_visible(self.eye, false);
+            return;
+        };
+        let at = (1.0 - share.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+        ui.set_visible(self.marker, true);
+        ui.set_visible(self.eye, true);
+        self.style(ui, self.marker, format!("left: {:.2}%", at * 100.0));
+        self.style(ui, self.eye, format!("left: {:.2}%", at.min(0.86) * 100.0));
+        ui.set_text(self.eye_text, &format!("{}%", trim(share * 100.0)));
     }
 
-    /// The LOD whose cell was clicked.
+    /// While an edge is dragged, where every LOD ends with it moved, kept
+    /// between the LODs on either side: the renderer's own ends from then.
+    pub fn dragged(&mut self, ui: &Ui) -> Option<[f32; MAX_TRANSITIONS]> {
+        let Some(level) = self.edges.iter().position(|&edge| ui.is_pressed(edge)) else {
+            self.drag = None;
+            return None;
+        };
+        self.drag = Some(level);
+        let (x, _) = ui.pointer_position()?;
+        let [left, _, width, _] = ui.rect(self.bar);
+        let along = ((x - left) / width.max(1.0)).clamp(0.0, 1.0);
+        let above = level.checked_sub(1).and_then(|before| self.ends.get(before).copied()).unwrap_or(1.0);
+        let below = self.ends.get(level + 1).copied().unwrap_or(0.0);
+        let mut ends = [0.0; MAX_TRANSITIONS];
+        for (end, &shown) in ends.iter_mut().zip(&self.ends) {
+            *end = shown.clamp(0.0, 1.0);
+        }
+        ends[level] = (1.0 - along).clamp(below + 0.001, (above - 0.001).max(below + 0.001));
+        Some(ends)
+    }
+
+    /// The LOD whose part of the bar was clicked.
     pub fn clicked(&self, ui: &Ui) -> Option<usize> {
-        self.cells.iter().position(|&cell| ui.clicked(cell))
+        self.segments.iter().position(|&segment| ui.clicked(segment))
     }
 
-    /// A cell's LOD and triangles, while the pointer rests on it.
+    /// The LOD right-clicked, on its part or its edge, what was clicked, the
+    /// LOD forced now, and whether the renderer says where its LODs end.
+    pub fn context_clicked(&self, ui: &Ui) -> Option<(usize, NodeId, Option<usize>, bool)> {
+        let on = |parts: &[NodeId]| parts.iter().position(|&part| ui.context_clicked(part)).map(|at| (at, parts[at]));
+        let (level, node) = on(&self.edges).or_else(|| on(&self.segments))?;
+        Some((level, node, self.forced, self.custom))
+    }
+
+    /// A LOD's triangles, while the pointer rests on its part of the bar.
     pub fn hovered_tooltip(&self, ui: &Ui) -> Option<(String, NodeId)> {
-        let (level, &cell) = self.cells.iter().enumerate().find(|(_, cell)| ui.is_hovered(**cell))?;
-        Some((format!("LOD {level}: {} triangles", thousands(self.lods[level].triangles)), cell))
+        let (level, &part) = self.segments.iter().enumerate().find(|(_, part)| ui.is_hovered(**part))?;
+        let triangles = self.lods.get(level).map_or(0, |lod| lod.triangles);
+        Some((format!("LOD {level}: {} triangles", thousands(triangles)), part))
+    }
+
+    fn style(&mut self, ui: &mut Ui, node: NodeId, style: String) {
+        if self.styled.get(&node) != Some(&style) {
+            ui.set_inline_style(node, &style);
+            self.styled.insert(node, style);
+        }
     }
 }
 
@@ -125,7 +263,18 @@ pub fn view_lod(world: &World, entity: Entity, renderer: &Renderer, level: usize
     let model = model(world, entity);
     let scale = max_scale(model);
     let center = model.transform_point3(center);
-    let away = distance_for(&lods, level, scale, eye) + radius * scale;
+    let away = match settings.lod_transitions {
+        // Halfway down the share of the screen the renderer gives the LOD.
+        Some(ends) => {
+            let last = lods.len().saturating_sub(1);
+            let level = level.min(last);
+            let top = level.checked_sub(1).map_or(1.0, |before| ends[before]).min(1.0);
+            let bottom = if level < last { ends[level] } else { 0.0 };
+            let share = ((top + bottom) * 0.5).max(1e-3);
+            radius * scale / (share * eye.camera.tan_half_fov)
+        }
+        None => distance_for(&lods, level, scale, eye) + radius * scale,
+    };
     let back = (eye.camera.position - center).try_normalize().unwrap_or(Vec3::new(0.0, 0.3, -1.0).normalize());
     let forward = -back;
     let rotation = Quat::from_euler(EulerRot::YXZ, forward.x.atan2(forward.z), -forward.y.asin(), 0.0);

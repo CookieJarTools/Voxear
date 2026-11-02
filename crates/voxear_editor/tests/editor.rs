@@ -2528,6 +2528,10 @@ fn the_profiling_layout_shows_recent_frames_in_the_profiler() {
     assert!(cpu.find("propagate transforms").is_some(), "and each system");
     let render = cpu.find("Render").unwrap();
     assert!(cpu.total_ms(render) >= cpu.self_ms(render));
+    // Waiting for the display is named so, and the CPU figure leaves it out.
+    let display = cpu.find("Wait for Display").expect("the wait for the display has a sample");
+    let worked = cpu.total_ms(voxear_core::profiling::Samples::FRAME) - cpu.total_ms(display);
+    assert!(last.cpu_ms() <= worked + 1e-3, "{} of {worked}", last.cpu_ms());
     assert!(!last.gpu.is_empty(), "and the GPU's passes");
     let panel = editor.ui.find(editor.ui.root(), "profiler-panel").unwrap();
     let shown = texts_in(&editor.ui, panel);

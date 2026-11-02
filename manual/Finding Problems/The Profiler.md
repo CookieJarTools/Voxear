@@ -32,7 +32,7 @@ The line under the toolbar sums up the frame: frames a second, how long it took,
 
 Open **Game** to see the game's own work: **FixedUpdate**, **Update**, **LateUpdate** and the rest, and inside them each behaviour's methods by class, as `MyGame.Spinner.Update()`. All the Spinners share one row, and **Calls** says how many there were.
 
-**Editor**, **UI** and **Render** are the editor's own work: its panels, its UI, and drawing the frame. Inside **UI**, **Styles** is working out how elements look after something changed, **Layout** where they go, and **Draw** turning them into shapes and text. With the display's refresh rate holding the frame back, **Render** includes the time spent waiting for it, so it can fill most of the frame without anything being wrong.
+**Editor**, **UI** and **Render** are the editor's own work: its panels, its UI, and drawing the frame. Inside **UI**, **Styles** is working out how elements look after something changed, **Layout** where they go, and **Draw** turning them into shapes and text. With the display's refresh rate holding the frame back, **Render** includes the time spent waiting for it, in **Wait for Display**, so it can fill most of the frame without anything being wrong: that is time left over, not time spent. The **CPU** figure at the top, and its line on the chart, leave that wait and **Wait for GPU** out, so they show the work alone.
 
 > [!TIP]
 > **GC Alloc** is worth watching. Memory asked for every frame must be cleaned up later, and the cleaning makes the game stutter. A behaviour that shows GC Alloc on every frame is worth fixing first.

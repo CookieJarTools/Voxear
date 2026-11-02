@@ -539,7 +539,8 @@ impl Renderer {
         let counters = bytemuck::cast_slice(&first.buffers[frame.slot].stats.read()[..stat::COUNT * 4]);
         let exposure = bytemuck::cast_slice(first.exposure.read());
         self.stats = RenderStats::read(counters, exposure);
-        let acquiring = profile_marker!("Acquire Image").scope();
+        // Acquiring the next image waits for the display, as vsync paces the frames.
+        let acquiring = profile_marker!("Wait for Display").scope();
         let acquired = match &self.output {
             Output::Window(swapchain) => match self.frames.acquire(&self.gpu, swapchain)? {
                 Some(acquired) => Some(acquired),

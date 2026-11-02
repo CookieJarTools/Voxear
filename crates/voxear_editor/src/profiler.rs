@@ -19,7 +19,8 @@
 //! the frames; Live goes back to the newest. The Timeline scrolls when its
 //! lanes are more than fit.
 //! Render's time includes waiting for the GPU and the display ("Wait for
-//! GPU", "Acquire Image"), so with vsync on it fills the frame.
+//! GPU", "Wait for Display"), so with vsync on it fills the frame; the CPU
+//! figure and line leave those waits out, to show the work alone.
 
 use std::{
     cell::RefCell,
@@ -56,7 +57,7 @@ const RENDER: u32 = 0x2f9a68;
 const WAIT: u32 = 0x3b3e46;
 /// Samples that are the renderer's, and those that are waiting on the GPU or display.
 const RENDERING: [&str; 5] = ["Render", "Extract", "Record Passes", "Submit", "UI"];
-const WAITING: [&str; 2] = ["Wait for GPU", "Acquire Image"];
+const WAITING: [&str; 2] = ["Wait for GPU", "Wait for Display"];
 /// Samples opened by themselves the first time they show, as Unity opens the
 /// player loop, so scripts' callbacks show at once.
 const OPENED: [&str; 7] = ["Game", "Editor", "Render", "FixedUpdate", "Update", "LateUpdate", "Lifecycle"];
@@ -82,8 +83,12 @@ pub struct Sample {
 }
 
 impl Sample {
+    /// Milliseconds the main thread worked: the frame's samples, less its
+    /// waits for the GPU and the display, which fill the frame with vsync on.
     pub fn cpu_ms(&self) -> f32 {
-        self.cpu.total_ms(Samples::FRAME)
+        let waits = (0..self.cpu.nodes.len()).filter(|&node| WAITING.contains(&self.cpu.name(node).as_str()));
+        let waited: f32 = waits.map(|node| self.cpu.total_ms(node)).sum();
+        (self.cpu.total_ms(Samples::FRAME) - waited).max(0.0)
     }
 
     pub fn gpu_ms(&self) -> f32 {

@@ -583,7 +583,7 @@ impl Editor {
             self.update_panels(renderer, delta)
         };
         let frame = {
-            profile_scope!("UI Layout");
+            profile_scope!("UI");
             self.ui.frame(size.0, size.1, scale)
         };
         let rendered = {

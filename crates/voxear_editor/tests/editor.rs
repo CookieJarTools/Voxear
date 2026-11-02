@@ -2517,7 +2517,7 @@ fn the_profiling_layout_shows_recent_frames_in_the_profiler() {
     let last = samples.back().unwrap();
     let cpu = &last.cpu;
     let inside = |node: usize| -> Vec<String> { cpu.nodes[node].children.iter().map(|&c| cpu.name(c)).collect() };
-    assert_eq!(inside(voxear_core::profiling::Samples::FRAME), ["Game", "Editor", "UI Layout", "Render"]);
+    assert_eq!(inside(voxear_core::profiling::Samples::FRAME), ["Game", "Editor", "UI", "Render"]);
     let game = cpu.find("Game").unwrap();
     assert!(inside(game).contains(&"Update".to_string()), "the engine's steps inside the game's: {:?}", inside(game));
     let editor_node = cpu.find("Editor").unwrap();
@@ -2528,7 +2528,7 @@ fn the_profiling_layout_shows_recent_frames_in_the_profiler() {
     assert!(!last.gpu.is_empty(), "and the GPU's passes");
     let panel = editor.ui.find(editor.ui.root(), "profiler-panel").unwrap();
     let shown = texts_in(&editor.ui, panel);
-    for text in ["Hierarchy", "Calls", "Self ms", "UI Layout", "Objs drawn", "Render"] {
+    for text in ["Hierarchy", "Calls", "Self ms", "UI", "Objs drawn", "Render"] {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
 
@@ -2541,7 +2541,7 @@ fn the_profiling_layout_shows_recent_frames_in_the_profiler() {
     let mut names = Vec::new();
     with_class(&editor.ui, panel, "profiler-bar-name", &mut names);
     let named: Vec<String> = names.iter().filter(|&&n| editor.ui.is_visible(n)).map(|&n| editor.ui.text(n)).collect();
-    let tops = ["Game", "Editor", "UI Layout", "Render"];
+    let tops = ["Game", "Editor", "UI", "Render"];
     assert!(named.iter().any(|n| tops.iter().any(|t| n.starts_with(t))), "the widest bars are named: {named:?}");
     let canvas = first_with(&editor.ui, panel, "profiler-canvas").unwrap();
     let [x, y, _, _] = editor.ui.rect(canvas);

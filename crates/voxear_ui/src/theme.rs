@@ -156,6 +156,7 @@ impl Ui {
     /// win; a theme set again replaces the last.
     pub fn set_theme(&mut self, theme: &Theme) {
         let sheet = std::rc::Rc::new(theme.sheet());
+        self.note_ancestor_keys(&sheet);
         let root = self.root();
         let Some(element) = self.element_mut(root) else { return };
         let sheets = &mut element.sheets;
@@ -166,7 +167,7 @@ impl Ui {
                 sheets.insert(at, sheet);
             }
         }
-        self.restyle = true;
+        self.restyle(root.0, true);
     }
 }
 

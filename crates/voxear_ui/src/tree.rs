@@ -2,7 +2,10 @@
 //! (type, name, classes and states), the style it was given, the style the
 //! cascade worked out, and its text.
 
-use std::rc::Rc;
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use parley::{FontContext, FontWeight, Layout, LayoutContext, StyleProperty};
 use taffy::{AvailableSpace, Dimension, Display, Size, TaffyTree};
@@ -11,7 +14,7 @@ use crate::{
     Style, TextStyle, UiFrame,
     atlas::GlyphAtlas,
     draw::{Draw, measure},
-    selector::States,
+    selector::{Compound, States},
     sheet::{Declaration, StyleSheet, parse_inline},
 };
 
@@ -145,6 +148,8 @@ pub(crate) struct Element {
     pub keyframes: Option<crate::animation::Playing>,
     /// The cascade has styled it at least once, so changes from now on may animate.
     pub styled: bool,
+    /// The custom properties in effect, its own and inherited, for its children.
+    pub vars: Rc<HashMap<String, String>>,
 }
 
 impl Element {
@@ -174,6 +179,7 @@ impl Element {
             animations: Vec::new(),
             keyframes: None,
             styled: false,
+            vars: Rc::default(),
         }
     }
 }
@@ -225,8 +231,13 @@ pub struct Ui {
     pub(crate) atlas: GlyphAtlas,
     /// Logical size and display scale of the last frame.
     pub(crate) viewport: (f32, f32, f32),
-    /// Something the cascade reads changed since it last ran.
-    pub(crate) restyle: bool,
+    /// Elements the cascade styles again next frame, as something it reads
+    /// changed, each with whether everything in it is styled again too.
+    pub(crate) restyles: Vec<(taffy::NodeId, bool)>,
+    /// The classes, and the ancestors in a state, that selectors in any
+    /// sheet ask of an ancestor; see [`RuleIndex`](crate::sheet::RuleIndex).
+    pub(crate) ancestor_classes: HashSet<String>,
+    pub(crate) state_ancestors: Vec<Compound>,
     pub(crate) pointer: crate::pointer::Pointer,
     pub(crate) warnings: Vec<String>,
     /// Elements that scroll, as of the last cascade.
@@ -283,7 +294,9 @@ impl Ui {
             layouts: LayoutContext::new(),
             atlas: GlyphAtlas::new(),
             viewport: (0.0, 0.0, 0.0),
-            restyle: true,
+            restyles: vec![(root, true)],
+            ancestor_classes: HashSet::new(),
+            state_ancestors: Vec::new(),
             pointer: Default::default(),
             warnings: Vec::new(),
             scrollers: Vec::new(),
@@ -442,7 +455,7 @@ impl Ui {
     pub(crate) fn add(&mut self, parent: NodeId, element: Element) -> NodeId {
         let node = self.tree.new_leaf_with_context(element.base.layout.clone(), element).expect("room for a node");
         self.tree.add_child(parent.0, node).expect("the parent is in this tree");
-        self.restyle = true;
+        self.restyle(node, true);
         NodeId(node)
     }
 
@@ -482,7 +495,7 @@ impl Ui {
             && element.base_text != Some(style)
         {
             element.base_text = Some(style);
-            self.restyle = true;
+            self.restyle(node.0, false);
         }
     }
 
@@ -492,7 +505,7 @@ impl Ui {
             && element.base != style
         {
             element.base = style;
-            self.restyle = true;
+            self.restyle(node.0, false);
         }
     }
 
@@ -504,7 +517,7 @@ impl Ui {
         self.warn(warnings);
         if let Some(element) = self.element_mut(node) {
             element.inline = inline;
-            self.restyle = true;
+            self.restyle(node.0, false);
         }
     }
 
@@ -512,9 +525,33 @@ impl Ui {
     /// element win over those further up when rules are equally specific.
     pub fn add_sheet(&mut self, node: NodeId, sheet: StyleSheet) {
         self.warn(sheet.warnings().to_vec());
+        self.note_ancestor_keys(&sheet);
         if let Some(element) = self.element_mut(node) {
             element.sheets.push(Rc::new(sheet));
-            self.restyle = true;
+            self.restyle(node.0, true);
+        }
+    }
+
+    /// Has the next cascade style `node` again, and everything in it when
+    /// `deep`. A UI changed over and over with no frame between, as a game's
+    /// is while it is not shown, is styled whole instead.
+    pub(crate) fn restyle(&mut self, node: taffy::NodeId, deep: bool) {
+        const HELD: usize = 4096;
+        if self.restyles.len() >= HELD {
+            self.restyles.clear();
+            self.restyles.push((self.root, true));
+        }
+        self.restyles.push((node, deep));
+    }
+
+    /// Notes the classes and states `sheet` asks of ancestors, so changing
+    /// one on an element restyles what is inside it.
+    pub(crate) fn note_ancestor_keys(&mut self, sheet: &StyleSheet) {
+        self.ancestor_classes.extend(sheet.index.ancestor_classes.iter().cloned());
+        for compound in &sheet.index.state_ancestors {
+            if !self.state_ancestors.contains(compound) {
+                self.state_ancestors.push(compound.clone());
+            }
         }
     }
 
@@ -522,14 +559,14 @@ impl Ui {
     pub fn clear_sheets(&mut self, node: NodeId) {
         if let Some(element) = self.element_mut(node) {
             element.sheets.clear();
-            self.restyle = true;
+            self.restyle(node.0, true);
         }
     }
 
     pub fn set_name(&mut self, node: NodeId, name: &str) {
         if let Some(element) = self.element_mut(node) {
             element.name = Some(name.to_string());
-            self.restyle = true;
+            self.restyle(node.0, true);
         }
     }
 
@@ -565,7 +602,8 @@ impl Ui {
         } else {
             element.classes.retain(|c| c != class);
         }
-        self.restyle = true;
+        let deep = self.ancestor_classes.contains(class);
+        self.restyle(node.0, deep);
     }
 
     pub fn has_class(&self, node: NodeId, class: &str) -> bool {
@@ -576,8 +614,21 @@ impl Ui {
         let Some(element) = self.element_mut(node) else { return };
         if element.states.contains(state) != on {
             element.states.set(state, on);
-            self.restyle = true;
+            let deep = self.state_reaches_inside(node.0, state);
+            self.restyle(node.0, deep);
         }
+    }
+
+    /// Whether a selector asks `state` of an element like `node` as an
+    /// ancestor, as `Toggle:hover .toggle-box` asks it of a Toggle, so that
+    /// changing it restyles what is inside `node`. The pointer sets `:hover`
+    /// and `:active` on everything from the root down, most of which no
+    /// selector asks it of.
+    fn state_reaches_inside(&self, node: taffy::NodeId, state: States) -> bool {
+        let Some(element) = self.tree.get_node_context(node) else { return false };
+        let (tag, name, classes) = (element.kind.tag(), element.name.as_deref(), &element.classes);
+        let asks = |compound: &&Compound| compound.states.intersects(state);
+        self.state_ancestors.iter().filter(asks).any(|compound| compound.could_match(tag, name, classes))
     }
 
     /// A disabled element matches `:disabled`, and neither it nor anything in
@@ -599,7 +650,7 @@ impl Ui {
         if element.base.layout.display != display {
             element.base.layout.display = display;
             element.inline.retain(|d| d.name != "display");
-            self.restyle = true;
+            self.restyle(node.0, false);
         }
     }
 
@@ -661,7 +712,6 @@ impl Ui {
         if self.input.dragging == Some(node.0) {
             self.input.dragging = None;
         }
-        self.restyle = true;
     }
 
     /// An element's style as the last frame's cascade worked it out.
@@ -725,21 +775,25 @@ impl Ui {
     /// and returns what to draw. Clicks seen since the last frame are
     /// forgotten after this.
     pub fn frame(&mut self, width: u32, height: u32, scale: f32) -> UiFrame {
-        if std::mem::take(&mut self.restyle) {
+        if !self.restyles.is_empty() {
             self.cascade();
         }
         self.layout(width, height, scale);
         self.update_scroll_limits();
         // Lists make and bind the rows now on screen, which then need laying out.
-        if self.update_lists() {
-            if std::mem::take(&mut self.restyle) {
+        let listed = {
+            voxear_core::profile_scope!("Lists");
+            self.update_lists()
+        };
+        if listed {
+            if !self.restyles.is_empty() {
                 self.cascade();
             }
             self.layout(width, height, scale);
             self.update_scroll_limits();
         }
         if self.place_menu() {
-            if std::mem::take(&mut self.restyle) {
+            if !self.restyles.is_empty() {
                 self.cascade();
             }
             self.layout(width, height, scale);
@@ -748,6 +802,7 @@ impl Ui {
         let scale = self.viewport.2;
         let (focused, caret_on, time) = (self.input.focused, self.caret_on(), self.input.time);
         let mut quads = Vec::new();
+        voxear_core::profile_scope!("Draw");
         // An atlas that filled up starts again part way through, so the
         // glyphs drawn before then are drawn once more.
         for _ in 0..2 {
@@ -783,6 +838,7 @@ impl Ui {
     }
 
     fn layout(&mut self, width: u32, height: u32, scale: f32) {
+        voxear_core::profile_scope!("Layout");
         let scale = scale.max(0.25);
         let viewport = (width as f32 / scale, height as f32 / scale, scale);
         if viewport.2 != self.viewport.2 {

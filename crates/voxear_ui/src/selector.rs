@@ -27,6 +27,11 @@ impl States {
         self.0 & other.0 == other.0
     }
 
+    /// Whether any of `other`'s states is one of these.
+    pub fn intersects(self, other: States) -> bool {
+        self.0 & other.0 != 0
+    }
+
     pub fn set(&mut self, state: States, on: bool) {
         if on { self.0 |= state.0 } else { self.0 &= !state.0 }
     }
@@ -73,6 +78,14 @@ impl Compound {
             && self.classes.iter().all(|class| element.classes.contains(class))
             && element.states.contains(self.states)
             && (!self.root || element.depth == scope)
+    }
+
+    /// Whether an element of this type, with this name and these classes,
+    /// matches when in the states asked.
+    pub(crate) fn could_match(&self, tag: &str, name: Option<&str>, classes: &[String]) -> bool {
+        self.tag.as_deref().is_none_or(|wanted| wanted == tag)
+            && self.name.as_deref().is_none_or(|wanted| Some(wanted) == name)
+            && self.classes.iter().all(|class| classes.contains(class))
     }
 
     fn is_empty(&self) -> bool {

@@ -173,7 +173,8 @@ Done so far:
   - tests without a GPU, and one that checks the drawn pixels
 - **Markup and style sheets:** `.vui` documents and `.vss` sheets in the spirit of UXML and USS: USS's
   selectors, the CSS cascade with inherited text and `var()` theme tokens, `oklch()` colours, and warnings that
-  name the file and line.
+  name the file and line. The cascade styles again only what changed, and finds rules by name, class and type,
+  so the editor's idle frame spends nothing on styles where it spent 8 ms.
 - **Pointer:** `:hover`, `:active`, clicks and the wheel.
 - **Controls:** ScrollView with clipping and a floating scrollbar, and virtualized ListView and TreeView, which
   keep elements only for the rows on screen. A list of 100,000 items makes 11 rows.

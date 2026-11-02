@@ -755,7 +755,8 @@ impl Ui {
             }
         }
         self.put_dock(dock, state);
-        self.restyle = true;
+        // Panels moved, so what is above them, which selectors see, changed.
+        self.restyle(dock.0, true);
     }
 
     fn build_dock(&mut self, parent: NodeId, node: &mut DockNode, state: &mut DockState) -> NodeId {

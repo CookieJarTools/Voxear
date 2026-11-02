@@ -182,3 +182,61 @@ fn a_label_that_hides_its_overflow_keeps_its_text_within_it() {
     ui.set_inline_style(label, "width: 60px; white-space: nowrap");
     assert!(glyphs(&mut ui).iter().any(|q| q.clip[2] > x + w + 0.5), "a label that shows its overflow runs on");
 }
+
+#[test]
+fn only_what_changed_is_styled_again_and_the_change_reaches_what_it_should() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let sheet = r#"
+        :root { --size: 12px; }
+        Label { font-size: var(--size); }
+        .dark Label { color: #ffffff; }
+        .picked { color: #ff0000; }
+        .loud { --size: 20px; }
+        Panel:hover Label { font-weight: 700; }
+    "#;
+    ui.add_sheet(root, StyleSheet::parse("Changes.vss", sheet));
+    let outer = ui.panel(root, voxear_ui::Style::default());
+    let inner = ui.panel(outer, voxear_ui::Style::default());
+    let label = ui.add_label(inner, "Changes");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let text = |ui: &Ui| ui.text_style(label).unwrap();
+    let (color, weight) = (text(&ui).color, text(&ui).weight);
+    assert_eq!(text(&ui).size, 12.0);
+
+    // Nothing changed, so nothing is styled again.
+    voxear_core::profiling::set_enabled(true);
+    let _ = voxear_core::profiling::end_frame();
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(voxear_core::profiling::end_frame().find("Styles").is_none(), "an unchanged frame skips the cascade");
+    voxear_core::profiling::set_enabled(false);
+
+    ui.add_class(outer, "dark");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(text(&ui).color, Color::hex(0xffffff), "a class a descendant rule asks of an ancestor");
+    ui.remove_class(outer, "dark");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(text(&ui).color, color, "and taken away again");
+
+    ui.add_class(inner, "picked");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(text(&ui).color, Color::hex(0xff0000), "a colour the parent now has, inherited");
+    ui.add_class(outer, "loud");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(text(&ui).size, 20.0, "a variable set two levels up");
+
+    let [x, y, _, _] = ui.rect(label);
+    ui.pointer_move(x + 2.0, y + 2.0);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(text(&ui).weight, 700.0, "a state a descendant rule asks of an ancestor");
+    ui.pointer_move(WIDTH as f32 - 1.0, HEIGHT as f32 - 1.0);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(text(&ui).weight, weight);
+
+    // Marked, then gone before the frame: nothing to style.
+    let gone = ui.add_label(inner, "Gone");
+    ui.add_class(gone, "picked");
+    ui.remove(gone);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.children(inner), [label]);
+}

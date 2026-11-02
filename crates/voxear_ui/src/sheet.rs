@@ -13,7 +13,9 @@ use cssparser::{
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
 };
 
-use crate::selector::{Combinator, Compound, Selector, States};
+use std::collections::{HashMap, HashSet};
+
+use crate::selector::{Combinator, Compound, Facts, Selector, States};
 
 /// A parsed `.vss` file, attached to an element with
 /// [`Ui::add_sheet`](crate::Ui::add_sheet) to style it and everything in it.
@@ -22,7 +24,64 @@ pub struct StyleSheet {
     pub(crate) source: String,
     pub(crate) rules: Vec<Rule>,
     pub(crate) keyframes: Vec<Keyframes>,
+    pub(crate) index: RuleIndex,
     warnings: Vec<String>,
+}
+
+/// A sheet's selectors filed by what the element they style must have, its
+/// name, a class or its type, so styling an element tries only those that
+/// could match it rather than every rule in the sheet.
+#[derive(Debug, Default)]
+pub(crate) struct RuleIndex {
+    by_name: HashMap<String, Vec<(u32, u32)>>,
+    by_class: HashMap<String, Vec<(u32, u32)>>,
+    by_tag: HashMap<String, Vec<(u32, u32)>>,
+    /// Selectors that ask for none of those, as `*` and `:hover` do.
+    any: Vec<(u32, u32)>,
+    /// The classes selectors ask of an element's ancestors, as `.dark .label`
+    /// does, so changing one restyles what is inside it.
+    pub ancestor_classes: HashSet<String>,
+    /// The ancestors selectors ask to be in a state, as `Toggle:hover` in
+    /// `Toggle:hover .toggle-box`, so that state changing on an element like
+    /// one of them restyles what is inside it.
+    pub state_ancestors: Vec<Compound>,
+}
+
+impl RuleIndex {
+    fn new(rules: &[Rule]) -> Self {
+        let mut index = Self::default();
+        for (rule_at, rule) in rules.iter().enumerate() {
+            for (selector_at, selector) in rule.selectors.iter().enumerate() {
+                let at = (rule_at as u32, selector_at as u32);
+                let subject = &selector.subject;
+                let list = match (&subject.name, subject.classes.first(), &subject.tag) {
+                    (Some(name), _, _) => index.by_name.entry(name.clone()).or_default(),
+                    (None, Some(class), _) => index.by_class.entry(class.clone()).or_default(),
+                    (None, None, Some(tag)) => index.by_tag.entry(tag.clone()).or_default(),
+                    (None, None, None) => &mut index.any,
+                };
+                list.push(at);
+                for (_, above) in &selector.ancestors {
+                    index.ancestor_classes.extend(above.classes.iter().cloned());
+                    if above.states != States::default() && !index.state_ancestors.contains(above) {
+                        index.state_ancestors.push(above.clone());
+                    }
+                }
+            }
+        }
+        index
+    }
+
+    /// Each selector that could match `element`, as its rule's place in the
+    /// sheet and its own in the rule; every one of them still has to be
+    /// checked.
+    pub(crate) fn candidates(&self, element: &Facts) -> impl Iterator<Item = (usize, usize)> {
+        let named = element.name.and_then(|name| self.by_name.get(name));
+        let classed = element.classes.iter().filter_map(|class| self.by_class.get(class));
+        let typed = self.by_tag.get(element.tag);
+        let lists = std::iter::once(&self.any).chain(named).chain(classed).chain(typed);
+        lists.flatten().map(|&(rule, selector)| (rule as usize, selector as usize))
+    }
 }
 
 /// `@keyframes name { ... }`: each stop's place from 0 to 1, and its
@@ -76,7 +135,8 @@ impl StyleSheet {
         }
         let mut warnings = rules.warnings;
         warnings.extend(skipped);
-        Self { source: source.to_string(), rules: parsed, keyframes, warnings }
+        let index = RuleIndex::new(&parsed);
+        Self { source: source.to_string(), rules: parsed, keyframes, index, warnings }
     }
 
     /// What was skipped while parsing.

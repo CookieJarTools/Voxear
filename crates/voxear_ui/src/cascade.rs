@@ -3,6 +3,13 @@
 //! in effect (those attached to it and its ancestors) from least to most
 //! specific, then its inline declarations. Text styles and custom
 //! properties are inherited from the parent.
+//!
+//! Only what changed is styled again. A change marks the element it was
+//! made to, and marks it deep when what is inside it may now match other
+//! rules: a new element, a sheet, a name, or a class or state some selector
+//! asks of an ancestor (`.dark .label`). An element styled again passes the
+//! cascade on to its children when marked deep, or when what they inherit
+//! from it changed.
 
 use std::{collections::HashMap, rc::Rc};
 
@@ -14,6 +21,7 @@ use crate::{
     properties,
     selector::{Facts, States},
     sheet::{Declaration, StyleSheet},
+    tree::Element,
 };
 
 /// What an element passes down to its children.
@@ -21,7 +29,7 @@ struct Inherited {
     text: TextStyle,
     vars: Rc<HashMap<String, String>>,
     /// Sheets in effect, each with how far down it was attached.
-    sheets: Vec<(Rc<StyleSheet>, usize)>,
+    sheets: Rc<Vec<(Rc<StyleSheet>, usize)>>,
     /// The parent scrolls, so its children keep their size instead of
     /// shrinking to fit, as in Unity's ScrollView.
     in_scroller: bool,
@@ -36,18 +44,93 @@ struct Seen {
 }
 
 impl Seen {
+    fn of(element: &Element) -> Self {
+        Self {
+            tag: element.kind.tag(),
+            name: element.name.clone(),
+            classes: element.classes.clone(),
+            states: element.states,
+        }
+    }
+
     fn facts(&self, depth: usize) -> Facts<'_> {
         Facts { tag: self.tag, name: self.name.as_deref(), classes: &self.classes, states: self.states, depth }
     }
 }
 
 impl Ui {
+    /// Styles again each element marked since the last cascade, and what is
+    /// in it as far as the change reaches.
     pub(crate) fn cascade(&mut self) {
-        self.scrollers.clear();
-        let top = Inherited { text: TextStyle::default(), vars: Rc::default(), sheets: Vec::new(), in_scroller: false };
+        voxear_core::profile_scope!("Styles");
         let mut warnings = Vec::new();
-        self.cascade_node(self.root, &top, &mut Vec::new(), &mut warnings);
+        for (node, deep) in self.marked_for_restyle() {
+            let (inherited, mut path) = self.inherited(node);
+            self.cascade_node(node, &inherited, &mut path, deep, &mut warnings);
+        }
         self.warn(warnings);
+    }
+
+    /// The elements marked since the last cascade that are still in the
+    /// tree, each once and deep if it was ever marked so, parents before
+    /// what is in them, leaving out those inside one marked deep, as styling
+    /// that one styles them.
+    fn marked_for_restyle(&mut self) -> Vec<(taffy::NodeId, bool)> {
+        let mut marked: Vec<(taffy::NodeId, bool)> = Vec::new();
+        let mut at: HashMap<taffy::NodeId, usize> = HashMap::new();
+        for (node, deep) in std::mem::take(&mut self.restyles) {
+            match at.get(&node) {
+                Some(&index) => marked[index].1 |= deep,
+                None => {
+                    at.insert(node, marked.len());
+                    marked.push((node, deep));
+                }
+            }
+        }
+        let deep_at = |node: taffy::NodeId| at.get(&node).is_some_and(|&index| marked[index].1);
+        let mut kept = Vec::new();
+        for &(node, deep) in &marked {
+            // Gone since it was marked.
+            if self.tree.get_node_context(node).is_none() {
+                continue;
+            }
+            let (mut top, mut depth, mut covered) = (node, 0, false);
+            while let Some(parent) = self.tree.parent(top) {
+                covered |= deep_at(parent);
+                (top, depth) = (parent, depth + 1);
+            }
+            if !covered && top == self.root {
+                kept.push((depth, node, deep));
+            }
+        }
+        kept.sort_by_key(|&(depth, ..)| depth);
+        kept.into_iter().map(|(_, node, deep)| (node, deep)).collect()
+    }
+
+    /// What `node`'s parent passes down, as the last cascade left it, and
+    /// the elements above `node` as selectors see them, from the root.
+    fn inherited(&self, node: taffy::NodeId) -> (Inherited, Vec<Seen>) {
+        let mut above = Vec::new();
+        let mut at = node;
+        while let Some(parent) = self.tree.parent(at) {
+            above.push(parent);
+            at = parent;
+        }
+        above.reverse();
+        let (mut sheets, mut path) = (Vec::new(), Vec::with_capacity(above.len() + 1));
+        for (depth, &ancestor) in above.iter().enumerate() {
+            let element = self.tree.get_node_context(ancestor).expect("every node has an element");
+            sheets.extend(element.sheets.iter().map(|sheet| (sheet.clone(), depth)));
+            path.push(Seen::of(element));
+        }
+        let parent = above.last().and_then(|&parent| self.tree.get_node_context(parent));
+        let inherited = Inherited {
+            text: parent.map_or_else(TextStyle::default, |parent| parent.text_style),
+            vars: parent.map_or_else(Rc::default, |parent| parent.vars.clone()),
+            sheets: Rc::new(sheets),
+            in_scroller: parent.is_some_and(|parent| parent.computed.overflow == Overflow::Scroll),
+        };
+        (inherited, path)
     }
 
     fn cascade_node(
@@ -55,17 +138,19 @@ impl Ui {
         node: taffy::NodeId,
         parent: &Inherited,
         path: &mut Vec<Seen>,
+        deep: bool,
         warnings: &mut Vec<String>,
     ) {
         let element = self.tree.get_node_context(node).expect("every node has an element");
-        let mut sheets = parent.sheets.clone();
-        sheets.extend(element.sheets.iter().map(|sheet| (sheet.clone(), path.len())));
-        path.push(Seen {
-            tag: element.kind.tag(),
-            name: element.name.clone(),
-            classes: element.classes.clone(),
-            states: element.states,
-        });
+        let sheets = match element.sheets.is_empty() {
+            true => parent.sheets.clone(),
+            false => {
+                let mut sheets = (*parent.sheets).clone();
+                sheets.extend(element.sheets.iter().map(|sheet| (sheet.clone(), path.len())));
+                Rc::new(sheets)
+            }
+        };
+        path.push(Seen::of(element));
         let (base, base_text, inline) = (element.base.clone(), element.base_text, element.inline.clone());
 
         let declarations = matching(&sheets, path, &inline);
@@ -92,8 +177,12 @@ impl Ui {
         let clips =
             if style.overflow == Overflow::Visible { taffy::Overflow::Visible } else { taffy::Overflow::Hidden };
         style.layout.overflow = taffy::Point { x: clips, y: clips };
-        if style.overflow == Overflow::Scroll {
-            self.scrollers.push(node);
+        let scrolls = style.overflow == Overflow::Scroll;
+        if scrolls != self.scrollers.contains(&node) {
+            match scrolls {
+                true => self.scrollers.push(node),
+                false => self.scrollers.retain(|&scroller| scroller != node),
+            }
         }
 
         let (now, clock) = (self.input.time, self.input.clock);
@@ -112,9 +201,14 @@ impl Ui {
             _ => None,
         };
         element.styled = true;
+        // Whether what the children inherit changed, so they need styling again too.
+        let passed_on = element.text_style != text
+            || (!Rc::ptr_eq(&element.vars, &vars) && element.vars != vars)
+            || (element.computed.overflow == Overflow::Scroll) != scrolls;
         let layout = (element.computed.layout != style.layout).then(|| style.layout.clone());
         element.computed = style;
         element.text_style = text;
+        element.vars = vars.clone();
         let mut reshape = false;
         if let Some(label) = &mut element.text
             && label.style != text
@@ -128,10 +222,11 @@ impl Ui {
             let _ = self.tree.mark_dirty(node);
         }
 
-        let in_scroller = self.tree.get_node_context(node).is_some_and(|e| e.computed.overflow == Overflow::Scroll);
-        let inherited = Inherited { text, vars, sheets, in_scroller };
-        for child in self.tree.children(node).unwrap_or_default() {
-            self.cascade_node(child, &inherited, path, warnings);
+        if deep || passed_on {
+            let inherited = Inherited { text, vars, sheets, in_scroller: scrolls };
+            for child in self.tree.children(node).unwrap_or_default() {
+                self.cascade_node(child, &inherited, path, deep, warnings);
+            }
         }
         path.pop();
     }
@@ -198,15 +293,19 @@ fn matching<'a>(
     inline: &'a [Declaration],
 ) -> Vec<(&'a Declaration, &'a str)> {
     let facts: Vec<Facts> = path.iter().enumerate().map(|(depth, seen)| seen.facts(depth)).collect();
+    let element = facts.last().expect("the path ends at the element");
     let mut matched = Vec::new();
     for (sheet_index, (sheet, scope)) in sheets.iter().enumerate() {
-        for (rule_index, rule) in sheet.rules.iter().enumerate() {
-            let best = rule.selectors.iter().filter(|s| s.matches(&facts, *scope)).map(|s| s.specificity).max();
-            if let Some(specificity) = best {
-                matched.push((specificity, sheet_index, rule_index));
+        for (rule_index, selector_index) in sheet.index.candidates(element) {
+            let selector = &sheet.rules[rule_index].selectors[selector_index];
+            if selector.matches(&facts, *scope) {
+                matched.push((selector.specificity, sheet_index, rule_index));
             }
         }
     }
+    // A rule applies once, as specific as the most specific of its selectors that match.
+    matched.sort_unstable_by_key(|&(specificity, sheet, rule)| (sheet, rule, std::cmp::Reverse(specificity)));
+    matched.dedup_by_key(|&mut (_, sheet, rule)| (sheet, rule));
     matched.sort_unstable();
     let from_sheets = matched.into_iter().flat_map(|(_, sheet, rule)| {
         let sheet = &sheets[sheet].0;

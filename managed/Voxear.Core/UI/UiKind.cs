@@ -14,5 +14,7 @@ namespace Voxear
 		Dropdown = 8,
 		Image = 9,
 		Icon = 10,
+		ListView = 11,
+		TreeView = 12,
 	}
 }

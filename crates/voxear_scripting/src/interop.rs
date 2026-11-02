@@ -39,11 +39,11 @@ use crate::services::{
     SceneLoadOptions, SceneRequest, SpawnedPrefab, with_services,
 };
 use crate::ui::{
-    ui_changed, ui_class, ui_clicked, ui_close, ui_create, ui_find, ui_load, ui_new, ui_remove, ui_set_text, ui_style,
-    ui_text, ui_value, ui_visible,
+    ui_changed, ui_class, ui_clicked, ui_close, ui_create, ui_find, ui_items, ui_load, ui_new, ui_remove, ui_set_text,
+    ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 30;
+pub(crate) const API_VERSION: u32 = 31;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -222,6 +222,10 @@ pub(crate) struct NativeApi {
     pub voice_value: unsafe extern "C" fn(voice: u64, what: i32, set: i32, value: f32) -> f32,
     pub source_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: f32) -> f32,
     pub audio_bus: unsafe extern "C" fn(bus: i32, set: i32, value: f32) -> f32,
+    /// A list view's items, for `ListView` and `TreeView`: how many there
+    /// are and how tall each row is, and for a tree, each item's id and its
+    /// parent's (0 at the top), `count` pairs in order (see [`crate::ui`]).
+    pub ui_items: unsafe extern "C" fn(element: i32, count: i32, parents: *const u64, item_height: f32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -1005,6 +1009,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         voice_value,
         source_value,
         audio_bus,
+        ui_items,
     }
 }
 

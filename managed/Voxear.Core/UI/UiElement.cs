@@ -216,6 +216,16 @@ namespace Voxear
 		{
 		}
 
+		/// <summary>For a kind of element to send what it holds besides what every element does, once it is on screen.</summary>
+		private protected virtual void OnShown()
+		{
+		}
+
+		/// <summary>For a kind of element to let go of what it keeps for being on screen, as it is taken off.</summary>
+		private protected virtual void OnTakenOff()
+		{
+		}
+
 		/// <summary>What the engine makes it from: its text, or for some kinds, such as a slider's range, what else they need.</summary>
 		private protected virtual string MadeFrom => text;
 
@@ -267,6 +277,7 @@ namespace Voxear
 			{
 				child.ShowIn(this);
 			}
+			OnShown();
 		}
 
 		/// <summary>Takes it off the screen, keeping what it shows, so it can show again elsewhere.</summary>
@@ -285,6 +296,7 @@ namespace Voxear
 		private void Forget()
 		{
 			UiElements.Drop(this);
+			OnTakenOff();
 			Id = -1;
 			foreach (var child in children)
 			{

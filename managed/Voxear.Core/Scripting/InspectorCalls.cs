@@ -59,6 +59,11 @@ namespace Voxear.Scripting
 				InspectorDrawers.Draw(json, root);
 				return;
 			}
+			if (action == "ui-rows")
+			{
+				UiLists.Fill(root);
+				return;
+			}
 			if (action is "live-read" or "live-write" or "live-call")
 			{
 				Live(json, root, action);

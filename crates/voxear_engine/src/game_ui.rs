@@ -5,13 +5,19 @@
 //! view: the whole window in a player, the Game view in the editor. Scripts
 //! hold documents and elements as numbers, which [`UiNumbers`] keeps; the
 //! editor's Inspector keeps its own for the drawers scripts draw fields with.
+//!
+//! The scripts' list and tree views (`ListView` and `TreeView`) are Voxear
+//! UI's own, which keep elements only for the rows on screen. What they make
+//! and bind is queued, and after the scripts' updates the game lays its UI
+//! out and has the scripts make and fill those rows ([`GameUi::rows_to_fill`]),
+//! so they show the right items in the frame drawn next.
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use anyhow::{Context, Result};
 use voxear_render::Renderer;
-use voxear_scripting::{UiAnswer, UiAsk};
-use voxear_ui::{ElementKind, Kind, NodeId, Style, Ui, UiFrame};
+use voxear_scripting::{RowWork, UiAnswer, UiAsk};
+use voxear_ui::{ElementKind, Kind, ListItems, NodeId, Style, TreeItems, Ui, UiFrame};
 
 use crate::Content;
 
@@ -136,10 +142,12 @@ impl UiNumbers {
             UiAsk::Visible => return UiAnswer::Yes(ui.is_visible(node)),
             UiAsk::SetVisible(visible) => ui.set_visible(node, visible),
             UiAsk::Clicked => return UiAnswer::Yes(ui.clicked(node)),
-            UiAsk::Changed => return UiAnswer::Yes(ui.changed(node)),
+            UiAsk::Changed => return UiAnswer::Yes(ui.changed(node) || ui.selection_changed(node)),
             UiAsk::Value => return UiAnswer::Number(value(ui, node)),
             UiAsk::SetValue(to) => set_value(ui, node, to),
             UiAsk::SetStyle(style) => ui.set_inline_style(node, style),
+            // Only the game's own UI fills lists from scripts.
+            UiAsk::Items { .. } => {}
         }
         UiAnswer::None
     }
@@ -156,11 +164,14 @@ fn change_class(ui: &mut Ui, node: NodeId, class: &str, change: ClassChange) -> 
     ui.has_class(node, class)
 }
 
-/// A slider's value, or a toggle's, 1 when ticked and 0 when not.
+/// A slider's value, or a toggle's, 1 when ticked and 0 when not; a list
+/// view's selected item, by index, or a tree view's, by id, -1 for none.
 fn value(ui: &Ui, node: NodeId) -> f32 {
     match ui.kind(node) {
         Some(Kind::Slider) => ui.slider_value(node),
         Some(Kind::Dropdown) => ui.selected_option(node) as f32,
+        Some(Kind::ListView) => ui.selection(node).first().map_or(-1.0, |&index| index as f32),
+        Some(Kind::TreeView) => ui.selected_items(node).first().map_or(-1.0, |&item| item as f32),
         _ => f32::from(u8::from(ui.is_checked(node))),
     }
 }
@@ -169,7 +180,82 @@ fn set_value(ui: &mut Ui, node: NodeId, value: f32) {
     match ui.kind(node) {
         Some(Kind::Slider) => ui.set_slider_value(node, value),
         Some(Kind::Dropdown) => ui.set_selected_option(node, value.max(0.0) as usize),
+        Some(Kind::ListView) if value < 0.0 => ui.set_selection(node, &[]),
+        Some(Kind::ListView) => ui.set_selection(node, &[value as usize]),
+        Some(Kind::TreeView) if value < 0.0 => ui.set_selection(node, &[]),
+        Some(Kind::TreeView) => {
+            ui.select_item(node, value as u64);
+        }
         _ => ui.set_checked(node, value != 0.0),
+    }
+}
+
+/// A row a list or tree view made or bound since the scripts last filled
+/// rows: the view, the row (a tree row's content), and the item bound.
+struct RowEvent {
+    list: NodeId,
+    row: NodeId,
+    made: bool,
+    item: Option<u64>,
+}
+
+type RowQueue = Rc<RefCell<Vec<RowEvent>>>;
+
+/// A list view the scripts fill: what it makes and binds waits for them.
+struct ScriptRows {
+    list: NodeId,
+    queue: RowQueue,
+}
+
+impl ListItems for ScriptRows {
+    fn make(&mut self, _ui: &mut Ui, row: NodeId) {
+        self.queue.borrow_mut().push(RowEvent { list: self.list, row, made: true, item: None });
+    }
+
+    fn bind(&mut self, _ui: &mut Ui, row: NodeId, index: usize) {
+        self.queue.borrow_mut().push(RowEvent { list: self.list, row, made: false, item: Some(index as u64) });
+    }
+}
+
+/// A tree view's items as the scripts last gave them: each one's children
+/// by id, in order, those at the top under `None`.
+#[derive(Default)]
+struct TreeShape {
+    children: HashMap<Option<u64>, Vec<u64>>,
+}
+
+impl TreeShape {
+    fn of(pairs: &[[u64; 2]]) -> Self {
+        let mut children: HashMap<Option<u64>, Vec<u64>> = HashMap::new();
+        for &[item, parent] in pairs {
+            children.entry((parent != 0).then_some(parent)).or_default().push(item);
+        }
+        Self { children }
+    }
+}
+
+/// A tree view the scripts fill, from the shape they gave it.
+struct ScriptTree {
+    tree: NodeId,
+    shape: Rc<RefCell<TreeShape>>,
+    queue: RowQueue,
+}
+
+impl TreeItems for ScriptTree {
+    fn children(&self, parent: Option<u64>) -> Vec<u64> {
+        self.shape.borrow().children.get(&parent).cloned().unwrap_or_default()
+    }
+
+    fn has_children(&self, item: u64) -> bool {
+        self.shape.borrow().children.get(&Some(item)).is_some_and(|children| !children.is_empty())
+    }
+
+    fn make(&mut self, _ui: &mut Ui, row: NodeId) {
+        self.queue.borrow_mut().push(RowEvent { list: self.tree, row, made: true, item: None });
+    }
+
+    fn bind(&mut self, _ui: &mut Ui, row: NodeId, item: u64) {
+        self.queue.borrow_mut().push(RowEvent { list: self.tree, row, made: false, item: Some(item) });
     }
 }
 
@@ -177,6 +263,14 @@ fn set_value(ui: &mut Ui, node: NodeId, value: f32) {
 pub struct GameUi {
     ui: Ui,
     numbers: UiNumbers,
+    /// The list and tree views the scripts gave items, what they made and
+    /// bound since, and each tree's items.
+    lists: Vec<NodeId>,
+    rows: RowQueue,
+    shapes: HashMap<NodeId, Rc<RefCell<TreeShape>>>,
+    /// The size and scale the last frame was laid out for, to lay the UI
+    /// out again before the scripts fill rows.
+    laid_out: Option<((u32, u32), f32)>,
 }
 
 impl GameUi {
@@ -229,7 +323,68 @@ impl GameUi {
 
     /// Answers what a script asks of an element: see [`UiAsk`].
     pub fn ask(&mut self, element: u32, ask: UiAsk<'_>) -> UiAnswer {
+        if let UiAsk::Items { count, tree, item_height } = ask {
+            self.set_items(element, count, tree, item_height);
+            return UiAnswer::None;
+        }
         self.numbers.ask(&mut self.ui, element, ask)
+    }
+
+    /// Gives a list or tree view its items, each row `item_height` tall:
+    /// how many a list has, or a tree's ids with their parents'. Every row
+    /// on screen is filled again.
+    fn set_items(&mut self, element: u32, count: usize, tree: Option<&[[u64; 2]]>, item_height: f32) {
+        let Some(node) = self.numbers.node(element) else { return };
+        let given = self.lists.contains(&node);
+        match (self.ui.kind(node), tree) {
+            (Some(Kind::ListView), _) if given => self.ui.set_list_count(node, count),
+            (Some(Kind::ListView), _) => {
+                self.ui.bind_list(node, count, ScriptRows { list: node, queue: self.rows.clone() });
+            }
+            (Some(Kind::TreeView), Some(pairs)) => {
+                let shape = self.shapes.entry(node).or_default().clone();
+                *shape.borrow_mut() = TreeShape::of(pairs);
+                match given {
+                    true => self.ui.refresh_list(node),
+                    false => self.ui.bind_tree(node, ScriptTree { tree: node, shape, queue: self.rows.clone() }),
+                }
+            }
+            _ => return,
+        }
+        if item_height > 0.0 {
+            self.ui.set_item_height(node, item_height);
+        }
+        if !given {
+            self.lists.push(node);
+        }
+    }
+
+    /// Lays the UI out as the last frame was, and gives the rows its list
+    /// and tree views made or bound for the scripts to make and fill, so
+    /// the frame drawn next shows them right. Nothing before a first frame.
+    pub fn rows_to_fill(&mut self) -> Vec<RowWork> {
+        self.lists.retain(|&list| self.ui.kind(list).is_some());
+        self.shapes.retain(|list, _| self.lists.contains(list));
+        let Some(((width, height), scale)) = self.laid_out.filter(|_| !self.lists.is_empty()) else {
+            return Vec::new();
+        };
+        self.ui.prepare(width, height, scale);
+        let events = std::mem::take(&mut *self.rows.borrow_mut());
+        let mut work: Vec<RowWork> = Vec::new();
+        for event in events {
+            if self.ui.kind(event.list).is_none() || self.ui.kind(event.row).is_none() {
+                continue;
+            }
+            let (list, row) = (self.numbers.number(event.list), self.numbers.number(event.row));
+            match work.iter_mut().find(|work| work.row == row) {
+                Some(work) => {
+                    work.made |= event.made;
+                    work.item = event.item.or(work.item);
+                }
+                None => work.push(RowWork { list, row, made: event.made, item: event.item }),
+            }
+        }
+        work
     }
 
     pub fn text(&self, element: u32) -> Option<String> {
@@ -287,6 +442,7 @@ impl GameUi {
     /// `width` by `height` pixels, at `scale` pixels to a logical one.
     pub fn frame(&mut self, delta: f32, (width, height): (u32, u32), scale: f32) -> UiFrame {
         self.ui.advance(delta);
+        self.laid_out = Some(((width, height), scale));
         self.ui.frame(width, height, scale)
     }
 

@@ -113,6 +113,15 @@ pub(crate) unsafe extern "C" fn ui_value(element: i32, set: i32, value: f32) -> 
     }
 }
 
+/// Gives a list view `count` items, each row `item_height` tall; for a tree
+/// view, `parents` holds `count` pairs, each item's id and its parent's, 0
+/// for one at the top, in the order they show.
+pub(crate) unsafe extern "C" fn ui_items(element: i32, count: i32, parents: *const u64, item_height: f32) {
+    let count = count.max(0) as usize;
+    let tree = (!parents.is_null()).then(|| unsafe { std::slice::from_raw_parts(parents.cast::<[u64; 2]>(), count) });
+    ask(element, UiAsk::Items { count, tree, item_height });
+}
+
 pub(crate) unsafe extern "C" fn ui_style(element: i32, style: *const u8, len: i32) {
     let style = unsafe { utf8(style, len) };
     ask(element, UiAsk::SetStyle(&style));

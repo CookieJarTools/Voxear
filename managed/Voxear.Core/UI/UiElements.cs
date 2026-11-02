@@ -77,6 +77,7 @@ namespace Voxear
 		{
 			elements.Clear();
 			listening.Clear();
+			UiLists.Forget();
 		}
 
 		private static void Guarded(bool happened, Action raise)

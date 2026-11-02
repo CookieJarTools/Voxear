@@ -153,6 +153,18 @@ impl Engine {
         scripts.call_live(&mut self.world, handle, method)
     }
 
+    /// Has the scripts make and fill the game UI's list rows (see
+    /// [`crate::game_ui`]), lending `services` for their elements. Nothing
+    /// without running scripts.
+    pub fn fill_ui_rows(
+        &mut self,
+        services: &mut dyn voxear_scripting::ScriptServices,
+        rows: &[voxear_scripting::RowWork],
+    ) -> anyhow::Result<()> {
+        let Some(scripts) = self.scripts.as_mut().filter(|_| !self.edit_mode) else { return Ok(()) };
+        scripts.fill_rows(&mut self.world, services, rows)
+    }
+
     /// Asks a behaviour's code what the Inspector wants, as for an Obj
     /// with no instance of it (see [`ScriptRuntime::inspector`]).
     pub fn ask_inspector(

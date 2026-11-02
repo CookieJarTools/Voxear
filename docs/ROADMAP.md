@@ -361,7 +361,8 @@ Still to do in M3:
   - [x] UI built in code, as Unity's UI Toolkit: `UiDocument.Create()`, `new Panel()`, `Label`, `Button`,
     `Toggle`, `Slider`, `TextField`, `ScrollView`, `Foldout`, `Dropdown` and `Icon`, `Add`, `Remove` and `Clear`,
     and `Changed` with each kind's own event
-  - [ ] list and tree views at runtime from C#, filled from code
+  - [x] list and tree views at runtime from C#, filled from code: `ListView<T>` and `TreeView<T>`, with `MakeRow`
+    and `BindRow`, rows filled in the frame they show in, and the selection
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.

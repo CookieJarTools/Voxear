@@ -99,6 +99,47 @@ name.Typed += text => player.Name = text;
 
 Like `Clicked`, these run at the start of the next frame.
 
+## Showing a list of items
+
+A `ListView` shows a list of items, one to a row, and scrolls when they do not fit. Only the rows on screen exist, so a list of thousands costs no more than a list of twenty. Each row shows its item's text:
+
+```csharp
+var names = hud.Root.Add(new ListView<string>(players));
+names.SetStyle("height: 240px");
+names.SelectionChanged += () => Log.Info($"{names.SelectedItem} picked");
+```
+
+To show more than text, say how to make a row once, with `MakeRow`, and how to show an item in it, with `BindRow`. A row is made once and then shows whichever item scrolls into it:
+
+```csharp
+var scores = hud.Root.Add(new ListView<Player>(team)
+{
+	MakeRow = row =>
+	{
+		row.Add(new Label());
+		row.Add(new Label()).AddClass("score");
+	},
+	BindRow = (row, player) =>
+	{
+		row.Children[0].Text = player.Name;
+		row.Children[1].Text = player.Score.ToString();
+	},
+});
+```
+
+After you change the items, as by adding one, call `Refresh()` so every row shows them again. `SelectedIndex` and `SelectedItem` say what is selected, and setting `SelectedIndex` selects a row; `-1` is nothing. `ItemHeight` sets how tall each row is, in pixels.
+
+## Showing a tree of items
+
+A `TreeView` shows items inside items, each opened and closed with its arrow. Give it the items at the top, and how to find what is in each:
+
+```csharp
+var folders = hud.Root.Add(new TreeView<Folder>(drive.Folders, folder => folder.Folders));
+folders.SelectionChanged += () => Open(folders.SelectedItem);
+```
+
+`MakeRow`, `BindRow`, `Refresh()` and `ItemHeight` work as a list's do, and `SelectedItem` says, or sets, what is selected. An item stays open and selected across a `Refresh()`, as each item is known by itself, the way a dictionary knows its keys.
+
 ## Using UI with the keyboard
 
 In a running game, Tab and Shift+Tab move between buttons, text fields, toggles, sliders and dropdowns. Enter or Space clicks a button or flips a toggle, the arrow keys move a slider or a dropdown's choice, and Escape lets go. The element you are on matches `:focus` in your style sheet, and `:focus-visible` too when you reached it with Tab, or when it is a text field. Style the focus ring with `:focus-visible`, so a button you click does not keep a ring as if marking what was pressed last.
@@ -109,7 +150,7 @@ Gamepads cannot drive UI yet.
 
 ## What C# cannot do with UI yet
 
-Scripts cannot yet read which tab is picked, turn an element off with `:disabled`, show a picture in an `Image`, or fill a `ListView`. For a picked tab, name each `Tab`, whose page is `Visible` only while its tab is picked. Elements made in code cannot have a name, so `Find` does not find them; keep them instead.
+Scripts cannot yet read which tab is picked, turn an element off with `:disabled`, show a picture in an `Image`, or fill a `ListView` or `TreeView` declared in markup; make those in code instead. For a picked tab, name each `Tab`, whose page is `Visible` only while its tab is picked. Elements made in code cannot have a name, so `Find` does not find them; keep them instead.
 
 ## UI text and fonts
 

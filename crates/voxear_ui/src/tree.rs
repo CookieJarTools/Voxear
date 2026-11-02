@@ -851,6 +851,19 @@ impl Ui {
         UiFrame { quads, atlas: self.atlas.snapshot() }
     }
 
+    /// Lays the tree out and lets each list make and bind the rows now on
+    /// screen, without drawing, for lists whose rows are filled by code that
+    /// cannot run inside [`frame`](Self::frame), as a game's scripts. The
+    /// frame after lays out again what that code changed.
+    pub fn prepare(&mut self, width: u32, height: u32, scale: f32) {
+        if !self.restyles.is_empty() {
+            self.cascade();
+        }
+        self.layout(width, height, scale);
+        self.update_scroll_limits();
+        self.update_lists();
+    }
+
     fn layout(&mut self, width: u32, height: u32, scale: f32) {
         voxear_core::profile_scope!("Layout");
         let scale = scale.max(0.25);

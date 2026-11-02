@@ -1211,6 +1211,13 @@ how they look, as UXML and USS do in Unity:
   views. Every row ends in a `row-bar`, which the default theme shows as an accent bar down a selected row.
 - **The editor is built from these.** Every long list in the editor (Hierarchy, Project, Console, inspector
   arrays) is a virtualized list or tree view, never one element per item.
+- **In a game's scripts** *(implemented)*, `ListView<T>` and `TreeView<T>` are these views, made in code as the
+  other elements are, with Unity's `makeItem` and `bindItem` as `MakeRow` and `BindRow` (a label of the item's
+  text without them). A list sends its count, and a tree its items as ids with their parents' (`ui_items`, API
+  31); the engine's `GameUi` queues what the views make and bind, and after the scripts' updates it lays the UI
+  out (`Ui::prepare`) and has the scripts make and fill those rows in one JSON call (`fill_rows`), so a row shows
+  its item in the very frame it scrolls on. The selection is the element's value: a list's index, or a tree's
+  item id, which the scripts give each item and keep across a `Refresh`.
 
 **Input controls** *(implemented)*. Each is made of ordinary elements with classes, so a sheet can restyle
 every part:

@@ -236,6 +236,13 @@ pub enum UiAsk<'a> {
     SetValue(f32),
     /// Declarations that win over its sheets.
     SetStyle(&'a str),
+    /// A list view's items: how many, how tall each row is, and for a tree
+    /// view, each item's id and its parent's, 0 at the top, in order.
+    Items {
+        count: usize,
+        tree: Option<&'a [[u64; 2]]>,
+        item_height: f32,
+    },
 }
 
 /// What an element answered.

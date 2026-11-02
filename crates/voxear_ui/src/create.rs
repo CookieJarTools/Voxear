@@ -21,11 +21,14 @@ pub enum ElementKind {
     Dropdown,
     Image,
     Icon,
+    /// A list whose rows its owner makes and fills, as the game's scripts do.
+    ListView,
+    TreeView,
 }
 
 impl ElementKind {
     /// Every kind, in the order scripts number them.
-    pub const ALL: [ElementKind; 11] = [
+    pub const ALL: [ElementKind; 13] = [
         Self::Panel,
         Self::ScrollView,
         Self::Label,
@@ -37,6 +40,8 @@ impl ElementKind {
         Self::Dropdown,
         Self::Image,
         Self::Icon,
+        Self::ListView,
+        Self::TreeView,
     ];
 
     /// The kind scripts know by this number, or none.
@@ -80,6 +85,9 @@ impl Ui {
             }
             ElementKind::Image => self.image(parent),
             ElementKind::Icon => self.icon(parent, text),
+            // Empty until its owner gives it items, as a list declared in markup is.
+            ElementKind::ListView => self.add(parent, Element::new(Kind::ListView, Style::column().scroll())),
+            ElementKind::TreeView => self.add(parent, Element::new(Kind::TreeView, Style::column().scroll())),
         }
     }
 }

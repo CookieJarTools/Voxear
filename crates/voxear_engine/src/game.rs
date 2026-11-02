@@ -350,6 +350,26 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        // The UI's list and tree views have the scripts fill the rows now on screen, before the frame draws them.
+        let rows = self.ui.rows_to_fill();
+        if !rows.is_empty() {
+            profile_scope!("UI Rows");
+            let mut services = GameServices {
+                content: &mut self.content,
+                loads: &mut self.loads,
+                levels: &self.levels,
+                renderer: renderer.as_deref_mut(),
+                models: self.models,
+                unload_requested: &mut self.unload_requested,
+                previews: &mut self.previews,
+                ui: &mut self.ui,
+                display: &mut self.display,
+                audio: &mut self.audio,
+            };
+            if let Err(error) = self.engine.fill_ui_rows(&mut services, &rows) {
+                tracing::error!(target: "script", "{error:#}");
+            }
+        }
         profile_scope!("Loading");
         for (id, target, options) in self.loads.advance(&mut self.content, renderer.as_deref_mut()) {
             let changed = match target {

@@ -99,5 +99,6 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<ulong, int, int, float, float> VoiceValue;
 		public delegate* unmanaged[Cdecl]<ulong, int, int, float, float> SourceValue;
 		public delegate* unmanaged[Cdecl]<int, int, float, float> AudioBus;
+		public delegate* unmanaged[Cdecl]<int, int, ulong*, float, void> UiItems;
 	}
 }

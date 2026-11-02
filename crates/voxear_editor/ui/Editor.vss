@@ -1839,10 +1839,6 @@ DockSpace .project-split > .split-divider {
     border-color: transparent;
 }
 
-.picker-head > .picker-back + .picker-title {
-    padding-left: 2px;
-}
-
 .picker-search {
     flex-shrink: 0;
 }

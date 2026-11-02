@@ -2683,6 +2683,18 @@ const SCRIPTS_IN_FOLDERS: &str = r##"{"behaviours": [
   {"name": "Game.Spawned", "bases": [], "interfaces": [], "fields": [], "menu": ""}
 ], "types": {}, "commands": []}"##;
 
+#[test]
+fn the_editors_style_sheets_read_without_warnings() {
+    let sheets = [
+        ("Editor.vss", include_str!("../ui/Editor.vss")),
+        ("Default.vss", include_str!("../../voxear_ui/theme/Default.vss")),
+    ];
+    for (name, text) in sheets {
+        let sheet = voxear_ui::StyleSheet::parse(name, text);
+        assert!(sheet.warnings().is_empty(), "{name}: {:?}", sheet.warnings());
+    }
+}
+
 /// Side bar buttons, one alone and two sharing a menu, and an item.
 const SIDE_BAR: &str = r##"{"behaviours": [], "types": {}, "commands": [], "side_bar": {"buttons": [
   {"title": "Snap Everything", "icon": "grid", "type": "Game.Tools", "method": "Snap"},

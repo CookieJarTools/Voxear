@@ -2639,6 +2639,18 @@ fn picker_rows(ui: &Ui) -> Vec<(String, String)> {
     rows.into_iter().map(|row| (ui.text(ui.children(row)[1]), ui.text(ui.children(row)[2]))).collect()
 }
 
+/// A click whose press and release come frames apart, as a hand's do, so
+/// whatever the editor does between them happens, as it does when used.
+fn click_across_frames(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: NodeId) {
+    let [x, y, w, h] = editor.ui.rect(node);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    for _ in 0..3 {
+        frame(editor, renderer);
+    }
+    editor.ui.pointer_button(false);
+}
+
 /// The object picker's row that says `label`.
 fn picker_row(ui: &Ui, label: &str) -> Option<NodeId> {
     let list = ui.find(ui.root(), "picker-list")?;
@@ -4871,7 +4883,8 @@ fn the_object_picker_sets_a_mesh_renderers_material() {
             frame(&mut editor, &mut renderer);
         }
         let red = picker_row(&editor.ui, "Red.material").unwrap_or_else(|| panic!("Red is offered for {what}"));
-        click(&mut editor.ui, red);
+        // Pressed and let go a few frames apart, as a hand does, not within one frame.
+        click_across_frames(&mut editor, &mut renderer, red);
         for _ in 0..3 {
             frame(&mut editor, &mut renderer);
         }

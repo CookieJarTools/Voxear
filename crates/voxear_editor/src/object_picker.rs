@@ -177,6 +177,10 @@ impl ObjectPicker {
         if self.focusing {
             ui.focus(self.field);
             self.focusing = ui.focused() != Some(self.field);
+        } else if ui.is_pressed(self.panel) {
+            // A press inside it, as on a row, takes focus from the search while the button is down, which
+            // spans frames: the search has it back, so the picker stays open for the click to pick.
+            ui.focus(self.field);
         } else if ui.focused() != Some(self.field) {
             self.close(ui);
             return None;

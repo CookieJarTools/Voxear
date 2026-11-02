@@ -1704,8 +1704,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   is the active Obj, which the Inspector shows and the handles sit on; the others follow what a drag does to it,
   its change in the world applied to each about where the active Obj stands, and the drag is one `Edit::Group`
   to undo. Delete and Duplicate act on the outermost of them, and each one's bounds are drawn while there are
-  several. An Inspector not locked edits them all (`Inspector::set_also`): a value changed goes to each other Obj
-  with the same property, a Transform's only on the axes edited, and the edits are one step to undo.
+  several. An Inspector not locked edits them all (`Inspector::set_also`): it shows only the sections every one
+  has, "—" in a field (or an axis of one) they hold differently, with `.mixed` on its row, and a value changed
+  goes to each, a vector's or a Transform's only on the parts edited, as one step to undo.
 - **Scene view tools** (`scene_tools`), as Unity's. A click selects the nearest Obj under the pointer: a ray
   against each mesh's bounds in the Obj's own space (`Renderer::mesh_bounds`; cooked meshes keep only a sphere,
   so they use the box around it), or a light or camera close to where it shows; a click on nothing clears the

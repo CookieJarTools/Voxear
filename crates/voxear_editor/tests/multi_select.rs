@@ -158,6 +158,33 @@ fn several_objs_are_selected_moved_and_deleted_together() {
     editor.undo(&mut renderer);
     assert_eq!((position(&editor, a), position(&editor, b)), (start_a, start_b), "one undo takes both back");
 
+    // Only what every one selected has shows, and a value they hold differently shows "—".
+    let lamp = obj(&editor, "Lamp");
+    editor.select_many(vec![a, lamp]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(says(&editor, "Transform"), "both have a Transform");
+    assert!(!says(&editor, "Mesh Renderer") && !says(&editor, "Light"), "neither's own component shows");
+    let mut fields = Vec::new();
+    let mut stack = vec![editor.ui.root()];
+    while let Some(node) = stack.pop() {
+        if editor.ui.has_class(node, "axis-input") {
+            fields.push(node);
+        }
+        stack.extend(editor.ui.children(node));
+    }
+    fields.sort_by(|p, q| editor.ui.rect(*p)[1].total_cmp(&editor.ui.rect(*q)[1]).then(editor.ui.rect(*p)[0].total_cmp(&editor.ui.rect(*q)[0])));
+    let (spinner_at, lamp_at) = (position(&editor, a), position(&editor, lamp));
+    let shown: Vec<String> = fields[..3].iter().map(|&f| editor.ui.text(f)).collect();
+    for axis in 0..3 {
+        let differs = (spinner_at[axis] - lamp_at[axis]).abs() > 1e-4;
+        assert_eq!(shown[axis] == "—", differs, "Position {axis}: {shown:?}");
+    }
+    editor.select_many(vec![a, b]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(says(&editor, "Mesh Renderer"), "two cubes share their Mesh Renderer");
+
     // A box over the whole Scene view selects all it shows.
     editor.select(None);
     let [x, y, w, h] = camera.rect;

@@ -732,7 +732,7 @@ impl Inspector {
         self.transform_menu = menu;
         self.headers.push((None, transform));
 
-        let layout = layout(game, entity, &self.types);
+        let layout = self.layout_for(game, entity);
         let locks = world.get::<Locks>(entity).cloned();
         for (part, values) in &layout {
             // A C# component is shown as a box of data, apart from behaviours' code.
@@ -1080,6 +1080,16 @@ impl Inspector {
 
     /// Applies what was typed or picked, and shows changes made elsewhere.
     /// Returns what was edited this frame, for undo.
+    /// The sections shown for `entity`: its own, and with other Objs
+    /// selected, only those every one of them has too, as Unity's Inspector
+    /// shows only the components all of them share.
+    fn layout_for(&self, game: &Game, entity: Entity) -> Vec<(Part, Vec<Prop>)> {
+        let mut parts = layout(game, entity, &self.types);
+        let world = &game.engine.world;
+        parts.retain(|(part, _)| self.also.iter().all(|&other| props::parts(world, other).contains(part)));
+        parts
+    }
+
     /// Makes edits here go to `others` too, the other Objs selected with the
     /// one shown, and says how many Objs it edits.
     pub fn set_also(&mut self, ui: &mut Ui, game: &Game, others: Vec<Entity>, playing: bool) {
@@ -1103,7 +1113,7 @@ impl Inspector {
         };
         let locks = game.engine.world.get::<Locks>(entity).cloned();
         self.remember_groups(ui);
-        let layout = layout(game, entity, &self.types);
+        let layout = self.layout_for(game, entity);
         let conditions = attributes::key(game, &self.types, entity, &layout);
         if layout != self.built.0 || playing != self.built.1 || locks != self.built.2 || conditions != self.conditions {
             self.show(ui, game, Some(entity), playing);
@@ -1133,10 +1143,12 @@ impl Inspector {
             if let Some(picked) = read_control(ui, &row.control, &current) {
                 let picked = clamp(picked, row.limits);
                 let changed = props::set(game, renderer.as_deref_mut(), &self.types, entity, &row.prop, picked.clone());
-                // The same value goes to each other Obj selected that has the same thing.
+                // The same value goes to each other Obj selected that has the same thing; of a vector
+                // or a colour, only the parts changed, so each keeps its own other parts.
                 for &other in self.also.iter().filter(|_| changed) {
-                    if props::get(game, &self.types, other, &row.prop).is_some() {
-                        props::set(game, renderer.as_deref_mut(), &self.types, other, &row.prop, picked.clone());
+                    if let Some(theirs) = props::get(game, &self.types, other, &row.prop) {
+                        let value = changed_parts(&current, &picked, theirs);
+                        props::set(game, renderer.as_deref_mut(), &self.types, other, &row.prop, value);
                     }
                 }
                 if let (true, Prop::Field { behaviour, .. }) = (changed, &row.prop)
@@ -1147,6 +1159,9 @@ impl Inspector {
             }
             if let Some(now) = props::get(game, &self.types, entity, &row.prop) {
                 refresh_control(ui, &mut row.control, &now);
+                let theirs: Vec<Value> =
+                    self.also.iter().filter_map(|&other| props::get(game, &self.types, other, &row.prop)).collect();
+                show_mixed(ui, row.row, &row.control, &now, &theirs);
             }
         }
         let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);
@@ -1226,6 +1241,25 @@ impl Inspector {
         write(ui, &fields.position, edited.position);
         write(ui, &fields.rotation, if rotation != euler { rotation } else { euler });
         write(ui, &fields.scale, edited.scale);
+        // An axis the other Objs selected hold otherwise shows "—".
+        let theirs: Vec<Transform> = self.also.iter().filter_map(|&other| world.get::<Transform>(other).copied()).collect();
+        let angles = |t: &Transform| {
+            let (y, x, z) = t.rotation.to_euler(EulerRot::YXZ);
+            Vec3::new(x, y, z) * (180.0 / std::f32::consts::PI)
+        };
+        let shown_angles = angles(&edited);
+        for (fields, mine, of) in [
+            (&fields.position, edited.position, theirs.iter().map(|t| t.position).collect::<Vec<_>>()),
+            (&fields.rotation, shown_angles, theirs.iter().map(angles).collect()),
+            (&fields.scale, edited.scale, theirs.iter().map(|t| t.scale).collect()),
+        ] {
+            for (axis, &field) in fields.iter().enumerate() {
+                let differs = of.iter().any(|other| (other[axis] - mine[axis]).abs() > 1e-4);
+                if differs && ui.focused() != Some(field) {
+                    ui.set_text(field, MIXED);
+                }
+            }
+        }
     }
 
     /// Marks the rows whose values are `kept`, and opens and answers the
@@ -1640,6 +1674,58 @@ fn info_box(ui: &mut Ui, container: NodeId, kind: InfoKind, message: &str) -> (N
 }
 
 /// Shows a value in its control, except in a field being typed in.
+/// What a field shows where the Objs selected hold different values.
+const MIXED: &str = "—";
+
+/// Shows "—" where the other Objs selected hold another value than the one
+/// shown, as Unity's Inspector does: each part of a vector or a colour on
+/// its own, any other value whole, in a field not being typed in. The row
+/// matches `.mixed` while any part differs.
+fn show_mixed(ui: &mut Ui, row: NodeId, control: &Control, value: &Value, theirs: &[Value]) {
+    let mixed = match (control, value) {
+        (Control::Axes(fields, _), Value::Vector(_) | Value::Color(_)) => {
+            let mine = numbers(value);
+            let mut any = false;
+            for (axis, &field) in fields.iter().enumerate() {
+                let differs = theirs.iter().any(|other| numbers(other).get(axis) != mine.get(axis));
+                if differs && ui.focused() != Some(field) {
+                    ui.set_text(field, MIXED);
+                }
+                any |= differs;
+            }
+            any
+        }
+        _ => theirs.iter().any(|other| other != value),
+    };
+    match control {
+        Control::Text(field) | Control::Fixed(field) if mixed && ui.focused() != Some(*field) => {
+            ui.set_text(*field, MIXED);
+        }
+        Control::Picker(_, label, _) if mixed => ui.set_text(*label, MIXED),
+        _ => {}
+    }
+    ui.set_class(row, "mixed", mixed);
+}
+
+/// The value an edit gives another Obj selected: `picked`, though of a
+/// vector or a colour only the parts that changed from `was`, the rest kept
+/// as `theirs` has them.
+fn changed_parts(was: &Value, picked: &Value, theirs: Value) -> Value {
+    let merge = |was: &[f32], now: &[f32], theirs: &[f32]| -> Vec<f32> {
+        theirs.iter().enumerate().map(|(i, &t)| if was.get(i) != now.get(i) { now[i] } else { t }).collect()
+    };
+    match (was, picked, theirs) {
+        (Value::Vector(was), Value::Vector(now), Value::Vector(theirs)) if theirs.len() == now.len() => {
+            Value::Vector(merge(was, now, &theirs))
+        }
+        (Value::Color(was), Value::Color(now), Value::Color(theirs)) => {
+            let merged = merge(was, now, &theirs);
+            Value::Color([merged[0], merged[1], merged[2]])
+        }
+        _ => picked.clone(),
+    }
+}
+
 fn refresh_control(ui: &mut Ui, control: &mut Control, value: &Value) {
     match (control, value) {
         (Control::Text(field), value) => {

@@ -15,7 +15,7 @@ MILESTONES = [
     ("M0", "Foundation", "Archetype ECS, Unity's lifecycle, C# on CoreCLR, the Vulkan device", "done"),
     ("M1", "Rendering core", "Render graph, bindless, GPU culling and LODs, shadows, clustered lights", "done"),
     ("M2", "Content, scenes and levels", "Assets, prefabs, levels, post-processing, content builds, async loading", "done"),
-    ("M3", "Editor and Voxear UI", "The Unity-style editor, its UI toolkit, play mode, undo, VoxDocs", "now"),
+    ("M3", "Editor and Voxear UI", "The Unity-style editor and its UI toolkit, growing all along", "ongoing"),
     ("", "Packages", "Share code, tools and content from GitHub, as Unity's packages", "next"),
     ("M4", "Input, localization, audio, physics", "Input actions, string tables, the mixer, Jolt and Box2D", "now"),
     ("M5", "Lighting", "Voxel GI, volumetric fog, soft shadows, probes, upscalers", "planned"),
@@ -41,7 +41,7 @@ THEMES = {
     },
 }
 
-LABELS = {"done": "Done", "now": "In progress", "next": "Next", "planned": "Planned"}
+LABELS = {"done": "Done", "ongoing": "Continuous", "now": "In progress", "next": "Next", "planned": "Planned"}
 
 WIDTH, TOP, ROW, LEFT = 880, 92, 40, 40
 FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
@@ -53,6 +53,9 @@ def marker(x, y, state, c):
         return (f'<circle cx="{x}" cy="{y}" r="8" fill="{c["done"]}"/>'
                 f'<path d="M{x-3.5} {y} l2.5 2.5 l4.5-5" fill="none" stroke="{c["bg"]}" stroke-width="2" '
                 f'stroke-linecap="round" stroke-linejoin="round"/>')
+    if state == "ongoing":
+        return (f'<circle cx="{x}" cy="{y}" r="8" fill="{c["now"]}"/>'
+                f'<circle cx="{x}" cy="{y}" r="3" fill="{c["bg"]}"/>')
     if state == "now":
         return (f'<circle cx="{x}" cy="{y}" r="7.5" fill="{c["bg"]}" stroke="{c["now"]}" stroke-width="2"/>'
                 f'<path d="M{x} {y-5.5} a5.5 5.5 0 0 1 0 11 z" fill="{c["now"]}"/>')
@@ -71,7 +74,7 @@ def draw(theme):
     ]
     # The legend, right-aligned.
     x = WIDTH - 36
-    for state in ["planned", "next", "now", "done"]:
+    for state in ["planned", "next", "now", "ongoing", "done"]:
         label = LABELS[state]
         width = 7.4 * len(label) + 40
         x -= width

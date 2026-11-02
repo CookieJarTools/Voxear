@@ -7,8 +7,10 @@
 <text x="704.6" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Next</text>
 <circle cx="569.2" cy="39" r="7.5" fill="#0d1117" stroke="#8a97ff" stroke-width="2"/><path d="M569.2 33.5 a5.5 5.5 0 0 1 0 11 z" fill="#8a97ff"/>
 <text x="583.2" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">In progress</text>
-<circle cx="499.6" cy="39" r="8" fill="#3fb950"/><path d="M496.1 39 l2.5 2.5 l4.5-5" fill="none" stroke="#0d1117" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="513.6" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Done</text>
+<circle cx="455.20000000000005" cy="39" r="8" fill="#8a97ff"/><circle cx="455.20000000000005" cy="39" r="3" fill="#0d1117"/>
+<text x="469.20000000000005" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Continuous</text>
+<circle cx="385.6" cy="39" r="8" fill="#3fb950"/><path d="M382.1 39 l2.5 2.5 l4.5-5" fill="none" stroke="#0d1117" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="399.6" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Done</text>
 <line x1="56" y1="112" x2="56" y2="712" stroke="#30363d" stroke-width="2"/>
 <circle cx="56" cy="112" r="8" fill="#3fb950"/><path d="M52.5 112 l2.5 2.5 l4.5-5" fill="none" stroke="#0d1117" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="80" y="117" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1">M0</text>
@@ -22,11 +24,10 @@
 <text x="80" y="197" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1">M2</text>
 <text x="120" y="197" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#e6edf3">Content, scenes and levels</text>
 <text x="380" y="197" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Assets, prefabs, levels, post-processing, content builds, async loading</text>
-<rect x="32" y="216" width="816" height="32" rx="7" fill="#151b23"/>
-<circle cx="56" cy="232" r="7.5" fill="#0d1117" stroke="#8a97ff" stroke-width="2"/><path d="M56 226.5 a5.5 5.5 0 0 1 0 11 z" fill="#8a97ff"/>
+<circle cx="56" cy="232" r="8" fill="#8a97ff"/><circle cx="56" cy="232" r="3" fill="#0d1117"/>
 <text x="80" y="237" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1">M3</text>
-<text x="120" y="237" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#e6edf3">Editor and Voxear UI</text>
-<text x="380" y="237" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">The Unity-style editor, its UI toolkit, play mode, undo, VoxDocs</text>
+<text x="120" y="237" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#e6edf3">Editor and Voxear UI</text>
+<text x="380" y="237" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">The Unity-style editor and its UI toolkit, growing all along</text>
 <rect x="32" y="256" width="816" height="32" rx="7" fill="#151b23"/>
 <circle cx="56" cy="272" r="7" fill="#0d1117" stroke="#d29922" stroke-width="2"/>
 <text x="80" y="277" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1"></text>

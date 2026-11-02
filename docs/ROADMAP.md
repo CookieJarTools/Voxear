@@ -171,7 +171,11 @@ Done so far:
 
 **Exit:** a two-level sample shares scenes between levels and loads only what each level needs.
 
-## M3 — Editor shell and Voxear UI
+## M3 — Editor shell and Voxear UI (continuous)
+
+The editor is never finished, as Unity's is not: M3 stays open beside every other milestone, each of which brings
+windows and tools of its own, and it takes what users find missing or falling short as they go. The lists below
+say what is done and what comes next.
 
 Done so far:
 - **Voxear UI foundation** (`voxear_ui`):
@@ -357,7 +361,7 @@ Done so far:
   its themes, so dark, light and custom themes hold together. Dark gives the default theme's own colours; Light and
   Custom are picked in the Settings drawer's Appearance group, a colour from its swatch.
 
-Still to do in M3:
+Next in M3:
 - UI core:
   - [x] keyframe animations
   - [x] floating windows: Float on a tab's menu, or a tab dropped outside every area; moved by the bar, resized by
@@ -540,7 +544,7 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
 - **Later:** native plugins (Rust or C libraries a package loads into the engine, behind the same consent), and a
   place to browse packages with pictures and ratings, as Unity's Asset Store.
 
-## M4 — Input, localization, audio and physics
+## M4 — Input, localization, audio and physics (in progress)
 
 - Input:
   - actions, schemes and auto-switching

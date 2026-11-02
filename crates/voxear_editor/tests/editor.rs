@@ -4645,7 +4645,7 @@ fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
 #[test]
 fn the_persistent_box_marks_an_obj_to_stay_through_level_changes() {
     let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
-    let persistent = |ui: &Ui| first_with(ui, prop_row(ui, "Persistent").unwrap(), "checkbox").unwrap();
+    let persistent = |ui: &Ui| first_with(ui, ui.root(), "persistent-check").expect("Persistent, under the name");
     let marked = |editor: &voxear_editor::Editor, e| editor.game.engine.world.has::<voxear_scene::ScenePersistence>(e);
     let manager = obj(&editor, "Game Manager").unwrap();
     editor.select(Some(manager));

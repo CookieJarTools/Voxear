@@ -411,7 +411,15 @@ Dropdown:focus-visible {
 .dropdown-arrow {
     width: 12px;
     height: 12px;
+    flex-shrink: 0;
     color: var(--vx-muted);
+}
+
+/* Squeezed, a dropdown cuts its text short and keeps its arrow. */
+.dropdown-label {
+    min-width: 0px;
+    overflow: hidden;
+    white-space: nowrap;
 }
 
 .dropdown-popup {

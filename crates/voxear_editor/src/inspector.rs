@@ -2048,7 +2048,9 @@ fn numbers(value: &Value) -> Vec<f32> {
 /// the name field, the persistent box, and the prefab row's Open and Select
 /// with the prefab's path. Active, tag, layer and static show their
 /// defaults until Objs have them.
-/// The Obj's name, its switch, and the rows Unity shows under them. With
+/// The Obj's name and its switch on one row, Tag and Layer side by side on
+/// the next, and Static and Persistent on a short one under them, kept
+/// short as Unity's header is. With
 /// `editing` more than one, a chip by the name says how many Objs an edit
 /// goes to.
 fn header(
@@ -2078,16 +2080,22 @@ fn header(
         ui.add_class(many, "inspector-many");
     }
     ui.toggle(top, "", true);
+    let tags = ui.panel(header, Style::row());
+    ui.add_class(tags, "header-tags");
     for (label, choice) in [("Tag", "Untagged"), ("Layer", "Default")] {
-        let row = prop(ui, header, label);
-        ui.dropdown(row, &[choice], 0);
+        let label = ui.add_label(tags, label);
+        ui.add_class(label, "header-label");
+        ui.dropdown(tags, &[choice], 0);
     }
-    let row = prop(ui, header, "Static");
-    let fixed = ui.toggle(row, "", false);
-    ui.add_class(fixed, "checkbox");
-    let row = prop(ui, header, "Persistent");
-    let persistent = ui.toggle(row, "", world.has::<ScenePersistence>(entity));
-    ui.add_class(persistent, "checkbox");
+    let checks = ui.panel(header, Style::row());
+    ui.add_class(checks, "header-checks");
+    let fixed = ui.toggle(checks, "Static", false);
+    let persistent = ui.toggle(checks, "Persistent", world.has::<ScenePersistence>(entity));
+    for check in [fixed, persistent] {
+        ui.add_class(check, "checkbox");
+        ui.add_class(check, "header-check");
+    }
+    ui.add_class(persistent, "persistent-check");
     let buttons = prefab.map(|(path, root)| {
         let row = prop(ui, header, if root { "Prefab" } else { "In prefab" });
         let holder = ui.panel(row, Style::row());

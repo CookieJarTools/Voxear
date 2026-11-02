@@ -784,6 +784,40 @@
     margin-bottom: 4px;
 }
 
+/* Tag and Layer side by side under the name, then Static and Persistent on
+   a short row, as Unity's header keeps them short. */
+.header-tags {
+    display: grid;
+    grid-template-columns: auto minmax(0px, 1fr) auto minmax(0px, 1fr);
+    column-gap: 6px;
+    align-items: center;
+}
+
+.header-tags > Dropdown {
+    min-width: 0px;
+}
+
+.header-checks {
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    margin-top: 4px;
+}
+
+.header-label {
+    color: var(--vx-muted);
+}
+
+.header-check {
+    flex-shrink: 0;
+    gap: 5px;
+    align-items: center;
+}
+
+.header-check > .toggle-label {
+    color: var(--vx-muted);
+}
+
 .obj-tile {
     width: 24px;
     height: 24px;

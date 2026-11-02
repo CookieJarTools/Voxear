@@ -1760,8 +1760,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   a move is undone, go back to the places they had. New Objs go to the end of the active scene, or their parent's,
   with ids after the highest there; Objs moved into another scene move into its list with new ids; deleted Objs
   come back with the ids they had. While playing, these change only the played world.
-- **The Inspector** has a header with the Obj's icon, its name and an active switch, then rows for Tag, Layer and
-  Static (shown, not yet stored: Objs have no tags or layers yet) and Persistent, which marks the Obj to stay through
+- **The Inspector** has a short header, as Unity's: the Obj's icon, its name and an active switch, then Tag and
+  Layer side by side, then Static and Persistent as checkboxes on one row (Tag, Layer and Static shown, not yet
+  stored: Objs have no tags or layers yet). Persistent marks the Obj to stay through
   level changes (`ScenePersistence`, saved as `persistent = true`) as a step to undo. The Transform and each component
   are sections divided by lines, each headed by its icon and title with an enabled switch (or, for the Transform, a
   menu) on the right, and with an 80px label column; position, rotation (in degrees) and scale are mono fields with

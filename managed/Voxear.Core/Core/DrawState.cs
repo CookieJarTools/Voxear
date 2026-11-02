@@ -11,6 +11,7 @@ namespace Voxear
 		public float Duration;
 		public bool OnTop;
 		public bool InGame;
+		public bool Gizmo;
 
 		public static DrawState Default => new DrawState { Color = Color.White, Matrix = Matrix4x4.Identity };
 	}

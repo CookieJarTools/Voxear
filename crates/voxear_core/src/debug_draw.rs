@@ -51,6 +51,8 @@ pub struct Line {
     pub on_top: bool,
     /// Pixels wide, or 0 for the usual width.
     pub width: f32,
+    /// Drawn by a behaviour's gizmos, which only views showing gizmos draw.
+    pub gizmo: bool,
 }
 
 /// How a shape's lines are drawn. `false` and `true` stand for the usual
@@ -63,6 +65,8 @@ pub struct LineStyle {
     pub width: f32,
     /// Part of the game, kept while debug draw is off, as in a release build.
     pub in_game: bool,
+    /// Drawn by a behaviour's gizmos, for the editor's Scene views only.
+    pub gizmo: bool,
 }
 
 impl From<bool> for LineStyle {
@@ -224,7 +228,8 @@ fn add_lines(segments: impl IntoIterator<Item = (Vec3, Vec3)>, color: [f32; 4], 
             }
             return;
         }
-        shapes.lines.push((Line { from, to, color, on_top: style.on_top, width: style.width }, duration));
+        let (on_top, width, gizmo) = (style.on_top, style.width, style.gizmo);
+        shapes.lines.push((Line { from, to, color, on_top, width, gizmo }, duration));
     }
     shapes.dropped = false;
 }
@@ -246,7 +251,10 @@ mod tests {
         assert_eq!(lines().len(), 2, "both show the frame they were drawn");
         assert_eq!(texts().len(), 1);
         advance(0.25);
-        assert_eq!(lines(), [Line { from: Vec3::ZERO, to: Vec3::Y, color: GREEN, on_top: true, width: 0.0 }]);
+        assert_eq!(
+            lines(),
+            [Line { from: Vec3::ZERO, to: Vec3::Y, color: GREEN, on_top: true, width: 0.0, gizmo: false }]
+        );
         assert!(texts().is_empty(), "no duration: one frame");
         advance(0.25);
         assert!(lines().is_empty());

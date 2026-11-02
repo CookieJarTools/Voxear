@@ -10,11 +10,13 @@ use voxear_core::{
 use crate::interop::utf8;
 
 /// `flags` bits from `Voxear.Debug` and `Voxear.Draw`: on top of the scene,
-/// with an arrowhead, part of the game (kept in release builds), and in
-/// bits 8 to 23 the width in sixteenths of a pixel, 0 for the usual width.
+/// with an arrowhead, part of the game (kept in release builds), drawn by a
+/// behaviour's gizmos, and in bits 8 to 23 the width in sixteenths of a
+/// pixel, 0 for the usual width.
 const ON_TOP: i32 = 1;
 const WITH_HEAD: i32 = 2;
 const IN_GAME: i32 = 4;
+const GIZMO: i32 = 8;
 const WIDTH_SHIFT: i32 = 8;
 
 /// How the lines are drawn, as `flags` say.
@@ -23,6 +25,7 @@ fn style(flags: i32) -> debug_draw::LineStyle {
         on_top: flags & ON_TOP != 0,
         width: ((flags >> WIDTH_SHIFT) & 0xffff) as f32 / 16.0,
         in_game: flags & IN_GAME != 0,
+        gizmo: flags & GIZMO != 0,
     }
 }
 

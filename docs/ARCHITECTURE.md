@@ -2106,6 +2106,15 @@ Names given with `nameof` are checked by the compiler already; these catch names
 kind. It is built against Roslyn 4.8, which newer compilers load, and tested by compiling snippets of game code in
 memory (`Voxear.Analyzers.Tests`).
 
+**Gizmos** *(implemented)*: a behaviour overrides `DrawGizmos(Gizmo gizmo)`, one callback in place of Unity's two,
+and draws with `Draw`, told `gizmo.IsSelected` and `IsHovered`. The editor asks each frame, after debug draw counts
+down, for the Scene views that show gizmos (`editor/scene_gizmos.rs`). While editing, a behaviour is only its
+scene's values, so Voxear.Core's `SceneGizmos` keeps a copy of each type that draws gizmos (ScriptInfo says which,
+`gizmos` on the behaviour), bound to its Obj and filled again only when its values change, and asks it through the
+Inspector's JSON calls; while playing, the running behaviours draw theirs. Their lines are marked as gizmos (a bit
+in the line call's flags, `Line::gizmo`), and a view draws them only when its `ViewOptions::gizmos` is on: a Scene
+view with its Gizmos button on, never the Game view. A gizmo that throws is logged once, not every frame.
+
 **Handles on fields** *(implemented)*, so a value is dragged where it belongs with no editor code:
 `[PositionHandle]` (a `Vector3`, or every point of a list joined as a path), `[RadiusHandle]`, `[DirectionHandle]`,
 `[BoundsHandle]`, `[ArcHandle]` and `[SliderHandle]`, each with a `Color`, and points and directions in the Obj's

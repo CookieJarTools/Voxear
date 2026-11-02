@@ -33,6 +33,7 @@ namespace Voxear
 		private const int OnTopFlag = 1;
 		private const int HeadFlag = 2;
 		private const int InGameFlag = 4;
+		private const int GizmoFlag = 8;
 		private const int WidthShift = 8;
 
 		[ThreadStatic] private static bool started;
@@ -109,6 +110,14 @@ namespace Voxear
 		{
 			var scope = new DrawScope(State);
 			State.InGame = true;
+			return scope;
+		}
+
+		/// <summary>Marks what is drawn inside the scope as a behaviour's gizmos, which only views showing gizmos draw.</summary>
+		internal static DrawScope Gizmos()
+		{
+			var scope = new DrawScope(State);
+			State.Gizmo = true;
 			return scope;
 		}
 
@@ -382,7 +391,7 @@ namespace Voxear
 			var a = Vector3.Transform(from, now.Matrix);
 			var b = Vector3.Transform(to, now.Matrix);
 			var shade = color ?? now.Color;
-			flags |= (now.OnTop ? OnTopFlag : 0) | (now.InGame ? InGameFlag : 0);
+			flags |= (now.OnTop ? OnTopFlag : 0) | (now.InGame ? InGameFlag : 0) | (now.Gizmo ? GizmoFlag : 0);
 			flags |= (int)MathF.Round(Math.Min(now.Width, 4095f) * 16f) << WidthShift;
 			if (Sink != null)
 			{

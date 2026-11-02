@@ -19,17 +19,21 @@ pub const MAX_DEBUG_LINES: u64 = debug_draw::MAX_LINES as u64;
 /// How wide lines are, in pixels at a scale of one.
 const WIDTH: f32 = 1.5;
 
-/// Writes the lines debug draw holds now, and adds the pass that draws them
-/// onto `view` of `output`, reading the scene's depth.
+/// Writes the lines debug draw holds now, those of behaviours' gizmos only
+/// when `gizmos`, and adds the pass that draws them onto `view` of `output`,
+/// reading the scene's depth.
 pub(crate) fn record(
     fg: &mut FrameGraph<'_>,
-    pipeline: vk::Pipeline,
-    push: Push,
+    (pipeline, push): (vk::Pipeline, Push),
     buffer: &Buffer,
     (output, view): (ImageId, vk::Rect2D),
     depth: ImageId,
+    gizmos: bool,
 ) {
-    let lines = debug_draw::lines();
+    let mut lines = debug_draw::lines();
+    if !gizmos {
+        lines.retain(|line| !line.gizmo);
+    }
     if lines.is_empty() {
         return;
     }

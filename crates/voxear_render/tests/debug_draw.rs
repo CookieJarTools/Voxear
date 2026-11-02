@@ -7,7 +7,7 @@ use voxear_core::{
     math::{Quat, Vec3},
 };
 use voxear_ecs::World;
-use voxear_render::{Camera, MaterialDesc, MeshRenderer, Primitive, Renderer, RendererSettings};
+use voxear_render::{Camera, MaterialDesc, MeshRenderer, Primitive, Renderer, RendererSettings, ViewOptions};
 use voxear_scene::Transform;
 
 const SIZE: (u32, u32) = (640, 360);
@@ -81,6 +81,16 @@ fn lines_dim_behind_the_scene_unless_drawn_on_top() {
     debug_draw::line(Vec3::new(2.0, 1.0, 0.0), Vec3::new(6.0, 1.0, 0.0), [1.0, 0.0, 0.0, 1.0], 10.0, wide);
     let thick = changed(&plain, &frame(&mut renderer, &world, &mut time), 0).1;
     assert!(thick > thin * 2, "a wider line covers more: {thick} pixels against {thin}");
+
+    // A gizmo's line shows only in a view showing gizmos, as the editor's Game view does not.
+    debug_draw::clear();
+    let gizmo = debug_draw::LineStyle { gizmo: true, ..Default::default() };
+    debug_draw::line(Vec3::new(2.0, 1.0, 0.0), Vec3::new(6.0, 1.0, 0.0), [1.0, 0.0, 0.0, 1.0], 10.0, gizmo);
+    let shown = changed(&plain, &frame(&mut renderer, &world, &mut time), 0).1;
+    renderer.set_view_options(ViewOptions { gizmos: false, ..ViewOptions::default() });
+    let hidden = changed(&plain, &frame(&mut renderer, &world, &mut time), 0).1;
+    renderer.set_view_options(ViewOptions::default());
+    assert!(shown > 100 && hidden == 0, "a gizmo's line shows where gizmos do: {shown} pixels, then {hidden}");
     debug_draw::clear();
 
     // Green behind the wall, on top: it shows through.

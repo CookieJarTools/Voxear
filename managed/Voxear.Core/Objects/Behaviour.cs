@@ -97,6 +97,35 @@ namespace Voxear
 		{
 		}
 
+		/// <summary>
+		/// Draws the behaviour's gizmos with Draw, each frame, in the editor's Scene views: in edit mode, from the values
+		/// the scene gives it, and while the game plays. They show while the Scene view's Gizmos button is on, and never
+		/// in the Game view or a build. One callback in place of Unity's two: gizmo.IsSelected says whether to show more.
+		/// <code>
+		/// protected override void DrawGizmos(Gizmo gizmo)
+		/// {
+		///     Draw.WireSphere(Obj.WorldPosition, Range, gizmo.IsSelected ? Color.Yellow : Color.Grey);
+		/// }
+		/// </code>
+		/// </summary>
+		protected virtual void DrawGizmos(Gizmo gizmo)
+		{
+		}
+
+		internal void RunGizmos(Gizmo gizmo)
+		{
+			DrawGizmos(gizmo);
+		}
+
+		/// <summary>Whether a behaviour type draws gizmos: it, or a class between it and Behaviour, overrides DrawGizmos.</summary>
+		internal static bool DrawsGizmos(System.Type type)
+		{
+			const System.Reflection.BindingFlags Instance =
+				System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+			var method = type.GetMethod(nameof(DrawGizmos), Instance, [typeof(Gizmo)]);
+			return method != null && method.DeclaringType != typeof(Behaviour);
+		}
+
 		internal void Attach(Obj obj, uint handle, int order)
 		{
 			this.obj = obj;

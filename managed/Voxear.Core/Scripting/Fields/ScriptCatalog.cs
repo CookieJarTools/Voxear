@@ -152,6 +152,10 @@ namespace Voxear.Scripting
 			WriteDocumentation(json, type);
 			WriteFields(json, type, FieldDefaults.Create(type), types, drawers);
 			WriteButtons(json, type);
+			if (Behaviour.DrawsGizmos(type))
+			{
+				json.WriteBoolean("gizmos", true);
+			}
 			json.WriteEndObject();
 		}
 

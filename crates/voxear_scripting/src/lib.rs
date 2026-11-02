@@ -9,6 +9,7 @@ mod debug;
 mod display;
 mod drawers;
 mod ecs;
+mod gizmos;
 mod hostfxr;
 mod inspector;
 mod interop;
@@ -20,6 +21,7 @@ mod ui;
 
 pub use display::CursorLock;
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
+pub use gizmos::GizmoTarget;
 pub use hostfxr::{DotnetInstall, find_dotnet};
 pub use inspector::{InspectorAnswer, InspectorAsk};
 pub use runtime::{ConsoleName, CreatedBehaviour, ManagedMemory, Reloaded, ScriptHost, ScriptRuntime};

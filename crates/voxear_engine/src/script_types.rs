@@ -122,6 +122,9 @@ pub struct BehaviourType {
     /// Its `[Button]` methods, which the Inspector shows under its fields.
     #[serde(default)]
     pub buttons: Vec<ScriptButton>,
+    /// Whether it draws gizmos: it overrides `DrawGizmos`.
+    #[serde(default)]
+    pub gizmos: bool,
 }
 
 /// A `[Button]` method, which takes nothing, and what its button says, or

@@ -470,9 +470,10 @@ Still to do in M3:
       screen
     - [x] nestable scopes instead of global state: `using (Draw.Color(Color.Red))`, `Draw.InLocalSpace(obj)`,
       `Draw.Width(3)`, `Draw.Duration(2)`, `Draw.OnTop()` and `Draw.InGame()`
-    - [ ] `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`
-      and `IsHovered`; its gizmos are clickable and select their Obj; a type's gizmos can be hidden from the
-      Gizmos menu, and `[GizmoIcon]` gives it an icon by typed reference
+    - [x] `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`
+      and `IsHovered`, while editing and while playing, in the Scene views only
+    - [ ] gizmos that are clickable and select their Obj; a type's gizmos hidden from the Gizmos menu; and
+      `[GizmoIcon]` giving it an icon by typed reference
     - [x] attribute handles that edit fields in the Scene view with no code, undoable: `[PositionHandle]` (local or
       world, every item of a list joined as a path), `[RadiusHandle]`, `[BoundsHandle]`, `[ArcHandle]`,
       `[DirectionHandle]` and `[SliderHandle]`

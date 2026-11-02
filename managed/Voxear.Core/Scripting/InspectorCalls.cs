@@ -16,8 +16,8 @@ namespace Voxear.Scripting
 	/// { "behaviour", "entity", "fields", "action": "call" | "validate" | "dropdown", "member", "field" }, answered with
 	/// { "changed": { field: value } }, { "valid", "message" } or { "options": [{ "label", "value" }] }, and
 	/// { "error" } when it could not be asked, which is logged. The Inspector's drawers are opened and drawn through
-	/// here too, as InspectorDrawers says, and the running game's behaviours read and changed while it plays, as
-	/// LiveFields says.
+	/// here too, as InspectorDrawers says, the running game's behaviours read and changed while it plays, as
+	/// LiveFields says, and behaviours' gizmos drawn, as SceneGizmos says.
 	/// </summary>
 	internal static class InspectorCalls
 	{
@@ -64,6 +64,16 @@ namespace Voxear.Scripting
 				Live(json, root, action);
 				return;
 			}
+			if (action == "gizmos")
+			{
+				SceneGizmos.DrawKept(root);
+				return;
+			}
+			if (action == "live-gizmos")
+			{
+				SceneGizmos.DrawLive(root);
+				return;
+			}
 
 			var behaviour = Make(root);
 			var member = root.GetProperty("member").GetString() ?? string.Empty;
@@ -101,7 +111,7 @@ namespace Voxear.Scripting
 		}
 
 		/// <summary>A copy of the behaviour with the scene's values, bound to its Obj.</summary>
-		private static Behaviour Make(JsonElement root)
+		internal static Behaviour Make(JsonElement root)
 		{
 			var name = root.GetProperty("behaviour").GetString() ?? string.Empty;
 			var type = Find(name) ?? throw new ArgumentException($"There is no behaviour {name}.");

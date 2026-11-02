@@ -1017,7 +1017,8 @@ impl View {
             }
             None => None,
         };
-        debug_pass::record(fg, pipelines.debug, push, &buffers.debug_lines, (output, view), depth);
+        let gizmos = self.options.gizmos;
+        debug_pass::record(fg, (pipelines.debug, push), &buffers.debug_lines, (output, view), depth, gizmos);
         Ok(ViewRecorded { push, backdrop })
     }
 }

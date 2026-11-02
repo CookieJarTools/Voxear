@@ -110,11 +110,14 @@ pub struct ViewOptions {
     /// The Obj whose camera to look through, rather than the first camera
     /// found, as the editor's Scene view does.
     pub camera: Option<voxear_ecs::Entity>,
+    /// Whether debug draw's lines from behaviours' gizmos show, as in the
+    /// editor's Scene views with their Gizmos button on, but not its Game view.
+    pub gizmos: bool,
 }
 
 impl Default for ViewOptions {
     fn default() -> Self {
-        Self { debug_view: 0, lod_threshold: 1.0, lod_fade_speed: 4.0, post_override: None, camera: None }
+        Self { debug_view: 0, lod_threshold: 1.0, lod_fade_speed: 4.0, post_override: None, camera: None, gizmos: true }
     }
 }
 

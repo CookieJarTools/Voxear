@@ -52,6 +52,29 @@ using (Draw.Width(3f))
 
 Blocks can sit inside each other, and each one only changes what it says.
 
+## Gizmos
+
+A behaviour can draw **gizmos**: drawings that show where things are while you build the level, such as how far an enemy can hear or where a door swings. Override `DrawGizmos`:
+
+```csharp
+public sealed class Guard : Behaviour
+{
+	public float HearingRange = 8f;
+
+	protected override void DrawGizmos(Gizmo gizmo)
+	{
+		var color = gizmo.IsSelected ? Color.Yellow : Color.Grey;
+		Draw.WireSphere(Obj.WorldPosition, HearingRange, color);
+	}
+}
+```
+
+The editor calls it every frame, for every Obj with the behaviour, while you edit and while the game plays. While you edit, the behaviour is made from the values in its scene, so changing a value in the Inspector changes the gizmo straight away. `gizmo.IsSelected` says whether its Obj is selected, and `gizmo.IsHovered` whether the pointer is over it, so a gizmo can show more when it matters.
+
+Gizmos show in the Scene view while its **Gizmos** button is on. They never show in the Game view or in your built game. Any shape and scope from `Draw` works in a gizmo.
+
+To drag a value in the Scene view instead of drawing it, see "Editing fields in the Scene view" in [[Fields in the Inspector]].
+
 ## Where drawings show
 
 Drawings show in the editor's Scene and Game views, and in development builds of your game. Release builds leave them out, except what you draw inside `InGame()`.

@@ -19,6 +19,7 @@ mod play;
 mod prefab_mode;
 mod previews;
 mod projects;
+mod scene_gizmos;
 mod scene_views;
 mod scenes;
 mod script_actions;
@@ -226,6 +227,8 @@ pub struct Editor {
     /// and the Obj as it was when a drag of one began, for undo.
     field_handles: FieldHandles,
     field_drag_start: Option<ObjState>,
+    /// The Obj under the pointer in the Scene view in use, for gizmos.
+    hovered_obj: Option<Entity>,
     hovered_handle: Option<Handle>,
     pressed_handle: Option<[f32; 2]>,
     released_handle: bool,
@@ -466,6 +469,7 @@ impl Editor {
             tools: SceneTools::new(),
             field_handles: FieldHandles::default(),
             field_drag_start: None,
+            hovered_obj: None,
             hovered_handle: None,
             pressed_handle: None,
             released_handle: false,
@@ -729,13 +733,13 @@ impl Editor {
         self.update_status(renderer, delta);
         self.update_tooltip(delta);
         self.update_debug_draw(view, delta);
+        self.draw_scene_gizmos();
 
         if let Some((viewport, camera)) = view {
+            // Set each frame, a copy: the Gizmos button changes it as much as the camera does.
             let options = self.view_options(viewport, camera);
-            if (options.camera, options.debug_view) != (self.view_camera, self.view_debug) {
-                renderer.set_view_options(options);
-                (self.view_camera, self.view_debug) = (options.camera, options.debug_view);
-            }
+            renderer.set_view_options(options);
+            (self.view_camera, self.view_debug) = (options.camera, options.debug_view);
         }
         views
     }
@@ -1148,6 +1152,7 @@ impl Editor {
             self.tools.hover(self.hovered_handle);
             let over_field = over.filter(|_| self.hovered_handle.is_none());
             self.field_handles.hover(world, self.inspector.types(), &camera, editing, over_field);
+            self.hovered_obj = over.and_then(|point| pick(world, renderer, &camera, point));
             self.click_to_select(renderer, &camera, point);
         }
         // Gizmos go under the handles, which are drawn last.
@@ -1599,10 +1604,14 @@ impl Editor {
     }
 
     /// How a view draws: through its camera, and a Scene view shaded as its
-    /// menu says, the Game view always lit.
+    /// menu says, with behaviours' gizmos while its Gizmos button is on; the
+    /// Game view always lit, and without gizmos.
     fn view_options(&self, viewport: NodeId, camera: Entity) -> ViewOptions {
-        let debug_view = self.scene_view_at(viewport).map_or(0, |view| view.debug_view());
-        ViewOptions { camera: Some(camera), debug_view, ..ViewOptions::default() }
+        let scene_view = self.scene_view_at(viewport);
+        let debug_view = scene_view.map_or(0, |view| view.debug_view());
+        // Behaviours' gizmos show in a Scene view with its Gizmos button on, and never in the Game view.
+        let gizmos = scene_view.is_some_and(|view| view.show_gizmos);
+        ViewOptions { camera: Some(camera), debug_view, gizmos, ..ViewOptions::default() }
     }
 
     /// The camera the game looks through: the level's first.

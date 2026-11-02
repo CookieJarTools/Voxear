@@ -20,6 +20,7 @@ MILESTONES = [
     ("M4", "Input, localization, audio, physics", "Input actions, string tables, the mixer, Jolt and Box2D", "now"),
     ("M5", "Lighting", "Voxel GI, volumetric fog, soft shadows, probes, upscalers", "planned"),
     ("M6", "Animation", "GPU skinning, state machines, blend trees, motion matching, IK", "planned"),
+    ("", "Gameplay kits", "Gun kit with procedural recoil, player and vehicle controllers", "planned"),
     ("M7", "Materials and particles", "Shader Graph, material variants, and GPU particles", "planned"),
     ("M8", "Terrain", "CDLOD terrain, layers, stamps, erosion, scatter, generators", "planned"),
     ("M9", "Navigation, cameras, Timeline", "Pathfinding and avoidance, camera rigs, Timeline", "planned"),

@@ -635,6 +635,31 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
 - Motion matching: the feature database, then search, then inertialisation, then GPU crowd search.
 - IK.
 
+## Gameplay kits: game-ready systems
+
+Systems a game needs again and again, ready to add to an Obj and play, so a new project moves in minutes rather than
+weeks. Each is a component with sensible defaults as the easy way in, and every part of it open as the advanced
+one: settings to tune in the Inspector, events to hook, and the code itself to read and change, since a kit is
+plain C# in a package (see Packages). They build on input and physics (M4) and, for characters, animation (M6).
+
+- **Gun kit:**
+  - hitscan and projectile weapons, fire modes (single, burst, automatic), ammo, magazines and reloads
+  - procedural recoil: kick and climb from curves, recovery, and camera and weapon sway, so guns feel weighty
+    with no animation authored
+  - spread that grows with firing and moving and settles when still, aim down sights, and bloom
+  - impacts by surface (decals, particles, sounds), muzzle flash and shell ejection
+  - damage with falloff and hit zones, and an interface for anything that can be hit
+- **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
+  the hands and camera the gun kit mounts on.
+- **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
+  and root-motion or in-place animation through the animation system.
+- **Top-down controller:** for twin-stick, isometric and click-to-move games, with aim toward the pointer or the
+  stick, and a camera that leads where the player is heading.
+- **Vehicle controller:** cars, trucks and motorbikes on the vehicle physics (M4), with a chase camera, input
+  for keyboard and gamepad, and presets to drive at once.
+- **For all of them:** input actions bound by default for keyboard, mouse and gamepad; a sample scene each to try
+  it in; a VoxDocs page each; and saving and loading their state with the game.
+
 ## M7 — Materials and particles
 
 - Shader Graph with previews and sub-graphs, plus material variants.

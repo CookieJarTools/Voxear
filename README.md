@@ -1,11 +1,26 @@
 # Voxear
 
-A modern, data-oriented game engine: a Rust core, a Vulkan renderer, C# scripting on CoreCLR, and a Unity-style
-editor. Every system has an easy API for getting started and an advanced API for full control, and nothing is a black
-box.
+A game engine for people who like how Unity works, and want an engine that is fast, open and theirs to change. It
+has a Rust core, a Vulkan renderer, C# scripting on .NET, and an editor laid out the way Unity users expect.
 
+## What Voxear is for
+
+- **Making games the way you already know.** Objs with components, scenes, prefabs, an Inspector, a Scene view with
+  Unity's controls, and C# behaviours with `Awake`, `Start` and `Update`. What you know from Unity carries over.
+- **Speed without fuss.** A data-oriented core and a GPU-driven renderer that culls, picks levels of detail and
+  lights thousands of objects by itself, with a profiler and a frame debugger built in to show where time goes.
+- **Easy first, open all the way down.** Every system has a simple way in and a full API underneath, and nothing is
+  a black box. A game's own scripts can add windows, side bar buttons, commands and Inspector drawers to the editor,
+  and packages will let people share them.
+- **Linux and Windows,** built and used on Linux from the first day.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/roadmap-dark.svg">
+  <img alt="Voxear's roadmap. Done: the foundation, the rendering core, and content, scenes and levels. In progress: the editor and Voxear UI, and input, localization, audio and physics. Next: packages. Planned: lighting, animation, materials and particles, terrain, navigation and cameras, 2D and networking, modding and platform services, shipping, and virtualised geometry." src="docs/images/roadmap-light.svg">
+</picture>
+
+- [Roadmap](docs/ROADMAP.md): each milestone in full, and open questions.
 - [Architecture](docs/ARCHITECTURE.md): what the engine is and how each system works.
-- [Roadmap](docs/ROADMAP.md): milestones and open questions.
 - [The Voxear Manual](manual/_folder.md): how to make games with Voxear, as the editor's VoxDocs shows it.
 
 ## Requirements

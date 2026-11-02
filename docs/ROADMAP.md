@@ -4,6 +4,9 @@ This is a multi-year engine. The order below gets to a usable editor early, then
 milestone ends with something you can run. Design details for every system are in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
+The README's picture of it is drawn by `docs/images/draw_roadmap.py`; when a milestone changes here, change its
+list too and run it again.
+
 ## M0 — Foundation ✅ (done)
 
 - **Cargo workspace.** Eight crates and a `vox` CLI.
@@ -508,6 +511,34 @@ Still to do in M3:
     window (through the desktop's drag and drop on Wayland), and kept with the layout
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
+
+## Packages: sharing code, tools and content
+
+Voxear is meant to be open: a project's own code already adds editor windows, side bar buttons, commands, drawers
+and Inspector attributes. Packages carry that from one project to another, as Unity's packages do, so people can
+share tools, systems, shaders, art and samples and add them to a project in a click.
+
+- **What a package is:** a folder with a `package.toml` (name, version, description, authors, the engine versions
+  it works with, and the packages it needs) holding any of: C# scripts, built into an assembly of its own that the
+  game's scripts can use; editor extensions (windows, side bar items, drawers, commands); assets; VoxDocs pages,
+  which the editor shows beside the manual; and samples to copy into a project.
+- **Where packages come from**, written in the project's `packages.toml`:
+  - a Git repository, GitHub first, by URL and a tag, branch or commit: `orbit-tools = { git =
+    "https://github.com/someone/orbit-tools", tag = "v1.2.0" }`, with `path` for a package inside a larger
+    repository, as Unity's Git URLs work
+  - a folder on disk, for packages being written alongside a game
+  - a registry: a plain index repository on GitHub that lists packages and their versions, for finding them by
+    name and searching, with more registries addable later
+- **Resolving and locking:** versions are semantic, ranges are resolved together with every package's own needs,
+  and `packages.lock` keeps the exact commit of each, so everyone on a team gets the same code. Downloads are
+  cached once per machine and shared between projects.
+- **The Package Manager window:** what a project has, with updates; add by Git URL, by folder or from a registry;
+  remove; read a package's pages; import its samples. A package from the internet runs code, so the first time
+  one is added the editor shows what it will add and asks.
+- **From the command line:** `vox package add <git url or name>`, `vox package update`, `vox package remove`, and
+  `vox package new` to start one, with `vox package publish` to list a tagged release in a registry.
+- **Later:** native plugins (Rust or C libraries a package loads into the engine, behind the same consent), and a
+  place to browse packages with pictures and ratings, as Unity's Asset Store.
 
 ## M4 — Input, localization, audio and physics
 

@@ -14,12 +14,15 @@
 //! with the defaults, and settings left at their defaults are not written.
 //! Whatever else a `.meta` holds is kept when settings are written.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::db::META_EXTENSION;
+use crate::{AssetGuid, db::META_EXTENSION};
 
 /// How a model file (`.gltf`, `.glb` or `.fbx`) is imported.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -87,6 +90,45 @@ impl ModelImport {
     /// another.
     pub fn size(&self) -> f32 {
         self.units.metres().unwrap_or(1.0) * self.scale
+    }
+}
+
+/// Which of a model's materials draw with a `.material` asset in place of
+/// the one in its file, as Unity's material remapping: each by its part
+/// (`material3`), with the material asset's GUID. In the model's `.meta`:
+///
+/// ```toml
+/// [materials]
+/// material3 = "…"
+/// ```
+///
+/// A part left out draws with the file's material.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct MaterialRemap(pub BTreeMap<String, AssetGuid>);
+
+impl MaterialRemap {
+    const TABLE: &str = "materials";
+
+    /// The remapping in a `.meta` file's text, or none.
+    pub fn from_meta(text: &str) -> Self {
+        section(text, Self::TABLE)
+    }
+
+    /// The remapping of the model at `asset`, from its `.meta`, or none.
+    pub fn read(asset: &Path) -> Self {
+        std::fs::read_to_string(meta_path(asset)).map(|text| Self::from_meta(&text)).unwrap_or_default()
+    }
+
+    /// Writes the remapping into the `.meta` beside `asset`, or takes the
+    /// table out when nothing is remapped.
+    pub fn write(&self, asset: &Path) -> Result<()> {
+        write_section(asset, Self::TABLE, self, &Self::default())
+    }
+
+    /// The material asset a part draws with, when it is remapped.
+    pub fn get(&self, part: &str) -> Option<AssetGuid> {
+        self.0.get(part).copied()
     }
 }
 
@@ -293,6 +335,25 @@ fn write_section<T: Serialize>(asset: &Path, name: &str, value: &T, defaults: &T
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_models_remapped_materials_are_written_by_part_and_taken_out_when_none_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("Gate.fbx");
+        std::fs::write(&model, "").unwrap();
+        std::fs::write(meta_path(&model), "guid = \"abc\"\n\n[model]\nscale = 2.0\n").unwrap();
+        let stone = AssetGuid::new_random();
+        let remap = MaterialRemap([("material3".to_string(), stone)].into());
+        remap.write(&model).unwrap();
+        let text = std::fs::read_to_string(meta_path(&model)).unwrap();
+        assert!(text.contains(&format!("[materials]\nmaterial3 = \"{stone}\"")), "{text}");
+        assert_eq!(MaterialRemap::read(&model).get("material3"), Some(stone));
+        assert_eq!(ModelImport::read(&model).scale, 2.0, "the import settings stay");
+
+        MaterialRemap::default().write(&model).unwrap();
+        let text = std::fs::read_to_string(meta_path(&model)).unwrap();
+        assert!(!text.contains("[materials]"), "{text}");
+    }
 
     #[test]
     fn settings_are_written_beside_the_guid_and_only_where_they_differ() {

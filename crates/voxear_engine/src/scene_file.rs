@@ -687,7 +687,7 @@ fn same_renderer(content: &Content, a: &Option<RendererData>, b: &Option<Rendere
     let parse = |text: &str| content.parse(text).ok();
     let material = |m: &Option<MaterialRef>| match m {
         None => Some(MaterialSource::Inline(default_material())),
-        Some(MaterialRef::Inline(data)) => Some(MaterialSource::Inline(*data)),
+        Some(MaterialRef::Inline(data)) => Some(MaterialSource::Inline(data.clone())),
         Some(MaterialRef::Asset(text)) => parse(text).map(MaterialSource::Asset),
     };
     match (a, b) {
@@ -745,7 +745,7 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
         let material = match content.material_source(r.material) {
             Some(MaterialSource::Asset(reference)) => Some(MaterialRef::Asset(reference.to_string())),
             Some(MaterialSource::Inline(data)) if *data == default_material() => None,
-            Some(MaterialSource::Inline(data)) => Some(MaterialRef::Inline(*data)),
+            Some(MaterialSource::Inline(data)) => Some(MaterialRef::Inline(data.clone())),
             None => None,
         };
         let (lod_bias, force_lod, lod_transitions) =

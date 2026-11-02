@@ -14,8 +14,14 @@ Right-click in the Project panel and choose **New Material**, then type its name
 | Emission | Light the surface gives off, so it glows. Black for none |
 | Metallic | 0 for plastic, wood or stone; 1 for bare metal |
 | Roughness | 0 for a smooth, mirror-like shine; 1 for a dull, matt surface |
+| Colour Map | A picture of the surface's colour, tinted by **Colour** |
+| Metallic Map | A picture of where it is metal, in blue, and how rough, in green, as glTF has them |
+| Normal Map | A picture of the surface's bumps and dents |
+| Emission Map | A picture of where it glows, tinted by **Emission** |
 
 Every change is saved straight away, and shows at once on everything that uses the material.
+
+To give a map a picture, click the arrow on its field and pick one, or drag a picture from the Project panel onto the field. Pick **None** to take it away. Click the field to find the picture in the Project panel.
 
 Click a colour's swatch to open the colour picker: drag in the square and the bar, or type a hex code such as `#FF8800`, or red, green and blue from 0 to 1.
 
@@ -36,16 +42,19 @@ A glowing surface does not light up what is around it. To make a lamp that light
 A material is a small text file:
 
 ```toml
-color = [0.8, 0.6, 0.2]
-metallic = 1.0
-roughness = 0.3
+color = [1.0, 1.0, 1.0]
+metallic = 0.0
+roughness = 0.8
 emissive = [0.0, 0.0, 0.0]
+color_map = "5b0e2a7c41d94f3c8a1f0e6b2d9c7a13"
+normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 ```
 
 - `color` is red, green and blue from 0 to 1, as a colour picker shows them.
 - `emissive` can go above 1 for a brighter glow.
+- `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.
 
-A material file holds no pictures yet. For a surface with a texture, a normal map or a cut-out, use the material that came with a model, as `Models/Crate.gltf#material0`. See [[Models]].
+A model's own materials, with their pictures, can be written out as material files to edit. See [[Models]].
 
 ## Materials written into a scene
 

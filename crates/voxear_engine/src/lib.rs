@@ -31,7 +31,7 @@ pub mod ui_input;
 pub mod upgrade;
 mod windowed;
 
-pub use content::{Content, ContentUsage, MaterialData, MaterialSource, MovedPart, Reimported, Released, linear, srgb};
+pub use content::{Content, ContentUsage, MaterialData, MaterialMap, MaterialSource, MovedPart, Reimported, Released, linear, srgb};
 pub use engine::{EditBehaviours, Engine, STAGES};
 pub use fly_camera::FlyCamera;
 pub use game::{Display, Game};

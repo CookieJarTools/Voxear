@@ -50,7 +50,8 @@ pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
 pub use frame_debugger::{Channels, FrameImage, FrameLook, FramePass};
 pub use gltf_import::{
-    ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files, prepare as prepare_model,
+    FilePicture, FileMaterial, ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files,
+    prepare as prepare_model,
 };
 pub use gpu::{
     DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE,

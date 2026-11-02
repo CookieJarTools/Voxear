@@ -2667,6 +2667,22 @@ fn add_component(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, na
     frame(editor, renderer);
 }
 
+/// Scrolls whatever holds `node` until it shows at the top, as a hand
+/// scrolls down to it.
+fn scroll_to(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: NodeId) {
+    let mut at = editor.ui.parent(node);
+    while let Some(parent) = at {
+        if editor.ui.scroll_max(parent)[1] > 0.0 {
+            let ([_, top, _, _], [_, y, _, _]) = (editor.ui.rect(parent), editor.ui.rect(node));
+            let [x, now] = editor.ui.scroll_offset(parent);
+            editor.ui.set_scroll(parent, [x, (now + y - top - 20.0).max(0.0)]);
+            frame(editor, renderer);
+            return;
+        }
+        at = editor.ui.parent(parent);
+    }
+}
+
 /// The object picker's row that says `label`.
 fn picker_row(ui: &Ui, label: &str) -> Option<NodeId> {
     let list = ui.find(ui.root(), "picker-list")?;
@@ -5106,6 +5122,79 @@ fn the_object_picker_sets_a_mesh_renderers_material() {
         let label = first_with(&editor.ui, prop_row(&editor.ui, "Material").unwrap(), "picker-label").unwrap();
         assert!(editor.ui.text(label).starts_with("Red"), "{what}'s field says Red: {}", editor.ui.text(label));
     }
+}
+
+#[test]
+fn a_models_materials_extract_into_material_assets_it_draws_with() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    open_folder(&mut editor, &mut renderer, "Models");
+    let pyramid = tile(&editor.ui, "Pyramid.gltf").unwrap();
+    click(&mut editor.ui, pyramid);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    // The model's Materials list its one material, by its name, drawn with the file's.
+    let row = prop_row(&editor.ui, "Checker").expect("the Pyramid's material, by name");
+    let label = first_with(&editor.ui, row, "picker-label").unwrap();
+    assert_eq!(editor.ui.text(label), "None (Material)");
+
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "add-component", &mut buttons);
+    let extract = buttons.into_iter().find(|&b| editor.ui.text(b) == "Extract Materials").expect("Extract Materials");
+    scroll_to(&mut editor, &mut renderer, extract);
+    click(&mut editor.ui, extract);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let db = editor.game.content.db();
+    let guid = |path: &str| db.guid_of(path).unwrap_or_else(|| panic!("{path} is an asset"));
+    let checker = guid("Models/Pyramid Materials/Checker.material");
+    let picture = guid("Models/Pyramid Materials/Checker Colour.png");
+    let model = guid("Models/Pyramid.gltf");
+    let data: voxear_engine::MaterialData = toml::from_str(
+        &std::fs::read_to_string(dir.path().join("Models/Pyramid Materials/Checker.material")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(data.color_map, Some(picture), "the picture inside the file, written out beside it");
+    assert!((data.roughness - 0.55).abs() < 1e-4, "the file's values: {data:?}");
+    let remap = voxear_assets::MaterialRemap::read(&dir.path().join("Models/Pyramid.gltf"));
+    assert_eq!(remap.get("material0"), Some(checker), "the model draws with what it extracted");
+    assert_eq!(editor.game.content.material_remap(model).and_then(|r| r.get("material0")), Some(checker));
+    let row = prop_row(&editor.ui, "Checker").unwrap();
+    assert_eq!(editor.ui.text(first_with(&editor.ui, row, "picker-label").unwrap()), "Checker");
+
+    // The extracted material's colour map is a field, emptied from the object picker.
+    let folder = dir.path().join("Models/Pyramid Materials");
+    assert!(folder.is_dir());
+    open_folder(&mut editor, &mut renderer, "Pyramid Materials");
+    let checker = tile(&editor.ui, "Checker.material").unwrap();
+    click(&mut editor.ui, checker);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let map = first_with(&editor.ui, prop_row(&editor.ui, "Colour Map").unwrap(), "value-picker").unwrap();
+    scroll_to(&mut editor, &mut renderer, map);
+    assert_eq!(editor.ui.text(first_with(&editor.ui, map, "picker-label").unwrap()), "Checker Colour");
+    let arrow = first_with(&editor.ui, map, "picker-arrow").unwrap();
+    click(&mut editor.ui, arrow);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
+    assert!(offered.contains(&"Checker Colour.png".to_string()), "pictures are offered: {offered:?}");
+    let none = picker_row(&editor.ui, "None").unwrap();
+    click_across_frames(&mut editor, &mut renderer, none);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let data: voxear_engine::MaterialData =
+        toml::from_str(&std::fs::read_to_string(folder.join("Checker.material")).unwrap()).unwrap();
+    assert_eq!(data.color_map, None, "saved without its map");
 }
 
 #[test]

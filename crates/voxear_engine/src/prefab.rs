@@ -599,7 +599,7 @@ fn resolve_obj(
             let mesh = content.mesh(renderer, &content.parse(&data.mesh)?)?;
             let source = match &data.material {
                 Some(MaterialRef::Asset(reference)) => MaterialSource::Asset(content.parse(reference)?),
-                Some(MaterialRef::Inline(material)) => MaterialSource::Inline(*material),
+                Some(MaterialRef::Inline(material)) => MaterialSource::Inline(material.clone()),
                 None => MaterialSource::Inline(default_material()),
             };
             let material = content.material(renderer, &source)?;

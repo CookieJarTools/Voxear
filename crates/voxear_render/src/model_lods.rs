@@ -6,6 +6,11 @@
 //! LODs as parts of their own. With `own_lods` off in its import settings,
 //! the part draws with LODs made from its first instead, as any mesh does.
 //!
+//! Parts named as Unreal names collision meshes, `UCX_`, `UBX_`, `USP_` and
+//! `UCP_` before the mesh's name, are left out too: models made for Unreal,
+//! as many in asset stores are, carry them for its physics, and drawn they
+//! would cover the model in boxes.
+//!
 //! A model's LODs are separate meshes, each with its own vertices, so the
 //! first part's mesh takes theirs after its own, and each LOD's triangles
 //! point into its share. Each is given the error a simplification of the
@@ -31,9 +36,16 @@ pub fn lod_of(name: &str) -> Option<(&str, u32)> {
     Some((&name[..at], level))
 }
 
+/// Whether a part is one of Unreal's collision meshes, by its name.
+pub fn is_collision(name: &str) -> bool {
+    ["UCX_", "UBX_", "USP_", "UCP_"].iter().any(|prefix| name.starts_with(prefix))
+}
+
 /// Folds each mesh's own LODs into its first part, and leaves the later
-/// LODs' parts, and the meshes only they used, out of the model.
+/// LODs' parts, collision meshes, and the meshes only they used, out of the
+/// model.
 pub(crate) fn fold(model: &mut PreparedModel, settings: &ModelImport) {
+    model.nodes.retain(|node| !is_collision(&node.name));
     let mut groups: HashMap<String, Vec<(u32, usize)>> = HashMap::new();
     for (index, node) in model.nodes.iter().enumerate() {
         if let Some((base, level)) = lod_of(&node.name) {
@@ -164,6 +176,7 @@ mod tests {
                 part("Rock_LOD1", 1, Vec3::X),
                 part("Rock_lod2", 2, Vec3::ZERO),
                 part("Crate", 3, Vec3::Z),
+                part("UCX_Crate_LOD0_01", 3, Vec3::Z),
             ],
         }
     }
@@ -181,7 +194,7 @@ mod tests {
         let mut model = rock_and_crate();
         fold(&mut model, &ModelImport::default());
         let names: Vec<&str> = model.nodes.iter().map(|node| node.name.as_str()).collect();
-        assert_eq!(names, ["Rock", "Crate"], "one part for the rock, called by its own name");
+        assert_eq!(names, ["Rock", "Crate"], "one part for the rock, called by its own name, and no collision mesh");
         assert_eq!(model.meshes.len(), 2, "the later LODs' meshes are gone");
         assert_eq!(model.nodes[1].mesh, 1, "and the crate points at where its mesh moved");
         assert_eq!(model.nodes[0].mesh_part, "mesh0", "the rock keeps its first part's name, for what refers to it");

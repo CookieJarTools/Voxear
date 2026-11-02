@@ -291,6 +291,31 @@ fn fbx_models_cook_and_cook_again_when_a_picture_they_look_for_comes() {
 }
 
 #[test]
+fn a_models_remapped_materials_and_their_pictures_ship_with_it() {
+    let dir = project();
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(4, 4, image::Rgba([60, 120, 40, 255])).write_to(&mut png, image::ImageFormat::Png).unwrap();
+    std::fs::write(dir.path().join("Materials/Moss.png"), png.into_inner()).unwrap();
+    let content = Content::open(dir.path()).unwrap();
+    let picture = content.db().guid_of("Materials/Moss.png").unwrap();
+    std::fs::write(dir.path().join("Materials/Moss.material"), format!("color_map = \"{picture}\"\n")).unwrap();
+    let content = Content::open(dir.path()).unwrap();
+    let moss = content.db().guid_of("Materials/Moss.material").unwrap();
+    let remap = voxear_assets::MaterialRemap([("material0".to_string(), moss)].into());
+    remap.write(&dir.path().join("Models/Tree.gltf")).unwrap();
+
+    let output = dir.path().join("Built");
+    let report = content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    let shipped: Vec<&String> = report.bundles.iter().flat_map(|b| &b.assets).collect();
+    for path in ["Materials/Moss.material", "Materials/Moss.png"] {
+        assert!(shipped.iter().any(|p| *p == path), "{path} ships, as the tree draws with it: {shipped:?}");
+    }
+    let mut built = Content::open_bundles(dir.path(), &output).unwrap();
+    let meta = built.read_text("Models/Tree.gltf.meta").expect("the tree's remapping ships beside it");
+    assert_eq!(voxear_assets::MaterialRemap::from_meta(&meta), remap);
+}
+
+#[test]
 fn small_bundles_merge_only_where_it_is_free() {
     let dir = project();
     let report = content_build::build(dir.path(), &dir.path().join("Built"), &ContentSettings::default(), &[]).unwrap();

@@ -13,6 +13,8 @@ If you can choose, pick glTF: it says more about how materials should look. Both
 
 Drag the model file from your file manager onto the Project panel, with any pictures it uses. The files are copied into the folder you let go on: a folder's tile, a folder in the tree, or the space around the files, which means the folder the Project panel shows. A `Models` folder is a good place. If a file of that name is already there, the copy is numbered, as in `Ship 1.glb`.
 
+On Linux, some desktops cannot pass a drag from an X11 program to the editor. If a drop does nothing, open your file manager on its own, not from another program such as the Unity editor, and drag from there.
+
 You can also copy files into the project's folder yourself. The editor sees them when you come back to it. In the same way, when you export a model again over its file, Voxear imports it again when you come back to the editor, and everything drawing it shows the change.
 
 Select the model in the Project panel to see it in the Inspector. Drag the preview to turn it.
@@ -20,6 +22,8 @@ Select the model in the Project panel to see it in the Inspector. Drag the previ
 When a model is first used, Voxear makes simpler copies of it, called **levels of detail** (LODs), for when it is far away and small on screen. You do not need to set anything up, and there is no component to add: the engine picks the right one as the camera moves, and blends smoothly between them. To leave them out, turn off **Make LODs** in the model's import settings. The Inspector shows them on the Obj's Mesh Renderer, and a **LOD Group** swaps whole Objs as they get further away; see [[Levels of Detail]].
 
 A model that comes with LODs of its own uses those instead. Name each mesh's versions as Unity reads them: `Rock_LOD0` for the full one, then `Rock_LOD1`, `Rock_LOD2` and so on, each simpler than the last. The model then has one part, `Rock`, drawn with your LODs at the distances the engine's own would be used. To have the engine make them from `Rock_LOD0` instead, turn off **Use its own LODs**. Either way, the later LODs are not parts of their own.
+
+A model made for Unreal, as many from asset stores are, often carries collision meshes beside its LODs, named `UCX_`, `UBX_`, `USP_` or `UCP_` before the mesh's name. Voxear leaves them out, so they never cover the model in boxes.
 
 ## Putting a model in a level
 
@@ -34,6 +38,21 @@ If you will use the model many times with the same settings, make it a prefab an
 A model can hold several meshes, the shapes it is made of, and the materials they are drawn with. Click the arrow on the model's tile in the Project panel to open it out: its meshes, then its materials, show after it. Click the arrow again to close it.
 
 Drag a mesh onto a Mesh Renderer's **Mesh** in the Inspector to draw that mesh, or a material onto its **Material** to draw with that material. You can also click the arrow on **Mesh** and type to search: it lists the built-in shapes, then every mesh of your models, each by the name its model gives it and its part, as `Gate #mesh0.3`, with the model's file beside it. A model the editor has not loaded yet is listed whole, by its file; picking it uses its first mesh.
+
+## A model's materials
+
+Select a model in the Project panel, and the Inspector lists its **Materials** by the names the file gives them, as Unity's model importer does. Beside each is the material file it is drawn with in its place, or **None (Material)** for the file's own. Pick a material file from the field's arrow, or drag one onto it, and everything drawing the model shows it at once.
+
+A model's own materials cannot be changed, as they live inside its file. To edit them, click **Extract Materials**. Voxear writes each one out as a material file, in a folder beside the model named after it, such as `Models/Gate Materials`, and draws the model with them. Pictures packed inside the model's file are written out beside them as `.png` files; pictures kept beside the model stay where they are. Then select a material in that folder to change it. See [[Materials]].
+
+The choices are kept in the model's `.meta` file, each material by its part, with the material file's ID:
+
+```toml
+[materials]
+material0 = "8d2f6a1c3e5b47d9a0c2e4f6b8d0a1c3"
+```
+
+A build ships the material files a model is drawn with, and their pictures.
 
 ### A model in the scene file
 
@@ -68,7 +87,7 @@ Select a model in the Project panel, and the Inspector shows its **Import Settin
 | **Tangents** | What normal maps need. **From the file** uses the file's, and works them out for a mesh that has none. **Calculate** always works them out. They are worked out whenever the normals are. |
 | **Use its own LODs** | For a model whose meshes come with LODs of their own, named `_LOD0`, `_LOD1` and on: whether it is drawn with those. Turned off, the engine makes them from the first, as **Make LODs** says. |
 | **Make LODs** | Whether the simpler copies for far away are made. Turn it off for a model that must always be drawn in full. |
-| **Import materials** | Whether the model is drawn with its own materials. Turned off, each part is drawn plain grey, and fields that name one of its materials still work. |
+| **Import materials** | Whether the model is drawn with its own materials. Turned off, each part is drawn plain grey, and fields that name one of its materials still work. A material listed under **Materials** with a material file of its own is drawn with that either way. |
 
 Everything that draws the model shows the change at once. A part of the model placed in an open scene moves to where the model now puts it, unless you have moved it since. In scenes that are not open, the parts stay where they were.
 

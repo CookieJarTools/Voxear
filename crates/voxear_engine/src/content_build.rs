@@ -8,11 +8,13 @@
 //!    in scripts names what code loads by path ([`CodeRoot`]); like a field,
 //!    it ships even when excluded.
 //! 2. **Dependencies** come from the files: a level's scenes, the prefabs,
-//!    meshes, materials and sounds that scenes and prefabs use, and a
-//!    model's textures. Files a model reads that are not assets, such as its
-//!    buffers, are cooked into it, and the sheets a UI document names ship
-//!    beside it, so it reads them by path as it does from the project. So
-//!    does a sound's `.meta`, for its import settings.
+//!    meshes, materials and sounds that scenes and prefabs use, a model's
+//!    textures, and the `.material` assets its materials are remapped to.
+//!    Files a model reads that are not assets, such as its buffers, are
+//!    cooked into it, and the sheets a UI document names ship beside it, so
+//!    it reads them by path as it does from the project. So does a sound's
+//!    `.meta`, for its import settings, and a remapped model's, for its
+//!    remapping.
 //! 3. An asset's **usage set** is the roots that reach it. Assets with the
 //!    same usage set share a bundle, so loading a root opens only bundles
 //!    it needs, and what two levels share sits in a bundle both open.
@@ -31,7 +33,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use voxear_assets::{
-    AssetDb, AssetGuid, AssetKind, AssetRef,
+    AssetDb, AssetGuid, AssetKind, AssetRef, MaterialRemap,
     bundle::{BundleInfo, BundleWriter, CATALOG_FORMAT, Catalog, CatalogAsset, content_hash},
 };
 
@@ -141,6 +143,10 @@ pub fn build_with(
             read(root, &entry.path)?
         };
         stored.insert(*guid, bytes);
+        if entry.kind == AssetKind::Model && !MaterialRemap::read(&root.join(&entry.path)).0.is_empty() {
+            let meta = format!("{}.{}", entry.path, voxear_assets::META_EXTENSION);
+            beside.insert(*guid, vec![(meta.clone(), read(root, &meta)?)]);
+        }
         if matches!(entry.kind, AssetKind::Ui | AssetKind::Sound) {
             let why = if entry.kind == AssetKind::Ui { "names" } else { "keeps its import settings in" };
             let files = needs[guid].companions.iter().map(|file| {
@@ -357,6 +363,8 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         AssetKind::Model => {
             let bytes = read(db.root(), path)?;
             needs.companions = voxear_render::companion_files(path, &bytes)?;
+            let remap = MaterialRemap::read(&db.root().join(path));
+            needs.direct.extend(remap.0.values().filter(|material| db.get(**material).is_some()));
         }
         AssetKind::Ui => {
             // Sheets are named from the document's folder, as the game reads them.

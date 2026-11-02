@@ -14,14 +14,14 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{
-    AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader, SoundImport,
+    AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader, MaterialRemap, SoundImport, TextureImport,
     bundle::{BundleInfo, BundleReader, Catalog},
 };
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     CookedModel, ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, MeshRenderer, Primitive,
-    Renderer,
+    Renderer, TextureId, TextureSource,
 };
 use voxear_scene::Destroying;
 
@@ -32,8 +32,9 @@ use crate::{
 };
 
 /// A PBR material as written in `.material` files and inline in scenes.
-/// Colours are sRGB, as picked in a colour picker.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// Colours are sRGB, as picked in a colour picker. Each map is a picture
+/// the material reads, by its GUID, which multiplies the value beside it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaterialData {
     #[serde(default = "default_color")]
@@ -44,6 +45,48 @@ pub struct MaterialData {
     pub roughness: f32,
     #[serde(default, skip_serializing_if = "is_black")]
     pub emissive: [f32; 3],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_map: Option<AssetGuid>,
+    /// Metallic in its blue, roughness in its green, as glTF has them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metallic_map: Option<AssetGuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normal_map: Option<AssetGuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emissive_map: Option<AssetGuid>,
+}
+
+impl Default for MaterialData {
+    fn default() -> Self {
+        Self {
+            color: default_color(),
+            metallic: 0.0,
+            roughness: default_roughness(),
+            emissive: [0.0; 3],
+            color_map: None,
+            metallic_map: None,
+            normal_map: None,
+            emissive_map: None,
+        }
+    }
+}
+
+/// One of a material's maps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaterialMap {
+    Color,
+    Metallic,
+    Normal,
+    Emissive,
+}
+
+impl MaterialMap {
+    pub const ALL: [Self; 4] = [Self::Color, Self::Metallic, Self::Normal, Self::Emissive];
+
+    /// Whether its picture holds colours, read as sRGB, rather than values.
+    pub fn srgb(self) -> bool {
+        matches!(self, Self::Color | Self::Emissive)
+    }
 }
 
 fn default_color() -> [f32; 3] {
@@ -59,24 +102,51 @@ fn is_black(color: &[f32; 3]) -> bool {
 }
 
 impl MaterialData {
-    fn desc(&self) -> MaterialDesc {
+    /// The picture a map reads, if it has one.
+    pub fn map(&self, map: MaterialMap) -> Option<AssetGuid> {
+        match map {
+            MaterialMap::Color => self.color_map,
+            MaterialMap::Metallic => self.metallic_map,
+            MaterialMap::Normal => self.normal_map,
+            MaterialMap::Emissive => self.emissive_map,
+        }
+    }
+
+    pub fn set_map(&mut self, map: MaterialMap, picture: Option<AssetGuid>) {
+        *match map {
+            MaterialMap::Color => &mut self.color_map,
+            MaterialMap::Metallic => &mut self.metallic_map,
+            MaterialMap::Normal => &mut self.normal_map,
+            MaterialMap::Emissive => &mut self.emissive_map,
+        } = picture;
+    }
+
+    /// The GPU's material, its maps' textures in [`MaterialMap::ALL`]'s order.
+    fn desc(&self, [color, metallic, normal, emissive]: [Option<TextureId>; 4]) -> MaterialDesc {
         let [r, g, b] = linear(self.color);
         MaterialDesc {
             base_color: [r, g, b, 1.0],
             metallic: self.metallic,
             roughness: self.roughness,
             emissive: self.emissive,
+            base_color_texture: color,
+            metallic_roughness_texture: metallic,
+            normal_texture: normal,
+            emissive_texture: emissive,
             ..MaterialDesc::default()
         }
     }
 
     /// Identical inline materials share one GPU material.
-    fn key(&self) -> [u32; 8] {
+    fn key(&self) -> MaterialKey {
         let [r, g, b] = self.color.map(f32::to_bits);
         let [er, eg, eb] = self.emissive.map(f32::to_bits);
-        [r, g, b, self.metallic.to_bits(), self.roughness.to_bits(), er, eg, eb]
+        let values = [r, g, b, self.metallic.to_bits(), self.roughness.to_bits(), er, eg, eb];
+        (values, MaterialMap::ALL.map(|map| self.map(map)))
     }
 }
+
+type MaterialKey = ([u32; 8], [Option<AssetGuid>; 4]);
 
 /// What [`Content::release_unused`] freed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -156,8 +226,12 @@ pub struct Content {
     meshes: HashMap<AssetRef, MeshHandle>,
     mesh_refs: HashMap<MeshHandle, AssetRef>,
     asset_materials: HashMap<AssetRef, MaterialHandle>,
-    inline_materials: HashMap<[u32; 8], MaterialHandle>,
+    inline_materials: HashMap<MaterialKey, MaterialHandle>,
     material_sources: HashMap<MaterialHandle, MaterialSource>,
+    /// Each loaded model's materials drawn with `.material` assets.
+    remaps: HashMap<AssetGuid, MaterialRemap>,
+    /// Pictures materials read, by GUID and whether they are read as sRGB.
+    pictures: HashMap<(AssetGuid, bool), TextureId>,
     prefabs: PrefabCache,
     sounds: SoundCache,
 }
@@ -238,6 +312,8 @@ impl Content {
             asset_materials: HashMap::new(),
             inline_materials: HashMap::new(),
             material_sources: HashMap::new(),
+            remaps: HashMap::new(),
+            pictures: HashMap::new(),
             prefabs: PrefabCache::default(),
             sounds: SoundCache::default(),
         }
@@ -328,7 +404,7 @@ impl Content {
             ReadyModel::Source(model) => renderer.upload_model(model)?,
             ReadyModel::Cooked(model) => renderer.upload_cooked(model)?,
         };
-        self.register_model(guid, model);
+        self.register_model(renderer, guid, model);
         Ok(())
     }
 
@@ -371,8 +447,17 @@ impl Content {
         std::fs::write(&file, toml::to_string(data)?).with_context(|| format!("writing {}", file.display()))?;
         let Some(guid) = self.db.guid_of(path) else { return Ok(()) };
         self.texts.remove(&guid);
-        if let Some(&handle) = self.asset_materials.get(&AssetRef::asset(guid, None)) {
-            renderer.update_material(handle, &data.desc())?;
+        let own = self.asset_materials.get(&AssetRef::asset(guid, None)).copied();
+        let remapped = self.remapped_to(guid);
+        if own.is_none() && remapped.is_empty() {
+            return Ok(());
+        }
+        let look = self.look(renderer, data)?;
+        if let Some(handle) = own {
+            renderer.update_material(handle, &look)?;
+        }
+        for (model, part) in remapped {
+            self.show_remapped(renderer, model, &part, &look)?;
         }
         Ok(())
     }
@@ -395,7 +480,7 @@ impl Content {
                 let reader = self.reader();
                 renderer.import_model(&path, &mut |file| reader.read(file))?
             };
-            self.register_model(guid, model);
+            self.register_model(renderer, guid, model);
         }
         Ok(&self.models[&guid].nodes)
     }
@@ -421,6 +506,8 @@ impl Content {
             let model = renderer.reupload_model(old, &prepared)?;
             let moved = moved_parts(old.nodes.iter().zip(&model.nodes));
             self.models.insert(guid, model);
+            // The file's materials went back behind the handles; the remapped ones go on them again.
+            self.remap_materials(renderer, guid);
             return Ok(Reimported { moved, ..Reimported::default() });
         }
 
@@ -442,7 +529,7 @@ impl Content {
         // Prefabs drawing it are read again, with its new parts.
         self.prefabs.templates.iter_mut().for_each(|template| *template = None);
         self.stale_models.push(old);
-        self.register_model(guid, model);
+        self.register_model(renderer, guid, model);
         Ok(reimported)
     }
 
@@ -453,12 +540,23 @@ impl Content {
         self.models.get(&guid).map(|model| model.nodes.as_slice())
     }
 
+    /// How a loaded model's materials are remapped to `.material` assets.
+    pub fn material_remap(&self, model: AssetGuid) -> Option<&MaterialRemap> {
+        self.remaps.get(&model)
+    }
+
+    /// A loaded model's materials, each part with its name in the file, in
+    /// the order its parts first draw, without loading it.
+    pub fn loaded_model_materials(&self, guid: AssetGuid) -> Option<&[(String, String)]> {
+        self.models.get(&guid).map(|model| model.materials.as_slice())
+    }
+
     pub fn loaded_models(&self) -> Vec<String> {
         let source = self.models.keys().filter(|guid| !self.cooked.contains(guid));
         source.filter_map(|&guid| Some(self.db.get(guid)?.path.clone())).collect()
     }
 
-    fn register_model(&mut self, guid: AssetGuid, model: ImportedModel) {
+    fn register_model(&mut self, renderer: &mut Renderer, guid: AssetGuid, model: ImportedModel) {
         for node in &model.nodes {
             let mesh = AssetRef::asset(guid, Some(&node.mesh_part));
             self.mesh_refs.insert(node.mesh, mesh.clone());
@@ -468,6 +566,86 @@ impl Content {
             self.asset_materials.insert(material, node.material);
         }
         self.models.insert(guid, model);
+        self.remap_materials(renderer, guid);
+    }
+
+    /// Puts the look of each `.material` a loaded model's materials are
+    /// remapped to (see [`MaterialRemap`]) on the model's own materials, so
+    /// whatever draws a part shows it, and remembers the remapping, for
+    /// [`Content::save_material`]. A material that cannot be read leaves the
+    /// file's in place, saying so.
+    fn remap_materials(&mut self, renderer: &mut Renderer, guid: AssetGuid) {
+        let Some(path) = self.db.get(guid).map(|entry| entry.path.clone()) else { return };
+        let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
+        let remap = self.read_text(&meta).map(|text| MaterialRemap::from_meta(&text)).unwrap_or_default();
+        for (part, &material) in &remap.0 {
+            let look = self.material_data(material).and_then(|data| self.look(renderer, &data));
+            let result = look.and_then(|look| self.show_remapped(renderer, guid, part, &look));
+            if let Err(error) = result {
+                tracing::warn!("{path}: {part} keeps the file's material: {error:#}");
+            }
+        }
+        match remap.0.is_empty() {
+            true => self.remaps.remove(&guid),
+            false => self.remaps.insert(guid, remap),
+        };
+    }
+
+    /// Shows `look` on a loaded model's material `part`.
+    fn show_remapped(&self, renderer: &mut Renderer, model: AssetGuid, part: &str, look: &MaterialDesc) -> Result<()> {
+        let nodes = self.models.get(&model).map_or(&[][..], |model| &model.nodes[..]);
+        let handles: HashSet<MaterialHandle> =
+            nodes.iter().filter(|node| node.material_part.as_deref() == Some(part)).map(|node| node.material).collect();
+        ensure!(!handles.is_empty(), "the model has no material {part}");
+        handles.into_iter().try_for_each(|handle| renderer.update_material(handle, look))
+    }
+
+    /// A `.material` asset's values.
+    pub fn material_data(&mut self, guid: AssetGuid) -> Result<MaterialData> {
+        let (text, path) = self.asset_text(guid, AssetKind::Material)?;
+        toml::from_str(&text).with_context(|| format!("reading {path}"))
+    }
+
+    /// What the GPU draws a material with, its maps' pictures loaded.
+    fn look(&mut self, renderer: &mut Renderer, data: &MaterialData) -> Result<MaterialDesc> {
+        let mut textures = [None; 4];
+        for (texture, map) in textures.iter_mut().zip(MaterialMap::ALL) {
+            if let Some(picture) = data.map(map) {
+                *texture = Some(self.picture(renderer, picture, map.srgb())?);
+            }
+        }
+        Ok(data.desc(textures))
+    }
+
+    /// A picture asset as a texture, read and uploaded on first use at the
+    /// size its import settings allow.
+    fn picture(&mut self, renderer: &mut Renderer, guid: AssetGuid, srgb: bool) -> Result<TextureId> {
+        if let Some(&texture) = self.pictures.get(&(guid, srgb)) {
+            return Ok(texture);
+        }
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Texture, "{} is not a picture", entry.path);
+        let path = entry.path.clone();
+        let bytes = self.read(&path)?;
+        let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
+        let settings = self.read_text(&meta).map(|text| TextureImport::from_meta(&text)).unwrap_or_default();
+        let picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
+        let (width, height) = settings.size(picture.width(), picture.height());
+        let picture = match (width, height) == picture.dimensions() {
+            true => picture,
+            false => image::imageops::resize(&picture, width, height, image::imageops::FilterType::Triangle),
+        };
+        let source = TextureSource { name: &path, width, height, rgba: picture.as_raw(), srgb };
+        let texture = renderer.add_texture(&source)?;
+        self.pictures.insert((guid, srgb), texture);
+        Ok(texture)
+    }
+
+    /// The models whose material is remapped to the `.material` asset `guid`,
+    /// each with the part.
+    fn remapped_to(&self, guid: AssetGuid) -> Vec<(AssetGuid, String)> {
+        let parts = self.remaps.iter().flat_map(|(model, remap)| remap.0.iter().map(move |(part, m)| (model, part, m)));
+        parts.filter(|(_, _, material)| **material == guid).map(|(model, part, _)| (*model, part.clone())).collect()
     }
 
     pub fn mesh(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<MeshHandle> {
@@ -496,7 +674,8 @@ impl Content {
                 if let Some(&handle) = self.inline_materials.get(&data.key()) {
                     return Ok(handle);
                 }
-                let handle = renderer.add_material(&data.desc())?;
+                let look = self.look(renderer, data)?;
+                let handle = renderer.add_material(&look)?;
                 self.inline_materials.insert(data.key(), handle);
                 handle
             }
@@ -514,9 +693,9 @@ impl Content {
         let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
         let handle = match entry.kind {
             AssetKind::Material => {
-                let (text, path) = self.asset_text(guid, AssetKind::Material)?;
-                let data: MaterialData = toml::from_str(&text).with_context(|| format!("reading {path}"))?;
-                renderer.add_material(&data.desc())?
+                let data = self.material_data(guid)?;
+                let look = self.look(renderer, &data)?;
+                renderer.add_material(&look)?
             }
             AssetKind::Model => {
                 self.model(renderer, guid)?;
@@ -662,6 +841,7 @@ impl Content {
             .collect();
         for guid in unused {
             let model = self.models.remove(&guid).expect("listed above");
+            self.remaps.remove(&guid);
             let model_meshes: HashSet<MeshHandle> = model.nodes.iter().map(|n| n.mesh).collect();
             let model_materials: HashSet<MaterialHandle> = model.nodes.iter().map(|n| n.material).collect();
             model_meshes.iter().for_each(|&m| renderer.free_mesh(m));

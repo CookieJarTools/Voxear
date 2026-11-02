@@ -25,6 +25,20 @@ impl fmt::Debug for AssetGuid {
     }
 }
 
+/// Written as its text, as files name assets.
+impl serde::Serialize for AssetGuid {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AssetGuid {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 impl FromStr for AssetGuid {
     type Err = anyhow::Error;
 

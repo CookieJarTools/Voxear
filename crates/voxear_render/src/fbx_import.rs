@@ -232,8 +232,9 @@ impl Preparer {
         if let Some(&index) = self.materials.get(&key) {
             return index;
         }
+        let name = material.element.name.to_string();
         if !self.settings.materials {
-            self.model.materials.push(PreparedMaterial::plain());
+            self.model.materials.push(PreparedMaterial::plain(&name));
             self.materials.insert(key, self.model.materials.len() - 1);
             return self.model.materials.len() - 1;
         }
@@ -251,7 +252,8 @@ impl Preparer {
             emissive: emission,
             ..MaterialDesc::default()
         };
-        self.model.materials.push(PreparedMaterial { desc, base_color, metallic_roughness: None, normal, emissive });
+        let metallic_roughness = None;
+        self.model.materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
         let index = self.model.materials.len() - 1;
         self.materials.insert(key, index);
         index
@@ -276,15 +278,15 @@ impl Preparer {
 
     fn read_texture(&mut self, texture: &ufbx::Texture, srgb: bool, read: &mut ReadFile) -> Option<usize> {
         let path = &self.model.path;
-        let (encoded, settings) = match texture.content.is_empty() {
-            false => (texture.content.to_vec(), TextureImport::default()),
+        let (encoded, settings, source) = match texture.content.is_empty() {
+            false => (texture.content.to_vec(), TextureImport::default(), None),
             true => {
                 let files = texture_files(path, texture);
                 let Some((file, bytes)) = files.iter().find_map(|file| Some((file, read(file).ok()?))) else {
                     tracing::warn!("{path}: no texture {} (looked for {})", &*texture.filename, files.join(", "));
                     return None;
                 };
-                (bytes, texture_settings(file, read))
+                (bytes, texture_settings(file, read), Some(file.clone()))
             }
         };
         let image = match image::load_from_memory(&encoded) {
@@ -297,13 +299,14 @@ impl Preparer {
         let (width, height) = image.dimensions();
         let name = [&texture.element.name, &texture.filename].into_iter().find(|name| !name.is_empty());
         self.model.textures.push(PreparedTexture {
-            name: name.map_or("fbx texture", |name| name).to_string(),
+            name: name.map_or("", |name| name).to_string(),
             width,
             height,
             srgb,
             format: TextureFormat::Rgba8,
             mips: vec![image.into_raw()],
             compress: settings.compress,
+            source,
         });
         Some(self.model.textures.len() - 1)
     }

@@ -15,6 +15,7 @@ mod importing;
 mod inspectors;
 mod level_edits;
 mod material_drops;
+mod model_materials;
 mod placing;
 mod play;
 mod prefab_mode;
@@ -744,6 +745,7 @@ impl Editor {
             if let Some(action) = self.inspector.update_asset(&mut self.ui) {
                 self.asset_action(action, renderer);
             }
+            self.fill_model_materials(renderer);
             let listening = self.game.audio.previewing().map(str::to_string);
             if let Some(view) = self.inspector.asset_view() {
                 view.show_listening(&mut self.ui, listening.as_deref());
@@ -950,6 +952,13 @@ impl Editor {
                 }
             }
             AssetAction::StopListening => self.game.audio.stop_preview(),
+            AssetAction::BrowseMap { material, map, anchor } => self.browse_material_map(&material, map, anchor),
+            AssetAction::DropMap { material, map, source } => {
+                self.drop_material_map(&material, map, &source, renderer);
+            }
+            AssetAction::BrowseRemap { model, part, anchor } => self.browse_remap(&model, &part, anchor),
+            AssetAction::DropRemap { model, part, source } => self.drop_remap(&model, &part, &source, renderer),
+            AssetAction::ExtractMaterials(model) => self.extract_materials(&model, renderer),
         }
     }
 
@@ -1959,6 +1968,10 @@ impl Editor {
                 (PickFor::LevelScene { level, at }, Chosen::Value(pick)) => {
                     self.pick_level_scene(&level, at, &pick, renderer);
                 }
+                (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {
+                    self.pick_material_map(&material, map, &pick, renderer);
+                }
+                (PickFor::Remap { model, part }, Chosen::Value(pick)) => self.pick_remap(&model, &part, &pick, renderer),
                 (PickFor::AddComponent(entity), Chosen::Component(part)) if alive(entity) => {
                     self.row_action_on(entity, RowAction::Add(part), renderer);
                 }

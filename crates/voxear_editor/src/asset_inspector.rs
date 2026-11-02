@@ -1,7 +1,10 @@
 //! The Inspector for what is selected in the Project panel: its icon, name
 //! and kind, where it is (path, GUID and size), and what its kind holds. A
-//! material's colour, metallic, roughness and emission are edited in place
-//! and saved to its file, showing at once where it is drawn. A script shows
+//! material's colour, metallic, roughness and emission, and the pictures its
+//! maps read, are edited in place and saved to its file, showing at once
+//! where it is drawn. A model lists its materials, each with the `.material`
+//! asset it draws with in place of the file's, and extracts them into
+//! `.material` assets to edit (see `editor::model_materials`). A script shows
 //! the fields of the behaviour it declares, with their starting values, as
 //! its last build describes them, then its code, coloured as a code editor
 //! colours it, as a UI document shows its markup. A prefab and a scene list their Objs. A
@@ -22,8 +25,8 @@
 //! sound shows how long it is, its channels and sample rate, and a button
 //! to listen to it, which plays it outside the game's volumes.
 
-use voxear_assets::AssetKind;
-use voxear_engine::{Game, MaterialData, script_types::ScriptTypes};
+use voxear_assets::{AssetDb, AssetGuid, AssetKind, MaterialRemap};
+use voxear_engine::{Game, MaterialData, MaterialMap, script_types::ScriptTypes};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -65,6 +68,35 @@ pub enum AssetAction {
     /// Play the sound at this path in the editor, or stop it.
     Listen(String),
     StopListening,
+    /// Open the object picker under `anchor` for a picture for a map of the
+    /// material at this path.
+    BrowseMap {
+        material: String,
+        map: MaterialMap,
+        anchor: NodeId,
+    },
+    /// Something was dragged onto a map of the material at this path.
+    DropMap {
+        material: String,
+        map: MaterialMap,
+        source: DragSource,
+    },
+    /// Open the object picker under `anchor` for the `.material` a part of
+    /// the model at this path draws with.
+    BrowseRemap {
+        model: String,
+        part: String,
+        anchor: NodeId,
+    },
+    /// Something was dragged onto a model's material.
+    DropRemap {
+        model: String,
+        part: String,
+        source: DragSource,
+    },
+    /// Write the model's materials out as `.material` assets, and draw it
+    /// with them.
+    ExtractMaterials(String),
 }
 
 pub struct AssetView {
@@ -73,6 +105,8 @@ pub struct AssetView {
     material: Option<MaterialFields>,
     level: Option<LevelFields>,
     import: Option<ImportFields>,
+    /// A model's materials, filled once the model is loaded.
+    remaps: Option<ModelMaterials>,
     /// The preview's frame, which takes drags, and its image.
     preview: Option<(NodeId, NodeId)>,
     /// A sound's play button, and whether it shows that the sound plays.
@@ -115,6 +149,29 @@ struct MaterialFields {
     emissive: [NodeId; 3],
     /// The colour's and the emission's swatches, which open the colour picker.
     swatches: [NodeId; 2],
+    /// Each map's picture, in [`MaterialMap::ALL`]'s order, with its path.
+    maps: [(Slot, Option<String>); 4],
+}
+
+/// A field naming an asset, as an Obj's references show one: its icon and
+/// name, which ping the asset, and an arrow for the object picker.
+#[derive(Clone, Copy)]
+struct Slot {
+    field: NodeId,
+    arrow: NodeId,
+    icon: NodeId,
+    label: NodeId,
+}
+
+/// A model's materials, each with the `.material` it draws with instead of
+/// the file's, and Extract Materials.
+struct ModelMaterials {
+    rows: NodeId,
+    /// Filled once the model is loaded, which names its materials.
+    filled: bool,
+    /// Each material's part, its slot and the remapped asset's path.
+    parts: Vec<(String, Slot, Option<String>)>,
+    extract: Option<NodeId>,
 }
 
 /// Which of a material's colours: its colour, picked as sRGB, or its
@@ -166,13 +223,23 @@ impl AssetView {
         }
 
         let file = game.project.root.join(&item.path);
-        let mut view =
-            Self { item: item.clone(), open: None, material: None, level: None, import: None, preview, listen: None };
+        let mut view = Self {
+            item: item.clone(),
+            open: None,
+            material: None,
+            level: None,
+            import: None,
+            remaps: None,
+            preview,
+            listen: None,
+        };
         match item.kind {
-            ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file),
+            ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game.content.db()),
             ItemKind::Asset(AssetKind::Model) => {
                 let rows = part(ui, root, "Import Settings", "box");
                 view.import = Some(ImportFields::model(ui, rows, &file));
+                let rows = part(ui, root, "Materials", "material");
+                view.remaps = Some(ModelMaterials { rows, filled: false, parts: Vec::new(), extract: None });
             }
             ItemKind::Asset(AssetKind::Texture) => {
                 let rows = part(ui, root, "Import Settings", "texture");
@@ -213,13 +280,14 @@ impl AssetView {
         if item.kind != ItemKind::Asset(AssetKind::Material) {
             return None;
         }
-        let material = material(ui, root, &game.project.root.join(&item.path))?;
+        let material = material(ui, root, &game.project.root.join(&item.path), game.content.db())?;
         Some(Self {
             item: item.clone(),
             open: None,
             material: Some(material),
             level: None,
             import: None,
+            remaps: None,
             preview: None,
             listen: None,
         })
@@ -246,7 +314,22 @@ impl AssetView {
         if let Some(action) = self.level.as_ref().and_then(|level| level.update(ui, &self.item.path)) {
             return Some(action);
         }
+        if let Some(action) = self.remaps.as_ref().and_then(|remaps| remaps.update(ui, &self.item.path)) {
+            return Some(action);
+        }
         let fields = self.material.as_mut()?;
+        for (map, (slot, path)) in MaterialMap::ALL.into_iter().zip(&fields.maps) {
+            let material = self.item.path.clone();
+            if let Some(source) = ui.dropped_onto(slot.field) {
+                return Some(AssetAction::DropMap { material, map, source });
+            }
+            if ui.clicked(slot.arrow) {
+                return Some(AssetAction::BrowseMap { material, map, anchor: slot.field });
+            }
+            if let Some(path) = path.clone().filter(|_| ui.clicked(slot.field)) {
+                return Some(AssetAction::Ping(path));
+            }
+        }
         let changed = fields.color.iter().chain(&fields.emissive).chain([&fields.metallic, &fields.roughness]);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -261,7 +344,49 @@ impl AssetView {
         }
         data.metallic = read(fields.metallic, data.metallic).clamp(0.0, 1.0);
         data.roughness = read(fields.roughness, data.roughness).clamp(0.0, 1.0);
-        Some(AssetAction::SaveMaterial(self.item.path.clone(), *data))
+        Some(AssetAction::SaveMaterial(self.item.path.clone(), data.clone()))
+    }
+
+    /// Sets the picture a map of the material shown reads, or none, and
+    /// asks for the material to be saved.
+    pub fn set_map(&mut self, ui: &mut Ui, map: MaterialMap, picture: Option<(AssetGuid, String)>) -> Option<AssetAction> {
+        let fields = self.material.as_mut()?;
+        let at = MaterialMap::ALL.iter().position(|&m| m == map)?;
+        fields.data.set_map(map, picture.as_ref().map(|(guid, _)| *guid));
+        let (slot, path) = &mut fields.maps[at];
+        *path = picture.map(|(_, path)| path);
+        show_slot(ui, *slot, path.as_deref(), "Texture");
+        Some(AssetAction::SaveMaterial(self.item.path.clone(), fields.data.clone()))
+    }
+
+    /// Whether a model is shown whose materials wait for it to load.
+    pub fn wants_materials(&self) -> bool {
+        self.remaps.as_ref().is_some_and(|remaps| !remaps.filled)
+    }
+
+    /// Lists the model's materials, by part and name, each with the
+    /// `.material` its `.meta` remaps it to, and Extract Materials.
+    pub fn fill_materials(&mut self, ui: &mut Ui, materials: &[(String, String)], remap: &MaterialRemap, db: &AssetDb) {
+        let Some(remaps) = self.remaps.as_mut() else { return };
+        for child in ui.children(remaps.rows) {
+            ui.remove(child);
+        }
+        remaps.parts.clear();
+        for (number, (part, name)) in materials.iter().enumerate() {
+            let label = if name.is_empty() { format!("Material {number}") } else { name.clone() };
+            let path = remap.get(part).and_then(|guid| db.get(guid)).map(|entry| entry.path.clone());
+            let slot = slot(ui, remaps.rows, &label, "material");
+            show_slot(ui, slot, path.as_deref(), "Material");
+            remaps.parts.push((part.clone(), slot, path));
+        }
+        if materials.is_empty() {
+            text_row(ui, remaps.rows, "Materials", "None");
+        } else {
+            let extract = ui.button(remaps.rows, "Extract Materials");
+            ui.add_class(extract, "add-component");
+            remaps.extract = Some(extract);
+        }
+        remaps.filled = true;
     }
 
     /// The material colour whose swatch was clicked, with the swatch and the
@@ -287,7 +412,7 @@ impl AssetView {
             ui.set_text(field, &number(value));
         }
         fields.show_swatches(ui);
-        Some(AssetAction::SaveMaterial(self.item.path.clone(), fields.data))
+        Some(AssetAction::SaveMaterial(self.item.path.clone(), fields.data.clone()))
     }
 
     /// Shows the material's colours in their swatches again, as after typing.
@@ -388,7 +513,7 @@ fn length(seconds: f64) -> String {
 }
 
 /// A material's values, to edit.
-fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path) -> Option<MaterialFields> {
+fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> Option<MaterialFields> {
     let text = std::fs::read_to_string(file).ok()?;
     let data: MaterialData = toml::from_str(&text).ok()?;
     let rows = part(ui, root, "Material", "material");
@@ -407,10 +532,66 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path) -> Option<Materia
             ui.set_text(*field, &number(value));
         }
     }
-    let fields =
-        MaterialFields { data, color, metallic, roughness, emissive, swatches: [color_swatch, emission_swatch] };
+    let labels = ["Colour Map", "Metallic Map", "Normal Map", "Emission Map"];
+    let maps = MaterialMap::ALL.map(|map| {
+        let at = MaterialMap::ALL.iter().position(|&m| m == map).unwrap_or_default();
+        let slot = slot(ui, rows, labels[at], "texture");
+        let path = data.map(map).and_then(|guid| db.get(guid)).map(|entry| entry.path.clone());
+        show_slot(ui, slot, path.as_deref(), "Texture");
+        (slot, path)
+    });
+    let swatches = [color_swatch, emission_swatch];
+    let fields = MaterialFields { data, color, metallic, roughness, emissive, swatches, maps };
     fields.show_swatches(ui);
     Some(fields)
+}
+
+/// A row with a field naming an asset.
+fn slot(ui: &mut Ui, rows: NodeId, label: &str, icon: &str) -> Slot {
+    let row = prop(ui, rows, label);
+    let field = ui.panel(row, Style::row());
+    ui.add_class(field, "value-picker");
+    ui.accept_drops(field, true);
+    let icon = ui.icon(field, icon);
+    ui.add_class(icon, "picker-icon");
+    let label = ui.add_label(field, "");
+    ui.add_class(label, "picker-label");
+    let arrow = ui.icon_button(field, "chevron-down");
+    ui.add_class(arrow, "picker-arrow");
+    Slot { field, arrow, icon, label }
+}
+
+/// Shows the asset at `path` in a slot by its name, or none of `kind`.
+fn show_slot(ui: &mut Ui, slot: Slot, path: Option<&str>, kind: &str) {
+    let name = path.map(|path| path.rsplit('/').next().unwrap_or(path));
+    let name = name.map(|name| name.rsplit_once('.').map_or(name, |(stem, _)| stem));
+    ui.set_text(slot.label, &name.map_or_else(|| format!("None ({kind})"), str::to_string));
+    ui.set_visible(slot.icon, path.is_some());
+}
+
+impl ModelMaterials {
+    /// What was asked this frame of the model at `model`: a material's
+    /// field clicked, its arrow, something dropped on it, or Extract
+    /// Materials.
+    fn update(&self, ui: &mut Ui, model: &str) -> Option<AssetAction> {
+        let model = model.to_string();
+        if self.extract.is_some_and(|button| ui.clicked(button)) {
+            return Some(AssetAction::ExtractMaterials(model));
+        }
+        for (part, slot, path) in &self.parts {
+            let part = part.clone();
+            if let Some(source) = ui.dropped_onto(slot.field) {
+                return Some(AssetAction::DropRemap { model, part, source });
+            }
+            if ui.clicked(slot.arrow) {
+                return Some(AssetAction::BrowseRemap { model, part, anchor: slot.field });
+            }
+            if let Some(path) = path.clone().filter(|_| ui.clicked(slot.field)) {
+                return Some(AssetAction::Ping(path));
+            }
+        }
+        None
+    }
 }
 
 impl MaterialFields {

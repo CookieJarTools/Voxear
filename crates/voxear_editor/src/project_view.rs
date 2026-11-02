@@ -879,11 +879,11 @@ impl ProjectView {
         contents.listing = contents.list(folder);
         contents.selected = None;
         let mut crumbs = vec![contents.folders[folder].name.clone()];
-        let mut parent = contents.folders[folder].parent;
+        let (mut parent, mut above) = (contents.folders[folder].parent, Vec::new());
         while let Some(at) = parent {
             crumbs.push(contents.folders[at].name.clone());
             parent = contents.folders[at].parent;
-            ui.set_expanded(self.folder_tree, at as u64, true);
+            above.push(at);
         }
         crumbs.reverse();
         ui.set_text(self.path, &crumbs.join("  /  "));
@@ -891,6 +891,10 @@ impl ProjectView {
         ui.set_text(self.count, &format!("{items} {}", if items == 1 { "item" } else { "items" }));
         let rows = contents.rows();
         drop(contents);
+        // Expanding asks the tree's rows for their folders, which needs the contents back.
+        for at in above {
+            ui.set_expanded(self.folder_tree, at as u64, true);
+        }
         ui.set_list_count(self.files, rows);
         ui.set_selection(self.files, &[]);
         ui.refresh_list(self.files);

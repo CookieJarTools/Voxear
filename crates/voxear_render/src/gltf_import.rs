@@ -35,6 +35,9 @@ use crate::{
 pub struct ImportedModel {
     pub nodes: Vec<ImportedNode>,
     pub textures: Vec<TextureId>,
+    /// Each material part, `material<index>`, with its name in the file, in
+    /// the order the parts first draw. A cooked model's have no names.
+    pub materials: Vec<(String, String)>,
 }
 
 /// One drawable piece of the imported scene, with its transform relative to
@@ -69,6 +72,7 @@ pub struct PreparedModel {
 }
 
 pub(crate) struct PreparedTexture {
+    /// Its name in the file, or empty when it has none.
     pub name: String,
     pub width: u32,
     pub height: u32,
@@ -80,6 +84,16 @@ pub(crate) struct PreparedTexture {
     /// Whether [`PreparedModel::compress_textures`] compresses it, as its
     /// picture's import settings say.
     pub compress: bool,
+    /// The project path of the picture file it was read from, or `None`
+    /// for one inside the model's file.
+    pub source: Option<String>,
+}
+
+impl PreparedTexture {
+    /// What the GPU's tools call it.
+    fn label(&self) -> &str {
+        if self.name.is_empty() { "model texture" } else { &self.name }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +127,8 @@ impl TextureFormat {
 /// A material whose textures are indices into the model's textures until upload.
 #[derive(Clone)]
 pub(crate) struct PreparedMaterial {
+    /// Its name in the file. A cooked model's have none.
+    pub name: String,
     pub desc: MaterialDesc,
     pub base_color: Option<usize>,
     pub metallic_roughness: Option<usize>,
@@ -124,9 +140,32 @@ impl PreparedMaterial {
     /// The default material's look, for a model imported without its
     /// materials: each keeps a material of its own, so its references
     /// still work and taking the materials back needs no new ones.
-    pub(crate) fn plain() -> Self {
-        Self { desc: MaterialDesc::default(), base_color: None, metallic_roughness: None, normal: None, emissive: None }
+    pub(crate) fn plain(name: &str) -> Self {
+        let desc = MaterialDesc::default();
+        Self { name: name.to_string(), desc, base_color: None, metallic_roughness: None, normal: None, emissive: None }
     }
+}
+
+/// One of a model's materials as its file has it, for the editor to list
+/// and to extract into a `.material` asset.
+#[derive(Clone, Debug)]
+pub struct FileMaterial {
+    /// `material<index>`, as asset references name it.
+    pub part: String,
+    pub name: String,
+    pub desc: MaterialDesc,
+    /// Its colour, metallic and roughness, normal and emissive maps' pictures.
+    pub maps: [Option<FilePicture>; 4],
+}
+
+/// A picture a model's material reads.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FilePicture {
+    /// A picture file in the project, by its path.
+    File(String),
+    /// A picture inside the model's file: its name, empty when it has none,
+    /// and its pixels, RGBA8.
+    Inside { name: String, width: u32, height: u32, rgba: Vec<u8> },
 }
 
 #[derive(Clone)]
@@ -151,6 +190,42 @@ impl PreparedModel {
     /// [`reupload`] needs to match an earlier import.
     pub fn parts(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
         self.nodes.iter().map(|node| (node.mesh_part.as_str(), node.material_part.as_deref()))
+    }
+
+    /// Each of its materials that a part draws with, as its file has it, in
+    /// the order the parts first draw. Read before
+    /// [`compress_textures`](Self::compress_textures), whose pictures it
+    /// cannot give back.
+    pub fn file_materials(&self) -> Vec<FileMaterial> {
+        let picture = |index: Option<usize>| {
+            let texture = &self.textures[index?];
+            Some(match &texture.source {
+                Some(path) => FilePicture::File(path.clone()),
+                None if texture.format != TextureFormat::Rgba8 => return None,
+                None => FilePicture::Inside {
+                    name: texture.name.clone(),
+                    width: texture.width,
+                    height: texture.height,
+                    rgba: texture.mips[0].clone(),
+                },
+            })
+        };
+        let mut found: Vec<FileMaterial> = Vec::new();
+        for node in &self.nodes {
+            let (Some(part), Some(index)) = (&node.material_part, node.material) else { continue };
+            if found.iter().any(|material| material.part == *part) {
+                continue;
+            }
+            let material = &self.materials[index];
+            let maps = [material.base_color, material.metallic_roughness, material.normal, material.emissive];
+            found.push(FileMaterial {
+                part: part.clone(),
+                name: material.name.clone(),
+                desc: material.desc,
+                maps: maps.map(picture),
+            });
+        }
+        found
     }
 
     /// Replaces a texture's pixels with `rgba`, for tests and tools that
@@ -201,13 +276,15 @@ fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result
     if fbx_import::is_fbx(path) {
         return fbx_import::prepare(path, read, settings).with_context(|| format!("reading {path}"));
     }
-    let (document, buffers, images, compress) = load(path, read).with_context(|| format!("reading {path}"))?;
+    let (document, buffers, images, compress, sources) =
+        load(path, read).with_context(|| format!("reading {path}"))?;
     let mut preparer = Preparer {
         settings: *settings,
         size: mesh_tools::size(settings),
         buffers,
         images,
         compress,
+        sources,
         model: PreparedModel {
             path: path.to_string(),
             meshes: Vec::new(),
@@ -234,7 +311,7 @@ pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &P
     for (data, lods) in &model.meshes {
         meshes.push(assets.add_mesh_with_lods(gpu, data, lods)?);
     }
-    Ok(imported(assets, &model.nodes, &meshes, &materials, textures))
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, textures))
 }
 
 /// Puts a model prepared again, as with other import settings, behind the
@@ -279,7 +356,7 @@ pub fn reupload(
         assets.set_material(gpu, handle, &material_desc(material, &textures))?;
     }
     old.textures.iter().for_each(|&texture| assets.free_texture(texture, frame));
-    Ok(imported(assets, &model.nodes, &meshes, &materials, textures))
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, textures))
 }
 
 fn upload_textures(
@@ -293,7 +370,7 @@ fn upload_textures(
         let id = match texture.format {
             TextureFormat::Rgba8 => {
                 let source = TextureSource {
-                    name: &texture.name,
+                    name: texture.label(),
                     width: texture.width,
                     height: texture.height,
                     rgba: &texture.mips[0],
@@ -304,7 +381,7 @@ fn upload_textures(
             format => assets.add_texture_mips(
                 gpu,
                 bindless,
-                &texture.name,
+                texture.label(),
                 (texture.width, texture.height),
                 format.vulkan(texture.srgb),
                 &texture.mips,
@@ -327,7 +404,7 @@ pub fn upload_cooked(
     let device = gpu.decompression.as_ref().filter(|_| decompress);
     let (meshes, textures) = assets.add_cooked(gpu, bindless, model, device)?;
     let materials = add_materials(gpu, assets, &model.materials, &textures)?;
-    Ok(imported(assets, &model.nodes, &meshes, &materials, textures))
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, textures))
 }
 
 fn add_materials(
@@ -353,11 +430,19 @@ fn material_desc(material: &PreparedMaterial, textures: &[TextureId]) -> Materia
 
 fn imported(
     assets: &Assets,
+    prepared: &[PreparedMaterial],
     nodes: &[PreparedNode],
     meshes: &[MeshHandle],
     materials: &[MaterialHandle],
     textures: Vec<TextureId>,
 ) -> ImportedModel {
+    let mut names: Vec<(String, String)> = Vec::new();
+    for node in nodes {
+        let (Some(part), Some(index)) = (&node.material_part, node.material) else { continue };
+        if !names.iter().any(|(known, _)| known == part) {
+            names.push((part.clone(), prepared.get(index).map_or_else(String::new, |m| m.name.clone())));
+        }
+    }
     let nodes = nodes
         .iter()
         .map(|node| ImportedNode {
@@ -371,7 +456,7 @@ fn imported(
             material_part: node.material_part.clone(),
         })
         .collect();
-    ImportedModel { nodes, textures }
+    ImportedModel { nodes, textures, materials: names }
 }
 
 /// Reads, processes and uploads a model in one go.
@@ -393,6 +478,8 @@ struct Preparer {
     images: Vec<gltf::image::Data>,
     /// Whether each image is compressed for a build.
     compress: Vec<bool>,
+    /// The project path of each image's file, for those not inside the model's.
+    sources: Vec<Option<String>>,
     model: PreparedModel,
     meshes: HashMap<(usize, usize), usize>,
     textures: HashMap<(usize, bool), usize>,
@@ -472,8 +559,9 @@ impl Preparer {
         if let Some(&index) = self.materials.get(&key) {
             return Ok(Some(index));
         }
+        let name = material.name().unwrap_or_default();
         if !self.settings.materials {
-            self.model.materials.push(PreparedMaterial::plain());
+            self.model.materials.push(PreparedMaterial::plain(name));
             self.materials.insert(key, self.model.materials.len() - 1);
             return Ok(Some(self.model.materials.len() - 1));
         }
@@ -498,7 +586,8 @@ impl Preparer {
             alpha_cutoff,
             ..MaterialDesc::default()
         };
-        self.model.materials.push(PreparedMaterial { desc, base_color, metallic_roughness, normal, emissive });
+        let name = name.to_string();
+        self.model.materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
         let index = self.model.materials.len() - 1;
         self.materials.insert(key, index);
         Ok(Some(index))
@@ -513,13 +602,14 @@ impl Preparer {
         let rgba =
             to_rgba8(image).with_context(|| format!("texture {image_index} uses an unsupported pixel format"))?;
         self.model.textures.push(PreparedTexture {
-            name: texture.name().unwrap_or("gltf texture").to_string(),
+            name: texture.name().or(texture.source().name()).unwrap_or_default().to_string(),
             width: image.width,
             height: image.height,
             srgb,
             format: TextureFormat::Rgba8,
             mips: vec![rgba],
             compress: self.compress[image_index],
+            source: self.sources[image_index].clone(),
         });
         let index = self.model.textures.len() - 1;
         self.textures.insert((image_index, srgb), index);
@@ -546,9 +636,9 @@ pub fn companion_files(path: &str, bytes: &[u8]) -> Result<Vec<String>> {
     Ok(buffers.chain(images).filter(|uri| !uri.starts_with("data:")).map(|uri| resolve(path, uri)).collect())
 }
 
-/// The file, its buffers, its images at the size their settings say, and
-/// whether each is compressed for a build.
-type Loaded = (gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>, Vec<bool>);
+/// The file, its buffers, its images at the size their settings say,
+/// whether each is compressed for a build, and each one's file.
+type Loaded = (gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>, Vec<bool>, Vec<Option<String>>);
 
 /// What `gltf::import` does, but reading every file through `read`.
 fn load(path: &str, read: &mut ReadFile) -> Result<Loaded> {
@@ -561,8 +651,12 @@ fn load(path: &str, read: &mut ReadFile) -> Result<Loaded> {
         };
         buffers.push(gltf::buffer::Data(data));
     }
-    let (mut images, mut compress) = (Vec::new(), Vec::new());
+    let (mut images, mut compress, mut sources) = (Vec::new(), Vec::new(), Vec::new());
     for image in document.images() {
+        sources.push(match image.source() {
+            gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => Some(resolve(path, uri)),
+            _ => None,
+        });
         let (encoded, settings) = match image.source() {
             gltf::image::Source::View { view, .. } => {
                 let buffer = &buffers[view.buffer().index()].0;
@@ -587,7 +681,7 @@ fn load(path: &str, read: &mut ReadFile) -> Result<Loaded> {
         });
         compress.push(settings.compress);
     }
-    Ok((document, buffers, images, compress))
+    Ok((document, buffers, images, compress, sources))
 }
 
 /// The import settings of the picture file at `path`, from its `.meta`, or

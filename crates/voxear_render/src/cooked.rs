@@ -265,7 +265,8 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         };
         let mut texture = || r.option().map(|t| t.map(|t| t as usize));
         let (base_color, metallic_roughness, normal, emissive) = (texture()?, texture()?, texture()?, texture()?);
-        materials.push(PreparedMaterial { desc, base_color, metallic_roughness, normal, emissive });
+        let name = String::new();
+        materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
     }
     let mut nodes = Vec::new();
     for _ in 0..r.u32()? {

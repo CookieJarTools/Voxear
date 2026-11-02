@@ -70,11 +70,8 @@ impl Editor {
             self.notify(&format!("Could not save the import settings of {path}: {error:#}"));
             return;
         }
-        // Written here, so not a change from outside to import again for.
+        self.wrote_meta(path);
         let meta = format!("{path}.meta");
-        if let Ok(time) = meta_path(&file).metadata().and_then(|m| m.modified()) {
-            self.imports.times.insert(meta.clone(), time);
-        }
         if let ImportSettings::Model(_) = settings {
             self.reimport_model(path, renderer);
             return;
@@ -96,6 +93,15 @@ impl Editor {
             [] => self.notify(&format!("Saved the import settings of {name}; models read it with them")),
             [_] => {}
             _ => self.notify(&format!("Imported the {} models that use {name} again", models.len())),
+        }
+    }
+
+    /// Notes that the editor wrote the `.meta` of the asset at `path`, so it
+    /// is not a change from outside to import again for.
+    pub(super) fn wrote_meta(&mut self, path: &str) {
+        let file = self.game.project.root.join(path);
+        if let Ok(time) = meta_path(&file).metadata().and_then(|m| m.modified()) {
+            self.imports.times.insert(format!("{path}.meta"), time);
         }
     }
 

@@ -156,11 +156,13 @@ pub fn default_until(measure: LodMeasure, index: usize) -> f32 {
 }
 
 /// How a camera sees a group: the fraction of the screen's height its Objs
-/// cover, and how far away its own Obj is, in metres.
+/// cover, how far away its own Obj is, in metres, and the middle of the box
+/// around its meshes, which the size is measured from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodView {
     pub size: f32,
     pub distance: f32,
+    pub center: Vec3,
 }
 
 /// A camera as LOD Groups measure from it.
@@ -258,7 +260,7 @@ fn measure(world: &World, group: Entity, bounds: Option<(Vec3, Vec3)>, camera: L
         None => (at, EMPTY_SIZE),
     };
     let away = center.distance(camera.position).max(1e-4);
-    LodView { size: size / (2.0 * away * camera.tan_half_fov), distance }
+    LodView { size: size / (2.0 * away * camera.tan_half_fov), distance, center }
 }
 
 /// The groups and levels an Obj is in, through its parents: the nearest

@@ -1038,16 +1038,41 @@
     font-size: 11px;
 }
 
-/* One of a level's scenes: a reference to it, then its boxes and remove button. */
+/* One of a level's scenes: a reference to it and its remove button, then its
+   boxes and weight under it. */
 .level-scene {
-    flex-direction: row;
+    flex-direction: column;
+    gap: 4px;
+    padding: 3px 0px;
+}
+
+.level-scene-top {
     align-items: center;
     gap: 6px;
     min-height: 26px;
 }
 
-.level-scene > .value-picker {
+.level-scene-top > .value-picker {
     flex-grow: 1;
+}
+
+.level-scene-flags {
+    align-items: center;
+    gap: 6px;
+    padding-left: 2px;
+}
+
+.level-weight-label {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.level-weight {
+    width: 36px;
+    min-width: 0px;
+    flex-grow: 0;
+    flex-shrink: 1;
 }
 
 .picker-icon {
@@ -1223,6 +1248,17 @@ DockSpace .project-split > .split-divider {
     font-family: mono;
     font-size: 11px;
     color: var(--vx-muted);
+}
+
+/* How big the Project panel's tiles are, rows at its far left, as Unity's. */
+.size-slider {
+    width: 72px;
+    flex-shrink: 0;
+    margin-left: 10px;
+}
+
+.size-slider > .slider-value {
+    display: none;
 }
 
 .file-size {

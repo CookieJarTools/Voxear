@@ -8,7 +8,9 @@
 //!
 //! Each scene is a reference, as an Obj's are: the object picker offers the
 //! project's other scenes for it, or for Add Scene, and a scene dragged from
-//! the Project panel onto either goes in.
+//! the Project panel onto either goes in. The level a level stands on is
+//! one too, offering the project's other levels, but none that stands on
+//! this one, which would go round in a circle.
 
 use anyhow::{Context, Result};
 use voxear_assets::AssetKind;
@@ -118,6 +120,66 @@ impl Editor {
             return self.notify(&format!("{name} is in this level already"));
         }
         self.pick_level_scene(level, at, &Pick::Asset(Some(path)), renderer);
+    }
+
+    /// Opens the object picker under `anchor` for the level that `level`
+    /// stands on: the project's other levels, or none.
+    pub(super) fn browse_stands_on(&mut self, level: &str, anchor: NodeId) {
+        let db = self.game.content.db();
+        let mut paths: Vec<String> = (db.entries())
+            .filter(|entry| entry.kind == AssetKind::Level && entry.path != level)
+            .map(|entry| entry.path.clone())
+            .collect();
+        paths.sort();
+        let mut choices = vec![("None".to_string(), Pick::Asset(None))];
+        choices.extend(paths.into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
+        let choices = object_picker::decorate(&self.game, choices);
+        let target = PickFor::StandsOn { level: level.to_string() };
+        self.picker.open(&mut self.ui, (target, anchor), "Select Level", choices, "");
+    }
+
+    /// Makes `level` stand on the level picked, or on none, unless the one
+    /// picked stands on `level`, through the levels it stands on.
+    pub(super) fn pick_stands_on(&mut self, level: &str, pick: &Pick, renderer: &mut Renderer) {
+        let base = match pick {
+            Pick::Asset(Some(path)) => Some(path.clone()),
+            _ => None,
+        };
+        let Some(base) = base else { return self.edit_level(level, &LevelEdit::StandsOn(None), renderer) };
+        if base == level || self.stands_on_chain(&base).iter().any(|below| below == level) {
+            let name = base.rsplit('/').next().unwrap_or(&base);
+            return self.notify(&format!("{name} stands on this level already"));
+        }
+        let Some(guid) = self.game.content.db().guid_of(&base) else { return };
+        self.edit_level(level, &LevelEdit::StandsOn(Some((guid.to_string(), base))), renderer);
+    }
+
+    /// A level dragged from the Project panel onto what a level stands on.
+    pub(super) fn drop_stands_on(&mut self, level: &str, source: &DragSource, renderer: &mut Renderer) {
+        let Some(path) = self.dragged_asset(source) else { return };
+        let db = self.game.content.db();
+        if db.guid_of(&path).and_then(|guid| db.get(guid)).map(|entry| entry.kind) != Some(AssetKind::Level) {
+            return self.notify("A level stands only on another level");
+        }
+        self.pick_stands_on(level, &Pick::Asset(Some(path)), renderer);
+    }
+
+    /// The levels `level` stands on, through each, by their paths.
+    fn stands_on_chain(&self, level: &str) -> Vec<String> {
+        let db = self.game.content.db();
+        let mut chain = Vec::new();
+        let mut at = level.to_string();
+        while chain.len() < 64 {
+            let text = std::fs::read_to_string(self.game.project.root.join(&at)).unwrap_or_default();
+            let Some(base) = level_files::stands_on(&text).ok().flatten() else { break };
+            let path = base.parse().ok().and_then(|guid| db.get(guid)).map_or(base, |entry| entry.path.clone());
+            if chain.contains(&path) {
+                break;
+            }
+            chain.push(path.clone());
+            at = path;
+        }
+        chain
     }
 
     /// A level's own scenes, by their paths, in its file's order. A scene

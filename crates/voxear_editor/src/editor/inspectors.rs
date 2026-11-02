@@ -16,7 +16,7 @@ use voxear_ui::{NodeId, Style};
 use super::Editor;
 use crate::{
     inspector::{Field, Inspector},
-    lod_inspector::{self, LodEye},
+    lod_inspector::{self, LodEdge, LodEye},
 };
 
 /// An Inspector opened from a window's menu: its panel's id, and itself.
@@ -106,6 +106,9 @@ impl Editor {
         let live = self.pull_live_fields();
         self.inspector.set_lod_eye(self.lod_eye());
         let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
+        if let Some(edge) = self.inspector.take_lod_edge() {
+            self.follow_lod_edge(edge, renderer);
+        }
         let edit = self.run_inspector_drawers(edit);
         // Before the callbacks, so a running behaviour's has the value it was called for.
         self.push_live_fields(live);
@@ -123,6 +126,23 @@ impl Editor {
         let kept: Vec<Field> = self.kept.iter().filter(|(e, _)| Some(*e) == shown).map(|(_, f)| f.clone()).collect();
         if let Some(action) = self.inspector.menus(&mut self.ui, &self.game, playing, can_keep, &kept) {
             self.row_action(action, renderer);
+        }
+    }
+
+    /// Moves the Scene view in use to where the Obj the Inspector shows is
+    /// at the LOD bar's edge being dragged, as Unity's LOD Group does, so
+    /// the switch shows as the edge moves.
+    fn follow_lod_edge(&mut self, edge: LodEdge, renderer: &Renderer) {
+        let Some(entity) = self.inspector.shown() else { return };
+        let eye = self.shown(self.scene.viewport).then(|| self.scene_eye()).flatten();
+        let world = &self.game.engine.world;
+        let Some((position, rotation)) = eye.and_then(|eye| lod_inspector::view_edge(world, entity, renderer, edge, eye))
+        else {
+            return;
+        };
+        self.glide = None;
+        if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.scene.camera) {
+            (transform.position, transform.rotation) = (position, rotation);
         }
     }
 

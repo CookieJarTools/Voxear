@@ -437,6 +437,9 @@ pub struct Memory {
     pub scene_views: Vec<KeptSceneView>,
     /// The game's own windows a layout names, so they open again with it.
     pub script_windows: Vec<KeptScriptWindow>,
+    /// How big the Project panel's tiles are, as its slider was left, from
+    /// 0 for rows to 1; `None` for the starting size.
+    pub tile_size: Option<f32>,
     /// Where it is kept, or `None` for an editor that remembers nothing.
     #[serde(skip)]
     path: Option<PathBuf>,

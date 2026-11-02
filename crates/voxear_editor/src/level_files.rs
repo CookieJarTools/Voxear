@@ -1,8 +1,9 @@
-//! A level's own scenes, as the Inspector shows them for a `.level`
-//! selected in the Project, and the changes it makes to them: a scene added
-//! at the end, one put in another's place, one taken out, another made the
-//! active one, one no longer required, or one loaded again on every level
-//! change. Each change is written to the file at once, keeping its
+//! A level's settings and own scenes, as the Inspector shows them for a
+//! `.level` selected in the Project, and the changes it makes to them: the
+//! level it stands on, a scene added at the end, one put in another's place,
+//! one taken out, another made the active one, one no longer required, one
+//! loaded again on every level change, or what one counts for while the
+//! level loads. Each change is written to the file at once, keeping its
 //! comments and the rest as they were, as a material's fields are. A scene
 //! added is written by its GUID, so renaming it keeps the level working, with
 //! its path in a comment beside it, as the samples write them.
@@ -22,6 +23,8 @@ pub struct LevelEntry {
     /// On, it loads again when the level comes in, even if the level before
     /// had it loaded too.
     pub reload: bool,
+    /// What it counts for while the level loads, against the others.
+    pub weight: f32,
 }
 
 /// A change to a level's scenes, by their place in its file.
@@ -43,6 +46,16 @@ pub enum LevelEdit {
     Activate(usize),
     Require(usize, bool),
     Reload(usize, bool),
+    Weight(usize, f32),
+    /// The level this one stands on, by its GUID with its path for the
+    /// comment, or none.
+    StandsOn(Option<(String, String)>),
+}
+
+/// The level a level's file says it stands on, as written: a GUID or a path.
+pub fn stands_on(text: &str) -> Result<Option<String>> {
+    let document: DocumentMut = text.parse().context("reading the level")?;
+    Ok(document.get("stands_on").and_then(Item::as_str).map(str::to_string))
 }
 
 /// A level file's own scenes, in order, not those of the level it stands on.
@@ -56,6 +69,8 @@ pub fn entries(text: &str) -> Result<Vec<LevelEntry>> {
             active: flag(table, "active").unwrap_or(false),
             required: flag(table, "required").unwrap_or(true),
             reload: flag(table, "reload").unwrap_or(false),
+            weight: table.get("weight").and_then(|w| w.as_float().or(w.as_integer().map(|i| i as f64))).unwrap_or(1.0)
+                as f32,
         })
         .collect();
     let active = entries.iter().rposition(|entry| entry.active).unwrap_or(0);
@@ -69,13 +84,26 @@ pub fn entries(text: &str) -> Result<Vec<LevelEntry>> {
 pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
     let mut document: DocumentMut = text.parse().context("reading the level")?;
     let count = scenes(&document).count();
+    if let LevelEdit::StandsOn(base) = edit {
+        match base {
+            Some((guid, path)) => {
+                document["stands_on"] = value(guid);
+                if let Some(written) = document["stands_on"].as_value_mut() {
+                    written.decor_mut().set_suffix(format!("  # {path}"));
+                }
+            }
+            None => drop(document.remove("stands_on")),
+        }
+        return Ok(document.to_string());
+    }
     let index = match edit {
-        LevelEdit::Add { .. } => None,
+        LevelEdit::Add { .. } | LevelEdit::StandsOn(_) => None,
         LevelEdit::Replace { at, .. }
         | LevelEdit::Remove(at)
         | LevelEdit::Activate(at)
         | LevelEdit::Require(at, _)
-        | LevelEdit::Reload(at, _) => Some(*at),
+        | LevelEdit::Reload(at, _)
+        | LevelEdit::Weight(at, _) => Some(*at),
     };
     ensure!(index.is_none_or(|at| at < count), "the level has no scene {}", index.unwrap_or_default() + 1);
     let list = document.entry("scene").or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
@@ -119,6 +147,16 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
                 table.remove("reload");
             }
         }
+        LevelEdit::Weight(at, weight) => {
+            let table = list.get_mut(*at).context("the scene is listed")?;
+            ensure!(weight.is_finite() && *weight >= 0.0, "a weight is 0 or more");
+            // One is the default, so it is not written.
+            match (*weight - 1.0).abs() < 1e-6 {
+                true => drop(table.remove("weight")),
+                false => table["weight"] = value(f64::from(*weight)),
+            }
+        }
+        LevelEdit::StandsOn(_) => {}
     }
     if list.is_empty() {
         document.remove("scene");
@@ -174,16 +212,30 @@ mod tests {
         assert!(replaced.contains("scene = \"def\"  # Scenes/Dusk.scene\nactive = true"), "{replaced}");
         assert!(!replaced.contains("abc"), "{replaced}");
 
+        let weighed = edit(&marked, &LevelEdit::Weight(1, 3.0)).unwrap();
+        assert!(weighed.contains("weight = 3.0") && entries(&weighed).unwrap()[1].weight == 3.0, "{weighed}");
+        assert_eq!(edit(&weighed, &LevelEdit::Weight(1, 1.0)).unwrap(), marked, "one is the default, not written");
+
         let taken = edit(&marked, &LevelEdit::Remove(1)).unwrap();
         assert_eq!(
             entries(&taken).unwrap(),
-            [LevelEntry { scene: listed[0].scene.clone(), active: true, required: true, reload: false }]
+            [LevelEntry { scene: listed[0].scene.clone(), active: true, required: true, reload: false, weight: 1.0 }]
         );
         let empty = edit(&taken, &LevelEdit::Remove(0)).unwrap();
         assert!(!empty.contains("[[scene]]") && empty.contains("stands_on"), "{empty}");
         assert!(edit(&empty, &LevelEdit::Remove(0)).is_err(), "no scene to take out");
         let again = edit(&empty, &LevelEdit::Add { guid: "abc".into(), path: "Scenes/Lights.scene".into() }).unwrap();
         assert_eq!(entries(&again).unwrap().len(), 1, "a level made empty takes scenes again:\n{again}");
+    }
+
+    #[test]
+    fn the_level_it_stands_on_is_set_by_guid_and_taken_away() {
+        let set = edit(DAY, &LevelEdit::StandsOn(Some(("abc".into(), "Levels/Core.level".into())))).unwrap();
+        assert!(set.contains("stands_on = \"abc\"  # Levels/Core.level\n"), "{set}");
+        assert_eq!(stands_on(&set).unwrap().as_deref(), Some("abc"));
+        assert!(set.contains("scene = \"713a4d989c654c6ca23b1d63201e0090\""), "the scenes stay: {set}");
+        let gone = edit(&set, &LevelEdit::StandsOn(None)).unwrap();
+        assert!(!gone.contains("stands_on") && stands_on(&gone).unwrap().is_none(), "{gone}");
     }
 
     #[test]

@@ -411,6 +411,14 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     frame(&mut editor, &mut renderer);
     let first = group(&editor, rock).unwrap().levels[0].until;
     assert!((first - 0.5).abs() < 0.02, "{first}");
+    // The Scene view followed the edge, as Unity's does: just past it, where the next level takes over.
+    frame(&mut editor, &mut renderer);
+    let segments = {
+        let mut found = Vec::new();
+        with_class(&editor.ui, bar, "lod-segment", &mut found);
+        found
+    };
+    assert!(editor.ui.has_class(segments[1], "lod-shown"), "the second level shows at the edge's distance");
 
     // A right-click on a level offers Delete, as in Unity; undo puts it back, then the drag, the typing
     // and the LOD Group itself go, each a step.

@@ -1,12 +1,18 @@
 //! The Project panel, laid out as Unity's two-column Project window: the
 //! project's folders as a tree on the left, and what is in the open folder
-//! on the right, its folders first. With room, the right side shows tiles;
-//! narrower, it shows rows with each file's size. Selecting a folder in the
+//! on the right, its folders first, as tiles, or as rows with each file's
+//! size at the smallest size. Selecting a folder in the
 //! tree opens it, as does double-clicking one on the right. Assets on the
 //! right can be dragged onto the Inspector's asset fields, and prefabs,
 //! models and scenes onto the Hierarchy and the Scene view. An Obj dragged
 //! from the Hierarchy onto the files makes a prefab in the open folder, or
 //! onto a folder's tile or a folder in the tree, in that folder.
+//!
+//! Files and folders dragged onto a folder, its tile or row or its place in
+//! the tree, move into it with their `.meta`, so references to them keep
+//! working; onto a folder higher up the tree, they move out. A slider over
+//! the files sets how big the tiles are, the smallest being rows, as in
+//! Unity's Project window.
 //!
 //! Selecting an item shows it in the Inspector, and double-clicking a file
 //! opens it, through [`ProjectEvent`]s. A context click on an item, on the
@@ -81,6 +87,9 @@ pub enum ProjectEvent {
     /// Import New Asset was chosen: the editor asks for files to copy into
     /// `folder` (from the project's folder).
     Import { folder: String },
+    /// A file or folder of the panel's was dragged onto a folder, by their
+    /// paths, to move it there.
+    Move { path: String, folder: String },
 }
 
 /// A part of a model, or an Obj of a prefab, shown after it when it is
@@ -110,17 +119,26 @@ enum MenuAction {
 
 /// How long a pinged file stays lit, in seconds.
 const PING: f32 = 1.5;
-/// A tile's width with the gap after it, and a row of tiles' height.
-const TILE: f32 = 72.0;
-const TILE_ROW: f32 = 76.0;
+/// What a tile takes across beside its picture, with the gap after it, and
+/// down beside it, for its name.
+const TILE_SIDES: f32 = 28.0;
+const TILE_BELOW: f32 = 32.0;
 /// A file row's height, as `item-height` gives it in Editor.vui.
 const ROW: f32 = 24.0;
-/// With room for fewer tiles than this, the files show as rows.
-const MIN_COLUMNS: usize = 3;
-/// How big a preview shows in a tile and in a row, as Editor.vss sizes
-/// `tile-thumb` and `row-thumb`.
-const TILE_PREVIEW: f32 = 44.0;
+/// How big a preview shows in a row, as Editor.vss sizes `row-thumb`.
 const ROW_PREVIEW: f32 = 16.0;
+/// The size slider's value below which the files show as rows, and the
+/// smallest and largest a tile's picture is past it, in logical pixels.
+const ROWS_BELOW: f32 = 0.05;
+const TILE_PICTURES: (f32, f32) = (36.0, 128.0);
+
+/// How big a tile's picture is at the size slider's `value`, or `None` for
+/// rows.
+fn tile_picture(value: f32) -> Option<f32> {
+    let (least, most) = TILE_PICTURES;
+    let along = (value - ROWS_BELOW) / (1.0 - ROWS_BELOW);
+    (value >= ROWS_BELOW).then(|| (least + along.clamp(0.0, 1.0) * (most - least)).round())
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum FileKind {
@@ -159,8 +177,9 @@ struct Contents {
     files: Vec<File>,
     /// The open folder's folders, then its files.
     listing: Vec<Entry>,
-    /// Tiles across a row, or 0 for rows.
+    /// Tiles across a row, or 0 for rows, and how big a tile's picture is.
     columns: usize,
+    picture: f32,
     selected: Option<Entry>,
     /// The entry lit by a ping, as a log line about it asks.
     pinged: Option<Entry>,
@@ -284,6 +303,16 @@ impl Contents {
         }
     }
 
+    /// The project path of a file or folder, but not of the project's own
+    /// folder or of a part of a file.
+    fn entry_path(&self, entry: Entry) -> Option<String> {
+        match entry {
+            Entry::Folder(folder) => Some(self.folders[folder].path.clone()).filter(|path| !path.is_empty()),
+            Entry::File(file) => Some(self.files[file].path.clone()),
+            Entry::Part(..) => None,
+        }
+    }
+
     /// How many list rows the listing takes.
     fn rows(&self) -> usize {
         match self.columns {
@@ -330,8 +359,9 @@ impl TreeItems for FolderItems {
     }
 }
 
-/// An icon, or the preview in its place, in a box of its own.
-fn thumb(ui: &mut Ui, parent: NodeId, class: &str, icon_class: &str) {
+/// An icon, or the preview in its place, in a box of its own. Returns the
+/// box and the icon.
+fn thumb(ui: &mut Ui, parent: NodeId, class: &str, icon_class: &str) -> (NodeId, NodeId) {
     let thumb = ui.panel(parent, Style::default());
     ui.add_class(thumb, class);
     let icon = ui.icon(thumb, "file");
@@ -339,6 +369,7 @@ fn thumb(ui: &mut Ui, parent: NodeId, class: &str, icon_class: &str) {
     let image = ui.image(thumb);
     ui.add_class(image, "thumb-image");
     ui.set_visible(image, false);
+    (thumb, icon)
 }
 
 /// The open folder's entries as rows: an icon or preview, the name, and a
@@ -381,12 +412,16 @@ struct TileRows(Shared);
 impl ListItems for TileRows {
     fn make(&mut self, ui: &mut Ui, row: NodeId) {
         ui.add_class(row, "tile-row");
-        let columns = self.0.borrow().columns;
+        let (columns, picture) = (self.0.borrow().columns, self.0.borrow().picture);
         for _ in 0..columns {
             let tile = ui.panel(row, Style::column());
             ui.add_class(tile, "tile");
             ui.set_draggable(tile, true);
-            thumb(ui, tile, "tile-thumb", "tile-icon");
+            ui.set_inline_style(tile, &format!("width: {}px", picture + TILE_SIDES - 2.0));
+            let (thumb, icon) = thumb(ui, tile, "tile-thumb", "tile-icon");
+            ui.set_inline_style(thumb, &format!("width: {picture}px; height: {picture}px"));
+            let icon_size = (picture * 0.6).round();
+            ui.set_inline_style(icon, &format!("width: {icon_size}px; height: {icon_size}px"));
             let name = ui.add_label(tile, "");
             ui.add_class(name, "tile-name");
             let arrow = ui.icon_button(tile, "chevron-right");
@@ -443,6 +478,8 @@ pub struct ProjectView {
     menu: Option<(NodeId, Option<Entry>, Vec<Option<MenuAction>>)>,
     /// How many seconds the pinged entry stays lit.
     ping_left: f32,
+    /// The slider for how big the tiles are, the smallest being rows.
+    size: NodeId,
 }
 
 impl ProjectView {
@@ -453,6 +490,7 @@ impl ProjectView {
         let (folder_tree, files) = (find(ui, "project-folders"), find(ui, "project-files"));
         let (path, count) = (find(ui, "project-path"), find(ui, "project-count"));
         let (rename_bar, rename_field) = (find(ui, "project-rename"), find(ui, "project-rename-field"));
+        let size = find(ui, "project-size");
         ui.set_visible(rename_bar, false);
         let contents = Rc::new(RefCell::new(scan(name, root, db)));
         let folder_rows = FolderRows::default();
@@ -478,6 +516,7 @@ impl ProjectView {
             focus_rename: false,
             menu: None,
             ping_left: 0.0,
+            size,
         };
         view.open(ui, 0);
         view
@@ -520,6 +559,7 @@ impl ProjectView {
         if let Some((source, folder)) = self.dropped(ui) {
             events.push(ProjectEvent::Dropped { source, folder });
         }
+        events.extend(self.row_moved(ui));
         if let Some(event) = self.update_rename(ui) {
             events.push(event);
         }
@@ -544,6 +584,19 @@ impl ProjectView {
         let in_open = || Some((ui.dropped_onto(self.files)?, self.open));
         let (source, folder) = on_tile.or_else(in_tree).or_else(in_open)?;
         Some((source, contents.folders.get(folder)?.path.clone()))
+    }
+
+    /// A row of the files dragged onto a folder's row, as rows show them, to
+    /// move it there.
+    fn row_moved(&self, ui: &Ui) -> Option<ProjectEvent> {
+        let (index, Some((onto, _))) = ui.dropped(self.files)? else { return None };
+        let contents = self.contents.borrow();
+        let (Some(&from), Some(&Entry::Folder(folder))) = (contents.listing.get(index), contents.listing.get(onto))
+        else {
+            return None;
+        };
+        let path = contents.entry_path(from).filter(|_| from != Entry::Folder(folder))?;
+        Some(ProjectEvent::Move { path, folder: contents.folders[folder].path.clone() })
     }
 
     /// The folder under `point`, in the UI's units: a folder's tile or a
@@ -641,7 +694,23 @@ impl ProjectView {
 
     /// How big a preview shows, in logical pixels: a tile's, or a row's.
     pub fn preview_size(&self) -> f32 {
-        if self.contents.borrow().columns == 0 { ROW_PREVIEW } else { TILE_PREVIEW }
+        let contents = self.contents.borrow();
+        if contents.columns == 0 { ROW_PREVIEW } else { contents.picture }
+    }
+
+    /// How big the tiles are, from 0 for rows to 1 for the largest, as the
+    /// slider over the files sets it.
+    pub fn tile_size(&self, ui: &Ui) -> f32 {
+        ui.slider_value(self.size)
+    }
+
+    pub fn set_tile_size(&mut self, ui: &mut Ui, size: f32) {
+        ui.set_slider_value(self.size, size);
+    }
+
+    /// Whether the size slider is being dragged.
+    pub fn resizing(&self, ui: &Ui) -> bool {
+        ui.is_pressed(self.size)
     }
 
     /// Shows these previews, by path, in place of icons; anything not among
@@ -911,31 +980,51 @@ impl ProjectView {
         }
     }
 
-    /// Tiles when at least a few fit across, rows otherwise, rebuilding the
+    /// Tiles of the size the slider sets, as many across as fit and smaller
+    /// when not even one does, or rows at its smallest, rebuilding the
     /// list's rows when that changes.
     fn fit(&mut self, ui: &mut Ui) {
         let width = ui.rect(self.files)[2];
-        let fits = ((width - 12.0) / TILE).floor().max(0.0) as usize;
-        let columns = if fits >= MIN_COLUMNS { fits } else { 0 };
-        if columns == self.contents.borrow().columns {
+        let picture = tile_picture(ui.slider_value(self.size))
+            .map(|picture| picture.min((width - 12.0 - TILE_SIDES).floor()).max(TILE_PICTURES.0));
+        let fits = |picture: f32| ((width - 12.0) / (picture + TILE_SIDES)).floor().max(1.0) as usize;
+        let columns = picture.map_or(0, fits);
+        let picture = picture.unwrap_or_default();
+        if (columns, picture) == (self.contents.borrow().columns, self.contents.borrow().picture) {
             return;
         }
         {
             let mut contents = self.contents.borrow_mut();
-            contents.columns = columns;
+            (contents.columns, contents.picture) = (columns, picture);
             contents.tiles.clear();
             contents.arrows.clear();
         }
         let rows = self.contents.borrow().rows();
-        // Rows of files drag one by one; a row of tiles does not, its tiles do.
+        // Rows of files drag one by one, and land on a folder's row to move
+        // into it; a row of tiles does not, its tiles do. Either way the list
+        // takes what is dragged from elsewhere, such as an Obj to make a prefab of.
         ui.set_rows_draggable(self.files, columns == 0);
+        ui.accept_row_drops(self.files, columns == 0);
+        ui.accept_drops(self.files, true);
         if columns == 0 {
             ui.set_item_height(self.files, ROW);
             ui.bind_list(self.files, rows, FileRows(self.contents.clone()));
         } else {
-            ui.set_item_height(self.files, TILE_ROW);
+            ui.set_item_height(self.files, picture + TILE_BELOW);
             ui.bind_list(self.files, rows, TileRows(self.contents.clone()));
         }
+    }
+
+    /// The project path of a file or folder being dragged, when it is one of
+    /// this view's: a tile, or a row of the open folder's, to move.
+    pub fn dragged_entry(&self, source: &DragSource) -> Option<String> {
+        let contents = self.contents.borrow();
+        let at = match *source {
+            DragSource::Row { list, index, .. } if list == self.files && contents.columns == 0 => index,
+            DragSource::Element(tile) => contents.tiles.iter().find(|(node, _)| *node == tile)?.1?,
+            _ => return None,
+        };
+        contents.entry_path(*contents.listing.get(at)?)
     }
 
     /// The project path of the asset being dragged, when it is one of this
@@ -1057,6 +1146,7 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         files: Vec::new(),
         listing: Vec::new(),
         columns: 0,
+        picture: 0.0,
         selected: None,
         pinged: None,
         tiles: Vec::new(),

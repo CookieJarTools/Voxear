@@ -10,6 +10,7 @@
             <Panel class="breadcrumb">
                 <Label name="project-path" class="crumbs" />
                 <Label name="project-count" class="count" />
+                <Slider name="project-size" class="size-slider" min="0" max="1" value="0.13" />
             </Panel>
             <Panel name="project-rename" class="project-rename">
                 <Label class="project-rename-label">Rename</Label>

@@ -48,11 +48,12 @@ Add as many scenes as the level needs. Each scene in the list is a field, like a
 
 If the level is open, you can also open the scene alongside it and add it from the Hierarchy, as "Opening a scene alongside a level" above shows.
 
-Each scene in the list has three boxes:
+Each scene in the list has three boxes, and a weight:
 
 - **Active**: new Objs you make go into this scene, and the level uses this scene's sky. A level always has one active scene. Until you tick another, it is the first.
 - **Required**: if a required scene fails to load, the level does not load. Untick it to let the level load without that scene.
 - **Reload**: the scene loads again whenever the game moves to this level, even when the level before had it loaded too. Use it for a scene that should start fresh each time, such as a puzzle room. Without it, a scene both levels share stays as it was.
+- **Weight**: how much the scene counts for in a loading bar while the level loads, against its other scenes. A scene twice as big as the rest might weigh 2. Type it and press **Enter**.
 
 A level is a small text file. The Inspector writes it for you, but you can also write it by hand:
 
@@ -68,6 +69,7 @@ scene = "Scenes/Castle Lights.scene"
 active = true
 required = false
 reload = true
+weight = 2.0
 ```
 
 The Inspector names each scene by its ID from its `.meta` file, with the scene's path in a comment beside it. That way, renaming the scene does not break the level.
@@ -84,6 +86,8 @@ stands_on = "Levels/World.level"
 [[scene]]
 scene = "Scenes/Day.scene"
 ```
+
+To choose the level it stands on, select the level in the Project panel and use **Stands on** at the top of its scenes, as you would a scene: pick from its arrow, drag a level onto it, or pick **None**. A level that already stands on this one cannot be chosen, as the two would go round in a circle.
 
 The scenes of the level stood on load first. When the game moves from one level to another that stands on the same one, those scenes stay loaded, untouched. Only the scenes that differ are unloaded and loaded. A scene marked **Reload** loads again anyway.
 

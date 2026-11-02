@@ -15,7 +15,10 @@ use voxear_render::Renderer;
 use voxear_ui::{DragSource, ImageRef, NodeId, Ui};
 
 use super::{Editor, script_namespace};
-use crate::project_view::ProjectView;
+use crate::{
+    project_files,
+    project_view::{ProjectEvent, ProjectView},
+};
 
 /// What every Project panel is built from.
 const MARKUP: &str = include_str!("../../ui/Project.vui");
@@ -58,6 +61,9 @@ impl Editor {
         let namespace = script_namespace(&self.game.project);
         let mut project = ProjectView::new(&mut self.ui, document, &name, &root, self.game.content.db(), &namespace);
         project.set_prefab_parts(&mut self.ui, self.memory.settings.prefab_parts);
+        if let Some(size) = self.memory.tile_size {
+            project.set_tile_size(&mut self.ui, size);
+        }
         self.extra_projects.push(ExtraProject { panel: panel.to_string(), project });
     }
 
@@ -89,14 +95,46 @@ impl Editor {
     }
 
     /// One Project panel's frame: what it asks, and its folders taking an
-    /// Obj dragged from a Hierarchy, to make a prefab in.
+    /// Obj dragged from a Hierarchy, to make a prefab in, or a file or
+    /// folder dragged from a Project panel, to move there.
     fn project_frame(&mut self, renderer: &mut Renderer, delta: f32) {
         self.project.fade_ping(&mut self.ui, delta);
         for event in self.project.update(&mut self.ui) {
             self.project_event(event, renderer);
         }
-        let making = self.ui.dragging().is_some_and(|source| self.dragged_obj(&source).is_some());
-        self.project.take_drops(&mut self.ui, making);
+        let taken = |source: DragSource| self.dragged_obj(&source).is_some() || self.dragged_project_entry(&source).is_some();
+        let take = self.ui.dragging().is_some_and(taken);
+        self.project.take_drops(&mut self.ui, take);
+        // The tile size is remembered once the slider is let go.
+        let size = self.project.tile_size(&self.ui);
+        if self.memory.tile_size != Some(size) && !self.project.resizing(&self.ui) {
+            self.memory.tile_size = Some(size);
+            self.memory.save();
+        }
+    }
+
+    /// The file or folder being dragged from any Project panel, by its path.
+    pub(super) fn dragged_project_entry(&self, source: &DragSource) -> Option<String> {
+        let extras = self.extra_projects.iter().map(|extra| &extra.project);
+        std::iter::once(&self.project).chain(extras).find_map(|project| project.dragged_entry(source))
+    }
+
+    /// Moves a file or folder of the project into `folder`, with its
+    /// `.meta`, and shows it there.
+    pub(super) fn move_in_project(&mut self, path: &str, folder: &str, renderer: &mut Renderer) {
+        let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        if parent == folder || path == folder {
+            return;
+        }
+        match project_files::move_into(&self.game.project.root, path, folder) {
+            Ok(moved) => {
+                let name = moved.rsplit('/').next().unwrap_or(&moved).to_string();
+                self.project_event(ProjectEvent::Changed { select: Some(moved), rename: false }, renderer);
+                let into = if folder.is_empty() { self.game.project.name().to_string() } else { folder.to_string() };
+                self.notify(&format!("Moved {name} to {into}"));
+            }
+            Err(error) => self.notify(&format!("Could not move {path}: {error:#}")),
+        }
     }
 
     /// Lists the project's files again in every Project panel but the

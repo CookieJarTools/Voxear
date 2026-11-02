@@ -44,7 +44,7 @@ use crate::{
     field_drawers::{DrawerUi, FieldDrawers, ToOpen},
     fields::{self, Pick, Step},
     history::{Edit, ObjState},
-    lod_inspector::{GroupLods, LodEye, MeshLods},
+    lod_inspector::{GroupLods, LodEdge, LodEye, MeshLods},
     object_picker::{Choice, Chosen},
     project_view::ProjectItem,
     props::{self, Part, Prop, Value},
@@ -326,6 +326,8 @@ pub struct Inspector {
     mesh_lods: Option<MeshLods>,
     group_lods: Option<GroupLods>,
     lod_eye: Option<LodEye>,
+    /// The LOD bar's edge dragged this frame, for the Scene view to follow.
+    lod_edge: Option<LodEdge>,
     /// The LOD Group level selected on its bar, whose settings show.
     lod_level: usize,
 }
@@ -381,6 +383,7 @@ impl Inspector {
             mesh_lods: None,
             group_lods: None,
             lod_eye: None,
+            lod_edge: None,
             lod_level: 0,
         }
     }
@@ -1210,6 +1213,12 @@ impl Inspector {
 
     /// The camera the Mesh Renderer and the LOD Group say what is drawn
     /// through, if there is one to say it of.
+    /// The LOD bar's edge dragged since the last call, for the Scene view to
+    /// follow.
+    pub fn take_lod_edge(&mut self) -> Option<LodEdge> {
+        self.lod_edge.take()
+    }
+
     pub fn set_lod_eye(&mut self, eye: Option<LodEye>) {
         self.lod_eye = eye;
     }
@@ -1331,6 +1340,7 @@ impl Inspector {
             for edited in std::iter::once(entity).chain(self.also.iter().copied()) {
                 props::set_lod_until(&mut game.engine.world, edited, level, until);
             }
+            self.lod_edge = Some(LodEdge::Group(until));
         }
         let world = &game.engine.world;
         if let (Some(renderer), Some(group)) = (renderer, world.get::<LodGroup>(entity)) {
@@ -1347,6 +1357,9 @@ impl Inspector {
         if let Some(ends) = lods.dragged(ui) {
             for edited in std::iter::once(entity).chain(self.also.iter().copied()) {
                 props::set_lod_transitions(&mut game.engine.world, edited, Some(ends));
+            }
+            if let Some(level) = lods.dragging() {
+                self.lod_edge = Some(LodEdge::Mesh(ends[level]));
             }
         }
         if let Some(renderer) = renderer {

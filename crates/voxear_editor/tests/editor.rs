@@ -5352,3 +5352,135 @@ fn hierarchies_and_project_panels_open_more_than_once() {
     let ids: Vec<String> = editor.ui.dock_panels(dock).into_iter().map(|(id, ..)| id).collect();
     assert!(!ids.contains(&"hierarchy-2".to_string()) && !ids.contains(&"project-2".to_string()), "{ids:?}");
 }
+
+/// The Project panel's files shown as rows, by their names, with the rows.
+fn file_rows(ui: &Ui) -> Vec<(String, NodeId)> {
+    let Some(files) = ui.find(ui.root(), "project-files") else { return Vec::new() };
+    let mut rows = Vec::new();
+    with_class(ui, files, "list-row", &mut rows);
+    rows.into_iter()
+        .filter(|&row| ui.is_visible(row))
+        .filter_map(|row| Some((ui.text(*ui.children(row).get(1)?), row)))
+        .collect()
+}
+
+#[test]
+fn files_move_between_folders_by_drag_and_the_tiles_resize_down_to_rows() {
+    // A folder that lists first among the top folder's, so its row shows, with a file in it.
+    let prepare = |root: &std::path::Path| {
+        std::fs::create_dir_all(root.join("0 Box")).unwrap();
+        std::fs::write(root.join("0 Box/Grey.material"), "color = [0.5, 0.5, 0.5]\n").unwrap();
+    };
+    let Some((dir, mut renderer, mut editor)) = open_copy_with(prepare) else { return };
+    let guid = std::fs::read_to_string(dir.path().join("Models/Pyramid.gltf.meta")).unwrap();
+    open_folder(&mut editor, &mut renderer, "Models");
+
+    // A tile dragged onto a folder in the tree moves there, with its .meta.
+    let from = centre(&editor.ui, tile(&editor.ui, "Pyramid.gltf").unwrap());
+    let to = centre(&editor.ui, folder_row(&editor.ui, "Prefabs").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Prefabs/Pyramid.gltf").exists() && !dir.path().join("Models/Pyramid.gltf").exists());
+    let moved = std::fs::read_to_string(dir.path().join("Prefabs/Pyramid.gltf.meta")).unwrap();
+    assert_eq!(moved, guid, "its GUID goes with it, so references to it still work");
+    assert!(editor.game.content.db().guid_of("Prefabs/Pyramid.gltf").is_some());
+
+    // Onto the project's own folder in the tree, it moves out.
+    open_folder_in_tree(&mut editor, &mut renderer, "Prefabs");
+    let from = centre(&editor.ui, tile(&editor.ui, "Pyramid.gltf").unwrap());
+    let to = centre(&editor.ui, folder_row(&editor.ui, "Hello").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Pyramid.gltf").exists(), "moved out to the top");
+
+    // The slider at its smallest shows rows, where a row dragged onto a folder's row moves into it.
+    let slider = editor.ui.find(editor.ui.root(), "project-size").unwrap();
+    editor.ui.set_slider_value(slider, 0.0);
+    open_folder_in_tree(&mut editor, &mut renderer, "Hello");
+    frame(&mut editor, &mut renderer);
+    assert!(tile(&editor.ui, "Models").is_none(), "no tiles at the smallest size");
+    let rows = file_rows(&editor.ui);
+    let row = |name: &str| rows.iter().find(|(n, _)| n == name).map(|(_, row)| *row).unwrap();
+    let (first, models) = (row("0 Box"), row("Models"));
+    let (from, to) = (centre(&editor.ui, first), centre(&editor.ui, models));
+    drag_between(&mut editor, &mut renderer, from, to);
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Models/0 Box/Grey.material").exists(), "a folder moves with what is in it");
+
+    // Larger, the tiles are wider.
+    open_folder_in_tree(&mut editor, &mut renderer, "Hello");
+    editor.ui.set_slider_value(slider, 0.13);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let small = editor.ui.rect(tile(&editor.ui, "Models").unwrap())[2];
+    editor.ui.set_slider_value(slider, 1.0);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let large = editor.ui.rect(tile(&editor.ui, "Models").unwrap())[2];
+    shot(&mut renderer, "project-large-tiles.png");
+    assert!(large > small * 1.8, "{small} then {large}");
+}
+
+/// Opens a folder by its row in the Project panel's tree.
+fn open_folder_in_tree(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name: &str) {
+    let row = folder_row(&editor.ui, name).unwrap_or_else(|| panic!("a folder row for {name}"));
+    click(&mut editor.ui, row);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+#[test]
+fn the_level_a_level_stands_on_and_its_scenes_weights_are_set_in_the_inspector() {
+    let Some((dir, mut renderer, mut editor)) = open_copy() else { return };
+    let level = |name: &str| std::fs::read_to_string(dir.path().join("Levels").join(name)).unwrap();
+    open_folder(&mut editor, &mut renderer, "Levels");
+    frame(&mut editor, &mut renderer);
+    let day = tile(&editor.ui, "Day.level").unwrap();
+    click(&mut editor.ui, day);
+    frame(&mut editor, &mut renderer);
+    let base = |ui: &Ui| first_with(ui, prop_row(ui, "Stands on").unwrap(), "value-picker").unwrap();
+    let says = |editor: &voxear_editor::Editor, field: NodeId| {
+        editor.ui.text(first_with(&editor.ui, field, "picker-label").unwrap())
+    };
+    assert_eq!(says(&editor, base(&editor.ui)), "World", "Hello's Day stands on World");
+
+    // Its arrow offers the other levels, and None, which takes it away.
+    let arrow = first_with(&editor.ui, base(&editor.ui), "picker-arrow").unwrap();
+    click(&mut editor.ui, arrow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
+    assert!(offered.contains(&"Night.level".to_string()) && !offered.contains(&"Day.level".to_string()), "{offered:?}");
+    let none = picker_row(&editor.ui, "None").unwrap();
+    click_across_frames(&mut editor, &mut renderer, none);
+    frame(&mut editor, &mut renderer);
+    assert!(!level("Day.level").contains("stands_on"), "{}", level("Day.level"));
+
+    // A level dropped on it is written by its GUID, with its path beside it.
+    let world = tile(&editor.ui, "World.level").unwrap();
+    let field = base(&editor.ui);
+    drag(&mut editor.ui, world, field);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let guid = editor.game.content.db().guid_of("Levels/World.level").unwrap();
+    assert!(level("Day.level").contains(&format!("stands_on = \"{guid}\"  # Levels/World.level")), "{}", level("Day.level"));
+    assert_eq!(says(&editor, base(&editor.ui)), "World");
+
+    // A scene's weight, typed and entered.
+    let weight = first_with(&editor.ui, editor.ui.root(), "level-weight").unwrap();
+    type_into(&mut editor.ui, weight, "3");
+    editor.ui.key_down(voxear_ui::Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(level("Day.level").contains("weight = 3.0"), "{}", level("Day.level"));
+
+    // World standing on Day would go round in a circle, so it is turned away.
+    let world = tile(&editor.ui, "World.level").unwrap();
+    click(&mut editor.ui, world);
+    frame(&mut editor, &mut renderer);
+    let day = tile(&editor.ui, "Day.level").unwrap();
+    let field = base(&editor.ui);
+    drag(&mut editor.ui, day, field);
+    frame(&mut editor, &mut renderer);
+    assert!(!level("World.level").contains("stands_on"), "{}", level("World.level"));
+}

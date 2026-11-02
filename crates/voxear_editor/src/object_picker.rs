@@ -76,6 +76,8 @@ pub enum PickFor {
     LevelScene { level: String, at: Option<usize> },
     /// The Obj to add a component to.
     AddComponent(Entity),
+    /// The level the level at this path stands on.
+    StandsOn { level: String },
     /// A map of the material at this path, for a picture.
     MaterialMap { material: String, map: voxear_engine::MaterialMap },
     /// A material of the model at this path, for the `.material` it draws with.

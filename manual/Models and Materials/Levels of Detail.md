@@ -11,7 +11,7 @@ Every model gets simpler copies of its meshes when it is imported, or uses the o
 Select an Obj with a **Mesh Renderer** to see its mesh's levels in the Inspector, as a bar like a LOD Group's: a part for each level, the most detailed on the left, with its triangles and where it ends as a share of the screen. The level the Scene view draws now is outlined, and the camera mark above shows how much of the screen the mesh covers from there; while the game plays, it is the game's camera.
 
 - **Click** a level to move the Scene view to where that level is drawn, looking at the Obj.
-- **Drag** the edge between two levels to choose where one ends, as in a LOD Group. The renderer then switches its levels where you say, by how much of the screen it covers. **Reset Transitions**, on a level's right-click, lets the engine switch them again.
+- **Drag** the edge between two levels to choose where one ends, as in a LOD Group. The renderer then switches its levels where you say, by how much of the screen it covers. While you drag, the Scene view moves to just past the edge, so you see the next level take over. **Reset Transitions**, on a level's right-click, lets the engine switch them again.
 - **Right-click** a level to **Force** it, so it is drawn at every distance, as Unity's Forced LOD. **Stop Forcing** goes back.
 - **LOD Bias** changes when the engine switches levels, as Unity's LOD Selection Bias does. At 1, simpler levels come sooner; at -1, later. It shows only while the engine switches them.
 
@@ -29,7 +29,7 @@ To make one:
 The Inspector shows the group's levels as a bar, as Unity does, the most detailed on the left. The camera mark above it shows where the Scene view sees the group now: how much of the screen it covers, or how far away it is.
 
 - **Click** a level on the bar to select it. Its settings show under the bar.
-- **Drag** the edge between two levels to move where one ends.
+- **Drag** the edge between two levels to move where one ends. As in Unity, the Scene view follows, standing just past the edge, so you see how the group looks where the next level takes over.
 - **Right-click** a level to **Insert Before** or **Delete** it, or the **Culled** part to **Insert** a level at the end. A new level shows the first Obj inside the group that no level shows yet.
 - **Drag** Objs from the Hierarchy onto a level to put them in it, as in Unity. With several Objs selected, dragging one of them puts them all there.
 

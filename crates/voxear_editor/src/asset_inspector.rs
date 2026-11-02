@@ -8,10 +8,11 @@
 //! the fields of the behaviour it declares, with their starting values, as
 //! its last build describes them, then its code, coloured as a code editor
 //! colours it, as a UI document shows its markup. A prefab and a scene list their Objs. A
-//! level lists the level it stands on and its own scenes, each a reference
-//! to a scene with whether it is the active one, whether it is required and
-//! whether it loads again on every level change, and a button to take it
-//! out. As an Obj's references do, a scene's field
+//! level shows the level it stands on, a reference picked or dropped as a
+//! scene is, and its own scenes, each a reference to a scene with whether
+//! it is the active one, whether it is required, whether it loads again on
+//! every level change and what it counts for while the level loads, and a
+//! button to take it out. As an Obj's references do, a scene's field
 //! pings the scene in the Project on a click, opens the object picker from
 //! its arrow to put another in its place, and takes a scene dropped on it;
 //! Add Scene opens the picker for a new one, and takes a scene dropped on it
@@ -61,6 +62,17 @@ pub enum AssetAction {
     DropScene {
         level: String,
         at: Option<usize>,
+        source: DragSource,
+    },
+    /// Open the object picker under `anchor` for the level the level at
+    /// this path stands on.
+    BrowseStandsOn {
+        level: String,
+        anchor: NodeId,
+    },
+    /// Something was dragged onto the level a level stands on.
+    DropStandsOn {
+        level: String,
         source: DragSource,
     },
     /// Show where the asset at this path is in the Project panel.
@@ -121,15 +133,17 @@ struct Listen {
     label: NodeId,
 }
 
-/// A level's own scenes, in the file's order, then Add Scene.
+/// The level a level stands on, with its path, and its own scenes, in the
+/// file's order, then Add Scene.
 struct LevelFields {
+    stands_on: (Slot, Option<String>),
     scenes: Vec<SceneRow>,
     add: NodeId,
 }
 
 /// One of a level's scenes: its reference field and the field's arrow, the
-/// scene's project path, and its Active, Required and Reload boxes and
-/// remove button.
+/// scene's project path, its Active, Required and Reload boxes, its weight
+/// with the value it was shown with, and its remove button.
 struct SceneRow {
     field: NodeId,
     arrow: NodeId,
@@ -137,6 +151,7 @@ struct SceneRow {
     active: NodeId,
     required: NodeId,
     reload: NodeId,
+    weight: (NodeId, f32),
     remove: NodeId,
 }
 
@@ -670,9 +685,9 @@ fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Opt
     let table = text.parse::<toml::Table>().ok()?;
     let entries = level_files::entries(&text).ok()?;
     let rows = part(ui, root, "Scenes", "scene");
-    if let Some(base) = table.get("stands_on").and_then(|v| v.as_str()) {
-        text_row(ui, rows, "Stands on", &asset_path(game, base));
-    }
+    let stands_on = slot(ui, rows, "Stands on", "level");
+    let base = table.get("stands_on").and_then(|v| v.as_str()).map(|base| asset_path(game, base));
+    show_slot(ui, stands_on, base.as_deref(), "Level");
     if entries.is_empty() {
         let hint = ui.add_label(rows, "No scenes yet. Add one to fill the level.");
         ui.add_class(hint, "asset-line");
@@ -681,9 +696,11 @@ fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Opt
     for entry in &entries {
         let found = game.content.parse(&entry.scene).ok().and_then(|r| r.guid()).and_then(|g| game.content.db().get(g));
         let path = found.map_or_else(|| entry.scene.clone(), |found| found.path.clone());
-        let row = ui.panel(rows, Style::row());
+        let row = ui.panel(rows, Style::column());
         ui.add_class(row, "level-scene");
-        let field = ui.panel(row, Style::row());
+        let top = ui.panel(row, Style::row());
+        ui.add_class(top, "level-scene-top");
+        let field = ui.panel(top, Style::row());
         ui.add_class(field, "value-picker");
         ui.accept_drops(field, true);
         let icon = ui.icon(field, "scene");
@@ -694,22 +711,38 @@ fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Opt
         ui.add_class(label, "picker-label");
         let arrow = ui.icon_button(field, "chevron-down");
         ui.add_class(arrow, "picker-arrow");
+        let remove = ui.icon_button(top, "close");
+        ui.add_class(remove, "list-remove");
+        let flags = ui.panel(row, Style::row());
+        ui.add_class(flags, "level-scene-flags");
         let mut check = |label: &str, on: bool| {
-            let toggle = ui.toggle(row, label, on);
+            let toggle = ui.toggle(flags, label, on);
             ui.add_class(toggle, "checkbox");
             ui.add_class(toggle, "level-flag");
             toggle
         };
         let (active, required) = (check("Active", entry.active), check("Required", entry.required));
         let reload = check("Reload", entry.reload);
-        let remove = ui.icon_button(row, "close");
-        ui.add_class(remove, "list-remove");
-        scenes.push(SceneRow { field, arrow, path, active, required, reload, remove });
+        let label = ui.add_label(flags, "Weight");
+        ui.add_class(label, "level-weight-label");
+        let weight = ui.text_field(flags, &number(entry.weight));
+        for class in ["value-input", "number-input", "level-weight"] {
+            ui.add_class(weight, class);
+        }
+        let weight = (weight, entry.weight);
+        scenes.push(SceneRow { field, arrow, path, active, required, reload, weight, remove });
     }
     let add = ui.button(rows, "Add Scene");
     ui.add_class(add, "add-component");
     ui.accept_drops(add, true);
-    Some(LevelFields { scenes, add })
+    Some(LevelFields { stands_on: (stands_on, base.filter(|_| found_base(game, &table))), scenes, add })
+}
+
+/// Whether the level a level's file says it stands on is in the project.
+fn found_base(game: &Game, table: &toml::Table) -> bool {
+    let Some(base) = table.get("stands_on").and_then(|v| v.as_str()) else { return false };
+    let db = game.content.db();
+    base.parse().ok().and_then(|guid| db.get(guid)).is_some() || db.guid_of(base).is_some()
 }
 
 impl LevelFields {
@@ -721,6 +754,16 @@ impl LevelFields {
     fn update(&self, ui: &mut Ui, level: &str) -> Option<AssetAction> {
         let level = level.to_string();
         let edit = |edit: LevelEdit| Some(AssetAction::EditLevel(level.clone(), edit));
+        let (base, base_path) = &self.stands_on;
+        if let Some(source) = ui.dropped_onto(base.field) {
+            return Some(AssetAction::DropStandsOn { level, source });
+        }
+        if ui.clicked(base.arrow) {
+            return Some(AssetAction::BrowseStandsOn { level, anchor: base.field });
+        }
+        if let Some(path) = base_path.clone().filter(|_| ui.clicked(base.field)) {
+            return Some(AssetAction::Ping(path));
+        }
         if let Some(source) = ui.dropped_onto(self.add) {
             return Some(AssetAction::DropScene { level, at: None, source });
         }
@@ -752,6 +795,13 @@ impl LevelFields {
             }
             if ui.clicked(scene.remove) {
                 return edit(LevelEdit::Remove(at));
+            }
+            // A weight is written once typed: on Enter, or when the field is left.
+            let (field, shown) = scene.weight;
+            let typed = ui.text(field).trim().parse::<f32>().ok().filter(|w| w.is_finite() && *w >= 0.0);
+            let done = ui.submitted(field) || ui.focused() != Some(field);
+            if let Some(weight) = typed.filter(|&weight| done && weight != shown) {
+                return edit(LevelEdit::Weight(at, weight));
             }
         }
         None

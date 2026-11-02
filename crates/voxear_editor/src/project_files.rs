@@ -99,6 +99,29 @@ pub fn rename(root: &Path, path: &str, name: &str) -> Result<String> {
     Ok(renamed)
 }
 
+/// Moves a file or folder, with its `.meta`, into `folder` (from the
+/// project's folder, `""` for the project's own), and returns its new path.
+/// Its GUID goes with it, so whatever refers to it still does.
+pub fn move_into(root: &Path, path: &str, folder: &str) -> Result<String> {
+    ensure!(!path.is_empty(), "the project's own folder cannot move");
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let moved = join(folder, name);
+    if moved == path {
+        return Ok(moved);
+    }
+    ensure!(folder != path && !folder.starts_with(&format!("{path}/")), "a folder cannot go inside itself");
+    let to = root.join(&moved);
+    let shown = if folder.is_empty() { "the project's folder" } else { folder };
+    ensure!(!to.exists(), "{name} is already in {shown}");
+    let from = root.join(path);
+    std::fs::rename(&from, &to).with_context(|| format!("moving {path}"))?;
+    let meta = meta_of(&from);
+    if meta.exists() {
+        std::fs::rename(&meta, meta_of(&to)).with_context(|| format!("moving {path}'s .meta"))?;
+    }
+    Ok(moved)
+}
+
 /// Copies a file beside itself, without its `.meta`, and returns the copy's
 /// path. Folders are not copied.
 pub fn duplicate(root: &Path, path: &str) -> Result<String> {

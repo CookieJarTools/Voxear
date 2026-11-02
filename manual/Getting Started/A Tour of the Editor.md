@@ -17,6 +17,8 @@ Along the top are the **command bar**, the **Play**, **Pause** and **Step** butt
 
 The bar at the bottom says what the editor is doing: building your scripts, playing, or that you have changes to save.
 
+In the **Project** panel, drag a file or folder onto a folder, among the files or in the tree on the left, to move it there; drag it onto a folder higher up the tree to move it out. Its `.meta` file goes with it, so everything that uses it still finds it. The slider at the top right sets how big the files show, as in Unity: all the way left shows them as rows.
+
 ## The command bar
 
 Press **Ctrl+K** and start typing. The command bar finds commands, settings, Objs in the level, files and pages, and runs or opens the one you pick. It is the quickest way to do almost anything, and it shows each command's shortcut, so you learn them as you go.

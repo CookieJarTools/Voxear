@@ -439,8 +439,11 @@ impl Editor {
         let namespace = script_namespace(&game.project);
         let project_panel = find(&ui, "project-panel");
         let project_markup = projects::build(&mut ui, project_panel);
-        let project =
+        let mut project =
             ProjectView::new(&mut ui, project_markup, game.project.name(), &root, game.content.db(), &namespace);
+        if let Some(size) = memory.tile_size {
+            project.set_tile_size(&mut ui, size);
+        }
         let console_panel = find(&ui, "console-panel");
         let console = Console::new(&mut ui, console_panel, log, &root, &memory.settings);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
@@ -882,8 +885,11 @@ impl Editor {
             ProjectEvent::Dropped { source, folder } => {
                 if let Some(entity) = self.dragged_obj(&source) {
                     self.make_prefab(entity, &folder, renderer);
+                } else if let Some(path) = self.dragged_project_entry(&source) {
+                    self.move_in_project(&path, &folder, renderer);
                 }
             }
+            ProjectEvent::Move { path, folder } => self.move_in_project(&path, &folder, renderer),
             ProjectEvent::Import { folder } => self.choose_imports(folder),
             ProjectEvent::WantsParts(path) => {
                 let parts = objs::model_parts(&mut self.game, renderer, &path);
@@ -964,6 +970,8 @@ impl Editor {
             AssetAction::Import(path, settings) => self.apply_import_settings(&path, &settings, renderer),
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
+            AssetAction::BrowseStandsOn { level, anchor } => self.browse_stands_on(&level, anchor),
+            AssetAction::DropStandsOn { level, source } => self.drop_stands_on(&level, &source, renderer),
             AssetAction::Ping(path) => self.project.ping(&mut self.ui, &path),
             AssetAction::Listen(path) => {
                 if let Err(error) = self.game.audio.preview(&mut self.game.content, &path) {
@@ -2023,6 +2031,7 @@ impl Editor {
                 (PickFor::LevelScene { level, at }, Chosen::Value(pick)) => {
                     self.pick_level_scene(&level, at, &pick, renderer);
                 }
+                (PickFor::StandsOn { level }, Chosen::Value(pick)) => self.pick_stands_on(&level, &pick, renderer),
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {
                     self.pick_material_map(&material, map, &pick, renderer);
                 }

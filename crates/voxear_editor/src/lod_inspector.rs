@@ -206,6 +206,11 @@ impl MeshLods {
 
     /// While an edge is dragged, where every LOD ends with it moved, kept
     /// between the LODs on either side: the renderer's own ends from then.
+    /// The edge being dragged, by the LOD it ends.
+    pub fn dragging(&self) -> Option<usize> {
+        self.drag
+    }
+
     pub fn dragged(&mut self, ui: &Ui) -> Option<[f32; MAX_TRANSITIONS]> {
         let Some(level) = self.edges.iter().position(|&edge| ui.is_pressed(edge)) else {
             self.drag = None;
@@ -274,6 +279,56 @@ pub fn view_lod(world: &World, entity: Entity, renderer: &Renderer, level: usize
             radius * scale / (share * eye.camera.tan_half_fov)
         }
         None => distance_for(&lods, level, scale, eye) + radius * scale,
+    };
+    let back = (eye.camera.position - center).try_normalize().unwrap_or(Vec3::new(0.0, 0.3, -1.0).normalize());
+    let forward = -back;
+    let rotation = Quat::from_euler(EulerRot::YXZ, forward.x.atan2(forward.z), -forward.y.asin(), 0.0);
+    Some((center + back * away, rotation))
+}
+
+/// An edge of a LOD bar being dragged, for the Scene view to follow: where
+/// a LOD Group's level now ends, as its measure has it, or the share of the
+/// screen where one of a mesh's LODs now ends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LodEdge {
+    Group(f32),
+    Mesh(f32),
+}
+
+/// A little past where an edge is, so the camera there sees the level
+/// after it, which takes over at the edge.
+const PAST_EDGE: f32 = 0.97;
+
+/// Where a camera goes to see an Obj at a dragged edge of its LOD bar, and
+/// how it turns to look at it: on the line from the Obj to where the camera
+/// is now, at the size or distance the edge is at, a little past it.
+pub fn view_edge(
+    world: &World,
+    entity: Entity,
+    renderer: &Renderer,
+    edge: LodEdge,
+    eye: LodEye,
+) -> Option<(Vec3, Quat)> {
+    let (center, away) = match edge {
+        LodEdge::Group(until) => {
+            let group = world.get::<LodGroup>(entity)?;
+            let (view, _) = *renderer.lod_choices(world, eye.camera).groups.get(&entity)?;
+            match group.measure {
+                // The size on screen goes as one over the distance from the middle of the group's box.
+                LodMeasure::ScreenSize => {
+                    let now = view.center.distance(eye.camera.position);
+                    (view.center, now * view.size / (until.max(1e-4) * PAST_EDGE))
+                }
+                LodMeasure::Distance => (model(world, entity).w_axis.truncate(), until / PAST_EDGE),
+            }
+        }
+        LodEdge::Mesh(share) => {
+            let settings = world.get::<MeshRenderer>(entity)?;
+            let (center, radius) = renderer.mesh_sphere(settings.mesh)?;
+            let model = model(world, entity);
+            let reach = radius * max_scale(model);
+            (model.transform_point3(center), reach / (share.max(1e-4) * PAST_EDGE * eye.camera.tan_half_fov))
+        }
     };
     let back = (eye.camera.position - center).try_normalize().unwrap_or(Vec3::new(0.0, 0.3, -1.0).normalize());
     let forward = -back;

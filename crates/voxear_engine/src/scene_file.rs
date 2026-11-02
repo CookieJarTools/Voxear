@@ -246,6 +246,20 @@ pub struct RendererData {
     /// The default grey material when left out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<MaterialRef>,
+    /// Shifts which LOD of the mesh is drawn: 1 switches to simpler ones
+    /// sooner, -1 later (see `MeshRenderer::lod_bias`).
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub lod_bias: f32,
+    /// A LOD drawn at every distance. Left out, or -1, the distance picks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_lod: Option<i32>,
+}
+
+impl RendererData {
+    /// The LOD it forces, if any.
+    pub fn forced_lod(&self) -> Option<u8> {
+        self.force_lod.filter(|lod| *lod >= 0).map(|lod| lod.min(255) as u8)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -542,6 +556,17 @@ fn renderer_changes(
     if parse(&actual.mesh) == parse(&expected.mesh) {
         changes.remove("mesh");
     }
+    // LOD settings back at their defaults are written out, or the prefab's would stay.
+    if actual.lod_bias != expected.lod_bias {
+        changes.insert("lod_bias".into(), toml::Value::Float(f64::from(actual.lod_bias)));
+    } else {
+        changes.remove("lod_bias");
+    }
+    if actual.forced_lod() != expected.forced_lod() {
+        changes.insert("force_lod".into(), i64::from(actual.force_lod.unwrap_or(-1)).into());
+    } else {
+        changes.remove("force_lod");
+    }
     if let (Some(toml::Value::Table(material)), Some(toml::Value::Table(was))) =
         (changes.get_mut("material"), before.get("material"))
     {
@@ -632,7 +657,11 @@ fn same_renderer(content: &Content, a: &Option<RendererData>, b: &Option<Rendere
         Some(MaterialRef::Asset(text)) => parse(text).map(MaterialSource::Asset),
     };
     match (a, b) {
-        (Some(a), Some(b)) => parse(&a.mesh) == parse(&b.mesh) && material(&a.material) == material(&b.material),
+        (Some(a), Some(b)) => {
+            parse(&a.mesh) == parse(&b.mesh)
+                && material(&a.material) == material(&b.material)
+                && (a.lod_bias, a.forced_lod()) == (b.lod_bias, b.forced_lod())
+        }
         (None, None) => true,
         _ => false,
     }
@@ -685,7 +714,7 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
             Some(MaterialSource::Inline(data)) => Some(MaterialRef::Inline(*data)),
             None => None,
         };
-        Some(RendererData { mesh, material })
+        Some(RendererData { mesh, material, lod_bias: r.lod_bias, force_lod: r.forced_lod.map(i32::from) })
     });
     obj.audio = world.get::<AudioSource>(entity).map(|source| audio_source_data(content, source));
     obj.audio_listener = world.has::<AudioListener>(entity);
@@ -758,6 +787,10 @@ fn is_one_f32(v: &f32) -> bool {
     *v == 1.0
 }
 
+fn is_zero_f32(v: &f32) -> bool {
+    *v == 0.0
+}
+
 fn one_f32() -> f32 {
     1.0
 }
@@ -796,4 +829,24 @@ fn default_inner() -> f32 {
 
 fn default_outer() -> f32 {
     45.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_renderers_lod_settings_are_written_only_when_set() {
+        let plain: RendererData = toml::from_str("mesh = \"builtin:sphere\"").unwrap();
+        assert_eq!((plain.lod_bias, plain.forced_lod()), (0.0, None));
+        assert_eq!(toml::to_string(&plain).unwrap().trim(), "mesh = \"builtin:sphere\"");
+
+        let tuned: RendererData = toml::from_str("mesh = \"builtin:sphere\"\nlod_bias = 1.5\nforce_lod = 2").unwrap();
+        assert_eq!((tuned.lod_bias, tuned.forced_lod()), (1.5, Some(2)));
+        let back: RendererData = toml::from_str(&toml::to_string(&tuned).unwrap()).unwrap();
+        assert_eq!(back, tuned);
+
+        let unforced: RendererData = toml::from_str("mesh = \"builtin:sphere\"\nforce_lod = -1").unwrap();
+        assert_eq!(unforced.forced_lod(), None, "-1, as an override writes it, picks by distance again");
+    }
 }

@@ -86,6 +86,8 @@ impl Part {
 pub enum Prop {
     Mesh,
     Material,
+    /// How soon a Mesh Renderer switches to simpler LODs.
+    LodBias,
     LightKind,
     LightColor,
     Intensity,
@@ -124,7 +126,7 @@ impl Prop {
     /// The component the value belongs to.
     pub fn part(&self) -> Part {
         match self {
-            Prop::Mesh | Prop::Material => Part::Renderer,
+            Prop::Mesh | Prop::Material | Prop::LodBias => Part::Renderer,
             Prop::LightKind | Prop::LightColor | Prop::Intensity | Prop::Range | Prop::SpotInner | Prop::SpotOuter => {
                 Part::Light
             }
@@ -149,6 +151,7 @@ impl Prop {
         let name = match self {
             Prop::Mesh => "mesh",
             Prop::Material => "material",
+            Prop::LodBias => "lod_bias",
             Prop::LightKind => "type",
             Prop::LightColor => "color",
             Prop::Intensity => "intensity",
@@ -247,7 +250,7 @@ pub fn specs(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
 /// script, the fields it declares, then any others its scene sets.
 pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) -> Vec<Prop> {
     match part {
-        Part::Renderer => vec![Prop::Mesh, Prop::Material],
+        Part::Renderer => vec![Prop::Mesh, Prop::Material, Prop::LodBias],
         Part::Light => {
             let kind = world.get::<Light>(entity).map_or(LightKind::Point, |l| l.kind);
             let mut props = vec![Prop::LightKind, Prop::LightColor, Prop::Intensity];
@@ -304,6 +307,7 @@ pub fn label(prop: &Prop) -> String {
     let label = match prop {
         Prop::Mesh => "Mesh",
         Prop::Material => "Material",
+        Prop::LodBias => "LOD Bias",
         Prop::LightKind => "Type",
         Prop::LightColor => "Colour",
         Prop::Intensity => "Intensity",
@@ -372,7 +376,7 @@ pub fn add(
         let cube = game.content.parse(BUILTIN_MESHES[0].1)?;
         let mesh = game.content.mesh(renderer, &cube)?;
         let material = game.content.material(renderer, &MaterialSource::Inline(default_material()))?;
-        game.engine.world.insert(entity, MeshRenderer { mesh, material });
+        game.engine.world.insert(entity, MeshRenderer::new(mesh, material));
         return Ok(());
     }
     if *part == Part::LodGroup {
@@ -462,6 +466,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             };
             Value::Choice(index, LIGHT_KINDS.iter().map(|k| k.to_string()).collect())
         }
+        Prop::LodBias => Value::Number(world.get::<MeshRenderer>(entity)?.lod_bias),
         Prop::LightColor => Value::Color(srgb(light()?.color.to_array()).map(round3)),
         Prop::Intensity => Value::Number(light()?.intensity),
         Prop::Range => Value::Number(light()?.range),
@@ -646,6 +651,12 @@ pub fn insert_lod_level(game: &mut Game, entity: Entity, at: usize) -> bool {
     })
 }
 
+/// Makes a Mesh Renderer draw one LOD of its mesh at every distance, or
+/// leaves the LOD to the distance again.
+pub fn set_forced_lod(world: &mut World, entity: Entity, lod: Option<u8>) -> bool {
+    with(world, entity, |renderer: &mut MeshRenderer| renderer.forced_lod = lod)
+}
+
 /// Takes the level at `at` out of a LOD Group.
 pub fn delete_lod_level(world: &mut World, entity: Entity, at: usize) -> bool {
     with(world, entity, |group: &mut LodGroup| {
@@ -820,6 +831,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::SoundBus, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
             a.bus = if index == 1 { AudioBus::Music } else { AudioBus::Effects };
         }),
+        (Prop::LodBias, Value::Number(n)) => with(world, entity, |r: &mut MeshRenderer| r.lod_bias = n.clamp(-8.0, 8.0)),
         (Prop::LodMeasure, Value::Choice(index, _)) => with(world, entity, |group: &mut LodGroup| {
             group.set_measure(if index == 1 { LodMeasure::Distance } else { LodMeasure::ScreenSize });
         }),

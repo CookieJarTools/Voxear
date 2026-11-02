@@ -2438,6 +2438,10 @@ TextField.build-title:focus {
     color: var(--vx-text);
 }
 
+.lod-cell.lod-forced {
+    background-color: var(--vx-accent-soft);
+}
+
 .attr-preview {
     justify-content: flex-end;
     padding: 4px 0px;

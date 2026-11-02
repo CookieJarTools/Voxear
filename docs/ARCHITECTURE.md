@@ -905,7 +905,12 @@ cost nothing. The CPU never touches visibility.
   fading in from the LOD another Obj was drawn at there.
 - **The Inspector shows a mesh's chain** *(implemented)*: under its Mesh Renderer, a cell for each LOD with its
   triangles, the one the Scene view draws outlined, worked out on the CPU as the GPU picks (`lod::lod_at`, from
-  the chain `Assets` keeps for each mesh).
+  the chain `Assets` keeps for each mesh). A click moves the Scene view to where that LOD is drawn.
+- **Per-renderer LOD settings** *(implemented)*, as Unity 6's Mesh LOD: `MeshRenderer::lod_bias` scales the
+  error the GPU allows it by two to that power, and `forced_lod` draws one LOD at every distance. Each instance
+  carries them to the cull shader (`GpuInstance::lod_bias`, and the forced LOD plus one in its flags above
+  `INSTANCE_LOD_SHIFT`); shadows pick the same way. Scene files write `lod_bias` and `force_lod` on
+  `[obj.renderer]`, and the Inspector edits them as LOD Bias and with Force on a LOD cell's menu.
 - **LOD Groups** *(implemented)*: a `LodGroup` on an Obj shows one of its levels' Objs at a time, each with its
   children, by the share of the screen's height its meshes cover or by its distance from the camera, as Unity's
   LOD Group does (`lod_group.rs`). Each view chooses for its own camera while extracting (`LodChoices`), and what a

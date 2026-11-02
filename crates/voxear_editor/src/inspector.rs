@@ -146,6 +146,10 @@ pub enum RowAction {
     /// after its last; or take the level at this place out.
     InsertLodLevel(usize),
     DeleteLodLevel(usize),
+    /// Move the Scene view to where it draws this LOD of the mesh.
+    ViewLod(usize),
+    /// Make the Mesh Renderer draw this LOD at every distance, or none.
+    ForceLod(Option<u8>),
 }
 
 /// A component value's row and the control that edits it.
@@ -1385,6 +1389,9 @@ impl Inspector {
         if let Some((prop, source)) = dropped {
             return Some(RowAction::Dropped(prop, source));
         }
+        if let Some(level) = self.mesh_lods.as_ref().and_then(|lods| lods.clicked(ui)) {
+            return Some(RowAction::ViewLod(level));
+        }
         let at = ui.pointer_position().unwrap_or_default();
         let mut items: Vec<(MenuItem, Option<RowAction>)>;
         let (owner, at) = if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
@@ -1399,6 +1406,15 @@ impl Inspector {
             return Some(action);
         } else if let Some((prop, swatch)) = self.swatch_clicked(ui) {
             return Some(RowAction::EditColor(prop, swatch));
+        } else if let Some((level, cell, forced)) = self.mesh_lods.as_ref().and_then(|lods| lods.context_clicked(ui)) {
+            items = vec![match forced == Some(level) {
+                true => (MenuItem::new("Stop Forcing"), Some(RowAction::ForceLod(None))),
+                false => (MenuItem::new(&format!("Force LOD {level}")), Some(RowAction::ForceLod(Some(level as u8)))),
+            }];
+            if forced.is_some_and(|forced| forced != level) {
+                items.push((MenuItem::new("Stop Forcing"), Some(RowAction::ForceLod(None))));
+            }
+            (cell, at)
         } else if let Some((level, clicked)) = self.group_lods.as_ref().and_then(|lods| lods.context_clicked(ui)) {
             items = lod_level_items(level, self.shown.and_then(|e| game.engine.world.get::<LodGroup>(e)));
             (clicked, at)

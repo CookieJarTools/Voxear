@@ -1,13 +1,14 @@
 //! What the Inspector shows of levels of detail, laid out as Unity does.
 //! Under a Mesh Renderer, a strip of its mesh's LODs, each with its
-//! triangles, the one a camera draws lit. Under a LOD Group, the bar of its
+//! triangles, the one a camera draws lit; a click on one moves the Scene
+//! view to where it is drawn, and a right-click forces it. Under a LOD Group, the bar of its
 //! levels: a click selects a level, a drag on an edge moves where it ends, a
 //! right-click inserts or deletes one, and a camera mark shows where the
 //! Scene view sees the group.
 
 use std::collections::HashMap;
 
-use voxear_core::math::{Mat4, Vec3, Vec4};
+use voxear_core::math::{EulerRot, Mat4, Quat, Vec3, Vec4};
 use voxear_ecs::{Entity, World};
 use voxear_render::{LodCamera, LodGroup, LodInfo, LodMeasure, LodView, MeshRenderer, Renderer, lod_at};
 use voxear_scene::{Transform, WorldTransform};
@@ -35,12 +36,22 @@ pub struct LodEye {
     pub threshold: f32,
 }
 
+impl LodEye {
+    /// The same camera for a renderer with a LOD bias, which scales the
+    /// error it allows as the GPU does.
+    pub fn biased(self, bias: f32) -> Self {
+        Self { threshold: self.threshold * bias.exp2(), ..self }
+    }
+}
+
 /// A Mesh Renderer's LODs row: a cell for each LOD of its mesh with its
 /// triangles, the one drawn now lit.
 pub struct MeshLods {
     strip: NodeId,
     cells: Vec<NodeId>,
     lods: Vec<LodInfo>,
+    /// The LOD its renderer forces, if any.
+    forced: Option<usize>,
 }
 
 impl MeshLods {
@@ -48,7 +59,7 @@ impl MeshLods {
         let row = prop(ui, rows, "LODs");
         let strip = ui.panel(row, Style::row());
         ui.add_class(strip, "lod-strip");
-        Self { strip, cells: Vec::new(), lods: Vec::new() }
+        Self { strip, cells: Vec::new(), lods: Vec::new(), forced: None }
     }
 
     pub fn update(&mut self, ui: &mut Ui, world: &World, entity: Entity, renderer: &Renderer, eye: Option<LodEye>) {
@@ -66,24 +77,73 @@ impl MeshLods {
             }
             self.lods = lods;
         }
-        let drawn = match (eye, renderer.mesh_sphere(mesh)) {
-            (Some(eye), Some((center, radius))) if !self.lods.is_empty() => {
+        let settings = world.get::<MeshRenderer>(entity).copied();
+        let forced = settings.and_then(|r| r.forced_lod).map(|lod| usize::from(lod).min(self.lods.len().saturating_sub(1)));
+        let drawn = match (eye.zip(settings), renderer.mesh_sphere(mesh)) {
+            _ if forced.is_some() => forced,
+            (Some((eye, settings)), Some((center, radius))) if !self.lods.is_empty() => {
                 let model = model(world, entity);
                 let scale = max_scale(model);
                 let away = model.transform_point3(center).distance(eye.camera.position) - radius * scale;
+                let eye = eye.biased(settings.lod_bias);
                 Some(lod_at(&self.lods, away, scale, eye.pixels_per_metre, eye.threshold))
             }
             _ => None,
         };
         for (level, &cell) in self.cells.iter().enumerate() {
             ui.set_class(cell, "lod-drawn", drawn == Some(level));
+            ui.set_class(cell, "lod-forced", forced == Some(level));
         }
+        self.forced = forced;
+    }
+
+    /// The LOD whose cell was right-clicked, the cell, and the LOD forced now.
+    pub fn context_clicked(&self, ui: &Ui) -> Option<(usize, NodeId, Option<usize>)> {
+        let level = self.cells.iter().position(|&cell| ui.context_clicked(cell))?;
+        Some((level, self.cells[level], self.forced))
+    }
+
+    /// The LOD whose cell was clicked.
+    pub fn clicked(&self, ui: &Ui) -> Option<usize> {
+        self.cells.iter().position(|&cell| ui.clicked(cell))
     }
 
     /// A cell's LOD and triangles, while the pointer rests on it.
     pub fn hovered_tooltip(&self, ui: &Ui) -> Option<(String, NodeId)> {
         let (level, &cell) = self.cells.iter().enumerate().find(|(_, cell)| ui.is_hovered(**cell))?;
         Some((format!("LOD {level}: {} triangles", thousands(self.lods[level].triangles)), cell))
+    }
+}
+
+/// Where a camera goes to see LOD `level` of an Obj's mesh drawn, and how
+/// it turns to look at it: on the line from the mesh to where the camera is
+/// now, inside the distances that LOD is drawn at.
+pub fn view_lod(world: &World, entity: Entity, renderer: &Renderer, level: usize, eye: LodEye) -> Option<(Vec3, Quat)> {
+    let settings = world.get::<MeshRenderer>(entity)?;
+    let (mesh, eye) = (settings.mesh, eye.biased(settings.lod_bias));
+    let (lods, (center, radius)) = (renderer.mesh_lods(mesh)?, renderer.mesh_sphere(mesh)?);
+    let model = model(world, entity);
+    let scale = max_scale(model);
+    let center = model.transform_point3(center);
+    let away = distance_for(&lods, level, scale, eye) + radius * scale;
+    let back = (eye.camera.position - center).try_normalize().unwrap_or(Vec3::new(0.0, 0.3, -1.0).normalize());
+    let forward = -back;
+    let rotation = Quat::from_euler(EulerRot::YXZ, forward.x.atan2(forward.z), -forward.y.asin(), 0.0);
+    Some((center + back * away, rotation))
+}
+
+/// How far from a mesh's bounding sphere LOD `level` is drawn, well inside
+/// where it starts and where the next takes over: halfway to the second
+/// for the first, between the two for the rest, and past the start of the last.
+fn distance_for(lods: &[LodInfo], level: usize, scale: f32, eye: LodEye) -> f32 {
+    let from = |lod: &LodInfo| lod.from_distance(scale, eye.pixels_per_metre, eye.threshold);
+    let level = level.min(lods.len().saturating_sub(1));
+    let (start, next) = (lods.get(level).map_or(0.0, from), lods.get(level + 1).map(from));
+    match next {
+        _ if lods.len() < 2 => 1.0,
+        Some(next) if level == 0 => next * 0.5,
+        Some(next) if next > start * 1.02 => (start * next).sqrt(),
+        _ => start * 1.5,
     }
 }
 
@@ -353,6 +413,18 @@ mod tests {
         assert_eq!(short_count(2000), "2k");
         assert_eq!(short_count(41_200), "41k");
         assert_eq!(short_count(1_250_000), "1.2M");
+    }
+
+    #[test]
+    fn each_lod_is_viewed_from_a_distance_the_gpu_draws_it_at() {
+        let lods: Vec<LodInfo> = [(4096, 0.0), (2048, 0.004), (1024, 0.02), (512, 0.09)]
+            .map(|(triangles, error)| LodInfo { triangles, error })
+            .to_vec();
+        let eye = LodEye { camera: LodCamera::new(Vec3::ZERO, 60.0), pixels_per_metre: 700.0, threshold: 1.0 };
+        for level in 0..lods.len() {
+            let away = distance_for(&lods, level, 1.0, eye);
+            assert_eq!(lod_at(&lods, away, 1.0, eye.pixels_per_metre, eye.threshold), level, "{away} m");
+        }
     }
 
     #[test]

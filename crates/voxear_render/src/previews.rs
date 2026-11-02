@@ -441,7 +441,7 @@ impl Previews {
                     mesh: part.mesh.0,
                     material: part.material.0,
                     flags: 0,
-                    _pad: 0,
+                    lod_bias: 0.0,
                 });
                 draws.push((draws.len(), *lod));
             }

@@ -19,7 +19,7 @@ fn wall(renderer: &mut Renderer) -> World {
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let material = renderer.add_material(&MaterialDesc::default()).unwrap();
     world.spawn((
-        MeshRenderer { mesh: cube, material },
+        MeshRenderer::new(cube, material),
         Transform::new(Vec3::new(-6.0, 1.0, 0.0), Quat::IDENTITY, Vec3::new(12.0, 12.0, 0.5)),
     ));
     world

@@ -1372,6 +1372,9 @@ impl Editor {
         if let RowAction::Ping(prop) | RowAction::SelectTarget(prop) = &action {
             return self.reference_target(entity, prop, matches!(action, RowAction::SelectTarget(_)));
         }
+        if let RowAction::ViewLod(level) = action {
+            return self.view_lod(entity, level, renderer);
+        }
         if let RowAction::Keep(field) = action {
             let label = field.label();
             let kept = (entity, field);
@@ -1421,6 +1424,10 @@ impl Editor {
             RowAction::Lock(part, locked) => props::set_locked(&mut self.game.engine.world, entity, &part, locked),
             RowAction::ShowToDesigners(prop, shown) => {
                 props::show_to_designers(&mut self.game.engine.world, entity, &prop, shown);
+            }
+            RowAction::ViewLod(_) => {}
+            RowAction::ForceLod(lod) => {
+                props::set_forced_lod(&mut self.game.engine.world, entity, lod);
             }
             RowAction::InsertLodLevel(at) => {
                 props::insert_lod_level(&mut self.game, entity, at);

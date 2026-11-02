@@ -40,14 +40,14 @@ fn wall_scene(renderer: &mut Renderer) -> World {
     let sphere = renderer.primitive(Primitive::Sphere).unwrap();
     let material = renderer.add_material(&MaterialDesc::default()).unwrap();
     world.spawn((
-        MeshRenderer { mesh: cube, material },
+        MeshRenderer::new(cube, material),
         Transform::new(Vec3::new(-4.0, 1.0, 0.0), Quat::IDENTITY, Vec3::new(8.0, 6.0, 0.5)),
     ));
     for i in 0..5 {
         let hidden = Vec3::new(-6.0 + i as f32, 1.0, 6.0);
         let visible = Vec3::new(2.0 + i as f32, 1.0, 6.0);
-        world.spawn((MeshRenderer { mesh: sphere, material }, Transform::from_position(hidden)));
-        world.spawn((MeshRenderer { mesh: sphere, material }, Transform::from_position(visible)));
+        world.spawn((MeshRenderer::new(sphere, material), Transform::from_position(hidden)));
+        world.spawn((MeshRenderer::new(sphere, material), Transform::from_position(visible)));
     }
     world
 }
@@ -85,7 +85,7 @@ fn lod_changes_fade_then_settle() {
     let sphere = renderer.primitive(Primitive::Sphere).unwrap();
     let material = renderer.add_material(&MaterialDesc::default()).unwrap();
     world
-        .spawn((MeshRenderer { mesh: sphere, material }, Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(3.0))));
+        .spawn((MeshRenderer::new(sphere, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(3.0))));
     let mut time = 0.0;
     let settled = run(&mut renderer, &world, &mut time, 4);
     assert_eq!(settled.fade_draws, 0, "first appearances snap: {settled:?}");
@@ -101,6 +101,32 @@ fn lod_changes_fade_then_settle() {
 }
 
 #[test]
+fn a_renderer_can_force_a_lod_or_bias_the_pick() {
+    let Some(mut renderer) = renderer() else { return };
+    // A large sphere close up, at its most detailed LOD.
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -4.0))));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let close = Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(3.0));
+    let ball = world.spawn((MeshRenderer::new(sphere, material), close));
+    let mut time = 0.0;
+    let near = run(&mut renderer, &world, &mut time, 4);
+    assert!(near.lods[0] > 0, "{near:?}");
+
+    // Forced, it draws the LOD it is told at any distance.
+    world.get_mut::<MeshRenderer>(ball).unwrap().forced_lod = Some(2);
+    let forced = run(&mut renderer, &world, &mut time, 30);
+    assert!(forced.lods[2] > 0 && forced.lods[0] == 0, "{forced:?}");
+
+    // A large bias lets far more error through, so a simpler LOD comes sooner.
+    let ball = world.get_mut::<MeshRenderer>(ball).unwrap();
+    (ball.forced_lod, ball.lod_bias) = (None, 6.0);
+    let biased = run(&mut renderer, &world, &mut time, 30);
+    assert_eq!(biased.lods[0], 0, "{biased:?}");
+}
+
+#[test]
 fn an_obj_new_to_its_place_in_the_list_does_not_fade_in() {
     let Some(mut renderer) = renderer() else { return };
     // A small sphere far off, drawn at a coarse LOD, until it settles.
@@ -109,7 +135,7 @@ fn an_obj_new_to_its_place_in_the_list_does_not_fade_in() {
     let sphere = renderer.primitive(Primitive::Sphere).unwrap();
     let material = renderer.add_material(&MaterialDesc::default()).unwrap();
     let far =
-        world.spawn((MeshRenderer { mesh: sphere, material }, Transform::from_position(Vec3::new(0.0, 0.0, 80.0))));
+        world.spawn((MeshRenderer::new(sphere, material), Transform::from_position(Vec3::new(0.0, 0.0, 80.0))));
     let mut time = 0.0;
     run(&mut renderer, &world, &mut time, 4);
 
@@ -117,7 +143,7 @@ fn an_obj_new_to_its_place_in_the_list_does_not_fade_in() {
     // in place of another: it shows at once, not fading in from the old LOD.
     world.despawn(far);
     world
-        .spawn((MeshRenderer { mesh: sphere, material }, Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(3.0))));
+        .spawn((MeshRenderer::new(sphere, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(3.0))));
     let swapped = run(&mut renderer, &world, &mut time, 1);
     assert_eq!(swapped.fade_draws, 0, "{swapped:?}");
 }
@@ -205,7 +231,7 @@ fn centre_and_corner(renderer: &mut Renderer, imported: &voxear_render::Imported
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -3.0))));
     world.spawn((
-        MeshRenderer { mesh: imported.nodes[0].mesh, material: imported.nodes[0].material },
+        MeshRenderer::new(imported.nodes[0].mesh, imported.nodes[0].material),
         Transform::IDENTITY,
     ));
     run(renderer, &world, &mut 0.0, 8);
@@ -859,7 +885,7 @@ fn the_view_draws_into_a_rect_through_a_chosen_camera() {
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let material =
         renderer.add_material(&MaterialDesc { base_color: [1.0, 0.1, 0.1, 1.0], ..Default::default() }).unwrap();
-    world.spawn((MeshRenderer { mesh: cube, material }, Transform::IDENTITY));
+    world.spawn((MeshRenderer::new(cube, material), Transform::IDENTITY));
     renderer.set_view_rect(Some([320, 40, 200, 200]));
     renderer.set_view_options(ViewOptions { camera: Some(chosen), ..ViewOptions::default() });
     run(&mut renderer, &world, &mut 0.0, 3);

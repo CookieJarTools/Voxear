@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn a_prefabs_parts_sit_where_their_parents_put_them() {
-        let renderer = Some(MeshRenderer { mesh: MeshHandle(1), material: MaterialHandle(2) });
+        let renderer = Some(MeshRenderer::new(MeshHandle(1), MaterialHandle(2)));
         let objs = [
             (None, Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0)), None),
             (Some(0), Mat4::from_translation(Vec3::new(0.0, 2.0, 0.0)), renderer),

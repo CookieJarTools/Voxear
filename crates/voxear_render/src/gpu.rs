@@ -68,14 +68,21 @@ pub struct GpuInstance {
     pub normal: [[f32; 4]; 3],
     pub mesh: u32,
     pub material: u32,
-    /// `INSTANCE_NEW` when another Obj had this place in the list last frame.
+    /// `INSTANCE_NEW` when another Obj had this place in the list last frame,
+    /// and above `INSTANCE_LOD_SHIFT`, the LOD it always draws, plus one.
     pub flags: u32,
-    pub _pad: u32,
+    /// Scales the LOD error it allows by two to this power: above 0 it
+    /// switches to simpler LODs sooner.
+    pub lod_bias: f32,
 }
 
 /// An instance whose place in the list another Obj held last frame, so the
 /// LOD history kept for that place is not its own.
 pub const INSTANCE_NEW: u32 = 1;
+
+/// Where an instance's forced LOD, plus one, sits in its flags; 0 there
+/// leaves the LOD to the distance.
+pub const INSTANCE_LOD_SHIFT: u32 = 8;
 
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;

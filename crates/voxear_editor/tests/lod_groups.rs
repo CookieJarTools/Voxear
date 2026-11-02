@@ -183,6 +183,47 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     assert_eq!(cells.len(), lods.len(), "a cell for each LOD");
     assert_eq!(cells.iter().filter(|&&cell| editor.ui.has_class(cell, "lod-drawn")).count(), 1, "one drawn now");
 
+    // A click on a cell moves the Scene view to where that LOD is drawn, looking at the mesh.
+    for level in [2, 0] {
+        click(&mut editor.ui, cells[level]);
+        frame(&mut editor, &mut renderer);
+        frame(&mut editor, &mut renderer);
+        let mut cells = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "lod-cell", &mut cells);
+        assert!(editor.ui.has_class(cells[level], "lod-drawn"), "LOD {level} is drawn after its click");
+        let camera = editor.scene_camera().unwrap();
+        let towards = (Vec3::new(0.0, 1.0, 0.0) - camera.position).normalize();
+        assert!(camera.forward.dot(towards) > 0.99, "looking at the rock");
+    }
+
+    // A right-click forces a LOD at every distance, as Unity's Forced LOD does; undo lets it go.
+    let renderer_of = |editor: &voxear_editor::Editor| *editor.game.engine.world.get::<voxear_render::MeshRenderer>(high).unwrap();
+    let mut cells = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "lod-cell", &mut cells);
+    let [x, y, w, h] = editor.ui.rect(cells[3]);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_secondary(true);
+    editor.ui.pointer_secondary(false);
+    frame(&mut editor, &mut renderer);
+    let force = menu_item(&editor.ui, "Force LOD 3").expect("the cell's menu");
+    click(&mut editor.ui, force);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(renderer_of(&editor).forced_lod, Some(3));
+    let mut cells = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "lod-cell", &mut cells);
+    assert!(editor.ui.has_class(cells[3], "lod-forced") && editor.ui.has_class(cells[3], "lod-drawn"), "drawn up close");
+    editor.undo(&mut renderer);
+    assert_eq!(renderer_of(&editor).forced_lod, None);
+
+    // LOD Bias is a field of the renderer's own.
+    let bias = first_with(&editor.ui, prop_rows(&editor.ui, "LOD Bias")[0], "value-input").unwrap();
+    type_into(&mut editor.ui, bias, "1.5");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    assert_eq!(renderer_of(&editor).lod_bias, 1.5);
+
     // Add Component makes a level of each Obj inside the rock, in the Hierarchy's order.
     editor.select(Some(rock));
     frame(&mut editor, &mut renderer);

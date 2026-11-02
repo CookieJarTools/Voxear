@@ -262,7 +262,7 @@ mod tests {
     use crate::assets::MaterialHandle;
 
     fn rock(world: &mut World, name: &str, parent: Entity) -> Entity {
-        let renderer = MeshRenderer { mesh: MeshHandle(0), material: MaterialHandle(0) };
+        let renderer = MeshRenderer::new(MeshHandle(0), MaterialHandle(0));
         world.spawn((Name(name.into()), Transform::IDENTITY, Parent(parent), renderer))
     }
 

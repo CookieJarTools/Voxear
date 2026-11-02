@@ -603,7 +603,7 @@ fn resolve_obj(
                 None => MaterialSource::Inline(default_material()),
             };
             let material = content.material(renderer, &source)?;
-            Some(MeshRenderer { mesh, material })
+            Some(MeshRenderer { lod_bias: data.lod_bias, forced_lod: data.forced_lod(), ..MeshRenderer::new(mesh, material) })
         }
         _ => None,
     };

@@ -83,8 +83,28 @@ impl Light {
 pub struct MeshRenderer {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
+    /// Shifts which LOD of its mesh is drawn, as Unity's LOD Selection Bias
+    /// does: 1 allows twice the error, so simpler LODs come sooner, and -1
+    /// half, so they come later. 0 draws them as the engine picks.
+    pub lod_bias: f32,
+    /// A LOD of its mesh drawn at every distance, as Unity's Forced LOD.
+    pub forced_lod: Option<u8>,
 }
 impl Component for MeshRenderer {}
+
+impl MeshRenderer {
+    /// A mesh drawn with a material, its LODs picked by distance.
+    pub fn new(mesh: MeshHandle, material: MaterialHandle) -> Self {
+        Self { mesh, material, lod_bias: 0.0, forced_lod: None }
+    }
+
+    /// Its LOD settings as the GPU reads them: flags with the forced LOD in,
+    /// and the bias.
+    pub(crate) fn lod_bits(&self) -> (u32, f32) {
+        let forced = self.forced_lod.map_or(0, |lod| u32::from(lod) + 1);
+        (forced << crate::gpu::INSTANCE_LOD_SHIFT, self.lod_bias)
+    }
+}
 
 /// Everything the GPU needs for one view of the world.
 pub struct ExtractedFrame {
@@ -281,8 +301,8 @@ pub fn extract(
                 normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
                 mesh: renderer.mesh.0,
                 material: renderer.material.0,
-                flags: 0,
-                _pad: 0,
+                flags: renderer.lod_bits().0,
+                lod_bias: renderer.lod_bits().1,
             }
         })
         .collect();

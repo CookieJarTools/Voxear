@@ -10,12 +10,13 @@
 
 use voxear_ecs::Entity;
 use voxear_render::{Camera, LodCamera, Renderer, ViewOptions};
+use voxear_scene::Transform;
 use voxear_ui::{NodeId, Style};
 
 use super::Editor;
 use crate::{
     inspector::{Field, Inspector},
-    lod_inspector::LodEye,
+    lod_inspector::{self, LodEye},
 };
 
 /// An Inspector opened from a window's menu: its panel's id, and itself.
@@ -125,6 +126,20 @@ impl Editor {
         }
     }
 
+    /// Moves the Scene view in use to where it draws LOD `level` of an Obj's
+    /// mesh, looking at it.
+    pub(super) fn view_lod(&mut self, entity: Entity, level: usize, renderer: &Renderer) {
+        let eye = self.shown(self.scene.viewport).then(|| self.scene_eye()).flatten();
+        let world = &self.game.engine.world;
+        let Some((position, rotation)) = eye.and_then(|eye| lod_inspector::view_lod(world, entity, renderer, level, eye))
+        else {
+            return;
+        };
+        if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.scene.camera) {
+            (transform.position, transform.rotation) = (position, rotation);
+        }
+    }
+
     /// The camera the Inspector says which LOD is drawn through: the game's
     /// while playing with the Game view showing, and otherwise the Scene
     /// view's, when it shows.
@@ -133,6 +148,15 @@ impl Editor {
         let game = game.map(|camera| (camera, self.nodes.game_viewport));
         let scene = self.shown(self.scene.viewport).then_some((self.scene.camera, self.scene.viewport));
         let (camera, viewport) = game.or(scene)?;
+        self.eye_of(camera, viewport)
+    }
+
+    /// The Scene view in use's camera, as LODs are picked for it.
+    fn scene_eye(&self) -> Option<LodEye> {
+        self.eye_of(self.scene.camera, self.scene.viewport)
+    }
+
+    fn eye_of(&self, camera: Entity, viewport: NodeId) -> Option<LodEye> {
         let world = &self.game.engine.world;
         let lens = world.get::<Camera>(camera)?;
         let position = voxear_scene::world_matrix(world, camera).w_axis.truncate();

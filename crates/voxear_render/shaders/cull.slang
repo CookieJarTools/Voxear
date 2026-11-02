@@ -39,6 +39,18 @@ uint selectLod(Mesh mesh, float scale, float pixelsPerUnit, float threshold)
     return lod;
 }
 
+// The LOD an instance draws: the one its renderer forces, or else the
+// coarsest within the threshold, scaled by its renderer's bias.
+uint instanceLod(Instance instance, Mesh mesh, float scale, float pixelsPerUnit, float threshold)
+{
+    uint forced = (instance.flags >> INSTANCE_LOD_SHIFT) & 0xFF;
+    if (forced != 0)
+    {
+        return min(forced - 1, max(mesh.lodCount, 1) - 1);
+    }
+    return selectLod(mesh, scale, pixelsPerUnit, threshold * exp2(instance.lodBias));
+}
+
 // True when the sphere's screen box is entirely behind the depth pyramid.
 // With reverse-Z, larger depth is nearer, and the pyramid stores the minimum
 // (farthest) depth of each region.
@@ -148,7 +160,8 @@ void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 cen
     {
         return;
     }
-    uint lod = selectLod(mesh, scale, 1.0 / frame->cascadeTexel[cascade], frame->lodThreshold);
+    Instance drawn = buffers()->instances[instance];
+    uint lod = instanceLod(drawn, mesh, scale, 1.0 / frame->cascadeTexel[cascade], frame->lodThreshold);
     emit(LIST_SHADOW + cascade, instance, mesh, lod, 0);
     count(STAT_SHADOW_DRAWS);
 }
@@ -177,7 +190,7 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     }
 
     float distance = max(length(center - frame->cameraPosition) - radius, frame->near);
-    uint lod = selectLod(mesh, scale, frame->lodScale / distance, frame->lodThreshold);
+    uint lod = instanceLod(instance, mesh, scale, frame->lodScale / distance, frame->lodThreshold);
     bool inFrustum = insidePlanes(frame->planes, center, radius);
 
     if (list == LIST_EARLY)

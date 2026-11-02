@@ -118,11 +118,13 @@ struct Instance
     uint mesh;
     uint material;
     uint flags;
-    uint pad;
+    float lodBias;
 };
 
 // An instance whose place in the list another Obj held last frame.
 static const uint INSTANCE_NEW = 1;
+// Where an instance's forced LOD, plus one, sits in its flags.
+static const uint INSTANCE_LOD_SHIFT = 8;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;

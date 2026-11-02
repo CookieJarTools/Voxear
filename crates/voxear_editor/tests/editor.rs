@@ -2901,6 +2901,26 @@ fn physics_components_show_what_their_shape_uses() {
     choose(&mut editor, &mut renderer, dropdown, 1);
     frame(&mut editor, &mut renderer);
     assert!(prop_row(&editor.ui, "Radius").is_some() && prop_row(&editor.ui, "Size").is_none());
+
+    // A Joint holds to the world to start with; a hinge shows its axis, and its limits once they are on.
+    let add = first_with(&editor.ui, editor.ui.root(), "add-component").unwrap();
+    scroll_to(&mut editor, &mut renderer, add);
+    add_component(&mut editor, &mut renderer, "Joint");
+    let connected = first_with(&editor.ui, prop_row(&editor.ui, "Connected").unwrap(), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(connected), "None");
+    assert!(prop_row(&editor.ui, "Axis").is_none(), "a fixed joint has no axis");
+    let kind = first_with(&editor.ui, prop_row(&editor.ui, "Type").unwrap(), "value-choice").unwrap();
+    choose(&mut editor, &mut renderer, kind, 1);
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "Axis").is_some() && prop_row(&editor.ui, "Min").is_none());
+    let limited = first_with(&editor.ui, prop_row(&editor.ui, "Use limits").unwrap(), "checkbox").unwrap();
+    click(&mut editor.ui, limited);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let joint = *editor.game.engine.world.get::<voxear_engine::physics::Joint>(ground).unwrap();
+    assert_eq!(joint.limits, Some([0.0, 90.0]), "a door's quarter turn to start with");
+    assert!(prop_row(&editor.ui, "Min").is_some() && prop_row(&editor.ui, "Max").is_some());
+    shot(&mut renderer, "joint-inspector.png");
 }
 
 #[test]

@@ -188,3 +188,46 @@ fn a_2d_scene_plays_in_the_xy_plane_and_saves_back() {
     assert!(text.contains("fixed_rotation = true") && text.contains("shape = \"capsule\""), "{text}");
     assert!(!text.contains("gravity_scale"), "defaults are left out: {text}");
 }
+
+const BELL: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Hook"
+position = [0.0, 5.0, 0.0]
+collider = { size = [0.2, 0.2, 0.2] }
+
+[[obj]]
+id = 2
+name = "Weight"
+position = [2.0, 5.0, 0.0]
+collider = { shape = "sphere", radius = 0.2 }
+rigidbody = {}
+joint = { type = "distance", connected = 1, anchor = [-2.0, 0.0, 0.0] }
+"#;
+
+#[test]
+fn a_joint_holds_its_obj_to_the_one_it_names_and_saves_it_by_its_id() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Bell.scene"), BELL).unwrap();
+    let mut content = Content::open(dir.path()).unwrap();
+    let scene = scene_file::read(&dir.path().join("Bell.scene")).unwrap();
+    let mut engine = Engine::new();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    let (hook, weight) = (find(&engine, "Hook"), find(&engine, "Weight"));
+    assert_eq!(engine.world.get::<voxear_engine::physics::Joint>(weight).unwrap().connected, Some(hook));
+
+    let mut lowest = f32::MAX;
+    for _ in 0..90 {
+        engine.tick(1.0 / 60.0);
+        lowest = lowest.min(engine.world.get::<Transform>(weight).unwrap().position.y);
+    }
+    let at = engine.world.get::<Transform>(weight).unwrap().position;
+    assert!((at.distance(Vec3::new(0.0, 5.0, 0.0)) - 2.0).abs() < 0.05, "on its rope from the hook: {at}");
+    assert!(lowest < 3.2, "swung down under it: {lowest}");
+
+    let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();
+    let text = toml::to_string(&scene_file::capture(&engine.world, &mut content, &entities)).unwrap();
+    assert!(text.contains("type = \"distance\"") && text.contains("connected = 1"), "{text}");
+}

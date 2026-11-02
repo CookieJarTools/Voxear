@@ -10,7 +10,7 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
     audio::{AudioBus, AudioListener, AudioSource, SoundSpace},
-    physics::{CharacterController, Collider, ColliderShape, Rigidbody},
+    physics::{CharacterController, Collider, ColliderShape, Joint, JointType, Rigidbody},
     physics2d::{Collider2D, ColliderShape2D, Rigidbody2D},
     linear,
     prefab::Locks,
@@ -43,6 +43,7 @@ pub enum Part {
     Collider,
     Rigidbody,
     Character,
+    Joint,
     Collider2D,
     Rigidbody2D,
     /// A script, by its full type name.
@@ -63,6 +64,7 @@ impl Part {
             Part::Collider => "collider".into(),
             Part::Rigidbody => "rigidbody".into(),
             Part::Character => "character".into(),
+            Part::Joint => "joint".into(),
             Part::Collider2D => "collider2d".into(),
             Part::Rigidbody2D => "rigidbody2d".into(),
             Part::Behaviour(name) => name.clone(),
@@ -80,6 +82,7 @@ impl Part {
             Part::Collider => "Collider",
             Part::Rigidbody => "Rigidbody",
             Part::Character => "Character Controller",
+            Part::Joint => "Joint",
             Part::Collider2D => "Collider 2D",
             Part::Rigidbody2D => "Rigidbody 2D",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
@@ -96,6 +99,7 @@ impl Part {
             Part::Collider => "box",
             Part::Rigidbody => "move",
             Part::Character => "obj",
+            Part::Joint => "pivot",
             Part::Collider2D => "box",
             Part::Rigidbody2D => "move",
             Part::Behaviour(_) => "code",
@@ -162,6 +166,15 @@ pub enum Prop {
     CharacterRadius,
     SlopeLimit,
     StepOffset,
+    /// A Joint's type, the Obj it holds to, its anchor and axis, and whether
+    /// it has limits, with the least and the greatest.
+    JointKind,
+    JointConnected,
+    JointAnchor,
+    JointAxis,
+    JointLimited,
+    JointMin,
+    JointMax,
     /// A Collider 2D's, as a Collider's, in the XY plane.
     Shape2D,
     Offset2D,
@@ -221,6 +234,13 @@ impl Prop {
                 Part::Rigidbody
             }
             Prop::CharacterHeight | Prop::CharacterRadius | Prop::SlopeLimit | Prop::StepOffset => Part::Character,
+            Prop::JointKind
+            | Prop::JointConnected
+            | Prop::JointAnchor
+            | Prop::JointAxis
+            | Prop::JointLimited
+            | Prop::JointMin
+            | Prop::JointMax => Part::Joint,
             Prop::Shape2D
             | Prop::Offset2D
             | Prop::Size2D
@@ -284,6 +304,11 @@ impl Prop {
             Prop::Continuous => "continuous",
             Prop::SlopeLimit => "slope_limit",
             Prop::StepOffset => "step_offset",
+            Prop::JointKind => "type",
+            Prop::JointConnected => "connected",
+            Prop::JointAnchor => "anchor",
+            Prop::JointAxis => "axis",
+            Prop::JointLimited | Prop::JointMin | Prop::JointMax => "limits",
             Prop::Shape2D => "shape",
             Prop::Offset2D => "offset",
             Prop::Size2D => "size",
@@ -365,6 +390,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<CharacterController>(entity) {
         parts.push(Part::Character);
     }
+    if world.has::<Joint>(entity) {
+        parts.push(Part::Joint);
+    }
     if world.has::<Collider2D>(entity) {
         parts.push(Part::Collider2D);
     }
@@ -430,6 +458,21 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             vec![Prop::Mass, Prop::Kinematic, Prop::UseGravity, Prop::Drag, Prop::AngularDrag, Prop::Continuous]
         }
         Part::Character => vec![Prop::CharacterHeight, Prop::CharacterRadius, Prop::SlopeLimit, Prop::StepOffset],
+        // A joint shows the axis a hinge turns about, and limits for what has them.
+        Part::Joint => {
+            let joint = world.get::<Joint>(entity).copied().unwrap_or_default();
+            let mut props = vec![Prop::JointKind, Prop::JointConnected, Prop::JointAnchor];
+            if joint.kind == JointType::Hinge {
+                props.push(Prop::JointAxis);
+            }
+            if matches!(joint.kind, JointType::Hinge | JointType::Distance) {
+                props.push(Prop::JointLimited);
+                if joint.limits.is_some() {
+                    props.extend([Prop::JointMin, Prop::JointMax]);
+                }
+            }
+            props
+        }
         Part::Collider2D => {
             let shape = world.get::<Collider2D>(entity).map_or(ColliderShape2D::Box, |c| c.shape);
             let mut props = vec![Prop::Shape2D, Prop::Offset2D];
@@ -528,6 +571,13 @@ pub fn label(prop: &Prop) -> String {
         Prop::Continuous => "Continuous",
         Prop::SlopeLimit => "Slope limit",
         Prop::StepOffset => "Step offset",
+        Prop::JointKind => "Type",
+        Prop::JointConnected => "Connected",
+        Prop::JointAnchor => "Anchor",
+        Prop::JointAxis => "Axis",
+        Prop::JointLimited => "Use limits",
+        Prop::JointMin => "Min",
+        Prop::JointMax => "Max",
         Prop::Shape2D => "Shape",
         Prop::Offset2D => "Offset",
         Prop::Size2D => "Size",
@@ -560,6 +610,10 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
     match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
         (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
+        (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
+            JointType::Hinge => Some("°"),
+            _ => Some("m"),
+        },
         _ => None,
     }
 }
@@ -621,6 +675,9 @@ pub fn add(
         Part::Character => {
             world.insert(entity, CharacterController::default());
         }
+        Part::Joint => {
+            world.insert(entity, Joint::default());
+        }
         Part::Collider2D => {
             world.insert(entity, Collider2D::default());
         }
@@ -652,6 +709,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Collider => drop(world.remove::<Collider>(entity)),
         Part::Rigidbody => drop(world.remove::<Rigidbody>(entity)),
         Part::Character => drop(world.remove::<CharacterController>(entity)),
+        Part::Joint => drop(world.remove::<Joint>(entity)),
         Part::Collider2D => drop(world.remove::<Collider2D>(entity)),
         Part::Rigidbody2D => drop(world.remove::<Rigidbody2D>(entity)),
         Part::Behaviour(name) => {
@@ -719,6 +777,20 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::CharacterRadius => Value::Number(character()?.radius),
         Prop::SlopeLimit => Value::Number(character()?.slope_limit),
         Prop::StepOffset => Value::Number(character()?.step_offset),
+        Prop::JointKind => {
+            let kind = world.get::<Joint>(entity)?.kind;
+            let index = JointType::ALL.iter().position(|k| *k == kind).unwrap_or_default();
+            Value::Choice(index, JointType::ALL.iter().map(|k| k.label().to_string()).collect())
+        }
+        Prop::JointConnected => {
+            let connected = world.get::<Joint>(entity)?.connected;
+            Value::Obj(connected.and_then(|obj| world.get::<Name>(obj)).map_or_else(|| "None".into(), |n| n.0.clone()))
+        }
+        Prop::JointAnchor => Value::Vector(world.get::<Joint>(entity)?.anchor.to_vec()),
+        Prop::JointAxis => Value::Vector(world.get::<Joint>(entity)?.axis.to_vec()),
+        Prop::JointLimited => Value::Toggle(world.get::<Joint>(entity)?.limits.is_some()),
+        Prop::JointMin => Value::Number(world.get::<Joint>(entity)?.limits?[0]),
+        Prop::JointMax => Value::Number(world.get::<Joint>(entity)?.limits?[1]),
         Prop::Mesh => {
             let reference = game.content.mesh_ref(world.get::<MeshRenderer>(entity)?.mesh)?.to_string();
             match BUILTIN_MESHES.iter().find(|(_, r)| *r == reference) {
@@ -816,7 +888,7 @@ pub fn set(
     match (prop, value) {
         // A mesh, material, sound or level's Obj kept after play comes back by its name, as its list has it.
         (Prop::Mesh | Prop::Material | Prop::Sound, Value::Asset(label))
-        | (Prop::LodObj(..) | Prop::LodAdd(_), Value::Obj(label)) => {
+        | (Prop::LodObj(..) | Prop::LodAdd(_) | Prop::JointConnected, Value::Obj(label)) => {
             let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| pick(game, renderer, types, entity, prop, &choice))
         }
@@ -892,6 +964,11 @@ pub fn pick(
         (Prop::LodAdd(level), Pick::Obj(Some(obj))) => {
             with(&mut game.engine.world, entity, |group: &mut LodGroup| group.put(*level, &[*obj]))
         }
+        // None holds it to the world.
+        (Prop::JointConnected, Pick::Obj(obj)) => {
+            let obj = obj.filter(|&obj| obj != entity);
+            with(&mut game.engine.world, entity, |joint: &mut Joint| joint.connected = obj)
+        }
         (Prop::Field { behaviour, path }, choice) => {
             fields::pick(&mut game.engine.world, types, entity, behaviour, path, choice)
         }
@@ -904,6 +981,7 @@ pub fn pick(
 pub fn obj_target(world: &World, entity: Entity, prop: &Prop) -> Option<Entity> {
     match prop {
         Prop::LodObj(level, index) => world.get::<LodGroup>(entity)?.levels.get(*level)?.objs.get(*index).copied(),
+        Prop::JointConnected => world.get::<Joint>(entity)?.connected,
         _ => None,
     }
 }
@@ -1061,6 +1139,20 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         }
         // A level shows Objs inside the group's Obj, at any depth: those not in it already, each in another
         // level saying which, as picking it moves it here.
+        // A joint holds to an Obj physics moves: every other with a Rigidbody, or the world.
+        Prop::JointConnected => {
+            let world = &game.engine.world;
+            let mut found = vec![("None".to_string(), Pick::Obj(None))];
+            let bodies = world.query_ref::<(Entity, &Rigidbody, &Name)>().without::<voxear_scene::Destroying>();
+            let mut others: Vec<(String, Pick)> = bodies
+                .into_iter()
+                .filter(|(other, ..)| *other != entity && !world.has::<voxear_scene::EditorOnly>(*other))
+                .map(|(other, _, name)| (name.0.clone(), Pick::Obj(Some(other))))
+                .collect();
+            others.sort_by(|a, b| a.0.cmp(&b.0));
+            found.extend(others);
+            return found;
+        }
         Prop::LodObj(level, _) | Prop::LodAdd(level) => {
             let world = &game.engine.world;
             let group = world.get::<LodGroup>(entity);
@@ -1094,6 +1186,9 @@ pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, ch
     if let Prop::LodObj(..) | Prop::LodAdd(_) = prop {
         return "A LOD Group's levels take Objs inside its Obj".to_string();
     }
+    if *prop == Prop::JointConnected {
+        return "A joint holds to another Obj with a Rigidbody".to_string();
+    }
     let Prop::Field { behaviour, path } = prop else {
         return format!("The {} takes a {} from its list", label(prop), title(types, prop));
     };
@@ -1109,6 +1204,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Material => "Material".into(),
         Prop::Sound => "Sound".into(),
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
+        Prop::JointConnected => "Rigidbody".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),
@@ -1217,6 +1313,26 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::StepOffset, Value::Number(n)) => {
             with(world, entity, |c: &mut CharacterController| c.step_offset = n.max(0.0))
         }
+        (Prop::JointKind, Value::Choice(index, _)) => with(world, entity, |joint: &mut Joint| {
+            joint.kind = JointType::ALL[index.min(JointType::ALL.len() - 1)];
+        }),
+        (Prop::JointAnchor, Value::Vector(v)) => with(world, entity, |joint: &mut Joint| joint.anchor = three(&v)),
+        (Prop::JointAxis, Value::Vector(v)) => with(world, entity, |joint: &mut Joint| joint.axis = three(&v)),
+        // Limits start as a door's quarter turn, or a rope from no length to two metres.
+        (Prop::JointLimited, Value::Toggle(on)) => with(world, entity, |joint: &mut Joint| {
+            let start = if joint.kind == JointType::Hinge { [0.0, 90.0] } else { [0.0, 2.0] };
+            joint.limits = on.then(|| joint.limits.unwrap_or(start));
+        }),
+        (Prop::JointMin, Value::Number(n)) => with(world, entity, |joint: &mut Joint| {
+            if let Some(limits) = &mut joint.limits {
+                limits[0] = n;
+            }
+        }),
+        (Prop::JointMax, Value::Number(n)) => with(world, entity, |joint: &mut Joint| {
+            if let Some(limits) = &mut joint.limits {
+                limits[1] = n;
+            }
+        }),
         (Prop::LightKind, Value::Choice(index, _)) => with(world, entity, |light: &mut Light| {
             let kind = [LightKind::Directional, LightKind::Point, LightKind::Spot][index.min(2)];
             // What the old kind did not use starts as a new light of this kind has it.

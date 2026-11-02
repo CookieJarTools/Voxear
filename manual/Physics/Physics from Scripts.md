@@ -56,6 +56,18 @@ You can also set `Velocity` and `AngularVelocity` directly, and read them back. 
 
 A body you give a Rigidbody in a script can be pushed straight away, in the same `Start`. Give it a Collider too, or physics has no shape to move.
 
+## Joining bodies
+
+`Obj.AddJoint` gives an Obj a joint, held to another Obj's Rigidbody or, without one, to the world:
+
+```csharp
+var hinge = Obj.AddJoint(JointType.Hinge);
+hinge.Anchor = new Vector3(-0.5f, 0f, 0f);
+hinge.SetLimits(0f, 90f);
+```
+
+`ConnectedBody` changes what it holds to, and `ClearLimits` lets it turn all the way round again. Changing a joint remakes it where its Objs are at that moment.
+
 ## Hearing what touches what
 
 A behaviour hears about collisions on its own Obj by overriding these, as in Unity:

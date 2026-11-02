@@ -255,6 +255,7 @@ pub(crate) struct NativeApi {
         dt: f32,
         state: *mut crate::physics::CharacterMoveData,
     ) -> i32,
+    pub joint_connected: unsafe extern "C" fn(entity: u64, set: i32, other: u64) -> u64,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -1053,6 +1054,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         physics_raycast: crate::physics::physics_raycast,
         physics_overlap: crate::physics::physics_overlap,
         character_move: crate::physics::character_move,
+        joint_connected: crate::physics::joint_connected,
     }
 }
 

@@ -63,6 +63,7 @@ use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Tra
 use crate::{
     audio::{AudioListener, AudioSource, audio_source},
     content::{Content, MaterialSource},
+    joints::JointData,
     lod_groups::LodGroupData,
     physics::{CharacterController, Collider, Rigidbody},
     physics2d::{Collider2D, Rigidbody2D},
@@ -256,9 +257,12 @@ pub(crate) fn ref_value(path: &ObjPath) -> toml::Value {
 }
 
 /// Rewrites every Obj reference an Obj holds: in its behaviours' fields,
-/// and its LOD Group's levels.
+/// its LOD Group's levels, and its joint.
 pub(crate) fn map_obj_refs(data: &mut ObjData, f: &dyn Fn(&ObjPath) -> ObjPath) -> Result<()> {
     map_refs(&mut data.fields, f)?;
+    if let Some(joint) = &mut data.joint {
+        joint.map_refs(f)?;
+    }
     match &mut data.lod_group {
         Some(lod) => lod.map_refs(f),
         None => Ok(()),
@@ -363,6 +367,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.collider = instance.collider.or(root.collider);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
     root.character = instance.character.or(root.character);
+    if instance.joint.is_some() {
+        root.joint = instance.joint.clone();
+    }
     root.collider2d = instance.collider2d.or(root.collider2d);
     root.rigidbody2d = instance.rigidbody2d.or(root.rigidbody2d);
 }
@@ -393,6 +400,8 @@ pub struct TemplateObj {
     pub collider: Option<Collider>,
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
+    /// Its connected Obj by path, bound to an entity when spawned.
+    pub joint: Option<JointData>,
     pub collider2d: Option<Collider2D>,
     pub rigidbody2d: Option<Rigidbody2D>,
     /// Its levels by path, bound to entities when spawned.
@@ -543,6 +552,9 @@ impl Template {
             if let Some(lod) = &obj.lod_group {
                 world.insert(entity, lod.bind(&lookup));
             }
+            if let Some(joint) = &obj.joint {
+                world.insert(entity, joint.bind(&lookup));
+            }
         }
         link_instances(world, &self.objs, &entities);
         entities
@@ -562,6 +574,10 @@ fn check_refs(obj: &FlatObj, index: &HashMap<&ObjPath, usize>) -> Result<()> {
     let levels = obj.data.lod_group.as_ref().map(LodGroupData::refs).transpose()?.unwrap_or_default();
     if let Some(missing) = levels.iter().find(|r| !index.contains_key(r)) {
         bail!("a level of its LOD Group is Obj {missing}, which is not in the same file");
+    }
+    let connected = obj.data.joint.as_ref().map(JointData::refs).transpose()?.unwrap_or_default();
+    if let Some(missing) = connected.iter().find(|r| !index.contains_key(r)) {
+        bail!("its joint is held to Obj {missing}, which is not in the same file");
     }
     Ok(())
 }
@@ -654,6 +670,7 @@ pub(crate) fn resolve_obj(
         collider: data.collider,
         rigidbody: data.rigidbody,
         character: data.character,
+        joint: data.joint.clone(),
         collider2d: data.collider2d,
         rigidbody2d: data.rigidbody2d,
         lod_group: data.lod_group.clone(),

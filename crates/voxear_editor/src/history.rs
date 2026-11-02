@@ -14,7 +14,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_engine::{
     EditBehaviours, Game,
     audio::{AudioListener, AudioSource},
-    physics::{CharacterController, Collider, Rigidbody},
+    physics::{CharacterController, Collider, Joint, Rigidbody},
     physics2d::{Collider2D, Rigidbody2D},
     prefab::{FromPrefab, Locks, PrefabInstance},
 };
@@ -43,11 +43,13 @@ pub struct ObjState {
     pub audio: Option<Box<AudioSource>>,
     pub listener: bool,
     pub lod_group: Option<Box<LodGroup>>,
-    pub collider: Option<Collider>,
-    pub rigidbody: Option<Rigidbody>,
-    pub character: Option<CharacterController>,
-    pub collider2d: Option<Collider2D>,
-    pub rigidbody2d: Option<Rigidbody2D>,
+    /// Physics is boxed too, being on few Objs.
+    pub collider: Option<Box<Collider>>,
+    pub rigidbody: Option<Box<Rigidbody>>,
+    pub character: Option<Box<CharacterController>>,
+    pub joint: Option<Box<Joint>>,
+    pub collider2d: Option<Box<Collider2D>>,
+    pub rigidbody2d: Option<Box<Rigidbody2D>>,
     pub behaviours: Option<EditBehaviours>,
     /// Components locked for designers, when this is a prefab's Obj.
     pub locks: Option<Locks>,
@@ -65,21 +67,25 @@ impl ObjState {
             audio: world.get::<AudioSource>(entity).copied().map(Box::new),
             listener: world.has::<AudioListener>(entity),
             lod_group: world.get::<LodGroup>(entity).cloned().map(Box::new),
-            collider: world.get::<Collider>(entity).copied(),
-            rigidbody: world.get::<Rigidbody>(entity).copied(),
-            character: world.get::<CharacterController>(entity).copied(),
-            collider2d: world.get::<Collider2D>(entity).copied(),
-            rigidbody2d: world.get::<Rigidbody2D>(entity).copied(),
+            collider: world.get::<Collider>(entity).copied().map(Box::new),
+            rigidbody: world.get::<Rigidbody>(entity).copied().map(Box::new),
+            character: world.get::<CharacterController>(entity).copied().map(Box::new),
+            joint: world.get::<Joint>(entity).copied().map(Box::new),
+            collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
+            rigidbody2d: world.get::<Rigidbody2D>(entity).copied().map(Box::new),
             behaviours: world.get::<EditBehaviours>(entity).cloned(),
             locks: world.get::<Locks>(entity).cloned(),
         })
     }
 
     /// Follows Objs brought back as new entities, as its LOD Group's levels
-    /// point at them.
+    /// and its joint point at them.
     fn remap(&mut self, renamed: &HashMap<Entity, Entity>) {
         let levels = self.lod_group.iter_mut().flat_map(|group| group.levels.iter_mut());
         for obj in levels.flat_map(|level| level.objs.iter_mut()) {
+            *obj = renamed.get(obj).copied().unwrap_or(*obj);
+        }
+        if let Some(obj) = self.joint.as_mut().and_then(|joint| joint.connected.as_mut()) {
             *obj = renamed.get(obj).copied().unwrap_or(*obj);
         }
     }
@@ -98,11 +104,12 @@ impl ObjState {
         put(world, entity, self.audio.as_deref().copied());
         put(world, entity, self.listener.then_some(AudioListener));
         put(world, entity, self.lod_group.as_deref().cloned());
-        put(world, entity, self.collider);
-        put(world, entity, self.rigidbody);
-        put(world, entity, self.character);
-        put(world, entity, self.collider2d);
-        put(world, entity, self.rigidbody2d);
+        put(world, entity, self.collider.as_deref().copied());
+        put(world, entity, self.rigidbody.as_deref().copied());
+        put(world, entity, self.character.as_deref().copied());
+        put(world, entity, self.joint.as_deref().copied());
+        put(world, entity, self.collider2d.as_deref().copied());
+        put(world, entity, self.rigidbody2d.as_deref().copied());
         put(world, entity, self.behaviours.clone());
         put(world, entity, self.locks.clone());
     }

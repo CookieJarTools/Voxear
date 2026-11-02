@@ -88,6 +88,23 @@ public sealed class Hop : Behaviour
 }
 "#;
 
+const SWING: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+public sealed class Swing : Behaviour
+{
+	protected override void Start()
+	{
+		var joint = Obj.AddJoint(JointType.Ball);
+		joint.Anchor = new Vector3(1f, 1f, 0f);
+		joint.SetLimits(0f, 1f);
+		Log.Info($"joint {joint.Type}, to the world {!joint.ConnectedBody.IsValid}, limits {joint.UseLimits}");
+	}
+}
+"#;
+
 const OBJS: &str = r#"
 [[obj]]
 id = 30
@@ -115,6 +132,14 @@ name = "Walker"
 position = [-5.0, 0.0, 0.0]
 character = {}
 behaviours = ["Hello.Walk"]
+
+[[obj]]
+id = 36
+name = "Bell"
+position = [-10.0, 4.0, 0.0]
+collider = { shape = "sphere", radius = 0.25 }
+rigidbody = {}
+behaviours = ["Hello.Swing"]
 
 [[obj]]
 id = 34
@@ -164,6 +189,7 @@ fn scripts_ask_push_and_hear_physics() {
     std::fs::write(dir.path().join("Scripts/Bump.cs"), BUMP).unwrap();
     std::fs::write(dir.path().join("Scripts/Walk.cs"), WALK).unwrap();
     std::fs::write(dir.path().join("Scripts/Hop.cs"), HOP).unwrap();
+    std::fs::write(dir.path().join("Scripts/Swing.cs"), SWING).unwrap();
     let scene = dir.path().join("Scenes/Environment.scene");
     let text = std::fs::read_to_string(&scene).unwrap() + OBJS;
     std::fs::write(&scene, text).unwrap();
@@ -188,6 +214,7 @@ fn scripts_ask_push_and_hear_physics() {
     assert!(said("walker grounded True, at 2.0"), "{lines:?}");
     assert!(said("2D ray met Pip at 1.3"), "{lines:?}");
     assert!(said("2D hit Ledge, pushed up 1"), "the ball came down on the ledge: {lines:?}");
+    assert!(said("joint Ball, to the world True, limits True"), "{lines:?}");
 
     // The kick sideways moved the crate along X as it fell.
     let world = &game.engine.world;
@@ -198,4 +225,14 @@ fn scripts_ask_push_and_hear_physics() {
         .map(|(_, transform)| transform.position)
         .unwrap();
     assert!(crate_at.x > 1.0 && (crate_at.y - 0.5).abs() < 0.05, "{crate_at}");
+
+    // The bell hangs from the ball joint its script made, a step right of it and one up.
+    let bell = world
+        .query_ref::<(&voxear_scene::Name, &voxear_scene::Transform)>()
+        .into_iter()
+        .find(|(name, _)| name.0 == "Bell")
+        .map(|(_, transform)| transform.position)
+        .unwrap();
+    let anchor = voxear_core::math::Vec3::new(-9.0, 5.0, 0.0);
+    assert!((bell.distance(anchor) - 2f32.sqrt()).abs() < 0.05, "held to where its anchor was: {bell}");
 }

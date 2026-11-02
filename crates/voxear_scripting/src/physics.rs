@@ -14,7 +14,7 @@ use voxear_core::math::{Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_physics::{
     Ground, Push,
-    scene::{CharacterController, Collider, ColliderShape, PhysicsEvent, PhysicsScene, Rigidbody},
+    scene::{CharacterController, Collider, ColliderShape, Joint, JointType, PhysicsEvent, PhysicsScene, Rigidbody},
 };
 use voxear_physics2d::{
     Push2D,
@@ -62,6 +62,14 @@ const CHARACTER_VELOCITY: i32 = 48;
 const CHARACTER_GROUND_NORMAL: i32 = 49;
 // The world's:
 const GRAVITY: i32 = 60;
+// A Joint's; its limits are the least and the greatest, and whether it has them:
+const JOINT_HAS: i32 = 70;
+const JOINT_ADD: i32 = 71;
+const JOINT_REMOVE: i32 = 72;
+const JOINT_TYPE: i32 = 73;
+const JOINT_ANCHOR: i32 = 74;
+const JOINT_AXIS: i32 = 75;
+const JOINT_LIMITS: i32 = 76;
 // A Collider 2D's:
 const COLLIDER_2D_HAS: i32 = 100;
 const COLLIDER_2D_ADD: i32 = 101;
@@ -256,6 +264,23 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
     if what >= COLLIDER_2D_HAS {
         return read_2d(world, entity, what);
     }
+    if (JOINT_HAS..=JOINT_LIMITS).contains(&what) {
+        let joint = world.get::<Joint>(entity);
+        return Some(match what {
+            JOINT_HAS => flag(joint.is_some()),
+            JOINT_TYPE => {
+                let kind = joint?.kind;
+                number(JointType::ALL.iter().position(|k| *k == kind).unwrap_or_default() as f32)
+            }
+            JOINT_ANCHOR => vector(joint?.anchor.into()),
+            JOINT_AXIS => vector(joint?.axis.into()),
+            JOINT_LIMITS => match joint?.limits {
+                Some([least, most]) => [least, most, 1.0, 0.0],
+                None => [0.0; 4],
+            },
+            _ => return None,
+        });
+    }
     let collider = || world.get::<Collider>(entity);
     let body = || world.get::<Rigidbody>(entity);
     let character = || world.get::<CharacterController>(entity);
@@ -429,6 +454,22 @@ fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool 
     let on = value[0] != 0.0;
     let n = value[0];
     match what {
+        JOINT_ADD => {
+            if !world.has::<Joint>(entity) {
+                let kind = JointType::ALL.get(n as usize).copied().unwrap_or_default();
+                world.insert(entity, Joint { kind, ..Joint::default() });
+            }
+            true
+        }
+        JOINT_REMOVE => world.remove::<Joint>(entity).is_some(),
+        JOINT_TYPE => change(world, entity, |joint: &mut Joint| {
+            joint.kind = JointType::ALL.get(n as usize).copied().unwrap_or_default();
+        }),
+        JOINT_ANCHOR => change(world, entity, |joint: &mut Joint| joint.anchor = three(value)),
+        JOINT_AXIS => change(world, entity, |joint: &mut Joint| joint.axis = three(value)),
+        JOINT_LIMITS => change(world, entity, |joint: &mut Joint| {
+            joint.limits = (value[2] != 0.0).then_some([value[0], value[1]]);
+        }),
         COLLIDER_ADD => {
             if !world.has::<Collider>(entity) {
                 let shape = ColliderShape::ALL.get(n as usize).copied().unwrap_or_default();
@@ -498,6 +539,23 @@ fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool 
 /// Changes an Obj's component in place: false when it has none.
 fn change<T: voxear_ecs::Component>(world: &mut World, entity: Entity, f: impl FnOnce(&mut T)) -> bool {
     world.get_mut::<T>(entity).map(f).is_some()
+}
+
+/// The Obj an Obj's joint holds to, its entity, or 0 for the world; set to
+/// `other` when `set`, none being 0. Returns 0 when the Obj has no joint,
+/// and when set, 1 when it did.
+pub(crate) unsafe extern "C" fn joint_connected(entity: u64, set: i32, other: u64) -> u64 {
+    let entity = Entity::from_bits(entity);
+    let answer = with_world(|world| {
+        if set == 0 {
+            let connected = world.get::<Joint>(entity)?.connected;
+            return Some(connected.filter(|&obj| world.is_alive(obj)).map_or(0, Entity::to_bits));
+        }
+        let other = (other != 0).then(|| Entity::from_bits(other)).filter(|&obj| obj != entity && world.is_alive(obj));
+        world.get_mut::<Joint>(entity)?.connected = other;
+        Some(1)
+    });
+    answer.unwrap_or(0)
 }
 
 /// Pushes an Obj's Rigidbody (see the kinds above), at a point in the

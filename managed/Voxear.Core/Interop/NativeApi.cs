@@ -110,4 +110,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<float*, float*, float, int, RaycastHitData*, int> PhysicsRaycast;
 	public delegate* unmanaged[Cdecl]<float*, float, int, ulong*, int, int> PhysicsOverlap;
 	public delegate* unmanaged[Cdecl]<ulong, float*, float, CharacterMoveData*, int> CharacterMove;
+	public delegate* unmanaged[Cdecl]<ulong, int, ulong, ulong> JointConnected;
 }

@@ -24,9 +24,9 @@ use voxear_scene::{BehaviourSpec, Name, ScenePersistence};
 use crate::{
     EditBehaviours,
     audio::{AudioListener, AudioSource},
-    physics::{CharacterController, Collider, Rigidbody},
-    physics2d::{Collider2D, Rigidbody2D},
     content::Content,
+    physics::{CharacterController, Collider, Joint, Rigidbody},
+    physics2d::{Collider2D, Rigidbody2D},
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabFile, PrefabInstance},
     scene_file::{self, ObjData},
 };
@@ -143,7 +143,7 @@ fn changed_paths(content: &Content, expected: &ObjData, actual: &ObjData) -> Res
                 }
             }
             // A component the prefab has too: by the values that differ.
-            (_, toml::Value::Table(now), Some(toml::Value::Table(was))) if key != "lod_group" => {
+            (_, toml::Value::Table(now), Some(toml::Value::Table(was))) if key != "lod_group" && key != "joint" => {
                 let differ = now.iter().filter(|(sub, value)| was.get(*sub) != Some(*value));
                 paths.extend(differ.map(|(sub, _)| ValuePath::new(&[key, sub])));
             }
@@ -218,6 +218,7 @@ pub fn put(
     set::<Collider2D>(world, entity, obj.collider2d);
     set::<Rigidbody2D>(world, entity, obj.rigidbody2d);
     set::<LodGroup>(world, entity, obj.lod_group.map(|lod| lod.bind(&lookup)));
+    set::<Joint>(world, entity, obj.joint.map(|joint| joint.bind(&lookup)));
     set(world, entity, (!behaviours.is_empty()).then_some(EditBehaviours(behaviours)));
     Ok(())
 }

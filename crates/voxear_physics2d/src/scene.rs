@@ -338,7 +338,10 @@ impl PhysicsScene2D {
     fn sync_body(&mut self, world: &World, entity: Entity, collider: Collider2D, dt: f32) {
         let (scale, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
         let place = flat(rotation, position);
-        let key = BodyKey { collider, rigidbody: world.get::<Rigidbody2D>(entity).copied(), scale: scale.truncate() };
+        // Rounded, as a scale read back from a turned Obj's matrix is a hair off, and the body would be
+        // made again each step it turns.
+        let scale = (scale.truncate() * 1e4).round() / 1e4;
+        let key = BodyKey { collider, rigidbody: world.get::<Rigidbody2D>(entity).copied(), scale };
         let Some(kept) = self.bodies.get_mut(&entity).filter(|kept| kept.key == key) else {
             if let Some(kept) = self.bodies.remove(&entity) {
                 self.world.remove_body(kept.body);

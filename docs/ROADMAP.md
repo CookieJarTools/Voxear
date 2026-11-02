@@ -590,7 +590,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] C#: `Collider`, `Rigidbody` (velocities, forces, torques, explosions, sleep) and `CharacterController`
     (`Move`, `SimpleMove`, grounded), `Physics.Raycast`, `Linecast`, `OverlapSphere` and gravity, and
     `OnCollisionEnter`/`Exit` and `OnTriggerEnter`/`Exit` straight after each step
-  - [ ] mesh and convex colliders from models, joints as components, and layers that choose what collides
+  - [x] joints as components: fixed, hinge, ball and distance, held to another Rigidbody or the world, with limits,
+    in scene files, the Inspector, the Scene view and C#
+  - [ ] mesh and convex colliders from models, and layers that choose what collides
   - [x] 2D physics on Box2D v3 (through `boxdd-sys`): Collider 2D (box, circle, capsule, trigger) and Rigidbody 2D
     in scenes, prefabs, the Inspector and the Scene view, and `Collider2D`, `Rigidbody2D`, `Physics2D` and the
     `On…2D` messages in C#

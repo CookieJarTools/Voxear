@@ -224,6 +224,21 @@ public readonly struct Obj : IEquatable<Obj>
 		return new CharacterController(this);
 	}
 
+	/// <summary>The Obj's Joint, which holds its Rigidbody to another or to the world. Not valid when it has none.</summary>
+	public Joint Joint => new Joint(this);
+
+	/// <summary>Gives the Obj a Joint of a type, unless it has one, held to a Rigidbody, or to the world for none.</summary>
+	public Joint AddJoint(JointType type = JointType.Fixed, Rigidbody connectedBody = default)
+	{
+		NativePhysics.Set(this, NativePhysics.JointAdd, new Vector4((int)type, 0f, 0f, 0f));
+		var joint = new Joint(this);
+		if (connectedBody.Obj.IsValid)
+		{
+			joint.ConnectedBody = connectedBody;
+		}
+		return joint;
+	}
+
 	/// <summary>The Obj's Collider2D, its flat shape for 2D physics. Not valid when it has none.</summary>
 	public Collider2D Collider2D => new Collider2D(this);
 

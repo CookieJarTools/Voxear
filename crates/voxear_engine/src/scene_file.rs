@@ -31,7 +31,8 @@
 //! hears the game from it (see [`crate::audio`]). `[obj.lod_group]` is a
 //! LOD Group, which shows one of its levels' Objs at a time (see
 //! [`crate::lod_groups`]). `[obj.collider]`, `[obj.rigidbody]` and
-//! `[obj.character]` are its physics (see [`crate::physics`]), and
+//! `[obj.character]` are its physics (see [`crate::physics`]), with
+//! `[obj.joint]` holding it to another (see [`crate::joints`]), and
 //! `[obj.collider2d]` and `[obj.rigidbody2d]` its 2D physics (see
 //! [`crate::physics2d`]).
 //!
@@ -58,8 +59,9 @@ use crate::{
     audio::{AudioListener, AudioSource, AudioSourceData, audio_source_data},
     content::{Content, MaterialData, MaterialSource, linear, srgb},
     engine::{EditBehaviours, Engine},
+    joints::JointData,
     lod_groups::LodGroupData,
-    physics::{CharacterController, Collider, Rigidbody},
+    physics::{CharacterController, Collider, Joint, Rigidbody},
     physics2d::{Collider2D, Rigidbody2D},
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabInstance, Template},
 };
@@ -157,6 +159,8 @@ pub struct ObjData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joint: Option<JointData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider2d: Option<Collider2D>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rigidbody2d: Option<Rigidbody2D>,
@@ -193,6 +197,7 @@ impl ObjData {
             collider: None,
             rigidbody: None,
             character: None,
+            joint: None,
             collider2d: None,
             rigidbody2d: None,
             lod_group: None,
@@ -531,6 +536,9 @@ fn capture_instance(
     if root.character.is_some() && root.character != prefab_root.character {
         instance.character = root.character;
     }
+    if root.joint.is_some() && root.joint != prefab_root.joint {
+        instance.joint = root.joint.clone();
+    }
     if root.collider2d.is_some() && root.collider2d != prefab_root.collider2d {
         instance.collider2d = root.collider2d;
     }
@@ -614,6 +622,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(character) = actual.character.filter(|c| Some(*c) != expected.character) {
         put("character", whole(&character, &crate::physics::CharacterController::default())?);
+    }
+    if let Some(joint) = actual.joint.as_ref().filter(|j| Some(*j) != expected.joint.as_ref()) {
+        put("joint", joint.whole()?);
     }
     if let Some(collider) = actual.collider2d.filter(|c| Some(*c) != expected.collider2d) {
         put("collider2d", whole(&collider, &Collider2D::default())?);
@@ -818,6 +829,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.collider = world.get::<Collider>(entity).copied();
     obj.rigidbody = world.get::<Rigidbody>(entity).copied();
     obj.character = world.get::<CharacterController>(entity).copied();
+    obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));
     obj.collider2d = world.get::<Collider2D>(entity).copied();
     obj.rigidbody2d = world.get::<Rigidbody2D>(entity).copied();
     obj.lod_group = world.get::<LodGroup>(entity).map(|lod| LodGroupData::of(lod, &|e| file_path(world, ids, e)));

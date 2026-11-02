@@ -32,7 +32,9 @@ use serde::{Deserialize, Serialize};
 use voxear_ecs::{Component, Entity, World};
 use voxear_scene::{Destroying, Parent, Transform};
 
-use crate::{BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, Motion, PhysicsWorld, ShapeId};
+use crate::{
+    BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, ShapeId,
+};
 
 /// A collider's shape.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,6 +157,66 @@ impl Default for CharacterController {
 
 impl Component for CharacterController {}
 
+/// How a Joint holds its Obj.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JointType {
+    /// Glued where they are when the game starts.
+    #[default]
+    Fixed,
+    /// Turning about an axis through its anchor, as a door on its hinges.
+    Hinge,
+    /// Turning every way about its anchor, as a ball in its socket.
+    Ball,
+    /// Its centre kept within a range of its anchor, as a weight on a rope.
+    Distance,
+}
+
+impl JointType {
+    pub const ALL: [Self; 4] = [Self::Fixed, Self::Hinge, Self::Ball, Self::Distance];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fixed => "Fixed",
+            Self::Hinge => "Hinge",
+            Self::Ball => "Ball",
+            Self::Distance => "Distance",
+        }
+    }
+}
+
+/// Holds its Obj's Rigidbody to another Obj's, or to where it is in the
+/// world when it names none, as Unity's joints do. Its anchor, from the
+/// Obj's origin, is the hinge's or the ball's point, and the point a
+/// Distance joint's Obj hangs from; a hinge turns about `axis`, in the
+/// Obj's space. Limits, when given, are a hinge's least and greatest angle
+/// in degrees, or a Distance joint's least and greatest length in metres.
+/// Changing it remakes the joint where its Objs are now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Joint {
+    pub kind: JointType,
+    pub connected: Option<Entity>,
+    pub anchor: [f32; 3],
+    pub axis: [f32; 3],
+    pub limits: Option<[f32; 2]>,
+}
+
+impl Default for Joint {
+    fn default() -> Self {
+        Self { kind: JointType::Fixed, connected: None, anchor: [0.0; 3], axis: [0.0, 1.0, 0.0], limits: None }
+    }
+}
+
+impl Component for Joint {}
+
+/// What a joint was made from, to make it again when any of it changes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct JointKey {
+    joint: Joint,
+    body: BodyId,
+    other: Option<BodyId>,
+}
+
 /// What a body was made from, to make it again when any of it changes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct BodyKey {
@@ -221,6 +283,7 @@ pub struct PhysicsScene {
     bodies: HashMap<Entity, Kept>,
     owners: HashMap<BodyId, Entity>,
     characters: HashMap<Entity, Walker>,
+    joints: HashMap<Entity, (JointId, JointKey)>,
     events: Vec<PhysicsEvent>,
     gravity: Vec3,
     /// Whether it has stepped: until then, a script's question brings its
@@ -252,6 +315,7 @@ impl PhysicsScene {
             bodies: HashMap::new(),
             owners: HashMap::new(),
             characters: HashMap::new(),
+            joints: HashMap::new(),
             events: Vec::new(),
             gravity: Vec3::new(0.0, -9.81, 0.0),
             stepped: false,
@@ -381,6 +445,62 @@ impl PhysicsScene {
             self.sync_body(world, entity, collider, dt);
         }
         self.sync_characters(world);
+        self.sync_joints(world);
+    }
+
+    /// Makes each Obj's joint between its body and the connected Obj's, or
+    /// the world, where they are now, and again when either body or the
+    /// joint changed. A joint whose Objs have no bodies waits for them.
+    fn sync_joints(&mut self, world: &World) {
+        let wanted: Vec<(Entity, Joint)> = world
+            .query_ref::<(Entity, &Joint)>()
+            .without::<Destroying>()
+            .into_iter()
+            .map(|(entity, joint)| (entity, *joint))
+            .collect();
+        let gone: Vec<Entity> =
+            self.joints.keys().copied().filter(|entity| !wanted.iter().any(|(e, _)| e == entity)).collect();
+        for entity in gone {
+            if let Some((joint, _)) = self.joints.remove(&entity) {
+                self.world.remove_joint(joint);
+            }
+        }
+        for (entity, joint) in wanted {
+            let Some(body) = self.body(entity) else { continue };
+            let other = match joint.connected {
+                Some(connected) => match self.body(connected) {
+                    Some(other) => Some(other),
+                    None => continue,
+                },
+                None => None,
+            };
+            let key = JointKey { joint, body, other };
+            if self.joints.get(&entity).is_some_and(|(_, had)| *had == key) {
+                continue;
+            }
+            if let Some((old, _)) = self.joints.remove(&entity) {
+                self.world.remove_joint(old);
+            }
+            let placed = voxear_scene::world_matrix(world, entity);
+            let (_, rotation, _) = placed.to_scale_rotation_translation();
+            let point = placed.transform_point3(Vec3::from(joint.anchor));
+            let axis = (rotation * Vec3::from(joint.axis)).normalize_or(Vec3::Y);
+            let limits = joint.limits.map(|[least, most]| (least.min(most), least.max(most)));
+            let kind = match joint.kind {
+                JointType::Fixed => JointKind::Fixed,
+                JointType::Ball => JointKind::Point(point),
+                JointType::Hinge => {
+                    // Jolt measures how far the second body turns from the first, and the first is
+                    // this Obj, so its own angles are turned round.
+                    let limits = limits.map(|(least, most)| (-most.to_radians(), -least.to_radians()));
+                    JointKind::Hinge { point, axis, limits }
+                }
+                JointType::Distance => JointKind::Distance { point, range: limits },
+            };
+            if let Some(made) = self.world.add_joint(kind, body, other) {
+                self.joints.insert(entity, (made, key));
+            }
+        }
     }
 
     /// Brings an Obj's body to its collider and its Obj: made again when
@@ -389,6 +509,9 @@ impl PhysicsScene {
     /// Rigidbody whose Transform is set.
     fn sync_body(&mut self, world: &World, entity: Entity, collider: Collider, dt: f32) {
         let (scale, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
+        // The scale is rounded, as one read back from a turned body's matrix is a hair off what was set,
+        // and the body would be made again, losing its speed, each step it turns.
+        let scale = (scale * 1e4).round() / 1e4;
         let key = BodyKey { collider, rigidbody: world.get::<Rigidbody>(entity).copied(), scale };
         let Some(kept) = self.bodies.get_mut(&entity).filter(|kept| kept.key == key) else {
             if self.bodies.contains_key(&entity) {
@@ -435,6 +558,19 @@ impl PhysicsScene {
     }
 
     fn remove(&mut self, entity: Entity) {
+        if let Some(kept) = self.bodies.get(&entity) {
+            // A joint holds its bodies, so it goes first; it is made again once its bodies are back.
+            let body = kept.body;
+            let holding: Vec<Entity> = (self.joints.iter())
+                .filter(|(_, (_, key))| key.body == body || key.other == Some(body))
+                .map(|(entity, _)| *entity)
+                .collect();
+            for holder in holding {
+                if let Some((joint, _)) = self.joints.remove(&holder) {
+                    self.world.remove_joint(joint);
+                }
+            }
+        }
         if let Some(kept) = self.bodies.remove(&entity) {
             self.world.remove_body(kept.body);
             self.world.release_shape(kept.shape);
@@ -788,6 +924,50 @@ mod tests {
         let z = world.get::<Transform>(walker).unwrap().position.z;
         assert!((z - 2.0).abs() < 0.1, "two metres on in a second: {z}");
         assert_eq!(state.map(|s| s.ground), Some(crate::Ground::Ground));
+    }
+
+    #[test]
+    fn joints_hold_a_door_to_the_world_and_a_weight_on_a_rope() {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        // A door a metre wide, its hinge up its left edge, pushed round.
+        let door = world.spawn((Transform::from_position(Vec3::new(0.5, 1.0, 0.0)),));
+        world.insert(door, Collider { size: [1.0, 2.0, 0.1], ..Collider::default() });
+        world.insert(door, Rigidbody { gravity: false, ..Rigidbody::default() });
+        let hinge =
+            Joint { kind: JointType::Hinge, anchor: [-0.5, 0.0, 0.0], limits: Some([0.0, 90.0]), ..Joint::default() };
+        world.insert(door, hinge);
+        // A weight hanging two metres under a point it swings from.
+        let weight = world.spawn((Transform::from_position(Vec3::new(1.0, 3.0, 5.0)),));
+        world.insert(weight, Collider { shape: ColliderShape::Sphere, radius: 0.2, ..Collider::default() });
+        world.insert(weight, Rigidbody::default());
+        world.insert(weight, Joint { kind: JointType::Distance, anchor: [-2.0, 0.0, 0.0], ..Joint::default() });
+        let mut physics = PhysicsScene::new();
+        physics.step(&mut world, 1.0 / 60.0);
+        let body = physics.body(door).unwrap();
+        physics.world_mut().set_velocity(body, Vec3::ZERO, Vec3::new(0.0, 6.0, 0.0));
+        let mut lowest = f32::MAX;
+        for step in 0..120 {
+            physics.step(&mut world, 1.0 / 60.0);
+            assert_eq!(physics.body(door), Some(body), "the same body as it turns, step {step}");
+            lowest = lowest.min(world.get::<Transform>(weight).unwrap().position.y);
+        }
+        let at = world.get::<Transform>(door).unwrap().position;
+        let edge = Vec3::new(0.0, 1.0, 0.0);
+        assert!((at.distance(edge) - 0.5).abs() < 0.02, "still on its hinge: {at}");
+        // Turned a quarter about +Y, its middle is half a metre along -Z of its hinge.
+        assert!(at.z < -0.45 && at.x.abs() < 0.05, "swung open to its limit, and no further: {at}");
+        let hung = world.get::<Transform>(weight).unwrap().position;
+        assert!((hung.distance(Vec3::new(-1.0, 3.0, 5.0)) - 2.0).abs() < 0.05, "on its rope: {hung}");
+        assert!((lowest - 1.0).abs() < 0.05, "swung through the bottom, two metres under: {lowest}");
+
+        // Taken off, the door is free; a body made again takes its joint again.
+        world.remove::<Joint>(door);
+        physics.step(&mut world, 1.0 / 60.0);
+        assert!(!physics.joints.contains_key(&door));
+        world.get_mut::<Collider>(weight).unwrap().radius = 0.3;
+        physics.step(&mut world, 1.0 / 60.0);
+        assert_eq!(physics.joints.get(&weight).map(|(_, key)| key.body), physics.body(weight));
     }
 
     #[test]

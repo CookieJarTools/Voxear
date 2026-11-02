@@ -189,9 +189,10 @@ pub enum JointKind {
     /// Both turn about an axis through a point, within limits in radians
     /// when given, as a door.
     Hinge { point: Vec3, axis: Vec3, limits: Option<(f32, f32)> },
-    /// Their centres stay within a range of distances, or as far apart as
-    /// they are now.
-    Distance(Option<(f32, f32)>),
+    /// The first body's centre stays within a range of distances of a
+    /// point in the world, held to the second body, or as far as it is
+    /// now.
+    Distance { point: Vec3, range: Option<(f32, f32)> },
 }
 
 /// The largest number of bodies a world holds by default.
@@ -497,15 +498,17 @@ impl PhysicsWorld {
     }
 
     /// Joins two bodies, or `None` when either is gone.
-    pub fn add_joint(&mut self, kind: JointKind, a: BodyId, b: BodyId) -> Option<JointId> {
+    /// Holds two bodies together, or `a` to the world when `b` is none.
+    pub fn add_joint(&mut self, kind: JointKind, a: BodyId, b: Option<BodyId>) -> Option<JointId> {
         let (code, point, axis, (min, max)) = match kind {
             JointKind::Fixed => (0, Vec3::ZERO, Vec3::Y, (0.0, 0.0)),
             JointKind::Point(point) => (1, point, Vec3::Y, (0.0, 0.0)),
             JointKind::Hinge { point, axis, limits } => (2, point, axis, limits.unwrap_or((0.0, 0.0))),
-            JointKind::Distance(range) => (3, Vec3::ZERO, Vec3::Y, range.unwrap_or((-1.0, 0.0))),
+            JointKind::Distance { point, range } => (3, point, Vec3::Y, range.unwrap_or((-1.0, 0.0))),
         };
         let (point, axis) = (point.to_array(), axis.to_array());
-        let joint = unsafe { ffi::vx_joint_add(self.world, code, a.0, b.0, point.as_ptr(), axis.as_ptr(), min, max) };
+        let b = b.map_or(u32::MAX, |b| b.0);
+        let joint = unsafe { ffi::vx_joint_add(self.world, code, a.0, b, point.as_ptr(), axis.as_ptr(), min, max) };
         (joint != 0).then_some(JointId(joint))
     }
 
@@ -602,7 +605,7 @@ mod tests {
         let door = world.add_body(&BodyDesc::new(slab, Motion::Dynamic).at(Vec3::new(0.6, 0.0, 0.0), Quat::IDENTITY));
         let door = door.unwrap();
         let hinge = JointKind::Hinge { point: Vec3::new(0.1, 0.0, 0.0), axis: Vec3::Y, limits: None };
-        assert!(world.add_joint(hinge, post, door).is_some());
+        assert!(world.add_joint(hinge, post, Some(door)).is_some());
         for _ in 0..120 {
             world.step(1.0 / 60.0, 1);
         }

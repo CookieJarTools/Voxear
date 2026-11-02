@@ -1694,6 +1694,7 @@ impl Inspector {
             (Part::Collider, "Physics"),
             (Part::Rigidbody, "Physics"),
             (Part::Character, "Physics"),
+            (Part::Joint, "Physics"),
             (Part::Collider2D, "Physics 2D"),
             (Part::Rigidbody2D, "Physics 2D"),
         ];
@@ -2341,6 +2342,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Collider) => "collider",
         Some(Part::Rigidbody) => "rigidbody",
         Some(Part::Character) => "character",
+        Some(Part::Joint) => "joint",
         Some(Part::Collider2D) => "collider2d",
         Some(Part::Rigidbody2D) => "rigidbody2d",
         Some(Part::Behaviour(name)) => return vec![ValuePath::new(&["fields", name])],

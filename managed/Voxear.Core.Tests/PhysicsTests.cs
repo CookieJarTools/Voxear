@@ -46,6 +46,16 @@ internal static class PhysicsTests
 	}
 
 	[Test]
+	private static void AJointReadsAsHeldToTheWorldWithoutTheEngine()
+	{
+		var joint = Obj.None.Joint;
+		Check.True(!joint.IsValid && joint.Type == JointType.Fixed && !joint.UseLimits, "no Joint");
+		Check.True(!joint.ConnectedBody.IsValid && joint.Axis == Vector3.UnitY, "held to the world, about Y");
+		joint.SetLimits(0f, 90f);
+		joint.ConnectedBody = Rigidbody.None;
+	}
+
+	[Test]
 	private static void PhysicsComponentsAreFieldsOfOtherObjs()
 	{
 		Check.True(typeof(IObjComponent).IsAssignableFrom(typeof(Rigidbody)), "a Rigidbody field holds another Obj's");

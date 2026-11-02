@@ -585,11 +585,14 @@ void vx_character_set_position(VxWorld *world, uint32_t character, const float p
 // about an axis, 3 a distance kept between two points. Returns a number for
 // the joint, or 0.
 
+// A joint between two bodies, or between `a` and the world when `b` is
+// none (0xffffffff).
 uint32_t vx_joint_add(VxWorld *world, uint32_t kind, uint32_t a, uint32_t b, const float point[3], const float axis[3], float min, float max) {
+	bool to_world = b == BodyID::cInvalidBodyID;
 	BodyID ids[2] = { id_of(a), id_of(b) };
-	BodyLockMultiWrite lock(world->system.GetBodyLockInterface(), ids, 2);
+	BodyLockMultiWrite lock(world->system.GetBodyLockInterface(), ids, to_world ? 1 : 2);
 	Body *first = lock.GetBody(0);
-	Body *second = lock.GetBody(1);
+	Body *second = to_world ? &Body::sFixedToWorld : lock.GetBody(1);
 	if (first == nullptr || second == nullptr) {
 		return 0;
 	}
@@ -622,9 +625,10 @@ uint32_t vx_joint_add(VxWorld *world, uint32_t kind, uint32_t a, uint32_t b, con
 		break;
 	}
 	default: {
+		// From the first body's centre to the point, held to the second.
 		auto distance = new DistanceConstraintSettings();
 		distance->mPoint1 = first->GetCenterOfMassPosition();
-		distance->mPoint2 = second->GetCenterOfMassPosition();
+		distance->mPoint2 = at;
 		if (min >= 0.0f && max > 0.0f) {
 			distance->mMinDistance = min;
 			distance->mMaxDistance = max;

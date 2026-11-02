@@ -55,6 +55,22 @@ Physics moves bodies in fixed steps, 50 times a second, straight after each `Fix
 
 The character's capsule stands on the Obj's origin, so the Obj's position is where its feet are. Physics never pushes a character around on its own. It moves only when your code moves it, and gravity is up to your code too, so a jump is just a velocity upwards.
 
+## Joints
+
+A **Joint** holds an Obj's Rigidbody to another Obj's, or to the spot it is in when it holds to nothing: a door on its hinges, a lamp on a chain, a trailer behind a car. Add one with **Add Component**, under **Physics**.
+
+| Setting | What it does |
+| --- | --- |
+| Type | **Fixed** glues the two together where they are. **Hinge** turns about an axis, as a door does. **Ball** turns every way about a point, as a shoulder does. **Distance** keeps the Obj within a range of a point, as a weight on a rope |
+| Connected | The Obj it holds to, which needs a Rigidbody. Leave it at None to hold the Obj to the world |
+| Anchor | The hinge's or the ball's point, or the point a Distance joint hangs from, measured from the Obj's origin |
+| Axis | The line a hinge turns about, in the Obj's own directions. Up, to start with |
+| Use limits | Holds a hinge between two angles, in degrees, or a Distance joint between two lengths, in metres |
+
+When the Obj is selected, the Scene view shows its joint in orange: a cross at the anchor, a hinge's axis through it, and a line to the Obj it holds to.
+
+A joint is made where its Objs are when the game starts. A door whose hinge should be at its left edge, with the door's origin in its middle, has its anchor half the door's width to the left. A door that only opens one way has limits of 0 and 90.
+
 ## Triggers
 
 A collider with **Is trigger** turned on is a zone rather than a solid thing. Nothing bumps into it, but physics notices when another collider enters it and when it leaves. Use triggers for checkpoints, doors that open as the player comes near, and pickups.
@@ -82,6 +98,17 @@ collider = { size = [4.0, 3.0, 1.0], trigger = true }
 id = 4
 name = "Player"
 character = { height = 1.7, radius = 0.35 }
+```
+
+A joint names the Obj it holds to by its id in the same file:
+
+```toml
+[[obj]]
+id = 5
+name = "Door"
+collider = { size = [1.0, 2.0, 0.1] }
+rigidbody = {}
+joint = { type = "hinge", anchor = [-0.5, 0.0, 0.0], limits = [0.0, 90.0] }
 ```
 
 Prefabs keep their physics too. An instance that changes its prefab's collider saves the whole collider with the instance, as it does for lights and cameras.

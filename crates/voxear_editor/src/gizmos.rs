@@ -5,12 +5,13 @@
 //! a spot light's cone and a point light's range. The Gizmos button shows or
 //! hides them all, and its menu lights' or cameras'. The selected Obj's
 //! Collider, Character Controller and Collider 2D are drawn in green, as
-//! Unity's are.
+//! Unity's are, and its joint's anchor, a hinge's axis, and a line to what
+//! it holds to in orange.
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
-    physics::{CharacterController, Collider, ColliderShape},
+    physics::{CharacterController, Collider, ColliderShape, Joint, JointType},
     physics2d::{Collider2D, ColliderShape2D},
 };
 use voxear_render::{Camera, Light, LightKind};
@@ -33,6 +34,10 @@ const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
 /// How long a directional light's direction is drawn, on screen.
 const DIRECTION: f32 = 70.0;
 const COLLIDER: u32 = 0x91f48b;
+const JOINT: u32 = 0xf2a14c;
+/// How big a joint's anchor and a hinge's axis are drawn, on screen.
+const ANCHOR: f32 = 8.0;
+const AXIS: f32 = 36.0;
 /// How many pieces a capsule's half circle is drawn in.
 const CAP_SEGMENTS: usize = 16;
 
@@ -110,6 +115,30 @@ fn colliders(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity
     }
     if let Some(collider) = world.get::<Collider2D>(entity) {
         flat_collider(shapes, camera, collider, position, rotation, scale, color);
+    }
+    if let Some(joint) = world.get::<Joint>(entity) {
+        let placed = Mat4::from_scale_rotation_translation(scale, rotation, position);
+        joint_marks(shapes, world, camera, joint, placed);
+    }
+}
+
+/// A joint's anchor as a small cross, a hinge's axis through it, and a
+/// line to the Obj it holds to.
+fn joint_marks(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, joint: &Joint, placed: Mat4) {
+    let color = Color::hex(JOINT);
+    let at = placed.transform_point3(Vec3::from(joint.anchor));
+    let size = camera.world_size(at, ANCHOR);
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+        line(shapes, camera, at - axis * size, at + axis * size, color);
+    }
+    if joint.kind == JointType::Hinge {
+        let (_, rotation, _) = placed.to_scale_rotation_translation();
+        let along = (rotation * Vec3::from(joint.axis)).normalize_or(Vec3::Y) * camera.world_size(at, AXIS);
+        line(shapes, camera, at - along, at + along, color);
+    }
+    if let Some(other) = joint.connected.filter(|&other| world.is_alive(other)) {
+        let there = voxear_scene::world_matrix(world, other).w_axis.truncate();
+        line(shapes, camera, at, there, color.with_alpha(160));
     }
 }
 
@@ -344,5 +373,15 @@ mod tests {
         world.remove::<CharacterController>(obj);
         world.insert(obj, Collider2D::default());
         assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown)), 4, "a 2D box is flat");
+
+        // A hinge: three lines of its anchor's cross, its axis, and one to what it holds to.
+        let post = world.spawn((Transform::from_position(Vec3::new(1.0, 0.0, 0.0)),));
+        world.insert(obj, Joint { kind: JointType::Hinge, connected: Some(post), ..Joint::default() });
+        let orange = Color::hex(JOINT);
+        let drawn = shapes(&world, &camera, Some(obj), shown);
+        let joint_lines = drawn
+            .iter()
+            .filter(|shape| matches!(shape, Shape::Line { color, .. } if color.r == orange.r && color.g == orange.g));
+        assert_eq!(joint_lines.count(), 5);
     }
 }

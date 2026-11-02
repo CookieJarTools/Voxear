@@ -47,6 +47,14 @@ internal static unsafe class NativePhysics
 
 	public const int Gravity = 60;
 
+	public const int JointHas = 70;
+	public const int JointAdd = 71;
+	public const int JointRemove = 72;
+	public const int JointType = 73;
+	public const int JointAnchor = 74;
+	public const int JointAxis = 75;
+	public const int JointLimits = 76;
+
 	public const int Collider2DHas = 100;
 	public const int Collider2DAdd = 101;
 	public const int Collider2DRemove = 102;
@@ -188,6 +196,17 @@ internal static unsafe class NativePhysics
 			}
 		}
 		return Array.ConvertAll(ids[..count], id => new Obj(id));
+	}
+
+	/// <summary>The Obj an Obj's joint holds to, or None for the world.</summary>
+	public static Obj Connected(Obj obj)
+	{
+		return Native.IsConnected ? new Obj(Native.Api->JointConnected(obj.Id, 0, 0)) : Obj.None;
+	}
+
+	public static bool Connect(Obj obj, Obj other)
+	{
+		return Native.IsConnected && Native.Api->JointConnected(obj.Id, 1, other.Id) == 1;
 	}
 
 	public static bool Move(Obj obj, Vector3 motion, float delta, out CharacterMoveData state)

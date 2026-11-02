@@ -58,6 +58,7 @@ mod gizmos;
 mod hierarchy;
 mod history;
 mod import_fields;
+mod input_panel;
 mod inspector;
 mod layers_view;
 mod level_files;

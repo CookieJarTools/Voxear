@@ -778,3 +778,171 @@ DockSpace .split-column > .split-divider {
     font-family: mono;
     font-size: 11px;
 }
+
+/* Key maps: a device's keys, lit where bound, with labels round it naming
+   their actions. A key's category colour, when it has one, is set on the
+   key itself and wins over these. */
+.keymap {
+    position: relative;
+    flex-grow: 1;
+    min-height: 0px;
+}
+
+.keymap-lines {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+}
+
+.keymap-key {
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    border: 1px solid var(--vx-field-line);
+    background-color: var(--vx-field);
+    color: var(--vx-muted);
+    transition: background-color var(--vx-fade);
+}
+
+.keymap-key.round, .keymap-key.stick {
+    border-radius: 999px;
+}
+
+.keymap-key.pill {
+    border-radius: 999px;
+}
+
+.keymap-key.stick {
+    border: 3px solid var(--vx-field-line);
+}
+
+.keymap-key.assigned {
+    background-color: var(--vx-accent);
+    border-color: var(--vx-accent-hover);
+    color: var(--vx-on-accent);
+}
+
+.keymap-key.hidden {
+    background-color: var(--vx-panel);
+    border-color: var(--vx-accent-soft);
+    color: var(--vx-text-2);
+}
+
+.keymap-key:hover {
+    border-color: var(--vx-text);
+}
+
+.keymap-key-label {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.keymap-callout {
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--vx-muted);
+    background-color: var(--vx-panel);
+}
+
+.keymap-callout:hover {
+    border-color: var(--vx-accent);
+}
+
+.keymap-callout-line {
+    font-size: 11px;
+    line-height: 14px;
+    color: var(--vx-text);
+    white-space: nowrap;
+    text-align: center;
+}
+
+/* The ready-made controls screen (KeyBindingScreen in C#): over the whole
+   game, a bar along the top, the key map, its legend, and the clicked key's
+   actions with their Rebind buttons. */
+.key-binding-screen {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px 28px;
+    background-color: rgba(10, 11, 13, 0.92);
+}
+
+.kbs-bar {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.kbs-title {
+    margin-right: 16px;
+    font-size: 18px;
+    line-height: 24px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.kbs-spacer {
+    flex-grow: 1;
+}
+
+.kbs-tab.selected {
+    background-color: var(--vx-accent-soft);
+    border-color: var(--vx-accent);
+    color: var(--vx-text);
+}
+
+.kbs-legend {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+}
+
+.kbs-legend-entry {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
+.keymap-key.kbs-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+}
+
+.kbs-details {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    min-height: 32px;
+    flex-shrink: 0;
+}
+
+.kbs-control {
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.kbs-use {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 4px 3px 10px;
+    border: 1px solid var(--vx-field-line);
+    border-radius: 6px;
+    background-color: var(--vx-panel);
+}
+
+.kbs-status {
+    color: var(--vx-muted);
+    flex-shrink: 0;
+}

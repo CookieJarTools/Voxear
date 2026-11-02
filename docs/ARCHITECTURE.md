@@ -2407,7 +2407,10 @@ await Input.Rebind(actions["Jump"], scheme: ControlScheme.Gamepad);
 - **Actions, maps and control schemes** are assets. The active scheme switches automatically on the last device
   used.
 - **Rebinding is built in:**
-  - A ready-made, themeable rebinding screen.
+  - A ready-made, themeable rebinding screen (`KeyBindingScreen`, built): the keyboard and mouse or a gamepad drawn
+    as a key map (`voxear_input::layouts`, `voxear_ui`'s key map, `voxear_engine::keymaps`), each bound control lit
+    with its actions labelled round the device, coloured by category, and Rebind beside each action of the key
+    clicked. The editor's Input Actions window draws the same map.
   - Conflict detection.
   - Per-player persistence.
   - Composites such as WASD into a Vector2.

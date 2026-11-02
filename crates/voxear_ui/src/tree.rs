@@ -283,6 +283,8 @@ pub struct Ui {
     /// Containers whose items drag into a new order, and their slides; see
     /// [`reorder`](crate::reorder).
     pub(crate) reorders: crate::reorder::Reorders,
+    /// Key maps, by their element; see [`keymap`](crate::keymap).
+    pub(crate) keymaps: HashMap<taffy::NodeId, crate::keymap::Keymap>,
     /// The elements whose text is a key's, in the language the game is in,
     /// and whether any were bound since the last look (see
     /// [`Ui::set_text_key`]).
@@ -340,6 +342,7 @@ impl Ui {
             window_move: None,
             visitors: Vec::new(),
             reorders: Default::default(),
+            keymaps: HashMap::new(),
             text_keys: HashMap::new(),
             text_keys_added: false,
         }
@@ -779,6 +782,7 @@ impl Ui {
         self.draggables.remove(&node.0);
         self.drop_targets.remove(&node.0);
         self.reorders.forget(node.0);
+        self.forget_keymap(node.0);
         self.text_keys.remove(&node.0);
         self.lists.retain(|&n| n != node.0);
         self.scrollers.retain(|&n| n != node.0);
@@ -872,6 +876,13 @@ impl Ui {
             self.update_scroll_limits();
         }
         if self.place_menu() {
+            if !self.restyles.is_empty() {
+                self.cascade();
+            }
+            self.layout(width, height, scale);
+        }
+        // Key maps place their boards and labels by where they were laid out.
+        if self.arrange_keymaps() {
             if !self.restyles.is_empty() {
                 self.cascade();
             }

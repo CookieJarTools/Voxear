@@ -131,6 +131,8 @@ Log.Info(taken == null ? "Kept as it was" : $"Jump is now {jump.Prompt}");
 
 Escape gives up. While it waits, the action reads nothing, so the key pressed does not also jump. To keep a player's bindings, save `Input.SaveBindings()` with their settings, and give it back to `Input.LoadBindings` when the game starts. `Input.ResetBindings()` puts every binding back.
 
+For a whole controls screen ready to use, with the keyboard or gamepad drawn and a Rebind button for each action, see [[Showing the Controls]].
+
 ## Menus
 
 Turn a map off while a menu is open, so the player does not walk while choosing: `Input.DisableMap("Player")`, then `Input.EnableMap("Player")` when it closes.

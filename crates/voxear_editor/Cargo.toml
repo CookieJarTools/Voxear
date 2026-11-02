@@ -18,6 +18,7 @@ voxear_engine.workspace = true
 voxear_assets.workspace = true
 voxear_scripting.workspace = true
 voxear_docs.workspace = true
+voxear_input.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 winit.workspace = true

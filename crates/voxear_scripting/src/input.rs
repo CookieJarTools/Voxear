@@ -26,6 +26,7 @@ const TEXT_MAPS: i32 = 3;
 const TEXT_BINDINGS: i32 = 4;
 const TEXT_REBOUND: i32 = 5;
 const TEXT_NAME: i32 = 6;
+const TEXT_CATEGORIES: i32 = 7;
 
 /// What [`input_change`] does.
 const CHANGE_REBIND: i32 = 0;
@@ -38,6 +39,46 @@ const CHANGE_CANCEL: i32 = 6;
 
 fn with_input<T>(f: impl FnOnce(&mut Input) -> T) -> Option<T> {
     with_services(|services| services.input().map(f)).flatten()
+}
+
+/// The actions a control serves, as a key map labels it: the whole of what
+/// its layout draws, as a stick with its halves and its press. A line each:
+/// the action by its map and name, which of its bindings, the part of a
+/// composite one (or empty), what a key map says for it, its category (or
+/// empty), and 1 when it is hidden, between tabs.
+pub(crate) unsafe extern "C" fn input_uses(path: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let path = unsafe { utf8(path, len) };
+    let layout = match Scheme::of(&path) {
+        Scheme::KeyboardMouse => voxear_input::layouts::keyboard_mouse(),
+        Scheme::Gamepad => voxear_input::layouts::gamepad(),
+    };
+    let paths: Vec<String> = layout.control_of(&path).map_or_else(|| vec![path.to_string()], |c| c.paths.clone());
+    let text = with_input(|input| {
+        let uses = input.control_uses().into_iter().filter(|u| paths.contains(&u.path));
+        let lines = uses.map(|u| {
+            let category = u.category.clone().unwrap_or_default();
+            let part = u.part.unwrap_or_default();
+            format!("{}/{}\t{}\t{part}\t{}\t{category}\t{}", u.map, u.name, u.binding, u.label(), i32::from(u.hidden))
+        });
+        lines.collect::<Vec<_>>().join("\n")
+    });
+    let text = text.unwrap_or_default();
+    if !buffer.is_null() && text.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), buffer, text.len()) };
+    }
+    text.len() as i32
+}
+
+/// A control as prompts name it, by its path: a key as this keyboard types
+/// it, a pad's button as its family names it. Written when it fits; its
+/// length either way.
+pub(crate) unsafe extern "C" fn input_label(path: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let path = unsafe { utf8(path, len) };
+    let label = with_input(|input| input.control_label(&path)).unwrap_or_else(|| path.to_string());
+    if !buffer.is_null() && label.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(label.as_ptr(), buffer, label.len()) };
+    }
+    label.len() as i32
 }
 
 /// An action by its name, `Jump` or `Player/Jump`, or -1.
@@ -112,6 +153,10 @@ pub(crate) unsafe extern "C" fn input_text(what: i32, action: i32, buffer: *mut 
             _ => None,
         },
         TEXT_NAME => input.action_name(action).map(|(map, name)| format!("{map}/{name}")),
+        TEXT_CATEGORIES => {
+            let lines = input.categories().iter().map(|category| format!("{}\t{}", category.name, category.color));
+            Some(lines.collect::<Vec<_>>().join("\n"))
+        }
         _ => None,
     });
     let Some(text) = text.flatten() else { return -1 };

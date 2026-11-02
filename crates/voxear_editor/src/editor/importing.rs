@@ -236,13 +236,21 @@ impl Editor {
                 .filter(|model| reads_any(&root, model, &changed))
                 .collect(),
         };
-        // A string table edited outside the editor is read again; one that came or went is, with every change.
+        // A string table or input actions edited outside the editor are read again; ones that came or went
+        // are, with every change.
         let tables = changed.iter().any(|path| path.ends_with(".strings"));
+        let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
         if came_or_went {
             self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
-        } else if tables {
-            self.game.content.forget_kind(voxear_assets::AssetKind::Strings);
-            self.game.load_strings();
+        } else {
+            if tables {
+                self.game.content.forget_kind(voxear_assets::AssetKind::Strings);
+                self.game.load_strings();
+            }
+            if actions {
+                self.game.content.forget_kind(voxear_assets::AssetKind::InputActions);
+                self.game.load_input_actions();
+            }
         }
         for model in models {
             self.reimport_model(&model, renderer);

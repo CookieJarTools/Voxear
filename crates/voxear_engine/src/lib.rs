@@ -13,6 +13,7 @@ mod fly_camera;
 mod game;
 pub mod game_ui;
 pub mod joints;
+pub mod keymaps;
 pub mod lod_groups;
 mod levels;
 mod loading;

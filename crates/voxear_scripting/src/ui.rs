@@ -122,6 +122,30 @@ pub(crate) unsafe extern "C" fn ui_items(element: i32, count: i32, parents: *con
     ask(element, UiAsk::Items { count, tree, item_height });
 }
 
+/// What a key map shows: see [`UiAsk::Keymap`].
+pub(crate) unsafe extern "C" fn ui_keymap(
+    element: i32,
+    scheme: i32,
+    colors: i32,
+    hidden: i32,
+    map: *const u8,
+    len: i32,
+) {
+    let map = unsafe { utf8(map, len) };
+    let (scheme, colors) = (scheme.clamp(0, 1) as u8, colors.clamp(0, 1) as u8);
+    ask(element, UiAsk::Keymap { scheme, colors, hidden: hidden != 0, map: &map });
+}
+
+/// The path of the control clicked on a key map since the last frame,
+/// written when it fits; its length either way, 0 for none.
+pub(crate) unsafe extern "C" fn ui_keymap_clicked(element: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let Some(UiAnswer::Text(path)) = ask(element, UiAsk::KeymapClicked) else { return 0 };
+    if !buffer.is_null() && path.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(path.as_ptr(), buffer, path.len()) };
+    }
+    path.len() as i32
+}
+
 pub(crate) unsafe extern "C" fn ui_style(element: i32, style: *const u8, len: i32) {
     let style = unsafe { utf8(style, len) };
     ask(element, UiAsk::SetStyle(&style));

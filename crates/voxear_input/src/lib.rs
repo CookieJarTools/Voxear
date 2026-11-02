@@ -15,15 +15,19 @@
 //! - **Prompts** name what to press for an action in the scheme used last:
 //!   a key as this keyboard types it, and a pad's button as its family
 //!   names it (A on Xbox, Cross on PlayStation).
+//! - **Key maps** draw the keyboard and mouse, or a gamepad ([`layouts`]),
+//!   with each control's actions ([`Input::control_uses`]), coloured by
+//!   their categories.
 //!
 //! The host hands it the window's events and the mouse's moves, and calls
 //! [`Input::update`] once a frame before the game's scripts run.
 
 pub mod actions;
 pub mod devices;
+pub mod layouts;
 
 use anyhow::{Context, Result};
-pub use actions::{ActionKind, ActionState, ActionsFile, Binding};
+pub use actions::{ActionKind, ActionState, ActionsFile, Binding, CategoryData};
 pub use devices::{Devices, Family, Mouse, Pad, Scheme};
 use winit::event::WindowEvent;
 
@@ -42,6 +46,37 @@ struct Listening {
     binding: usize,
     part: Option<String>,
     scheme: Option<Scheme>,
+}
+
+/// One use of a control: the action a binding of it reads, and which part
+/// of a composite binding, as a key map shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ControlUse {
+    pub path: String,
+    pub action: ActionId,
+    pub map: String,
+    pub name: String,
+    /// Which binding of the action, and its part: `up` of a WASD binding.
+    pub binding: usize,
+    pub part: Option<&'static str>,
+    pub category: Option<String>,
+    /// The action keeps out of key maps, as a debug key does.
+    pub hidden: bool,
+}
+
+impl ControlUse {
+    /// What a key map says for it: the action, with its part, as
+    /// "Move (Up)".
+    pub fn label(&self) -> String {
+        match self.part {
+            Some(part) => {
+                let mut part = part.chars();
+                let first = part.next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
+                format!("{} ({first}{})", self.name, part.as_str())
+            }
+            None => self.name.clone(),
+        }
+    }
 }
 
 /// What listening for a rebind came to.
@@ -200,6 +235,35 @@ impl Input {
         self.devices.last
     }
 
+    /// The categories key maps colour actions by, in order.
+    pub fn categories(&self) -> &[CategoryData] {
+        &self.actions.file.categories
+    }
+
+    /// Every control every action's bindings read, as they are now, rebound
+    /// or not: one use a binding, or a part of a composite one, in the
+    /// order of the actions.
+    pub fn control_uses(&self) -> Vec<ControlUse> {
+        let mut uses = Vec::new();
+        for (at, action) in self.actions.list.iter().enumerate() {
+            for (binding, bound) in action.data.bindings.iter().enumerate() {
+                for (part, path) in bound.controls() {
+                    uses.push(ControlUse {
+                        path,
+                        action: ActionId(at),
+                        map: action.map.clone(),
+                        name: action.data.name.clone(),
+                        binding,
+                        part,
+                        category: action.data.category.clone(),
+                        hidden: action.data.hidden,
+                    });
+                }
+            }
+        }
+        uses
+    }
+
     /// An action's bindings as they are now.
     pub fn bindings(&self, action: ActionId) -> &[Binding] {
         self.actions.list.get(action.0).map_or(&[], |a| a.data.bindings.as_slice())
@@ -335,6 +399,25 @@ fn pad_label(family: Family, control: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controls_say_which_actions_they_serve_with_their_categories() {
+        let mut input = Input::without_gamepads();
+        let file = "format = 1\n\n[[category]]\nname = \"Movement\"\ncolor = \"#3fb950\"\n\n[[map]]\nname = \"Player\"\n\n\
+                    [[map.action]]\nname = \"Move\"\ntype = \"vector2\"\ncategory = \"Movement\"\n\
+                    bindings = [{ up = \"Keyboard/W\", down = \"Keyboard/S\" }, \"Gamepad/LeftStick\"]\n\n\
+                    [[map.action]]\nname = \"Cheat\"\nhidden = true\nbindings = [\"Keyboard/W\"]\n";
+        input.load_actions(file).unwrap();
+        assert_eq!(input.categories()[0].color, "#3fb950");
+        let on_w: Vec<String> = input.control_uses().into_iter().filter(|u| u.path == "Keyboard/W").map(|u| u.label()).collect();
+        assert_eq!(on_w, ["Move (Up)", "Cheat"]);
+        let uses = input.control_uses();
+        let cheat = uses.iter().find(|u| u.name == "Cheat").unwrap();
+        assert!(cheat.hidden && cheat.category.is_none());
+        let stick = uses.iter().find(|u| u.path == "Gamepad/LeftStick").unwrap();
+        assert_eq!((stick.binding, stick.category.as_deref()), (1, Some("Movement")));
+        assert_eq!(layouts::gamepad().control_of(&stick.path).map(|c| c.label.as_str()), Some("LS"));
+    }
 
     #[test]
     fn the_default_actions_read_and_prompt_in_the_scheme_used_last() {

@@ -125,6 +125,59 @@ public static class Input
 		return InputEvents.AwaitRebind();
 	}
 
+	/// <summary>
+	/// The actions a control serves, by its path, such as "Keyboard/W" or "Gamepad/LeftStick": every binding of every
+	/// action that reads it, rebound or not, in the order of the actions. A stick counts its halves and its press too,
+	/// as a key map draws them as one.
+	/// </summary>
+	public static IReadOnlyList<ControlUse> ControlUses(string path)
+	{
+		var uses = new List<ControlUse>();
+		foreach (var line in NativeInput.Uses(path).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+		{
+			var parts = line.Split('\t');
+			if (parts.Length < 6)
+			{
+				continue;
+			}
+			var binding = int.TryParse(parts[1], out var at) ? at : 0;
+			var part = parts[2].Length > 0 ? parts[2] : null;
+			var category = parts[4].Length > 0 ? parts[4] : null;
+			uses.Add(new ControlUse(Action(parts[0]), binding, part, parts[3], category, parts[5] == "1"));
+		}
+		return uses;
+	}
+
+	/// <summary>A control as prompts name it, by its path: "Keyboard/Q" is "A" on an AZERTY keyboard, and "Gamepad/South" is "Cross" on a PlayStation pad.</summary>
+	public static string ControlLabel(string path)
+	{
+		return NativeInput.Label(path);
+	}
+
+	/// <summary>The categories key maps colour actions by, from the input actions, in order.</summary>
+	public static IReadOnlyList<InputCategory> Categories
+	{
+		get
+		{
+			var categories = new List<InputCategory>();
+			var text = NativeInput.Text(NativeInput.TextCategories) ?? string.Empty;
+			foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+			{
+				var parts = line.Split('\t');
+				var color = Color.White;
+				try
+				{
+					color = parts.Length > 1 && parts[1].Length > 0 ? Color.Hex(parts[1]) : Color.White;
+				}
+				catch (FormatException)
+				{
+				}
+				categories.Add(new InputCategory(parts[0], color));
+			}
+			return categories;
+		}
+	}
+
 	/// <summary>Gives up a rebinding waiting for a control.</summary>
 	public static void CancelRebind()
 	{

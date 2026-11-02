@@ -119,4 +119,8 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, int> TextLanguage;
 	public delegate* unmanaged[Cdecl]<byte*, int, int> TextLanguages;
 	public delegate* unmanaged[Cdecl]<ulong> TextVersion;
+	public delegate* unmanaged[Cdecl]<int, int, int, int, byte*, int, void> UiKeymap;
+	public delegate* unmanaged[Cdecl]<int, byte*, int, int> UiKeymapClicked;
+	public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> InputUses;
+	public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> InputLabel;
 }

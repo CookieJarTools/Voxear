@@ -76,6 +76,7 @@ use crate::{
     history::{Edit, History, ObjState},
     inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
+    input_panel::InputPanel,
     memory_panel::MemoryPanel,
     object_picker::{self, Chosen, ObjectPicker, PickFor},
     objs,
@@ -154,6 +155,8 @@ struct Nodes {
     entities_panel: NodeId,
     frame_debugger_panel: NodeId,
     memory_panel: NodeId,
+    /// The Input Actions window's panel.
+    input_panel: NodeId,
     /// The Build window's panel.
     build_panel: NodeId,
     /// A script field's tooltip, shown under its label.
@@ -282,6 +285,7 @@ pub struct Editor {
     entities: EntitiesPanel,
     frame_debugger: FrameDebuggerPanel,
     memory_profiler: MemoryPanel,
+    input_actions: InputPanel,
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
@@ -429,6 +433,7 @@ impl Editor {
             entities_panel: find(&ui, "entities-panel"),
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
             memory_panel: find(&ui, "memory-panel"),
+            input_panel: find(&ui, "input-panel"),
             build_panel: find(&ui, "build-panel"),
             tooltip: find(&ui, "tooltip"),
             debug_texts: find(&ui, "debug-texts"),
@@ -474,6 +479,7 @@ impl Editor {
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
+        let input_actions = InputPanel::new(&mut ui, nodes.input_panel);
         let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
         let parts = ["picker", "picker-back", "picker-title", "picker-field", "picker-list", "picker-empty"]
@@ -541,6 +547,7 @@ impl Editor {
             entities,
             frame_debugger,
             memory_profiler,
+            input_actions,
             build_window,
             picker,
             color_popup,
@@ -747,6 +754,9 @@ impl Editor {
             self.frame_debugger.update(&mut self.ui, frames_shown, renderer);
             let memory_shown = self.shown(self.nodes.memory_panel);
             self.memory_profiler.update(&mut self.ui, memory_shown, &self.game, renderer);
+            if self.shown(self.nodes.input_panel) {
+                self.input_actions.update(&mut self.ui, &self.game.input);
+            }
         }
         self.update_drawer();
         self.update_side_bar();
@@ -964,6 +974,7 @@ impl Editor {
                 let file = self.game.project.root.join(&item.path);
                 self.open_source(&file, 1);
             }
+            ItemKind::Asset(AssetKind::InputActions) => self.show_panel("input"),
             _ => self.inspect_asset(item),
         }
     }

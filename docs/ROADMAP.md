@@ -556,8 +556,12 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] rebinding: to a control named, or the next one pressed; conflicts found; bindings saved and read back
   - [x] prompts as text per scheme and pad family, with keys as this keyboard's layout types them
   - [x] the Game view hears the keyboard and mouse while it has the focus
-  - [ ] the Input Actions editor window, with listening for a binding
-  - [ ] a ready-made, themeable rebinding screen
+  - [x] key maps: the keyboard and mouse, and a gamepad, drawn with each bound control lit and its actions labelled
+    round the device, coloured as assigned, hidden and unused or by the actions' categories (`[[category]]` in
+    `.inputactions`, and `hidden` actions), in the editor's Input Actions window and in games as `KeymapView`
+  - [x] a ready-made, themeable rebinding screen (`KeyBindingScreen`), built from parts a game can change, and
+    `Input.ControlUses`, `ControlLabel` and `Categories` for screens of a game's own
+  - [ ] editing actions and bindings in the Input Actions window, with listening for a binding
   - [ ] prompt glyphs (icons) per device family, and local multiplayer pairing
 - Localization:
   - [x] string tables (`.strings` files) holding each key's text in every language `voxear.toml` lists, read when the

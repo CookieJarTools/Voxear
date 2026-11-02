@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using System.Text;
 
@@ -13,6 +14,7 @@ internal static unsafe class NativeInput
 	public const int TextBindings = 4;
 	public const int TextRebound = 5;
 	public const int TextName = 6;
+	public const int TextCategories = 7;
 
 	public const int ChangeRebind = 0;
 	public const int ChangeListen = 1;
@@ -68,6 +70,34 @@ internal static unsafe class NativeInput
 		}
 		value = new Vector2(read[0], read[1]);
 		return flags;
+	}
+
+	/// <summary>The actions a control serves, a line each, as input_uses writes them; empty without the engine.</summary>
+	public static string Uses(string path)
+	{
+		return Native.IsConnected ? ByPath(path, Native.Api->InputUses) : string.Empty;
+	}
+
+	/// <summary>A control as prompts name it; its path without the engine.</summary>
+	public static string Label(string path)
+	{
+		return Native.IsConnected ? ByPath(path, Native.Api->InputLabel) : path;
+	}
+
+	/// <summary>The text a native call writes about a control, asking again with room for all of it.</summary>
+	private static string ByPath(string path, delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> call)
+	{
+		var bytes = Encoding.UTF8.GetBytes(path);
+		fixed (byte* named = bytes)
+		{
+			var length = call(named, bytes.Length, null, 0);
+			var buffer = new byte[Math.Max(length, 0)];
+			fixed (byte* into = buffer)
+			{
+				call(named, bytes.Length, into, buffer.Length);
+			}
+			return Encoding.UTF8.GetString(buffer);
+		}
 	}
 
 	/// <summary>Text about input, or null when there is none.</summary>

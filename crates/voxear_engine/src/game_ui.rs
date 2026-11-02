@@ -6,6 +6,10 @@
 //! hold documents and elements as numbers, which [`UiNumbers`] keeps; the
 //! editor's Inspector keeps its own for the drawers scripts draw fields with.
 //!
+//! A key map (`KeymapView`) shows the keyboard and mouse or a gamepad with
+//! each control's actions, as scripts ask, filled from the game's input at
+//! the end of each frame ([`GameUi::follow_input`]).
+//!
 //! A label, button or toggle whose text is `@menu.play`, in a document or
 //! set from a script, shows that key's text in the game's language, and the
 //! game shows it again whenever the language or its text changes
@@ -20,12 +24,16 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use anyhow::{Context, Result};
+use voxear_input::{Input, Scheme};
 use voxear_localization::Localization;
 use voxear_render::Renderer;
 use voxear_scripting::{RowWork, UiAnswer, UiAsk};
 use voxear_ui::{ElementKind, Kind, ListItems, NodeId, Style, TreeItems, Ui, UiFrame};
 
-use crate::Content;
+use crate::{
+    Content,
+    keymaps::{self, KeymapColors, KeymapOptions},
+};
 
 /// What a script asks of an element's class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,8 +165,8 @@ impl UiNumbers {
             UiAsk::Value => return UiAnswer::Number(value(ui, node)),
             UiAsk::SetValue(to) => set_value(ui, node, to),
             UiAsk::SetStyle(style) => ui.set_inline_style(node, style),
-            // Only the game's own UI fills lists from scripts.
-            UiAsk::Items { .. } => {}
+            // Only the game's own UI fills lists and key maps from scripts.
+            UiAsk::Items { .. } | UiAsk::Keymap { .. } | UiAsk::KeymapClicked => {}
         }
         UiAnswer::None
     }
@@ -285,6 +293,8 @@ pub struct GameUi {
     /// The game's text as its keys' elements show it, by
     /// [`Localization::version`].
     language: Option<u64>,
+    /// The key maps scripts made, with the device each shows and how.
+    keymaps: HashMap<NodeId, (Scheme, KeymapOptions)>,
 }
 
 impl GameUi {
@@ -352,11 +362,39 @@ impl GameUi {
 
     /// Answers what a script asks of an element: see [`UiAsk`].
     pub fn ask(&mut self, element: u32, ask: UiAsk<'_>) -> UiAnswer {
-        if let UiAsk::Items { count, tree, item_height } = ask {
-            self.set_items(element, count, tree, item_height);
-            return UiAnswer::None;
+        match ask {
+            UiAsk::Items { count, tree, item_height } => self.set_items(element, count, tree, item_height),
+            UiAsk::Keymap { scheme, colors, hidden, map } => {
+                let Some(node) = self.numbers.node(element).filter(|&node| self.ui.is_keymap(node)) else {
+                    return UiAnswer::None;
+                };
+                let scheme = if scheme == 1 { Scheme::Gamepad } else { Scheme::KeyboardMouse };
+                let colors = if colors == 1 { KeymapColors::Categories } else { KeymapColors::Assigned };
+                let map = (!map.is_empty()).then(|| map.to_string());
+                // Shown as asked from the frame's end on.
+                self.keymaps.insert(node, (scheme, KeymapOptions { colors, show_hidden: hidden, map }));
+            }
+            UiAsk::KeymapClicked => {
+                let Some(node) = self.numbers.node(element) else { return UiAnswer::None };
+                let scheme = self.keymaps.get(&node).map_or(Scheme::KeyboardMouse, |(scheme, _)| *scheme);
+                let Some(at) = self.ui.keymap_clicked(node) else { return UiAnswer::None };
+                let layout = keymaps::layout_of(scheme);
+                return layout.controls.get(at).map_or(UiAnswer::None, |c| UiAnswer::Text(c.paths[0].clone()));
+            }
+            ask => return self.numbers.ask(&mut self.ui, element, ask),
         }
-        self.numbers.ask(&mut self.ui, element, ask)
+        UiAnswer::None
+    }
+
+    /// Shows each key map scripts made the game's input as they asked, as
+    /// it is now, with what was rebound. Once a frame.
+    pub fn follow_input(&mut self, input: &Input) {
+        self.keymaps.retain(|node, _| self.ui.is_keymap(*node));
+        let views: Vec<(NodeId, Scheme, KeymapOptions)> =
+            self.keymaps.iter().map(|(node, (scheme, options))| (*node, *scheme, options.clone())).collect();
+        for (node, scheme, options) in views {
+            self.ui.set_keymap(node, keymaps::keymap_data(input, scheme, &options));
+        }
     }
 
     /// Gives a list or tree view its items, each row `item_height` tall:

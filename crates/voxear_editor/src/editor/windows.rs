@@ -214,7 +214,8 @@ impl Editor {
     /// a side column.
     pub(super) fn open_panel(&mut self, id: &str) {
         match id {
-            "build" => self.ui.open_dock_panel_beside(self.nodes.dock, id, "scene"),
+            // Wide windows open over the Scene view.
+            "build" | "input" => self.ui.open_dock_panel_beside(self.nodes.dock, id, "scene"),
             _ => self.ui.open_dock_panel(self.nodes.dock, id),
         }
     }

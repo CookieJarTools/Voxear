@@ -3940,6 +3940,126 @@ fn audio_sources_show_in_the_scene_view_with_their_reach() {
     shot(&mut renderer, "audio-gizmos.png");
 }
 
+const ACTIONS_WITH_CATEGORIES: &str = r##"format = 1
+
+[[category]]
+name = "Movement"
+color = "#3fb950"
+
+[[category]]
+name = "Combat"
+color = "#a371f7"
+
+[[category]]
+name = "Utility"
+color = "#f0883e"
+
+[[map]]
+name = "Player"
+
+[[map.action]]
+name = "Move"
+type = "vector2"
+category = "Movement"
+bindings = [{ up = "Keyboard/W", down = "Keyboard/S", left = "Keyboard/A", right = "Keyboard/D" }, "Gamepad/LeftStick"]
+
+[[map.action]]
+name = "Jump"
+category = "Movement"
+bindings = ["Keyboard/Space", "Gamepad/South"]
+
+[[map.action]]
+name = "Sprint"
+category = "Movement"
+bindings = ["Keyboard/ShiftLeft", "Gamepad/LeftStickPress"]
+
+[[map.action]]
+name = "Attack"
+category = "Combat"
+bindings = ["Mouse/Left", "Gamepad/RightTrigger"]
+
+[[map.action]]
+name = "Block"
+category = "Combat"
+bindings = ["Mouse/Right", "Gamepad/LeftTrigger"]
+
+[[map.action]]
+name = "Cast Spell"
+category = "Combat"
+bindings = ["Keyboard/Q", "Gamepad/West"]
+
+[[map.action]]
+name = "Open Map"
+category = "Utility"
+bindings = ["Keyboard/M", "Gamepad/Select"]
+
+[[map.action]]
+name = "Inventory"
+category = "Utility"
+bindings = ["Keyboard/Tab", "Gamepad/North"]
+
+[[map.action]]
+name = "Look"
+type = "vector2"
+bindings = ["Mouse/Delta", "Gamepad/RightStick"]
+
+[[map.action]]
+name = "Pause"
+bindings = ["Keyboard/Escape", "Gamepad/Start"]
+
+[[map.action]]
+name = "Noclip"
+hidden = true
+bindings = ["Keyboard/F9"]
+"##;
+
+#[test]
+fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() {
+    use voxear_editor::PaletteKey;
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::write(dir.path().join("Controls.inputactions"), ACTIONS_WITH_CATEGORIES).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    editor.ui.focus(field);
+    frame(&mut editor, &mut renderer);
+    editor.ui.text_input("input actions");
+    frame(&mut editor, &mut renderer);
+    editor.palette_key(PaletteKey::Enter);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let keymap = editor.ui.find(editor.ui.root(), "input-keymap").expect("the Input Actions window");
+    let mut keys = Vec::new();
+    with_class(&editor.ui, keymap, "keymap-key", &mut keys);
+    let lit = |editor: &voxear_editor::Editor, keys: &[NodeId]| {
+        keys.iter().filter(|&&k| editor.ui.has_class(k, "assigned")).count()
+    };
+    assert_eq!(lit(&editor, &keys), 13, "W, A, S, D, Space, Shift, Q, M, Tab, Esc and the mouse's left, right and body");
+    let mut callouts = Vec::new();
+    with_class(&editor.ui, keymap, "keymap-callout", &mut callouts);
+    assert_eq!(callouts.len(), 13, "Noclip's F9 is hidden, unlabelled");
+    shot(&mut renderer, "input-actions-keyboard.png");
+
+    // Coloured by category, then the gamepad.
+    let colors = editor.ui.find(editor.ui.root(), "input-colors").unwrap();
+    let categories = editor.ui.children(colors)[1];
+    click(&mut editor.ui, categories);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "input-actions-categories.png");
+    let scheme = editor.ui.find(editor.ui.root(), "input-scheme").unwrap();
+    let pad = editor.ui.children(scheme)[1];
+    click(&mut editor.ui, pad);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut keys = Vec::new();
+    with_class(&editor.ui, keymap, "keymap-key", &mut keys);
+    assert_eq!(lit(&editor, &keys), 9, "Sprint shares the left stick, which it presses");
+    shot(&mut renderer, "input-actions-gamepad.png");
+}
+
 #[test]
 fn the_palette_pseudo_localises_the_games_text() {
     use voxear_editor::PaletteKey;

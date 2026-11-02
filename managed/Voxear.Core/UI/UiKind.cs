@@ -16,4 +16,5 @@ internal enum UiKind
 	Icon = 10,
 	ListView = 11,
 	TreeView = 12,
+	Keymap = 13,
 }

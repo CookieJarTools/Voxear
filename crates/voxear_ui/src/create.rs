@@ -24,11 +24,13 @@ pub enum ElementKind {
     /// A list whose rows its owner makes and fills, as the game's scripts do.
     ListView,
     TreeView,
+    /// A device drawn as its keys, with their actions; see [`crate::keymap`].
+    Keymap,
 }
 
 impl ElementKind {
     /// Every kind, in the order scripts number them.
-    pub const ALL: [ElementKind; 13] = [
+    pub const ALL: [ElementKind; 14] = [
         Self::Panel,
         Self::ScrollView,
         Self::Label,
@@ -42,6 +44,7 @@ impl ElementKind {
         Self::Icon,
         Self::ListView,
         Self::TreeView,
+        Self::Keymap,
     ];
 
     /// The kind scripts know by this number, or none.
@@ -88,6 +91,8 @@ impl Ui {
             // Empty until its owner gives it items, as a list declared in markup is.
             ElementKind::ListView => self.add(parent, Element::new(Kind::ListView, Style::column().scroll())),
             ElementKind::TreeView => self.add(parent, Element::new(Kind::TreeView, Style::column().scroll())),
+            // Empty until its owner gives it a device and its keys.
+            ElementKind::Keymap => self.keymap(parent),
         }
     }
 }

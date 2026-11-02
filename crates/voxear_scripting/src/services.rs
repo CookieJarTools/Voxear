@@ -248,6 +248,17 @@ pub enum UiAsk<'a> {
         tree: Option<&'a [[u64; 2]]>,
         item_height: f32,
     },
+    /// What a key map shows: the keyboard and mouse (0) or a gamepad (1),
+    /// coloured by being assigned (0) or by category (1), whether hidden
+    /// actions are labelled, and one map's actions, or every map's for "".
+    Keymap {
+        scheme: u8,
+        colors: u8,
+        hidden: bool,
+        map: &'a str,
+    },
+    /// The path of the control clicked on a key map since the last frame.
+    KeymapClicked,
 }
 
 /// What an element answered.

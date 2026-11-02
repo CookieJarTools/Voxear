@@ -14,10 +14,11 @@ You write your game's code in C#. A script that you put on an Obj is called a **
 8. [[Queries]]
 9. [[Custom Drawers]], to draw a field, or a whole behaviour, in the Inspector your own way
 10. [[Reading Input]], the keyboard, mouse and gamepads as actions players can rebind
-11. [[The Window and the Mouse]], its size and the pointer
-12. [[Saving the Game]], to keep progress between runs
-13. [[Drawing in the Scene]], lines, shapes and labels to see what your code is doing
-14. [[Editor Windows]], windows of your own in the editor, for the tools you build levels with
-15. [[Playing Sounds from Scripts]], effects, music and volume settings
+11. [[Showing the Controls]], the keyboard and pad drawn with their actions, and a screen to rebind them
+12. [[The Window and the Mouse]], its size and the pointer
+13. [[Saving the Game]], to keep progress between runs
+14. [[Drawing in the Scene]], lines, shapes and labels to see what your code is doing
+15. [[Editor Windows]], windows of your own in the editor, for the tools you build levels with
+16. [[Playing Sounds from Scripts]], effects, music and volume settings
 
 If you know Unity, much will feel familiar: Obj is Voxear's GameObject, and Behaviour its MonoBehaviour. [[How Scripts Run]] lists the few differences that catch people out.

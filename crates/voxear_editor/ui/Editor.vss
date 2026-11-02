@@ -3231,3 +3231,41 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     align-self: flex-start;
     margin: 6px 12px 4px 12px;
 }
+
+/* The Input Actions window: a bar over the key map, and its legend. */
+.input-panel {
+    flex-direction: column;
+    padding: 8px 10px;
+    gap: 8px;
+}
+
+.input-bar {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.input-legend {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+}
+
+.input-legend-entry {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
+.keymap-key.input-legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+}
+
+.input-legend-label {
+    color: var(--vx-muted);
+}

@@ -36,6 +36,20 @@
 //! - Its `interaction` says when it is performed: when pressed (the
 //!   default), `hold(seconds)` once held that long, or `tap(seconds)` when
 //!   let go within that long.
+//! - Its `category` groups it for key maps, which colour its keys by the
+//!   category's `color`, and `hidden = true` keeps it out of them, as for a
+//!   debug key:
+//!
+//! ```toml
+//! [[category]]
+//! name = "Movement"
+//! color = "#3fb950"
+//!
+//! [[map.action]]
+//! name = "Jump"
+//! category = "Movement"
+//! bindings = ["Keyboard/Space"]
+//! ```
 
 use std::collections::HashMap;
 
@@ -55,8 +69,20 @@ const STICK_DEADZONE: (f32, f32) = (0.125, 0.925);
 #[serde(deny_unknown_fields)]
 pub struct ActionsFile {
     pub format: u32,
+    #[serde(default, rename = "category", skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<CategoryData>,
     #[serde(default, rename = "map")]
     pub maps: Vec<MapData>,
+}
+
+/// A group of actions, as key maps colour them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CategoryData {
+    pub name: String,
+    /// `#rrggbb`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -75,6 +101,12 @@ pub struct ActionData {
     pub kind: ActionKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interaction: Option<String>,
+    /// The category key maps show it in, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Left out of key maps, as a debug key is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
     #[serde(default)]
     pub bindings: Vec<Binding>,
 }

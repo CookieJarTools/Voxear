@@ -1,6 +1,6 @@
 [package]
 name = "voxear_physics"
-description = "3D physics: Jolt Physics, vendored and built with the crate, behind a small C shim"
+description = "3D physics: Jolt Physics, vendored and built with the crate behind a small C shim, and the components that put Objs in it"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,8 +10,12 @@ build = "build.rs"
 links = "voxear_jolt"
 
 [dependencies]
+voxear_ecs.workspace = true
+voxear_scene.workspace = true
 anyhow.workspace = true
 glam.workspace = true
+serde.workspace = true
+tracing.workspace = true
 
 [build-dependencies]
 cc = { version = "1", features = ["parallel"] }

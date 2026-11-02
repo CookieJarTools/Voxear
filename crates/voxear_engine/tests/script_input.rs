@@ -86,7 +86,7 @@ fn scripts_read_actions_rebind_them_and_hear_their_events() {
     let mut game = Game::new(project, engine).unwrap();
     game.start(None).unwrap();
     let said = |log: &LogCapture, text: &str| log.lock().unwrap().lines.iter().any(|line| line.message == text);
-    let mut press = |game: &mut Game, key: &str, down: bool| {
+    let press = |game: &mut Game, key: &str, down: bool| {
         game.input.devices_mut().set_key(key, down);
         game.tick(1.0 / 60.0, None);
     };

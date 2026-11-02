@@ -10,7 +10,10 @@ use voxear_scene::{
 };
 use voxear_scripting::{Reloaded, ScriptRuntime};
 
-use crate::prefab::{FromPrefab, PrefabInstance, Template};
+use crate::{
+    physics::{PhysicsEvent, PhysicsScene},
+    prefab::{FromPrefab, PrefabInstance, Template},
+};
 
 /// Engine stages in run order. Behaviour callbacks run alongside them: see
 /// [`Engine::tick`].
@@ -32,11 +35,8 @@ pub struct Engine {
     fixed_accumulator: f32,
     /// The editor's edit mode: behaviours are kept as data, and no script runs.
     edit_mode: bool,
-    /// Physics for the Objs with colliders, made when the first is there
-    /// while the game plays.
-    physics: Option<crate::physics::PhysicsScene>,
     /// The contacts and trigger crossings this frame's physics steps found.
-    physics_events: Vec<crate::physics::PhysicsEvent>,
+    physics_events: Vec<PhysicsEvent>,
 }
 
 /// An Obj's behaviours and C# components in edit mode, as data: what the
@@ -80,7 +80,6 @@ impl Engine {
             time: Time::default(),
             fixed_accumulator: 0.0,
             edit_mode: false,
-            physics: None,
             physics_events: Vec::new(),
         }
     }
@@ -91,7 +90,7 @@ impl Engine {
     /// made afresh.
     pub fn set_edit_mode(&mut self, edit_mode: bool) {
         if edit_mode != self.edit_mode {
-            self.physics = None;
+            self.world.remove_resource::<PhysicsScene>();
         }
         self.edit_mode = edit_mode;
     }
@@ -499,46 +498,42 @@ impl Engine {
     }
 
     /// Moves physics on by a fixed step, after FixedUpdate as in Unity,
-    /// while the game plays and something has physics.
+    /// while the game plays and something has physics. The scene is kept
+    /// in the world, where scripts reach it, and taken out for the step.
     fn step_physics(&mut self) {
         if self.edit_mode {
             return;
         }
-        if self.physics.is_none() {
-            let colliders = self.world.query_ref::<&crate::physics::Collider>().into_iter().next().is_some();
-            let walkers = self.world.query_ref::<&crate::physics::CharacterController>().into_iter().next().is_some();
-            if !colliders && !walkers {
-                return;
-            }
-            self.physics = Some(crate::physics::PhysicsScene::new());
+        let mut physics = match self.world.remove_resource::<PhysicsScene>() {
+            Some(physics) => physics,
+            None if PhysicsScene::wanted(&self.world) => PhysicsScene::new(),
+            None => return,
+        };
+        {
+            profile_scope!("Physics");
+            physics.step(&mut self.world, self.time.fixed_delta);
         }
-        profile_scope!("Physics");
-        let dt = self.time.fixed_delta;
-        if let Some(physics) = self.physics.as_mut() {
-            physics.step(&mut self.world, dt);
-            self.physics_events.extend(physics.take_events());
+        let events = physics.take_events();
+        self.world.insert_resource(physics);
+        // As in Unity, OnCollisionEnter and the rest come straight after the step.
+        if let Some(scripts) = self.scripts.as_mut().filter(|_| !events.is_empty()) {
+            profile_scope!("Physics Messages");
+            scripts.physics_events(&mut self.world, &events);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+            self.flush();
         }
+        self.physics_events.extend(events);
     }
 
     /// The contacts and trigger crossings this frame's physics steps found.
-    pub fn physics_events(&self) -> &[crate::physics::PhysicsEvent] {
+    pub fn physics_events(&self) -> &[PhysicsEvent] {
         &self.physics_events
     }
 
-    /// Physics, once something with physics has played a step.
-    pub fn physics(&self) -> Option<&crate::physics::PhysicsScene> {
-        self.physics.as_ref()
-    }
-
-    pub fn physics_mut(&mut self) -> Option<&mut crate::physics::PhysicsScene> {
-        self.physics.as_mut()
-    }
-
-    /// The world and physics together, made if need be, as moving a
-    /// Character Controller from a script needs both.
-    pub fn world_and_physics(&mut self) -> (&mut World, &mut crate::physics::PhysicsScene) {
-        let physics = self.physics.get_or_insert_with(crate::physics::PhysicsScene::new);
-        (&mut self.world, physics)
+    /// Physics, once something with physics has played a step, or a
+    /// script has asked it something.
+    pub fn physics(&self) -> Option<&PhysicsScene> {
+        self.world.resource::<PhysicsScene>()
     }
 
     /// Awake, OnEnable, Start, OnDisable and OnDestroy for what changed.

@@ -19,8 +19,13 @@
 //! come after, from [`PhysicsWorld::take_contacts`]. Ray casts and point
 //! overlaps ask what is where. Y is up, and units are metres, kilograms and
 //! seconds.
+//!
+//! [`scene`] puts Objs in a world: their Collider, Rigidbody and Character
+//! Controller components, and the [`PhysicsScene`](scene::PhysicsScene)
+//! that keeps a body for each while the game plays.
 
 mod ffi;
+pub mod scene;
 
 use glam::{Quat, Vec3};
 
@@ -197,8 +202,11 @@ pub struct PhysicsWorld {
     world: *mut ffi::VxWorld,
 }
 
-// The world is used from one thread at a time; Jolt's own jobs run inside a step.
+// The world is changed from one thread at a time; Jolt's own jobs run inside
+// a step. What takes it shared only asks, through Jolt's body and query
+// interfaces, which lock what they read, so several threads may ask at once.
 unsafe impl Send for PhysicsWorld {}
+unsafe impl Sync for PhysicsWorld {}
 
 impl Default for PhysicsWorld {
     fn default() -> Self {
@@ -360,13 +368,22 @@ impl PhysicsWorld {
         unsafe { ffi::vx_body_user_data(self.world, body.0) }
     }
 
+    /// Wakes a body, or puts it to sleep until something moves it.
+    pub fn set_active(&mut self, body: BodyId, active: bool) {
+        unsafe { ffi::vx_body_set_active(self.world, body.0, active.into()) };
+    }
+
     /// The first body a ray meets from `origin`, going `direction`, whose
-    /// length is how far it reaches, passing over `ignore`.
-    pub fn raycast(&self, origin: Vec3, direction: Vec3, ignore: Option<BodyId>) -> Option<RayHit> {
+    /// length is how far it reaches, passing over `ignore`, and over
+    /// sensors unless `sensors`. As in Unity, a ray that starts inside a
+    /// shape passes out of it without meeting it.
+    pub fn raycast(&self, origin: Vec3, direction: Vec3, ignore: Option<BodyId>, sensors: bool) -> Option<RayHit> {
         let mut hit = ffi::VxHit::default();
         let (origin, direction) = (origin.to_array(), direction.to_array());
         let ignore = ignore.map_or(u32::MAX, |body| body.0);
-        let found = unsafe { ffi::vx_raycast(self.world, origin.as_ptr(), direction.as_ptr(), ignore, &mut hit) };
+        let flags = u32::from(sensors);
+        let found =
+            unsafe { ffi::vx_raycast(self.world, origin.as_ptr(), direction.as_ptr(), ignore, flags, &mut hit) };
         (found != 0).then(|| RayHit {
             body: BodyId(hit.body),
             fraction: hit.fraction,
@@ -383,6 +400,23 @@ impl PhysicsWorld {
         if count > 16 {
             found.resize(count as usize, 0);
             count = unsafe { ffi::vx_overlap_point(self.world, point.as_ptr(), found.as_mut_ptr(), count) };
+        }
+        found.truncate(count.max(0) as usize);
+        found.into_iter().map(BodyId).collect()
+    }
+
+    /// The bodies a sphere overlaps, each once, with sensors when `sensors`.
+    pub fn bodies_in_sphere(&self, center: Vec3, radius: f32, sensors: bool) -> Vec<BodyId> {
+        let center = center.to_array();
+        let flags = u32::from(sensors);
+        let overlap = |found: &mut Vec<u32>| unsafe {
+            ffi::vx_overlap_sphere(self.world, center.as_ptr(), radius, flags, found.as_mut_ptr(), found.len() as i32)
+        };
+        let mut found = vec![0u32; 32];
+        let count = overlap(&mut found);
+        if count > 32 {
+            found.resize(count as usize, 0);
+            overlap(&mut found);
         }
         found.truncate(count.max(0) as usize);
         found.into_iter().map(BodyId).collect()
@@ -516,12 +550,28 @@ mod tests {
     fn rays_meet_the_nearest_body_and_points_find_what_holds_them() {
         let mut world = PhysicsWorld::new(1024);
         let (ground, crate_) = ground_and_crate(&mut world);
-        let hit = world.raycast(Vec3::new(0.0, 10.0, 0.0), Vec3::new(0.0, -20.0, 0.0), None).expect("a hit");
+        let down = Vec3::new(0.0, -20.0, 0.0);
+        let hit = world.raycast(Vec3::new(0.0, 10.0, 0.0), down, None, false).expect("a hit");
         assert_eq!(hit.body, crate_);
         assert!((hit.point.y - 5.5).abs() < 0.01 && hit.normal.y > 0.99, "{hit:?}");
-        let past = world.raycast(Vec3::new(0.0, 10.0, 0.0), Vec3::new(0.0, -20.0, 0.0), Some(crate_)).unwrap();
+        let past = world.raycast(Vec3::new(0.0, 10.0, 0.0), down, Some(crate_), false).unwrap();
         assert_eq!(past.body, ground, "past the crate when it is passed over");
+        let inside = world.raycast(Vec3::new(0.0, 5.0, 0.0), down, None, false).unwrap();
+        assert_eq!(inside.body, ground, "out of the crate it starts in, as in Unity");
         assert_eq!(world.bodies_at(Vec3::new(0.0, 5.0, 0.0)), [crate_]);
+
+        // A sphere finds what it touches; a sensor only when asked for.
+        let zone = world.box_shape(Vec3::splat(1.0));
+        let mut desc = BodyDesc::new(zone, Motion::Static).at(Vec3::new(0.0, 8.0, 0.0), Quat::IDENTITY);
+        desc.sensor = true;
+        let zone = world.add_body(&desc).unwrap();
+        assert_eq!(world.bodies_in_sphere(Vec3::new(0.0, 6.0, 0.0), 1.2, false), [crate_]);
+        let mut both = world.bodies_in_sphere(Vec3::new(0.0, 6.0, 0.0), 1.2, true);
+        both.sort();
+        let mut expected = [crate_, zone];
+        expected.sort();
+        assert_eq!(both, expected);
+        assert_eq!(world.raycast(Vec3::new(0.0, 10.0, 0.0), down, None, true).unwrap().body, zone);
     }
 
     #[test]

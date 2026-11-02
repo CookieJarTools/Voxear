@@ -13,6 +13,7 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game,
     audio::AudioSource,
+    physics::{CharacterController, Collider, Rigidbody},
     script_types::{FieldKind, ScriptTypes, nice_name, same_field},
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Destroying, EditorOnly, Name};
@@ -546,6 +547,9 @@ pub fn takes(kind: &FieldKind) -> &str {
 fn has_component(world: &World, entity: Entity, name: &str) -> bool {
     match short(name) {
         "AudioSource" => world.has::<AudioSource>(entity),
+        "Collider" => world.has::<Collider>(entity),
+        "Rigidbody" => world.has::<Rigidbody>(entity),
+        "CharacterController" => world.has::<CharacterController>(entity),
         _ => false,
     }
 }

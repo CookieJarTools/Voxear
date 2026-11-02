@@ -17,7 +17,7 @@ mod levels;
 mod loading;
 pub mod memory;
 pub mod new_project;
-pub mod physics;
+pub use voxear_physics::scene as physics;
 pub mod player;
 pub mod player_build;
 pub mod prefab;

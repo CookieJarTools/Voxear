@@ -98,6 +98,43 @@ public abstract class Behaviour
 	}
 
 	/// <summary>
+	/// Called when the Obj's collider first touches another, straight after the physics step, as in Unity. One of the
+	/// two must have a Rigidbody. Disabled behaviours are told too, so they can enable themselves.
+	/// </summary>
+	protected virtual void OnCollisionEnter(Collision collision)
+	{
+	}
+
+	/// <summary>Called when the Obj's collider stops touching another. A body asleep on another still touches it.</summary>
+	protected virtual void OnCollisionExit(Collision collision)
+	{
+	}
+
+	/// <summary>
+	/// Called when a collider enters the Obj's trigger, or the Obj enters another's trigger: a checkpoint passed, or a
+	/// door that opens as the player comes near. Triggers notice Objs with a Rigidbody, and characters.
+	/// </summary>
+	protected virtual void OnTriggerEnter(Collider other)
+	{
+	}
+
+	/// <summary>Called when a collider leaves the Obj's trigger, or the Obj leaves another's trigger.</summary>
+	protected virtual void OnTriggerExit(Collider other)
+	{
+	}
+
+	internal void Collide(uint kind, Collision collision)
+	{
+		switch (kind)
+		{
+			case PhysicsEventData.CollisionEnter: OnCollisionEnter(collision); break;
+			case PhysicsEventData.CollisionExit: OnCollisionExit(collision); break;
+			case PhysicsEventData.TriggerEnter: OnTriggerEnter(collision.Collider); break;
+			case PhysicsEventData.TriggerExit: OnTriggerExit(collision.Collider); break;
+		}
+	}
+
+	/// <summary>
 	/// Draws the behaviour's gizmos with Draw, each frame, in the editor's Scene views: in edit mode, from the values
 	/// the scene gives it, and while the game plays. They show while the Scene view's Gizmos button is on, and never
 	/// in the Game view or a build. One callback in place of Unity's two: gizmo.IsSelected says whether to show more.

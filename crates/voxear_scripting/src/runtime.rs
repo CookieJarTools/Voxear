@@ -12,6 +12,7 @@ use voxear_scene::{BehaviourHandle, BehaviourHost, BehaviourSpec, Callbacks, Pha
 use crate::{
     hostfxr::{DotnetInstall, Runtime},
     interop::{self, BehaviourInfo, FLAG_GONE, FLAG_INSTANCE, ManagedApi, NativeApi, WorldScope},
+    physics::PhysicsEventData,
     saves::{self, SaveSettings},
 };
 
@@ -107,7 +108,8 @@ impl ScriptRuntime {
                 && managed.console_names.is_some()
                 && managed.run_check.is_some()
                 && managed.inspector_call.is_some()
-                && managed.managed_memory.is_some(),
+                && managed.managed_memory.is_some()
+                && managed.physics_events.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -360,6 +362,19 @@ impl ScriptRuntime {
         let update = self.managed.update.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { update() };
+    }
+
+    /// Tells behaviours of a physics step's contacts and trigger
+    /// crossings, as `OnCollisionEnter`, `OnTriggerExit` and the rest,
+    /// each Obj in one told of it.
+    pub fn physics_events(&mut self, world: &mut World, events: &[voxear_physics::scene::PhysicsEvent]) {
+        if events.is_empty() {
+            return;
+        }
+        let send = self.managed.physics_events.expect("validated at start");
+        let data: Vec<PhysicsEventData> = events.iter().flat_map(PhysicsEventData::both).collect();
+        let _scope = WorldScope::enter(world);
+        unsafe { send(data.as_ptr(), data.len() as i32) };
     }
 
     /// Objs scripts asked to destroy since the last call.

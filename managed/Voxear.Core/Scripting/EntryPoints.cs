@@ -203,6 +203,13 @@ internal static unsafe class EntryPoints
 		return written;
 	}
 
+	/// <summary>Tells each Obj's behaviours of the last physics step's contacts and trigger crossings.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void PhysicsEvents(PhysicsEventData* events, int count)
+	{
+		PhysicsMessages.Dispatch(new ReadOnlySpan<PhysicsEventData>(events, count));
+	}
+
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static int ContentRoots(byte* buffer, int capacity)
 	{

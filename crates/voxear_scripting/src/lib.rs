@@ -15,6 +15,7 @@ mod hostfxr;
 mod input;
 mod inspector;
 mod interop;
+mod physics;
 mod playing;
 mod runtime;
 mod saves;

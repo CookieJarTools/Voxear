@@ -15,6 +15,7 @@
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollidePointResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -23,7 +24,6 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
-#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
@@ -34,6 +34,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <mutex>
 #include <thread>
@@ -392,19 +393,48 @@ void vx_body_push(VxWorld *world, uint32_t body, uint32_t kind, const float amou
 
 int vx_body_is_active(VxWorld *world, uint32_t body) { return world->system.GetBodyInterface().IsActive(id_of(body)) ? 1 : 0; }
 
+// Wakes a body, or puts it to sleep until something moves it.
+void vx_body_set_active(VxWorld *world, uint32_t body, int active) {
+	if (active != 0) {
+		world->system.GetBodyInterface().ActivateBody(id_of(body));
+	} else {
+		world->system.GetBodyInterface().DeactivateBody(id_of(body));
+	}
+}
+
 uint64_t vx_body_user_data(VxWorld *world, uint32_t body) { return world->system.GetBodyInterface().GetUserData(id_of(body)); }
 
 // Queries.
 
-int vx_raycast(VxWorld *world, const float origin[3], const float direction[3], uint32_t ignore, VxHit *hit) {
+// What a query passes over: one body, and sensors unless `sensors`.
+class QueryFilter : public BodyFilter {
+public:
+	QueryFilter(uint32_t ignore, bool sensors) : ignore(id_of(ignore)), sensors(sensors) {}
+	bool ShouldCollide(const BodyID &body) const override { return body != ignore; }
+	bool ShouldCollideLocked(const Body &body) const override { return sensors || !body.IsSensor(); }
+
+private:
+	BodyID ignore;
+	bool sensors;
+};
+
+// The query flags: 1 counts sensors (triggers) too.
+constexpr uint32_t QUERY_SENSORS = 1;
+
+// The nearest body a ray meets. As in Unity, a ray that starts inside a
+// shape passes out of it without meeting it.
+int vx_raycast(VxWorld *world, const float origin[3], const float direction[3], uint32_t ignore, uint32_t flags, VxHit *hit) {
 	RRayCast ray { RVec3(origin[0], origin[1], origin[2]), Vec3(direction[0], direction[1], direction[2]) };
-	RayCastResult result;
-	IgnoreSingleBodyFilter skip(id_of(ignore));
-	BodyFilter none;
-	const BodyFilter &filter = ignore == BodyID::cInvalidBodyID ? none : static_cast<const BodyFilter &>(skip);
-	if (!world->system.GetNarrowPhaseQuery().CastRay(ray, result, {}, {}, filter)) {
+	RayCastSettings settings;
+	settings.mTreatConvexAsSolid = false;
+	settings.SetBackFaceMode(EBackFaceMode::IgnoreBackFaces);
+	ClosestHitCollisionCollector<CastRayCollector> found;
+	QueryFilter filter(ignore, (flags & QUERY_SENSORS) != 0);
+	world->system.GetNarrowPhaseQuery().CastRay(ray, settings, found, {}, {}, filter);
+	if (!found.HadHit()) {
 		return 0;
 	}
+	const RayCastResult &result = found.mHit;
 	RVec3 point = ray.GetPointOnRay(result.mFraction);
 	hit->body = result.mBodyID.GetIndexAndSequenceNumber();
 	hit->fraction = result.mFraction;
@@ -431,6 +461,28 @@ int vx_overlap_point(VxWorld *world, const float point[3], uint32_t *bodies, int
 		++count;
 	}
 	return count;
+}
+
+// The bodies a sphere overlaps, each once, up to `capacity`; returns how many.
+int vx_overlap_sphere(VxWorld *world, const float center[3], float radius, uint32_t flags, uint32_t *bodies, int capacity) {
+	SphereShape sphere(std::max(radius, 1.0e-4f));
+	sphere.SetEmbedded();
+	CollideShapeSettings settings;
+	AllHitCollisionCollector<CollideShapeCollector> found;
+	QueryFilter filter(BodyID::cInvalidBodyID, (flags & QUERY_SENSORS) != 0);
+	RMat44 at = RMat44::sTranslation(RVec3(center[0], center[1], center[2]));
+	world->system.GetNarrowPhaseQuery().CollideShape(&sphere, Vec3::sOne(), at, settings, RVec3::sZero(), found, {}, {}, filter);
+	std::vector<BodyID> seen;
+	for (const CollideShapeResult &hit : found.mHits) {
+		if (std::find(seen.begin(), seen.end(), hit.mBodyID2) != seen.end()) {
+			continue;
+		}
+		if (int(seen.size()) < capacity) {
+			bodies[seen.size()] = hit.mBodyID2.GetIndexAndSequenceNumber();
+		}
+		seen.push_back(hit.mBodyID2);
+	}
+	return int(seen.size());
 }
 
 // Contacts since the last call, up to `capacity`, oldest first; returns how

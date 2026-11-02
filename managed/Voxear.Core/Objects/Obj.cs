@@ -194,6 +194,36 @@ public readonly struct Obj : IEquatable<Obj>
 		return this;
 	}
 
+	/// <summary>The Obj's Collider, its shape for physics. Not valid when it has none.</summary>
+	public Collider Collider => new Collider(this);
+
+	/// <summary>Gives the Obj a Collider of a shape, unless it has one, and returns it.</summary>
+	public Collider AddCollider(ColliderShape shape = ColliderShape.Box)
+	{
+		NativePhysics.Set(this, NativePhysics.ColliderAdd, new Vector4((int)shape, 0f, 0f, 0f));
+		return new Collider(this);
+	}
+
+	/// <summary>The Obj's Rigidbody, which hands it to physics. Not valid when it has none.</summary>
+	public Rigidbody Rigidbody => new Rigidbody(this);
+
+	/// <summary>Gives the Obj a Rigidbody, unless it has one, and returns it. It needs a Collider too, for a shape.</summary>
+	public Rigidbody AddRigidbody()
+	{
+		NativePhysics.Set(this, NativePhysics.BodyAdd, Vector4.Zero);
+		return new Rigidbody(this);
+	}
+
+	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
+	public CharacterController CharacterController => new CharacterController(this);
+
+	/// <summary>Gives the Obj a Character Controller, unless it has one, and returns it.</summary>
+	public CharacterController AddCharacterController()
+	{
+		NativePhysics.Set(this, NativePhysics.CharacterAdd, Vector4.Zero);
+		return new CharacterController(this);
+	}
+
 	/// <summary>The Obj's Audio Source, which plays a sound from it. Not valid when it has none.</summary>
 	public AudioSource AudioSource => new AudioSource(this);
 

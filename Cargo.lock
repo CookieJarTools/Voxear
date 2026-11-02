@@ -3445,6 +3445,10 @@ dependencies = [
  "anyhow",
  "cc",
  "glam",
+ "serde",
+ "tracing",
+ "voxear_ecs",
+ "voxear_scene",
 ]
 
 [[package]]
@@ -3509,6 +3513,7 @@ dependencies = [
  "voxear_core",
  "voxear_ecs",
  "voxear_input",
+ "voxear_physics",
  "voxear_scene",
 ]
 

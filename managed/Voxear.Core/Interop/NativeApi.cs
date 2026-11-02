@@ -105,4 +105,9 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<byte*, int, float*, int> InputControl;
 	public delegate* unmanaged[Cdecl]<int, int, byte*, int, int> InputText;
 	public delegate* unmanaged[Cdecl]<int, int, int, int, byte*, int, int> InputChange;
+	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> PhysicsValue;
+	public delegate* unmanaged[Cdecl]<ulong, int, float*, float*, int> PhysicsPush;
+	public delegate* unmanaged[Cdecl]<float*, float*, float, int, RaycastHitData*, int> PhysicsRaycast;
+	public delegate* unmanaged[Cdecl]<float*, float, int, ulong*, int, int> PhysicsOverlap;
+	public delegate* unmanaged[Cdecl]<ulong, float*, float, CharacterMoveData*, int> CharacterMove;
 }

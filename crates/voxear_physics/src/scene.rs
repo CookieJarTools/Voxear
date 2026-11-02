@@ -27,11 +27,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
-use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_physics::{BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, Motion, PhysicsWorld, ShapeId};
 use voxear_scene::{Destroying, Parent, Transform};
+
+use crate::{BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, Motion, PhysicsWorld, ShapeId};
 
 /// A collider's shape.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +171,34 @@ struct Kept {
     placed: (Vec3, Quat),
 }
 
+/// A Character Controller's character, what it was made from, where its
+/// Obj was last, and how its last move went.
+struct Walker {
+    id: CharacterId,
+    controller: CharacterController,
+    placed: Vec3,
+    state: Option<CharacterState>,
+}
+
+/// Where an Obj is and where its body was put last are the same place:
+/// near enough, and a turn and its negative alike.
+fn same_place(a: (Vec3, Quat), b: (Vec3, Quat)) -> bool {
+    a.0.abs_diff_eq(b.0, 1e-4) && a.1.dot(b.1).abs() > 1.0 - 1e-6
+}
+
+/// Where a ray met an Obj's collider.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneHit {
+    pub obj: Entity,
+    pub point: Vec3,
+    pub normal: Vec3,
+    /// How far from where the ray started, in metres.
+    pub distance: f32,
+}
+
+/// How far a ray reaches when it is told to reach forever.
+const FOREVER: f32 = 1.0e6;
+
 /// Two Objs that began or stopped touching in a step, or a trigger and
 /// what entered or left it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -191,8 +220,12 @@ pub struct PhysicsScene {
     world: PhysicsWorld,
     bodies: HashMap<Entity, Kept>,
     owners: HashMap<BodyId, Entity>,
-    characters: HashMap<Entity, (CharacterId, CharacterController)>,
+    characters: HashMap<Entity, Walker>,
     events: Vec<PhysicsEvent>,
+    gravity: Vec3,
+    /// Whether it has stepped: until then, a script's question brings its
+    /// bodies to where their Objs are first.
+    stepped: bool,
     /// The pairs of Objs touching, by [`pair`].
     touching: HashSet<(Entity, Entity)>,
     /// Touching pairs Jolt stopped telling of without their parting: one
@@ -220,9 +253,76 @@ impl PhysicsScene {
             owners: HashMap::new(),
             characters: HashMap::new(),
             events: Vec::new(),
+            gravity: Vec3::new(0.0, -9.81, 0.0),
+            stepped: false,
             touching: HashSet::new(),
             unsure: HashMap::new(),
         }
+    }
+
+    /// Whether a world has anything for physics to do: an Obj with a
+    /// Collider or a Character Controller.
+    pub fn wanted(world: &World) -> bool {
+        world.query_ref::<&Collider>().into_iter().next().is_some()
+            || world.query_ref::<&CharacterController>().into_iter().next().is_some()
+    }
+
+    /// Which way and how hard everything falls, in metres per second per second.
+    pub fn gravity(&self) -> Vec3 {
+        self.gravity
+    }
+
+    pub fn set_gravity(&mut self, gravity: Vec3) {
+        self.gravity = gravity;
+        self.world.set_gravity(gravity);
+    }
+
+    /// Brings the bodies to where their Objs are, before the first step,
+    /// so that a script's question in `Start` finds them.
+    pub fn ready(&mut self, world: &World) {
+        if !self.stepped {
+            self.sync(world, 0.0);
+        }
+    }
+
+    /// The body of an Obj's collider, made or made again now if its
+    /// collider, Rigidbody or scale changed since the last step, so that
+    /// a script can push a body it has only just given a Rigidbody.
+    pub fn body_now(&mut self, world: &World, entity: Entity) -> Option<BodyId> {
+        let collider = *world.get::<Collider>(entity)?;
+        self.sync_body(world, entity, collider, 0.0);
+        self.body(entity)
+    }
+
+    /// The first collider a ray from `origin` meets along `direction`
+    /// within `distance` metres, passing over triggers unless `triggers`.
+    /// As in Unity, a ray that starts inside a collider passes out of it.
+    pub fn raycast(&self, origin: Vec3, direction: Vec3, distance: f32, triggers: bool) -> Option<SceneHit> {
+        let direction = direction.normalize_or_zero();
+        if direction == Vec3::ZERO || distance.is_nan() || distance <= 0.0 {
+            return None;
+        }
+        let reach = distance.min(FOREVER);
+        let hit = self.world.raycast(origin, direction * reach, None, triggers)?;
+        let obj = self.owner(hit.body)?;
+        Some(SceneHit { obj, point: hit.point, normal: hit.normal, distance: hit.fraction * reach })
+    }
+
+    /// The Objs whose colliders a sphere overlaps, each once, with
+    /// triggers when `triggers`.
+    pub fn overlap_sphere(&self, center: Vec3, radius: f32, triggers: bool) -> Vec<Entity> {
+        let mut objs: Vec<Entity> = Vec::new();
+        for body in self.world.bodies_in_sphere(center, radius, triggers) {
+            if let Some(obj) = self.owner(body).filter(|obj| !objs.contains(obj)) {
+                objs.push(obj);
+            }
+        }
+        objs
+    }
+
+    /// How an Obj's Character Controller's last move went.
+    pub fn character_state(&self, entity: Entity) -> Option<CharacterState> {
+        self.characters.get(&entity)?.state
     }
 
     /// Whether two Objs' colliders are touching, or one is inside the other's trigger.
@@ -258,12 +358,13 @@ impl PhysicsScene {
     /// where physics put them, and the step's contacts noted.
     pub fn step(&mut self, world: &mut World, dt: f32) {
         self.sync(world, dt);
+        self.stepped = true;
         self.world.step(dt, 1);
         self.write_back(world);
         self.note_contacts();
     }
 
-    fn sync(&mut self, world: &mut World, dt: f32) {
+    fn sync(&mut self, world: &World, dt: f32) {
         let colliders: Vec<(Entity, Collider)> = world
             .query_ref::<(Entity, &Collider)>()
             .without::<Destroying>()
@@ -277,34 +378,34 @@ impl PhysicsScene {
             self.forget(entity);
         }
         for (entity, collider) in colliders {
-            let (scale, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
-            let key = BodyKey { collider, rigidbody: world.get::<Rigidbody>(entity).copied(), scale };
-            match self.bodies.get(&entity) {
-                Some(kept) if kept.key == key => {
-                    let moved =
-                        !kept.placed.0.abs_diff_eq(position, 1e-5) || !kept.placed.1.abs_diff_eq(rotation, 1e-5);
-                    let dynamic = key.rigidbody.is_some_and(|body| !body.kinematic);
-                    if moved && !dynamic {
-                        let body = kept.body;
-                        match key.rigidbody.is_some() {
-                            true => self.world.move_kinematic(body, position, rotation, dt),
-                            false => self.world.set_transform(body, position, rotation),
-                        }
-                        if let Some(kept) = self.bodies.get_mut(&entity) {
-                            kept.placed = (position, rotation);
-                        }
-                    }
-                }
-                had => {
-                    if had.is_some() {
-                        self.doubt(entity);
-                    }
-                    self.remove(entity);
-                    self.add(entity, key, position, rotation);
-                }
-            }
+            self.sync_body(world, entity, collider, dt);
         }
         self.sync_characters(world);
+    }
+
+    /// Brings an Obj's body to its collider and its Obj: made again when
+    /// either changed, and moved where the game put the Obj, a kinematic
+    /// body over the step and any other at once, as Unity teleports a
+    /// Rigidbody whose Transform is set.
+    fn sync_body(&mut self, world: &World, entity: Entity, collider: Collider, dt: f32) {
+        let (scale, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
+        let key = BodyKey { collider, rigidbody: world.get::<Rigidbody>(entity).copied(), scale };
+        let Some(kept) = self.bodies.get_mut(&entity).filter(|kept| kept.key == key) else {
+            if self.bodies.contains_key(&entity) {
+                self.doubt(entity);
+            }
+            self.remove(entity);
+            return self.add(entity, key, position, rotation);
+        };
+        if same_place(kept.placed, (position, rotation)) {
+            return;
+        }
+        kept.placed = (position, rotation);
+        let body = kept.body;
+        match key.rigidbody.is_some_and(|body| body.kinematic) && dt > 0.0 {
+            true => self.world.move_kinematic(body, position, rotation, dt),
+            false => self.world.set_transform(body, position, rotation),
+        }
     }
 
     fn add(&mut self, entity: Entity, key: BodyKey, position: Vec3, rotation: Quat) {
@@ -443,11 +544,11 @@ impl PhysicsScene {
     }
 
     fn remove_character(&mut self, entity: Entity) {
-        let Some((character, _)) = self.characters.remove(&entity) else { return };
-        if let Some(body) = self.world.character_body(character) {
+        let Some(walker) = self.characters.remove(&entity) else { return };
+        if let Some(body) = self.world.character_body(walker.id) {
             self.owners.remove(&body);
         }
-        self.world.remove_character(character);
+        self.world.remove_character(walker.id);
     }
 
     /// Whether an Obj's body is one physics moves that has gone to sleep.
@@ -474,27 +575,40 @@ impl PhysicsScene {
             self.forget(entity);
         }
         for (entity, controller) in wanted {
-            match self.characters.get(&entity) {
-                Some((_, had)) if *had == controller => continue,
-                Some(_) => self.doubt(entity),
-                None => {}
-            }
-            self.remove_character(entity);
-            let position = voxear_scene::world_matrix(world, entity).w_axis.truncate();
-            let desc = CharacterDesc {
-                position,
-                height: controller.height,
-                radius: controller.radius,
-                max_slope: controller.slope_limit,
-                step_height: controller.step_offset,
-                ..CharacterDesc::default()
-            };
-            let character = self.world.add_character(&desc);
-            if let Some(body) = self.world.character_body(character) {
-                self.owners.insert(body, entity);
-            }
-            self.characters.insert(entity, (character, controller));
+            self.sync_character(world, entity, controller);
         }
+    }
+
+    /// Brings an Obj's character to its Character Controller, made again
+    /// when that changed, and to where the game put the Obj.
+    fn sync_character(&mut self, world: &World, entity: Entity, controller: CharacterController) {
+        let position = voxear_scene::world_matrix(world, entity).w_axis.truncate();
+        match self.characters.get_mut(&entity) {
+            Some(walker) if walker.controller == controller => {
+                if !walker.placed.abs_diff_eq(position, 1e-4) {
+                    walker.placed = position;
+                    let id = walker.id;
+                    self.world.set_character_position(id, position);
+                }
+                return;
+            }
+            Some(_) => self.doubt(entity),
+            None => {}
+        }
+        self.remove_character(entity);
+        let desc = CharacterDesc {
+            position,
+            height: controller.height,
+            radius: controller.radius,
+            max_slope: controller.slope_limit,
+            step_height: controller.step_offset,
+            ..CharacterDesc::default()
+        };
+        let character = self.world.add_character(&desc);
+        if let Some(body) = self.world.character_body(character) {
+            self.owners.insert(body, entity);
+        }
+        self.characters.insert(entity, Walker { id: character, controller, placed: position, state: None });
     }
 
     /// Moves an Obj's Character Controller at `velocity` for `dt` seconds,
@@ -507,14 +621,12 @@ impl PhysicsScene {
         velocity: Vec3,
         dt: f32,
     ) -> Option<CharacterState> {
-        if !self.characters.contains_key(&entity) {
-            self.sync_characters(world);
-        }
-        let (character, controller) = *self.characters.get(&entity)?;
-        // Where the game put the Obj since, the character goes too.
-        let at = voxear_scene::world_matrix(world, entity).w_axis.truncate();
-        self.world.set_character_position(character, at);
-        let state = self.world.move_character(character, velocity, dt, controller.step_offset);
+        let controller = *world.get::<CharacterController>(entity)?;
+        self.sync_character(world, entity, controller);
+        let walker = self.characters.get_mut(&entity)?;
+        let state = self.world.move_character(walker.id, velocity, dt, walker.controller.step_offset);
+        walker.placed = state.position;
+        walker.state = Some(state);
         let parent = world.get::<Parent>(entity).map(|parent| voxear_scene::world_matrix(world, parent.0));
         let local = parent.map_or(state.position, |parent| parent.inverse().transform_point3(state.position));
         if let Some(transform) = world.get_mut::<Transform>(entity) {
@@ -647,6 +759,12 @@ mod tests {
         assert!((y - 0.5).abs() < 0.05, "it rests on the ground: {y}");
         assert!(events.iter().any(|e| e.began && !e.trigger && [e.a, e.b].contains(&ground)), "{events:?}");
 
+        // Put somewhere by the game, a dynamic body goes there, as Unity's does.
+        world.get_mut::<Transform>(falling).unwrap().position = Vec3::new(3.0, 6.0, 0.0);
+        physics.step(&mut world, 1.0 / 60.0);
+        let moved = world.get::<Transform>(falling).unwrap().position;
+        assert!(moved.x == 3.0 && moved.y > 5.9 && moved.y < 6.0, "falling again from there: {moved}");
+
         // Taken out, its body goes; the ground's stays, unmoved by the game.
         world.remove::<Collider>(falling);
         physics.step(&mut world, 1.0 / 60.0);
@@ -669,7 +787,7 @@ mod tests {
         }
         let z = world.get::<Transform>(walker).unwrap().position.z;
         assert!((z - 2.0).abs() < 0.1, "two metres on in a second: {z}");
-        assert_eq!(state.map(|s| s.ground), Some(voxear_physics::Ground::Ground));
+        assert_eq!(state.map(|s| s.ground), Some(crate::Ground::Ground));
     }
 
     #[test]

@@ -235,6 +235,26 @@ pub(crate) struct NativeApi {
     pub input_text: unsafe extern "C" fn(what: i32, action: i32, buffer: *mut u8, capacity: i32) -> i32,
     pub input_change:
         unsafe extern "C" fn(what: i32, action: i32, binding: i32, extra: i32, text: *const u8, len: i32) -> i32,
+    /// Physics, for `Collider`, `Rigidbody`, `CharacterController` and
+    /// `Physics` (see [`crate::physics`]): a value read or written, a
+    /// push, a ray, a sphere's overlaps, and a character's move.
+    pub physics_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    pub physics_push: unsafe extern "C" fn(entity: u64, kind: i32, amount: *const [f32; 3], at: *const [f32; 3]) -> i32,
+    pub physics_raycast: unsafe extern "C" fn(
+        origin: *const [f32; 3],
+        direction: *const [f32; 3],
+        distance: f32,
+        flags: i32,
+        hit: *mut crate::physics::RaycastHitData,
+    ) -> i32,
+    pub physics_overlap:
+        unsafe extern "C" fn(center: *const [f32; 3], radius: f32, flags: i32, objs: *mut u64, capacity: i32) -> i32,
+    pub character_move: unsafe extern "C" fn(
+        entity: u64,
+        motion: *const [f32; 3],
+        dt: f32,
+        state: *mut crate::physics::CharacterMoveData,
+    ) -> i32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -313,6 +333,10 @@ pub(crate) struct ManagedApi {
     /// The managed heap's numbers, as many as fit: see
     /// [`ManagedMemory`](crate::ManagedMemory).
     pub managed_memory: Option<unsafe extern "C" fn(values: *mut u64, count: i32) -> i32>,
+    /// Tells each Obj's behaviours of the last physics step's contacts and
+    /// trigger crossings (`OnCollisionEnter` and the rest), each event
+    /// once for each Obj in it.
+    pub physics_events: Option<unsafe extern "C" fn(events: *const crate::physics::PhysicsEventData, count: i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(
@@ -1024,6 +1048,11 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         input_control: crate::input::input_control,
         input_text: crate::input::input_text,
         input_change: crate::input::input_change,
+        physics_value: crate::physics::physics_value,
+        physics_push: crate::physics::physics_push,
+        physics_raycast: crate::physics::physics_raycast,
+        physics_overlap: crate::physics::physics_overlap,
+        character_move: crate::physics::character_move,
     }
 }
 

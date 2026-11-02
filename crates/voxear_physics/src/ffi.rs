@@ -100,6 +100,7 @@ unsafe extern "C" {
     pub fn vx_body_set_velocity(world: *mut VxWorld, body: u32, linear: *const f32, angular: *const f32);
     pub fn vx_body_push(world: *mut VxWorld, body: u32, kind: u32, amount: *const f32, at: *const f32);
     pub fn vx_body_is_active(world: *mut VxWorld, body: u32) -> c_int;
+    pub fn vx_body_set_active(world: *mut VxWorld, body: u32, active: c_int);
     pub fn vx_body_user_data(world: *mut VxWorld, body: u32) -> u64;
 
     pub fn vx_raycast(
@@ -107,9 +108,18 @@ unsafe extern "C" {
         origin: *const f32,
         direction: *const f32,
         ignore: u32,
+        flags: u32,
         hit: *mut VxHit,
     ) -> c_int;
     pub fn vx_overlap_point(world: *mut VxWorld, point: *const f32, bodies: *mut u32, capacity: c_int) -> c_int;
+    pub fn vx_overlap_sphere(
+        world: *mut VxWorld,
+        center: *const f32,
+        radius: f32,
+        flags: u32,
+        bodies: *mut u32,
+        capacity: c_int,
+    ) -> c_int;
     pub fn vx_contacts(world: *mut VxWorld, out: *mut VxContact, capacity: c_int) -> c_int;
 
     pub fn vx_character_add(world: *mut VxWorld, desc: *const VxCharacterDesc) -> u32;

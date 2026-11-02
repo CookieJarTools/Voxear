@@ -39,6 +39,7 @@ internal static unsafe class Bootstrap
 		managed->RunCheck = &EntryPoints.RunCheck;
 		managed->InspectorCall = &EntryPoints.InspectorCall;
 		managed->ManagedMemory = &EntryPoints.ManagedMemory;
+		managed->PhysicsEvents = &EntryPoints.PhysicsEvents;
 		MainThreadContext.Instance.Install();
 		return 0;
 	}

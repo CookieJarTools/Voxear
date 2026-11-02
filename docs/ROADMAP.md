@@ -585,8 +585,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     prefabs, in the Inspector under Add Component's Physics folder, and outlined in the Scene view
   - [x] bodies kept in step with their Objs as the game plays, stepped after `FixedUpdate`; contacts and trigger
     crossings that last through sleep, and characters that triggers notice
-  - [ ] C#: `Rigidbody` velocities and forces, `Physics.Raycast` and overlaps, `CharacterController.Move`, and
-    `OnCollisionEnter`/`Exit` and `OnTriggerEnter`/`Exit`
+  - [x] C#: `Collider`, `Rigidbody` (velocities, forces, torques, explosions, sleep) and `CharacterController`
+    (`Move`, `SimpleMove`, grounded), `Physics.Raycast`, `Linecast`, `OverlapSphere` and gravity, and
+    `OnCollisionEnter`/`Exit` and `OnTriggerEnter`/`Exit` straight after each step
   - [ ] mesh and convex colliders from models, joints as components, and layers that choose what collides
   - [ ] Box2D v3 for 2D games
 - **Built-in vehicle physics**, on Jolt's vehicle constraints *(later, once the physics above is in)*:

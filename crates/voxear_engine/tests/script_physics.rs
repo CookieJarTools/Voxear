@@ -1,0 +1,160 @@
+//! Scripts and physics: a crate a script kicks sideways falls through a
+//! trigger onto the floor, its behaviour told of each, after a ray and a
+//! sphere asked what is where; and a character walks across the floor.
+//! Builds a copy of Hello with these added; skips itself without .NET and
+//! the managed build.
+
+use voxear_core::logging::LogCapture;
+use voxear_engine::{Engine, Game, Project, scripts};
+
+const BUMP: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+public sealed class Bump : Behaviour
+{
+	protected override void Start()
+	{
+		var body = Obj.Rigidbody;
+		Log.Info($"mass {body.Mass}, sleeping {body.IsSleeping}");
+		if (Physics.Raycast(new Vector3(0f, 10f, 0f), -Vector3.UnitY, out var hit))
+		{
+			Log.Info($"ray met {hit.Obj.Name} at {hit.Point.Y:0.0}");
+		}
+		Log.Info($"sphere found {Physics.OverlapSphere(new Vector3(0f, -0.5f, 0f), 0.2f).Length}");
+		body.AddForce(Vector3.UnitX * 2f, ForceMode.VelocityChange);
+	}
+
+	protected override void OnCollisionEnter(Collision collision)
+	{
+		Log.Info($"hit {collision.Obj.Name}, pushed up {collision.Normal.Y:0}");
+	}
+
+	protected override void OnTriggerEnter(Collider other)
+	{
+		Log.Info($"entered {other.Obj.Name}");
+	}
+
+	protected override void OnTriggerExit(Collider other)
+	{
+		Log.Info($"left {other.Obj.Name}");
+	}
+}
+"#;
+
+const WALK: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+public sealed class Walk : Behaviour
+{
+	private int frames;
+
+	protected override void Update()
+	{
+		var walker = Obj.CharacterController;
+		walker.SimpleMove(new Vector3(0f, 0f, 2f));
+		if (++frames == 60)
+		{
+			Log.Info($"walker grounded {walker.IsGrounded}, at {Obj.Position.Z:0.0}");
+		}
+	}
+}
+"#;
+
+const OBJS: &str = r#"
+[[obj]]
+id = 30
+name = "Floor"
+position = [0.0, -0.5, 0.0]
+collider = { size = [30.0, 1.0, 30.0] }
+
+[[obj]]
+id = 31
+name = "Crate"
+position = [0.0, 4.0, 0.0]
+collider = {}
+rigidbody = { mass = 3.0 }
+behaviours = ["Hello.Bump"]
+
+[[obj]]
+id = 32
+name = "Gate"
+position = [0.0, 2.5, 0.0]
+collider = { size = [20.0, 0.5, 20.0], trigger = true }
+
+[[obj]]
+id = 33
+name = "Walker"
+position = [-5.0, 0.0, 0.0]
+character = {}
+behaviours = ["Hello.Walk"]
+"#;
+
+/// A copy of Hello, inside the repository, where its scripts find the
+/// engine to build against.
+fn hello_copy() -> tempfile::TempDir {
+    fn copy(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "bin" || name == "obj" {
+                continue;
+            }
+            if entry.path().is_dir() {
+                copy(&entry.path(), &to.join(&name));
+            } else {
+                std::fs::copy(entry.path(), to.join(&name)).unwrap();
+            }
+        }
+    }
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    copy(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello"), dir.path());
+    dir
+}
+
+#[test]
+fn scripts_ask_push_and_hear_physics() {
+    if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
+        return eprintln!("skipping: needs .NET and the managed build");
+    }
+    let log = LogCapture::default();
+    let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
+    let dir = hello_copy();
+    std::fs::write(dir.path().join("Scripts/Bump.cs"), BUMP).unwrap();
+    std::fs::write(dir.path().join("Scripts/Walk.cs"), WALK).unwrap();
+    let scene = dir.path().join("Scenes/Environment.scene");
+    let text = std::fs::read_to_string(&scene).unwrap() + OBJS;
+    std::fs::write(&scene, text).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    scripts::build(&project).unwrap();
+    let mut engine = Engine::new();
+    engine.set_scripts(scripts::start(&project).unwrap().expect("Hello has scripts"));
+    let mut game = Game::new(project, engine).unwrap();
+    game.start(None).unwrap();
+
+    // Two seconds, before Hello's own game manager changes the level.
+    for _ in 0..120 {
+        game.tick(1.0 / 60.0, None);
+    }
+    let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|line| line.message.clone()).collect();
+    let said = |text: &str| lines.iter().any(|line| line == text);
+    assert!(said("mass 3, sleeping False"), "{lines:?}");
+    assert!(said("ray met Crate at 4.5"), "Start finds the colliders where the scene put them: {lines:?}");
+    assert!(said("sphere found 1"), "{lines:?}");
+    assert!(said("entered Gate") && said("left Gate"), "{lines:?}");
+    assert!(said("hit Floor, pushed up 1"), "{lines:?}");
+    assert!(said("walker grounded True, at 2.0"), "{lines:?}");
+
+    // The kick sideways moved the crate along X as it fell.
+    let world = &game.engine.world;
+    let crate_at = world
+        .query_ref::<(&voxear_scene::Name, &voxear_scene::Transform)>()
+        .into_iter()
+        .find(|(name, _)| name.0 == "Crate")
+        .map(|(_, transform)| transform.position)
+        .unwrap();
+    assert!(crate_at.x > 1.0 && (crate_at.y - 0.5).abs() < 0.05, "{crate_at}");
+}

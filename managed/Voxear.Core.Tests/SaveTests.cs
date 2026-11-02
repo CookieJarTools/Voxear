@@ -263,6 +263,7 @@ namespace Voxear.Tests
 				Anything = 7,
 				Review = new TestRecord("Lovely", 5),
 				Pet = new Ref<Prefab>("713a4d989c654c6ca23b1d63201e0090"),
+				Theme = new Ref<Sound>("0f2b6c1e9a8d4e7f8b1c2d3e4f5a6b7c"),
 				ShieldCount = 2,
 				Cached = 99,
 				Scratch = 98,
@@ -296,6 +297,7 @@ namespace Voxear.Tests
 			Check.True(back.Anything is int and 7, Say("a boxed int stays an int"));
 			Check.True(back.Review == new TestRecord("Lovely", 5), Say("a record without a constructor that takes nothing"));
 			Check.True(!back.Home.IsValid && back.Pet.Path == "713a4d989c654c6ca23b1d63201e0090", Say("references"));
+			Check.True(!back.Music.IsValid && back.Theme.Path == "0f2b6c1e9a8d4e7f8b1c2d3e4f5a6b7c", Say("a sound, and a reference to one"));
 			Check.True(back.ShieldCount == 2 && back.Coins == 250 && back.Secret == 41, Say("properties, and private fields marked to save"));
 		}
 

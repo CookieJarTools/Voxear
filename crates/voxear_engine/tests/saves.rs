@@ -8,8 +8,15 @@
 //! since .NET starts only once per process. Skips itself without .NET.
 
 use voxear_core::logging::LogCapture;
-use voxear_engine::{Engine, Game, Project, scripts};
+use voxear_engine::{
+    Engine, Game, Project,
+    audio::{Audio, GameAudio},
+    scripts,
+};
 use voxear_scripting::{SaveFolder, SavePart, SaveSettings};
+
+/// The GUID the test's sound is given.
+const CHIME: &str = "5e1d0c2b3a4f4e6d8c7b9a0f1e2d3c4b";
 
 const SCRIPT: &str = r#"using System.Collections.Generic;
 using System.Numerics;
@@ -25,6 +32,8 @@ public sealed class Progress
 	public Spinner? Favourite;
 	public Ref<Prefab> Pet;
 	public Prefab Lamp;
+	public Sound Click;
+	public Ref<Sound> Music;
 	public Vector3 Position;
 	public List<string> Found = [];
 
@@ -62,12 +71,15 @@ public sealed class SaveCheck : SystemBase
 			Favourite = Obj.Find("Spinner B").GetBehaviour<Spinner>(),
 			Pet = new Ref<Prefab>("Prefabs/Firefly.prefab"),
 			Lamp = Prefab.Load("Prefabs/Lamp.prefab"),
+			Click = Sound.Load("Sounds/Chime.wav"),
+			Music = new Ref<Sound>("Sounds/Chime.wav"),
 			Position = new Vector3(1, 2, 3),
 			Found = ["key", "map"],
 		};
 		Save.Write("slot1", progress, "Chapter 3");
 		var back = Save.Read<Progress>("slot1");
 		Log.Info($"read level {back.Level}, checkpoint {back.Checkpoint.Name}, favourite {back.Favourite?.Obj.Name}, pet {back.Pet.Path}, lamp {back.Lamp == progress.Lamp}, found {string.Join("+", back.Found)}");
+		Log.Info($"sounds: click {back.Click.IsValid && back.Click == progress.Click}, music {back.Music.Path}");
 
 		var made = progress.Lamp.Instantiate();
 		Save.Write("made", new Progress { Checkpoint = made });
@@ -134,14 +146,32 @@ public sealed class SaveCheck : SystemBase
 }
 "#;
 
+/// A 16-bit mono WAV at 48 kHz, a tenth of a second of silence.
+fn wav() -> Vec<u8> {
+    let data = 9_600u32;
+    let mut file = Vec::new();
+    file.extend_from_slice(b"RIFF");
+    file.extend_from_slice(&(36 + data).to_le_bytes());
+    file.extend_from_slice(b"WAVEfmt ");
+    for value in [16u32.to_le_bytes(), [1, 0, 1, 0], 48_000u32.to_le_bytes(), 96_000u32.to_le_bytes(), [2, 0, 16, 0]] {
+        file.extend_from_slice(&value);
+    }
+    file.extend_from_slice(b"data");
+    file.extend_from_slice(&data.to_le_bytes());
+    file.resize(file.len() + data as usize, 0);
+    file
+}
+
 /// A copy of Hello, inside the repository, where its scripts find the
-/// engine to build against.
+/// engine to build against. Its own sounds stay out, as large files the
+/// test does not need.
 fn hello_copy() -> tempfile::TempDir {
     fn copy(from: &std::path::Path, to: &std::path::Path) {
         std::fs::create_dir_all(to).unwrap();
         for entry in std::fs::read_dir(from).unwrap().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name == "bin" || name == "obj" {
+            let sound = name.ends_with(".wav") || name.ends_with(".ogg") || name.ends_with(".mp3");
+            if name.starts_with('.') || name == "bin" || name == "obj" || sound {
                 continue;
             }
             if entry.path().is_dir() {
@@ -170,6 +200,9 @@ fn scripts_save_and_read_back_through_the_engines_files() {
     let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
     let dir = hello_copy();
     std::fs::write(dir.path().join("Scripts/SaveCheck.cs"), SCRIPT).unwrap();
+    std::fs::create_dir_all(dir.path().join("Sounds")).unwrap();
+    std::fs::write(dir.path().join("Sounds/Chime.wav"), wav()).unwrap();
+    std::fs::write(dir.path().join("Sounds/Chime.wav.meta"), format!("guid = \"{CHIME}\"\n")).unwrap();
     let saves = dir.path().join("Saves");
     let project = Project::open(dir.path()).unwrap();
     scripts::build(&project).unwrap();
@@ -179,6 +212,8 @@ fn scripts_save_and_read_back_through_the_engines_files() {
     runtime.set_saves(SaveSettings { folder: Some(saves.clone()), readable: true });
     engine.set_scripts(runtime);
     let mut game = Game::new(project, engine).unwrap();
+    // Sounds load, but nothing plays them, so no sound card is opened.
+    game.audio = GameAudio::new(Audio::quiet());
     game.start(None).unwrap();
     let said = |log: &LogCapture| -> Vec<String> {
         let lines = log.lock().unwrap();
@@ -200,6 +235,8 @@ fn scripts_save_and_read_back_through_the_engines_files() {
     let read =
         format!("read level 3, checkpoint Spinner A, favourite Spinner B, pet {firefly}, lamp True, found key+map");
     assert!(lines.contains(&read), "{lines:#?}");
+    let sounds = format!("sounds: click True, music {CHIME}");
+    assert!(lines.contains(&sounds), "a sound and a reference to one, by GUID: {lines:#?}");
     assert!(
         lines.contains(&"follower turns at 90".to_string()),
         "a behaviour's fields put back into another: {lines:#?}"
@@ -228,6 +265,7 @@ fn scripts_save_and_read_back_through_the_engines_files() {
     assert!(data.contains(&format!("\"Checkpoint\": \"{day}:2\"")), "an Obj by its scene and place: {data}");
     assert!(data.contains(&format!("\"Favourite\": \"{day}:3\"")), "a behaviour by its Obj: {data}");
     assert!(data.contains("\"$version\": 2") && data.contains(&format!("\"Pet\": \"{firefly}\"")), "{data}");
+    assert!(data.contains(&format!("\"Click\": \"{CHIME}\"")), "a loaded sound by its GUID: {data}");
     let made = String::from_utf8(folder.read("made", SavePart::Data).unwrap()).unwrap();
     assert!(made.contains("\"Checkpoint\": null"), "{made}");
 

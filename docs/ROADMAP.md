@@ -412,8 +412,9 @@ Still to do in M3:
     save's time, version and summary, and slots deleted, copied and renamed
   - [x] any value: numbers, text, enums, the math types, dates, arrays, lists, sets and dictionaries, and classes,
     structs and records by their fields and properties, with shared and circular references and derived types
-  - [x] Objs by their scene and place, behaviours that values point to by their Obj, prefabs and `Ref<T>` by GUID,
-    and a behaviour's own fields, read back into it with `Save.ReadInto`
+  - [x] Objs by their scene and place, behaviours that values point to by their Obj, assets (prefabs, sounds, and
+    every asset type to come, through `IAsset`) and `Ref<T>` by GUID, and a behaviour's own fields, read back into
+    it with `Save.ReadInto`
   - [x] `SaveConverter<T>` for a type saved its own way, found in the scripts by itself
   - [x] binary and JSON behind one `SaveFormat`, JSON in the editor and binary in builds, and formats of a game's
     own, found by themselves

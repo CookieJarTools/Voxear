@@ -616,7 +616,9 @@ types, so it takes them apart and puts them back; Rust knows files, so it keeps 
   the game scripts, then the engine's own for vectors, quaternions, colours, matrices, dates, times and GUIDs);
   then plain values (enums by name); then the engine's things (an Obj as `<scene GUID>:<ObjPath>`, from
   `Levels::place_of`, so it is found in a later run while its scene is open; a behaviour that another value points
-  to as its Obj; `Prefab` and `Ref<T>` as GUIDs); then dictionaries (a table when keys read as text, else
+  to as its Obj; any asset as its GUID, which every `IAsset` type gives through its internal `AssetGuid` (a
+  `save_key` kind each: prefabs 2, sounds 3), and reads back through its `Load`; `Ref<T>` as the GUID of what it
+  names); then dictionaries (a table when keys read as text, else
   `[key, value]` pairs), collections and arrays; and then a type's members: public fields, `[SerializeField]`
   private ones (readonly too), and public settable properties, init-only ones included, less `[NonSerialized]`,
   `[DontSave]` and delegates. A behaviour at the top of a save is its fields, read back with `ReadInto`. A value

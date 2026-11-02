@@ -596,6 +596,7 @@ impl ScriptServices for GameServices<'_> {
         let guid = match asset {
             AssetName::Reference(reference) => self.content.parse(reference).ok()?.guid()?,
             AssetName::Prefab(prefab) => self.content.prefab_guid(PrefabId(prefab))?,
+            AssetName::Sound(sound) => self.content.sound_guid(SoundId(sound))?,
         };
         Some(guid.to_string())
     }

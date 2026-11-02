@@ -201,9 +201,9 @@ pub(crate) struct NativeApi {
     /// What a save calls something, so a later run finds it again: an Obj
     /// by its scene and its place there (`kind` 0, `id` its entity), an
     /// asset by GUID from its project path or GUID (`kind` 1, `reference`),
-    /// or a loaded prefab by GUID (`kind` 2, `id`); written when it fits,
-    /// its length returned either way, or -1 for none. Then the Obj a key
-    /// names, or 0.
+    /// or a loaded prefab (`kind` 2) or sound (`kind` 3) by GUID, from its
+    /// `id`; written when it fits, its length returned either way, or -1 for
+    /// none. Then the Obj a key names, or 0.
     pub save_key:
         unsafe extern "C" fn(kind: i32, id: u64, reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
     pub save_obj: unsafe extern "C" fn(key: *const u8, len: i32) -> u64,
@@ -456,7 +456,9 @@ unsafe extern "C" fn save_key(
     let key = match kind {
         0 => with_services(|services| with_world(|world| services.obj_key(world, Entity::from_bits(id)))),
         1 => with_services(|services| services.asset_guid(AssetName::Reference(&reference))),
-        _ => with_services(|services| services.asset_guid(AssetName::Prefab(id as u32))),
+        2 => with_services(|services| services.asset_guid(AssetName::Prefab(id as u32))),
+        3 => with_services(|services| services.asset_guid(AssetName::Sound(id as u32))),
+        _ => None,
     };
     let Some(key) = key.flatten() else { return -1 };
     if !buffer.is_null() && key.len() <= capacity.max(0) as usize {

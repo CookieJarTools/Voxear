@@ -27,6 +27,8 @@ namespace Voxear
 		/// <summary>The engine's id for the prefab, or -1 for None.</summary>
 		internal int EngineId => id - 1;
 
+		string? IAsset<Prefab>.AssetGuid => IsValid ? NativeSaves.Key(NativeSaves.KeyPrefab, (ulong)EngineId, string.Empty) : null;
+
 		internal static Prefab FromEngine(int engineId)
 		{
 			return new Prefab(engineId);

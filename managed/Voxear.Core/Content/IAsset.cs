@@ -5,5 +5,11 @@ namespace Voxear
 	{
 		/// <summary>Loads the asset by project path or GUID. Logs an error and returns an invalid one when it cannot.</summary>
 		static abstract TSelf Load(string path);
+
+		/// <summary>
+		/// The asset's GUID, which a save keeps to load it again with Load: null for an invalid one, or away from the
+		/// engine. Every asset type gives it, so saves keep each one without knowing it by name.
+		/// </summary>
+		internal string? AssetGuid { get; }
 	}
 }

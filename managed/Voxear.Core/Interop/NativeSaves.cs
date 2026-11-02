@@ -14,6 +14,10 @@ namespace Voxear.Interop
 		public const int InfoSlots = 0;
 		public const int InfoFolder = 1;
 		public const int InfoFormat = 2;
+		public const int KeyObj = 0;
+		public const int KeyReference = 1;
+		public const int KeyPrefab = 2;
+		public const int KeySound = 3;
 		private const int InfoError = 3;
 
 		/// <summary>Queues a slot to be written and returns its ticket.</summary>
@@ -74,8 +78,8 @@ namespace Voxear.Interop
 		}
 
 		/// <summary>
-		/// What a save calls something, so a later run finds it: an Obj (kind 0), an asset by project path or GUID
-		/// (kind 1), or a loaded prefab (kind 2). Null for an Obj made while the game ran, or away from the engine.
+		/// What a save calls something, so a later run finds it: an Obj, an asset by project path or GUID, or a loaded
+		/// prefab or sound, as the Key kinds say. Null for an Obj with no key, or away from the engine.
 		/// </summary>
 		public static string? Key(int kind, ulong id, string reference)
 		{

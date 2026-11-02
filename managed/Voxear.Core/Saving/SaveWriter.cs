@@ -11,8 +11,8 @@ namespace Voxear.Saving
 	/// <summary>
 	/// Takes values apart into SaveNodes. Classes and structs become tables of their members (see SaveMembers), and
 	/// lists and arrays lists. A dictionary is a table when its keys read as text, and a list of [key, value] pairs when
-	/// they do not. An Obj, a behaviour another value points to, a prefab or a Ref&lt;T&gt; is kept as what finds it
-	/// again in a later run: the Obj's scene and place, or the asset's GUID. A value whose type is not the one its field
+	/// they do not. An Obj, a behaviour another value points to, an asset such as a prefab or a sound, or a
+	/// Ref&lt;T&gt; is kept as what finds it again in a later run: the Obj's scene and place, or the asset's GUID. A value whose type is not the one its field
 	/// declares records "$type", and an object reached twice is written once, marked "$id", and then as "$ref", so
 	/// shared and circular references read back as they were. A behaviour at the top of a save is its fields, and a
 	/// SaveNode is kept as it is.
@@ -147,16 +147,24 @@ namespace Voxear.Saving
 			{
 				return ObjKey(behaviour.Obj, $"{type.Name} on {behaviour.Obj.Name}");
 			}
-			if (value is Prefab prefab)
+			if (FieldValues.IsAsset(type))
 			{
-				return prefab.IsValid ? NativeSaves.Key(2, (ulong)prefab.EngineId, string.Empty) : SaveNode.Null;
+				return AssetGuid(value, type);
 			}
 			if (FieldValues.IsGeneric(type, typeof(Ref<>)))
 			{
 				var reference = (string)type.GetProperty(nameof(Ref<Prefab>.Path))!.GetValue(value)!;
-				return reference.Length == 0 ? SaveNode.Null : NativeSaves.Key(1, 0, reference) ?? reference;
+				return reference.Length == 0 ? SaveNode.Null : NativeSaves.Key(NativeSaves.KeyReference, 0, reference) ?? reference;
 			}
 			return null;
+		}
+
+		/// <summary>A loaded asset, such as a Prefab or a Sound, as the GUID every asset type gives through IAsset.</summary>
+		private static SaveNode AssetGuid(object asset, Type type)
+		{
+			var contract = typeof(IAsset<>).MakeGenericType(type);
+			var guid = contract.GetProperty(nameof(IAsset<Prefab>.AssetGuid), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+			return (string?)guid.GetValue(asset);
 		}
 
 		private SaveNode ObjKey(Obj obj, string shown)
@@ -166,7 +174,7 @@ namespace Voxear.Saving
 				return SaveNode.Null;
 			}
 
-			var key = SpawnedKeys.ForSave(NativeSaves.Key(0, obj.Id, string.Empty));
+			var key = SpawnedKeys.ForSave(NativeSaves.Key(NativeSaves.KeyObj, obj.Id, string.Empty));
 			if (key == null)
 			{
 				Log.Warning($"{Where()}: {shown} was made while the game ran, so a save cannot find it again, and keeps nothing for it. A save of the scene makes such Objs again.");

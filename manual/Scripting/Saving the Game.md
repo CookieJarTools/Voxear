@@ -37,7 +37,7 @@ Almost anything can go in a save:
 | Your own classes, structs and records | Field by field (see below) |
 | `Obj` | As the scene it was loaded from and its place there, so it finds the same Obj in a later run |
 | A behaviour another value points to | As the Obj it is on |
-| `Prefab` and `Ref<Prefab>` | As the asset's GUID, so moving or renaming the file doesn't break the save |
+| Assets such as `Prefab` and `Sound`, and `Ref<T>` | As the asset's GUID, so moving or renaming the file doesn't break the save |
 
 A class, struct or record saves its public fields and properties, and any private field marked `[SerializeField]`, as the Inspector shows them. To leave one out, mark it `[DontSave]`, or `[NonSerialized]` for a field. Delegates and events are always left out.
 

@@ -138,13 +138,15 @@ behaviours = ["Hello.Lid"]
 "#;
 
 /// A copy of Hello, inside the repository, where its scripts find the
-/// engine to build against.
+/// engine to build against. Its own sounds stay out, as large files the
+/// test does not need.
 fn hello_copy() -> tempfile::TempDir {
     fn copy(from: &std::path::Path, to: &std::path::Path) {
         std::fs::create_dir_all(to).unwrap();
         for entry in std::fs::read_dir(from).unwrap().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name == "bin" || name == "obj" {
+            let sound = name.ends_with(".wav") || name.ends_with(".ogg") || name.ends_with(".mp3");
+            if name.starts_with('.') || name == "bin" || name == "obj" || sound {
                 continue;
             }
             if entry.path().is_dir() {

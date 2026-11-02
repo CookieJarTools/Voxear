@@ -44,6 +44,8 @@ namespace Voxear.Tests
 		public TestRecord? Review;
 		public Obj Home;
 		public Ref<Prefab> Pet;
+		public Sound Music;
+		public Ref<Sound> Theme;
 		public Action? OnChanged;
 		public int ShieldCount { get; set; }
 

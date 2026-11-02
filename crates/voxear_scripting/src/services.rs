@@ -213,6 +213,8 @@ pub enum AssetName<'a> {
     Reference(&'a str),
     /// A loaded prefab, by the id [`ScriptServices::load_prefab`] gave it.
     Prefab(u32),
+    /// A loaded sound, by the id [`ScriptServices::load_sound`] gave it.
+    Sound(u32),
 }
 
 /// What a script asks of one of the game UI's elements.

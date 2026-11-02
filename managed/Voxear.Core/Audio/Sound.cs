@@ -38,6 +38,8 @@ namespace Voxear
 		/// <summary>Whether it streams from its file as it plays, rather than sitting decoded in memory.</summary>
 		public bool IsStreamed => NativeAudio.Facts(EngineId).Streamed != 0;
 
+		string? IAsset<Sound>.AssetGuid => IsValid ? NativeSaves.Key(NativeSaves.KeySound, (ulong)EngineId, string.Empty) : null;
+
 		internal static Sound FromEngine(int engineId)
 		{
 			return engineId < 0 ? None : new Sound(engineId);

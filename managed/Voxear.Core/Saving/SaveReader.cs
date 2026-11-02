@@ -222,9 +222,9 @@ namespace Voxear.Saving
 			{
 				found = FindBehaviour(node.AsString()!, type);
 			}
-			else if (type == typeof(Prefab))
+			else if (FieldValues.IsAsset(type))
 			{
-				found = Prefab.Load(node.AsString()!);
+				found = type.GetMethod("Load", new[] { typeof(string) })!.Invoke(null, new object?[] { node.AsString()! });
 			}
 			else if (FieldValues.IsGeneric(type, typeof(Ref<>)))
 			{

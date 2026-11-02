@@ -157,7 +157,7 @@ namespace Voxear
 				return null;
 			}
 
-			var key = SpawnedKeys.ForSave(NativeSaves.Key(0, behaviour.Obj.Id, string.Empty));
+			var key = SpawnedKeys.ForSave(NativeSaves.Key(NativeSaves.KeyObj, behaviour.Obj.Id, string.Empty));
 			if (key == null)
 			{
 				Log.Warning($"{type.Name} on {behaviour.Obj.Name} has [Saved] values, but its Obj is in no scene file and was not made from a prefab, so a save of the scene cannot find it again.");

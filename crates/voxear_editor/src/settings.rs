@@ -170,6 +170,7 @@ pub struct Settings {
     /// the behaviour types whose gizmos it hides, by full name.
     pub light_gizmos: bool,
     pub camera_gizmos: bool,
+    pub audio_gizmos: bool,
     pub hidden_gizmos: Vec<String>,
     /// How the Scene view shades: lit, unlit, or as wireframe.
     pub scene_shading: usize,
@@ -246,6 +247,7 @@ impl Default for Settings {
             show_gizmos: true,
             light_gizmos: true,
             camera_gizmos: true,
+            audio_gizmos: true,
             hidden_gizmos: Vec::new(),
             scene_shading: 0,
             prefab_parts: false,

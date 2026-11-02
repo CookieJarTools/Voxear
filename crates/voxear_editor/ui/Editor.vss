@@ -1115,7 +1115,7 @@
 
 /* Empty, the box takes no room but stays laid out, so a field added to it can be focused at once. */
 .collection-items.none {
-    border: 0px;
+    border: 0px solid transparent;
 }
 
 .collection-footer {

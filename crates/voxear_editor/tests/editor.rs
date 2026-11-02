@@ -3926,6 +3926,21 @@ fn a_string_table_is_edited_in_the_inspector() {
 }
 
 #[test]
+fn audio_sources_show_in_the_scene_view_with_their_reach() {
+    use voxear_engine::audio::AudioSource;
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    let source = AudioSource { min_distance: 1.0, max_distance: 3.0, ..AudioSource::default() };
+    editor.game.engine.world.insert(spinner, source);
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let row = prop_row(&editor.ui, "Doppler level").expect("a 3D source's Doppler level");
+    assert!(first_with(&editor.ui, row, "value-input").is_some());
+    shot(&mut renderer, "audio-gizmos.png");
+}
+
+#[test]
 fn the_palette_pseudo_localises_the_games_text() {
     use voxear_editor::PaletteKey;
     use voxear_engine::localization::Localization;
@@ -4605,7 +4620,7 @@ fn prefabs_dragged_from_the_project_place_instances() {
     let point = [x + w * 0.2, y + h * 0.85];
     let world = &editor.game.engine.world;
     let ground = obj(&editor, "Ground").unwrap();
-    let markers = voxear_editor::scene_tools::Markers { lights: true, cameras: true, colliders: true };
+    let markers = voxear_editor::scene_tools::Markers { lights: true, cameras: true, sounds: true, colliders: true };
     let picked = voxear_editor::scene_tools::pick(world, &renderer, &camera, point, markers);
     assert_eq!(picked, Some(ground), "only ground there");
     let (origin, direction) = camera.ray(point);

@@ -17,6 +17,7 @@
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Entity, World};
+use voxear_engine::audio::AudioSource;
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Destroying, EditorOnly, Parent, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
@@ -152,21 +153,25 @@ impl ViewCamera {
 pub struct Markers {
     pub lights: bool,
     pub cameras: bool,
+    /// Audio Sources, and while the game plays, which of them are playing.
+    pub sounds: bool,
     /// The selected Obj's colliders.
     pub colliders: bool,
 }
 
 impl Markers {
-    pub const NONE: Self = Self { lights: false, cameras: false, colliders: false };
+    pub const NONE: Self = Self { lights: false, cameras: false, sounds: false, colliders: false };
 
-    /// Whether an Obj with a light, a camera or both has a marker that shows.
-    pub fn show(self, light: bool, camera: bool) -> bool {
-        (light && self.lights) || (camera && self.cameras)
+    /// Whether an Obj with a light, a camera or an Audio Source has a
+    /// marker that shows.
+    pub fn show(self, light: bool, camera: bool, sound: bool) -> bool {
+        (light && self.lights) || (camera && self.cameras) || (sound && self.sounds)
     }
 }
 
 /// The Obj under a point in the Scene view: the nearest mesh the ray
-/// enters, by its box, or a light or camera whose marker shows close by.
+/// enters, by its box, or a light, camera or Audio Source whose marker shows
+/// close by.
 pub fn pick(
     world: &World,
     renderer: &Renderer,
@@ -185,11 +190,11 @@ pub fn pick(
         consider(distance, entity);
     }
     let marked = world
-        .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>)>()
+        .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>, Option<&AudioSource>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
-    for (entity, transform, placed, light, lens) in marked {
-        if !markers.show(light.is_some(), lens.is_some()) {
+    for (entity, transform, placed, light, lens, sound) in marked {
+        if !markers.show(light.is_some(), lens.is_some(), sound.is_some()) {
             continue;
         }
         let at = placed.map_or(transform.position, |w| w.0.w_axis.truncate());

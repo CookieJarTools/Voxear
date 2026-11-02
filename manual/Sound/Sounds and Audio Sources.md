@@ -48,6 +48,8 @@ You can also make one with the Hierarchy's **+** button and **Audio Source**, or
 
 Audio Sources only play while the game runs. In the editor, **Pause** holds every sound the game is playing, and **Stop** silences them.
 
+In the Scene view, each Audio Source shows a small speaker where its Obj is. While the game runs, the speakers of the sources that are playing turn blue, so you can see what is making a sound. Select a 3D source to see how far it carries: a blue sphere at its min distance and a fainter one at its max. **Audio Sources** in the Gizmos menu hides the speakers.
+
 ## 3D and 2D sounds
 
 A **3D** sound comes from where its Obj is. It gets quieter as the listener moves away, and it comes from the left or right, depending on where the Obj is. A 3D sound follows its Obj as it moves.

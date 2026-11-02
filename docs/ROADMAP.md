@@ -594,7 +594,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [ ] effects, snapshots and ducking on the buses
   - [ ] Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
     acceleration structures exist.
-  - [ ] the audio debugger: active voices in the viewport
+  - [x] the audio debugger: each Audio Source a speaker in the Scene view, lit while it plays, and the selected one's
+    min and max distances as rings
+  - [ ] a list of the voices playing, with their buses and volumes
 - Physics:
   - [x] Jolt 5.6 vendored and built behind Voxear's own C shim: shapes, static, kinematic and dynamic bodies,
     raycasts and overlaps, contacts, joints and a character controller

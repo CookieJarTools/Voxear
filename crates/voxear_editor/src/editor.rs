@@ -1302,7 +1302,9 @@ impl Editor {
         }
         // Gizmos go under the handles, which are drawn last.
         let world = &self.game.engine.world;
-        let mut shapes = gizmos::shapes(world, &camera, self.selected(), self.markers(self.scene.show_gizmos));
+        let playing = |entity| self.game.audio.is_source_playing(world, entity);
+        let markers = self.markers(self.scene.show_gizmos);
+        let mut shapes = gizmos::shapes(world, &camera, self.selected(), markers, &playing);
         if self.scene.show_gizmos {
             shapes.extend(scene_gizmos::icon_shapes(&self.gizmo_icons(), &camera, self.selected()));
         }

@@ -6,11 +6,14 @@
 //! hides them all, and its menu lights' or cameras'. The selected Obj's
 //! Collider, Character Controller and Collider 2D are drawn in green, as
 //! Unity's are, and its joint's anchor, a hinge's axis, and a line to what
-//! it holds to in orange.
+//! it holds to in orange. Each Audio Source shows a speaker, bright while
+//! the game plays it and dim otherwise, and the selected 3D one the
+//! distances it is at full volume within and silent past, as rings.
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
+    audio::{AudioSource, SoundSpace},
     physics::{CharacterController, Collider, ColliderMesh, ColliderShape, Joint, JointType},
     physics2d::{Collider2D, ColliderShape2D},
 };
@@ -24,6 +27,11 @@ use crate::scene_tools::{Markers, ViewCamera, ring};
 const MARKER: f32 = 5.0;
 const LIGHT: u32 = 0xf2c94c;
 const CAMERA: u32 = 0xc8ccd1;
+/// An Audio Source's speaker while it plays, and while it does not.
+const SOUND: u32 = 0x6fc3ff;
+const QUIET: u32 = 0x7d8590;
+/// A speaker's size, in logical pixels.
+const SPEAKER: f32 = 16.0;
 /// The selected Obj's reach is drawn in the accent.
 const REACH: u32 = 0x7988ff;
 /// How far a camera's frustum is drawn, in metres.
@@ -44,18 +52,26 @@ const AXIS: f32 = 36.0;
 /// How many pieces a capsule's half circle is drawn in.
 const CAP_SEGMENTS: usize = 16;
 
-/// The gizmos for every light and camera in view whose markers show, in the
-/// view's own coordinates (from its top left).
-pub fn shapes(world: &World, camera: &ViewCamera, selected: Option<Entity>, markers: Markers) -> Vec<Shape> {
+/// The gizmos for every light, camera and Audio Source in view whose
+/// markers show, in the view's own coordinates (from its top left).
+/// `playing` says whether the game is playing an Obj's Audio Source.
+pub fn shapes(
+    world: &World,
+    camera: &ViewCamera,
+    selected: Option<Entity>,
+    markers: Markers,
+    playing: &dyn Fn(Entity) -> bool,
+) -> Vec<Shape> {
     let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
     let mut shapes = Vec::new();
     let marked = world
-        .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>)>()
+        .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>, Option<&AudioSource>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
-    for (entity, transform, placed, light, lens) in marked {
+    for (entity, transform, placed, light, lens, sound) in marked {
         let (light, lens) = (light.filter(|_| markers.lights), lens.filter(|_| markers.cameras));
-        if light.is_none() && lens.is_none() {
+        let sound = sound.filter(|_| markers.sounds);
+        if light.is_none() && lens.is_none() && sound.is_none() {
             continue;
         }
         let (position, rotation) = placement(transform, placed);
@@ -72,6 +88,12 @@ pub fn shapes(world: &World, camera: &ViewCamera, selected: Option<Entity>, mark
             if chosen {
                 frustum(&mut shapes, camera, lens, position, rotation);
             }
+        } else if sound.is_some() {
+            let color = Color::hex(if playing(entity) { SOUND } else { QUIET });
+            shapes.push(Shape::Icon { name: "audio", center: at, size: SPEAKER, color });
+        }
+        if let Some(source) = sound.filter(|source| chosen && source.space == SoundSpace::ThreeD) {
+            sound_reach(&mut shapes, camera, source, position);
         }
     }
     if markers.colliders
@@ -80,6 +102,18 @@ pub fn shapes(world: &World, camera: &ViewCamera, selected: Option<Entity>, mark
         colliders(&mut shapes, world, camera, entity);
     }
     shapes
+}
+
+/// How far the selected Audio Source carries: a sphere of three rings at
+/// its min distance, inside which it is at full volume, and a fainter one at
+/// its max, past which it is silent.
+fn sound_reach(shapes: &mut Vec<Shape>, camera: &ViewCamera, source: &AudioSource, position: Vec3) {
+    let faint = Color { a: 110, ..Color::hex(SOUND) };
+    for (radius, color) in [(source.min_distance, Color::hex(SOUND)), (source.max_distance, faint)] {
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            polyline(shapes, camera, &ring(camera, position, axis, radius), color);
+        }
+    }
 }
 
 /// The selected Obj's Collider, where physics puts it, and its Character
@@ -369,33 +403,68 @@ mod tests {
     }
 
     #[test]
+    fn audio_sources_show_a_speaker_lit_while_playing_and_the_selected_ones_reach() {
+        let (mut world, camera, obj) = looking_at_an_obj();
+        let shown = Markers { lights: false, cameras: false, sounds: true, colliders: false };
+        world.insert(obj, AudioSource::default());
+        let speaker = |drawn: &[Shape]| {
+            drawn.iter().find_map(|shape| match shape {
+                Shape::Icon { name: "audio", color, .. } => Some(*color),
+                _ => None,
+            })
+        };
+        assert_eq!(speaker(&shapes(&world, &camera, None, shown, &|_| false)), Some(Color::hex(QUIET)));
+        assert_eq!(speaker(&shapes(&world, &camera, None, shown, &|e| e == obj)), Some(Color::hex(SOUND)), "playing");
+        assert_eq!(speaker(&shapes(&world, &camera, None, Markers::NONE, &|_| false)), None, "hidden");
+
+        // Selected, a 3D source's min and max distances are rings; a 2D one has none.
+        let rings = |world: &World| {
+            let drawn = shapes(world, &camera, Some(obj), shown, &|_| false);
+            let blue = Color::hex(SOUND);
+            let tinted = |color: &Color| (color.r, color.g, color.b) == (blue.r, blue.g, blue.b);
+            drawn.iter().filter(|shape| matches!(shape, Shape::Line { color, .. } if tinted(color))).count()
+        };
+        assert!(rings(&world) > 0);
+        world.get_mut::<AudioSource>(obj).unwrap().space = SoundSpace::TwoD;
+        assert_eq!(rings(&world), 0);
+    }
+
+    #[test]
     fn the_selected_objs_colliders_are_drawn_in_green() {
         let (mut world, camera, obj) = looking_at_an_obj();
-        let shown = Markers { lights: true, cameras: true, colliders: true };
+        let shown = Markers { lights: true, cameras: true, sounds: true, colliders: true };
         world.insert(obj, Collider::default());
-        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown)), 12, "a box's edges");
-        assert_eq!(green_lines(&shapes(&world, &camera, None, shown)), 0, "only the selected Obj's");
-        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), Markers::NONE)), 0, "nor with gizmos hidden");
+        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown, &|_| false)), 12, "a box's edges");
+        assert_eq!(green_lines(&shapes(&world, &camera, None, shown, &|_| false)), 0, "only the selected Obj's");
+        assert_eq!(
+            green_lines(&shapes(&world, &camera, Some(obj), Markers::NONE, &|_| false)),
+            0,
+            "nor with gizmos hidden"
+        );
 
         world.insert(obj, Collider { shape: ColliderShape::Sphere, ..Collider::default() });
-        let sphere = green_lines(&shapes(&world, &camera, Some(obj), shown));
+        let sphere = green_lines(&shapes(&world, &camera, Some(obj), shown, &|_| false));
         world.insert(obj, Collider { shape: ColliderShape::Capsule, ..Collider::default() });
-        let capsule = green_lines(&shapes(&world, &camera, Some(obj), shown));
+        let capsule = green_lines(&shapes(&world, &camera, Some(obj), shown, &|_| false));
         assert!(sphere > 12 && capsule > sphere, "three rings, then two rings, four caps and four sides");
 
         world.remove::<Collider>(obj);
         world.insert(obj, CharacterController::default());
-        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown)), capsule, "a character is a capsule");
+        assert_eq!(
+            green_lines(&shapes(&world, &camera, Some(obj), shown, &|_| false)),
+            capsule,
+            "a character is a capsule"
+        );
 
         world.remove::<CharacterController>(obj);
         world.insert(obj, Collider2D::default());
-        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown)), 4, "a 2D box is flat");
+        assert_eq!(green_lines(&shapes(&world, &camera, Some(obj), shown, &|_| false)), 4, "a 2D box is flat");
 
         // A hinge: three lines of its anchor's cross, its axis, and one to what it holds to.
         let post = world.spawn((Transform::from_position(Vec3::new(1.0, 0.0, 0.0)),));
         world.insert(obj, Joint { kind: JointType::Hinge, connected: Some(post), ..Joint::default() });
         let orange = Color::hex(JOINT);
-        let drawn = shapes(&world, &camera, Some(obj), shown);
+        let drawn = shapes(&world, &camera, Some(obj), shown, &|_| false);
         let joint_lines = drawn
             .iter()
             .filter(|shape| matches!(shape, Shape::Line { color, .. } if color.r == orange.r && color.g == orange.g));

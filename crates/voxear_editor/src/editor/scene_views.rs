@@ -394,6 +394,7 @@ impl Editor {
     pub(super) fn draw_other_scene_views(&mut self, renderer: &Renderer) {
         let (markers, icons) = (self.markers(true), self.gizmo_icons());
         let (ui, world, tools) = (&mut self.ui, &self.game.engine.world, &self.tools);
+        let playing = |entity| self.game.audio.is_source_playing(world, entity);
         let selected = self.selection;
         for view in &self.scene_views {
             let shown = std::iter::successors(Some(view.viewport), |&n| ui.parent(n)).all(|n| ui.is_visible(n));
@@ -403,7 +404,7 @@ impl Editor {
                 continue;
             };
             let markers = if view.show_gizmos { markers } else { crate::scene_tools::Markers::NONE };
-            let mut shapes = gizmos::shapes(world, &camera, selected, markers);
+            let mut shapes = gizmos::shapes(world, &camera, selected, markers, &playing);
             if view.show_gizmos {
                 shapes.extend(super::scene_gizmos::icon_shapes(&icons, &camera, selected));
             }
@@ -528,6 +529,7 @@ fn gizmos_menu(settings: &Settings, types: &[(String, String)]) -> Vec<MenuItem>
     let mut items = vec![
         MenuItem::new("Lights").checked(settings.light_gizmos),
         MenuItem::new("Cameras").checked(settings.camera_gizmos),
+        MenuItem::new("Audio Sources").checked(settings.audio_gizmos),
         MenuItem::separator(),
     ];
     for (name, label) in types {
@@ -545,8 +547,9 @@ fn toggle_gizmos(settings: &mut Settings, types: &[(String, String)], choice: us
     match choice {
         0 => settings.light_gizmos = !settings.light_gizmos,
         1 => settings.camera_gizmos = !settings.camera_gizmos,
+        2 => settings.audio_gizmos = !settings.audio_gizmos,
         _ => {
-            let Some((name, _)) = types.get(choice - 3) else { return false };
+            let Some((name, _)) = types.get(choice - 4) else { return false };
             match settings.hidden_gizmos.iter().position(|hidden| hidden == name) {
                 Some(index) => _ = settings.hidden_gizmos.remove(index),
                 None => settings.hidden_gizmos.push(name.clone()),

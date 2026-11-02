@@ -2839,8 +2839,9 @@ fn the_object_picker_searches_what_a_reference_can_take() {
     let mesh = renderer_of(&editor).mesh;
     open_picker(&mut editor, &mut renderer, "Mesh");
     assert_eq!(
-        picker_rows(&editor.ui).iter().map(|(label, _)| label.as_str()).collect::<Vec<_>>(),
-        ["Cube", "Sphere", "Plane"]
+        picker_rows(&editor.ui).iter().map(|(label, _)| label.as_str()).take(3).collect::<Vec<_>>(),
+        ["Cube", "Sphere", "Plane"],
+        "the built-in meshes first, then the project's"
     );
     editor.picker_key(PaletteKey::Escape);
     frame(&mut editor, &mut renderer);
@@ -4956,6 +4957,59 @@ fn scene_views_open_more_than_once_each_through_its_own_camera() {
     assert!(!editor.game.engine.world.is_alive(second));
     assert!(editor.game.engine.world.is_alive(first));
     assert_eq!(editor.ui.dock_panels(dock).iter().filter(|(id, ..)| id.starts_with("scene")).count(), 1);
+}
+
+#[test]
+fn the_mesh_picker_offers_the_meshes_of_the_projects_models() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    // A model no level uses, so nothing has loaded it.
+    std::fs::write(dir.path().join("Models/Rug.fbx"), RUG).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let mesh_of = |editor: &voxear_editor::Editor| {
+        let mesh = editor.game.engine.world.get::<voxear_render::MeshRenderer>(spinner).unwrap().mesh;
+        editor.game.content.mesh_ref(mesh).unwrap().to_string()
+    };
+    let search = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, text: &str| {
+        let picker = first_with(&editor.ui, prop_row(&editor.ui, "Mesh").unwrap(), "value-picker").unwrap();
+        let arrow = first_with(&editor.ui, picker, "picker-arrow").unwrap();
+        click(&mut editor.ui, arrow);
+        for _ in 0..3 {
+            frame(editor, renderer);
+        }
+        editor.ui.text_input(text);
+        frame(editor, renderer);
+        picker_rows(&editor.ui)
+    };
+
+    // A loaded model's mesh, found by its model's name, called by the name the model gives it and its part.
+    let rows = search(&mut editor, &mut renderer, "pyramid");
+    assert!(rows.contains(&("Pyramid #mesh0.0".to_string(), "Pyramid.gltf".to_string())), "{rows:?}");
+    let row = picker_row(&editor.ui, "Pyramid #mesh0.0").unwrap();
+    click_across_frames(&mut editor, &mut renderer, row);
+    frame(&mut editor, &mut renderer);
+    let same = |editor: &voxear_editor::Editor, a: &str, b: &str| editor.game.content.parse(a).ok() == editor.game.content.parse(b).ok();
+    let picked = mesh_of(&editor);
+    assert!(same(&editor, &picked, "Models/Pyramid.gltf#mesh0.0"), "{picked}");
+    let label = first_with(&editor.ui, prop_row(&editor.ui, "Mesh").unwrap(), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(label), "Pyramid #mesh0.0", "the field names it as the picker does");
+
+    // Another model, offered by its mesh once loaded, as for its preview, or whole until then, which picked gives
+    // its first mesh.
+    let rows = search(&mut editor, &mut renderer, "rug");
+    let offered = ["Rug #mesh0.0", "Rug.fbx"].into_iter().find(|label| rows.iter().any(|(l, _)| l == label));
+    let row = picker_row(&editor.ui, offered.unwrap_or_else(|| panic!("the rug is offered: {rows:?}"))).unwrap();
+    click_across_frames(&mut editor, &mut renderer, row);
+    frame(&mut editor, &mut renderer);
+    let picked = mesh_of(&editor);
+    let (model, part) = picked.split_once('#').expect("a part of the model");
+    assert!(same(&editor, model, "Models/Rug.fbx") && part.starts_with("mesh"), "its first mesh: {picked}");
 }
 
 #[test]

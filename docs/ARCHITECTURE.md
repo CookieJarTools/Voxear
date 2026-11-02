@@ -1814,7 +1814,9 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   everything the field can take, each with its icon and where it is (an asset's folder, an Obj's scene). Typing
   narrows it as the command palette does, letters in order and the best match first, by name or by place. Up and
   Down move the highlight, which starts on what the field points at now; Enter or a click picks, as a step to undo,
-  and Escape or a click elsewhere closes it.
+  and Escape or a click elsewhere closes it. A Mesh offers the built-in shapes, then each mesh of every model
+  Content has loaded (`Content::loaded_model`), named `Gate #mesh0.3` beside its model's file, and each model not
+  loaded yet whole, which picked loads and gives its first mesh; listing loads nothing, so it opens at once.
 - **Previews in the editor** (`editor::previews`): materials, prefabs and models show previews of themselves in
   place of their icons in the Project panel's tiles and rows (only the tiles on screen are asked for) and in the
   object picker's rows; an asset field shows a thumbnail of what it points at before its name, and a Mesh

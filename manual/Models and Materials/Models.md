@@ -33,7 +33,7 @@ If you will use the model many times with the same settings, make it a prefab an
 
 A model can hold several meshes, the shapes it is made of, and the materials they are drawn with. Click the arrow on the model's tile in the Project panel to open it out: its meshes, then its materials, show after it. Click the arrow again to close it.
 
-Drag a mesh onto a Mesh Renderer's **Mesh** in the Inspector to draw that mesh, or a material onto its **Material** to draw with that material.
+Drag a mesh onto a Mesh Renderer's **Mesh** in the Inspector to draw that mesh, or a material onto its **Material** to draw with that material. You can also click the arrow on **Mesh** and type to search: it lists the built-in shapes, then every mesh of your models, each by the name its model gives it and its part, as `Gate #mesh0.3`, with the model's file beside it. A model the editor has not loaded yet is listed whole, by its file; picking it uses its first mesh.
 
 ### A model in the scene file
 

@@ -447,6 +447,12 @@ impl Content {
     }
 
     /// The project paths of the models imported from their source files.
+    /// A model's parts when it is loaded, without loading it, as the
+    /// editor lists meshes to pick from.
+    pub fn loaded_model(&self, guid: AssetGuid) -> Option<&[ImportedNode]> {
+        self.models.get(&guid).map(|model| model.nodes.as_slice())
+    }
+
     pub fn loaded_models(&self) -> Vec<String> {
         let source = self.models.keys().filter(|guid| !self.cooked.contains(guid));
         source.filter_map(|&guid| Some(self.db.get(guid)?.path.clone())).collect()

@@ -410,6 +410,11 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 Pick::Obj(None) | Pick::Asset(None) => ("material", "Built in".into()),
                 Pick::Obj(Some(entity)) => obj(game, *entity),
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => ("cube", "Built in".into()),
+                // A part of a model, as a mesh, beside the model it is in.
+                Pick::Asset(Some(reference)) if reference.contains('#') => {
+                    let model = reference.split_once('#').map_or("", |(model, _)| model);
+                    ("box", file_name(model).to_string())
+                }
                 Pick::Asset(Some(path)) => asset(game, path),
             };
             let label = match &pick {

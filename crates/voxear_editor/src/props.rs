@@ -444,7 +444,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             let reference = game.content.mesh_ref(world.get::<MeshRenderer>(entity)?.mesh)?.to_string();
             match BUILTIN_MESHES.iter().find(|(_, r)| *r == reference) {
                 Some((label, _)) => Value::Asset(label.to_string()),
-                None => Value::Asset(asset_label(game, &reference)),
+                None => Value::Asset(mesh_label(game, &reference)),
             }
         }
         Prop::Material => {
@@ -562,7 +562,12 @@ pub fn pick(
     match (prop, choice) {
         (Prop::Mesh, Pick::Asset(Some(reference))) => {
             let Some(renderer) = renderer else { return false };
-            let Ok(mesh) = game.content.parse(reference).and_then(|r| game.content.mesh(renderer, &r)) else {
+            // A model picked whole, not loaded when the list was made, gives its first mesh.
+            let reference = match first_mesh(game, renderer, reference) {
+                Some(part) => part,
+                None => reference.clone(),
+            };
+            let Ok(mesh) = game.content.parse(&reference).and_then(|r| game.content.mesh(renderer, &r)) else {
                 return false;
             };
             with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.mesh = mesh)
@@ -676,19 +681,26 @@ pub fn set_lod_until(world: &mut World, entity: Entity, at: usize, until: f32) -
     })
 }
 
-/// What a reference can point at, each with what it is called: the built-in
-/// meshes and the one it has for a Mesh, the default and the project's
-/// materials for a Material, and for a script field, the Objs or assets of
-/// its kind. Nothing comes first where a reference can be empty.
+/// What a reference can point at, each with what it is called: for a Mesh,
+/// the built-in meshes, then each mesh of the project's models, or the
+/// model whole where it is not loaded yet, and the one it has; the default
+/// and the project's materials for a Material; and for a script field, the
+/// Objs or assets of its kind. Nothing comes first where a reference can be
+/// empty.
 pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Vec<(String, Pick)> {
     match prop {
         Prop::Mesh => {
             let mut found: Vec<(String, Pick)> =
                 BUILTIN_MESHES.iter().map(|(label, r)| (label.to_string(), Pick::Asset(Some(r.to_string())))).collect();
+            found.extend(model_meshes(game));
             let mesh = game.engine.world.get::<MeshRenderer>(entity).map(|r| r.mesh);
             let reference = mesh.and_then(|mesh| game.content.mesh_ref(mesh)).map(|r| r.to_string());
-            if let Some(reference) = reference.filter(|r| !BUILTIN_MESHES.iter().any(|(_, b)| b == r)) {
-                found.push((asset_label(game, &reference), Pick::Asset(Some(reference))));
+            let listed = |reference: &str| {
+                let parsed = game.content.parse(reference).ok();
+                found.iter().any(|(_, pick)| matches!(pick, Pick::Asset(Some(r)) if game.content.parse(r).ok() == parsed))
+            };
+            if let Some(reference) = reference.filter(|r| !listed(r)) {
+                found.push((mesh_label(game, &reference), Pick::Asset(Some(reference))));
             }
             return found;
         }
@@ -862,6 +874,59 @@ fn material_assets(game: &Game) -> Vec<String> {
         game.content.db().entries().filter(|e| e.kind == AssetKind::Material).map(|e| e.path.clone()).collect();
     paths.sort();
     paths
+}
+
+/// Each mesh of the project's models that is loaded, by the name its model
+/// gives it, and each model not loaded yet whole, by its file, as a Mesh
+/// picks from them. Listing them loads nothing, so a picker opens at once
+/// however many models a project has.
+fn model_meshes(game: &Game) -> Vec<(String, Pick)> {
+    let db = game.content.db();
+    let mut models: Vec<_> = db.entries().filter(|e| e.kind == AssetKind::Model).map(|e| (e.path.clone(), e.guid)).collect();
+    models.sort();
+    let mut found = Vec::new();
+    for (path, guid) in models {
+        let Some(nodes) = game.content.loaded_model(guid) else {
+            found.push((file_name(&path).to_string(), Pick::Asset(Some(path))));
+            continue;
+        };
+        let mut parts: Vec<&str> = Vec::new();
+        for node in nodes {
+            if parts.contains(&node.mesh_part.as_str()) {
+                continue;
+            }
+            parts.push(&node.mesh_part);
+            let reference = format!("{path}#{}", node.mesh_part);
+            found.push((mesh_label(game, &reference), Pick::Asset(Some(reference))));
+        }
+    }
+    found
+}
+
+/// The first mesh of a model picked whole, `Models/Gate.fbx#mesh0.0`,
+/// loading it; `None` for a reference to a part already, or not a model.
+fn first_mesh(game: &mut Game, renderer: &mut Renderer, reference: &str) -> Option<String> {
+    if reference.contains('#') || reference.starts_with("builtin:") {
+        return None;
+    }
+    let guid = game.content.db().guid_of(reference)?;
+    let part = game.content.model(renderer, guid).ok()?.first()?.mesh_part.clone();
+    Some(format!("{reference}#{part}"))
+}
+
+/// A model's mesh as fields and pickers name it: the name the model gives
+/// the part, then the part, `Gate #mesh0.3`, which tells apart the parts of
+/// a model that gives several the same name; or, for a model not loaded,
+/// its file and the part.
+fn mesh_label(game: &Game, reference: &str) -> String {
+    let Some((asset, part)) = reference.split_once('#') else { return asset_label(game, reference) };
+    let guid = game.content.parse(asset).ok().and_then(|r| r.guid());
+    let nodes = guid.and_then(|guid| game.content.loaded_model(guid));
+    let name = nodes.and_then(|nodes| nodes.iter().find(|node| node.mesh_part == part)).map(|node| node.name.as_str());
+    match name.filter(|name| !name.is_empty()) {
+        Some(name) => format!("{name} #{part}"),
+        None => asset_label(game, reference),
+    }
 }
 
 /// An asset reference by the name of its file: `Pyramid.gltf #mesh0.0`.

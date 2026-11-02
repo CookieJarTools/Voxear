@@ -53,11 +53,17 @@ impl Editor {
         self.discard_armed = None;
         self.game.content.forget(path);
         self.levels.refresh(&mut self.ui, &mut self.game.content);
-        // The Inspector shows the change, when it shows the level.
+        // The Inspector shows the change, when it shows the level, and a scene moved by its grip
+        // eases into place in the list built again, as it would have in the old one.
         if self.inspected_asset().is_some_and(|shown| shown.path == path)
             && let Some(item) = self.project.item(path)
         {
+            let items = |editor: &mut Self| editor.inspector.asset_view().and_then(|view| view.level_items());
+            let slides = items(self).map(|old| self.ui.slides_of(old)).unwrap_or_default();
             self.inspector.show_asset(&mut self.ui, &self.game, &item);
+            if let Some(new) = items(self) {
+                self.ui.start_slides(new, &slides);
+            }
         }
         if let Err(error) = self.open_level_again(renderer) {
             self.notify(&format!("Could not open the level again: {error:#}"));

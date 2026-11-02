@@ -71,6 +71,7 @@ pub const NAMES: &[&str] = &[
     "settings",
     "panels",
     "lock",
+    "grip",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -174,6 +175,13 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
             STROKE,
         )],
         "lock" => &[("M6 10.5h12v9H6ZM8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5M12 14v2", STROKE)],
+        // Six dots, two by three: what drags an item of a list into a new place.
+        "grip" => &[(
+            "M7.5 6a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0ZM13.5 6a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0Z\
+             M7.5 12a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0ZM13.5 12a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0Z\
+             M7.5 18a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0ZM13.5 18a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0Z",
+            FILL,
+        )],
         // Two sliders, for settings.
         "settings" => &[(
             "M4 7.5h8.5M17.5 7.5H20M4 16.5h2.5M11.5 16.5H20\

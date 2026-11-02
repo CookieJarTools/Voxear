@@ -165,6 +165,34 @@ fn a_level_change_frees_what_only_the_old_level_used() {
 }
 
 #[test]
+fn a_world_set_aside_keeps_what_it_draws_through_level_changes() {
+    let dir = project();
+    let mut renderer = Renderer::new_offscreen(64, 64, &RendererSettings::default()).unwrap();
+    let mut game = game(&dir);
+    game.start(Some(&mut renderer)).unwrap();
+    game.load_level("Levels/Forest.level", Some(&mut renderer)).unwrap();
+    let drawn: Vec<voxear_render::MeshRenderer> =
+        game.engine.world.query_ref::<&voxear_render::MeshRenderer>().into_iter().copied().collect();
+    let tree = game.content.mesh_ref(drawn[0].mesh).cloned().expect("the tree's mesh");
+
+    // As the editor plays: its level put aside, and a game of its own changing levels.
+    let edit = std::mem::replace(&mut game.engine, Engine::new());
+    game.content.set_aside(&edit.world);
+    game.load_level("Levels/Start.level", Some(&mut renderer)).unwrap();
+    assert_eq!(game.content.usage().models, 1, "the tree stays for the level put aside");
+    assert_eq!(game.content.mesh_ref(drawn[0].mesh), Some(&tree));
+
+    // Brought back, it is as it was; and once nothing draws the tree, the tree goes.
+    game.engine = edit;
+    game.content.bring_back();
+    game.release_unused(Some(&mut renderer));
+    assert_eq!(game.content.usage().models, 1, "the level brought back still draws it");
+    game.engine = Engine::new();
+    game.release_unused(Some(&mut renderer));
+    assert_eq!(game.content.usage().models, 0);
+}
+
+#[test]
 fn prefabs_go_unless_kept_and_come_back_when_used() {
     let dir = project();
     let mut game = game(&dir);

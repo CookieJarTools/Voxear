@@ -35,11 +35,12 @@ Values are set just before `Awake`, so by the time any of your methods run, the 
 | `Vector2`, `Vector3`, `Vector4` | A box for each part |
 | `Quaternion` | Three angles, in degrees |
 | `Color` | A colour swatch, which opens a colour picker |
-| Arrays and `List<T>` | Each item, with buttons to add and remove items |
+| Arrays and `List<T>` | A box of its items, each with a grip to drag it to a new place and a cross to take it out, and **+** under it to add one |
 | A `[Serializable]` class or struct | Its own fields, indented |
 | `Obj` | Another Obj in the same scene |
 | A behaviour type, such as `Door` | An Obj in the same scene that has that behaviour |
 | `AudioSource` | An Obj in the same scene that has an Audio Source |
+| `Collider`, `Rigidbody`, `CharacterController`, `Collider2D`, `Rigidbody2D` | An Obj in the same scene that has one |
 | `Prefab` | A prefab in the project |
 
 Click a field that refers to an Obj or a prefab to pick from a list, or drag an Obj from the Hierarchy, or a prefab from the Project panel, onto the field.

@@ -42,6 +42,12 @@ pub enum LevelEdit {
         path: String,
     },
     Remove(usize),
+    /// The scene at `from` moved to `to`, the others making room, as a
+    /// scene dragged in the Inspector's list is.
+    Move {
+        from: usize,
+        to: usize,
+    },
     /// This scene is the active one, and no other is marked so.
     Activate(usize),
     Require(usize, bool),
@@ -100,6 +106,7 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
         LevelEdit::Add { .. } | LevelEdit::StandsOn(_) => None,
         LevelEdit::Replace { at, .. }
         | LevelEdit::Remove(at)
+        | LevelEdit::Move { from: at, .. }
         | LevelEdit::Activate(at)
         | LevelEdit::Require(at, _)
         | LevelEdit::Reload(at, _)
@@ -121,6 +128,19 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
         }
         LevelEdit::Remove(at) => {
             list.remove(*at);
+        }
+        LevelEdit::Move { from, to } => {
+            ensure!(*to < count, "the level has no scene {}", to + 1);
+            let mut tables: Vec<Table> = list.iter().cloned().collect();
+            // Tables are written where they were read, so each takes the place of the one now there.
+            let places: Vec<Option<isize>> = tables.iter().map(Table::position).collect();
+            let moved = tables.remove(*from);
+            tables.insert(*to, moved);
+            list.clear();
+            for (mut table, place) in tables.into_iter().zip(places) {
+                table.set_position(place);
+                list.push(table);
+            }
         }
         LevelEdit::Activate(at) => {
             for (place, table) in list.iter_mut().enumerate() {
@@ -215,6 +235,16 @@ mod tests {
         let weighed = edit(&marked, &LevelEdit::Weight(1, 3.0)).unwrap();
         assert!(weighed.contains("weight = 3.0") && entries(&weighed).unwrap()[1].weight == 3.0, "{weighed}");
         assert_eq!(edit(&weighed, &LevelEdit::Weight(1, 1.0)).unwrap(), marked, "one is the default, not written");
+
+        let moved = edit(&marked, &LevelEdit::Move { from: 1, to: 0 }).unwrap();
+        let order = entries(&moved).unwrap();
+        assert_eq!((&order[0].scene, &order[1].scene), (&listed[1].scene, &listed[0].scene), "{moved}");
+        assert!(
+            order[0].active && moved.contains("scene = \"abc\"  # Scenes/Lights.scene"),
+            "its flags and comment go too"
+        );
+        assert_eq!(edit(&moved, &LevelEdit::Move { from: 0, to: 1 }).unwrap(), marked, "and back as it was");
+        assert!(edit(&marked, &LevelEdit::Move { from: 0, to: 2 }).is_err(), "no third place");
 
         let taken = edit(&marked, &LevelEdit::Remove(1)).unwrap();
         assert_eq!(

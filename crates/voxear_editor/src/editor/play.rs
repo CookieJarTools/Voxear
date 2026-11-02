@@ -58,6 +58,16 @@ pub(super) struct Run {
     step: bool,
 }
 
+impl Play {
+    /// The edited level's world, while it is put aside for the game to play.
+    pub(super) fn edit_world(&mut self) -> Option<&mut voxear_ecs::World> {
+        match &mut self.mode {
+            Mode::Playing(run) => Some(&mut run.edit.world),
+            _ => None,
+        }
+    }
+}
+
 pub(super) struct Play {
     pub mode: Mode,
     /// .NET with the scripts loaded, kept between runs.
@@ -325,6 +335,7 @@ impl Editor {
         let flown = self.scene_cameras_flown();
         let mut played = std::mem::replace(&mut self.game.engine, edit);
         self.game.levels = levels;
+        self.game.content.bring_back();
         self.play.scripts = played.shutdown();
         drop(played);
         self.scene_cameras_back(flown);
@@ -485,6 +496,8 @@ impl Editor {
         let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
         let edit = std::mem::replace(&mut self.game.engine, engine);
         let levels = std::mem::replace(&mut self.game.levels, levels);
+        // The game may change levels as it plays, and let go of what it no longer uses, but not of what the level put aside here draws.
+        self.game.content.set_aside(&edit.world);
         self.kept.clear();
         let paused = self.memory.settings.start_paused;
         if self.memory.settings.clear_console_on_play {

@@ -849,6 +849,8 @@ fn script_fields_pick_references_and_edit_lists() {
     frame(&mut editor, &mut renderer);
     shot(&mut renderer, "inspector-list.png");
     let cycle = prop_row(&editor.ui, "Cycle").expect("the list shows");
+    let items = |ui: &Ui| first_with(ui, collection_of(ui, prop_row(ui, "Cycle").unwrap()), "collection-items").unwrap();
+    assert_eq!(editor.ui.children(items(&editor.ui)).len(), 2, "in a collection field under its row: {cycle:?}");
     let count = |editor: &voxear_editor::Editor| {
         let row = prop_row(&editor.ui, "Cycle").unwrap();
         editor.ui.text(first_with(&editor.ui, row, "value").unwrap())
@@ -885,16 +887,47 @@ fn script_fields_pick_references_and_edit_lists() {
     editor.ui.blur();
     assert_eq!(cycle_now(&editor)[1].get("seconds"), Some(&toml::Value::Float(7.0)), "a value inside an item");
 
-    // Found again, as the pick above built the Inspector anew.
-    let cycle = prop_row(&editor.ui, "Cycle").unwrap();
-    let add = first_with(&editor.ui, cycle, "list-add").expect("the list can grow");
+    // An item dragged by its grip below the next swaps with it, the rows easing into place, and undoes.
+    let before = cycle_now(&editor);
+    let grip = |ui: &Ui, at: usize| first_with(ui, ui.children(items(ui))[at], "collection-grip").unwrap();
+    let from = centre(&editor.ui, grip(&editor.ui, 0));
+    let [_, _, _, height] = editor.ui.rect(editor.ui.children(items(&editor.ui))[0]);
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    for step in 1..=4 {
+        editor.ui.pointer_move(from[0], from[1] + height * 0.3 * step as f32);
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "inspector-list-dragging.png");
+    let lifted = editor.ui.children(items(&editor.ui))[0];
+    assert!(editor.ui.has_class(lifted, "reorder-lifted") && editor.ui.slide(lifted) > height, "it follows the pointer");
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(cycle_now(&editor), vec![before[1].clone(), before[0].clone()], "swapped");
+    assert_eq!(count(&editor), "2 items", "the rows stay, showing the moved items");
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(editor.ui.children(items(&editor.ui)).iter().all(|&item| editor.ui.slide(item) == 0.0), "settled");
+    // Edits this close together are one step, so this undoes the 7 above too.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    let levels = |cycle: Vec<toml::Value>| cycle.iter().map(|stop| stop.get("level").cloned()).collect::<Vec<_>>();
+    assert_eq!(levels(cycle_now(&editor)), levels(before), "undone");
+
+    // The collection field's add button grows the list, and an item's remove button shrinks it.
+    let collection = collection_of(&editor.ui, prop_row(&editor.ui, "Cycle").unwrap());
+    let add = first_with(&editor.ui, collection, "collection-add").expect("the list can grow");
     click(&mut editor.ui, add);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert_eq!(count(&editor), "3 items");
     assert_eq!(cycle_now(&editor).len(), 3);
     let last = prop_row(&editor.ui, "Element 2").expect("the new item shows");
-    let remove = first_with(&editor.ui, last, "list-remove").unwrap();
+    let item = editor.ui.parent(editor.ui.parent(last).unwrap()).unwrap();
+    assert!(editor.ui.has_class(item, "collection-item"), "an item of its own");
+    let remove = first_with(&editor.ui, item, "collection-remove").unwrap();
     click(&mut editor.ui, remove);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
@@ -2061,6 +2094,14 @@ fn the_theme_is_chosen_in_settings_and_colours_the_editor() {
         frame(&mut editor, &mut renderer);
     }
     shot(&mut renderer, "theme-light-editor.png");
+}
+
+/// The collection field a list's row shows its items in: what follows the
+/// row in its container.
+fn collection_of(ui: &Ui, row: NodeId) -> NodeId {
+    let siblings = ui.children(ui.parent(row).unwrap());
+    let at = siblings.iter().position(|&node| node == row).unwrap();
+    siblings[at + 1..].iter().copied().find(|&node| ui.has_class(node, "collection")).expect("a collection field")
 }
 
 /// Picks an option of a dropdown, as the pointer would.
@@ -3351,9 +3392,38 @@ fn build_profiles_are_made_named_and_given_levels_and_defines_in_fields() {
     editor.ui.key_down(Key::Enter);
     frame(&mut editor, &mut renderer);
     assert!(read("Demo").contains("defines = [\"DEMO\"]"), "{}", read("Demo"));
+    let add = editor.ui.find(editor.ui.root(), "build-defines-add").unwrap();
+    press(&mut editor, &mut renderer, add);
+    editor.ui.text_input("FAST");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    assert!(read("Demo").contains("defines = [\"DEMO\", \"FAST\"]"), "{}", read("Demo"));
+    shot(&mut renderer, "build-lists.png");
+
+    // A define dragged by its grip above the first goes first.
     let defines = editor.ui.find(editor.ui.root(), "build-defines").unwrap();
-    let remove = first_with(&editor.ui, defines, "build-field-remove").unwrap();
-    press(&mut editor, &mut renderer, remove);
+    let items = first_with(&editor.ui, defines, "collection-items").unwrap();
+    let rows = editor.ui.children(items);
+    let grip = first_with(&editor.ui, rows[1], "collection-grip").unwrap();
+    let from = centre(&editor.ui, grip);
+    let top = editor.ui.rect(rows[0])[1];
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    for step in 1..=4 {
+        editor.ui.pointer_move(from[0], from[1] + (top - from[1]) * step as f32 / 4.0);
+        frame(&mut editor, &mut renderer);
+    }
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    assert!(read("Demo").contains("defines = [\"FAST\", \"DEMO\"]"), "{}", read("Demo"));
+
+    // Each taken out by its item's remove button.
+    for _ in 0..2 {
+        let defines = editor.ui.find(editor.ui.root(), "build-defines").unwrap();
+        let remove = first_with(&editor.ui, defines, "collection-remove").unwrap();
+        press(&mut editor, &mut renderer, remove);
+    }
     assert!(!read("Demo").contains("defines"), "taken out again: {}", read("Demo"));
 
     // Remove moves the picked profile into the project's trash.
@@ -4669,7 +4739,8 @@ fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
         let row = scene_row(ui, scene).unwrap_or_else(|| panic!("a row for {scene}"));
         let mut flags = Vec::new();
         with_class(ui, row, "level-flag", &mut flags);
-        (flags[0], flags[1], first_with(ui, row, "list-remove").unwrap())
+        let item = ui.parent(row).unwrap();
+        (flags[0], flags[1], first_with(ui, item, "collection-remove").unwrap())
     };
     let field = |ui: &Ui, scene: &str| first_with(ui, scene_row(ui, scene).unwrap(), "value-picker").unwrap();
     open_folder(&mut editor, &mut renderer, "Levels");
@@ -4684,7 +4755,7 @@ fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     // Add Scene opens the object picker on the scenes not in it; the open level takes the one picked at once.
     let add_scene = |ui: &Ui| {
         let mut buttons = Vec::new();
-        with_class(ui, ui.root(), "add-component", &mut buttons);
+        with_class(ui, ui.root(), "collection-add", &mut buttons);
         buttons.into_iter().find(|&b| ui.text(b) == "Add Scene").expect("an Add Scene button")
     };
     let add = add_scene(&editor.ui);
@@ -4733,6 +4804,30 @@ fn a_levels_scenes_are_added_and_taken_out_in_the_inspector() {
     click(&mut editor.ui, flags[2]);
     frame(&mut editor, &mut renderer);
     assert!(level().contains("reload = true"), "{}", level());
+
+    // Night dragged by its grip above Day goes first in the file, and the list eases into its new order.
+    let item_of = |ui: &Ui, scene: &str| ui.parent(scene_row(ui, scene).unwrap()).unwrap();
+    let night_grip = first_with(&editor.ui, item_of(&editor.ui, "Night"), "collection-grip").unwrap();
+    let from = centre(&editor.ui, night_grip);
+    let [_, top, _, _] = editor.ui.rect(item_of(&editor.ui, "Day"));
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    for step in 1..=4 {
+        editor.ui.pointer_move(from[0], from[1] + (top - from[1]) * step as f32 / 4.0);
+        frame(&mut editor, &mut renderer);
+    }
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let (day_at, night_at) = (level().find("Scenes/Day.scene").unwrap(), level().find("Scenes/Night.scene").unwrap());
+    assert!(night_at < day_at, "Night first now:\n{}", level());
+    let [_, night_top, _, _] = editor.ui.rect(item_of(&editor.ui, "Night"));
+    assert!(night_top < editor.ui.rect(item_of(&editor.ui, "Day"))[1], "and first in the list");
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    let items = editor.ui.parent(item_of(&editor.ui, "Night")).unwrap();
+    assert!(editor.ui.slides_of(items).iter().all(|&slide| slide == 0.0), "settled");
 
     // Taken out, it unloads, and Day is active again.
     let (.., remove) = parts(&editor.ui, "Night");
@@ -5467,6 +5562,29 @@ fn files_move_between_folders_by_drag_and_the_tiles_resize_down_to_rows() {
     drag_between(&mut editor, &mut renderer, from, to);
     frame(&mut editor, &mut renderer);
     assert!(dir.path().join("Models/0 Box/Grey.material").exists(), "a folder moves with what is in it");
+
+    // Each file's size ends in the same place, whether or not its row has an arrow, clear of the list's edge:
+    // the model at the top has one, and the scenes have none.
+    let size_ends = |editor: &voxear_editor::Editor| -> Vec<f32> {
+        file_rows(&editor.ui)
+            .into_iter()
+            .map(|(_, row)| editor.ui.children(row)[2])
+            .filter(|&size| !editor.ui.text(size).is_empty())
+            .map(|size| {
+                let [left, _, width, _] = editor.ui.rect(size);
+                left + width
+            })
+            .collect()
+    };
+    open_folder_in_tree(&mut editor, &mut renderer, "Hello");
+    let mut ends = size_ends(&editor);
+    open_folder_in_tree(&mut editor, &mut renderer, "Scenes");
+    ends.extend(size_ends(&editor));
+    let list = editor.ui.find(editor.ui.root(), "project-files").unwrap();
+    let [x, _, w, _] = editor.ui.rect(list);
+    assert!(ends.len() > 2, "files with sizes: {ends:?}");
+    assert!(ends.iter().all(|end| (end - ends[0]).abs() < 0.5), "lined up: {ends:?}");
+    assert!(x + w - ends[0] > 30.0, "clear of the arrows and the edge: {ends:?} in {x} + {w}");
 
     // Larger, the tiles are wider.
     open_folder_in_tree(&mut editor, &mut renderer, "Hello");

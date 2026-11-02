@@ -1142,6 +1142,15 @@ pub fn move_item(world: &mut World, types: &ScriptTypes, entity: Entity, item: &
         && fields::move_item(world, types, entity, behaviour, list, *from, *to)
 }
 
+/// Whether a script's value is inside `outer`, as an item's fields are
+/// inside the item.
+pub fn within(value: &Prop, outer: &Prop) -> bool {
+    let (Prop::Field { behaviour, path }, Prop::Field { behaviour: of, path: outside }) = (value, outer) else {
+        return false;
+    };
+    behaviour == of && path.len() > outside.len() && path.starts_with(outside)
+}
+
 /// Whether a prop is an item of a list, which can be taken out.
 pub fn is_item(prop: &Prop) -> bool {
     matches!(prop, Prop::Field { path, .. } if matches!(path.last(), Some(Step::Item(_))))

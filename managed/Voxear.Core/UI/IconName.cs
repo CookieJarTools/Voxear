@@ -27,6 +27,7 @@ public enum IconName
 	Gamepad,
 	Globe,
 	Grid,
+	Grip,
 	Info,
 	Level,
 	Light,

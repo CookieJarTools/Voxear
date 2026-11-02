@@ -234,6 +234,32 @@ pub struct Content {
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     prefabs: PrefabCache,
     sounds: SoundCache,
+    /// What a world set aside still draws and plays, as the editor's edited
+    /// level while the game plays, which `release_unused` keeps.
+    aside: InUse,
+}
+
+/// The meshes, materials, prefab instances and sounds a world uses.
+#[derive(Default)]
+struct InUse {
+    meshes: HashSet<MeshHandle>,
+    materials: HashSet<MaterialHandle>,
+    prefabs: HashSet<AssetGuid>,
+    sounds: HashSet<SoundId>,
+}
+
+impl InUse {
+    fn of(world: &World) -> Self {
+        let mut used = Self::default();
+        for renderer in world.query_ref::<&MeshRenderer>().without::<Destroying>() {
+            used.meshes.insert(renderer.mesh);
+            used.materials.insert(renderer.material);
+        }
+        used.prefabs = world.query_ref::<&PrefabInstance>().without::<Destroying>().into_iter().map(|p| p.0).collect();
+        let heard = world.query_ref::<&AudioSource>().without::<Destroying>().into_iter().filter_map(|s| s.sound);
+        used.sounds = heard.collect();
+        used
+    }
 }
 
 /// Where asset files are read from.
@@ -316,6 +342,7 @@ impl Content {
             pictures: HashMap::new(),
             prefabs: PrefabCache::default(),
             sounds: SoundCache::default(),
+            aside: InUse::default(),
         }
     }
 
@@ -798,15 +825,13 @@ impl Content {
         keep_models: &HashSet<AssetGuid>,
     ) -> Released {
         let mut released = Released::default();
-        let mut meshes = HashSet::new();
-        let mut materials = HashSet::new();
-        for renderer in world.query_ref::<&MeshRenderer>().without::<Destroying>() {
-            meshes.insert(renderer.mesh);
-            materials.insert(renderer.material);
-        }
+        // What the world uses, and what a world set aside does.
+        let InUse { mut meshes, mut materials, prefabs: mut instances, sounds: mut heard } = InUse::of(world);
+        meshes.extend(&self.aside.meshes);
+        materials.extend(&self.aside.materials);
+        instances.extend(&self.aside.prefabs);
+        heard.extend(&self.aside.sounds);
 
-        let instances: HashSet<AssetGuid> =
-            world.query_ref::<&PrefabInstance>().without::<Destroying>().into_iter().map(|p| p.0).collect();
         let cache = &mut self.prefabs;
         for (index, slot) in cache.templates.iter_mut().enumerate() {
             let id = PrefabId(index as u32);
@@ -830,8 +855,7 @@ impl Content {
         cache.used.clear();
         cache.files.clear();
         self.texts.clear();
-        let heard = world.query_ref::<&AudioSource>().without::<Destroying>().into_iter().filter_map(|s| s.sound);
-        released.sounds = self.sounds.release(&heard.collect());
+        released.sounds = self.sounds.release(&heard);
         if let Source::Bundles(reader, _) = &mut self.source {
             reader.close_all();
         }
@@ -878,6 +902,19 @@ impl Content {
             self.asset_materials.values().chain(self.inline_materials.values()).copied().collect();
         self.material_sources.retain(|handle, _| known.contains(handle));
         released
+    }
+
+    /// Keeps what a world set aside uses from being released until
+    /// [`bring_back`](Self::bring_back): the editor's edited level, while
+    /// the game plays in a world of its own and changes levels.
+    pub fn set_aside(&mut self, world: &World) {
+        self.aside = InUse::of(world);
+    }
+
+    /// Lets go of the world [`set_aside`](Self::set_aside), once it is the
+    /// world in use again.
+    pub fn bring_back(&mut self) {
+        self.aside = InUse::default();
     }
 
     /// What is loaded now, for the stats overlay and scripts.

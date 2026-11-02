@@ -1032,6 +1032,118 @@
     flex-shrink: 0;
 }
 
+/* The collection field, every list's look, as Unity 6's reorderable lists: a
+   box of items, each on a ground of its own with a line between, a grip at
+   its left that drags it, and its remove button at its right; the add button
+   hangs under the box at its right. */
+.collection {
+    flex-direction: column;
+    margin: 2px 0px 6px 0px;
+}
+
+.collection-items {
+    flex-direction: column;
+    border: 1px solid var(--vx-field-line);
+    border-radius: 6px;
+    background-color: var(--vx-panel);
+    overflow: hidden;
+}
+
+.collection-item {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 3px 4px 3px 2px;
+    background-color: var(--vx-panel);
+    border-top: 1px solid var(--vx-line);
+}
+
+.collection-item.first {
+    border-top: 0px;
+}
+
+.collection-item.odd {
+    background-color: var(--vx-hover);
+}
+
+.collection-item.reorder-lifted {
+    background-color: var(--vx-selected);
+    border: 1px solid var(--vx-accent);
+    border-radius: 5px;
+}
+
+.collection-grip {
+    width: 16px;
+    height: 22px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+.collection-grip:hover, .reorder-lifted > .collection-grip {
+    color: var(--vx-text);
+}
+
+.collection-grip.disabled {
+    color: transparent;
+}
+
+.collection-body {
+    flex-direction: column;
+    flex-grow: 1;
+    min-width: 0px;
+    gap: 2px;
+}
+
+.collection-body > .prop {
+    padding-left: 0px;
+}
+
+.collection-remove {
+    width: 20px;
+    height: 20px;
+    margin-top: 1px;
+    flex-shrink: 0;
+}
+
+.collection-empty {
+    padding: 6px 10px;
+    border: 1px solid var(--vx-field-line);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+/* Empty, the box takes no room but stays laid out, so a field added to it can be focused at once. */
+.collection-items.none {
+    border: 0px;
+}
+
+.collection-footer {
+    flex-direction: row;
+    justify-content: flex-end;
+}
+
+.collection-footer > .collection-add {
+    margin-top: -1px;
+    padding: 1px 10px;
+    min-width: 28px;
+    height: 20px;
+    /* A side's border keeps the colour of the rest, so the top is left out by width alone. */
+    border: 1px solid var(--vx-field-line);
+    border-top: 0px;
+    border-radius: 0px;
+    background-color: var(--vx-panel);
+}
+
+.collection-footer > .icon-button.collection-add {
+    width: 34px;
+    padding: 0px;
+}
+
+.collection-footer > .collection-add:hover {
+    background-color: var(--vx-hover);
+}
+
 /* A level's scene in the Inspector: whether it is active, and required. */
 .level-flag {
     gap: 5px;
@@ -1056,23 +1168,32 @@
     flex-grow: 1;
 }
 
+.level-weight-group {
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+}
+
+/* Narrow, the weight goes under the boxes rather than off the edge. */
 .level-scene-flags {
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
+    row-gap: 4px;
     padding-left: 2px;
 }
 
 .level-weight-label {
-    margin-left: auto;
     font-size: 11px;
     color: var(--vx-muted);
 }
 
 .level-weight {
-    width: 36px;
-    min-width: 0px;
+    width: 40px;
+    min-width: 40px;
     flex-grow: 0;
-    flex-shrink: 1;
+    flex-shrink: 0;
 }
 
 .picker-icon {
@@ -1266,6 +1387,15 @@ DockSpace .project-split > .split-divider {
     font-size: 11px;
     color: var(--vx-muted);
     flex-shrink: 0;
+}
+
+/* Rows keep clear of the scroll bar, sizes and arrows lined up down the list. */
+.files .list-row {
+    padding-right: 10px;
+}
+
+.part-arrow.unused {
+    opacity: 0;
 }
 
 .tile-row {
@@ -2173,6 +2303,19 @@ TextField.build-title:focus {
 
 .build-level-field {
     justify-content: flex-start;
+}
+
+/* A list setting's collection field fills the row, each field its item's width. */
+.build-setting-list > .collection {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    margin: 0px;
+}
+
+.collection-body > .build-level-field, .collection-body > .build-word-field {
+    flex-grow: 0;
+    flex-basis: auto;
 }
 
 .build-fields-empty {

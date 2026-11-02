@@ -31,6 +31,7 @@ use voxear_engine::{Game, MaterialData, MaterialMap, script_types::ScriptTypes};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
+    collection,
     import_fields::{ImportFields, ImportSettings},
     inspector::{color_row, number, prop},
     level_files::{self, LevelEdit},
@@ -134,9 +135,11 @@ struct Listen {
 }
 
 /// The level a level stands on, with its path, and its own scenes, in the
-/// file's order, then Add Scene.
+/// file's order, in a collection field whose items drag into a new order,
+/// with Add Scene under it.
 struct LevelFields {
     stands_on: (Slot, Option<String>),
+    items: NodeId,
     scenes: Vec<SceneRow>,
     add: NodeId,
 }
@@ -198,6 +201,11 @@ pub enum MaterialColor {
 }
 
 impl AssetView {
+    /// The box of a level's scenes, whose items drag into a new order.
+    pub fn level_items(&self) -> Option<NodeId> {
+        self.level.as_ref().map(|level| level.items)
+    }
+
     /// Shows `item` in `root`, which is emptied first.
     pub fn build(ui: &mut Ui, root: NodeId, item: &ProjectItem, game: &Game, types: &ScriptTypes, dark: bool) -> Self {
         for child in ui.children(root) {
@@ -688,15 +696,13 @@ fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Opt
     let stands_on = slot(ui, rows, "Stands on", "level");
     let base = table.get("stands_on").and_then(|v| v.as_str()).map(|base| asset_path(game, base));
     show_slot(ui, stands_on, base.as_deref(), "Level");
-    if entries.is_empty() {
-        let hint = ui.add_label(rows, "No scenes yet. Add one to fill the level.");
-        ui.add_class(hint, "asset-line");
-    }
+    let list = collection::collection(ui, rows, entries.len(), true, Some("Add Scene"));
     let mut scenes = Vec::new();
-    for entry in &entries {
+    for (place, entry) in entries.iter().enumerate() {
         let found = game.content.parse(&entry.scene).ok().and_then(|r| r.guid()).and_then(|g| game.content.db().get(g));
         let path = found.map_or_else(|| entry.scene.clone(), |found| found.path.clone());
-        let row = ui.panel(rows, Style::column());
+        let item = collection::item(ui, list.items, place, true);
+        let row = item.body;
         ui.add_class(row, "level-scene");
         let top = ui.panel(row, Style::row());
         ui.add_class(top, "level-scene-top");
@@ -711,8 +717,7 @@ fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Opt
         ui.add_class(label, "picker-label");
         let arrow = ui.icon_button(field, "chevron-down");
         ui.add_class(arrow, "picker-arrow");
-        let remove = ui.icon_button(top, "close");
-        ui.add_class(remove, "list-remove");
+        let remove = item.remove.expect("a level's scenes can be taken out");
         let flags = ui.panel(row, Style::row());
         ui.add_class(flags, "level-scene-flags");
         let mut check = |label: &str, on: bool| {
@@ -723,19 +728,21 @@ fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Opt
         };
         let (active, required) = (check("Active", entry.active), check("Required", entry.required));
         let reload = check("Reload", entry.reload);
-        let label = ui.add_label(flags, "Weight");
+        let group = ui.panel(flags, Style::row());
+        ui.add_class(group, "level-weight-group");
+        let label = ui.add_label(group, "Weight");
         ui.add_class(label, "level-weight-label");
-        let weight = ui.text_field(flags, &number(entry.weight));
+        let weight = ui.text_field(group, &number(entry.weight));
         for class in ["value-input", "number-input", "level-weight"] {
             ui.add_class(weight, class);
         }
         let weight = (weight, entry.weight);
         scenes.push(SceneRow { field, arrow, path, active, required, reload, weight, remove });
     }
-    let add = ui.button(rows, "Add Scene");
-    ui.add_class(add, "add-component");
+    let add = list.add.expect("a level takes scenes");
     ui.accept_drops(add, true);
-    Some(LevelFields { stands_on: (stands_on, base.filter(|_| found_base(game, &table))), scenes, add })
+    let stands_on = (stands_on, base.filter(|_| found_base(game, &table)));
+    Some(LevelFields { stands_on, items: list.items, scenes, add })
 }
 
 /// Whether the level a level's file says it stands on is in the project.
@@ -769,6 +776,9 @@ impl LevelFields {
         }
         if ui.clicked(self.add) {
             return Some(AssetAction::BrowseScene { level, at: None, anchor: self.add });
+        }
+        if let Some((from, to)) = collection::moved(ui, self.items) {
+            return edit(LevelEdit::Move { from, to });
         }
         for (at, scene) in self.scenes.iter().enumerate() {
             if let Some(source) = ui.dropped_onto(scene.field) {

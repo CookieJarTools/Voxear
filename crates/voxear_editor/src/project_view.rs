@@ -295,7 +295,10 @@ impl Contents {
             Entry::File(file) => self.opens(file).then(|| self.opened.contains(&self.files[file].path)),
             _ => None,
         };
-        ui.set_visible(arrow, opens.is_some());
+        // A row keeps its place when there is nothing to open, so that each row's size lines up; a tile hides it.
+        let tile = ui.parent(arrow).is_some_and(|parent| ui.has_class(parent, "tile"));
+        ui.set_visible(arrow, opens.is_some() || !tile);
+        ui.set_class(arrow, "unused", opens.is_none());
         if let Some(&icon) = ui.children(arrow).first() {
             ui.set_icon(icon, if opens == Some(true) { "chevron-down" } else { "chevron-right" });
         }

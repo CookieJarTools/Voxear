@@ -194,17 +194,20 @@ impl Game {
     /// part of it that was uploaded anew draw the new one. A part placed in
     /// the world that still sits where the model put it moves to where the
     /// model puts it now, as after a change of size; one moved since stays.
-    /// Returns how many moved.
-    pub fn reimport_model(&mut self, renderer: &mut Renderer, path: &str) -> Result<usize> {
+    /// A world set aside, as the editor's edited level while the game
+    /// plays, draws the new parts too. Returns how many moved.
+    pub fn reimport_model(&mut self, renderer: &mut Renderer, path: &str, aside: Option<&mut World>) -> Result<usize> {
         let guid = self.content.db().guid_of(path).with_context(|| format!("{path} is not in the project"))?;
         let Reimported { moved, meshes, materials } = self.content.reimport_model(renderer, guid)?;
-        let world = &mut self.engine.world;
         if !meshes.is_empty() || !materials.is_empty() {
-            for drawn in world.query::<&mut MeshRenderer>() {
-                drawn.mesh = meshes.get(&drawn.mesh).copied().unwrap_or(drawn.mesh);
-                drawn.material = materials.get(&drawn.material).copied().unwrap_or(drawn.material);
+            for world in std::iter::once(&mut self.engine.world).chain(aside) {
+                for drawn in world.query::<&mut MeshRenderer>() {
+                    drawn.mesh = meshes.get(&drawn.mesh).copied().unwrap_or(drawn.mesh);
+                    drawn.material = materials.get(&drawn.material).copied().unwrap_or(drawn.material);
+                }
             }
         }
+        let world = &mut self.engine.world;
         let mut placed = Vec::new();
         for (entity, renderer, transform) in world.query_ref::<(Entity, &MeshRenderer, &Transform)>() {
             let at = (transform.position, transform.rotation, transform.scale);

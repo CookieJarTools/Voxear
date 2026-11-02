@@ -74,6 +74,9 @@ impl Ui {
         if let Some((node, grab)) = self.pointer.dragging {
             self.drag_thumb(node, point.1 - grab);
         }
+        if self.move_reorder(point) {
+            return self.update_hover();
+        }
         self.drag_controls(point);
         self.drag_dock(point);
         self.move_drag(point);
@@ -100,7 +103,7 @@ impl Ui {
         }
         if !pressed {
             self.input.dragging = None;
-            if self.release_dock() || self.release_drag() {
+            if self.release_reorder() || self.release_dock() || self.release_drag() {
                 return true;
             }
         }
@@ -131,7 +134,9 @@ impl Ui {
             if let Some(point) = self.pointer.position {
                 self.press_controls(&path, point);
                 self.press_dock(&path, point);
-                self.press_drag(&path, point);
+                if !self.press_reorder(&path, point) {
+                    self.press_drag(&path, point);
+                }
             }
         } else {
             let pressed = std::mem::take(&mut self.pointer.pressed);

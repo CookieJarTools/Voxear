@@ -150,6 +150,9 @@ pub(crate) struct Element {
     pub styled: bool,
     /// The custom properties in effect, its own and inherited, for its children.
     pub vars: Rc<HashMap<String, String>>,
+    /// How far it is drawn from where it is laid out, with everything in
+    /// it, as an item sliding in a reorderable list is.
+    pub translate: [f32; 2],
 }
 
 impl Element {
@@ -180,6 +183,7 @@ impl Element {
             keyframes: None,
             styled: false,
             vars: Rc::default(),
+            translate: [0.0; 2],
         }
     }
 }
@@ -276,6 +280,9 @@ pub struct Ui {
     pub(crate) window_move: Option<crate::DesktopWindow>,
     /// Elements moved over a desktop window, each with where it came from.
     pub(crate) visitors: Vec<(taffy::NodeId, taffy::NodeId)>,
+    /// Containers whose items drag into a new order, and their slides; see
+    /// [`reorder`](crate::reorder).
+    pub(crate) reorders: crate::reorder::Reorders,
 }
 
 impl Default for Ui {
@@ -327,6 +334,7 @@ impl Ui {
             pointer_window: None,
             window_move: None,
             visitors: Vec::new(),
+            reorders: Default::default(),
         }
         .with_theme()
     }
@@ -733,6 +741,7 @@ impl Ui {
         self.pointer.forget(node.0);
         self.draggables.remove(&node.0);
         self.drop_targets.remove(&node.0);
+        self.reorders.forget(node.0);
         self.lists.retain(|&n| n != node.0);
         self.scrollers.retain(|&n| n != node.0);
         self.fields.retain(|&n| n != node.0);
@@ -864,6 +873,7 @@ impl Ui {
         self.pointer.context_clicks.clear();
         self.menu_choices.clear();
         self.row_drops.clear();
+        self.reorders.frame_done();
         self.element_drops.clear();
         self.row_landings.clear();
         self.clear_selection_changes();

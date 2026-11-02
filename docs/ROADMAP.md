@@ -388,7 +388,9 @@ Next in M3:
     labels, and `[ColorPalette]`
   - [x] the build's check of every scene and prefab: `[Required]` and `[ValidateInput]` problems listed as the
     build's warnings, and kept in its report
-  - [x] dragging a list's items by their labels to reorder them
+  - [x] one collection field for every list, as Unity 6's: each item on a ground of its own, dragged by its grip
+    into a new place while the others slide out of its way and ease into place; scripts' lists and arrays, a
+    level's scenes and the Build window's lists all use it
   - [x] the analyzer: a wrong name or shape in an Inspector attribute is a compile error where it is written
     (`VOX0001` to `VOX0007`); the source generator is not needed, as ScriptInfo describes the scripts already
   - [x] custom drawers in C#: `ValueDrawer<T>` and `AttributeDrawer<TAttribute, T>`, built from `.vui` markup and

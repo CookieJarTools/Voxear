@@ -113,6 +113,7 @@ impl Ui {
     pub fn advance(&mut self, seconds: f32) {
         self.input.time += seconds;
         self.input.clock = true;
+        self.step_reorders(seconds);
     }
 
     /// Where copied text goes and pasted text comes from.

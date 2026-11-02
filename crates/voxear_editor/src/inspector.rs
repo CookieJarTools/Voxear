@@ -41,6 +41,7 @@ use voxear_scripting::{DrawRequest, Drawn};
 use crate::{
     asset_inspector::{AssetAction, AssetView},
     attributes,
+    collection::{self, Collection, CollectionItem},
     field_drawers::{DrawerUi, FieldDrawers, ToOpen},
     fields::{self, Pick, Step},
     history::{Edit, ObjState},
@@ -169,6 +170,37 @@ pub enum RowAction {
     /// the Obj as a new component.
     CopyComponent(Part),
     PasteComponent,
+}
+
+/// A list shown in a collection field while the Inspector is built: the
+/// list, its field, whether it can change, and the item each of its items
+/// shows.
+struct ListBox {
+    list: Prop,
+    collection: Collection,
+    editable: bool,
+    shown: Vec<usize>,
+}
+
+impl ListBox {
+    /// Whether a value is one of this list's items.
+    fn holds(&self, value: &Prop) -> bool {
+        let (Prop::Field { behaviour, path }, Prop::Field { behaviour: of, path: list }) = (value, &self.list) else {
+            return false;
+        };
+        behaviour == of && path.len() == list.len() + 1 && path.starts_with(list) && props::is_item(value)
+    }
+
+    /// The next item in the field, for the list's item `item`.
+    fn add(&mut self, ui: &mut Ui, item: &Prop, editable: bool) -> CollectionItem {
+        if let Prop::Field { path, .. } = item
+            && let Some(Step::Item(index)) = path.last()
+        {
+            self.shown.push(*index);
+        }
+        let place = self.shown.len().saturating_sub(1);
+        collection::item(ui, self.collection.items, place, self.editable && editable)
+    }
 }
 
 /// A component value's row and the control that edits it.
@@ -301,9 +333,10 @@ pub struct Inspector {
     pagers: Vec<(NodeId, NodeId, String, usize)>,
     /// The `[ColorPalette]` swatches shown: each, its field and its colour.
     palette_swatches: Vec<(NodeId, Prop, [f32; 3])>,
-    /// A list's items shown: each one's row, which takes drops, its label,
-    /// which drags it, and the item.
-    item_handles: Vec<(NodeId, NodeId, Prop)>,
+    /// Each list shown in a collection field: the list, its items' box,
+    /// whose items drag into a new order, and which item each shows, as a
+    /// page shows some.
+    collections: Vec<(Prop, NodeId, Vec<usize>)>,
     /// The fields the scripts' drawers draw, and the behaviours their
     /// inspectors draw whole.
     drawers: FieldDrawers,
@@ -373,7 +406,7 @@ impl Inspector {
             pages: std::collections::HashMap::new(),
             pagers: Vec::new(),
             palette_swatches: Vec::new(),
-            item_handles: Vec::new(),
+            collections: Vec::new(),
             drawers: FieldDrawers::new(owner),
             inspected: Vec::new(),
             prefab_buttons: None,
@@ -771,7 +804,7 @@ impl Inspector {
         self.validation_boxes.clear();
         self.pagers.clear();
         self.palette_swatches.clear();
-        self.item_handles.clear();
+        self.collections.clear();
         self.prefab_buttons = None;
         self.drawers.clear();
         self.inspected.clear();
@@ -864,6 +897,9 @@ impl Inspector {
             }
             let values = attributes::ordered(&self.types, values);
             let mut groups = attributes::Groups::new(rows);
+            // Each list's collection field, and each item's body, which what is in the item goes in.
+            let mut boxes: Vec<ListBox> = Vec::new();
+            let mut bodies: Vec<(Prop, NodeId)> = Vec::new();
             for value in &values {
                 if !self.prefab_mode && !designers_see(value) {
                     continue;
@@ -881,7 +917,30 @@ impl Inspector {
                     continue;
                 }
                 let mut meta = attributes::of(&self.types, value).clone();
-                let container = groups.container(ui, attributes::top(&self.types, value).group.as_ref());
+                let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
+                let enabled = attributes::enabled(game, &self.types, entity, value);
+                // While playing, a C# component's values are read and written in the running
+                // game, and a running behaviour's on its instance, as the editor keeps them.
+                let world = &game.engine.world;
+                let live = matches!(value, Prop::Field { behaviour, path }
+                    if crate::live::is_live(world, &self.types, entity, behaviour, path)
+                        || crate::live::is_running(world, entity, behaviour));
+                let editable = !(playing && matches!(value, Prop::Field { .. }) && !live) && enabled;
+                // An item goes in its list's collection field, and what is in an item in the item's body,
+                // indented from it; anything else in its group.
+                let mut remove = None;
+                let (container, from_depth) = match boxes.iter_mut().find(|list| list.holds(value)) {
+                    Some(list) => {
+                        let item = list.add(ui, value, editable);
+                        remove = item.remove;
+                        bodies.push((value.clone(), item.body));
+                        (item.body, props::depth(value))
+                    }
+                    None => match bodies.iter().rev().find(|(item, _)| props::within(value, item)) {
+                        Some((item, body)) => (*body, props::depth(item)),
+                        None => (groups.container(ui, attributes::top(&self.types, value).group.as_ref()), 0),
+                    },
+                };
                 let mut label = meta.label.clone().unwrap_or_else(|| props::label(value));
                 if meta.suffix.is_none() {
                     meta.suffix = props::unit_on(world, entity, value).map(str::to_string);
@@ -895,7 +954,7 @@ impl Inspector {
                 let row = prop(ui, container, &label);
                 ui.set_class(row, "hidden-from-designers", !designers_see(value));
                 let label_node = ui.children(row)[0];
-                let indent = props::depth(value) + meta.indent as usize;
+                let indent = props::depth(value) - from_depth + meta.indent as usize;
                 if indent > 0 {
                     ui.set_inline_style(label_node, &format!("padding-left: {}px", indent * 12));
                 }
@@ -903,19 +962,13 @@ impl Inspector {
                     ui.add_class(row, "no-label");
                     ui.set_visible(label_node, false);
                 }
-                let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
-                let enabled = attributes::enabled(game, &self.types, entity, value);
                 ui.set_class(row, "disabled", !enabled && !meta.read_only);
-                // While playing, a C# component's values are read and written in the running
-                // game, and a running behaviour's on its instance, as the editor keeps them.
-                let world = &game.engine.world;
-                let live = matches!(value, Prop::Field { behaviour, path }
-                    if crate::live::is_live(world, &self.types, entity, behaviour, path)
-                        || crate::live::is_running(world, entity, behaviour));
-                let editable = !(playing && matches!(value, Prop::Field { .. }) && !live) && enabled;
-                // An item of a list, or a list, gets its button beside its value, as a unit does.
-                let item = editable && props::is_item(value);
-                let list = editable && matches!(shown, Value::List(_));
+                // A list is a collection field under its row, but for a [TableList], whose add button is
+                // beside its value, as an item of a list outside a collection field has its remove button.
+                let table = matches!(value, Prop::Field { behaviour, path }
+                    if matches!(shown, Value::List(_)) && attributes::is_table(&self.types, behaviour, path));
+                let item = editable && props::is_item(value) && remove.is_none();
+                let list = editable && table;
                 let drawers = attributes::drawers(&self.types, value);
                 let drawn = !playing && !drawers.is_empty();
                 let holder = if item || list || drawn || meta.suffix.is_some() || meta.documentation.is_some() {
@@ -943,15 +996,8 @@ impl Inspector {
                     ui.add_class(button, class);
                     button
                 };
-                let add = list.then(|| button(ui, "plus", "list-add"));
-                let remove = item.then(|| button(ui, "close", "list-remove"));
-                // An item's label drags it onto another of its list, which moves it there.
-                if item && !meta.hide_label {
-                    ui.set_draggable(label_node, true);
-                    ui.add_class(label_node, "drag-handle");
-                    ui.accept_drops(row, true);
-                    self.item_handles.push((row, label_node, value.clone()));
-                }
+                let mut add = list.then(|| button(ui, "plus", "list-add"));
+                let remove = remove.or_else(|| item.then(|| button(ui, "close", "list-remove")));
                 if let Some(page) = &meta.documentation {
                     self.doc_buttons.push((button(ui, "book", "docs-link"), page.clone()));
                 }
@@ -964,15 +1010,25 @@ impl Inspector {
                 }
                 let limits = limits(&meta);
                 let tooltip = meta.tooltip.clone();
+                let paged = match (&shown, value) {
+                    (Value::List(count), Prop::Field { behaviour, path }) => {
+                        let per_page = meta.list.map_or(0, |settings| settings.per_page);
+                        let page = attributes::page(&self.pages, behaviour, path);
+                        Some((*count, per_page, page, page_range(*count, per_page, page)))
+                    }
+                    _ => None,
+                };
+                if let Some((.., shown_items)) = paged.clone().filter(|_| !table) {
+                    let collection = collection::collection(ui, container, shown_items.len(), editable, None);
+                    add = collection.add;
+                    boxes.push(ListBox { list: value.clone(), collection, editable, shown: Vec::new() });
+                }
                 self.rows.push(PropRow { prop: value.clone(), row, control, add, remove, tooltip, limits });
-                if let (Value::List(count), Prop::Field { behaviour, path }) = (&shown, value) {
-                    let per_page = meta.list.map_or(0, |settings| settings.per_page);
-                    let page = attributes::page(&self.pages, behaviour, path);
-                    let shown_items = page_range(*count, per_page, page);
-                    if attributes::is_table(&self.types, behaviour, path) {
+                if let (Some((count, per_page, page, shown_items)), Prop::Field { behaviour, path }) = (paged, value) {
+                    if table {
                         self.table(ui, container, game, (entity, behaviour, path), shown_items, editable);
                     }
-                    if per_page > 0 && *count > per_page {
+                    if per_page > 0 && count > per_page {
                         self.pager(
                             ui,
                             container,
@@ -986,6 +1042,7 @@ impl Inspector {
                     self.palette(ui, container, value, &meta.palette);
                 }
             }
+            self.collections.extend(boxes.into_iter().map(|list| (list.list, list.collection.items, list.shown)));
             if let Part::Behaviour(name) = part {
                 let waits = playing && !crate::live::is_running(&game.engine.world, entity, name);
                 self.add_buttons(ui, rows, name, waits);
@@ -1144,19 +1201,28 @@ impl Inspector {
         }
     }
 
-    /// Turns a page, picks a palette's colour or moves a list's item, as
-    /// clicked or dropped this frame. True when a page turned or an item
-    /// moved, which builds the sections again.
+    /// Moves a list's item dragged by its grip to where it was let go. The
+    /// rows stay, each showing what is now its item, so the items ease into
+    /// place; the change is a step to undo like any other.
+    fn update_reorders(&mut self, ui: &Ui, game: &mut Game, entity: Entity) {
+        for (list, items, shown) in &self.collections {
+            let (Some((from, to)), Prop::Field { behaviour, path }) = (collection::moved(ui, *items), list) else {
+                continue;
+            };
+            let (Some(&from), Some(&to)) = (shown.get(from), shown.get(to)) else { continue };
+            let item = |index: usize| {
+                let mut path = path.clone();
+                path.push(Step::Item(index));
+                Prop::Field { behaviour: behaviour.clone(), path }
+            };
+            props::move_item(&mut game.engine.world, &self.types, entity, &item(from), &item(to));
+        }
+    }
+
+    /// Turns a page or picks a palette's colour, as clicked this frame.
+    /// True when a page turned, which builds the sections again.
     fn update_lists(&mut self, ui: &Ui, game: &mut Game, entity: Entity, renderer: Option<&mut Renderer>) -> bool {
         let mut turned = false;
-        let dropped = self.item_handles.iter().find_map(|(row, _, onto)| {
-            let Some(DragSource::Element(handle)) = ui.dropped_onto(*row) else { return None };
-            let (_, _, item) = self.item_handles.iter().find(|(_, h, _)| *h == handle)?;
-            Some((item.clone(), onto.clone()))
-        });
-        if let Some((item, onto)) = dropped {
-            turned |= props::move_item(&mut game.engine.world, &self.types, entity, &item, &onto);
-        }
         for (back, on, key, pages) in &self.pagers {
             let page = self.pages.get(key).copied().unwrap_or_default();
             let next = if ui.clicked(*back) {
@@ -1272,6 +1338,7 @@ impl Inspector {
             return (before != after).then_some(Edit::Changed { entity, before, after });
         }
         self.update_transform(ui, game, entity, transform);
+        self.update_reorders(ui, game, entity);
         for row in &self.rows {
             // Adding or taking out an item changes the rows, which are built again next frame.
             if row.add.is_some_and(|b| ui.clicked(b)) {

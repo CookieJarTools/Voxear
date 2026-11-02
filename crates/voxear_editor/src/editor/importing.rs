@@ -117,7 +117,8 @@ impl Editor {
     /// and draws again the previews that show it.
     pub(super) fn reimport_model(&mut self, path: &str, renderer: &mut Renderer) {
         let name = path.rsplit('/').next().unwrap_or(path);
-        match self.game.reimport_model(renderer, path) {
+        let aside = self.play.edit_world();
+        match self.game.reimport_model(renderer, path, aside) {
             Ok(moved) => {
                 // The parts' places are part of the scene, to save.
                 self.unsaved |= moved > 0;

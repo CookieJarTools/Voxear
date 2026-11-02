@@ -515,6 +515,13 @@ Dropdown:focus-visible {
     color: var(--vx-text);
 }
 
+/* An item lifted out of a reorderable list by its handle rides over the others,
+   which slide out of its way. */
+.reorder-lifted {
+    z-index: 1;
+    box-shadow: 0px 6px 18px rgba(0, 0, 0, 0.45);
+}
+
 /* A row dragged lands before or after the row marked so: a short bar on that
    edge, as the split handles show, over the rows either side. */
 .drop-line {

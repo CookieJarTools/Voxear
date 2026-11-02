@@ -162,7 +162,8 @@ impl Draw<'_> {
             return;
         }
         let layout = *self.tree.layout(node).expect("laid out");
-        let at = (parent.0 + layout.location.x, parent.1 + layout.location.y);
+        let shift = self.tree.get_node_context(node).map_or([0.0; 2], |e| e.translate);
+        let at = (parent.0 + layout.location.x + shift[0], parent.1 + layout.location.y + shift[1]);
         let [x0, y0] = self.snap(at.0, at.1);
         let [x1, y1] = self.snap(at.0 + layout.size.width, at.1 + layout.size.height);
         let inset = (layout.border.left + layout.padding.left, layout.border.top + layout.padding.top);

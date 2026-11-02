@@ -43,6 +43,8 @@ use voxear_assets::{AssetDb, AssetGuid, AssetKind};
 use voxear_engine::{build_profile, player_build::sibling_program};
 use voxear_ui::{DragSource, ItemFns, MenuItem, NodeId, Style, Ui};
 
+use crate::collection;
+
 /// How long a cancelled build has to stop before its process is stopped.
 const CANCEL_WAIT: Duration = Duration::from_secs(10);
 /// How often the profiles are read again while the window shows, to see
@@ -322,7 +324,20 @@ impl BuildWindow {
                         ui.set_placeholder(field, empty);
                         field
                     }
-                    Edit::Level(empty) | Edit::Levels(empty) | Edit::Words(empty) => {
+                    // A list is a collection field, its items dragged into a new order.
+                    Edit::Levels(empty) | Edit::Words(empty) => {
+                        ui.add_class(row, "build-setting-list");
+                        let add = if matches!(edit, Edit::Levels(_)) { "Add a level" } else { "Add a define" };
+                        let list = collection::collection(ui, row, 0, true, Some(add));
+                        ui.set_text(list.empty, empty);
+                        if let Some(add) = list.add {
+                            ui.set_name(add, &format!("build-{key}-add"));
+                        }
+                        let (items, add) = (list.items, list.add);
+                        lists.push(FieldList { index, holder: items, add, empty: list.empty, rows: Vec::new() });
+                        list.frame
+                    }
+                    Edit::Level(empty) => {
                         ui.add_class(row, "build-setting-list");
                         let holder = ui.panel(row, Style::column());
                         ui.add_class(holder, "build-fields");
@@ -330,16 +345,7 @@ impl BuildWindow {
                         ui.add_class(hint, "build-fields-empty");
                         let items = ui.panel(holder, Style::column());
                         ui.add_class(items, "build-fields-items");
-                        let add = match edit {
-                            Edit::Levels(_) => Some(ui.button(holder, "Add a level")),
-                            Edit::Words(_) => Some(ui.button(holder, "Add a define")),
-                            _ => None,
-                        };
-                        if let Some(add) = add {
-                            ui.add_class(add, "build-fields-add");
-                            ui.set_name(add, &format!("build-{key}-add"));
-                        }
-                        lists.push(FieldList { index, holder: items, add, empty: hint, rows: Vec::new() });
+                        lists.push(FieldList { index, holder: items, add: None, empty: hint, rows: Vec::new() });
                         holder
                     }
                     Edit::Number => ui.text_field(row, ""),
@@ -690,10 +696,13 @@ impl BuildWindow {
         for row in rows.drain(..) {
             ui.remove(row.panel);
         }
-        for value in values {
-            rows.push(field_row(ui, db, holder, edit, value));
+        for (place, value) in values.into_iter().enumerate() {
+            rows.push(field_row(ui, db, holder, edit, value, place));
         }
-        ui.set_visible(empty, rows.is_empty());
+        match edit {
+            Edit::Level(_) => ui.set_visible(empty, rows.is_empty()),
+            _ => collection::show_count(ui, holder, empty, rows.len()),
+        }
     }
 
     /// What a list's fields hold now, typed words as they are typed.
@@ -746,12 +755,27 @@ impl BuildWindow {
                 match edit {
                     Edit::Levels(_) => self.open_level_menu(ui, db, list, None, add),
                     _ => {
-                        let row = field_row(ui, db, self.lists[list].holder, edit, String::new());
+                        let place = self.lists[list].rows.len();
+                        let row = field_row(ui, db, self.lists[list].holder, edit, String::new(), place);
+                        // Shown before it is focused, as a hidden field takes no focus.
+                        collection::show_count(ui, self.lists[list].holder, self.lists[list].empty, place + 1);
                         ui.focus(row.field);
-                        ui.set_visible(self.lists[list].empty, false);
                         self.lists[list].rows.push(row);
                         self.typing_word = Some((list, self.lists[list].rows.len() - 1));
                     }
+                }
+                return;
+            }
+            // A field dragged by its grip moves there, and the fields built again ease into place.
+            if let Some((from, to)) = collection::moved(ui, self.lists[list].holder) {
+                let mut values = self.values_of(ui, list);
+                if from < values.len() && to < values.len() {
+                    let moved = values.remove(from);
+                    values.insert(to, moved);
+                    let slides = ui.slides_of(self.lists[list].holder);
+                    self.typing_word = None;
+                    self.write_list(ui, root, db, list, values);
+                    ui.start_slides(self.lists[list].holder, &slides);
                 }
                 return;
             }
@@ -1219,25 +1243,28 @@ fn parse(text: &str) -> Line {
 }
 
 /// A field of a list: a level field, which shows its level by name and
-/// takes a level dragged onto it, or a field to type words in; in a list,
-/// with a button that takes it out.
-fn field_row(ui: &mut Ui, db: &AssetDb, holder: NodeId, edit: Edit, value: String) -> FieldRow {
-    let panel = ui.panel(holder, Style::row());
+/// takes a level dragged onto it, or a field to type words in. A list's is
+/// an item of its collection field, at `place`, with its grip and its
+/// button that takes it out.
+fn field_row(ui: &mut Ui, db: &AssetDb, holder: NodeId, edit: Edit, value: String, place: usize) -> FieldRow {
+    let (panel, body, remove) = match edit {
+        Edit::Level(_) => (ui.panel(holder, Style::row()), None, None),
+        _ => {
+            let item = collection::item(ui, holder, place, true);
+            (item.node, Some(item.body), item.remove)
+        }
+    };
     ui.add_class(panel, "build-field-row");
+    let panel_body = body.unwrap_or(panel);
     let field = match edit {
-        Edit::Words(_) => ui.text_field(panel, &value),
-        Edit::Level(none) => ui.button(panel, &level_name(db, &value, none)),
-        _ => ui.button(panel, &level_name(db, &value, "")),
+        Edit::Words(_) => ui.text_field(panel_body, &value),
+        Edit::Level(none) => ui.button(panel_body, &level_name(db, &value, none)),
+        _ => ui.button(panel_body, &level_name(db, &value, "")),
     };
     ui.add_class(field, if matches!(edit, Edit::Words(_)) { "build-word-field" } else { "build-level-field" });
     if !matches!(edit, Edit::Words(_)) {
         ui.accept_drops(field, true);
     }
-    let remove = (!matches!(edit, Edit::Level(_))).then(|| {
-        let remove = ui.icon_button(panel, "close");
-        ui.add_class(remove, "build-field-remove");
-        remove
-    });
     FieldRow { panel, field, remove, value }
 }
 

@@ -330,6 +330,26 @@ impl Input {
         Ok(())
     }
 
+    /// Every action, in order: its map, its name, its category and whether
+    /// it is hidden, as a list of controls shows them.
+    pub fn actions(&self) -> Vec<(ActionId, &str, &str, Option<&str>, bool)> {
+        (self.actions.list.iter().enumerate())
+            .map(|(at, a)| (ActionId(at), a.map.as_str(), a.data.name.as_str(), a.data.category.as_deref(), a.data.hidden))
+            .collect()
+    }
+
+    /// Puts one action's bindings back as the actions' file has them.
+    pub fn reset_action(&mut self, action: ActionId) -> Result<()> {
+        let found = self.actions.list.get(action.0).context("no such action")?;
+        let (map, name) = (found.map.clone(), found.data.name.clone());
+        let file = self.actions.file.maps.iter().find(|m| m.name == map);
+        let original = file.and_then(|m| m.actions.iter().find(|a| a.name == name)).context("no such action")?;
+        let bindings = original.bindings.clone();
+        let action = &mut self.actions.list[action.0];
+        action.data.bindings = bindings;
+        action.read_processors()
+    }
+
     /// Puts every binding back as the actions' file has it.
     pub fn reset_bindings(&mut self) -> Result<()> {
         self.actions = actions::Actions::of(self.actions.file.clone())?;

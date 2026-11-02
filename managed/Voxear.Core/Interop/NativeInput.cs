@@ -15,6 +15,7 @@ internal static unsafe class NativeInput
 	public const int TextRebound = 5;
 	public const int TextName = 6;
 	public const int TextCategories = 7;
+	public const int TextActions = 8;
 
 	public const int ChangeRebind = 0;
 	public const int ChangeListen = 1;
@@ -23,6 +24,7 @@ internal static unsafe class NativeInput
 	public const int ChangeReset = 4;
 	public const int ChangeMap = 5;
 	public const int ChangeCancel = 6;
+	public const int ChangeResetAction = 7;
 
 	/// <summary>The control bits a key or a mouse button reads as.</summary>
 	public const int ControlDown = 1;
@@ -76,6 +78,26 @@ internal static unsafe class NativeInput
 	public static string Uses(string path)
 	{
 		return Native.IsConnected ? ByPath(path, Native.Api->InputUses) : string.Empty;
+	}
+
+	/// <summary>The other actions of an action's map bound to a control, a name a line; empty without the engine.</summary>
+	public static string Conflicts(int action, string path)
+	{
+		if (!Native.IsConnected)
+		{
+			return string.Empty;
+		}
+		var bytes = Encoding.UTF8.GetBytes(path);
+		fixed (byte* named = bytes)
+		{
+			var length = Native.Api->InputConflicts(action, named, bytes.Length, null, 0);
+			var buffer = new byte[Math.Max(length, 0)];
+			fixed (byte* into = buffer)
+			{
+				Native.Api->InputConflicts(action, named, bytes.Length, into, buffer.Length);
+			}
+			return Encoding.UTF8.GetString(buffer);
+		}
 	}
 
 	/// <summary>A control as prompts name it; its path without the engine.</summary>

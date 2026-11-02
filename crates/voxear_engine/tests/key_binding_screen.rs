@@ -135,4 +135,30 @@ fn players_see_their_controls_and_rebind_them() {
         game.input.control_uses().iter().find(|u| u.action == jump).map(|u| u.path.clone()),
         Some("Keyboard/J".to_string())
     );
+
+    // The List tab rebinds by row: Crouch's C, pressed E, is taken by Interact too, and the row says so.
+    let ui = game.ui.ui();
+    let list_tab = find(ui, |n| ui.has_class(n, "kbs-tab") && ui.text(n) == "List");
+    click(game.ui.ui(), list_tab[0]);
+    game.tick(1.0 / 60.0, None);
+    game.ui.frame(1.0 / 60.0, (1280, 720), 1.0);
+    let ui = game.ui.ui();
+    let crouch = find(ui, |n| ui.has_class(n, "controls-binding") && ui.text(n) == "C");
+    assert_eq!(crouch.len(), 1, "Crouch's key in the list");
+    click(game.ui.ui(), crouch[0]);
+    game.tick(1.0 / 60.0, None);
+    game.tick(1.0 / 60.0, None);
+    assert!(game.input.is_listening());
+    game.input.devices_mut().set_key("E", true);
+    game.tick(1.0 / 60.0, None);
+    game.input.devices_mut().set_key("E", false);
+    game.tick(1.0 / 60.0, None);
+    game.tick(1.0 / 60.0, None);
+    game.ui.frame(1.0 / 60.0, (1280, 720), 1.0);
+    let lines = said(&log);
+    assert!(lines.contains(&"rebound Crouch to Keyboard/E".to_string()), "{lines:#?}");
+    let ui = game.ui.ui();
+    let conflicts: Vec<String> =
+        find(ui, |n| ui.has_class(n, "controls-conflict")).into_iter().map(|n| ui.text(n)).collect();
+    assert!(conflicts.contains(&"Also Interact".to_string()), "{conflicts:?}");
 }

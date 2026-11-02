@@ -154,6 +154,34 @@ public static class Input
 		return NativeInput.Label(path);
 	}
 
+	/// <summary>Every one of the game's actions, in every map, in the order the input actions list them.</summary>
+	public static IReadOnlyList<InputAction> Actions
+	{
+		get
+		{
+			var actions = new List<InputAction>();
+			foreach (var line in (NativeInput.Text(NativeInput.TextActions) ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+			{
+				actions.Add(Action(line.Split('\t')[0]));
+			}
+			return actions;
+		}
+	}
+
+	/// <summary>
+	/// The other actions of <paramref name="action"/>'s map that a control is bound to, by its path, as a controls
+	/// screen warns of when a player picks a key that is taken.
+	/// </summary>
+	public static IReadOnlyList<InputAction> Conflicts(InputAction action, string path)
+	{
+		var found = new List<InputAction>();
+		foreach (var name in NativeInput.Conflicts(action.Id, path).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+		{
+			found.Add(Action(action.Map.Length > 0 ? $"{action.Map}/{name}" : name));
+		}
+		return found;
+	}
+
 	/// <summary>The categories key maps colour actions by, from the input actions, in order.</summary>
 	public static IReadOnlyList<InputCategory> Categories
 	{

@@ -946,3 +946,85 @@ DockSpace .split-column > .split-divider {
     color: var(--vx-muted);
     flex-shrink: 0;
 }
+
+.kbs-layout {
+    flex-direction: column;
+    flex-grow: 1;
+    min-height: 0px;
+    gap: 12px;
+}
+
+.kbs-list {
+    flex-grow: 1;
+    min-height: 0px;
+}
+
+/* The controls as a list (ControlsList in C#): a row for each action, under
+   its category, with a column of bindings for each device. */
+.controls-list {
+    flex-direction: column;
+    gap: 2px;
+    padding-bottom: 12px;
+}
+
+.controls-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    min-height: 34px;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+.controls-row:hover {
+    background-color: var(--vx-hover);
+}
+
+.controls-header {
+    color: var(--vx-muted);
+    min-height: 24px;
+}
+
+.controls-header:hover {
+    background-color: transparent;
+}
+
+.controls-heading {
+    margin-top: 14px;
+    padding: 0px 8px 4px 8px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.controls-action {
+    width: 200px;
+    flex-shrink: 0;
+    color: var(--vx-text);
+}
+
+.controls-cell {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    width: 260px;
+    flex-shrink: 0;
+}
+
+.controls-binding {
+    min-width: 44px;
+}
+
+.controls-binding.listening {
+    background-color: var(--vx-accent-soft);
+    border-color: var(--vx-accent);
+    color: var(--vx-text);
+}
+
+.controls-none {
+    color: var(--vx-muted);
+}
+
+.controls-conflict {
+    color: var(--vx-warning);
+}

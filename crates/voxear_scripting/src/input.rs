@@ -27,6 +27,7 @@ const TEXT_BINDINGS: i32 = 4;
 const TEXT_REBOUND: i32 = 5;
 const TEXT_NAME: i32 = 6;
 const TEXT_CATEGORIES: i32 = 7;
+const TEXT_ACTIONS: i32 = 8;
 
 /// What [`input_change`] does.
 const CHANGE_REBIND: i32 = 0;
@@ -36,6 +37,7 @@ const CHANGE_LOAD: i32 = 3;
 const CHANGE_RESET: i32 = 4;
 const CHANGE_MAP: i32 = 5;
 const CHANGE_CANCEL: i32 = 6;
+const CHANGE_RESET_ACTION: i32 = 7;
 
 fn with_input<T>(f: impl FnOnce(&mut Input) -> T) -> Option<T> {
     with_services(|services| services.input().map(f)).flatten()
@@ -79,6 +81,25 @@ pub(crate) unsafe extern "C" fn input_label(path: *const u8, len: i32, buffer: *
         unsafe { std::ptr::copy_nonoverlapping(label.as_ptr(), buffer, label.len()) };
     }
     label.len() as i32
+}
+
+/// The other actions of the same map bound to a control, by its path, as a
+/// rebinding screen warns of: a name a line. Written when it fits; its
+/// length either way.
+pub(crate) unsafe extern "C" fn input_conflicts(
+    action: i32,
+    path: *const u8,
+    len: i32,
+    buffer: *mut u8,
+    capacity: i32,
+) -> i32 {
+    let path = unsafe { utf8(path, len) };
+    let action = voxear_input::ActionId(action.max(0) as usize);
+    let text = with_input(|input| input.conflicts(action, &path).join("\n")).unwrap_or_default();
+    if !buffer.is_null() && text.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), buffer, text.len()) };
+    }
+    text.len() as i32
 }
 
 /// An action by its name, `Jump` or `Player/Jump`, or -1.
@@ -153,6 +174,12 @@ pub(crate) unsafe extern "C" fn input_text(what: i32, action: i32, buffer: *mut 
             _ => None,
         },
         TEXT_NAME => input.action_name(action).map(|(map, name)| format!("{map}/{name}")),
+        TEXT_ACTIONS => {
+            let lines = input.actions().into_iter().map(|(_, map, name, category, hidden)| {
+                format!("{map}/{name}\t{}\t{}", category.unwrap_or_default(), i32::from(hidden))
+            });
+            Some(lines.collect::<Vec<_>>().join("\n"))
+        }
         TEXT_CATEGORIES => {
             let lines = input.categories().iter().map(|category| format!("{}\t{}", category.name, category.color));
             Some(lines.collect::<Vec<_>>().join("\n"))
@@ -210,6 +237,7 @@ pub(crate) unsafe extern "C" fn input_change(
             input.cancel_listening();
             0
         }
+        CHANGE_RESET_ACTION => input.reset_action(action).map_or(-1, |()| 0),
         _ => -1,
     });
     done.unwrap_or(-2)

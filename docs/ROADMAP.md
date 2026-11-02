@@ -559,8 +559,10 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] key maps: the keyboard and mouse, and a gamepad, drawn with each bound control lit and its actions labelled
     round the device, coloured as assigned, hidden and unused or by the actions' categories (`[[category]]` in
     `.inputactions`, and `hidden` actions), in the editor's Input Actions window and in games as `KeymapView`
-  - [x] a ready-made, themeable rebinding screen (`KeyBindingScreen`), built from parts a game can change, and
-    `Input.ControlUses`, `ControlLabel` and `Categories` for screens of a game's own
+  - [x] a ready-made, themeable rebinding screen (`KeyBindingScreen`) with a Layout view, the device drawn, and a List
+    view (`ControlsList`), a row an action with its keys and buttons, conflicts and Reset, as tabs or alone; built
+    from `Input.Actions`, `InputAction.GetBindings`, `Input.ControlUses`, `ControlLabel`, `Conflicts`, `Categories`
+    and `Rebind`, which games' own screens use too
   - [ ] editing actions and bindings in the Input Actions window, with listening for a binding
   - [ ] prompt glyphs (icons) per device family, and local multiplayer pairing
 - Localization:

@@ -85,6 +85,37 @@ public sealed class InputAction
 		}
 	}
 
+	/// <summary>Its category, from the input actions, or null.</summary>
+	public string? Category => Facts().Category;
+
+	/// <summary>Whether the input actions mark it hidden, as a debug key: controls screens leave it out.</summary>
+	public bool Hidden => Facts().Hidden;
+
+	/// <summary>
+	/// Its bindings, each with its controls and what to call them, as a controls screen lists them; only those of
+	/// <paramref name="scheme"/> when given. Each knows its place among all the action's bindings, for Rebind.
+	/// </summary>
+	public IReadOnlyList<InputBinding> GetBindings(ControlScheme? scheme = null)
+	{
+		var found = new List<InputBinding>();
+		var lines = Bindings;
+		for (var at = 0; at < lines.Count; at++)
+		{
+			var binding = InputBinding.Parse(this, at, lines[at]);
+			if (scheme == null || binding.Scheme == scheme)
+			{
+				found.Add(binding);
+			}
+		}
+		return found;
+	}
+
+	/// <summary>Puts its bindings back as the input actions have them, undoing the player's rebinding of it.</summary>
+	public void ResetBindings()
+	{
+		NativeInput.Change(NativeInput.ChangeResetAction, id);
+	}
+
 	/// <summary>Fires the frame it goes down.</summary>
 	public event Action<InputAction>? Started
 	{
@@ -150,5 +181,18 @@ public sealed class InputAction
 	private InputActionData Read()
 	{
 		return NativeInput.State(id);
+	}
+
+	private (string? Category, bool Hidden) Facts()
+	{
+		foreach (var line in (NativeInput.Text(NativeInput.TextActions) ?? string.Empty).Split('\n'))
+		{
+			var parts = line.Split('\t');
+			if (parts.Length >= 3 && parts[0] == $"{Map}/{Name}")
+			{
+				return (parts[1].Length > 0 ? parts[1] : null, parts[2] == "1");
+			}
+		}
+		return (null, false);
 	}
 }

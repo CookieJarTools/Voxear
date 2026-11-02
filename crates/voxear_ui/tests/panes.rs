@@ -42,6 +42,27 @@ fn grids_place_children_in_tracks() {
 }
 
 #[test]
+fn a_border_on_one_side_draws_only_that_side() {
+    let mut ui = Ui::bare();
+    let root = ui.root();
+    let sheet = ".row { background-color: #101010; border-bottom: 2px solid #ff0000; } .row.left { border-left: 1px; }";
+    ui.add_sheet(root, StyleSheet::parse("Sides.vss", sheet));
+    let node = ui.panel(root, Style::default().at(10.0, 20.0).width(100.0).height(30.0));
+    ui.add_class(node, "row");
+    let red = |ui: &mut Ui| -> Vec<[f32; 4]> {
+        let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+        frame.quads.iter().filter(|q| q.kind == Quad::SHAPE && q.color[0] > 0.5).map(|q| q.rect).collect()
+    };
+    assert!(ui.take_warnings().is_empty());
+    assert_eq!(red(&mut ui), [[10.0, 48.0, 100.0, 2.0]], "a strip along the bottom, inside the box");
+    let box_quad = ui.frame(WIDTH, HEIGHT, 1.0).quads.iter().find(|q| q.kind == Quad::SHAPE).copied().unwrap();
+    assert_eq!(box_quad.border, 0.0, "the box itself has no border all round");
+
+    ui.add_class(node, "left");
+    assert_eq!(red(&mut ui), [[10.0, 20.0, 1.0, 30.0], [10.0, 48.0, 100.0, 2.0]], "another side, the same colour");
+}
+
+#[test]
 fn transitions_ease_between_styles_but_not_on_creation() {
     let mut ui = Ui::bare();
     ui.advance(0.0);

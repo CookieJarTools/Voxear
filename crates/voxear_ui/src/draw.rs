@@ -201,6 +201,7 @@ impl Draw<'_> {
                 shadow_quad(shadow, &look, rect, self.scale, opacity, clip, self.quads);
             }
             shape_quad(&look, rect, self.scale, opacity, clip, self.quads);
+            side_quads(&look, rect, self.scale, opacity, clip, self.quads);
             if let Some(gradient) = element.gradient
                 && opacity > 0.0
             {
@@ -338,6 +339,9 @@ struct Look {
     background: [f32; 4],
     border: f32,
     border_color: [f32; 4],
+    /// The widths of a border on some sides only, left, top, right and
+    /// bottom, drawn as strips rather than with the shape.
+    sides: Option<[f32; 4]>,
     dashed: bool,
     radius: f32,
     /// What is behind shows through, blurred.
@@ -349,8 +353,9 @@ impl Look {
         let (border, border_color) = style.border.map_or((0.0, [0.0; 4]), |(w, c)| (w, c.linear_premultiplied()));
         Self {
             background: style.background.map_or([0.0; 4], |c| c.linear_premultiplied()),
-            border,
+            border: if style.border_sides.is_some() { 0.0 } else { border },
             border_color,
+            sides: style.border_sides,
             dashed: style.dashed,
             radius: style.radius,
             backdrop: style.backdrop_blur > 0.0,
@@ -456,6 +461,7 @@ fn shape_quads(
                     background: fill.linear_premultiplied(),
                     border: border.map_or(0.0, |(w, _)| w),
                     border_color: border.map_or([0.0; 4], |(_, c)| c.linear_premultiplied()),
+                    sides: None,
                     dashed: false,
                     radius,
                     backdrop: false,
@@ -468,6 +474,7 @@ fn shape_quads(
                     background: fill.linear_premultiplied(),
                     border: 0.0,
                     border_color: [0.0; 4],
+                    sides: None,
                     dashed: false,
                     backdrop: false,
                     radius,
@@ -529,6 +536,27 @@ fn shape_quad(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32;
         flags: if look.dashed { Quad::DASHED } else { 0 } | if look.backdrop { Quad::BACKDROP } else { 0 },
         ..Quad::default()
     });
+}
+
+/// A border on some sides only: each a strip along the inside of the box,
+/// as wide as its side, in the border's colour.
+fn side_quads(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
+    let Some(sides) = look.sides else { return };
+    let color = look.border_color.map(|c| c * opacity);
+    if color[3] <= 0.0 {
+        return;
+    }
+    let [x, y, width, height] = rect;
+    let [left, top, right, bottom] = sides.map(|side| if side > 0.0 { (side * scale).round().max(1.0) } else { 0.0 });
+    let strips = [
+        [x, y, left, height],
+        [x, y, width, top],
+        [x + width - right, y, right, height],
+        [x, y + height - bottom, width, bottom],
+    ];
+    for strip in strips.into_iter().filter(|strip| strip[2] > 0.0 && strip[3] > 0.0) {
+        quads.push(Quad { rect: strip, color, clip, kind: Quad::SHAPE, ..Quad::default() });
+    }
 }
 
 /// How a text's glyphs are coloured: all one colour, or for rich text, as

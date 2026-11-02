@@ -66,6 +66,7 @@ To centre a menu on screen, centre what the document holds:
 | --- | --- |
 | `background-color` | The fill |
 | `border: 1px solid #3a3b42` | An edge: its width first, then `solid` or `dashed`, then its colour |
+| `border-bottom: 1px solid #3a3b42` | An edge on one side only, drawn solid. `border-top`, `border-left` and `border-right` work the same way, and the sides share one colour |
 | `border-radius: 8px` | Rounded corners |
 | `box-shadow: 0 4px 12px #00000080` | A shadow |
 | `opacity: 0.5` | See-through |

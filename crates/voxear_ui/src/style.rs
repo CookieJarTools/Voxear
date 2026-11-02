@@ -13,6 +13,10 @@ pub struct Style {
     pub background: Option<Color>,
     /// Width in logical pixels, and colour.
     pub border: Option<(f32, Color)>,
+    /// The width of each side, left, top, right and bottom, when they
+    /// differ, as `border-bottom` and the like set them. The sides share
+    /// `border`'s colour, and are drawn solid.
+    pub border_sides: Option<[f32; 4]>,
     /// The border is drawn in dashes rather than a solid line.
     pub dashed: bool,
     pub radius: f32,
@@ -155,6 +159,7 @@ impl Default for Style {
             layout: taffy::Style { position: Position::Relative, ..taffy::Style::default() },
             background: None,
             border: None,
+            border_sides: None,
             dashed: false,
             radius: 0.0,
             shadow: None,
@@ -252,6 +257,7 @@ impl Style {
     /// A border, which also insets the content, as in CSS.
     pub fn border(mut self, width: f32, color: Color) -> Self {
         self.border = Some((width, color));
+        self.border_sides = None;
         self.layout.border = Rect::length(width);
         self
     }

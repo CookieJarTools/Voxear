@@ -196,6 +196,10 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
             }
             border(style, width, Some(color(input)?));
         }
+        "border-left" => border_side(style, input, 0)?,
+        "border-top" => border_side(style, input, 1)?,
+        "border-right" => border_side(style, input, 2)?,
+        "border-bottom" => border_side(style, input, 3)?,
         "border-style" => style.dashed = keyword(input, BORDER_STYLES)?,
         "box-shadow" => style.shadow = shadow(input)?,
         "border-width" => border(style, pixels(input)?, None),
@@ -433,7 +437,25 @@ fn seconds(input: &mut Parser) -> Parsed<f32> {
 fn border(style: &mut Style, width: f32, color: Option<Color>) {
     let color = color.or(style.border.map(|(_, c)| c)).unwrap_or(Color::TRANSPARENT);
     style.border = Some((width, color));
+    style.border_sides = None;
     style.layout.border = Rect::length(width);
+}
+
+/// One side of a border, `border-bottom: 1px solid #2a2b30`: its width, then
+/// `solid` if written, then its colour, which every side shares. The other
+/// sides keep the widths they had.
+fn border_side(style: &mut Style, input: &mut Parser, side: usize) -> Parsed<()> {
+    let width = pixels(input)?;
+    let _ = input.try_parse(|i| keyword(i, BORDER_STYLES).map_err(|_| i.new_error_for_next_token::<()>()));
+    let color = if input.is_exhausted() { None } else { Some(color(input)?) };
+    let mut sides = style.border_sides.unwrap_or([style.border.map_or(0.0, |(w, _)| w); 4]);
+    sides[side] = width;
+    let color = color.or(style.border.map(|(_, c)| c)).unwrap_or(Color::TRANSPARENT);
+    style.border = Some((sides.into_iter().fold(0.0, f32::max), color));
+    style.border_sides = Some(sides);
+    let [left, top, right, bottom] = sides.map(LengthPercentage::length);
+    style.layout.border = Rect { left, top, right, bottom };
+    Ok(())
 }
 
 fn keyword<T: Copy>(input: &mut Parser, choices: &[(&str, T)]) -> Parsed<T> {
@@ -653,6 +675,10 @@ mod tests {
         let (style, _) = applied("border", "1px solid #2a2b30").unwrap();
         assert_eq!(style.border, Some((1.0, Color::hex(0x2a2b30))));
         assert_eq!(style.layout.border.left, LengthPercentage::length(1.0), "borders inset the content");
+        let (style, _) = applied("border-bottom", "2px solid #2a2b30").unwrap();
+        assert_eq!((style.border_sides, style.border), (Some([0.0, 0.0, 0.0, 2.0]), Some((2.0, Color::hex(0x2a2b30)))));
+        assert_eq!(style.layout.border.bottom, LengthPercentage::length(2.0), "one side insets the content");
+        assert_eq!(style.layout.border.top, LengthPercentage::length(0.0), "and the others do not");
         let (style, _) = applied("flex", "1").unwrap();
         assert_eq!((style.layout.flex_grow, style.layout.flex_basis), (1.0, Dimension::percent(0.0)));
         let (_, text) = applied("font-weight", "semibold").unwrap();

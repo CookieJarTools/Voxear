@@ -13,7 +13,7 @@ has a Rust core, a Vulkan renderer, C# scripting on .NET, and an editor laid out
   a black box. A game's own scripts can add windows, side bar buttons, commands and Inspector drawers to the editor,
   and packages will let people share them.
 - **Game-ready kits,** coming: a gun kit with procedural recoil, first-person, third-person, top-down and vehicle
-  controllers, each a component to add and play, and open to change.
+  controllers, and destruction for buildings, each a component to add and play, and open to change.
 - **Linux and Windows,** built and used on Linux from the first day.
 
 <picture>

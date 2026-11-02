@@ -657,6 +657,15 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   stick, and a camera that leads where the player is heading.
 - **Vehicle controller:** cars, trucks and motorbikes on the vehicle physics (M4), with a chase camera, input
   for keyboard and gamepad, and presets to drive at once.
+- **Destruction kit,** for buildings and props that break apart:
+  - fracturing in the editor: a mesh split into pieces (Voronoi, slices, or glass shards), its inside faces given
+    a material of their own, and the pieces kept with the model so breaking costs nothing to work out at runtime
+  - structural integrity: the pieces of a building joined in a graph of what holds up what, so knocking out a
+    wall brings down what rested on it, floor by floor, rather than everything at once or nothing
+  - damage from the gun kit's hits, explosions and impacts, with a strength for each material (wood, brick,
+    concrete, glass) and pieces that crack before they fall
+  - debris that settles, sleeps and fades, pooled and capped so a collapse never stalls the frame
+  - dust, sparks and sounds by material, and a whole building drawn as one mesh until it first breaks
 - **For all of them:** input actions bound by default for keyboard, mouse and gamepad; a sample scene each to try
   it in; a VoxDocs page each; and saving and loading their state with the game.
 

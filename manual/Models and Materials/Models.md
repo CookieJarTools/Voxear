@@ -23,7 +23,7 @@ A model that comes with LODs of its own uses those instead. Name each mesh's ver
 
 ## Putting a model in a level
 
-Drag the model from the Project panel into the Scene view. It lands where the pointer meets the ground, or on top of whatever is under the pointer. You can also drag it onto the Hierarchy: let go on an Obj to put the model inside that Obj, or on a scene's name to put it in that scene. Press Ctrl+Z to take it away again.
+Drag the model from the Project panel into the Scene view. As in Unity, it shows there as soon as the pointer is over the view, following it so you see where it will go, and lands where you let go: where the pointer meets the ground, or on top of whatever is under the pointer. Drag it off the view to change your mind. You can also drag it onto the Hierarchy: let go on an Obj to put the model inside that Obj, or on a scene's name to put it in that scene. Press Ctrl+Z to take it away again.
 
 The new Obj is named after the model, and has a **Mesh Renderer** that draws the model with its own material. A model made of several parts becomes an Obj with an Obj inside it for each part.
 

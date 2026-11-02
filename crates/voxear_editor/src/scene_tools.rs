@@ -204,8 +204,21 @@ pub fn pick(
 /// its box, or else the ground, the plane through the origin facing up, if
 /// that is in front and not too near the horizon to place things on.
 pub fn surface_at(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32; 2]) -> Option<Vec3> {
+    surface_past(world, renderer, camera, point, &[])
+}
+
+/// [`surface_at`], passing through the Objs in `skip`, as what is being
+/// placed under the pointer must not land on itself.
+pub fn surface_past(
+    world: &World,
+    renderer: &Renderer,
+    camera: &ViewCamera,
+    point: [f32; 2],
+    skip: &[Entity],
+) -> Option<Vec3> {
     let ray = camera.ray(point);
-    let nearest = mesh_hits(world, renderer, ray).into_iter().min_by(|a, b| a.0.total_cmp(&b.0));
+    let hits = mesh_hits(world, renderer, ray).into_iter().filter(|(_, _, obj)| !skip.contains(obj));
+    let nearest = hits.min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((_, hit, _)) = nearest {
         return Some(hit);
     }

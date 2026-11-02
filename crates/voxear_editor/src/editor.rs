@@ -278,6 +278,8 @@ pub struct Editor {
     /// The colour picker, opened from a colour's swatch.
     color_popup: color_popup::ColorPopup,
     picker_picks: Vec<(PickFor, Chosen)>,
+    /// What is being placed live under the pointer over a Scene view.
+    live_place: Option<placing::LivePlace>,
     /// A material shown on an Obj while it is dragged over it from the Project.
     material_preview: Option<material_drops::MaterialPreview>,
     /// The Obj selected, which every Inspector not locked shows: the active
@@ -519,6 +521,7 @@ impl Editor {
             hovered_tooltip: None,
             debug_texts,
             picker_picks: Vec::new(),
+            live_place: None,
             material_preview: None,
             selection: None,
             others: Vec::new(),

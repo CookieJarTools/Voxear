@@ -30,7 +30,7 @@ You can also open a prefab from one of its instances: click **Open** on its **Pr
 
 ## Placing more instances
 
-Drag the prefab from the Project panel into the Scene view. The new instance lands where the pointer meets the ground, or on top of whatever is under the pointer. If there is nothing there, it lands a little way in front of the camera.
+Drag the prefab from the Project panel into the Scene view. The new instance shows as soon as the pointer is over the view, following it, and lands where you let go: where the pointer meets the ground, or on top of whatever is under the pointer. If there is nothing there, it lands a little way in front of the camera.
 
 You can also drag the prefab onto the Hierarchy:
 

@@ -4355,6 +4355,48 @@ fn a_model_dragged_from_the_project_places_objs_drawing_it() {
 }
 
 #[test]
+fn what_is_dragged_over_the_scene_view_is_there_following_the_pointer() {
+    let Some((_dir, mut renderer, mut editor)) = open_copy() else { return };
+    open_folder(&mut editor, &mut renderer, "Models");
+    frame(&mut editor, &mut renderer);
+    let from = centre(&editor.ui, tile(&editor.ui, "Pyramid.gltf").expect("the Models folder shows"));
+    let viewport = editor.ui.find(editor.ui.root(), "viewport").unwrap();
+    let [x, y, w, h] = editor.ui.rect(viewport);
+    let position = |editor: &voxear_editor::Editor| {
+        obj(editor, "Pyramid (1)").map(|e| editor.game.engine.world.get::<Transform>(e).unwrap().position)
+    };
+
+    // Over the Scene view, as in Unity, it is there already, and moves with the pointer.
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(x + w * 0.3, y + h * 0.8);
+    frame(&mut editor, &mut renderer);
+    let first = position(&editor).expect("placed while dragged over the view");
+    editor.ui.pointer_move(x + w * 0.7, y + h * 0.8);
+    frame(&mut editor, &mut renderer);
+    let moved = position(&editor).unwrap();
+    assert!(moved.x > first.x + 0.5, "followed the pointer: {first} to {moved}");
+    assert!(moved.y.abs() < 1e-4, "on the ground, not on itself: {moved}");
+
+    // Off the view it goes, and back over the view and let go of, it stays, as one step to undo.
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let [ix, iy, iw, ih] = editor.ui.rect(inspector);
+    editor.ui.pointer_move(ix + iw / 2.0, iy + ih / 2.0);
+    frame(&mut editor, &mut renderer);
+    assert!(position(&editor).is_none(), "taken off the view, it goes");
+    editor.ui.pointer_move(x + w * 0.5, y + h * 0.8);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let kept = obj(&editor, "Pyramid (1)").expect("kept where let go of");
+    assert_eq!(editor.selected(), Some(kept));
+    assert!(obj(&editor, "Pyramid (2)").is_none(), "one, not another beside it");
+    editor.undo(&mut renderer);
+    assert!(obj(&editor, "Pyramid (1)").is_none(), "one step to undo");
+}
+
+#[test]
 fn a_sound_dragged_from_the_project_places_an_obj_playing_it() {
     let write = |root: &std::path::Path| std::fs::write(root.join("Models/Chime.wav"), chime()).unwrap();
     let Some((dir, mut renderer, mut editor)) = open_copy_with(write) else { return };

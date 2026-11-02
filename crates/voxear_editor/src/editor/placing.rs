@@ -8,10 +8,14 @@
 //! the top of the active scene. Let go of on a Scene view, it lands where
 //! the pointer meets what is under it, or the ground, on the snap grid
 //! across; failing both, in front of the camera, as a new Obj does. Either
-//! is one step to undo. Only while a prefab, model, sound or scene is
-//! dragged do the two take drops, so nothing else lights them up. In a
-//! prefab open on its own, what would land at the top goes inside its root
-//! instead, keeping its place in the world, as a prefab has one root.
+//! is one step to undo. As in Unity, what is dragged over a Scene view is
+//! there already, following the pointer and settling on what is under it,
+//! so it can be seen where it will go; let go there, it stays, and taken
+//! off the view or let go elsewhere, it goes. Only while a prefab, model,
+//! sound or scene is dragged do the two take drops, so nothing else lights
+//! them up. In a prefab open on its own, what would land at the top goes
+//! inside its root instead, keeping its place in the world, as a prefab has
+//! one root.
 
 use std::collections::HashSet;
 
@@ -23,6 +27,16 @@ use voxear_scene::Parent;
 use voxear_ui::DragSource;
 
 use super::{Editor, NEW_OBJ_DISTANCE};
+
+/// What is being placed live, under the pointer over a Scene view: the
+/// asset's path, the Obj made of it, every Obj in it, and how far its root
+/// stands from where it lands, as a prefab places its root.
+pub(super) struct LivePlace {
+    path: String,
+    root: Entity,
+    family: Vec<Entity>,
+    offset: Vec3,
+}
 use crate::{
     history::Edit,
     objs::{self, Destination},
@@ -48,14 +62,19 @@ impl Editor {
         if let Some(source) = dropped
             && let Some((path, kind)) = self.dragged_placeable(&source)
         {
-            match kind {
-                AssetKind::Scene => self.open_scene_alongside(&path, renderer),
-                _ => {
-                    let at = self.scene_landing(renderer);
+            match (kind, self.live_place.take()) {
+                (AssetKind::Scene, _) => self.open_scene_alongside(&path, renderer),
+                (_, Some(live)) if live.path == path => self.keep_live(live, renderer),
+                (_, live) => {
+                    if let Some(live) = live {
+                        self.drop_live(live);
+                    }
+                    let at = self.scene_landing(renderer, &[]);
                     self.place(&path, kind, None, at, renderer);
                 }
             }
         }
+        self.update_live_place(renderer);
         let placing = self.ui.dragging().is_some_and(|source| self.dragged_placeable(&source).is_some());
         // A material dropped on an Obj there goes to it (see `material_drops`).
         let material = self.ui.dragging().is_some_and(|source| self.dragged_material(&source).is_some());
@@ -76,6 +95,81 @@ impl Editor {
             .then_some((path, kind))
     }
 
+    /// While a prefab, model or sound is dragged over the Scene view in use,
+    /// it is there, settled on what is under the pointer; off the view, or
+    /// once the drag is over without landing there, it goes.
+    fn update_live_place(&mut self, renderer: &mut Renderer) {
+        let dragged = self.ui.dragging().and_then(|source| self.dragged_placeable(&source));
+        let over = self.shown(self.scene.viewport)
+            && self.ui.pointer_position().is_some_and(|(x, y)| {
+                let [left, top, width, height] = self.ui.rect(self.scene.viewport);
+                x >= left && x < left + width && y >= top && y < top + height
+            });
+        let wanted = dragged.filter(|(_, kind)| *kind != AssetKind::Scene && over);
+        let Some((path, kind)) = wanted else {
+            if let Some(live) = self.live_place.take() {
+                self.drop_live(live);
+            }
+            return;
+        };
+        if self.live_place.as_ref().is_some_and(|live| live.path != path)
+            && let Some(live) = self.live_place.take()
+        {
+            self.drop_live(live);
+        }
+        if self.live_place.is_none() {
+            if kind == AssetKind::Prefab && self.would_hold_itself(&path) {
+                return;
+            }
+            let at = self.scene_landing(renderer, &[]);
+            let Ok(root) = self.make(&path, kind, (None, None), at, renderer) else { return };
+            let world = &self.game.engine.world;
+            let offset = world.get::<voxear_scene::Transform>(root).map_or(Vec3::ZERO, |t| t.position - at);
+            let family = objs::family(world, root);
+            self.live_place = Some(LivePlace { path, root, family, offset });
+        }
+        let Some(live) = &self.live_place else { return };
+        let at = self.scene_landing(renderer, &live.family) + live.offset;
+        if let Some(transform) = self.game.engine.world.get_mut::<voxear_scene::Transform>(live.root) {
+            transform.position = at;
+        }
+    }
+
+    /// Keeps what was placed live where it was let go of, as one step to
+    /// undo, and selects it.
+    fn keep_live(&mut self, live: LivePlace, renderer: &Renderer) {
+        let at = self.scene_landing(renderer, &live.family) + live.offset;
+        if let Some(transform) = self.game.engine.world.get_mut::<voxear_scene::Transform>(live.root) {
+            transform.position = at;
+        }
+        self.settle(live.root, None);
+    }
+
+    /// Takes away what was placed live, leaving nothing to undo.
+    fn drop_live(&mut self, live: LivePlace) {
+        if self.game.engine.world.is_alive(live.root) {
+            drop(objs::take(&mut self.game, live.root));
+        }
+    }
+
+    /// Makes an instance of a prefab, a model's Objs, or an Obj playing a
+    /// sound, inside `parent` or at the top of `scene` (or the active one),
+    /// at `at` unless it goes inside an Obj.
+    fn make(
+        &mut self,
+        path: &str,
+        kind: AssetKind,
+        (parent, scene): (Option<Entity>, Option<voxear_assets::AssetGuid>),
+        at: Vec3,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<Entity> {
+        match kind {
+            AssetKind::Model => objs::place_model(&mut self.game, renderer, path, parent, scene, at),
+            AssetKind::Sound => objs::place_sound(&mut self.game, path, parent, scene, at),
+            _ => objs::place_prefab(&mut self.game, Some(renderer), path, parent, scene, at),
+        }
+    }
+
     /// Places an instance of a prefab, a model's Objs, or an Obj playing a
     /// sound, where `to` says, or at the top of the active scene, at `at`
     /// unless it goes inside an Obj, and selects it.
@@ -89,15 +183,17 @@ impl Editor {
             Some(Destination::Before(beside) | Destination::After(beside)) => (None, self.game.levels.scene_of(beside)),
             None => (None, None),
         };
-        let made = match kind {
-            AssetKind::Model => objs::place_model(&mut self.game, renderer, path, parent, scene, at),
-            AssetKind::Sound => objs::place_sound(&mut self.game, path, parent, scene, at),
-            _ => objs::place_prefab(&mut self.game, Some(renderer), path, parent, scene, at),
-        };
-        let made = match made {
+        let made = match self.make(path, kind, (parent, scene), at, renderer) {
             Ok(made) => made,
             Err(error) => return self.notify(&format!("Could not place {path}: {error:#}")),
         };
+        self.settle(made, to);
+    }
+
+    /// Finishes placing what was made: beside an Obj if `to` says, inside
+    /// the root of a prefab open on its own if at the top, as one step to
+    /// undo, and selected.
+    fn settle(&mut self, made: Entity, to: Option<Destination>) {
         if let Some(beside @ (Destination::Before(_) | Destination::After(_))) = to {
             objs::move_obj(&mut self.game, made, beside);
         }
@@ -144,14 +240,15 @@ impl Editor {
     }
 
     /// Where what is let go of on the Scene view goes: where the pointer
-    /// meets what is under it, or the ground, on the snap grid across it;
-    /// failing both, a little way along the pointer's ray, on the grid.
-    fn scene_landing(&self, renderer: &Renderer) -> Vec3 {
+    /// meets what is under it, `skip` aside, or the ground, on the snap grid
+    /// across it; failing both, a little way along the pointer's ray, on the
+    /// grid.
+    fn scene_landing(&self, renderer: &Renderer, skip: &[Entity]) -> Vec3 {
         let snap = self.tools.snap;
         let (Some(camera), Some((x, y))) = (self.scene_camera(), self.ui.pointer_position()) else {
             return self.new_obj_position();
         };
-        match scene_tools::surface_at(&self.game.engine.world, renderer, &camera, [x, y]) {
+        match scene_tools::surface_past(&self.game.engine.world, renderer, &camera, [x, y], skip) {
             Some(hit) => Vec3::new((hit.x / snap).round() * snap, hit.y, (hit.z / snap).round() * snap),
             None => {
                 let (origin, direction) = camera.ray([x, y]);

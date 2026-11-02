@@ -40,6 +40,19 @@ fr = "{player} a trouvé {count} pièces"
 
 The editor reads your tables again whenever one changes.
 
+## Text in UI documents
+
+In a UI document, write a key with `@` in front of it in place of a label's, a button's or a toggle's text. The element shows that key's text, and changes by itself when the game's language changes:
+
+```xml
+<vui>
+    <Label class="title" text="@menu.title" />
+    <Button name="play">@menu.play</Button>
+</vui>
+```
+
+A script does the same by setting an element's `Text` to a key with `@` in front: `playButton.Text = "@menu.play"`. Setting plain text stops the element following a key. To start a text with a plain `@`, write it twice: `@@home` shows as `@home`.
+
 ## Text from scripts
 
 `Localization.Get` gives a key's text in the language the game is in:
@@ -68,6 +81,26 @@ A language changes with `Localization.Language`, such as from a settings menu. `
 Localization.Changed += () => title.Text = Localization.Get("menu.title");
 Localization.Language = "fr";
 ```
+
+## Text in a behaviour's fields
+
+A `LocalizedString` field holds a key, picked in the Inspector from a list of your project's keys, each shown beside its text. Its `Value` is the key's text in the game's language:
+
+```csharp
+namespace MyGame;
+
+public sealed class Sign : Behaviour
+{
+	public LocalizedString Message = "sign.welcome";
+
+	protected override void Start()
+	{
+		Log.Info(Message.Value);
+	}
+}
+```
+
+The scene saves the key, so a sign placed in a level reads in whatever language the player picks. `Message.Format(("player", name))` fills in values, as `Localization.Format` does.
 
 ## Which language the game starts in
 

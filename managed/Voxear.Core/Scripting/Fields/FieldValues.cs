@@ -23,6 +23,10 @@ internal static class FieldValues
 		{
 			return value.GetString();
 		}
+		if (type == typeof(LocalizedString))
+		{
+			return new LocalizedString(value.ValueKind == JsonValueKind.Null ? string.Empty : value.GetString() ?? string.Empty);
+		}
 		if (type == typeof(bool))
 		{
 			return value.GetBoolean();

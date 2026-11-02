@@ -39,6 +39,16 @@ internal static class ScriptCatalogTests
 	}
 
 	[Test]
+	private static void LocalizedStringsAreDescribedByTheirKeys()
+	{
+		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestSign).Assembly));
+		var sign = document.RootElement.GetProperty("behaviours").EnumerateArray().Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestSign");
+		var title = sign.GetProperty("fields").EnumerateArray().Single(f => f.GetProperty("name").GetString() == "Title");
+		Check.True(Kind(title) == "localized", Kind(title) ?? "no kind");
+		Check.True(title.GetProperty("default").GetString() == "sign.welcome", "its key, as the script starts it");
+	}
+
+	[Test]
 	private static void ButtonsCallbacksChecksAndDropdownsAreDescribed()
 	{
 		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestTower).Assembly));

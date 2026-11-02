@@ -24,7 +24,9 @@
 //! with [`Ui::set_image`]), each taking `name`, `class`
 //! (several, separated by spaces) and `style` (declarations that win over
 //! sheets). A label's or button's text is its content, or its `text`
-//! attribute; a button may instead hold elements, such as an icon and a label. A list or tree view takes `item-height`, and gets its rows
+//! attribute; a button may instead hold elements, such as an icon and a label. A label's, a button's or a
+//! toggle's text written as `@menu.play` is that key's text in the game's language, and follows it when the
+//! language changes (see [`Ui::set_text_key`]); `@@` starts a text with a plain `@`. A list or tree view takes `item-height`, and gets its rows
 //! from code with [`Ui::bind_list`] or [`Ui::bind_tree`]. `<Style src>`
 //! attaches a sheet to the element it is in, so it styles that element and
 //! everything in it.
@@ -171,7 +173,11 @@ impl Ui {
                 "Toggle" => {
                     let content: String = child.children().filter_map(|n| n.text()).collect();
                     let text = child.attribute("text").map_or_else(|| content.trim().to_string(), str::to_string);
+                    let (text, key) = keyed(&text);
                     let node = self.toggle(parent, &text, flag(child, "value", builder)?);
+                    if let Some(&label) = key.and(self.children(node).last()) {
+                        self.set_text_key(label, key);
+                    }
                     self.attributes(node, child, &["name", "class", "style", "text", "value"], builder);
                 }
                 "Slider" => {
@@ -292,9 +298,11 @@ impl Ui {
                     }
                     let content: String = child.children().filter_map(|n| n.text()).collect();
                     let text = child.attribute("text").map_or_else(|| content.trim().to_string(), str::to_string);
+                    let (text, key) = keyed(&text);
                     let kind = if tag == "Label" { Kind::Label } else { Kind::Button };
                     let element = Element { text: Some(Text::new(&text)), ..Element::new(kind, Style::default()) };
                     let node = self.add(parent, element);
+                    self.set_text_key(node, key);
                     self.attributes(node, child, &["name", "class", "style", "text"], builder);
                 }
                 other => {
@@ -334,6 +342,17 @@ impl Ui {
 }
 
 /// A `true` or `false` attribute; absent is false.
+/// A text as markup and scripts write it, and the key it names, if any:
+/// `@menu.play` is the key `menu.play`, its text the key until the key's
+/// text is shown; `@@` starts a text with a plain `@`.
+pub fn keyed(text: &str) -> (String, Option<&str>) {
+    match text.strip_prefix('@').map(str::trim) {
+        Some(rest) if rest.starts_with('@') => (text[1..].to_string(), None),
+        Some(key) if !key.is_empty() => (key.to_string(), Some(key)),
+        _ => (text.to_string(), None),
+    }
+}
+
 fn flag(xml: Node, name: &str, builder: &Builder) -> Result<bool, UiError> {
     match xml.attribute(name) {
         None | Some("false") => Ok(false),

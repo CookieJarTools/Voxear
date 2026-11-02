@@ -1183,6 +1183,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             kind @ (voxear_engine::script_types::FieldKind::Asset { .. }
             | voxear_engine::script_types::FieldKind::Ref { .. }),
         ) => fields::asset_choices(game, &kind),
+        Some(voxear_engine::script_types::FieldKind::Localized) => fields::key_choices(game),
         Some(kind) => fields::obj_choices(game, types, entity, &kind),
         None => fields::obj_choices(game, types, entity, &voxear_engine::script_types::FieldKind::Obj),
     }

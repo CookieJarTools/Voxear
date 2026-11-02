@@ -31,6 +31,7 @@ Values are set just before `Awake`, so by the time any of your methods run, the 
 | Type | In the Inspector |
 | --- | --- |
 | Numbers, `bool`, `string` | A box to type in, or a tick |
+| `LocalizedString` | A key from your string tables, picked from a list beside its text (see [[Translating Your Game]]) |
 | An `enum` | A list to pick from |
 | `Vector2`, `Vector3`, `Vector4` | A box for each part |
 | `Quaternion` | Three angles, in degrees |

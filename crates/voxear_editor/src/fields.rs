@@ -34,6 +34,8 @@ pub enum Pick {
     Obj(Option<Entity>),
     /// An asset by its project path.
     Asset(Option<String>),
+    /// A key into the project's string tables.
+    Key(Option<String>),
 }
 
 /// The kind of value at a path, as the scripts' description says.
@@ -184,6 +186,9 @@ pub(crate) fn typed(world: &World, kind: &FieldKind, value: Option<&toml::Value>
         }
         FieldKind::Bool => Value::Toggle(value.and_then(toml::Value::as_bool).unwrap_or_default()),
         FieldKind::Text => Value::Text(value.and_then(toml::Value::as_str).unwrap_or_default().to_string()),
+        FieldKind::Localized => Value::Asset(
+            value.and_then(toml::Value::as_str).filter(|key| !key.is_empty()).unwrap_or("None").to_string(),
+        ),
         FieldKind::Enum { names } => {
             let index = match value {
                 Some(toml::Value::Integer(i)) => usize::try_from(*i).ok(),
@@ -305,9 +310,9 @@ pub fn pick(
             toml::Value::Integer(target.to_bits() as i64),
         )])),
         Pick::Obj(None) => toml::Value::Table(toml::Table::new()),
-        Pick::Asset(Some(asset)) => toml::Value::String(asset.clone()),
-        Pick::Asset(None) if path.len() == 1 => return reset(world, entity, behaviour, path),
-        Pick::Asset(None) => toml::Value::String(String::new()),
+        Pick::Asset(Some(asset)) | Pick::Key(Some(asset)) => toml::Value::String(asset.clone()),
+        Pick::Asset(None) | Pick::Key(None) if path.len() == 1 => return reset(world, entity, behaviour, path),
+        Pick::Asset(None) | Pick::Key(None) => toml::Value::String(String::new()),
     };
     change(world, types, entity, behaviour, path, |slot| *slot = new)
 }
@@ -434,7 +439,9 @@ fn blank(types: &ScriptTypes, kind: &FieldKind) -> toml::Value {
         FieldKind::Number => toml::Value::Float(0.0),
         FieldKind::Whole => toml::Value::Integer(0),
         FieldKind::Bool => toml::Value::Boolean(false),
-        FieldKind::Text | FieldKind::Asset { .. } | FieldKind::Ref { .. } => toml::Value::String(String::new()),
+        FieldKind::Text | FieldKind::Localized | FieldKind::Asset { .. } | FieldKind::Ref { .. } => {
+            toml::Value::String(String::new())
+        }
         FieldKind::Enum { names } => toml::Value::String(names.first().cloned().unwrap_or_default()),
         FieldKind::Vector { size } => toml::Value::Array(vec![toml::Value::Float(0.0); *size]),
         FieldKind::Rotation => toml::Value::Array(vec![toml::Value::Float(0.0); 3]),
@@ -507,6 +514,17 @@ pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
     found
 }
 
+/// The keys of the project's string tables a `LocalizedString` field can
+/// take, in order, with nothing first.
+pub fn key_choices(game: &Game) -> Vec<(String, Pick)> {
+    let localization = game.engine.world.resource::<voxear_engine::localization::Localization>();
+    let mut keys: Vec<String> = localization.map(|l| l.keys().map(str::to_string).collect()).unwrap_or_default();
+    keys.sort();
+    let mut found = vec![("None".to_string(), Pick::Key(None))];
+    found.extend(keys.into_iter().map(|key| (key.clone(), Pick::Key(Some(key)))));
+    found
+}
+
 /// Why a reference cannot take what was dropped on it, for the status bar.
 pub fn why_not(game: &Game, entity: Entity, kind: &FieldKind, pick: &Pick) -> String {
     let world = &game.engine.world;
@@ -539,6 +557,7 @@ pub fn takes(kind: &FieldKind) -> &str {
     match kind {
         FieldKind::Asset { asset } | FieldKind::Ref { asset } => short(asset),
         FieldKind::Behaviour { name } | FieldKind::Component { name } => short(name),
+        FieldKind::Localized => "Text",
         _ => "Obj",
     }
 }

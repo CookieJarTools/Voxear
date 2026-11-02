@@ -412,8 +412,10 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
         .into_iter()
         .map(|(label, pick)| {
             let (icon, detail) = match &pick {
-                Pick::Obj(None) | Pick::Asset(None) if label == "None" => ("close", String::new()),
-                Pick::Obj(None) | Pick::Asset(None) => ("material", "Built in".into()),
+                Pick::Obj(None) | Pick::Asset(None) | Pick::Key(None) if label == "None" => ("close", String::new()),
+                Pick::Obj(None) | Pick::Asset(None) | Pick::Key(None) => ("material", "Built in".into()),
+                // A key, beside its text in the language the game is in.
+                Pick::Key(Some(key)) => ("globe", key_text(game, key)),
                 Pick::Obj(Some(entity)) => obj(game, *entity),
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => ("cube", "Built in".into()),
                 // A part of a model, as a mesh, beside the model it is in.
@@ -439,6 +441,11 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
             Choice { label, detail, icon, pick: Chosen::Value(pick), preview, folder: String::new() }
         })
         .collect()
+}
+
+fn key_text(game: &Game, key: &str) -> String {
+    let localization = game.engine.world.resource::<voxear_engine::localization::Localization>();
+    localization.and_then(|l| l.find(key)).unwrap_or_default().to_string()
 }
 
 fn obj(game: &Game, entity: Entity) -> (&'static str, String) {

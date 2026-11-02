@@ -6,6 +6,11 @@
 //! hold documents and elements as numbers, which [`UiNumbers`] keeps; the
 //! editor's Inspector keeps its own for the drawers scripts draw fields with.
 //!
+//! A label, button or toggle whose text is `@menu.play`, in a document or
+//! set from a script, shows that key's text in the game's language, and the
+//! game shows it again whenever the language or its text changes
+//! ([`GameUi::follow_language`]).
+//!
 //! The scripts' list and tree views (`ListView` and `TreeView`) are Voxear
 //! UI's own, which keep elements only for the rows on screen. What they make
 //! and bind is queued, and after the scripts' updates the game lays its UI
@@ -15,6 +20,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use anyhow::{Context, Result};
+use voxear_localization::Localization;
 use voxear_render::Renderer;
 use voxear_scripting::{RowWork, UiAnswer, UiAsk};
 use voxear_ui::{ElementKind, Kind, ListItems, NodeId, Style, TreeItems, Ui, UiFrame};
@@ -129,7 +135,12 @@ impl UiNumbers {
         let Some(node) = self.node(element) else { return UiAnswer::None };
         match ask {
             UiAsk::Text => return UiAnswer::Text(ui.text(node)),
-            UiAsk::SetText(text) => ui.set_text(node, text),
+            // `@menu.play` shows that key's text, following the language; plain text stops following one.
+            UiAsk::SetText(text) => {
+                let (text, key) = voxear_ui::markup::keyed(text);
+                ui.set_text(node, &text);
+                ui.set_text_key(node, key);
+            }
             UiAsk::Class(class, change) => {
                 let change = match change {
                     0 => ClassChange::Remove,
@@ -271,6 +282,9 @@ pub struct GameUi {
     /// The size and scale the last frame was laid out for, to lay the UI
     /// out again before the scripts fill rows.
     laid_out: Option<((u32, u32), f32)>,
+    /// The game's text as its keys' elements show it, by
+    /// [`Localization::version`].
+    language: Option<u64>,
 }
 
 impl GameUi {
@@ -289,6 +303,21 @@ impl GameUi {
             tracing::warn!(target: "script", "{warning}");
         }
         Ok(self.numbers.add_document(document))
+    }
+
+    /// Shows each element bound to a key that key's text in the game's
+    /// language: every one when the language or the text changed since the
+    /// last call, or any bound since.
+    pub fn follow_language(&mut self, localization: Option<&Localization>) {
+        let Some(localization) = localization else { return };
+        let added = self.ui.take_text_keys_added();
+        if !added && self.language == Some(localization.version()) {
+            return;
+        }
+        self.language = Some(localization.version());
+        for (node, key) in self.ui.text_keys() {
+            self.ui.set_text(node, &localization.text(&key));
+        }
     }
 
     /// An empty document over the game, to fill with elements made from

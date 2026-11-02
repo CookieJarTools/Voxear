@@ -46,6 +46,10 @@ A `.vui` file lists what is on screen, as elements inside elements, in a form li
 
 Most icons are the editor's own, such as `play`, `pause`, `check`, `close`, `plus`, `search`, `settings`, `eye`, `lock`, `info` and `alert`.
 
+## Text in every language
+
+A label's, a button's or a toggle's text written as `@menu.play` is the text of the key `menu.play`, in the language the game is in, and it changes when the language does. See [[Translating Your Game]].
+
 ## Linking a style sheet
 
 `<Style src="Menu.vss" />` styles the element it sits in and everything inside it. Put one at the top, directly in `<vui>`, to style the whole document. The path is from the `.vui` file's folder, so `UI/Menu.vui` with `src="Menu.vss"` reads `UI/Menu.vss`.

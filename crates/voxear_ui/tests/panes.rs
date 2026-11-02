@@ -506,3 +506,39 @@ fn a_dropdowns_list_fits_its_options_and_the_screen() {
     let layer = *ui.children(ui.root()).last().unwrap();
     assert_eq!(ui.rect(ui.children(layer)[0])[2], 90.0, "unless its width is set");
 }
+
+#[test]
+fn text_written_as_a_key_is_bound_to_it() {
+    let mut ui = Ui::new();
+    let document = load(
+        &mut ui,
+        r#"<vui>
+            <Label name="title" text="@menu.title" />
+            <Button name="play">@menu.play</Button>
+            <Toggle name="music" text="@menu.music" />
+            <Label name="mail">@@home</Label>
+        </vui>"#,
+    );
+    let find = |ui: &Ui, name: &str| ui.find(document, name).unwrap();
+    let (title, play, mail) = (find(&ui, "title"), find(&ui, "play"), find(&ui, "mail"));
+    assert_eq!(
+        (ui.text_key(title), ui.text_key(play), ui.text_key(mail)),
+        (Some("menu.title"), Some("menu.play"), None)
+    );
+    assert_eq!(
+        (ui.text(title).as_str(), ui.text(mail).as_str()),
+        ("menu.title", "@home"),
+        "the key until its text comes"
+    );
+    let toggle_label = *ui.children(find(&ui, "music")).last().unwrap();
+    assert_eq!(ui.text_key(toggle_label), Some("menu.music"));
+    assert!(ui.take_text_keys_added() && !ui.take_text_keys_added());
+
+    // Whoever keeps the languages fills each one in; an element gone is forgotten.
+    for (node, key) in ui.text_keys() {
+        ui.set_text(node, &key.replace("menu.", "Menu "));
+    }
+    assert_eq!(ui.text(play), "Menu play");
+    ui.remove(play);
+    assert_eq!(ui.text_keys().len(), 2);
+}

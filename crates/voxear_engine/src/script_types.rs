@@ -431,6 +431,9 @@ pub enum FieldKind {
     Whole,
     Bool,
     Text,
+    /// A `LocalizedString`: a key into the project's string tables, which
+    /// scenes write as the key.
+    Localized,
     Enum {
         names: Vec<String>,
     },

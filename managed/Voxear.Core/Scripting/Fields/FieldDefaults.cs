@@ -47,6 +47,9 @@ internal static class FieldDefaults
 			case string text:
 				json.WriteStringValue(text);
 				return true;
+			case LocalizedString localized:
+				json.WriteStringValue(localized.Key ?? string.Empty);
+				return true;
 			case bool on:
 				json.WriteBooleanValue(on);
 				return true;

@@ -567,7 +567,10 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     language on Linux; missing keys marked `⟦key⟧` while the game is made
   - [ ] asset tables
   - [ ] ICU smart strings (plurals, gender, number and date formatting)
-  - [ ] binding through `@key` in UI markup, `LocalizedString` fields, `LocalizedText`, and observable `Localized(key)`
+  - [x] binding through `@key` in UI markup and in an element's `Text` from a script, shown again when the language or
+    the text changes
+  - [x] `LocalizedString` fields, picked in the Inspector from the project's keys beside their text, saved as the key
+  - [ ] a `LocalizedText` component (once there is text in the world), and observable `Localized(key)`
   - [ ] CSV import from a file or URL with a diff preview, and CSV export
   - [ ] the Localization Tables editor window, with pseudo-localisation
   - [ ] the saved choice, the store's language and Windows' languages in language detection

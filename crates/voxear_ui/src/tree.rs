@@ -283,6 +283,11 @@ pub struct Ui {
     /// Containers whose items drag into a new order, and their slides; see
     /// [`reorder`](crate::reorder).
     pub(crate) reorders: crate::reorder::Reorders,
+    /// The elements whose text is a key's, in the language the game is in,
+    /// and whether any were bound since the last look (see
+    /// [`Ui::set_text_key`]).
+    text_keys: HashMap<taffy::NodeId, String>,
+    text_keys_added: bool,
 }
 
 impl Default for Ui {
@@ -335,6 +340,8 @@ impl Ui {
             window_move: None,
             visitors: Vec::new(),
             reorders: Default::default(),
+            text_keys: HashMap::new(),
+            text_keys_added: false,
         }
         .with_theme()
     }
@@ -485,6 +492,36 @@ impl Ui {
 
     pub(crate) fn element_mut(&mut self, node: NodeId) -> Option<&mut Element> {
         self.tree.get_node_context_mut(node.0)
+    }
+
+    /// Binds an element's text to a key, such as `menu.play`, for whoever
+    /// keeps the game's languages to show that key's text in it, now and
+    /// whenever the language changes (see [`text_keys`](Self::text_keys)).
+    /// `None` unbinds it, leaving the text it has.
+    pub fn set_text_key(&mut self, node: NodeId, key: Option<&str>) {
+        match key {
+            Some(key) => {
+                self.text_keys.insert(node.0, key.to_string());
+                self.text_keys_added = true;
+            }
+            None => drop(self.text_keys.remove(&node.0)),
+        }
+    }
+
+    /// The key an element's text is bound to.
+    pub fn text_key(&self, node: NodeId) -> Option<&str> {
+        self.text_keys.get(&node.0).map(String::as_str)
+    }
+
+    /// Every element whose text is bound to a key, and the key.
+    pub fn text_keys(&self) -> Vec<(NodeId, String)> {
+        self.text_keys.iter().map(|(&node, key)| (NodeId(node), key.clone())).collect()
+    }
+
+    /// Whether elements were bound to keys since the last call, so their
+    /// text is still to be shown.
+    pub fn take_text_keys_added(&mut self) -> bool {
+        std::mem::take(&mut self.text_keys_added)
     }
 
     /// Changes an element's text. Setting the same text again costs nothing,
@@ -742,6 +779,7 @@ impl Ui {
         self.draggables.remove(&node.0);
         self.drop_targets.remove(&node.0);
         self.reorders.forget(node.0);
+        self.text_keys.remove(&node.0);
         self.lists.retain(|&n| n != node.0);
         self.scrollers.retain(|&n| n != node.0);
         self.fields.retain(|&n| n != node.0);

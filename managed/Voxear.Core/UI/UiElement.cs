@@ -79,6 +79,11 @@ public unsafe class UiElement
 		}
 	}
 
+	/// <summary>
+	/// A label's or a button's text. Set to "@menu.play", it shows that key's text in the game's language, and follows
+	/// the language when it changes (see Localization); set to plain text, it stops following one. "@@" starts a text
+	/// with a plain "@".
+	/// </summary>
 	public string Text
 	{
 		get { return IsShown ? ReadText() : text; }

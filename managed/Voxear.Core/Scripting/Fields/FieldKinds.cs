@@ -49,6 +49,10 @@ internal static class FieldKinds
 		{
 			return "text";
 		}
+		if (type == typeof(LocalizedString))
+		{
+			return "localized";
+		}
 		if (type == typeof(bool))
 		{
 			return "bool";

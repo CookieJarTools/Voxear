@@ -3832,6 +3832,44 @@ fn the_console_saves_filters_hides_assemblies_and_colours_categories() {
 }
 
 /// Hello's Spinner as a build with a C# `Color` field on it describes it.
+const SPINNER_WITH_TITLE: &str = r#"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
+  {"name": "title", "type": {"kind": "localized"}, "default": ""}
+]}], "types": {}, "commands": []}"#;
+
+#[test]
+fn a_localized_string_field_picks_a_key_beside_its_text() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let table = "[[entry]]\nkey = \"menu.play\"\nen = \"Play\"\n\n[[entry]]\nkey = \"menu.quit\"\nen = \"Quit\"\n";
+    std::fs::write(dir.path().join("Menu.strings"), table).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(SPINNER_WITH_TITLE).unwrap());
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    let picker = first_with(&editor.ui, prop_row(&editor.ui, "Title").unwrap(), "value-picker").unwrap();
+    let label = first_with(&editor.ui, picker, "picker-label").unwrap();
+    assert_eq!(editor.ui.text(label), "None");
+    let arrow = first_with(&editor.ui, picker, "picker-arrow").unwrap();
+    click(&mut editor.ui, arrow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let offered = picker_rows(&editor.ui);
+    assert_eq!(offered[1..], [("menu.play".into(), "Play".into()), ("menu.quit".into(), "Quit".into())], "{offered:?}");
+    shot(&mut renderer, "localized-string-picker.png");
+
+    let row = picker_row(&editor.ui, "menu.quit").unwrap();
+    click_across_frames(&mut editor, &mut renderer, row);
+    frame(&mut editor, &mut renderer);
+    let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+    assert_eq!(kept.0[0].fields.get("title"), Some(&toml::Value::String("menu.quit".into())), "written as its key");
+    let label = first_with(&editor.ui, prop_row(&editor.ui, "Title").unwrap(), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(label), "menu.quit");
+}
+
 const SPINNER_WITH_COLOUR: &str = r#"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
   {"name": "tint", "type": {"kind": "color"}, "default": [1.0, 0.5, 0.0, 0.5]}
 ]}], "types": {}, "commands": []}"#;

@@ -419,6 +419,7 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        self.ui.follow_language(self.engine.world.resource::<Localization>());
         // The UI's list and tree views have the scripts fill the rows now on screen, before the frame draws them.
         let rows = self.ui.rows_to_fill();
         if !rows.is_empty() {

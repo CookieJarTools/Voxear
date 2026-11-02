@@ -18,6 +18,7 @@ mod levels;
 mod loading;
 pub mod memory;
 pub mod new_project;
+pub use voxear_localization as localization;
 pub use voxear_physics::scene as physics;
 pub use voxear_physics2d::scene as physics2d;
 pub mod player;

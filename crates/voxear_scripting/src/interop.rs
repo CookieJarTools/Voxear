@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 31;
+pub(crate) const API_VERSION: u32 = 32;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -269,6 +269,17 @@ pub(crate) struct NativeApi {
     pub layer_name: unsafe extern "C" fn(layer: i32, buffer: *mut u8, capacity: i32) -> i32,
     pub layer_find: unsafe extern "C" fn(name: *const u8, len: i32) -> i32,
     pub layer_collide: unsafe extern "C" fn(a: i32, b: i32, set: i32, on: i32) -> i32,
+    pub text_get: unsafe extern "C" fn(
+        key: *const u8,
+        len: i32,
+        values: *const u8,
+        values_len: i32,
+        buffer: *mut u8,
+        capacity: i32,
+    ) -> i32,
+    pub text_language: unsafe extern "C" fn(set: i32, code: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    pub text_languages: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
+    pub text_version: unsafe extern "C" fn() -> u64,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -1072,6 +1083,10 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         layer_name: crate::layers::layer_name,
         layer_find: crate::layers::layer_find,
         layer_collide: crate::layers::layer_collide,
+        text_get: crate::text::text_get,
+        text_language: crate::text::text_language,
+        text_languages: crate::text::text_languages,
+        text_version: crate::text::text_version,
     }
 }
 

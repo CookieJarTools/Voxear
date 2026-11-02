@@ -18,6 +18,21 @@ pub struct ProjectFile {
     pub layers: LayerSettings,
     #[serde(default)]
     pub physics: PhysicsSettings,
+    #[serde(default)]
+    pub localization: LocalizationSettings,
+}
+
+/// The languages the game is in, by their codes, the one it is written in
+/// first. Its text is in string tables (see `voxear_localization`).
+///
+/// ```toml
+/// [localization]
+/// languages = ["en", "fr", "pt-BR"]
+/// ```
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LocalizationSettings {
+    pub languages: Vec<String>,
 }
 
 /// The project's layers' names, by number from layer 0, as Unity's Tags

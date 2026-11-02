@@ -32,6 +32,8 @@ pub enum AssetKind {
     Sound,
     /// A `.inputactions` file: the game's input actions, in maps.
     InputActions,
+    /// A `.strings` file: a table of the game's text in each of its languages.
+    Strings,
 }
 
 impl AssetKind {
@@ -47,6 +49,7 @@ impl AssetKind {
             "vui" => Self::Ui,
             "wav" | "ogg" | "flac" | "mp3" => Self::Sound,
             "inputactions" => Self::InputActions,
+            "strings" => Self::Strings,
             _ => return None,
         })
     }

@@ -671,6 +671,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Prefab => "prefab",
             AssetKind::Sound => "sound",
             AssetKind::InputActions => "input",
+            AssetKind::Strings => "strings",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

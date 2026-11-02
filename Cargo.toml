@@ -25,6 +25,7 @@ voxear_docs = { path = "crates/voxear_docs" }
 voxear_input = { path = "crates/voxear_input" }
 voxear_physics = { path = "crates/voxear_physics" }
 voxear_physics2d = { path = "crates/voxear_physics2d" }
+voxear_localization = { path = "crates/voxear_localization" }
 
 anyhow = "1"
 ash = "0.38"
@@ -76,6 +77,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 gilrs = "0.11"
 # 2D physics: Box2D v3, built from its C source, with ready-made bindings (no libclang needed).
 boxdd-sys = "0.6"
+# Language codes and their fallbacks (`pt-BR`, then `pt`), as ICU works them out; already in the build through
+# parley's text segmentation.
+icu_locale_core = "2.4"
+icu_locale_fallback = "2.4"
 
 # Keep dependencies fast in debug builds so the engine stays usable while iterating.
 [profile.dev.package."*"]

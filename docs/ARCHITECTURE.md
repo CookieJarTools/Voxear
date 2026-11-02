@@ -2421,7 +2421,9 @@ await Input.Rebind(actions["Jump"], scheme: ControlScheme.Gamepad);
 ## Localization
 
 Every piece of text can be bound to a key. When the language changes, everything bound to it updates at once, with
-no reload. This works like Unity's Localization package, but with the setup done for you.
+no reload. This works like Unity's Localization package, but with the setup done for you. *(Built so far: string
+tables as `.strings` files, `voxear_localization` finding a key's text through ICU's fallback chains, the system
+language on Linux, and `Localization.Get`, `Format` with plain `{name}` values, `Language` and `Changed` in C#.)*
 
 ```csharp
 // Easy: bind once, and the text follows the language

@@ -236,8 +236,13 @@ impl Editor {
                 .filter(|model| reads_any(&root, model, &changed))
                 .collect(),
         };
+        // A string table edited outside the editor is read again; one that came or went is, with every change.
+        let tables = changed.iter().any(|path| path.ends_with(".strings"));
         if came_or_went {
             self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
+        } else if tables {
+            self.game.content.forget_kind(voxear_assets::AssetKind::Strings);
+            self.game.load_strings();
         }
         for model in models {
             self.reimport_model(&model, renderer);

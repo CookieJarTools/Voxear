@@ -20,7 +20,7 @@ use voxear_scripting::{SaveSettings, ScriptRuntime};
 
 use crate::{
     Content, ContentSettings, Engine, Game, Project, ProjectFile, WindowOptions,
-    project::{LayerSettings, PhysicsSettings, ProjectInfo},
+    project::{LayerSettings, LocalizationSettings, PhysicsSettings, ProjectInfo},
     run_windowed, scripts,
 };
 
@@ -71,6 +71,9 @@ pub struct PlayerSettings {
     pub layers: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore: Vec<[String; 2]>,
+    /// The project's languages, the one it is written in first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
 }
 
 impl PlayerSettings {
@@ -189,9 +192,14 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             content: ContentSettings::default(),
             layers: LayerSettings { names: settings.layers.clone() },
             physics: PhysicsSettings { ignore: settings.ignore.clone() },
+            localization: LocalizationSettings { languages: settings.languages.clone() },
         },
     };
     let mut game = Game::with_content(project, engine, content);
+    // A development build marks a key no language has, as the editor does; a shipped game shows the key.
+    if let Some(localization) = game.engine.world.resource_mut::<voxear_localization::Localization>() {
+        localization.set_mark_missing(settings.development);
+    }
 
     if args.headless {
         // Without a window, sound plays out in silence.

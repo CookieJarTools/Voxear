@@ -1,0 +1,17 @@
+namespace Voxear.Tests;
+
+/// <summary>Localization with no engine behind it: a key is its own text, in English, and nothing throws.</summary>
+internal static class LocalizationTests
+{
+	[Test]
+	private static void AKeyIsItsOwnTextWithoutTheEngine()
+	{
+		Check.True(Localization.Get("menu.play") == "menu.play", "the key");
+		Check.True(Localization.Format("loot.found", ("count", 3)) == "loot.found", "with values too");
+		var changed = false;
+		Localization.Changed += () => changed = true;
+		Localization.Language = "fr";
+		Check.True(Localization.Language == "en" && !changed, "English, unchanged");
+		Check.True(Localization.Languages.Count == 1 && Localization.Languages[0] == "en", "only English");
+	}
+}

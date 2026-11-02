@@ -875,9 +875,11 @@ impl Editor {
                 if let Err(error) = self.game.content.rescan() {
                     tracing::warn!("could not look at the project's files again: {error:#}");
                 }
-                // An .inputactions file may have come, gone or changed.
+                // An .inputactions file or a string table may have come, gone or changed.
                 self.game.content.forget_kind(voxear_assets::AssetKind::InputActions);
                 self.game.load_input_actions();
+                self.game.content.forget_kind(voxear_assets::AssetKind::Strings);
+                self.game.load_strings();
                 self.files_seen();
                 // Files moved or went, so previews are made again for the paths they have now.
                 self.asset_previews.clear(renderer);

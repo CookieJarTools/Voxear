@@ -5,6 +5,7 @@ use voxear_core::{
     profile_scope,
 };
 use voxear_ecs::{Entity, World};
+use voxear_localization::{Localization, StringTable};
 use voxear_render::{MAX_PREVIEW_SIZE, MeshHandle, MeshRenderer, PreviewId, PreviewOptions, Renderer};
 use voxear_scene::{Destroying, Parent, Placement, Transform};
 use voxear_scripting::{
@@ -112,6 +113,7 @@ impl Game {
             input: voxear_input::Input::new(),
         };
         game.load_input_actions();
+        game.load_strings();
         game.engine.world.insert_resource(game.project.layers());
         game
     }
@@ -130,6 +132,40 @@ impl Game {
         if let Err(error) = read.and_then(|(text, _)| self.input.load_actions(&text)) {
             tracing::error!("{path}: {error:#}; the game uses Voxear's own input actions");
         }
+    }
+
+    /// Reads every string table in the project, in path order, into the
+    /// world's [`Localization`]. The game starts in the language the
+    /// player's system is in, or the nearest the project has, or its own;
+    /// read again, as when a table changed, it stays in the one it is in.
+    pub fn load_strings(&mut self) {
+        let languages = &self.project.file.localization.languages;
+        let mut localization = match self.engine.world.remove_resource::<Localization>() {
+            Some(mut kept) => {
+                kept.set_languages(languages);
+                kept
+            }
+            None => {
+                let mut fresh = Localization::new(languages);
+                if let Some(system) = voxear_localization::system_language() {
+                    fresh.set_language(&system);
+                }
+                fresh
+            }
+        };
+        localization.clear();
+        let db = self.content.db();
+        let mut files: Vec<(String, AssetGuid)> =
+            db.entries().filter(|entry| entry.kind == AssetKind::Strings).map(|e| (e.path.clone(), e.guid)).collect();
+        files.sort();
+        for (path, guid) in files {
+            let read = self.content.asset_text(guid, AssetKind::Strings);
+            match read.and_then(|(text, _)| StringTable::parse(&text)) {
+                Ok(table) => localization.add_table(&table),
+                Err(error) => tracing::error!("{path}: {error:#}"),
+            }
+        }
+        self.engine.world.insert_resource(localization);
     }
 
     /// Rebuilds the scripts when they change and reloads them into the

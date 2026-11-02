@@ -480,8 +480,11 @@ impl Editor {
     /// Copies the level into a new engine with the scripts and swaps it in.
     fn start_run(&mut self, renderer: &mut Renderer) {
         let mut engine = Engine::new();
-        // The project's layers, as the copied level's Objs name theirs.
+        // The project's layers, as the copied level's Objs name theirs, and its text, in the language it is in.
         engine.world.insert_resource(self.game.project.layers());
+        if let Some(localization) = self.game.engine.world.resource::<voxear_engine::localization::Localization>() {
+            engine.world.insert_resource(localization.clone());
+        }
         if let Some(scripts) = self.play.scripts.take() {
             engine.set_scripts(scripts);
         }

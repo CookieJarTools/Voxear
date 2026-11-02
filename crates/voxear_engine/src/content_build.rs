@@ -307,9 +307,11 @@ fn usage_sets(
             // A field or code naming an asset means something shipped uses it, so exclude cannot drop it.
             let needed = named.contains(&e.guid) || code_roots.iter().any(|r| r.matches(e.guid, &e.path));
             // Code loads levels, prefabs and UI documents by path, which the build cannot see, and the game
-            // reads its input actions when it starts.
-            let blanket = matches!(e.kind, AssetKind::Level | AssetKind::Prefab | AssetKind::Ui | AssetKind::InputActions)
-                || matches(&settings.include, &e.path);
+            // reads its input actions and every string table when it starts.
+            let blanket = matches!(
+                e.kind,
+                AssetKind::Level | AssetKind::Prefab | AssetKind::Ui | AssetKind::InputActions | AssetKind::Strings
+            ) || matches(&settings.include, &e.path);
             needed || (blanket && !matches(&settings.exclude, &e.path))
         })
         .map(|e| (e.guid, e.path.clone()));
@@ -376,7 +378,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
-        AssetKind::Texture | AssetKind::InputActions => {}
+        AssetKind::Texture | AssetKind::InputActions | AssetKind::Strings => {}
     }
     needs.direct.remove(&guid);
     needs.named.remove(&guid);

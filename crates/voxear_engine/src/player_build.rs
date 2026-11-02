@@ -201,6 +201,7 @@ pub fn build(
         commit: commit.clone(),
         layers: project.file.layers.names.clone(),
         ignore: project.file.physics.ignore.clone(),
+        languages: project.file.localization.languages.clone(),
     };
     settings.write(&data)?;
     timed("player", stage);

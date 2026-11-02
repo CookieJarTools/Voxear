@@ -407,6 +407,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Ui => ("UI document", "panels"),
                 AssetKind::Sound => ("Sound", "audio"),
                 AssetKind::InputActions => ("Input actions", "gamepad"),
+                AssetKind::Strings => ("String table", "globe"),
             };
             let (action, key) = match kind {
                 AssetKind::Level => (PaletteAction::OpenLevel(path.clone()), format!("level:{path}")),

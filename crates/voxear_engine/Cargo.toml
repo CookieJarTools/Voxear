@@ -30,6 +30,7 @@ voxear_audio.workspace = true
 voxear_input.workspace = true
 voxear_physics.workspace = true
 voxear_physics2d.workspace = true
+voxear_localization.workspace = true
 uuid.workspace = true
 
 [features]

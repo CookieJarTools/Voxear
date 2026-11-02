@@ -3514,6 +3514,7 @@ dependencies = [
  "voxear_core",
  "voxear_ecs",
  "voxear_input",
+ "voxear_localization",
  "voxear_physics",
  "voxear_physics2d",
  "voxear_render",
@@ -3534,6 +3535,17 @@ dependencies = [
  "toml",
  "tracing",
  "winit",
+]
+
+[[package]]
+name = "voxear_localization"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "icu_locale_core",
+ "icu_locale_fallback",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -3623,6 +3635,7 @@ dependencies = [
  "voxear_core",
  "voxear_ecs",
  "voxear_input",
+ "voxear_localization",
  "voxear_physics",
  "voxear_physics2d",
  "voxear_scene",

@@ -559,14 +559,19 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [ ] the Input Actions editor window, with listening for a binding
   - [ ] a ready-made, themeable rebinding screen
   - [ ] prompt glyphs (icons) per device family, and local multiplayer pairing
-- **Localization:**
-  - string and asset tables
-  - ICU smart strings (plurals, gender, number and date formatting)
-  - binding through `@key` in UI markup, `LocalizedString` fields, `LocalizedText`, and observable `Localized(key)`
-  - CSV import from a file or URL with a diff preview, and CSV export
-  - the Localization Tables editor window, with pseudo-localisation
-  - automatic language detection (saved choice, then store, then OS) with fallback chains
-  - RTL mirroring and per-locale fonts
+- Localization:
+  - [x] string tables (`.strings` files) holding each key's text in every language `voxear.toml` lists, read when the
+    game starts and again when one changes, and shipped with every build; in C#, `Localization.Get`, `Format` with
+    `{name}` values, `Language`, `Languages` and `Changed`
+  - [x] fallback chains as ICU makes them (`pt-BR`, then `pt`, then the project's own); the game starts in the system's
+    language on Linux; missing keys marked `⟦key⟧` while the game is made
+  - [ ] asset tables
+  - [ ] ICU smart strings (plurals, gender, number and date formatting)
+  - [ ] binding through `@key` in UI markup, `LocalizedString` fields, `LocalizedText`, and observable `Localized(key)`
+  - [ ] CSV import from a file or URL with a diff preview, and CSV export
+  - [ ] the Localization Tables editor window, with pseudo-localisation
+  - [ ] the saved choice, the store's language and Windows' languages in language detection
+  - [ ] RTL mirroring and per-locale fonts
 - Audio:
   - [x] a Rust mixer on cpal: music and effects buses under a master volume, and voices that play, loop, pause and
     stop, with long music streamed

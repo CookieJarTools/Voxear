@@ -1,0 +1,12 @@
+<!-- A Hierarchy: its + button, its filter, and the tree of the open scenes' Objs. Every Hierarchy is built from
+     this, the first and any opened from a window's menu. -->
+<vui>
+    <Panel class="panel-actions">
+        <Button name="hierarchy-add" class="icon-button"><Icon icon="plus" /></Button>
+    </Panel>
+    <Panel class="search">
+        <Icon icon="search" class="search-icon" />
+        <TextField name="hierarchy-filter" class="search-field" placeholder="Filter" />
+    </Panel>
+    <TreeView name="hierarchy-tree" class="fill" item-height="24" />
+</vui>

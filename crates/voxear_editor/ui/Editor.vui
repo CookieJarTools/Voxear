@@ -33,35 +33,10 @@
                 <Button name="rail-settings" class="icon-button rail-button"><Icon icon="settings" /></Button>
             </Panel>
             <DockSpace name="dock" class="dock">
-                <DockPanel id="hierarchy" title="Hierarchy" class="dock-content">
-                    <Panel class="panel-actions">
-                        <Button name="hierarchy-add" class="icon-button"><Icon icon="plus" /></Button>
-                    </Panel>
-                    <Panel class="search">
-                        <Icon icon="search" class="search-icon" />
-                        <TextField name="hierarchy-filter" class="search-field" placeholder="Filter" />
-                    </Panel>
-                    <TreeView name="hierarchy-tree" class="fill" item-height="24" />
-                </DockPanel>
-                <DockPanel id="project" title="Project" class="dock-content">
-                    <Panel class="panel-actions">
-                        <Button class="icon-button"><Icon icon="plus" /></Button>
-                    </Panel>
-                    <SplitView name="project-split" class="fill project-split" size="200">
-                        <TreeView name="project-folders" class="fill folders" item-height="24" />
-                        <Panel class="files-pane">
-                            <Panel class="breadcrumb">
-                                <Label name="project-path" class="crumbs" />
-                                <Label name="project-count" class="count" />
-                            </Panel>
-                            <Panel name="project-rename" class="project-rename">
-                                <Label class="project-rename-label">Rename</Label>
-                                <TextField name="project-rename-field" class="search-field project-rename-field" />
-                            </Panel>
-                            <ListView name="project-files" class="fill files" item-height="24" />
-                        </Panel>
-                    </SplitView>
-                </DockPanel>
+                <!-- Built from Hierarchy.vui, as each Hierarchy opened from a window's menu is. -->
+                <DockPanel id="hierarchy" title="Hierarchy" class="dock-content" name="hierarchy-panel" />
+                <!-- Built from Project.vui, as each Project opened from a window's menu is. -->
+                <DockPanel id="project" title="Project" class="dock-content" name="project-panel" />
                 <DockPanel id="console" title="Console" class="dock-content">
                     <Panel name="console-panel" class="fill console-panel" />
                 </DockPanel>

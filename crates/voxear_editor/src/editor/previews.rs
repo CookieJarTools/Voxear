@@ -104,9 +104,10 @@ impl Editor {
         let mut budget = NEW_PER_FRAME;
         let size = |logical: f32, scale: f32| (logical * scale).ceil() as u32;
 
-        let tile = size(self.project.preview_size(), self.scale);
-        let shown = self.asset_images(renderer, self.project.previewable(&self.ui), tile, &mut budget);
-        self.project.set_previews(&mut self.ui, shown);
+        for (index, (tile, wanted)) in self.project_previews_wanted().into_iter().enumerate() {
+            let shown = self.asset_images(renderer, wanted, size(tile, self.scale), &mut budget);
+            self.set_project_previews(index, shown);
+        }
 
         if self.picker.is_open() {
             let row = size(object_picker::PREVIEW, self.scale);

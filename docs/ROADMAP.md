@@ -483,7 +483,9 @@ Still to do in M3:
       `Handles.FreeMove` and `Handles.Button`, in `DrawGizmos` while selected
     - [x] in development builds, drawing shows in the game; release builds leave it out unless asked to keep it
     - [ ] later: physics queries drawn with their hits, and a recorder to scrub back through what was drawn
-  - [ ] several Hierarchies and Projects, and windows a game's code can open more than once
+  - [x] several Hierarchies and Project panels, opened from a window's menu (Add Hierarchy, Add Project), and a click
+    on the space below the Hierarchy's rows selects nothing
+  - [ ] windows a game's code can open more than once
   - [ ] windows dragged out of the editor into windows of the desktop's own
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.

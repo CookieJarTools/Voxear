@@ -9,6 +9,7 @@ mod docs_links;
 mod docs_pictures;
 mod docs_steps;
 mod drawer;
+mod hierarchies;
 mod importing;
 mod inspectors;
 mod level_edits;
@@ -17,6 +18,7 @@ mod placing;
 mod play;
 mod prefab_mode;
 mod previews;
+mod projects;
 mod scene_views;
 mod scenes;
 mod script_actions;
@@ -268,6 +270,9 @@ pub struct Editor {
     selection: Option<Entity>,
     /// The Inspectors opened from a window's menu, after the first.
     extra_inspectors: Vec<inspectors::ExtraInspector>,
+    /// The Hierarchies and Project panels opened from a window's menu, past the first.
+    extra_hierarchies: Vec<hierarchies::ExtraHierarchy>,
+    extra_projects: Vec<projects::ExtraProject>,
     /// Previews of assets, of a Mesh Renderer's own mesh and material, and
     /// the Inspector's large one; see `previews`.
     asset_previews: AssetPreviews,
@@ -386,11 +391,13 @@ impl Editor {
         ui.set_visible(nodes.drawer, false);
         ui.set_visible(nodes.layout_prompt, false);
         ui.set_visible(nodes.tooltip, false);
-        let (tree, filter, add) =
-            (find(&ui, "hierarchy-tree"), find(&ui, "hierarchy-filter"), find(&ui, "hierarchy-add"));
-        let hierarchy = Hierarchy::new(&mut ui, tree, filter, add);
+        let hierarchy_panel = find(&ui, "hierarchy-panel");
+        let hierarchy = hierarchies::build(&mut ui, hierarchy_panel);
         let namespace = script_namespace(&game.project);
-        let project = ProjectView::new(&mut ui, document, game.project.name(), &root, game.content.db(), &namespace);
+        let project_panel = find(&ui, "project-panel");
+        let project_markup = projects::build(&mut ui, project_panel);
+        let project =
+            ProjectView::new(&mut ui, project_markup, game.project.name(), &root, game.content.db(), &namespace);
         let console_panel = find(&ui, "console-panel");
         let console = Console::new(&mut ui, console_panel, log, &root, &memory.settings);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
@@ -485,6 +492,8 @@ impl Editor {
             material_preview: None,
             selection: None,
             extra_inspectors: Vec::new(),
+            extra_hierarchies: Vec::new(),
+            extra_projects: Vec::new(),
             asset_previews: AssetPreviews::default(),
             imports: importing::Imports::new(&root),
             live_assets: Vec::new(),
@@ -512,12 +521,9 @@ impl Editor {
 
     /// Selects an Obj, as a click in the Hierarchy does, or nothing.
     pub fn select(&mut self, entity: Option<Entity>) {
-        // An Obj made this frame is in the Hierarchy once it has looked again.
-        self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
-        match entity {
-            Some(entity) => self.hierarchy.select(&mut self.ui, &self.game.engine.world, entity),
-            None => self.hierarchy.clear(&mut self.ui),
-        }
+        // An Obj made this frame is in the Hierarchies once they have looked again.
+        self.refresh_hierarchies();
+        self.select_in_hierarchies(entity);
         self.show_selection(entity);
     }
 
@@ -613,18 +619,11 @@ impl Editor {
         self.update_color_popup(renderer);
         {
             profile_scope!("Hierarchy");
-            self.hierarchy.fade_ping(&mut self.ui, delta);
-            self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
-            if let Some(selected) = self.hierarchy.selection_changed(&self.ui) {
-                self.show_selection(selected);
-            }
+            self.update_hierarchies(renderer, delta);
         }
         {
             profile_scope!("Inspector");
             self.update_inspectors(renderer, playing);
-        }
-        if let Some(action) = self.hierarchy.action(&mut self.ui) {
-            self.obj_action(action, renderer);
         }
         self.update_placing(renderer);
         self.update_material_drops(renderer);
@@ -669,13 +668,7 @@ impl Editor {
         self.update_script_types();
         {
             profile_scope!("Project");
-            self.project.fade_ping(&mut self.ui, delta);
-            for event in self.project.update(&mut self.ui) {
-                self.project_event(event, renderer);
-            }
-            // Folders take an Obj dragged from the Hierarchy, to make a prefab in.
-            let making = self.ui.dragging().is_some_and(|source| self.hierarchy.dragged(&source).is_some());
-            self.project.take_drops(&mut self.ui, making);
+            self.update_projects(renderer, delta);
             self.update_imports(renderer);
             if let Some(action) = self.inspector.update_asset(&mut self.ui) {
                 self.asset_action(action, renderer);
@@ -781,6 +774,7 @@ impl Editor {
                 // Files moved or went, so previews are made again for the paths they have now.
                 self.asset_previews.clear(renderer);
                 self.project.refresh(&mut self.ui, self.game.content.db(), select.as_deref());
+                self.refresh_other_projects();
                 self.levels.refresh(&mut self.ui, &mut self.game.content);
                 if let Some(item) = select.and_then(|path| self.project.item(&path)) {
                     self.inspect_asset(&item);
@@ -791,7 +785,7 @@ impl Editor {
             }
             ProjectEvent::Notice(text) => self.notify(&text),
             ProjectEvent::Dropped { source, folder } => {
-                if let Some(entity) = self.hierarchy.dragged(&source) {
+                if let Some(entity) = self.dragged_obj(&source) {
                     self.make_prefab(entity, &folder, renderer);
                 }
             }
@@ -823,6 +817,7 @@ impl Editor {
                 self.unsaved = true;
                 self.select(Some(instance));
                 self.project.refresh(&mut self.ui, self.game.content.db(), Some(&path));
+                self.refresh_other_projects();
                 self.notify(&format!("Made the prefab {path}"));
             }
             Err(error) => self.notify(&format!("Could not make a prefab of {name}: {error:#}")),
@@ -989,7 +984,8 @@ impl Editor {
     fn apply_settings(&mut self) {
         let settings = &self.memory.settings;
         (self.tools.snap, self.tools.centred, self.tools.local) = (settings.snap, settings.centred, settings.local);
-        self.project.set_prefab_parts(&mut self.ui, settings.prefab_parts);
+        let prefab_parts = settings.prefab_parts;
+        self.set_prefab_parts_shown(prefab_parts);
         self.apply_scene_settings();
     }
 
@@ -1332,7 +1328,7 @@ impl Editor {
     /// from the Project, if it is one the field's menu offers; otherwise the
     /// status bar says why not.
     fn drop_reference(&mut self, entity: Entity, prop: &Prop, source: &DragSource, renderer: &mut Renderer) {
-        let pick = match (self.hierarchy.dragged(source), self.project.dragged(source)) {
+        let pick = match (self.dragged_obj(source), self.dragged_asset(source)) {
             (Some(obj), _) => Pick::Obj(Some(obj)),
             (None, Some(path)) => Pick::Asset(Some(path)),
             (None, None) => return,
@@ -1369,7 +1365,7 @@ impl Editor {
         }
         // A line about an Obj or an asset shows it, as Unity's log context does, leaving the selection alone.
         if let Some(entity) = result.ping.filter(|&e| self.game.engine.world.is_alive(e)) {
-            self.hierarchy.ping(&mut self.ui, &self.game.engine.world, entity);
+            self.ping_obj(entity);
         }
         if let Some(asset) = result.ping_asset {
             let db = self.game.content.db();
@@ -1769,7 +1765,7 @@ impl Editor {
         };
         match target {
             Some(fields::Target::Obj(obj)) if select => self.select(Some(obj)),
-            Some(fields::Target::Obj(obj)) => self.hierarchy.ping(&mut self.ui, &self.game.engine.world, obj),
+            Some(fields::Target::Obj(obj)) => self.ping_obj(obj),
             Some(fields::Target::Asset(path)) => self.project.ping(&mut self.ui, &path),
             None => {}
         }

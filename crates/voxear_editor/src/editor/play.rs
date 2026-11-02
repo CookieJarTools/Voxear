@@ -499,7 +499,7 @@ impl Editor {
             view.gizmo_shows = None;
         }
         self.view_camera = None;
-        self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
+        self.refresh_hierarchies();
         self.select(selected);
         self.show_panel(panel);
     }

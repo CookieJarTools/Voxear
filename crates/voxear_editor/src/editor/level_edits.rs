@@ -107,7 +107,7 @@ impl Editor {
         source: &DragSource,
         renderer: &mut Renderer,
     ) {
-        let Some(path) = self.project.dragged(source) else { return };
+        let Some(path) = self.dragged_asset(source) else { return };
         let db = self.game.content.db();
         if db.guid_of(&path).and_then(|guid| db.get(guid)).map(|entry| entry.kind) != Some(AssetKind::Scene) {
             return self.notify("Only a scene goes in a level's scenes");

@@ -57,7 +57,9 @@ Hold **Ctrl** while you drag to snap: moves go in steps of the size shown in the
 
 Drag a panel's tab to move it somewhere else in the window. Right-click a tab to close it, to float it in a window of its own, or to **Reset Layout**. The **Window** button at the top lists every panel, so you can bring back one you closed.
 
-To see the level from two places at once, choose **Add Scene View** from a panel's options button (the **⋯** at the right end of its tabs) or from a right-click on a tab. Each Scene view has its own camera and its own shading menu, so one can show Wireframe while another shows Lit. The tools work in whichever Scene view the pointer is over. **Add Inspector** works the same way, and each extra Inspector has a padlock that keeps it on the Obj it shows. An extra Scene view or Inspector is gone for good once you close it.
+To see the level from two places at once, choose **Add Scene View** from a panel's options button (the **⋯** at the right end of its tabs) or from a right-click on a tab. Each Scene view has its own camera and its own shading menu, so one can show Wireframe while another shows Lit. The tools work in whichever Scene view the pointer is over. **Add Inspector** works the same way, and each extra Inspector has a padlock that keeps it on the Obj it shows. **Add Hierarchy** opens another Hierarchy, with its own filter, and **Add Project** opens another Project panel, so you can have two folders open and drag between them. An extra window is gone for good once you close it.
+
+To select nothing, click the empty space below the Objs in the Hierarchy.
 
 The **Layout** button at the top left, which shows the name of the layout in use, switches between arrangements of the panels. **Default** is the one described here; **Profiling** holds the tools for finding out why a game runs slowly. Each layout stays as you left it. **Save Layout As** keeps your own arrangement under a name, to switch back to later, and **Reset Layout** puts the one in use back as it started.
 

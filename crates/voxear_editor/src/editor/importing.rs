@@ -114,7 +114,7 @@ impl Editor {
     /// shows. Brought in at the next frame, with the others dropped with it.
     pub(super) fn file_dropped(&mut self, path: &Path) {
         let pointer = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
-        let folder = pointer.and_then(|point| self.project.folder_at(&self.ui, point));
+        let folder = pointer.and_then(|point| self.folder_at(point));
         if folder.is_none() && self.docs.drop_file(&mut self.ui, path) {
             return;
         }

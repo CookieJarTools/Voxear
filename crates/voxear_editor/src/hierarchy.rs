@@ -201,6 +201,9 @@ impl Hierarchy {
         if ui.clicked(self.add) {
             let [x, y, _, height] = ui.rect(self.add);
             self.open_menu(ui, self.add, (x, y + height + 4.0), None);
+        } else if ui.clicked(self.tree) && ui.item_at_pointer(self.tree).is_none() {
+            // A click on the space below the rows selects nothing, as in Unity.
+            self.clear(ui);
         } else if ui.context_clicked(self.tree) {
             let on = ui.item_at_pointer(self.tree);
             if on.is_none_or(is_header) {

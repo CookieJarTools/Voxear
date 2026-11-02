@@ -59,6 +59,10 @@ pub(super) enum WindowAction {
     AddInspector,
     /// Opens another Scene view beside it.
     AddSceneView,
+    /// Opens another Hierarchy beside it.
+    AddHierarchy,
+    /// Opens another Project panel beside it.
+    AddProject,
     ResetLayout,
 }
 
@@ -115,8 +119,10 @@ impl Editor {
             (MenuItem::separator(), None),
         ];
         items.extend([
+            (MenuItem::new("Add Hierarchy"), Some(WindowAction::AddHierarchy)),
             (MenuItem::new("Add Inspector"), Some(WindowAction::AddInspector)),
             (MenuItem::new("Add Scene View"), Some(WindowAction::AddSceneView)),
+            (MenuItem::new("Add Project"), Some(WindowAction::AddProject)),
             (MenuItem::separator(), None),
         ]);
         items.push((MenuItem::new("Reset Layout"), Some(WindowAction::ResetLayout)));
@@ -130,12 +136,12 @@ impl Editor {
         let dock = self.nodes.dock;
         match action {
             WindowAction::Maximize => self.toggle_maximized(panel),
-            // An Inspector or Scene view opened from the menu goes for good; any other waits closed.
-            WindowAction::Close if self.remove_inspector(panel) || self.remove_scene_view(panel) => {}
+            // A window opened from the menu goes for good; any other waits closed.
+            WindowAction::Close if self.remove_opened_from_menu(panel) => {}
             WindowAction::Close => self.ui.close_dock_panel(dock, panel),
             WindowAction::CloseOthers => {
                 for other in self.ui.dock_panel_neighbours(dock, panel) {
-                    if !self.remove_inspector(&other) && !self.remove_scene_view(&other) {
+                    if !self.remove_opened_from_menu(&other) {
                         self.ui.close_dock_panel(dock, &other);
                     }
                 }
@@ -147,6 +153,12 @@ impl Editor {
             }
             WindowAction::AddSceneView => {
                 self.add_scene_view(panel);
+            }
+            WindowAction::AddHierarchy => {
+                self.add_hierarchy(panel);
+            }
+            WindowAction::AddProject => {
+                self.add_project_panel(panel);
             }
             WindowAction::ResetLayout => self.reset_layout(),
         }
@@ -198,9 +210,11 @@ impl Editor {
     fn arrange(&mut self, layout: &str) -> Result<(), UiError> {
         let named = opened_from_menu(layout);
         for &panel in &named {
-            match panel.starts_with("scene-") {
-                true => self.reopen_scene_view(panel),
-                false => self.reopen_inspector(panel),
+            match panel.split_once('-').map_or("", |(kind, _)| kind) {
+                "scene" => self.reopen_scene_view(panel),
+                "hierarchy" => self.reopen_hierarchy(panel),
+                "project" => self.reopen_project_panel(panel),
+                _ => self.reopen_inspector(panel),
             }
         }
         let dock = self.nodes.dock;
@@ -209,9 +223,18 @@ impl Editor {
         let left_out: Vec<String> =
             panels.filter(|id| is_opened_from_menu(id) && !named.contains(&id.as_str())).collect();
         for panel in left_out {
-            let _ = self.remove_inspector(&panel) || self.remove_scene_view(&panel);
+            self.remove_opened_from_menu(&panel);
         }
         Ok(())
+    }
+
+    /// Takes a window opened from the menu away for good. False for a panel
+    /// that is not one.
+    fn remove_opened_from_menu(&mut self, panel: &str) -> bool {
+        self.remove_inspector(panel)
+            || self.remove_scene_view(panel)
+            || self.remove_hierarchy(panel)
+            || self.remove_project_panel(panel)
     }
 
     /// The top bar's Layout menu: the layouts to pick from, ticked for the
@@ -414,12 +437,14 @@ impl Editor {
 }
 
 /// The panels a layout names that were opened from a window's menu: Scene
-/// views and Inspectors past the first, as `scene-2` and `inspector-2`.
+/// views, Inspectors, Hierarchies and Project panels past the first, as
+/// `scene-2` and `project-2`.
 fn opened_from_menu(layout: &str) -> Vec<&str> {
     layout.split(|c: char| !c.is_ascii_alphanumeric() && c != '-').filter(|id| is_opened_from_menu(id)).collect()
 }
 
 fn is_opened_from_menu(panel: &str) -> bool {
-    let number = panel.strip_prefix("scene-").or_else(|| panel.strip_prefix("inspector-"));
+    let kinds = ["scene-", "inspector-", "hierarchy-", "project-"];
+    let number = kinds.iter().find_map(|kind| panel.strip_prefix(kind));
     number.and_then(|n| n.parse::<u32>().ok()).is_some_and(|n| n >= 2)
 }

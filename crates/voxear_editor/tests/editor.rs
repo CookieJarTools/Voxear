@@ -4771,3 +4771,96 @@ fn a_material_dragged_onto_an_obj_shows_on_it_and_stays_where_let_go() {
     frame(&mut editor, &mut renderer);
     assert!(draws_red(&editor, other), "dropped on its row in the Hierarchy");
 }
+
+#[test]
+fn hierarchies_and_project_panels_open_more_than_once() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // Add Hierarchy and Add Project, from each window's own menu, as Add Inspector is.
+    for (title, item) in [("Hierarchy", "Add Hierarchy"), ("Project", "Add Project")] {
+        let tab = dock_tab(&editor.ui, title).unwrap();
+        context_click(&mut editor.ui, tab);
+        frame(&mut editor, &mut renderer);
+        let add = menu_item(&editor.ui, item).unwrap_or_else(|| panic!("{item} is in the window's menu"));
+        click(&mut editor.ui, add);
+        frame(&mut editor, &mut renderer);
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!((editor.hierarchy_count(), editor.project_panel_count()), (2, 2));
+    fn named(ui: &Ui, node: NodeId, name: &str, found: &mut Vec<NodeId>) {
+        if ui.name(node) == Some(name) {
+            found.push(node);
+        }
+        for child in ui.children(node) {
+            named(ui, child, name, found);
+        }
+    }
+    let all_named = |ui: &Ui, name: &str| {
+        let mut found = Vec::new();
+        named(ui, ui.root(), name, &mut found);
+        found
+    };
+    let row_in = |ui: &Ui, tree: NodeId, name: &str| {
+        let mut names = Vec::new();
+        with_class(ui, tree, "row-name", &mut names);
+        let label = names.into_iter().find(|&n| ui.is_visible(n) && ui.text(n) == name)?;
+        std::iter::successors(Some(label), |&n| ui.parent(n)).find(|&n| ui.has_class(n, "list-row"))
+    };
+
+    // A click on a row of the second Hierarchy selects in both, and the Inspector shows it.
+    let trees = all_named(&editor.ui, "hierarchy-tree");
+    assert_eq!(trees.len(), 2);
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    let row = row_in(&editor.ui, trees[1], "Spinner A").expect("the second lists the Objs too");
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.selected(), Some(spinner));
+    assert_eq!(editor.ui.selected_items(trees[0]), [spinner.to_bits()], "the first shows it selected");
+    assert_eq!(editor.inspectors_shown(), [Some(spinner)]);
+
+    // A click on the space below a Hierarchy's rows selects nothing: the second's, the tab showing.
+    let [x, y, w, h] = editor.ui.rect(trees[1]);
+    editor.ui.pointer_move(x + w / 2.0, y + h - 8.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.selected(), None, "nothing is selected");
+    assert!(editor.ui.selected_items(trees[0]).is_empty(), "in either Hierarchy");
+
+    // The second Project panel opens a folder of its own, and the first stays where it was.
+    let files = all_named(&editor.ui, "project-files");
+    assert_eq!(files.len(), 2);
+    let mut tiles = Vec::new();
+    with_class(&editor.ui, files[1], "tile", &mut tiles);
+    let models =
+        tiles.into_iter().find(|&t| editor.ui.is_visible(t) && editor.ui.text(editor.ui.children(t)[1]) == "Models");
+    let [x, y, w, h] = editor.ui.rect(models.expect("the second shows the project's folders"));
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    for _ in 0..2 {
+        editor.ui.pointer_button(true);
+        editor.ui.pointer_button(false);
+    }
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let paths: Vec<String> = all_named(&editor.ui, "project-path").into_iter().map(|p| editor.ui.text(p)).collect();
+    assert!(!paths[0].contains("Models") && paths[1].contains("Models"), "{paths:?}");
+
+    // Closed from their menus, both go for good.
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    for title in ["Hierarchy", "Project"] {
+        let mut tabs = Vec::new();
+        with_class(&editor.ui, dock, "tab", &mut tabs);
+        let second = tabs.into_iter().filter(|&t| editor.ui.text(t) == title).last().unwrap();
+        context_click(&mut editor.ui, second);
+        frame(&mut editor, &mut renderer);
+        let close = menu_item(&editor.ui, "Close").unwrap();
+        click(&mut editor.ui, close);
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!((editor.hierarchy_count(), editor.project_panel_count()), (1, 1));
+    let ids: Vec<String> = editor.ui.dock_panels(dock).into_iter().map(|(id, ..)| id).collect();
+    assert!(!ids.contains(&"hierarchy-2".to_string()) && !ids.contains(&"project-2".to_string()), "{ids:?}");
+}

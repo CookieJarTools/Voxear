@@ -1535,8 +1535,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
   shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. Every window's options
   button, at its header's right end (the Game and Scene views' too), and a context click on a tab or its bar,
-  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, Add Inspector and Add Scene View (another
-  of the windows there can be more than one of, as Unity's Add Tab), and Reset Layout; a closed panel keeps its state, and opens again
+  offer Maximize (or Restore), Close, Close Other Tabs, Float or Dock, Add Hierarchy, Add Inspector, Add Scene View
+  and Add Project (another of the windows there can be more than one of, as Unity's Add Tab), and Reset Layout; a closed panel keeps its state, and opens again
   from the Window button, beside a panel it shared an area with.
 - **The Project** is laid out as Unity's two-column Project window: the folders as a tree on the left, and the open
   folder's folders, assets and C# scripts on the right, with a breadcrumb and an item count. With room for three
@@ -1653,6 +1653,15 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   menu goes for good when it closes, and locked ones follow their Objs into the played world and back. A layout that
   names one (`inspector-2`) opens it again in its place, after a restart or on going back to that layout, showing
   the selection; a layout that leaves it out takes it away for good, as Scene views opened from the menu are.
+- **Several Hierarchies and Project panels** (`editor::hierarchies`, `editor::projects`), as Unity's: Add Hierarchy
+  and Add Project on a window's menu open another beside it, each built from the same markup as the first
+  (Hierarchy.vui, Project.vui). Hierarchies list the same Objs with their own filter and folds, and share the
+  selection: a click in one selects in all, and a ping lights the Obj in each. A click on the space below the rows
+  selects nothing. Project panels each show a folder of their own, so two can be open side by side to drag between;
+  files that came, went or were renamed show in every one, and their previews are drawn for each. Each runs the
+  same frame in turn, swapped in as the editor's `hierarchy` or `project`, so its menus, drags and drops act as the
+  first's do, and what is dragged from any of them, or dropped on any, is heard. One opened from the menu goes for
+  good when it closes, and a layout naming one (`hierarchy-2`, `project-2`) opens it again.
 - **Components in the Inspector** (`props`): each component is a part, and each value in it a prop, read from the
   world and written back as it is typed or picked. A Mesh Renderer picks its mesh (cube, sphere, plane, or the model
   mesh it has) and its material (the default, or a `.material` in the project, which can also be dragged onto it from

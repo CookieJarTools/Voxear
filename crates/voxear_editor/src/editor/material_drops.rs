@@ -27,7 +27,7 @@ impl Editor {
     /// The material being dragged from the Project, as a Mesh Renderer's
     /// Material field takes it, when one is.
     pub(super) fn dragged_material(&self, source: &DragSource) -> Option<String> {
-        let path = self.project.dragged(source)?;
+        let path = self.dragged_asset(source)?;
         if path.contains("#material") {
             return Some(path);
         }
@@ -43,7 +43,7 @@ impl Editor {
         let in_view = self.all_scene_views().find_map(|view| self.ui.dropped_onto(view.viewport));
         let in_view =
             in_view.and_then(|source| Some((self.dragged_material(&source)?, self.material_target(renderer))));
-        let on_row = self.hierarchy.dropped_from_elsewhere(&self.ui).and_then(|(source, to)| {
+        let on_row = self.dropped_on_hierarchies().and_then(|(source, to)| {
             let entity = match to? {
                 Destination::Into(entity) | Destination::Before(entity) | Destination::After(entity) => entity,
                 Destination::SceneEnd(_) => return None,

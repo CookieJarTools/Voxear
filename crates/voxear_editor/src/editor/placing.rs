@@ -32,7 +32,7 @@ impl Editor {
     /// Places what was let go of on the Hierarchy or the Scene view, and lets
     /// them take drops while a prefab, model or scene is dragged.
     pub(super) fn update_placing(&mut self, renderer: &mut Renderer) {
-        if let Some((source, to)) = self.hierarchy.dropped_from_elsewhere(&self.ui)
+        if let Some((source, to)) = self.dropped_on_hierarchies()
             && let Some((path, kind)) = self.dragged_placeable(&source)
         {
             match kind {
@@ -58,7 +58,7 @@ impl Editor {
         let placing = self.ui.dragging().is_some_and(|source| self.dragged_placeable(&source).is_some());
         // A material dropped on an Obj there goes to it (see `material_drops`).
         let material = self.ui.dragging().is_some_and(|source| self.dragged_material(&source).is_some());
-        self.hierarchy.take_drops(&mut self.ui, placing || material);
+        self.hierarchies_take_drops(placing || material);
         let viewports: Vec<_> = self.all_scene_views().map(|view| view.viewport).collect();
         for viewport in viewports {
             self.ui.accept_drops(viewport, placing || material);
@@ -68,7 +68,7 @@ impl Editor {
     /// The path of the prefab, model or scene being dragged, when it is one
     /// from the Project, and which it is.
     fn dragged_placeable(&self, source: &DragSource) -> Option<(String, AssetKind)> {
-        let path = self.project.dragged(source)?;
+        let path = self.dragged_asset(source)?;
         let db = self.game.content.db();
         let kind = db.guid_of(&path).and_then(|guid| db.get(guid)).map(|entry| entry.kind)?;
         matches!(kind, AssetKind::Prefab | AssetKind::Model | AssetKind::Scene).then_some((path, kind))

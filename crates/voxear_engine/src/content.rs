@@ -20,14 +20,15 @@ use voxear_assets::{
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
-    CookedModel, ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshHandle, MeshRenderer, Primitive,
-    Renderer, TextureId, TextureSource,
+    CookedModel, ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
+    MeshTriangles, Primitive, Renderer, TextureId, TextureSource,
 };
 use voxear_scene::Destroying;
 
 use crate::{
     audio::{AudioSource, Sound, SoundCache, SoundId, load_sound},
     loading::ReadyModel,
+    physics::ColliderMesh,
     prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, PrefabInstance, Template},
 };
 
@@ -225,6 +226,11 @@ pub struct Content {
     stale_models: Vec<ImportedModel>,
     meshes: HashMap<AssetRef, MeshHandle>,
     mesh_refs: HashMap<MeshHandle, AssetRef>,
+    /// Meshes' triangles as Mesh colliders take them, read from their
+    /// models when first asked for; `None` for one that could not be.
+    triangles: HashMap<AssetRef, Option<ColliderMesh>>,
+    /// The key the next mesh's triangles get, each read anew a new one.
+    next_triangles: u64,
     asset_materials: HashMap<AssetRef, MaterialHandle>,
     inline_materials: HashMap<MaterialKey, MaterialHandle>,
     material_sources: HashMap<MaterialHandle, MaterialSource>,
@@ -335,6 +341,8 @@ impl Content {
             stale_models: Vec::new(),
             meshes: HashMap::new(),
             mesh_refs: HashMap::new(),
+            triangles: HashMap::new(),
+            next_triangles: 1,
             asset_materials: HashMap::new(),
             inline_materials: HashMap::new(),
             material_sources: HashMap::new(),
@@ -532,6 +540,8 @@ impl Content {
         }
         ensure!(!self.cooked.contains(&guid), "a model in built content cannot be imported again");
         let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
+        // Its colliders take the new triangles, under new keys, so their bodies are made again.
+        self.triangles.retain(|reference, _| !matches!(reference, AssetRef::Asset { guid: of, .. } if *of == guid));
         let reader = self.reader();
         let prepared = voxear_render::prepare_model(&path, &mut |file| reader.read(file))?;
         let old = &self.models[&guid];
@@ -925,6 +935,43 @@ impl Content {
             kept_prefabs: self.prefabs.kept.len(),
             materials: self.asset_materials.len() + self.inline_materials.len(),
         }
+    }
+
+    /// A mesh's triangles, as its Obj's Mesh collider takes its shape from
+    /// them: read from its model the first time one asks, and kept until
+    /// the model is imported again. `None` for a mesh not loaded from
+    /// content, or a model that cannot be read, which is logged.
+    pub fn triangles(&mut self, mesh: MeshHandle) -> Option<ColliderMesh> {
+        let reference = self.mesh_refs.get(&mesh)?.clone();
+        if let Some(found) = self.triangles.get(&reference) {
+            return found.clone();
+        }
+        let read = self.read_triangles(&reference);
+        let read = read.inspect_err(|error| tracing::warn!("{reference}'s triangles for a collider: {error:#}"));
+        let found = read.ok().flatten().map(|triangles| {
+            self.next_triangles += 1;
+            ColliderMesh {
+                key: self.next_triangles,
+                points: triangles.points.into(),
+                indices: triangles.indices.into(),
+            }
+        });
+        self.triangles.insert(reference, found.clone());
+        found
+    }
+
+    /// A mesh's triangles from its model's file, or the built-in mesh's.
+    fn read_triangles(&mut self, reference: &AssetRef) -> Result<Option<MeshTriangles>> {
+        let (guid, part) = match reference {
+            AssetRef::Builtin(name) => return Ok(Some(MeshData::primitive(primitive(name)?).triangles())),
+            AssetRef::Asset { guid, part } => (*guid, part.as_deref()),
+        };
+        let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
+        if self.cooked.contains(&guid) {
+            return CookedModel::from_bytes(&path, &self.read(&path)?)?.triangles(part);
+        }
+        let reader = self.reader();
+        Ok(voxear_render::prepare_model(&path, &mut |file| reader.read(file))?.triangles(part))
     }
 
     /// The reference a mesh was loaded from, for saving scenes.

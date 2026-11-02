@@ -20,6 +20,7 @@ internal static unsafe class NativePhysics
 	public const int ColliderTrigger = 8;
 	public const int ColliderFriction = 9;
 	public const int ColliderBounciness = 10;
+	public const int ColliderConvex = 11;
 
 	public const int BodyHas = 20;
 	public const int BodyAdd = 21;

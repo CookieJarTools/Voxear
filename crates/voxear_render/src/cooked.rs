@@ -16,7 +16,7 @@ use voxear_core::math::{Quat, Vec3};
 use crate::{
     assets::MaterialDesc,
     gltf_import::{PreparedMaterial, PreparedModel, PreparedNode, TextureFormat},
-    mesh::Vertex,
+    mesh::{MeshTriangles, Vertex},
     payload::Payload,
     texture_codec,
 };
@@ -118,6 +118,26 @@ impl PreparedModel {
 impl CookedModel {
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// The triangles of a part's mesh, by its name, or of the first part's
+    /// for none, for a Mesh collider: its finest LOD, read out of the GPU
+    /// data, which is decompressed here to do it.
+    pub fn triangles(&self, part: Option<&str>) -> Result<Option<MeshTriangles>> {
+        let node = match part {
+            Some(part) => self.nodes.iter().find(|node| node.mesh_part == part),
+            None => self.nodes.first(),
+        };
+        let Some(mesh) = node.and_then(|node| self.meshes.get(node.mesh)) else { return Ok(None) };
+        let bytes = self.payload.unpack()?;
+        let ((start, count), stride) = (mesh.vertices, size_of::<Vertex>());
+        let vertices = bytes.get(start as usize..start as usize + count as usize * stride).context("a mesh's vertices")?;
+        let float = |bytes: &[u8]| f32::from_le_bytes(bytes.try_into().expect("four bytes"));
+        let points = vertices.chunks_exact(stride).map(|v| Vec3::new(float(&v[0..4]), float(&v[4..8]), float(&v[8..12])));
+        let finest = mesh.lods.first().map_or(0, |&(_, count)| count as usize);
+        let indices = bytes.get(mesh.indices as usize..mesh.indices as usize + finest * 4).context("a mesh's indices")?;
+        let indices = indices.as_chunks::<4>().0.iter().map(|bytes| u32::from_le_bytes(*bytes)).collect();
+        Ok(Some(MeshTriangles { points: points.collect(), indices }))
     }
 
     /// Whether the GPU data is still compressed.
@@ -486,6 +506,10 @@ pub(crate) mod tests {
         assert!(cooked.is_compressed());
 
         let mut back = CookedModel::from_bytes("Models/Quad.gltf", &cooked.to_bytes()).unwrap();
+        let triangles = back.triangles(Some("mesh0.0")).unwrap().unwrap();
+        assert_eq!(triangles, model.triangles(None).unwrap(), "a collider's triangles, as imported");
+        assert_eq!((triangles.points.len(), triangles.indices.len()), (4, 6));
+        assert_eq!(back.triangles(Some("mesh9.0")).unwrap(), None);
         let expected = back.payload.unpack().unwrap().into_owned();
         back.decompress().unwrap();
         assert!(!back.is_compressed());

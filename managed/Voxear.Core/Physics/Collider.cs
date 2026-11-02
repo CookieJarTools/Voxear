@@ -62,6 +62,16 @@ public readonly struct Collider : IEquatable<Collider>, IObjComponent
 		set { Set(NativePhysics.ColliderHeight, new Vector4(value, 0f, 0f, 0f)); }
 	}
 
+	/// <summary>
+	/// Whether a Mesh collider is the convex hull round its mesh rather than its triangles. One with a Rigidbody that
+	/// physics moves is always its hull.
+	/// </summary>
+	public bool Convex
+	{
+		get { return NativePhysics.Flag(Obj, NativePhysics.ColliderConvex); }
+		set { Set(NativePhysics.ColliderConvex, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
+	}
+
 	/// <summary>Whether it is a zone that notices what passes through it, rather than something solid.</summary>
 	public bool IsTrigger
 	{

@@ -5,8 +5,8 @@ use voxear_core::{
     profile_scope,
 };
 use voxear_ecs::{Entity, World};
-use voxear_render::{MAX_PREVIEW_SIZE, MeshRenderer, PreviewId, PreviewOptions, Renderer};
-use voxear_scene::{Parent, Placement, Transform};
+use voxear_render::{MAX_PREVIEW_SIZE, MeshHandle, MeshRenderer, PreviewId, PreviewOptions, Renderer};
+use voxear_scene::{Destroying, Parent, Placement, Transform};
 use voxear_scripting::{
     AssetName, AudioAsk, ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PlaySound,
     PreviewOptions as ScriptPreviewOptions, PreviewSource, PreviewState, SceneLoadOptions, SceneRequest,
@@ -20,6 +20,7 @@ use crate::{
     engine::Engine,
     game_ui::GameUi,
     levels::{LevelChange, LevelOptions, Levels, is_doomed},
+    physics::{Collider, ColliderMesh, ColliderShape},
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
     prefab::{ObjPath, PrefabId, Spawned},
     previews::ScriptPreviews,
@@ -361,6 +362,7 @@ impl Game {
         // Read once, before the scripts that ask about it.
         self.input.update(delta);
         self.models = ModelWork::for_renderer(renderer.as_deref());
+        give_collider_meshes(&mut self.engine.world, &mut self.content);
         {
             let renderer = renderer.as_deref_mut();
             let models = self.models;
@@ -730,6 +732,27 @@ impl ScriptServices for GameServices<'_> {
 
 /// What a change did, for the log: `what` is "level" or "scene", and
 /// `name` the level or scene it was for.
+/// Gives each Obj with a Mesh collider its mesh's triangles, which physics
+/// makes its shape from, and takes them from one that has none now.
+fn give_collider_meshes(world: &mut World, content: &mut Content) {
+    let meshes = world.query_ref::<(Entity, &Collider, &MeshRenderer)>().without::<Destroying>().into_iter();
+    let wanted: Vec<(Entity, MeshHandle)> =
+        meshes.filter(|(_, collider, _)| collider.shape == ColliderShape::Mesh).map(|(e, _, r)| (e, r.mesh)).collect();
+    for &(entity, mesh) in &wanted {
+        let given = world.get::<ColliderMesh>(entity).map(|given| given.key);
+        match content.triangles(mesh) {
+            Some(triangles) if given != Some(triangles.key) => drop(world.insert(entity, triangles)),
+            None if given.is_some() => drop(world.remove::<ColliderMesh>(entity)),
+            _ => {}
+        }
+    }
+    let stale = world.query_ref::<(Entity, &ColliderMesh)>().into_iter().map(|(entity, _)| entity);
+    let stale: Vec<Entity> = stale.filter(|entity| !wanted.iter().any(|(e, _)| e == entity)).collect();
+    for entity in stale {
+        world.remove::<ColliderMesh>(entity);
+    }
+}
+
 fn log_change(what: &str, name: &str, change: &LevelChange) {
     let list = |scenes: &[String]| if scenes.is_empty() { "none".to_string() } else { scenes.join(", ") };
     tracing::info!(

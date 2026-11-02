@@ -150,6 +150,8 @@ pub enum Prop {
     ColliderSize,
     ColliderRadius,
     ColliderHeight,
+    /// A Mesh collider's: its mesh's convex hull rather than its triangles.
+    ColliderConvex,
     ColliderTrigger,
     Friction,
     Bounciness,
@@ -227,6 +229,7 @@ impl Prop {
             | Prop::ColliderSize
             | Prop::ColliderRadius
             | Prop::ColliderHeight
+            | Prop::ColliderConvex
             | Prop::ColliderTrigger
             | Prop::Friction
             | Prop::Bounciness => Part::Collider,
@@ -293,6 +296,7 @@ impl Prop {
             Prop::ColliderSize => "size",
             Prop::ColliderRadius | Prop::CharacterRadius => "radius",
             Prop::ColliderHeight | Prop::CharacterHeight => "height",
+            Prop::ColliderConvex => "convex",
             Prop::ColliderTrigger => "trigger",
             Prop::Friction => "friction",
             Prop::Bounciness => "bounciness",
@@ -442,14 +446,15 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props
         }
         Part::Listener => Vec::new(),
-        // A collider shows the sizes its shape uses.
+        // A collider shows the sizes its shape uses; a mesh is the Obj's own, at its own middle.
         Part::Collider => {
             let shape = world.get::<Collider>(entity).map_or(ColliderShape::Box, |c| c.shape);
-            let mut props = vec![Prop::ColliderShape, Prop::ColliderCenter];
+            let mut props = vec![Prop::ColliderShape];
             props.extend(match shape {
-                ColliderShape::Box => vec![Prop::ColliderSize],
-                ColliderShape::Sphere => vec![Prop::ColliderRadius],
-                ColliderShape::Capsule => vec![Prop::ColliderRadius, Prop::ColliderHeight],
+                ColliderShape::Box => vec![Prop::ColliderCenter, Prop::ColliderSize],
+                ColliderShape::Sphere => vec![Prop::ColliderCenter, Prop::ColliderRadius],
+                ColliderShape::Capsule => vec![Prop::ColliderCenter, Prop::ColliderRadius, Prop::ColliderHeight],
+                ColliderShape::Mesh => vec![Prop::ColliderConvex],
             });
             props.extend([Prop::ColliderTrigger, Prop::Friction, Prop::Bounciness]);
             props
@@ -560,6 +565,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::ColliderSize => "Size",
         Prop::ColliderRadius | Prop::CharacterRadius => "Radius",
         Prop::ColliderHeight | Prop::CharacterHeight => "Height",
+        Prop::ColliderConvex => "Convex",
         Prop::ColliderTrigger => "Is trigger",
         Prop::Friction => "Friction",
         Prop::Bounciness => "Bounciness",
@@ -764,6 +770,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::ColliderSize => Value::Vector(collider()?.size.to_vec()),
         Prop::ColliderRadius => Value::Number(collider()?.radius),
         Prop::ColliderHeight => Value::Number(collider()?.height),
+        Prop::ColliderConvex => Value::Toggle(collider()?.convex),
         Prop::ColliderTrigger => Value::Toggle(collider()?.trigger),
         Prop::Friction => Value::Number(collider()?.friction),
         Prop::Bounciness => Value::Number(collider()?.bounciness),
@@ -1290,6 +1297,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::ColliderRadius, Value::Number(n)) => with(world, entity, |c: &mut Collider| c.radius = n.max(0.001)),
         (Prop::ColliderHeight, Value::Number(n)) => with(world, entity, |c: &mut Collider| c.height = n.max(0.001)),
+        (Prop::ColliderConvex, Value::Toggle(on)) => with(world, entity, |c: &mut Collider| c.convex = on),
         (Prop::ColliderTrigger, Value::Toggle(on)) => with(world, entity, |c: &mut Collider| c.trigger = on),
         (Prop::Friction, Value::Number(n)) => with(world, entity, |c: &mut Collider| c.friction = n.max(0.0)),
         (Prop::Bounciness, Value::Number(n)) => {

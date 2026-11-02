@@ -11,4 +11,7 @@ public enum ColliderShape
 
 	/// <summary>A capsule standing up: its Height from end to end, and its Radius round.</summary>
 	Capsule,
+
+	/// <summary>The Obj's own mesh, as Unity's Mesh Collider: its triangles, or their hull when Convex.</summary>
+	Mesh,
 }

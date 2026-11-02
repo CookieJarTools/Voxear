@@ -11,7 +11,7 @@
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
-    physics::{CharacterController, Collider, ColliderShape, Joint, JointType},
+    physics::{CharacterController, Collider, ColliderMesh, ColliderShape, Joint, JointType},
     physics2d::{Collider2D, ColliderShape2D},
 };
 use voxear_render::{Camera, Light, LightKind};
@@ -34,6 +34,9 @@ const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
 /// How long a directional light's direction is drawn, on screen.
 const DIRECTION: f32 = 70.0;
 const COLLIDER: u32 = 0x91f48b;
+/// The most triangles of a Mesh collider drawn, so that a big mesh does not
+/// slow the Scene view; the rest are left out.
+const MESH_TRIANGLES: usize = 4096;
 const JOINT: u32 = 0xf2a14c;
 /// How big a joint's anchor and a hinge's axis are drawn, on screen.
 const ANCHOR: f32 = 8.0;
@@ -105,6 +108,20 @@ fn colliders(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity
                 let radius = collider.radius * scale.x.max(scale.z);
                 let half = (collider.height * scale.y * 0.5 - radius).max(0.01);
                 capsule(shapes, camera, middle, rotation, half, radius, color);
+            }
+            // Its mesh's triangles, once the engine has given them.
+            ColliderShape::Mesh => {
+                let Some(mesh) = world.get::<ColliderMesh>(entity) else { return };
+                let matrix = voxear_scene::world_matrix(world, entity);
+                let at = |index: u32| mesh.points.get(index as usize).map(|p| matrix.transform_point3(*p));
+                for &[a, b, c] in mesh.indices.as_chunks::<3>().0.iter().take(MESH_TRIANGLES) {
+                    let (Some(a), Some(b), Some(c)) = (at(a), at(b), at(c)) else {
+                        continue;
+                    };
+                    for (from, to) in [(a, b), (b, c), (c, a)] {
+                        line(shapes, camera, from, to, color);
+                    }
+                }
             }
         }
     }

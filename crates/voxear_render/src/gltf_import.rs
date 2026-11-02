@@ -186,6 +186,16 @@ impl PreparedModel {
         &self.path
     }
 
+    /// The triangles of a part's mesh, by its name (`mesh0.0`), or of the
+    /// first part's for none, for a Mesh collider.
+    pub fn triangles(&self, part: Option<&str>) -> Option<crate::MeshTriangles> {
+        let node = match part {
+            Some(part) => self.nodes.iter().find(|node| node.mesh_part == part),
+            None => self.nodes.first(),
+        }?;
+        Some(self.meshes.get(node.mesh)?.0.triangles())
+    }
+
     /// Each drawable part's mesh and material, by name, in order: what
     /// [`reupload`] needs to match an earlier import.
     pub fn parts(&self) -> impl Iterator<Item = (&str, Option<&str>)> {

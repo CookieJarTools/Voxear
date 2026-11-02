@@ -594,7 +594,8 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     in scene files, the Inspector, the Scene view and C#
   - [x] layers: 32, named in the Inspector as Unity's Tags and Layers, with a Collision Matrix that keeps 3D and 2D
     bodies and characters apart; rays and overlaps take a layer mask; `LayerMask` and `IgnoreLayerCollision` in C#
-  - [ ] mesh and convex colliders from models
+  - [x] mesh and convex colliders from models: a Mesh collider takes its Obj's mesh's triangles, or their convex
+    hull, read once from the model (or the built content) when first needed, outlined in the Scene view
   - [x] 2D physics on Box2D v3 (through `boxdd-sys`): Collider 2D (box, circle, capsule, trigger) and Rigidbody 2D
     in scenes, prefabs, the Inspector and the Scene view, and `Collider2D`, `Rigidbody2D`, `Physics2D` and the
     `On…2D` messages in C#

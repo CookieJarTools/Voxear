@@ -36,6 +36,7 @@ const COLLIDER_HEIGHT: i32 = 7;
 const COLLIDER_TRIGGER: i32 = 8;
 const COLLIDER_FRICTION: i32 = 9;
 const COLLIDER_BOUNCINESS: i32 = 10;
+const COLLIDER_CONVEX: i32 = 11;
 // A Rigidbody's:
 const BODY_HAS: i32 = 20;
 const BODY_ADD: i32 = 21;
@@ -297,6 +298,7 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
         COLLIDER_TRIGGER => flag(collider()?.trigger),
         COLLIDER_FRICTION => number(collider()?.friction),
         COLLIDER_BOUNCINESS => number(collider()?.bounciness),
+        COLLIDER_CONVEX => flag(collider()?.convex),
         BODY_HAS => flag(body().is_some()),
         BODY_MASS => number(body()?.mass),
         BODY_KINEMATIC => flag(body()?.kinematic),
@@ -502,6 +504,7 @@ fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool 
         COLLIDER_TRIGGER => change(world, entity, |c: &mut Collider| c.trigger = on),
         COLLIDER_FRICTION => change(world, entity, |c: &mut Collider| c.friction = n.max(0.0)),
         COLLIDER_BOUNCINESS => change(world, entity, |c: &mut Collider| c.bounciness = n.clamp(0.0, 1.0)),
+        COLLIDER_CONVEX => change(world, entity, |c: &mut Collider| c.convex = on),
         BODY_MASS => change(world, entity, |b: &mut Rigidbody| b.mass = n.max(0.001)),
         BODY_KINEMATIC => change(world, entity, |b: &mut Rigidbody| b.kinematic = on),
         BODY_GRAVITY => change(world, entity, |b: &mut Rigidbody| b.gravity = on),

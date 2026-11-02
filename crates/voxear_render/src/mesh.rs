@@ -24,6 +24,21 @@ pub struct MeshData {
     pub indices: Vec<u32>,
 }
 
+/// A mesh's triangles, for physics: its points, and three indices a
+/// triangle, at its full detail.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MeshTriangles {
+    pub points: Vec<Vec3>,
+    pub indices: Vec<u32>,
+}
+
+impl MeshData {
+    pub fn triangles(&self) -> MeshTriangles {
+        let points = self.vertices.iter().map(|vertex| Vec3::from(vertex.position)).collect();
+        MeshTriangles { points, indices: self.indices.clone() }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Primitive {
     Cube,

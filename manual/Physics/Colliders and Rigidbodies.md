@@ -14,11 +14,12 @@ Add each one with **Add Component**, under **Physics**. Physics only runs while 
 
 | Setting | What it does |
 | --- | --- |
-| Shape | Box, Sphere or Capsule |
+| Shape | Box, Sphere, Capsule or Mesh |
 | Center | Where the middle of the shape is, from the Obj's origin |
 | Size | A box's width, height and depth |
 | Radius | A sphere's or a capsule's radius |
 | Height | A capsule's height, from end to end, standing up |
+| Convex | A mesh's convex hull rather than its triangles (see below) |
 | Is trigger | Nothing bumps into it. Instead, it notices what passes through it (see below) |
 | Friction | How much it grips what slides on it. 0 is ice, and the 0.6 it starts with suits most things |
 | Bounciness | How much things bounce off it. 0 is a sack of sand, and 1 bounces back as high as it fell from |
@@ -28,6 +29,12 @@ The Inspector shows only the settings the chosen shape uses. When you select an 
 A collider grows and shrinks with its Obj's **Scale**. A box stretches along each axis. A sphere or a capsule can't stretch one way only, so it takes the largest of the scales across it.
 
 Pick the simplest shape that fits. A box for a crate, a sphere for a ball, a capsule for anything tall and round, like a barrel or a person. Physics works these out far faster than anything shaped like the model itself, and players rarely notice the difference.
+
+### Mesh colliders
+
+A **Mesh** collider takes its shape from the Obj's own mesh, as Unity's Mesh Collider does. Use it for what has to fit exactly and never moves, such as the ground of a level, a ruined archway or a staircase. It follows the Obj's Mesh Renderer, so changing the mesh changes the collider, and the Scene view outlines its triangles.
+
+Turn on **Convex** to wrap the mesh in its convex hull instead: the smallest shape round it with no hollows, as if shrink-wrapped. A hull is much quicker for physics, and it is the only kind a Rigidbody that physics moves can have. A Mesh collider on such a Rigidbody is always its hull, whether Convex is on or not, so a rock can tumble but a bowl won't hold anything.
 
 ## Rigidbodies
 
@@ -113,6 +120,13 @@ collider = { size = [4.0, 3.0, 1.0], trigger = true }
 id = 4
 name = "Player"
 character = { height = 1.7, radius = 0.35 }
+
+[[obj]]
+id = 6
+name = "Archway"
+collider = { shape = "mesh" }
+[obj.renderer]
+mesh = "Models/SM_Archway.fbx"
 ```
 
 A joint names the Obj it holds to by its id in the same file:

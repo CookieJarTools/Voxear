@@ -2843,6 +2843,35 @@ fn add_component_is_a_search_with_folders() {
 }
 
 #[test]
+fn a_mesh_collider_takes_its_objs_mesh() {
+    use voxear_engine::physics::{Collider, ColliderMesh, ColliderShape};
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Collider");
+
+    // As a mesh, it has no size or center of its own, and may be its mesh's hull.
+    let dropdown = first_with(&editor.ui, prop_row(&editor.ui, "Shape").unwrap(), "value-choice").unwrap();
+    choose(&mut editor, &mut renderer, dropdown, 3);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.engine.world.get::<Collider>(spinner).unwrap().shape, ColliderShape::Mesh);
+    assert!(prop_row(&editor.ui, "Convex").is_some() && prop_row(&editor.ui, "Size").is_none());
+    assert!(prop_row(&editor.ui, "Center").is_none());
+    let convex = first_with(&editor.ui, prop_row(&editor.ui, "Convex").unwrap(), "checkbox").unwrap();
+    click(&mut editor.ui, convex);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.game.engine.world.get::<Collider>(spinner).unwrap().convex);
+
+    // The engine gives it its cube's triangles, which the Scene view outlines.
+    frame(&mut editor, &mut renderer);
+    let mesh = editor.game.engine.world.get::<ColliderMesh>(spinner).expect("the cube's triangles");
+    assert_eq!((mesh.points.len(), mesh.indices.len()), (24, 36));
+    shot(&mut renderer, "mesh-collider.png");
+}
+
+#[test]
 fn physics_components_show_what_their_shape_uses() {
     use voxear_engine::physics::{CharacterController, Collider, ColliderShape, Rigidbody};
     let Some((mut renderer, mut editor)) = open() else { return };

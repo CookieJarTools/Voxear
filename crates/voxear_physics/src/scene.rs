@@ -5,7 +5,7 @@
 //!
 //! ```toml
 //! [obj.collider]
-//! shape = "box"          # box, sphere or capsule
+//! shape = "box"          # box, sphere, capsule or mesh
 //! size = [1.0, 2.0, 1.0] # a box's
 //! center = [0.0, 1.0, 0.0]
 //!
@@ -27,8 +27,17 @@
 //!
 //! Each body is on its Obj's [`Layer`], and Objs on layers the world's
 //! [`Layers`] keep apart pass through each other.
+//!
+//! A Mesh collider takes its shape from its Obj's mesh, as Unity's Mesh
+//! Collider does, given to it as a [`ColliderMesh`] beside it: the mesh's
+//! triangles for what does not move, or the convex hull round them, which
+//! is all a dynamic Rigidbody can have. An Obj whose mesh has not been
+//! given has no body until it is.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -47,24 +56,28 @@ pub enum ColliderShape {
     Box,
     Sphere,
     Capsule,
+    /// The Obj's own mesh.
+    Mesh,
 }
 
 impl ColliderShape {
-    pub const ALL: [Self; 3] = [Self::Box, Self::Sphere, Self::Capsule];
+    pub const ALL: [Self; 4] = [Self::Box, Self::Sphere, Self::Capsule, Self::Mesh];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Box => "Box",
             Self::Sphere => "Sphere",
             Self::Capsule => "Capsule",
+            Self::Mesh => "Mesh",
         }
     }
 }
 
 /// A shape around an Obj that others bump into, scaled with the Obj, its
 /// middle at `center` from the Obj's origin. A box uses `size`, a sphere
-/// `radius`, and a capsule, standing up, `height` and `radius`. A trigger
-/// pushes nothing, and only notices what enters it.
+/// `radius`, and a capsule, standing up, `height` and `radius`. A mesh is
+/// the Obj's own, wrapped in its convex hull when `convex`, and has no
+/// center. A trigger pushes nothing, and only notices what enters it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Collider {
@@ -78,6 +91,10 @@ pub struct Collider {
     pub radius: f32,
     #[serde(default = "two", skip_serializing_if = "is_two")]
     pub height: f32,
+    /// A mesh's convex hull rather than its triangles, as a dynamic
+    /// Rigidbody's always is.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub convex: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub trigger: bool,
     /// How much it grips what slides on it, from 0 for ice.
@@ -96,6 +113,7 @@ impl Default for Collider {
             size: unit(),
             radius: half(),
             height: two(),
+            convex: false,
             trigger: false,
             friction: grip(),
             bounciness: 0.0,
@@ -104,6 +122,19 @@ impl Default for Collider {
 }
 
 impl Component for Collider {}
+
+/// The triangles a Mesh collider takes its shape from, in its Obj's own
+/// space: its points, and three indices a triangle. The engine gives each
+/// Obj with a Mesh collider its mesh's, and `key` names the mesh, so that
+/// its body is made again when the mesh changes.
+#[derive(Clone, Debug)]
+pub struct ColliderMesh {
+    pub key: u64,
+    pub points: Arc<[Vec3]>,
+    pub indices: Arc<[u32]>,
+}
+
+impl Component for ColliderMesh {}
 
 /// Makes physics move its Obj, which needs a Collider beside it. A
 /// kinematic one is moved by the game instead, pushing what is in the way.
@@ -227,6 +258,8 @@ struct BodyKey {
     rigidbody: Option<Rigidbody>,
     scale: Vec3,
     layer: u8,
+    /// A Mesh collider's [`ColliderMesh`] key.
+    mesh: Option<u64>,
 }
 
 struct Kept {
@@ -532,13 +565,17 @@ impl PhysicsScene {
         // and the body would be made again, losing its speed, each step it turns.
         let scale = (scale * 1e4).round() / 1e4;
         let (rigidbody, layer) = (world.get::<Rigidbody>(entity).copied(), layer(world, entity));
-        let key = BodyKey { collider, rigidbody, scale, layer };
+        let mesh = world.get::<ColliderMesh>(entity).filter(|_| collider.shape == ColliderShape::Mesh);
+        let key = BodyKey { collider, rigidbody, scale, layer, mesh: mesh.map(|mesh| mesh.key) };
         let Some(kept) = self.bodies.get_mut(&entity).filter(|kept| kept.key == key) else {
             if self.bodies.contains_key(&entity) {
                 self.doubt(entity);
             }
             self.remove(entity);
-            return self.add(entity, key, position, rotation);
+            if collider.shape == ColliderShape::Mesh && mesh.is_none() {
+                return;
+            }
+            return self.add(entity, key, mesh.cloned(), position, rotation);
         };
         if same_place(kept.placed, (position, rotation)) {
             return;
@@ -551,12 +588,14 @@ impl PhysicsScene {
         }
     }
 
-    fn add(&mut self, entity: Entity, key: BodyKey, position: Vec3, rotation: Quat) {
-        let shape = self.shape(&key.collider, key.scale);
+    fn add(&mut self, entity: Entity, key: BodyKey, mesh: Option<ColliderMesh>, position: Vec3, rotation: Quat) {
         let motion = match key.rigidbody {
             None => Motion::Static,
             Some(body) if body.kinematic => Motion::Kinematic,
             Some(_) => Motion::Dynamic,
+        };
+        let Some(shape) = self.shape(&key.collider, key.scale, mesh.as_ref(), motion == Motion::Dynamic) else {
+            return tracing::warn!("an Obj's mesh has no triangles to collide with; its collider is left out");
         };
         let mut desc = BodyDesc::new(shape, motion).at(position, rotation);
         desc.friction = key.collider.friction;
@@ -601,11 +640,23 @@ impl PhysicsScene {
 
     /// A collider's shape at an Obj's scale. A sphere and a capsule take
     /// the scale across them, as round shapes cannot stretch one way.
-    fn shape(&mut self, collider: &Collider, scale: Vec3) -> ShapeId {
+    /// A collider's shape at its Obj's scale. A mesh's is its triangles,
+    /// or their convex hull when it is convex or moved by physics; `None`
+    /// for one with too few to make either.
+    fn shape(&mut self, collider: &Collider, scale: Vec3, mesh: Option<&ColliderMesh>, moving: bool) -> Option<ShapeId> {
+        if let (ColliderShape::Mesh, Some(mesh)) = (collider.shape, mesh) {
+            // Mirrored, the points keep their side; a scale of 0 would flatten them to nothing.
+            let scale = scale.signum() * scale.abs().max(Vec3::splat(1e-4));
+            let points: Vec<Vec3> = mesh.points.iter().map(|point| *point * scale).collect();
+            return match collider.convex || moving {
+                true => self.world.convex_hull_shape(&points),
+                false => self.world.mesh_shape(&points, &mesh.indices),
+            };
+        }
         let scale = scale.abs().max(Vec3::splat(1e-4));
         let across = scale.x.max(scale.z);
         let base = match collider.shape {
-            ColliderShape::Box => self.world.box_shape(Vec3::from(collider.size) * scale * 0.5),
+            ColliderShape::Box | ColliderShape::Mesh => self.world.box_shape(Vec3::from(collider.size) * scale * 0.5),
             ColliderShape::Sphere => self.world.sphere_shape(collider.radius * scale.max_element()),
             ColliderShape::Capsule => {
                 let radius = collider.radius * across;
@@ -615,11 +666,11 @@ impl PhysicsScene {
         };
         let center = Vec3::from(collider.center) * scale;
         if center == Vec3::ZERO {
-            return base;
+            return Some(base);
         }
         let placed = self.world.placed_shape(base, center, Quat::IDENTITY, Vec3::ONE);
         self.world.release_shape(base);
-        placed
+        Some(placed)
     }
 
     /// Dynamic bodies' Objs move to where physics put them.
@@ -1022,6 +1073,41 @@ mod tests {
         world.remove::<CharacterController>(walker);
         physics.step(&mut world, 1.0 / 60.0);
         assert!(physics.take_events().is_empty() && physics.owners.values().all(|e| *e != walker));
+    }
+
+    #[test]
+    fn a_mesh_collider_is_its_meshs_triangles_or_their_hull() {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let mesh = |key: u64, points: &[[f32; 3]], indices: &[u32]| ColliderMesh {
+            key,
+            points: points.iter().map(|p| Vec3::from(*p)).collect(),
+            indices: indices.into(),
+        };
+        // A floor of two triangles, ten metres across before its Obj's scale of two.
+        let floor = mesh(1, &[[-5.0, 0.0, -5.0], [5.0, 0.0, -5.0], [5.0, 0.0, 5.0], [-5.0, 0.0, 5.0]], &[0, 2, 1, 0, 3, 2]);
+        let mut scaled = Transform::default();
+        scaled.scale = Vec3::splat(2.0);
+        let ground = world.spawn((scaled,));
+        world.insert(ground, Collider { shape: ColliderShape::Mesh, ..Collider::default() });
+        let corners: Vec<[f32; 3]> =
+            (0..8).map(|i| [[-0.5, 0.5][i & 1], [-0.5, 0.5][i >> 1 & 1], [-0.5, 0.5][i >> 2 & 1]]).collect();
+        let falling = world.spawn((Transform::from_position(Vec3::new(8.0, 3.0, 0.0)),));
+        world.insert(falling, Collider { shape: ColliderShape::Mesh, ..Collider::default() });
+        world.insert(falling, Rigidbody::default());
+        world.insert(falling, mesh(2, &corners, &[]));
+        let mut physics = PhysicsScene::new();
+        physics.step(&mut world, 1.0 / 60.0);
+        assert!(physics.body(ground).is_none(), "no body until its mesh is given");
+        world.insert(ground, floor);
+        for _ in 0..120 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        let y = world.get::<Transform>(falling).unwrap().position.y;
+        assert!((y - 0.5).abs() < 0.05, "a moving one is its hull, resting on the floor's triangles: {y}");
+        let hit = physics.raycast(Vec3::new(9.5, 5.0, 9.5), Vec3::NEG_Y, 10.0, u32::MAX, false).unwrap();
+        assert_eq!(hit.obj, ground, "the floor reaches as far as its Obj's scale takes it");
+        assert!(physics.raycast(Vec3::new(10.5, 5.0, 0.0), Vec3::NEG_Y, 10.0, u32::MAX, false).is_none());
     }
 
     #[test]

@@ -25,6 +25,7 @@ use voxear_scene::{
     Registration, Request, SceneComponents, Transform, world_matrix,
 };
 
+use crate::audio::{PlaySound, SoundFacts, audio_bus, sound_info, sound_load, sound_play, source_value, voice_value};
 use crate::debug::{debug_box, debug_line, debug_sphere, debug_text};
 use crate::display;
 use crate::ecs::{
@@ -42,7 +43,7 @@ use crate::ui::{
     ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 29;
+pub(crate) const API_VERSION: u32 = 30;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -210,6 +211,17 @@ pub(crate) struct NativeApi {
     /// [`ScriptServices::scene_state`]), written when it fits, its length
     /// returned either way, or -1 where there are no scenes.
     pub save_scene: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
+    /// Sound, for `Sound`, `Audio` and `AudioSource` (see [`crate::audio`]):
+    /// a sound loaded by project path or GUID, returning its id, or -1; what
+    /// a loaded one holds; one played once, returning its voice, or 0; and a
+    /// voice, an Obj's Audio Source or a bus's volume read, and written
+    /// when `set` is not 0.
+    pub sound_load: unsafe extern "C" fn(reference: *const u8, len: i32) -> i32,
+    pub sound_info: unsafe extern "C" fn(sound: i32, out: *mut SoundFacts) -> i32,
+    pub sound_play: unsafe extern "C" fn(sound: i32, play: *const PlaySound) -> u64,
+    pub voice_value: unsafe extern "C" fn(voice: u64, what: i32, set: i32, value: f32) -> f32,
+    pub source_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: f32) -> f32,
+    pub audio_bus: unsafe extern "C" fn(bus: i32, set: i32, value: f32) -> f32,
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -985,6 +997,12 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         save_key,
         save_obj,
         save_scene,
+        sound_load,
+        sound_info,
+        sound_play,
+        voice_value,
+        source_value,
+        audio_bus,
     }
 }
 

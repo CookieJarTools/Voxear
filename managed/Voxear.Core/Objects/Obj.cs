@@ -194,6 +194,24 @@ namespace Voxear
 			return this;
 		}
 
+		/// <summary>The Obj's Audio Source, which plays a sound from it. Not valid when it has none.</summary>
+		public AudioSource AudioSource => new AudioSource(this);
+
+		/// <summary>
+		/// Gives the Obj an Audio Source, unless it has one, and returns it: in 3D, playing the sound given, or none
+		/// until one is set. Call Play on it to hear it.
+		/// </summary>
+		public AudioSource AddAudioSource(Sound sound = default)
+		{
+			NativeAudio.SetSource(this, NativeAudio.SourceAdd, 1f);
+			var source = new AudioSource(this);
+			if (sound.IsValid)
+			{
+				source.Sound = sound;
+			}
+			return source;
+		}
+
 		public static bool operator ==(Obj left, Obj right)
 		{
 			return left.Id == right.Id;

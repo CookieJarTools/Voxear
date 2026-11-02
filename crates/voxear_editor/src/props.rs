@@ -8,7 +8,9 @@ use voxear_assets::AssetKind;
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
-    EditBehaviours, Game, MaterialSource, linear,
+    EditBehaviours, Game, MaterialSource,
+    audio::{AudioBus, AudioListener, AudioSource, SoundSpace},
+    linear,
     prefab::Locks,
     scene_file::{default_light, default_material},
     script_types::ScriptTypes,
@@ -23,6 +25,8 @@ use crate::fields::{self, Pick, Step};
 const BUILTIN_MESHES: [(&str, &str); 3] =
     [("Cube", "builtin:cube"), ("Sphere", "builtin:sphere"), ("Plane", "builtin:plane")];
 const LIGHT_KINDS: [&str; 3] = ["Directional", "Point", "Spot"];
+const SOUND_SPACES: [&str; 2] = ["3D", "2D"];
+const AUDIO_BUSES: [&str; 2] = ["Effects", "Music"];
 
 /// A component the Inspector shows as a section of its own.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -30,18 +34,22 @@ pub enum Part {
     Renderer,
     Light,
     Camera,
+    Audio,
+    Listener,
     /// A script, by its full type name.
     Behaviour(String),
 }
 
 impl Part {
     /// The component as a prefab's locks name it: a behaviour by its type, or
-    /// `renderer`, `light` or `camera`.
+    /// `renderer`, `light`, `camera`, `audio` or `audio_listener`.
     pub fn lock_key(&self) -> String {
         match self {
             Part::Renderer => "renderer".into(),
             Part::Light => "light".into(),
             Part::Camera => "camera".into(),
+            Part::Audio => "audio".into(),
+            Part::Listener => "audio_listener".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -51,6 +59,8 @@ impl Part {
             Part::Renderer => "Mesh Renderer",
             Part::Light => "Light",
             Part::Camera => "Camera",
+            Part::Audio => "Audio Source",
+            Part::Listener => "Audio Listener",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -60,6 +70,7 @@ impl Part {
             Part::Renderer => "cube",
             Part::Light => "light",
             Part::Camera => "camera",
+            Part::Audio | Part::Listener => "audio",
             Part::Behaviour(_) => "code",
         }
     }
@@ -79,6 +90,15 @@ pub enum Prop {
     FieldOfView,
     Near,
     Exposure,
+    Sound,
+    SoundVolume,
+    Pitch,
+    Loop,
+    PlayOnStart,
+    SoundSpace,
+    MinDistance,
+    MaxDistance,
+    SoundBus,
     /// A script field, or a value inside one: its behaviour's type name,
     /// and the path to it from the field.
     Field {
@@ -96,6 +116,15 @@ impl Prop {
                 Part::Light
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
+            Prop::Sound
+            | Prop::SoundVolume
+            | Prop::Pitch
+            | Prop::Loop
+            | Prop::PlayOnStart
+            | Prop::SoundSpace
+            | Prop::MinDistance
+            | Prop::MaxDistance
+            | Prop::SoundBus => Part::Audio,
             Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
         }
     }
@@ -115,6 +144,15 @@ impl Prop {
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
+            Prop::Sound => "sound",
+            Prop::SoundVolume => "volume",
+            Prop::Pitch => "pitch",
+            Prop::Loop => "loop",
+            Prop::PlayOnStart => "play_on_start",
+            Prop::SoundSpace => "mode",
+            Prop::MinDistance => "min_distance",
+            Prop::MaxDistance => "max_distance",
+            Prop::SoundBus => "bus",
             Prop::Field { path, .. } => match path.first() {
                 Some(crate::fields::Step::Key(field)) => return field.clone(),
                 _ => "",
@@ -163,6 +201,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<Camera>(entity) {
         parts.push(Part::Camera);
     }
+    if world.has::<AudioSource>(entity) {
+        parts.push(Part::Audio);
+    }
+    if world.has::<AudioListener>(entity) {
+        parts.push(Part::Listener);
+    }
     parts.extend(specs(world, entity).into_iter().map(|spec| Part::Behaviour(spec.type_name)));
     parts
 }
@@ -196,6 +240,16 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props
         }
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure],
+        Part::Audio => {
+            let mut props =
+                vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
+            props.push(Prop::SoundSpace);
+            if world.get::<AudioSource>(entity).is_none_or(|source| source.space == SoundSpace::ThreeD) {
+                props.extend([Prop::MinDistance, Prop::MaxDistance]);
+            }
+            props
+        }
+        Part::Listener => Vec::new(),
         Part::Behaviour(behaviour) => {
             let mut rows = Vec::new();
             let declared = types.behaviour(behaviour);
@@ -226,6 +280,15 @@ pub fn label(prop: &Prop) -> String {
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
+        Prop::Sound => "Sound",
+        Prop::SoundVolume => "Volume",
+        Prop::Pitch => "Pitch",
+        Prop::Loop => "Loop",
+        Prop::PlayOnStart => "Play on start",
+        Prop::SoundSpace => "Mode",
+        Prop::MinDistance => "Min distance",
+        Prop::MaxDistance => "Max distance",
+        Prop::SoundBus => "Bus",
         Prop::Field { path, .. } => {
             return match path.last() {
                 Some(Step::Key(name)) => nice_name(name),
@@ -246,8 +309,9 @@ pub fn depth(prop: &Prop) -> usize {
 }
 
 /// A component as an Obj gets it from Add Component: a grey cube, a point
-/// light, a camera, or a script (a behaviour or, as `types` tell, a C#
-/// component) with every field as it starts.
+/// light, a camera, an Audio Source with no sound yet, an Audio Listener,
+/// or a script (a behaviour or, as `types` tell, a C# component) with every
+/// field as it starts.
 pub fn add(
     game: &mut Game,
     renderer: Option<&mut Renderer>,
@@ -272,6 +336,12 @@ pub fn add(
         Part::Camera => {
             world.insert(entity, Camera::default());
         }
+        Part::Audio => {
+            world.insert(entity, AudioSource::default());
+        }
+        Part::Listener => {
+            world.insert(entity, AudioListener);
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -291,6 +361,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Renderer => drop(world.remove::<MeshRenderer>(entity)),
         Part::Light => drop(world.remove::<Light>(entity)),
         Part::Camera => drop(world.remove::<Camera>(entity)),
+        Part::Audio => drop(world.remove::<AudioSource>(entity)),
+        Part::Listener => drop(world.remove::<AudioListener>(entity)),
         Part::Behaviour(name) => {
             let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return };
             kept.0.retain(|spec| spec.type_name != *name);
@@ -307,6 +379,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     let world = &game.engine.world;
     let light = || world.get::<Light>(entity);
     let camera = || world.get::<Camera>(entity);
+    let audio = || world.get::<AudioSource>(entity);
     Some(match prop {
         Prop::Mesh => {
             let reference = game.content.mesh_ref(world.get::<MeshRenderer>(entity)?.mesh)?.to_string();
@@ -342,6 +415,24 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
+        Prop::Sound => Value::Asset(match audio()?.sound.and_then(|id| game.content.sound_guid(id)) {
+            Some(guid) => game.content.db().get(guid).map_or_else(|| guid.to_string(), |e| e.path.clone()),
+            None => "None".into(),
+        }),
+        Prop::SoundVolume => Value::Number(audio()?.volume),
+        Prop::Pitch => Value::Number(audio()?.pitch),
+        Prop::Loop => Value::Toggle(audio()?.looping),
+        Prop::PlayOnStart => Value::Toggle(audio()?.play_on_start),
+        Prop::SoundSpace => {
+            let index = usize::from(audio()?.space == SoundSpace::TwoD);
+            Value::Choice(index, SOUND_SPACES.iter().map(|k| k.to_string()).collect())
+        }
+        Prop::MinDistance => Value::Number(audio()?.min_distance),
+        Prop::MaxDistance => Value::Number(audio()?.max_distance),
+        Prop::SoundBus => {
+            let index = usize::from(audio()?.bus == AudioBus::Music);
+            Value::Choice(index, AUDIO_BUSES.iter().map(|k| k.to_string()).collect())
+        }
         Prop::Field { behaviour, path } => {
             specs(world, entity).iter().find(|s| s.type_name == *behaviour)?;
             fields::get(game, types, entity, behaviour, path)
@@ -362,8 +453,8 @@ pub fn set(
         return false;
     }
     match (prop, value) {
-        // A mesh or material kept after play comes back by its name, as its list has it.
-        (Prop::Mesh | Prop::Material, Value::Asset(label)) => {
+        // A mesh, material or sound kept after play comes back by its name, as its list has it.
+        (Prop::Mesh | Prop::Material | Prop::Sound, Value::Asset(label)) => {
             let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| pick(game, renderer, types, entity, prop, &choice))
         }
@@ -410,6 +501,19 @@ pub fn pick(
             let Ok(material) = game.content.material(renderer, &source) else { return false };
             with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.material = material)
         }
+        (Prop::Sound, Pick::Asset(path)) => {
+            let sound = match path {
+                None => None,
+                Some(path) => match game.content.parse(path).and_then(|r| game.content.sound(&r)) {
+                    Ok(sound) => Some(sound),
+                    Err(error) => {
+                        tracing::error!("{error:#}");
+                        return false;
+                    }
+                },
+            };
+            with(&mut game.engine.world, entity, |source: &mut AudioSource| source.sound = sound)
+        }
         (Prop::Field { behaviour, path }, choice) => {
             fields::pick(&mut game.engine.world, types, entity, behaviour, path, choice)
         }
@@ -437,6 +541,10 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             let mut found = vec![("Default".to_string(), Pick::Asset(None))];
             found.extend(material_assets(game).into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
             return found;
+        }
+        Prop::Sound => {
+            let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
+            return fields::asset_choices(game, &kind);
         }
         _ => {}
     }
@@ -466,6 +574,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
     match prop {
         Prop::Mesh => "Mesh".into(),
         Prop::Material => "Material".into(),
+        Prop::Sound => "Sound".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),
@@ -504,7 +613,8 @@ pub fn is_item(prop: &Prop) -> bool {
     matches!(prop, Prop::Field { path, .. } if matches!(path.last(), Some(Step::Item(_))))
 }
 
-/// Lights and cameras, whose values are plain numbers on the component.
+/// Lights, cameras and Audio Sources, whose values are plain numbers,
+/// switches and choices on the component.
 fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -> bool {
     match (prop, value) {
         (Prop::LightKind, Value::Choice(index, _)) => with(world, entity, |light: &mut Light| {
@@ -536,6 +646,22 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::Near, Value::Number(n)) => with(world, entity, |camera: &mut Camera| camera.near = n.max(0.001)),
         (Prop::Exposure, Value::Number(n)) => with(world, entity, |camera: &mut Camera| camera.exposure = n.max(0.0)),
+        (Prop::SoundVolume, Value::Number(n)) => with(world, entity, |a: &mut AudioSource| a.volume = n.max(0.0)),
+        (Prop::Pitch, Value::Number(n)) => with(world, entity, |a: &mut AudioSource| a.pitch = n.clamp(0.05, 4.0)),
+        (Prop::Loop, Value::Toggle(on)) => with(world, entity, |a: &mut AudioSource| a.looping = on),
+        (Prop::PlayOnStart, Value::Toggle(on)) => with(world, entity, |a: &mut AudioSource| a.play_on_start = on),
+        (Prop::SoundSpace, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
+            a.space = if index == 1 { SoundSpace::TwoD } else { SoundSpace::ThreeD };
+        }),
+        (Prop::MinDistance, Value::Number(n)) => {
+            with(world, entity, |a: &mut AudioSource| a.min_distance = n.clamp(0.0, a.max_distance))
+        }
+        (Prop::MaxDistance, Value::Number(n)) => {
+            with(world, entity, |a: &mut AudioSource| a.max_distance = n.max(a.min_distance))
+        }
+        (Prop::SoundBus, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
+            a.bus = if index == 1 { AudioBus::Music } else { AudioBus::Effects };
+        }),
         _ => false,
     }
 }

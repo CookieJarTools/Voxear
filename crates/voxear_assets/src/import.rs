@@ -132,6 +132,73 @@ impl TextureImport {
     }
 }
 
+/// How a sound file (`.wav`, `.ogg`, `.flac` or `.mp3`) is imported.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SoundImport {
+    pub load: SoundLoad,
+    /// Multiplies the sound wherever it plays, as a quick fix for a file
+    /// recorded too loud or too quiet.
+    pub volume: f32,
+}
+
+impl Default for SoundImport {
+    fn default() -> Self {
+        Self { load: SoundLoad::Auto, volume: 1.0 }
+    }
+}
+
+impl SoundImport {
+    const TABLE: &str = "sound";
+
+    /// The settings in a `.meta` file's text, or the defaults.
+    pub fn from_meta(text: &str) -> Self {
+        section(text, Self::TABLE)
+    }
+
+    /// The settings of the sound at `asset`, from its `.meta`, or the defaults.
+    pub fn read(asset: &Path) -> Self {
+        std::fs::read_to_string(meta_path(asset)).map(|text| Self::from_meta(&text)).unwrap_or_default()
+    }
+
+    /// Writes the settings into the `.meta` beside `asset`.
+    pub fn write(&self, asset: &Path) -> Result<()> {
+        write_section(asset, Self::TABLE, self, &Self::default())
+    }
+
+    /// Whether a sound of `seconds` streams as it plays rather than being
+    /// decoded whole when it loads.
+    pub fn streams(&self, seconds: f64) -> bool {
+        match self.load {
+            SoundLoad::Auto => seconds > SoundLoad::AUTO_STREAM_SECONDS,
+            SoundLoad::Whole => false,
+            SoundLoad::Stream => true,
+        }
+    }
+}
+
+/// How a sound is held while it is loaded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SoundLoad {
+    /// Whole for a short sound, streamed for one longer than
+    /// [`AUTO_STREAM_SECONDS`](Self::AUTO_STREAM_SECONDS).
+    #[default]
+    Auto,
+    /// Decoded into memory when it loads, so it starts at once and costs
+    /// nothing while it plays: for effects.
+    Whole,
+    /// Kept as its file and decoded a little ahead as it plays: a fraction
+    /// of the memory, for music and long ambience.
+    Stream,
+}
+
+impl SoundLoad {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Whole, Self::Stream];
+    /// How long a sound can be before Auto streams it.
+    pub const AUTO_STREAM_SECONDS: f64 = 10.0;
+}
+
 /// The length one unit in a model file stands for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -259,6 +326,24 @@ mod tests {
         assert_eq!(settings.size(100, 3000), (8, 256));
         assert_eq!(settings.size(200, 100), (200, 100), "a smaller picture keeps its size");
         assert_eq!(TextureImport::default().size(8192, 8192), (8192, 8192));
+    }
+
+    #[test]
+    fn a_sounds_settings_say_how_it_loads_and_how_loud_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let sound = dir.path().join("Rain.ogg");
+        std::fs::write(meta_path(&sound), "guid = \"abc\"\n").unwrap();
+        let auto = SoundImport::read(&sound);
+        assert_eq!(auto, SoundImport::default());
+        assert!(!auto.streams(2.0) && auto.streams(120.0), "Auto streams long sounds only");
+
+        let settings = SoundImport { load: SoundLoad::Stream, volume: 0.5 };
+        settings.write(&sound).unwrap();
+        let text = std::fs::read_to_string(meta_path(&sound)).unwrap();
+        assert!(text.contains("[sound]") && text.contains("load = \"stream\"") && text.contains("volume = 0.5"));
+        assert_eq!(SoundImport::read(&sound), settings);
+        assert!(settings.streams(0.1));
+        assert!(!SoundImport { load: SoundLoad::Whole, volume: 1.0 }.streams(600.0));
     }
 
     #[test]

@@ -505,8 +505,18 @@ Still to do in M3:
   - the Localization Tables editor window, with pseudo-localisation
   - automatic language detection (saved choice, then store, then OS) with fallback chains
   - RTL mirroring and per-locale fonts
-- Audio mixer, 2D/3D sources, and Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5,
-  once the ray-tracing acceleration structures exist.
+- Audio:
+  - [x] a Rust mixer on cpal: music and effects buses under a master volume, and voices that play, loop, pause and
+    stop, with long music streamed
+  - [x] 2D and 3D sources, with distance falloff and panning from the listener (the camera, or an Audio Listener)
+  - [x] sound assets (WAV, OGG Vorbis, FLAC and MP3) with import settings, previewed in the Inspector, and the Audio
+    Source component
+  - [x] C#: `Audio.Play(sound)` and `Audio.Play(sound, at:)`, `Sound`, `AudioSource` and the bus volumes; builds pack
+    the sounds they use
+  - [ ] effects, snapshots and ducking on the buses, and Doppler
+  - [ ] Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
+    acceleration structures exist.
+  - [ ] the audio debugger: active voices in the viewport
 - Jolt integration (bodies, joints, character controller, queries, events) and Box2D v3.
 - **Built-in vehicle physics**, on Jolt's vehicle constraints *(later, once the physics above is in)*:
   - wheeled vehicles (cars, trucks, motorbikes) with suspension, tyre friction curves, engine and gearbox, and

@@ -399,8 +399,9 @@ fn gather(
                 AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material => true,
                 // A source model reads its own buffers and images as it is prepared.
                 AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
-                // Textures load with their models, and scripts load UI documents themselves.
-                AssetKind::Texture | AssetKind::Ui => false,
+                // Textures load with their models, scripts load UI documents themselves, and
+                // sounds are read as the scene that plays them comes in.
+                AssetKind::Texture | AssetKind::Ui | AssetKind::Sound => false,
             };
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));

@@ -93,5 +93,11 @@ namespace Voxear.Interop
 		public delegate* unmanaged[Cdecl]<int, ulong, byte*, int, byte*, int, int> SaveKey;
 		public delegate* unmanaged[Cdecl]<byte*, int, ulong> SaveObj;
 		public delegate* unmanaged[Cdecl]<byte*, int, int> SaveScene;
+		public delegate* unmanaged[Cdecl]<byte*, int, int> SoundLoad;
+		public delegate* unmanaged[Cdecl]<int, SoundFacts*, int> SoundInfo;
+		public delegate* unmanaged[Cdecl]<int, PlaySoundData*, ulong> SoundPlay;
+		public delegate* unmanaged[Cdecl]<ulong, int, int, float, float> VoiceValue;
+		public delegate* unmanaged[Cdecl]<ulong, int, int, float, float> SourceValue;
+		public delegate* unmanaged[Cdecl]<int, int, float, float> AudioBus;
 	}
 }

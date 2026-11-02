@@ -8,7 +8,10 @@ use anyhow::Result;
 use voxear_ecs::{Entity, World};
 use voxear_scene::{BehaviourSpec, Placement};
 
-use crate::display::CursorLock;
+use crate::{
+    audio::{AudioAsk, PlaySound, SoundFacts},
+    display::CursorLock,
+};
 
 /// What scripts reach beyond the world. Each part has a default that says
 /// there is none of it here, so a host lends only what it has, as the
@@ -176,6 +179,29 @@ pub trait ScriptServices {
 
     /// An asset's GUID, as a save keeps it.
     fn asset_guid(&self, _asset: AssetName<'_>) -> Option<String> {
+        None
+    }
+
+    /// Loads a sound asset by project path or GUID, for `Sound.Load`,
+    /// returning its id.
+    fn load_sound(&mut self, reference: &str) -> Result<u32> {
+        anyhow::bail!("sounds load only in a running game, not here ({reference})")
+    }
+
+    /// What a loaded sound holds.
+    fn sound_info(&mut self, _sound: u32) -> Option<SoundFacts> {
+        None
+    }
+
+    /// Plays a sound once, for `Audio.Play`, returning its voice, or 0.
+    fn play_sound(&mut self, _sound: u32, _play: &PlaySound) -> u64 {
+        0
+    }
+
+    /// Reads, and sets when `set` says, something of a voice, an Audio
+    /// Source in `world`, or a bus (see [`AudioAsk`]); `None` where there
+    /// is no such voice or source, or no sound here.
+    fn audio(&mut self, _world: Option<&mut World>, _ask: AudioAsk, _set: Option<f32>) -> Option<f32> {
         None
     }
 }

@@ -27,6 +27,9 @@
 //! material = { color = [0.5, 0.3, 0.9] }
 //! ```
 //!
+//! An Obj's `[obj.audio]` is an Audio Source, and `audio_listener = true`
+//! hears the game from it (see [`crate::audio`]).
+//!
 //! An optional `[sky]` sets the sky colours and `[post]` the
 //! post-processing (see [`PostProcess`]). Like Unity's global volume, the
 //! last scene loaded with either one sets it for the whole level.
@@ -47,6 +50,7 @@ use voxear_render::{Camera, Light, LightKind, MeshRenderer, PostProcess, Rendere
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, ScenePersistence, Transform};
 
 use crate::{
+    audio::{AudioListener, AudioSource, AudioSourceData, audio_source_data},
     content::{Content, MaterialData, MaterialSource, linear, srgb},
     engine::{EditBehaviours, Engine},
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabInstance, Template},
@@ -129,12 +133,18 @@ pub struct ObjData {
     pub light: Option<LightData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer: Option<RendererData>,
+    /// An Audio Source, which plays a sound from the Obj.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioSourceData>,
+    /// Hears the game's sound from here rather than from the camera.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub audio_listener: bool,
     /// Changes to Objs inside a prefab instance, by path (`"2"`, `"3/2"`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, toml::Table>,
     /// Components a prefab locks, so its instances show designers only some
-    /// fields: by component (a behaviour's type, or `renderer`, `light` or
-    /// `camera`), each with the fields still shown. Only a prefab's own file
+    /// fields: by component (a behaviour's type, or `renderer`, `light`,
+    /// `camera` or `audio`), each with the fields still shown. Only a prefab's own file
     /// sets them; an instance cannot change them.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub locks: BTreeMap<String, Vec<String>>,
@@ -157,6 +167,8 @@ impl ObjData {
             camera: None,
             light: None,
             renderer: None,
+            audio: None,
+            audio_listener: false,
             overrides: BTreeMap::new(),
             locks: BTreeMap::new(),
         }
@@ -434,6 +446,10 @@ fn capture_instance(
     if root.renderer.is_some() && !same_renderer(content, &root.renderer, &prefab_root.renderer) {
         instance.renderer = root.renderer.clone();
     }
+    if root.audio.is_some() && root.audio != prefab_root.audio {
+        instance.audio = root.audio.clone();
+    }
+    instance.audio_listener = root.audio_listener && !prefab_root.audio_listener;
 
     for inner in expected.iter().filter(|o| !o.path.is_root()) {
         let Some(&entity) = members.get(&inner.path) else { continue };
@@ -485,6 +501,12 @@ fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Resul
     }
     if actual.renderer.is_some() && !same_renderer(content, &actual.renderer, &expected.renderer) {
         put("renderer", renderer_changes(content, &actual.renderer, &expected.renderer)?);
+    }
+    if let Some(audio) = actual.audio.as_ref().filter(|a| Some(*a) != expected.audio.as_ref()) {
+        put("audio", toml::Value::Table(audio.changes_from(expected.audio.as_ref())));
+    }
+    if actual.audio_listener != expected.audio_listener {
+        put("audio_listener", actual.audio_listener.into());
     }
     Ok(changes)
 }
@@ -652,6 +674,8 @@ fn capture_obj(world: &World, content: &Content, entity: Entity, ids: &HashMap<E
         };
         Some(RendererData { mesh, material })
     });
+    obj.audio = world.get::<AudioSource>(entity).map(|source| audio_source_data(content, source));
+    obj.audio_listener = world.has::<AudioListener>(entity);
     obj
 }
 

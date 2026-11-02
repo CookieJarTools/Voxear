@@ -1180,6 +1180,98 @@ fn a_pictures_import_settings_apply_to_the_models_that_read_it() {
     assert!(status.contains("Imported Pyramid.gltf again"), "the model reading it is imported again: {status}");
 }
 
+#[test]
+fn a_sound_shows_what_it_holds_plays_in_the_editor_and_goes_on_an_audio_source() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    // A second of one level, mono at 48 kHz.
+    let mut chime = Vec::new();
+    chime.extend_from_slice(b"RIFF");
+    chime.extend_from_slice(&(36u32 + 96_000).to_le_bytes());
+    chime.extend_from_slice(b"WAVEfmt ");
+    for value in [16u32.to_le_bytes(), [1, 0, 1, 0], 48_000u32.to_le_bytes(), 96_000u32.to_le_bytes(), [2, 0, 16, 0]] {
+        chime.extend_from_slice(&value);
+    }
+    chime.extend_from_slice(b"data");
+    chime.extend_from_slice(&96_000u32.to_le_bytes());
+    chime.resize(chime.len() + 96_000, 0x20);
+    std::fs::write(dir.path().join("Models/Chime.wav"), chime).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
+    // Silent, rather than through the machine's speakers.
+    editor.game.audio = voxear_engine::audio::GameAudio::new(voxear_engine::audio::Audio::quiet());
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    open_models(&mut editor, &mut renderer);
+    let sound = tile(&editor.ui, "Chime.wav").expect("the sound shows");
+    click(&mut editor.ui, sound);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    let value = |editor: &voxear_editor::Editor, label: &str| {
+        let row = prop_row(&editor.ui, label).unwrap_or_else(|| panic!("a sound shows its {label}"));
+        editor.ui.text(editor.ui.children(row)[1]).to_string()
+    };
+    assert_eq!(value(&editor, "Kind"), "Sound");
+    assert_eq!(value(&editor, "Length"), "0:01.0");
+    assert_eq!(value(&editor, "Channels"), "Mono");
+    assert_eq!(value(&editor, "Sample rate"), "48000 Hz");
+    shot(&mut renderer, "inspector-sound.png");
+
+    let listen = editor.ui.find(editor.ui.root(), "listen").expect("a button to listen to it");
+    let words = |editor: &voxear_editor::Editor| editor.ui.text(editor.ui.children(listen)[1]).to_string();
+    assert_eq!(words(&editor), "Play");
+    click(&mut editor.ui, listen);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.audio.previewing(), Some("Models/Chime.wav"), "it plays in the editor");
+    assert_eq!(words(&editor), "Stop");
+    click(&mut editor.ui, listen);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.audio.previewing(), None);
+    assert_eq!(words(&editor), "Play");
+
+    let load = first_with(&editor.ui, prop_row(&editor.ui, "Load").unwrap(), "value-choice").unwrap();
+    assert_eq!(editor.ui.selected_option(load), 0, "by its length, to start with");
+    choose(&mut editor, &mut renderer, load, 2);
+    let apply = editor.ui.find(editor.ui.root(), "import-apply").unwrap();
+    click(&mut editor.ui, apply);
+    frame(&mut editor, &mut renderer);
+    let meta = std::fs::read_to_string(dir.path().join("Models/Chime.wav.meta")).unwrap();
+    assert!(meta.contains("[sound]") && meta.contains("load = \"stream\""), "Apply writes them to the .meta: {meta}");
+
+    // Add Component gives an Obj an Audio Source, whose values the Inspector edits and undo takes back.
+    let ground = obj(&editor, "Ground").unwrap();
+    editor.select(Some(ground));
+    frame(&mut editor, &mut renderer);
+    let mut add = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "add-component", &mut add);
+    click(&mut editor.ui, add[0]);
+    frame(&mut editor, &mut renderer);
+    let target = menu_item(&editor.ui, "Audio Source").expect("Add Component offers an Audio Source");
+    click(&mut editor.ui, target);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let source = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<voxear_engine::audio::AudioSource>(ground).copied()
+    };
+    assert!(source(&editor).is_some_and(|s| s.sound.is_none() && s.play_on_start), "added, with no sound yet");
+    let picked = first_with(&editor.ui, prop_row(&editor.ui, "Sound").unwrap(), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(picked), "None");
+    let volume = prop_field(&editor.ui, "Volume").expect("its volume shows");
+    type_into(&mut editor.ui, volume, "0.5");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    assert_eq!(source(&editor).unwrap().volume, 0.5);
+    assert!(prop_row(&editor.ui, "Max distance").is_some(), "3D, so it shows how far it carries");
+    shot(&mut renderer, "inspector-audio-source.png");
+    editor.undo(&mut renderer);
+    assert_eq!(source(&editor).unwrap().volume, 1.0, "undo takes the volume back");
+}
+
 /// The mesh the Day scene draws the Pyramid model with.
 fn pyramid(editor: &voxear_editor::Editor) -> voxear_render::MeshHandle {
     let world = &editor.game.engine.world;

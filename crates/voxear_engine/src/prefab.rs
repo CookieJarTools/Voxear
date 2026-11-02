@@ -61,6 +61,7 @@ use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
 
 use crate::{
+    audio::{AudioListener, AudioSource, audio_source},
     content::{Content, MaterialSource},
     scene_file::{MaterialRef, ObjData, default_material, light_component},
 };
@@ -339,6 +340,10 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     if instance.renderer.is_some() {
         root.renderer = instance.renderer.clone();
     }
+    if instance.audio.is_some() {
+        root.audio = instance.audio.clone();
+    }
+    root.audio_listener |= instance.audio_listener;
 }
 
 /// Expanded Objs with their meshes and materials loaded, ready to spawn any
@@ -362,6 +367,8 @@ pub struct TemplateObj {
     pub camera: Option<Camera>,
     pub light: Option<Light>,
     pub renderer: Option<MeshRenderer>,
+    pub audio: Option<AudioSource>,
+    pub audio_listener: bool,
     /// Set on the root of each prefab instance.
     pub prefab: Option<AssetGuid>,
     /// Components the prefab locks (see [`Locks`]).
@@ -369,7 +376,7 @@ pub struct TemplateObj {
 }
 
 /// Components a prefab locks, as its file's `locks` says: by component (a
-/// behaviour's type, or `renderer`, `light` or `camera`), each with the
+/// behaviour's type, or `renderer`, `light`, `camera` or `audio`), each with the
 /// fields designers still see in the Inspector. Only the prefab, opened on
 /// its own, changes them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -467,6 +474,12 @@ impl Template {
             }
             if let Some(renderer) = obj.renderer {
                 world.insert(entity, renderer);
+            }
+            if let Some(audio) = obj.audio {
+                world.insert(entity, audio);
+            }
+            if obj.audio_listener {
+                world.insert(entity, AudioListener);
             }
             if obj.persistent {
                 world.insert(entity, ScenePersistence);
@@ -580,6 +593,8 @@ fn resolve_obj(
         camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
         light: data.light.map(light_component),
         renderer,
+        audio: data.audio.as_ref().map(|audio| audio_source(content, audio)).transpose()?,
+        audio_listener: data.audio_listener,
         prefab: obj.prefab,
         locks: data.locks.clone(),
     })

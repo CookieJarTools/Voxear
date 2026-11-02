@@ -1,6 +1,8 @@
 //! Assets coming into the project, and imported again, as Unity's asset
 //! importing does:
 //!
+//! - A sound whose import settings were applied loads with them the next
+//!   time it plays; what plays it now plays on as it was.
 //! - A model whose import settings were applied in the Inspector is read
 //!   again with them and put behind the meshes and materials it had, so
 //!   every Obj drawing it, and every undo step, shows the change at once.
@@ -62,6 +64,7 @@ impl Editor {
         let written = match settings {
             ImportSettings::Model(settings) => settings.write(&file),
             ImportSettings::Texture(settings) => settings.write(&file),
+            ImportSettings::Sound(settings) => settings.write(&file),
         };
         if let Err(error) = written {
             self.notify(&format!("Could not save the import settings of {path}: {error:#}"));
@@ -75,6 +78,11 @@ impl Editor {
         if let ImportSettings::Model(_) = settings {
             self.reimport_model(path, renderer);
             return;
+        }
+        if let ImportSettings::Sound(_) = settings {
+            self.game.content.forget_sound(path);
+            let name = path.rsplit('/').next().unwrap_or(path);
+            return self.notify(&format!("Saved the import settings of {name}; it plays with them from now on"));
         }
         let root = self.game.project.root.clone();
         let changed = HashSet::from([&meta]);

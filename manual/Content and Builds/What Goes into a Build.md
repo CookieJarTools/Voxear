@@ -2,7 +2,7 @@
 order: 1
 ---
 
-When you make a build, Voxear packs your levels, scenes, prefabs, models, materials and UI into **bundles**: a few large files that load quickly. This is the **content build**, the middle stage of every build. While you work in the editor nothing is packed: the game reads your project's files as they are.
+When you make a build, Voxear packs your levels, scenes, prefabs, models, materials, UI and sounds into **bundles**: a few large files that load quickly. This is the **content build**, the middle stage of every build. While you work in the editor nothing is packed: the game reads your project's files as they are.
 
 ## What a build includes
 

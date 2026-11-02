@@ -30,6 +30,7 @@ pub const NAMES: &[&str] = &[
     "search",
     "play",
     "pause",
+    "stop",
     "step",
     "logo-top",
     "logo-left",
@@ -85,6 +86,7 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "search" => &[("M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13ZM15.5 15.5l4.5 4.5", STROKE)],
         "play" => &[("M7.5 5.6v12.8a1 1 0 0 0 1.5.87l10.6-6.4a1 1 0 0 0 0-1.74L9 4.73a1 1 0 0 0-1.5.87Z", FILL)],
         "pause" => &[("M6.5 5h3.5v14H6.5ZM14 5h3.5v14H14Z", FILL)],
+        "stop" => &[("M7 6h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z", FILL)],
         "step" => {
             &[("M5 5.6v12.8a1 1 0 0 0 1.5.87l9.4-6.4a1 1 0 0 0 0-1.74L6.5 4.73A1 1 0 0 0 5 5.6ZM17 5h3v14h-3Z", FILL)]
         }

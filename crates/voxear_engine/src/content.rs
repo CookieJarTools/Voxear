@@ -1,5 +1,5 @@
 //! Turns asset references from scene files into GPU meshes and materials,
-//! importing each source asset once.
+//! and sounds, importing each source asset once.
 //!
 //! In a project this reads source files directly, so pressing play never
 //! needs a build. Built games read the bundles `vox content build` makes,
@@ -14,7 +14,7 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{
-    AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader,
+    AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader, SoundImport,
     bundle::{BundleInfo, BundleReader, Catalog},
 };
 use voxear_core::math::{Quat, Vec3};
@@ -26,6 +26,7 @@ use voxear_render::{
 use voxear_scene::Destroying;
 
 use crate::{
+    audio::{AudioSource, Sound, SoundCache, SoundId, load_sound},
     loading::ReadyModel,
     prefab::{self, PREFAB_FORMAT, PrefabCache, PrefabFile, PrefabId, PrefabInstance, Template},
 };
@@ -85,6 +86,7 @@ pub struct Released {
     pub meshes: usize,
     pub materials: usize,
     pub textures: usize,
+    pub sounds: usize,
 }
 
 impl Released {
@@ -157,6 +159,7 @@ pub struct Content {
     inline_materials: HashMap<[u32; 8], MaterialHandle>,
     material_sources: HashMap<MaterialHandle, MaterialSource>,
     prefabs: PrefabCache,
+    sounds: SoundCache,
 }
 
 /// Where asset files are read from.
@@ -236,6 +239,7 @@ impl Content {
             inline_materials: HashMap::new(),
             material_sources: HashMap::new(),
             prefabs: PrefabCache::default(),
+            sounds: SoundCache::default(),
         }
     }
 
@@ -625,6 +629,8 @@ impl Content {
         cache.used.clear();
         cache.files.clear();
         self.texts.clear();
+        let heard = world.query_ref::<&AudioSource>().without::<Destroying>().into_iter().filter_map(|s| s.sound);
+        released.sounds = self.sounds.release(&heard.collect());
         if let Source::Bundles(reader, _) = &mut self.source {
             reader.close_all();
         }
@@ -689,6 +695,51 @@ impl Content {
 
     pub fn material_source(&self, handle: MaterialHandle) -> Option<&MaterialSource> {
         self.material_sources.get(&handle)
+    }
+
+    /// A sound asset's id, loading it now if it is not loaded, as its
+    /// import settings say: decoded whole, or kept to stream as it plays.
+    pub fn sound(&mut self, reference: &AssetRef) -> Result<SoundId> {
+        let guid = reference.guid().with_context(|| format!("`{reference}` is not a sound"))?;
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Sound, "{} is not a sound", entry.path);
+        let id = self.sounds.id(guid);
+        self.loaded_sound(id)?;
+        Ok(id)
+    }
+
+    /// A sound by id, loaded again if it was freed since.
+    pub fn loaded_sound(&mut self, id: SoundId) -> Result<Arc<Sound>> {
+        if let Some(sound) = self.sounds.get(id) {
+            return Ok(sound);
+        }
+        let guid = self.sounds.guid(id).with_context(|| format!("no sound has id {}", id.0))?;
+        let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
+        let bytes = self.read(&path)?;
+        // Built content ships a sound's `.meta` beside it for these.
+        let settings = self.read_text(&format!("{path}.{}", voxear_assets::META_EXTENSION)).ok();
+        let settings = settings.map_or_else(SoundImport::default, |text| SoundImport::from_meta(&text));
+        let sound = Arc::new(load_sound(bytes, &path, settings)?);
+        self.sounds.put(id, sound.clone());
+        Ok(sound)
+    }
+
+    pub fn sound_guid(&self, id: SoundId) -> Option<AssetGuid> {
+        self.sounds.guid(id)
+    }
+
+    /// Forgets a loaded sound, so it loads again with new import settings
+    /// the next time it plays. Voices playing it now play on as they were.
+    pub fn forget_sound(&mut self, path: &str) {
+        if let Some(guid) = self.db.guid_of(path) {
+            let id = self.sounds.id(guid);
+            self.sounds.release_one(id);
+        }
+    }
+
+    /// How many sounds are loaded now.
+    pub fn loaded_sounds(&self) -> usize {
+        self.sounds.loaded()
     }
 }
 

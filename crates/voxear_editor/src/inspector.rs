@@ -1227,10 +1227,11 @@ impl Inspector {
     /// edit mode.
     fn add_items(&self, playing: bool) -> Vec<(MenuItem, Option<RowAction>)> {
         let has = |part: &Part| self.built.0.iter().any(|(p, _)| p == part);
-        let mut items: Vec<(MenuItem, Option<RowAction>)> = [Part::Renderer, Part::Light, Part::Camera]
-            .into_iter()
-            .map(|part| (MenuItem::new(part.title()).enabled(!has(&part)), Some(RowAction::Add(part))))
-            .collect();
+        let mut items: Vec<(MenuItem, Option<RowAction>)> =
+            [Part::Renderer, Part::Light, Part::Camera, Part::Audio, Part::Listener]
+                .into_iter()
+                .map(|part| (MenuItem::new(part.title()).enabled(!has(&part)), Some(RowAction::Add(part))))
+                .collect();
         for scripts in [&self.types.behaviours, &self.types.components] {
             if !scripts.is_empty() {
                 items.push((MenuItem::separator(), None));

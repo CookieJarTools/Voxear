@@ -8,10 +8,11 @@
 //!    in scripts names what code loads by path ([`CodeRoot`]); like a field,
 //!    it ships even when excluded.
 //! 2. **Dependencies** come from the files: a level's scenes, the prefabs,
-//!    meshes and materials that scenes and prefabs use, and a model's
-//!    textures. Files a model reads that are not assets, such as its
+//!    meshes, materials and sounds that scenes and prefabs use, and a
+//!    model's textures. Files a model reads that are not assets, such as its
 //!    buffers, are cooked into it, and the sheets a UI document names ship
-//!    beside it, so it reads them by path as it does from the project.
+//!    beside it, so it reads them by path as it does from the project. So
+//!    does a sound's `.meta`, for its import settings.
 //! 3. An asset's **usage set** is the roots that reach it. Assets with the
 //!    same usage set share a bundle, so loading a root opens only bundles
 //!    it needs, and what two levels share sits in a bundle both open.
@@ -127,7 +128,7 @@ pub fn build_with(
     excluded.sort();
 
     // Every asset as it will ship: models cooked, everything else as written,
-    // and a UI document's sheets beside it.
+    // and a UI document's sheets and a sound's import settings beside it.
     let mut cooker = Cooker::open(root)?;
     let mut stored = HashMap::with_capacity(usage.len());
     let mut beside: HashMap<AssetGuid, Vec<(String, Vec<u8>)>> = HashMap::new();
@@ -140,12 +141,13 @@ pub fn build_with(
             read(root, &entry.path)?
         };
         stored.insert(*guid, bytes);
-        if entry.kind == AssetKind::Ui {
-            let sheets = needs[guid].companions.iter().map(|sheet| {
-                let bytes = read(root, sheet).with_context(|| format!("{} names {sheet}", entry.path))?;
-                Ok((sheet.clone(), bytes))
+        if matches!(entry.kind, AssetKind::Ui | AssetKind::Sound) {
+            let why = if entry.kind == AssetKind::Ui { "names" } else { "keeps its import settings in" };
+            let files = needs[guid].companions.iter().map(|file| {
+                let bytes = read(root, file).with_context(|| format!("{} {why} {file}", entry.path))?;
+                Ok((file.clone(), bytes))
             });
-            beside.insert(*guid, sheets.collect::<Result<_>>()?);
+            beside.insert(*guid, files.collect::<Result<_>>()?);
         }
     }
 
@@ -170,8 +172,10 @@ pub fn build_with(
         let mut writer = BundleWriter::new(settings.compression);
         for &guid in &assets {
             let entry = db.get(guid).expect("from the database");
-            // A cooked model compressed its own GPU data, as GDeflate the GPU unpacks.
-            let mut files = vec![if entry.kind == AssetKind::Model {
+            // A cooked model compressed its own GPU data, as GDeflate the GPU unpacks, and
+            // a compressed sound file would only grow.
+            let as_is = entry.kind == AssetKind::Model || compressed_sound(&entry.path);
+            let mut files = vec![if as_is {
                 writer.add_as_is(&entry.path, &stored[&guid])
             } else {
                 writer.add(&entry.path, &stored[&guid])
@@ -362,11 +366,18 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             let beside = |sheet: String| if folder.is_empty() { sheet } else { format!("{folder}/{sheet}") };
             needs.companions = sheets.into_iter().map(beside).collect();
         }
+        AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
         AssetKind::Texture => {}
     }
     needs.direct.remove(&guid);
     needs.named.remove(&guid);
     Ok(needs)
+}
+
+/// Whether a sound file is compressed already: OGG Vorbis, FLAC and MP3,
+/// but not WAV.
+fn compressed_sound(path: &str) -> bool {
+    AssetKind::from_path(Path::new(path)) == Some(AssetKind::Sound) && !path.to_ascii_lowercase().ends_with(".wav")
 }
 
 /// The assets a level, scene, prefab or material file loads with it: what it

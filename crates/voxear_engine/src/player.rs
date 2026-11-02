@@ -185,6 +185,8 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
     let mut game = Game::with_content(project, engine, content);
 
     if args.headless {
+        // Without a window, sound plays out in silence.
+        game.audio = crate::audio::GameAudio::new(crate::audio::Audio::quiet());
         game.start(None)?;
         for _ in 0..args.frames.unwrap_or(3) {
             game.tick(1.0 / 60.0, None);

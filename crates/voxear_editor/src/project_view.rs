@@ -188,6 +188,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Material) => "material",
                 FileKind::Asset(AssetKind::Texture) => "texture",
                 FileKind::Asset(AssetKind::Ui) => "panels",
+                FileKind::Asset(AssetKind::Sound) => "audio",
             },
         }
     }

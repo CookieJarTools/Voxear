@@ -357,6 +357,8 @@ fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, rende
         let options = WindowOptions { frames, stats, console, ..WindowOptions::tools(&title) };
         return run_windowed(game, options, settings, setup);
     }
+    // Without a window, sound plays out in silence.
+    game.audio = voxear_engine::audio::GameAudio::new(voxear_engine::audio::Audio::quiet());
     game.start(None)?;
     for _ in 0..frames.unwrap_or(3) {
         game.tick(1.0 / 60.0, None);
@@ -667,6 +669,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Scene => "scene",
             AssetKind::Level => "level",
             AssetKind::Prefab => "prefab",
+            AssetKind::Sound => "sound",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

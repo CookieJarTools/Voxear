@@ -28,6 +28,8 @@ pub enum AssetKind {
     Prefab,
     /// A `.vui` document, which ships with the `.vss` sheets it names.
     Ui,
+    /// A sound file: WAV, OGG Vorbis, FLAC or MP3.
+    Sound,
 }
 
 impl AssetKind {
@@ -41,6 +43,7 @@ impl AssetKind {
             "level" => Self::Level,
             "prefab" => Self::Prefab,
             "vui" => Self::Ui,
+            "wav" | "ogg" | "flac" | "mp3" => Self::Sound,
             _ => return None,
         })
     }

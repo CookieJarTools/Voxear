@@ -1,13 +1,14 @@
 //! An asset's import settings in the Inspector, as Unity's importers show
 //! them: a model's units and scale, where its normals and tangents come
 //! from, whether it gets LODs and uses the file's materials; a picture's
-//! largest size and whether a build compresses it. They change nothing
-//! until Apply, which asks for them to be written to the asset's `.meta`
-//! and the asset imported again; Revert puts back the ones applied.
+//! largest size and whether a build compresses it; a sound's volume, and
+//! whether it loads whole or streams. They change nothing until Apply,
+//! which asks for them to be written to the asset's `.meta` and the asset
+//! imported again; Revert puts back the ones applied.
 
 use std::path::Path;
 
-use voxear_assets::{ModelImport, Normals, Tangents, TextureImport, Units};
+use voxear_assets::{ModelImport, Normals, SoundImport, SoundLoad, Tangents, TextureImport, Units};
 use voxear_ui::{NodeId, Style, Ui};
 
 use crate::inspector::{number, prop};
@@ -17,12 +18,15 @@ use crate::inspector::{number, prop};
 pub enum ImportSettings {
     Model(ModelImport),
     Texture(TextureImport),
+    Sound(SoundImport),
 }
 
-/// The import settings of a model or a picture, as they are being changed.
+/// The import settings of a model, a picture or a sound, as they are being
+/// changed.
 pub enum ImportFields {
     Model(ModelFields),
     Texture(TextureFields),
+    Sound(SoundFields),
 }
 
 impl ImportFields {
@@ -36,11 +40,17 @@ impl ImportFields {
         Self::Texture(TextureFields::build(ui, rows, TextureImport::read(file)))
     }
 
+    /// The settings in the `.meta` beside the sound at `file`, in `rows`.
+    pub fn sound(ui: &mut Ui, rows: NodeId, file: &Path) -> Self {
+        Self::Sound(SoundFields::build(ui, rows, SoundImport::read(file)))
+    }
+
     /// The settings to apply, when Apply was clicked.
     pub fn update(&mut self, ui: &mut Ui) -> Option<ImportSettings> {
         match self {
             Self::Model(fields) => fields.update(ui).map(ImportSettings::Model),
             Self::Texture(fields) => fields.update(ui).map(ImportSettings::Texture),
+            Self::Sound(fields) => fields.update(ui).map(ImportSettings::Sound),
         }
     }
 }
@@ -182,6 +192,61 @@ impl TextureFields {
     }
 
     fn update(&mut self, ui: &mut Ui) -> Option<TextureImport> {
+        let shown = self.shown(ui);
+        match self.buttons.clicked(ui) {
+            Some(Click::Revert) => self.show(ui, &self.applied.clone()),
+            Some(Click::Apply) if shown != self.applied => {
+                self.applied = shown;
+                self.show(ui, &shown);
+                return Some(shown);
+            }
+            _ => self.buttons.enable(ui, shown != self.applied),
+        }
+        None
+    }
+}
+
+/// A sound's import settings, and the ones last applied.
+pub struct SoundFields {
+    applied: SoundImport,
+    load: NodeId,
+    volume: NodeId,
+    buttons: Buttons,
+}
+
+impl SoundFields {
+    /// By length decodes a sound whole unless it is long, when it streams.
+    const LOADS: [&str; 3] = ["By length", "Whole", "Streamed"];
+
+    fn build(ui: &mut Ui, rows: NodeId, applied: SoundImport) -> Self {
+        let fields = Self {
+            applied,
+            load: choice(ui, rows, "Load", &Self::LOADS),
+            volume: number_field(ui, rows, "Volume"),
+            buttons: Buttons::new(ui, rows),
+        };
+        fields.show(ui, &applied);
+        fields
+    }
+
+    fn show(&self, ui: &mut Ui, settings: &SoundImport) {
+        let load = SoundLoad::ALL.iter().position(|&load| load == settings.load).unwrap_or(0);
+        ui.set_selected_option(self.load, load);
+        ui.set_text(self.volume, &number(settings.volume));
+        self.buttons.enable(ui, *settings != self.applied);
+    }
+
+    /// The settings as the fields show them. A volume that does not read,
+    /// or is below nothing, keeps the one applied.
+    fn shown(&self, ui: &Ui) -> SoundImport {
+        let volume = ui.text(self.volume).trim().parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0);
+        SoundImport {
+            load: SoundLoad::ALL.get(ui.selected_option(self.load)).copied().unwrap_or_default(),
+            volume: volume.unwrap_or(self.applied.volume),
+        }
+    }
+
+    fn update(&mut self, ui: &mut Ui) -> Option<SoundImport> {
         let shown = self.shown(ui);
         match self.buttons.clicked(ui) {
             Some(Click::Revert) => self.show(ui, &self.applied.clone()),

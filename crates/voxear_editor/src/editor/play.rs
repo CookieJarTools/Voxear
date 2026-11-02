@@ -1,7 +1,7 @@
 //! Play mode, as in Unity: Play copies the open level, edits included, into
 //! a fresh engine whose behaviours run, and Stop throws that away and brings
-//! back the level exactly as it was edited. Pause holds the game still, and
-//! Step moves a paused game on by one frame.
+//! back the level exactly as it was edited. Pause holds the game still, its
+//! sound too, and Step moves a paused game on by one frame, in silence.
 //!
 //! The project's scripts are built and started the first time Play is
 //! pressed, the build off the main thread. .NET starts only once per
@@ -302,9 +302,10 @@ impl Editor {
     /// brings back the level as it was edited.
     pub fn stop(&mut self, renderer: &mut Renderer) {
         let Mode::Playing(run) = std::mem::replace(&mut self.play.mode, Mode::Editing) else { return };
-        // What the game drew goes with it, and its UI.
+        // What the game drew goes with it, and its UI and sound.
         voxear_core::debug_draw::clear();
         self.game.ui = voxear_engine::game_ui::GameUi::default();
+        self.game.audio.stop_game();
         let Run { edit, levels, .. } = *run;
         let selected = self.selected().and_then(|entity| self.game.levels.counterpart(entity, &levels));
         let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
@@ -376,6 +377,7 @@ impl Editor {
     pub fn set_paused(&mut self, paused: bool) {
         if let Mode::Playing(run) = &mut self.play.mode {
             run.paused = paused;
+            self.game.audio.pause_game(paused);
         }
     }
 
@@ -384,6 +386,7 @@ impl Editor {
         if let Mode::Playing(run) = &mut self.play.mode {
             run.paused = true;
             run.step = true;
+            self.game.audio.pause_game(true);
         }
     }
 
@@ -485,6 +488,7 @@ impl Editor {
         if self.memory.settings.clear_console_on_play {
             self.console.clear(&mut self.ui);
         }
+        self.game.audio.pause_game(paused);
         let run = Run { edit, levels, paused, step: false };
         self.play.mode = Mode::Playing(Box::new(run));
         self.after_swap(selected, "game");

@@ -5,6 +5,7 @@
 //! is loaded again from a new build when they change (hot reload), and talks to them through two function tables: one
 //! for engine calls scripts make, one for script calls the engine makes.
 
+mod audio;
 mod debug;
 mod display;
 mod drawers;
@@ -19,6 +20,7 @@ mod saves;
 mod services;
 mod ui;
 
+pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 pub use display::CursorLock;
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use gizmos::GizmoTarget;

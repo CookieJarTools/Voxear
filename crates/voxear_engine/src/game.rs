@@ -8,13 +8,14 @@ use voxear_ecs::{Entity, World};
 use voxear_render::{MAX_PREVIEW_SIZE, MeshRenderer, PreviewId, PreviewOptions, Renderer};
 use voxear_scene::{Parent, Placement, Transform};
 use voxear_scripting::{
-    AssetName, ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress,
+    AssetName, AudioAsk, ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PlaySound,
     PreviewOptions as ScriptPreviewOptions, PreviewSource, PreviewState, SceneLoadOptions, SceneRequest,
-    ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
+    ScriptServices, ServicesScope, SoundFacts, SpawnedPrefab, UiAnswer, UiAsk,
 };
 use voxear_ui::ElementKind;
 
 use crate::{
+    audio::{GameAudio, SoundId, sound_facts},
     content::{Content, Reimported, Released},
     engine::Engine,
     game_ui::GameUi,
@@ -46,6 +47,8 @@ pub struct Game {
     pub ui: GameUi,
     /// The window as scripts see it and ask for it.
     pub display: Display,
+    /// The game's sound, and what its Audio Sources play.
+    pub audio: GameAudio,
 }
 
 /// The game's window as scripts see it and ask for it, through `Screen` and
@@ -101,6 +104,7 @@ impl Game {
             previews: ScriptPreviews::default(),
             ui: GameUi::default(),
             display: Display::default(),
+            audio: GameAudio::default(),
         }
     }
 
@@ -200,9 +204,9 @@ impl Game {
         let keep = self.loads.uploaded_models();
         let released = self.content.release_unused(&self.engine.world, renderer, &keep);
         if !released.is_empty() {
-            let Released { prefabs, models, meshes, materials, textures } = released;
+            let Released { prefabs, models, meshes, materials, textures, sounds } = released;
             tracing::info!(
-                "released {prefabs} prefabs and {models} models: {meshes} meshes, {materials} materials, {textures} textures"
+                "released {prefabs} prefabs and {models} models: {meshes} meshes, {materials} materials, {textures} textures; and {sounds} sounds"
             );
         }
         released
@@ -272,6 +276,7 @@ impl Game {
             previews: &mut self.previews,
             ui: &mut self.ui,
             display: &mut self.display,
+            audio: &mut self.audio,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.switch_level_through_scripts(level);
@@ -312,6 +317,7 @@ impl Game {
             previews: &mut self.previews,
             ui: &mut self.ui,
             display: &mut self.display,
+            audio: &mut self.audio,
         };
         let _scope = ServicesScope::enter(&mut services);
         self.engine.instantiate(&template, parent, placement)
@@ -339,6 +345,7 @@ impl Game {
                 previews: &mut self.previews,
                 ui: &mut self.ui,
                 display: &mut self.display,
+                audio: &mut self.audio,
             };
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
@@ -373,6 +380,11 @@ impl Game {
         if let Some(renderer) = renderer.as_deref_mut() {
             self.previews.finish_saves(renderer);
         }
+        {
+            profile_scope!("Audio");
+            let running = !self.engine.is_edit_mode();
+            self.audio.update(&self.engine.world, &mut self.content, running);
+        }
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);
         }
@@ -395,9 +407,27 @@ struct GameServices<'a> {
     previews: &'a mut ScriptPreviews,
     ui: &'a mut GameUi,
     display: &'a mut Display,
+    audio: &'a mut GameAudio,
 }
 
 impl ScriptServices for GameServices<'_> {
+    fn load_sound(&mut self, reference: &str) -> Result<u32> {
+        let reference = self.content.parse(reference)?;
+        Ok(self.content.sound(&reference)?.0)
+    }
+
+    fn sound_info(&mut self, sound: u32) -> Option<SoundFacts> {
+        self.content.loaded_sound(SoundId(sound)).ok().map(|loaded| sound_facts(&loaded))
+    }
+
+    fn play_sound(&mut self, sound: u32, play: &PlaySound) -> u64 {
+        self.audio.play_for_script(self.content, sound, play)
+    }
+
+    fn audio(&mut self, world: Option<&mut World>, ask: AudioAsk, set: Option<f32>) -> Option<f32> {
+        self.audio.answer(self.content, world, ask, set)
+    }
+
     fn screen(&self) -> (u32, u32, bool) {
         (self.display.width, self.display.height, self.display.fullscreen)
     }

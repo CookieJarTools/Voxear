@@ -11,7 +11,11 @@ use std::{
 };
 
 use voxear_ecs::{Component, Entity, World};
-use voxear_engine::{EditBehaviours, Game, prefab::Locks};
+use voxear_engine::{
+    EditBehaviours, Game,
+    audio::{AudioListener, AudioSource},
+    prefab::Locks,
+};
 use voxear_render::{Camera, Light, MeshRenderer, Renderer};
 use voxear_scene::{Name, ScenePersistence, Transform};
 
@@ -30,8 +34,12 @@ pub struct ObjState {
     pub transform: Transform,
     pub persistent: bool,
     pub renderer: Option<MeshRenderer>,
-    pub light: Option<Light>,
+    /// Lights and Audio Sources are boxed: few Objs have one, and every
+    /// undo step holds two states.
+    pub light: Option<Box<Light>>,
     pub camera: Option<Camera>,
+    pub audio: Option<Box<AudioSource>>,
+    pub listener: bool,
     pub behaviours: Option<EditBehaviours>,
     /// Components locked for designers, when this is a prefab's Obj.
     pub locks: Option<Locks>,
@@ -44,8 +52,10 @@ impl ObjState {
             transform: *world.get::<Transform>(entity)?,
             persistent: world.has::<ScenePersistence>(entity),
             renderer: world.get::<MeshRenderer>(entity).copied(),
-            light: world.get::<Light>(entity).copied(),
+            light: world.get::<Light>(entity).copied().map(Box::new),
             camera: world.get::<Camera>(entity).copied(),
+            audio: world.get::<AudioSource>(entity).copied().map(Box::new),
+            listener: world.has::<AudioListener>(entity),
             behaviours: world.get::<EditBehaviours>(entity).cloned(),
             locks: world.get::<Locks>(entity).cloned(),
         })
@@ -60,8 +70,10 @@ impl ObjState {
         }
         put(world, entity, self.persistent.then_some(ScenePersistence));
         put(world, entity, self.renderer);
-        put(world, entity, self.light);
+        put(world, entity, self.light.as_deref().copied());
         put(world, entity, self.camera);
+        put(world, entity, self.audio.as_deref().copied());
+        put(world, entity, self.listener.then_some(AudioListener));
         put(world, entity, self.behaviours.clone());
         put(world, entity, self.locks.clone());
     }

@@ -528,9 +528,10 @@ behaviour with field values always gets Awake dispatched, even if its type does 
   1. The Inspector shows a swatch that opens the colour picker, then red, green and blue to type; alpha keeps what the
   script or scene gave it. A C# component's `Color` is edited the same way while playing.
 - arrays and `List<T>` of any of these
-- **`Prefab`:** a direct reference, loaded with the Obj, before Awake.
+- **`Prefab`** and **`Sound`:** a direct reference, loaded with the Obj, before Awake.
 - **`Ref<T>`:** a lazy reference, like an Addressables AssetReference. It holds the path or GUID, and
-  `rareFirefly.Load()` loads it when the game first needs it. `T` is any `IAsset<T>`, which `Prefab` is today.
+  `rareFirefly.Load()` loads it when the game first needs it. `T` is any `IAsset<T>`, which `Prefab` and `Sound` are
+  today.
 - **`Obj`:** another Obj in the same scene or prefab, like dragging a GameObject into a field. It is written as its
   id or path, and arrays of them work too:
 
@@ -2327,8 +2328,19 @@ The formatting runs on ICU4X, the same library behind the UI's text shaping.
 Audio.Play(Sounds.Explosion, at: obj.Position);   // easy: 3D one-shot with sensible falloff
 ```
 
-**Mixer.** A Rust mixer on cpal with buses, effects, snapshots and ducking. 2D and 3D sources, Doppler, and
-streaming for music.
+**Mixer.** A Rust mixer on cpal (`voxear_audio`), on a thread of its own, with buses, effects, snapshots and ducking.
+2D and 3D sources, Doppler, and streaming for music. *(Built so far: music and effects buses under a master volume, and
+the editor's own preview voices outside them; 2D voices, and 3D ones that fade by the inverse of distance down to
+silence at a max distance and pan with equal power from the listener; voices that loop, pause, and change volume and
+pitch without clicks, resampled to the device's rate; and long sounds decoded a block ahead on a streaming thread.
+Effects, snapshots, ducking and Doppler are next.)*
+
+**Sounds** are assets: WAV, OGG Vorbis, FLAC and MP3, decoded by Symphonia. Their `.meta` says whether one loads whole
+or streams (by default by its length) and its volume. An **Audio Source** component plays one from its Obj, and the
+listener is the first Obj with an **Audio Listener**, or else the game's camera. Each frame, after the game's update,
+`GameAudio` brings every source's voice in line with its component and position. Scripts get `Audio.Play(sound)` and
+`Audio.Play(sound, at:)` for one-shots, `Obj.AudioSource`, and the bus volumes. A build packs the sounds that scenes and
+script fields use, each with its `.meta`, and compressed files as they are.
 
 **Spatial acoustics** come from Steam Audio:
 - HRTF binaural rendering.

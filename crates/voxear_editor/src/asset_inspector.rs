@@ -17,8 +17,10 @@
 //! on its own, to edit. A material, prefab or model shows a large preview
 //! of itself under its name, which a drag turns.
 //!
-//! A model and a picture show their import settings, as Unity's importers
-//! do (see `import_fields`), and a picture its size in pixels.
+//! A model, a picture and a sound show their import settings, as Unity's
+//! importers do (see `import_fields`), and a picture its size in pixels. A
+//! sound shows how long it is, its channels and sample rate, and a button
+//! to listen to it, which plays it outside the game's volumes.
 
 use voxear_assets::AssetKind;
 use voxear_engine::{Game, MaterialData, script_types::ScriptTypes};
@@ -60,6 +62,9 @@ pub enum AssetAction {
     },
     /// Show where the asset at this path is in the Project panel.
     Ping(String),
+    /// Play the sound at this path in the editor, or stop it.
+    Listen(String),
+    StopListening,
 }
 
 pub struct AssetView {
@@ -70,6 +75,16 @@ pub struct AssetView {
     import: Option<ImportFields>,
     /// The preview's frame, which takes drags, and its image.
     preview: Option<(NodeId, NodeId)>,
+    /// A sound's play button, and whether it shows that the sound plays.
+    listen: Option<(Listen, bool)>,
+}
+
+/// A sound's play button, with its icon and its words.
+#[derive(Clone, Copy)]
+struct Listen {
+    button: NodeId,
+    icon: NodeId,
+    label: NodeId,
 }
 
 /// A level's own scenes, in the file's order, then Add Scene.
@@ -151,7 +166,8 @@ impl AssetView {
         }
 
         let file = game.project.root.join(&item.path);
-        let mut view = Self { item: item.clone(), open: None, material: None, level: None, import: None, preview };
+        let mut view =
+            Self { item: item.clone(), open: None, material: None, level: None, import: None, preview, listen: None };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file),
             ItemKind::Asset(AssetKind::Model) => {
@@ -161,6 +177,11 @@ impl AssetView {
             ItemKind::Asset(AssetKind::Texture) => {
                 let rows = part(ui, root, "Import Settings", "texture");
                 view.import = Some(ImportFields::texture(ui, rows, &file));
+            }
+            ItemKind::Asset(AssetKind::Sound) => {
+                view.listen = Some((sound(ui, root, &file), false));
+                let rows = part(ui, root, "Import Settings", "audio");
+                view.import = Some(ImportFields::sound(ui, rows, &file));
             }
             ItemKind::Script => {
                 script(ui, root, item, types);
@@ -200,6 +221,7 @@ impl AssetView {
             level: None,
             import: None,
             preview: None,
+            listen: None,
         })
     }
 
@@ -208,6 +230,15 @@ impl AssetView {
     pub fn update(&mut self, ui: &mut Ui) -> Option<AssetAction> {
         if self.open.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::Open(self.item.clone()));
+        }
+        if let Some((listen, playing)) = self.listen
+            && ui.clicked(listen.button)
+        {
+            return Some(if playing {
+                AssetAction::StopListening
+            } else {
+                AssetAction::Listen(self.item.path.clone())
+            });
         }
         if let Some(settings) = self.import.as_mut().and_then(|import| import.update(ui)) {
             return Some(AssetAction::Import(self.item.path.clone(), settings));
@@ -266,6 +297,18 @@ impl AssetView {
         }
     }
 
+    /// Shows on a sound's button whether it is playing now: the editor plays
+    /// one sound at a time, so another starting stops this one.
+    pub fn show_listening(&mut self, ui: &mut Ui, playing: Option<&str>) {
+        let Some((listen, shown)) = &mut self.listen else { return };
+        let playing = playing == Some(self.item.path.as_str());
+        if *shown != playing {
+            *shown = playing;
+            ui.set_text(listen.label, if playing { "Stop" } else { "Play" });
+            ui.set_icon(listen.icon, if playing { "stop" } else { "play" });
+        }
+    }
+
     /// The large preview's frame, which takes drags to turn it, and its
     /// image, for an asset that has one.
     pub fn preview(&self) -> Option<(NodeId, NodeId)> {
@@ -304,6 +347,44 @@ fn text_row(ui: &mut Ui, rows: NodeId, label: &str, value: &str) {
     let row = prop(ui, rows, label);
     let value = ui.add_label(row, value);
     ui.add_class(value, "value");
+}
+
+/// What a sound file holds, and the button that plays it, which this
+/// returns.
+fn sound(ui: &mut Ui, root: NodeId, file: &std::path::Path) -> Listen {
+    let rows = part(ui, root, "Sound", "audio");
+    let extension = file.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    let read = std::fs::read(file).map_err(anyhow::Error::from);
+    match read.and_then(|bytes| voxear_engine::audio::probe(&bytes, extension.as_deref())) {
+        Ok(info) => {
+            text_row(ui, rows, "Length", &length(info.seconds()));
+            let channels = match info.channels {
+                1 => "Mono".to_string(),
+                2 => "Stereo".to_string(),
+                more => format!("{more}, played as stereo"),
+            };
+            text_row(ui, rows, "Channels", &channels);
+            text_row(ui, rows, "Sample rate", &format!("{} Hz", info.sample_rate));
+        }
+        Err(error) => text_row(ui, rows, "Problem", &format!("{error:#}")),
+    }
+    let button = ui.icon_button(rows, "play");
+    ui.remove_class(button, "icon-button");
+    ui.add_class(button, "listen");
+    ui.set_name(button, "listen");
+    let icon = ui.children(button)[0];
+    let label = ui.add_label(button, "Play");
+    Listen { button, icon, label }
+}
+
+/// A length as players show one: `0:04.2`, or `2:01` past a minute.
+fn length(seconds: f64) -> String {
+    let whole = seconds.max(0.0);
+    let minutes = (whole / 60.0).floor();
+    match minutes {
+        0.0 => format!("0:{:04.1}", whole),
+        _ => format!("{}:{:02}", minutes as u64, (whole - minutes * 60.0).floor() as u64),
+    }
 }
 
 /// A material's values, to edit.
@@ -516,6 +597,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Material) => "Material",
         ItemKind::Asset(AssetKind::Texture) => "Texture",
         ItemKind::Asset(AssetKind::Ui) => "UI document",
+        ItemKind::Asset(AssetKind::Sound) => "Sound",
     }
 }
 
@@ -530,6 +612,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Material) => "material",
         ItemKind::Asset(AssetKind::Texture) => "texture",
         ItemKind::Asset(AssetKind::Ui) => "panels",
+        ItemKind::Asset(AssetKind::Sound) => "audio",
     }
 }
 

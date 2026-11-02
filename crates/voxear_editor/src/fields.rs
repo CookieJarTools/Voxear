@@ -477,6 +477,7 @@ pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
         Some("Model") => Some(AssetKind::Model),
         Some("Scene") => Some(AssetKind::Scene),
         Some("Level") => Some(AssetKind::Level),
+        Some("Sound") => Some(AssetKind::Sound),
         _ => None,
     };
     let mut paths: Vec<String> = game

@@ -677,6 +677,10 @@ impl Editor {
             if let Some(action) = self.inspector.update_asset(&mut self.ui) {
                 self.asset_action(action, renderer);
             }
+            let listening = self.game.audio.previewing().map(str::to_string);
+            if let Some(view) = self.inspector.asset_view() {
+                view.show_listening(&mut self.ui, listening.as_deref());
+            }
         }
         {
             profile_scope!("Console");
@@ -873,6 +877,12 @@ impl Editor {
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
             AssetAction::Ping(path) => self.project.ping(&mut self.ui, &path),
+            AssetAction::Listen(path) => {
+                if let Err(error) = self.game.audio.preview(&mut self.game.content, &path) {
+                    self.notify(&format!("Could not play {path}: {error:#}"));
+                }
+            }
+            AssetAction::StopListening => self.game.audio.stop_preview(),
         }
     }
 

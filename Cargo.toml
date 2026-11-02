@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 voxear_assets = { path = "crates/voxear_assets" }
+voxear_audio = { path = "crates/voxear_audio" }
 voxear_ui = { path = "crates/voxear_ui" }
 voxear_core = { path = "crates/voxear_core" }
 voxear_ecs = { path = "crates/voxear_ecs" }
@@ -63,6 +64,10 @@ regex = "1"
 tar = { version = "0.4", default-features = false }
 zstd = "0.13"
 tracing = "0.1"
+# Sound out through the system's audio: ALSA on Linux (which PipeWire serves), WASAPI on Windows.
+cpal = "0.18"
+# Decodes sound files, with only the formats Voxear imports: WAV, OGG Vorbis, FLAC and MP3.
+symphonia = { version = "0.6", default-features = false, features = ["opt-simd", "wav", "pcm", "adpcm", "ogg", "vorbis", "flac", "mp3"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Keep dependencies fast in debug builds so the engine stays usable while iterating.

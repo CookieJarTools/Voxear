@@ -911,11 +911,11 @@ cost nothing. The CPU never touches visibility.
   carries them to the cull shader (`GpuInstance::lod_bias`, and the forced LOD plus one in its flags above
   `INSTANCE_LOD_SHIFT`); shadows pick the same way. Scene files write `lod_bias` and `force_lod` on
   `[obj.renderer]`, and the Inspector edits them as LOD Bias and with Force on a LOD cell's menu.
-- **LOD Groups** *(implemented)*: a `LodGroup` on an Obj shows one of its levels' Objs at a time, each with its
-  children, by the share of the screen's height its meshes cover or by its distance from the camera, as Unity's
+- **LOD Groups** *(implemented)*: a `LodGroup` on an Obj shows one of its levels at a time, each a list of Objs
+  as Unity's LOD lists renderers (`LodLevel::objs`), each Obj with its children, by the share of the screen's height its meshes cover or by its distance from the camera, as Unity's
   LOD Group does (`lod_group.rs`). Each view chooses for its own camera while extracting (`LodChoices`), and what a
   level not shown holds is neither drawn nor lit; its scripts run on. Files write it as `[obj.lod_group]`, levels
-  naming Objs as other references do, so prefabs map them into each instance (`lod_groups.rs` in the engine). Add
+  naming Objs as other references do (`objs = [2, 5]`, with a lone `obj` read from older files), so prefabs map them into each instance (`lod_groups.rs` in the engine). Add
   Component makes a level of each child in Hierarchy order. The Inspector edits it as Unity's does, on the bar
   (`lod_inspector.rs`): a click selects a level, whose rows alone show, a drag on an edge moves where it ends, a
   right-click inserts or deletes one, and a camera mark shows where the Scene view sees the group.

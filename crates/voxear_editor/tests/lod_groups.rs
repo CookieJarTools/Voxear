@@ -242,12 +242,13 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
         frame(&mut editor, &mut renderer);
     }
     let made = group(&editor, rock).expect("the LOD Group was added");
-    assert_eq!(made.levels.iter().map(|l| l.obj).collect::<Vec<_>>(), [Some(high), Some(low), Some(card)]);
+    let objs: Vec<Vec<Entity>> = made.levels.iter().map(|l| l.objs.clone()).collect();
+    assert_eq!(objs, [vec![high], vec![low], vec![card]]);
     assert_eq!(made.levels.iter().map(|l| l.until).collect::<Vec<_>>(), [0.6, 0.3, 0.15]);
 
     // As in Unity, only the selected level's settings show under the bar, the first to begin with.
-    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "LOD 0")[0]), "Rock High");
-    assert!(prop_rows(&editor.ui, "LOD 1").is_empty());
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Objs")[0]), "Rock High");
+    assert_eq!(prop_rows(&editor.ui, "Objs").len(), 1, "only the selected level's");
     let transition = prop_rows(&editor.ui, "Transition");
     assert_eq!(transition.len(), 1);
     assert_eq!(row_text(&editor.ui, transition[0]), "60 %");
@@ -272,7 +273,30 @@ fn a_lod_group_is_added_edited_and_shown_in_the_inspector() {
     click(&mut editor.ui, segments[1]);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
-    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "LOD 1")[0]), "Rock Low");
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Objs")[0]), "Rock Low");
+
+    // A level shows several Objs, as Unity's LOD lists its renderers: one picked into Add Obj joins it.
+    let add = first_with(&editor.ui, prop_rows(&editor.ui, "Add Obj")[0], "picker-arrow").unwrap();
+    click(&mut editor.ui, add);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let list = editor.ui.find(editor.ui.root(), "picker-list").unwrap();
+    let mut rows = Vec::new();
+    with_class(&editor.ui, list, "list-row", &mut rows);
+    let card_row = rows.into_iter().find(|&row| editor.ui.text(editor.ui.children(row)[1]) == "Rock Card").unwrap();
+    click(&mut editor.ui, card_row);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(group(&editor, rock).unwrap().levels[1].objs, [low, card]);
+    let shown = renderer.lod_choices(&editor.game.engine.world, LodCamera::new(Vec3::new(0.0, 1.0, -2.5), 60.0));
+    if shown.groups[&rock].1 == Some(1) {
+        assert!(!shown.hidden.contains(&low) && !shown.hidden.contains(&card), "both of the level's Objs show");
+    }
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(group(&editor, rock).unwrap().levels[1].objs, [low]);
     let transition = prop_rows(&editor.ui, "Transition")[0];
     let field = first_with(&editor.ui, transition, "value-input").unwrap();
     type_into(&mut editor.ui, field, "25");

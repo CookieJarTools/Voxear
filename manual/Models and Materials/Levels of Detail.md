@@ -22,7 +22,7 @@ A **LOD Group** shows one of several Objs at a time, chosen by how big the group
 
 To make one:
 
-1. Make an Obj to hold the group, and put the Obj for each level inside it, the most detailed first. Each level's Obj is shown with everything inside it.
+1. Make an Obj to hold the group, and put the Obj for each level inside it, the most detailed first. Each Obj a level shows is shown with everything inside it.
 2. Select the holding Obj, click **Add Component** and choose **LOD Group**. Each Obj inside it becomes a level, in the order the Hierarchy shows them.
 
 The Inspector shows the group's levels as a bar, as Unity does, the most detailed on the left. The camera mark above it shows where the Scene view sees the group now: how much of the screen it covers, or how far away it is.
@@ -34,7 +34,7 @@ The Inspector shows the group's levels as a bar, as Unity does, the most detaile
 | Setting | What it does |
 | --- | --- |
 | **Switch by** | **Screen size** switches by how much of the screen's height the group covers, as Unity does. **Distance** switches by how far the camera is from the group's Obj. |
-| **LOD 0**, **LOD 1** and on | The Obj the selected level shows, picked from the Objs inside the group, or **None**. |
+| **Objs** | The Objs the selected level shows, as Unity's LOD lists its renderers. Pick one into **Add Obj** to add it, from the Objs inside the group, and pick **None** on one to take it out. |
 | **Transition** | Where the selected level ends: a share of the screen in percent, or a distance in metres. Past it, the next level shows. |
 | **Culled** | Whether nothing shows past the last level. Turned off, the last level stays. |
 
@@ -53,7 +53,7 @@ name = "Tree"
 [obj.lod_group]
 measure = "distance"   # or "screen_size", as when left out
 cull = false           # the last level stays past its end
-levels = [{ obj = 2, until = 30.0 }, { obj = 3, until = 120.0 }]
+levels = [{ objs = [2, 5], until = 30.0 }, { objs = [3], until = 120.0 }]
 ```
 
 Measured by screen size, `until` is a share of the screen from 0 to 1, so `0.25` is a quarter of it.

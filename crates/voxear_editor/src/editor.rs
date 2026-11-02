@@ -1900,7 +1900,7 @@ impl Editor {
         let world = &self.game.engine.world;
         let target = match prop {
             Prop::Field { behaviour, path } => fields::target(world, self.inspector.types(), entity, behaviour, path),
-            Prop::LodObj(_) => props::obj_target(world, entity, prop).map(fields::Target::Obj),
+            Prop::LodObj(..) => props::obj_target(world, entity, prop).map(fields::Target::Obj),
             // A mesh or material by its path, when it is an asset of the project's.
             _ => match props::get(&self.game, self.inspector.types(), entity, prop) {
                 Some(props::Value::Asset(path)) if path.contains('/') || path.contains('.') => {

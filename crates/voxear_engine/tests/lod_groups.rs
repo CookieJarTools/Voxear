@@ -13,7 +13,7 @@ format = 1
 id = 1
 name = "Rock"
 [obj.lod_group]
-levels = [{ obj = 2, until = 0.5 }, { obj = 3, until = 0.2 }, { obj = 4, until = 0.05 }]
+levels = [{ objs = [2], until = 0.5 }, { objs = [3], until = 0.2 }, { objs = [4], until = 0.05 }]
 
 [[obj]]
 id = 2
@@ -52,7 +52,7 @@ prefab = "Rock.prefab"
 [obj.lod_group]
 measure = "distance"
 cull = false
-levels = [{ obj = "3/2", until = 10.0 }, { obj = "3/3", until = 30.0 }]
+levels = [{ objs = ["3/2"], until = 10.0 }, { objs = ["3/3"], until = 30.0 }]
 "#;
 
 fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -72,10 +72,10 @@ fn parent_of(engine: &Engine, entity: Entity) -> Option<Entity> {
     engine.world.get::<voxear_scene::Parent>(entity).map(|p| p.0)
 }
 
-/// Each level's Obj, by name.
+/// Each level's Objs, by name.
 fn level_names(engine: &Engine, group: &LodGroup) -> Vec<String> {
-    let name = |entity: Entity| engine.world.get::<Name>(entity).map_or("?".to_string(), |n| n.0.clone());
-    group.levels.iter().map(|level| level.obj.map_or("none".to_string(), name)).collect()
+    let name = |entity: &Entity| engine.world.get::<Name>(*entity).map_or("?".to_string(), |n| n.0.clone());
+    group.levels.iter().map(|level| level.objs.iter().map(name).collect::<Vec<_>>().join(", ")).collect()
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn each_instance_of_a_prefab_has_its_own_levels_and_saves_only_what_it_changed()
     for root in ["Boulder", "Pebble"] {
         let root = named(&engine, root)[0];
         let group = engine.world.get::<LodGroup>(root).expect("each instance has the group");
-        for level in group.levels.iter().filter_map(|level| level.obj) {
+        for &level in group.levels.iter().flat_map(|level| &level.objs) {
             assert_eq!(parent_of(&engine, level), Some(root), "a level is the instance's own child");
         }
     }
@@ -122,7 +122,7 @@ fn each_instance_of_a_prefab_has_its_own_levels_and_saves_only_what_it_changed()
     assert_eq!(instance("Boulder").lod_group, None, "the prefab's own group is not written again");
     let levels = &instance("Pebble").lod_group.as_ref().expect("the instance's own group").levels;
     let id = instance("Pebble").id;
-    assert_eq!(levels[0].obj, Some(FileRef::Path(format!("{id}/2"))));
+    assert_eq!(levels[0].objs, [FileRef::Path(format!("{id}/2"))]);
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn a_level_outside_its_file_is_a_mistake() {
     let dir = project(&[]);
     let mut content = Content::open(dir.path()).unwrap();
     let stray: scene_file::SceneFile =
-        toml::from_str("format = 1\n[[obj]]\nid = 1\nname = \"A\"\nlod_group = { levels = [{ obj = 9, until = 0.5 }] }\n")
+        toml::from_str("format = 1\n[[obj]]\nid = 1\nname = \"A\"\nlod_group = { levels = [{ objs = [9], until = 0.5 }] }\n")
             .unwrap();
     let flat = voxear_engine::prefab::expand(&mut content, &stray.objs).unwrap();
     let error = format!("{:#}", voxear_engine::Template::resolve(&mut content, None, &flat).unwrap_err());

@@ -1,7 +1,8 @@
-//! LOD Groups: an Obj that shows one of several Objs at a time, by how much
-//! of the screen it covers or how far it is from the camera, as Unity's LOD
-//! Group does. Each level is an Obj, shown with everything inside it, so a
-//! level can be a simpler mesh or something else entirely.
+//! LOD Groups: an Obj that shows one of several sets of Objs at a time, by
+//! how much of the screen it covers or how far it is from the camera, as
+//! Unity's LOD Group does. Each level is a list of Objs, each shown with
+//! everything inside it, so a level can be simpler meshes or something
+//! else entirely.
 //!
 //! Each view chooses for its own camera, so a Scene view and the Game view
 //! can show different levels of the same group at once. The choice hides
@@ -38,10 +39,11 @@ pub enum LodMeasure {
 }
 
 /// One level of a LOD Group.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LodLevel {
-    /// The Obj this level shows, with everything inside it. None shows nothing.
-    pub obj: Option<Entity>,
+    /// The Objs this level shows, each with everything inside it, as
+    /// Unity's LOD lists its renderers. None shows nothing.
+    pub objs: Vec<Entity>,
     /// Where the level ends. Measured by screen size, the fraction of the
     /// screen's height, from 0 to 1, that the group shows this level down to;
     /// by distance, the metres it shows this level out to.
@@ -72,7 +74,7 @@ impl LodGroup {
         let levels = objs
             .iter()
             .enumerate()
-            .map(|(index, &obj)| LodLevel { obj: Some(obj), until: default_until(LodMeasure::ScreenSize, index) })
+            .map(|(index, &obj)| LodLevel { objs: vec![obj], until: default_until(LodMeasure::ScreenSize, index) })
             .collect();
         Self { levels, ..Self::default() }
     }
@@ -166,8 +168,10 @@ impl LodChoices {
         // Which group and level each level's Obj is.
         let mut levels: HashMap<Entity, (usize, usize)> = HashMap::new();
         for (group, (_, lod)) in groups.iter().enumerate() {
-            for (level, obj) in lod.levels.iter().enumerate().filter_map(|(i, l)| Some((i, l.obj?))) {
-                levels.entry(obj).or_insert((group, level));
+            for (level, at) in lod.levels.iter().enumerate() {
+                for &obj in &at.objs {
+                    levels.entry(obj).or_insert((group, level));
+                }
             }
         }
 

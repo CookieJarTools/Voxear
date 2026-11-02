@@ -67,7 +67,7 @@ impl ObjState {
     /// point at them.
     fn remap(&mut self, renamed: &HashMap<Entity, Entity>) {
         let levels = self.lod_group.iter_mut().flat_map(|group| group.levels.iter_mut());
-        for obj in levels.filter_map(|level| level.obj.as_mut()) {
+        for obj in levels.flat_map(|level| level.objs.iter_mut()) {
             *obj = renamed.get(obj).copied().unwrap_or(*obj);
         }
     }

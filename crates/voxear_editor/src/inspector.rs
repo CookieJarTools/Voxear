@@ -826,7 +826,7 @@ impl Inspector {
                 if !self.prefab_mode && !designers_see(value) {
                     continue;
                 }
-                if let Prop::LodObj(level) | Prop::LodUntil(level) = value
+                if let Prop::LodObj(level, _) | Prop::LodAdd(level) | Prop::LodUntil(level) = value
                     && *level != self.lod_level
                 {
                     continue;

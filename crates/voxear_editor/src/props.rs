@@ -110,8 +110,11 @@ pub enum Prop {
     LodMeasure,
     /// Whether a LOD Group shows nothing past its last level.
     LodCull,
-    /// The Obj a LOD Group's level shows, by the level's index.
-    LodObj(usize),
+    /// One of the Objs a LOD Group's level shows, by the level's index and
+    /// its own.
+    LodObj(usize, usize),
+    /// Where an Obj is added to a LOD Group's level, by the level's index.
+    LodAdd(usize),
     /// Where a LOD Group's level ends, by the level's index.
     LodUntil(usize),
     /// A script field, or a value inside one: its behaviour's type name,
@@ -140,7 +143,9 @@ impl Prop {
             | Prop::MinDistance
             | Prop::MaxDistance
             | Prop::SoundBus => Part::Audio,
-            Prop::LodMeasure | Prop::LodCull | Prop::LodObj(_) | Prop::LodUntil(_) => Part::LodGroup,
+            Prop::LodMeasure | Prop::LodCull | Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => {
+                Part::LodGroup
+            }
             Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
         }
     }
@@ -172,7 +177,7 @@ impl Prop {
             Prop::SoundBus => "bus",
             Prop::LodMeasure => "measure",
             Prop::LodCull => "cull",
-            Prop::LodObj(_) | Prop::LodUntil(_) => "levels",
+            Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => "levels",
             Prop::Field { path, .. } => match path.first() {
                 Some(crate::fields::Step::Key(field)) => return field.clone(),
                 _ => "",
@@ -273,12 +278,14 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props
         }
         Part::Listener => Vec::new(),
-        // Each level's Obj, then where it ends, which the last has only when the group hides past it.
+        // Each level's Objs and a place to add another, then where it ends, which the last has only when the
+        // group hides past it.
         Part::LodGroup => {
             let Some(group) = world.get::<LodGroup>(entity) else { return Vec::new() };
             let mut props = vec![Prop::LodMeasure];
-            for level in 0..group.levels.len() {
-                props.push(Prop::LodObj(level));
+            for (level, at) in group.levels.iter().enumerate() {
+                props.extend((0..at.objs.len()).map(|index| Prop::LodObj(level, index)));
+                props.push(Prop::LodAdd(level));
                 if group.cull || level + 1 < group.levels.len() {
                     props.push(Prop::LodUntil(level));
                 }
@@ -328,7 +335,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::SoundBus => "Bus",
         Prop::LodMeasure => "Switch by",
         Prop::LodCull => "Culled",
-        Prop::LodObj(level) => return format!("LOD {level}"),
+        // The first of a level's Objs heads the list.
+        Prop::LodObj(_, 0) => "Objs",
+        Prop::LodObj(..) => "",
+        Prop::LodAdd(_) => "Add Obj",
         Prop::LodUntil(_) => "Transition",
         Prop::Field { path, .. } => {
             return match path.last() {
@@ -498,9 +508,13 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             Value::Choice(index, LOD_MEASURES.iter().map(|k| k.to_string()).collect())
         }
         Prop::LodCull => Value::Toggle(lod()?.cull),
-        Prop::LodObj(level) => {
-            let obj = lod()?.levels.get(*level)?.obj;
-            Value::Obj(obj.and_then(|obj| world.get::<Name>(obj)).map_or_else(|| "None".into(), |n| n.0.clone()))
+        Prop::LodObj(level, index) => {
+            let obj = *lod()?.levels.get(*level)?.objs.get(*index)?;
+            Value::Obj(world.get::<Name>(obj).map_or_else(|| "None".into(), |n| n.0.clone()))
+        }
+        Prop::LodAdd(level) => {
+            lod()?.levels.get(*level)?;
+            Value::Obj("None".into())
         }
         // Screen sizes show as percentages, and distances in metres.
         Prop::LodUntil(level) => {
@@ -532,7 +546,8 @@ pub fn set(
     }
     match (prop, value) {
         // A mesh, material, sound or level's Obj kept after play comes back by its name, as its list has it.
-        (Prop::Mesh | Prop::Material | Prop::Sound, Value::Asset(label)) | (Prop::LodObj(_), Value::Obj(label)) => {
+        (Prop::Mesh | Prop::Material | Prop::Sound, Value::Asset(label))
+        | (Prop::LodObj(..) | Prop::LodAdd(_), Value::Obj(label)) => {
             let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| pick(game, renderer, types, entity, prop, &choice))
         }
@@ -597,9 +612,19 @@ pub fn pick(
             };
             with(&mut game.engine.world, entity, |source: &mut AudioSource| source.sound = sound)
         }
-        (Prop::LodObj(level), Pick::Obj(obj)) => with(&mut game.engine.world, entity, |group: &mut LodGroup| {
-            if let Some(at) = group.levels.get_mut(*level) {
-                at.obj = *obj;
+        // None takes an Obj out of its level; another takes its place.
+        (Prop::LodObj(level, index), Pick::Obj(obj)) => with(&mut game.engine.world, entity, |group: &mut LodGroup| {
+            let Some(at) = group.levels.get_mut(*level).filter(|at| *index < at.objs.len()) else { return };
+            match obj {
+                Some(obj) => at.objs[*index] = *obj,
+                None => {
+                    at.objs.remove(*index);
+                }
+            }
+        }),
+        (Prop::LodAdd(level), Pick::Obj(Some(obj))) => with(&mut game.engine.world, entity, |group: &mut LodGroup| {
+            if let Some(at) = group.levels.get_mut(*level).filter(|at| !at.objs.contains(obj)) {
+                at.objs.push(*obj);
             }
         }),
         (Prop::Field { behaviour, path }, choice) => {
@@ -613,7 +638,7 @@ pub fn pick(
 /// Group's level's.
 pub fn obj_target(world: &World, entity: Entity, prop: &Prop) -> Option<Entity> {
     match prop {
-        Prop::LodObj(level) => world.get::<LodGroup>(entity)?.levels.get(*level)?.obj,
+        Prop::LodObj(level, index) => world.get::<LodGroup>(entity)?.levels.get(*level)?.objs.get(*index).copied(),
         _ => None,
     }
 }
@@ -632,6 +657,17 @@ pub fn children(game: &Game, entity: Entity) -> Vec<Entity> {
     inside
 }
 
+/// Every Obj inside an Obj, at any depth, each before what is inside it,
+/// in the order the Hierarchy shows them.
+pub fn descendants(game: &Game, entity: Entity) -> Vec<Entity> {
+    let mut found = Vec::new();
+    for child in children(game, entity) {
+        found.push(child);
+        found.extend(descendants(game, child));
+    }
+    found
+}
+
 /// Puts a new level into a LOD Group before the level at `at`, or after the
 /// last, showing the first Obj inside the group's Obj that no level shows
 /// yet. Before a level, it takes the nearer half of that level's part of
@@ -639,7 +675,7 @@ pub fn children(game: &Game, entity: Entity) -> Vec<Entity> {
 pub fn insert_lod_level(game: &mut Game, entity: Entity, at: usize) -> bool {
     let inside = children(game, entity);
     with(&mut game.engine.world, entity, |group: &mut LodGroup| {
-        let obj = inside.into_iter().find(|child| group.levels.iter().all(|level| level.obj != Some(*child)));
+        let obj = inside.into_iter().find(|child| group.levels.iter().all(|level| !level.objs.contains(child)));
         let at = at.min(group.levels.len());
         let until = match (group.levels.get(at), group.measure) {
             (None, _) => group.next_until(),
@@ -652,7 +688,7 @@ pub fn insert_lod_level(game: &mut Game, entity: Entity, at: usize) -> bool {
                 (nearer + level.until) * 0.5
             }
         };
-        group.levels.insert(at, LodLevel { obj, until });
+        group.levels.insert(at, LodLevel { objs: obj.into_iter().collect(), until });
     })
 }
 
@@ -713,13 +749,13 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
             return fields::asset_choices(game, &kind);
         }
-        // A level shows an Obj inside the group's Obj.
-        Prop::LodObj(_) => {
+        // A level shows Objs inside the group's Obj, at any depth.
+        Prop::LodObj(..) | Prop::LodAdd(_) => {
             let world = &game.engine.world;
             let mut found = vec![("None".to_string(), Pick::Obj(None))];
-            for child in children(game, entity) {
-                let name = world.get::<Name>(child).map_or_else(|| "Obj".into(), |n| n.0.clone());
-                found.push((name, Pick::Obj(Some(child))));
+            for inside in descendants(game, entity) {
+                let name = world.get::<Name>(inside).map_or_else(|| "Obj".into(), |n| n.0.clone());
+                found.push((name, Pick::Obj(Some(inside))));
             }
             return found;
         }
@@ -738,8 +774,8 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
 
 /// Why a reference cannot take what was dropped on it.
 pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, choice: &Pick) -> String {
-    if let Prop::LodObj(_) = prop {
-        return format!("{} takes an Obj inside the LOD Group's Obj", label(prop));
+    if let Prop::LodObj(..) | Prop::LodAdd(_) = prop {
+        return "A LOD Group's levels take Objs inside its Obj".to_string();
     }
     let Prop::Field { behaviour, path } = prop else {
         return format!("The {} takes a {} from its list", label(prop), title(types, prop));
@@ -755,7 +791,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Mesh => "Mesh".into(),
         Prop::Material => "Material".into(),
         Prop::Sound => "Sound".into(),
-        Prop::LodObj(_) => "Obj".into(),
+        Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),

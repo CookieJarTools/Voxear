@@ -6,7 +6,7 @@
 //! [obj.lod_group]
 //! measure = "distance"   # or "screen_size", as when left out
 //! cull = false           # keep the last level past its end
-//! levels = [{ obj = 3, until = 20.0 }, { obj = 4, until = 60.0 }]
+//! levels = [{ objs = [3, 5], until = 20.0 }, { objs = [4], until = 60.0 }]
 //! ```
 //!
 //! Measured by screen size, `until` is the fraction of the screen's height,
@@ -35,10 +35,20 @@ pub struct LodGroupData {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LodLevelData {
-    /// The Obj the level shows. Left out, the level shows nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The Objs the level shows. Left out, the level shows nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objs: Vec<FileRef>,
+    /// One Obj, as files written before a level could show several say it.
+    #[serde(default, skip_serializing)]
     pub obj: Option<FileRef>,
     pub until: f32,
+}
+
+impl LodLevelData {
+    /// Every Obj it shows, as either form names them.
+    fn all(&self) -> impl Iterator<Item = &FileRef> {
+        self.obj.iter().chain(&self.objs)
+    }
 }
 
 /// An Obj in the same file: its id, or its path inside a prefab instance,
@@ -72,7 +82,8 @@ impl LodGroupData {
     /// nothing, like a missing reference in Unity.
     pub fn of(group: &LodGroup, path: &dyn Fn(Entity) -> Option<ObjPath>) -> Self {
         let level = |level: &LodLevel| LodLevelData {
-            obj: level.obj.and_then(path).map(|path| FileRef::new(&path)),
+            objs: level.objs.iter().filter_map(|&obj| path(obj)).map(|path| FileRef::new(&path)).collect(),
+            obj: None,
             until: (level.until * 1e4).round() / 1e4,
         };
         Self { measure: group.measure, cull: group.cull, levels: group.levels.iter().map(level).collect() }
@@ -81,7 +92,7 @@ impl LodGroupData {
     /// The component, each level's Obj found by `lookup`.
     pub fn bind(&self, lookup: &dyn Fn(&ObjPath) -> Option<Entity>) -> LodGroup {
         let level = |level: &LodLevelData| LodLevel {
-            obj: level.obj.as_ref().and_then(|obj| obj.path().ok()).and_then(|path| lookup(&path)),
+            objs: level.all().filter_map(|obj| obj.path().ok()).filter_map(|path| lookup(&path)).collect(),
             until: level.until,
         };
         LodGroup { measure: self.measure, cull: self.cull, levels: self.levels.iter().map(level).collect() }
@@ -89,14 +100,16 @@ impl LodGroupData {
 
     /// Every Obj its levels refer to.
     pub fn refs(&self) -> Result<Vec<ObjPath>> {
-        self.levels.iter().filter_map(|level| level.obj.as_ref()).map(FileRef::path).collect()
+        self.levels.iter().flat_map(LodLevelData::all).map(FileRef::path).collect()
     }
 
     /// Rewrites each level's reference, as prefabs move paths into the file
     /// that holds an instance.
     pub fn map_refs(&mut self, f: &dyn Fn(&ObjPath) -> ObjPath) -> Result<()> {
-        for obj in self.levels.iter_mut().filter_map(|level| level.obj.as_mut()) {
-            *obj = FileRef::new(&f(&obj.path()?));
+        for level in &mut self.levels {
+            for obj in level.obj.iter_mut().chain(&mut level.objs) {
+                *obj = FileRef::new(&f(&obj.path()?));
+            }
         }
         Ok(())
     }
@@ -133,20 +146,26 @@ mod tests {
     fn levels_read_and_write_as_references_in_the_file() {
         let text = r#"
             measure = "distance"
-            levels = [{ obj = 3, until = 20.0 }, { obj = "4/2", until = 60.0 }, { until = 90.0 }]
+            levels = [{ obj = 3, until = 20.0 }, { objs = ["4/2", 6], until = 60.0 }, { until = 90.0 }]
         "#;
         let data: LodGroupData = toml::from_str(text).expect("a LOD Group");
         assert_eq!(data.measure, LodMeasure::Distance);
         assert!(data.cull, "culled past the last level unless it says otherwise");
         let refs = data.refs().expect("references");
-        assert_eq!(refs, [ObjPath::new(3), ObjPath::parse("4/2").expect("a path")]);
+        assert_eq!(refs, [ObjPath::new(3), ObjPath::parse("4/2").expect("a path"), ObjPath::new(6)]);
 
-        let near = Entity::from_bits(7);
-        let group = data.bind(&|path| (*path == ObjPath::new(3)).then_some(near));
-        assert_eq!(group.levels.iter().map(|l| l.obj).collect::<Vec<_>>(), [Some(near), None, None]);
+        let (near, other) = (Entity::from_bits(7), Entity::from_bits(8));
+        let group = data.bind(&|path| match path.ids() {
+            [3] => Some(near),
+            [6] => Some(other),
+            _ => None,
+        });
+        let objs: Vec<Vec<Entity>> = group.levels.iter().map(|l| l.objs.clone()).collect();
+        assert_eq!(objs, [vec![near], vec![other], vec![]], "the older single obj reads as a list of one");
         let saved = LodGroupData::of(&group, &|entity| (entity == near).then(|| ObjPath::new(9)));
-        assert_eq!(saved.levels[0].obj, Some(FileRef::Id(9)));
-        assert_eq!(toml::to_string(&saved).expect("written").matches("obj").count(), 1);
+        assert_eq!(saved.levels[0].objs, [FileRef::Id(9)]);
+        let written = toml::to_string(&saved).expect("written");
+        assert!(written.contains("objs = [9]") && !written.contains("obj ="), "{written}");
 
         let whole = data.whole().expect("an override");
         assert_eq!(whole.get("cull").and_then(toml::Value::as_bool), Some(true));

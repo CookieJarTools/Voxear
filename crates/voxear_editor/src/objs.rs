@@ -504,7 +504,7 @@ pub fn bring_back(
     let groups: Vec<Entity> = world.query_ref::<(Entity, &LodGroup)>().into_iter().map(|(e, _)| e).collect();
     for group in groups {
         let Some(group) = world.get_mut::<LodGroup>(group) else { continue };
-        for obj in group.levels.iter_mut().filter_map(|level| level.obj.as_mut()) {
+        for obj in group.levels.iter_mut().flat_map(|level| level.objs.iter_mut()) {
             *obj = renamed.get(obj).copied().unwrap_or(*obj);
         }
     }

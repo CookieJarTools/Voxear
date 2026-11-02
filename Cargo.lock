@@ -3438,6 +3438,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxear_physics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "glam",
+]
+
+[[package]]
 name = "voxear_render"
 version = "0.1.0"
 dependencies = [

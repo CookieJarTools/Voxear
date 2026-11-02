@@ -1,0 +1,17 @@
+[package]
+name = "voxear_physics"
+description = "3D physics: Jolt Physics, vendored and built with the crate, behind a small C shim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+links = "voxear_jolt"
+
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+
+[build-dependencies]
+cc = { version = "1", features = ["parallel"] }

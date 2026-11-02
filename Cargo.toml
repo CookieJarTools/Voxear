@@ -23,6 +23,7 @@ voxear_engine = { path = "crates/voxear_engine" }
 voxear_editor = { path = "crates/voxear_editor" }
 voxear_docs = { path = "crates/voxear_docs" }
 voxear_input = { path = "crates/voxear_input" }
+voxear_physics = { path = "crates/voxear_physics" }
 
 anyhow = "1"
 ash = "0.38"

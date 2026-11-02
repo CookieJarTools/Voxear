@@ -61,6 +61,8 @@ To see the level from two places at once, choose **Add Scene View** from a panel
 
 To select nothing, click the empty space below the Objs in the Hierarchy.
 
+Once you have clicked in the Hierarchy, the Project panel, the Console or any other list, the arrow keys move through it: **Up** and **Down** a row at a time, with **Shift** to select every row on the way, **Home** and **End** to the first and last, and **Page Up** and **Page Down** a screenful at a time. In a tree, **Right** opens what is selected, or goes inside it once it is open, and **Left** closes it, or goes to what it is in.
+
 The **Layout** button at the top left, which shows the name of the layout in use, switches between arrangements of the panels. **Default** is the one described here; **Profiling** holds the tools for finding out why a game runs slowly. Each layout stays as you left it. **Save Layout As** keeps your own arrangement under a name, to switch back to later, and **Reset Layout** puts the one in use back as it started.
 
 ## Editor shortcuts

@@ -34,7 +34,7 @@ use std::collections::HashSet;
 use taffy::{Dimension, LengthPercentageAuto, Position, Rect};
 
 use crate::{
-    NodeId, Style, Ui,
+    Key, NodeId, Style, Ui,
     drag::DragSource,
     selector::States,
     tree::{Element, Kind},
@@ -128,6 +128,9 @@ pub(crate) struct ListState {
     selection: Vec<usize>,
     /// Where a shift-click extends from.
     anchor: Option<usize>,
+    /// The row the arrow keys last moved to, which Shift extends the
+    /// selection to from the anchor.
+    cursor: Option<usize>,
     pub changed: bool,
     /// Every row shows something else, so all are bound again.
     rebind: bool,
@@ -310,12 +313,82 @@ impl Ui {
         let mut selection: Vec<usize> = indices.iter().copied().filter(|&i| i < state.count).collect();
         selection.sort_unstable();
         selection.dedup();
+        state.cursor = None;
         if selection != state.selection {
             state.selection = selection;
             state.anchor = state.selection.first().copied();
             state.changed = true;
             self.show_selection(list);
         }
+    }
+
+    /// A key pressed while a list or tree has focus, as in a desktop's
+    /// lists: Up and Down move the selection a row, Shift extending it from
+    /// where it began, Home and End go to the first and last, and Page Up
+    /// and Page Down a screenful at a time. In a tree, Right opens the item,
+    /// or once it is open goes to the first item in it, and Left closes it,
+    /// or goes to the item it is in. Returns whether the key was used.
+    pub(crate) fn list_key(&mut self, list: NodeId, key: Key) -> bool {
+        let [_, _, _, viewport] = self.viewport(list);
+        let Some(state) = self.element(list).and_then(|e| e.list.as_ref()) else { return false };
+        if state.count == 0 {
+            return false;
+        }
+        let last = state.count - 1;
+        let at = state.cursor.or(state.selection.last().copied()).map(|index| index.min(last));
+        let page = ((viewport / state.item_height).floor() as usize).max(1);
+        let item = match &state.source {
+            Source::Tree(tree) => Some(at.and_then(|index| tree.open.get(index).copied())),
+            _ => None,
+        };
+        let to = match (key, item) {
+            (Key::Up, _) => at.map_or(0, |index| index.saturating_sub(1)),
+            (Key::Down, _) => at.map_or(0, |index| (index + 1).min(last)),
+            (Key::Home, _) => 0,
+            (Key::End, _) => last,
+            (Key::PageUp, _) => at.map_or(0, |index| index.saturating_sub(page)),
+            (Key::PageDown, _) => at.map_or(0, |index| (index + page).min(last)),
+            (Key::Right, Some(Some((item, _, true)))) if !self.is_expanded(list, item) => {
+                self.set_expanded(list, item, true);
+                return true;
+            }
+            (Key::Right, Some(Some((_, _, true)))) => at.map_or(0, |index| index + 1),
+            (Key::Left, Some(Some((item, _, true)))) if self.is_expanded(list, item) => {
+                self.set_expanded(list, item, false);
+                return true;
+            }
+            (Key::Left, Some(Some((_, depth, _)))) => {
+                let Some(parent) = at.and_then(|index| self.row_above_at_depth(list, index, depth)) else { return true };
+                parent
+            }
+            // In a tree, nothing to open or leave still takes the key.
+            (Key::Left | Key::Right, Some(_)) => return true,
+            _ => return false,
+        };
+        self.move_cursor(list, to);
+        true
+    }
+
+    /// The nearest row above `index` less deep than `depth`: the item that
+    /// row's item is in.
+    fn row_above_at_depth(&self, tree: NodeId, index: usize, depth: u32) -> Option<usize> {
+        let state = self.element(tree)?.list.as_ref()?;
+        let Source::Tree(items) = &state.source else { return None };
+        (0..index).rev().find(|&above| items.open.get(above).is_some_and(|open| open.1 < depth))
+    }
+
+    /// Moves the arrow keys' place to row `to`, selecting it alone, or with
+    /// Shift held every row from the anchor to it, and scrolls it into view.
+    fn move_cursor(&mut self, list: NodeId, to: usize) {
+        let extend = self.modifiers.shift;
+        let Some(state) = self.list_state(list) else { return };
+        let anchor = state.anchor.unwrap_or(to);
+        let selection: Vec<usize> = if extend { (anchor.min(to)..=anchor.max(to)).collect() } else { vec![to] };
+        self.set_selection(list, &selection);
+        if let Some(state) = self.list_state(list) {
+            (state.anchor, state.cursor) = (Some(if extend { anchor } else { to }), Some(to));
+        }
+        self.scroll_to_index(list, to);
     }
 
     /// Whether the selection changed since the last frame.
@@ -406,6 +479,7 @@ impl Ui {
                 rows: Vec::new(),
                 selection: Vec::new(),
                 anchor: None,
+                cursor: None,
                 changed: false,
                 rebind: true,
                 source: Source::Empty,

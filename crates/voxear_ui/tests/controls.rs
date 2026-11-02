@@ -358,3 +358,75 @@ fn lists_declared_in_markup_get_their_items_from_code() {
     assert_eq!(shown_rows(&ui, log).len(), 11, "18-pixel rows in 180 pixels");
     assert!(ui.take_warnings().is_empty());
 }
+
+#[test]
+fn arrow_keys_move_through_lists_and_open_and_close_trees() {
+    use voxear_ui::Key;
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let host = ui.panel(root, Style::column().at(0.0, 0.0).width(300.0).height(100.0));
+    let items = ItemFns {
+        make: |ui: &mut Ui, row: NodeId| {
+            ui.label(row, "", TextStyle::default());
+        },
+        bind: |ui: &mut Ui, row: NodeId, index: usize| {
+            let label = ui.children(row)[0];
+            ui.set_text(label, &format!("Item {index}"));
+        },
+    };
+    let list = ui.list_view(host, 20.0, 50, items);
+    ui.set_style(list, Style::column().scroll().grow());
+    ui.frame(WIDTH, HEIGHT, 1.0);
+
+    // A click on a row gives the list the keys.
+    let second = shown_rows(&ui, list)[1];
+    click(&mut ui, second);
+    assert_eq!(ui.focused(), Some(list), "the list has focus");
+    assert!(ui.key_down(Key::Down));
+    assert_eq!(ui.selection(list), [2]);
+    assert!(ui.selection_changed(list), "as a click's change does");
+    ui.key_down(Key::Up);
+    ui.key_down(Key::Up);
+    ui.key_down(Key::Up);
+    assert_eq!(ui.selection(list), [0], "and stops at the first");
+
+    // Shift extends from where the selection began; Home, End and the page keys jump.
+    ui.set_modifiers(Modifiers { shift: true, control: false });
+    ui.key_down(Key::Down);
+    ui.key_down(Key::Down);
+    assert_eq!(ui.selection(list), [0, 1, 2]);
+    ui.set_modifiers(Modifiers::default());
+    ui.key_down(Key::End);
+    assert_eq!(ui.selection(list), [49]);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let rows = shown_rows(&ui, list);
+    let last = rows.last().copied().unwrap();
+    assert_eq!(ui.text(ui.children(last)[0]), "Item 49", "scrolled to show it");
+    ui.key_down(Key::PageUp);
+    assert_eq!(ui.selection(list), [44], "a screenful of five rows up");
+    ui.key_down(Key::Home);
+    assert_eq!(ui.selection(list), [0]);
+    assert!(!ui.key_down(Key::Left), "a list leaves Left and Right to others");
+
+    // In a tree, Right opens, then goes in; Left goes back out, then closes.
+    let beside = ui.panel(root, Style::column().at(400.0, 0.0).width(300.0).height(200.0));
+    let tree = ui.tree_view(beside, 20.0, Folders);
+    ui.set_style(tree, Style::column().scroll().grow());
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let first = shown_rows(&ui, tree)[0];
+    let label = ui.children(first)[2];
+    click(&mut ui, label);
+    assert_eq!((ui.focused(), ui.selected_items(tree)), (Some(tree), vec![1]));
+    ui.key_down(Key::Right);
+    assert!(ui.is_expanded(tree, 1), "Right opens it");
+    ui.key_down(Key::Right);
+    assert_eq!(ui.selected_items(tree), [11], "and then goes to the first inside");
+    ui.key_down(Key::Down);
+    assert_eq!(ui.selected_items(tree), [12]);
+    ui.key_down(Key::Left);
+    assert_eq!(ui.selected_items(tree), [1], "Left goes to what it is in");
+    ui.key_down(Key::Left);
+    assert!(!ui.is_expanded(tree, 1), "and then closes it");
+    ui.key_down(Key::Down);
+    assert_eq!(ui.selected_items(tree), [2]);
+}

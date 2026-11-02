@@ -204,6 +204,7 @@ impl Ui {
             }
             Some(Kind::Slider) => self.slider_key(focused, key),
             Some(Kind::Dropdown) => self.dropdown_key(focused, key),
+            Some(Kind::ListView | Kind::TreeView) if key != Key::Escape => self.list_key(focused, key),
             _ if key == Key::Escape => {
                 self.blur();
                 true
@@ -275,9 +276,17 @@ impl Ui {
     /// is disabled.
     pub(crate) fn focusable(&self, node: taffy::NodeId) -> bool {
         let Some(element) = self.tree.get_node_context(node) else { return false };
+        // Lists and trees too, as a press on a row gives them the arrow keys.
         let control = matches!(
             element.kind,
-            Kind::TextField | Kind::Button | Kind::Toggle | Kind::Slider | Kind::Foldout | Kind::Dropdown
+            Kind::TextField
+                | Kind::Button
+                | Kind::Toggle
+                | Kind::Slider
+                | Kind::Foldout
+                | Kind::Dropdown
+                | Kind::ListView
+                | Kind::TreeView
         );
         let mut at = Some(node);
         while let Some(current) = at {

@@ -1195,7 +1195,10 @@ how they look, as UXML and USS do in Unity:
   shader, which trims each quad to its clip rectangle, and whatever lies wholly outside is never drawn.
 - **ListView** keeps elements only for the rows on screen, so 100,000 items cost what 20 do. As in Unity, rows
   are built once by `make` and filled by `bind` whenever they show a different item, and are reused as the list
-  scrolls. Rows match `:selected`; a click selects, Ctrl adds or removes, and Shift extends.
+  scrolls. Rows match `:selected`; a click selects, Ctrl adds or removes, and Shift extends. A click on a row also
+  gives the list focus, and then the arrow keys move the selection, Shift extending it, with Home, End and the page
+  keys; in a tree, Right opens an item or goes into it, and Left closes it or goes to its parent, as desktops'
+  trees do.
 
   ```rust
   let log = ui.list_view(panel, 18.0, lines.len(), ItemFns {

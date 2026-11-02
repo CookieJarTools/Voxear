@@ -2184,6 +2184,15 @@ as the Inspector's own control goes only in a markup's `next` element; its eleme
   that comes back changed goes into the scene, typed as the field is, as part of the frame's step to undo, and
   calls the field's `[OnValueChanged]`. A drawer that throws stops drawing until the Inspector is built again.
 - While playing, a drawn field shows its own control.
+- **The game's own windows** *(implemented)*: an `EditorWindow` in the game's C#, as Unity's, is a dock panel
+  opened from any window's menu (Add Level Tools) as many times as wanted, each its own instance, numbered by the
+  editor (`window-1`). ScriptInfo lists them (`windows`, with `[Window]`'s title and icon). The editor opens each
+  in the scripts, which give its markup, builds that in the panel, and every frame the panel shows has the window
+  raise its elements' events and `Update`, through the same JSON calls and `DrawerUi` the drawers use, with
+  numbers of its own from 2²⁶ up. It runs in the edit-mode scripts while editing and the game's while playing,
+  which are the same runtime, so a window keeps its state across play. One the scripts let go of, as on a
+  reload, answers that it is gone and opens again. The editor's memory keeps which window each panel was, so a
+  layout opens its windows again.
 - **Behaviour inspectors** *(implemented)*: a `BehaviourInspector<T>` draws a whole behaviour, of type `T` or
   derived from it, in place of its fields, as Unity's custom `Editor` does. ScriptInfo names it on the behaviour
   (`inspector`), and it runs as a drawer of a field with no path: the editor opens it with the shown Obj, its value

@@ -169,6 +169,7 @@ namespace Voxear.Scripting
 			SceneComponentTypes.Clear();
 			InstanceRegistry.Clear();
 			InspectorDrawers.Forget();
+			EditorWindows.Forget();
 			SceneGizmos.Forget();
 			SaveTypes.Clear();
 		}

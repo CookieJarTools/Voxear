@@ -153,6 +153,12 @@ impl Engine {
         scripts.call_live(&mut self.world, handle, method)
     }
 
+    /// The running scripts with the world they run on, for calls that need
+    /// both, as the editor's windows written in C# do.
+    pub fn scripts_and_world(&mut self) -> Option<(&mut ScriptRuntime, &mut World)> {
+        Some((self.scripts.as_mut()?, &mut self.world))
+    }
+
     /// Has the scripts make and fill the game UI's list rows (see
     /// [`crate::game_ui`]), lending `services` for their elements. Nothing
     /// without running scripts.

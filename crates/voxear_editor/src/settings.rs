@@ -389,6 +389,15 @@ pub struct SavedLayout {
     pub start: String,
 }
 
+/// A window written in the game's C# that a layout names: its panel, by id
+/// (`window-1`), and the window's type, by its full name.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeptScriptWindow {
+    pub panel: String,
+    pub window: String,
+}
+
 /// A Scene view opened from a window's menu, as it was left: its panel, by
 /// id (`scene-2`), where its camera was and which way it looked, and how it
 /// drew.
@@ -426,6 +435,8 @@ pub struct Memory {
     /// The Scene views opened from a window's menu that a layout names, so
     /// they open again as they were left with the layout.
     pub scene_views: Vec<KeptSceneView>,
+    /// The game's own windows a layout names, so they open again with it.
+    pub script_windows: Vec<KeptScriptWindow>,
     /// Where it is kept, or `None` for an editor that remembers nothing.
     #[serde(skip)]
     path: Option<PathBuf>,

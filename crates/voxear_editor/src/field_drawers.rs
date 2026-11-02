@@ -272,11 +272,17 @@ impl DrawnRow {
     }
 }
 
-/// The Inspector's UI as the drawers' code reaches it, by the numbers the
-/// drawers' documents and elements were given.
+/// The editor's UI as scripts' drawers, and windows written in C#, reach
+/// it, by the numbers their documents and elements were given.
 pub struct DrawerUi<'a> {
     ui: &'a mut Ui,
     numbers: &'a mut UiNumbers,
+}
+
+impl<'a> DrawerUi<'a> {
+    pub fn new(ui: &'a mut Ui, numbers: &'a mut UiNumbers) -> Self {
+        Self { ui, numbers }
+    }
 }
 
 impl ScriptServices for DrawerUi<'_> {

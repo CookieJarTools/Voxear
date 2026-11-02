@@ -64,6 +64,21 @@ namespace Voxear.Scripting
 				UiLists.Fill(root);
 				return;
 			}
+			if (action == "window-open")
+			{
+				EditorWindows.Open(json, root);
+				return;
+			}
+			if (action == "window-update")
+			{
+				EditorWindows.Update(json, root);
+				return;
+			}
+			if (action == "window-close")
+			{
+				EditorWindows.Close(root);
+				return;
+			}
 			if (action is "live-read" or "live-write" or "live-call")
 			{
 				Live(json, root, action);

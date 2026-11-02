@@ -20,6 +20,7 @@ mod saves;
 mod services;
 mod ui;
 mod ui_rows;
+mod windows;
 
 pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 pub use display::CursorLock;
@@ -34,3 +35,4 @@ pub use services::{
     SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
 };
 pub use ui_rows::RowWork;
+pub use windows::WindowUpdate;

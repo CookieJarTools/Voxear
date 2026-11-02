@@ -23,6 +23,7 @@ mod scene_gizmos;
 mod scene_views;
 mod scenes;
 mod script_actions;
+mod script_windows;
 mod tooltip;
 mod windows;
 
@@ -281,6 +282,8 @@ pub struct Editor {
     /// The Hierarchies and Project panels opened from a window's menu, past the first.
     extra_hierarchies: Vec<hierarchies::ExtraHierarchy>,
     extra_projects: Vec<projects::ExtraProject>,
+    /// The game's own windows written in C#, opened from a window's menu.
+    script_windows: script_windows::ScriptWindows,
     /// Previews of assets, of a Mesh Renderer's own mesh and material, and
     /// the Inspector's large one; see `previews`.
     asset_previews: AssetPreviews,
@@ -505,6 +508,7 @@ impl Editor {
             extra_inspectors: Vec::new(),
             extra_hierarchies: Vec::new(),
             extra_projects: Vec::new(),
+            script_windows: script_windows::ScriptWindows::default(),
             asset_previews: AssetPreviews::default(),
             imports: importing::Imports::new(&root),
             live_assets: Vec::new(),
@@ -644,6 +648,10 @@ impl Editor {
         self.update_windows();
         self.update_layouts();
         self.keep_layout();
+        {
+            profile_scope!("Script Windows");
+            self.update_script_windows();
+        }
         {
             profile_scope!("Profiler");
             let profiler_shown = self.shown(self.nodes.profiler_panel);
@@ -1459,6 +1467,7 @@ impl Editor {
                     for inspector in self.inspectors_mut() {
                         inspector.set_types(types.clone());
                     }
+                    self.retry_script_windows();
                     self.describing = None;
                     self.reload_scripts();
                     if let Some(code) = code_reference(&self.game.project) {
@@ -1500,6 +1509,7 @@ impl Editor {
         for inspector in self.inspectors_mut() {
             inspector.set_types(types.clone());
         }
+        self.retry_script_windows();
     }
 
     /// Whether the scripts are described as they are now, with no build of

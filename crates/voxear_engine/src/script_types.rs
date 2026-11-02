@@ -53,6 +53,28 @@ pub struct ScriptTypes {
     /// The `[DocsCheck]` methods, for a VoxDocs guide's checks.
     #[serde(default)]
     pub checks: Vec<ScriptCheck>,
+    /// The game's own editor windows (`EditorWindow`).
+    #[serde(default)]
+    pub windows: Vec<ScriptWindow>,
+}
+
+/// An `EditorWindow` of the game's: its full name, and the title and icon
+/// its `[Window]` gives it, if it has one.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptWindow {
+    pub name: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+}
+
+impl ScriptWindow {
+    /// What the menus and its tab call it: its `[Window]` title, or its
+    /// class name in words, as `LevelTools` is "Level Tools".
+    pub fn title(&self) -> String {
+        self.title.clone().unwrap_or_else(|| nice_name(self.name.rsplit(['.', '+']).next().unwrap_or(&self.name)))
+    }
 }
 
 /// A static method marked `[DocsCheck]`: what its step says, and where it

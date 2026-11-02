@@ -43,6 +43,7 @@ namespace Voxear.Scripting
 				WriteNestedTypes(json, types, nested, drawers);
 				WriteCommands(json, assembly);
 				WriteChecks(json, assembly);
+				WriteWindows(json, assembly);
 				json.WriteEndObject();
 			}
 			return Encoding.UTF8.GetString(stream.ToArray());
@@ -252,6 +253,28 @@ namespace Voxear.Scripting
 		}
 
 		/// <summary>Each static method marked [Command] that takes nothing and returns nothing, as the palette runs it.</summary>
+		/// <summary>The game's editor windows, each with the title and icon its [Window] gives it, if any.</summary>
+		private static void WriteWindows(Utf8JsonWriter json, Assembly assembly)
+		{
+			json.WriteStartArray("windows");
+			foreach (var type in EditorWindows.In(Loadable(assembly)))
+			{
+				var named = type.GetCustomAttribute<WindowAttribute>();
+				json.WriteStartObject();
+				json.WriteString("name", type.FullName);
+				if (named != null)
+				{
+					json.WriteString("title", named.Title);
+				}
+				if (named?.Icon != null)
+				{
+					json.WriteString("icon", named.Icon);
+				}
+				json.WriteEndObject();
+			}
+			json.WriteEndArray();
+		}
+
 		private static void WriteCommands(Utf8JsonWriter json, Assembly assembly)
 		{
 			json.WriteStartArray("commands");

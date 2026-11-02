@@ -498,7 +498,9 @@ Still to do in M3:
     - [ ] later: physics queries drawn with their hits, and a recorder to scrub back through what was drawn
   - [x] several Hierarchies and Project panels, opened from a window's menu (Add Hierarchy, Add Project), and a click
     on the space below the Hierarchy's rows selects nothing
-  - [ ] windows a game's code can open more than once
+  - [x] windows a game's code can open more than once: `EditorWindow`, built with Voxear UI, opened from any
+    window's menu as often as wanted, each its own instance, updated while editing and while playing, and kept
+    with the layout
   - [ ] windows dragged out of the editor into windows of the desktop's own
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.

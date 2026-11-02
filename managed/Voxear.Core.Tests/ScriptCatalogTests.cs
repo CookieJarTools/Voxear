@@ -54,6 +54,16 @@ namespace Voxear.Tests
 		}
 
 		[Test]
+		private static void EditorWindowsAreListedWithWhatTheirWindowAttributeGives()
+		{
+			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestToolWindow).Assembly));
+			var windows = document.RootElement.GetProperty("windows").EnumerateArray().ToDictionary(w => w.GetProperty("name").GetString()!);
+			var tools = windows["Voxear.Tests.TestToolWindow"];
+			Check.True(tools.GetProperty("title").GetString() == "Test Tools" && tools.GetProperty("icon").GetString() == "settings", "[Window]'s title and icon");
+			Check.True(!windows["Voxear.Tests.TestPlainWindow"].TryGetProperty("title", out _), "no title of its own without [Window]");
+		}
+
+		[Test]
 		private static void TablesListSettingsAndPalettesAreDescribed()
 		{
 			using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestShelf).Assembly));

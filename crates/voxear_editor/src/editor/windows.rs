@@ -63,6 +63,8 @@ pub(super) enum WindowAction {
     AddHierarchy,
     /// Opens another Project panel beside it.
     AddProject,
+    /// Opens one of the game's own windows beside it, by the window's type.
+    AddScriptWindow(String),
     ResetLayout,
 }
 
@@ -95,6 +97,8 @@ impl Editor {
         }
         if let Some(choice) = self.ui.menu_choice(windows) {
             match self.ui.dock_panels(dock).get(choice) {
+                // The game's own windows go for good, as closing them from their menu does.
+                Some((id, _, true)) if self.remove_script_window(&id.clone()) => {}
                 Some((id, _, true)) => self.ui.close_dock_panel(dock, id),
                 Some((id, _, false)) => self.open_panel(&id.clone()),
                 None => self.reset_layout(),
@@ -125,6 +129,14 @@ impl Editor {
             (MenuItem::new("Add Project"), Some(WindowAction::AddProject)),
             (MenuItem::separator(), None),
         ]);
+        let game_windows = self.script_window_types();
+        for (type_name, title) in &game_windows {
+            items
+                .push((MenuItem::new(&format!("Add {title}")), Some(WindowAction::AddScriptWindow(type_name.clone()))));
+        }
+        if !game_windows.is_empty() {
+            items.push((MenuItem::separator(), None));
+        }
         items.push((MenuItem::new("Reset Layout"), Some(WindowAction::ResetLayout)));
         let (menu, actions): (Vec<MenuItem>, Vec<Option<WindowAction>>) = items.into_iter().unzip();
         self.ui.open_menu(dock, at, &menu);
@@ -159,6 +171,9 @@ impl Editor {
             }
             WindowAction::AddProject => {
                 self.add_project_panel(panel);
+            }
+            WindowAction::AddScriptWindow(type_name) => {
+                self.add_script_window(&type_name, panel);
             }
             WindowAction::ResetLayout => self.reset_layout(),
         }
@@ -214,6 +229,7 @@ impl Editor {
                 "scene" => self.reopen_scene_view(panel),
                 "hierarchy" => self.reopen_hierarchy(panel),
                 "project" => self.reopen_project_panel(panel),
+                "window" => self.reopen_script_window(panel),
                 _ => self.reopen_inspector(panel),
             }
         }
@@ -235,6 +251,7 @@ impl Editor {
             || self.remove_scene_view(panel)
             || self.remove_hierarchy(panel)
             || self.remove_project_panel(panel)
+            || self.remove_script_window(panel)
     }
 
     /// The top bar's Layout menu: the layouts to pick from, ticked for the
@@ -426,11 +443,14 @@ impl Editor {
         let named: Vec<&str> =
             arrangements.iter().map(String::as_str).chain(starts).flat_map(opened_from_menu).collect();
         let scene_views = self.kept_scene_views(&named);
+        let script_windows = self.kept_script_windows(&named);
         let memory = &self.memory;
         let changed = memory.workspace != self.layout || memory.layouts != arrangements;
-        if changed || memory.saved_layouts != saved || memory.scene_views != scene_views {
+        let kept = memory.scene_views == scene_views && memory.script_windows == script_windows;
+        if changed || memory.saved_layouts != saved || !kept {
             (self.memory.workspace, self.memory.layouts) = (self.layout, arrangements);
             (self.memory.saved_layouts, self.memory.scene_views) = (saved, scene_views);
+            self.memory.script_windows = script_windows;
             self.memory.save();
         }
     }
@@ -446,5 +466,7 @@ fn opened_from_menu(layout: &str) -> Vec<&str> {
 fn is_opened_from_menu(panel: &str) -> bool {
     let kinds = ["scene-", "inspector-", "hierarchy-", "project-"];
     let number = kinds.iter().find_map(|kind| panel.strip_prefix(kind));
-    number.and_then(|n| n.parse::<u32>().ok()).is_some_and(|n| n >= 2)
+    // The game's own windows are all opened from the menu, from the first.
+    let window = panel.strip_prefix("window-").and_then(|n| n.parse::<u32>().ok()).is_some_and(|n| n >= 1);
+    window || number.and_then(|n| n.parse::<u32>().ok()).is_some_and(|n| n >= 2)
 }

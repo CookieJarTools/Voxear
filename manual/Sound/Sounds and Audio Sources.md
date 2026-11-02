@@ -28,7 +28,11 @@ Click **Apply** to keep your changes. They are saved in the sound's `.meta` file
 
 ## Playing a sound from an Obj
 
-An **Audio Source** plays a sound from the Obj it is on: a crackling fire, a radio, a waterfall. Make one with the Hierarchy's **+** button and **Audio Source**, or give an existing Obj one with **Add Component**. Then pick its sound, or drag a sound from the Project panel onto its **Sound** field.
+An **Audio Source** plays a sound from the Obj it is on: a crackling fire, a radio, a waterfall.
+
+The quickest way to make one is to drag a sound from the Project panel into the Scene view or the Hierarchy. You get a new Obj named after the sound, with an Audio Source that plays it. In the Scene view, the Obj lands where you let go. In the Hierarchy, letting go on an Obj puts the new one inside it. Undo takes it away again.
+
+You can also make one with the Hierarchy's **+** button and **Audio Source**, or give an existing Obj one with **Add Component**. Then pick its sound, or drag a sound from the Project panel onto its **Sound** field. The Hierarchy shows an Obj whose only job is playing a sound with a speaker icon.
 
 | Setting | What it does |
 | --- | --- |

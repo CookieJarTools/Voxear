@@ -1180,14 +1180,8 @@ fn a_pictures_import_settings_apply_to_the_models_that_read_it() {
     assert!(status.contains("Imported Pyramid.gltf again"), "the model reading it is imported again: {status}");
 }
 
-#[test]
-fn a_sound_shows_what_it_holds_plays_in_the_editor_and_goes_on_an_audio_source() {
-    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
-        Ok(renderer) => renderer,
-        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
-    };
-    let dir = hello_copy();
-    // A second of one level, mono at 48 kHz.
+/// A WAV file holding a second of one level, mono at 48 kHz.
+fn chime() -> Vec<u8> {
     let mut chime = Vec::new();
     chime.extend_from_slice(b"RIFF");
     chime.extend_from_slice(&(36u32 + 96_000).to_le_bytes());
@@ -1198,7 +1192,17 @@ fn a_sound_shows_what_it_holds_plays_in_the_editor_and_goes_on_an_audio_source()
     chime.extend_from_slice(b"data");
     chime.extend_from_slice(&96_000u32.to_le_bytes());
     chime.resize(chime.len() + 96_000, 0x20);
-    std::fs::write(dir.path().join("Models/Chime.wav"), chime).unwrap();
+    chime
+}
+
+#[test]
+fn a_sound_shows_what_it_holds_plays_in_the_editor_and_goes_on_an_audio_source() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    std::fs::write(dir.path().join("Models/Chime.wav"), chime()).unwrap();
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
     // Silent, rather than through the machine's speakers.
@@ -4192,6 +4196,52 @@ fn a_model_dragged_from_the_project_places_objs_drawing_it() {
         assert_eq!(world.get::<Transform>(part).unwrap().position, position, "{name}");
         assert!(world.get::<voxear_render::MeshRenderer>(part).is_some());
     }
+}
+
+#[test]
+fn a_sound_dragged_from_the_project_places_an_obj_playing_it() {
+    let write = |root: &std::path::Path| std::fs::write(root.join("Models/Chime.wav"), chime()).unwrap();
+    let Some((dir, mut renderer, mut editor)) = open_copy_with(write) else { return };
+    // Silent, rather than through the machine's speakers.
+    editor.game.audio = voxear_engine::audio::GameAudio::new(voxear_engine::audio::Audio::quiet());
+    open_folder(&mut editor, &mut renderer, "Models");
+    frame(&mut editor, &mut renderer);
+    let from = centre(&editor.ui, tile(&editor.ui, "Chime.wav").expect("the Models folder shows"));
+    let camera = editor.scene_camera().unwrap();
+    let viewport = editor.ui.find(editor.ui.root(), "viewport").unwrap();
+    let [x, y, w, h] = editor.ui.rect(viewport);
+    let point = [x + w * 0.2, y + h * 0.85];
+    let (origin, direction) = camera.ray(point);
+    let hit = origin + direction * (-origin.y / direction.y);
+    drag_between(&mut editor, &mut renderer, from, point);
+
+    // An Obj named for the sound, with an Audio Source playing it, standing where it was let go.
+    let chime = obj(&editor, "Chime").expect("an Obj for the sound");
+    assert_eq!(editor.selected(), Some(chime));
+    let world = &editor.game.engine.world;
+    let source = world.get::<voxear_engine::audio::AudioSource>(chime).copied().expect("with an Audio Source");
+    let guid = editor.game.content.db().guid_of("Models/Chime.wav").unwrap();
+    assert_eq!(source.sound.and_then(|id| editor.game.content.sound_guid(id)), Some(guid));
+    assert!(source.play_on_start, "it plays as the game starts");
+    let position = world.get::<Transform>(chime).unwrap().position;
+    assert!(
+        position.y.abs() < 1e-4 && (position.x - hit.x).abs() <= 0.13 && (position.z - hit.z).abs() <= 0.13,
+        "{position}"
+    );
+    editor.undo(&mut renderer);
+    assert!(obj(&editor, "Chime").is_none(), "one step to undo");
+    editor.redo(&mut renderer);
+    assert!(obj(&editor, "Chime").is_some(), "and to redo");
+
+    // Onto an Obj's row, inside it, numbered as a copy is, and saved naming the sound.
+    let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Spinner A").unwrap());
+    drag_between(&mut editor, &mut renderer, from, to);
+    let inside = obj(&editor, "Chime (1)").expect("a second Obj for the sound");
+    let spinner = obj(&editor, "Spinner A");
+    assert_eq!(editor.game.engine.world.get::<voxear_scene::Parent>(inside).map(|p| p.0), spinner);
+    editor.save();
+    let text = std::fs::read_to_string(dir.path().join("Scenes/Day.scene")).unwrap();
+    assert_eq!(text.matches(&format!("sound = \"{guid}\"")).count(), 2, "both are saved:\n{text}");
 }
 
 /// A rug a metre square, as 3ds Max writes FBX: Z up, in centimetres.

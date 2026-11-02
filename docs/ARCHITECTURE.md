@@ -2345,14 +2345,18 @@ Audio.Play(Sounds.Explosion, at: obj.Position);   // easy: 3D one-shot with sens
 the editor's own preview voices outside them; 2D voices, and 3D ones that fade by the inverse of distance down to
 silence at a max distance and pan with equal power from the listener; voices that loop, pause, and change volume and
 pitch without clicks, resampled to the device's rate; and long sounds decoded a block ahead on a streaming thread.
-Effects, snapshots, ducking and Doppler are next.)*
+The output follows the system's default device: when that device goes away or another becomes the default, as when
+headphones are unplugged, the output thread opens the default again, and with none it mixes quietly until one turns
+up. Effects, snapshots, ducking and Doppler are next.)*
 
 **Sounds** are assets: WAV, OGG Vorbis, FLAC and MP3, decoded by Symphonia. Their `.meta` says whether one loads whole
 or streams (by default by its length) and its volume. An **Audio Source** component plays one from its Obj, and the
 listener is the first Obj with an **Audio Listener**, or else the game's camera. Each frame, after the game's update,
 `GameAudio` brings every source's voice in line with its component and position. Scripts get `Audio.Play(sound)` and
 `Audio.Play(sound, at:)` for one-shots, `Obj.AudioSource`, and the bus volumes. A build packs the sounds that scenes and
-script fields use, each with its `.meta`, and compressed files as they are.
+script fields use, each with its `.meta`, and compressed files as they are. A background load reads and decodes the
+sounds its scenes and prefabs use on the loading thread, so they come in with no IO. In the editor, a sound dragged
+from the Project into a Scene view or the Hierarchy makes an Obj named for it with an Audio Source playing it.
 
 **Spatial acoustics** come from Steam Audio:
 - HRTF binaural rendering.

@@ -1,6 +1,6 @@
 //! Making, duplicating, deleting and reparenting Objs, as the Hierarchy
-//! does, and placing prefabs and models dragged from the Project. Objs are
-//! copied and brought back through scene files of them
+//! does, and placing prefabs, models and sounds dragged from the Project.
+//! Objs are copied and brought back through scene files of them
 //! (`scene_file::capture_scene` and `spawn`), so everything a scene holds
 //! comes back, prefab instances included. They keep their place in the
 //! level's scenes (`Levels::untrack` and `track`), so a save writes them
@@ -206,8 +206,7 @@ pub fn place_model(
         })
         .collect();
     ensure!(!parts.is_empty(), "{path} has nothing to draw");
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let name = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    let name = stem(path);
     let mut text = String::from("format = 1\n");
     // Each part's Obj, by its id in the file.
     let mut placed: Vec<(u32, Transform)> = Vec::new();
@@ -236,6 +235,39 @@ pub fn place_model(
     let made = made.context("the model's Obj was made")?;
     settle(world, made, parent, position);
     Ok(made)
+}
+
+/// Places the sound at `path` (from the project's folder) as an Obj named
+/// for it, with an Audio Source playing it, where [`place_prefab`] places
+/// an instance, as Unity does with a clip dragged into the scene. Returns
+/// it.
+pub fn place_sound(
+    game: &mut Game,
+    path: &str,
+    parent: Option<Entity>,
+    scene: Option<AssetGuid>,
+    position: Vec3,
+) -> Result<Entity> {
+    let guid = game.content.db().guid_of(path).with_context(|| format!("{path} is not in the project"))?;
+    let string = |text: &str| toml::Value::String(text.to_string());
+    let text = format!(
+        "format = 1\n\n[[obj]]\nid = 1\nname = {}\n[obj.audio]\nsound = {}\n",
+        string(stem(path)),
+        string(&guid.to_string())
+    );
+    let file = scene_file::parse(&text, path)?;
+    let spawned = scene_file::spawn(&mut game.engine, &mut game.content, None, &file, &HashSet::new())?;
+    game.levels.track_new(parent.and_then(|p| game.levels.scene_of(p)).or(scene), &spawned);
+    let made = spawned.first().map(|(_, entity)| *entity).context("the sound's Obj was made")?;
+    settle(&mut game.engine.world, made, parent, position);
+    Ok(made)
+}
+
+/// A file's name without its folder or extension, as Objs placed from it
+/// are named.
+fn stem(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.rsplit_once('.').map_or(name, |(stem, _)| stem)
 }
 
 /// A model's meshes and materials, as the Project panel shows them when the

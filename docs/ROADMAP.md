@@ -512,7 +512,8 @@ Still to do in M3:
     stop, with long music streamed
   - [x] 2D and 3D sources, with distance falloff and panning from the listener (the camera, or an Audio Listener)
   - [x] sound assets (WAV, OGG Vorbis, FLAC and MP3) with import settings, previewed in the Inspector, and the Audio
-    Source component
+    Source component; a sound dragged into the scene makes an Obj playing it, and background loads decode sounds
+  - [x] sound moves to the new default output device when the old one goes away
   - [x] C#: `Audio.Play(sound)` and `Audio.Play(sound, at:)`, `Sound`, `AudioSource` and the bus volumes; builds pack
     the sounds they use
   - [ ] effects, snapshots and ducking on the buses, and Doppler

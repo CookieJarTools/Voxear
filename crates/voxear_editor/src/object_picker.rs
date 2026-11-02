@@ -15,7 +15,6 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use voxear_assets::AssetKind;
 use voxear_ecs::Entity;
 use voxear_engine::{AssetPreviews, Game};
-use voxear_render::{Camera, Light, MeshRenderer};
 use voxear_ui::{ImageRef, ItemFns, NodeId, Style, Ui};
 
 use crate::{fields::Pick, hierarchy, palette::PaletteKey, palette::score, props::Prop};
@@ -306,8 +305,7 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
 
 fn obj(game: &Game, entity: Entity) -> (&'static str, String) {
     let world = &game.engine.world;
-    let icon =
-        hierarchy::icon(world.has::<Camera>(entity), world.has::<Light>(entity), world.has::<MeshRenderer>(entity));
+    let icon = hierarchy::icon(world, entity);
     let scene = game.levels.scene_of(entity).and_then(|guid| game.content.db().get(guid)).map(|e| e.path.clone());
     (icon, scene.as_deref().map(file_name).unwrap_or_default().to_string())
 }

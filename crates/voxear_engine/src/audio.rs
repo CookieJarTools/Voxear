@@ -78,6 +78,20 @@ impl SoundCache {
         self.used.insert(id);
     }
 
+    /// Keeps a sound loaded elsewhere, as by a background load, unless it
+    /// is loaded already.
+    pub(crate) fn adopt(&mut self, guid: AssetGuid, sound: Sound) {
+        let id = self.id(guid);
+        if self.loaded[id.0 as usize].is_none() {
+            self.put(id, Arc::new(sound));
+        }
+    }
+
+    /// The sounds loaded now, by GUID.
+    pub(crate) fn loaded_guids(&self) -> impl Iterator<Item = AssetGuid> + '_ {
+        self.guids.iter().zip(&self.loaded).filter(|(_, sound)| sound.is_some()).map(|(guid, _)| *guid)
+    }
+
     /// Frees every sound not in `keep` and not used since the last sweep.
     /// Returns how many went.
     pub(crate) fn release(&mut self, keep: &HashSet<SoundId>) -> usize {

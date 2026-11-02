@@ -1,13 +1,14 @@
-//! Placing prefabs and models, as Unity's drag from the Project window does:
-//! a prefab as an instance of it, a model as Objs drawing it (see
-//! `objs::place_model`); a scene dragged onto either opens alongside the
-//! scenes open instead (see `scenes`). One dragged onto the Hierarchy lands
-//! where an Obj moved there would: inside the Obj it is let go of on, beside
-//! it near its edge, at the top of a scene on its header, and below the
-//! rows, at the top of the active scene. Let go of on a Scene view, it
-//! lands where the pointer meets what is under it, or the ground, on the
-//! snap grid across; failing both, in front of the camera, as a new Obj
-//! does. Either is one step to undo. Only while a prefab, model or scene is
+//! Placing prefabs, models and sounds, as Unity's drag from the Project
+//! window does: a prefab as an instance of it, a model as Objs drawing it
+//! (see `objs::place_model`), a sound as an Obj with an Audio Source
+//! playing it; a scene dragged onto either opens alongside the scenes open
+//! instead (see `scenes`). One dragged onto the Hierarchy lands where an
+//! Obj moved there would: inside the Obj it is let go of on, beside it near
+//! its edge, at the top of a scene on its header, and below the rows, at
+//! the top of the active scene. Let go of on a Scene view, it lands where
+//! the pointer meets what is under it, or the ground, on the snap grid
+//! across; failing both, in front of the camera, as a new Obj does. Either
+//! is one step to undo. Only while a prefab, model, sound or scene is
 //! dragged do the two take drops, so nothing else lights them up. In a
 //! prefab open on its own, what would land at the top goes inside its root
 //! instead, keeping its place in the world, as a prefab has one root.
@@ -30,7 +31,7 @@ use crate::{
 
 impl Editor {
     /// Places what was let go of on the Hierarchy or the Scene view, and lets
-    /// them take drops while a prefab, model or scene is dragged.
+    /// them take drops while a prefab, model, sound or scene is dragged.
     pub(super) fn update_placing(&mut self, renderer: &mut Renderer) {
         if let Some((source, to)) = self.dropped_on_hierarchies()
             && let Some((path, kind)) = self.dragged_placeable(&source)
@@ -65,18 +66,19 @@ impl Editor {
         }
     }
 
-    /// The path of the prefab, model or scene being dragged, when it is one
-    /// from the Project, and which it is.
+    /// The path of the prefab, model, sound or scene being dragged, when it
+    /// is one from the Project, and which it is.
     fn dragged_placeable(&self, source: &DragSource) -> Option<(String, AssetKind)> {
         let path = self.dragged_asset(source)?;
         let db = self.game.content.db();
         let kind = db.guid_of(&path).and_then(|guid| db.get(guid)).map(|entry| entry.kind)?;
-        matches!(kind, AssetKind::Prefab | AssetKind::Model | AssetKind::Scene).then_some((path, kind))
+        matches!(kind, AssetKind::Prefab | AssetKind::Model | AssetKind::Sound | AssetKind::Scene)
+            .then_some((path, kind))
     }
 
-    /// Places an instance of a prefab, or a model's Objs, where `to` says, or
-    /// at the top of the active scene, at `at` unless it goes inside an Obj,
-    /// and selects it.
+    /// Places an instance of a prefab, a model's Objs, or an Obj playing a
+    /// sound, where `to` says, or at the top of the active scene, at `at`
+    /// unless it goes inside an Obj, and selects it.
     fn place(&mut self, path: &str, kind: AssetKind, to: Option<Destination>, at: Vec3, renderer: &mut Renderer) {
         if kind == AssetKind::Prefab && self.would_hold_itself(path) {
             return self.notify("A prefab cannot hold an instance of itself");
@@ -89,6 +91,7 @@ impl Editor {
         };
         let made = match kind {
             AssetKind::Model => objs::place_model(&mut self.game, renderer, path, parent, scene, at),
+            AssetKind::Sound => objs::place_sound(&mut self.game, path, parent, scene, at),
             _ => objs::place_prefab(&mut self.game, Some(renderer), path, parent, scene, at),
         };
         let made = match made {
@@ -140,7 +143,7 @@ impl Editor {
         false
     }
 
-    /// Where a prefab or model let go of on the Scene view goes: where the pointer
+    /// Where what is let go of on the Scene view goes: where the pointer
     /// meets what is under it, or the ground, on the snap grid across it;
     /// failing both, a little way along the pointer's ray, on the grid.
     fn scene_landing(&self, renderer: &Renderer) -> Vec3 {

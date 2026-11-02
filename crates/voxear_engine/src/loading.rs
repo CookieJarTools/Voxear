@@ -3,8 +3,9 @@
 //!
 //! A level, a scene to load alongside those loaded, or a prefab. A worker
 //! thread, with its own reader, reads and parses every level, scene, prefab
-//! and material file the target needs, and prepares its models:
-//! parsing, decoding images and building LODs. It reads in waves, one batch
+//! and material file the target needs, decodes its sounds (only reading
+//! those kept to stream), and prepares its models: parsing, decoding images
+//! and building LODs. It reads in waves, one batch
 //! per step down the dependency graph (the level, then its scenes, then what
 //! they use), so the IO system works on each wave's reads together. The main thread then uploads
 //! the models a few at a time within a per-frame budget, and finishes. A
@@ -29,7 +30,8 @@ use voxear_assets::{AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef};
 use voxear_render::{CookedModel, PreparedModel, Renderer};
 
 use crate::{
-    content::Content,
+    audio::{Sound, load_sound},
+    content::{Content, sound_import},
     content_build::direct_needs,
     levels::{LevelChange, LevelOptions},
     prefab::PrefabId,
@@ -104,6 +106,7 @@ pub(crate) enum ReadyModel {
 struct Prepared {
     texts: HashMap<AssetGuid, Arc<str>>,
     models: Vec<(AssetGuid, ReadyModel)>,
+    sounds: Vec<(AssetGuid, Sound)>,
 }
 
 /// Counted by the worker, read by the main thread.
@@ -325,11 +328,12 @@ fn advance_one(
             }
         }
     }
-    // Texts go to content only when used, so a level held at ready keeps its
-    // own through any sweep another level change makes.
+    // Texts and sounds go to content only when used, so a level held at
+    // ready keeps its own through any sweep another level change makes.
     match &load.target {
         LoadTarget::Prefab(path) => {
             content.adopt_texts(std::mem::take(&mut prepared.texts));
+            content.adopt_sounds(std::mem::take(&mut prepared.sounds));
             load.status.prefab = Some(content.prefab(renderer, path)?);
             load.status.state = LoadState::Done;
             load.status.progress = 1.0;
@@ -343,6 +347,7 @@ fn advance_one(
                 return Ok(false);
             }
             content.adopt_texts(std::mem::take(&mut prepared.texts));
+            content.adopt_sounds(std::mem::take(&mut prepared.sounds));
             Ok(true)
         }
     }
@@ -396,12 +401,13 @@ fn gather(
             }
             let entry = db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
             let read = match entry.kind {
-                AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material => true,
+                AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material | AssetKind::Sound => {
+                    true
+                }
                 // A source model reads its own buffers and images as it is prepared.
                 AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
-                // Textures load with their models, scripts load UI documents themselves, and
-                // sounds are read as the scene that plays them comes in.
-                AssetKind::Texture | AssetKind::Ui | AssetKind::Sound => false,
+                // Textures load with their models, and scripts load UI documents themselves.
+                AssetKind::Texture | AssetKind::Ui => false,
             };
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));
@@ -423,6 +429,11 @@ fn gather(
                         model.decompress()?;
                     }
                     prepared.models.push((guid, ReadyModel::Cooked(model)));
+                }
+                (AssetKind::Sound, Some(data)) => {
+                    voxear_core::profile_scope!("Decode sound");
+                    let settings = sound_import(reader, &entry.path);
+                    prepared.sounds.push((guid, load_sound(data, &entry.path, settings)?));
                 }
                 (AssetKind::Model, None) if models.work != ModelWork::Skip => {
                     voxear_core::profile_scope!("Prepare model");

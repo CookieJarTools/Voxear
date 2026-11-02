@@ -1,7 +1,10 @@
 //! Background loading on a throwaway project: headless, and on an offscreen
 //! GPU for models.
 
-use voxear_engine::{Engine, Game, LevelOptions, LoadState, Project};
+use voxear_engine::{
+    Engine, Game, LevelOptions, LoadState, Project,
+    audio::{Audio, AudioSource, GameAudio},
+};
 use voxear_render::{MeshRenderer, Renderer, RendererSettings};
 use voxear_scene::Name;
 
@@ -286,4 +289,69 @@ fn a_level_change_can_load_its_shared_scenes_again() {
     game.tick(1.0 / 60.0, None);
     assert_ne!(start(&game), before, "loaded again, its Objs are new");
     assert_eq!(names(&game), ["Start"], "and the old ones went at the end of the frame");
+}
+
+/// A 16-bit mono WAV at 48 kHz holding one level for a tenth of a second.
+fn wav(level: i16) -> Vec<u8> {
+    let data = 4800u32 * 2;
+    let mut file = Vec::new();
+    file.extend_from_slice(b"RIFF");
+    file.extend_from_slice(&(36 + data).to_le_bytes());
+    file.extend_from_slice(b"WAVEfmt ");
+    for value in [16u32.to_le_bytes(), [1, 0, 1, 0], 48_000u32.to_le_bytes(), 96_000u32.to_le_bytes(), [2, 0, 16, 0]] {
+        file.extend_from_slice(&value);
+    }
+    file.extend_from_slice(b"data");
+    file.extend_from_slice(&data.to_le_bytes());
+    (0..4800).for_each(|_| file.extend_from_slice(&level.to_le_bytes()));
+    file
+}
+
+#[test]
+fn a_levels_sounds_are_read_and_decoded_on_the_loading_thread() {
+    let dir = project();
+    let files = [
+        ("Levels/River.level", "format = 1\n[[scene]]\nscene = \"Scenes/River.scene\"\n"),
+        (
+            "Scenes/River.scene",
+            "format = 1\n[[obj]]\nid = 1\nname = \"River\"\n[obj.audio]\nsound = \"Sounds/River.wav\"\nloop = true\n[[obj]]\nid = 2\nprefab = \"Prefabs/Bird.prefab\"\n",
+        ),
+        (
+            "Prefabs/Bird.prefab",
+            "format = 1\n[[obj]]\nid = 1\nname = \"Bird\"\n[obj.audio]\nsound = \"Sounds/Song.wav\"\n",
+        ),
+    ];
+    for (path, text) in files {
+        std::fs::create_dir_all(dir.path().join(path).parent().unwrap()).unwrap();
+        std::fs::write(dir.path().join(path), text).unwrap();
+    }
+    std::fs::create_dir_all(dir.path().join("Sounds")).unwrap();
+    std::fs::write(dir.path().join("Sounds/River.wav"), wav(8000)).unwrap();
+    std::fs::write(dir.path().join("Sounds/Song.wav"), wav(4000)).unwrap();
+    let mut game = game(&dir);
+    game.audio = GameAudio::new(Audio::quiet());
+    // The river is imported quieter, which the loading thread reads from its .meta.
+    let meta = dir.path().join("Sounds/River.wav.meta");
+    let text = std::fs::read_to_string(&meta).unwrap();
+    std::fs::write(&meta, format!("{text}\n[sound]\nvolume = 0.5\n")).unwrap();
+    game.start(None).unwrap();
+
+    let id = game.load_level_async("Levels/River.level").unwrap();
+    game.loads.set_allow_activation(id, false);
+    tick_while(&mut game, None, id, LoadState::Loading);
+    assert_eq!(game.content.loaded_sounds(), 0, "they come in with the level");
+
+    // With the files gone, the scene comes in only from what the loading thread read.
+    std::fs::remove_file(dir.path().join("Sounds/River.wav")).unwrap();
+    std::fs::remove_file(dir.path().join("Sounds/Song.wav")).unwrap();
+    game.loads.set_allow_activation(id, true);
+    tick_while(&mut game, None, id, LoadState::Ready);
+    game.tick(1.0 / 60.0, None);
+    assert_eq!(game.load_status(id).unwrap().state, LoadState::Done);
+    assert_eq!(names(&game), ["Bird", "River"]);
+    assert_eq!(game.content.loaded_sounds(), 2, "the scene's sound and the prefab's");
+    let world = &game.engine.world;
+    let river = world.query_ref::<(&Name, &AudioSource)>().into_iter().find(|(name, _)| name.0 == "River");
+    let sound = river.and_then(|(_, source)| source.sound).expect("the river plays its sound");
+    assert_eq!(game.content.loaded_sound(sound).unwrap().volume, 0.5);
 }

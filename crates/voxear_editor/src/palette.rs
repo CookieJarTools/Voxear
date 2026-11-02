@@ -19,7 +19,6 @@ use std::{cell::RefCell, rc::Rc};
 use voxear_assets::AssetKind;
 use voxear_ecs::Entity;
 use voxear_engine::Game;
-use voxear_render::{Camera, Light, MeshRenderer};
 use voxear_scene::{Destroying, EditorOnly, Name};
 use voxear_ui::{ItemFns, NodeId, Ui};
 
@@ -367,11 +366,11 @@ fn gather(sources: &Sources) -> Vec<Entry> {
 fn objs(game: &Game) -> Vec<Entry> {
     let world = &game.engine.world;
     let mut objs: Vec<Entry> = world
-        .query_ref::<(Entity, &Name, Option<&Camera>, Option<&Light>, Option<&MeshRenderer>)>()
+        .query_ref::<(Entity, &Name)>()
         .without::<EditorOnly>()
         .without::<Destroying>()
         .into_iter()
-        .map(|(entity, name, camera, light, mesh)| {
+        .map(|(entity, name)| {
             let key = match game.levels.tracked(&[entity]).first() {
                 Some(tracked) => format!("obj:{}:{}", tracked.scene, tracked.path),
                 None => format!("obj-named:{}", name.0),
@@ -379,7 +378,7 @@ fn objs(game: &Game) -> Vec<Entry> {
             Entry {
                 title: name.0.clone(),
                 detail: "Obj".into(),
-                icon: crate::hierarchy::icon(camera.is_some(), light.is_some(), mesh.is_some()),
+                icon: crate::hierarchy::icon(world, entity),
                 action: PaletteAction::Select(entity),
                 key,
                 command: false,

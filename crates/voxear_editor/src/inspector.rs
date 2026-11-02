@@ -29,7 +29,7 @@ use voxear_engine::{
     Game,
     script_types::{FieldInspector, InfoKind, ScriptTypes},
 };
-use voxear_render::{Camera, Light, MeshRenderer, Renderer};
+use voxear_render::Renderer;
 use voxear_scene::{Name, ScenePersistence, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
@@ -1665,11 +1665,7 @@ fn header(
     ui.add_class(top, "header-row");
     let tile = ui.panel(top, Style::row());
     ui.add_class(tile, "obj-tile");
-    let kind = crate::hierarchy::icon(
-        world.get::<Camera>(entity).is_some(),
-        world.get::<Light>(entity).is_some(),
-        world.get::<MeshRenderer>(entity).is_some(),
-    );
+    let kind = crate::hierarchy::icon(world, entity);
     let prefab = prefab_of(game, entity);
     // A prefab instance shows Unity's prefab cube, tinted.
     let instance = prefab.as_ref().is_some_and(|(_, root)| *root);

@@ -302,12 +302,21 @@ impl Content {
 
     /// Assets that are loaded already, which a background load can skip.
     pub(crate) fn loaded(&self) -> HashSet<AssetGuid> {
-        self.texts.keys().chain(self.models.keys()).chain(self.prefabs.files.keys()).copied().collect()
+        let files = self.texts.keys().chain(self.models.keys()).chain(self.prefabs.files.keys()).copied();
+        files.chain(self.sounds.loaded_guids()).collect()
     }
 
     /// Keeps texts a background load read, so later loads need no IO.
     pub(crate) fn adopt_texts(&mut self, texts: HashMap<AssetGuid, Arc<str>>) {
         self.texts.extend(texts);
+    }
+
+    /// Keeps sounds a background load read and decoded, so the scenes that
+    /// play them come in with no IO or decoding.
+    pub(crate) fn adopt_sounds(&mut self, sounds: Vec<(AssetGuid, Sound)>) {
+        for (guid, sound) in sounds {
+            self.sounds.adopt(guid, sound);
+        }
     }
 
     /// Uploads a model a background load prepared, unless it is loaded already.
@@ -716,10 +725,7 @@ impl Content {
         let guid = self.sounds.guid(id).with_context(|| format!("no sound has id {}", id.0))?;
         let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
         let bytes = self.read(&path)?;
-        // Built content ships a sound's `.meta` beside it for these.
-        let settings = self.read_text(&format!("{path}.{}", voxear_assets::META_EXTENSION)).ok();
-        let settings = settings.map_or_else(SoundImport::default, |text| SoundImport::from_meta(&text));
-        let sound = Arc::new(load_sound(bytes, &path, settings)?);
+        let sound = Arc::new(load_sound(bytes, &path, sound_import(self.reader(), &path))?);
         self.sounds.put(id, sound.clone());
         Ok(sound)
     }
@@ -741,6 +747,13 @@ impl Content {
     pub fn loaded_sounds(&self) -> usize {
         self.sounds.loaded()
     }
+}
+
+/// A sound's import settings, from its `.meta`, which built content ships
+/// beside it for these.
+pub(crate) fn sound_import(reader: &mut dyn AssetReader, path: &str) -> SoundImport {
+    let settings = reader.read_text(&format!("{path}.{}", voxear_assets::META_EXTENSION)).ok();
+    settings.map_or_else(SoundImport::default, |text| SoundImport::from_meta(&text))
 }
 
 fn primitive(name: &str) -> Result<Primitive> {

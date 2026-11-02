@@ -32,6 +32,7 @@ use voxear_assets::AssetGuid;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Levels,
+    audio::AudioSource,
     prefab::{FromPrefab, PrefabInstance},
     script_types::ScriptTypes,
 };
@@ -401,13 +402,19 @@ fn destination(shown: &Snapshot, target: u64, place: DropPlace) -> Option<Destin
     })
 }
 
-/// The icon for an Obj with a camera, a light or a mesh, in that order.
-pub fn icon(camera: bool, light: bool, mesh: bool) -> &'static str {
-    match (camera, light, mesh) {
-        (true, _, _) => "camera",
-        (_, true, _) => "light",
-        (_, _, true) => "cube",
-        _ => "obj",
+/// The icon for an Obj with a camera, a light, a mesh or an Audio Source,
+/// the first it has in that order, or else the plain Obj's.
+pub fn icon(world: &World, entity: Entity) -> &'static str {
+    if world.has::<Camera>(entity) {
+        "camera"
+    } else if world.has::<Light>(entity) {
+        "light"
+    } else if world.has::<MeshRenderer>(entity) {
+        "cube"
+    } else if world.has::<AudioSource>(entity) {
+        "audio"
+    } else {
+        "obj"
     }
 }
 
@@ -423,18 +430,15 @@ fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -
     for (scene, (_, _, entities)) in scenes.iter().enumerate() {
         places.extend(entities.iter().enumerate().map(|(at, entity)| (*entity, (scene, at))));
     }
-    let objs = world
-        .query_ref::<(Entity, &Name, Option<&Parent>, Option<&Camera>, Option<&Light>, Option<&MeshRenderer>)>()
-        .without::<EditorOnly>()
-        .without::<Destroying>();
+    let objs = world.query_ref::<(Entity, &Name, Option<&Parent>)>().without::<EditorOnly>().without::<Destroying>();
     let mut all: Vec<(Entity, Option<Entity>, Place)> = Vec::new();
-    for (entity, name, parent, camera, light, mesh) in objs {
+    for (entity, name, parent) in objs {
         if !filter.is_empty() && !name.0.to_lowercase().contains(filter) {
             continue;
         }
         let prefab = prefab(world, entity);
         // A prefab instance shows Unity's prefab cube, tinted.
-        let icon = if prefab == Some(true) { "cube" } else { icon(camera.is_some(), light.is_some(), mesh.is_some()) };
+        let icon = if prefab == Some(true) { "cube" } else { icon(world, entity) };
         let badge = if is_instance(world, types, entity) { "Instance" } else { "" };
         let row = Row { name: name.0.clone(), icon, header: false, badge, prefab };
         snapshot.rows.insert(entity.to_bits(), row);
@@ -503,4 +507,22 @@ fn prefab(world: &World, entity: Entity) -> Option<bool> {
         return Some(true);
     }
     world.has::<FromPrefab>(entity).then_some(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use voxear_core::math::Vec3;
+
+    use super::*;
+
+    #[test]
+    fn an_obj_shows_the_icon_of_what_it_has() {
+        let mut world = World::new();
+        let plain = world.spawn((Name("Obj".into()),));
+        let sound = world.spawn((Name("Waterfall".into()), AudioSource::default()));
+        let lamp = world.spawn((Name("Lamp".into()), AudioSource::default(), Light::point(Vec3::ONE, 1.0, 5.0)));
+        assert_eq!(icon(&world, plain), "obj");
+        assert_eq!(icon(&world, sound), "audio", "an Obj with only an Audio Source");
+        assert_eq!(icon(&world, lamp), "light", "a light comes before a sound");
+    }
 }

@@ -132,9 +132,10 @@ impl Audio {
         }
     }
 
-    /// The output device's name, once a sound has opened it.
-    pub fn device(&self) -> Option<&str> {
-        self.output.as_ref().and_then(|output| output.device.as_deref())
+    /// The output device's name, once a sound has opened it. It changes
+    /// when sound moves to another device, as when headphones are unplugged.
+    pub fn device(&self) -> Option<String> {
+        self.output.as_ref().and_then(Output::device)
     }
 
     /// Starts `sound` playing, returning its voice. A streamed sound whose

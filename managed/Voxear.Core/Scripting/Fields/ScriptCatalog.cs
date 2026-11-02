@@ -44,6 +44,7 @@ internal static class ScriptCatalog
 			WriteCommands(json, assembly);
 			WriteChecks(json, assembly);
 			WriteWindows(json, assembly);
+			WriteSideBar(json, assembly);
 			json.WriteEndObject();
 		}
 		return Encoding.UTF8.GetString(stream.ToArray());
@@ -270,6 +271,11 @@ internal static class ScriptCatalog
 		json.WriteStartArray("windows");
 		foreach (var type in EditorWindows.In(Loadable(assembly)))
 		{
+			if (typeof(SideBarItem).IsAssignableFrom(type))
+			{
+				continue;
+			}
+
 			var named = type.GetCustomAttribute<WindowAttribute>();
 			json.WriteStartObject();
 			json.WriteString("name", type.FullName);
@@ -284,6 +290,49 @@ internal static class ScriptCatalog
 			json.WriteEndObject();
 		}
 		json.WriteEndArray();
+	}
+
+	/// <summary>
+	/// What the game adds to the editor's side bar: each [SideBarButton] method, which takes nothing and returns
+	/// nothing, with its icon, title and menu, and each SideBarItem.
+	/// </summary>
+	private static void WriteSideBar(Utf8JsonWriter json, Assembly assembly)
+	{
+		json.WriteStartObject("side_bar");
+		json.WriteStartArray("buttons");
+		foreach (var type in Loadable(assembly))
+		{
+			foreach (var method in type?.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ?? [])
+			{
+				var button = method.GetCustomAttribute<SideBarButtonAttribute>();
+				if (button == null || method.GetParameters().Length > 0 || method.ReturnType != typeof(void))
+				{
+					continue;
+				}
+
+				json.WriteStartObject();
+				json.WriteString("title", button.Title);
+				json.WriteString("icon", IconNames.Of(button.Icon));
+				if (button.Menu != null)
+				{
+					json.WriteString("menu", button.Menu);
+				}
+				json.WriteString("type", type!.FullName);
+				json.WriteString("method", method.Name);
+				json.WriteEndObject();
+			}
+		}
+		json.WriteEndArray();
+		json.WriteStartArray("items");
+		foreach (var type in EditorWindows.In(Loadable(assembly)))
+		{
+			if (typeof(SideBarItem).IsAssignableFrom(type))
+			{
+				json.WriteStringValue(type.FullName);
+			}
+		}
+		json.WriteEndArray();
+		json.WriteEndObject();
 	}
 
 	private static void WriteCommands(Utf8JsonWriter json, Assembly assembly)

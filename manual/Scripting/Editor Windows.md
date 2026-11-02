@@ -45,3 +45,51 @@ public sealed class LevelTools : EditorWindow
 - `Closed` runs when you close the window, to let go of anything it holds.
 - A layout keeps the editor windows it shows, and opens them again with it.
 - When your scripts change, each window opens again from the new code. Its fields start again, as a new window's do.
+
+## Adding to the side bar
+
+The side bar is the narrow strip down the editor's left edge, with **Levels** at the top. Your game can add its own buttons there, under Levels.
+
+`[SideBarButton]` on a static method makes a button with an icon that runs it. The title shows when the pointer rests on the button:
+
+```csharp
+public static class LevelTools
+{
+    [SideBarButton(IconName.Grid, "Snap Everything")]
+    private static void SnapEverything()
+    {
+        // Runs as a command does: on the level you are editing, as one step to undo.
+    }
+}
+```
+
+Give several methods the same `Menu` and they share one button, which opens a menu of them:
+
+```csharp
+[SideBarButton(IconName.Light, "Light Every Lamp", Menu = "Lamps")]
+private static void LightEveryLamp() { }
+
+[SideBarButton(IconName.Light, "Put Every Lamp Out", Menu = "Lamps")]
+private static void PutEveryLampOut() { }
+```
+
+For more than a button, derive from `SideBarItem`. It is built and updated as an editor window is, with `Build` and `Update`, but it sits in the side bar, under the buttons, so keep it small: a light that says whether a server answers, or a count of something.
+
+```csharp
+public sealed class EnemyCount : SideBarItem
+{
+    private Label count = null!;
+
+    protected override void Build(UiElement root)
+    {
+        count = root.Add(new Label());
+    }
+
+    protected override void Update(UiDocument ui)
+    {
+        count.Text = Obj.FindAll("Enemy").Length.ToString();
+    }
+}
+```
+
+The side bar is built again whenever your scripts change.

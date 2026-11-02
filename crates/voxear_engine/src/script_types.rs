@@ -56,6 +56,35 @@ pub struct ScriptTypes {
     /// The game's own editor windows (`EditorWindow`).
     #[serde(default)]
     pub windows: Vec<ScriptWindow>,
+    /// What the game adds to the editor's side bar.
+    #[serde(default)]
+    pub side_bar: ScriptSideBar,
+}
+
+/// The game's own buttons and items on the editor's side bar, the strip
+/// down its left edge.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct ScriptSideBar {
+    /// `[SideBarButton]` methods.
+    #[serde(default)]
+    pub buttons: Vec<SideBarButton>,
+    /// `SideBarItem` classes, by full name, each built in the side bar.
+    #[serde(default)]
+    pub items: Vec<String>,
+}
+
+/// A `[SideBarButton]` method: what its tooltip, or its line in a menu,
+/// says, the icon, by Voxear UI's name for it, the menu it shares with
+/// others if any, and the method, which runs as a command does.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct SideBarButton {
+    pub title: String,
+    pub icon: String,
+    #[serde(default)]
+    pub menu: Option<String>,
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub method: String,
 }
 
 /// An `EditorWindow` of the game's: its full name, and the title and icon

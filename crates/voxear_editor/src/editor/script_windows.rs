@@ -8,7 +8,9 @@
 //! let go of, as when they reload, is opened again. Closing one closes it
 //! in the scripts too, and it goes for good. A layout that names one opens
 //! it again with the layout, as the editor's memory keeps which window each
-//! panel was.
+//! panel was. The game's side bar items (`SideBarItem`) are windows too,
+//! each built in a panel of the side bar rather than of the dock (see
+//! `side_bar`).
 
 use voxear_ecs::World;
 use voxear_engine::{Game, game_ui::UiNumbers};
@@ -36,6 +38,9 @@ pub(super) struct ScriptWindow {
     document: Option<u32>,
     /// It threw while opening, so it waits for the scripts to change.
     failed: bool,
+    /// It is a side bar item, in the side bar, which shows nothing while
+    /// it waits, having no room to say so.
+    in_rail: bool,
 }
 
 pub(super) struct ScriptWindows {
@@ -95,9 +100,45 @@ impl Editor {
             content,
             document: None,
             failed: false,
+            in_rail: false,
         };
         self.script_windows.open.push(opened);
         true
+    }
+
+    /// Builds a `SideBarItem` of the game's in `content`, a panel of the
+    /// side bar, once the scripts have started.
+    pub(super) fn open_rail_item(&mut self, type_name: &str, content: NodeId) {
+        let number = self.script_windows.next;
+        self.script_windows.next += 1;
+        let item = ScriptWindow {
+            panel: format!("side-bar-{number}"),
+            type_name: type_name.to_string(),
+            number,
+            content,
+            document: None,
+            failed: false,
+            in_rail: true,
+        };
+        self.script_windows.open.push(item);
+    }
+
+    /// Takes the side bar's items away, closing them in the scripts too.
+    pub(super) fn close_rail_items(&mut self) {
+        let (items, windows): (Vec<ScriptWindow>, Vec<ScriptWindow>) =
+            std::mem::take(&mut self.script_windows.open).into_iter().partition(|window| window.in_rail);
+        self.script_windows.open = windows;
+        for item in items {
+            if let Some(document) = item.document {
+                self.script_windows.numbers.close(document);
+                if let Some((scripts, world)) = window_scripts(&mut self.play, &mut self.game)
+                    && let Err(error) = scripts.close_window(world, item.number)
+                {
+                    tracing::error!(target: "script", "{error:#}");
+                }
+            }
+            self.ui.remove(item.content);
+        }
     }
 
     /// Takes one of the game's windows away for good, closing it in the
@@ -120,12 +161,12 @@ impl Editor {
 
     /// How many of the game's windows are open.
     pub fn script_window_count(&self) -> usize {
-        self.script_windows.open.len()
+        self.script_windows.open.iter().filter(|window| !window.in_rail).count()
     }
 
     /// The game's windows open, as the editor's memory keeps them.
     pub(super) fn kept_script_windows(&self, named: &[&str]) -> Vec<KeptScriptWindow> {
-        let open = self.script_windows.open.iter();
+        let open = self.script_windows.open.iter().filter(|window| !window.in_rail);
         let mut kept: Vec<KeptScriptWindow> = open
             .map(|window| KeptScriptWindow { panel: window.panel.clone(), window: window.type_name.clone() })
             .collect();
@@ -175,7 +216,8 @@ impl Editor {
                     if let Some(document) = window.document.take() {
                         self.script_windows.numbers.close(document);
                     }
-                    say(&mut self.ui, window.content, "Waiting for the scripts to start…");
+                    let waiting = if window.in_rail { "" } else { "Waiting for the scripts to start…" };
+                    say(&mut self.ui, window.content, waiting);
                 }
                 WindowUpdate::Threw(error) => {
                     let said = format!("{} threw: {error}", window.type_name);
@@ -217,7 +259,8 @@ impl Editor {
                 Err(error) => {
                     tracing::error!(target: "script", "{type_name}: {error}");
                     window.failed = true;
-                    say(&mut self.ui, content, &format!("{type_name} could not open: {error}"));
+                    let said = if window.in_rail { String::new() } else { format!("{type_name} could not open: {error}") };
+                    say(&mut self.ui, content, &said);
                 }
             }
         }
@@ -242,11 +285,14 @@ fn window_scripts<'a>(play: &'a mut Play, game: &'a mut Game) -> Option<(&'a mut
     }
 }
 
-/// A panel's only line, while its window waits or after it failed.
+/// A panel's only line, while its window waits or after it failed, or
+/// nothing at all.
 fn say(ui: &mut Ui, content: NodeId, text: &str) {
     for child in ui.children(content) {
         ui.remove(child);
     }
-    let label = ui.add_label(content, text);
-    ui.add_class(label, "placeholder");
+    if !text.is_empty() {
+        let label = ui.add_label(content, text);
+        ui.add_class(label, "placeholder");
+    }
 }

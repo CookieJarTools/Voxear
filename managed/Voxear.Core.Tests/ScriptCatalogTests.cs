@@ -140,6 +140,22 @@ internal static class ScriptCatalogTests
 	}
 
 	[Test]
+	private static void SideBarButtonsAndItemsAreListedForTheEditorsSideBar()
+	{
+		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestSideBarTools).Assembly));
+		var sideBar = document.RootElement.GetProperty("side_bar");
+		var buttons = sideBar.GetProperty("buttons").EnumerateArray().ToDictionary(b => b.GetProperty("method").GetString()!);
+		var snap = buttons["SnapEverything"];
+		Check.True(snap.GetProperty("title").GetString() == "Snap Everything" && snap.GetProperty("icon").GetString() == "grid", "a button's title and icon");
+		Check.True(!snap.TryGetProperty("menu", out _) && snap.GetProperty("type").GetString() == "Voxear.Tests.TestSideBarTools", "a button of its own");
+		Check.True(buttons["LightEveryLamp"].GetProperty("menu").GetString() == "Lamps", "a line of a menu");
+		var items = sideBar.GetProperty("items").EnumerateArray().Select(i => i.GetString()).ToList();
+		Check.True(items.Contains("Voxear.Tests.TestBeacon"), "a SideBarItem");
+		var windows = document.RootElement.GetProperty("windows").EnumerateArray().Select(w => w.GetProperty("name").GetString()).ToList();
+		Check.True(!windows.Contains("Voxear.Tests.TestBeacon"), "not a window of the Window menu");
+	}
+
+	[Test]
 	private static void AddComponentMenuPlacesABehaviour()
 	{
 		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestCampFire).Assembly));

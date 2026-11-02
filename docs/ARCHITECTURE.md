@@ -2289,6 +2289,13 @@ as the Inspector's own control goes only in a markup's `next` element; its eleme
   which are the same runtime, so a window keeps its state across play. One the scripts let go of, as on a
   reload, answers that it is gone and opens again. The editor's memory keeps which window each panel was, so a
   layout opens its windows again.
+- **The game's side bar** *(implemented)*, the easy way and the open way: `[SideBarButton(IconName.Grid, "Snap")]`
+  on a static method is an icon button on the editor's rail, under Levels, that runs it as a `[Command]` runs
+  (`Commands.Run` takes either attribute), its title the button's tooltip; methods sharing a `Menu` share one
+  button, which opens a menu of them beside it. A `SideBarItem` is an `EditorWindow` built in a panel of the
+  rail rather than of the dock, through the same calls (`open_rail_item`), for custom elements. ScriptInfo lists
+  both (`side_bar`: `buttons` and `items`, the items left out of `windows`), and `editor/side_bar.rs` builds them
+  again whenever the scripts' description changes.
 - **Behaviour inspectors** *(implemented)*: a `BehaviourInspector<T>` draws a whole behaviour, of type `T` or
   derived from it, in place of its fields, as Unity's custom `Editor` does. ScriptInfo names it on the behaviour
   (`inspector`), and it runs as a drawer of a field with no path: the editor opens it with the shown Obj, its value

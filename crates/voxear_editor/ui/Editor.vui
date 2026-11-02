@@ -29,6 +29,8 @@
         <Panel class="body">
             <Panel class="rail">
                 <Button name="rail-levels" class="icon-button rail-button"><Icon icon="level" /></Button>
+                <!-- The game's own buttons and items, from its scripts. -->
+                <Panel name="rail-scripts" class="rail-scripts" />
                 <Panel class="spacer" />
                 <Button name="rail-settings" class="icon-button rail-button"><Icon icon="settings" /></Button>
             </Panel>

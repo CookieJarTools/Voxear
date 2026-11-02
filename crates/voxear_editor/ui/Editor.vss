@@ -329,6 +329,17 @@
     background-color: var(--vx-selected);
 }
 
+/* The game's own buttons and items, under Levels. */
+.rail-scripts {
+    align-items: center;
+    gap: 4px;
+}
+
+.rail-item {
+    width: 40px;
+    align-items: center;
+}
+
 /* The Project panel's rename bar, over its files while a name is typed. */
 .project-rename {
     flex-direction: row;

@@ -2683,6 +2683,44 @@ const SCRIPTS_IN_FOLDERS: &str = r##"{"behaviours": [
   {"name": "Game.Spawned", "bases": [], "interfaces": [], "fields": [], "menu": ""}
 ], "types": {}, "commands": []}"##;
 
+/// Side bar buttons, one alone and two sharing a menu, and an item.
+const SIDE_BAR: &str = r##"{"behaviours": [], "types": {}, "commands": [], "side_bar": {"buttons": [
+  {"title": "Snap Everything", "icon": "grid", "type": "Game.Tools", "method": "Snap"},
+  {"title": "Light Every Lamp", "icon": "light", "menu": "Lamps", "type": "Game.Tools", "method": "Light"},
+  {"title": "Put Every Lamp Out", "icon": "light", "menu": "Lamps", "type": "Game.Tools", "method": "Out"}
+], "items": ["Game.Beacon"]}}"##;
+
+#[test]
+fn the_game_adds_buttons_menus_and_items_to_the_side_bar() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    editor.set_script_types(voxear_engine::script_types::parse(SIDE_BAR).unwrap());
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.side_bar_count(), (2, 1), "a button alone, one for the menu, and the item");
+    let slot = editor.ui.find(editor.ui.root(), "rail-scripts").unwrap();
+    let buttons: Vec<NodeId> = editor.ui.children(slot).into_iter().filter(|&b| editor.ui.has_class(b, "rail-button")).collect();
+
+    // Resting on a button shows what it does beside it.
+    let [x, y, w, h] = editor.ui.rect(buttons[0]);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    for _ in 0..40 {
+        frame(&mut editor, &mut renderer);
+    }
+    let tooltip = editor.ui.find(editor.ui.root(), "tooltip").unwrap();
+    assert!(editor.ui.is_visible(tooltip) && editor.ui.text(tooltip) == "Snap Everything", "{}", editor.ui.text(tooltip));
+    assert!(editor.ui.rect(tooltip)[0] > x + w, "beside the button");
+
+    // The menu's button opens a menu of its lines, beside it.
+    click(&mut editor.ui, buttons[1]);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_item(&editor.ui, "Light Every Lamp").is_some() && menu_item(&editor.ui, "Put Every Lamp Out").is_some());
+
+    // When the scripts change, the side bar is built again from them.
+    editor.set_script_types(voxear_engine::script_types::parse(SPINNER_WITH_LISTS).unwrap());
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.side_bar_count(), (0, 0));
+    assert!(editor.ui.children(slot).is_empty());
+}
+
 #[test]
 fn add_component_is_a_search_with_folders() {
     let Some((mut renderer, mut editor)) = open() else { return };

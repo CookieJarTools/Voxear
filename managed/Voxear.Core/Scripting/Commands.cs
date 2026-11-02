@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace Voxear.Scripting;
 
-/// <summary>Finds and runs the [Command] methods the editor's palette lists.</summary>
+/// <summary>Finds and runs the [Command] methods the editor's palette lists, and the [SideBarButton] methods of its side bar.</summary>
 internal static class Commands
 {
 	private const BindingFlags Static = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
@@ -13,7 +13,7 @@ internal static class Commands
 		foreach (var assembly in GameScripts.Assemblies)
 		{
 			var method = assembly.GetType(typeName)?.GetMethod(methodName, Static, System.Type.EmptyTypes);
-			if (method == null || method.GetCustomAttribute<CommandAttribute>() == null)
+			if (method == null || (method.GetCustomAttribute<CommandAttribute>() == null && method.GetCustomAttribute<SideBarButtonAttribute>() == null))
 			{
 				continue;
 			}

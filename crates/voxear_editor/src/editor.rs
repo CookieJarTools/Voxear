@@ -26,6 +26,7 @@ mod scenes;
 mod script_actions;
 mod selection;
 mod script_windows;
+mod side_bar;
 mod tooltip;
 mod windows;
 
@@ -127,6 +128,8 @@ struct Nodes {
     /// button and pages.
     rail_levels: NodeId,
     rail_settings: NodeId,
+    /// Where the game's own side bar buttons and items go.
+    rail_scripts: NodeId,
     drawer: NodeId,
     drawer_title: NodeId,
     drawer_close: NodeId,
@@ -292,6 +295,7 @@ pub struct Editor {
     extra_projects: Vec<projects::ExtraProject>,
     /// The game's own windows written in C#, opened from a window's menu.
     script_windows: script_windows::ScriptWindows,
+    side_bar: side_bar::SideBar,
     /// The desktop windows open for panels floated out of the editor's
     /// window; see `desktop_windows`.
     desktop: Vec<desktop_windows::Opened>,
@@ -385,6 +389,7 @@ impl Editor {
             windows: find(&ui, "windows"),
             rail_levels: find(&ui, "rail-levels"),
             rail_settings: find(&ui, "rail-settings"),
+            rail_scripts: find(&ui, "rail-scripts"),
             drawer: find(&ui, "drawer"),
             drawer_title: find(&ui, "drawer-title"),
             drawer_close: find(&ui, "drawer-close"),
@@ -523,6 +528,7 @@ impl Editor {
             extra_hierarchies: Vec::new(),
             extra_projects: Vec::new(),
             script_windows: script_windows::ScriptWindows::default(),
+            side_bar: side_bar::SideBar::default(),
             desktop: Vec::new(),
             asset_previews: AssetPreviews::default(),
             imports: importing::Imports::new(&root),
@@ -710,6 +716,7 @@ impl Editor {
             self.memory_profiler.update(&mut self.ui, memory_shown, &self.game, renderer);
         }
         self.update_drawer();
+        self.update_side_bar();
         self.update_prefab_mode(renderer);
         self.update_settings();
         let theme = self.memory.settings.theme();

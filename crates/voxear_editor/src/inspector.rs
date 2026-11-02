@@ -286,6 +286,9 @@ pub struct Inspector {
     /// The Prefab row's Open and Select, and the prefab's path, for a prefab
     /// instance or an Obj in one.
     prefab_buttons: Option<(NodeId, NodeId, String)>,
+    /// The other Objs selected with the one shown, which an edit made here
+    /// goes to as well, each that has what was edited.
+    also: Vec<Entity>,
 }
 
 impl Inspector {
@@ -333,6 +336,7 @@ impl Inspector {
             drawers: FieldDrawers::new(owner),
             inspected: Vec::new(),
             prefab_buttons: None,
+            also: Vec::new(),
         }
     }
 
@@ -707,6 +711,11 @@ impl Inspector {
             return;
         };
         let (name_row, name, persistent, prefab_buttons) = header(ui, self.root, game, entity);
+        if !self.also.is_empty() {
+            let count = self.also.len() + 1;
+            let many = ui.add_label(self.root, &format!("Editing {count} Objs: a change goes to each that has it."));
+            ui.add_class(many, "inspector-many");
+        }
         self.prefab_buttons = prefab_buttons;
 
         let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", false);
@@ -1071,6 +1080,15 @@ impl Inspector {
 
     /// Applies what was typed or picked, and shows changes made elsewhere.
     /// Returns what was edited this frame, for undo.
+    /// Makes edits here go to `others` too, the other Objs selected with the
+    /// one shown, and says how many Objs it edits.
+    pub fn set_also(&mut self, ui: &mut Ui, game: &Game, others: Vec<Entity>, playing: bool) {
+        if others != self.also {
+            self.also = others;
+            self.show(ui, game, self.shown, playing);
+        }
+    }
+
     pub fn update(
         &mut self,
         ui: &mut Ui,
@@ -1092,6 +1110,9 @@ impl Inspector {
             return None;
         }
         let before = ObjState::of(&game.engine.world, entity);
+        let world = &game.engine.world;
+        let others_before: Vec<(Entity, ObjState)> =
+            self.also.iter().filter_map(|&other| Some((other, ObjState::of(world, other)?))).collect();
         if self.update_lists(ui, game, entity, renderer.as_deref_mut()) {
             self.show(ui, game, Some(entity), playing);
             let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);
@@ -1111,7 +1132,13 @@ impl Inspector {
             let Some(current) = props::get(game, &self.types, entity, &row.prop) else { continue };
             if let Some(picked) = read_control(ui, &row.control, &current) {
                 let picked = clamp(picked, row.limits);
-                let changed = props::set(game, renderer.as_deref_mut(), &self.types, entity, &row.prop, picked);
+                let changed = props::set(game, renderer.as_deref_mut(), &self.types, entity, &row.prop, picked.clone());
+                // The same value goes to each other Obj selected that has the same thing.
+                for &other in self.also.iter().filter(|_| changed) {
+                    if props::get(game, &self.types, other, &row.prop).is_some() {
+                        props::set(game, renderer.as_deref_mut(), &self.types, other, &row.prop, picked.clone());
+                    }
+                }
                 if let (true, Prop::Field { behaviour, .. }) = (changed, &row.prop)
                     && let Some(method) = &attributes::top(&self.types, &row.prop).on_changed
                 {
@@ -1123,7 +1150,17 @@ impl Inspector {
             }
         }
         let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);
-        (before != after).then_some(Edit::Changed { entity, before, after })
+        let world = &game.engine.world;
+        let mut edits: Vec<Edit> = (before != after).then_some(Edit::Changed { entity, before, after }).into_iter().collect();
+        edits.extend(others_before.into_iter().filter_map(|(other, before)| {
+            let after = ObjState::of(world, other)?;
+            (before != after).then_some(Edit::Changed { entity: other, before, after })
+        }));
+        // Several Objs edited at once are one step to undo.
+        match edits.len() {
+            0 | 1 => edits.pop(),
+            _ => Some(Edit::Group(edits)),
+        }
     }
 
     fn update_transform(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, transform: Transform) {
@@ -1131,15 +1168,20 @@ impl Inspector {
         let world = &mut game.engine.world;
         if ui.changed(fields.name) {
             let name = ui.text(fields.name);
-            if let Some(current) = world.get_mut::<Name>(entity) {
-                current.0 = name;
+            for target in std::iter::once(entity).chain(self.also.iter().copied()) {
+                if let Some(current) = world.get_mut::<Name>(target) {
+                    current.0 = name.clone();
+                }
             }
         }
         if ui.changed(fields.persistent) {
-            if ui.is_checked(fields.persistent) {
-                world.insert(entity, ScenePersistence);
-            } else {
-                world.remove::<ScenePersistence>(entity);
+            let persistent = ui.is_checked(fields.persistent);
+            for target in std::iter::once(entity).chain(self.also.iter().copied()) {
+                if persistent {
+                    world.insert(target, ScenePersistence);
+                } else {
+                    world.remove::<ScenePersistence>(target);
+                }
             }
         }
         ui.set_checked(fields.persistent, world.has::<ScenePersistence>(entity));
@@ -1157,6 +1199,29 @@ impl Inspector {
             && let Some(current) = world.get_mut::<Transform>(entity)
         {
             *current = edited;
+        }
+        // The other Objs selected take the parts that were edited, each axis on its own, and keep the rest.
+        let moved = |from: Vec3, to: Vec3| [from.x != to.x, from.y != to.y, from.z != to.z];
+        let (position, turned, scale) = (moved(transform.position, edited.position), moved(euler, rotation), moved(transform.scale, edited.scale));
+        for &other in self.also.iter().filter(|_| edited != transform) {
+            let Some(current) = world.get_mut::<Transform>(other) else { continue };
+            let (y, x, z) = current.rotation.to_euler(EulerRot::YXZ);
+            let mut angles = Vec3::new(x, y, z) * (180.0 / std::f32::consts::PI);
+            for axis in 0..3 {
+                if position[axis] {
+                    current.position[axis] = edited.position[axis];
+                }
+                if turned[axis] {
+                    angles[axis] = rotation[axis];
+                }
+                if scale[axis] {
+                    current.scale[axis] = edited.scale[axis];
+                }
+            }
+            if turned.contains(&true) {
+                let r = angles * (std::f32::consts::PI / 180.0);
+                current.rotation = Quat::from_euler(EulerRot::YXZ, r.y, r.x, r.z);
+            }
         }
         write(ui, &fields.position, edited.position);
         write(ui, &fields.rotation, if rotation != euler { rotation } else { euler });

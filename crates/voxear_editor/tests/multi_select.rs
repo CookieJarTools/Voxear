@@ -120,6 +120,44 @@ fn several_objs_are_selected_moved_and_deleted_together() {
     editor.undo(&mut renderer);
     assert_eq!((position(&editor, a), position(&editor, b)), (start_a, start_b), "one undo takes both back");
 
+    // The Inspector shows the active one, says how many it edits, and a value typed goes to both,
+    // each keeping its other axes; one undo takes both back.
+    editor.select_many(vec![a, b]);
+    frame(&mut editor, &mut renderer);
+    let says = |editor: &voxear_editor::Editor, text: &str| {
+        let mut stack = vec![editor.ui.root()];
+        let mut found = false;
+        while let Some(node) = stack.pop() {
+            found |= editor.ui.text(node) == text;
+            stack.extend(editor.ui.children(node));
+        }
+        found
+    };
+    assert!(says(&editor, "Editing 2 Objs: a change goes to each that has it."));
+    let mut numbers = Vec::new();
+    let mut stack = vec![editor.ui.root()];
+    while let Some(node) = stack.pop() {
+        if editor.ui.has_class(node, "axis-input") {
+            numbers.push(node);
+        }
+        stack.extend(editor.ui.children(node));
+    }
+    numbers.sort_by(|p, q| editor.ui.rect(*p)[1].total_cmp(&editor.ui.rect(*q)[1]).then(editor.ui.rect(*p)[0].total_cmp(&editor.ui.rect(*q)[0])));
+    let ui = &mut editor.ui;
+    ui.focus(numbers[0]);
+    ui.set_modifiers(voxear_ui::Modifiers { shift: false, control: true });
+    ui.key_down(voxear_ui::Key::Char('a'));
+    ui.set_modifiers(voxear_ui::Modifiers::default());
+    ui.text_input("3.5");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    let (now_a, now_b) = (position(&editor, a), position(&editor, b));
+    assert_eq!((now_a.x, now_b.x), (3.5, 3.5), "Position X typed goes to both");
+    assert_eq!((now_a.y, now_a.z, now_b.y, now_b.z), (start_a.y, start_a.z, start_b.y, start_b.z), "the rest kept");
+    editor.undo(&mut renderer);
+    assert_eq!((position(&editor, a), position(&editor, b)), (start_a, start_b), "one undo takes both back");
+
     // A box over the whole Scene view selects all it shows.
     editor.select(None);
     let [x, y, w, h] = camera.rect;

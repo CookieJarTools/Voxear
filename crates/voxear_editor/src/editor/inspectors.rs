@@ -96,6 +96,9 @@ impl Editor {
             let selected = self.selected();
             self.inspector.show(&mut self.ui, &self.game, selected, playing);
         }
+        // An Inspector not locked edits every Obj selected, shown on the active one.
+        let others = if self.inspector.is_locked() { Vec::new() } else { self.others.clone() };
+        self.inspector.set_also(&mut self.ui, &self.game, others, playing);
         let live = self.pull_live_fields();
         let edit = self.inspector.update(&mut self.ui, &mut self.game, Some(renderer), playing);
         let edit = self.run_inspector_drawers(edit);

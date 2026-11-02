@@ -2095,6 +2095,15 @@ Names given with `nameof` are checked by the compiler already; these catch names
 kind. It is built against Roslyn 4.8, which newer compilers load, and tested by compiling snippets of game code in
 memory (`Voxear.Analyzers.Tests`).
 
+**Handles on fields** *(implemented)*, so a value is dragged where it belongs with no editor code:
+`[PositionHandle]` (a `Vector3`, or every point of a list joined as a path), `[RadiusHandle]`, `[DirectionHandle]`,
+`[BoundsHandle]`, `[ArcHandle]` and `[SliderHandle]`, each with a `Color`, and points and directions in the Obj's
+space unless `Space = HandleSpace.World`. ScriptInfo writes each as a `handle` in the field's inspector settings
+(`FieldHandle`), and the editor's `field_handles` draws them for the selected Obj while editing, as dots under the
+move, rotate and scale handles: a press on one is taken before the UI, as theirs is, the drag writes the field
+through the same path the Inspector uses (`fields::set_raw_at`), and the Obj before the drag and after is one step
+to undo. Ctrl snaps points to the snap distance, lengths to tenths, and angles to 5°.
+
 **Custom drawers** *(implemented)* are C#, built with Voxear UI, the UI games draw theirs with: `ValueDrawer<T>`
 draws every field of a type, and `AttributeDrawer<TAttribute, T>` (or `AttributeDrawer<TAttribute>` for any type)
 the fields marked with an attribute of the game's own. A drawer builds its elements in code in `Build(root)`, once,

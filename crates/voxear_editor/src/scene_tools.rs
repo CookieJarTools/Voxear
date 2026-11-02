@@ -233,7 +233,7 @@ fn enter_box(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f32>
 
 /// Where on a line through `point` along `axis` comes nearest a ray, as a
 /// distance along the axis; `None` when they run side by side.
-fn along_axis((origin, direction): (Vec3, Vec3), point: Vec3, axis: Vec3) -> Option<f32> {
+pub(crate) fn along_axis((origin, direction): (Vec3, Vec3), point: Vec3, axis: Vec3) -> Option<f32> {
     let between = origin - point;
     let b = direction.dot(axis);
     let denominator = 1.0 - b * b;
@@ -244,7 +244,7 @@ fn along_axis((origin, direction): (Vec3, Vec3), point: Vec3, axis: Vec3) -> Opt
 }
 
 /// Where a ray crosses a plane, or `None` when it runs along it.
-fn on_plane((origin, direction): (Vec3, Vec3), point: Vec3, normal: Vec3) -> Option<Vec3> {
+pub(crate) fn on_plane((origin, direction): (Vec3, Vec3), point: Vec3, normal: Vec3) -> Option<Vec3> {
     let facing = direction.dot(normal);
     if facing.abs() < 1e-5 {
         return None;
@@ -720,7 +720,7 @@ fn to_segment(point: [f32; 2], from: [f32; 2], to: [f32; 2]) -> f32 {
 }
 
 /// A value rounded to a step; a step of 0 leaves it as it is.
-fn snapped(value: f32, step: f32) -> f32 {
+pub(crate) fn snapped(value: f32, step: f32) -> f32 {
     if step > 0.0 { (value / step).round() * step } else { value }
 }
 

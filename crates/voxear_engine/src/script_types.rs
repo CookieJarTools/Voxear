@@ -246,6 +246,47 @@ pub struct FieldInspector {
     pub drawers: Vec<String>,
     /// For a list, the drawers of each of its items.
     pub item_drawers: Vec<String>,
+    /// A handle that edits it in the Scene view, as `[PositionHandle]` and
+    /// the others ask.
+    pub handle: Option<FieldHandle>,
+}
+
+/// A Scene view handle on a field (`[PositionHandle]`, `[RadiusHandle]`,
+/// `[DirectionHandle]`, `[BoundsHandle]`, `[ArcHandle]` and
+/// `[SliderHandle]` in Voxear.Core), drawn for the selected Obj.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct FieldHandle {
+    pub kind: HandleKind,
+    /// A point or direction in the world's space, rather than the Obj's own.
+    #[serde(default)]
+    pub world: bool,
+    /// For a slider, which of the Obj's axes: 0, 1 or 2 for X, Y or Z.
+    #[serde(default)]
+    pub axis: usize,
+    /// For an arc, how far from the Obj it is drawn, in metres.
+    #[serde(default)]
+    pub radius: Option<f32>,
+    /// Its colour as hex, or none for the usual.
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+/// What a field's Scene view handle edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HandleKind {
+    /// A Vector3 point, or each point of a list of them.
+    Position,
+    /// A float radius around the Obj.
+    Radius,
+    /// A Vector3 direction from the Obj, with its length.
+    Direction,
+    /// A Vector3 size of a box around the Obj.
+    Bounds,
+    /// A float angle in degrees, open around the Obj's forward.
+    Arc,
+    /// A float distance along one of the Obj's axes.
+    Slider,
 }
 
 /// A `[ListDrawerSettings]`: how many items show at a time, 0 for all, and

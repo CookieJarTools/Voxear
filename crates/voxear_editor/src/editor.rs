@@ -53,6 +53,7 @@ use crate::{
     build_window::BuildWindow,
     console::Console,
     entities_panel::EntitiesPanel,
+    field_handles::FieldHandles,
     fields::{self, Pick},
     frame_debugger_panel::FrameDebuggerPanel,
     gizmos,
@@ -219,6 +220,10 @@ pub struct Editor {
     /// The Scene view's tools, the handle under the pointer, and a press on
     /// one or a release of the one held, since the last frame.
     tools: SceneTools,
+    /// The handles that edit the selected Obj's fields in the Scene view,
+    /// and the Obj as it was when a drag of one began, for undo.
+    field_handles: FieldHandles,
+    field_drag_start: Option<ObjState>,
     hovered_handle: Option<Handle>,
     pressed_handle: Option<[f32; 2]>,
     released_handle: bool,
@@ -452,6 +457,8 @@ impl Editor {
             commands: Vec::new(),
             kept: Vec::new(),
             tools: SceneTools::new(),
+            field_handles: FieldHandles::default(),
+            field_drag_start: None,
             hovered_handle: None,
             pressed_handle: None,
             released_handle: false,
@@ -1109,15 +1116,30 @@ impl Editor {
         };
         let point = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
         let world = &self.game.engine.world;
-        if let (Some(point), Some(entity)) = (self.pressed_handle.take(), selected)
-            && let Some(handle) = self.tools.handle_at(world, renderer, &camera, entity, point)
-        {
-            self.tools.begin(world, renderer, &camera, entity, handle, point);
+        // The fields' handles are edited, not played: only while editing.
+        let editing = (!self.is_playing()).then_some(selected).flatten();
+        if let (Some(point), Some(entity)) = (self.pressed_handle.take(), selected) {
+            match self.tools.handle_at(world, renderer, &camera, entity, point) {
+                Some(handle) => self.tools.begin(world, renderer, &camera, entity, handle, point),
+                None if editing.is_some()
+                    && self.field_handles.begin(world, self.inspector.types(), &camera, entity, point) =>
+                {
+                    self.field_drag_start = ObjState::of(world, entity);
+                }
+                None => {}
+            }
         }
         if self.tools.is_dragging()
             && let Some(point) = point
         {
             self.tools.drag_to(&mut self.game.engine.world, &camera, point, self.control);
+        }
+        if self.field_handles.is_dragging()
+            && let Some(point) = point
+        {
+            let snap = (self.control, self.tools.snap);
+            let types = self.inspector.types().clone();
+            self.field_handles.drag_to(&mut self.game.engine.world, &types, &camera, point, snap);
         }
         if std::mem::take(&mut self.released_handle) {
             self.end_drag();
@@ -1128,12 +1150,15 @@ impl Editor {
             self.hovered_handle =
                 over.zip(selected).and_then(|(p, e)| self.tools.handle_at(world, renderer, &camera, e, p));
             self.tools.hover(self.hovered_handle);
+            let over_field = over.filter(|_| self.hovered_handle.is_none());
+            self.field_handles.hover(world, self.inspector.types(), &camera, editing, over_field);
             self.click_to_select(renderer, &camera, point);
         }
         // Gizmos go under the handles, which are drawn last.
         let world = &self.game.engine.world;
         let mut shapes =
             if self.scene.show_gizmos { gizmos::shapes(world, &camera, self.selected()) } else { Vec::new() };
+        shapes.extend(self.field_handles.shapes(world, self.inspector.types(), &camera, editing));
         shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
         self.ui.set_shapes(self.scene.handles, shapes);
     }
@@ -1153,10 +1178,26 @@ impl Editor {
 
     /// Lets go of a handle; the drag is one step to undo.
     fn end_drag(&mut self) {
+        if let Some(entity) = self.field_handles.end() {
+            return self.end_field_drag(entity);
+        }
         let Some((entity, start)) = self.tools.end() else { return };
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
         let before = ObjState { transform: start, ..after.clone() };
         if before != after && !self.is_playing() {
+            self.history.record_step(Edit::Changed { entity, before, after });
+            self.unsaved = true;
+        }
+    }
+
+    /// Lets go of a field's handle: the fields it changed are one step to
+    /// undo, from the Obj as it was when the drag began.
+    fn end_field_drag(&mut self, entity: Entity) {
+        let (Some(before), Some(after)) = (self.field_drag_start.take(), ObjState::of(&self.game.engine.world, entity))
+        else {
+            return;
+        };
+        if before != after {
             self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
         }
@@ -1603,12 +1644,14 @@ impl Editor {
         if let WindowEvent::MouseInput { state, button: winit::event::MouseButton::Left, .. } = event {
             let pressed = *state == ElementState::Pressed;
             // A handle takes the press before the UI sees it, so it is not also a click.
-            if pressed && self.hovered_handle.is_some() && self.over_viewport() {
+            let over_handle = self.hovered_handle.is_some() || self.field_handles.is_hovered();
+            if pressed && over_handle && self.over_viewport() {
                 self.pressed_handle = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
                 return true;
             }
             // A press and release inside one frame still ends the drag the press begins.
-            if !pressed && (self.tools.is_dragging() || self.pressed_handle.is_some()) {
+            let dragging = self.tools.is_dragging() || self.field_handles.is_dragging();
+            if !pressed && (dragging || self.pressed_handle.is_some()) {
                 self.released_handle = true;
                 return true;
             }

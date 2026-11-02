@@ -473,10 +473,11 @@ Still to do in M3:
     - [ ] `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`
       and `IsHovered`; its gizmos are clickable and select their Obj; a type's gizmos can be hidden from the
       Gizmos menu, and `[GizmoIcon]` gives it an icon by typed reference
-    - [ ] attribute handles that edit fields in the Scene view with no code, undoable, with prefab overrides and
-      several Objs selected: `[PositionHandle]` (local or world, every item of a list), `[RadiusHandle]`,
-      `[BoundsHandle]`, `[ArcHandle]`, `[DirectionHandle]` and `[SliderHandle]`; the move, rotate and scale
-      handles on points inside an Obj, such as a path's points, picked by clicking them
+    - [x] attribute handles that edit fields in the Scene view with no code, undoable: `[PositionHandle]` (local or
+      world, every item of a list joined as a path), `[RadiusHandle]`, `[BoundsHandle]`, `[ArcHandle]`,
+      `[DirectionHandle]` and `[SliderHandle]`
+    - [ ] the same with several Objs selected, and the move, rotate and scale handles on points inside an Obj,
+      such as a path's points, picked by clicking them
     - [ ] for custom tools, handles that return the new value, with undo and change callbacks built in:
       `target = Handles.Position(target)`, `Handles.Radius`, `Handles.Slider`, `Handles.Disc`,
       `Handles.FreeMove` and `Handles.Button`, in `DrawGizmos` while selected

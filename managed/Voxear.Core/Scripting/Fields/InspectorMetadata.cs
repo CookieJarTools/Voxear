@@ -66,10 +66,49 @@ namespace Voxear.Scripting
 			json.WriteEndArray();
 		}
 
+		/// <summary>A Scene view handle: its kind, and what else it needs, such as its space, axis or colour.</summary>
+		private static void WriteHandle(Utf8JsonWriter json, HandleAttribute handle)
+		{
+			json.WriteStartObject("handle");
+			switch (handle)
+			{
+				case PositionHandleAttribute position:
+					json.WriteString("kind", "position");
+					json.WriteBoolean("world", position.Space == HandleSpace.World);
+					break;
+				case RadiusHandleAttribute:
+					json.WriteString("kind", "radius");
+					break;
+				case DirectionHandleAttribute direction:
+					json.WriteString("kind", "direction");
+					json.WriteBoolean("world", direction.Space == HandleSpace.World);
+					break;
+				case BoundsHandleAttribute:
+					json.WriteString("kind", "bounds");
+					break;
+				case ArcHandleAttribute arc:
+					json.WriteString("kind", "arc");
+					json.WriteNumber("radius", arc.Radius);
+					break;
+				case SliderHandleAttribute slider:
+					json.WriteString("kind", "slider");
+					json.WriteNumber("axis", (int)slider.Axis);
+					break;
+			}
+			if (handle.Color != null)
+			{
+				json.WriteString("color", handle.Color);
+			}
+			json.WriteEndObject();
+		}
+
 		private static void WriteOne(Utf8JsonWriter json, Attribute attribute)
 		{
 			switch (attribute)
 			{
+				case HandleAttribute handle:
+					WriteHandle(json, handle);
+					break;
 				case GroupAttribute group:
 					WriteGroup(json, group);
 					break;

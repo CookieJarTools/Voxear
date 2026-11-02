@@ -83,6 +83,29 @@ public float OpenTime = 1f;
 
 The Code Reference, in VoxDocs, has a page for every attribute: look in the **Inspector** folder under **Voxear**. When no attribute shows a field the way you want, write your own drawer: see [[Custom Drawers]].
 
+## Editing fields in the Scene view
+
+Some values are easier to set by dragging them where they belong than by typing numbers. A handle attribute puts a field in the Scene view, as dots to drag, while its Obj is selected:
+
+```csharp
+[PositionHandle] public Vector3 SpawnPoint = new(0f, 0f, 2f);
+[RadiusHandle] public float HearingRange = 8f;
+[PositionHandle(Space = HandleSpace.World)] public List<Vector3> Patrol = [];
+```
+
+| Attribute | On a | What you drag |
+| --- | --- | --- |
+| `[PositionHandle]` | `Vector3`, or a list of them | A point. A list shows each point, joined in order as a path |
+| `[RadiusHandle]` | `float` | The edge of a circle around the Obj, its radius in metres |
+| `[DirectionHandle]` | `Vector3` | The tip of an arrow from the Obj, for a direction and its length |
+| `[BoundsHandle]` | `Vector3` | The faces of a box around the Obj, its size in metres |
+| `[ArcHandle]` | `float` | The end of an arc around the Obj's front, its angle in degrees |
+| `[SliderHandle]` | `float` | A point along one of the Obj's axes, its distance in metres |
+
+Points and directions move and turn with the Obj, unless you give them `Space = HandleSpace.World`. Every handle takes a `Color`, such as `Color = "#ff8800"`, and `[ArcHandle]` a `Radius` and `[SliderHandle]` an `Axis`.
+
+Each drag is one step to undo. Hold **Ctrl** while dragging to snap: points to the snap distance shown in the Scene view, other values to tenths of a metre, and angles to 5°. The handles show while you edit, not while the game plays, and the move, rotate and scale handles sit on top of them. Choose the Select tool to reach a dot underneath.
+
 ## When a script's fields change
 
 When you save a script, the editor builds it and shows its fields as they now are. If the build fails, the Inspector keeps showing the fields from the last good build, and the Console says what is wrong.

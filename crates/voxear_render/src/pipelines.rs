@@ -118,6 +118,9 @@ pub struct Pipelines {
     pub mesh: Option<MeshPipelines>,
     /// Ray-traced GI's rays and update passes, where the GPU has ray tracing.
     pub ddgi: Option<[vk::Pipeline; 2]>,
+    /// The same, tracing rays through hierarchies in a compute shader, for
+    /// GPUs without ray tracing.
+    pub ddgi_software: [vk::Pipeline; 2],
 }
 
 impl Pipelines {
@@ -140,6 +143,7 @@ impl Pipelines {
             module("volumetric")?,
             module("gi_inject")?,
             module("gi_voxelize")?,
+            module("ddgi_software")?,
         ];
         let [
             cull,
@@ -157,6 +161,7 @@ impl Pipelines {
             volumetric,
             gi_inject,
             gi_voxelize,
+            ddgi_software,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -323,6 +328,10 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Preview resolve", preview, c"resolveVertex", c"resolveFragment")
             })?,
             mesh: meshlets.as_ref().map(|modules| mesh_pipelines(gpu, layout, modules, scene_formats)).transpose()?,
+            ddgi_software: [
+                create_compute_pipeline(gpu, layout, "DDGI rays", ddgi_software, c"ddgiRaysMain")?,
+                create_compute_pipeline(gpu, layout, "DDGI update", ddgi_software, c"ddgiUpdateMain")?,
+            ],
             ddgi: match &ddgi {
                 Some(module) => Some([
                     create_compute_pipeline(gpu, layout, "DDGI rays", module, c"ddgiRaysMain")?,
@@ -388,7 +397,8 @@ impl Pipelines {
         ];
         let mesh =
             self.mesh.iter().flat_map(|m| [m.shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);
-        for pipeline in all.into_iter().chain(mesh).chain(self.ddgi.into_iter().flatten()) {
+        let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software);
+        for pipeline in all.into_iter().chain(mesh).chain(traced) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }
     }

@@ -11,13 +11,67 @@
 //   is kept or set aside: one that sees mostly backs of surfaces is inside a
 //   wall, and lights nothing.
 //
-// Only where the GPU has ray tracing; elsewhere the voxels (gi.slang) light
-// the scene instead.
+// Built twice: with the GPU's ray tracing, and with SOFTWARE_RAYS, walking
+// hierarchies of the scene's triangles in the compute shader
+// (trace_software.slang), for GPUs without it.
 
 #include "shading.slang"
 #include "ddgi_sample.slang"
 
+#ifndef SOFTWARE_RAYS
+#define SOFTWARE_RAYS 0
+#endif
+
+// What a ray found: whether it hit, how far, the instance and triangle, and
+// where on the triangle.
+struct Hit
+{
+    bool found;
+    float t;
+    uint instance;
+    uint primitive;
+    float2 barycentrics;
+};
+
+#if SOFTWARE_RAYS
+#include "trace_software.slang"
+#else
 [[vk::binding(4, 0)]] RaytracingAccelerationStructure scenes[];
+
+// The nearest triangle along a ray, or any at all with `any`, by the GPU's
+// ray tracing, through the scene's top level.
+Hit traceScene(Frame* frame, float3 origin, float3 direction, float far, bool any)
+{
+    RaytracingAccelerationStructure scene = scenes[NonUniformResourceIndex(frame->ddgi.scene)];
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = direction;
+    ray.TMin = 0.0;
+    ray.TMax = far;
+    Hit hit;
+    hit.found = false;
+    if (any)
+    {
+        RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> query;
+        query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
+        query.Proceed();
+        hit.found = query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+        return hit;
+    }
+    RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+    query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
+    query.Proceed();
+    hit.found = query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+    if (hit.found)
+    {
+        hit.t = query.CommittedRayT();
+        hit.instance = query.CommittedInstanceID();
+        hit.primitive = query.CommittedPrimitiveIndex();
+        hit.barycentrics = query.CommittedTriangleBarycentrics();
+    }
+    return hit;
+}
+#endif
 
 // How much of a probe's last value a fresh one keeps, against noise.
 static const float DDGI_KEEP = 0.95;
@@ -53,8 +107,9 @@ bool ddgiDue(Frame* frame, uint cascade, uint index, out int3 world, out bool fr
     world = ddgiWorldOf(ddgiSlotOf(index), origin);
     int3 before = frame->ddgi.previousOrigin[cascade].xyz;
     fresh = frame->ddgi.warmUp > 0 || any(world < before) || any(world >= before + DDGI_PROBES);
-    // A quarter of the fine probes each frame and an eighth of the coarse, scattered through the grid.
-    uint every = cascade == 0 ? 4u : 8u;
+    // A quarter of the fine probes each frame and an eighth of the coarse, scattered through the grid; half as
+    // many where the rays are traced in software.
+    uint every = (cascade == 0 ? 4u : 8u) * (SOFTWARE_RAYS ? 2u : 1u);
     return fresh || (ddgiHash(index + cascade * 65536u) + frame->frameIndex) % every == 0;
 }
 
@@ -63,22 +118,14 @@ int2 ddgiRayTexel(uint index, uint cascade, uint ray)
     return int2(ray + (index % 16u) * DDGI_RAYS, index / 16u + cascade * (DDGI_PROBE_COUNT / 16u));
 }
 
-bool ddgiBlocked(RaytracingAccelerationStructure scene, float3 origin, float3 direction, float far)
+bool ddgiBlocked(Frame* frame, float3 origin, float3 direction, float far)
 {
-    RayDesc ray;
-    ray.Origin = origin;
-    ray.Direction = direction;
-    ray.TMin = 0.0;
-    ray.TMax = far;
-    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
-    query.Proceed();
-    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+    return traceScene(frame, origin, direction, far, true).found;
 }
 
 // The light a surface sends back along a ray that hit it, where it hit, and
 // whether the ray found the surface's back, as from inside something.
-float3 ddgiShadeHit(Frame* frame, RaytracingAccelerationStructure scene, uint id, uint primitive, float2 barycentrics,
+float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     float3 position, float3 direction, out bool back)
 {
     Instance instance = buffers()->instances[id];
@@ -110,7 +157,7 @@ float3 ddgiShadeHit(Frame* frame, RaytracingAccelerationStructure scene, uint id
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float facing = dot(normal, toSun);
     float3 lit = 0.0;
-    if (facing > 0.0 && !ddgiBlocked(scene, position + normal * 0.02, toSun, 1e4))
+    if (facing > 0.0 && !ddgiBlocked(frame, position + normal * 0.02, toSun, 1e4))
     {
         lit += albedo / PI * sunLight * facing;
     }
@@ -162,30 +209,20 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     {
         return;
     }
-    RaytracingAccelerationStructure scene = scenes[NonUniformResourceIndex(frame->ddgi.scene)];
     float3 origin = ddgiProbePosition(frame, cascade, world);
     float3 direction = ddgiRayDirection(frame, thread.x);
-    RayDesc ray;
-    ray.Origin = origin;
-    ray.Direction = direction;
-    ray.TMin = 0.0;
-    ray.TMax = 1e4;
-    RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
-    query.Proceed();
+    Hit hit = traceScene(frame, origin, direction, 1e4, false);
     float4 result;
-    if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
+    if (!hit.found)
     {
         result = float4(ddgiSky(frame, direction), 1e4);
     }
     else
     {
-        float t = query.CommittedRayT();
-        uint id = query.CommittedInstanceID();
+        float t = hit.t;
         float3 position = origin + direction * t;
         bool back;
-        float3 light = ddgiShadeHit(frame, scene, id, query.CommittedPrimitiveIndex(),
-            query.CommittedTriangleBarycentrics(), position, direction, back);
+        float3 light = ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, position, direction, back);
         // The back of a surface, seen from inside it: no light, and marked by its distance's sign.
         result = back ? float4(0.0, 0.0, 0.0, -t) : float4(light, t);
     }

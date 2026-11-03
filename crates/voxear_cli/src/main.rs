@@ -289,6 +289,9 @@ enum Commands {
         /// watching what changes over time, such as the eye adapting.
         #[arg(long, value_name = "FRAMES")]
         every: Option<u64>,
+        /// Trace the GI's rays in a compute shader, as GPUs without ray tracing do, even on one that has it.
+        #[arg(long)]
+        software_rays: bool,
     },
 }
 
@@ -389,6 +392,7 @@ fn main() -> Result<()> {
             no_mesh_shaders,
             render_scale,
             every,
+            software_rays,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -406,7 +410,7 @@ fn main() -> Result<()> {
                 ViewOptions { debug_view, post_override, meshlet_culling, render_scale, ..ViewOptions::default() };
             let prepare = Prepare { build: !no_build, bundles, overlays };
             let mesh_shaders = !no_mesh_shaders;
-            let shot = Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders };
+            let shot = Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders, software_rays };
             render(&project, shot, prepare, renderdoc)
         }
     }
@@ -473,12 +477,14 @@ struct Shot {
     stats: bool,
     /// Cull meshlets with task and mesh shaders, where the GPU has them.
     mesh_shaders: bool,
+    /// Trace the GI's rays in a compute shader even on a GPU with ray tracing.
+    software_rays: bool,
 }
 
 fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<()> {
-    let Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders } = shot;
+    let Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders, software_rays } = shot;
     let project = Project::open(path)?;
-    let settings = renderer_settings(&project, renderdoc);
+    let settings = RendererSettings { software_rays, ..renderer_settings(&project, renderdoc) };
     let mut game = start_game(project, prepare)?;
     let mut renderer = Renderer::new_offscreen(width, height, &settings)?;
     renderer.set_view_options(options);
@@ -561,6 +567,7 @@ fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
         renderdoc,
         capture_folder: Some(project.root.join(".voxear").join("Captures")),
         hot_reload: false,
+        software_rays: false,
     }
 }
 

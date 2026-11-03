@@ -11,13 +11,15 @@ Voxear works it out as the game runs. Turn it on in the scene's post-processing:
 enabled = true
 ```
 
-## Ray-traced or voxels
+## Ray-traced probes
 
-On a graphics card with ray tracing (NVIDIA RTX 20 series and later, AMD RX 6000 and later, Intel Arc), Voxear traces real rays against the scene, as Arc Raiders and The Finals do. Probes round the camera each send out 128 rays; where a ray hits a surface, it takes the light that surface sends back, testing the sun with another ray, and where it misses, the sky's. Each probe also keeps how far its rays went in every direction, so a surface only takes light from the probes that can actually see it. **No light passes through walls**: a sealed room is dark however bright the sun is outside, and a room lit through a doorway is lit only by what comes through it. Probes that end up inside a wall, or too close to one, move out of it.
+Voxear traces real rays against the scene, as Arc Raiders and The Finals do. Probes round the camera each send out 128 rays; where a ray hits a surface, it takes the light that surface sends back, testing the sun with another ray, and where it misses, the sky's. Each probe also keeps how far its rays went in every direction, so a surface only takes light from the probes that can actually see it. **No light passes through walls**: a sealed room is dark however bright the sun is outside, and a room lit through a doorway is lit only by what comes through it. Probes that end up inside a wall, or too close to one, move out of it.
 
-On other cards, Voxear uses voxels instead, described below. They work everywhere, but light can leak a little through thin walls.
+This works on every graphics card. On one with ray tracing (NVIDIA RTX 20 series and later, AMD RX 6000 and later, Intel Arc), the card traces the rays itself. On others, Voxear traces them in a compute shader, through a tree of boxes round each mesh's triangles built when the mesh loads and one round the scene's meshes built each frame. The light is the same either way; tracing in a compute shader is slower, so each probe is traced half as often and light settles a little more slowly after a change. To try it on a card with ray tracing, render with `vox render --software-rays`.
 
-To use voxels even where ray tracing is available:
+## Voxels
+
+Voxear can light the scene from voxels instead, described below. Light can leak a little through thin walls with them. To use them:
 
 ```toml
 [post.global_illumination]
@@ -64,7 +66,7 @@ Dark scenes still look dark: the darker a scene, the less exposure brightens it,
 
 ## Cost
 
-Ray-traced bounced light costs about 1.2 milliseconds on an RTX 3070, whatever the screen size: half a millisecond tracing rays and the rest blending them into the probes.
+Ray-traced bounced light costs about 1.3 milliseconds on an RTX 3070 in the Sponza palace, whatever the screen size: a tenth building the scene for the rays, six tenths tracing them, and the rest blending them into the probes. Traced in a compute shader, it costs about 3 milliseconds there: 2.2 tracing and 0.9 blending.
 
 With voxels:
 

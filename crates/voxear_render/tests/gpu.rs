@@ -12,7 +12,11 @@ use voxear_scene::Transform;
 const FRAME: f32 = 1.0 / 60.0;
 
 fn renderer() -> Option<Renderer> {
-    match Renderer::new_offscreen(640, 360, &RendererSettings::default()) {
+    renderer_with(&RendererSettings::default())
+}
+
+fn renderer_with(settings: &RendererSettings) -> Option<Renderer> {
+    match Renderer::new_offscreen(640, 360, settings) {
         Ok(renderer) => Some(renderer),
         Err(error) => {
             eprintln!("skipping: no usable GPU ({error:#})");
@@ -2188,17 +2192,43 @@ fn a_bloom_tint_colours_the_glow_but_not_the_light() {
     assert!(glow_gold[0] - glow_gold[2] > glow_white[0] - glow_white[2] + 5, "{glow_gold:?} from {glow_white:?}");
 }
 
-/// A white floor seen from head height, looking along +Z and a little
-/// down, with a red wall standing behind the camera, out of view, lit by a
-/// sun ahead, under a dim sky so bounced light shows as it does indoors,
-/// and GI on or off, from voxels or traced.
-fn wall_behind_render(gi: bool, ray_tracing: bool) -> Option<Vec<u8>> {
-    use voxear_render::{GlobalIllumination, Sky};
-    let mut renderer = renderer()?;
-    if ray_tracing && !renderer.gpu().ray_tracing {
-        eprintln!("skipping the ray-traced wall: this GPU has no ray tracing");
+/// How a test scene's light bounces.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Bounce {
+    Off,
+    Voxels,
+    /// Probes whose rays are traced by the GPU's ray tracing.
+    Traced,
+    /// The same probes, their rays traced in a compute shader.
+    Software,
+}
+
+/// A renderer for `bounce`, or none where this GPU cannot trace rays.
+fn bounce_renderer(bounce: Bounce) -> Option<Renderer> {
+    let renderer = renderer_with(&RendererSettings { software_rays: bounce == Bounce::Software, ..Default::default() })?;
+    if bounce == Bounce::Traced && !renderer.gpu().ray_tracing {
+        eprintln!("skipping the ray-traced scene: this GPU has no ray tracing");
         return None;
     }
+    Some(renderer)
+}
+
+/// The GI settings for `bounce`.
+fn bounce_settings(bounce: Bounce) -> voxear_render::GlobalIllumination {
+    voxear_render::GlobalIllumination {
+        enabled: bounce != Bounce::Off,
+        voxel_size: 0.25,
+        ray_tracing: bounce != Bounce::Voxels,
+        ..Default::default()
+    }
+}
+
+/// A white floor seen from head height, looking along +Z and a little
+/// down, with a red wall standing behind the camera, out of view, lit by a
+/// sun ahead, under a dim sky so bounced light shows as it does indoors.
+fn wall_behind_render(bounce: Bounce) -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = bounce_renderer(bounce)?;
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.5, 0.0), Quat::from_rotation_x(0.6), Vec3::ONE)));
     let plane = renderer.primitive(Primitive::Plane).unwrap();
@@ -2215,7 +2245,7 @@ fn wall_behind_render(gi: bool, ray_tracing: bool) -> Option<Vec<u8>> {
     let mut post = steady_post();
     post.ambient_occlusion.enabled = false;
     post.contact_shadows.enabled = false;
-    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ray_tracing, ..Default::default() };
+    post.global_illumination = bounce_settings(bounce);
     world.insert_resource(post);
     // Long enough for every probe to be traced again since the voxels filled.
     run(&mut renderer, &world, &mut 0.0, 34);
@@ -2224,22 +2254,7 @@ fn wall_behind_render(gi: bool, ray_tracing: bool) -> Option<Vec<u8>> {
 
 #[test]
 fn voxel_gi_bounces_the_colour_of_a_wall_the_camera_cannot_see() {
-    let (Some(plain), Some(lit)) = (wall_behind_render(false, false), wall_behind_render(true, false)) else { return };
-    keep_image("wall behind gi off.png", &plain);
-    keep_image("wall behind gi on.png", &lit);
-    // The floor along the bottom of the picture, nearest the wall: how much redder than green and blue.
-    let redness = |pixels: &[u8]| {
-        let patch: Vec<i32> = (330..350)
-            .flat_map(|y| (200..440).map(move |x| (x, y)))
-            .map(|at| {
-                let [r, g, b] = rgb_at(pixels, at);
-                r - (g + b) / 2
-            })
-            .collect();
-        patch.iter().sum::<i32>() / patch.len() as i32
-    };
-    let (before, after) = (redness(&plain), redness(&lit));
-    assert!(after > before + 6, "the floor takes the hidden wall's red: {after} redder, from {before}");
+    assert_floor_takes_the_hidden_walls_red(Bounce::Voxels, "wall behind gi on.png");
 }
 
 /// When in the day the courtyard below is lit.
@@ -2451,15 +2466,11 @@ fn under_the_moon_the_sky_is_dark_with_stars_and_the_moons_disc() {
 
 
 /// A closed box of walls, floor and roof, three metres inside each way,
-/// under a bright sun and sky, seen from inside, with GI on or off, traced
-/// or from voxels. Nothing outside can light the inside.
-fn sealed_box_render(gi: bool, ray_tracing: bool) -> Option<Vec<u8>> {
-    use voxear_render::{GlobalIllumination, Sky};
-    let mut renderer = renderer()?;
-    if ray_tracing && !renderer.gpu().ray_tracing {
-        eprintln!("skipping the ray-traced box: this GPU has no ray tracing");
-        return None;
-    }
+/// under a bright sun and sky, seen from inside. Nothing outside can light
+/// the inside.
+fn sealed_box_render(bounce: Bounce) -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = bounce_renderer(bounce)?;
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.5, -1.0), Quat::IDENTITY, Vec3::ONE)));
     let plane = renderer.primitive(Primitive::Plane).unwrap();
@@ -2478,38 +2489,63 @@ fn sealed_box_render(gi: bool, ray_tracing: bool) -> Option<Vec<u8>> {
     let mut post = steady_post();
     post.ambient_occlusion.enabled = false;
     post.contact_shadows.enabled = false;
-    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ray_tracing, ..Default::default() };
+    post.global_illumination = bounce_settings(bounce);
     world.insert_resource(post);
     run(&mut renderer, &world, &mut 0.0, 30);
     Some(renderer.read_pixels().unwrap().2)
 }
 
-#[test]
-fn no_light_leaks_into_a_sealed_box_with_ray_traced_gi() {
-    let (Some(open_sky), Some(traced)) = (sealed_box_render(false, false), sealed_box_render(true, true)) else {
+/// Checks that nothing lights the sealed box's inside with `bounce`'s GI,
+/// where the plain sky light, without GI, does.
+fn assert_sealed_box_stays_dark(bounce: Bounce, name: &str) {
+    let (Some(open_sky), Some(traced)) = (sealed_box_render(Bounce::Off), sealed_box_render(bounce)) else {
         return;
     };
     keep_image("sealed box plain sky.png", &open_sky);
-    keep_image("sealed box ray traced.png", &traced);
+    keep_image(name, &traced);
     let (lit, dark) = (mean_brightness(&open_sky), mean_brightness(&traced));
     assert!(lit > 20.0, "without GI, the plain sky light reaches inside: {lit:.1}");
-    assert!(dark < 1.0, "with ray-traced GI, nothing does: {dark:.2}");
+    assert!(dark < 1.0, "with {bounce:?} GI, nothing does: {dark:.2}");
+}
+
+#[test]
+fn no_light_leaks_into_a_sealed_box_with_ray_traced_gi() {
+    assert_sealed_box_stays_dark(Bounce::Traced, "sealed box ray traced.png");
+}
+
+#[test]
+fn no_light_leaks_into_a_sealed_box_with_software_rays() {
+    assert_sealed_box_stays_dark(Bounce::Software, "sealed box software rays.png");
+}
+
+/// How much redder than green and blue the floor is along the bottom of
+/// the wall-behind picture, nearest the wall.
+fn floor_redness(pixels: &[u8]) -> i32 {
+    let patch: Vec<i32> = (330..350)
+        .flat_map(|y| (200..440).map(move |x| (x, y)))
+        .map(|at| {
+            let [r, g, b] = rgb_at(pixels, at);
+            r - (g + b) / 2
+        })
+        .collect();
+    patch.iter().sum::<i32>() / patch.len() as i32
+}
+
+/// Checks that `bounce`'s GI carries the hidden wall's red onto the floor.
+fn assert_floor_takes_the_hidden_walls_red(bounce: Bounce, name: &str) {
+    let (Some(plain), Some(lit)) = (wall_behind_render(Bounce::Off), wall_behind_render(bounce)) else { return };
+    keep_image("wall behind gi off.png", &plain);
+    keep_image(name, &lit);
+    let (before, after) = (floor_redness(&plain), floor_redness(&lit));
+    assert!(after > before + 6, "the floor takes the hidden wall's red: {after} redder, from {before}");
 }
 
 #[test]
 fn ray_traced_gi_bounces_the_colour_of_a_wall_the_camera_cannot_see() {
-    let (Some(plain), Some(lit)) = (wall_behind_render(false, false), wall_behind_render(true, true)) else { return };
-    keep_image("wall behind ray traced.png", &lit);
-    let redness = |pixels: &[u8]| {
-        let patch: Vec<i32> = (330..350)
-            .flat_map(|y| (200..440).map(move |x| (x, y)))
-            .map(|at| {
-                let [r, g, b] = rgb_at(pixels, at);
-                r - (g + b) / 2
-            })
-            .collect();
-        patch.iter().sum::<i32>() / patch.len() as i32
-    };
-    let (before, after) = (redness(&plain), redness(&lit));
-    assert!(after > before + 6, "the floor takes the hidden wall's red: {after} redder, from {before}");
+    assert_floor_takes_the_hidden_walls_red(Bounce::Traced, "wall behind ray traced.png");
+}
+
+#[test]
+fn software_rays_bounce_the_colour_of_a_wall_the_camera_cannot_see() {
+    assert_floor_takes_the_hidden_walls_red(Bounce::Software, "wall behind software rays.png");
 }

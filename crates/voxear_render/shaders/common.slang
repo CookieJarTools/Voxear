@@ -524,6 +524,27 @@ struct DebugLine
     float4 color;
 };
 
+// A node of a hierarchy for tracing rays without ray tracing (src/bvh.rs):
+// its box, and its first child (the second follows) or, with count above 0,
+// its first primitive in the hierarchy's order.
+struct BvhNode
+{
+    float3 min;
+    uint leftOrFirst;
+    float3 max;
+    uint count;
+};
+
+// An instance as the scene's hierarchy names it: the inverse of its model
+// matrix's rows, taking rays into its mesh's space, its instance and mesh.
+struct TraceInstance
+{
+    float4 inverse[3];
+    uint instance;
+    uint mesh;
+    uint2 pad;
+};
+
 struct Buffers
 {
     Instance* instances;
@@ -552,6 +573,13 @@ struct Buffers
     uint2* meshletWork;
     // Every LOD's indices, counting from its mesh's first vertex.
     uint* indices;
+    // Without ray tracing: the meshes' hierarchies, the table of where each
+    // mesh's start (nodes, order), and this frame's hierarchy of instances.
+    BvhNode* bvhNodes;
+    uint* bvhOrder;
+    uint2* bvhTable;
+    BvhNode* sceneNodes;
+    TraceInstance* sceneInstances;
 };
 
 struct Push

@@ -79,10 +79,13 @@ pub struct Probes {
     pub depth: ImageId,
     /// Each probe's state: w 1 while it lights the scene, 0 inside a wall.
     pub states: ImageId,
+    /// Its rays are traced in a compute shader through the scene's hierarchy,
+    /// not by ray tracing.
+    pub software: bool,
 }
 
 impl Probes {
-    pub fn new(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless) -> Result<Self> {
+    pub fn new(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless, software: bool) -> Result<Self> {
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
         let tile_rows = probe_count() / TILES_ACROSS * DDGI_CASCADES as u32;
         let maps = ImageDesc::new(TILES_ACROSS * DDGI_TEXELS, tile_rows * DDGI_TEXELS, FORMAT, usage);
@@ -97,16 +100,18 @@ impl Probes {
                 "ddgi states",
                 ImageDesc::new(TILES_ACROSS, tile_rows, FORMAT, usage),
             )?,
+            software,
         })
     }
 }
 
 /// Records the rays and update passes, once the scene's top level is built.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), probes: Probes) {
-    let Some([rays_pipeline, update_pipeline]) = pipelines.ddgi else {
+    let traced = if probes.software { Some(pipelines.ddgi_software) } else { pipelines.ddgi };
+    let Some([rays_pipeline, update_pipeline]) = traced else {
         return;
     };
-    let Probes { rays, irradiance, depth, states } = probes;
+    let Probes { rays, irradiance, depth, states, .. } = probes;
     let groups = probe_count() * DDGI_CASCADES as u32;
 
     let trace = Push { output: fg.storage(rays, 0).0, ..push };

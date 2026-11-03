@@ -903,8 +903,12 @@ Done so far:
   and a top level per view and frame. Two cascades of 32×16×32 probes trace 128 rays each when due, shading hits
   with the sun through a shadow ray, lamps, glow and last frame's probes; each keeps 8×8 octahedral irradiance and
   depth maps, and shading weighs probes by Chebyshev visibility, so no light passes walls. Probes inside geometry
-  are set aside and probes near surfaces moved off them. Voxels remain on GPUs without ray tracing. GPU tests: a
-  sealed box in sunlight stays black; a hidden red wall bounces. About 1.2 ms on an RTX 3070.
+  are set aside and probes near surfaces moved off them. GPU tests: a sealed box in sunlight stays black; a
+  hidden red wall bounces. About 1.3 ms on an RTX 3070.
+- **Ray-traced GI on every GPU:** without ray tracing, the probes' rays are traced in a compute shader, through a
+  binned-SAH BVH over each mesh's finest LOD built when it loads and one over the frame's instances built each
+  frame, nearer child first; each probe is traced half as often. `vox render --software-rays` forces it. GPU
+  tests: the sealed box and the hidden wall, traced in software. About 3 ms in Sponza on an RTX 3070.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.
@@ -916,9 +920,7 @@ Done so far:
 
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
-- Ray-traced GI everywhere: probes traced in a compute shader against a software BVH of the scene's triangles on
-  GPUs without ray tracing, so no GPU falls back to voxels that leak; alpha-tested and two-sided materials in the
-  rays; probe rays for reflections.
+- Alpha-tested and two-sided materials in the GI's rays; probe rays for reflections.
 - Virtual shadow maps, and shadows for point, spot and area lights.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
 - Baked lightmapper, light probes and reflection probes.

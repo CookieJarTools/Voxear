@@ -18,6 +18,7 @@ use voxear_rhi::{
 
 use crate::{
     alloc::{RangeAllocator, SlotAllocator},
+    bvh::MeshHierarchies,
     cooked::{CookedModel, CookedTexture},
     gpu::{GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_FOLIAGE, MATERIAL_NORMAL_MAP},
     lod::{Lod, LodInfo, MAX_LODS, build_lods},
@@ -185,6 +186,9 @@ pub struct Assets {
     /// Each mesh's bottom level, where ray tracing is on, and those replaced
     /// since the last frame, waiting to be retired.
     bottom_levels: HashMap<MeshHandle, AccelerationStructure>,
+    /// Each mesh's hierarchy of triangles, where the GI's rays are traced in a
+    /// compute shader.
+    pub hierarchies: Option<MeshHierarchies>,
     retired_levels: Vec<AccelerationStructure>,
     white: TextureId,
     primitives: HashMap<Primitive, MeshHandle>,
@@ -197,7 +201,9 @@ pub struct Assets {
 }
 
 impl Assets {
-    pub fn new(gpu: &Gpu, bindless: &mut Bindless) -> Result<Self> {
+    /// `software_rays` keeps a hierarchy of each mesh's triangles, for the
+    /// GI's rays to walk in a compute shader.
+    pub fn new(gpu: &Gpu, bindless: &mut Bindless, software_rays: bool) -> Result<Self> {
         let device_local = MemoryLocation::GpuOnly;
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
         // Ray tracing builds each mesh's bottom level straight from the shared buffers.
@@ -238,6 +244,7 @@ impl Assets {
             textures: HashMap::new(),
             retiring: Vec::new(),
             bottom_levels: HashMap::new(),
+            hierarchies: software_rays.then(|| MeshHierarchies::new(gpu, MAX_MESHES)).transpose()?,
             retired_levels: Vec::new(),
             white: TextureId(0),
             primitives: HashMap::new(),
@@ -348,6 +355,10 @@ impl Assets {
         });
         if !mesh.vertices.is_empty() {
             self.mesh_bounds.insert(handle, (min, max));
+        }
+        if let (Some(hierarchies), Some(lod)) = (&mut self.hierarchies, lods.first()) {
+            let points: Vec<Vec3> = mesh.vertices.iter().map(|v| Vec3::from(v.position)).collect();
+            hierarchies.add(gpu, handle.0, &points, &lod.indices)?;
         }
         self.build_bottom_level(gpu, handle)
     }
@@ -592,6 +603,17 @@ impl Assets {
         for (handle, _) in &meshes {
             self.build_bottom_level(gpu, *handle)?;
         }
+        if self.hierarchies.is_some() {
+            // Read back out of the model's data, which the GPU may have decompressed itself.
+            let bytes = match &unpacked {
+                Some(bytes) => std::borrow::Cow::Borrowed(bytes.as_ref()),
+                None => std::borrow::Cow::Owned(model.payload.unpack()?.into_owned()),
+            };
+            for (mesh, (handle, _)) in model.meshes.iter().zip(&meshes) {
+                let (points, indices) = crate::cooked::finest_triangles(&bytes, mesh)?;
+                self.hierarchies.as_mut().expect("checked above").add(gpu, handle.0, &points, &indices)?;
+            }
+        }
         if tiled.is_some() {
             self.decompressed_on_gpu += model.payload.size();
         }
@@ -744,6 +766,9 @@ impl Assets {
             Retiring::BottomLevel(level) => gpu.destroy_acceleration_structure(level),
             Retiring::Mesh(mesh) => {
                 self.mesh_bounds.remove(&mesh);
+                if let Some(hierarchies) = &mut self.hierarchies {
+                    hierarchies.remove(mesh.0);
+                }
                 if let Some(level) = self.bottom_levels.remove(&mesh) {
                     gpu.destroy_acceleration_structure(level);
                 }
@@ -782,6 +807,9 @@ impl Assets {
         });
         for level in self.bottom_levels.into_values().chain(self.retired_levels).chain(retired) {
             gpu.destroy_acceleration_structure(level);
+        }
+        if let Some(hierarchies) = self.hierarchies {
+            hierarchies.destroy(gpu);
         }
         for (id, image) in self.textures {
             bindless.remove_texture(id);

@@ -547,6 +547,14 @@ pub struct GpuBuffers {
     /// Every LOD's indices, three a triangle, counting from its mesh's first
     /// vertex, for ray-traced GI to find what a ray hit.
     pub indices: u64,
+    /// Without ray tracing: every mesh's hierarchy's nodes and triangle
+    /// order, the table of where each mesh's start, and this frame's
+    /// hierarchy over the scene's instances and those instances.
+    pub bvh_nodes: u64,
+    pub bvh_order: u64,
+    pub bvh_table: u64,
+    pub scene_nodes: u64,
+    pub scene_instances: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -697,7 +705,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 22 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 27 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }

@@ -152,14 +152,8 @@ impl CookedModel {
         };
         let Some(mesh) = node.and_then(|node| self.meshes.get(node.mesh)) else { return Ok(None) };
         let bytes = self.payload.unpack()?;
-        let ((start, count), stride) = (mesh.vertices, size_of::<Vertex>());
-        let vertices = bytes.get(start as usize..start as usize + count as usize * stride).context("a mesh's vertices")?;
-        let float = |bytes: &[u8]| f32::from_le_bytes(bytes.try_into().expect("four bytes"));
-        let points = vertices.chunks_exact(stride).map(|v| Vec3::new(float(&v[0..4]), float(&v[4..8]), float(&v[8..12])));
-        let finest = mesh.lods.first().map_or(0, |&(_, count, _)| count as usize);
-        let indices = bytes.get(mesh.indices as usize..mesh.indices as usize + finest * 4).context("a mesh's indices")?;
-        let indices = indices.as_chunks::<4>().0.iter().map(|bytes| u32::from_le_bytes(*bytes)).collect();
-        Ok(Some(MeshTriangles { points: points.collect(), indices }))
+        let (points, indices) = finest_triangles(&bytes, mesh)?;
+        Ok(Some(MeshTriangles { points, indices }))
     }
 
     /// Whether the GPU data is still compressed.
@@ -567,4 +561,17 @@ pub(crate) mod tests {
         assert!(!back.is_compressed());
         assert_eq!(back.payload, crate::payload::Payload::Raw(expected));
     }
+}
+
+/// A cooked mesh's finest LOD, its points and three indices a triangle, read
+/// out of its model's unpacked GPU data.
+pub(crate) fn finest_triangles(bytes: &[u8], mesh: &CookedMesh) -> Result<(Vec<Vec3>, Vec<u32>)> {
+    let ((start, count), stride) = (mesh.vertices, size_of::<Vertex>());
+    let vertices = bytes.get(start as usize..start as usize + count as usize * stride).context("a mesh's vertices")?;
+    let float = |bytes: &[u8]| f32::from_le_bytes(bytes.try_into().expect("four bytes"));
+    let points = vertices.chunks_exact(stride).map(|v| Vec3::new(float(&v[0..4]), float(&v[4..8]), float(&v[8..12])));
+    let finest = mesh.lods.first().map_or(0, |&(_, count, _)| count as usize);
+    let indices = bytes.get(mesh.indices as usize..mesh.indices as usize + finest * 4).context("a mesh's indices")?;
+    let indices = indices.as_chunks::<4>().0.iter().map(|bytes| u32::from_le_bytes(*bytes)).collect();
+    Ok((points.collect(), indices))
 }

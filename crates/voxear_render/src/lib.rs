@@ -12,6 +12,7 @@ mod alloc;
 mod ambient_occlusion;
 mod assets;
 mod atmosphere;
+mod bvh;
 mod capture;
 mod cooked;
 mod debug_pass;
@@ -184,6 +185,9 @@ pub struct RendererSettings {
     pub capture_folder: Option<PathBuf>,
     /// Recompile shaders when their source changes (source checkouts only).
     pub hot_reload: bool,
+    /// Trace the GI's rays in a compute shader even where the GPU has ray
+    /// tracing, as GPUs without it do: for testing that path.
+    pub software_rays: bool,
 }
 
 fn attach_renderdoc(settings: &RendererSettings) -> Option<RenderDoc> {
@@ -297,6 +301,9 @@ impl FrameBuffers {
 
 pub struct Renderer {
     renderdoc: Option<RenderDoc>,
+    /// The GI's rays are traced in a compute shader rather than by the GPU's
+    /// ray tracing, which it lacks or the settings turn off.
+    software_rays: bool,
     show_capture: bool,
     gpu: Gpu,
     /// What it draws into, the one it was made with first.
@@ -336,7 +343,7 @@ impl Renderer {
         let (gpu, surface) = unsafe { Gpu::new(window)? };
         let vsync = std::env::var("VOXEAR_VSYNC").map(|v| v != "0").unwrap_or(true);
         let swapchain = Swapchain::new(&gpu, surface, width, height, vsync)?;
-        Self::build(gpu, Target::Window(swapchain), renderdoc, settings.hot_reload)
+        Self::build(gpu, Target::Window(swapchain), renderdoc, settings)
     }
 
     /// Renders into an image with no window, for screenshots, tests and tools.
@@ -346,14 +353,17 @@ impl Renderer {
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC;
         let image = gpu.create_image("output", ImageDesc::new(width, height, OFFSCREEN_FORMAT, usage))?;
         let output = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined };
-        Self::build(gpu, output, renderdoc, settings.hot_reload)
+        Self::build(gpu, output, renderdoc, settings)
     }
 
-    fn build(gpu: Gpu, target: Target, renderdoc: Option<RenderDoc>, hot_reload: bool) -> Result<Self> {
+    fn build(gpu: Gpu, target: Target, renderdoc: Option<RenderDoc>, settings: &RendererSettings) -> Result<Self> {
+        let hot_reload = settings.hot_reload;
         let frames = Frames::new(&gpu)?;
         let mut bindless = Bindless::new(&gpu)?;
         let graph = RenderGraph::new(&gpu, FRAMES_IN_FLIGHT)?;
-        let assets = Assets::new(&gpu, &mut bindless)?;
+        // Without ray tracing, the GI's rays walk hierarchies of the meshes' triangles in a compute shader.
+        let software_rays = settings.software_rays || gpu.acceleration_structure.is_none();
+        let assets = Assets::new(&gpu, &mut bindless, software_rays)?;
         let output_format = match &target {
             Target::Window(swapchain) => swapchain.format.format,
             Target::Offscreen { image, .. } => image.desc.format,
@@ -364,6 +374,7 @@ impl Renderer {
         let main =
             Output { id: OutputId::MAIN, target, pending_size: None, ui: ui_pass::UiGpu::default(), ready: Vec::new() };
         Ok(Self {
+            software_rays,
             renderdoc,
             show_capture: false,
             gpu,
@@ -856,6 +867,7 @@ impl Renderer {
             captures,
             clear,
             mesh_shaders,
+            software_rays,
             ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
@@ -898,6 +910,7 @@ impl Renderer {
             let full = desc.extent();
             let ui_quads = ui.quads.address;
             let mesh_shaders = *mesh_shaders;
+            let software_rays = *software_rays;
             let setup = ViewSetup {
                 time,
                 delta_time,
@@ -908,6 +921,7 @@ impl Renderer {
                 first,
                 keep_ldr,
                 mesh_shaders,
+                software_rays,
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
@@ -1146,6 +1160,9 @@ struct View {
     /// The scene as ray queries see it, one top level a frame in flight,
     /// made the first time a frame needs it, where ray tracing is on.
     top_levels: Vec<Option<TopLevel>>,
+    /// Without ray tracing, the scene's hierarchy over its instances and the
+    /// instances it names, one pair a frame in flight, made when first needed.
+    scene_hierarchies: Vec<Option<(Buffer, Buffer)>>,
     /// The output it draws into, and where in it; all of it when `None`.
     output: OutputId,
     rect: Option<[u32; 4]>,
@@ -1197,6 +1214,8 @@ struct ViewSetup {
     keep_ldr: bool,
     /// Meshlet culling draws with task and mesh shaders, where the pipelines have them.
     mesh_shaders: bool,
+    /// The GI's rays are traced in a compute shader, not by ray tracing.
+    software_rays: bool,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -1229,6 +1248,7 @@ impl View {
         Ok(Self {
             number,
             top_levels: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
+            scene_hierarchies: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             output: OutputId::MAIN,
             rect: None,
             options: ViewOptions::default(),
@@ -1281,6 +1301,62 @@ impl View {
         for level in self.top_levels.into_iter().flatten() {
             frames.retire(Retired::TopLevel(level));
         }
+        for (nodes, instances) in self.scene_hierarchies.into_iter().flatten() {
+            frames.retire(Retired::Buffer(nodes));
+            frames.retire(Retired::Buffer(instances));
+        }
+    }
+
+    /// Without ray tracing: this frame's hierarchy over the instances drawn,
+    /// each by its mesh's box in the world, written for slot `slot`. Returns
+    /// the addresses of its nodes and of the instances it names.
+    fn trace_scene(
+        hierarchy: &mut Option<(Buffer, Buffer)>,
+        (gpu, assets): (&Gpu, &Assets),
+        instances: &[gpu::GpuInstance],
+        slot: usize,
+    ) -> Result<(u64, u64)> {
+        use voxear_core::math::{Mat4, Vec3};
+        if hierarchy.is_none() {
+            let usage = vk::BufferUsageFlags::STORAGE_BUFFER;
+            let nodes_size = 2 * MAX_INSTANCES * size_of::<bvh::BvhNode>() as u64;
+            let instances_size = MAX_INSTANCES * size_of::<bvh::TraceInstance>() as u64;
+            *hierarchy = Some((
+                gpu.create_buffer(&format!("scene bvh {slot}"), nodes_size, usage, MemoryLocation::CpuToGpu)?,
+                gpu.create_buffer(&format!("scene instances {slot}"), instances_size, usage, MemoryLocation::CpuToGpu)?,
+            ));
+        }
+        let traced: Vec<_> = instances
+            .iter()
+            .enumerate()
+            .filter_map(|(id, instance)| {
+                let (low, high) = assets.mesh_bounds(MeshHandle(instance.mesh))?;
+                let model = Mat4::from_cols_array_2d(&instance.model);
+                let corners = (0..8).map(|c| {
+                    let pick = |bit: u32, axis: usize| if c & bit == 0 { low[axis] } else { high[axis] };
+                    model.transform_point3(Vec3::new(pick(1, 0), pick(2, 1), pick(4, 2)))
+                });
+                let (min, max) = corners.fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), p| {
+                    (lo.min(p), hi.max(p))
+                });
+                let inverse = model.inverse();
+                let row = |r: usize| [inverse.x_axis[r], inverse.y_axis[r], inverse.z_axis[r], inverse.w_axis[r]];
+                let entry = bvh::TraceInstance {
+                    inverse: [row(0), row(1), row(2)],
+                    instance: id as u32,
+                    mesh: instance.mesh,
+                    _pad: [0; 2],
+                };
+                Some((entry, (min, max)))
+            })
+            .collect();
+        let (nodes, ordered) = bvh::scene(&traced);
+        let (node_buffer, instance_buffer) = hierarchy.as_ref().expect("made above");
+        node_buffer.write(0, &nodes);
+        if !ordered.is_empty() {
+            instance_buffer.write(0, &ordered);
+        }
+        Ok((node_buffer.address, instance_buffer.address))
     }
 
     /// The scene's slot in the bindless set's `scenes` for frame slot `slot`,
@@ -1503,11 +1579,22 @@ impl View {
         // Probes traced against the scene where the GPU can, in place of the voxels, which leak light.
         let mut probes = None;
         let previous_ddgi = self.ddgi_history.take();
-        if lit.enabled && !wireframe && lit.ray_tracing && pipelines.ddgi.is_some() {
+        let mut scene_hierarchy = (0, 0);
+        if lit.enabled && !wireframe && lit.ray_tracing {
             let traced = &extracted.instances[..instance_count];
-            let top_level = (&mut self.top_levels[slot], self.number);
-            if let Some(scene) = Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)? {
-                let made = ddgi::Probes::new(fg, gpu, bindless)?;
+            // Ray queries where the GPU has them; otherwise the scene's hierarchy, walked in a compute shader.
+            let scene = if setup.software_rays {
+                let hierarchy = &mut self.scene_hierarchies[slot];
+                scene_hierarchy = Self::trace_scene(hierarchy, (gpu, assets), traced, slot)?;
+                Some(0)
+            } else if pipelines.ddgi.is_some() {
+                let top_level = (&mut self.top_levels[slot], self.number);
+                Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)?
+            } else {
+                None
+            };
+            if let Some(scene) = scene {
+                let made = ddgi::Probes::new(fg, gpu, bindless, setup.software_rays)?;
                 let spacing = lit.voxel_size.clamp(0.05, 8.0) * 2.0;
                 let origin = ddgi::origins(voxear_core::math::Vec3::from(frame_data.camera_position), spacing);
                 let kept = previous_ddgi.filter(|(_, known, _)| *known == spacing);
@@ -1640,6 +1727,11 @@ impl View {
                 meshlet_draw_instances: buffers.meshlet_draw_instances.address,
                 meshlet_work: buffers.meshlet_work.address,
                 indices: assets.indices.address,
+                bvh_nodes: assets.hierarchies.as_ref().map_or(0, |h| h.nodes.address),
+                bvh_order: assets.hierarchies.as_ref().map_or(0, |h| h.order.address),
+                bvh_table: assets.hierarchies.as_ref().map_or(0, |h| h.table.address),
+                scene_nodes: scene_hierarchy.0,
+                scene_instances: scene_hierarchy.1,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);

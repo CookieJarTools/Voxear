@@ -10,7 +10,7 @@ use crate::{
     assets::{MaterialHandle, MeshHandle},
     lod_group::{LodCamera, LodChoices},
     gpu::{
-        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_NONE, GpuFrame, GpuInstance, GpuLight, GpuLighting,
+        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_NONE, GpuFrame, GpuGi, GpuInstance, GpuLight, GpuLighting,
         LIGHT_DISC, LIGHT_POINT, LIGHT_RECTANGLE, LIGHT_SPOT, LIGHT_TUBE, MAX_CLUSTER_LIGHTS, NO_TEXTURE, SKY_ATMOSPHERE, SKY_GRADIENT, cols, vec3,
     },
     post::{AmbientOcclusion, AntiAliasingMode, PostProcess, taa_jitter},
@@ -373,6 +373,8 @@ pub fn extract(
         ambient: sky.ambient,
         viewport: [width, height],
         inv_view_proj: cols(view_proj.inverse()),
+        // The renderer turns it on once it has made the voxels.
+        gi: GpuGi { texture: NO_TEXTURE, ..GpuGi::default() },
         lighting: GpuLighting {
             sky: match sky.mode {
                 SkyMode::Gradient => SKY_GRADIENT,
@@ -424,6 +426,7 @@ pub fn extract(
             frame.cascade_planes[i] = cascade.planes;
             frame.cascade_far[i] = cascade.far;
             frame.cascade_texel[i] = cascade.texel;
+            frame.gi.cascade_inverse[i] = cols(cascade.view_proj.inverse());
         }
     }
 

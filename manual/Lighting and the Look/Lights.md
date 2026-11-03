@@ -88,4 +88,4 @@ Contact shadows work beyond the 80 metres shadows reach, so distant things still
 Point and spot lights are cheap, so a level can have hundreds. Area lights cost a little more each. Each part of the screen is lit by up to 128 lights at once. Only the sun casts shadows yet.
 
 > [!NOTE]
-> Light does not bounce from one surface to the next yet. A room lit through a window is lit only where the light falls, plus the soft light of the sky (see [[The Sky]]). Bounced light comes in a later version.
+> Unless you turn on bounced light, light does not bounce from one surface to the next: a room lit through a window is lit only where the light falls, plus the soft light of the sky. See [[Bounced Light]].

@@ -19,6 +19,7 @@ mod fbx_import;
 mod frame_debugger;
 mod gltf_import;
 mod gpu;
+mod gi;
 mod graph;
 mod hot_reload;
 mod ies;
@@ -74,6 +75,7 @@ pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, Primitive, Vertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
+    GlobalIllumination,
     Grading, Grain, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
@@ -1160,6 +1162,9 @@ struct View {
     atmosphere_tables: Option<gpu::GpuAtmosphere>,
     /// Whether last frame drew a fog volume this one can carry on from.
     fog_history: bool,
+    /// The voxel GI's grids' origins last frame, and its voxel size, when
+    /// it had voxels this one can carry on from.
+    gi_history: Option<([[i32; 4]; gpu::GI_LEVELS], f32)>,
     /// It has said its scene has too many meshlets to cull one by one.
     warned_meshlets: bool,
 }
@@ -1223,6 +1228,7 @@ impl View {
             ao_history: None,
             atmosphere_tables: None,
             fog_history: false,
+            gi_history: None,
             warned_meshlets: false,
         })
     }
@@ -1263,6 +1269,7 @@ impl View {
         self.ao_history = None;
         self.atmosphere_tables = None;
         self.fog_history = false;
+        self.gi_history = None;
         self.prev_models.clear();
         self.prev_view_proj = None;
     }
@@ -1403,6 +1410,26 @@ impl View {
         if let Some(image) = contact_shadows {
             frame_data.post.contact_texture = fg.texture(image).0;
         }
+        let lit = extracted.post.global_illumination;
+        let voxels = match lit.enabled && !wireframe {
+            true => Some(gi::Voxels::new(fg, gpu, bindless, history)?),
+            false => None,
+        };
+        let previous_gi = self.gi_history.take();
+        if let Some(voxels) = voxels {
+            let size = lit.voxel_size.clamp(0.05, 8.0);
+            let origin = gi::origins(voxear_core::math::Vec3::from(frame_data.camera_position), size);
+            let kept = previous_gi.filter(|(_, known)| *known == size);
+            frame_data.gi.origin = origin;
+            frame_data.gi.previous_origin = kept.map_or(origin, |(before, _)| before);
+            frame_data.gi.voxel_size = size;
+            frame_data.gi.texture = fg.texture(voxels.previous).0;
+            frame_data.gi.storage = fg.storage(voxels.current, 0).0;
+            frame_data.gi.reset = u32::from(kept.is_none());
+            frame_data.gi.strength = lit.strength.max(0.0);
+            frame_data.gi.cones = lit.cones.clamp(1, 5);
+            self.gi_history = Some((origin, size));
+        }
         let fog = extracted.post.fog;
         let foggy = fog.enabled && fog.volumetric && fog.density > 0.0 && !wireframe;
         let volume = match foggy {
@@ -1525,6 +1552,7 @@ impl View {
             contact_shadows,
             atmosphere,
             volume,
+            voxels,
         };
         passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {

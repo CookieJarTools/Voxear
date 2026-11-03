@@ -254,6 +254,39 @@ pub struct GpuFrame {
     pub meshlet_flags: u32,
     pub _pad5: [u32; 2],
     pub lighting: GpuLighting,
+    pub gi: GpuGi,
+}
+
+/// How many nested grids the voxel GI's clipmap has, each twice the last's
+/// voxel size, and how many voxels each is across.
+pub const GI_LEVELS: usize = 3;
+pub const GI_SIZE: u32 = 64;
+
+/// Voxel global illumination as the shaders read it (see `gi`). Mirrors
+/// `Gi` in `shaders/common.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuGi {
+    /// Each level's lowest voxel, in that level's voxels from the world's
+    /// origin, this frame and last frame; w unused.
+    pub origin: [[i32; 4]; GI_LEVELS],
+    pub previous_origin: [[i32; 4]; GI_LEVELS],
+    /// The sun's shadow cascades back into the world, to turn what they saw
+    /// into voxels.
+    pub cascade_inverse: [Mat4Cols; crate::shadows::CASCADES],
+    /// The first level's voxel size, in metres.
+    pub voxel_size: f32,
+    /// The voxels as a texture, or `NO_TEXTURE` without GI, and as a
+    /// storage image for the passes that fill them.
+    pub texture: u32,
+    pub storage: u32,
+    /// 1 when the voxels are stale, as on their first frame.
+    pub reset: u32,
+    /// How bright the bounced light is, 1 as measured.
+    pub strength: f32,
+    /// Cones traced for each pixel's light.
+    pub cones: u32,
+    pub _pad: [u32; 2],
 }
 
 /// `GpuLighting::sky`: the colours the scene gives, or the atmosphere.
@@ -562,10 +595,12 @@ mod tests {
         let post = 16 * 17;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6;
+        let gi = 16 * GI_LEVELS * 2 + 64 * CASCADES + 32;
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + gi
         );
+        assert_eq!(size_of::<GpuGi>(), gi);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 21 * 8);

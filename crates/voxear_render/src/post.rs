@@ -28,6 +28,7 @@ use voxear_rhi::TextureId;
 pub struct PostProcess {
     pub ambient_occlusion: AmbientOcclusion,
     pub contact_shadows: ContactShadows,
+    pub global_illumination: GlobalIllumination,
     pub anti_aliasing: AntiAliasing,
     pub bloom: Bloom,
     pub exposure: Exposure,
@@ -90,6 +91,30 @@ pub struct AmbientOcclusion {
     /// temporal pass filling in the rest. Sharper in fine detail, and about
     /// four times the cost.
     pub full_resolution: bool,
+}
+
+/// Real-time global illumination from a clipmap of voxels round the camera
+/// (see `gi`): light bounced off nearby surfaces, and the sky's light kept
+/// out of rooms and from under things, in place of the plain sky ambient.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GlobalIllumination {
+    pub enabled: bool,
+    /// How bright the bounced light is: 1 as measured, more for a brighter,
+    /// more stylised bounce.
+    pub strength: f32,
+    /// The finest voxels' size, in metres; each of the three grids round the
+    /// camera is 64 voxels across, the next with voxels twice the size.
+    pub voxel_size: f32,
+    /// Advanced: cones traced for each pixel, from 1 to 5. Fewer is
+    /// cheaper and blotchier.
+    pub cones: u32,
+}
+
+impl Default for GlobalIllumination {
+    fn default() -> Self {
+        Self { enabled: false, strength: 1.0, voxel_size: 0.5, cones: 5 }
+    }
 }
 
 /// Contact shadows: the small shadows the sun casts where things touch,
@@ -386,6 +411,7 @@ impl PostProcess {
         Self {
             ambient_occlusion: AmbientOcclusion::default(),
             contact_shadows: ContactShadows::default(),
+            global_illumination: GlobalIllumination::default(),
             anti_aliasing: AntiAliasing::default(),
             bloom: Bloom::default(),
             // Metering for middle grey looks dull on bright days; half a stop lifts it.
@@ -434,6 +460,7 @@ impl PostProcess {
         Self {
             ambient_occlusion: AmbientOcclusion { enabled: false, ..AmbientOcclusion::default() },
             contact_shadows: ContactShadows { enabled: false, ..ContactShadows::default() },
+            global_illumination: GlobalIllumination { enabled: false, ..GlobalIllumination::default() },
             anti_aliasing: AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() },
             exposure: Exposure { auto: false, ..Exposure::default() },
             tonemap: Tonemap { mapper: Tonemapper::None, ..Tonemap::default() },

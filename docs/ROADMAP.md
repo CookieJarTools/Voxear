@@ -852,11 +852,20 @@ Done so far:
   samples cover every output pixel. Depth of field and motion blur now run before TAA, as in Unreal, at the drawn
   size. On Hello at 1440p a frame takes 1.42 ms at 0.67 and 1.20 ms at 0.5, against 2.29 ms at full size.
   `vox render --render-scale` compares them.
+- **Real-time voxel GI, first version:** `[post.global_illumination]`. A clipmap of three nested 64³ voxel grids
+  round the camera, each with twice the last's voxel size, in two images used in turn. Each frame, after the
+  opaque passes, compute passes shift last frame's voxels to the new origins and fade them, mark voxels where the
+  sun's shadow cascades see surfaces, and write the lit colour of every other pixel into its voxel. Shading traces
+  five 60° cones through last frame's voxels for bounced light and the sky's light where it is open, in place of
+  the flat sky ambient. Light bounces again frame to frame. About 0.75 ms at 1440p on an RTX 3070; off by
+  default. GPU test: a sunlit red wall reddens the floor before it, and the floor behind it is darker.
 
 Next:
 - Virtual shadow maps, and shadows for point, spot and area lights.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
-- **Real-time voxel GI** (clipmaps, then injection, gathering and the radiance cache).
+- **Voxel GI's radiance cache:** irradiance at probes round the camera, worked out by cone tracing and read by
+  shading, so pixels stop tracing cones each (several times cheaper); and voxelizing the scene's geometry, so
+  surfaces neither the camera nor the sun has seen bounce their own colours.
 - Baked lightmapper, light probes and reflection probes.
 - Reflections: screen-space reflections, falling back to reflection probes.
 - Stylised shading: shadows tinted a colour, and foliage shading (wrap lighting, light through the leaves, and a

@@ -8,6 +8,8 @@
 [[vk::binding(0, 0)]] Texture2D textures[];
 [[vk::binding(1, 0)]] SamplerState samplers[];
 [[vk::binding(2, 0)]] [[vk::image_format("r32f")]] RWTexture2D<float> storageImagesR32f[];
+// The same storage images, for those of four half floats, as the voxel GI's.
+[[vk::binding(2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> storageImagesRgba16f[];
 [[vk::binding(3, 0)]] SamplerComparisonState comparisonSamplers[];
 
 static const uint SAMPLER_LINEAR_REPEAT = 0;
@@ -355,6 +357,24 @@ struct Lighting
     Atmosphere atmosphere;
 };
 
+static const uint GI_LEVELS = 3;
+static const int GI_SIZE = 64;
+
+// Voxel global illumination; mirrors GpuGi in src/gpu.rs.
+struct Gi
+{
+    int4 origin[GI_LEVELS];
+    int4 previousOrigin[GI_LEVELS];
+    Mat4 cascadeInverse[CASCADES];
+    float voxelSize;
+    uint texture;
+    uint storage;
+    uint reset;
+    float strength;
+    uint cones;
+    uint2 pad;
+};
+
 struct Frame
 {
     Mat4 viewProj;
@@ -406,6 +426,7 @@ struct Frame
     uint meshletFlags;
     uint2 pad5;
     Lighting lighting;
+    Gi gi;
 };
 
 struct DrawCommand

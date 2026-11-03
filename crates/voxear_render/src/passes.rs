@@ -27,7 +27,7 @@
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
-    ambient_occlusion, atmosphere,
+    ambient_occlusion, atmosphere, gi,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
         LIST_SHADOW, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
@@ -97,6 +97,9 @@ pub struct Frame {
     pub atmosphere: Option<atmosphere::Tables>,
     /// The volumetric fog's volumes, filled once the opaque passes are done.
     pub volume: Option<volumetric::Volume>,
+    /// The voxel GI's voxels: last frame's, which shading reads, and this
+    /// frame's, filled once the opaque passes are done.
+    pub voxels: Option<gi::Voxels>,
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -210,6 +213,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
 
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;
+    let voxels = frame.voxels;
     // Drawn as depth first, then shaded over it, for what reads the depth before shading.
     let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some();
     if let Some(atmosphere) = frame.atmosphere {
@@ -222,6 +226,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
+        images.extend(voxels.map(|voxels| (voxels.previous, ImageAccess::Sampled)));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
         images
     };
@@ -295,6 +300,10 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
             opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, Clear::default());
         }),
+    }
+    if let Some(voxels) = voxels {
+        let size = [frame.extent.width, frame.extent.height];
+        gi::record(fg, (pipelines, push), voxels, (targets.hdr, targets.depth, size), targets.shadows);
     }
     if let Some(volume) = frame.volume {
         volumetric::record(fg, (pipelines, push), volume, targets.shadows, &[draws.clusters]);

@@ -86,6 +86,11 @@ pub struct Pipelines {
     pub bloom_down: vk::Pipeline,
     pub bloom_up: vk::Pipeline,
     pub exposure: vk::Pipeline,
+    /// Voxel GI's passes: moving last frame's voxels, and marking them from
+    /// the sun's shadows and from what the camera sees.
+    pub gi_shift: vk::Pipeline,
+    pub gi_shadows: vk::Pipeline,
+    pub gi_view: vk::Pipeline,
     /// Writes the LDR intermediate, for a finishing pass to read.
     pub composite_ldr: vk::Pipeline,
     /// Writes the output directly, when nothing follows.
@@ -122,9 +127,24 @@ impl Pipelines {
             module("debug")?,
             module("ambient_occlusion")?,
             module("volumetric")?,
+            module("gi_inject")?,
         ];
-        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview, debug, occlusion, volumetric] =
-            &modules;
+        let [
+            cull,
+            pyramid,
+            shadow,
+            forward,
+            sky,
+            clusters,
+            post,
+            exposure,
+            ui,
+            preview,
+            debug,
+            occlusion,
+            volumetric,
+            gi_inject,
+        ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
             Some(_) => Some([module("meshlet_task")?, module("meshlets")?, module("meshlet_shadow")?]),
@@ -242,6 +262,9 @@ impl Pipelines {
             bloom_down: fullscreen("Bloom down", c"bloomDownFragment", bloom, Blend::Opaque)?,
             bloom_up: fullscreen("Bloom up", c"bloomUpFragment", bloom, Blend::Additive)?,
             exposure: create_compute_pipeline(gpu, layout, "Exposure", exposure, c"exposureMain")?,
+            gi_shift: create_compute_pipeline(gpu, layout, "GI shift", gi_inject, c"giShiftMain")?,
+            gi_shadows: create_compute_pipeline(gpu, layout, "GI shadows", gi_inject, c"giShadowsMain")?,
+            gi_view: create_compute_pipeline(gpu, layout, "GI view", gi_inject, c"giViewMain")?,
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
@@ -312,6 +335,9 @@ impl Pipelines {
             self.bloom_down,
             self.bloom_up,
             self.exposure,
+            self.gi_shift,
+            self.gi_shadows,
+            self.gi_view,
             self.composite_ldr,
             self.composite,
             self.finish,

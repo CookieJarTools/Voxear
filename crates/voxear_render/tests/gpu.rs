@@ -1960,3 +1960,57 @@ fn taa_upscales_a_scene_drawn_at_half_size_close_to_the_full_one() {
     let (Some(plain), Some(plain_scaled)) = (upscaled_render(1.0, false), upscaled_render(0.5, false)) else { return };
     assert_eq!(mean_difference(&plain, &plain_scaled), 0.0, "without TAA the scene is drawn at full size");
 }
+
+/// A white floor seen from above, with a sunlit red wall standing on it
+/// along X at z = 1, and GI on or off.
+fn gi_render(gi: bool) -> Option<Vec<u8>> {
+    use voxear_render::{GlobalIllumination, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let white = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.9, 0.9, 1.0], ..MaterialDesc::default() }).unwrap();
+    let red = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, white), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let wall = Transform::new(Vec3::new(2.0, 1.0, 1.25), Quat::IDENTITY, Vec3::new(3.0, 2.0, 0.5));
+    world.spawn((MeshRenderer::new(cube, red), wall));
+    // The sun from the open side, low enough to light the wall's face towards the camera's floor.
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.6, 0.8).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ..GlobalIllumination::default() };
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 10);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn voxel_gi_bounces_a_walls_colour_and_keeps_the_sky_from_behind_it() {
+    let (Some(plain), Some(lit)) = (gi_render(false), gi_render(true)) else { return };
+    keep_image("gi off.png", &plain);
+    keep_image("gi on.png", &lit);
+    // On the floor in front of the red wall's sunlit face, the floor turns redder.
+    let near_wall = |pixels: &[u8]| rgb_at(pixels, floor_pixel(Vec3::new(2.0, 0.0, 0.5)));
+    let (before, after) = (near_wall(&plain), near_wall(&lit));
+    let redness = |rgb: [i32; 3]| rgb[0] - (rgb[1] + rgb[2]) / 2;
+    assert!(redness(after) > redness(before) + 6, "the wall's red bounces onto the floor: {after:?} from {before:?}");
+    // In the wall's shadow behind it, past where its top hides the floor from above, the wall keeps out
+    // some of the sky, which the plain ambient cannot do.
+    let behind = |pixels: &[u8]| rgb_at(pixels, floor_pixel(Vec3::new(2.0, 0.0, 2.4))).iter().sum::<i32>();
+    let open = |pixels: &[u8]| rgb_at(pixels, floor_pixel(Vec3::new(-5.0, 0.0, -3.0))).iter().sum::<i32>();
+    assert!(behind(&lit) * 20 < behind(&plain) * 19, "darker behind the wall: {} from {}", behind(&lit), behind(&plain));
+    assert!(open(&lit) * 10 > open(&plain) * 8, "out in the open, little changes: {} from {}", open(&lit), open(&plain));
+}
+
+/// The pixel the floor at `point` lands on, seen from the lamp camera.
+fn floor_pixel(point: Vec3) -> (u32, u32) {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let view = Mat4::from_rotation_translation(lamp_camera_rotation(), LAMP_CAMERA).inverse();
+    let clip = vulkan::perspective_infinite_reverse(60f32.to_radians(), 640.0 / 360.0, 0.1) * view * point.extend(1.0);
+    let (x, y) = (clip.x / clip.w * 0.5 + 0.5, clip.y / clip.w * 0.5 + 0.5);
+    ((x * 640.0) as u32, (y * 360.0) as u32)
+}

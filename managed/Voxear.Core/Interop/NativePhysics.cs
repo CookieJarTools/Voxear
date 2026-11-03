@@ -83,6 +83,35 @@ internal static unsafe class NativePhysics
 	public const int Body2DAngularVelocity = 131;
 	public const int Body2DAwake = 132;
 
+	public const int VehicleHas = 200;
+	public const int VehicleAdd = 201;
+	public const int VehicleRemove = 202;
+	public const int VehicleKind = 203;
+	public const int VehicleMaxTorque = 204;
+	public const int VehicleMinRpm = 205;
+	public const int VehicleMaxRpm = 206;
+	public const int VehicleAutomatic = 207;
+	public const int VehicleThrottle = 208;
+	public const int VehicleSteering = 209;
+	public const int VehicleBrake = 210;
+	public const int VehicleHandbrake = 211;
+	public const int VehicleSpeed = 212;
+	public const int VehicleRpm = 213;
+	public const int VehicleGear = 214;
+
+	public const int WheelHas = 220;
+	public const int WheelAdd = 221;
+	public const int WheelRemove = 222;
+	public const int WheelRadius = 223;
+	public const int WheelWidth = 224;
+	public const int WheelSuspension = 225;
+	public const int WheelSpring = 226;
+	public const int WheelDamping = 227;
+	public const int WheelSteerAngle = 228;
+	public const int WheelPowered = 229;
+	public const int WheelBrake = 230;
+	public const int WheelHandbrake = 231;
+
 	public const int Gravity2D = 160;
 
 	public const int PushForce = 0;

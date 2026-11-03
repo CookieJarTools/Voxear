@@ -32,6 +32,11 @@
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Vehicle/MotorcycleController.h>
+#include <Jolt/Physics/Vehicle/TrackedVehicleController.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
@@ -130,6 +135,14 @@ public:
 	std::vector<Contact> events;
 };
 
+// A vehicle: its constraint, which Jolt steps as a step listener, the test
+// that finds the ground under its wheels, and what kind it is.
+struct Vehicle {
+	Ref<VehicleConstraint> constraint;
+	Ref<VehicleCollisionTester> tester;
+	uint32_t kind; // 0 a car, 1 a tank, 2 a motorbike
+};
+
 struct Character {
 	Ref<CharacterVirtual> inner;
 	float height_offset;
@@ -151,6 +164,7 @@ struct VxWorld {
 	std::vector<RefConst<Shape>> shapes;
 	std::vector<Character> characters;
 	std::vector<Ref<Constraint>> joints;
+	std::vector<Vehicle> vehicles;
 
 	VxWorld(uint32_t max_bodies)
 		: jobs(cMaxPhysicsJobs, cMaxPhysicsBarriers, int(std::max(1u, std::thread::hardware_concurrency() - 1))) {
@@ -692,6 +706,258 @@ void vx_joint_remove(VxWorld *world, uint32_t joint) {
 		world->system.RemoveConstraint(world->joints[joint - 1]);
 		world->joints[joint - 1] = nullptr;
 	}
+}
+
+// A wheel, in its vehicle's body's space: where its suspension is fixed,
+// how far it travels, and what the wheel is.
+struct VxWheelDesc {
+	float position[3];
+	float radius;
+	float width;
+	float suspension_min;
+	float suspension_max;
+	float frequency;
+	float damping;
+	float max_steer; // radians
+	float max_brake; // Nm
+	float max_handbrake; // Nm
+	uint32_t powered;
+};
+
+struct VxVehicleDesc {
+	uint32_t kind; // 0 a car, 1 a tank, 2 a motorbike
+	float max_torque;
+	float min_rpm;
+	float max_rpm;
+	uint32_t automatic;
+	float max_pitch_roll; // radians
+	uint32_t wheel_count;
+	const VxWheelDesc *wheels;
+};
+
+struct VxVehicleState {
+	float rpm;
+	int32_t gear;
+	float speed; // m/s, forward
+};
+
+}
+
+namespace {
+
+void fill_wheel(WheelSettings &wheel, const VxWheelDesc &desc) {
+	wheel.mPosition = Vec3(desc.position[0], desc.position[1], desc.position[2]);
+	wheel.mRadius = desc.radius;
+	wheel.mWidth = desc.width;
+	wheel.mSuspensionMinLength = desc.suspension_min;
+	wheel.mSuspensionMaxLength = std::max(desc.suspension_max, desc.suspension_min + 0.01f);
+	wheel.mSuspensionSpring.mFrequency = desc.frequency;
+	wheel.mSuspensionSpring.mDamping = desc.damping;
+}
+
+// A car's or a motorbike's controller: powered wheels side by side share a
+// differential, each with an equal share of the engine.
+void fill_wheeled(WheeledVehicleControllerSettings &controller, const VxVehicleDesc &desc) {
+	controller.mEngine.mMaxTorque = desc.max_torque;
+	controller.mEngine.mMinRPM = desc.min_rpm;
+	controller.mEngine.mMaxRPM = std::max(desc.max_rpm, desc.min_rpm + 1.0f);
+	controller.mTransmission.mMode = desc.automatic ? ETransmissionMode::Auto : ETransmissionMode::Manual;
+	std::vector<uint32_t> powered;
+	for (uint32_t at = 0; at < desc.wheel_count; ++at) {
+		if (desc.wheels[at].powered) {
+			powered.push_back(at);
+		}
+	}
+	std::sort(powered.begin(), powered.end(), [&](uint32_t a, uint32_t b) { return desc.wheels[a].position[2] < desc.wheels[b].position[2]; });
+	std::vector<std::pair<int, int>> axles;
+	for (size_t at = 0; at < powered.size(); ++at) {
+		const VxWheelDesc &wheel = desc.wheels[powered[at]];
+		bool paired = at + 1 < powered.size() && std::abs(desc.wheels[powered[at + 1]].position[2] - wheel.position[2]) < 0.25f;
+		if (paired) {
+			axles.emplace_back(int(powered[at]), int(powered[at + 1]));
+			++at;
+		} else {
+			axles.emplace_back(int(powered[at]), -1);
+		}
+	}
+	for (auto [left, right] : axles) {
+		VehicleDifferentialSettings differential;
+		differential.mLeftWheel = left;
+		differential.mRightWheel = right;
+		differential.mEngineTorqueRatio = 1.0f / float(axles.size());
+		controller.mDifferentials.push_back(differential);
+	}
+}
+
+} // namespace
+
+extern "C" {
+
+uint32_t vx_vehicle_add(VxWorld *world, uint32_t body, const VxVehicleDesc *desc) {
+	BodyLockWrite lock(world->system.GetBodyLockInterface(), id_of(body));
+	if (!lock.Succeeded() || desc->wheel_count == 0) {
+		return 0;
+	}
+	Body &vehicle_body = lock.GetBody();
+	VehicleConstraintSettings settings;
+	settings.mMaxPitchRollAngle = desc->max_pitch_roll;
+	if (desc->kind == 1) {
+		auto controller = new TrackedVehicleControllerSettings();
+		controller->mEngine.mMaxTorque = desc->max_torque;
+		controller->mEngine.mMinRPM = desc->min_rpm;
+		controller->mEngine.mMaxRPM = std::max(desc->max_rpm, desc->min_rpm + 1.0f);
+		controller->mTransmission.mMode = desc->automatic ? ETransmissionMode::Auto : ETransmissionMode::Manual;
+		// Jolt's left is +X, as it is right-handed; each track takes the wheels on its side.
+		for (int side = 0; side < 2; ++side) {
+			VehicleTrackSettings &track = controller->mTracks[side];
+			track.mWheels.clear();
+			bool driven = false;
+			for (uint32_t at = 0; at < desc->wheel_count; ++at) {
+				bool left = desc->wheels[at].position[0] >= 0.0f;
+				if (left != (side == int(ETrackSide::Left))) {
+					continue;
+				}
+				track.mWheels.push_back(at);
+				if (!driven && desc->wheels[at].powered) {
+					track.mDrivenWheel = at;
+					driven = true;
+				}
+			}
+			if (!track.mWheels.empty() && !driven) {
+				track.mDrivenWheel = track.mWheels[0];
+			}
+		}
+		settings.mController = controller;
+		for (uint32_t at = 0; at < desc->wheel_count; ++at) {
+			auto wheel = new WheelSettingsTV();
+			fill_wheel(*wheel, desc->wheels[at]);
+			settings.mWheels.push_back(wheel);
+		}
+	} else {
+		Ref<WheeledVehicleControllerSettings> controller =
+			desc->kind == 2 ? new MotorcycleControllerSettings() : new WheeledVehicleControllerSettings();
+		fill_wheeled(*controller, *desc);
+		settings.mController = controller;
+		for (uint32_t at = 0; at < desc->wheel_count; ++at) {
+			auto wheel = new WheelSettingsWV();
+			fill_wheel(*wheel, desc->wheels[at]);
+			wheel->mMaxSteerAngle = desc->wheels[at].max_steer;
+			wheel->mMaxBrakeTorque = desc->wheels[at].max_brake;
+			wheel->mMaxHandBrakeTorque = desc->wheels[at].max_handbrake;
+			if (desc->kind == 2) {
+				// A motorbike's front wheel steers about a raked fork; both lean with the bike.
+				wheel->mSteeringAxis = Vec3(0, 1, desc->wheels[at].max_steer > 0.0f ? -0.4f : 0.0f).Normalized();
+			}
+			settings.mWheels.push_back(wheel);
+		}
+	}
+	Vehicle vehicle;
+	vehicle.kind = desc->kind;
+	vehicle.constraint = new VehicleConstraint(vehicle_body, settings);
+	vehicle.tester = new VehicleCollisionTesterCastCylinder(vehicle_body.GetObjectLayer());
+	vehicle.constraint->SetVehicleCollisionTester(vehicle.tester);
+	world->system.AddConstraint(vehicle.constraint);
+	world->system.AddStepListener(vehicle.constraint);
+	for (size_t at = 0; at < world->vehicles.size(); ++at) {
+		if (world->vehicles[at].constraint == nullptr) {
+			world->vehicles[at] = vehicle;
+			return uint32_t(at + 1);
+		}
+	}
+	world->vehicles.push_back(vehicle);
+	return uint32_t(world->vehicles.size());
+}
+
+static Vehicle *vehicle_of(VxWorld *world, uint32_t vehicle) {
+	if (vehicle == 0 || vehicle > world->vehicles.size() || world->vehicles[vehicle - 1].constraint == nullptr) {
+		return nullptr;
+	}
+	return &world->vehicles[vehicle - 1];
+}
+
+void vx_vehicle_remove(VxWorld *world, uint32_t vehicle) {
+	Vehicle *found = vehicle_of(world, vehicle);
+	if (found == nullptr) {
+		return;
+	}
+	world->system.RemoveStepListener(found->constraint);
+	world->system.RemoveConstraint(found->constraint);
+	*found = Vehicle {};
+}
+
+// Drives a vehicle: `forward` from -1 (reverse) to 1, `right` the way it
+// steers in Voxear's own sense, from -1 left to 1 right, and the brakes from
+// 0 to 1. Jolt's right is Voxear's left, so the steering turns round here.
+void vx_vehicle_drive(VxWorld *world, uint32_t vehicle, float forward, float right, float brake, float handbrake) {
+	Vehicle *found = vehicle_of(world, vehicle);
+	if (found == nullptr) {
+		return;
+	}
+	if (forward != 0.0f || right != 0.0f || brake != 0.0f || handbrake != 0.0f) {
+		world->system.GetBodyInterface().ActivateBody(found->constraint->GetVehicleBody()->GetID());
+	}
+	VehicleController *controller = found->constraint->GetController();
+	if (found->kind != 1) {
+		static_cast<WheeledVehicleController *>(controller)->SetDriverInput(forward, -right, brake, handbrake);
+		return;
+	}
+	// A tank turns by running its tracks at different speeds, and on the spot by running them opposite ways.
+	float steer = std::clamp(right, -1.0f, 1.0f);
+	float left_ratio = 1.0f, right_ratio = 1.0f;
+	if (std::abs(steer) > 0.01f && std::abs(forward) < 0.1f) {
+		forward = 1.0f;
+		left_ratio = steer > 0.0f ? -1.0f : 1.0f;
+		right_ratio = -left_ratio;
+	} else if (steer > 0.0f) {
+		left_ratio = std::max(1.0f - 2.0f * steer, 0.05f);
+	} else if (steer < 0.0f) {
+		right_ratio = std::max(1.0f + 2.0f * steer, 0.05f);
+	}
+	// Jolt's left track is on +X, Voxear's right: turning right runs it slower.
+	static_cast<TrackedVehicleController *>(controller)->SetDriverInput(forward, left_ratio, right_ratio, std::max(brake, handbrake));
+}
+
+void vx_vehicle_state(VxWorld *world, uint32_t vehicle, VxVehicleState *out) {
+	*out = VxVehicleState {};
+	Vehicle *found = vehicle_of(world, vehicle);
+	if (found == nullptr) {
+		return;
+	}
+	const VehicleEngine *engine = nullptr;
+	const VehicleTransmission *transmission = nullptr;
+	VehicleController *controller = found->constraint->GetController();
+	if (found->kind == 1) {
+		auto tracked = static_cast<TrackedVehicleController *>(controller);
+		engine = &tracked->GetEngine();
+		transmission = &tracked->GetTransmission();
+	} else {
+		auto wheeled = static_cast<WheeledVehicleController *>(controller);
+		engine = &wheeled->GetEngine();
+		transmission = &wheeled->GetTransmission();
+	}
+	out->rpm = engine->GetCurrentRPM();
+	out->gear = transmission->GetCurrentGear();
+	const Body *body = found->constraint->GetVehicleBody();
+	out->speed = body->GetLinearVelocity().Dot(body->GetRotation() * Vec3::sAxisZ());
+}
+
+// Where a wheel is now, and how it is turned: steered, rolled and down on
+// its suspension, for its Obj.
+void vx_vehicle_wheel(VxWorld *world, uint32_t vehicle, uint32_t wheel, float position[3], float rotation[4]) {
+	Vehicle *found = vehicle_of(world, vehicle);
+	if (found == nullptr || wheel >= found->constraint->GetWheels().size()) {
+		return;
+	}
+	RMat44 placed = found->constraint->GetWheelWorldTransform(wheel, Vec3::sAxisX(), Vec3::sAxisY());
+	RVec3 at = placed.GetTranslation();
+	Quat turn = placed.GetQuaternion();
+	position[0] = float(at.GetX());
+	position[1] = float(at.GetY());
+	position[2] = float(at.GetZ());
+	rotation[0] = turn.GetX();
+	rotation[1] = turn.GetY();
+	rotation[2] = turn.GetZ();
+	rotation[3] = turn.GetW();
 }
 
 } // extern "C"

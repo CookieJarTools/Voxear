@@ -10,6 +10,8 @@
 //! The contacts and trigger crossings of each step go the other way, to
 //! `PhysicsMessages` in C#, as [`PhysicsEventData`].
 
+mod vehicles;
+
 use voxear_core::math::{Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_physics::{
@@ -265,6 +267,9 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
     if !world.is_alive(entity) {
         return None;
     }
+    if what >= vehicles::VEHICLE_HAS {
+        return vehicles::read(world, entity, what);
+    }
     if what >= COLLIDER_2D_HAS {
         return read_2d(world, entity, what);
     }
@@ -456,6 +461,9 @@ fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool 
     }
     if !world.is_alive(entity) {
         return false;
+    }
+    if what >= vehicles::VEHICLE_HAS {
+        return vehicles::write(world, entity, what, value);
     }
     if what >= COLLIDER_2D_HAS {
         return write_2d(world, entity, what, value);

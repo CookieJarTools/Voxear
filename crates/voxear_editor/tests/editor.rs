@@ -6225,3 +6225,22 @@ fn a_string_table_goes_out_to_a_sheet_and_comes_back_from_one() {
     assert_eq!(table.entries.len(), 2);
     assert_eq!(table.entries[0].text("fr"), Some("Jouer"));
 }
+
+#[test]
+fn a_new_car_has_a_vehicle_on_four_wheels() {
+    use voxear_engine::physics::{Rigidbody, Vehicle, Wheel};
+    let Some((mut renderer, mut editor)) = open() else { return };
+    run_command(&mut editor, &mut renderer, "new car");
+    let car = obj(&editor, "Car").expect("a car made from the palette");
+    let world = &editor.game.engine.world;
+    assert!(world.has::<Vehicle>(car) && world.has::<Rigidbody>(car));
+    let wheels: Vec<Wheel> = world
+        .query_ref::<(&Wheel, &voxear_scene::Parent)>()
+        .into_iter()
+        .filter(|(_, parent)| parent.0 == car)
+        .map(|(wheel, _)| *wheel)
+        .collect();
+    assert_eq!(wheels.len(), 4);
+    assert_eq!(wheels.iter().filter(|w| w.steer_angle > 0.0).count(), 2, "the front two steer");
+    assert_eq!(wheels.iter().filter(|w| w.powered).count(), 2, "the back two are driven");
+}

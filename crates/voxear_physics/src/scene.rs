@@ -33,6 +33,9 @@
 //! triangles for what does not move, or the convex hull round them, which
 //! is all a dynamic Rigidbody can have. An Obj whose mesh has not been
 //! given has no body until it is.
+//!
+//! A **Vehicle** beside a Rigidbody drives it on the **Wheel**s of its
+//! child Objs (see `vehicles`): a car's, a tank's tracks, or a motorbike's.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -43,6 +46,8 @@ use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use voxear_ecs::{Component, Entity, World};
 use voxear_scene::{Destroying, Layer, Layers, Parent, Transform};
+
+mod vehicles;
 
 use crate::{
     BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, ShapeId,
@@ -248,6 +253,150 @@ impl Default for CharacterController {
 
 impl Component for CharacterController {}
 
+/// What drives a Vehicle: wheels, a tank's tracks, or two wheels that lean.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VehicleKind {
+    #[default]
+    Car,
+    /// Turns by running its tracks at different speeds, and on the spot by
+    /// running them opposite ways.
+    Tank,
+    Motorbike,
+}
+
+impl VehicleKind {
+    pub const ALL: [Self; 3] = [Self::Car, Self::Tank, Self::Motorbike];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Car => "Car",
+            Self::Tank => "Tank",
+            Self::Motorbike => "Motorbike",
+        }
+    }
+}
+
+/// Drives its Obj's Rigidbody on the Wheels of its child Objs, with an
+/// engine, a gearbox and differentials, as a car, a tank or a motorbike.
+/// Its Obj faces its +Z. A script drives it by `throttle` (-1 reverse to
+/// 1), `steering` (-1 left to 1 right), `brake` and `handbrake` (0 to 1),
+/// and reads its `speed` (metres a second, forward), `rpm` and `gear`
+/// (-1 reverse, 0 neutral, 1 first), none of which scene files keep.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Vehicle {
+    #[serde(default, skip_serializing_if = "is_car")]
+    pub kind: VehicleKind,
+    /// The engine's most torque, in Nm, and the range it revs through.
+    #[serde(default = "torque", skip_serializing_if = "is_torque")]
+    pub max_torque: f32,
+    #[serde(default = "min_rpm", skip_serializing_if = "is_min_rpm")]
+    pub min_rpm: f32,
+    #[serde(default = "max_rpm", skip_serializing_if = "is_max_rpm")]
+    pub max_rpm: f32,
+    /// Its gears change by themselves.
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub automatic: bool,
+    #[serde(skip)]
+    pub throttle: f32,
+    #[serde(skip)]
+    pub steering: f32,
+    #[serde(skip)]
+    pub brake: f32,
+    #[serde(skip)]
+    pub handbrake: f32,
+    #[serde(skip)]
+    pub speed: f32,
+    #[serde(skip)]
+    pub rpm: f32,
+    #[serde(skip)]
+    pub gear: i32,
+}
+
+impl Default for Vehicle {
+    fn default() -> Self {
+        Self {
+            kind: VehicleKind::Car,
+            max_torque: torque(),
+            min_rpm: min_rpm(),
+            max_rpm: max_rpm(),
+            automatic: true,
+            throttle: 0.0,
+            steering: 0.0,
+            brake: 0.0,
+            handbrake: 0.0,
+            speed: 0.0,
+            rpm: 0.0,
+            gear: 0,
+        }
+    }
+}
+
+impl Vehicle {
+    /// What it is made from, without what drives it or how it goes.
+    fn settings(&self) -> Self {
+        Self {
+            kind: self.kind,
+            max_torque: self.max_torque,
+            min_rpm: self.min_rpm,
+            max_rpm: self.max_rpm,
+            automatic: self.automatic,
+            ..Self::default()
+        }
+    }
+}
+
+impl Component for Vehicle {}
+
+/// One of a Vehicle's wheels, on a child Obj of the Vehicle's, placed where
+/// the wheel's middle is at rest, as Unity's Wheel Collider is: its radius
+/// and width in metres, how far its suspension travels, its spring's
+/// frequency (Hz) and damping, how far it steers (degrees; 0 for a wheel
+/// that does not), whether the engine drives it, and its brake's and hand
+/// brake's torque in Nm. While the game plays, physics turns and drops its
+/// Obj as the wheel rolls, steers and rides its suspension.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Wheel {
+    #[serde(default = "wheel_radius", skip_serializing_if = "is_wheel_radius")]
+    pub radius: f32,
+    #[serde(default = "wheel_width", skip_serializing_if = "is_wheel_width")]
+    pub width: f32,
+    #[serde(default = "travel", skip_serializing_if = "is_travel")]
+    pub suspension: f32,
+    #[serde(default = "frequency", skip_serializing_if = "is_frequency")]
+    pub spring: f32,
+    #[serde(default = "half", skip_serializing_if = "is_half")]
+    pub damping: f32,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub steer_angle: f32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub powered: bool,
+    #[serde(default = "brake", skip_serializing_if = "is_brake")]
+    pub brake: f32,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub handbrake: f32,
+}
+
+impl Default for Wheel {
+    fn default() -> Self {
+        Self {
+            radius: wheel_radius(),
+            width: wheel_width(),
+            suspension: travel(),
+            spring: frequency(),
+            damping: half(),
+            steer_angle: 0.0,
+            powered: false,
+            brake: brake(),
+            handbrake: 0.0,
+        }
+    }
+}
+
+impl Component for Wheel {}
+
 /// How a Joint holds its Obj.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -379,6 +528,9 @@ pub struct PhysicsScene {
     owners: HashMap<BodyId, Entity>,
     characters: HashMap<Entity, Walker>,
     joints: HashMap<Entity, (JointId, JointKey)>,
+    vehicles: HashMap<Entity, vehicles::Ride>,
+    /// Where each Wheel's Obj was when first seen, before physics moved it.
+    wheels_at_rest: HashMap<Entity, Vec3>,
     events: Vec<PhysicsEvent>,
     gravity: Vec3,
     /// Which layers collide, as the world was told last.
@@ -418,6 +570,8 @@ impl PhysicsScene {
             owners: HashMap::new(),
             characters: HashMap::new(),
             joints: HashMap::new(),
+            vehicles: HashMap::new(),
+            wheels_at_rest: HashMap::new(),
             events: Vec::new(),
             gravity: Vec3::new(0.0, -9.81, 0.0),
             collide: [u32::MAX; 32],
@@ -529,6 +683,7 @@ impl PhysicsScene {
         self.stepped = true;
         self.world.step(dt, 1);
         self.write_back(world);
+        self.write_back_vehicles(world);
         self.note_contacts();
     }
 
@@ -555,6 +710,7 @@ impl PhysicsScene {
         }
         self.sync_characters(world);
         self.sync_joints(world);
+        self.sync_vehicles(world);
     }
 
     /// Makes each Obj's joint between its body and the connected Obj's, or
@@ -687,6 +843,7 @@ impl PhysicsScene {
                     self.world.remove_joint(joint);
                 }
             }
+            self.remove_vehicles_of(body);
         }
         if let Some(kept) = self.bodies.remove(&entity) {
             self.world.remove_body(kept.body);
@@ -959,6 +1116,74 @@ fn is_zero_f32(value: &f32) -> bool {
     *value == 0.0
 }
 
+fn is_car(kind: &VehicleKind) -> bool {
+    *kind == VehicleKind::Car
+}
+
+fn torque() -> f32 {
+    500.0
+}
+
+fn is_torque(value: &f32) -> bool {
+    *value == torque()
+}
+
+fn min_rpm() -> f32 {
+    1000.0
+}
+
+fn is_min_rpm(value: &f32) -> bool {
+    *value == min_rpm()
+}
+
+fn max_rpm() -> f32 {
+    6000.0
+}
+
+fn is_max_rpm(value: &f32) -> bool {
+    *value == max_rpm()
+}
+
+fn wheel_radius() -> f32 {
+    0.35
+}
+
+fn is_wheel_radius(value: &f32) -> bool {
+    *value == wheel_radius()
+}
+
+fn wheel_width() -> f32 {
+    0.25
+}
+
+fn is_wheel_width(value: &f32) -> bool {
+    *value == wheel_width()
+}
+
+fn travel() -> f32 {
+    0.3
+}
+
+fn is_travel(value: &f32) -> bool {
+    *value == travel()
+}
+
+fn frequency() -> f32 {
+    1.5
+}
+
+fn is_frequency(value: &f32) -> bool {
+    *value == frequency()
+}
+
+fn brake() -> f32 {
+    1500.0
+}
+
+fn is_brake(value: &f32) -> bool {
+    *value == brake()
+}
+
 fn is_generic(acoustic: &Acoustic) -> bool {
     *acoustic == Acoustic::Generic
 }
@@ -1040,6 +1265,55 @@ mod tests {
         world.remove::<Collider>(falling);
         physics.step(&mut world, 1.0 / 60.0);
         assert!(physics.body(falling).is_none() && physics.body(ground).is_some());
+    }
+
+    #[test]
+    fn a_vehicle_drives_on_its_childrens_wheels_and_turns_them() {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let ground = world.spawn((Transform::from_position(Vec3::new(0.0, -0.5, 0.0)),));
+        world.insert(ground, Collider { size: [400.0, 1.0, 400.0], ..Collider::default() });
+        let car = world.spawn((Transform::from_position(Vec3::new(0.0, 1.0, 0.0)),));
+        world.insert(car, Collider { size: [1.8, 0.6, 4.0], ..Collider::default() });
+        world.insert(car, Rigidbody { mass: 1200.0, ..Rigidbody::default() });
+        world.insert(car, Vehicle::default());
+        let mut wheels = Vec::new();
+        for (x, z) in [(-0.9, 1.4), (0.9, 1.4), (-0.9, -1.4), (0.9, -1.4)] {
+            let wheel = world.spawn((Transform::from_position(Vec3::new(x, -0.4, z)), Parent(car)));
+            let front = z > 0.0;
+            world.insert(
+                wheel,
+                Wheel { steer_angle: if front { 35.0 } else { 0.0 }, powered: !front, ..Wheel::default() },
+            );
+            wheels.push(wheel);
+        }
+        let mut physics = PhysicsScene::new();
+        let drive = |world: &mut World, physics: &mut PhysicsScene, throttle: f32, steering: f32, steps: usize| {
+            for _ in 0..steps {
+                let vehicle = world.get_mut::<Vehicle>(car).unwrap();
+                (vehicle.throttle, vehicle.steering) = (throttle, steering);
+                physics.step(world, 1.0 / 60.0);
+            }
+        };
+        drive(&mut world, &mut physics, 0.0, 0.0, 60);
+        let wheel = world.get::<Transform>(wheels[0]).unwrap().position;
+        assert!(wheel.x < -0.8 && wheel.y < 0.0, "its wheel's Obj hangs where the wheel is: {wheel}");
+
+        drive(&mut world, &mut physics, 1.0, 0.0, 180);
+        let at = world.get::<Transform>(car).unwrap().position;
+        let vehicle = *world.get::<Vehicle>(car).unwrap();
+        assert!(at.z > 5.0, "driven forward: {at}");
+        assert!(vehicle.speed > 2.0 && vehicle.gear >= 1, "its speed and gear for scripts: {vehicle:?}");
+        let spun = world.get::<Transform>(wheels[2]).unwrap().rotation;
+        assert!(spun.angle_between(Quat::IDENTITY) > 0.01, "a wheel's Obj rolls with it");
+
+        drive(&mut world, &mut physics, 1.0, 1.0, 120);
+        assert!(world.get::<Transform>(car).unwrap().position.x > at.x + 1.0, "steered right");
+
+        // Taken away, the Vehicle leaves an ordinary Rigidbody.
+        world.remove::<Vehicle>(car);
+        physics.step(&mut world, 1.0 / 60.0);
+        assert!(physics.vehicles.is_empty());
     }
 
     #[test]

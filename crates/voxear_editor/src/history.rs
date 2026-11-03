@@ -14,7 +14,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_engine::{
     EditBehaviours, Game,
     audio::{AudioListener, AudioSource},
-    physics::{CharacterController, Collider, Joint, Rigidbody},
+    physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
     prefab::{FromPrefab, Locks, PrefabInstance},
 };
@@ -51,6 +51,8 @@ pub struct ObjState {
     pub joint: Option<Box<Joint>>,
     pub collider2d: Option<Box<Collider2D>>,
     pub rigidbody2d: Option<Box<Rigidbody2D>>,
+    pub vehicle: Option<Box<Vehicle>>,
+    pub wheel: Option<Box<Wheel>>,
     pub behaviours: Option<EditBehaviours>,
     /// Components locked for designers, when this is a prefab's Obj.
     pub locks: Option<Locks>,
@@ -75,6 +77,8 @@ impl ObjState {
             joint: world.get::<Joint>(entity).copied().map(Box::new),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
             rigidbody2d: world.get::<Rigidbody2D>(entity).copied().map(Box::new),
+            vehicle: world.get::<Vehicle>(entity).copied().map(Box::new),
+            wheel: world.get::<Wheel>(entity).copied().map(Box::new),
             behaviours: world.get::<EditBehaviours>(entity).cloned(),
             locks: world.get::<Locks>(entity).cloned(),
         })
@@ -113,6 +117,8 @@ impl ObjState {
         put(world, entity, self.joint.as_deref().copied());
         put(world, entity, self.collider2d.as_deref().copied());
         put(world, entity, self.rigidbody2d.as_deref().copied());
+        put(world, entity, self.vehicle.as_deref().copied());
+        put(world, entity, self.wheel.as_deref().copied());
         put(world, entity, self.behaviours.clone());
         put(world, entity, self.locks.clone());
     }

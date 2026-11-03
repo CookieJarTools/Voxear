@@ -656,12 +656,13 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] 2D physics on Box2D v3 (through `boxdd-sys`): Collider 2D (box, circle, capsule, trigger) and Rigidbody 2D
     in scenes, prefabs, the Inspector and the Scene view, and `Collider2D`, `Rigidbody2D`, `Physics2D` and the
     `On…2D` messages in C#
-- **Built-in vehicle physics**, on Jolt's vehicle constraints *(later, once the physics above is in)*:
-  - wheeled vehicles (cars, trucks, motorbikes) with suspension, tyre friction curves, engine and gearbox, and
-    differentials
-  - tracked vehicles (tanks)
-  - a `Vehicle` component with presets as the easy path, and every part (wheels, engine torque curve, gears,
-    anti-roll) open to tune or drive from code as the advanced one
+- **Built-in vehicle physics**, on Jolt's vehicle constraints:
+  - [x] wheeled vehicles (cars, trucks, motorbikes) with suspension, engine and gearbox, and differentials: a
+    `Vehicle` beside a Rigidbody, driven on the `Wheel`s of its child Objs, whose Objs physics turns and drops
+  - [x] tracked vehicles (tanks), turning on the spot
+  - [x] the easy path: a ready-to-drive Car from the Hierarchy's + and the palette, and `Throttle`, `Steering`,
+    `Brake`, `Handbrake`, `Speed`, `Rpm` and `Gear` in C#; in the Inspector, scene files and the Scene view
+  - [ ] the advanced path: tyre friction curves, the engine's torque curve, gear ratios and anti-roll bars open to tune
   - input bindings for driving, and a debug view of wheel contacts, slip and suspension
 
 ## M5 — Lighting

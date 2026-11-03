@@ -46,6 +46,18 @@ internal static class PhysicsTests
 	}
 
 	[Test]
+	private static void AVehicleAndAWheelReadAsTheDefaultsWithoutTheEngine()
+	{
+		var car = Obj.None.Vehicle;
+		Check.True(!car.IsValid && car.Kind == VehicleKind.Car && car.Speed == 0f && car.Gear == 0, "no Vehicle");
+		Check.Near(500f, car.MaxTorque);
+		car.Throttle = 1f;
+		var wheel = Obj.None.Wheel;
+		Check.True(!wheel.IsValid && !wheel.Powered && wheel.SteerAngle == 0f, "no Wheel");
+		Check.Near(0.35f, wheel.Radius);
+	}
+
+	[Test]
 	private static void AJointReadsAsHeldToTheWorldWithoutTheEngine()
 	{
 		var joint = Obj.None.Joint;

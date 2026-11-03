@@ -36,6 +36,7 @@
 //! [`LayerRef`]). `[obj.collider]`, `[obj.rigidbody]` and
 //! `[obj.character]` are its physics (see [`crate::physics`]), with
 //! `[obj.joint]` holding it to another (see [`crate::joints`]), and
+//! `[obj.vehicle]` and `[obj.wheel]` a vehicle and its wheels,
 //! `[obj.collider2d]` and `[obj.rigidbody2d]` its 2D physics (see
 //! [`crate::physics2d`]).
 //!
@@ -66,7 +67,7 @@ use crate::{
     engine::{EditBehaviours, Engine},
     joints::JointData,
     lod_groups::LodGroupData,
-    physics::{CharacterController, Collider, Joint, Rigidbody},
+    physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabInstance, Template},
 };
@@ -172,6 +173,10 @@ pub struct ObjData {
     pub collider2d: Option<Collider2D>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rigidbody2d: Option<Rigidbody2D>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vehicle: Option<Vehicle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wheel: Option<Wheel>,
     /// Changes to Objs inside a prefab instance, by path (`"2"`, `"3/2"`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, toml::Table>,
@@ -209,6 +214,8 @@ impl ObjData {
             joint: None,
             collider2d: None,
             rigidbody2d: None,
+            vehicle: None,
+            wheel: None,
             lod_group: None,
             overrides: BTreeMap::new(),
             locks: BTreeMap::new(),
@@ -558,6 +565,12 @@ fn capture_instance(
     if root.rigidbody2d.is_some() && root.rigidbody2d != prefab_root.rigidbody2d {
         instance.rigidbody2d = root.rigidbody2d;
     }
+    if root.vehicle.is_some() && root.vehicle != prefab_root.vehicle {
+        instance.vehicle = root.vehicle;
+    }
+    if root.wheel.is_some() && root.wheel != prefab_root.wheel {
+        instance.wheel = root.wheel;
+    }
 
     for inner in expected.iter().filter(|o| !o.path.is_root()) {
         let Some(&entity) = members.get(&inner.path) else { continue };
@@ -647,6 +660,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(body) = actual.rigidbody2d.filter(|b| Some(*b) != expected.rigidbody2d) {
         put("rigidbody2d", whole(&body, &Rigidbody2D::default())?);
+    }
+    if let Some(vehicle) = actual.vehicle.filter(|v| Some(*v) != expected.vehicle) {
+        put("vehicle", whole(&vehicle, &Vehicle::default())?);
+    }
+    if let Some(wheel) = actual.wheel.filter(|w| Some(*w) != expected.wheel) {
+        put("wheel", whole(&wheel, &Wheel::default())?);
     }
     if let Some(lod) = actual.lod_group.as_ref().filter(|l| Some(*l) != expected.lod_group.as_ref()) {
         put("lod_group", lod.whole()?);
@@ -849,6 +868,18 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));
     obj.collider2d = world.get::<Collider2D>(entity).copied();
     obj.rigidbody2d = world.get::<Rigidbody2D>(entity).copied();
+    // What drives a Vehicle and how it goes are the game's, not the scene's.
+    obj.vehicle = world.get::<Vehicle>(entity).map(|vehicle| Vehicle {
+        throttle: 0.0,
+        steering: 0.0,
+        brake: 0.0,
+        handbrake: 0.0,
+        speed: 0.0,
+        rpm: 0.0,
+        gear: 0,
+        ..*vehicle
+    });
+    obj.wheel = world.get::<Wheel>(entity).copied();
     obj.lod_group = world.get::<LodGroup>(entity).map(|lod| LodGroupData::of(lod, &|e| file_path(world, ids, e)));
     obj
 }

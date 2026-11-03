@@ -10,7 +10,10 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
     audio::{AudioBus, AudioListener, AudioSource, SoundOcclusion, SoundSpace},
-    physics::{Acoustic, CharacterController, Collider, ColliderShape, Joint, JointType, Rigidbody},
+    physics::{
+        Acoustic, CharacterController, Collider, ColliderShape, Joint, JointType, Rigidbody, Vehicle, VehicleKind,
+        Wheel,
+    },
     physics2d::{Collider2D, ColliderShape2D, Rigidbody2D},
     linear,
     prefab::Locks,
@@ -46,6 +49,8 @@ pub enum Part {
     Joint,
     Collider2D,
     Rigidbody2D,
+    Vehicle,
+    Wheel,
     /// A script, by its full type name.
     Behaviour(String),
 }
@@ -67,6 +72,8 @@ impl Part {
             Part::Joint => "joint".into(),
             Part::Collider2D => "collider2d".into(),
             Part::Rigidbody2D => "rigidbody2d".into(),
+            Part::Vehicle => "vehicle".into(),
+            Part::Wheel => "wheel".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -85,6 +92,8 @@ impl Part {
             Part::Joint => "Joint",
             Part::Collider2D => "Collider 2D",
             Part::Rigidbody2D => "Rigidbody 2D",
+            Part::Vehicle => "Vehicle",
+            Part::Wheel => "Wheel",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -102,6 +111,8 @@ impl Part {
             Part::Joint => "pivot",
             Part::Collider2D => "box",
             Part::Rigidbody2D => "move",
+            Part::Vehicle => "move",
+            Part::Wheel => "rotate",
             Part::Behaviour(_) => "code",
         }
     }
@@ -206,6 +217,22 @@ pub enum Prop {
     AngularDrag2D,
     FixedRotation,
     Continuous2D,
+    /// A Vehicle's kind, engine and gearbox.
+    VehicleKind,
+    MaxTorque,
+    MinRpm,
+    MaxRpm,
+    Automatic,
+    /// A Wheel's size, suspension, steering, drive and brakes.
+    WheelRadius,
+    WheelWidth,
+    Suspension,
+    Spring,
+    Damping,
+    SteerAngle,
+    Powered,
+    WheelBrake,
+    Handbrake,
     /// A script field, or a value inside one: its behaviour's type name,
     /// and the path to it from the field.
     Field {
@@ -276,6 +303,16 @@ impl Prop {
             | Prop::AngularDrag2D
             | Prop::FixedRotation
             | Prop::Continuous2D => Part::Rigidbody2D,
+            Prop::VehicleKind | Prop::MaxTorque | Prop::MinRpm | Prop::MaxRpm | Prop::Automatic => Part::Vehicle,
+            Prop::WheelRadius
+            | Prop::WheelWidth
+            | Prop::Suspension
+            | Prop::Spring
+            | Prop::Damping
+            | Prop::SteerAngle
+            | Prop::Powered
+            | Prop::WheelBrake
+            | Prop::Handbrake => Part::Wheel,
             Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
         }
     }
@@ -351,6 +388,20 @@ impl Prop {
             Prop::AngularDrag2D => "angular_drag",
             Prop::FixedRotation => "fixed_rotation",
             Prop::Continuous2D => "continuous",
+            Prop::VehicleKind => "kind",
+            Prop::MaxTorque => "max_torque",
+            Prop::MinRpm => "min_rpm",
+            Prop::MaxRpm => "max_rpm",
+            Prop::Automatic => "automatic",
+            Prop::WheelRadius => "radius",
+            Prop::WheelWidth => "width",
+            Prop::Suspension => "suspension",
+            Prop::Spring => "spring",
+            Prop::Damping => "damping",
+            Prop::SteerAngle => "steer_angle",
+            Prop::Powered => "powered",
+            Prop::WheelBrake => "brake",
+            Prop::Handbrake => "handbrake",
             Prop::Field { path, .. } => match path.first() {
                 Some(crate::fields::Step::Key(field)) => return field.clone(),
                 _ => "",
@@ -425,6 +476,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     }
     if world.has::<Rigidbody2D>(entity) {
         parts.push(Part::Rigidbody2D);
+    }
+    if world.has::<Vehicle>(entity) {
+        parts.push(Part::Vehicle);
+    }
+    if world.has::<Wheel>(entity) {
+        parts.push(Part::Wheel);
     }
     parts.extend(specs(world, entity).into_iter().map(|spec| Part::Behaviour(spec.type_name)));
     parts
@@ -533,6 +590,18 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::FixedRotation,
             Prop::Continuous2D,
         ],
+        Part::Vehicle => vec![Prop::VehicleKind, Prop::MaxTorque, Prop::MinRpm, Prop::MaxRpm, Prop::Automatic],
+        Part::Wheel => vec![
+            Prop::WheelRadius,
+            Prop::WheelWidth,
+            Prop::Suspension,
+            Prop::Spring,
+            Prop::Damping,
+            Prop::SteerAngle,
+            Prop::Powered,
+            Prop::WheelBrake,
+            Prop::Handbrake,
+        ],
         // Each level's Objs and a place to add another, then where it ends, which the last has only when the
         // group hides past it.
         Part::LodGroup => {
@@ -640,6 +709,20 @@ pub fn label(prop: &Prop) -> String {
         Prop::AngularDrag2D => "Angular drag",
         Prop::FixedRotation => "Fixed rotation",
         Prop::Continuous2D => "Continuous",
+        Prop::VehicleKind => "Kind",
+        Prop::MaxTorque => "Max torque",
+        Prop::MinRpm => "Min RPM",
+        Prop::MaxRpm => "Max RPM",
+        Prop::Automatic => "Automatic",
+        Prop::WheelRadius => "Radius",
+        Prop::WheelWidth => "Width",
+        Prop::Suspension => "Suspension",
+        Prop::Spring => "Spring",
+        Prop::Damping => "Damping",
+        Prop::SteerAngle => "Steer angle",
+        Prop::Powered => "Powered",
+        Prop::WheelBrake => "Brake",
+        Prop::Handbrake => "Handbrake",
         Prop::Field { path, .. } => {
             return match path.last() {
                 Some(Step::Key(name)) => nice_name(name),
@@ -731,6 +814,12 @@ pub fn add(
         Part::Rigidbody2D => {
             world.insert(entity, Rigidbody2D::default());
         }
+        Part::Vehicle => {
+            world.insert(entity, Vehicle::default());
+        }
+        Part::Wheel => {
+            world.insert(entity, Wheel::default());
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -759,6 +848,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Joint => drop(world.remove::<Joint>(entity)),
         Part::Collider2D => drop(world.remove::<Collider2D>(entity)),
         Part::Rigidbody2D => drop(world.remove::<Rigidbody2D>(entity)),
+        Part::Vehicle => drop(world.remove::<Vehicle>(entity)),
+        Part::Wheel => drop(world.remove::<Wheel>(entity)),
         Part::Behaviour(name) => {
             let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return };
             kept.0.retain(|spec| spec.type_name != *name);
@@ -782,6 +873,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     let character = || world.get::<CharacterController>(entity);
     let collider2d = || world.get::<Collider2D>(entity);
     let body2d = || world.get::<Rigidbody2D>(entity);
+    let vehicle = || world.get::<Vehicle>(entity);
+    let wheel = || world.get::<Wheel>(entity);
     Some(match prop {
         Prop::Shape2D => {
             let shape = collider2d()?.shape;
@@ -802,6 +895,24 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::AngularDrag2D => Value::Number(body2d()?.angular_drag),
         Prop::FixedRotation => Value::Toggle(body2d()?.fixed_rotation),
         Prop::Continuous2D => Value::Toggle(body2d()?.continuous),
+        Prop::VehicleKind => {
+            let kind = vehicle()?.kind;
+            let index = VehicleKind::ALL.iter().position(|k| *k == kind).unwrap_or_default();
+            Value::Choice(index, VehicleKind::ALL.iter().map(|k| k.label().to_string()).collect())
+        }
+        Prop::MaxTorque => Value::Number(vehicle()?.max_torque),
+        Prop::MinRpm => Value::Number(vehicle()?.min_rpm),
+        Prop::MaxRpm => Value::Number(vehicle()?.max_rpm),
+        Prop::Automatic => Value::Toggle(vehicle()?.automatic),
+        Prop::WheelRadius => Value::Number(wheel()?.radius),
+        Prop::WheelWidth => Value::Number(wheel()?.width),
+        Prop::Suspension => Value::Number(wheel()?.suspension),
+        Prop::Spring => Value::Number(wheel()?.spring),
+        Prop::Damping => Value::Number(wheel()?.damping),
+        Prop::SteerAngle => Value::Number(wheel()?.steer_angle),
+        Prop::Powered => Value::Toggle(wheel()?.powered),
+        Prop::WheelBrake => Value::Number(wheel()?.brake),
+        Prop::Handbrake => Value::Number(wheel()?.handbrake),
         Prop::ColliderShape => {
             let shape = collider()?.shape;
             let index = ColliderShape::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -1344,6 +1455,22 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::FixedRotation, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody2D| b.fixed_rotation = on),
         (Prop::Continuous2D, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody2D| b.continuous = on),
+        (Prop::VehicleKind, Value::Choice(index, _)) => with(world, entity, |v: &mut Vehicle| {
+            v.kind = VehicleKind::ALL[index.min(VehicleKind::ALL.len() - 1)];
+        }),
+        (Prop::MaxTorque, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.max_torque = n.max(0.0)),
+        (Prop::MinRpm, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.min_rpm = n.clamp(0.0, v.max_rpm)),
+        (Prop::MaxRpm, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.max_rpm = n.max(v.min_rpm)),
+        (Prop::Automatic, Value::Toggle(on)) => with(world, entity, |v: &mut Vehicle| v.automatic = on),
+        (Prop::WheelRadius, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.radius = n.max(0.01)),
+        (Prop::WheelWidth, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.width = n.max(0.01)),
+        (Prop::Suspension, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.suspension = n.max(0.01)),
+        (Prop::Spring, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.spring = n.max(0.01)),
+        (Prop::Damping, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.damping = n.max(0.0)),
+        (Prop::SteerAngle, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.steer_angle = n.clamp(0.0, 90.0)),
+        (Prop::Powered, Value::Toggle(on)) => with(world, entity, |w: &mut Wheel| w.powered = on),
+        (Prop::WheelBrake, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.brake = n.max(0.0)),
+        (Prop::Handbrake, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.handbrake = n.max(0.0)),
         (Prop::ColliderShape, Value::Choice(index, _)) => with(world, entity, |c: &mut Collider| {
             c.shape = ColliderShape::ALL[index.min(ColliderShape::ALL.len() - 1)];
         }),

@@ -1757,6 +1757,8 @@ impl Inspector {
             (Part::Joint, "Physics"),
             (Part::Collider2D, "Physics 2D"),
             (Part::Rigidbody2D, "Physics 2D"),
+            (Part::Vehicle, "Physics"),
+            (Part::Wheel, "Physics"),
         ];
         let mut choices: Vec<Choice> = built_in
             .into_iter()
@@ -2413,6 +2415,8 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Joint) => "joint",
         Some(Part::Collider2D) => "collider2d",
         Some(Part::Rigidbody2D) => "rigidbody2d",
+        Some(Part::Vehicle) => "vehicle",
+        Some(Part::Wheel) => "wheel",
         Some(Part::Behaviour(name)) => return vec![ValuePath::new(&["fields", name])],
     };
     vec![ValuePath::new(&[key])]

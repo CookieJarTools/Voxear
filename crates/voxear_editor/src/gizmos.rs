@@ -14,7 +14,7 @@ use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     audio::{AudioSource, SoundSpace},
-    physics::{CharacterController, Collider, ColliderMesh, ColliderShape, Joint, JointType},
+    physics::{CharacterController, Collider, ColliderMesh, ColliderShape, Joint, JointType, Vehicle, Wheel},
     physics2d::{Collider2D, ColliderShape2D},
 };
 use voxear_render::{Camera, Light, LightKind};
@@ -171,6 +171,25 @@ fn colliders(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity
         let placed = Mat4::from_scale_rotation_translation(scale, rotation, position);
         joint_marks(shapes, world, camera, joint, placed);
     }
+    if let Some(wheel) = world.get::<Wheel>(entity) {
+        wheel_marks(shapes, camera, wheel, position, rotation, color);
+    }
+    // A Vehicle selected shows each of its wheels.
+    if world.has::<Vehicle>(entity) {
+        let wheels = world.query_ref::<(Entity, &Wheel, &voxear_scene::Parent)>();
+        for (child, wheel, _) in wheels.into_iter().filter(|(_, _, parent)| parent.0 == entity) {
+            let (_, turn, at) = voxear_scene::world_matrix(world, child).to_scale_rotation_translation();
+            wheel_marks(shapes, camera, wheel, at, turn, color);
+        }
+    }
+}
+
+/// A Wheel as a ring about its axle, its Obj's X, and a line up and down
+/// its suspension's travel.
+fn wheel_marks(shapes: &mut Vec<Shape>, camera: &ViewCamera, wheel: &Wheel, at: Vec3, turn: Quat, color: Color) {
+    polyline(shapes, camera, &ring(camera, at, turn * Vec3::X, wheel.radius), color);
+    let half = turn * Vec3::Y * (wheel.suspension * 0.5);
+    line(shapes, camera, at - half, at + half, color.with_alpha(160));
 }
 
 /// A joint's anchor as a small cross, a hinge's axis through it, and a

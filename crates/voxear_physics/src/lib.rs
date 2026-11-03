@@ -46,6 +46,58 @@ pub struct CharacterId(u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct JointId(u32);
 
+/// A vehicle, made by [`PhysicsWorld::add_vehicle`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VehicleId(u32);
+
+/// What drives a vehicle: wheels, tracks, or two wheels that lean.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VehicleType {
+    #[default]
+    Car,
+    Tank,
+    Motorbike,
+}
+
+/// A vehicle's wheel, in its body's space: where its suspension is fixed,
+/// how far it travels, its spring, and the wheel itself. A wheel steers
+/// up to `max_steer` radians, and is driven when `powered`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WheelDesc {
+    pub position: Vec3,
+    pub radius: f32,
+    pub width: f32,
+    pub suspension: (f32, f32),
+    pub frequency: f32,
+    pub damping: f32,
+    pub max_steer: f32,
+    pub brake: f32,
+    pub handbrake: f32,
+    pub powered: bool,
+}
+
+/// A vehicle: what drives it, its engine's most torque in Nm and its range
+/// of revolutions a minute, whether its gears change by themselves, how
+/// far it may pitch or roll in radians, and its wheels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VehicleDesc {
+    pub kind: VehicleType,
+    pub max_torque: f32,
+    pub rpm: (f32, f32),
+    pub automatic: bool,
+    pub max_pitch_roll: f32,
+    pub wheels: Vec<WheelDesc>,
+}
+
+/// How a vehicle is going: its engine's revolutions a minute, its gear (-1
+/// reverse, 0 neutral, 1 first), and its speed forward in metres a second.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VehicleState {
+    pub rpm: f32,
+    pub gear: i32,
+    pub speed: f32,
+}
+
 /// How a body moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Motion {
@@ -544,6 +596,76 @@ impl PhysicsWorld {
     pub fn remove_joint(&mut self, joint: JointId) {
         unsafe { ffi::vx_joint_remove(self.world, joint.0) };
     }
+
+    /// Makes a vehicle of a dynamic body, Jolt's vehicle constraint with
+    /// an engine, gearbox and differentials, or a tank's tracks.
+    pub fn add_vehicle(&mut self, body: BodyId, desc: &VehicleDesc) -> Option<VehicleId> {
+        let wheels: Vec<ffi::VxWheelDesc> = desc
+            .wheels
+            .iter()
+            .map(|wheel| ffi::VxWheelDesc {
+                position: wheel.position.to_array(),
+                radius: wheel.radius,
+                width: wheel.width,
+                suspension_min: wheel.suspension.0,
+                suspension_max: wheel.suspension.1,
+                frequency: wheel.frequency,
+                damping: wheel.damping,
+                max_steer: wheel.max_steer,
+                max_brake: wheel.brake,
+                max_handbrake: wheel.handbrake,
+                powered: u32::from(wheel.powered),
+            })
+            .collect();
+        let kind = match desc.kind {
+            VehicleType::Car => 0,
+            VehicleType::Tank => 1,
+            VehicleType::Motorbike => 2,
+        };
+        let raw = ffi::VxVehicleDesc {
+            kind,
+            max_torque: desc.max_torque,
+            min_rpm: desc.rpm.0,
+            max_rpm: desc.rpm.1,
+            automatic: u32::from(desc.automatic),
+            max_pitch_roll: desc.max_pitch_roll,
+            wheel_count: wheels.len() as u32,
+            wheels: wheels.as_ptr(),
+        };
+        let vehicle = unsafe { ffi::vx_vehicle_add(self.world, body.0, &raw) };
+        (vehicle != 0).then_some(VehicleId(vehicle))
+    }
+
+    pub fn remove_vehicle(&mut self, vehicle: VehicleId) {
+        unsafe { ffi::vx_vehicle_remove(self.world, vehicle.0) };
+    }
+
+    /// What the driver asks of a vehicle: `forward` from -1 (reverse) to 1,
+    /// `right` from -1 (steering left) to 1, and the brake and hand brake
+    /// from 0 to 1.
+    pub fn drive_vehicle(&mut self, vehicle: VehicleId, forward: f32, right: f32, brake: f32, handbrake: f32) {
+        let clamp = |value: f32, least: f32| value.clamp(least, 1.0);
+        let (forward, right) = (clamp(forward, -1.0), clamp(right, -1.0));
+        unsafe {
+            ffi::vx_vehicle_drive(self.world, vehicle.0, forward, right, clamp(brake, 0.0), clamp(handbrake, 0.0))
+        };
+    }
+
+    pub fn vehicle_state(&self, vehicle: VehicleId) -> VehicleState {
+        let mut state = ffi::VxVehicleState::default();
+        unsafe { ffi::vx_vehicle_state(self.world, vehicle.0, &mut state) };
+        VehicleState { rpm: state.rpm, gear: state.gear, speed: state.speed }
+    }
+
+    /// Where a vehicle's wheel is now, and how it is turned: steered,
+    /// rolled and down on its suspension.
+    pub fn vehicle_wheel(&self, vehicle: VehicleId, wheel: usize) -> (Vec3, Quat) {
+        let (mut position, mut rotation) = ([0.0f32; 3], [0.0, 0.0, 0.0, 1.0f32]);
+        unsafe {
+            ffi::vx_vehicle_wheel(self.world, vehicle.0, wheel as u32, position.as_mut_ptr(), rotation.as_mut_ptr())
+        };
+        (Vec3::from(position), Quat::from_array(rotation))
+    }
 }
 
 #[cfg(test)]
@@ -560,6 +682,85 @@ mod tests {
         desc.user_data = 42;
         let falling = world.add_body(&desc);
         (ground.unwrap(), falling.unwrap())
+    }
+
+    /// A body on flat ground made a vehicle of `kind`, with four wheels,
+    /// the front two steering, all of them powered; a tank's set wider,
+    /// with a tank's torque.
+    fn vehicle(world: &mut PhysicsWorld, kind: VehicleType) -> (BodyId, VehicleId) {
+        let floor = world.box_shape(Vec3::new(200.0, 0.5, 200.0));
+        world.add_body(&BodyDesc::new(floor, Motion::Static).at(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY));
+        let shape = world.box_shape(Vec3::new(0.9, 0.3, 2.0));
+        let mut desc = BodyDesc::new(shape, Motion::Dynamic).at(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY);
+        desc.mass = 1200.0;
+        let body = world.add_body(&desc).unwrap();
+        let wheel = |x: f32, z: f32| WheelDesc {
+            position: Vec3::new(x, -0.1, z),
+            radius: 0.35,
+            width: 0.25,
+            suspension: (0.3, 0.5),
+            frequency: 1.5,
+            damping: 0.5,
+            max_steer: if z > 0.0 { 0.6 } else { 0.0 },
+            brake: 1500.0,
+            handbrake: if z < 0.0 { 4000.0 } else { 0.0 },
+            powered: true,
+        };
+        let wheels = match kind {
+            VehicleType::Tank => vec![wheel(-1.2, 0.9), wheel(1.2, 0.9), wheel(-1.2, -0.9), wheel(1.2, -0.9)],
+            _ => vec![wheel(-0.9, 1.4), wheel(0.9, 1.4), wheel(-0.9, -1.4), wheel(0.9, -1.4)],
+        };
+        let desc = VehicleDesc {
+            kind,
+            max_torque: if kind == VehicleType::Tank { 5000.0 } else { 500.0 },
+            rpm: (1000.0, 6000.0),
+            automatic: true,
+            max_pitch_roll: std::f32::consts::PI,
+            wheels,
+        };
+        (body, world.add_vehicle(body, &desc).expect("a vehicle"))
+    }
+
+    fn drive(world: &mut PhysicsWorld, vehicle: VehicleId, forward: f32, right: f32, seconds: f32) {
+        for _ in 0..(seconds * 60.0) as usize {
+            world.drive_vehicle(vehicle, forward, right, 0.0, 0.0);
+            world.step(1.0 / 60.0, 1);
+        }
+    }
+
+    #[test]
+    fn a_car_drives_forward_and_steers_the_way_it_is_told() {
+        let mut world = PhysicsWorld::new(1024);
+        let (body, car) = vehicle(&mut world, VehicleType::Car);
+        drive(&mut world, car, 0.0, 0.0, 1.0);
+        let (rest, _) = world.transform(body);
+        assert!(rest.y > 0.3 && rest.y < 1.2, "on its wheels: {rest}");
+        let (wheel, _) = world.vehicle_wheel(car, 0);
+        assert!(wheel.x < -0.5 && wheel.y < rest.y, "the front left wheel under its corner: {wheel}");
+
+        drive(&mut world, car, 1.0, 0.0, 3.0);
+        let (ahead, _) = world.transform(body);
+        let state = world.vehicle_state(car);
+        assert!(ahead.z > 5.0 && ahead.x.abs() < 1.0, "forward is +Z: {ahead}");
+        assert!(state.speed > 2.0 && state.gear >= 1 && state.rpm > 900.0, "{state:?}");
+
+        drive(&mut world, car, 1.0, 1.0, 2.0);
+        let (turned, _) = world.transform(body);
+        assert!(turned.x > ahead.x + 1.0, "steering right goes to +X, Voxear's right: {turned}");
+    }
+
+    #[test]
+    fn a_tank_turns_on_the_spot() {
+        let mut world = PhysicsWorld::new(1024);
+        let (body, tank) = vehicle(&mut world, VehicleType::Tank);
+        drive(&mut world, tank, 0.0, 0.0, 1.0);
+        let (start, _) = world.transform(body);
+        // Its tracks turn opposite ways; a tank turns best when they are about as far apart as it is long.
+        drive(&mut world, tank, 0.0, 1.0, 0.4);
+        let (at, turn) = world.transform(body);
+        let facing = turn * Vec3::Z;
+        assert!(at.distance(start) < 1.5, "on the spot: {start} to {at}");
+        assert!(facing.x > 0.2, "turned right, to face +X: {facing}");
     }
 
     #[test]

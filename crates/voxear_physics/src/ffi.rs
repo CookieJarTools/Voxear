@@ -67,6 +67,43 @@ pub struct VxContact {
     pub normal: [f32; 3],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VxWheelDesc {
+    pub position: [f32; 3],
+    pub radius: f32,
+    pub width: f32,
+    pub suspension_min: f32,
+    pub suspension_max: f32,
+    pub frequency: f32,
+    pub damping: f32,
+    pub max_steer: f32,
+    pub max_brake: f32,
+    pub max_handbrake: f32,
+    pub powered: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct VxVehicleDesc {
+    pub kind: u32,
+    pub max_torque: f32,
+    pub min_rpm: f32,
+    pub max_rpm: f32,
+    pub automatic: u32,
+    pub max_pitch_roll: f32,
+    pub wheel_count: u32,
+    pub wheels: *const VxWheelDesc,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VxVehicleState {
+    pub rpm: f32,
+    pub gear: i32,
+    pub speed: f32,
+}
+
 unsafe extern "C" {
     pub fn vx_world_create(max_bodies: u32) -> *mut VxWorld;
     pub fn vx_world_destroy(world: *mut VxWorld);
@@ -151,4 +188,10 @@ unsafe extern "C" {
         max: f32,
     ) -> u32;
     pub fn vx_joint_remove(world: *mut VxWorld, joint: u32);
+
+    pub fn vx_vehicle_add(world: *mut VxWorld, body: u32, desc: *const VxVehicleDesc) -> u32;
+    pub fn vx_vehicle_remove(world: *mut VxWorld, vehicle: u32);
+    pub fn vx_vehicle_drive(world: *mut VxWorld, vehicle: u32, forward: f32, right: f32, brake: f32, handbrake: f32);
+    pub fn vx_vehicle_state(world: *mut VxWorld, vehicle: u32, out: *mut VxVehicleState);
+    pub fn vx_vehicle_wheel(world: *mut VxWorld, vehicle: u32, wheel: u32, position: *mut f32, rotation: *mut f32);
 }

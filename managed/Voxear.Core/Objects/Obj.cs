@@ -269,6 +269,26 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Rigidbody2D(this);
 	}
 
+	/// <summary>The Obj's Vehicle, which drives its Rigidbody on its children's Wheels. Not valid when it has none.</summary>
+	public Vehicle Vehicle => new Vehicle(this);
+
+	/// <summary>Gives the Obj a Vehicle of a kind, unless it has one, and returns it. It needs a Collider and a Rigidbody too.</summary>
+	public Vehicle AddVehicle(VehicleKind kind = VehicleKind.Car)
+	{
+		NativePhysics.Set(this, NativePhysics.VehicleAdd, new Vector4((int)kind, 0f, 0f, 0f));
+		return new Vehicle(this);
+	}
+
+	/// <summary>The Obj's Wheel, as one of its parent's Vehicle's wheels. Not valid when it has none.</summary>
+	public Wheel Wheel => new Wheel(this);
+
+	/// <summary>Gives the Obj a Wheel, unless it has one, and returns it. Its parent's Vehicle drives on it.</summary>
+	public Wheel AddWheel()
+	{
+		NativePhysics.Set(this, NativePhysics.WheelAdd, Vector4.Zero);
+		return new Wheel(this);
+	}
+
 	/// <summary>The Obj's Audio Source, which plays a sound from it. Not valid when it has none.</summary>
 	public AudioSource AudioSource => new AudioSource(this);
 

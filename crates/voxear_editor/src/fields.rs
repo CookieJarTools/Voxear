@@ -13,7 +13,7 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game,
     audio::AudioSource,
-    physics::{CharacterController, Collider, Joint, Rigidbody},
+    physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
     script_types::{FieldKind, ScriptTypes, nice_name, same_field},
 };
@@ -573,6 +573,8 @@ fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "Joint" => world.has::<Joint>(entity),
         "Collider2D" => world.has::<Collider2D>(entity),
         "Rigidbody2D" => world.has::<Rigidbody2D>(entity),
+        "Vehicle" => world.has::<Vehicle>(entity),
+        "Wheel" => world.has::<Wheel>(entity),
         _ => false,
     }
 }

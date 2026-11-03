@@ -25,7 +25,7 @@ use crate::{
     EditBehaviours,
     audio::{AudioListener, AudioSource},
     content::Content,
-    physics::{CharacterController, Collider, Joint, Rigidbody},
+    physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
     prefab::{self, FlatObj, FromPrefab, ObjPath, PrefabFile, PrefabInstance},
     scene_file::{self, ObjData},
@@ -220,6 +220,8 @@ pub fn put(
     set::<CharacterController>(world, entity, obj.character);
     set::<Collider2D>(world, entity, obj.collider2d);
     set::<Rigidbody2D>(world, entity, obj.rigidbody2d);
+    set::<Vehicle>(world, entity, obj.vehicle);
+    set::<Wheel>(world, entity, obj.wheel);
     set::<LodGroup>(world, entity, obj.lod_group.map(|lod| lod.bind(&lookup)));
     set::<Joint>(world, entity, obj.joint.map(|joint| joint.bind(&lookup)));
     set(world, entity, (!behaviours.is_empty()).then_some(EditBehaviours(behaviours)));

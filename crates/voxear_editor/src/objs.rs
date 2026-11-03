@@ -26,7 +26,7 @@ use crate::project_view::AssetPart;
 
 /// What the Hierarchy's + makes, as Unity's GameObject menu: what the menu
 /// says, the new Obj's name, and the rest of its scene file entry.
-pub const NEW_OBJS: [(&str, &str, &str); 9] = [
+pub const NEW_OBJS: [(&str, &str, &str); 10] = [
     ("Empty", "Obj", ""),
     ("Cube", "Cube", "[obj.renderer]\nmesh = \"builtin:cube\""),
     ("Sphere", "Sphere", "[obj.renderer]\nmesh = \"builtin:sphere\""),
@@ -36,7 +36,92 @@ pub const NEW_OBJS: [(&str, &str, &str); 9] = [
     ("Spot Light", "Spot Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"spot\""),
     ("Camera", "Camera", "[obj.camera]"),
     ("Audio Source", "Audio Source", "[obj.audio]"),
+    ("Car", "Car", CAR),
 ];
+
+/// A car ready to drive: a body that physics moves, with a Vehicle, and
+/// four wheels under it, the front two steering and the back two driven,
+/// each with a flattened sphere for a tyre.
+const CAR: &str = r#"[obj.collider]
+size = [1.8, 0.6, 4.0]
+[obj.rigidbody]
+mass = 1200.0
+[obj.vehicle]
+
+[[obj]]
+id = 2
+name = "Body"
+parent = 1
+scale = [1.8, 0.6, 4.0]
+[obj.renderer]
+mesh = "builtin:cube"
+
+[[obj]]
+id = 3
+name = "Front Left Wheel"
+parent = 1
+position = [-0.9, -0.4, 1.4]
+[obj.wheel]
+steer_angle = 35.0
+
+[[obj]]
+id = 4
+name = "Front Right Wheel"
+parent = 1
+position = [0.9, -0.4, 1.4]
+[obj.wheel]
+steer_angle = 35.0
+
+[[obj]]
+id = 5
+name = "Back Left Wheel"
+parent = 1
+position = [-0.9, -0.4, -1.4]
+[obj.wheel]
+powered = true
+handbrake = 4000.0
+
+[[obj]]
+id = 6
+name = "Back Right Wheel"
+parent = 1
+position = [0.9, -0.4, -1.4]
+[obj.wheel]
+powered = true
+handbrake = 4000.0
+
+[[obj]]
+id = 7
+name = "Tyre"
+parent = 3
+scale = [0.25, 0.7, 0.7]
+[obj.renderer]
+mesh = "builtin:sphere"
+
+[[obj]]
+id = 8
+name = "Tyre"
+parent = 4
+scale = [0.25, 0.7, 0.7]
+[obj.renderer]
+mesh = "builtin:sphere"
+
+[[obj]]
+id = 9
+name = "Tyre"
+parent = 5
+scale = [0.25, 0.7, 0.7]
+[obj.renderer]
+mesh = "builtin:sphere"
+
+[[obj]]
+id = 10
+name = "Tyre"
+parent = 6
+scale = [0.25, 0.7, 0.7]
+[obj.renderer]
+mesh = "builtin:sphere"
+"#;
 
 /// Objs taken out of the world, ready to bring back exactly: the top one,
 /// each one's parent, and a scene file of them for each scene they were in.

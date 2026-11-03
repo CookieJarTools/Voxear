@@ -4,14 +4,15 @@ using System.Reflection;
 
 namespace Voxear.Analyzers.Tests;
 
-/// <summary>Runs every static method whose name starts with "Test" in AnalyzerTests, and exits non-zero when any fails.</summary>
+/// <summary>Runs every static method whose name starts with "Test" in the test classes, and exits non-zero when any fails.</summary>
 internal static class Program
 {
 	private static int Main()
 	{
-		var tests = typeof(AnalyzerTests).GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
-			.Where(method => method.Name.StartsWith("Test", StringComparison.Ordinal))
-			.OrderBy(method => method.Name)
+		var tests = new[] { typeof(AnalyzerTests), typeof(StringKeysTests) }
+			.SelectMany(type => type.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+				.Where(method => method.Name.StartsWith("Test", StringComparison.Ordinal))
+				.OrderBy(method => method.Name))
 			.ToList();
 		var failed = tests.Count(method => !Run(method));
 		Console.WriteLine($"{tests.Count - failed} passed, {failed} failed");

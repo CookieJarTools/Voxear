@@ -2,8 +2,9 @@
 	<!--
 		Compile-time checks of the Inspector's attributes: a condition, callback, check or dropdown that names a member
 		the type does not have, or one of the wrong shape, is an error where it is written rather than a puzzle in the
-		editor. Game scripts get it through Voxear.Scripts.props. Built against an older Roslyn than the SDK's, which
-		loads it, as analyzers are.
+		editor. It also makes Strings from the project's string tables, so a key a script names is checked too. Game
+		scripts get it through Voxear.Scripts.props. Built against an older Roslyn than the SDK's, which loads it, as
+		analyzers are.
 	-->
 	<PropertyGroup>
 		<TargetFramework>netstandard2.0</TargetFramework>

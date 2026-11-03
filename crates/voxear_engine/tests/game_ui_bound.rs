@@ -2,9 +2,10 @@
 //! are made: a handler in a button's constructor, a label bound to the
 //! game's state, a tooltip, and keys' text for a toggle, a label with
 //! values, a placeholder, a dropdown and a foldout, which follow the
-//! language. On a copy of Hello with a script and a string table of its
-//! own. A file of its own, so it runs in a process of its own, since .NET
-//! starts only once per process. Skips itself without .NET.
+//! language; two of the keys named as the table's typed keys, `Strings`.
+//! On a copy of Hello with a script and a string table of its own. A file
+//! of its own, so it runs in a process of its own, since .NET starts only
+//! once per process. Skips itself without .NET.
 
 use voxear_engine::{Engine, Game, Project, localization::Localization, scripts};
 use voxear_ui::{NodeId, Ui};
@@ -24,8 +25,8 @@ public sealed class BoundHud : SystemBase
 		panel.Add(new Label().Bind(() => $"Clicked {clicks}"));
 		var button = panel.Add(new Button("Click me", () => clicks++) { Tooltip = "Counts a click" });
 		button.SetStyle("width: 120px; height: 32px");
-		panel.Add(new Toggle(new LocalizedString("menu.music"), on: true));
-		panel.Add(new Label().Localize(new LocalizedString("hud.coins"), ("count", 3)));
+		panel.Add(new Toggle(Strings.Menu.Music, on: true));
+		panel.Add(new Label().Localize(Strings.Hud.Coins, ("count", 3)));
 		panel.Add(new TextField { Placeholder = new LocalizedString("menu.name") });
 		panel.Add(new Dropdown(new LocalizedString("menu.easy"), "Custom"));
 		panel.Add(new Foldout(new LocalizedString("menu.more")));

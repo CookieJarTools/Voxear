@@ -12,3 +12,4 @@ VOX0004 | Voxear.Inspector | Error | Diagnostics
 VOX0005 | Voxear.Inspector | Error | Diagnostics
 VOX0006 | Voxear.Inspector | Warning | Diagnostics
 VOX0007 | Voxear.Inspector | Error | Diagnostics
+VOX0008 | Voxear.Localization | Warning | Diagnostics

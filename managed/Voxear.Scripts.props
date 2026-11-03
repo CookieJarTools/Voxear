@@ -21,6 +21,21 @@
 	<PropertyGroup Condition="'$(VoxearDefines)' != ''">
 		<DefineConstants>$(DefineConstants);$(VoxearDefines)</DefineConstants>
 	</PropertyGroup>
+	<!--
+		The project's string tables, for Voxear.Analyzers to make Strings from, so Strings.Menu.Play names the key
+		"menu.play". The project is the scripts folder's parent; its tables are found as the engine finds them, leaving
+		out hidden folders, build output and the top's Docs.
+	-->
+	<PropertyGroup>
+		<VoxearProjectFolder Condition="'$(VoxearProjectFolder)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../'))</VoxearProjectFolder>
+	</PropertyGroup>
+	<ItemGroup>
+		<CompilerVisibleProperty Include="RootNamespace" />
+		<VoxearStringTable Include="$(VoxearProjectFolder)**/*.strings" Exclude="$(VoxearProjectFolder)**/.*/**;$(VoxearProjectFolder)**/bin/**;$(VoxearProjectFolder)**/obj/**;$(VoxearProjectFolder)**/target/**;$(VoxearProjectFolder)**/node_modules/**;$(VoxearProjectFolder)Docs/**" />
+		<AdditionalFiles Include="@(VoxearStringTable)" />
+		<!-- A table added or removed builds the scripts again, as a script would; a table changed does already. -->
+		<CoreCompileCache Include="@(VoxearStringTable)" />
+	</ItemGroup>
 	<ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
 		<Reference Include="Voxear.Core">
 			<HintPath>$(MSBuildThisFileDirectory)Voxear.Core.dll</HintPath>

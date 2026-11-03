@@ -2,7 +2,7 @@ using Microsoft.CodeAnalysis;
 
 namespace Voxear.Analyzers;
 
-/// <summary>What the analyzer reports, each with a number of its own so a project can turn one down.</summary>
+/// <summary>What the analyzer and the Strings generator report, each with a number of its own so a project can turn one down.</summary>
 internal static class Diagnostics
 {
 	private const string Category = "Voxear.Inspector";
@@ -30,6 +30,10 @@ internal static class Diagnostics
 
 	public static readonly DiagnosticDescriptor BadColour = Error(
 		"VOX0007", "[ColorPalette] has something that is not a colour", "\"{0}\" is not a colour; write it as #rrggbb");
+
+	public static readonly DiagnosticDescriptor LeftOutKey = new DiagnosticDescriptor(
+		"VOX0008", "A string table's key is left out of Strings", "\"{0}\" is left out of Strings, {1}",
+		"Voxear.Localization", DiagnosticSeverity.Warning, isEnabledByDefault: true);
 
 	private static DiagnosticDescriptor Error(string id, string title, string message)
 	{

@@ -7,7 +7,8 @@
 //! tool on the build. The tool reads it with reflection, under the same
 //! rules that set fields when the game runs (`BehaviourFields`), and writes
 //! `.voxear/Scripts/Behaviours.json`. [`cached`] reads the last one, and
-//! [`is_stale`] says whether a script changed since it was written.
+//! [`is_stale`] says whether a script or a string table changed since it
+//! was written.
 //!
 //! The tool writes the Code Reference beside it, `Code.json`: every public
 //! type of the scripts and of Voxear.Core, with its members and their `///`
@@ -524,8 +525,9 @@ pub fn cached(project: &Project) -> Option<ScriptTypes> {
     parse(&text).ok()
 }
 
-/// Whether a script or the scripts project changed since the description
-/// was written, or there is none. A project without scripts never is.
+/// Whether a script, the scripts project or a string table changed since
+/// the description was written, or there is none. A project without scripts
+/// never is.
 pub fn is_stale(project: &Project) -> bool {
     if project.scripts_project().is_none() {
         return false;
@@ -537,7 +539,8 @@ pub fn is_stale(project: &Project) -> bool {
     }
 }
 
-/// Whether a script or the scripts project changed after `time`.
+/// Whether a script, the scripts project or a string table changed after
+/// `time`.
 pub fn changed_since(project: &Project, time: SystemTime) -> bool {
     newest_source(project).is_some_and(|newest| newest > time)
 }
@@ -548,6 +551,8 @@ fn newest_source(project: &Project) -> Option<SystemTime> {
     if let Some(folder) = csproj.parent() {
         source_files(folder, &mut sources);
     }
+    // The scripts' build makes the tables' keys into `Strings`.
+    string_tables(&project.root, &mut sources, true);
     sources.iter().filter_map(|path| modified(path)).max()
 }
 
@@ -595,6 +600,25 @@ fn source_files(folder: &Path, files: &mut Vec<PathBuf>) {
             source_files(&path, files);
         } else if name.ends_with(".cs") {
             files.push(path);
+        }
+    }
+}
+
+/// The project's `.strings` tables, found as its asset scan finds them:
+/// leaving out hidden folders, build output and the `Docs` at its top.
+fn string_tables(folder: &Path, files: &mut Vec<PathBuf>, top: bool) {
+    let Ok(entries) = std::fs::read_dir(folder) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            if !matches!(name.as_str(), "bin" | "obj" | "target" | "node_modules") && !(top && name == "Docs") {
+                string_tables(&entry.path(), files, false);
+            }
+        } else if name.ends_with(".strings") {
+            files.push(entry.path());
         }
     }
 }
@@ -662,6 +686,32 @@ mod tests {
         let wave = boss.fields[3].default.as_ref().unwrap().as_table().unwrap();
         assert!(wave.contains_key("count") && !wave.contains_key("who"), "nothing is left out");
         assert_eq!(types.fields_of("Hello.Wave")[0].name, "count");
+    }
+
+    #[test]
+    fn a_string_table_changed_counts_as_the_scripts_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let long_ago = SystemTime::now() - std::time::Duration::from_secs(100);
+        let write = |path: &str, at: Option<SystemTime>| {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "[[entry]]\nkey = \"menu.play\"\n").unwrap();
+            if let Some(at) = at {
+                std::fs::File::options().write(true).open(&path).unwrap().set_modified(at).unwrap();
+            }
+        };
+        let manifest = "[project]\nname = \"Tables\"\nscripts = \"Scripts/T.csproj\"\n";
+        std::fs::write(dir.path().join("voxear.toml"), manifest).unwrap();
+        write("Scripts/T.csproj", Some(long_ago));
+        write(".voxear/Cache/Copy.strings", None);
+        write("Docs/Page.strings", None);
+        write("Scripts/obj/Built.strings", None);
+        let project = Project::open(dir.path()).unwrap();
+        let since = long_ago + std::time::Duration::from_secs(50);
+        assert!(!changed_since(&project, since), "tables in hidden folders, Docs and build output are not the game's");
+
+        write("Text/Menu.strings", None);
+        assert!(changed_since(&project, since), "a table changed, so the scripts' Strings did");
     }
 
     /// Needs .NET and the managed build, as play mode does.

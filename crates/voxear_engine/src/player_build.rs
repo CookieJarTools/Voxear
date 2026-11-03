@@ -183,6 +183,7 @@ pub fn build(
     let program = output.join(format!("{}{}", file_name(&product_name), std::env::consts::EXE_SUFFIX));
     std::fs::copy(player, &program).with_context(|| format!("copying the player to {}", program.display()))?;
     let assembly = copy_managed(project, configuration, profile.development.enabled, &data.join(MANAGED_FOLDER))?;
+    copy_steam_audio(project, &output)?;
     let commit = git_commit(&project.root);
     let settings = PlayerSettings {
         format: PLAYER_FORMAT,
@@ -202,6 +203,7 @@ pub fn build(
         layers: project.file.layers.names.clone(),
         ignore: project.file.physics.ignore.clone(),
         languages: project.file.localization.languages.clone(),
+        headphones: project.file.audio.headphones,
     };
     settings.write(&data)?;
     timed("player", stage);
@@ -320,6 +322,27 @@ fn copy_managed(project: &Project, configuration: &str, symbols: bool, managed: 
     }
     let name = assembly.file_name().context("the scripts have no file name")?.to_string_lossy().into_owned();
     Ok(Some(name))
+}
+
+/// Steam Audio's library beside the player, where it looks first, with its
+/// licence, unless the project leaves it out. Without it, the player pans
+/// 3D sound.
+fn copy_steam_audio(project: &Project, output: &Path) -> Result<()> {
+    use voxear_audio::steam_audio;
+    if !project.file.audio.steam_audio {
+        return Ok(());
+    }
+    let Some(library) = steam_audio::library_paths().into_iter().find(|path| path.is_file()) else {
+        tracing::info!("Steam Audio is not here, so the player pans 3D sound");
+        return Ok(());
+    };
+    copy(&library, &output.join(steam_audio::file_name()))?;
+    let notices = output.join("Third Party/Steam Audio");
+    std::fs::create_dir_all(&notices).with_context(|| format!("making {}", notices.display()))?;
+    for (name, text) in steam_audio::NOTICES {
+        std::fs::write(notices.join(name), text).with_context(|| format!("writing {name}"))?;
+    }
+    Ok(())
 }
 
 fn copy(from: &Path, to: &Path) -> Result<()> {

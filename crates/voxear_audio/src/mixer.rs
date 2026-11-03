@@ -10,16 +10,24 @@
 //! jumping, and a stopped voice fades out over one, so nothing clicks. A
 //! sound at another sample rate than the output, or played at another
 //! pitch, is read between its samples.
+//!
+//! With headphones on, 3D voices go through Steam Audio's HRTF, heard from
+//! where they are with the cues of a real head, above and behind included,
+//! rather than panned. Its HRTF is made on a thread of its own when first
+//! wanted, so voices pan as before until it is ready, or when Steam Audio
+//! is not here.
 
 use std::sync::{
     Arc,
-    mpsc::{Receiver, SyncSender},
+    mpsc::{self, Receiver, SyncSender},
 };
 
 use voxear_core::math::Vec3;
 
 use crate::{
+    ears::Ears,
     spatial::{self, Distance, Listener},
+    steam_audio::Hrtf,
     stream::{Frame, StreamReader},
 };
 
@@ -92,6 +100,7 @@ pub(crate) enum Command {
     Bus(Bus, f32),
     Master(f32),
     Listener(Listener),
+    Headphones(bool),
     PauseGame(bool),
     StopGame,
 }
@@ -129,6 +138,10 @@ struct Voice {
     gains: Option<[f32; 2]>,
     paused: bool,
     stopping: bool,
+    /// Steam Audio's binaural effect, for a 3D voice with headphones on.
+    ears: Option<Box<Ears>>,
+    /// Its sound is over, and its binaural effect plays out what it holds.
+    done: bool,
 }
 
 /// What became of a voice this block.
@@ -145,6 +158,10 @@ pub struct Mixer {
     effects: f32,
     listener: Listener,
     game_paused: bool,
+    headphones: bool,
+    /// The HRTF at the output's rate, once made, and while it is being.
+    hrtf: Option<Arc<Hrtf>>,
+    making: Option<Receiver<Result<Arc<Hrtf>, String>>>,
     commands: Receiver<Command>,
     finished: SyncSender<VoiceId>,
     /// The block being mixed, in stereo.
@@ -161,6 +178,9 @@ impl Mixer {
             effects: 1.0,
             listener: Listener::default(),
             game_paused: false,
+            headphones: false,
+            hrtf: None,
+            making: None,
             commands,
             finished,
             mix: Vec::new(),
@@ -174,6 +194,17 @@ impl Mixer {
     /// Sets the rate the output plays at, before the first block.
     pub(crate) fn set_sample_rate(&mut self, rate: u32) {
         self.sample_rate = rate.max(1);
+        if self.hrtf.as_ref().is_some_and(|hrtf| hrtf.sample_rate != self.sample_rate) {
+            self.hrtf = None;
+            self.give_ears();
+            self.make_hrtf();
+        }
+    }
+
+    /// Whether 3D voices are heard through Steam Audio's HRTF now: wanted,
+    /// and ready.
+    pub fn hears_binaurally(&self) -> bool {
+        self.headphones && self.hrtf.is_some()
     }
 
     /// How many voices are playing or fading out.
@@ -188,6 +219,7 @@ impl Mixer {
         let channels = channels.max(1);
         let frames = out.len() / channels;
         self.take_commands();
+        self.take_hrtf();
         self.mix.clear();
         self.mix.resize(frames * 2, 0.0);
         let mut index = 0;
@@ -239,6 +271,7 @@ impl Mixer {
                 Command::Bus(Bus::Preview, _) => {}
                 Command::Master(volume) => self.master = volume,
                 Command::Listener(listener) => self.listener = listener,
+                Command::Headphones(on) => self.set_headphones(on),
                 Command::PauseGame(paused) => self.game_paused = paused,
                 Command::StopGame => {
                     for voice in self.voices.iter_mut().filter(|voice| voice.params.bus != Bus::Preview) {
@@ -246,6 +279,58 @@ impl Mixer {
                     }
                 }
             }
+        }
+    }
+
+    fn set_headphones(&mut self, on: bool) {
+        self.headphones = on;
+        self.give_ears();
+        self.make_hrtf();
+    }
+
+    /// Starts making the HRTF for the output's rate, away from this thread,
+    /// when headphones are on and there is none.
+    fn make_hrtf(&mut self) {
+        if !self.headphones || self.hrtf.is_some() || self.making.is_some() {
+            return;
+        }
+        let (made, making) = mpsc::sync_channel(1);
+        let rate = self.sample_rate;
+        let started = std::thread::Builder::new().name("voxear-hrtf".into()).spawn(move || {
+            let _ = made.send(Hrtf::new(rate));
+        });
+        if started.is_ok() {
+            self.making = Some(making);
+        }
+    }
+
+    /// Takes the HRTF once it is made, if it is still for the output's rate.
+    fn take_hrtf(&mut self) {
+        let Some(made) = self.making.as_ref().and_then(|making| making.try_recv().ok()) else { return };
+        self.making = None;
+        match made {
+            Ok(hrtf) if hrtf.sample_rate == self.sample_rate => {
+                self.hrtf = Some(hrtf);
+                self.give_ears();
+            }
+            Ok(_) => self.make_hrtf(),
+            Err(error) => {
+                tracing::warn!(target: "audio", "3D sound pans without headphones' HRTF: {error}");
+                self.headphones = false;
+            }
+        }
+    }
+
+    /// Gives every 3D voice its binaural effect while headphones are on and
+    /// the HRTF is ready, and takes it away otherwise.
+    fn give_ears(&mut self) {
+        let hrtf = self.hrtf.clone().filter(|_| self.headphones);
+        for voice in &mut self.voices {
+            voice.ears = match (&hrtf, voice.params.spatial) {
+                (Some(hrtf), Some(_)) if voice.ears.is_some() => continue,
+                (Some(hrtf), Some(_)) => Ears::new(hrtf),
+                _ => None,
+            };
         }
     }
 
@@ -265,7 +350,10 @@ impl Mixer {
             let taken = self.voices.remove(oldest);
             let _ = self.finished.try_send(taken.id);
         }
+        let hrtf = self.hrtf.as_ref().filter(|_| self.headphones && new.params.spatial.is_some());
         self.voices.push(Voice {
+            ears: hrtf.and_then(Ears::new),
+            done: false,
             id: new.id,
             source: new.source,
             rate: new.rate,
@@ -291,6 +379,10 @@ impl Mixer {
         };
         let volume = voice.params.volume * voice.gain * bus;
         match &voice.params.spatial {
+            // Heard binaurally, the HRTF places it, so its volume is only its distance's.
+            Some((at, distance)) if voice.ears.is_some() => {
+                [distance.falloff(self.listener.position.distance(*at)) * volume; 2]
+            }
             Some((at, distance)) => spatial::gains(&self.listener, *at, distance).map(|side| side * volume),
             None => [volume; 2],
         }
@@ -311,7 +403,10 @@ impl Mixer {
         let from = voice.gains.unwrap_or(target);
         let silent = from == [0.0; 2] && target == [0.0; 2];
         if voice.stopping && (silent || voice.gains.is_none()) {
-            return Played::Ended;
+            voice.done = true;
+        }
+        if voice.done {
+            return drain(voice, &mut self.mix.as_chunks_mut::<2>().0[..frames], &listener);
         }
         // Faded out while held: it keeps its place without reading its sound.
         // A voice only too far away to hear plays on.
@@ -325,35 +420,60 @@ impl Mixer {
         };
         let pitch = (voice.params.pitch * shift).clamp(VoiceParams::MIN_PITCH, VoiceParams::MAX_PITCH);
         let step = f64::from(voice.rate) / output_rate * f64::from(pitch);
-        let spatial = voice.params.spatial.is_some();
         let per_frame = [(target[0] - from[0]) / frames.max(1) as f32, (target[1] - from[1]) / frames.max(1) as f32];
         let mut gains = from;
         let mut ended = false;
-        for out in self.mix.as_chunks_mut::<2>().0.iter_mut().take(frames) {
-            let Some([left, right]) = voice.read() else {
+        let mut played = 0;
+        let mix = &mut self.mix.as_chunks_mut::<2>().0[..frames];
+        for out in mix.iter_mut() {
+            let Some(sound) = voice.read() else {
                 ended = true;
                 break;
             };
             gains = [gains[0] + per_frame[0], gains[1] + per_frame[1]];
-            if spatial {
-                let mono = (left + right) * 0.5;
-                out[0] += mono * gains[0];
-                out[1] += mono * gains[1];
-            } else {
-                out[0] += left * gains[0];
-                out[1] += right * gains[1];
-            }
+            let [left, right] = voice.heard(sound, gains, &listener);
+            out[0] += left;
+            out[1] += right;
+            played += 1;
             if !voice.advance(step) {
                 ended = true;
                 break;
             }
         }
         voice.gains = Some(target);
-        if ended || voice.stopping { Played::Ended } else { Played::Going }
+        if !ended && !voice.stopping {
+            return Played::Going;
+        }
+        voice.done = true;
+        drain(voice, &mut mix[played..], &listener)
     }
 }
 
+/// Plays out what a finished voice's binaural effect still holds, into the
+/// rest of the block, and ends it once that is out, or at once without one.
+fn drain(voice: &mut Voice, mix: &mut [[f32; 2]], listener: &Listener) -> Played {
+    let (Some(ears), Some((at, _))) = (voice.ears.as_mut(), voice.params.spatial) else { return Played::Ended };
+    for out in mix {
+        let Some([left, right]) = ears.drain(listener, at) else { return Played::Ended };
+        out[0] += left;
+        out[1] += right;
+    }
+    Played::Going
+}
+
 impl Voice {
+    /// One frame of the voice's sound as the listener hears it, at its
+    /// left and right volumes: as it is for a 2D voice, and in mono from
+    /// where it is for a 3D one, panned or through its binaural effect.
+    fn heard(&mut self, [left, right]: [f32; 2], gains: [f32; 2], listener: &Listener) -> [f32; 2] {
+        let Some((at, _)) = self.params.spatial else { return [left * gains[0], right * gains[1]] };
+        let mono = (left + right) * 0.5;
+        match &mut self.ears {
+            Some(ears) => ears.hear(mono * gains[0], listener, at),
+            None => [mono * gains[0], mono * gains[1]],
+        }
+    }
+
     /// The sound at the voice's place, between its frames. `None` at its
     /// end; silence while a stream waits for its next block.
     fn read(&mut self) -> Option<[f32; 2]> {

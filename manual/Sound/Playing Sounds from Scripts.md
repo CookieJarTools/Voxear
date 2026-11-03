@@ -134,6 +134,18 @@ Audio.EffectsVolume = 1f;   // what plays through the Effects bus
 
 When you stop playing in the editor, the volumes go back to full. To keep the player's choice between runs, save it with [[Saving the Game]] and set it again when the game starts.
 
+A player wearing headphones hears 3D sounds better with **Headphones** on (see [[Sounds and Audio Sources]]). `Audio.HeadphonesAvailable` says whether Steam Audio is there to do it, so your menu can leave the choice out when it isn't:
+
+```csharp
+if (Audio.HeadphonesAvailable)
+{
+	var headphones = menu.Add(new Toggle("Headphones", Audio.Headphones));
+	headphones.Toggled += on => Audio.Headphones = on;
+}
+```
+
+Each time the game starts, Headphones starts as your project's `[audio] headphones` setting has it.
+
 ## Loading a sound by its path
 
 When a field isn't practical, load a sound by its path in the project:

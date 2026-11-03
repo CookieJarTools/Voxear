@@ -600,6 +600,8 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     the sounds they use
   - [x] Doppler on 3D sources, from their and the listener's speed, with a Doppler Level per Audio Source
   - [ ] effects, snapshots and ducking on the buses
+  - [x] Steam Audio 4.8.1, loaded when it is there: HRTF for headphones on 3D sources, `Audio.Headphones` and
+    `[audio] headphones`, and player builds that take the library and its licence with them
   - [ ] Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
     acceleration structures exist.
   - [x] the audio debugger: each Audio Source a speaker in the Scene view, lit while it plays, and the selected one's

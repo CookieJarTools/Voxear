@@ -37,6 +37,27 @@ public static class Audio
 	}
 
 	/// <summary>
+	/// Whether 3D sounds are heard as through headphones: from where they are around the listener's head, above and
+	/// behind included, by Steam Audio's HRTF, rather than panned between two speakers. A game's sound options
+	/// usually let the player choose it, as it suits headphones and not speakers. It starts as the project's
+	/// <c>[audio] headphones</c> setting has it, and stays off without Steam Audio (see HeadphonesAvailable).
+	/// <code>
+	/// Audio.Headphones = Save.Read("headphones") == "on";
+	/// </code>
+	/// </summary>
+	public static bool Headphones
+	{
+		get { return NativeAudio.Bus(NativeAudio.BusHeadphones) == 1f; }
+		set { NativeAudio.SetBus(NativeAudio.BusHeadphones, value ? 1f : 0f); }
+	}
+
+	/// <summary>Whether Steam Audio is here for Headphones to use, so a sound options menu can leave the choice out.</summary>
+	public static bool HeadphonesAvailable
+	{
+		get { return NativeAudio.Bus(NativeAudio.BusSteamAudio) == 1f; }
+	}
+
+	/// <summary>
 	/// Plays a sound once in 2D, the same wherever the listener is: for interface sounds, stingers and voices in
 	/// the player's head. Pitch 1 plays it as it is; 2 an octave higher and twice as fast.
 	/// </summary>

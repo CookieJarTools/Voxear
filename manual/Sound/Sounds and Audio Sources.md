@@ -64,6 +64,19 @@ A 3D sound moving towards the listener sounds higher, and one moving away sounds
 
 A **2D** sound plays the same wherever the listener is. Use 2D for music, for interface sounds, and for anything the player should hear from everywhere.
 
+## Headphones
+
+Panned between two speakers, a 3D sound can only come from the left or the right. With headphones on, Voxear plays 3D sounds through Valve's **Steam Audio**, which gives each one the small differences in time and tone that a real head hears. A sound can then come from above, below or behind as well, and a player wearing headphones can tell where it is without looking.
+
+It suits headphones and not speakers, so it is off unless you turn it on. Most games put a **Headphones** choice in their sound options, as [[Playing Sounds from Scripts]] shows. To start with it on, add this to your project's `voxear.toml`:
+
+```toml
+[audio]
+headphones = true
+```
+
+A build takes Steam Audio's library with it, about 40 MB, beside the game's program, and its licence in `Third Party/Steam Audio`. If your game never uses headphones, leave it out with `steam_audio = false` under `[audio]`. Without Steam Audio, sounds pan as they do with headphones off.
+
 ## Who hears the game
 
 The **listener** is where the game hears from. It is the camera the game looks through, unless an Obj has an **Audio Listener** component (from **Add Component**). In a third-person game, put an Audio Listener on the player character, so sounds come from around the character rather than from behind it, where the camera is. If more than one Obj has an Audio Listener, the first one listens.

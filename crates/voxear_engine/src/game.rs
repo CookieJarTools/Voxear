@@ -21,8 +21,8 @@ use crate::{
     engine::Engine,
     game_ui::GameUi,
     levels::{LevelChange, LevelOptions, Levels, is_doomed},
-    physics::{Collider, ColliderMesh, ColliderShape},
     loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork},
+    physics::{Collider, ColliderMesh, ColliderShape},
     prefab::{ObjPath, PrefabId, Spawned},
     previews::ScriptPreviews,
     project::Project,
@@ -112,6 +112,7 @@ impl Game {
             audio: GameAudio::default(),
             input: voxear_input::Input::new(),
         };
+        game.audio.headphones = game.project.file.audio.headphones;
         game.load_input_actions();
         game.load_strings();
         game.engine.world.insert_resource(game.project.layers());
@@ -194,6 +195,7 @@ impl Game {
 
     /// Loads the project's `start_level`.
     pub fn start(&mut self, renderer: Option<&mut Renderer>) -> Result<()> {
+        self.audio.start_game();
         self.models = ModelWork::for_renderer(renderer.as_deref());
         let level = self
             .project

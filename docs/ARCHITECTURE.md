@@ -2510,8 +2510,8 @@ silence at a max distance and pan with equal power from the listener; voices tha
 pitch without clicks, resampled to the device's rate; and long sounds decoded a block ahead on a streaming thread.
 The output follows the system's default device: when that device goes away or another becomes the default, as when
 headphones are unplugged, the output thread opens the default again, and with none it mixes quietly until one turns
-up; and Doppler on 3D voices, from each source's and the listener's speed frame to frame, with a level per source.
-Effects, snapshots and ducking are next.)*
+up; Doppler on 3D voices, from each source's and the listener's speed frame to frame, with a level per source; and
+HRTF for headphones from Steam Audio. Effects, snapshots and ducking are next.)*
 
 **Sounds** are assets: WAV, OGG Vorbis, FLAC and MP3, decoded by Symphonia. Their `.meta` says whether one loads whole
 or streams (by default by its length) and its volume. An **Audio Source** component plays one from its Obj, and the
@@ -2523,7 +2523,13 @@ sounds its scenes and prefabs use on the loading thread, so they come in with no
 from the Project into a Scene view or the Hierarchy makes an Obj named for it with an Audio Source playing it.
 
 **Spatial acoustics** come from Steam Audio:
-- HRTF binaural rendering.
+- HRTF binaural rendering. *(Built: Steam Audio 4.8.1 is loaded with `libloading` when first wanted, from
+  `VOXEAR_STEAM_AUDIO`, beside the program, or `crates/voxear_audio/steam-audio/lib`, which `fetch.sh` fills from
+  Valve's release, so Voxear builds and plays without it. With `Audio::set_headphones`, the mixer makes the HRTF at the
+  output's rate on a thread of its own, then gives each 3D voice a binaural effect: the voice's mono samples, at its
+  distance's volume, go in blocks of 256, and its stereo plays a block behind, playing out when the voice ends. Without
+  the library, or before the HRTF is ready, 3D voices pan. Player builds copy the library beside the player with its
+  licence, unless `[audio] steam_audio = false`.)*
 - **Occlusion and transmission:** sound is muffled through walls, and materials set absorption.
 - **Reflections and reverb:** real-time or baked reverb probes, with echo from real geometry.
 - **Pathing:** sound bends around corners and through doorways.

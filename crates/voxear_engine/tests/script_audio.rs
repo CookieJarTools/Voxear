@@ -38,6 +38,10 @@ public sealed class Noises : SystemBase
 
 		Audio.MusicVolume = 0.5f;
 		Log.Info($"music at {Audio.MusicVolume}");
+
+		Audio.Headphones = true;
+		Log.Info($"headphones {Audio.Headphones}, available {Audio.HeadphonesAvailable}");
+		Audio.Headphones = false;
 	}
 
 	protected override void Update()
@@ -114,6 +118,8 @@ fn scripts_play_sounds_once_and_from_audio_sources() {
     said("source True, playing True, loop True, 3D False, volume 0.25, same sound True");
     said("the camera has one: False");
     said("music at 0.5");
+    let steam = if voxear_audio::steam_audio::SteamAudio::get().is_ok() { "True" } else { "False" };
+    said(&format!("headphones {steam}, available {steam}"));
 
     let world = &game.engine.world;
     let ground = world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, n)| n.0 == "Ground").unwrap().0;

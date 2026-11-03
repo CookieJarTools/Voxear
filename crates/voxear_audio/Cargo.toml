@@ -13,3 +13,5 @@ anyhow.workspace = true
 cpal.workspace = true
 symphonia.workspace = true
 tracing.workspace = true
+# Steam Audio, loaded when wanted rather than linked (see steam-audio/README.md).
+libloading.workspace = true

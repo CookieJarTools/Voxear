@@ -6,3 +6,6 @@
 .vs/
 .idea/
 .vscode/
+
+# Steam Audio's libraries, fetched by crates/voxear_audio/steam-audio/fetch.sh rather than kept in git.
+/crates/voxear_audio/steam-audio/lib/

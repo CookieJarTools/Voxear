@@ -333,3 +333,54 @@ fn a_looping_stream_goes_round_without_end() {
     assert!(audio.is_playing(voice));
     assert!(heard > 20_000, "it went round several times: {heard} frames");
 }
+
+/// A mono sound of noise, `frames` long.
+fn noise(frames: usize, rate: u32) -> Arc<Sound> {
+    let mut seed = 7u32;
+    let samples = (0..frames)
+        .map(|_| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 9) as f32 / (1u32 << 23) as f32 - 0.5
+        })
+        .collect();
+    Arc::new(Sound::from_samples(samples, 1, rate))
+}
+
+#[test]
+fn with_headphones_a_3d_voice_is_heard_through_the_hrtf_and_plays_out() {
+    if voxear_audio::steam_audio::SteamAudio::get().is_err() {
+        return eprintln!("skipping: Steam Audio's library is not fetched");
+    }
+    let (mut audio, mut mixer) = Audio::offline(RATE);
+    audio.set_headphones(true);
+    let at = Vec3::new(5.0, 0.0, 0.0);
+    let voice = audio.play(
+        &noise(RATE as usize, RATE),
+        VoiceParams { spatial: Some((at, Distance::default())), ..Default::default() },
+    );
+    let started = std::time::Instant::now();
+    while !mixer.hears_binaurally() {
+        assert!(started.elapsed() < Duration::from_secs(10), "the HRTF is made");
+        render(&mut mixer, 256);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    render(&mut mixer, 1024);
+    let out = render(&mut mixer, 4096);
+    let energy = |side: usize| out.as_chunks::<2>().0.iter().map(|frame| frame[side] * frame[side]).sum::<f32>();
+    assert!(energy(1) > energy(0) * 2.0, "louder on the right: {} {}", energy(1), energy(0));
+    assert!(energy(0) > 0.0, "and heard a little on the left, unlike hard panning");
+
+    // Stopped, it plays out what the effect holds, then ends.
+    audio.stop(voice);
+    let out = render(&mut mixer, 64);
+    assert!(out.iter().any(|&s| s != 0.0), "not cut off");
+    render(&mut mixer, 512);
+    assert_eq!(mixer.voices(), 0);
+
+    // Off again, a new voice pans as before.
+    audio.set_headphones(false);
+    let sound = level(1.0, RATE as usize, RATE);
+    audio.play(&sound, VoiceParams { spatial: Some((at, Distance::default())), ..Default::default() });
+    let out = render(&mut mixer, 10);
+    assert!(close(out[0], 0.0) && out[1] > 0.0, "panned hard right: {:?}", &out[..2]);
+}

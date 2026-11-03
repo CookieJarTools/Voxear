@@ -17,13 +17,17 @@
 //! # anyhow::Ok(())
 //! ```
 //!
-//! Spatial acoustics (occlusion, reverb and pathing) come later, from Steam
-//! Audio; see the Audio section of `docs/ARCHITECTURE.md`.
+//! With [`Audio::set_headphones`], 3D voices are heard through Steam
+//! Audio's HRTF (see [`steam_audio`]); spatial acoustics, occlusion,
+//! reflections and pathing, come from it too. See the Audio section of
+//! `docs/ARCHITECTURE.md`.
 
+mod ears;
 mod mixer;
 mod output;
 mod sound;
 mod spatial;
+pub mod steam_audio;
 mod stream;
 
 use std::{
@@ -83,6 +87,7 @@ pub struct Audio {
     music: f32,
     effects: f32,
     game_paused: bool,
+    headphones: bool,
 }
 
 impl Default for Audio {
@@ -129,6 +134,7 @@ impl Audio {
             music: 1.0,
             effects: 1.0,
             game_paused: false,
+            headphones: false,
         }
     }
 
@@ -287,6 +293,23 @@ impl Audio {
         if self.output.is_some() || self.mode == Mode::Offline {
             self.send(Command::Listener(listener));
         }
+    }
+
+    /// Whether 3D voices are heard as through headphones: from where they
+    /// are around the listener's head, above and behind included, through
+    /// Steam Audio's HRTF, rather than panned between two speakers. Off by
+    /// default, as it suits headphones and not speakers. The HRTF is made
+    /// on the first sound after, so voices pan for a moment until it is
+    /// ready, and on without Steam Audio, which logs why.
+    pub fn set_headphones(&mut self, on: bool) {
+        if self.headphones != on {
+            self.headphones = on;
+            self.send(Command::Headphones(on));
+        }
+    }
+
+    pub fn headphones(&self) -> bool {
+        self.headphones
     }
 
     /// Holds every game voice where it is, as the editor's Pause does, or

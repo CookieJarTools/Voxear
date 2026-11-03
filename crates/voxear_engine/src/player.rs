@@ -20,7 +20,7 @@ use voxear_scripting::{SaveSettings, ScriptRuntime};
 
 use crate::{
     Content, ContentSettings, Engine, Game, Project, ProjectFile, WindowOptions,
-    project::{LayerSettings, LocalizationSettings, PhysicsSettings, ProjectInfo},
+    project::{AudioSettings, LayerSettings, LocalizationSettings, PhysicsSettings, ProjectInfo},
     run_windowed, scripts,
 };
 
@@ -74,6 +74,9 @@ pub struct PlayerSettings {
     /// The project's languages, the one it is written in first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub languages: Vec<String>,
+    /// Whether 3D sounds start out heard as through headphones.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub headphones: bool,
 }
 
 impl PlayerSettings {
@@ -193,6 +196,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             layers: LayerSettings { names: settings.layers.clone() },
             physics: PhysicsSettings { ignore: settings.ignore.clone() },
             localization: LocalizationSettings { languages: settings.languages.clone() },
+            audio: AudioSettings { headphones: settings.headphones, steam_audio: true },
         },
     };
     let mut game = Game::with_content(project, engine, content);

@@ -3449,6 +3449,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cpal",
+ "libloading 0.9.0",
  "symphonia",
  "tracing",
  "voxear_core",

@@ -34,6 +34,7 @@ use voxear_render::Camera;
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_scripting::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 
+use voxear_audio::steam_audio::SteamAudio;
 pub use voxear_audio::{Audio, Bus, Distance, Listener, Sound, SoundInfo, VoiceId, VoiceParams, probe};
 
 use crate::content::Content;
@@ -417,6 +418,9 @@ pub struct GameAudio {
     /// sound's project path.
     preview: VoiceId,
     preview_path: String,
+    /// Whether 3D voices start out heard as through headphones each time
+    /// the game starts, from the project's `[audio]` settings.
+    pub headphones: bool,
 }
 
 impl Default for GameAudio {
@@ -434,7 +438,14 @@ impl GameAudio {
             listener_was: None,
             preview: 0,
             preview_path: String::new(),
+            headphones: false,
         }
+    }
+
+    /// As the game starts, before its scripts do: 3D voices heard as the
+    /// project's `[audio]` settings start them, whatever the last play left.
+    pub fn start_game(&mut self) {
+        self.audio.set_headphones(self.headphones);
     }
 
     /// Once a frame, after the game's update: hears which voices ended, and
@@ -627,12 +638,15 @@ impl GameAudio {
             (BusValue::Master, Some(volume)) => audio.set_master_volume(volume),
             (BusValue::Effects, Some(volume)) => audio.set_bus_volume(Bus::Effects, volume),
             (BusValue::Music, Some(volume)) => audio.set_bus_volume(Bus::Music, volume),
-            (_, None) => {}
+            (BusValue::Headphones, Some(on)) => audio.set_headphones(on != 0.0),
+            (BusValue::SteamAudio, Some(_)) | (_, None) => {}
         }
         match bus {
             BusValue::Master => audio.master_volume(),
             BusValue::Effects => audio.bus_volume(Bus::Effects),
             BusValue::Music => audio.bus_volume(Bus::Music),
+            BusValue::Headphones => flag(audio.headphones() && SteamAudio::get().is_ok()),
+            BusValue::SteamAudio => flag(SteamAudio::get().is_ok()),
         }
     }
 

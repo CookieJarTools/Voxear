@@ -817,9 +817,19 @@ Done so far:
   - On an RTX 3070 at 1440p it costs about 0.35 ms (Stress), and full resolution about three times that.
 - Still to come: the post-processing settings, AO's among them, in the editor and the C# API; today they are in a
   scene's `[post]` section.
+- **Area and tube lights:** rectangle and disc lights shaded by linearly transformed cosines (Heitz et al. 2016,
+  tables fitted to GGX ahead of time), and tube lights by Karis's representative point. In scenes, the
+  Hierarchy's + menu, the Inspector and the Scene view, which shows each one's shape and reach.
+- **IES profiles and light cookies:** `.ies` files (LM-63, 1986 to 2002) as assets a point or spot light takes,
+  baked over the sphere; and pictures as cookies, over a spot light's cone or tiled over the world from the sun.
+  Both are fields on the Light in the Inspector, and scenes save them.
+- **The atmosphere:** `[sky] mode = "atmosphere"`, a physically based sky as Hillaire models it (2020), with
+  transmittance, multiple scattering, the sky view and aerial perspective drawn as tables, so the sky reddens at
+  sunset, lights the scene from its own colours and hazes what lies far off. About 0.06 ms a frame.
+- Still to come for lights: shadows from point, spot and area lights; the C# `Light` API; and the sky's settings
+  in the editor rather than only the scene file.
 
 Next:
-- Area and tube lights, IES profiles and light cookies, sky and atmosphere.
 - Volumetric fog: a froxel volume lit by every light, with the sun casting volumetric shadows, so light shafts show.
 - Soft shadows (PCSS, with a softness per light) and contact shadows, then virtual shadow maps.
 - Upscalers (FSR built in, DLSS and XeSS optional), colour grading LUTs, and local post volumes.

@@ -56,7 +56,9 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{Camera, Light, LightKind, LodGroup, MAX_TRANSITIONS, MeshRenderer, PostProcess, Renderer, Sky};
+use voxear_render::{
+    Camera, Light, LightKind, LodGroup, MAX_TRANSITIONS, MeshRenderer, PostProcess, Renderer, Sky, SkyMode,
+};
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
 };
@@ -101,11 +103,28 @@ pub struct PostTable(pub toml::Table);
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkyData {
+    /// `"gradient"`, the colours below, or `"atmosphere"`, the sky of a
+    /// planet like Earth lit by the sun.
+    #[serde(default, skip_serializing_if = "is_gradient")]
+    pub mode: SkyModeData,
     pub zenith: [f32; 3],
     pub horizon: [f32; 3],
     pub ground: [f32; 3],
     #[serde(default = "one_f32")]
     pub ambient: f32,
+}
+
+/// A [`SkyMode`] as scene files write it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkyModeData {
+    #[default]
+    Gradient,
+    Atmosphere,
+}
+
+fn is_gradient(mode: &SkyModeData) -> bool {
+    *mode == SkyModeData::Gradient
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -426,6 +445,10 @@ pub fn spawn(
 pub fn apply_environment(engine: &mut Engine, sky: Option<SkyData>, post: Option<&toml::Table>) -> Result<()> {
     if let Some(sky) = sky {
         engine.world.insert_resource(Sky {
+            mode: match sky.mode {
+                SkyModeData::Gradient => SkyMode::Gradient,
+                SkyModeData::Atmosphere => SkyMode::Atmosphere,
+            },
             zenith: Vec3::from(linear(sky.zenith)),
             horizon: Vec3::from(linear(sky.horizon)),
             ground: Vec3::from(linear(sky.ground)),
@@ -527,6 +550,10 @@ pub fn capture_scene_with_ids(
     }
 
     let sky = world.resource::<Sky>().map(|sky| SkyData {
+        mode: match sky.mode {
+            SkyMode::Gradient => SkyModeData::Gradient,
+            SkyMode::Atmosphere => SkyModeData::Atmosphere,
+        },
         zenith: round3(srgb(sky.zenith.to_array())),
         horizon: round3(srgb(sky.horizon.to_array())),
         ground: round3(srgb(sky.ground.to_array())),
@@ -1100,6 +1127,17 @@ fn default_outer() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sky_is_a_gradient_unless_it_says_atmosphere() {
+        let colours = "zenith = [0.5, 0.7, 0.9]\nhorizon = [0.8, 0.8, 0.9]\nground = [0.5, 0.5, 0.4]";
+        let gradient: SkyData = toml::from_str(colours).unwrap();
+        assert_eq!(gradient.mode, SkyModeData::Gradient);
+        assert!(!toml::to_string(&gradient).unwrap().contains("mode"), "a gradient is not written out");
+        let air: SkyData = toml::from_str(&format!("mode = \"atmosphere\"\n{colours}")).unwrap();
+        assert_eq!(air.mode, SkyModeData::Atmosphere);
+        assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&air).unwrap()).unwrap(), air);
+    }
 
     #[test]
     fn area_and_tube_lights_read_and_write_back() {

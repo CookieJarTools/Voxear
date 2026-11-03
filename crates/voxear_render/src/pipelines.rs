@@ -3,7 +3,7 @@ use voxear_rhi::{
     Bindless, Blend, Gpu, GraphicsPipelineDesc, ShaderModule, create_compute_pipeline, create_graphics_pipeline, vk,
 };
 
-use crate::hot_reload::ShaderSet;
+use crate::{atmosphere::TABLE_FORMAT, hot_reload::ShaderSet};
 
 pub const HDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
@@ -61,6 +61,11 @@ pub struct Pipelines {
     /// wireframe view.
     pub edges: vk::Pipeline,
     pub sky: vk::Pipeline,
+    /// The atmosphere's tables (see `atmosphere`).
+    pub transmittance: vk::Pipeline,
+    pub multi_scattering: vk::Pipeline,
+    pub sky_view: vk::Pipeline,
+    pub aerial_perspective: vk::Pipeline,
     /// Ambient occlusion's passes: GTAO, its denoise and its temporal blend.
     pub gtao: vk::Pipeline,
     pub ao_denoise: vk::Pipeline,
@@ -131,6 +136,13 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new(name, occlusion, c"aoVertex", entry)
             })
         };
+        let table = |name, entry| {
+            graphics(&GraphicsPipelineDesc {
+                color_formats: &[TABLE_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new(name, sky, c"lutVertex", entry)
+            })
+        };
         let scene_formats = &[HDR_FORMAT, VELOCITY_FORMAT];
         let hdr = &[HDR_FORMAT];
         let bloom = &[BLOOM_FORMAT];
@@ -193,6 +205,10 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Sky", sky, c"skyVertex", c"skyFragment")
             })?,
+            transmittance: table("Transmittance", c"transmittanceFragment")?,
+            multi_scattering: table("Multiple scattering", c"multiScatteringFragment")?,
+            sky_view: table("Sky view", c"skyViewFragment")?,
+            aerial_perspective: table("Aerial perspective", c"aerialPerspectiveFragment")?,
             gtao: occlusion_pass("GTAO", c"gtaoFragment", &[AO_FORMAT])?,
             ao_denoise: occlusion_pass("AO denoise", c"aoDenoiseFragment", &[AO_FORMAT])?,
             ao_temporal: occlusion_pass("AO temporal", c"aoTemporalFragment", &[AO_HISTORY_FORMAT])?,
@@ -254,6 +270,10 @@ impl Pipelines {
             self.wireframe,
             self.edges,
             self.sky,
+            self.transmittance,
+            self.multi_scattering,
+            self.sky_view,
+            self.aerial_perspective,
             self.gtao,
             self.ao_denoise,
             self.ao_temporal,

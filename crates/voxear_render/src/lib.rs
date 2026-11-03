@@ -11,6 +11,7 @@
 mod alloc;
 mod ambient_occlusion;
 mod assets;
+mod atmosphere;
 mod capture;
 mod cooked;
 mod debug_pass;
@@ -75,7 +76,7 @@ pub use post::{
 pub use previews::{
     MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
 };
-pub use scene::{Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, ViewOptions};
+pub use scene::{Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyMode, ViewOptions};
 pub use voxear_rhi::TextureId;
 
 use crate::{
@@ -84,7 +85,7 @@ use crate::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAW_COUNT_SIZE, GpuBuffers, GpuFrame, GpuInstance, GpuLight, LIST_COUNT,
         MAX_CLUSTER_LIGHTS, MESHLET_CONES, MESHLET_CULLING, MESHLET_RUNS, Mat4Cols, NO_TEXTURE, Push,
         meshlet_lists_len, stat,
-    },
+    SKY_ATMOSPHERE, },
     hot_reload::{ShaderSet, ShaderWatcher},
     pipelines::{DEPTH_FORMAT, HDR_FORMAT, PYRAMID_FORMAT, Pipelines, VELOCITY_FORMAT},
     shadows::ATLAS_RESOLUTION,
@@ -1124,6 +1125,9 @@ struct View {
     taa_history: Option<vk::Extent2D>,
     /// The same for ambient occlusion's.
     ao_history: Option<vk::Extent2D>,
+    /// The atmosphere the kept atmosphere tables were drawn for; `None` when
+    /// they are stale.
+    atmosphere_tables: Option<gpu::GpuAtmosphere>,
     /// It has said its scene has too many meshlets to cull one by one.
     warned_meshlets: bool,
 }
@@ -1185,6 +1189,7 @@ impl View {
             prev_view_proj: None,
             taa_history: None,
             ao_history: None,
+            atmosphere_tables: None,
             warned_meshlets: false,
         })
     }
@@ -1223,6 +1228,7 @@ impl View {
     fn reset_history(&mut self) {
         self.taa_history = None;
         self.ao_history = None;
+        self.atmosphere_tables = None;
         self.prev_models.clear();
         self.prev_view_proj = None;
     }
@@ -1349,6 +1355,20 @@ impl View {
         frame_data.post.ao_reset = u32::from(ao_reset);
         frame_data.lighting.ltc_matrix = assets.ltc[0].0;
         frame_data.lighting.ltc_amplitude = assets.ltc[1].0;
+        let current = (frame_data.lighting.sky == SKY_ATMOSPHERE).then_some(frame_data.lighting.atmosphere);
+        let kept = self.atmosphere_tables.as_ref().map(bytemuck::bytes_of);
+        let fresh = kept != current.as_ref().map(bytemuck::bytes_of);
+        self.atmosphere_tables = current;
+        let atmosphere = match current {
+            Some(_) => Some(atmosphere::Tables::new(fg, gpu, bindless, fresh)?),
+            None => None,
+        };
+        if let Some(tables) = atmosphere {
+            frame_data.lighting.transmittance = fg.texture(tables.transmittance).0;
+            frame_data.lighting.multi_scattering = fg.texture(tables.multi_scattering).0;
+            frame_data.lighting.sky_view = fg.texture(tables.sky_view).0;
+            frame_data.lighting.aerial_perspective = fg.texture(tables.aerial_perspective).0;
+        }
         frame_data.instance_count = instance_count as u32;
         frame_data.light_count = light_count as u32;
         frame_data.hiz_texture = fg.texture(pyramid).0;
@@ -1441,6 +1461,7 @@ impl View {
             wireframe,
             edges,
             ambient_occlusion,
+            atmosphere,
         };
         passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {

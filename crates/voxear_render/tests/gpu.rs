@@ -1544,3 +1544,66 @@ fn a_tube_lights_along_its_length() {
     );
     assert!(tube_far > 0 && point_far > 0, "{tube_far} {point_far}");
 }
+
+/// The sky alone, with the atmosphere lit by a sun `elevation` degrees up,
+/// in front of a camera at head height looking along `looking`.
+fn atmosphere_render(elevation: f32, looking: Vec3) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky, SkyMode};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let camera = Quat::from_rotation_arc(Vec3::Z, looking.normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.7, 0.0), camera, Vec3::ONE)));
+    let towards_sun = Vec3::new(0.0, elevation.to_radians().sin(), elevation.to_radians().cos());
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { mode: SkyMode::Atmosphere, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// The pixel a direction lands on, seen from a camera looking along `looking`.
+fn sky_pixel(looking: Vec3, direction: Vec3) -> (u32, u32) {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let view = Mat4::from_quat(Quat::from_rotation_arc(Vec3::Z, looking.normalize())).inverse();
+    let clip = vulkan::perspective_infinite_reverse(60f32.to_radians(), 640.0 / 360.0, 0.1) * view * direction.extend(0.0);
+    let (x, y) = (clip.x / clip.w * 0.5 + 0.5, clip.y / clip.w * 0.5 + 0.5);
+    assert!((0.0..1.0).contains(&x) && (0.0..1.0).contains(&y), "{direction} is in view");
+    ((x * 640.0) as u32, (y * 360.0) as u32)
+}
+
+/// A direction `elevation` degrees up and `across` degrees to the right of +Z.
+fn bearing(elevation: f32, across: f32) -> Vec3 {
+    let (e, a) = (elevation.to_radians(), across.to_radians());
+    Vec3::new(e.cos() * a.sin(), e.sin(), e.cos() * a.cos())
+}
+
+#[test]
+fn the_atmosphere_is_brightest_towards_the_sun_and_reddens_as_it_sets() {
+    let ahead = bearing(8.0, 0.0);
+    let behind = Vec3::new(-ahead.x, ahead.y, -ahead.z);
+    let (Some(towards), Some(away)) = (atmosphere_render(20.0, ahead), atmosphere_render(20.0, behind)) else {
+        return;
+    };
+    keep_image("atmosphere towards the sun.png", &towards);
+    keep_image("atmosphere away from the sun.png", &away);
+    // Beside the sun, against the same part of the sky the other way.
+    let near_sun = rgb_at(&towards, sky_pixel(ahead, bearing(14.0, 15.0)));
+    let mirrored = bearing(14.0, 15.0);
+    let opposite = rgb_at(&away, sky_pixel(behind, Vec3::new(-mirrored.x, mirrored.y, -mirrored.z)));
+    let sum = |rgb: [i32; 3]| rgb.iter().sum::<i32>();
+    assert!(sum(near_sun) > sum(opposite), "brighter by the sun: {near_sun:?} against {opposite:?}");
+    assert!(opposite[2] > opposite[0], "blue away from the sun: {opposite:?}");
+
+    let (Some(noon), Some(sunset)) = (atmosphere_render(60.0, ahead), atmosphere_render(2.0, ahead)) else { return };
+    keep_image("atmosphere at noon.png", &noon);
+    keep_image("atmosphere at sunset.png", &sunset);
+    let horizon = sky_pixel(ahead, bearing(4.0, 20.0));
+    let warmth = |rgb: [i32; 3]| rgb[0] as f32 / rgb[2].max(1) as f32;
+    let (at_noon, at_sunset) = (rgb_at(&noon, horizon), rgb_at(&sunset, horizon));
+    assert!(
+        warmth(at_sunset) > warmth(at_noon) * 1.3,
+        "redder at sunset: {at_sunset:?} against {at_noon:?} at noon"
+    );
+}

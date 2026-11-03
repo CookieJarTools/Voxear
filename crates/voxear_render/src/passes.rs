@@ -27,7 +27,7 @@
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
-    ambient_occlusion,
+    ambient_occlusion, atmosphere,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
         LIST_SHADOW, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
@@ -88,6 +88,9 @@ pub struct Frame {
     /// Ambient occlusion's images, when it is on: the opaque lists are then
     /// drawn as depth first, and shaded once it has run.
     pub ambient_occlusion: Option<ambient_occlusion::Targets>,
+    /// The atmosphere's tables, when the sky is the atmosphere: drawn first,
+    /// and sampled by the opaque passes and the sky.
+    pub atmosphere: Option<atmosphere::Tables>,
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -200,11 +203,16 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     }
 
     let ambient_occlusion = frame.ambient_occlusion;
+    if let Some(atmosphere) = frame.atmosphere {
+        atmosphere::record(fg, (pipelines, push), atmosphere);
+    }
+    let tables: Vec<ImageId> = frame.atmosphere.map(|atmosphere| atmosphere.all().to_vec()).unwrap_or_default();
     let shading = |color: ImageAccess| {
         let mut images =
             vec![(targets.hdr, color), (targets.velocity, color), (targets.depth, ImageAccess::DepthAttachment)];
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
+        images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
         images
     };
     let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..draw_push };
@@ -283,11 +291,12 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     fg.sync_buffer(draws.stats_readback, BufferAccess::HostRead);
 
     let extent = frame.extent;
-    let sky_images = [
+    let mut sky_images = vec![
         (hdr, ImageAccess::ColorAttachment),
         (velocity, ImageAccess::ColorAttachment),
         (depth, ImageAccess::DepthRead),
     ];
+    sky_images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
     fg.add_pass("Sky", &sky_images, &[], move |ctx| {
         let color = [
             attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None),

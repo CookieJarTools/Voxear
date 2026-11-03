@@ -258,7 +258,6 @@ pub struct GpuFrame {
 
 /// `GpuLighting::sky`: the colours the scene gives, or the atmosphere.
 pub const SKY_GRADIENT: u32 = 0;
-#[allow(dead_code, reason = "the atmosphere is drawn once its tables are")]
 pub const SKY_ATMOSPHERE: u32 = 1;
 
 /// What area lights, cookies and the sky shade with beyond the frame's

@@ -10,7 +10,7 @@ use crate::{
     lod_group::{LodCamera, LodChoices},
     gpu::{
         CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_NONE, GpuFrame, GpuInstance, GpuLight, GpuLighting,
-        LIGHT_DISC, LIGHT_POINT, LIGHT_RECTANGLE, LIGHT_SPOT, LIGHT_TUBE, MAX_CLUSTER_LIGHTS, NO_TEXTURE, SKY_GRADIENT, cols, vec3,
+        LIGHT_DISC, LIGHT_POINT, LIGHT_RECTANGLE, LIGHT_SPOT, LIGHT_TUBE, MAX_CLUSTER_LIGHTS, NO_TEXTURE, SKY_ATMOSPHERE, SKY_GRADIENT, cols, vec3,
     },
     post::{AmbientOcclusion, AntiAliasingMode, PostProcess, taa_jitter},
     shadows::{self, CASCADES},
@@ -217,6 +217,8 @@ impl Default for ViewOptions {
 /// the scene gets a clear midday.
 #[derive(Clone, Copy, Debug)]
 pub struct Sky {
+    pub mode: SkyMode,
+    /// A gradient sky's colours.
     pub zenith: Vec3,
     pub horizon: Vec3,
     pub ground: Vec3,
@@ -224,9 +226,22 @@ pub struct Sky {
     pub ambient: f32,
 }
 
+/// What the sky is drawn as.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SkyMode {
+    /// A gradient of the sky's own colours, from the horizon up and down.
+    #[default]
+    Gradient,
+    /// The air of a planet like Earth, lit by the sun: blue by day, red and
+    /// orange as the sun sets, with haze over distant things (see
+    /// `atmosphere`).
+    Atmosphere,
+}
+
 impl Default for Sky {
     fn default() -> Self {
         Self {
+            mode: SkyMode::Gradient,
             zenith: Vec3::new(0.23, 0.45, 0.85),
             horizon: Vec3::new(0.62, 0.72, 0.86),
             ground: Vec3::new(0.22, 0.2, 0.18),
@@ -318,7 +333,11 @@ pub fn extract(
         viewport: [width, height],
         inv_view_proj: cols(view_proj.inverse()),
         lighting: GpuLighting {
-            sky: SKY_GRADIENT,
+            sky: match sky.mode {
+                SkyMode::Gradient => SKY_GRADIENT,
+                SkyMode::Atmosphere => SKY_ATMOSPHERE,
+            },
+            atmosphere: crate::atmosphere::earth(),
             sun_cookie: NO_TEXTURE,
             transmittance: NO_TEXTURE,
             multi_scattering: NO_TEXTURE,

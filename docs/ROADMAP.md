@@ -614,33 +614,55 @@ Next in M3:
 
 **Exit:** you can build and play the Hello scene in the editor, and it looks like the concept.
 
-## Packages: sharing code, tools and content
+## Packages: sharing code, tools and content ✅ (done)
 
 Voxear is meant to be open: a project's own code already adds editor windows, side bar buttons, commands, drawers
 and Inspector attributes. Packages carry that from one project to another, as Unity's packages do, so people can
 share tools, systems, shaders, art and samples and add them to a project in a click.
 
+Done:
 - **What a package is:** a folder with a `package.toml` (name, version, description, authors, the engine versions
-  it works with, and the packages it needs) holding any of: C# scripts, built into an assembly of its own that the
-  game's scripts can use; editor extensions (windows, side bar items, drawers, commands); assets; VoxDocs pages,
-  which the editor shows beside the manual; and samples to copy into a project.
-- **Where packages come from**, written in the project's `packages.toml`:
-  - a Git repository, GitHub first, by URL and a tag, branch or commit: `orbit-tools = { git =
-    "https://github.com/someone/orbit-tools", tag = "v1.2.0" }`, with `path` for a package inside a larger
-    repository, as Unity's Git URLs work
+  it works with, and the packages it needs). It holds C# in `Scripts/`, VoxDocs pages in `Docs/`, samples in
+  `Samples/<name>/`, and assets everywhere else. `vox package new` starts one.
+- **Where packages come from**, written in the project's `packages.toml`, whose comments survive Voxear's edits:
+  - a Git repository by URL and a tag, branch or commit, with `path` for a package inside a larger repository.
+    Git does the fetching, so a developer's own credentials and SSH keys work.
   - a folder on disk, for packages being written alongside a game
-  - a registry: a plain index repository on GitHub that lists packages and their versions, for finding them by
-    name and searching, with more registries addable later
-- **Resolving and locking:** versions are semantic, ranges are resolved together with every package's own needs,
-  and `packages.lock` keeps the exact commit of each, so everyone on a team gets the same code. Downloads are
-  cached once per machine and shared between projects.
-- **The Package Manager window:** what a project has, with updates; add by Git URL, by folder or from a registry;
-  remove; read a package's pages; import its samples. A package from the internet runs code, so the first time
-  one is added the editor shows what it will add and asks.
-- **From the command line:** `vox package add <git url or name>`, `vox package update`, `vox package remove`, and
-  `vox package new` to start one, with `vox package publish` to list a tagged release in a registry.
-- **Later:** native plugins (Rust or C libraries a package loads into the engine, behind the same consent), and a
-  place to browse packages with pictures and ratings, as Unity's Asset Store.
+  - a registry: a plain Git repository of `packages/<name>.toml` listings, for finding packages by name and
+    searching. Projects can name more under `[registries]`, and `VOXEAR_REGISTRY` sets a machine's default.
+- **Resolving and locking:**
+  - Versions are semantic. Ranges are resolved together with every package's own needs, and the project wins
+    when it asks for a package from somewhere else. Errors name who asked for what.
+  - `packages.lock` keeps the exact commit of each package.
+  - Downloads go into a cache shared by every project on the machine. With the lock and the cache in step,
+    nothing needs the network.
+- **Scripts:** each package's C# builds into an assembly of its own, from a project Voxear writes in
+  `.voxear/Packages`, against the packages it needs. The game's scripts use them all. The package assemblies load,
+  hot-reload and ship with the game's, and their behaviours, windows, side bar items, drawers and commands are
+  found as the game's are.
+- **Assets:** a package's assets are mounted at `Packages/<name>/`, with IDs that do not depend on where the
+  cache is. Import settings for cached packages are kept in the project's `Settings/Packages`. A build ships only
+  the package assets the game uses. The Project panel has a Packages section, read-only for cached packages.
+- **Docs and samples:** a package's pages show beside the manual in VoxDocs, and its samples copy into
+  `Samples/<Package>/<Sample>`.
+- **The Package Manager window** (Window > Package Manager):
+  - what the project has, with updates
+  - add by Git URL, by folder, or from a registry search
+  - update, remove, read a package's README and pages, and import its samples
+  - before code from somewhere new is added, a dialog shows what each package holds and asks
+- **From the command line:** `vox package add`, `remove`, `update`, `list`, `search`, `new`, and `publish`, which
+  lists a tagged release in a clone of a registry.
+
+Next:
+- The default registry's repository, which `vox package add <name>` looks in.
+- Changes made outside the editor to a folder package's files, picked up and imported again as the project's are.
+- Editing a package's string tables and input actions from the editor writes into a folder package, rather than
+  failing.
+- Cancelling a fetch in the Package Manager, and its update check working offline without an error.
+
+Later:
+- Native plugins (Rust or C libraries a package loads into the engine, behind the same consent).
+- A place to browse packages with pictures and ratings, as Unity's Asset Store.
 
 ## M4 — Input, localization, audio and physics (in progress)
 

@@ -11,7 +11,19 @@ my-tool = { path = "../my-tool" }
 cameras = "^1.0"
 ```
 
-You can edit the file yourself, or let `vox package add` write it for you.
+You can edit the file yourself, or let the Package Manager or `vox package add` write it for you.
+
+## The Package Manager
+
+Open **Window > Package Manager**. The window lists every package the project uses, with its version, where it comes from and what it holds. A newer release or commit shows beside the version, with **Update** in the details and **Update All** at the top.
+
+Select a package to see its description, its README, its pages and its samples. **Import** copies a sample into your project.
+
+The **+** button adds a package:
+
+- **Add from Git URL…**: the repository's URL, and a tag, branch or revision.
+- **Add from Folder…**: a package folder on disk.
+- **Add from Registry…**: search a registry by name or description.
 
 ## Where packages come from
 
@@ -58,9 +70,9 @@ vox package list
 vox package search camera
 ```
 
-Every command works on the project in the current folder. Pass `--project` to name another.
+The same changes can be made from the command line. Every command works on the project in the current folder. Pass `--project` to name another.
 
-`vox package add` shows what each new package holds before it changes anything: its scripts, assets, pages and samples. A package's scripts run when your game's scripts do, so if a new package from Git or a registry has scripts, Voxear asks before adding it. Pass `--yes` to skip the question, for example in a build script.
+Before anything changes, the Package Manager and `vox package add` show what each new package holds: its scripts, assets, pages and samples. A package's scripts run when your game's scripts do, so if a new package from Git or a registry has scripts, Voxear asks before adding it. On the command line, pass `--yes` to skip the question, for example in a build script.
 
 ## The lock file
 
@@ -81,3 +93,13 @@ Once the lock and the cache agree, nothing needs the network. `--offline` uses o
 A package can need other packages, and those packages can need more. Voxear adds them all, and picks one version of each that suits everyone who asks for it. If your project and a package ask for the same package from different places, your project's choice wins.
 
 When no version suits everyone, the error names who asked for what, for example: `the project needs ^0.1, orbit-tools needs ^0.2`. Change your project's range, or update the package that asks for the other one.
+
+## Using a package's assets
+
+A package's assets appear in the Project panel under **Packages**, in a folder named after the package. Use them as you use your own: drag them into a level, or pick them in a field. Their paths start with `Packages/<name>/`.
+
+Packages from Git or a registry are read-only, so you cannot rename, move or delete their files. Their import settings are saved in your project, under `Settings/Packages`, so your whole team shares them. A package added from a folder can be changed like the rest of your project.
+
+A build ships only the package assets your game uses.
+
+A package's pages appear in VoxDocs after the manual, under the package's name.

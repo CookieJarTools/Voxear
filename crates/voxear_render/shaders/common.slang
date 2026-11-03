@@ -8,7 +8,7 @@
 [[vk::binding(0, 0)]] Texture2D textures[];
 [[vk::binding(1, 0)]] SamplerState samplers[];
 [[vk::binding(2, 0)]] [[vk::image_format("r32f")]] RWTexture2D<float> storageImagesR32f[];
-// The same storage images, for those of four half floats, as the voxel GI's.
+// The same storage images, for those of four half floats, as the GI probes'.
 [[vk::binding(2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> storageImagesRgba16f[];
 [[vk::binding(3, 0)]] SamplerComparisonState comparisonSamplers[];
 
@@ -380,37 +380,6 @@ struct Lighting
     uint moon;
 };
 
-static const uint GI_LEVELS = 3;
-// The radiance cache's cascades of probes, each this many times as far apart as the one before.
-static const uint GI_CASCADES = 2;
-static const float GI_CASCADE_SCALE = 4.0;
-static const int GI_SIZE = 64;
-
-// Voxel global illumination; mirrors GpuGi in src/gpu.rs.
-struct Gi
-{
-    int4 origin[GI_LEVELS];
-    int4 previousOrigin[GI_LEVELS];
-    float voxelSize;
-    uint texture;
-    // Frames left in which every probe is traced, as the GI starts.
-    uint warmUp;
-    uint reset;
-    float strength;
-    uint probeTexture;
-    float probeSpacing;
-    // How much the voxels block along X, Y and Z, last frame's, as a texture.
-    uint opacityTexture;
-    // Each cascade's lowest probe, this frame and last.
-    int4 probeOrigin[GI_CASCADES];
-    int4 probePreviousOrigin[GI_CASCADES];
-    // Which way the voxels' light faces, last frame's, as a texture.
-    uint directionTexture;
-    uint3 directionPad;
-};
-
-static const int GI_PROBES = 48;
-
 // Ray-traced GI's probes; mirrors GpuDdgi in src/gpu.rs.
 static const uint DDGI_CASCADES = 2;
 static const float DDGI_CASCADE_SCALE = 4.0;
@@ -485,7 +454,6 @@ struct Frame
     uint meshletFlags;
     uint2 pad5;
     Lighting lighting;
-    Gi gi;
     Ddgi ddgi;
 };
 

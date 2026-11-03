@@ -1,7 +1,8 @@
 //! Bounding volume hierarchies, for tracing rays in a compute shader on GPUs
 //! without ray tracing: one over each mesh's triangles, built when the mesh
 //! loads, and one over the scene's instances, built each frame. The shader
-//! that walks them is in `shaders/ddgi.slang`, with `SOFTWARE_RAYS`.
+//! that walks them is `shaders/trace_software.slang`, which `ddgi.slang`
+//! includes with `SOFTWARE_RAYS`.
 //!
 //! Each is built by binned SAH: every split tries a few planes along the
 //! longest axis and keeps the one that makes rays cheapest to trace, by the

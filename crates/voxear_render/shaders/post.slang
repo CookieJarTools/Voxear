@@ -7,7 +7,6 @@
 #include "atmosphere.slang"
 #include "common.slang"
 #include "ddgi_sample.slang"
-#include "gi.slang"
 #include "volume.slang"
 
 static const float3 LUMA = float3(0.2126, 0.7152, 0.0722);
@@ -70,23 +69,18 @@ float heightFogThrough(float density, float falloff, float3 ray)
 // walls keep out the sky, judged at both ends of the ray; otherwise 1.
 float fogOpenness(Frame* frame, float3 point)
 {
-    bool traced = frame->ddgi.enabled != 0;
-    if (!traced && frame->gi.probeTexture == NO_TEXTURE)
+    if (frame->ddgi.enabled == 0)
     {
         return 1.0;
     }
     // The open sky's light as the probes count it, from the atmosphere or the gradient.
     float3 sky = frame->lighting.sky == SKY_ATMOSPHERE ? atmosphereAmbient(frame, 0.5, sunThroughAtmosphere(frame))
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
-    if (traced)
-    {
-        float open = max(dot(sky, LUMA), 1e-5);
-        float3 back = normalize(frame->cameraPosition - point);
-        float atCamera = dot(ddgiLightAround(frame, frame->cameraPosition, back, sky), LUMA) / open;
-        float atPoint = dot(ddgiLightAround(frame, point, back, sky), LUMA) / open;
-        return saturate((atCamera + atPoint) * 0.5);
-    }
-    return (giOpenness(frame, frame->cameraPosition, sky) + giOpenness(frame, point, sky)) * 0.5;
+    float open = max(dot(sky, LUMA), 1e-5);
+    float3 back = normalize(frame->cameraPosition - point);
+    float atCamera = dot(ddgiLightAround(frame, frame->cameraPosition, back, sky), LUMA) / open;
+    float atPoint = dot(ddgiLightAround(frame, point, back, sky), LUMA) / open;
+    return saturate((atCamera + atPoint) * 0.5);
 }
 
 // The colour the mist takes looking along `direction`. Under the atmosphere,

@@ -1,16 +1,15 @@
 //! Ray-traced global illumination: probes round the camera that trace rays
-//! against the scene's triangles, as RTXGI and DDGI do, where the GPU has
-//! ray tracing. The shaders are `shaders/ddgi.slang`, which traces and
-//! updates the probes, and `shaders/ddgi_sample.slang`, which shading reads
-//! them with.
+//! against the scene's triangles, as RTXGI and DDGI do, by ray tracing
+//! where the GPU has it and in a compute shader where it does not. The
+//! shaders are `shaders/ddgi.slang`, which traces and updates the probes,
+//! and `shaders/ddgi_sample.slang`, which shading reads them with.
 //!
 //! Each probe keeps, in small octahedral maps, the light reaching it from
 //! every direction and how far its rays went before they hit something.
 //! Shading takes light from the probes round a point only as far as their
 //! rays say they can see it, so a probe on the far side of a wall gives
 //! none, and probes whose rays find mostly the backs of surfaces are inside
-//! something and are set aside. Light does not leak through walls as it
-//! does through voxels.
+//! something and are set aside. Light does not leak through walls.
 //!
 //! Each frame:
 //!

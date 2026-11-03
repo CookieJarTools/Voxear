@@ -1966,10 +1966,10 @@ fn taa_upscales_a_scene_drawn_at_half_size_close_to_the_full_one() {
 }
 
 /// A white floor seen from above, with a sunlit red wall standing on it
-/// along X at z = 1, and GI on or off.
-fn gi_render(gi: bool) -> Option<Vec<u8>> {
-    use voxear_render::{GlobalIllumination, Sky};
-    let mut renderer = renderer()?;
+/// along X at z = 1.
+fn gi_render(bounce: Bounce) -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = bounce_renderer(bounce)?;
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
     let plane = renderer.primitive(Primitive::Plane).unwrap();
@@ -1986,16 +1986,16 @@ fn gi_render(gi: bool) -> Option<Vec<u8>> {
     let mut post = steady_post();
     post.ambient_occlusion.enabled = false;
     post.contact_shadows.enabled = false;
-    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ray_tracing: false, ..Default::default() };
+    post.global_illumination = bounce_settings(bounce);
     world.insert_resource(post);
-    // Long enough for every probe to be traced again since the voxels filled.
+    // Long enough for every probe to be traced again since the GI warmed up.
     run(&mut renderer, &world, &mut 0.0, 34);
     Some(renderer.read_pixels().unwrap().2)
 }
 
 #[test]
-fn voxel_gi_bounces_a_walls_colour_and_keeps_the_sky_from_behind_it() {
-    let (Some(plain), Some(lit)) = (gi_render(false), gi_render(true)) else { return };
+fn gi_bounces_a_walls_colour_and_keeps_the_sky_from_behind_it() {
+    let (Some(plain), Some(lit)) = (gi_render(Bounce::Off), gi_render(Bounce::Traced)) else { return };
     keep_image("gi off.png", &plain);
     keep_image("gi on.png", &lit);
     // On the floor in front of the red wall's sunlit face, the floor turns redder.
@@ -2196,7 +2196,6 @@ fn a_bloom_tint_colours_the_glow_but_not_the_light() {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Bounce {
     Off,
-    Voxels,
     /// Probes whose rays are traced by the GPU's ray tracing.
     Traced,
     /// The same probes, their rays traced in a compute shader.
@@ -2217,8 +2216,7 @@ fn bounce_renderer(bounce: Bounce) -> Option<Renderer> {
 fn bounce_settings(bounce: Bounce) -> voxear_render::GlobalIllumination {
     voxear_render::GlobalIllumination {
         enabled: bounce != Bounce::Off,
-        voxel_size: 0.25,
-        ray_tracing: bounce != Bounce::Voxels,
+        probe_spacing: 0.5,
         ..Default::default()
     }
 }
@@ -2247,14 +2245,9 @@ fn wall_behind_render(bounce: Bounce) -> Option<Vec<u8>> {
     post.contact_shadows.enabled = false;
     post.global_illumination = bounce_settings(bounce);
     world.insert_resource(post);
-    // Long enough for every probe to be traced again since the voxels filled.
+    // Long enough for every probe to be traced again since the GI warmed up.
     run(&mut renderer, &world, &mut 0.0, 34);
     Some(renderer.read_pixels().unwrap().2)
-}
-
-#[test]
-fn voxel_gi_bounces_the_colour_of_a_wall_the_camera_cannot_see() {
-    assert_floor_takes_the_hidden_walls_red(Bounce::Voxels, "wall behind gi on.png");
 }
 
 /// When in the day the courtyard below is lit.
@@ -2316,7 +2309,7 @@ fn courtyard_render(time: TimeOfDay, torches: bool, gi: bool, post: voxear_rende
     world.insert_resource(Sky { mode: SkyMode::Atmosphere, ..Sky::default() });
     let mut post = post;
     post.contact_shadows.enabled = false;
-    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ..GlobalIllumination::default() };
+    post.global_illumination = GlobalIllumination { enabled: gi, probe_spacing: 0.5, ..GlobalIllumination::default() };
     world.insert_resource(post);
     run(&mut renderer, &world, &mut 0.0, 34);
     Some(renderer.read_pixels().unwrap().2)

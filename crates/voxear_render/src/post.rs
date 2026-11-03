@@ -94,9 +94,10 @@ pub struct AmbientOcclusion {
     pub full_resolution: bool,
 }
 
-/// Real-time global illumination from a clipmap of voxels round the camera
-/// (see `gi`): light bounced off nearby surfaces, and the sky's light kept
-/// out of rooms and from under things, in place of the plain sky ambient.
+/// Real-time global illumination from probes round the camera whose rays are
+/// traced against the scene (see `ddgi`): light bounced off nearby surfaces,
+/// and the sky's light kept out of rooms and from under things, in place of
+/// the plain sky ambient. No light passes walls.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GlobalIllumination {
@@ -104,20 +105,15 @@ pub struct GlobalIllumination {
     /// How bright the bounced light is: 1 as measured, more for a brighter,
     /// more stylised bounce.
     pub strength: f32,
-    /// The finest voxels' size, in metres; each of the three grids round the
-    /// camera is 64 voxels across, the next with voxels twice the size. The
-    /// radiance cache's probes are two voxels apart, 48 across. With ray
-    /// tracing, the probes are two of these apart too.
-    pub voxel_size: f32,
-    /// Advanced: trace the probes' rays against the scene's triangles where
-    /// the GPU has ray tracing, so no light leaks through walls; off, voxels
-    /// light the scene on every GPU.
-    pub ray_tracing: bool,
+    /// How far apart the fine probes round the camera are, in metres. The
+    /// grid is 32 probes across, 16 high and 32 deep, and a coarse one four
+    /// times as far apart carries on past it.
+    pub probe_spacing: f32,
 }
 
 impl Default for GlobalIllumination {
     fn default() -> Self {
-        Self { enabled: false, strength: 1.0, voxel_size: 0.5, ray_tracing: true }
+        Self { enabled: false, strength: 1.0, probe_spacing: 1.0 }
     }
 }
 

@@ -21,7 +21,6 @@ mod frame_debugger;
 mod gltf_import;
 mod gpu;
 mod ddgi;
-mod gi;
 mod graph;
 mod hot_reload;
 mod ies;
@@ -1188,10 +1187,6 @@ struct View {
     atmosphere_tables: Option<gpu::GpuAtmosphere>,
     /// Whether last frame drew a fog volume this one can carry on from.
     fog_history: bool,
-    /// The voxel GI's grids' origins last frame, its probe grid's, its
-    /// voxel size, and how many frames it has run, when it had voxels this
-    /// one can carry on from.
-    gi_history: Option<([[i32; 4]; gpu::GI_LEVELS], [[i32; 4]; gpu::GI_CASCADES], f32, u32)>,
     /// The ray-traced GI's origins last frame, its spacing, and how many
     /// frames it has run, when it had probes this one can carry on from.
     ddgi_history: Option<([[i32; 4]; gpu::DDGI_CASCADES], f32, u32)>,
@@ -1263,7 +1258,6 @@ impl View {
             ao_history: None,
             atmosphere_tables: None,
             fog_history: false,
-            gi_history: None,
             ddgi_history: None,
             warned_meshlets: false,
         })
@@ -1417,7 +1411,6 @@ impl View {
         self.ao_history = None;
         self.atmosphere_tables = None;
         self.fog_history = false;
-        self.gi_history = None;
         self.ddgi_history = None;
         self.prev_models.clear();
         self.prev_view_proj = None;
@@ -1576,11 +1569,11 @@ impl View {
             frame_data.post.reflection_texture = fg.texture(target).0;
         }
         let lit = extracted.post.global_illumination;
-        // Probes traced against the scene where the GPU can, in place of the voxels, which leak light.
+        // Probes whose rays are traced against the scene's triangles, so no light passes walls.
         let mut probes = None;
         let previous_ddgi = self.ddgi_history.take();
         let mut scene_hierarchy = (0, 0);
-        if lit.enabled && !wireframe && lit.ray_tracing {
+        if lit.enabled && !wireframe {
             let traced = &extracted.instances[..instance_count];
             // Ray queries where the GPU has them; otherwise the scene's hierarchy, walked in a compute shader.
             let scene = if setup.software_rays {
@@ -1595,7 +1588,7 @@ impl View {
             };
             if let Some(scene) = scene {
                 let made = ddgi::Probes::new(fg, gpu, bindless, setup.software_rays)?;
-                let spacing = lit.voxel_size.clamp(0.05, 8.0) * 2.0;
+                let spacing = lit.probe_spacing.clamp(0.1, 16.0);
                 let origin = ddgi::origins(voxear_core::math::Vec3::from(frame_data.camera_position), spacing);
                 let kept = previous_ddgi.filter(|(_, known, _)| *known == spacing);
                 let frames = kept.map_or(0, |(.., frames)| frames.saturating_add(1));
@@ -1615,49 +1608,6 @@ impl View {
                 self.ddgi_history = Some((origin, spacing, frames));
                 probes = Some(made);
             }
-        }
-        let voxels = match lit.enabled && !wireframe && probes.is_none() {
-            true => Some(gi::Voxels::new(fg, gpu, bindless, history)?),
-            false => None,
-        };
-        let previous_gi = self.gi_history.take();
-        let mut voxel_draws: [Vec<gi::VoxelDraw>; gpu::GI_LEVELS] = Default::default();
-        if let Some(voxels) = voxels {
-            let size = lit.voxel_size.clamp(0.05, 8.0);
-            let camera = voxear_core::math::Vec3::from(frame_data.camera_position);
-            let origin = gi::origins(camera, size);
-            let spacing = size * gi::PROBE_SPACING;
-            let probe_origin = gi::probe_origins(camera, spacing);
-            let kept = previous_gi.filter(|(_, _, known, _)| *known == size);
-            frame_data.gi.origin = origin;
-            frame_data.gi.previous_origin = kept.map_or(origin, |(before, ..)| before);
-            frame_data.gi.probe_origin = probe_origin;
-            frame_data.gi.probe_previous_origin = kept.map_or(probe_origin, |(_, before, ..)| before);
-            frame_data.gi.voxel_size = size;
-            frame_data.gi.probe_spacing = spacing;
-            frame_data.gi.texture = fg.texture(voxels.previous).0;
-            frame_data.gi.probe_texture = fg.texture(voxels.previous_probes).0;
-            frame_data.gi.opacity_texture = fg.texture(voxels.previous_opacity).0;
-            frame_data.gi.direction_texture = fg.texture(voxels.previous_direction).0;
-            frame_data.gi.reset = u32::from(kept.is_none());
-            // Every probe is traced each frame until the light has bounced round and settled.
-            let frames = kept.map_or(0, |(.., frames)| frames.saturating_add(1));
-            frame_data.gi.warm_up = gi::WARM_UP_FRAMES.saturating_sub(frames);
-            frame_data.gi.strength = lit.strength.max(0.0);
-            let spheres = extracted.instances[..instance_count].iter().enumerate().filter_map(|(index, instance)| {
-                let mesh = MeshHandle(instance.mesh);
-                let (first_index, index_count) = assets.first_lod(mesh)?;
-                let (centre, radius) = assets.mesh_sphere(mesh)?;
-                let model = voxear_core::math::Mat4::from_cols_array_2d(&instance.model);
-                let scale = [model.x_axis, model.y_axis, model.z_axis]
-                    .map(|axis| axis.truncate().length())
-                    .into_iter()
-                    .fold(0.0, f32::max);
-                let draw = gi::VoxelDraw { instance: index as u32, first_index, index_count };
-                Some((draw, model.transform_point3(centre), radius * scale))
-            });
-            voxel_draws = gi::voxel_draws(spheres, &origin, size);
-            self.gi_history = Some((origin, probe_origin, size, frames));
         }
         let fog = extracted.post.fog;
         let foggy = fog.enabled && fog.volumetric && fog.density > 0.0 && !wireframe;
@@ -1788,8 +1738,6 @@ impl View {
             reflections,
             atmosphere,
             volume,
-            voxels,
-            voxel_draws,
             probes,
         };
         passes::record(fg, &frame_setup, &targets, &draws);

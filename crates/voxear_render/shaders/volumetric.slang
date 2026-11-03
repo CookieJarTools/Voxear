@@ -116,9 +116,8 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
     // The sky lights the fog from all round, scattered evenly.
     float3 sky = atmosphere ? atmosphereAmbient(frame, 0.5, sunLight)
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
-    // With voxel GI, the light round the froxel instead, which walls and bounced light change.
-    float3 around = frame->ddgi.enabled != 0 ? ddgiLightAround(frame, position, toCamera, sky)
-        : giLightAround(frame, position, sky);
+    // With GI, the light round the froxel instead, which walls and bounced light change.
+    float3 around = frame->ddgi.enabled != 0 ? ddgiLightAround(frame, position, toCamera, sky) : sky;
     light += around / (4.0 * PI);
     float4 current = float4(frame->post.fogColor * light * density, density);
 

@@ -256,7 +256,7 @@ enum Commands {
         #[arg(long)]
         renderdoc: bool,
         /// Show `lod`, shadow `cascades`, `lights` per cluster, `normals`, `meshlets`, ambient occlusion (`ao`) or
-        /// the light the voxel GI finds (`gi`) instead of normal shading.
+        /// the light the GI's probes find (`gi`) instead of normal shading.
         #[arg(
             long,
             value_parser = ["none", "lod", "cascades", "lights", "normals", "meshlets", "ao", "gi"],

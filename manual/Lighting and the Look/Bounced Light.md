@@ -17,25 +17,13 @@ Voxear traces real rays against the scene, as Arc Raiders and The Finals do. Pro
 
 This works on every graphics card. On one with ray tracing (NVIDIA RTX 20 series and later, AMD RX 6000 and later, Intel Arc), the card traces the rays itself. On others, Voxear traces them in a compute shader, through a tree of boxes round each mesh's triangles built when the mesh loads and one round the scene's meshes built each frame. The light is the same either way; tracing in a compute shader is slower, so each probe is traced half as often and light settles a little more slowly after a change. To try it on a card with ray tracing, render with `vox render --software-rays`.
 
-## Voxels
+## How the probes work
 
-Voxear can light the scene from voxels instead, described below. Light can leak a little through thin walls with them. To use them:
+The probes sit in two grids round the camera: a fine one, 32 probes across, 16 high and 32 deep, and a coarse one four times as far apart that carries on past it, so far walls and the mist over them are lit as near ones are. The grids move with the camera, and probes the camera leaves behind are reused for the ground ahead.
 
-```toml
-[post.global_illumination]
-enabled = true
-ray_tracing = false
-```
+A few probes, scattered through the grids, trace their rays each frame: a quarter of the fine ones and an eighth of the coarse. Each blends what it finds into what it had, so light changes smoothly over about a quarter of a second. When a level opens, every probe traces each frame for its first few, so the light has settled by the time you see it.
 
-## How the voxels work
-
-Round the camera, Voxear keeps three grids of small boxes, called **voxels**, nested inside each other: fine near the camera, coarser farther out. Each frame it draws every mesh near the camera into them, its colour and which way it faces, so walls behind you and round the corner are there as much as those in view. Then it lights each voxel as its surface is lit: by the sun where the sun reaches it, by lamps and torches, by its own glow, and by the light bouncing round it. What the camera sees brightens the voxels it falls in too.
-
-Between the voxels sit **probes**: a fine grid two voxels apart round the camera, and a coarse one four times as far apart that carries on past it, so far walls and the mist over them are lit as near ones are. From each probe, Voxear looks out through the voxels in 32 directions and keeps the light coming from each side: above, below, and the four ways round. A floor takes the light from above it, a wall the light in front of it, and each pixel takes it from the probes round it, leaving out any a wall stands in front of. A few probes, scattered through the grids, are worked out again each frame, so light changes smoothly over about a quarter of a second. When a level opens, every probe is worked out each frame for its first few, so the light has settled by the time you see it.
-
-Each voxel also remembers which way its light faces, so the shaded side of a thin wall shows none of its sunlit side's light.
-
-Light bounces more than once: what one frame bounces lights the voxels for the next. Shiny surfaces reflect the lit voxels too, so a polished floor shows the warm walls round it rather than only the sky.
+Light bounces more than once: where a ray hits a surface, the light it brings back includes what the probes round that surface found last frame. Shiny surfaces reflect the probes' light too, so a polished floor shows the warm walls round it rather than the sky through the ceiling.
 
 Bounced light is soft by nature, so the probes show it well. The small, sharp shade where things touch comes from ambient occlusion and contact shadows (see [[Post-Processing]] and [[Lights]]).
 
@@ -49,9 +37,9 @@ To see the bounced light on its own, use `vox render --debug-view gi`.
 | --- | --- |
 | `enabled = false` | Bounced light on or off. Off, the sky lights everything evenly, as [[The Sky]] describes |
 | `strength = 1.0` | How bright the bounced light is. Higher gives a brighter, more stylised glow |
-| `voxel_size = 0.5` | The finest voxels' size, in metres. Each grid is 64 voxels across, and the fine probes are two voxels apart, 48 across, the coarse ones four times that, so this also sets how far round the camera light bounces: about 190 metres at 0.5. Beyond it, the sky lights things evenly |
+| `probe_spacing = 1.0` | How far apart the fine probes are, in metres. This also sets how far round the camera light bounces: the coarse grid reaches about 64 metres each way at 1. Beyond it, the sky lights things evenly |
 
-Smaller voxels show finer detail, such as light through a doorway, but reach less far. Interiors suit 0.25 to 0.5; open landscapes 1 or more.
+Closer probes show finer detail, such as light through a doorway, but reach less far. Interiors suit 0.5 to 1; open landscapes 2 or more.
 
 ## Exposure indoors
 
@@ -66,11 +54,7 @@ Dark scenes still look dark: the darker a scene, the less exposure brightens it,
 
 ## Cost
 
-Ray-traced bounced light costs about 1.3 milliseconds on an RTX 3070 in the Sponza palace, whatever the screen size: a tenth building the scene for the rays, six tenths tracing them, and the rest blending them into the probes. Traced in a compute shader, it costs about 3 milliseconds there: 2.2 tracing and 0.9 blending.
-
-With voxels:
-
-Bounced light costs about a millisecond at 1440p on an RTX 3070: four tenths for drawing the meshes into the voxels, four tenths for the probes, and a little for lighting the voxels and for each pixel to read its probes.
+Bounced light costs about 1.3 milliseconds on an RTX 3070 in the Sponza palace, whatever the screen size: a tenth building the scene for the rays, six tenths tracing them, and the rest blending them into the probes. Traced in a compute shader, it costs about 3 milliseconds there: 2.2 tracing and 0.9 blending.
 
 > [!NOTE]
-> A thin wall in a coarse voxel can let a little light through to its far side, and lamps cast no shadows into the voxels yet.
+> Rays see every surface as solid, so leaves cut out of a card block light as the whole card would.

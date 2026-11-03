@@ -87,7 +87,7 @@ void exposureMain(uint3 thread : SV_GroupThreadID)
     float current = state[0];
     // Straight to the target on the first frame, and while the bounced light is still settling as the GI starts,
     // so a level opens at its own exposure rather than sliding into it.
-    if (state[1] == 0.0 || frame->gi.warmUp > 0)
+    if (state[1] == 0.0 || frame->ddgi.warmUp > 0)
     {
         current = target;
     }

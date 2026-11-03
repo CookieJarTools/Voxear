@@ -88,18 +88,6 @@ pub struct Pipelines {
     pub bloom_down: vk::Pipeline,
     pub bloom_up: vk::Pipeline,
     pub exposure: vk::Pipeline,
-    /// Voxel GI's passes: emptying the meshes' voxels and drawing the meshes
-    /// into them, lighting them, and brightening them from what the camera
-    /// sees.
-    pub gi_clear: vk::Pipeline,
-    pub gi_voxelize: vk::Pipeline,
-    pub gi_light: vk::Pipeline,
-    pub gi_view: vk::Pipeline,
-    pub gi_downsample: vk::Pipeline,
-    /// The radiance cache's probes: last frame's kept, then those due
-    /// traced through the voxels again.
-    pub gi_probes_keep: vk::Pipeline,
-    pub gi_probes: vk::Pipeline,
     /// Writes the LDR intermediate, for a finishing pass to read.
     pub composite_ldr: vk::Pipeline,
     /// Writes the output directly, when nothing follows.
@@ -141,8 +129,6 @@ impl Pipelines {
             module("debug")?,
             module("ambient_occlusion")?,
             module("volumetric")?,
-            module("gi_inject")?,
-            module("gi_voxelize")?,
             module("ddgi_software")?,
         ];
         let [
@@ -159,8 +145,6 @@ impl Pipelines {
             debug,
             occlusion,
             volumetric,
-            gi_inject,
-            gi_voxelize,
             ddgi_software,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
@@ -286,17 +270,6 @@ impl Pipelines {
             bloom_down: fullscreen("Bloom down", c"bloomDownFragment", bloom, Blend::Opaque)?,
             bloom_up: fullscreen("Bloom up", c"bloomUpFragment", bloom, Blend::Additive)?,
             exposure: create_compute_pipeline(gpu, layout, "Exposure", exposure, c"exposureMain")?,
-            gi_clear: create_compute_pipeline(gpu, layout, "GI clear", gi_inject, c"giClearMain")?,
-            gi_voxelize: graphics(&GraphicsPipelineDesc {
-                // Both faces of every surface count, and nothing is drawn but the voxels' writes.
-                cull: vk::CullModeFlags::NONE,
-                ..GraphicsPipelineDesc::new("GI voxelize", gi_voxelize, c"voxelVertex", c"voxelFragment")
-            })?,
-            gi_light: create_compute_pipeline(gpu, layout, "GI light", gi_inject, c"giLightMain")?,
-            gi_view: create_compute_pipeline(gpu, layout, "GI view", gi_inject, c"giViewMain")?,
-            gi_downsample: create_compute_pipeline(gpu, layout, "GI downsample", gi_inject, c"giDownsampleMain")?,
-            gi_probes_keep: create_compute_pipeline(gpu, layout, "GI probes kept", gi_inject, c"giProbesKeepMain")?,
-            gi_probes: create_compute_pipeline(gpu, layout, "GI probes", gi_inject, c"giProbesTraceMain")?,
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
@@ -379,13 +352,6 @@ impl Pipelines {
             self.bloom_down,
             self.bloom_up,
             self.exposure,
-            self.gi_clear,
-            self.gi_voxelize,
-            self.gi_light,
-            self.gi_view,
-            self.gi_downsample,
-            self.gi_probes_keep,
-            self.gi_probes,
             self.composite_ldr,
             self.composite,
             self.finish,

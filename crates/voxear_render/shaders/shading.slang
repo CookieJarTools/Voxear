@@ -8,7 +8,6 @@
 #include "atmosphere.slang"
 #include "common.slang"
 #include "ddgi_sample.slang"
-#include "gi.slang"
 #include "lights.slang"
 #include "occlusion.slang"
 
@@ -158,7 +157,7 @@ float3 shadowTint(Frame* frame, Surface s, float3 toSun, float3 sunLight, float 
 }
 
 // What a surface reflects of its surroundings: the sky in the mirror
-// direction, or with voxel GI the lit voxels in a cone round it, blurring
+// direction, or with GI the light the probes see that way, blurring
 // towards the light from all round (`ambient`) as the surface roughens,
 // with screen-space reflections over it where they found something and the
 // surface is smooth enough to show them.
@@ -180,15 +179,9 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3
     sky *= frame->ambient;
     if (frame->ddgi.enabled != 0)
     {
-        // With ray-traced GI, the light arriving from the mirror direction as the probes see it: blurred, but
-        // never the sky through a wall.
+        // With GI, the light arriving from the mirror direction as the probes see it: blurred, but never the sky
+        // through a wall.
         sky = ddgiIrradiance(frame, position, direction, normal, sky);
-    }
-    else if (frame->gi.texture != NO_TEXTURE)
-    {
-        // With voxel GI, what stands round the surface, lit, hides the sky behind it.
-        float4 voxels = giReflection(frame, position, normal, direction, roughness);
-        sky = voxels.rgb + (1.0 - voxels.a) * sky;
     }
     float3 reflected = lerp(sky, ambient, saturate(roughness * 1.5));
     if (frame->post.reflectionTexture == NO_TEXTURE)
@@ -405,19 +398,14 @@ FragmentOut fragmentMain(VertexOut input)
         color += shadeLocalLight(s, buffers()->lights[light], input.worldPosition);
     }
 
-    // Hemisphere ambient until real GI arrives.
+    // Hemisphere ambient, where GI is off or beyond its probes.
     float up = s.normal.y * 0.5 + 0.5;
     float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
     if (frame->ddgi.enabled != 0)
     {
-        // From the ray-traced probes, falling back to the plain sky light beyond them.
+        // From the GI's probes, falling back to the plain sky light beyond them.
         ambient = ddgiIrradiance(frame, input.worldPosition, s.normal, s.view, ambient);
-    }
-    else if (frame->gi.probeTexture != NO_TEXTURE)
-    {
-        // From the radiance cache, falling back to the plain sky light beyond it.
-        ambient = giAmbient(frame, input.worldPosition, s.normal, ambient);
     }
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);

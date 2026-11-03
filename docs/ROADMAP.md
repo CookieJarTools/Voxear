@@ -909,6 +909,9 @@ Done so far:
   binned-SAH BVH over each mesh's finest LOD built when it loads and one over the frame's instances built each
   frame, nearer child first; each probe is traced half as often. `vox render --software-rays` forces it. GPU
   tests: the sealed box and the hidden wall, traced in software. About 3 ms in Sponza on an RTX 3070.
+- **Voxel GI removed:** the ray-traced probes light every scene on every GPU, so the voxel clipmap, its radiance
+  cache and their passes are gone. `[post.global_illumination] probe_spacing` (1 m) replaces `voxel_size`, and
+  `ray_tracing` is gone. Fog, reflections and exposure's warm-up read the probes.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

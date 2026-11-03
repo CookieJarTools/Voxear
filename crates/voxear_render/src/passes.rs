@@ -27,7 +27,7 @@
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
-    ambient_occlusion, atmosphere, ddgi, gi,
+    ambient_occlusion, atmosphere, ddgi,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
         LIST_SHADOW, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
@@ -100,13 +100,8 @@ pub struct Frame {
     pub atmosphere: Option<atmosphere::Tables>,
     /// The volumetric fog's volumes, filled once the opaque passes are done.
     pub volume: Option<volumetric::Volume>,
-    /// The voxel GI's voxels: last frame's, which shading reads, and this
-    /// frame's, filled once the opaque passes are done.
-    pub voxels: Option<gi::Voxels>,
-    /// The meshes each of the GI's grids draws into its voxels.
-    pub voxel_draws: [Vec<gi::VoxelDraw>; crate::gpu::GI_LEVELS],
-    /// The ray-traced GI's probes, in place of the voxels, where the GPU
-    /// has ray tracing.
+    /// The GI's probes, whose rays are traced once the opaque passes are
+    /// done; shading reads last frame's.
     pub probes: Option<ddgi::Probes>,
 }
 
@@ -222,7 +217,6 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;
     let reflections = frame.reflections;
-    let voxels = frame.voxels;
     // Drawn as depth first, then shaded over it, for what reads the depth before shading.
     let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some();
     if let Some(atmosphere) = frame.atmosphere {
@@ -236,13 +230,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
-        // Last frame's voxels too, which reflections trace cones through.
+        // The GI's probes, which shading and reflections read.
         images.extend(frame.probes.into_iter().flat_map(|probes| {
             [probes.irradiance, probes.depth, probes.states].map(|image| (image, ImageAccess::Sampled))
-        }));
-        images.extend(voxels.into_iter().flat_map(|voxels| {
-            let images = [voxels.previous_probes, voxels.previous, voxels.previous_opacity, voxels.previous_direction];
-            images.map(|image| (image, ImageAccess::Sampled))
         }));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
         images
@@ -320,11 +310,6 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
             opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, Clear::default());
         }),
-    }
-    if let Some(voxels) = voxels {
-        let size = [frame.extent.width, frame.extent.height];
-        let meshes = (frame.voxel_draws.clone(), draws.index_buffer);
-        gi::record(fg, (pipelines, push), voxels, (targets.hdr, targets.depth, size), targets.shadows, meshes);
     }
     if let Some(probes) = frame.probes {
         ddgi::record(fg, (pipelines, push), probes);

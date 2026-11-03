@@ -10,20 +10,20 @@ There are two ways to make a game's UI: write it as markup in a `.vui` file and 
 var hud = UiDocument.Create()!;
 var panel = hud.Root.Add(new Panel("hud"));
 var score = panel.Add(new Label("0"));
-var pause = panel.Add(new Button("Pause"));
-pause.Clicked += Pause;
+panel.Add(new Button("Pause", Pause));
 ```
 
-`UiDocument.Create()` puts an empty document on screen. `Root` is its top element, and `Add` puts an element at the end of another and gives it back, so you can keep it in a field and change it later. There is no need to find it by name.
+`UiDocument.Create()` puts an empty document on screen. `Root` is its top element, and `Add` puts an element at the end of another and gives it back, so you can keep it in a field and change it later. There is no need to find it by name. `new Button("Pause", Pause)` gives the button the method to run when it is clicked, as it is made.
 
 The elements you can make are `Panel`, `ScrollView`, `Label`, `Button`, `Toggle`, `Slider`, `TextField`, `Foldout`, `Dropdown` and `Icon`:
 
 ```csharp
-var volume = panel.Add(new Slider(0, 10, value: 4));
-var sound = panel.Add(new Toggle("Sound", on: true));
+var volume = panel.Add(new Slider(0, 1, value: 0.8f));
+var subtitles = panel.Add(new Toggle("Subtitles", on: true));
 var quality = panel.Add(new Dropdown("Low", "Medium", "High"));
+var name = panel.Add(new TextField { Placeholder = "Your name" });
 var settings = panel.Add(new Foldout("Settings"));
-settings.Add(new Label("Inside the foldout"));
+settings.Add(new Label("Inside the foldout") { Tooltip = "Shows when the pointer rests here" });
 ```
 
 An element made with `new` waits in your code until you add it to one on screen. You can set its text, classes, style and value first; they show when it is added. `IsShown` says whether it is on screen yet.
@@ -53,7 +53,7 @@ var resume = menu.Find("resume");
 ## Reacting to clicks on UI
 
 ```csharp
-resume!.Clicked += () => Resume();
+resume!.Clicked += Resume;
 ```
 
 `Clicked` runs your code when the element, or anything inside it, is clicked. It runs at the start of the next frame, before any `Update`. If you would rather check each frame, `WasClicked` says whether it was clicked since the last frame:
@@ -73,6 +73,8 @@ protected override void Update()
 | Member | What it does |
 | --- | --- |
 | `Text` | A label's or button's text, or what is typed in a text field |
+| `Tooltip` | What shows under the element once the pointer rests on it for half a second: text, or a key's text |
+| `Placeholder` | What a text field shows, faded, while nothing is typed in it |
 | `Visible` | Shows or hides the element. Hidden, it takes no space |
 | `Value` | A slider's value, or the option a dropdown has picked, by its place |
 | `Checked` | Whether a toggle is on |
@@ -91,13 +93,20 @@ lowHealth!.Visible = health < 20;
 `Changed` runs your code when an element's value changes on screen: typed in, ticked, moved or picked. `WasChanged` says whether it changed since the last frame. The elements made in code also have their own events, which hand you the new value:
 
 ```csharp
-volume.Moved += value => Audio.Volume = value;
-sound.Toggled += on => Audio.Muted = !on;
+volume.Moved += value => Audio.MasterVolume = value;
+subtitles.Toggled += on => Settings.Subtitles = on;
 quality.Picked += index => Settings.Quality = index;
 name.Typed += text => player.Name = text;
 ```
 
-Like `Clicked`, these run at the start of the next frame.
+Like `Clicked`, these run at the start of the next frame. Each can also be given as the element is made, and gives the element back, so it chains inside `Add`:
+
+```csharp
+panel.Add(new Slider(0, 1, value: 0.8f).OnMoved(value => Audio.MasterVolume = value));
+panel.Add(new Label().Bind(() => $"Volume {Audio.MasterVolume * 100:0}%"));
+```
+
+`Bind` gives the label a function that works its text out again every frame, so it always shows the volume as it is. [[Callbacks and Binding]] has every callback and `Bind`, and when each runs.
 
 ## Showing a list of items
 

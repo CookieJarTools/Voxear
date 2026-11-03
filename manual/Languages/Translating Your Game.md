@@ -85,6 +85,10 @@ public sealed class MainMenu : Behaviour
 var found = Localization.Format("loot.found", ("player", name), ("count", coins));
 ```
 
+### Typed keys from Strings
+
+Your tables also give your scripts a class, `Strings`, with a member for every key: `menu.play` is `Strings.Menu.Play`, a `LocalizedString`. A key you misspell or rename is then a compile error, not text missing in the game, and your code editor shows each key's text. `Strings.Menu.Play.Value` is its text, and `Strings.Loot.Found.Format(("player", name), ("count", coins))` fills in values. Buttons, labels and other elements built in code take these keys straight away: see [[Localized UI Text]].
+
 ### Text that keeps itself up to date
 
 Text you show for a while, such as a coin counter, should change when the player picks another language, or when you edit its table while the game runs. A `Localized` does that for you: its `Text` is always right, and `Changed` tells you the new text whenever it changes, including when you give it a new value with `Set`:

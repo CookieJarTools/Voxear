@@ -491,6 +491,9 @@ Next in M3:
   - [x] drawers built in code, in `Build(root)`, with markup optional
   - [x] custom inspectors that draw a whole behaviour, as Unity's `Editor`: `BehaviourInspector<T>`, with the
     behaviour's usual fields in its `next` element
+  - [x] drawers and inspectors written only in `Build`: handlers given as elements are made (`new Button("Fill",
+    Fill)`, `.OnClicked`, `.OnToggled` and the rest) that set `Value` or change `Target`, saved as one step to
+    undo; `Refresh` and `Bind` to keep elements in step; `NextField` for markup's `next`; `Draw` optional
 - A build option to compile the scripts ahead of time (Native AOT) as well as run them on CoreCLR, which needs the
   player and Voxear.Core built that way too, and an option to ship the .NET runtime with the game (M12).
 - A jobs API for fast parallel C#, Voxear's answer to Unity's job system without Burst: work split over the
@@ -683,6 +686,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] `LocalizedString` fields, picked in the Inspector from the project's keys beside their text, saved as the key
   - [x] observable text, `Localized`, following the language, its table and its values, with `Changed`; from a
     `LocalizedString` by `Observe()`
+  - [x] keys' text on elements made in code: a `LocalizedString` for a label's, button's, toggle's or foldout's
+    text, `Localize(key, values)`, tooltips, placeholders and dropdown options from keys, and typed keys made
+    from each table by a source generator (`Strings.Menu.Play`)
   - [ ] a `LocalizedText` component, once there is text in the world
   - [x] CSV export, and import from a file with what it adds, changes and takes away shown first (`vox loc export` and
     `vox loc import`)

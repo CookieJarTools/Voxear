@@ -24,6 +24,7 @@ A `.vui` file lists what is on screen, as elements inside elements, in a form li
 | `name` | How scripts find it, and how a style sheet picks it out with `#name` |
 | `class` | One or more class names, separated by spaces, for style sheets to use |
 | `style` | Style written right there, as `style="width: 200px"`. It wins over style sheets |
+| `tooltip` | What shows under it once the pointer rests there, as `tooltip="Fills the bar"`, or a key's text, as `tooltip="@hints.fill"` |
 
 ## The UI elements
 

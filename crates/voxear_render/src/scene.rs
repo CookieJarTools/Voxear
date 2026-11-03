@@ -374,7 +374,7 @@ pub fn extract(
         viewport: [width, height],
         inv_view_proj: cols(view_proj.inverse()),
         // The renderer turns it on once it has made the voxels.
-        gi: GpuGi { texture: NO_TEXTURE, ..GpuGi::default() },
+        gi: GpuGi { texture: NO_TEXTURE, probe_texture: NO_TEXTURE, ..GpuGi::default() },
         lighting: GpuLighting {
             sky: match sky.mode {
                 SkyMode::Gradient => SKY_GRADIENT,

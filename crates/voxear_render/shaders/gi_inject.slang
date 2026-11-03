@@ -5,9 +5,12 @@
 // - shadows: every few texels of the sun's shadow cascades, a voxel where
 //   the sun sees a surface, so walls out of view still block and bounce;
 // - view: every other pixel the camera sees, its lit colour into its voxel,
-//   which is the light that surface sends on.
+//   which is the light that surface sends on;
+// - probes: the radiance cache's probes (gi.slang), an eighth of them each
+//   frame and any the grid has just moved over, by tracing cones.
 
-#include "common.slang"
+#include "atmosphere.slang"
+#include "gi.slang"
 
 // How much of last frame's voxels stays, each frame.
 static const float GI_FADE = 0.9;
@@ -116,4 +119,95 @@ void giViewMain(uint3 id : SV_DispatchThreadID)
     float brightest = max(colour.r, max(colour.g, colour.b));
     colour *= min(1.0, 4.0 / max(brightest, 1e-4));
     giMark(frame, world.xyz / world.w, colour, false);
+}
+
+// Twelve directions, an icosahedron's corners, which cover the sphere evenly.
+static const float3 PROBE_DIRECTIONS[12] = {
+    float3(0.0, 0.525731, 0.850651), float3(0.0, -0.525731, 0.850651),
+    float3(0.0, 0.525731, -0.850651), float3(0.0, -0.525731, -0.850651),
+    float3(0.525731, 0.850651, 0.0), float3(-0.525731, 0.850651, 0.0),
+    float3(0.525731, -0.850651, 0.0), float3(-0.525731, -0.850651, 0.0),
+    float3(0.850651, 0.0, 0.525731), float3(-0.850651, 0.0, 0.525731),
+    float3(0.850651, 0.0, -0.525731), float3(-0.850651, 0.0, -0.525731),
+};
+// Wide enough that twelve cones together cover the sphere.
+static const float PROBE_CONE_TAN = 0.75;
+// How much of a probe's last value a fresh one keeps, against flicker.
+static const float PROBE_KEEP = 0.5;
+// How bright each colour looks, for the direction light grows brighter in.
+static const float3 PROBE_LUMA = float3(0.2126, 0.7152, 0.0722);
+
+// The sky's light from straight up, the horizon and straight down, as
+// shading has it.
+void probeSky(Frame* frame, out float3 up, out float3 horizon, out float3 down)
+{
+    if (frame->lighting.sky == SKY_ATMOSPHERE)
+    {
+        float3 sun = sunThroughAtmosphere(frame);
+        up = atmosphereAmbient(frame, 1.0, sun);
+        down = atmosphereAmbient(frame, 0.0, sun);
+    }
+    else
+    {
+        up = lerp(frame->skyHorizon, frame->skyZenith, 0.5) * 0.35 * frame->ambient;
+        down = frame->groundColor * 0.35 * frame->ambient;
+    }
+    horizon = (up + down) * 0.5;
+}
+
+// One thread a probe. textures: x last frame's probes.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void giProbesMain(uint3 id : SV_DispatchThreadID)
+{
+    Frame* frame = push.frame;
+    uint count = uint(GI_PROBES * GI_PROBES * GI_PROBES);
+    if (id.x >= count)
+    {
+        return;
+    }
+    int index = int(id.x);
+    int3 slot = int3(index % GI_PROBES, (index / GI_PROBES) % GI_PROBES, index / (GI_PROBES * GI_PROBES));
+    int3 probe = slot + frame->gi.probeOrigin.xyz;
+    int3 before = probe - frame->gi.probePreviousOrigin.xyz;
+    bool known = frame->gi.reset == 0 && all(before >= 0) && all(before < GI_PROBES);
+    float4 lastAverage = 0.0;
+    float4 lastGrowth = 0.0;
+    if (known)
+    {
+        Texture2D last = textures[NonUniformResourceIndex(push.textures.x)];
+        lastAverage = last.Load(int3(giProbeTexel(before, 0), 0));
+        lastGrowth = last.Load(int3(giProbeTexel(before, 1), 0));
+    }
+    // An eighth each frame, spread through the grid.
+    bool due = (uint(index) + frame->frameIndex) % 8 == 0;
+    if (known && !due)
+    {
+        storageImagesRgba16f[push.output][giProbeTexel(slot, 0)] = lastAverage;
+        storageImagesRgba16f[push.output][giProbeTexel(slot, 1)] = lastGrowth;
+        return;
+    }
+
+    float3 middle = (float3(probe) + 0.5) * frame->gi.probeSpacing;
+    float3 skyUp;
+    float3 skyHorizon;
+    float3 skyDown;
+    probeSky(frame, skyUp, skyHorizon, skyDown);
+    float3 average = 0.0;
+    float3 growth = 0.0;
+    for (uint i = 0; i < 12; i++)
+    {
+        float3 direction = PROBE_DIRECTIONS[i];
+        float4 cone = giCone(frame, middle, direction, PROBE_CONE_TAN);
+        float3 light = cone.rgb * frame->gi.strength + (1.0 - cone.a) * giSky(direction, skyUp, skyHorizon, skyDown);
+        average += light / 12.0;
+        growth += dot(light, PROBE_LUMA) * direction / 12.0;
+    }
+    float brightness = max(dot(average, PROBE_LUMA), 1e-5);
+    // How much of the probe's own voxel is open: a probe inside a wall sees only the wall.
+    float open = 1.0 - giSample(frame, middle, 0).a;
+    float4 fresh = float4(average, open);
+    float4 freshGrowth = float4(growth / brightness, 0.0);
+    storageImagesRgba16f[push.output][giProbeTexel(slot, 0)] = known ? lerp(fresh, lastAverage, PROBE_KEEP) : fresh;
+    storageImagesRgba16f[push.output][giProbeTexel(slot, 1)] = known ? lerp(freshGrowth, lastGrowth, PROBE_KEEP) : freshGrowth;
 }

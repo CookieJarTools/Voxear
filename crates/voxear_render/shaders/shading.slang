@@ -320,14 +320,10 @@ FragmentOut fragmentMain(VertexOut input)
     float up = s.normal.y * 0.5 + 0.5;
     float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
-    if (frame->gi.texture != NO_TEXTURE)
+    if (frame->gi.probeTexture != NO_TEXTURE)
     {
-        // The sky's light from straight up, the horizon and straight down, as the plain ambient has it.
-        float3 skyUp = atmosphere ? atmosphereAmbient(frame, 1.0, sunLight)
-            : lerp(frame->skyHorizon, frame->skyZenith, 0.5) * 0.35 * frame->ambient;
-        float3 skyDown = atmosphere ? atmosphereAmbient(frame, 0.0, sunLight) : frame->groundColor * 0.35 * frame->ambient;
-        float3 skyHorizon = (skyUp + skyDown) * 0.5;
-        ambient = giAmbient(frame, input.worldPosition, s.normal, skyUp, skyHorizon, skyDown);
+        // From the radiance cache, falling back to the plain sky light beyond it.
+        ambient = giAmbient(frame, input.worldPosition, s.normal, ambient);
     }
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);

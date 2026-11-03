@@ -1162,9 +1162,9 @@ struct View {
     atmosphere_tables: Option<gpu::GpuAtmosphere>,
     /// Whether last frame drew a fog volume this one can carry on from.
     fog_history: bool,
-    /// The voxel GI's grids' origins last frame, and its voxel size, when
-    /// it had voxels this one can carry on from.
-    gi_history: Option<([[i32; 4]; gpu::GI_LEVELS], f32)>,
+    /// The voxel GI's grids' origins last frame, its probe grid's, and its
+    /// voxel size, when it had voxels this one can carry on from.
+    gi_history: Option<([[i32; 4]; gpu::GI_LEVELS], [i32; 4], f32)>,
     /// It has said its scene has too many meshlets to cull one by one.
     warned_meshlets: bool,
 }
@@ -1418,17 +1418,23 @@ impl View {
         let previous_gi = self.gi_history.take();
         if let Some(voxels) = voxels {
             let size = lit.voxel_size.clamp(0.05, 8.0);
-            let origin = gi::origins(voxear_core::math::Vec3::from(frame_data.camera_position), size);
-            let kept = previous_gi.filter(|(_, known)| *known == size);
+            let camera = voxear_core::math::Vec3::from(frame_data.camera_position);
+            let origin = gi::origins(camera, size);
+            let spacing = size * gi::PROBE_SPACING;
+            let probe_origin = gi::probe_origin(camera, spacing);
+            let kept = previous_gi.filter(|(.., known)| *known == size);
             frame_data.gi.origin = origin;
-            frame_data.gi.previous_origin = kept.map_or(origin, |(before, _)| before);
+            frame_data.gi.previous_origin = kept.map_or(origin, |(before, ..)| before);
+            frame_data.gi.probe_origin = probe_origin;
+            frame_data.gi.probe_previous_origin = kept.map_or(probe_origin, |(_, before, _)| before);
             frame_data.gi.voxel_size = size;
+            frame_data.gi.probe_spacing = spacing;
             frame_data.gi.texture = fg.texture(voxels.previous).0;
+            frame_data.gi.probe_texture = fg.texture(voxels.previous_probes).0;
             frame_data.gi.storage = fg.storage(voxels.current, 0).0;
             frame_data.gi.reset = u32::from(kept.is_none());
             frame_data.gi.strength = lit.strength.max(0.0);
-            frame_data.gi.cones = lit.cones.clamp(1, 5);
-            self.gi_history = Some((origin, size));
+            self.gi_history = Some((origin, probe_origin, size));
         }
         let fog = extracted.post.fog;
         let foggy = fog.enabled && fog.volumetric && fog.density > 0.0 && !wireframe;

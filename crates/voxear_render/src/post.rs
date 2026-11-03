@@ -104,16 +104,14 @@ pub struct GlobalIllumination {
     /// more stylised bounce.
     pub strength: f32,
     /// The finest voxels' size, in metres; each of the three grids round the
-    /// camera is 64 voxels across, the next with voxels twice the size.
+    /// camera is 64 voxels across, the next with voxels twice the size. The
+    /// radiance cache's probes are two voxels apart, 48 across.
     pub voxel_size: f32,
-    /// Advanced: cones traced for each pixel, from 1 to 5. Fewer is
-    /// cheaper and blotchier.
-    pub cones: u32,
 }
 
 impl Default for GlobalIllumination {
     fn default() -> Self {
-        Self { enabled: false, strength: 1.0, voxel_size: 0.5, cones: 5 }
+        Self { enabled: false, strength: 1.0, voxel_size: 0.5 }
     }
 }
 

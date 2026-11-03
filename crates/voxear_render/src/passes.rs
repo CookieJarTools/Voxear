@@ -226,7 +226,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
-        images.extend(voxels.map(|voxels| (voxels.previous, ImageAccess::Sampled)));
+        images.extend(voxels.map(|voxels| (voxels.previous_probes, ImageAccess::Sampled)));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
         images
     };

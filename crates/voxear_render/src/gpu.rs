@@ -284,10 +284,19 @@ pub struct GpuGi {
     pub reset: u32,
     /// How bright the bounced light is, 1 as measured.
     pub strength: f32,
-    /// Cones traced for each pixel's light.
-    pub cones: u32,
-    pub _pad: [u32; 2],
+    /// The radiance cache's probes, as a texture for shading (last frame's)
+    /// and how far apart they are, in metres.
+    pub probe_texture: u32,
+    pub probe_spacing: f32,
+    pub _pad: u32,
+    /// The probe grid's lowest probe, in probes from the world's origin,
+    /// this frame and last frame; w unused.
+    pub probe_origin: [i32; 4],
+    pub probe_previous_origin: [i32; 4],
 }
+
+/// How many probes the radiance cache's grid is across, each way.
+pub const GI_PROBES: u32 = 48;
 
 /// `GpuLighting::sky`: the colours the scene gives, or the atmosphere.
 pub const SKY_GRADIENT: u32 = 0;
@@ -595,7 +604,7 @@ mod tests {
         let post = 16 * 17;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6;
-        let gi = 16 * GI_LEVELS * 2 + 64 * CASCADES + 32;
+        let gi = 16 * GI_LEVELS * 2 + 64 * CASCADES + 32 + 32;
         assert_eq!(
             size_of::<GpuFrame>(),
             64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + gi

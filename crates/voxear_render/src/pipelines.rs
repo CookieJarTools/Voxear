@@ -91,6 +91,8 @@ pub struct Pipelines {
     pub gi_shift: vk::Pipeline,
     pub gi_shadows: vk::Pipeline,
     pub gi_view: vk::Pipeline,
+    /// The radiance cache's probes, traced through the voxels.
+    pub gi_probes: vk::Pipeline,
     /// Writes the LDR intermediate, for a finishing pass to read.
     pub composite_ldr: vk::Pipeline,
     /// Writes the output directly, when nothing follows.
@@ -265,6 +267,7 @@ impl Pipelines {
             gi_shift: create_compute_pipeline(gpu, layout, "GI shift", gi_inject, c"giShiftMain")?,
             gi_shadows: create_compute_pipeline(gpu, layout, "GI shadows", gi_inject, c"giShadowsMain")?,
             gi_view: create_compute_pipeline(gpu, layout, "GI view", gi_inject, c"giViewMain")?,
+            gi_probes: create_compute_pipeline(gpu, layout, "GI probes", gi_inject, c"giProbesMain")?,
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
@@ -338,6 +341,7 @@ impl Pipelines {
             self.gi_shift,
             self.gi_shadows,
             self.gi_view,
+            self.gi_probes,
             self.composite_ldr,
             self.composite,
             self.finish,

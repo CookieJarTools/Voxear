@@ -18,17 +18,25 @@
 //! 3. **GI view** writes the lit colour of every other pixel the camera
 //!    sees into its voxel: the light that surface sends on.
 //!
-//! The voxels are two images used in turn, as TAA's history is: shading
-//! reads last frame's, finished, while this frame's are filled. Light that
-//! bounces once lights the next frame's voxels, so it bounces again, and
-//! the fade keeps that from running away.
+//! 4. **GI probes** updates the radiance cache: a grid of probes round the
+//!    camera, each holding the light reaching it from every direction, as
+//!    twelve cones through the voxels find it. An eighth of the probes are
+//!    traced again each frame, and any the grid has just moved over.
+//!
+//! Shading reads the eight probes round each pixel, rather than tracing
+//! cones for each pixel, which costs several times less.
+//!
+//! The voxels and the probes are each two images used in turn, as TAA's
+//! history is: shading reads last frame's, finished, while this frame's are
+//! filled. Light that bounces once lights the next frame's voxels, so it
+//! bounces again, and the fade keeps that from running away.
 
 use anyhow::Result;
 use voxear_core::math::Vec3;
 use voxear_rhi::{Bindless, Gpu, ImageDesc, vk};
 
 use crate::{
-    gpu::{GI_LEVELS, GI_SIZE, Push},
+    gpu::{GI_LEVELS, GI_PROBES, GI_SIZE, Push},
     graph::{FrameGraph, ImageAccess, ImageId},
     passes::bind,
     pipelines::Pipelines,
@@ -37,6 +45,18 @@ use crate::{
 pub const VOXEL_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
 const HISTORY_NAMES: [&str; 2] = ["gi voxels 0", "gi voxels 1"];
+const PROBE_NAMES: [&str; 2] = ["gi probes 0", "gi probes 1"];
+
+/// How far apart the probes are, in the finest voxels.
+pub const PROBE_SPACING: f32 = 2.0;
+
+/// The probe grid's lowest probe, in probes from the world's origin, so
+/// that the camera is in its middle.
+pub fn probe_origin(camera: Vec3, spacing: f32) -> [i32; 4] {
+    let middle = (camera / spacing).floor();
+    let half = (GI_PROBES / 2) as f32;
+    [(middle.x - half) as i32, (middle.y - half) as i32, (middle.z - half) as i32, 0]
+}
 
 /// Each grid's lowest voxel, in its own voxels from the world's origin, so
 /// that the camera is in its middle. Grids move a voxel at a time.
@@ -55,6 +75,9 @@ pub fn origins(camera: Vec3, voxel_size: f32) -> [[i32; 4]; GI_LEVELS] {
 pub struct Voxels {
     pub previous: ImageId,
     pub current: ImageId,
+    /// The radiance cache's probes, last frame's and this frame's.
+    pub previous_probes: ImageId,
+    pub probes: ImageId,
 }
 
 impl Voxels {
@@ -62,9 +85,13 @@ impl Voxels {
     pub fn new(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless, history: usize) -> Result<Self> {
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
         let desc = ImageDesc::new(GI_SIZE * GI_SIZE, GI_SIZE * GI_LEVELS as u32, VOXEL_FORMAT, usage);
+        // Two texels a probe, one above the other.
+        let probe_desc = ImageDesc::new(GI_PROBES * GI_PROBES, GI_PROBES * 2, VOXEL_FORMAT, usage);
         Ok(Self {
             previous: fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], desc)?,
             current: fg.history_image(gpu, bindless, HISTORY_NAMES[history], desc)?,
+            previous_probes: fg.history_image(gpu, bindless, PROBE_NAMES[1 - history], probe_desc)?,
+            probes: fg.history_image(gpu, bindless, PROBE_NAMES[history], probe_desc)?,
         })
     }
 }
@@ -78,7 +105,7 @@ pub fn record(
     (scene, depth, size): (ImageId, ImageId, [u32; 2]),
     shadows: Option<ImageId>,
 ) {
-    let Voxels { previous, current } = voxels;
+    let Voxels { previous, current, previous_probes, probes } = voxels;
     let storage = fg.storage(current, 0).0;
     let dispatch = |width: u32, height: u32| [width.div_ceil(8), height.div_ceil(8)];
 
@@ -100,6 +127,16 @@ pub fn record(
     let images = [(scene, ImageAccess::Sampled), (depth, ImageAccess::Sampled), (current, ImageAccess::StorageWrite)];
     let groups = dispatch(size[0].div_ceil(2), size[1].div_ceil(2));
     fg.add_pass("GI view", &images, &[], move |ctx| compute(ctx, pipelines.gi_view, &view, groups));
+
+    // The probes trace cones through last frame's finished voxels, which shading also read.
+    let cache = Push { textures: [fg.texture(previous_probes).0, 0, 0, 0], output: fg.storage(probes, 0).0, ..push };
+    let images = [
+        (previous, ImageAccess::Sampled),
+        (previous_probes, ImageAccess::Sampled),
+        (probes, ImageAccess::StorageWrite),
+    ];
+    let groups = [(GI_PROBES * GI_PROBES * GI_PROBES).div_ceil(64), 1];
+    fg.add_pass("GI probes", &images, &[], move |ctx| compute(ctx, pipelines.gi_probes, &cache, groups));
 }
 
 fn compute(ctx: &crate::graph::PassContext, pipeline: vk::Pipeline, push: &Push, [x, y]: [u32; 2]) {

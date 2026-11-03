@@ -61,35 +61,72 @@ float4 giCone(Frame* frame, float3 start, float3 direction, float tanHalfAngle)
     return float4(light, blocked);
 }
 
-// The light falling on a surface from all round its normal: five cones, the
-// one along the normal counting most, each adding the voxels' bounced light
-// and, where they leave it open, the sky's.
-float3 giAmbient(Frame* frame, float3 position, float3 normal, float3 skyUp, float3 skyHorizon, float3 skyDown)
+// The sky's light from a direction, between the light from straight up, at
+// the horizon and from straight down.
+float3 giSky(float3 direction, float3 skyUp, float3 skyHorizon, float3 skyDown)
 {
-    float3 side = abs(normal.y) < 0.9 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
-    float3 tangent = normalize(cross(side, normal));
-    float3 bitangent = cross(normal, tangent);
-    float3 start = position + normal * frame->gi.voxelSize;
-    // 60 degree cones: one along the normal, four leaning 45 degrees from it.
-    static const float TAN_HALF = 0.577;
-    float3 directions[5] = {
-        normal,
-        normalize(normal + tangent),
-        normalize(normal - tangent),
-        normalize(normal + bitangent),
-        normalize(normal - bitangent),
-    };
-    float weights[5] = { 0.4, 0.15, 0.15, 0.15, 0.15 };
-    uint cones = clamp(frame->gi.cones, 1, 5);
-    float3 total = 0.0;
-    float weighting = 0.0;
-    for (uint i = 0; i < cones; i++)
+    float up = direction.y;
+    return up >= 0.0 ? lerp(skyHorizon, skyUp, up) : lerp(skyHorizon, skyDown, -up);
+}
+
+// ---------------------------------------------------------------- The radiance cache
+
+// The radiance cache: a grid of probes round the camera, each holding the
+// light that reaches its middle from every direction, as cone tracing found
+// it (gi_inject.slang), so each pixel reads its eight nearest probes rather
+// than tracing cones itself. A probe is two texels: the light's average
+// colour and how much of the probe is open space; and the direction in
+// which the light grows brighter, as the light's L1 spherical harmonic,
+// relative to its average. Probes lie slice after slice across the image,
+// the two texels' rows one above the other.
+
+static const float GI_PROBE_WIDTH = float(GI_PROBES * GI_PROBES);
+
+int2 giProbeTexel(int3 probe, int part)
+{
+    return int2(probe.x + probe.z * GI_PROBES, probe.y + part * GI_PROBES);
+}
+
+// What a probe sends towards a surface facing `normal`: its light over the
+// half of the sphere the normal faces, weighted as light falls on a surface.
+float3 giProbeLight(float4 average, float4 growth, float3 normal)
+{
+    return average.rgb * max(1.0 + 2.0 * dot(growth.xyz, normal), 0.0);
+}
+
+// The light falling on a surface from all round its normal, from the eight
+// probes round it, each counted less the more it lies behind the surface
+// and the less of it is open space, so light leaks less through walls.
+// Beyond the grid, `fallback`, the plain sky light, fading in over its edge.
+float3 giAmbient(Frame* frame, float3 position, float3 normal, float3 fallback)
+{
+    float spacing = frame->gi.probeSpacing;
+    float3 inGrid = (position + normal * spacing * 0.5) / spacing - float3(frame->gi.probePreviousOrigin.xyz) - 0.5;
+    float last = float(GI_PROBES - 1);
+    float edge = min(min(inGrid.x, inGrid.y), min(inGrid.z, min(min(last - inGrid.x, last - inGrid.y), last - inGrid.z)));
+    if (edge <= 0.0)
     {
-        float4 cone = giCone(frame, start, directions[i], TAN_HALF);
-        float up = directions[i].y;
-        float3 sky = up >= 0.0 ? lerp(skyHorizon, skyUp, up) : lerp(skyHorizon, skyDown, -up);
-        total += weights[i] * (cone.rgb * frame->gi.strength + (1.0 - cone.a) * sky);
-        weighting += weights[i];
+        return fallback;
     }
-    return total / weighting;
+    int3 base = int3(floor(inGrid));
+    float3 within = inGrid - float3(base);
+    Texture2D probes = textures[NonUniformResourceIndex(frame->gi.probeTexture)];
+    float3 total = 0.0;
+    float weights = 0.0;
+    for (uint corner = 0; corner < 8; corner++)
+    {
+        int3 offset = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+        int3 probe = min(base + offset, GI_PROBES - 1);
+        float3 trilinear = lerp(1.0 - within, within, float3(offset));
+        float3 middle = (float3(probe + frame->gi.probePreviousOrigin.xyz) + 0.5) * spacing;
+        float3 towards = normalize(middle - position + 1e-4);
+        float facing = (dot(towards, normal) + 1.0) * 0.5;
+        float4 average = probes.Load(int3(giProbeTexel(probe, 0), 0));
+        float4 growth = probes.Load(int3(giProbeTexel(probe, 1), 0));
+        float weight = trilinear.x * trilinear.y * trilinear.z * (facing * facing + 0.2) * max(average.a, 0.05);
+        total += giProbeLight(average, growth, normal) * weight;
+        weights += weight;
+    }
+    float3 cached = total / max(weights, 1e-5);
+    return lerp(fallback, cached, saturate(edge / 2.0));
 }

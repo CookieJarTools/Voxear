@@ -859,13 +859,17 @@ Done so far:
   five 60° cones through last frame's voxels for bounced light and the sky's light where it is open, in place of
   the flat sky ambient. Light bounces again frame to frame. About 0.75 ms at 1440p on an RTX 3070; off by
   default. GPU test: a sunlit red wall reddens the floor before it, and the floor behind it is darker.
+- **GI's radiance cache:** a 48³ grid of probes, two voxels apart, each holding the light reaching it as an
+  average colour, how open its voxel is, and the direction the light grows brighter in (L1). A compute pass traces
+  twelve cones from an eighth of the probes each frame, and from any the grid has just moved over, blending with
+  their last value. Shading reads the eight probes round each pixel, weighted towards those it faces and away from
+  those inside walls, falling back to the plain sky beyond the grid. GI went from about 0.95 ms to 0.28 ms at 1440p.
 
 Next:
 - Virtual shadow maps, and shadows for point, spot and area lights.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
-- **Voxel GI's radiance cache:** irradiance at probes round the camera, worked out by cone tracing and read by
-  shading, so pixels stop tracing cones each (several times cheaper); and voxelizing the scene's geometry, so
-  surfaces neither the camera nor the sun has seen bounce their own colours.
+- Voxel GI: voxelizing the scene's geometry, so surfaces neither the camera nor the sun has seen bounce their own
+  colours, and probe visibility against leaks through thin walls.
 - Baked lightmapper, light probes and reflection probes.
 - Reflections: screen-space reflections, falling back to reflection probes.
 - Stylised shading: shadows tinted a colour, and foliage shading (wrap lighting, light through the leaves, and a

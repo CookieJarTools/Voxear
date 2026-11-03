@@ -371,9 +371,14 @@ struct Gi
     uint storage;
     uint reset;
     float strength;
-    uint cones;
-    uint2 pad;
+    uint probeTexture;
+    float probeSpacing;
+    uint pad;
+    int4 probeOrigin;
+    int4 probePreviousOrigin;
 };
+
+static const int GI_PROBES = 48;
 
 struct Frame
 {

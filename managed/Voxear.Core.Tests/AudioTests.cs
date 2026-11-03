@@ -40,6 +40,9 @@ internal static class AudioTests
 		Check.Near(1f, source.OcclusionRadius);
 		Check.True(!Audio.Headphones && !Audio.HeadphonesAvailable, "no headphones without the engine");
 		Check.True(!Audio.Reverb, "nor reverb");
+		Check.True(Audio.Ducking == null, "no ducking");
+		Check.Near(AudioSnapshot.Open, Audio.GetLowPass(AudioBus.Music));
+		Check.Near(AudioSnapshot.Closed, Audio.GetHighPass(AudioBus.Effects));
 		Check.True(source.Bus == AudioBus.Effects && !source.Loop, "the defaults it reads as");
 		source.Play();
 	}

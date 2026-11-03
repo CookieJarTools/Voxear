@@ -134,6 +134,19 @@ pub enum BusValue {
     Headphones,
     SteamAudio,
     Reverb,
+    /// How long the changes after it take, in seconds.
+    Transition,
+    /// A bus's filter cutoffs, in Hz.
+    MusicLowPass,
+    EffectsLowPass,
+    MusicHighPass,
+    EffectsHighPass,
+    /// The music's ducking under the effects: by how many decibels, 0 for
+    /// none; above what level; and how fast it goes down and comes back.
+    DuckAmount,
+    DuckThreshold,
+    DuckAttack,
+    DuckRelease,
 }
 
 impl BusValue {
@@ -145,6 +158,15 @@ impl BusValue {
             3 => Self::Headphones,
             4 => Self::SteamAudio,
             5 => Self::Reverb,
+            6 => Self::Transition,
+            7 => Self::MusicLowPass,
+            8 => Self::EffectsLowPass,
+            9 => Self::MusicHighPass,
+            10 => Self::EffectsHighPass,
+            11 => Self::DuckAmount,
+            12 => Self::DuckThreshold,
+            13 => Self::DuckAttack,
+            14 => Self::DuckRelease,
             _ => return None,
         })
     }

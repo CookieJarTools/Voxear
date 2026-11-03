@@ -11,6 +11,11 @@
 //! sound at another sample rate than the output, or played at another
 //! pitch, is read between its samples.
 //!
+//! Each bus is mixed on its own, then filtered as its low-pass and
+//! high-pass ask, the music ducked under loud effects (see `buses`); the
+//! volumes and filters slide to new settings over the time a snapshot's
+//! transition asks for.
+//!
 //! 3D voices on the effects bus are also sent to the reverb, which rings as
 //! the listener's room does, once the game says how (see `reverb`).
 //!
@@ -29,6 +34,7 @@ use voxear_core::math::Vec3;
 
 use crate::{
     bands::Bands,
+    buses::{BusFilters, Ducker, Ducking, Slide},
     ears::Ears,
     report::{VoiceBoard, VoiceReport},
     reverb::{Reverb, ReverbTimes},
@@ -105,6 +111,11 @@ pub(crate) enum Command {
     Doppler(VoiceId, f32),
     Muffle(VoiceId, Muffle),
     Reverb(ReverbTimes),
+    /// How long the volume and filter changes after it take, in seconds.
+    Transition(f32),
+    /// A bus's low-pass cutoff, or with `true` its high-pass one, in Hz.
+    Filter(Bus, bool, f32),
+    Ducking(Option<Ducking>),
     Bus(Bus, f32),
     Master(f32),
     Listener(Listener),
@@ -164,9 +175,13 @@ enum Played {
 pub struct Mixer {
     sample_rate: u32,
     voices: Vec<Voice>,
-    master: f32,
-    music: f32,
-    effects: f32,
+    master: Slide,
+    music: Slide,
+    effects: Slide,
+    transition: f32,
+    /// The music bus's filters, then the effects bus's.
+    filters: [BusFilters; 2],
+    ducker: Ducker,
     listener: Listener,
     game_paused: bool,
     headphones: bool,
@@ -175,8 +190,10 @@ pub struct Mixer {
     making: Option<Receiver<Result<Arc<Hrtf>, String>>>,
     commands: Receiver<Command>,
     finished: SyncSender<VoiceId>,
-    /// The block being mixed, in stereo, and what of it goes to the reverb,
-    /// in mono, once there is a room to ring.
+    /// The block being mixed, in stereo, a buffer for each bus (music,
+    /// effects, then the editor's preview) and their sum; and what of it
+    /// goes to the reverb, in mono, once there is a room to ring.
+    buses: [Vec<[f32; 2]>; 3],
     mix: Vec<f32>,
     sent: Vec<f32>,
     reverb: Option<Box<Reverb>>,
@@ -194,9 +211,12 @@ impl Mixer {
         Self {
             sample_rate,
             voices: Vec::with_capacity(64),
-            master: 1.0,
-            music: 1.0,
-            effects: 1.0,
+            master: Slide::at(1.0),
+            music: Slide::at(1.0),
+            effects: Slide::at(1.0),
+            transition: 0.0,
+            filters: Default::default(),
+            ducker: Ducker::default(),
             listener: Listener::default(),
             game_paused: false,
             headphones: false,
@@ -204,6 +224,7 @@ impl Mixer {
             making: None,
             commands,
             finished,
+            buses: Default::default(),
             mix: Vec::new(),
             sent: Vec::new(),
             reverb: None,
@@ -244,8 +265,14 @@ impl Mixer {
         let frames = out.len() / channels;
         self.take_commands();
         self.take_hrtf();
-        self.mix.clear();
-        self.mix.resize(frames * 2, 0.0);
+        let seconds = frames as f32 / self.sample_rate as f32;
+        for volume in [&mut self.master, &mut self.music, &mut self.effects] {
+            volume.advance(seconds);
+        }
+        for bus in &mut self.buses {
+            bus.clear();
+            bus.resize(frames, [0.0; 2]);
+        }
         self.sent.clear();
         self.sent.resize(frames, 0.0);
         let mut index = 0;
@@ -258,13 +285,7 @@ impl Mixer {
                 }
             }
         }
-        if let Some(reverb) = &mut self.reverb {
-            for (mixed, &sent) in self.mix.as_chunks_mut::<2>().0.iter_mut().zip(&self.sent) {
-                let [left, right] = reverb.apply(sent);
-                mixed[0] += left;
-                mixed[1] += right;
-            }
-        }
+        self.finish_buses();
         if self.board.watched() {
             let game_paused = self.game_paused;
             self.board.write(self.voices.iter().map(|voice| voice.report(game_paused)));
@@ -279,6 +300,27 @@ impl Mixer {
                 }
                 [] => {}
             }
+        }
+    }
+
+    /// Rings the room into the effects bus, ducks the music under it,
+    /// filters each, and sums the three into the mix.
+    fn finish_buses(&mut self) {
+        let rate = self.sample_rate as f32;
+        let [music, effects, preview] = &mut self.buses;
+        if let Some(reverb) = &mut self.reverb {
+            for (mixed, &sent) in effects.iter_mut().zip(&self.sent) {
+                let [left, right] = reverb.apply(sent);
+                mixed[0] += left;
+                mixed[1] += right;
+            }
+        }
+        self.ducker.apply(music, effects, rate);
+        self.filters[0].apply(music, rate);
+        self.filters[1].apply(effects, rate);
+        self.mix.clear();
+        for ((a, b), c) in music.iter().zip(effects.iter()).zip(preview.iter()) {
+            self.mix.extend([a[0] + b[0] + c[0], a[1] + b[1] + c[1]]);
         }
     }
 
@@ -315,10 +357,17 @@ impl Mixer {
                     None if times != ReverbTimes::NONE => self.reverb = Some(Reverb::new(self.sample_rate, times)),
                     None => {}
                 },
-                Command::Bus(Bus::Music, volume) => self.music = volume,
-                Command::Bus(Bus::Effects, volume) => self.effects = volume,
+                Command::Transition(seconds) => self.transition = seconds.max(0.0),
+                Command::Filter(bus, high, hz) => {
+                    let Some(filters) = self.filters.get_mut(bus_index(bus)) else { continue };
+                    let cutoff = if high { &mut filters.high_pass } else { &mut filters.low_pass };
+                    cutoff.set(hz, self.transition);
+                }
+                Command::Ducking(ducking) => self.ducker.ducking = ducking,
+                Command::Bus(Bus::Music, volume) => self.music.set(volume, self.transition),
+                Command::Bus(Bus::Effects, volume) => self.effects.set(volume, self.transition),
                 Command::Bus(Bus::Preview, _) => {}
-                Command::Master(volume) => self.master = volume,
+                Command::Master(volume) => self.master.set(volume, self.transition),
                 Command::Listener(listener) => self.listener = listener,
                 Command::Headphones(on) => self.set_headphones(on),
                 Command::PauseGame(paused) => self.game_paused = paused,
@@ -423,8 +472,8 @@ impl Mixer {
             return [0.0; 2];
         }
         let bus = match voice.params.bus {
-            Bus::Music => self.music * self.master,
-            Bus::Effects => self.effects * self.master,
+            Bus::Music => self.music.now * self.master.now,
+            Bus::Effects => self.effects.now * self.master.now,
             Bus::Preview => 1.0,
         };
         let volume = voice.params.volume * voice.gain * bus;
@@ -456,7 +505,7 @@ impl Mixer {
             voice.done = true;
         }
         if voice.done {
-            return drain(voice, &mut self.mix.as_chunks_mut::<2>().0[..frames], &listener);
+            return drain(voice, &mut self.buses[bus_index(voice.params.bus)][..frames], &listener);
         }
         // Faded out while held: it keeps its place without reading its sound.
         // A voice only too far away to hear plays on.
@@ -474,7 +523,7 @@ impl Mixer {
         let mut gains = from;
         let mut ended = false;
         let mut played = 0;
-        let mix = &mut self.mix.as_chunks_mut::<2>().0[..frames];
+        let mix = &mut self.buses[bus_index(voice.params.bus)][..frames];
         for (out, sent) in mix.iter_mut().zip(&mut self.sent) {
             let Some(sound) = voice.read() else {
                 ended = true;
@@ -496,6 +545,15 @@ impl Mixer {
         }
         voice.done = true;
         drain(voice, &mut mix[played..], &listener)
+    }
+}
+
+/// Where a bus's voices are mixed, of [`Mixer::buses`].
+fn bus_index(bus: Bus) -> usize {
+    match bus {
+        Bus::Music => 0,
+        Bus::Effects => 1,
+        Bus::Preview => 2,
     }
 }
 

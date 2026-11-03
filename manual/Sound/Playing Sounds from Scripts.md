@@ -149,6 +149,32 @@ Each time the game starts, Headphones starts as your project's `[audio] headphon
 
 `Audio.Reverb` turns the room's reverb on or off (see [[Sounds and Audio Sources]]). It starts as the project's `[audio] reverb` setting has it.
 
+## Snapshots
+
+A game sounds different in different states: muffled under a pause menu, dull and distant underwater, thin over a radio. An `AudioSnapshot` holds a mix to move to: the three volumes, and a **low-pass** and a **high-pass** filter for each bus. A low-pass holds back the high notes above its cutoff, and a high-pass the low notes below its own. `Audio.TransitionTo` slides from the mix there is to a snapshot's over the time you give it:
+
+```csharp
+var paused = new AudioSnapshot { MusicVolume = 0.6f, MusicLowPass = 800f, EffectsVolume = 0f };
+Audio.TransitionTo(paused, 0.5f);
+
+// And back, when the game goes on.
+Audio.TransitionTo(AudioSnapshot.Default, 0.5f);
+```
+
+To change one filter at once, call `Audio.SetLowPass(AudioBus.Effects, 600f)` or `Audio.SetHighPass(AudioBus.Music, 1500f)`. `AudioSnapshot.Open`, 22000 Hz, is a low-pass that lets everything by.
+
+## Ducking
+
+Ducking turns the music down while the effects are loud, so dialogue or a big explosion is heard over it, and brings it back once they are quiet:
+
+```csharp
+Audio.Ducking = new Ducking(-12f);
+```
+
+The music goes down by 12 decibels, about a quarter as loud, while the effects bus is louder than its threshold. `new Ducking(-12f, Threshold: 0.2f, Attack: 0.05f, Release: 1f)` sets how loud the effects must be, from 0 to 1, how many seconds the music takes to go down, and how many to come back. `Audio.Ducking = null` turns it off.
+
+When you stop playing in the editor, the filters open and ducking turns off, as the volumes go back to full.
+
 ## Loading a sound by its path
 
 When a field isn't practical, load a sound by its path in the project:

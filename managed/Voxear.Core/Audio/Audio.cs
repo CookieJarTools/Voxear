@@ -63,6 +63,85 @@ public static class Audio
 		set { NativeAudio.SetBus(NativeAudio.BusReverb, value ? 1f : 0f); }
 	}
 
+	/// <summary>
+	/// Holds back what is above <paramref name="hz"/> on a bus, as for sound heard underwater or through a wall, or
+	/// music muffled under a pause menu. AudioSnapshot.Open, 22000 Hz, lets everything by.
+	/// </summary>
+	public static void SetLowPass(AudioBus bus, float hz)
+	{
+		NativeAudio.SetBus(bus == AudioBus.Music ? NativeAudio.BusMusicLowPass : NativeAudio.BusEffectsLowPass, hz);
+	}
+
+	/// <summary>
+	/// Holds back what is below <paramref name="hz"/> on a bus, as for the thin sound of a radio or a telephone.
+	/// 10 Hz lets everything by.
+	/// </summary>
+	public static void SetHighPass(AudioBus bus, float hz)
+	{
+		NativeAudio.SetBus(bus == AudioBus.Music ? NativeAudio.BusMusicHighPass : NativeAudio.BusEffectsHighPass, hz);
+	}
+
+	/// <summary>A bus's low-pass cutoff, in Hz.</summary>
+	public static float GetLowPass(AudioBus bus)
+	{
+		var low = NativeAudio.Bus(bus == AudioBus.Music ? NativeAudio.BusMusicLowPass : NativeAudio.BusEffectsLowPass);
+		return float.IsNaN(low) ? AudioSnapshot.Open : low;
+	}
+
+	/// <summary>A bus's high-pass cutoff, in Hz.</summary>
+	public static float GetHighPass(AudioBus bus)
+	{
+		var high = NativeAudio.Bus(bus == AudioBus.Music ? NativeAudio.BusMusicHighPass : NativeAudio.BusEffectsHighPass);
+		return float.IsNaN(high) ? AudioSnapshot.Closed : high;
+	}
+
+	/// <summary>
+	/// Whether, and how, the music turns down while the effects are loud, so that dialogue or a big explosion is
+	/// heard over it; null, the default, for not at all.
+	/// <code>
+	/// Audio.Ducking = new Ducking(-12f);
+	/// </code>
+	/// </summary>
+	public static Ducking? Ducking
+	{
+		get
+		{
+			var amount = NativeAudio.Bus(NativeAudio.BusDuckAmount);
+			if (float.IsNaN(amount) || amount >= 0f)
+			{
+				return null;
+			}
+			var threshold = NativeAudio.Bus(NativeAudio.BusDuckThreshold);
+			var attack = NativeAudio.Bus(NativeAudio.BusDuckAttack);
+			return new Ducking(amount, threshold, attack, NativeAudio.Bus(NativeAudio.BusDuckRelease));
+		}
+		set
+		{
+			var ducking = value ?? new Ducking(0f);
+			NativeAudio.SetBus(NativeAudio.BusDuckThreshold, ducking.Threshold);
+			NativeAudio.SetBus(NativeAudio.BusDuckAttack, ducking.Attack);
+			NativeAudio.SetBus(NativeAudio.BusDuckRelease, ducking.Release);
+			NativeAudio.SetBus(NativeAudio.BusDuckAmount, value == null ? 0f : ducking.Amount);
+		}
+	}
+
+	/// <summary>
+	/// Slides the volumes and filters to a snapshot's over <paramref name="seconds"/>, as Unity's
+	/// AudioMixerSnapshot.TransitionTo does: from the game's mix into a pause menu's, or out of the water.
+	/// </summary>
+	public static void TransitionTo(AudioSnapshot snapshot, float seconds)
+	{
+		NativeAudio.SetBus(NativeAudio.BusTransition, seconds);
+		MasterVolume = snapshot.MasterVolume;
+		MusicVolume = snapshot.MusicVolume;
+		EffectsVolume = snapshot.EffectsVolume;
+		SetLowPass(AudioBus.Music, snapshot.MusicLowPass);
+		SetLowPass(AudioBus.Effects, snapshot.EffectsLowPass);
+		SetHighPass(AudioBus.Music, snapshot.MusicHighPass);
+		SetHighPass(AudioBus.Effects, snapshot.EffectsHighPass);
+		NativeAudio.SetBus(NativeAudio.BusTransition, 0f);
+	}
+
 	/// <summary>Whether Steam Audio is here for Headphones to use, so a sound options menu can leave the choice out.</summary>
 	public static bool HeadphonesAvailable
 	{

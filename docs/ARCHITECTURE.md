@@ -2511,7 +2511,9 @@ pitch without clicks, resampled to the device's rate; and long sounds decoded a 
 The output follows the system's default device: when that device goes away or another becomes the default, as when
 headphones are unplugged, the output thread opens the default again, and with none it mixes quietly until one turns
 up; Doppler on 3D voices, from each source's and the listener's speed frame to frame, with a level per source; and
-HRTF for headphones from Steam Audio. Effects, snapshots and ducking are next.)*
+HRTF for headphones from Steam Audio; each bus mixed on its own, with a Butterworth low-pass and high-pass, the music
+ducked under the effects by an envelope follower, and the volumes and cutoffs sliding to a snapshot's over the time
+`Audio::set_transition` asks for.)*
 
 **Sounds** are assets: WAV, OGG Vorbis, FLAC and MP3, decoded by Symphonia. Their `.meta` says whether one loads whole
 or streams (by default by its length) and its volume. An **Audio Source** component plays one from its Obj, and the

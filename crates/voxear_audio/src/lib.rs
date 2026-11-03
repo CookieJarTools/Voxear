@@ -23,6 +23,7 @@
 //! `docs/ARCHITECTURE.md`.
 
 mod bands;
+mod buses;
 mod ears;
 mod mixer;
 mod output;
@@ -41,6 +42,7 @@ use std::{
     },
 };
 
+pub use buses::{Ducking, OPEN_HIGH_PASS, OPEN_LOW_PASS};
 pub use mixer::{Bus, MAX_VOICES, Mixer, VoiceId, VoiceParams};
 pub use report::VoiceReport;
 pub use reverb::ReverbTimes;
@@ -95,6 +97,11 @@ pub struct Audio {
     game_paused: bool,
     headphones: bool,
     board: Arc<VoiceBoard>,
+    /// How long volume and filter changes take, and the filters' cutoffs,
+    /// low-pass then high-pass, of the music bus then the effects bus.
+    transition: f32,
+    filters: [[f32; 2]; 2],
+    ducking: Option<Ducking>,
 }
 
 impl Default for Audio {
@@ -144,6 +151,9 @@ impl Audio {
             game_paused: false,
             headphones: false,
             board,
+            transition: 0.0,
+            filters: [[OPEN_LOW_PASS, OPEN_HIGH_PASS]; 2],
+            ducking: None,
         }
     }
 
@@ -332,6 +342,62 @@ impl Audio {
 
     pub fn headphones(&self) -> bool {
         self.headphones
+    }
+
+    /// How long, in seconds, the bus volumes, the master volume and the
+    /// filters set after this take to slide to their new settings, as a
+    /// snapshot's transition: 0, the default, changes them at once, as a
+    /// block's slide still keeps from clicking.
+    pub fn set_transition(&mut self, seconds: f32) {
+        self.transition = seconds.max(0.0);
+        self.send(Command::Transition(self.transition));
+    }
+
+    pub fn transition(&self) -> f32 {
+        self.transition
+    }
+
+    /// A bus's low-pass filter, which holds back what is above `hz`, as for
+    /// sound heard underwater or through a door: [`OPEN_LOW_PASS`] for none.
+    pub fn set_low_pass(&mut self, bus: Bus, hz: f32) {
+        self.set_filter(bus, false, hz.clamp(OPEN_HIGH_PASS, OPEN_LOW_PASS));
+    }
+
+    /// A bus's high-pass filter, which holds back what is below `hz`, as
+    /// for a radio's thin sound: [`OPEN_HIGH_PASS`] for none.
+    pub fn set_high_pass(&mut self, bus: Bus, hz: f32) {
+        self.set_filter(bus, true, hz.clamp(OPEN_HIGH_PASS, OPEN_LOW_PASS));
+    }
+
+    /// A bus's low-pass and high-pass cutoffs, in Hz, as last set; the
+    /// editor's own sounds have neither.
+    pub fn filters(&self, bus: Bus) -> [f32; 2] {
+        match bus {
+            Bus::Music => self.filters[0],
+            Bus::Effects => self.filters[1],
+            Bus::Preview => [OPEN_LOW_PASS, OPEN_HIGH_PASS],
+        }
+    }
+
+    fn set_filter(&mut self, bus: Bus, high: bool, hz: f32) {
+        let index = match bus {
+            Bus::Music => 0,
+            Bus::Effects => 1,
+            Bus::Preview => return,
+        };
+        self.filters[index][usize::from(high)] = hz;
+        self.send(Command::Filter(bus, high, hz));
+    }
+
+    /// Whether, and how, the music ducks under loud effects; `None` for
+    /// not at all, the default.
+    pub fn set_ducking(&mut self, ducking: Option<Ducking>) {
+        self.ducking = ducking;
+        self.send(Command::Ducking(ducking));
+    }
+
+    pub fn ducking(&self) -> Option<Ducking> {
+        self.ducking
     }
 
     /// Has the mixer say what it plays, for [`voice_reports`](Self::voice_reports),

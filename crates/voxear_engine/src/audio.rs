@@ -38,7 +38,7 @@ use voxear_audio::steam_audio::{Muffle, Occlusion, SourceAcoustics, SteamAudio};
 
 use crate::acoustics::Walls;
 pub use voxear_audio::{
-    Audio, Bus, Distance, Listener, ReverbTimes, Sound, SoundInfo, VoiceId, VoiceParams, VoiceReport, probe,
+    Audio, Bus, Distance, Ducking, Listener, ReverbTimes, Sound, SoundInfo, VoiceId, VoiceParams, VoiceReport, probe,
 };
 
 use crate::content::Content;
@@ -495,6 +495,9 @@ pub struct GameAudio {
     walls: Walls,
     /// The sound each one-shot voice plays, for the Audio panel.
     shots: HashMap<VoiceId, SoundId>,
+    /// The music's ducking as a script has set it so far, kept while it is
+    /// off, as its amount turns it on.
+    ducking: Ducking,
 }
 
 /// A voice playing, as the editor's Audio panel lists it: what the mixer
@@ -532,6 +535,7 @@ impl GameAudio {
             room: ReverbTimes::NONE,
             walls: Walls::default(),
             shots: HashMap::new(),
+            ducking: Ducking::default(),
         }
     }
 
@@ -773,6 +777,13 @@ impl GameAudio {
         self.sources.clear();
         self.set_reverb(false);
         self.walls = Walls::default();
+        self.ducking = Ducking::default();
+        self.audio.set_transition(0.0);
+        self.audio.set_ducking(None);
+        for bus in [Bus::Music, Bus::Effects] {
+            self.audio.set_low_pass(bus, voxear_audio::OPEN_LOW_PASS);
+            self.audio.set_high_pass(bus, voxear_audio::OPEN_HIGH_PASS);
+        }
         self.audio.set_master_volume(1.0);
         self.audio.set_bus_volume(Bus::Effects, 1.0);
         self.audio.set_bus_volume(Bus::Music, 1.0);
@@ -823,7 +834,11 @@ impl GameAudio {
         match (bus, set) {
             (BusValue::Reverb, Some(on)) => self.set_reverb(on != 0.0),
             (BusValue::Reverb, None) => {}
-            _ => return self.volume_value(bus, set),
+            (
+                BusValue::Master | BusValue::Effects | BusValue::Music | BusValue::Headphones | BusValue::SteamAudio,
+                _,
+            ) => return self.volume_value(bus, set),
+            _ => return self.mix_value(bus, set),
         }
         flag(self.reverb_on && SteamAudio::get().is_ok())
     }
@@ -835,15 +850,51 @@ impl GameAudio {
             (BusValue::Effects, Some(volume)) => audio.set_bus_volume(Bus::Effects, volume),
             (BusValue::Music, Some(volume)) => audio.set_bus_volume(Bus::Music, volume),
             (BusValue::Headphones, Some(on)) => audio.set_headphones(on != 0.0),
-            (BusValue::SteamAudio | BusValue::Reverb, Some(_)) | (_, None) => {}
+            _ => {}
         }
         match bus {
             BusValue::Master => audio.master_volume(),
             BusValue::Effects => audio.bus_volume(Bus::Effects),
             BusValue::Music => audio.bus_volume(Bus::Music),
             BusValue::Headphones => flag(audio.headphones() && SteamAudio::get().is_ok()),
-            BusValue::SteamAudio => flag(SteamAudio::get().is_ok()),
-            BusValue::Reverb => flag(self.reverb_on),
+            _ => flag(SteamAudio::get().is_ok()),
+        }
+    }
+
+    /// The transition, the buses' filters and the music's ducking.
+    fn mix_value(&mut self, what: BusValue, set: Option<f32>) -> f32 {
+        let audio = &mut self.audio;
+        if let Some(value) = set {
+            let mut ducking = audio.ducking().unwrap_or(self.ducking);
+            match what {
+                BusValue::Transition => audio.set_transition(value),
+                BusValue::MusicLowPass => audio.set_low_pass(Bus::Music, value),
+                BusValue::EffectsLowPass => audio.set_low_pass(Bus::Effects, value),
+                BusValue::MusicHighPass => audio.set_high_pass(Bus::Music, value),
+                BusValue::EffectsHighPass => audio.set_high_pass(Bus::Effects, value),
+                BusValue::DuckAmount => ducking.amount = value.min(0.0),
+                BusValue::DuckThreshold => ducking.threshold = value.clamp(0.0, 1.0),
+                BusValue::DuckAttack => ducking.attack = value.max(0.0),
+                BusValue::DuckRelease => ducking.release = value.max(0.0),
+                _ => {}
+            }
+            // The ducking's settings wait for its amount, which turns it on, or off at 0.
+            self.ducking = ducking;
+            if what == BusValue::DuckAmount || audio.ducking().is_some() {
+                audio.set_ducking((ducking.amount < 0.0).then_some(ducking));
+            }
+        }
+        let ducking = audio.ducking().unwrap_or(Ducking { amount: 0.0, ..self.ducking });
+        match what {
+            BusValue::Transition => audio.transition(),
+            BusValue::MusicLowPass => audio.filters(Bus::Music)[0],
+            BusValue::EffectsLowPass => audio.filters(Bus::Effects)[0],
+            BusValue::MusicHighPass => audio.filters(Bus::Music)[1],
+            BusValue::EffectsHighPass => audio.filters(Bus::Effects)[1],
+            BusValue::DuckAmount => ducking.amount,
+            BusValue::DuckThreshold => ducking.threshold,
+            BusValue::DuckAttack => ducking.attack,
+            _ => ducking.release,
         }
     }
 

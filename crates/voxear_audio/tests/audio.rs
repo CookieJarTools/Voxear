@@ -405,3 +405,30 @@ fn a_watched_mixer_reports_its_voices() {
     assert_eq!(placed.at, Some(at));
     assert!(placed.heard > 0.0 && placed.heard < 1.0 && !placed.paused && !placed.ending);
 }
+
+#[test]
+fn a_transition_slides_the_volumes_and_a_low_pass_dulls_a_bus() {
+    let (mut audio, mut mixer) = Audio::offline(RATE);
+    let sound = level(1.0, RATE as usize * 2, RATE);
+    audio.play(&sound, VoiceParams { bus: Bus::Music, looping: true, ..Default::default() });
+    render(&mut mixer, 480);
+    audio.set_transition(1.0);
+    audio.set_bus_volume(Bus::Music, 0.0);
+    render(&mut mixer, 24_000);
+    let halfway = render(&mut mixer, 10)[0];
+    assert!((halfway - 0.5).abs() < 0.05, "half way down after half the second: {halfway}");
+    render(&mut mixer, 24_000);
+    assert!(render(&mut mixer, 10)[0].abs() < 1e-3, "down after the second");
+
+    // A low-pass well below a sound's notes holds it back; a steady level is below every note.
+    audio.set_transition(0.0);
+    audio.set_bus_volume(Bus::Music, 1.0);
+    audio.set_low_pass(Bus::Music, 200.0);
+    assert_eq!(audio.filters(Bus::Music), [200.0, voxear_audio::OPEN_HIGH_PASS]);
+    render(&mut mixer, 4_800);
+    let steady = render(&mut mixer, 10)[0];
+    assert!((steady - 1.0).abs() < 0.02, "a steady level passes a low-pass: {steady}");
+    audio.set_high_pass(Bus::Music, 200.0);
+    render(&mut mixer, 9_600);
+    assert!(render(&mut mixer, 10)[0].abs() < 0.02, "and not a high-pass");
+}

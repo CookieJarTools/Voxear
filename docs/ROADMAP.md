@@ -599,7 +599,8 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] C#: `Audio.Play(sound)` and `Audio.Play(sound, at:)`, `Sound`, `AudioSource` and the bus volumes; builds pack
     the sounds they use
   - [x] Doppler on 3D sources, from their and the listener's speed, with a Doppler Level per Audio Source
-  - [ ] effects, snapshots and ducking on the buses
+  - [x] effects, snapshots and ducking on the buses: a low-pass and a high-pass on each, `AudioSnapshot` with
+    `Audio.TransitionTo`, and the music ducked under loud effects
   - [x] Steam Audio 4.8.1, loaded when it is there: HRTF for headphones on 3D sources, `Audio.Headphones` and
     `[audio] headphones`, and player builds that take the library and its licence with them
   - [x] Steam Audio occlusion and transmission: raycast or volumetric per Audio Source, through the level's still

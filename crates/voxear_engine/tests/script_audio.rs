@@ -36,6 +36,13 @@ public sealed class Noises : SystemBase
 		Log.Info($"source {source.IsValid}, playing {source.IsPlaying}, loop {source.Loop}, 3D {source.Is3D}, volume {source.Volume}, same sound {source.Sound == chime}");
 		Log.Info($"the camera has one: {Obj.Find("Main Camera").AudioSource.IsValid}");
 
+		Audio.SetLowPass(AudioBus.Music, 800f);
+		Audio.Ducking = new Ducking(-12f, Release: 1f);
+		Log.Info($"low pass {Audio.GetLowPass(AudioBus.Music)}, ducking {Audio.Ducking?.Amount} {Audio.Ducking?.Release}");
+		Audio.TransitionTo(AudioSnapshot.Default, 0f);
+		Audio.Ducking = null;
+		Log.Info($"after {Audio.GetLowPass(AudioBus.Music)}, ducking {Audio.Ducking == null}");
+
 		Audio.MusicVolume = 0.5f;
 		Log.Info($"music at {Audio.MusicVolume}");
 
@@ -118,6 +125,8 @@ fn scripts_play_sounds_once_and_from_audio_sources() {
     said("source True, playing True, loop True, 3D False, volume 0.25, same sound True");
     said("the camera has one: False");
     said("music at 0.5");
+    said("low pass 800, ducking -12 1");
+    said("after 22000, ducking True");
     let steam = if voxear_audio::steam_audio::SteamAudio::get().is_ok() { "True" } else { "False" };
     said(&format!("headphones {steam}, available {steam}"));
 

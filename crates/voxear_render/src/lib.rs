@@ -66,8 +66,9 @@ pub use gltf_import::{
     prepare as prepare_model,
 };
 pub use gpu::{
-    DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LIT_WIREFRAME,
-    DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
+    DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_GLOBAL_ILLUMINATION, DEBUG_VIEW_LIGHT_COMPLEXITY,
+    DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT,
+    DEBUG_VIEW_WIREFRAME,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
@@ -1434,6 +1435,7 @@ impl View {
             false => None,
         };
         let previous_gi = self.gi_history.take();
+        let mut voxel_draws: [Vec<gi::VoxelDraw>; gpu::GI_LEVELS] = Default::default();
         if let Some(voxels) = voxels {
             let size = lit.voxel_size.clamp(0.05, 8.0);
             let camera = voxear_core::math::Vec3::from(frame_data.camera_position);
@@ -1449,9 +1451,23 @@ impl View {
             frame_data.gi.probe_spacing = spacing;
             frame_data.gi.texture = fg.texture(voxels.previous).0;
             frame_data.gi.probe_texture = fg.texture(voxels.previous_probes).0;
+            frame_data.gi.opacity_texture = fg.texture(voxels.previous_opacity).0;
             frame_data.gi.storage = fg.storage(voxels.current, 0).0;
             frame_data.gi.reset = u32::from(kept.is_none());
             frame_data.gi.strength = lit.strength.max(0.0);
+            let spheres = extracted.instances[..instance_count].iter().enumerate().filter_map(|(index, instance)| {
+                let mesh = MeshHandle(instance.mesh);
+                let (first_index, index_count) = assets.first_lod(mesh)?;
+                let (centre, radius) = assets.mesh_sphere(mesh)?;
+                let model = voxear_core::math::Mat4::from_cols_array_2d(&instance.model);
+                let scale = [model.x_axis, model.y_axis, model.z_axis]
+                    .map(|axis| axis.truncate().length())
+                    .into_iter()
+                    .fold(0.0, f32::max);
+                let draw = gi::VoxelDraw { instance: index as u32, first_index, index_count };
+                Some((draw, model.transform_point3(centre), radius * scale))
+            });
+            voxel_draws = gi::voxel_draws(spheres, &origin, size);
             self.gi_history = Some((origin, probe_origin, size));
         }
         let fog = extracted.post.fog;
@@ -1578,6 +1594,7 @@ impl View {
             atmosphere,
             volume,
             voxels,
+            voxel_draws,
         };
         passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {

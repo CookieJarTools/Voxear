@@ -410,7 +410,8 @@ impl Features<'_> {
             .fill_mode_non_solid(true)
             .depth_clamp(true)
             .independent_blend(true)
-            .texture_compression_bc(true);
+            .texture_compression_bc(true)
+            .fragment_stores_and_atomics(true);
         Self {
             core: vk::PhysicalDeviceFeatures2::default().features(core),
             v11: vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true),
@@ -472,6 +473,11 @@ impl Features<'_> {
                 "BC texture compression",
                 on(r.core.features.texture_compression_bc),
                 on(s.core.features.texture_compression_bc),
+            ),
+            (
+                "fragment shader stores",
+                on(r.core.features.fragment_stores_and_atomics),
+                on(s.core.features.fragment_stores_and_atomics),
             ),
             ("shader draw parameters", on(r.v11.shader_draw_parameters), on(s.v11.shader_draw_parameters)),
             ("timeline semaphores", on(r.v12.timeline_semaphore), on(s.v12.timeline_semaphore)),

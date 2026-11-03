@@ -10,10 +10,11 @@ use crate::{
     assets::{MaterialHandle, MeshHandle},
     lod_group::{LodCamera, LodChoices},
     gpu::{
-        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_NONE, GpuFrame, GpuGi, GpuInstance, GpuLight, GpuLighting,
-        LIGHT_DISC, LIGHT_POINT, LIGHT_RECTANGLE, LIGHT_SPOT, LIGHT_TUBE, MAX_CLUSTER_LIGHTS, NO_TEXTURE, SKY_ATMOSPHERE, SKY_GRADIENT, cols, vec3,
+        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_GLOBAL_ILLUMINATION, DEBUG_VIEW_NONE, GpuFrame,
+        GpuGi, GpuInstance, GpuLight, GpuLighting, LIGHT_DISC, LIGHT_POINT, LIGHT_RECTANGLE, LIGHT_SPOT, LIGHT_TUBE,
+        MAX_CLUSTER_LIGHTS, NO_TEXTURE, SKY_ATMOSPHERE, SKY_GRADIENT, cols, vec3,
     },
-    post::{AmbientOcclusion, AntiAliasingMode, PostProcess, taa_jitter},
+    post::{AmbientOcclusion, AntiAliasingMode, GlobalIllumination, PostProcess, taa_jitter},
     shadows::{self, CASCADES},
 };
 
@@ -322,6 +323,10 @@ pub fn extract(
             ambient_occlusion: AmbientOcclusion { enabled: true, ..scene_post.ambient_occlusion },
             ..PostProcess::debug_view()
         },
+        DEBUG_VIEW_GLOBAL_ILLUMINATION => PostProcess {
+            global_illumination: GlobalIllumination { enabled: true, ..scene_post.global_illumination },
+            ..PostProcess::debug_view()
+        },
         _ => PostProcess::debug_view(),
     };
     // With TAA, the scene may be drawn smaller and upscaled; LODs are still picked for the view's own size.
@@ -448,7 +453,6 @@ pub fn extract(
             frame.cascade_planes[i] = cascade.planes;
             frame.cascade_far[i] = cascade.far;
             frame.cascade_texel[i] = cascade.texel;
-            frame.gi.cascade_inverse[i] = cols(cascade.view_proj.inverse());
         }
     }
 

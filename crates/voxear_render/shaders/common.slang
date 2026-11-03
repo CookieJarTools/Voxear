@@ -90,6 +90,7 @@ static const uint DEBUG_VIEW_WIREFRAME = 6;
 static const uint DEBUG_VIEW_LIT_WIREFRAME = 7;
 static const uint DEBUG_VIEW_MESHLETS = 8;
 static const uint DEBUG_VIEW_AMBIENT_OCCLUSION = 9;
+static const uint DEBUG_VIEW_GLOBAL_ILLUMINATION = 10;
 
 // Frame.meshletFlags: back-facing meshlets are culled; surviving meshlets
 // side by side are drawn together; draws are culled meshlet by meshlet.
@@ -328,7 +329,8 @@ struct Post
     uint3 reflectionPad;
     // Bloom's colour, multiplying its glow.
     float3 bloomTint;
-    uint bloomPad;
+    // How dark auto exposure leaves dark scenes, 0 as bright as day, 1 as the eye sees them.
+    float exposureNight;
 };
 
 static const uint SKY_GRADIENT = 0;
@@ -382,7 +384,6 @@ struct Gi
 {
     int4 origin[GI_LEVELS];
     int4 previousOrigin[GI_LEVELS];
-    Mat4 cascadeInverse[CASCADES];
     float voxelSize;
     uint texture;
     uint storage;
@@ -390,7 +391,8 @@ struct Gi
     float strength;
     uint probeTexture;
     float probeSpacing;
-    uint pad;
+    // How much the voxels block along X, Y and Z, last frame's, as a texture.
+    uint opacityTexture;
     int4 probeOrigin;
     int4 probePreviousOrigin;
 };

@@ -169,6 +169,9 @@ pub const DEBUG_VIEW_MESHLETS: u32 = 8;
 /// What ambient occlusion leaves of the sky's light, as the opaque passes
 /// multiply it in, tint and all.
 pub const DEBUG_VIEW_AMBIENT_OCCLUSION: u32 = 9;
+/// The light falling on each surface from all round, as the voxel GI finds
+/// it: bounced light and the sky's, before the surface's colour.
+pub const DEBUG_VIEW_GLOBAL_ILLUMINATION: u32 = 10;
 
 /// `GpuFrame::meshlet_flags`: back-facing meshlets are culled; surviving
 /// meshlets side by side are drawn together, as one range of indices; draws
@@ -273,9 +276,6 @@ pub struct GpuGi {
     /// origin, this frame and last frame; w unused.
     pub origin: [[i32; 4]; GI_LEVELS],
     pub previous_origin: [[i32; 4]; GI_LEVELS],
-    /// The sun's shadow cascades back into the world, to turn what they saw
-    /// into voxels.
-    pub cascade_inverse: [Mat4Cols; crate::shadows::CASCADES],
     /// The first level's voxel size, in metres.
     pub voxel_size: f32,
     /// The voxels as a texture, or `NO_TEXTURE` without GI, and as a
@@ -290,7 +290,9 @@ pub struct GpuGi {
     /// and how far apart they are, in metres.
     pub probe_texture: u32,
     pub probe_spacing: f32,
-    pub _pad: u32,
+    /// How much the voxels block along X, Y and Z, as a texture for those
+    /// that trace cones (last frame's).
+    pub opacity_texture: u32,
     /// The probe grid's lowest probe, in probes from the world's origin,
     /// this frame and last frame; w unused.
     pub probe_origin: [i32; 4],
@@ -448,7 +450,9 @@ pub struct GpuPost {
     pub _reflection_pad: [u32; 3],
     /// Bloom's colour, linear, multiplying its glow.
     pub bloom_tint: [f32; 3],
-    pub _bloom_pad: u32,
+    /// How dark auto exposure leaves dark scenes, from 0 (as bright as day)
+    /// to 1 (as the eye sees them).
+    pub exposure_night: f32,
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -622,7 +626,7 @@ mod tests {
         let post = 16 * 20;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6 + 16;
-        let gi = 16 * GI_LEVELS * 2 + 64 * CASCADES + 32 + 32;
+        let gi = 16 * GI_LEVELS * 2 + 32 + 32;
         assert_eq!(
             size_of::<GpuFrame>(),
             64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + gi

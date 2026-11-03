@@ -882,12 +882,22 @@ Done so far:
     teal fog in layers, tinted ambient occlusion, gold-tinted bloom, saturation 1.15, shadows lifted toward teal
     and highlights toward gold.
   - Still to come for them: a dappled canopy cookie, probes, and depth of field on the near foreground.
+- **GI v2:** the meshes near the camera drawn into the voxels each frame, flat along each axis, as colour,
+  normal and glow, and each voxel lit as its surface is (the sun through its shadow map, lamps, its glow, and last
+  frame's bounce), so walls behind the camera bounce their own colour. Coarser grids are made from finer ones,
+  keeping how much they block along each axis, so floors do not swallow light passing above them. Probes are ambient
+  cubes traced with 32 cones, skipping those behind walls; reflections trace a cone through the voxels; mist is lit
+  by the probes, and under the atmosphere takes its horizon's light. About 0.75 ms at 1440p. GPU tests: a wall the
+  camera cannot see reddens the floor; torchlight bounces.
+- **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
+  where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
+  tests: a courtyard from dawn to midnight and by torchlight.
 
 Next:
+- A night sky: stars and the moon's disc, and the atmosphere lit by moonlight as a night sky rather than a dim day.
+- Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
 - Virtual shadow maps, and shadows for point, spot and area lights.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
-- Voxel GI: voxelizing the scene's geometry, so surfaces neither the camera nor the sun has seen bounce their own
-  colours, and probe visibility against leaks through thin walls.
 - Baked lightmapper, light probes and reflection probes.
 - Reflections: falling back to reflection probes rather than the sky, and tracing against the depth pyramid,
   for fewer misses on surfaces seen edge on.

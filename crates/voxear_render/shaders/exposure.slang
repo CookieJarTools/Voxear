@@ -6,6 +6,8 @@
 #include "common.slang"
 
 static const float3 LUMA = float3(0.2126, 0.7152, 0.0722);
+// The average brightness of a daylit scene; darker scenes are left darker.
+static const float DAYLIGHT = 0.05;
 
 groupshared float2 partial[256];
 
@@ -43,7 +45,14 @@ void exposureMain(uint3 thread : SV_GroupThreadID)
 
     Post post = frame->post;
     float average = exp2(partial[0].x / partial[0].y);
-    float target = clamp(log2(0.18 / average) + post.exposureCompensation, post.exposureMin, post.exposureMax);
+    // An eye adapts less the darker it gets: each stop darker than daylight
+    // the scene is, the picture is left a growing share of a stop darker than
+    // mid-grey, so a moonlit night stays dark however far exposure may go.
+    float belowDaylight = max(log2(DAYLIGHT / average), 0.0);
+    // At most three stops, so the darkest scene still shows a moonlit shape.
+    float darker = post.exposureNight * min(0.25 * pow(belowDaylight, 1.5), 3.0);
+    float metered = log2(0.18 / average) - darker;
+    float target = clamp(metered + post.exposureCompensation, post.exposureMin, post.exposureMax);
     float* state = buffers()->exposure;
     float current = state[0];
     if (state[1] == 0.0)

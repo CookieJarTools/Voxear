@@ -214,13 +214,20 @@ pub struct Exposure {
     pub compensation: f32,
     /// Advanced: the most auto exposure may darken (negative) or brighten
     /// (positive) the image, in stops. Darkening is allowed further than
-    /// brightening by default, so nights stay dark.
+    /// brightening by default, so nights stay dark; rooms lit only through
+    /// their windows want `max_ev` raised to 6 or more, and `night` keeps
+    /// their nights dark when it is.
     pub min_ev: f32,
     pub max_ev: f32,
     /// Advanced: adaptation speed in stops per second, towards brighter and
     /// towards darker scenes.
     pub speed_up: f32,
     pub speed_down: f32,
+    /// How dark a dark scene stays, as an eye sees it: the darker it is,
+    /// the less auto exposure brightens it, so night stays night however far
+    /// `max_ev` lets it brighten. 1 is as the eye sees; 0 brightens dark
+    /// scenes as far as daylit ones.
+    pub night: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,7 +370,7 @@ impl Default for Bloom {
 
 impl Default for Exposure {
     fn default() -> Self {
-        Self { auto: true, compensation: 0.0, min_ev: -3.0, max_ev: 1.0, speed_up: 2.0, speed_down: 1.0 }
+        Self { auto: true, compensation: 0.0, min_ev: -3.0, max_ev: 1.0, speed_up: 2.0, speed_down: 1.0, night: 1.0 }
     }
 }
 
@@ -634,7 +641,7 @@ impl PostProcess {
             reflection_max_roughness: self.reflections.max_roughness.clamp(0.01, 1.0),
             _reflection_pad: [0; 3],
             bloom_tint: linear(self.bloom.tint),
-            _bloom_pad: 0,
+            exposure_night: self.exposure.night.clamp(0.0, 1.0),
         }
     }
 }

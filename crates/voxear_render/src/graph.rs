@@ -38,6 +38,8 @@ pub enum ImageAccess {
     /// has task shaders.
     SampledWithTasks,
     StorageWrite,
+    /// Written as a storage image from fragment shaders.
+    FragmentStorageWrite,
     TransferSrc,
     TransferDst,
     Present,
@@ -100,6 +102,9 @@ impl ImageAccess {
                 A::SHADER_SAMPLED_READ,
             ),
             Self::StorageWrite => (L::GENERAL, S::COMPUTE_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE),
+            Self::FragmentStorageWrite => {
+                (L::GENERAL, S::FRAGMENT_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE)
+            }
             Self::TransferSrc => (L::TRANSFER_SRC_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_READ),
             Self::TransferDst => (L::TRANSFER_DST_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_WRITE),
             Self::Present => (L::PRESENT_SRC_KHR, S::NONE, A::NONE),

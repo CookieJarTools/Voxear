@@ -4,7 +4,9 @@
 // the finish (FXAA or sharpening). Each pass reads textures named in
 // push.textures; see src/post_passes.rs for the order.
 
+#include "atmosphere.slang"
 #include "common.slang"
+#include "gi.slang"
 #include "volume.slang"
 
 static const float3 LUMA = float3(0.2126, 0.7152, 0.0722);
@@ -63,6 +65,35 @@ float heightFogThrough(float density, float falloff, float3 ray)
     return exp(-density * length(ray) * heightTerm);
 }
 
+// How lit the fog is between the camera and a point: with voxel GI, dim
+// where walls keep out the sky, judged at both ends of the ray; otherwise 1.
+float fogOpenness(Frame* frame, float3 point)
+{
+    if (frame->gi.probeTexture == NO_TEXTURE)
+    {
+        return 1.0;
+    }
+    // The open sky's light as the probes count it, from the atmosphere or the gradient.
+    float3 sky = frame->lighting.sky == SKY_ATMOSPHERE ? atmosphereAmbient(frame, 0.5, sunThroughAtmosphere(frame))
+        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
+    return (giOpenness(frame, frame->cameraPosition, sky) + giOpenness(frame, point, sky)) * 0.5;
+}
+
+// The colour the mist takes looking along `direction`. Under the atmosphere,
+// the sky's own light at the horizon that way, so the mist darkens with the
+// night and reddens at dusk, tinted by the fog's colour; under a gradient
+// sky, the fog's colour, which the scene's sky colours already set.
+float3 fogColourToward(Frame* frame, float3 direction)
+{
+    if (frame->lighting.sky != SKY_ATMOSPHERE)
+    {
+        return frame->post.fogColor;
+    }
+    float3 level = normalize(float3(direction.x, 0.0, direction.z) + float3(0.0, 0.0, 1e-4));
+    float3 tint = frame->post.fogColor / max(dot(frame->post.fogColor, LUMA), 1e-4);
+    return skyToward(frame, level) * frame->sunColor * frame->ambient * tint;
+}
+
 // Exponential height fog, integrated along each view ray, glowing towards the
 // sun. The sky is left alone: it already fades into the horizon.
 [shader("fragment")]
@@ -84,7 +115,7 @@ float4 fogFragment(PostOut input) : SV_Target
     float amount = 1.0 - heightFogThrough(density, falloff, ray);
 
     float glow = pow(saturate(dot(direction, -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
-    float3 color = frame->post.fogColor + frame->sunColor * glow * 0.15;
+    float3 color = (fogColourToward(frame, direction) + frame->sunColor * glow * 0.15) * fogOpenness(frame, point.xyz / point.w);
     return float4(color, saturate(amount));
 }
 
@@ -121,7 +152,7 @@ float4 volumetricFogFragment(PostOut input) : SV_Target
     float throughNear = heightFogThrough(density, falloff, ray * (far / viewDepth));
     float beyond = 1.0 - throughAll / max(throughNear, 1e-6);
     float glow = pow(saturate(dot(normalize(ray), -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
-    float3 beyondColor = (frame->post.fogColor + frame->sunColor * glow * 0.15) * beyond;
+    float3 beyondColor = (fogColourToward(frame, normalize(ray)) + frame->sunColor * glow * 0.15) * beyond;
     return float4(fog.rgb + fog.a * beyondColor, 1.0 - fog.a * (1.0 - beyond));
 }
 
@@ -570,6 +601,23 @@ int2 viewPixel(PostOut input)
     return int2(input.position.xy) - int2(push.size);
 }
 
+// How the eye sees in the dark: where light is fainter than about a
+// twenty-fifth of daylight's, it sees more and more with its rods, which see
+// no colour and see blue best. A moonlit scene, adapted to the dark, looks
+// grey-blue all over, sky and all, rather than a dim day; a torchlit one
+// keeps its colour but for its darkest corners. `light` is how bright the
+// pixel is before exposure, `average` the scene as auto exposure metered
+// it, `color` the pixel exposed, and `night` the exposure's own setting,
+// off at 0.
+float3 nightVision(float3 color, float light, float average, float night)
+{
+    static const float RODS_FROM = 0.002;
+    float dark = min(light, average);
+    float rods = saturate(log2(RODS_FROM / max(dark, 1e-7)) / 3.0) * night;
+    float3 seen = luminance(color) * float3(0.72, 0.85, 1.1);
+    return lerp(color, seen, rods * 0.85);
+}
+
 // textures: x HDR colour, y bloom (or NO_TEXTURE). push.output is 1 when
 // this is the last pass, which then dithers.
 [shader("fragment")]
@@ -602,7 +650,12 @@ float4 compositeFragment(PostOut input) : SV_Target
     }
 
     float ev = post.autoExposure != 0 ? buffers()->exposure[0] : post.exposureCompensation;
+    float light = luminance(color) * frame->exposure;
     color *= frame->exposure * exp2(ev);
+    if (post.autoExposure != 0)
+    {
+        color = nightVision(color, light, buffers()->exposure[2], post.exposureNight);
+    }
 
     color = whiteBalance(color, post.temperature, post.tint);
     color = 0.18 * pow(max(color, 0.0) / 0.18, post.gradingContrast);

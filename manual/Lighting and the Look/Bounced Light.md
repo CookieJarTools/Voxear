@@ -13,13 +13,17 @@ enabled = true
 
 ## How it works
 
-Round the camera, Voxear keeps three grids of small boxes, called **voxels**, nested inside each other: fine near the camera, coarser farther out. Each frame, it fills them with what the camera sees, lit as it is, and with what the sun's shadows show is solid.
+Round the camera, Voxear keeps three grids of small boxes, called **voxels**, nested inside each other: fine near the camera, coarser farther out. Each frame it draws every mesh near the camera into them, its colour and which way it faces, so walls behind you and round the corner are there as much as those in view. Then it lights each voxel as its surface is lit: by the sun where the sun reaches it, by lamps and torches, by its own glow, and by the light bouncing round it. What the camera sees brightens the voxels it falls in too.
 
-Between the voxels sit **probes**, a grid of points two voxels apart. From each probe, Voxear looks out through the voxels in twelve directions, and adds up the light the voxels send back, and the sky's light where nothing is in the way. Each pixel then takes its light from the eight probes round it, counting those on the side it faces most. A few probes are worked out again each frame, so light changes over about a quarter of a second, not at once.
+Between the voxels sit **probes**, a grid of points two voxels apart. From each probe, Voxear looks out through the voxels in 32 directions and keeps the light coming from each side: above, below, and the four ways round. A floor takes the light from above it, a wall the light in front of it, and each pixel takes it from the probes round it, leaving out any a wall stands in front of. A few probes are worked out again each frame, so light changes over about a quarter of a second, not at once.
+
+Light bounces more than once: what one frame bounces lights the voxels for the next. Shiny surfaces reflect the lit voxels too, so a polished floor shows the warm walls round it rather than only the sky.
 
 Bounced light is soft by nature, so the probes show it well. The small, sharp shade where things touch comes from ambient occlusion and contact shadows (see [[Post-Processing]] and [[Lights]]).
 
-Because it uses what the camera and the sun see, things neither has seen lately fade from the voxels after a second or so. Light bounces more than once: what one frame bounces lights the voxels for the next.
+The mist in [[Post-Processing]] is lit by the probes as well, so it is dim indoors and bright out in the open.
+
+To see the bounced light on its own, use `vox render --debug-view gi`.
 
 ## Settings
 
@@ -31,9 +35,20 @@ Because it uses what the camera and the sun see, things neither has seen lately 
 
 Smaller voxels show finer detail, such as light through a doorway, but reach less far. Interiors suit 0.25 to 0.5; open landscapes 1 or more.
 
+## Exposure indoors
+
+A room lit only through its windows is much darker than the sunlit yard outside, as it is in life, and the eye adapts to it. By default, auto exposure only brightens a little, so nights stay dark; for interiors, let it brighten further:
+
+```toml
+[post.exposure]
+max_ev = 8.0
+```
+
+Dark scenes still look dark: the darker a scene, the less exposure brightens it, and in moonlight colours fade to grey-blue, as the eye sees them (see [[Post-Processing]]).
+
 ## Cost
 
-Bounced light costs about a quarter of a millisecond at 1440p on an RTX 3070: a tenth for the probes, a tenth for filling the voxels, and a little for each pixel to read its probes.
+Bounced light costs about three quarters of a millisecond at 1440p on an RTX 3070: four tenths for drawing the meshes into the voxels, three tenths for the probes, and a little for lighting the voxels and for each pixel to read its probes.
 
 > [!NOTE]
-> Surfaces neither the camera nor the sun has seen lately bounce only an estimate of the sun's light, not their own colour. Light can leak a little through walls thinner than the probes are apart.
+> A thin wall in a coarse voxel can let a little light through to its far side, and lamps cast no shadows into the voxels yet.

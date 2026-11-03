@@ -247,7 +247,7 @@ fn used(access: ImageAccess) -> &'static str {
         ImageAccess::DepthAttachment => "Depth drawn into",
         ImageAccess::DepthRead => "Depth tested",
         ImageAccess::Sampled | ImageAccess::SampledWithTasks => "Sampled",
-        ImageAccess::StorageWrite => "Written",
+        ImageAccess::StorageWrite | ImageAccess::FragmentStorageWrite => "Written",
         ImageAccess::TransferSrc => "Copied from",
         ImageAccess::TransferDst => "Copied into",
         ImageAccess::Present => "Presented",

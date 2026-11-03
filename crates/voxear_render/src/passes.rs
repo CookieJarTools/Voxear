@@ -103,6 +103,8 @@ pub struct Frame {
     /// The voxel GI's voxels: last frame's, which shading reads, and this
     /// frame's, filled once the opaque passes are done.
     pub voxels: Option<gi::Voxels>,
+    /// The meshes each of the GI's grids draws into its voxels.
+    pub voxel_draws: [Vec<gi::VoxelDraw>; crate::gpu::GI_LEVELS],
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -231,7 +233,11 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
-        images.extend(voxels.map(|voxels| (voxels.previous_probes, ImageAccess::Sampled)));
+        // Last frame's voxels too, which reflections trace cones through.
+        images.extend(voxels.into_iter().flat_map(|voxels| {
+            let images = [voxels.previous_probes, voxels.previous, voxels.previous_opacity];
+            images.map(|image| (image, ImageAccess::Sampled))
+        }));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
         images
     };
@@ -311,7 +317,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     }
     if let Some(voxels) = voxels {
         let size = [frame.extent.width, frame.extent.height];
-        gi::record(fg, (pipelines, push), voxels, (targets.hdr, targets.depth, size), targets.shadows);
+        let meshes = (frame.voxel_draws.clone(), draws.index_buffer);
+        gi::record(fg, (pipelines, push), voxels, (targets.hdr, targets.depth, size), targets.shadows, meshes);
     }
     if let Some(volume) = frame.volume {
         volumetric::record(fg, (pipelines, push), volume, targets.shadows, &[draws.clusters]);

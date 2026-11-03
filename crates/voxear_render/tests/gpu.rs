@@ -1984,7 +1984,8 @@ fn gi_render(gi: bool) -> Option<Vec<u8>> {
     post.contact_shadows.enabled = false;
     post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ..GlobalIllumination::default() };
     world.insert_resource(post);
-    run(&mut renderer, &world, &mut 0.0, 10);
+    // Long enough for every probe to be traced again since the voxels filled.
+    run(&mut renderer, &world, &mut 0.0, 34);
     Some(renderer.read_pixels().unwrap().2)
 }
 
@@ -1999,10 +2000,10 @@ fn voxel_gi_bounces_a_walls_colour_and_keeps_the_sky_from_behind_it() {
     let redness = |rgb: [i32; 3]| rgb[0] - (rgb[1] + rgb[2]) / 2;
     assert!(redness(after) > redness(before) + 6, "the wall's red bounces onto the floor: {after:?} from {before:?}");
     // In the wall's shadow behind it, past where its top hides the floor from above, the wall keeps out
-    // some of the sky, which the plain ambient cannot do.
+    // some of the sky, which the plain ambient cannot do; the sunlit floor round it gives some back.
     let behind = |pixels: &[u8]| rgb_at(pixels, floor_pixel(Vec3::new(2.0, 0.0, 2.4))).iter().sum::<i32>();
     let open = |pixels: &[u8]| rgb_at(pixels, floor_pixel(Vec3::new(-5.0, 0.0, -3.0))).iter().sum::<i32>();
-    assert!(behind(&lit) * 20 < behind(&plain) * 19, "darker behind the wall: {} from {}", behind(&lit), behind(&plain));
+    assert!(behind(&lit) * 100 < behind(&plain) * 97, "darker behind the wall: {} from {}", behind(&lit), behind(&plain));
     assert!(open(&lit) * 10 > open(&plain) * 8, "out in the open, little changes: {} from {}", open(&lit), open(&plain));
 }
 
@@ -2185,4 +2186,198 @@ fn a_bloom_tint_colours_the_glow_but_not_the_light() {
     let (glow_white, glow_gold) = (rgb_at(&white, (420, 180)), rgb_at(&gold, (420, 180)));
     assert!(glow_white[0] > 5, "the glow reaches out: {glow_white:?}");
     assert!(glow_gold[0] - glow_gold[2] > glow_white[0] - glow_white[2] + 5, "{glow_gold:?} from {glow_white:?}");
+}
+
+/// A white floor seen from head height, looking along +Z and a little
+/// down, with a red wall standing behind the camera, out of view, lit by a
+/// sun ahead, under a dim sky so bounced light shows as it does indoors,
+/// and GI on or off.
+fn wall_behind_render(gi: bool) -> Option<Vec<u8>> {
+    use voxear_render::{GlobalIllumination, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.5, 0.0), Quat::from_rotation_x(0.6), Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let white = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.9, 0.9, 1.0], ..MaterialDesc::default() }).unwrap();
+    let red = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, white), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let wall = Transform::new(Vec3::new(0.0, 2.0, -1.0), Quat::IDENTITY, Vec3::new(8.0, 4.0, 0.5));
+    world.spawn((MeshRenderer::new(cube, red), wall));
+    // Ahead of the camera and low, lighting the wall's face towards the floor in view, and the floor little.
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.25, -1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.2, ..Sky::default() });
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ..GlobalIllumination::default() };
+    world.insert_resource(post);
+    // Long enough for every probe to be traced again since the voxels filled.
+    run(&mut renderer, &world, &mut 0.0, 34);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn voxel_gi_bounces_the_colour_of_a_wall_the_camera_cannot_see() {
+    let (Some(plain), Some(lit)) = (wall_behind_render(false), wall_behind_render(true)) else { return };
+    keep_image("wall behind gi off.png", &plain);
+    keep_image("wall behind gi on.png", &lit);
+    // The floor along the bottom of the picture, nearest the wall: how much redder than green and blue.
+    let redness = |pixels: &[u8]| {
+        let patch: Vec<i32> = (330..350)
+            .flat_map(|y| (200..440).map(move |x| (x, y)))
+            .map(|at| {
+                let [r, g, b] = rgb_at(pixels, at);
+                r - (g + b) / 2
+            })
+            .collect();
+        patch.iter().sum::<i32>() / patch.len() as i32
+    };
+    let (before, after) = (redness(&plain), redness(&lit));
+    assert!(after > before + 6, "the floor takes the hidden wall's red: {after} redder, from {before}");
+}
+
+/// When in the day the courtyard below is lit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TimeOfDay {
+    Dawn,
+    Morning,
+    Noon,
+    Dusk,
+    Midnight,
+}
+
+impl TimeOfDay {
+    /// The light the sky's sun (or at midnight, the moon) comes from: its
+    /// height above the horizon and its bearing from +Z towards +X, in
+    /// degrees, its colour and its strength.
+    fn light(self) -> (f32, f32, Vec3, f32) {
+        match self {
+            TimeOfDay::Dawn => (3.0, 120.0, Vec3::ONE, 3.0),
+            TimeOfDay::Morning => (25.0, 140.0, Vec3::ONE, 3.0),
+            TimeOfDay::Noon => (70.0, 180.0, Vec3::ONE, 3.0),
+            TimeOfDay::Dusk => (3.0, 240.0, Vec3::ONE, 3.0),
+            TimeOfDay::Midnight => (40.0, 200.0, Vec3::new(0.6, 0.7, 1.0), 0.06),
+        }
+    }
+}
+
+/// A courtyard of pale stone, ten metres across, walled on three sides and
+/// open to the south, with a roofed walk along its north wall and a post in
+/// its middle, seen from the south; lit by the atmosphere's sun at `time`
+/// (or the moon), perhaps with torches under the walk, GI on or off, and
+/// `post` for the exposure.
+fn courtyard_render(time: TimeOfDay, torches: bool, gi: bool, post: voxear_render::PostProcess) -> Option<Vec<u8>> {
+    use voxear_render::{GlobalIllumination, Sky, SkyMode};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let looking = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.35, 1.0).normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 3.0, -8.0), looking, Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let stone = renderer.add_material(&MaterialDesc { base_color: [0.7, 0.66, 0.6, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, stone), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(60.0))));
+    let block = |position: Vec3, scale: Vec3| (MeshRenderer::new(cube, stone), Transform::new(position, Quat::IDENTITY, scale));
+    world.spawn(block(Vec3::new(0.0, 3.0, 5.25), Vec3::new(11.0, 6.0, 0.5)));
+    world.spawn(block(Vec3::new(5.25, 3.0, 0.0), Vec3::new(0.5, 6.0, 11.0)));
+    world.spawn(block(Vec3::new(-5.25, 3.0, 0.0), Vec3::new(0.5, 6.0, 11.0)));
+    world.spawn(block(Vec3::new(0.0, 3.1, 4.0), Vec3::new(10.0, 0.2, 2.0)));
+    world.spawn(block(Vec3::new(0.0, 1.5, 0.0), Vec3::new(1.0, 3.0, 1.0)));
+    let (elevation, bearing, colour, strength) = time.light();
+    let (e, b) = (elevation.to_radians(), bearing.to_radians());
+    let towards = Vec3::new(e.cos() * b.sin(), e.sin(), e.cos() * b.cos());
+    world.spawn((Light::directional(colour, strength), Transform::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::Z, -towards), Vec3::ONE)));
+    if torches {
+        for x in [-3.0, 0.0, 3.0] {
+            let torch = Light::point(Vec3::new(1.0, 0.55, 0.2), 6.0, 4.0);
+            world.spawn((torch, Transform::from_position(Vec3::new(x, 2.0, 4.6))));
+        }
+    }
+    world.insert_resource(Sky { mode: SkyMode::Atmosphere, ..Sky::default() });
+    let mut post = post;
+    post.contact_shadows.enabled = false;
+    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ..GlobalIllumination::default() };
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 34);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// How bright a picture is on average, from 0 to 255.
+fn mean_brightness(pixels: &[u8]) -> f32 {
+    let total: u64 = pixels.chunks(4).map(|p| u64::from(p[0]) + u64::from(p[1]) + u64::from(p[2])).sum();
+    total as f32 / (pixels.len() / 4 * 3) as f32
+}
+
+/// How much redder than blue a patch round `at` is, against how bright it is.
+fn warmth(pixels: &[u8], (x, y): (u32, u32)) -> f32 {
+    let (mut red, mut blue, mut all) = (0, 0, 0);
+    for dy in 0..8 {
+        for dx in 0..8 {
+            let [r, g, b] = rgb_at(pixels, (x + dx, y + dy));
+            (red, blue, all) = (red + r, blue + b, all + r + g + b);
+        }
+    }
+    (red - blue) as f32 / all.max(1) as f32
+}
+
+/// How much redder than blue a whole picture is, against how bright it is.
+fn picture_warmth(pixels: &[u8]) -> f32 {
+    let (mut red, mut blue, mut all) = (0i64, 0i64, 0i64);
+    for p in pixels.chunks(4) {
+        let [r, g, b] = [p[0], p[1], p[2]].map(i64::from);
+        (red, blue, all) = (red + r, blue + b, all + r + g + b);
+    }
+    (red - blue) as f32 / all.max(1) as f32
+}
+
+#[test]
+fn the_courtyard_brightens_from_dawn_to_noon_and_darkens_through_dusk_to_midnight() {
+    use TimeOfDay::*;
+    let Some(_) = renderer() else { return };
+    let render = |time| courtyard_render(time, false, true, steady_post()).unwrap();
+    let pictures = [Dawn, Morning, Noon, Dusk, Midnight].map(|time| (time, render(time)));
+    for (time, pixels) in &pictures {
+        keep_image(&format!("courtyard {time:?}.png"), pixels);
+    }
+    let [dawn, morning, noon, dusk, midnight] = pictures.each_ref().map(|(_, pixels)| mean_brightness(pixels));
+    assert!(noon > morning && morning > dawn, "brighter as the sun climbs: {dawn:.0}, {morning:.0}, {noon:.0}");
+    assert!(noon > dusk, "darker as it sets: {noon:.0} to {dusk:.0}");
+    assert!((dawn - dusk).abs() < dawn * 0.25, "dawn and dusk mirror each other: {dawn:.0} and {dusk:.0}");
+    assert!(midnight * 4.0 < dusk, "midnight, under the moon, far darker than dusk: {midnight:.0} against {dusk:.0}");
+}
+
+#[test]
+fn a_low_sun_lights_walls_warmer_than_the_noon_sun() {
+    use TimeOfDay::*;
+    let Some(_) = renderer() else { return };
+    let render = |time| courtyard_render(time, false, true, steady_post()).unwrap();
+    let (dawn, noon, dusk) = (render(Dawn), render(Noon), render(Dusk));
+    // Dawn lights the west wall, on the left, and dusk the east wall, on the right.
+    let (left, right) = ((30, 100), (600, 100));
+    let (dawn_left, noon_left) = (warmth(&dawn, left), warmth(&noon, left));
+    let (dusk_right, noon_right) = (warmth(&dusk, right), warmth(&noon, right));
+    assert!(dawn_left > noon_left + 0.15, "dawn's light is redder: {dawn_left:.2} against noon's {noon_left:.2}");
+    assert!(dusk_right > noon_right + 0.15, "and dusk's: {dusk_right:.2} against noon's {noon_right:.2}");
+}
+
+#[test]
+fn torches_light_the_night_warm_and_their_light_bounces_with_gi() {
+    let Some(_) = renderer() else { return };
+    let render = |torches, gi| courtyard_render(TimeOfDay::Midnight, torches, gi, steady_post()).unwrap();
+    let (moonlit, plain, bounced) = (render(false, true), render(true, false), render(true, true));
+    keep_image("courtyard torches without gi.png", &plain);
+    keep_image("courtyard torches with gi.png", &bounced);
+    let (cold, warm) = (picture_warmth(&moonlit), picture_warmth(&bounced));
+    assert!(warm > cold + 0.1, "torchlight warms the night: {warm:.2} against the moon's {cold:.2}");
+    let (direct, with_bounce) = (mean_brightness(&plain), mean_brightness(&bounced));
+    assert!(with_bounce > direct * 1.2, "their light bounces off the walk onto the walls: {with_bounce:.0} from {direct:.0}");
+}
+
+#[test]
+fn auto_exposure_keeps_midnight_darker_than_noon() {
+    let Some(_) = renderer() else { return };
+    let render = |time| courtyard_render(time, false, true, voxear_render::PostProcess::default()).unwrap();
+    let (noon, midnight) = (mean_brightness(&render(TimeOfDay::Noon)), mean_brightness(&render(TimeOfDay::Midnight)));
+    assert!(midnight * 3.0 < noon, "the eye adapts, but night stays night: {midnight:.0} against {noon:.0}");
 }

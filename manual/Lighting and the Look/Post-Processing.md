@@ -101,8 +101,9 @@ To see the occlusion on its own, press F7 in a game window, or use `vox render -
 | --- | --- |
 | `auto = true` | Adjusts the brightness to the scene, as eyes do. See [[Cameras]] |
 | `compensation = 0.5` | Brighter or darker than auto exposure would choose, in stops: each 1 doubles the brightness |
-| `min_ev = -3`, `max_ev = 1` | The darkest and brightest auto exposure may go |
-| `speed_up = 2`, `speed_down = 1` | How fast it adjusts, to brighter and to darker scenes |
+| `min_ev = -3`, `max_ev = 1` | The darkest and brightest auto exposure may go. Raise `max_ev` to 6 or more for rooms lit through their windows; see [[Bounced Light]] |
+| `speed_up = 2`, `speed_down = 1` | How fast it adjusts, to brighter and to darker scenes. Walking from a dark room into sunlight, the picture glares and then settles, as eyes do |
+| `night = 1` | How dark a dark scene stays, as the eye sees it: the darker it is, the less exposure brightens it, and in moonlight colours fade to grey-blue. 0 brightens night as far as day, in full colour |
 
 **Colour**, `[post.tonemap]` and `[post.grading]`
 

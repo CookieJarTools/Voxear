@@ -157,10 +157,11 @@ float3 shadowTint(Frame* frame, Surface s, float3 toSun, float3 sunLight, float 
 }
 
 // What a surface reflects of its surroundings: the sky in the mirror
-// direction, blurring towards the light from all round (`ambient`) as the
-// surface roughens, with screen-space reflections over it where they found
-// something and the surface is smooth enough to show them.
-float3 environmentReflection(Frame* frame, float2 pixel, float3 direction, float roughness, float3 ambient, bool atmosphere)
+// direction, or with voxel GI the lit voxels in a cone round it, blurring
+// towards the light from all round (`ambient`) as the surface roughens,
+// with screen-space reflections over it where they found something and the
+// surface is smooth enough to show them.
+float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere)
 {
     float3 sky;
     if (atmosphere)
@@ -176,6 +177,12 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 direction, float
     }
     // Scaled as the sky's other light is, so a night scene's floor does not mirror a day sky.
     sky *= frame->ambient;
+    if (frame->gi.texture != NO_TEXTURE)
+    {
+        // With voxel GI, what stands round the surface, lit, hides the sky behind it.
+        float4 voxels = giReflection(frame, position, normal, direction, roughness);
+        sky = voxels.rgb + (1.0 - voxels.a) * sky;
+    }
     float3 reflected = lerp(sky, ambient, saturate(roughness * 1.5));
     if (frame->post.reflectionTexture == NO_TEXTURE)
     {
@@ -403,7 +410,7 @@ FragmentOut fragmentMain(VertexOut input)
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);
-    float3 reflected = environmentReflection(frame, input.position.xy, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere);
+    float3 reflected = environmentReflection(frame, input.position.xy, input.worldPosition, s.normal, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere);
     color += ambient * s.diffuse * occlusion.diffuse + reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * occlusion.specular;
 
     color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
@@ -442,6 +449,10 @@ FragmentOut fragmentMain(VertexOut input)
     else if (frame->debugView == DEBUG_VIEW_AMBIENT_OCCLUSION)
     {
         color = occlusion.diffuse;
+    }
+    else if (frame->debugView == DEBUG_VIEW_GLOBAL_ILLUMINATION)
+    {
+        color = ambient;
     }
     else if (frame->debugView == DEBUG_VIEW_WIREFRAME)
     {

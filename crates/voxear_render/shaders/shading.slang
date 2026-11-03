@@ -122,36 +122,142 @@ uint cascadeAt(Frame* frame, float3 position)
     return cascade;
 }
 
-// 3x3 taps of hardware 2x2 PCF across one cascade's tile of the atlas.
-float sunShadow(Frame* frame, float3 position, float3 normal)
+// Where a point lies in the sun's shadow map: its cascade's tile of the
+// atlas, its place in the tile, and its depth from the sun. `found` is false
+// beyond the cascades, or without a shadow map.
+struct ShadowLookup
 {
+    bool found;
+    uint cascade;
+    float2 uv;
+    float depth;
+    float2 low;
+    float2 high;
+};
+
+ShadowLookup shadowLookup(Frame* frame, float3 position, float3 normal)
+{
+    ShadowLookup lookup;
+    lookup.found = false;
     uint cascade = cascadeAt(frame, position);
     if (frame->shadowTexture == NO_TEXTURE || cascade >= CASCADES)
     {
-        return 1.0;
+        return lookup;
     }
     float3 offsetPosition = position + normal * frame->cascadeTexel[cascade] * 1.5;
     float4 clip = transform(frame->cascadeViewProj[cascade], float4(offsetPosition, 1.0));
     float2 uv = clip.xy * 0.5 + 0.5;
     if (any(uv < 0.0) || any(uv > 1.0) || clip.z > 1.0)
     {
-        return 1.0;
+        return lookup;
     }
-
     float texel = 0.5 / float(push.size.x);
     float2 tile = CASCADE_TILES[cascade];
-    float2 low = tile + texel * 1.5;
-    float2 high = tile + 0.5 - texel * 1.5;
+    lookup.found = true;
+    lookup.cascade = cascade;
+    lookup.uv = tile + uv * 0.5;
+    lookup.depth = clip.z;
+    lookup.low = tile + texel * 1.5;
+    lookup.high = tile + 0.5 - texel * 1.5;
+    return lookup;
+}
+
+// 3x3 taps of hardware 2x2 PCF across one cascade's tile of the atlas: the
+// sun's shadow with a hard edge, as the volumetric fog takes it.
+float sunShadowHard(Frame* frame, float3 position, float3 normal)
+{
+    ShadowLookup lookup = shadowLookup(frame, position, normal);
+    if (!lookup.found)
+    {
+        return 1.0;
+    }
+    float texel = 0.5 / float(push.size.x);
     float lit = 0.0;
     for (int y = -1; y <= 1; y++)
     {
         for (int x = -1; x <= 1; x++)
         {
-            float2 atlasUv = clamp(tile + uv * 0.5 + float2(x, y) * texel * 2.0, low, high);
-            lit += textures[frame->shadowTexture].SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, clip.z);
+            float2 atlasUv = clamp(lookup.uv + float2(x, y) * texel * 2.0, lookup.low, lookup.high);
+            lit += textures[frame->shadowTexture].SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, lookup.depth);
         }
     }
     return lit / 9.0;
+}
+
+// Points on a disc spread evenly by the golden angle, turned by `angle`.
+float2 vogelDisc(uint index, uint count, float angle)
+{
+    float radius = sqrt((float(index) + 0.5) / float(count));
+    float theta = float(index) * 2.39996323 + angle;
+    return radius * float2(cos(theta), sin(theta));
+}
+
+// Few taps, turned each frame and pixel, as TAA averages them.
+static const uint PCSS_BLOCKER_TAPS = 12;
+static const uint PCSS_FILTER_TAPS = 16;
+// The farthest, in metres, a blocker is looked for above what it shades.
+static const float PCSS_SEARCH_METRES = 8.0;
+// The widest a shadow's soft edge grows, in metres. The taps are the same
+// whatever its width, so a wide edge costs no more, only spreads them.
+static const float PCSS_MAX_METRES = 1.5;
+
+// The sun's shadow, soft as the sun's disc makes it: percentage-closer soft
+// shadows (Fernando 2005). Blockers are found round the point first; the
+// farther they are above it, the wider the filter, so shadows stay sharp
+// where things touch and soften away from them. Without a softness it is
+// the hard shadow.
+float sunShadow(Frame* frame, float3 position, float3 normal)
+{
+    float tanHalfAngle = frame->lighting.sunSoftness;
+    if (tanHalfAngle <= 0.0)
+    {
+        return sunShadowHard(frame, position, normal);
+    }
+    ShadowLookup lookup = shadowLookup(frame, position, normal);
+    if (!lookup.found)
+    {
+        return 1.0;
+    }
+    float texelUv = 0.5 / float(push.size.x);
+    float worldTexel = frame->cascadeTexel[lookup.cascade];
+    // The shadow map's depth runs over its cascade's diameter, as wide as all its texels.
+    float depthMetres = worldTexel * float(push.size.x);
+    float angle = frac(52.9829189 * frac(dot(position.xz * 37.0, float2(0.06711056, 0.00583715)))) * 2.0 * PI;
+    angle += float(frame->frameIndex % 64) * 2.39996323;
+
+    float maxTexels = PCSS_MAX_METRES / worldTexel;
+    float searchTexels = clamp(PCSS_SEARCH_METRES * tanHalfAngle / worldTexel, 1.0, maxTexels);
+    Texture2D atlas = textures[frame->shadowTexture];
+    float blockers = 0.0;
+    float blockerDepth = 0.0;
+    for (uint i = 0; i < PCSS_BLOCKER_TAPS; i++)
+    {
+        float2 atlasUv = clamp(lookup.uv + vogelDisc(i, PCSS_BLOCKER_TAPS, angle) * searchTexels * texelUv * 2.0, lookup.low, lookup.high);
+        float depth = atlas.SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], atlasUv, 0.0).r;
+        if (depth < lookup.depth)
+        {
+            blockers += 1.0;
+            blockerDepth += depth;
+        }
+    }
+    // Nothing round it is above it, or everything is: wholly lit or wholly shaded, with no edge to soften.
+    if (blockers == 0.0)
+    {
+        return 1.0;
+    }
+    if (blockers == float(PCSS_BLOCKER_TAPS))
+    {
+        return 0.0;
+    }
+    float above = (lookup.depth - blockerDepth / blockers) * depthMetres;
+    float filterTexels = clamp(above * tanHalfAngle * 2.0 / worldTexel, 1.0, maxTexels);
+    float lit = 0.0;
+    for (uint i = 0; i < PCSS_FILTER_TAPS; i++)
+    {
+        float2 atlasUv = clamp(lookup.uv + vogelDisc(i, PCSS_FILTER_TAPS, angle) * filterTexels * texelUv * 2.0, lookup.low, lookup.high);
+        lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, lookup.depth);
+    }
+    return lit / float(PCSS_FILTER_TAPS);
 }
 
 float3 debugColor(uint index)
@@ -194,7 +300,7 @@ FragmentOut fragmentMain(VertexOut input)
     s.diffuse = base.rgb * (1.0 - metallic);
     s.f0 = lerp(float3(0.04), base.rgb, metallic);
 
-    float shadow = sunShadow(frame, input.worldPosition, s.normal);
+    float shadow = min(sunShadow(frame, input.worldPosition, s.normal), contactShadow(frame, input.position.xy));
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     // Through the atmosphere, the sun reddens as it sets.
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;

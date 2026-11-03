@@ -100,6 +100,15 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), dep
     fg.add_pass("AO temporal", &images, &[], move |ctx| draw(ctx, pipelines.ao_temporal, &temporal, current));
 }
 
+/// Records the contact shadows pass into `target`, a full-resolution image
+/// of `AO_FORMAT`, reading `depth` once the depth passes drew it. Its shader
+/// lives beside GTAO's, as both march through the depth buffer.
+pub fn record_contact_shadows(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), depth: ImageId, target: ImageId) {
+    let push = Push { textures: [fg.texture(depth).0, 0, 0, 0], ..push };
+    let images = [(depth, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
+    fg.add_pass("Contact shadows", &images, &[], move |ctx| draw(ctx, pipelines.contact_shadows, &push, target));
+}
+
 /// A fullscreen pass that writes every pixel of `target`.
 fn draw(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId) {
     let color = [vk::RenderingAttachmentInfo::default()

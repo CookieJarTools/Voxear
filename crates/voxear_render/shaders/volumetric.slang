@@ -104,7 +104,7 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
 
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float3 light = sunLight * sunShadow(frame, position, float3(0.0)) * sunCookieAt(frame, position)
+    float3 light = sunLight * sunShadowHard(frame, position, float3(0.0)) * sunCookieAt(frame, position)
         * miePhase(g, dot(-frame->sunDirection, -toCamera));
     uint cluster = clusterAt(frame, uv * float2(frame->viewport), depth);
     uint clusterBase = cluster * (frame->clusterMaxLights + 1);

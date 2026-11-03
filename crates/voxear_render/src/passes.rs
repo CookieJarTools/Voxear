@@ -89,6 +89,9 @@ pub struct Frame {
     /// Ambient occlusion's images, when it is on: the opaque lists are then
     /// drawn as depth first, and shaded once it has run.
     pub ambient_occlusion: Option<ambient_occlusion::Targets>,
+    /// Contact shadows' image, when they are on: like ambient occlusion,
+    /// they need the depth drawn first.
+    pub contact_shadows: Option<ImageId>,
     /// The atmosphere's tables, when the sky is the atmosphere: drawn first,
     /// and sampled by the opaque passes and the sky.
     pub atmosphere: Option<atmosphere::Tables>,
@@ -206,6 +209,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     }
 
     let ambient_occlusion = frame.ambient_occlusion;
+    let contact_shadows = frame.contact_shadows;
+    // Drawn as depth first, then shaded over it, for what reads the depth before shading.
+    let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some();
     if let Some(atmosphere) = frame.atmosphere {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
@@ -215,6 +221,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             vec![(targets.hdr, color), (targets.velocity, color), (targets.depth, ImageAccess::DepthAttachment)];
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
+        images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
         images
     };
@@ -239,9 +246,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         cull(ctx, pipelines.cull, &push, LIST_EARLY, instances, 1);
     });
     meshlet_pass(fg, "Meshlets (early)", &[], [LIST_EARLY, LIST_LATE]);
-    match ambient_occlusion {
-        Some(_) => depth_pass(fg, "Depth (early)", LIST_EARLY),
-        None => fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
+    match depth_first {
+        true => depth_pass(fg, "Depth (early)", LIST_EARLY),
+        false => fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
             let clear = Clear { color: true, depth: true };
             opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, clear);
         }),
@@ -266,10 +273,15 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         cull(ctx, pipelines.cull, &push, LIST_LATE, instances, 1);
     });
     meshlet_pass(fg, "Meshlets (late)", &[(pyramid, ImageAccess::Sampled)], [LIST_LATE, LIST_SHADOW]);
-    match ambient_occlusion {
-        Some(ao) => {
+    match depth_first {
+        true => {
             depth_pass(fg, "Depth (late)", LIST_LATE);
-            ambient_occlusion::record(fg, (pipelines, push), depth, ao);
+            if let Some(ao) = ambient_occlusion {
+                ambient_occlusion::record(fg, (pipelines, push), depth, ao);
+            }
+            if let Some(contact) = contact_shadows {
+                ambient_occlusion::record_contact_shadows(fg, (pipelines, push), depth, contact);
+            }
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);
             let again = if mesh.is_some() { Push { source: DRAWS_AGAIN, ..shading_push } } else { shading_push };
@@ -280,7 +292,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
                 });
             }
         }
-        None => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
+        false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
             opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, Clear::default());
         }),
     }

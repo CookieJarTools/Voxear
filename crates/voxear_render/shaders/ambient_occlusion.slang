@@ -348,3 +348,57 @@ float4 aoTemporalFragment(AoOut input) : SV_Target
     float history = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], previousUv, 0.0).r;
     return lerp(current, clamp(history, low, high), HISTORY);
 }
+
+// ---------------------------------------------------------------- Contact shadows
+
+// Contact shadows: from each pixel, a short march towards the sun through
+// the depth buffer, for the small shadows where things touch that the
+// shadow map is too coarse to hold. A step that lands behind something in
+// the depth buffer, but no more than its thickness behind, is in shadow.
+// textures: x depth. Writes 1 where nothing is found, 0 in shadow.
+[shader("fragment")]
+float4 contactShadowFragment(AoOut input) : SV_Target
+{
+    Frame* frame = push.frame;
+    uint depthTexture = push.textures.x;
+    int2 pixel = int2(input.position.xy);
+    float depth = loadDepth(depthTexture, pixel);
+    if (depth <= 0.0 || dot(frame->sunColor, frame->sunColor) <= 0.0)
+    {
+        return 1.0;
+    }
+    float3 centre = viewPosition(float2(pixel) + 0.5, depth);
+    float3 normal = viewNormal(depthTexture, pixel, centre);
+    // Into view space, and two pixels' width off the surface, so it does not shadow itself.
+    float3 toSun = normalize(transform(frame->view, float4(-frame->sunDirection, 0.0)).xyz);
+    // Facing away from the sun, it is dark already.
+    if (dot(normal, toSun) <= 0.0)
+    {
+        return 1.0;
+    }
+    float pixelSpan = abs(frame->post.aoUnproject.y) * 2.0 / float(frame->viewport.y) * centre.z;
+    float3 start = centre + normal * (2.0 * pixelSpan);
+    uint steps = max(frame->post.contactSteps, 1);
+    float stepLength = frame->post.contactLength / float(steps);
+    float jitter = aoNoise(pixel, frame->frameIndex).x;
+    float2 size = float2(frame->viewport);
+    for (uint i = 0; i < steps; i++)
+    {
+        float3 along = start + toSun * stepLength * (float(i) + jitter);
+        // Back onto the screen, as viewPosition came off it.
+        float2 ndc = along.xy / (along.z * frame->post.aoUnproject) + frame->jitter * 2.0 / size;
+        float2 at = (ndc * 0.5 + 0.5) * size;
+        if (along.z <= frame->near || any(at < 0.0) || any(at >= size))
+        {
+            break;
+        }
+        float scene = loadDepth(depthTexture, int2(at));
+        float sceneZ = frame->near / max(scene, 1e-7);
+        float behind = along.z - sceneZ;
+        if (behind > 0.0 && behind < frame->post.contactThickness)
+        {
+            return 0.0;
+        }
+    }
+    return 1.0;
+}

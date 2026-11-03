@@ -80,6 +80,11 @@ pub struct Light {
     /// light every `cookie_size` metres. Its colours tint the light.
     pub cookie: Option<TextureId>,
     pub cookie_size: f32,
+    /// How wide across, in degrees, the light's source looks from what it
+    /// shines on, which softens its shadow's edges the farther they fall
+    /// from what casts them; 0 for hard edges. The sun is about half a
+    /// degree. Only the sun casts shadows yet.
+    pub softness: f32,
     /// An IES profile (see `Renderer::add_light_profile`): how bright a real
     /// fitting is in each direction, for a point or spot light.
     pub profile: Option<TextureId>,
@@ -132,6 +137,7 @@ impl Light {
             length: 0.0,
             cookie: None,
             cookie_size: 10.0,
+            softness: 0.5,
             profile: None,
         }
     }
@@ -373,6 +379,7 @@ pub fn extract(
                 sun_found = true;
                 frame.sun_direction = vec3(forward);
                 frame.sun_color = vec3(radiance);
+                frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
                 if let Some(cookie) = light.cookie {
                     frame.lighting.sun_cookie = cookie.0;
                     frame.lighting.sun_cookie_size = light.cookie_size;

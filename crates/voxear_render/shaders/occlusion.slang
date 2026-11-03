@@ -51,3 +51,14 @@ void depthFragment(VertexOut input)
         }
     }
 }
+
+// Whether the contact shadows pass found something between a pixel and the
+// sun, close by: 0 in such a shadow, 1 out of it, and 1 without the pass.
+float contactShadow(Frame* frame, float2 pixel)
+{
+    if (frame->post.contactTexture == NO_TEXTURE)
+    {
+        return 1.0;
+    }
+    return textures[NonUniformResourceIndex(frame->post.contactTexture)].Load(int3(int2(pixel), 0)).r;
+}

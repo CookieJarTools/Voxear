@@ -72,7 +72,7 @@ pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodVi
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, Primitive, Vertex};
 pub use post::{
-    AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, DepthOfField, Exposure, Fog,
+    AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
     Grading, Grain, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
@@ -1370,6 +1370,19 @@ impl View {
         let mut frame_data = extracted.frame;
         frame_data.post.ao_texture = ambient_occlusion.map_or(NO_TEXTURE, |ao| fg.texture(ao.current).0);
         frame_data.post.ao_reset = u32::from(ao_reset);
+        // Contact shadows are the sun's, so they go without one, and the wireframe goes without its depth.
+        let contact = extracted.post.contact_shadows.enabled && extracted.has_sun && !wireframe;
+        let contact_shadows = match contact {
+            true => {
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                let desc = ImageDesc::new(extent.width, extent.height, pipelines::AO_FORMAT, usage);
+                Some(fg.create_image(gpu, bindless, "contact shadows", desc)?)
+            }
+            false => None,
+        };
+        if let Some(image) = contact_shadows {
+            frame_data.post.contact_texture = fg.texture(image).0;
+        }
         let fog = extracted.post.fog;
         let foggy = fog.enabled && fog.volumetric && fog.density > 0.0 && !wireframe;
         let volume = match foggy {
@@ -1489,6 +1502,7 @@ impl View {
             wireframe,
             edges,
             ambient_occlusion,
+            contact_shadows,
             atmosphere,
             volume,
         };

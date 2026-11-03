@@ -281,6 +281,9 @@ pub enum LightData {
         /// How many metres the cookie covers before it repeats.
         #[serde(default = "default_cookie_size")]
         cookie_size: f32,
+        /// How wide the sun looks, in degrees, which softens its shadows.
+        #[serde(default = "default_softness")]
+        softness: f32,
     },
     Point {
         #[serde(default = "white")]
@@ -360,6 +363,10 @@ fn default_tube_radius() -> f32 {
 
 fn default_cookie_size() -> f32 {
     10.0
+}
+
+fn default_softness() -> f32 {
+    0.5
 }
 
 impl LightData {
@@ -1005,8 +1012,8 @@ pub fn default_light(kind: LightKind) -> Light {
 /// need their assets loaded (see [`light_with_assets`]).
 pub(crate) fn light_component(light: &LightData) -> Light {
     match *light {
-        LightData::Directional { color, intensity, cookie_size, .. } => {
-            Light { cookie_size, ..Light::directional(Vec3::from(linear(color)), intensity) }
+        LightData::Directional { color, intensity, cookie_size, softness, .. } => {
+            Light { cookie_size, softness, ..Light::directional(Vec3::from(linear(color)), intensity) }
         }
         LightData::Point { color, intensity, range, .. } => Light::point(Vec3::from(linear(color)), intensity, range),
         LightData::Spot { color, intensity, range, inner_angle, outer_angle, .. } => {
@@ -1043,7 +1050,13 @@ fn light_data(content: &Content, light: &Light) -> LightData {
     let cookie = light.cookie.and_then(|texture| content.picture_guid(texture)).map(|guid| guid.to_string());
     let profile = light.profile.and_then(|texture| content.light_profile_guid(texture)).map(|guid| guid.to_string());
     match light.kind {
-        LightKind::Directional => LightData::Directional { color, intensity, cookie, cookie_size: light.cookie_size },
+        LightKind::Directional => LightData::Directional {
+            color,
+            intensity,
+            cookie,
+            cookie_size: light.cookie_size,
+            softness: light.softness,
+        },
         LightKind::Point => LightData::Point { color, intensity, range: light.range, profile },
         LightKind::Spot => LightData::Spot {
             color,

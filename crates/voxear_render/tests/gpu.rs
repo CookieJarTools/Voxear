@@ -1707,3 +1707,105 @@ fn volumetric_fog_is_dark_in_shadow_and_glows_round_a_lamp() {
     let red_glow = rgb_at(&lamp, (400, 190))[0] - rgb_at(&shafts, (400, 190))[0];
     assert!(red_glow > 0, "the glow takes the lamp's colour");
 }
+
+/// A tall wall on a floor seen from above, ending at z = 0, its shadow cast
+/// along +X by a sun 40 degrees from straight down, as soft as `softness`
+/// makes it. The shadow's edge runs along X from where the wall ends.
+fn post_shadow_render(softness: f32) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let wall = Transform::new(Vec3::new(0.0, 3.0, -5.0), Quat::IDENTITY, Vec3::new(0.5, 6.0, 10.0));
+    world.spawn((MeshRenderer::new(cube, material), wall));
+    let towards_sun = Vec3::new(-40f32.to_radians().sin(), 40f32.to_radians().cos(), 0.0);
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    let light = Light { softness, ..Light::directional(Vec3::ONE, 2.0) };
+    world.spawn((light, Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// How wide, in metres, the shadow's edge goes from mostly shaded to mostly
+/// lit, across it at `x`, averaged along a band either side of it so each
+/// pixel's noise evens out.
+fn penumbra_width(pixels: &[u8], x: f32) -> f32 {
+    let step = 0.02;
+    let across = |z: f32| (-4..=4).map(|i| floor_brightness(pixels, Vec3::new(x + i as f32 * 0.04, 0.0, z))).sum::<i32>();
+    let values: Vec<i32> = (0..150).map(|i| across(-1.5 + i as f32 * step)).collect();
+    let (shaded, lit) = (*values.iter().min().unwrap(), *values.iter().max().unwrap());
+    let range = (lit - shaded) as f32;
+    let between = values.iter().filter(|&&v| (v - shaded) as f32 > range * 0.2 && ((v - shaded) as f32) < range * 0.8);
+    between.count() as f32 * step
+}
+
+#[test]
+fn a_soft_sun_softens_shadows_more_the_farther_they_fall() {
+    let (Some(hard), Some(soft)) = (post_shadow_render(0.0), post_shadow_render(4.0)) else { return };
+    keep_image("hard shadow.png", &hard);
+    keep_image("soft shadow.png", &soft);
+    let (soft_near, soft_far) = (penumbra_width(&soft, 0.6), penumbra_width(&soft, 4.5));
+    let hard_far = penumbra_width(&hard, 4.5);
+    assert!(soft_far > soft_near * 2.0, "wider far from the wall: {soft_far} m against {soft_near} m by its foot");
+    assert!(soft_far > hard_far * 2.0, "wider than a hard shadow: {soft_far} m against {hard_far} m");
+}
+
+/// A box on a floor 120 m away, beyond the reach of shadow maps, seen
+/// through a narrow lens under a low sun, with contact shadows on or off.
+fn far_box_render(contact: bool) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, ContactShadows, PostProcess, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let camera = Camera { fov_y_degrees: 4.0, ..Camera::default() };
+    let looking = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -20.0, 120.0).normalize());
+    world.spawn((camera, Transform::new(Vec3::new(0.0, 20.0, 0.0), looking, Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let floor = Transform::new(Vec3::new(0.0, 0.0, 120.0), Quat::IDENTITY, Vec3::splat(40.0));
+    world.spawn((MeshRenderer::new(plane, material), floor));
+    world.spawn((MeshRenderer::new(cube, material), Transform::from_position(Vec3::new(0.0, 0.5, 120.0))));
+    // Low, from the left, so the box's shadow falls to its right on screen.
+    let towards_sun = Vec3::new(-1.0, 0.5, 0.0).normalize();
+    world.spawn((Light::directional(Vec3::ONE, 2.0), Transform::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::Z, -towards_sun), Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    // No sharpening, which rings round any new dark edge.
+    let anti_aliasing = AntiAliasing { sharpness: 0.0, ..anti_aliasing };
+    let contact_shadows = ContactShadows { enabled: contact, length: 1.5, thickness: 1.0, steps: 24 };
+    let mut post = PostProcess { anti_aliasing, contact_shadows, ..PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn contact_shadows_darken_the_floor_by_a_box_where_shadow_maps_do_not_reach() {
+    let (Some(without), Some(with)) = (far_box_render(false), far_box_render(true)) else { return };
+    keep_image("far box without contact shadows.png", &without);
+    keep_image("far box with contact shadows.png", &with);
+    // The floor just to the box's right, where its shadow falls.
+    let darkened = (0..640 * 360).filter(|&i| {
+        let (a, b) = (&without[i * 4..i * 4 + 3], &with[i * 4..i * 4 + 3]);
+        a.iter().zip(b).map(|(a, b)| i32::from(*a) - i32::from(*b)).sum::<i32>() > 30
+    });
+    let count = darkened.count();
+    // The floor is seen nearly edge on from so far away, so the strip is thin.
+    assert!(count > 200, "contact shadows darken part of the floor: {count} pixels");
+    let lighter = (0..640 * 360).filter(|&i| {
+        let (a, b) = (&without[i * 4..i * 4 + 3], &with[i * 4..i * 4 + 3]);
+        a.iter().zip(b).map(|(a, b)| i32::from(*b) - i32::from(*a)).sum::<i32>() > 6
+    });
+    assert_eq!(lighter.count(), 0, "and lighten nothing");
+}

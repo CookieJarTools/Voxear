@@ -282,7 +282,9 @@ pub struct GpuLighting {
     pub multi_scattering: u32,
     pub sky_view: u32,
     pub aerial_perspective: u32,
-    pub _pad: u32,
+    /// The tangent of half the sun's angle across, which softens its
+    /// shadows (see `Light::softness`); 0 for hard ones.
+    pub sun_softness: f32,
     pub atmosphere: GpuAtmosphere,
 }
 
@@ -375,6 +377,12 @@ pub struct GpuPost {
     pub fog_volume: u32,
     /// 1 when the volume's history is stale, as on its first frame.
     pub fog_volume_reset: u32,
+    /// Contact shadows' image, or `NO_TEXTURE` without them, and how they
+    /// march: how far, how thick things count as, and in how many steps.
+    pub contact_texture: u32,
+    pub contact_length: f32,
+    pub contact_thickness: f32,
+    pub contact_steps: u32,
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -545,7 +553,7 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 15;
+        let post = 16 * 16;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6;
         assert_eq!(

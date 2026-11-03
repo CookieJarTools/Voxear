@@ -300,6 +300,13 @@ struct Post
     float fogVolumeFar;
     uint fogVolume;
     uint fogVolumeReset;
+    // Contact shadows: their image (NO_TEXTURE without them), how far each
+    // pixel looks towards the sun, in metres, how thick a thing in the depth
+    // buffer counts as, and how many steps it takes.
+    uint contactTexture;
+    float contactLength;
+    float contactThickness;
+    uint contactSteps;
 };
 
 static const uint SKY_GRADIENT = 0;
@@ -337,7 +344,8 @@ struct Lighting
     uint multiScattering;
     uint skyView;
     uint aerialPerspective;
-    uint pad;
+    // The tangent of half the sun's angle across, which softens its shadows; 0 for hard ones.
+    float sunSoftness;
     Atmosphere atmosphere;
 };
 

@@ -141,6 +141,7 @@ pub enum Prop {
     LightCookie,
     LightCookieSize,
     LightProfile,
+    LightSoftness,
     FieldOfView,
     Near,
     Exposure,
@@ -274,7 +275,8 @@ impl Prop {
             | Prop::LightLength
             | Prop::LightCookie
             | Prop::LightCookieSize
-            | Prop::LightProfile => {
+            | Prop::LightProfile
+            | Prop::LightSoftness => {
                 Part::Light
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
@@ -375,6 +377,7 @@ impl Prop {
             Prop::LightCookie => "cookie",
             Prop::LightCookieSize => "cookie_size",
             Prop::LightProfile => "profile",
+            Prop::LightSoftness => "softness",
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
@@ -572,7 +575,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 props.push(Prop::Range);
             }
             match kind {
-                LightKind::Directional => props.extend([Prop::LightCookie, Prop::LightCookieSize]),
+                LightKind::Directional => props.extend([Prop::LightSoftness, Prop::LightCookie, Prop::LightCookieSize]),
                 LightKind::Point => props.push(Prop::LightProfile),
                 LightKind::Spot => props.extend([Prop::SpotInner, Prop::SpotOuter, Prop::LightCookie, Prop::LightProfile]),
                 LightKind::Rectangle => props.extend([Prop::LightWidth, Prop::LightHeight]),
@@ -720,6 +723,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::LightCookie => "Cookie",
         Prop::LightCookieSize => "Cookie size",
         Prop::LightProfile => "IES profile",
+        Prop::LightSoftness => "Shadow softness",
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
@@ -1077,6 +1081,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightLength => Value::Number(light()?.length),
         Prop::LightCookie => Value::Asset(guid_label(game, light()?.cookie.and_then(|t| game.content.picture_guid(t)))),
         Prop::LightCookieSize => Value::Number(light()?.cookie_size),
+        Prop::LightSoftness => Value::Number(light()?.softness),
         Prop::LightProfile => {
             Value::Asset(guid_label(game, light()?.profile.and_then(|t| game.content.light_profile_guid(t))))
         }
@@ -1693,6 +1698,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::LightHeight, Value::Number(n)) => with(world, entity, |light: &mut Light| light.height = n.max(0.0)),
         (Prop::LightRadius, Value::Number(n)) => with(world, entity, |light: &mut Light| light.radius = n.max(0.0)),
         (Prop::LightLength, Value::Number(n)) => with(world, entity, |light: &mut Light| light.length = n.max(0.0)),
+        (Prop::LightSoftness, Value::Number(n)) => {
+            with(world, entity, |light: &mut Light| light.softness = n.clamp(0.0, 20.0))
+        }
         (Prop::LightCookieSize, Value::Number(n)) => {
             with(world, entity, |light: &mut Light| light.cookie_size = n.max(0.01))
         }

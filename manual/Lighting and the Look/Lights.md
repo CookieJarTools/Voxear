@@ -60,7 +60,28 @@ The profile's straight-ahead direction is the way the light faces, along its Obj
 
 The first directional light in the level is its **sun**. It is the only light that casts shadows, and the sky draws the sun's disc in its direction and colour. A level only uses one: any other directional lights are left out.
 
-Shadows reach 80 metres from the camera, and are sharpest close to it.
+Shadows reach 80 metres from the camera.
+
+### Soft shadows
+
+A real sun is a disc, not a point, so shadows are sharp where things touch the ground and soften the farther they fall from what casts them. The sun's **Shadow softness** sets how wide the sun looks, in degrees:
+
+- **0.5**, the default, is about the real sun.
+- Higher, up to a few degrees, gives the softer shadows of a hazy day.
+- **0** gives hard edges everywhere, and costs least.
+
+### Contact shadows
+
+Where small things meet, such as a cup on a table or the feet of a chair, the shadow map is too coarse to show the shadow. **Contact shadows** fill these in, by looking a short way towards the sun from each pixel. They are on by default, and set in the scene file's post-processing:
+
+```toml
+[post.contact_shadows]
+enabled = true
+length = 0.3      # how far each pixel looks towards the sun, in metres
+thickness = 0.15  # how thick things count as, in metres
+```
+
+Contact shadows work beyond the 80 metres shadows reach, so distant things still sit on the ground. They cost about a quarter of a millisecond at 1440p.
 
 ## Using many lights
 

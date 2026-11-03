@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 pub struct PostProcess {
     pub ambient_occlusion: AmbientOcclusion,
+    pub contact_shadows: ContactShadows,
     pub anti_aliasing: AntiAliasing,
     pub bloom: Bloom,
     pub exposure: Exposure,
@@ -88,6 +89,28 @@ pub struct AmbientOcclusion {
     /// temporal pass filling in the rest. Sharper in fine detail, and about
     /// four times the cost.
     pub full_resolution: bool,
+}
+
+/// Contact shadows: the small shadows the sun casts where things touch,
+/// which its shadow map is too coarse to hold, found by marching a short way
+/// towards the sun through the depth buffer from each pixel.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ContactShadows {
+    pub enabled: bool,
+    /// How far each pixel looks towards the sun, in metres.
+    pub length: f32,
+    /// How thick something in the depth buffer counts as, in metres: what
+    /// lies farther behind it than this does not shadow.
+    pub thickness: f32,
+    /// Advanced: how many steps the march takes.
+    pub steps: u32,
+}
+
+impl Default for ContactShadows {
+    fn default() -> Self {
+        Self { enabled: true, length: 0.3, thickness: 0.15, steps: 12 }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,12 +363,13 @@ impl Default for Grain {
 }
 
 impl PostProcess {
-    /// The Voxear Look: ambient occlusion, TAA with light sharpening, soft
+    /// The Voxear Look: ambient occlusion, contact shadows, TAA with light sharpening, soft
     /// bloom, eye adaptation that keeps nights dark, AgX with a little punch,
     /// a soft vignette and a touch of atmospheric fog.
     pub fn voxear() -> Self {
         Self {
             ambient_occlusion: AmbientOcclusion::default(),
+            contact_shadows: ContactShadows::default(),
             anti_aliasing: AntiAliasing::default(),
             bloom: Bloom::default(),
             // Metering for middle grey looks dull on bright days; half a stop lifts it.
@@ -393,6 +417,7 @@ impl PostProcess {
     pub(crate) fn debug_view() -> Self {
         Self {
             ambient_occlusion: AmbientOcclusion { enabled: false, ..AmbientOcclusion::default() },
+            contact_shadows: ContactShadows { enabled: false, ..ContactShadows::default() },
             anti_aliasing: AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() },
             exposure: Exposure { auto: false, ..Exposure::default() },
             tonemap: Tonemap { mapper: Tonemapper::None, ..Tonemap::default() },
@@ -507,6 +532,11 @@ impl PostProcess {
             // The renderer names the volume once it has made it.
             fog_volume: crate::gpu::NO_TEXTURE,
             fog_volume_reset: 0,
+            // The renderer names the image once it has made it.
+            contact_texture: crate::gpu::NO_TEXTURE,
+            contact_length: self.contact_shadows.length.max(0.0),
+            contact_thickness: self.contact_shadows.thickness.max(0.001),
+            contact_steps: self.contact_shadows.steps.clamp(1, 64),
         }
     }
 }

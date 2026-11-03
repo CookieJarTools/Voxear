@@ -834,9 +834,14 @@ Done so far:
   volume, then integrated from the camera out; beyond `volumetric_distance` the plain height fog carries on. About
   0.17 ms on an RTX 3070, whatever the screen's size. A GPU test checks the fog is dark in shadow and glows round
   a lamp in its colour.
+- **Soft shadows and contact shadows:** the sun's shadows are percentage-closer soft shadows (PCSS), with a
+  Shadow softness on the light, the sun's width in degrees (0.5 by default, 0 for hard edges): a blocker search,
+  then a filter as wide as the blocker is far above, so shadows stay sharp where things touch. Screen-space contact
+  shadows march a short way towards the sun from each pixel, for the small shadows the shadow map cannot hold,
+  even beyond its 80 metres. On Stress at 1440p, PCSS adds about 0.11 ms and contact shadows 0.23 ms.
 
 Next:
-- Soft shadows (PCSS, with a softness per light) and contact shadows, then virtual shadow maps.
+- Virtual shadow maps, and shadows for point, spot and area lights.
 - Upscalers (FSR built in, DLSS and XeSS optional), colour grading LUTs, and local post volumes.
 - **Real-time voxel GI** (clipmaps, then injection, gathering and the radiance cache).
 - Baked lightmapper, light probes and reflection probes.

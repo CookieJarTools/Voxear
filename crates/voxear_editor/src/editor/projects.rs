@@ -126,7 +126,9 @@ impl Editor {
         if parent == folder || path == folder {
             return;
         }
-        match project_files::move_into(&self.game.project.root, path, folder) {
+        let moved = project_files::move_place(self.game.content.db().mounts(), path, folder)
+            .and_then(|(at, into)| project_files::move_into(&at.root, &at.path, &into).map(|moved| at.back(&moved)));
+        match moved {
             Ok(moved) => {
                 let name = moved.rsplit('/').next().unwrap_or(&moved).to_string();
                 self.project_event(ProjectEvent::Changed { select: Some(moved), rename: false }, renderer);

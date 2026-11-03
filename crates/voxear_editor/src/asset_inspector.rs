@@ -257,7 +257,7 @@ impl AssetView {
             info.push(("Size", size(item.size)));
         }
         if item.kind == ItemKind::Asset(AssetKind::Texture)
-            && let Ok((width, height)) = image::image_dimensions(game.project.root.join(&item.path))
+            && let Ok((width, height)) = image::image_dimensions(game.content.db().file(&item.path))
         {
             info.push(("Pixels", format!("{width} × {height}")));
         }
@@ -265,7 +265,9 @@ impl AssetView {
             text_row(ui, rows, label, &value);
         }
 
-        let file = game.project.root.join(&item.path);
+        // In the project's folder or a package's, with its import settings in the `.meta` they are read from.
+        let file = game.content.db().file(&item.path);
+        let meta = game.content.db().mounts().meta_file(&item.path);
         let mut view = Self {
             item: item.clone(),
             open: None,
@@ -282,18 +284,18 @@ impl AssetView {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game.content.db()),
             ItemKind::Asset(AssetKind::Model) => {
                 let rows = part(ui, root, "Import Settings", "box");
-                view.import = Some(ImportFields::model(ui, rows, &file));
+                view.import = Some(ImportFields::model(ui, rows, &meta));
                 let rows = part(ui, root, "Materials", "material");
                 view.remaps = Some(ModelMaterials { rows, filled: false, parts: Vec::new(), extract: None });
             }
             ItemKind::Asset(AssetKind::Texture) => {
                 let rows = part(ui, root, "Import Settings", "texture");
-                view.import = Some(ImportFields::texture(ui, rows, &file));
+                view.import = Some(ImportFields::texture(ui, rows, &meta));
             }
             ItemKind::Asset(AssetKind::Sound) => {
                 view.listen = Some((sound(ui, root, &file), false));
                 let rows = part(ui, root, "Import Settings", "audio");
-                view.import = Some(ImportFields::sound(ui, rows, &file));
+                view.import = Some(ImportFields::sound(ui, rows, &meta));
             }
             ItemKind::Script => {
                 script(ui, root, item, types);
@@ -342,7 +344,7 @@ impl AssetView {
         if item.kind != ItemKind::Asset(AssetKind::Material) {
             return None;
         }
-        let material = material(ui, root, &game.project.root.join(&item.path), game.content.db())?;
+        let material = material(ui, root, &game.content.db().file(&item.path), game.content.db())?;
         Some(Self {
             item: item.clone(),
             open: None,

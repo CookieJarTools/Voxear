@@ -11,17 +11,22 @@
 //!
 //! Assets are read through an [`AssetReader`]: from the project folder while
 //! developing, or from built content bundles (see [`bundle`]).
+//!
+//! Packages' assets are mounted beside the project's, under
+//! `Packages/<name>/` (see [`mount`]).
 
 pub mod bundle;
 mod db;
 mod guid;
 mod import;
 pub mod io;
+pub mod mount;
 mod reader;
 mod reference;
 
 pub use db::{AssetDb, AssetEntry, AssetKind, META_EXTENSION, ScanReport};
 pub use guid::AssetGuid;
 pub use import::{MaterialRemap, ModelImport, Normals, SoundImport, SoundLoad, Tangents, TextureImport, Units, meta_path};
+pub use mount::{Access, Mount, Mounts, PACKAGES_FOLDER, PackageMount};
 pub use reader::{AssetReader, FolderReader};
 pub use reference::AssetRef;

@@ -7,10 +7,66 @@
 //! into the project's `.voxear/Trash`, where it can be got back, rather than
 //! destroying it. Files dropped on the panel from outside the editor are
 //! copied in, numbered when their names are taken.
+//!
+//! The panel's paths are the content's: a folder package's files are under
+//! `Packages/<name>/`, and change in the package's own folder (see
+//! [`place`]). A package from the machine's cache never changes.
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
+use voxear_assets::{Access, Mount, Mounts, PACKAGES_FOLDER};
+
+/// Where a path of the Project panel's changes on disk: the folder of its
+/// mount, the project's or a folder package's, and its path in there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub root: PathBuf,
+    pub path: String,
+    pub mount: Mount,
+}
+
+impl Place {
+    /// A path in the same mount, from one within it, as the functions here
+    /// return, back as the panel names it.
+    pub fn back(&self, local: &str) -> String {
+        self.mount.content_path(local)
+    }
+}
+
+/// Where `path` changes, or why it cannot: a package from the machine's
+/// cache is shared by every project on it, and `Packages` itself only
+/// holds the packages.
+pub fn place(mounts: &Mounts, path: &str) -> Result<Place> {
+    let (mount, local) = mounts.locate(path);
+    if mount == Mount::Project && path == PACKAGES_FOLDER && !mounts.packages().is_empty() {
+        bail!("{PACKAGES_FOLDER} holds the project's packages; add them with the Package Manager");
+    }
+    if mounts.access(&mount) == Access::ReadOnly {
+        let title = mount.package().and_then(|name| mounts.package(name)).map_or(path, |p| p.title.as_str());
+        bail!("{title} is read-only: it is in the package cache");
+    }
+    let root = mounts.folder(&mount).context("the package is not mounted")?.to_path_buf();
+    Ok(Place { root, path: local.to_string(), mount })
+}
+
+/// Where a file or folder to rename, copy, delete or move changes: as
+/// [`place`], but never a package's own folder, which the Package Manager
+/// adds and removes.
+pub fn item_place(mounts: &Mounts, path: &str) -> Result<Place> {
+    let place = place(mounts, path)?;
+    let package = place.mount != Mount::Project && place.path.is_empty();
+    ensure!(!package, "packages are added and removed in the Package Manager");
+    Ok(place)
+}
+
+/// Where a file or folder and the folder it moves into both change, which
+/// must be one mount: the project's, or one folder package's.
+pub fn move_place(mounts: &Mounts, path: &str, folder: &str) -> Result<(Place, String)> {
+    let (from, into) = (item_place(mounts, path)?, place(mounts, folder)?);
+    ensure!(from.mount == into.mount, "files move within the project, or within one package");
+    Ok((from, into.path))
+}
 
 /// Something the Project panel makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,12 +245,14 @@ fn copy_all(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Moves a file or folder, and its `.meta`, into `.voxear/Trash`, and
-/// returns where it went.
-pub fn trash(root: &Path, path: &str) -> Result<PathBuf> {
+/// Moves a file or folder at `path` in `root`, and its `.meta`, into the
+/// `.voxear/Trash` of the project at `project`, and returns where it went.
+/// `root` is the project's folder, or a folder package's, which so never
+/// gets a `.voxear` of its own.
+pub fn trash(root: &Path, path: &str, project: &Path) -> Result<PathBuf> {
     let from = root.join(path);
     ensure!(from.exists(), "{path} is not there");
-    let bin = root.join(".voxear").join("Trash");
+    let bin = project.join(".voxear").join("Trash");
     std::fs::create_dir_all(&bin)?;
     let name = path.rsplit('/').next().unwrap_or(path);
     let to = bin.join(unique(&bin, name, ""));
@@ -305,7 +363,7 @@ mod tests {
         assert_eq!(copy, "Mover1.cs");
         assert!(std::fs::read_to_string(root.join(&copy)).unwrap().contains("class Mover1"));
 
-        let gone = trash(root, "Scenes/Main.scene").unwrap();
+        let gone = trash(root, "Scenes/Main.scene", root).unwrap();
         assert!(!root.join("Scenes/Main.scene").exists() && gone.is_file() && meta_of(&gone).is_file());
     }
 
@@ -328,5 +386,35 @@ mod tests {
         assert!(root.join("Models/Ship 1.glb.meta").is_file(), "the .meta follows its file");
         assert!(root.join("Models/Rocks/Small/Pebble.glb").is_file(), "a folder comes with what is in it");
         assert!(!root.join("Models/Lone.png.meta").exists(), "a .meta without its file is left out");
+    }
+
+    #[test]
+    fn a_folder_packages_files_change_in_its_folder_and_a_cached_ones_never() {
+        let (project, packages) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (mine, orbit) = (packages.path().join("mine"), packages.path().join("orbit"));
+        std::fs::create_dir_all(mine.join("Rocks")).unwrap();
+        std::fs::write(mine.join("Rocks/Rock.png"), "").unwrap();
+        let package = |name: &str, root: &Path, access| voxear_assets::PackageMount {
+            name: name.into(),
+            title: name.into(),
+            root: root.to_path_buf(),
+            access,
+        };
+        let mounts = Mounts::new(
+            project.path(),
+            vec![package("my-tools", &mine, Access::Editable), package("orbit-tools", &orbit, Access::ReadOnly)],
+        );
+
+        let at = item_place(&mounts, "Packages/my-tools/Rocks/Rock.png").unwrap();
+        assert_eq!((at.root.as_path(), at.path.as_str()), (mine.as_path(), "Rocks/Rock.png"));
+        let renamed = rename(&at.root, &at.path, "Boulder").map(|path| at.back(&path)).unwrap();
+        assert_eq!(renamed, "Packages/my-tools/Rocks/Boulder.png", "in the package's own folder");
+        assert!(mine.join("Rocks/Boulder.png").is_file());
+
+        assert!(place(&mounts, "Packages/orbit-tools/Prefabs").is_err(), "a cached package is read-only");
+        assert!(item_place(&mounts, "Packages/my-tools").is_err(), "a package itself is the Package Manager's");
+        assert!(place(&mounts, "Packages").is_err(), "the Packages section holds only packages");
+        assert!(move_place(&mounts, "Packages/my-tools/Rocks/Boulder.png", "Scenes").is_err(), "nor out of it");
+        assert_eq!(place(&mounts, "Scenes").unwrap().root, project.path());
     }
 }

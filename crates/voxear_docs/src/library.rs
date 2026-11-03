@@ -16,6 +16,12 @@
 //! read like the project's but not written here. Links name its pages as
 //! `[[manual:Levels]]`, by title or path, and a link in the manual finds the
 //! manual's own pages, as it cannot know the project's.
+//!
+//! Beside the manual come the project's packages' pages, each package's
+//! `Docs` folder as a folder under the package's title. They are the
+//! package's, read here but written in the package: links name them as
+//! `[[package:orbit-tools/Orbit Cameras]]`, and a link in one of them finds
+//! its own package's pages first.
 
 use std::{
     cell::RefCell,
@@ -50,6 +56,9 @@ itself.";
 /// and its folder's title.
 pub const MANUAL_SCHEME: &str = "manual:";
 const MANUAL_FOLDER: &str = "Voxear Manual";
+/// How links name a package's pages, as `package:orbit-tools/Orbit Cameras`:
+/// the package's name, then the page's path in its `Docs`.
+pub const PACKAGE_SCHEME: &str = "package:";
 /// The path of the folder for types in the global namespace.
 const GLOBAL_NAMESPACE: &str = "code:global::";
 /// Where the notes on the Code Reference's pages are kept, in `Docs`.
@@ -84,13 +93,25 @@ impl Page {
     /// The file or folder's name, without `.md`.
     pub fn name(&self) -> &str {
         let name = self.path.rsplit('/').next().unwrap_or_default();
-        let name = name.strip_prefix(MANUAL_SCHEME).unwrap_or(name);
+        let name = name.strip_prefix(MANUAL_SCHEME).or_else(|| name.strip_prefix(PACKAGE_SCHEME)).unwrap_or(name);
         name.strip_suffix(EXTENSION).unwrap_or(name)
     }
 
     /// Part of the engine's manual, rather than the project's.
     pub fn is_manual(&self) -> bool {
         self.path.starts_with(MANUAL_SCHEME)
+    }
+
+    /// The package whose pages it is part of, by the package's name.
+    pub fn package(&self) -> Option<&str> {
+        let rest = self.path.strip_prefix(PACKAGE_SCHEME)?;
+        Some(rest.split_once('/').map_or(rest, |(name, _)| name))
+    }
+
+    /// Part of the manual or a package's pages: someone else's, read here
+    /// and not written.
+    pub fn is_shelved(&self) -> bool {
+        self.is_manual() || self.package().is_some()
     }
 
     pub fn title(&self) -> &str {
@@ -115,6 +136,16 @@ impl Page {
         let top = if self.is_manual() { MANUAL_SCHEME } else { "" };
         self.path.rsplit_once('/').map_or(top, |(folder, _)| folder)
     }
+}
+
+/// A package's pages, as the library shows them beside the manual.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageDocs {
+    pub name: String,
+    /// What its folder is called: `Orbit Tools`.
+    pub title: String,
+    /// The package's `Docs` folder.
+    pub folder: PathBuf,
 }
 
 /// What `[Excerpt]` shows of a page in the Inspector.
@@ -154,6 +185,8 @@ pub struct Library {
     code: CodeReference,
     /// The engine's manual, the folder of pages that comes with it.
     manual: Option<PathBuf>,
+    /// The project's packages that have pages, in the order shown.
+    packages: Vec<PackageDocs>,
     /// The notes written on the Code Reference's pages: each type's header,
     /// for its tags, and words, by the type's full name.
     notes: HashMap<String, (Header, String)>,
@@ -178,6 +211,7 @@ impl Library {
             version: 0,
             code: CodeReference::default(),
             manual: None,
+            packages: Vec::new(),
             notes: HashMap::new(),
             history: RefCell::new(None),
             by_id: HashMap::new(),
@@ -207,6 +241,7 @@ impl Library {
             self.index(PageId(index));
         }
         self.add_manual(root);
+        self.add_packages(root);
         self.add_code(root);
         for index in self.written..self.pages.len() {
             self.index(PageId(index));
@@ -251,6 +286,14 @@ impl Library {
     /// The pages read from `Docs` keep their ids.
     pub fn set_manual(&mut self, folder: &Path) {
         self.manual = Some(folder.to_path_buf());
+        self.reload();
+    }
+
+    /// Shows the project's packages' pages after the manual, each under its
+    /// title, in place of those it showed. A package with no `Docs` folder
+    /// shows none. The pages read from `Docs` keep their ids.
+    pub fn set_packages(&mut self, packages: Vec<PackageDocs>) {
+        self.packages = packages;
         self.reload();
     }
 
@@ -318,8 +361,8 @@ impl Library {
         }
         let url = unescape(url);
         let beside = combine(self.page(from).directory(), &url).map(|path| self.disk(&path));
-        // The manual's pictures are its own: it cannot know the project's.
-        let project = (!self.page(from).is_manual()).then(|| self.project.join(&url));
+        // The manual's pictures are its own, as a package's are: neither can know the project's.
+        let project = (!self.page(from).is_shelved()).then(|| self.project.join(&url));
         beside.filter(|path| path.is_file()).or_else(|| project.filter(|path| path.is_file()))
     }
 
@@ -447,11 +490,24 @@ impl Library {
     }
 
     /// What `[[name]]` in page `from` names: in the manual, the manual's own
-    /// pages, unless it names the Code Reference's.
+    /// pages, unless it names the Code Reference's; in a package's pages,
+    /// its own package's first.
     fn link_name(&self, name: &str, from: PageId) -> String {
         let name = name.trim();
-        let named = [MANUAL_SCHEME, CODE_SCHEME].iter().any(|scheme| name.starts_with(scheme));
-        if self.page(from).is_manual() && !named { format!("{MANUAL_SCHEME}{name}") } else { name.to_string() }
+        let named = [MANUAL_SCHEME, CODE_SCHEME, PACKAGE_SCHEME].iter().any(|scheme| name.starts_with(scheme));
+        if named {
+            return name.to_string();
+        }
+        if self.page(from).is_manual() {
+            return format!("{MANUAL_SCHEME}{name}");
+        }
+        match self.page(from).package() {
+            Some(package) => {
+                let own = format!("{PACKAGE_SCHEME}{package}/{name}");
+                if self.find(&own).is_some() { own } else { name.to_string() }
+            }
+            None => name.to_string(),
+        }
     }
 
     /// The page a reference names, with or without a heading after a hash.
@@ -500,9 +556,13 @@ impl Library {
             .filter(|(_, page)| tagged(page) && words.iter().all(|w| page.words.contains(w.as_str())))
             .map(|(id, page)| (words.iter().all(|w| page.title().to_lowercase().contains(w.as_str())), id))
             .collect();
-        // The project's own pages before the Code Reference's.
-        // The project's own pages first, then the manual's, then the Code Reference's.
-        let rank = |page: &Page| (page.generated, !page.is_manual());
+        // The project's own pages first, then the manual's, then the packages', then the Code Reference's.
+        let rank = |page: &Page| match page {
+            page if !page.generated => 0,
+            page if page.is_manual() => 1,
+            page if page.package().is_some() => 2,
+            _ => 3,
+        };
         found.sort_by(|a, b| {
             let (page_a, page_b) = (self.page(a.1), self.page(b.1));
             b.0.cmp(&a.0).then(rank(page_a).cmp(&rank(page_b))).then_with(|| page_a.title().cmp(page_b.title()))
@@ -518,6 +578,9 @@ impl Library {
                 "{} is part of Voxear's manual, which comes with the engine, so it is not written here",
                 self.page(id).title()
             );
+        }
+        if let Some(package) = self.page(id).package() {
+            bail!("{} is one of the package {package}'s pages, so it is written in the package", self.page(id).title());
         }
         if self.page(id).generated {
             let Some(key) = self.type_of(id) else {
@@ -586,8 +649,8 @@ impl Library {
 
     /// Ticks or unticks a checklist box, and saves the page.
     pub fn set_task(&mut self, id: PageId, task: Task, done: bool) -> Result<()> {
-        if self.page(id).is_manual() {
-            bail!("{} is part of Voxear's manual, so its checklists are not kept", self.page(id).title());
+        if self.page(id).is_shelved() {
+            bail!("{} is not one of the project's pages, so its checklists are not kept", self.page(id).title());
         }
         if self.page(id).generated {
             bail!("a checklist on {} is ticked in its note, with Edit", self.page(id).title());
@@ -696,11 +759,36 @@ impl Library {
     }
 
     /// Where a page's path is on disk: in the manual's folder for the
-    /// manual's pages, in `Docs` for the project's.
+    /// manual's pages, in a package's `Docs` for its pages, and in the
+    /// project's `Docs` for the project's.
     fn disk(&self, path: &str) -> PathBuf {
+        if let Some(rest) = path.strip_prefix(PACKAGE_SCHEME) {
+            let (name, inside) = rest.split_once('/').unwrap_or((rest, ""));
+            if let Some(package) = self.packages.iter().find(|package| package.name == name) {
+                return package.folder.join(inside);
+            }
+        }
         match (path.strip_prefix(MANUAL_SCHEME), &self.manual) {
             (Some(path), Some(manual)) => manual.join(path),
             _ => self.root.join(path),
+        }
+    }
+
+    /// Each package's pages, after the manual: a folder under the package's
+    /// title, unless its own `_folder.md` gives another, read but not
+    /// written.
+    fn add_packages(&mut self, root: PageId) {
+        let packages: Vec<PackageDocs> = self.packages.iter().filter(|p| p.folder.is_dir()).cloned().collect();
+        for package in packages {
+            let first = self.pages.len();
+            let top = self.read_folder(format!("{PACKAGE_SCHEME}{}", package.name), Some(root));
+            self.pages[root.0].children.push(top);
+            if self.pages[top.0].header.title.is_empty() {
+                self.pages[top.0].header.title = package.title.clone();
+            }
+            for page in &mut self.pages[first..] {
+                page.generated = true;
+            }
         }
     }
 
@@ -814,6 +902,8 @@ impl Library {
         }
         let title = if page.is_manual() {
             Some(format!("{MANUAL_SCHEME}{}", page.title().to_lowercase()))
+        } else if let Some(package) = page.package() {
+            Some(format!("{PACKAGE_SCHEME}{package}/{}", page.title().to_lowercase()))
         } else {
             (!page.path.is_empty() && !page.generated).then(|| page.title().to_lowercase())
         };
@@ -852,9 +942,20 @@ fn join(folder: &str, name: &str) -> String {
 }
 
 /// A path relative to `folder`, made into one from `Docs`, or from the
-/// manual's folder for a folder of the manual, or `None` if it climbs out.
+/// manual's folder or a package's `Docs` for a folder of theirs, or `None`
+/// if it climbs out.
 fn combine(folder: &str, relative: &str) -> Option<String> {
-    let (top, folder) = folder.strip_prefix(MANUAL_SCHEME).map_or(("", folder), |folder| (MANUAL_SCHEME, folder));
+    let package = folder.strip_prefix(PACKAGE_SCHEME).map(|rest| {
+        let (name, inside) = rest.split_once('/').unwrap_or((rest, ""));
+        (format!("{PACKAGE_SCHEME}{name}/"), inside)
+    });
+    let (top, folder) = match package {
+        Some((top, inside)) => (top, inside),
+        None => match folder.strip_prefix(MANUAL_SCHEME) {
+            Some(folder) => (MANUAL_SCHEME.to_string(), folder),
+            None => (String::new(), folder),
+        },
+    };
     let mut parts: Vec<&str> = folder.split('/').filter(|p| !p.is_empty()).collect();
     for part in relative.split('/') {
         match part {

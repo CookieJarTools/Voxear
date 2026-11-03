@@ -70,7 +70,7 @@ use voxear_ui::{ImageRef, ItemFns, MenuItem, NodeId, TreeItems, Ui};
 use crate::{
     code::{CODE_SCHEME, CodeReference},
     health::Health,
-    library::{Excerpt, Library, MANUAL_SCHEME, Page, PageId, Target, unescape},
+    library::{Excerpt, Library, MANUAL_SCHEME, PACKAGE_SCHEME, PackageDocs, Page, PageId, Target, unescape},
     markdown::{self, PAGE_SCHEME},
     progress::Progress,
     view::{self, ACTION_SCHEME, CHECK_SCHEME, Lookups, Picture, Rendered},
@@ -134,13 +134,14 @@ impl TreeItems for PageTree {
     }
 }
 
-/// A page's icon in lists: the manual, a folder, a page, or a type of the
-/// Code Reference.
+/// A page's icon in lists: the manual, a package, a folder, a page, or a
+/// type of the Code Reference.
 fn page_icon(page: &Page) -> &'static str {
     match page {
         page if page.path == MANUAL_SCHEME => "book",
+        page if page.package().is_some_and(|name| page.path.len() == PACKAGE_SCHEME.len() + name.len()) => "box",
         page if page.is_folder => "folder",
-        page if page.generated && !page.is_manual() => "code",
+        page if page.generated && !page.is_shelved() => "code",
         _ => "file",
     }
 }
@@ -505,6 +506,17 @@ impl VoxDocs {
         }
     }
 
+    /// Shows the project's packages' pages beside the manual, each under
+    /// its title, in place of those it showed.
+    pub fn set_packages(&mut self, ui: &mut Ui, packages: Vec<PackageDocs>) {
+        self.library.borrow_mut().set_packages(packages);
+        ui.refresh_list(self.nodes.tree);
+        self.search(ui);
+        if !self.editing && !self.showing_health {
+            self.render(ui);
+        }
+    }
+
     /// Shows the Code Reference as `code` describes it, as the scripts were
     /// last built. A page of it being read stays open if its type is still
     /// there.
@@ -675,19 +687,23 @@ impl VoxDocs {
             .collect()
     }
 
-    /// The project's own pages and the manual's, linked by their titles, or
-    /// by their paths when another page shares the title.
+    /// The project's own pages, the manual's and the packages', linked by
+    /// their titles, or by their paths when another page shares the title.
     fn link_items(&self) -> Vec<(String, String)> {
         let library = self.library.borrow();
         let mut pages: Vec<(String, String)> = library
             .pages()
-            .filter(|(id, page)| (!page.generated || page.is_manual()) && *id != library.root() && *id != self.open)
+            .filter(|(id, page)| (!page.generated || page.is_shelved()) && *id != library.root() && *id != self.open)
             .map(|(id, page)| {
                 let title = page.title();
-                let named = if page.is_manual() { format!("{MANUAL_SCHEME}{title}") } else { title.to_string() };
+                let named = match page.package() {
+                    Some(package) => format!("{PACKAGE_SCHEME}{package}/{title}"),
+                    None if page.is_manual() => format!("{MANUAL_SCHEME}{title}"),
+                    None => title.to_string(),
+                };
                 let link = if library.find(&named) != Some(id) {
                     format!("[[{}|{title}]]", page.reference())
-                } else if page.is_manual() {
+                } else if page.is_shelved() {
                     format!("[[{named}|{title}]]")
                 } else {
                     format!("[[{title}]]")
@@ -1108,7 +1124,8 @@ impl VoxDocs {
             Target::Heading(anchor) => self.pending_anchor = Some(anchor),
             // A type no longer in the code, or a page the manual does not
             // have: there is nothing to write.
-            Target::Missing(name) if name.starts_with(CODE_SCHEME) || name.starts_with(MANUAL_SCHEME) => {}
+            Target::Missing(name)
+                if [CODE_SCHEME, MANUAL_SCHEME, PACKAGE_SCHEME].iter().any(|scheme| name.starts_with(scheme)) => {}
             Target::Missing(name) => self.write_missing(ui, &name),
             Target::Web(url) => open_in_browser(&url),
             Target::File(path) => self.file_request = Some(path),

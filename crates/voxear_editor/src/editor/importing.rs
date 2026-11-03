@@ -28,7 +28,7 @@ use std::{
     time::SystemTime,
 };
 
-use voxear_assets::meta_path;
+use voxear_assets::Mounts;
 use voxear_render::Renderer;
 
 use super::Editor;
@@ -68,12 +68,12 @@ impl Editor {
     /// again: a model itself, and for a picture each model in use that
     /// reads it.
     pub(super) fn apply_import_settings(&mut self, path: &str, settings: &ImportSettings, renderer: &mut Renderer) {
-        let file = self.game.project.root.join(path);
-        let written = match settings {
-            ImportSettings::Model(settings) => settings.write(&file),
-            ImportSettings::Texture(settings) => settings.write(&file),
-            ImportSettings::Sound(settings) => settings.write(&file),
-        };
+        // A package's from the package cache are written into the project's settings for it.
+        let written = self.game.content.db().mounts().writable_meta(path).and_then(|meta| match settings {
+            ImportSettings::Model(settings) => settings.write_meta(&meta),
+            ImportSettings::Texture(settings) => settings.write_meta(&meta),
+            ImportSettings::Sound(settings) => settings.write_meta(&meta),
+        });
         if let Err(error) = written {
             self.notify(&format!("Could not save the import settings of {path}: {error:#}"));
             return;
@@ -89,10 +89,10 @@ impl Editor {
             let name = path.rsplit('/').next().unwrap_or(path);
             return self.notify(&format!("Saved the import settings of {name}; it plays with them from now on"));
         }
-        let root = self.game.project.root.clone();
+        let mounts = self.game.content.db().mounts().clone();
         let changed = HashSet::from([&meta]);
         let models: Vec<String> =
-            self.game.content.loaded_models().into_iter().filter(|model| reads_any(&root, model, &changed)).collect();
+            self.game.content.loaded_models().into_iter().filter(|model| reads_any(&mounts, model, &changed)).collect();
         for model in &models {
             self.reimport_model(model, renderer);
         }
@@ -107,8 +107,8 @@ impl Editor {
     /// Notes that the editor wrote the `.meta` of the asset at `path`, so it
     /// is not a change from outside to import again for.
     pub(super) fn wrote_meta(&mut self, path: &str) {
-        let file = self.game.project.root.join(path);
-        if let Ok(time) = meta_path(&file).metadata().and_then(|m| m.modified()) {
+        let meta = self.game.content.db().mounts().meta_file(path);
+        if let Ok(time) = meta.metadata().and_then(|m| m.modified()) {
             self.imports.times.insert(format!("{path}.meta"), time);
         }
     }
@@ -199,7 +199,11 @@ impl Editor {
             dropped.iter().find_map(|(_, folder)| folder.clone()).unwrap_or_else(|| self.project.open_folder());
         let files: Vec<PathBuf> = dropped.into_iter().map(|(file, _)| file).collect();
         let shown = if folder.is_empty() { self.game.project.name().to_string() } else { folder.clone() };
-        match project_files::bring_in(&self.game.project.root, &folder, &files) {
+        let brought = project_files::place(self.game.content.db().mounts(), &folder).and_then(|at| {
+            let brought = project_files::bring_in(&at.root, &at.path, &files)?;
+            Ok(brought.iter().map(|path| at.back(path)).collect::<Vec<_>>())
+        });
+        match brought {
             Ok(brought) => {
                 let last = brought.last().cloned();
                 self.project_event(ProjectEvent::Changed { select: last, rename: false }, renderer);
@@ -233,7 +237,7 @@ impl Editor {
                 .content
                 .loaded_models()
                 .into_iter()
-                .filter(|model| reads_any(&root, model, &changed))
+                .filter(|model| reads_any(self.game.content.db().mounts(), model, &changed))
                 .collect(),
         };
         // A string table or input actions edited outside the editor are read again; ones that came or went
@@ -267,12 +271,12 @@ impl Editor {
 
 /// Whether the model at `path` reads any of `files`: itself, or a buffer or
 /// picture it names, or the `.meta` of any of them.
-fn reads_any(root: &Path, path: &str, files: &HashSet<&String>) -> bool {
+fn reads_any(mounts: &Mounts, path: &str, files: &HashSet<&String>) -> bool {
     let has = |file: &str| files.iter().any(|changed| changed.as_str() == file);
     if has(path) || has(&format!("{path}.meta")) {
         return true;
     }
-    let Ok(bytes) = std::fs::read(root.join(path)) else { return false };
+    let Ok(bytes) = std::fs::read(mounts.file(path)) else { return false };
     let companions = voxear_render::companion_files(path, &bytes).unwrap_or_default();
     companions.iter().any(|file| has(file) || has(&format!("{file}.meta")))
 }

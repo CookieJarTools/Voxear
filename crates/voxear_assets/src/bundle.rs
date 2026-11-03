@@ -21,7 +21,7 @@ use anyhow::{Context, Result, bail, ensure};
 use crate::io::{Io, ReadAt};
 use serde::{Deserialize, Serialize};
 
-use crate::{AssetEntry, AssetGuid, AssetKind, reader::AssetReader};
+use crate::{AssetEntry, AssetGuid, AssetKind, Mount, reader::AssetReader};
 
 pub const CATALOG_FILE: &str = "catalog.toml";
 pub const CATALOG_FORMAT: u32 = 1;
@@ -62,6 +62,9 @@ pub struct CatalogAsset {
     /// meshes, LODs, textures and materials in Voxear's own format.
     #[serde(default, skip_serializing_if = "is_false")]
     pub cooked: bool,
+    /// The package it is from, by name, for one of a package's assets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -132,7 +135,10 @@ impl Catalog {
     pub fn entries(&self) -> Result<Vec<AssetEntry>> {
         self.assets
             .iter()
-            .map(|a| Ok(AssetEntry { guid: a.guid.parse::<AssetGuid>()?, path: a.path.clone(), kind: a.kind }))
+            .map(|a| {
+                let mount = a.package.clone().map_or(Mount::Project, Mount::Package);
+                Ok(AssetEntry { guid: a.guid.parse::<AssetGuid>()?, path: a.path.clone(), kind: a.kind, mount })
+            })
             .collect()
     }
 }
@@ -328,6 +334,7 @@ mod tests {
                 bundle: 0,
                 files: vec![packed.clone(), tiny.clone()],
                 cooked: false,
+                package: None,
             };
             // Through the catalog's own text, as a player reads it.
             Catalog { format: CATALOG_FORMAT, bundles: vec![bundle], assets: vec![asset] }.write(dir.path()).unwrap();

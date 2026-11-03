@@ -31,6 +31,14 @@
 //! the model when it is first opened out ([`ProjectEvent::WantsParts`]).
 //! A part can be dragged onto a field that takes one, as a mesh onto a Mesh
 //! Renderer's Mesh. With the setting on, a prefab opens out to its Objs.
+//!
+//! Below the project's folder in the tree, as in Unity's Project window, a
+//! Packages section has a folder for each of the project's packages, under
+//! its title, with its assets and scripts, by `Packages/<name>/…` paths. Their
+//! assets drag onto fields as the project's do. A package from the package
+//! cache is read-only: nothing in it is renamed, moved, deleted or made, and
+//! nothing dropped on it lands there. A folder package is the developer's
+//! own, and its files change as the project's do, in its own folder.
 
 use std::{
     cell::RefCell,
@@ -39,7 +47,7 @@ use std::{
     rc::Rc,
 };
 
-use voxear_assets::{AssetDb, AssetKind};
+use voxear_assets::{Access, AssetDb, AssetKind, Mount, Mounts, PACKAGES_FOLDER};
 use voxear_ui::{DragSource, ImageRef, ListItems, MenuItem, NodeId, Style, TreeItems, Ui};
 
 use crate::project_files::{self, NewFile};
@@ -148,11 +156,18 @@ enum FileKind {
 
 struct Folder {
     name: String,
-    /// From the project's folder; empty for the project's own.
+    /// From the project's folder; empty for the project's own, and
+    /// `Packages/<name>/…` in a package.
     path: String,
     parent: Option<usize>,
     folders: Vec<usize>,
     files: Vec<usize>,
+    /// What is in it never changes: a package's from the package cache, or
+    /// the Packages section, which holds only the packages.
+    read_only: bool,
+    /// It is not renamed, moved or deleted: the Packages section, or a
+    /// package's own folder, which the Package Manager adds and removes.
+    fixed: bool,
 }
 
 struct File {
@@ -161,6 +176,8 @@ struct File {
     path: String,
     kind: FileKind,
     size: u64,
+    /// In a package from the package cache.
+    read_only: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -195,6 +212,10 @@ struct Contents {
     prefab_parts: bool,
     /// Each opening arrow made, with the place in `listing` it opens.
     arrows: Vec<(NodeId, Option<usize>)>,
+    /// The Packages section beside the project's folder, when the project
+    /// has packages, and each package's folder in it by the package's name.
+    packages: Option<usize>,
+    package_folders: HashMap<String, usize>,
 }
 
 impl Contents {
@@ -309,6 +330,16 @@ impl Contents {
         }
     }
 
+    /// Whether an entry stays as it is: not renamed, moved or deleted. A
+    /// part is never a file of its own.
+    fn is_fixed(&self, entry: Entry) -> bool {
+        match entry {
+            Entry::Folder(folder) => self.folders[folder].fixed || self.folders[folder].read_only,
+            Entry::File(file) => self.files[file].read_only,
+            Entry::Part(..) => true,
+        }
+    }
+
     /// The project path of a file or folder, but not of the project's own
     /// folder or of a part of a file.
     fn entry_path(&self, entry: Entry) -> Option<String> {
@@ -338,7 +369,8 @@ struct FolderItems(Shared, FolderRows);
 impl TreeItems for FolderItems {
     fn children(&self, parent: Option<u64>) -> Vec<u64> {
         match parent {
-            None => vec![0],
+            // The project's folder, and the Packages section after it, as in Unity's Project window.
+            None => std::iter::once(0).chain(self.0.borrow().packages.map(|p| p as u64)).collect(),
             Some(parent) => self.0.borrow().folders[parent as usize].folders.iter().map(|&f| f as u64).collect(),
         }
     }
@@ -473,6 +505,8 @@ pub struct ProjectView {
     root: PathBuf,
     name: String,
     namespace: String,
+    /// Where the files are on disk: the project's, and its packages'.
+    mounts: Mounts,
     /// The rename bar and its field, and what is being renamed.
     rename_bar: NodeId,
     rename_field: NodeId,
@@ -499,6 +533,7 @@ impl ProjectView {
         let size = find(ui, "project-size");
         ui.set_visible(rename_bar, false);
         let contents = Rc::new(RefCell::new(scan(name, root, db)));
+        let mounts = db.mounts().clone();
         let folder_rows = FolderRows::default();
         ui.bind_tree(folder_tree, FolderItems(contents.clone(), folder_rows.clone()));
         ui.set_expanded(folder_tree, 0, true);
@@ -516,6 +551,7 @@ impl ProjectView {
             root: root.to_path_buf(),
             name: name.to_string(),
             namespace: namespace.to_string(),
+            mounts,
             rename_bar,
             rename_field,
             renaming: None,
@@ -601,7 +637,7 @@ impl ProjectView {
         else {
             return None;
         };
-        let path = contents.entry_path(from).filter(|_| from != Entry::Folder(folder))?;
+        let path = contents.entry_path(from).filter(|_| from != Entry::Folder(folder) && !contents.is_fixed(from))?;
         Some(ProjectEvent::Move { path, folder: contents.folders[folder].path.clone() })
     }
 
@@ -634,12 +670,16 @@ impl ProjectView {
     /// make a prefab in the folder it is let go of on.
     pub fn take_drops(&self, ui: &mut Ui, take: bool) {
         let contents = self.contents.borrow();
+        let open = |folder: usize| !contents.folders.get(folder).is_some_and(|f| f.read_only);
         for &(tile, at) in &contents.tiles {
-            let folder = at.and_then(|at| contents.listing.get(at)).is_some_and(|e| matches!(e, Entry::Folder(_)));
-            ui.accept_drops(tile, take && folder);
+            let folder = at.and_then(|at| contents.listing.get(at)).and_then(|e| match e {
+                Entry::Folder(folder) => Some(*folder),
+                _ => None,
+            });
+            ui.accept_drops(tile, take && folder.is_some_and(open));
         }
-        for &(row, _) in self.folder_rows.borrow().iter() {
-            ui.accept_drops(row, take);
+        for &(row, folder) in self.folder_rows.borrow().iter() {
+            ui.accept_drops(row, take && open(folder as usize));
         }
     }
 
@@ -648,6 +688,7 @@ impl ProjectView {
     pub fn refresh(&mut self, ui: &mut Ui, db: &AssetDb, select: Option<&str>) {
         let open = self.contents.borrow().folders.get(self.open).map(|f| f.path.clone()).unwrap_or_default();
         let mut contents = scan(&self.name, &self.root, db);
+        self.mounts = db.mounts().clone();
         // So the rows are made again for the new contents, whichever kind fits.
         contents.columns = usize::MAX;
         {
@@ -734,7 +775,7 @@ impl ProjectView {
     pub fn start_rename(&mut self, ui: &mut Ui) {
         let Some(entry) = self.contents.borrow().selected else { return };
         let item = self.contents.borrow().item(entry);
-        if item.path.is_empty() {
+        if item.path.is_empty() || self.contents.borrow().is_fixed(entry) {
             return;
         }
         let name = match item.kind {
@@ -759,7 +800,9 @@ impl ProjectView {
         if ui.submitted(self.rename_field) {
             self.end_rename(ui);
             let name = ui.text(self.rename_field);
-            return Some(match project_files::rename(&self.root, &path, &name) {
+            let renamed = project_files::item_place(&self.mounts, &path)
+                .and_then(|at| project_files::rename(&at.root, &at.path, &name).map(|renamed| at.back(&renamed)));
+            return Some(match renamed {
                 Ok(renamed) => ProjectEvent::Changed { select: Some(renamed), rename: false },
                 Err(error) => ProjectEvent::Notice(format!("{error:#}")),
             });
@@ -809,11 +852,22 @@ impl ProjectView {
             actions.push(action);
         };
         let is_root = entry == Some(Entry::Folder(0));
+        // A package from the cache, and the Packages section, change in the Package Manager alone.
+        let (fixed, open_to_new) = {
+            let contents = self.contents.borrow();
+            let folder = match entry {
+                Some(Entry::Folder(folder)) => folder,
+                _ => self.open,
+            };
+            let fixed = entry.is_some_and(|entry| contents.is_fixed(entry));
+            (fixed, !contents.folders.get(folder).is_some_and(|f| f.read_only))
+        };
         if let Some(entry) = entry {
             add(MenuItem::new("Open"), Some(MenuAction::Open));
             let contents = self.contents.borrow();
             let scene =
                 matches!(entry, Entry::File(file) if contents.files[file].kind == FileKind::Asset(AssetKind::Scene));
+            let duplicates = matches!(entry, Entry::File(_)) && open_to_new;
             drop(contents);
             if scene {
                 add(MenuItem::new("Open Additively"), Some(MenuAction::OpenAdditively));
@@ -821,18 +875,18 @@ impl ProjectView {
             add(MenuItem::new("Show in Files"), Some(MenuAction::Reveal));
             add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
             add(MenuItem::separator(), None);
-            add(MenuItem::new("Rename").enabled(!is_root), Some(MenuAction::Rename));
-            add(MenuItem::new("Duplicate").enabled(matches!(entry, Entry::File(_))), Some(MenuAction::Duplicate));
-            add(MenuItem::new("Delete").enabled(!is_root), Some(MenuAction::Delete));
+            add(MenuItem::new("Rename").enabled(!is_root && !fixed), Some(MenuAction::Rename));
+            add(MenuItem::new("Duplicate").enabled(duplicates && !fixed), Some(MenuAction::Duplicate));
+            add(MenuItem::new("Delete").enabled(!is_root && !fixed), Some(MenuAction::Delete));
         } else {
             add(MenuItem::new("Show in Files"), Some(MenuAction::Reveal));
             add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
         }
         add(MenuItem::separator(), None);
-        add(MenuItem::new("Import New Asset…"), Some(MenuAction::Import));
+        add(MenuItem::new("Import New Asset…").enabled(open_to_new), Some(MenuAction::Import));
         add(MenuItem::separator(), None);
         for kind in NewFile::ALL {
-            add(MenuItem::new(kind.label()), Some(MenuAction::New(kind)));
+            add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind)));
         }
         let at = ui.pointer_position().unwrap_or_default();
         ui.open_menu(owner, at, &items);
@@ -864,7 +918,9 @@ impl ProjectView {
             MenuAction::OpenAdditively => vec![ProjectEvent::OpenAdditively(item)],
             MenuAction::Reveal => {
                 let shown = if item.kind == ItemKind::Folder { item.path.as_str() } else { parent(&item.path) };
-                show_in_files(&self.root.join(shown));
+                let folder = self.mounts.file(shown);
+                // The Packages section is no folder of its own; the project's is shown for it.
+                show_in_files(if folder.is_dir() { &folder } else { &self.root });
                 Vec::new()
             }
             MenuAction::CopyPath => {
@@ -875,21 +931,32 @@ impl ProjectView {
                 self.start_rename(ui);
                 Vec::new()
             }
-            MenuAction::Duplicate => match project_files::duplicate(&self.root, &item.path) {
-                Ok(copy) => vec![ProjectEvent::Changed { select: Some(copy), rename: false }],
-                Err(error) => failed(error),
-            },
-            MenuAction::Delete => match project_files::trash(&self.root, &item.path) {
-                Ok(_) => vec![
-                    ProjectEvent::Changed { select: None, rename: false },
-                    ProjectEvent::Notice(format!("Moved {} to the project's .voxear/Trash", item.name)),
-                ],
-                Err(error) => failed(error),
-            },
+            MenuAction::Duplicate => {
+                let copied = project_files::item_place(&self.mounts, &item.path)
+                    .and_then(|at| project_files::duplicate(&at.root, &at.path).map(|copy| at.back(&copy)));
+                match copied {
+                    Ok(copy) => vec![ProjectEvent::Changed { select: Some(copy), rename: false }],
+                    Err(error) => failed(error),
+                }
+            }
+            MenuAction::Delete => {
+                let trashed = project_files::item_place(&self.mounts, &item.path)
+                    .and_then(|at| project_files::trash(&at.root, &at.path, &self.root));
+                match trashed {
+                    Ok(_) => vec![
+                        ProjectEvent::Changed { select: None, rename: false },
+                        ProjectEvent::Notice(format!("Moved {} to .voxear/Trash", item.name)),
+                    ],
+                    Err(error) => failed(error),
+                }
+            }
             MenuAction::Import => vec![ProjectEvent::Import { folder: self.contents.borrow().folders[folder].path.clone() }],
             MenuAction::New(kind) => {
                 let at = self.contents.borrow().folders[folder].path.clone();
-                match project_files::create(&self.root, &at, kind, &self.namespace) {
+                let made = project_files::place(&self.mounts, &at).and_then(|at| {
+                    project_files::create(&at.root, &at.path, kind, &self.namespace).map(|made| at.back(&made))
+                });
+                match made {
                     Ok(made) => vec![ProjectEvent::Changed { select: Some(made), rename: true }],
                     Err(error) => failed(error),
                 }
@@ -937,9 +1004,14 @@ impl ProjectView {
     /// Opens the folder `path` is in, and finds the file there: its place
     /// in the listing, and its entry.
     fn open_folder_of(&mut self, ui: &mut Ui, path: &str) -> Option<(usize, Entry)> {
+        // A package's files are found from its folder in the Packages section.
+        let (mount, local) = self.mounts.locate(path);
+        let (mut folder, path) = match mount.package() {
+            Some(package) => (*self.contents.borrow().package_folders.get(package)?, local),
+            None => (0, path),
+        };
         let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         let name = parts.pop().unwrap_or_default();
-        let mut folder = 0;
         for part in parts {
             let contents = self.contents.borrow();
             let child = contents.folders[folder].folders.iter().find(|&&f| contents.folders[f].name == part)?;
@@ -1030,7 +1102,12 @@ impl ProjectView {
             DragSource::Element(tile) => contents.tiles.iter().find(|(node, _)| *node == tile)?.1?,
             _ => return None,
         };
-        contents.entry_path(*contents.listing.get(at)?)
+        let entry = *contents.listing.get(at)?;
+        // A package's files from the cache, and packages themselves, stay where they are.
+        if contents.is_fixed(entry) {
+            return None;
+        }
+        contents.entry_path(entry)
     }
 
     /// The project path of the asset being dragged, when it is one of this
@@ -1090,7 +1167,7 @@ impl ProjectView {
         if !contents.opened.remove(&path) {
             contents.opened.insert(path.clone());
             if kind == FileKind::Asset(AssetKind::Prefab) {
-                let objs = prefab_objs(&self.root.join(&path));
+                let objs = prefab_objs(&self.mounts.file(&path));
                 contents.parts.insert(path.clone(), objs);
             }
         }
@@ -1143,10 +1220,18 @@ fn prefab_objs(file: &Path) -> Vec<AssetPart> {
 
 /// The project's folders and files: its assets, its C# scripts, and every
 /// folder, empty ones too, leaving out build output and hidden folders such
-/// as `.voxear`.
+/// as `.voxear`. Then the Packages section, when the project has packages:
+/// a folder for each, under its title, with its assets, scripts and folders.
 fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
-    let top =
-        Folder { name: name.to_string(), path: String::new(), parent: None, folders: Vec::new(), files: Vec::new() };
+    let top = Folder {
+        name: name.to_string(),
+        path: String::new(),
+        parent: None,
+        folders: Vec::new(),
+        files: Vec::new(),
+        read_only: false,
+        fixed: true,
+    };
     let mut contents = Contents {
         folders: vec![top],
         files: Vec::new(),
@@ -1161,31 +1246,114 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         opened: HashSet::new(),
         prefab_parts: false,
         arrows: Vec::new(),
+        packages: None,
+        package_folders: HashMap::new(),
     };
-    let mut paths: Vec<(String, FileKind)> = db.entries().map(|e| (e.path.clone(), FileKind::Asset(e.kind))).collect();
+    let mounts = db.mounts();
+    // Folder packages kept in the project's folder show in the Packages section, not twice.
+    let inside: Vec<PathBuf> = mounts.packages().iter().filter_map(|p| p.root.canonicalize().ok()).collect();
+    let is_package = |folder: &Path| !inside.is_empty() && folder.canonicalize().is_ok_and(|f| inside.contains(&f));
+    // A Packages folder that only holds them is not shown empty beside the section.
+    let packages_folder = root.join(PACKAGES_FOLDER);
+    let only_packages = !inside.is_empty()
+        && std::fs::read_dir(&packages_folder).is_ok_and(|entries| {
+            entries.flatten().all(|e| e.file_name().to_string_lossy().starts_with('.') || is_package(&e.path()))
+        });
+    let skip = |folder: &Path| is_package(folder) || (only_packages && folder == packages_folder);
+    let own = db.entries().filter(|e| e.mount == Mount::Project);
+    let mut paths: Vec<(String, FileKind)> = own.map(|e| (e.path.clone(), FileKind::Asset(e.kind))).collect();
     let mut folders = Vec::new();
-    scripts(root, root, &mut paths, &mut folders);
+    scripts(root, root, &mut paths, &mut folders, &skip);
+    fill(&mut contents, 0, folders, paths, |path| root.join(path));
+
+    let mut packages = mounts.packages().to_vec();
+    if packages.is_empty() {
+        return contents;
+    }
+    packages.sort_by_key(|package| package.title.to_lowercase());
+    let section = Folder {
+        name: PACKAGES_FOLDER.to_string(),
+        path: PACKAGES_FOLDER.to_string(),
+        parent: None,
+        folders: Vec::new(),
+        files: Vec::new(),
+        read_only: true,
+        fixed: true,
+    };
+    contents.folders.push(section);
+    let section = contents.folders.len() - 1;
+    contents.packages = Some(section);
+    for package in packages {
+        let mount = package.mount();
+        contents.folders.push(Folder {
+            name: package.title.clone(),
+            path: mount.content_path(""),
+            parent: Some(section),
+            folders: Vec::new(),
+            files: Vec::new(),
+            read_only: package.access == Access::ReadOnly,
+            fixed: true,
+        });
+        let folder = contents.folders.len() - 1;
+        contents.folders[section].folders.push(folder);
+        contents.package_folders.insert(package.name.clone(), folder);
+        let assets = db.entries().filter(|e| e.mount == mount);
+        let prefix = format!("{}/", mount.content_path(""));
+        let local = |path: &str| path.strip_prefix(&prefix).unwrap_or(path).to_string();
+        let mut paths: Vec<(String, FileKind)> = assets.map(|e| (local(&e.path), FileKind::Asset(e.kind))).collect();
+        let mut folders = Vec::new();
+        // A package's pages and samples are read in VoxDocs and the Package Manager, not here.
+        let extra = |folder: &Path| folder.parent() == Some(package.root.as_path()) && is_package_extra(folder);
+        scripts(&package.root, &package.root, &mut paths, &mut folders, &extra);
+        let paths = paths.into_iter().map(|(path, kind)| (mount.content_path(&path), kind)).collect();
+        let folders = folders.into_iter().map(|path| mount.content_path(&path)).collect();
+        fill(&mut contents, folder, folders, paths, |path| mounts.file(path));
+    }
+    contents
+}
+
+/// Whether a folder at a package's top holds its VoxDocs pages or samples.
+fn is_package_extra(folder: &Path) -> bool {
+    folder.file_name().is_some_and(|name| name == "Docs" || name == "Samples")
+}
+
+/// Puts folders and files, by their paths, into `top` and the folders below
+/// it, a package's from its own folder. `file` says where each is on disk,
+/// for its size.
+fn fill(
+    contents: &mut Contents,
+    top: usize,
+    mut folders: Vec<String>,
+    mut paths: Vec<(String, FileKind)>,
+    file: impl Fn(&str) -> PathBuf,
+) {
+    let base = contents.folders[top].path.clone();
+    let prefix = format!("{base}/");
+    let within = |path: &str| -> String {
+        if base.is_empty() { path.to_string() } else { path.strip_prefix(&prefix).unwrap_or(path).to_string() }
+    };
     folders.sort_by_key(|path| path.to_lowercase());
     for path in folders {
-        let mut folder = 0;
-        for part in path.split('/') {
-            folder = child_folder(&mut contents, folder, part);
+        let mut folder = top;
+        for part in within(&path).split('/') {
+            folder = child_folder(contents, folder, part);
         }
     }
     paths.sort_by_key(|(path, _)| path.to_lowercase());
     for (path, kind) in paths {
-        let size = std::fs::metadata(root.join(&path)).map_or(0, |m| m.len());
-        let mut parts: Vec<&str> = path.split('/').collect();
+        let size = std::fs::metadata(file(&path)).map_or(0, |m| m.len());
+        let inside = within(&path);
+        let mut parts: Vec<&str> = inside.split('/').collect();
         let file_name = parts.pop().unwrap_or_default().to_string();
-        let mut folder = 0;
+        let mut folder = top;
         for part in parts {
-            folder = child_folder(&mut contents, folder, part);
+            folder = child_folder(contents, folder, part);
         }
-        contents.files.push(File { name: file_name, path: path.clone(), kind, size });
+        let read_only = contents.folders[folder].read_only;
+        contents.files.push(File { name: file_name, path: path.clone(), kind, size, read_only });
         let file = contents.files.len() - 1;
         contents.folders[folder].files.push(file);
     }
-    contents
 }
 
 /// The folder called `name` in `parent`, made if it is not there yet.
@@ -1194,12 +1362,15 @@ fn child_folder(contents: &mut Contents, parent: usize, name: &str) -> usize {
     found.unwrap_or_else(|| {
         let at = &contents.folders[parent].path;
         let path = if at.is_empty() { name.to_string() } else { format!("{at}/{name}") };
+        let read_only = contents.folders[parent].read_only;
         contents.folders.push(Folder {
             name: name.to_string(),
             path,
             parent: Some(parent),
             folders: Vec::new(),
             files: Vec::new(),
+            read_only,
+            fixed: false,
         });
         let folder = contents.folders.len() - 1;
         contents.folders[parent].folders.push(folder);
@@ -1208,18 +1379,24 @@ fn child_folder(contents: &mut Contents, parent: usize, name: &str) -> usize {
 }
 
 /// C# scripts and folders under `dir`, relative to `root`, leaving out build
-/// output and hidden folders such as `.voxear`.
-fn scripts(root: &Path, dir: &Path, found: &mut Vec<(String, FileKind)>, folders: &mut Vec<String>) {
+/// output, hidden folders such as `.voxear`, and folders `skip` says to.
+fn scripts(
+    root: &Path,
+    dir: &Path,
+    found: &mut Vec<(String, FileKind)>,
+    folders: &mut Vec<String>,
+    skip: &dyn Fn(&Path) -> bool,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
-            if !name.starts_with('.') && name != "bin" && name != "obj" {
+            if !name.starts_with('.') && name != "bin" && name != "obj" && !skip(&path) {
                 if let Ok(relative) = path.strip_prefix(root) {
                     folders.push(relative.to_string_lossy().replace('\\', "/"));
                 }
-                scripts(root, &path, found, folders);
+                scripts(root, &path, found, folders, skip);
             }
         } else if name.ends_with(".cs")
             && let Ok(relative) = path.strip_prefix(root)
@@ -1256,5 +1433,69 @@ pub(crate) fn show_in_files(folder: &Path) {
         // Waited on elsewhere, so it does not linger once it ends.
         Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
         Err(error) => tracing::warn!("could not open {}: {error}", folder.display()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use voxear_assets::PackageMount;
+
+    use super::*;
+
+    fn touch(root: &Path, file: &str) {
+        let path = root.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+
+    #[test]
+    fn packages_show_in_a_section_of_their_own_and_a_cached_one_is_read_only() {
+        let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        touch(project.path(), "Scenes/Main.scene");
+        let mine = project.path().join("Packages/my-tools");
+        for file in ["package.toml", "Rocks/Rock.png", "Scripts/Rocks.cs"] {
+            touch(&mine, file);
+        }
+        let orbit = cache.path().join("orbit-tools-1a2b");
+        for file in ["package.toml", "Prefabs/Rig.prefab", "Scripts/Orbit.cs", "Docs/Orbit.md", "Samples/A/A.level"] {
+            touch(&orbit, file);
+        }
+        let package = |name: &str, title: &str, root: &Path, access| PackageMount {
+            name: name.into(),
+            title: title.into(),
+            root: root.to_path_buf(),
+            access,
+        };
+        let mounts = Mounts::new(
+            project.path(),
+            vec![
+                package("orbit-tools", "Orbit Tools", &orbit, Access::ReadOnly),
+                package("my-tools", "My Tools", &mine, Access::Editable),
+            ],
+        );
+        let (db, _) = AssetDb::scan_mounted(mounts).unwrap();
+        let contents = scan("Game", project.path(), &db);
+
+        let top = |folder: usize| -> Vec<&str> {
+            contents.folders[folder].folders.iter().map(|&f| contents.folders[f].name.as_str()).collect()
+        };
+        assert_eq!(top(0), ["Scenes"], "a folder package in the project shows once, as a package");
+        let section = contents.packages.expect("a Packages section");
+        assert_eq!(top(section), ["My Tools", "Orbit Tools"], "by title");
+
+        let orbit = contents.package_folders["orbit-tools"];
+        assert_eq!(contents.folders[orbit].path, "Packages/orbit-tools");
+        assert_eq!(top(orbit), ["Prefabs", "Scripts"], "not its pages or samples");
+        let file = |path: &str| contents.files.iter().position(|f| f.path == path).map(Entry::File);
+        let rig = file("Packages/orbit-tools/Prefabs/Rig.prefab").expect("its prefab");
+        assert!(contents.is_fixed(rig), "a cached package's file stays as it is");
+        assert!(file("Packages/orbit-tools/Scripts/Orbit.cs").is_some_and(|script| contents.is_fixed(script)));
+        assert!(contents.is_fixed(Entry::Folder(orbit)) && contents.is_fixed(Entry::Folder(section)));
+
+        let rock = file("Packages/my-tools/Rocks/Rock.png").expect("a folder package's picture");
+        assert!(!contents.is_fixed(rock), "a folder package's files change");
+        let mine = contents.package_folders["my-tools"];
+        assert!(contents.is_fixed(Entry::Folder(mine)), "but the package itself is removed in the Package Manager");
+        assert!(!contents.folders[mine].read_only, "and files can be made in it");
     }
 }

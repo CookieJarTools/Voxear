@@ -122,11 +122,12 @@ impl Game {
     }
 
     /// Reads the project's input actions: its `.inputactions` file, the
-    /// first by path when it has several, or else Voxear's own.
+    /// first by path when it has several, or else Voxear's own. A package's
+    /// are its own, and never the game's.
     pub fn load_input_actions(&mut self) {
         let db = self.content.db();
         let mut files: Vec<(String, AssetGuid)> = (db.entries())
-            .filter(|entry| entry.kind == AssetKind::InputActions)
+            .filter(|entry| entry.kind == AssetKind::InputActions && entry.mount == voxear_assets::Mount::Project)
             .map(|entry| (entry.path.clone(), entry.guid))
             .collect();
         files.sort();

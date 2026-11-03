@@ -482,6 +482,7 @@ impl Editor {
         let docs_panel = find(&ui, "docs");
         let mut docs = voxear_docs::VoxDocs::new(&mut ui, docs_panel, &root, game.project.name());
         docs.set_manual(&mut ui, &voxear_engine::manual_folder());
+        docs.set_packages(&mut ui, package_docs(game.content.db().mounts()));
         if let Some(code) = code_reference(&game.project) {
             docs.set_code(&mut ui, code);
         }
@@ -972,9 +973,13 @@ impl Editor {
         }
         let name = self.game.engine.world.get::<Name>(entity).map(|n| n.0.clone()).unwrap_or_else(|| "Obj".into());
         let stem: String = name.chars().filter(|c| !r#"/\:*?"<>|"#.contains(*c)).collect();
-        let root = self.game.project.root.clone();
-        let path = crate::project_files::free_path(&root, folder, stem.trim(), ".prefab");
-        match objs::make_prefab(&mut self.game, Some(renderer), entity, &root.join(&path), &path) {
+        let at = match crate::project_files::place(self.game.content.db().mounts(), folder) {
+            Ok(at) => at,
+            Err(error) => return self.notify(&format!("Could not make a prefab of {name}: {error:#}")),
+        };
+        let local = crate::project_files::free_path(&at.root, &at.path, stem.trim(), ".prefab");
+        let path = at.back(&local);
+        match objs::make_prefab(&mut self.game, Some(renderer), entity, &at.root.join(&local), &path) {
             Ok((instance, taken)) => {
                 let made = Edit::Exists { root: instance, taken: None };
                 let replaced = Edit::Exists { root: entity, taken: Some(taken) };
@@ -1009,7 +1014,7 @@ impl Editor {
             ItemKind::Asset(AssetKind::Scene) => self.level_action(LevelAction::OpenScene(item.path.clone()), renderer),
             ItemKind::Asset(AssetKind::Prefab) => self.open_prefab(&item.path.clone(), renderer),
             ItemKind::Script => {
-                let file = self.game.project.root.join(&item.path);
+                let file = self.game.content.db().file(&item.path);
                 self.open_source(&file, 1);
             }
             ItemKind::Asset(AssetKind::InputActions) => self.show_panel("input"),
@@ -1069,11 +1074,12 @@ impl Editor {
             playing,
             settings: &memory.settings,
             recent: &memory.recent,
-            // The project's own pages and the manual's: the Code Reference's would crowd out everything else.
+            // The project's own pages, the manual's and the packages': the Code Reference's would crowd out
+            // everything else.
             docs: docs
                 .library()
                 .pages()
-                .filter(|(_, page)| !page.generated || page.is_manual())
+                .filter(|(_, page)| !page.generated || page.is_shelved())
                 .map(|(_, page)| (page.title().to_string(), page.reference().to_string()))
                 .collect(),
             added,
@@ -2374,6 +2380,21 @@ fn script_namespace(project: &Project) -> String {
         Some(text[start..end].trim().to_string())
     });
     declared.unwrap_or_else(|| voxear_engine::new_project::namespace(project.name()))
+}
+
+/// The pages of the packages whose assets the content has mounted, for
+/// VoxDocs to show beside the manual: each package's `Docs` folder, under
+/// its title.
+pub(crate) fn package_docs(mounts: &voxear_assets::Mounts) -> Vec<voxear_docs::PackageDocs> {
+    let docs = voxear_engine::packages::contents::DOCS_FOLDER;
+    let packages = mounts.packages().iter();
+    packages
+        .map(|package| voxear_docs::PackageDocs {
+            name: package.name.clone(),
+            title: package.title.clone(),
+            folder: package.root.join(docs),
+        })
+        .collect()
 }
 
 /// The Code Reference for VoxDocs, as the scripts were last described, if

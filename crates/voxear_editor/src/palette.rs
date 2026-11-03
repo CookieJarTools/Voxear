@@ -354,13 +354,22 @@ fn gather(sources: &Sources) -> Vec<Entry> {
     every.extend(assets(sources.game));
     every.extend(sources.docs.iter().map(|(title, reference)| Entry {
         title: title.clone(),
-        detail: if reference.starts_with(voxear_docs::MANUAL_SCHEME) { "Manual" } else { "Doc" }.into(),
+        detail: doc_detail(reference).into(),
         icon: "book",
         action: PaletteAction::OpenDoc(reference.clone()),
         key: format!("doc:{reference}"),
         command: false,
     }));
     every
+}
+
+/// Where a VoxDocs page is from, beside its title.
+fn doc_detail(reference: &str) -> &'static str {
+    match reference {
+        reference if reference.starts_with(voxear_docs::MANUAL_SCHEME) => "Manual",
+        reference if reference.starts_with(voxear_docs::PACKAGE_SCHEME) => "Package",
+        _ => "Doc",
+    }
 }
 
 /// Every Obj, by name. Each is remembered by its scene and its place there,

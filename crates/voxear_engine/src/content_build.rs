@@ -25,6 +25,12 @@
 //!    model is not cooked again.
 //! 5. Bundles are named by a hash of their contents, so an unchanged bundle
 //!    is not written again.
+//!
+//! The project's packages' assets are part of the build, under
+//! `Packages/<name>/` (see [`crate::package_assets`]). A package's levels,
+//! prefabs and UI documents are not roots of their own: they ship when
+//! something the game ships uses them, a field names them, or `include` or
+//! `[ContentRoot]` asks for them.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -33,7 +39,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use voxear_assets::{
-    AssetDb, AssetGuid, AssetKind, AssetRef, MaterialRemap,
+    AssetDb, AssetGuid, AssetKind, AssetRef, MaterialRemap, Mount, Mounts,
     bundle::{BundleInfo, BundleWriter, CATALOG_FORMAT, Catalog, CatalogAsset, content_hash},
 };
 
@@ -116,7 +122,21 @@ pub fn build_with(
     code_roots: &[CodeRoot],
     progress: &mut dyn FnMut(usize, usize, &str) -> Result<()>,
 ) -> Result<BuildReport> {
-    let (db, _) = AssetDb::scan(root)?;
+    let mounts = crate::package_assets::mounts(root)?;
+    build_mounted(&mounts, output, settings, code_roots, progress)
+}
+
+/// [`build_with`], with the packages' assets mounted as `mounts` says rather
+/// than as the project's `packages.toml` resolves.
+pub fn build_mounted(
+    mounts: &Mounts,
+    output: &Path,
+    settings: &ContentSettings,
+    code_roots: &[CodeRoot],
+    progress: &mut dyn FnMut(usize, usize, &str) -> Result<()>,
+) -> Result<BuildReport> {
+    let root = mounts.root();
+    let (db, _) = AssetDb::scan_mounted(mounts.clone())?;
     let mut needs = HashMap::new();
     for entry in db.entries() {
         let found = find_needs(&db, entry.guid, entry.kind, &entry.path)
@@ -133,7 +153,7 @@ pub fn build_with(
     // Every asset as it will ship: models cooked, everything else as written,
     // and a UI document's sheets, a sound's import settings and a level's
     // baked paths beside it.
-    let mut cooker = Cooker::open(root)?;
+    let mut cooker = Cooker::open(root, db.mounts())?;
     let mut stored = HashMap::with_capacity(usage.len());
     let mut beside: HashMap<AssetGuid, Vec<(String, Vec<u8>)>> = HashMap::new();
     for (done, guid) in usage.keys().enumerate() {
@@ -142,12 +162,13 @@ pub fn build_with(
         let bytes = if entry.kind == AssetKind::Model {
             cooker.cook(&entry.path, &needs[guid].companions).with_context(|| format!("cooking {}", entry.path))?
         } else {
-            read(root, &entry.path)?
+            read(db.mounts(), &entry.path)?
         };
         stored.insert(*guid, bytes);
-        if entry.kind == AssetKind::Model && !MaterialRemap::read(&root.join(&entry.path)).0.is_empty() {
+        let remapped = || !MaterialRemap::read_meta(&db.mounts().meta_file(&entry.path)).0.is_empty();
+        if entry.kind == AssetKind::Model && remapped() {
             let meta = format!("{}.{}", entry.path, voxear_assets::META_EXTENSION);
-            beside.insert(*guid, vec![(meta.clone(), read(root, &meta)?)]);
+            beside.insert(*guid, vec![(meta.clone(), read(db.mounts(), &meta)?)]);
         }
         if matches!(entry.kind, AssetKind::Ui | AssetKind::Sound | AssetKind::Level) {
             let why = match entry.kind {
@@ -156,7 +177,7 @@ pub fn build_with(
                 _ => "keeps its paths in",
             };
             let files = needs[guid].companions.iter().map(|file| {
-                let bytes = read(root, file).with_context(|| format!("{} {why} {file}", entry.path))?;
+                let bytes = read(db.mounts(), file).with_context(|| format!("{} {why} {file}", entry.path))?;
                 Ok((file.clone(), bytes))
             });
             beside.insert(*guid, files.collect::<Result<_>>()?);
@@ -202,6 +223,7 @@ pub fn build_with(
                 bundle: index,
                 files,
                 cooked: entry.kind == AssetKind::Model,
+                package: entry.mount.package().map(str::to_string),
             });
             bundle_of.insert(guid, index);
         }
@@ -314,16 +336,21 @@ fn usage_sets(
             let needed = named.contains(&e.guid) || code_roots.iter().any(|r| r.matches(e.guid, &e.path));
             // Code loads levels, prefabs and UI documents by path, which the build cannot see, and the game
             // reads its input actions and every string and asset table when it starts, an asset table taking
-            // each language's asset with it.
-            let blanket = matches!(
-                e.kind,
-                AssetKind::Level
-                    | AssetKind::Prefab
-                    | AssetKind::Ui
-                    | AssetKind::InputActions
-                    | AssetKind::Strings
-                    | AssetKind::AssetTable
-            ) || matches(&settings.include, &e.path);
+            // each language's asset with it. A package's levels, prefabs and UI documents ship only when the
+            // game uses them, so a package of many ships what the game takes from it; its tables still ship,
+            // since the game reads them all, and its input actions never stand in for the project's.
+            let blanket = match e.mount {
+                Mount::Project => matches!(
+                    e.kind,
+                    AssetKind::Level
+                        | AssetKind::Prefab
+                        | AssetKind::Ui
+                        | AssetKind::InputActions
+                        | AssetKind::Strings
+                        | AssetKind::AssetTable
+                ),
+                Mount::Package(_) => matches!(e.kind, AssetKind::Strings | AssetKind::AssetTable),
+            } || matches(&settings.include, &e.path);
             needed || (blanket && !matches(&settings.exclude, &e.path))
         })
         .map(|e| (e.guid, e.path.clone()));
@@ -369,26 +396,26 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
     let mut needs = Needs::default();
     match kind {
         AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material | AssetKind::AssetTable => {
-            let text = std::fs::read_to_string(db.root().join(path))?;
+            let text = std::fs::read_to_string(db.file(path))?;
             let table: toml::Table = toml::from_str(&text)?;
             for (key, value) in &table {
                 collect(db, key == "fields", value, &mut needs);
             }
             // A level's baked paths go with it, for its sound to follow round the walls.
             let paths = crate::acoustics::paths_file(path);
-            if kind == AssetKind::Level && db.root().join(&paths).is_file() {
+            if kind == AssetKind::Level && db.file(&paths).is_file() {
                 needs.companions.push(paths);
             }
         }
         AssetKind::Model => {
-            let bytes = read(db.root(), path)?;
+            let bytes = read(db.mounts(), path)?;
             needs.companions = voxear_render::companion_files(path, &bytes)?;
-            let remap = MaterialRemap::read(&db.root().join(path));
+            let remap = MaterialRemap::read_meta(&db.mounts().meta_file(path));
             needs.direct.extend(remap.0.values().filter(|material| db.get(**material).is_some()));
         }
         AssetKind::Ui => {
             // Sheets are named from the document's folder, as the game reads them.
-            let markup = std::fs::read_to_string(db.root().join(path))?;
+            let markup = std::fs::read_to_string(db.file(path))?;
             let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
             let sheets = voxear_ui::markup::style_sources(&markup).map_err(|e| anyhow::anyhow!("{e}"))?;
             let beside = |sheet: String| if folder.is_empty() { sheet } else { format!("{folder}/{sheet}") };
@@ -444,7 +471,8 @@ fn collect(db: &AssetDb, in_fields: bool, value: &toml::Value, needs: &mut Needs
 
 /// Cooks models, reusing earlier cooks of the same inputs.
 struct Cooker {
-    root: PathBuf,
+    /// The project's folder and its packages', which models are read from.
+    mounts: Mounts,
     dir: PathBuf,
     used: Vec<PathBuf>,
     cooked: usize,
@@ -452,25 +480,25 @@ struct Cooker {
 }
 
 impl Cooker {
-    fn open(root: &Path) -> Result<Self> {
+    fn open(root: &Path, mounts: &Mounts) -> Result<Self> {
         let dir = cache_dir(root);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-        Ok(Self { root: root.to_path_buf(), dir, used: Vec::new(), cooked: 0, cached: 0 })
+        Ok(Self { mounts: mounts.clone(), dir, used: Vec::new(), cooked: 0, cached: 0 })
     }
 
     /// The cooked model. Its cache key covers every file it reads with its
     /// `.meta`, for the model's import settings and its pictures', and the
     /// format version, so changing any of them cooks again.
     fn cook(&mut self, path: &str, companions: &[String]) -> Result<Vec<u8>> {
-        let meta = voxear_assets::meta_path(&self.root.join(path));
-        let mut inputs = vec![voxear_render::COOKED_VERSION.to_le_bytes().to_vec(), read(&self.root, path)?];
+        let meta = self.mounts.meta_file(path);
+        let mut inputs = vec![voxear_render::COOKED_VERSION.to_le_bytes().to_vec(), read(&self.mounts, path)?];
         inputs.push(std::fs::read(meta).unwrap_or_default());
         for file in companions {
             inputs.push(file.as_bytes().to_vec());
             // An FBX file's textures are looked for in more than one place, so one may be missing: it counts as
             // empty, and its coming changes the hash. A glTF file's buffer that is missing fails when it is read.
-            inputs.push(read(&self.root, file).unwrap_or_default());
-            inputs.push(std::fs::read(voxear_assets::meta_path(&self.root.join(file))).unwrap_or_default());
+            inputs.push(read(&self.mounts, file).unwrap_or_default());
+            inputs.push(std::fs::read(self.mounts.meta_file(file)).unwrap_or_default());
         }
         let parts: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
         let cached = self.dir.join(format!("{}.model", content_hash(&parts)));
@@ -479,8 +507,8 @@ impl Cooker {
             self.cached += 1;
             return Ok(bytes);
         }
-        let root = &self.root;
-        let mut model = voxear_render::prepare_model(path, &mut |file| read(root, file))?;
+        let mounts = &self.mounts;
+        let mut model = voxear_render::prepare_model(path, &mut |file| read(mounts, file))?;
         model.compress_textures();
         let bytes = model.cook()?.to_bytes();
         std::fs::write(&cached, &bytes).with_context(|| format!("writing {}", cached.display()))?;
@@ -525,8 +553,9 @@ pub(crate) fn glob(pattern: &str, path: &str) -> bool {
     segments(&pattern, &path)
 }
 
-fn read(root: &Path, path: &str) -> Result<Vec<u8>> {
-    let file = root.join(path);
+/// A file by its content path, from the project's folder or a package's.
+fn read(mounts: &Mounts, path: &str) -> Result<Vec<u8>> {
+    let file = mounts.file(path);
     std::fs::read(&file).with_context(|| format!("reading {}", file.display()))
 }
 

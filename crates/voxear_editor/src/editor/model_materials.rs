@@ -36,7 +36,7 @@ impl Editor {
             tracing::warn!("could not list the materials of {path}: {error:#}");
         }
         let materials = self.game.content.loaded_model_materials(guid).unwrap_or_default().to_vec();
-        let remap = MaterialRemap::read(&self.game.project.root.join(&path));
+        let remap = MaterialRemap::read_meta(&self.game.content.db().mounts().meta_file(&path));
         let Some(view) = self.inspector.asset_view() else { return };
         view.fill_materials(&mut self.ui, &materials, &remap, self.game.content.db());
     }
@@ -102,8 +102,7 @@ impl Editor {
             },
             _ => None,
         };
-        let file = self.game.project.root.join(model);
-        let mut remap = MaterialRemap::read(&file);
+        let mut remap = MaterialRemap::read_meta(&self.game.content.db().mounts().meta_file(model));
         match material {
             Some(material) => remap.0.insert(part.to_string(), material),
             None => remap.0.remove(part),
@@ -143,13 +142,16 @@ impl Editor {
     /// Writes the model's materials and pictures, and returns the folder
     /// they went in and the remapping to them.
     fn write_materials(&mut self, model: &str) -> Result<(String, MaterialRemap)> {
-        let root = self.game.project.root.clone();
-        let prepared = voxear_render::prepare_model(model, &mut |file| Ok(std::fs::read(root.join(file))?))?;
+        let mounts = self.game.content.db().mounts().clone();
+        let prepared = voxear_render::prepare_model(model, &mut |file| Ok(std::fs::read(mounts.file(file))?))?;
         let materials = prepared.file_materials();
         anyhow::ensure!(!materials.is_empty(), "it has no materials of its own");
         let (parent, file) = model.rsplit_once('/').unwrap_or(("", model));
+        // Beside the model: in the project, or in a folder package's own folder.
+        let at = project_files::place(&mounts, parent)?;
+        let root = at.root.clone();
         let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
-        let folder = project_files::free_path(&root, parent, &format!("{stem} Materials"), "");
+        let folder = project_files::free_path(&root, &at.path, &format!("{stem} Materials"), "");
         std::fs::create_dir_all(root.join(&folder)).with_context(|| format!("making {folder}"))?;
 
         // Pictures first, so the materials can name them once they have GUIDs.
@@ -157,7 +159,7 @@ impl Editor {
         for (number, material) in materials.iter().enumerate() {
             let name = file_name(&material.name).unwrap_or_else(|| format!("Material {number}"));
             let maps = material.maps.clone().into_iter().zip(MAP_NAMES);
-            let written = maps.map(|(map, kind)| write_picture(&root, &folder, map?, &format!("{name} {kind}")));
+            let written = maps.map(|(map, kind)| write_picture(&at, &folder, map?, &format!("{name} {kind}")));
             pictures.push(<[Option<String>; 4]>::try_from(written.collect::<Vec<_>>()).expect("four maps"));
         }
         self.game.content.rescan()?;
@@ -167,18 +169,20 @@ impl Editor {
             let name = file_name(&material.name).unwrap_or_else(|| format!("Material {number}"));
             let path = project_files::free_path(&root, &folder, &name, ".material");
             std::fs::write(root.join(&path), toml::to_string(&data)?).with_context(|| format!("writing {path}"))?;
-            written.push((material.part.clone(), path));
+            written.push((material.part.clone(), at.back(&path)));
         }
         self.game.content.rescan()?;
         let db = self.game.content.db();
         let parts = written.into_iter().filter_map(|(part, path)| Some((part, db.guid_of(&path)?)));
-        Ok((folder, MaterialRemap(parts.collect())))
+        Ok((at.back(&folder), MaterialRemap(parts.collect())))
     }
 
     /// Writes a model's remapping to its `.meta`, imports the model again
-    /// with it, and shows its Inspector again.
+    /// with it, and shows its Inspector again. A model in a package from the
+    /// package cache has it written into the project's settings for the
+    /// package.
     fn write_remap(&mut self, model: &str, remap: &MaterialRemap, renderer: &mut Renderer) -> Result<()> {
-        remap.write(&self.game.project.root.join(model))?;
+        remap.write_meta(&self.game.content.db().mounts().writable_meta(model)?)?;
         self.wrote_meta(model);
         self.reimport_model(model, renderer);
         let shown = self.inspector.shown_asset().filter(|item| item.path == model).cloned();
@@ -226,19 +230,19 @@ fn material_data(material: &FileMaterial, maps: [Option<voxear_assets::AssetGuid
 const MAP_NAMES: [&str; 4] = ["Colour", "Metallic", "Normal", "Emission"];
 
 /// The project path of a picture a material reads: its own file's, or a
-/// `.png` written into `folder` for one inside the model's file, named
-/// `unnamed` when it has no name.
-fn write_picture(root: &std::path::Path, folder: &str, picture: FilePicture, unnamed: &str) -> Option<String> {
+/// `.png` written into `folder`, within `at`, for one inside the model's
+/// file, named `unnamed` when it has no name.
+fn write_picture(at: &project_files::Place, folder: &str, picture: FilePicture, unnamed: &str) -> Option<String> {
     let (name, width, height, rgba) = match picture {
         FilePicture::File(path) => return Some(path),
         FilePicture::Inside { name, width, height, rgba } => (name, width, height, rgba),
     };
     let stem = file_name(name.rsplit(['/', '\\']).next().unwrap_or(&name)).unwrap_or_else(|| unnamed.to_string());
     let stem = stem.rsplit_once('.').map_or(stem.as_str(), |(stem, _)| stem).to_string();
-    let path = project_files::free_path(root, folder, &stem, ".png");
+    let path = project_files::free_path(&at.root, folder, &stem, ".png");
     let image = image::RgbaImage::from_raw(width, height, rgba)?;
-    match image.save(root.join(&path)) {
-        Ok(()) => Some(path),
+    match image.save(at.root.join(&path)) {
+        Ok(()) => Some(at.back(&path)),
         Err(error) => {
             tracing::warn!("could not write {path}: {error}");
             None

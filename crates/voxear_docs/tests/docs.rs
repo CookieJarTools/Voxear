@@ -878,6 +878,58 @@ fn the_manual_comes_after_the_projects_pages_and_is_read_not_written() {
     assert_eq!(library.search("welcome")[..2], [theirs, welcome], "the project's own pages first");
 }
 
+#[test]
+fn each_packages_pages_come_beside_the_manual_under_its_title() {
+    let dir = project();
+    let manual = manual();
+    let packages = tempfile::tempdir().unwrap();
+    let write = |path: &str, text: &str| {
+        let file = packages.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    };
+    write("orbit/Docs/Orbit Cameras.md", "How they orbit. See [[Rigs]] and [[Damage]].\n\n![Rig](images/Rig.png)\n");
+    write("orbit/Docs/Setup/Rigs.md", "Back to [the cameras](../Orbit%20Cameras.md).\n");
+    write("orbit/Docs/images/Rig.png", "png");
+    write("springs/Scripts/Spring.cs", "");
+    let package = |name: &str, title: &str, folder: &str| voxear_docs::PackageDocs {
+        name: name.to_string(),
+        title: title.to_string(),
+        folder: packages.path().join(folder).join("Docs"),
+    };
+
+    let mut library = Library::open(dir.path(), "Hello");
+    let damage = library.find("Damage").unwrap();
+    library.set_manual(manual.path());
+    let (orbit, springs) = (package("orbit-tools", "Orbit Tools", "orbit"), package("springs", "Springs", "springs"));
+    library.set_packages(vec![orbit, springs]);
+    let root = library.root();
+    let titles: Vec<&str> = library.page(root).children.iter().map(|c| library.page(*c).title()).collect();
+    assert_eq!(titles, ["Combat", "Guide", "Voxear Manual", "Orbit Tools"], "a package with no Docs has no folder");
+    assert_eq!(library.find("Damage"), Some(damage), "the project's pages keep their places");
+
+    let cameras = library.find("package:orbit-tools/Orbit Cameras").expect("a package's page, by its path");
+    let rigs = library.find("package:orbit-tools/Rigs").expect("or its title");
+    assert_eq!(library.find("package:orbit-tools/Setup/Rigs"), Some(rigs));
+    let page = library.page(cameras);
+    assert!(page.generated && page.package() == Some("orbit-tools") && !page.is_manual());
+    assert_eq!(library.resolve("docs:Rigs", cameras), Target::Page(rigs, None), "its own package's pages first");
+    assert_eq!(library.resolve("docs:Damage", cameras), Target::Page(damage, None), "then the project's");
+    assert_eq!(library.resolve("../Orbit%20Cameras.md", rigs), Target::Page(cameras, None));
+    assert_eq!(
+        library.resolve("docs:package:orbit-tools/Orbit Cameras", damage),
+        Target::Page(cameras, None),
+        "the project's link to it"
+    );
+    let picture = library.picture_path("images/Rig.png", cameras);
+    assert_eq!(picture, Some(packages.path().join("orbit/Docs/images/Rig.png")), "its pictures are its own");
+
+    assert!(library.save(cameras, "Changed").is_err(), "a package's pages are written in the package");
+    let health = voxear_docs::health::Health::check(&library);
+    assert!(health.broken.iter().all(|(page, _)| library.page(*page).package().is_none()), "nor looked after");
+    assert!(library.search("orbit").contains(&cameras));
+}
+
 /// The engine's own manual, as each version ships it: every link in it goes
 /// somewhere and every picture is there. Links to the Code Reference are
 /// left out, as it is made from the scripts' build.

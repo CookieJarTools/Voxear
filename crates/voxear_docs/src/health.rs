@@ -62,8 +62,9 @@ impl Health {
         let mut health = Health::default();
         let mut shown: HashSet<PathBuf> = HashSet::new();
         let mut linked: Vec<(PageId, Vec<String>)> = Vec::new();
-        // The manual comes with the engine: it is not the project's to look after.
-        for (id, page) in library.pages().filter(|(_, page)| !page.is_manual()) {
+        // The manual comes with the engine, and a package's pages with the package: neither is the project's
+        // to look after.
+        for (id, page) in library.pages().filter(|(_, page)| !page.is_shelved()) {
             let blocks = markdown::parse(&page.body);
             let pictures: Vec<&str> = blocks
                 .iter()

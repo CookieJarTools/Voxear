@@ -30,19 +30,20 @@ pub enum ImportFields {
 }
 
 impl ImportFields {
-    /// The settings in the `.meta` beside the model at `file`, in `rows`.
-    pub fn model(ui: &mut Ui, rows: NodeId, file: &Path) -> Self {
-        Self::Model(ModelFields::build(ui, rows, ModelImport::read(file)))
+    /// A model's settings in its `.meta` at `meta`, in `rows`: beside it, or
+    /// the project's own for a model of a package from the package cache.
+    pub fn model(ui: &mut Ui, rows: NodeId, meta: &Path) -> Self {
+        Self::Model(ModelFields::build(ui, rows, ModelImport::read_meta(meta)))
     }
 
-    /// The settings in the `.meta` beside the picture at `file`, in `rows`.
-    pub fn texture(ui: &mut Ui, rows: NodeId, file: &Path) -> Self {
-        Self::Texture(TextureFields::build(ui, rows, TextureImport::read(file)))
+    /// A picture's settings in its `.meta` at `meta`, in `rows`.
+    pub fn texture(ui: &mut Ui, rows: NodeId, meta: &Path) -> Self {
+        Self::Texture(TextureFields::build(ui, rows, TextureImport::read_meta(meta)))
     }
 
-    /// The settings in the `.meta` beside the sound at `file`, in `rows`.
-    pub fn sound(ui: &mut Ui, rows: NodeId, file: &Path) -> Self {
-        Self::Sound(SoundFields::build(ui, rows, SoundImport::read(file)))
+    /// A sound's settings in its `.meta` at `meta`, in `rows`.
+    pub fn sound(ui: &mut Ui, rows: NodeId, meta: &Path) -> Self {
+        Self::Sound(SoundFields::build(ui, rows, SoundImport::read_meta(meta)))
     }
 
     /// The settings to apply, when Apply was clicked.

@@ -76,12 +76,24 @@ impl ModelImport {
 
     /// The settings of the model at `asset`, from its `.meta`, or the defaults.
     pub fn read(asset: &Path) -> Self {
-        std::fs::read_to_string(meta_path(asset)).map(|text| Self::from_meta(&text)).unwrap_or_default()
+        Self::read_meta(&meta_path(asset))
+    }
+
+    /// The settings in the `.meta` file at `meta`, or the defaults: for a
+    /// package's asset, the one [`Mounts::meta_file`](crate::Mounts::meta_file) gives.
+    pub fn read_meta(meta: &Path) -> Self {
+        std::fs::read_to_string(meta).map(|text| Self::from_meta(&text)).unwrap_or_default()
     }
 
     /// Writes the settings into the `.meta` beside `asset`.
     pub fn write(&self, asset: &Path) -> Result<()> {
-        write_section(asset, Self::TABLE, self, &Self::default())
+        self.write_meta(&meta_path(asset))
+    }
+
+    /// Writes them into the `.meta` file at `meta`: for a package's asset,
+    /// the one [`Mounts::writable_meta`](crate::Mounts::writable_meta) gives.
+    pub fn write_meta(&self, meta: &Path) -> Result<()> {
+        write_section(meta, Self::TABLE, self, &Self::default())
     }
 
     /// How many metres one unit becomes, units and scale together, for a
@@ -117,13 +129,25 @@ impl MaterialRemap {
 
     /// The remapping of the model at `asset`, from its `.meta`, or none.
     pub fn read(asset: &Path) -> Self {
-        std::fs::read_to_string(meta_path(asset)).map(|text| Self::from_meta(&text)).unwrap_or_default()
+        Self::read_meta(&meta_path(asset))
+    }
+
+    /// The settings in the `.meta` file at `meta`, or the defaults: for a
+    /// package's asset, the one [`Mounts::meta_file`](crate::Mounts::meta_file) gives.
+    pub fn read_meta(meta: &Path) -> Self {
+        std::fs::read_to_string(meta).map(|text| Self::from_meta(&text)).unwrap_or_default()
     }
 
     /// Writes the remapping into the `.meta` beside `asset`, or takes the
     /// table out when nothing is remapped.
     pub fn write(&self, asset: &Path) -> Result<()> {
-        write_section(asset, Self::TABLE, self, &Self::default())
+        self.write_meta(&meta_path(asset))
+    }
+
+    /// Writes them into the `.meta` file at `meta`: for a package's asset,
+    /// the one [`Mounts::writable_meta`](crate::Mounts::writable_meta) gives.
+    pub fn write_meta(&self, meta: &Path) -> Result<()> {
+        write_section(meta, Self::TABLE, self, &Self::default())
     }
 
     /// The material asset a part draws with, when it is remapped.
@@ -162,12 +186,24 @@ impl TextureImport {
 
     /// The settings of the picture at `asset`, from its `.meta`, or the defaults.
     pub fn read(asset: &Path) -> Self {
-        std::fs::read_to_string(meta_path(asset)).map(|text| Self::from_meta(&text)).unwrap_or_default()
+        Self::read_meta(&meta_path(asset))
+    }
+
+    /// The settings in the `.meta` file at `meta`, or the defaults: for a
+    /// package's asset, the one [`Mounts::meta_file`](crate::Mounts::meta_file) gives.
+    pub fn read_meta(meta: &Path) -> Self {
+        std::fs::read_to_string(meta).map(|text| Self::from_meta(&text)).unwrap_or_default()
     }
 
     /// Writes the settings into the `.meta` beside `asset`.
     pub fn write(&self, asset: &Path) -> Result<()> {
-        write_section(asset, Self::TABLE, self, &Self::default())
+        self.write_meta(&meta_path(asset))
+    }
+
+    /// Writes them into the `.meta` file at `meta`: for a package's asset,
+    /// the one [`Mounts::writable_meta`](crate::Mounts::writable_meta) gives.
+    pub fn write_meta(&self, meta: &Path) -> Result<()> {
+        write_section(meta, Self::TABLE, self, &Self::default())
     }
 
     /// The size a picture of `width` × `height` pixels is imported at.
@@ -206,12 +242,24 @@ impl SoundImport {
 
     /// The settings of the sound at `asset`, from its `.meta`, or the defaults.
     pub fn read(asset: &Path) -> Self {
-        std::fs::read_to_string(meta_path(asset)).map(|text| Self::from_meta(&text)).unwrap_or_default()
+        Self::read_meta(&meta_path(asset))
+    }
+
+    /// The settings in the `.meta` file at `meta`, or the defaults: for a
+    /// package's asset, the one [`Mounts::meta_file`](crate::Mounts::meta_file) gives.
+    pub fn read_meta(meta: &Path) -> Self {
+        std::fs::read_to_string(meta).map(|text| Self::from_meta(&text)).unwrap_or_default()
     }
 
     /// Writes the settings into the `.meta` beside `asset`.
     pub fn write(&self, asset: &Path) -> Result<()> {
-        write_section(asset, Self::TABLE, self, &Self::default())
+        self.write_meta(&meta_path(asset))
+    }
+
+    /// Writes them into the `.meta` file at `meta`: for a package's asset,
+    /// the one [`Mounts::writable_meta`](crate::Mounts::writable_meta) gives.
+    pub fn write_meta(&self, meta: &Path) -> Result<()> {
+        write_section(meta, Self::TABLE, self, &Self::default())
     }
 
     /// Whether a sound of `seconds` streams as it plays rather than being
@@ -315,12 +363,11 @@ fn section<T: DeserializeOwned + Default>(text: &str, name: &str) -> T {
     meta.remove(name).and_then(|table| table.try_into().ok()).unwrap_or_default()
 }
 
-/// Writes a table into the `.meta` beside `asset`, keeping the rest of it,
+/// Writes a table into the `.meta` file at `path`, keeping the rest of it,
 /// with only the settings that differ from `defaults`, and none at all
 /// when nothing does.
-fn write_section<T: Serialize>(asset: &Path, name: &str, value: &T, defaults: &T) -> Result<()> {
-    let path = meta_path(asset);
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+fn write_section<T: Serialize>(path: &Path, name: &str, value: &T, defaults: &T) -> Result<()> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mut meta: toml::Table = text.parse().with_context(|| format!("reading {}", path.display()))?;
     let toml::Value::Table(mut table) = toml::Value::try_from(value)? else { unreachable!("settings are a table") };
     let toml::Value::Table(defaults) = toml::Value::try_from(defaults)? else { unreachable!("settings are a table") };
@@ -329,7 +376,7 @@ fn write_section<T: Serialize>(asset: &Path, name: &str, value: &T, defaults: &T
         true => meta.remove(name),
         false => meta.insert(name.to_string(), toml::Value::Table(table)),
     };
-    std::fs::write(&path, toml::to_string(&meta)?).with_context(|| format!("writing {}", path.display()))
+    std::fs::write(path, toml::to_string(&meta)?).with_context(|| format!("writing {}", path.display()))
 }
 
 #[cfg(test)]

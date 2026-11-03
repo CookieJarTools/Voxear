@@ -1,11 +1,11 @@
-use std::{
-    fs::File,
-    path::{Path, PathBuf},
-};
+use std::{fs::File, path::Path};
 
 use anyhow::{Context, Result};
 
-use crate::io::{Io, ReadAt};
+use crate::{
+    io::{Io, ReadAt},
+    mount::Mounts,
+};
 
 /// Reads asset files by project path, such as `Models/Ship.gltf`, wherever
 /// the content lives.
@@ -24,15 +24,21 @@ pub trait AssetReader: Send {
 }
 
 /// Reads straight from a project folder, so pressing play never needs a
-/// content build.
+/// content build, and from the folders of the packages mounted beside it.
 pub struct FolderReader {
-    root: PathBuf,
+    mounts: Mounts,
     io: Io,
 }
 
 impl FolderReader {
     pub fn new(root: &Path) -> Self {
-        Self { root: root.to_path_buf(), io: Io::new() }
+        Self::mounted(Mounts::project(root))
+    }
+
+    /// Reads the project's files and its packages', each package's under
+    /// `Packages/<name>/`.
+    pub fn mounted(mounts: Mounts) -> Self {
+        Self { mounts, io: Io::new() }
     }
 }
 
@@ -44,7 +50,7 @@ impl AssetReader for FolderReader {
     fn read_many(&mut self, paths: &[&str]) -> Result<Vec<Vec<u8>>> {
         let mut files = Vec::with_capacity(paths.len());
         for path in paths {
-            let full = self.root.join(path);
+            let full = self.mounts.file(path);
             let file = File::open(&full).with_context(|| format!("reading {}", full.display()))?;
             let len = file.metadata()?.len() as usize;
             files.push((file, len));
@@ -54,7 +60,7 @@ impl AssetReader for FolderReader {
             files.iter().zip(&mut buffers).map(|((file, _), buffer)| ReadAt { file, offset: 0, buffer }).collect();
         self.io
             .read_all(&mut reads)
-            .with_context(|| format!("reading {} from {}", paths.join(", "), self.root.display()))?;
+            .with_context(|| format!("reading {} from {}", paths.join(", "), self.mounts.root().display()))?;
         Ok(buffers)
     }
 }

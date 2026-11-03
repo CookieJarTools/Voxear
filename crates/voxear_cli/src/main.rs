@@ -13,7 +13,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use voxear_assets::{AssetDb, AssetKind};
+use voxear_assets::AssetKind;
 use voxear_core::math::EulerRot;
 use voxear_engine::{
     Content, Engine, Game, PROJECT_FILE, Project, StatsOverlay, WindowOptions, build_profile,
@@ -757,7 +757,7 @@ fn print_objs(engine: &Engine) {
 
 fn assets(path: &Path) -> Result<()> {
     let project = Project::open(path)?;
-    let (db, report) = AssetDb::scan(&project.root)?;
+    let (db, report) = voxear_engine::package_assets::scan(&project.root)?;
     let mut entries: Vec<_> = db.entries().collect();
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     for entry in entries {

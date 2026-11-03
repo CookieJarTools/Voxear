@@ -14,7 +14,8 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{
-    AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader, MaterialRemap, SoundImport, TextureImport,
+    Access, AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader, MaterialRemap, Mounts, SoundImport,
+    TextureImport,
     bundle::{BundleInfo, BundleReader, Catalog},
 };
 use voxear_core::math::{Quat, Vec3};
@@ -270,23 +271,30 @@ impl InUse {
 
 /// Where asset files are read from.
 enum Source {
-    Folder(FolderReader, PathBuf),
+    /// The project's folder, and its packages' beside it.
+    Folder(FolderReader, Mounts),
     /// The reader, and every catalog layer with its folder, base first.
     Bundles(BundleReader, Vec<(PathBuf, Arc<Catalog>)>),
 }
 
 impl Content {
-    /// Scans the project's assets, creating `.meta` files for new ones, and
-    /// reads them from the project folder.
+    /// Scans the project's assets and its packages', creating `.meta` files
+    /// for new ones of its own, and reads them from their folders.
     pub fn open(root: &Path) -> Result<Self> {
-        let (db, report) = AssetDb::scan(root)?;
+        Self::open_mounted(crate::package_assets::mounts_or_project(root))
+    }
+
+    /// [`open`](Self::open), with the packages' assets mounted as `mounts`
+    /// says rather than as the project's `packages.toml` resolves.
+    pub fn open_mounted(mounts: Mounts) -> Result<Self> {
+        let (db, report) = AssetDb::scan_mounted(mounts.clone())?;
         for path in &report.created {
             tracing::info!("new asset: {path}");
         }
         for path in &report.reassigned {
             tracing::warn!("{path} had the same GUID as another asset (copied with its .meta?); it has a new one");
         }
-        Ok(Self::with_source(db, Source::Folder(FolderReader::new(root), root.to_path_buf())))
+        Ok(Self::with_source(db, Source::Folder(FolderReader::mounted(mounts.clone()), mounts)))
     }
 
     /// Reads assets from built bundles in `content_dir` (see
@@ -381,7 +389,7 @@ impl Content {
     /// A second reader over the same content, for a loading thread.
     pub(crate) fn worker_reader(&self) -> Box<dyn AssetReader> {
         match &self.source {
-            Source::Folder(_, root) => Box::new(FolderReader::new(root)),
+            Source::Folder(_, mounts) => Box::new(FolderReader::mounted(mounts.clone())),
             Source::Bundles(_, layers) => {
                 let (base_dir, base) = &layers[0];
                 let mut reader = BundleReader::new(base_dir, base);
@@ -472,8 +480,8 @@ impl Content {
     /// editor's Project panel makes and removes them, giving new ones their
     /// GUIDs. Content read from bundles does not change.
     pub fn rescan(&mut self) -> Result<()> {
-        let Source::Folder(_, root) = &self.source else { return Ok(()) };
-        let (db, report) = AssetDb::scan(root)?;
+        let Source::Folder(_, mounts) = &self.source else { return Ok(()) };
+        let (db, report) = AssetDb::scan_mounted(mounts.clone())?;
         for path in &report.created {
             tracing::info!("new asset: {path}");
         }
@@ -481,11 +489,25 @@ impl Content {
         Ok(())
     }
 
+    /// Mounts the project's packages again, as they are after its
+    /// `packages.toml` changed, and looks at every asset again. What is
+    /// loaded already stays as it was.
+    pub fn remount_packages(&mut self) -> Result<()> {
+        let Source::Folder(reader, mounts) = &mut self.source else { return Ok(()) };
+        *mounts = crate::package_assets::mounts(mounts.root())?;
+        *reader = FolderReader::mounted(mounts.clone());
+        self.rescan()
+    }
+
     /// Saves a `.material` asset, and shows the change at once wherever it is
     /// drawn.
     pub fn save_material(&mut self, renderer: &mut Renderer, path: &str, data: &MaterialData) -> Result<()> {
-        let Source::Folder(_, root) = &self.source else { bail!("materials in built content cannot change") };
-        let file = root.join(path);
+        let Source::Folder(_, mounts) = &self.source else { bail!("materials in built content cannot change") };
+        let (mount, _) = mounts.locate(path);
+        if mounts.access(&mount) == Access::ReadOnly {
+            bail!("{path} is in a package from the package cache, which is not changed");
+        }
+        let file = mounts.file(path);
         std::fs::write(&file, toml::to_string(data)?).with_context(|| format!("writing {}", file.display()))?;
         let Some(guid) = self.db.guid_of(path) else { return Ok(()) };
         self.texts.remove(&guid);

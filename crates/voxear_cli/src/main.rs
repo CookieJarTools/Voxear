@@ -285,6 +285,10 @@ enum Commands {
         /// Show the stats overlay (F1 in a window).
         #[arg(long)]
         stats: bool,
+        /// Also save every this many frames as a sequence, numbered beside --out (frame_0060.png, ...), for
+        /// watching what changes over time, such as the eye adapting.
+        #[arg(long, value_name = "FRAMES")]
+        every: Option<u64>,
     },
 }
 
@@ -384,6 +388,7 @@ fn main() -> Result<()> {
             no_meshlet_culling,
             no_mesh_shaders,
             render_scale,
+            every,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -400,7 +405,8 @@ fn main() -> Result<()> {
             let options =
                 ViewOptions { debug_view, post_override, meshlet_culling, render_scale, ..ViewOptions::default() };
             let prepare = Prepare { build: !no_build, bundles, overlays };
-            let shot = Shot { out, size: (width, height), frames, options, stats, mesh_shaders: !no_mesh_shaders };
+            let mesh_shaders = !no_mesh_shaders;
+            let shot = Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders };
             render(&project, shot, prepare, renderdoc)
         }
     }
@@ -447,12 +453,21 @@ fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, rende
     Ok(())
 }
 
+/// Where frame `frame` of a sequence saved beside `out` goes: `out`'s name
+/// with the frame's number, as `frame_0060.png` beside `frame.png`.
+fn sequence_path(out: &Path, frame: u64) -> PathBuf {
+    let stem = out.file_stem().map_or_else(|| "frame".into(), |stem| stem.to_string_lossy().into_owned());
+    out.with_file_name(format!("{stem}_{frame:04}.png"))
+}
+
 /// What `vox render` draws and where it saves it.
 struct Shot {
     out: PathBuf,
     size: (u32, u32),
     /// Frames to simulate before the one saved.
     frames: u64,
+    /// Save every this many frames too, as a numbered sequence.
+    every: Option<u64>,
     options: ViewOptions,
     /// Draw the stats overlay over the image.
     stats: bool,
@@ -461,7 +476,7 @@ struct Shot {
 }
 
 fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<()> {
-    let Shot { out, size: (width, height), frames, options, stats, mesh_shaders } = shot;
+    let Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders } = shot;
     let project = Project::open(path)?;
     let settings = renderer_settings(&project, renderdoc);
     let mut game = start_game(project, prepare)?;
@@ -486,6 +501,10 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         renderer.render(&game.engine.world, game.engine.time().elapsed as f32)?;
         if capture && let Some(path) = renderer.end_capture() {
             println!("RenderDoc capture: {}", path.display());
+        }
+        if every.is_some_and(|every| every > 0 && frame % every == 0) {
+            let (width, height, pixels) = renderer.read_pixels()?;
+            write_png(&sequence_path(&out, frame), width, height, &pixels)?;
         }
     }
 

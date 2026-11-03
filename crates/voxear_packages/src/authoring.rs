@@ -11,7 +11,7 @@ use semver::VersionReq;
 
 use crate::{
     contents::{DOCS_FOLDER, SCRIPTS_FOLDER},
-    manifest::{MANIFEST_FILE, Manifest, assembly_name, check_name},
+    manifest::{MANIFEST_FILE, Manifest, assembly_name, check_name, title},
     registry::{Release, add_release},
 };
 
@@ -57,17 +57,6 @@ pub fn new_package(folder: &Path, name: &str, engine: &semver::Version) -> Resul
         &format!("# {title}\n\nWhat the package is for, and how to use it.\n"),
     )?;
     Ok(())
-}
-
-/// `orbit-tools` as a person writes it: `Orbit Tools`.
-fn title(name: &str) -> String {
-    name.split('-')
-        .map(|word| {
-            let mut chars = word.chars();
-            chars.next().map(|first| first.to_ascii_uppercase().to_string() + chars.as_str()).unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn write(folder: &Path, file: &str, text: &str) -> Result<()> {

@@ -29,7 +29,7 @@ use anyhow::{Context, Result};
 pub use cache::{Cache, Fetch};
 pub use contents::Contents;
 pub use lock::{LOCK_FILE, Lock};
-pub use manifest::{MANIFEST_FILE, Manifest, assembly_name};
+pub use manifest::{MANIFEST_FILE, Manifest, assembly_name, title};
 pub use project::{PACKAGES_FILE, PackagesFile};
 pub use registry::{DEFAULT_REGISTRY, Listing, Registry, Release};
 pub use resolve::{Options, Origin, Package, Registries, Update};

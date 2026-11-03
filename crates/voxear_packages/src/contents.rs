@@ -9,6 +9,10 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result, bail};
+
+use crate::manifest::title;
+
 pub const SCRIPTS_FOLDER: &str = "Scripts";
 pub const DOCS_FOLDER: &str = "Docs";
 pub const SAMPLES_FOLDER: &str = "Samples";
@@ -74,6 +78,46 @@ impl Contents {
     }
 }
 
+/// Where a project keeps the samples it copied from packages.
+pub const PROJECT_SAMPLES_FOLDER: &str = "Samples";
+
+impl Sample {
+    /// Where the sample goes in a project: `Samples/Orbit Tools/First
+    /// Orbit` for orbit-tools' First Orbit.
+    pub fn destination(&self, project: &Path, package: &str) -> PathBuf {
+        project.join(PROJECT_SAMPLES_FOLDER).join(title(package)).join(&self.name)
+    }
+
+    /// Copies the sample into a project, to change as its own. Returns
+    /// where it went; a sample already copied is left as it is.
+    pub fn import(&self, project: &Path, package: &str) -> Result<PathBuf> {
+        let destination = self.destination(project, package);
+        if destination.exists() {
+            bail!("{} is in the project already, at {}", self.name, destination.display());
+        }
+        copy_folder(&self.folder, &destination)
+            .with_context(|| format!("copying {} into {}", self.name, destination.display()))?;
+        Ok(destination)
+    }
+}
+
+fn copy_folder(from: &Path, to: &Path) -> Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)?.flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            copy_folder(&path, &to.join(&name))?;
+        } else {
+            std::fs::copy(&path, to.join(&name))?;
+        }
+    }
+    Ok(())
+}
+
 fn is_about(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name);
     name.starts_with('.') || ABOUT.iter().any(|about| stem.eq_ignore_ascii_case(about))
@@ -130,5 +174,11 @@ mod tests {
         assert_eq!(contents.assets, 2);
         assert_eq!(contents.samples.len(), 1);
         assert_eq!(contents.samples[0].name, "First Orbit");
+
+        let project = tempfile::tempdir().unwrap();
+        let copied = contents.samples[0].import(project.path(), "orbit-tools").unwrap();
+        assert_eq!(copied, project.path().join("Samples/Orbit Tools/First Orbit"));
+        assert!(copied.join("Orbit.level").is_file());
+        assert!(contents.samples[0].import(project.path(), "orbit-tools").is_err());
     }
 }

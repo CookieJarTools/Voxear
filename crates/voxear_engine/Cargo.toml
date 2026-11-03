@@ -33,6 +33,8 @@ voxear_input.workspace = true
 voxear_physics.workspace = true
 voxear_physics2d.workspace = true
 voxear_localization.workspace = true
+voxear_packages.workspace = true
+semver.workspace = true
 uuid.workspace = true
 
 [features]

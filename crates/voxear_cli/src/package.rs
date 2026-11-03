@@ -8,10 +8,13 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
-use voxear_engine::{Project, engine_version};
+use voxear_engine::{
+    Project,
+    packages::{engine, options},
+};
 use voxear_packages::{
-    Add, Cache, Change, Contents, Fetch, GitRev, Options, Origin, PackagesFile, Plan, Update, authoring, plan_add,
-    plan_remove, source::short,
+    Add, Cache, Change, Contents, Fetch, GitRev, Origin, PackagesFile, Plan, Update, authoring, plan_add, plan_remove,
+    source::short,
 };
 
 #[derive(Subcommand)]
@@ -269,14 +272,6 @@ fn confirm(question: &str) -> Result<bool> {
     let mut answer = String::new();
     std::io::stdin().lock().read_line(&mut answer)?;
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
-}
-
-fn options(cache: &Cache, offline: bool, update: Update) -> Options<'_> {
-    Options { engine: engine(), cache, offline, update }
-}
-
-fn engine() -> semver::Version {
-    semver::Version::parse(engine_version()).unwrap_or_else(|_| semver::Version::new(0, 1, 0))
 }
 
 fn project_root(path: &Path) -> Result<PathBuf> {

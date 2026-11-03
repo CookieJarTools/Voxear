@@ -133,6 +133,17 @@ pub fn assembly_name(name: &str) -> String {
         .collect()
 }
 
+/// `orbit-tools` as a person writes it: `Orbit Tools`.
+pub fn title(name: &str) -> String {
+    name.split('-')
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map(|first| first.to_ascii_uppercase().to_string() + chars.as_str()).unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

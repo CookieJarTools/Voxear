@@ -2,7 +2,7 @@
 //! where its data says, and the labels round the board, apart, with lines
 //! out to them.
 
-use voxear_ui::{Color, KeyShape, KeyState, KeymapData, KeymapKey, Shape, Style, Ui};
+use voxear_ui::{Color, KeyShape, KeyState, KeymapBody, KeymapData, KeymapKey, KeymapLine, Shape, Style, Ui};
 
 fn key(rect: [f32; 4], label: &str, callout: &[&str]) -> KeymapKey {
     KeymapKey {
@@ -11,7 +11,7 @@ fn key(rect: [f32; 4], label: &str, callout: &[&str]) -> KeymapKey {
         label: label.into(),
         state: if callout.is_empty() { KeyState::Unused } else { KeyState::Assigned },
         color: None,
-        callout: callout.iter().map(|s| s.to_string()).collect(),
+        callout: callout.iter().map(|s| KeymapLine::new(s)).collect(),
     }
 }
 
@@ -30,7 +30,7 @@ fn a_key_map_fits_its_board_and_places_its_labels_round_it() {
         key([5.0, 2.0, 1.0, 1.0], "G", &[]),
     ];
     keys[3].color = Some(Color::rgb(0xe0, 0x80, 0x20));
-    ui.set_keymap(map, KeymapData { size: [10.0, 5.0], keys });
+    ui.set_keymap(map, KeymapData { size: [10.0, 5.0], keys, body: Vec::new() });
     ui.frame(1000, 600, 1.0);
 
     let rect = |at: usize| ui.keymap_key_rect(map, at).unwrap();
@@ -68,6 +68,51 @@ fn a_key_map_fits_its_board_and_places_its_labels_round_it() {
         Some(Color::rgb(0xe0, 0x80, 0x20)),
         "its own colour"
     );
+}
+
+#[test]
+fn a_key_map_draws_its_body_fits_its_text_and_marks_conflicts() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let holder = ui.panel(root, Style::cover());
+    let map = ui.keymap(holder);
+    let mut keys = vec![
+        key([0.0, 0.0, 1.0, 1.0], "W", &["Jump"]),
+        key([1.0, 0.0, 1.0, 1.0], "Backspace", &[]),
+        key([2.0, 0.0, 2.0, 1.0], "E", &["Use", "Open"]),
+    ];
+    keys[2].state = KeyState::Conflict;
+    keys[0].callout[0].icon = Some("play".into());
+    let body = vec![
+        KeymapBody { rect: [-0.2, -0.2, 4.4, 1.4], radius: 0.3 },
+        KeymapBody { rect: [1.0, 0.5, 2.0, 1.5], radius: 1.0 },
+    ];
+    ui.set_keymap(map, KeymapData { size: [12.0, 3.0], keys, body });
+    // Once arranged, the keys' text takes its size on the next frame.
+    ui.frame(800, 400, 1.0);
+    ui.frame(800, 400, 1.0);
+
+    let mut parts = Vec::new();
+    collect(&ui, map, "keymap-body", &mut parts);
+    let mut edges = Vec::new();
+    collect(&ui, map, "keymap-body-edge", &mut edges);
+    assert_eq!((parts.len(), edges.len()), (2, 2), "a part and an edge for each");
+    let (part, edge) = (ui.rect(parts[0]), ui.rect(edges[0]));
+    assert!(edge[0] < part[0] && edge[2] > part[2], "the edge shows round the part: {edge:?} {part:?}");
+
+    let (w, back) = (nth_key(&ui, map, 0), nth_key(&ui, map, 1));
+    let label = |key| ui.children(key)[0];
+    let text = |key| ui.text_style(label(key)).unwrap().size;
+    assert!(text(back) < text(w), "a long name is made smaller: {} {}", text(back), text(w));
+    assert!(ui.rect(label(back))[2] <= ui.rect(back)[2], "and fits inside its key");
+
+    assert!(ui.has_class(nth_key(&ui, map, 2), "conflict"));
+    let mut callouts = Vec::new();
+    collect(&ui, map, "keymap-callout", &mut callouts);
+    assert_eq!(callouts.iter().filter(|&&c| ui.has_class(c, "conflict")).count(), 1, "its label marked too");
+    let mut icons = Vec::new();
+    collect(&ui, map, "keymap-callout-icon", &mut icons);
+    assert_eq!(icons.len(), 1, "an action's icon beside its name");
 }
 
 fn nth_key(ui: &Ui, map: voxear_ui::NodeId, at: usize) -> voxear_ui::NodeId {

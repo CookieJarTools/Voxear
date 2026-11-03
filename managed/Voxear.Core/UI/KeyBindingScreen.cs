@@ -30,7 +30,7 @@ public sealed class KeyBindingScreen
 	private readonly Panel layout;
 	private readonly ScrollView listView;
 	private readonly Label status;
-	private string? shown;
+	private InputControl? shown;
 
 	private KeyBindingScreen(UiDocument document, string title, ControlsView views)
 	{
@@ -72,7 +72,7 @@ public sealed class KeyBindingScreen
 		hidden.Toggled += on => List.ShowHidden = Keymap.ShowHidden = on;
 		reset.Clicked += ResetAll;
 		close.Clicked += Close;
-		Keymap.KeyClicked += ShowControl;
+		Keymap.KeyClicked += control => ShowControl(control);
 		List.Rebound += (action, control) => Rebound?.Invoke(action, control);
 		Scheme = Keymap.Scheme;
 		View = views == ControlsView.List ? ControlsView.List : ControlsView.Layout;
@@ -83,7 +83,7 @@ public sealed class KeyBindingScreen
 	public event Action? Closed;
 
 	/// <summary>Runs with the action and the control it now reads, each time the player rebinds one.</summary>
-	public event Action<InputAction, string>? Rebound;
+	public event Action<InputAction, InputControl>? Rebound;
 
 	public UiDocument Document { get; }
 
@@ -157,18 +157,18 @@ public sealed class KeyBindingScreen
 		Closed?.Invoke();
 	}
 
-	/// <summary>Lists a control's actions under the device, by its path, such as "Keyboard/W"; null lists none.</summary>
-	public void ShowControl(string? path)
+	/// <summary>Lists a control's actions under the device; null lists none.</summary>
+	public void ShowControl(InputControl? control)
 	{
-		shown = path;
+		shown = control;
 		Details.Clear();
-		if (path == null)
+		if (control is not InputControl showing)
 		{
 			return;
 		}
 
-		Details.Add(new Label(Input.ControlLabel(path))).AddClass("kbs-control");
-		var uses = Input.ControlUses(path);
+		Details.Add(new Label(showing.Label)).AddClass("kbs-control");
+		var uses = Input.ControlUses(showing);
 		if (uses.Count == 0)
 		{
 			Details.Add(new Label("Not used")).AddClass("kbs-unused");
@@ -198,7 +198,7 @@ public sealed class KeyBindingScreen
 			return;
 		}
 
-		Rebound?.Invoke(use.Action, control);
+		Rebound?.Invoke(use.Action, control.Value);
 		ShowControl(control);
 	}
 
@@ -231,6 +231,7 @@ public sealed class KeyBindingScreen
 		{
 			AddLegend("Assigned", "assigned", null);
 		}
+		AddLegend("Conflict", "conflict", null);
 		AddLegend("Hidden", "hidden", null);
 		AddLegend("Unused", "unused", null);
 	}

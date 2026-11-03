@@ -40,12 +40,12 @@ public sealed class InputBinding
 		foreach (var piece in line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
 		{
 			var equals = piece.IndexOf('=');
-			var part = equals > 0 ? piece.Substring(0, equals) : null;
-			var path = equals > 0 ? piece.Substring(equals + 1) : piece;
-			controls.Add(new InputBindingControl(part, path, Input.ControlLabel(path)));
+			var part = equals > 0 ? Input.Part(piece.Substring(0, equals)) : null;
+			var control = InputControl.FromPath(equals > 0 ? piece.Substring(equals + 1) : piece);
+			controls.Add(new InputBindingControl(part, control, control?.Label ?? string.Empty));
 		}
-		var first = controls.Count > 0 ? controls[0].Path : string.Empty;
-		var scheme = first.StartsWith("Gamepad/", StringComparison.Ordinal) ? ControlScheme.Gamepad : ControlScheme.KeyboardMouse;
+		var first = controls.Count > 0 ? controls[0].Control : null;
+		var scheme = first?.Device == ControlDevice.Gamepad ? ControlScheme.Gamepad : ControlScheme.KeyboardMouse;
 		return new InputBinding(action, index, scheme, controls.AsReadOnly());
 	}
 }

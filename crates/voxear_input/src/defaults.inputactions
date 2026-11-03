@@ -53,8 +53,11 @@ bindings = ["Keyboard/R", "Gamepad/West"]
 name = "Pause"
 bindings = ["Keyboard/Escape", "Gamepad/Start"]
 
+# Menus: on while one is open, which turns Player off, so the two share
+# keys without conflicting.
 [[map]]
 name = "UI"
+excludes = ["Player"]
 
 [[map.action]]
 name = "Navigate"

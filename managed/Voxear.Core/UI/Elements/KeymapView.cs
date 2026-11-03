@@ -9,12 +9,14 @@ namespace Voxear;
 /// game's controls screen shows them. It follows the game's input on its own, rebinding included, every frame.
 /// <code>
 /// var map = panel.Add(new KeymapView(ControlScheme.Gamepad) { Colors = KeymapColors.Categories });
-/// map.KeyClicked += path => Log.Info($"{path}: {Input.ControlUses(path).Count} actions");
+/// map.KeyClicked += control => Log.Info($"{control.Label}: {Input.ControlUses(control).Count} actions");
 /// </code>
 /// <para>
-/// Sheets style it by its classes: <c>keymap-key</c> for each key, with <c>assigned</c>, <c>hidden</c> or
-/// <c>unused</c>, and <c>round</c>, <c>stick</c> or <c>pill</c> for its shape; <c>keymap-callout</c> for each label
-/// round the device, whose border colour its line takes. Categories' colours come from the input actions. For a
+/// Sheets style it by its classes: <c>keymap-key</c> for each key, with <c>assigned</c>, <c>hidden</c>,
+/// <c>unused</c> or <c>conflict</c>, and <c>round</c>, <c>stick</c> or <c>pill</c> for its shape;
+/// <c>keymap-callout</c> for each label round the device, whose border colour its line takes; and
+/// <c>keymap-body</c> for the device's outline behind its keys. A key two actions that can be on at once both read
+/// is a conflict. Categories' colours come from the input actions. For a
 /// screen of your own drawn another way, Input.ControlUses and Input.Categories give the same facts.
 /// </para>
 /// </summary>
@@ -23,7 +25,7 @@ public sealed unsafe class KeymapView : UiElement
 	private ControlScheme scheme;
 	private KeymapColors colors;
 	private bool showHidden;
-	private string? map;
+	private InputMap? map;
 
 	public KeymapView(ControlScheme scheme = ControlScheme.KeyboardMouse) : base(UiKind.Keymap, string.Empty)
 	{
@@ -36,8 +38,8 @@ public sealed unsafe class KeymapView : UiElement
 		Clicked += RaiseKeyClicked;
 	}
 
-	/// <summary>Runs with the path of the control clicked, such as "Keyboard/W", at the start of the next frame.</summary>
-	public event Action<string>? KeyClicked;
+	/// <summary>Runs with the control clicked, at the start of the next frame.</summary>
+	public event Action<InputControl>? KeyClicked;
 
 	/// <summary>Which device it draws: the keyboard and mouse, or a gamepad.</summary>
 	public ControlScheme Scheme
@@ -72,8 +74,8 @@ public sealed unsafe class KeymapView : UiElement
 		}
 	}
 
-	/// <summary>Only this map's actions, by its name; null for every map's.</summary>
-	public string? Map
+	/// <summary>Only this map's actions; null for every map's.</summary>
+	public InputMap? Map
 	{
 		get { return map; }
 		set
@@ -113,7 +115,7 @@ public sealed unsafe class KeymapView : UiElement
 			return;
 		}
 
-		var bytes = Encoding.UTF8.GetBytes(map ?? string.Empty);
+		var bytes = Encoding.UTF8.GetBytes(map?.Name ?? string.Empty);
 		fixed (byte* named = bytes)
 		{
 			Native.Api->UiKeymap(Id, (int)scheme, (int)colors, showHidden ? 1 : 0, named, bytes.Length);
@@ -122,10 +124,10 @@ public sealed unsafe class KeymapView : UiElement
 
 	private void RaiseKeyClicked()
 	{
-		var path = ClickedPath();
-		if (path.Length > 0)
+		var control = InputControl.FromPath(ClickedPath());
+		if (control != null)
 		{
-			KeyClicked?.Invoke(path);
+			KeyClicked?.Invoke(control.Value);
 		}
 	}
 

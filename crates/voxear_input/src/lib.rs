@@ -23,12 +23,13 @@
 //! [`Input::update`] once a frame before the game's scripts run.
 
 pub mod actions;
+pub mod controls;
 pub mod devices;
 pub mod glyphs;
 pub mod layouts;
 
 use anyhow::{Context, Result};
-pub use actions::{ActionKind, ActionState, ActionsFile, Binding, CategoryData};
+pub use actions::{ActionKind, ActionState, ActionsFile, Binding, CategoryData, Processor};
 pub use devices::{Device, Devices, Family, Mouse, Pad, Scheme};
 pub use glyphs::{Glyph, GlyphShape};
 use winit::event::WindowEvent;
@@ -65,6 +66,10 @@ pub struct ControlUse {
     pub category: Option<String>,
     /// The action keeps out of key maps, as a debug key does.
     pub hidden: bool,
+    /// The action's icon, by name.
+    pub icon: Option<String>,
+    /// Another action that can be on at once reads the same control.
+    pub conflict: bool,
 }
 
 impl ControlUse {
@@ -264,12 +269,20 @@ impl Input {
     }
 
     /// Turns a map's actions on or off, as a game does for its menus.
+    /// Turning one on turns off the maps it cannot be on with.
     pub fn set_map_enabled(&mut self, map: &str, on: bool) {
         self.players.stale = true;
-        self.actions.off.retain(|off| off != map);
-        if !on {
-            self.actions.off.push(map.to_string());
-        }
+        self.actions.set_enabled(map, on);
+    }
+
+    /// Whether two maps cannot be on together.
+    pub fn maps_exclusive(&self, a: &str, b: &str) -> bool {
+        self.actions.file.exclusive(a, b)
+    }
+
+    /// The maps a map cannot be on with, by name.
+    pub fn map_excludes(&self, map: &str) -> Vec<String> {
+        self.maps().into_iter().filter(|other| self.maps_exclusive(map, other)).collect()
     }
 
     pub fn map_enabled(&self, map: &str) -> bool {
@@ -296,7 +309,7 @@ impl Input {
 
     /// Every control every action's bindings read, as they are now, rebound
     /// or not: one use a binding, or a part of a composite one, in the
-    /// order of the actions.
+    /// order of the actions, each saying whether it conflicts.
     pub fn control_uses(&self) -> Vec<ControlUse> {
         let mut uses = Vec::new();
         for (at, action) in self.actions.list.iter().enumerate() {
@@ -311,9 +324,18 @@ impl Input {
                         part,
                         category: action.data.category.clone(),
                         hidden: action.data.hidden,
+                        icon: action.data.icon.clone(),
+                        conflict: false,
                     });
                 }
             }
+        }
+        let clashes = |a: &ControlUse, b: &ControlUse| {
+            a.action != b.action && !self.maps_exclusive(&a.map, &b.map) && actions::overlaps(&a.path, &b.path)
+        };
+        let conflicts: Vec<bool> = uses.iter().map(|one| uses.iter().any(|other| clashes(one, other))).collect();
+        for (found, conflict) in uses.iter_mut().zip(conflicts) {
+            found.conflict = conflict;
         }
         uses
     }
@@ -367,9 +389,11 @@ impl Input {
         }
     }
 
-    /// The other actions of an action's map that a control is bound to.
-    pub fn conflicts(&self, action: ActionId, path: &str) -> Vec<String> {
-        self.actions.conflicts(action.0, path)
+    /// The other actions a control is bound to, wholly or in part, that
+    /// can be on at once with this one: those of its map, and of maps that
+    /// do not exclude it.
+    pub fn conflicts(&self, action: ActionId, path: &str) -> Vec<ActionId> {
+        self.actions.conflicts(action.0, path).into_iter().map(ActionId).collect()
     }
 
     /// Every action's bindings as they are now, as text to save a player's
@@ -401,6 +425,11 @@ impl Input {
         (self.actions.list.iter().enumerate())
             .map(|(at, a)| (ActionId(at), a.map.as_str(), a.data.name.as_str(), a.data.category.as_deref(), a.data.hidden))
             .collect()
+    }
+
+    /// An action's icon, by name, when its file gives it one.
+    pub fn action_icon(&self, action: ActionId) -> Option<&str> {
+        self.actions.list.get(action.0).and_then(|a| a.data.icon.as_deref())
     }
 
     /// Puts one action's bindings back as the actions' file has them.

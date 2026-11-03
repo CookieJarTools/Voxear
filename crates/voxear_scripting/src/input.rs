@@ -81,7 +81,8 @@ fn with_input<T>(f: impl FnOnce(&mut Input) -> T) -> Option<T> {
 /// its layout draws, as a stick with its halves and its press. A line each:
 /// the action by its map and name, which of its bindings, the part of a
 /// composite one (or empty), what a key map says for it, its category (or
-/// empty), and 1 when it is hidden, between tabs.
+/// empty), 1 when it is hidden, its icon (or empty), and 1 when it
+/// conflicts, between tabs.
 pub(crate) unsafe extern "C" fn input_uses(path: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
     let path = unsafe { utf8(path, len) };
     let layout = match Scheme::of(&path) {
@@ -93,8 +94,9 @@ pub(crate) unsafe extern "C" fn input_uses(path: *const u8, len: i32, buffer: *m
         let uses = input.control_uses().into_iter().filter(|u| paths.contains(&u.path));
         let lines = uses.map(|u| {
             let category = u.category.clone().unwrap_or_default();
-            let part = u.part.unwrap_or_default();
-            format!("{}/{}\t{}\t{part}\t{}\t{category}\t{}", u.map, u.name, u.binding, u.label(), i32::from(u.hidden))
+            let (part, icon) = (u.part.unwrap_or_default(), u.icon.clone().unwrap_or_default());
+            let (hidden, conflict) = (i32::from(u.hidden), i32::from(u.conflict));
+            format!("{}/{}\t{}\t{part}\t{}\t{category}\t{hidden}\t{icon}\t{conflict}", u.map, u.name, u.binding, u.label())
         });
         lines.collect::<Vec<_>>().join("\n")
     });
@@ -117,9 +119,9 @@ pub(crate) unsafe extern "C" fn input_label(path: *const u8, len: i32, buffer: *
     label.len() as i32
 }
 
-/// The other actions of the same map bound to a control, by its path, as a
-/// rebinding screen warns of: a name a line. Written when it fits; its
-/// length either way.
+/// The other actions bound to a control, by its path, that can be on at
+/// once with this one, as a rebinding screen warns of: `Map/Name` a line.
+/// Written when it fits; its length either way.
 pub(crate) unsafe extern "C" fn input_conflicts(
     action: i32,
     path: *const u8,
@@ -129,7 +131,11 @@ pub(crate) unsafe extern "C" fn input_conflicts(
 ) -> i32 {
     let path = unsafe { utf8(path, len) };
     let action = voxear_input::ActionId(action.max(0) as usize);
-    let text = with_input(|input| input.conflicts(action, &path).join("\n")).unwrap_or_default();
+    let text = with_input(|input| {
+        let names = input.conflicts(action, &path).into_iter().filter_map(|other| input.action_name(other));
+        names.map(|(map, name)| format!("{map}/{name}")).collect::<Vec<_>>().join("\n")
+    })
+    .unwrap_or_default();
     if !buffer.is_null() && text.len() <= capacity.max(0) as usize {
         unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), buffer, text.len()) };
     }
@@ -187,7 +193,7 @@ pub(crate) unsafe extern "C" fn input_control(path: *const u8, len: i32, value: 
 
 /// Text about input, written into `buffer` when it fits; returns its length
 /// in bytes either way, or -1 for none: an action's prompt (0), the scheme
-/// used last (1), the saved bindings (2), the maps' names a line each (3),
+/// used last (1), the saved bindings (2), each map a line, with 1 when it is on and the maps it excludes (3),
 /// an action's bindings' controls a line each (4), the control the last
 /// rebinding took (5), or an action's name with its map's (6).
 pub(crate) unsafe extern "C" fn input_text(what: i32, action: i32, buffer: *mut u8, capacity: i32) -> i32 {
@@ -196,7 +202,13 @@ pub(crate) unsafe extern "C" fn input_text(what: i32, action: i32, buffer: *mut 
         TEXT_PROMPT => Some(input.prompt(action)),
         TEXT_SCHEME => Some(input.scheme().name().to_string()),
         TEXT_SAVED => Some(input.saved_bindings()),
-        TEXT_MAPS => Some(input.maps().join("\n")),
+        TEXT_MAPS => {
+            let lines = input.maps().into_iter().map(|map| {
+                let on = i32::from(input.map_enabled(&map));
+                format!("{map}\t{on}\t{}", input.map_excludes(&map).join(","))
+            });
+            Some(lines.collect::<Vec<_>>().join("\n"))
+        }
         TEXT_BINDINGS => {
             let lines = input.bindings(action).iter().map(|binding| {
                 let controls = binding.controls();
@@ -214,8 +226,9 @@ pub(crate) unsafe extern "C" fn input_text(what: i32, action: i32, buffer: *mut 
         },
         TEXT_NAME => input.action_name(action).map(|(map, name)| format!("{map}/{name}")),
         TEXT_ACTIONS => {
-            let lines = input.actions().into_iter().map(|(_, map, name, category, hidden)| {
-                format!("{map}/{name}\t{}\t{}", category.unwrap_or_default(), i32::from(hidden))
+            let lines = input.actions().into_iter().map(|(id, map, name, category, hidden)| {
+                let icon = input.action_icon(id).unwrap_or_default();
+                format!("{map}/{name}\t{}\t{}\t{icon}", category.unwrap_or_default(), i32::from(hidden))
             });
             Some(lines.collect::<Vec<_>>().join("\n"))
         }

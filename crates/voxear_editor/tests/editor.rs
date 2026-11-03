@@ -3940,6 +3940,14 @@ fn audio_sources_show_in_the_scene_view_with_their_reach() {
     shot(&mut renderer, "audio-gizmos.png");
 }
 
+/// Takes away a copy of Hello's own input actions, if it has any, for a test
+/// to start from Voxear's.
+fn without_own_actions(dir: &std::path::Path) {
+    for name in ["Input.inputactions", "Input.inputactions.meta"] {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
+}
+
 const ACTIONS_WITH_CATEGORIES: &str = r##"format = 1
 
 [[category]]
@@ -3966,6 +3974,7 @@ bindings = [{ up = "Keyboard/W", down = "Keyboard/S", left = "Keyboard/A", right
 [[map.action]]
 name = "Jump"
 category = "Movement"
+icon = "arrow-up"
 bindings = ["Keyboard/Space", "Gamepad/South"]
 
 [[map.action]]
@@ -4011,6 +4020,21 @@ bindings = ["Keyboard/Escape", "Gamepad/Start"]
 name = "Noclip"
 hidden = true
 bindings = ["Keyboard/F9"]
+
+[[map]]
+name = "UI"
+excludes = ["Player"]
+
+[[map.action]]
+name = "Submit"
+bindings = ["Keyboard/Space"]
+
+[[map]]
+name = "Debug"
+
+[[map.action]]
+name = "Fly"
+bindings = ["Keyboard/Q"]
 "##;
 
 #[test]
@@ -4018,6 +4042,7 @@ fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() 
     use voxear_editor::PaletteKey;
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
     let dir = hello_copy();
+    without_own_actions(dir.path());
     std::fs::write(dir.path().join("Controls.inputactions"), ACTIONS_WITH_CATEGORIES).unwrap();
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
@@ -4028,8 +4053,17 @@ fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() 
     frame(&mut editor, &mut renderer);
     editor.palette_key(PaletteKey::Enter);
     frame(&mut editor, &mut renderer);
-    // It opens on its Actions; the key maps are its Layout.
+    // It opens on its Actions, a row a binding with its control's name and device, every other row shaded.
     let view = editor.ui.find(editor.ui.root(), "input-view").expect("the Input Actions window");
+    for _ in 0..2 {
+        frame(&mut editor, &mut renderer);
+    }
+    let mut rows = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "input-row", &mut rows);
+    let texts: Vec<Vec<String>> = rows.iter().map(|&row| texts_in(&editor.ui, row)).collect();
+    assert!(texts.contains(&vec!["Space".to_string(), "Keyboard".to_string()]), "{texts:?}");
+    assert!(rows.iter().any(|&row| editor.ui.has_class(row, "odd")));
+    // The key maps are its Layout.
     editor.ui.set_segment(view, 1);
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
@@ -4040,10 +4074,19 @@ fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() 
     let lit = |editor: &voxear_editor::Editor, keys: &[NodeId]| {
         keys.iter().filter(|&&k| editor.ui.has_class(k, "assigned")).count()
     };
-    assert_eq!(lit(&editor, &keys), 13, "W, A, S, D, Space, Shift, Q, M, Tab, Esc and the mouse's left, right and body");
+    assert_eq!(lit(&editor, &keys), 12, "W, A, S, D, Space, Shift, M, Tab, Esc and the mouse's left, right and body");
+    let conflicts: Vec<String> =
+        keys.iter().filter(|&&k| editor.ui.has_class(k, "conflict")).flat_map(|&k| texts_in(&editor.ui, k)).collect();
+    assert_eq!(conflicts, ["Q"], "Fly's Debug map can be on with Player; UI's Submit on Space cannot");
     let mut callouts = Vec::new();
     with_class(&editor.ui, keymap, "keymap-callout", &mut callouts);
     assert_eq!(callouts.len(), 13, "Noclip's F9 is hidden, unlabelled");
+    let mut icons = Vec::new();
+    with_class(&editor.ui, keymap, "keymap-callout-icon", &mut icons);
+    assert_eq!(icons.len(), 1, "Jump's icon beside it by Space");
+    let mut body = Vec::new();
+    with_class(&editor.ui, keymap, "keymap-body", &mut body);
+    assert_eq!(body.len(), 2, "the keyboard and the mouse drawn behind their keys");
     shot(&mut renderer, "input-actions-keyboard.png");
 
     // Coloured by category, then the gamepad.
@@ -6079,6 +6122,7 @@ fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
         Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
     };
     let dir = hello_copy();
+    without_own_actions(dir.path());
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     frame(&mut editor, &mut renderer);
@@ -6090,14 +6134,19 @@ fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
     let file = dir.path().join("Input.inputactions");
     assert!(!file.exists(), "Hello has no actions of its own");
 
-    let add = with_text(&editor.ui, panel, "Action").expect("an Action button");
+    let add = editor.ui.find(panel, "input-add").expect("the plus over the actions");
     click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let action = menu_item(&editor.ui, "Action").expect("the plus offers an action");
+    click(&mut editor.ui, action);
     frame(&mut editor, &mut renderer);
     let text = std::fs::read_to_string(&file).expect("the actions written to a file of the project's own");
     assert!(text.contains("name = \"New Action\""), "{text}");
     assert!(editor.game.input.action("New Action").is_some(), "the game reads it at once");
 
-    let binding = with_text(&editor.ui, panel, "Binding").unwrap();
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let binding = menu_item(&editor.ui, "Binding").expect("and a binding of the action picked");
     click(&mut editor.ui, binding);
     frame(&mut editor, &mut renderer);
     let listen = with_text(&editor.ui, panel, "Listen").expect("the new binding's Listen button");
@@ -6116,16 +6165,42 @@ fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
     assert_eq!(glyphs.len(), 1, "the binding's prompt: a keycap");
     assert!(editor.ui.has_class(glyphs[0], "key") && texts_in(&editor.ui, glyphs[0]) == ["K"]);
 
-    // Typed in, a pad's button is drawn as an Xbox pad marks it until a pad says otherwise.
-    let path = editor.ui.find(panel, "input-path").expect("the binding's Path field");
-    type_into(&mut editor.ui, path, "Gamepad/South");
-    editor.ui.key_down(Key::Enter);
+    // Picked from every control, searched for, a pad's button is drawn as an Xbox pad marks it until a pad says
+    // otherwise.
+    let control = editor.ui.find(panel, "input-control").expect("the binding's Control");
+    assert_eq!(texts_in(&editor.ui, control), ["K Key"]);
+    click(&mut editor.ui, control);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(editor.picker_open(), "the control picker");
+    editor.ui.text_input("south");
     frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    editor.picker_key(voxear_editor::PaletteKey::Enter);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
     assert!(std::fs::read_to_string(&file).unwrap().contains("\"Gamepad/South\""));
     let mut glyphs = Vec::new();
     with_class(&editor.ui, panel, "prompt-glyph", &mut glyphs);
     assert!(editor.ui.has_class(glyphs[0], "round") && texts_in(&editor.ui, glyphs[0]) == ["A"]);
+
+    // A processor is picked from a menu of them, and its value given in a field of its own.
+    let add = editor.ui.find(panel, "input-add-processor").expect("the binding's plus for processors");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let scale = menu_item(&editor.ui, "Scale").expect("Scale among the processors");
+    click(&mut editor.ui, scale);
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("scale(1)"));
+    let mut values = Vec::new();
+    with_class(&editor.ui, panel, "input-value", &mut values);
+    assert_eq!(values.len(), 1, "Scale's Factor");
+    type_into(&mut editor.ui, values[0], "2.5");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("scale(2.5)"));
     shot(&mut renderer, "input-actions.png");
 }
 

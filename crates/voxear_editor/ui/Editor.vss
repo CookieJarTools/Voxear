@@ -3292,12 +3292,79 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     flex-shrink: 0;
 }
 
-/* What the Actions column adds: an action, or a binding of the action picked. */
-.input-adds {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px;
+/* An Actions row: its icon, what it says, its control's device after it, and a mark when it conflicts; every
+   other row a shade lighter, to follow along. */
+.input-row.odd {
+    background-color: rgba(255, 255, 255, 0.025);
+}
+
+.input-row.odd:hover {
+    background-color: var(--vx-hover);
+}
+
+.input-row.odd:selected {
+    background-color: var(--vx-selected);
+}
+
+.input-row-icon {
+    width: 13px;
+    height: 13px;
     flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+.input-row-detail {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.input-row-conflict {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    color: var(--vx-danger);
+}
+
+.input-row.conflict > .entities-row-name {
+    color: var(--vx-danger);
+}
+
+/* The binding's control, which opens the control picker, reads as a field. */
+.input-picker {
+    justify-content: flex-start;
+    min-width: 0px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.input-icon-name {
+    color: var(--vx-muted);
+}
+
+/* A processor: its kind, then a short field for each of its values after its name, across the whole width and
+   onto another line when the column is narrow. */
+.input-processor-row {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding-left: 12px;
+}
+
+/* The processor's kind and values. */
+.input-processor {
+    flex-shrink: 0;
+}
+
+.input-value-name {
+    color: var(--vx-muted);
+    flex-shrink: 0;
+}
+
+.input-value {
+    width: 44px;
+    flex-shrink: 1;
+    min-width: 32px;
 }
 
 .input-properties {

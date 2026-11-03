@@ -4,10 +4,20 @@
 //! when it had none, and read into the game's input again. While a binding
 //! listens for a key or button, the keys and mouse buttons go to the
 //! game's input, wherever the focus is, and it reads them each frame.
+//!
+//! The window's pickers are the object picker: a binding's control from
+//! every control, in folders by device, and an action's icon.
 
 use voxear_assets::AssetKind;
+use voxear_input::controls;
+use voxear_ui::ICONS;
 
 use super::Editor;
+use crate::{
+    input_edit,
+    input_editor::{Browse, Picked},
+    object_picker::{Choice, Chosen, PickFor},
+};
 
 /// Where the actions go when the project has no file of its own yet.
 const NEW_FILE: &str = "Input.inputactions";
@@ -21,6 +31,51 @@ impl Editor {
         }
         if self.input_actions.is_listening() && !self.is_playing() {
             self.game.input.update(1.0 / 60.0);
+        }
+        match self.input_actions.take_browse() {
+            Some(Browse::Control { anchor, now }) => {
+                let choice = |control: controls::Control| Choice {
+                    label: control.name,
+                    detail: String::new(),
+                    icon: input_edit::device_icon(&control.path),
+                    pick: Chosen::Control(control.path),
+                    preview: None,
+                    folder: control.group.to_string(),
+                };
+                let choices = controls::all().into_iter().map(choice).collect();
+                self.picker.open(&mut self.ui, (PickFor::InputControl, anchor), "Select Control", choices, &now);
+            }
+            Some(Browse::Icon { anchor, now }) => {
+                let none = Choice {
+                    label: "Default".into(),
+                    detail: "by its type".into(),
+                    icon: "close",
+                    pick: Chosen::Icon(None),
+                    preview: None,
+                    folder: String::new(),
+                };
+                let icon = |&name: &&'static str| Choice {
+                    label: name.to_string(),
+                    detail: String::new(),
+                    icon: name,
+                    pick: Chosen::Icon(Some(name)),
+                    preview: None,
+                    folder: String::new(),
+                };
+                let mut choices = vec![none];
+                choices.extend(ICONS.iter().filter(|name| !name.starts_with("logo-")).map(icon));
+                self.picker.open(&mut self.ui, (PickFor::ActionIcon, anchor), "Select Icon", choices, &now);
+            }
+            None => {}
+        }
+    }
+
+    /// Hands the Input Actions window what its picker picked.
+    pub(super) fn pick_for_input(&mut self, picked: Chosen) {
+        match picked {
+            Chosen::Control(path) => self.input_actions.pick(Picked::Control(path)),
+            Chosen::Icon(icon) => self.input_actions.pick(Picked::Icon(icon.map(str::to_string))),
+            _ => {}
         }
     }
 

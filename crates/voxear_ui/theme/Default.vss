@@ -26,6 +26,7 @@
     --vx-on-accent: #ffffff;
     --vx-success: #4cb782;
     --vx-warning: #e2b340;
+    --vx-danger: #e5534b;
     --vx-prefab: #7cb1ff;
     --vx-prefab-member: #a3c6f5;
     --vx-x: #eb5757;
@@ -799,6 +800,7 @@ DockSpace .split-column > .split-divider {
 .keymap-key {
     align-items: center;
     justify-content: center;
+    overflow: hidden;
     border-radius: 5px;
     border: 1px solid var(--vx-field-line);
     background-color: var(--vx-field);
@@ -830,8 +832,22 @@ DockSpace .split-column > .split-divider {
     color: var(--vx-text-2);
 }
 
+.keymap-key.conflict {
+    background-color: var(--vx-danger);
+    border-color: #ff8f88;
+    color: var(--vx-on-accent);
+}
+
 .keymap-key:hover {
     border-color: var(--vx-text);
+}
+
+.keymap-body-edge {
+    background-color: var(--vx-line-2);
+}
+
+.keymap-body {
+    background-color: var(--vx-bg);
 }
 
 .keymap-key-label {
@@ -846,8 +862,24 @@ DockSpace .split-column > .split-divider {
     background-color: var(--vx-panel);
 }
 
+.keymap-callout.conflict {
+    border-color: var(--vx-danger);
+}
+
 .keymap-callout:hover {
     border-color: var(--vx-accent);
+}
+
+.keymap-callout-row {
+    align-items: center;
+    justify-content: center;
+}
+
+.keymap-callout-icon {
+    width: 11px;
+    height: 11px;
+    margin-right: 4px;
+    color: var(--vx-muted);
 }
 
 .keymap-callout-line {

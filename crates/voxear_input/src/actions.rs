@@ -48,7 +48,23 @@
 //! [[map.action]]
 //! name = "Jump"
 //! category = "Movement"
+//! icon = "arrow-up"
 //! bindings = ["Keyboard/Space"]
+//! ```
+//!
+//! - Its `icon`, one of Voxear's icons by name, marks it in key maps and in
+//!   the Input Actions window.
+//! - A map's `excludes` names the maps that cannot be on while it is, as a
+//!   game's Player and UI maps are not on together: turning it on turns
+//!   them off, and of two that exclude each other only the first in the file
+//!   starts on. Either naming the other is enough.
+//! - The same control bound to two actions conflicts when both can be on
+//!   at once: in one map, or in two that do not exclude each other.
+//!
+//! ```toml
+//! [[map]]
+//! name = "Player"
+//! excludes = ["UI"]
 //! ```
 
 use std::collections::HashMap;
@@ -97,6 +113,50 @@ impl ActionsFile {
     pub fn check(&self) -> Result<()> {
         Actions::of(self.clone()).map(drop)
     }
+
+    /// Whether two maps, by name, cannot be on together: either excludes
+    /// the other.
+    pub fn exclusive(&self, a: &str, b: &str) -> bool {
+        let names = |map: &MapData, other: &str| map.excludes.iter().any(|name| name == other);
+        a != b && self.maps.iter().any(|map| (map.name == a && names(map, b)) || (map.name == b && names(map, a)))
+    }
+
+    /// Every control bound in the file that conflicts: bound, or bound in
+    /// part, to another action that can be on at once, in its own map or
+    /// one that does not exclude it.
+    pub fn conflicts(&self) -> Vec<BoundAt> {
+        let mut bound = Vec::new();
+        for (map_at, map) in self.maps.iter().enumerate() {
+            for (action_at, action) in map.actions.iter().enumerate() {
+                for (binding, found) in action.bindings.iter().enumerate() {
+                    for (part, path) in found.controls() {
+                        bound.push((
+                            BoundAt { map: map_at, action: action_at, binding, part },
+                            map.name.as_str(),
+                            path,
+                        ));
+                    }
+                }
+            }
+        }
+        let clashes = |(a, a_map, a_path): &(BoundAt, &str, String), (b, b_map, b_path): &(BoundAt, &str, String)| {
+            let same_action = a.map == b.map && a.action == b.action;
+            !same_action && !self.exclusive(a_map, b_map) && overlaps(a_path, b_path)
+        };
+        bound.iter().filter(|one| bound.iter().any(|other| clashes(one, other))).map(|(at, ..)| *at).collect()
+    }
+
+    /// The maps that start off: of two that exclude each other, the later.
+    pub fn starting_off(&self) -> Vec<String> {
+        let mut off: Vec<String> = Vec::new();
+        for (at, map) in self.maps.iter().enumerate() {
+            let on_before = self.maps[..at].iter().filter(|before| !off.contains(&before.name));
+            if on_before.clone().any(|before| self.exclusive(&before.name, &map.name)) {
+                off.push(map.name.clone());
+            }
+        }
+        off
+    }
 }
 
 fn tables(item: Option<&mut toml_edit::Item>) -> Option<&mut toml_edit::ArrayOfTables> {
@@ -117,8 +177,43 @@ pub struct CategoryData {
 #[serde(deny_unknown_fields)]
 pub struct MapData {
     pub name: String,
+    /// The maps that cannot be on while this one is, by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excludes: Vec<String>,
     #[serde(default, rename = "action")]
     pub actions: Vec<ActionData>,
+}
+
+/// Where one control is bound in a file: the map and action by their
+/// places, the binding by its place in the action, and its part.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoundAt {
+    pub map: usize,
+    pub action: usize,
+    pub binding: usize,
+    pub part: Option<&'static str>,
+}
+
+/// Whether two controls' paths read the same thing, wholly or in part: the
+/// same control, or a stick and an axis or half of it, or an axis and its
+/// halves. A stick's press is a button of its own.
+pub fn overlaps(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let stick = |path: &str| -> Option<(String, String)> {
+        let at = path.find("Stick")? + "Stick".len();
+        let rest = &path[at..];
+        (rest != "Press").then(|| (path[..at].to_string(), rest.to_string()))
+    };
+    let (Some((stick_a, part_a)), Some((stick_b, part_b))) = (stick(a), stick(b)) else { return false };
+    let within = |axis: &str, half: &str| match axis {
+        "X" => half == "Left" || half == "Right",
+        "Y" => half == "Up" || half == "Down",
+        _ => false,
+    };
+    stick_a == stick_b
+        && (part_a.is_empty() || part_b.is_empty() || within(&part_a, &part_b) || within(&part_b, &part_a))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -135,6 +230,10 @@ pub struct ActionData {
     /// Left out of key maps, as a debug key is.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// The icon key maps and the Input Actions window mark it with, one of
+    /// Voxear's by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     #[serde(default)]
     pub bindings: Vec<Binding>,
 }
@@ -272,16 +371,72 @@ fn call(text: &str) -> Result<(&str, Vec<f32>)> {
     Ok((name.trim(), numbers))
 }
 
-/// What changes a binding's value, in order.
+/// What changes a binding's value, in order, as the Input Actions window
+/// picks it from a list and gives its values: a deadzone between `min` and
+/// `max`, inverting either way or both, or scaling by a factor.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Processor {
+pub enum Processor {
     Deadzone(f32, f32),
+    /// Inverting x, y or both.
     Invert(bool, bool),
     Scale(f32),
 }
 
 impl Processor {
-    fn parse(text: &str) -> Result<Self> {
+    /// Each kind of processor, as a list names them, with its values at
+    /// their defaults.
+    pub const KINDS: [(&'static str, Self); 5] = [
+        ("Deadzone", Self::Deadzone(STICK_DEADZONE.0, STICK_DEADZONE.1)),
+        ("Invert", Self::Invert(true, true)),
+        ("Invert X", Self::Invert(true, false)),
+        ("Invert Y", Self::Invert(false, true)),
+        ("Scale", Self::Scale(1.0)),
+    ];
+
+    /// Which of [`KINDS`](Self::KINDS) it is.
+    pub fn kind(self) -> usize {
+        match self {
+            Self::Deadzone(..) => 0,
+            Self::Invert(true, true) | Self::Invert(false, false) => 1,
+            Self::Invert(true, false) => 2,
+            Self::Invert(false, true) => 3,
+            Self::Scale(_) => 4,
+        }
+    }
+
+    /// Its values, by name, as fields show them: a deadzone's Min and Max,
+    /// a scale's Factor.
+    pub fn values(self) -> Vec<(&'static str, f32)> {
+        match self {
+            Self::Deadzone(min, max) => vec![("Min", min), ("Max", max)],
+            Self::Invert(..) => Vec::new(),
+            Self::Scale(by) => vec![("Factor", by)],
+        }
+    }
+
+    /// The same kind with its values set, in the order [`values`](Self::values) gives them.
+    pub fn with_values(self, values: &[f32]) -> Self {
+        let at = |i: usize, kept: f32| values.get(i).copied().filter(|v| v.is_finite()).unwrap_or(kept);
+        match self {
+            Self::Deadzone(min, max) => Self::Deadzone(at(0, min), at(1, max)),
+            Self::Invert(x, y) => Self::Invert(x, y),
+            Self::Scale(by) => Self::Scale(at(0, by)),
+        }
+    }
+
+    /// As `.inputactions` writes it: `deadzone(0.1, 0.9)`, `invert_y`.
+    pub fn to_text(self) -> String {
+        match self {
+            Self::Deadzone(min, max) => format!("deadzone({min}, {max})"),
+            Self::Invert(true, false) => "invert_x".into(),
+            Self::Invert(false, true) => "invert_y".into(),
+            Self::Invert(..) => "invert".into(),
+            Self::Scale(by) => format!("scale({by})"),
+        }
+    }
+
+    /// Reads one as `.inputactions` writes it.
+    pub fn parse(text: &str) -> Result<Self> {
         let (name, args) = call(text)?;
         let arg = |at: usize, default: f32| args.get(at).copied().unwrap_or(default);
         Ok(match name {
@@ -442,7 +597,8 @@ impl Actions {
                 list.push(Action::new(&map.name, action.clone())?);
             }
         }
-        Ok(Self { file, list, off: Vec::new() })
+        let off = file.starting_off();
+        Ok(Self { file, list, off })
     }
 
     /// An action by its name, `Jump`, or with its map, `Player/Jump`.
@@ -486,15 +642,35 @@ impl Actions {
         action.read_processors()
     }
 
-    /// The other actions of the same map that a control is bound to, by
-    /// name, as a rebinding screen warns of.
-    pub fn conflicts(&self, action: usize, path: &str) -> Vec<String> {
+    /// The other actions that a control is bound to, wholly or in part,
+    /// that can be on at once with this one, by place, as a rebinding
+    /// screen warns of: those of its own map, and of maps that do not
+    /// exclude it.
+    pub fn conflicts(&self, action: usize, path: &str) -> Vec<usize> {
         let Some(this) = self.list.get(action) else { return Vec::new() };
         (self.list.iter().enumerate())
-            .filter(|(at, other)| *at != action && other.map == this.map)
-            .filter(|(_, other)| other.data.bindings.iter().any(|b| b.controls().iter().any(|(_, p)| p == path)))
-            .map(|(_, other)| other.data.name.clone())
+            .filter(|(at, other)| *at != action && !self.file.exclusive(&this.map, &other.map))
+            .filter(|(_, other)| {
+                other.data.bindings.iter().any(|b| b.controls().iter().any(|(_, p)| overlaps(p, path)))
+            })
+            .map(|(at, _)| at)
             .collect()
+    }
+
+    /// Turns a map on, and those it cannot be on with off; or turns it off.
+    pub fn set_enabled(&mut self, map: &str, on: bool) {
+        self.off.retain(|off| off != map);
+        if !on {
+            self.off.push(map.to_string());
+            return;
+        }
+        let excluded: Vec<String> =
+            self.file.maps.iter().filter(|m| self.file.exclusive(map, &m.name)).map(|m| m.name.clone()).collect();
+        for name in excluded {
+            if !self.off.contains(&name) {
+                self.off.push(name);
+            }
+        }
     }
 
     /// Each action's bindings as they are now, rebound or not, by map and
@@ -583,12 +759,70 @@ mod tests {
         let jump = actions.find("Jump").unwrap();
         actions.rebind(jump, 0, None, "Keyboard/E").unwrap();
         assert_eq!(actions.list[jump].data.bindings[0], Binding::Path("Keyboard/E".into()));
-        assert_eq!(actions.conflicts(jump, "Keyboard/E"), ["Charge"]);
+        assert_eq!(actions.conflicts(jump, "Keyboard/E"), [actions.find("Charge").unwrap()]);
         let moves = actions.find("Move").unwrap();
         actions.rebind(moves, 0, Some("up"), "Keyboard/Z").unwrap();
         let Binding::Full(full) = &actions.list[moves].data.bindings[0] else { panic!("still a composite") };
         assert_eq!(full.up.as_deref(), Some("Keyboard/Z"));
         assert!(Processor::parse("deadzone(0.2)").is_ok() && Processor::parse("wobble").is_err());
+        for (_, kind) in Processor::KINDS {
+            assert_eq!(Processor::parse(&kind.to_text()).unwrap(), kind, "{kind:?} reads back");
+        }
+        assert_eq!(Processor::Scale(1.0).with_values(&[2.5]).to_text(), "scale(2.5)");
         assert!(Interaction::parse(Some("hold(1)")).is_ok() && Interaction::parse(Some("spin")).is_err());
+    }
+
+    const MAPS: &str = r#"
+        format = 1
+
+        [[map]]
+        name = "Player"
+        excludes = ["Menu"]
+
+        [[map.action]]
+        name = "Move"
+        type = "vector2"
+        bindings = ["Gamepad/LeftStick"]
+
+        [[map.action]]
+        name = "Sprint"
+        bindings = ["Gamepad/LeftStickPress", "Keyboard/ShiftLeft"]
+
+        [[map]]
+        name = "Menu"
+
+        [[map.action]]
+        name = "Up"
+        bindings = ["Gamepad/LeftStickUp"]
+
+        [[map]]
+        name = "Debug"
+
+        [[map.action]]
+        name = "Noclip"
+        bindings = ["Keyboard/ShiftLeft"]
+    "#;
+
+    #[test]
+    fn maps_that_exclude_each_other_are_not_on_together_nor_conflict() {
+        let mut actions = Actions::parse(MAPS).unwrap();
+        assert_eq!(actions.off, ["Menu"], "of two that exclude each other, the first starts on");
+        actions.set_enabled("Menu", true);
+        assert_eq!(actions.off, ["Player"], "turning one on turns the other off");
+
+        let file = &actions.file;
+        assert!(file.exclusive("Menu", "Player") && !file.exclusive("Player", "Debug"));
+        let (sprint, noclip) = (actions.find("Sprint").unwrap(), actions.find("Noclip").unwrap());
+        assert!(actions.conflicts(actions.find("Move").unwrap(), "Gamepad/LeftStick").is_empty(), "Up is in Menu");
+        assert_eq!(actions.conflicts(sprint, "Keyboard/ShiftLeft"), [noclip], "Debug can be on with Player");
+
+        let conflicts = file.conflicts();
+        let shift =
+            |map: usize, action: usize| BoundAt { map, action, binding: if map == 0 { 1 } else { 0 }, part: None };
+        assert_eq!(conflicts, [shift(0, 1), shift(2, 0)], "the stick and its press are apart");
+        assert!(
+            overlaps("Gamepad/RightStickX", "Gamepad/RightStickLeft")
+                && !overlaps("Gamepad/LeftStickX", "Gamepad/LeftStickUp")
+        );
     }
 }

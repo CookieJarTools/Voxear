@@ -64,6 +64,10 @@ pub enum Chosen {
     Value(Pick),
     Component(Part),
     Folder(String),
+    /// An input binding's control, by its path.
+    Control(String),
+    /// An input action's icon, or none for its type's.
+    Icon(Option<&'static str>),
 }
 
 /// What a pick is for: a reference of an Obj's, or a scene of a level's.
@@ -82,6 +86,10 @@ pub enum PickFor {
     MaterialMap { material: String, map: voxear_engine::MaterialMap },
     /// A material of the model at this path, for the `.material` it draws with.
     Remap { model: String, part: String },
+    /// The control of the binding picked in the Input Actions window.
+    InputControl,
+    /// The icon of the action picked in the Input Actions window.
+    ActionIcon,
 }
 
 /// What the picker is open for, and the field it opened from.
@@ -184,8 +192,8 @@ impl ObjectPicker {
     }
 
     /// Opens under `anchor` for `target`, headed `title`, offering
-    /// `choices`, at the top of their folders, with the one called `now`
-    /// highlighted.
+    /// `choices`, in the folder of the one called `now` and with it
+    /// highlighted, or at the top of their folders.
     pub fn open(
         &mut self,
         ui: &mut Ui,
@@ -199,8 +207,10 @@ impl ObjectPicker {
         self.heading = title.to_string();
         ui.set_text(self.field, "");
         ui.set_visible(self.panel, true);
-        self.open_folder(ui, String::new());
-        let at = self.every.iter().position(|c| c.label == now || c.label.rsplit('/').next() == Some(now));
+        // In the folder of what is chosen now, on it.
+        let found = self.every.iter().find(|c| c.label == now || c.label.rsplit('/').next() == Some(now)).cloned();
+        self.open_folder(ui, found.as_ref().map(|c| c.folder.clone()).unwrap_or_default());
+        let at = found.and_then(|found| self.shown.borrow().iter().position(|c| c.pick == found.pick));
         self.highlight(ui, at.unwrap_or(0));
         self.place(ui);
         self.focusing = true;

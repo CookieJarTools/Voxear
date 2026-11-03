@@ -2114,6 +2114,7 @@ impl Editor {
                 (PickFor::AddComponent(entity), Chosen::Component(part)) if alive(entity) => {
                     self.row_action_on(entity, RowAction::Add(part), renderer);
                 }
+                (PickFor::InputControl | PickFor::ActionIcon, picked) => self.pick_for_input(picked),
                 _ => {}
             }
         }

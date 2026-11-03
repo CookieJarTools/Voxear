@@ -5,9 +5,13 @@
 //! as a stick stands for its axes and halves and its press.
 //!
 //! The keyboard is ANSI, with its function row, the keys beside it and the
-//! arrows, and a mouse to its right. The gamepad sits as every pad does:
+//! arrows, and a mouse to its right, its side buttons on its left. The gamepad sits as every pad does:
 //! triggers and shoulders on top, the left stick and the d-pad on the
 //! left, the face buttons and the right stick on the right.
+//!
+//! Behind its controls each layout has an outline of the device itself, as
+//! rounded shapes that together make its body: the keyboard's case and the
+//! mouse, or a pad's body and its grips.
 
 /// How a control is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +40,18 @@ pub struct LayoutControl {
     pub label: String,
 }
 
+/// A part of a device's body, drawn behind its controls: a rectangle in
+/// key widths, with corners rounded `radius` key widths.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BodyPart {
+    pub rect: [f32; 4],
+    pub radius: f32,
+}
+
+const fn part(rect: [f32; 4], radius: f32) -> BodyPart {
+    BodyPart { rect, radius }
+}
+
 /// A device's controls, laid out.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
@@ -43,6 +59,8 @@ pub struct Layout {
     /// How big it is, in key widths.
     pub size: [f32; 2],
     pub controls: Vec<LayoutControl>,
+    /// Its body, the parts overlapping into one shape.
+    pub body: Vec<BodyPart>,
 }
 
 impl Layout {
@@ -114,20 +132,23 @@ pub fn keyboard_mouse() -> Layout {
     row(&mut c, 15.25, 2.25, &[("Delete", "Del", 1.0), ("End", "End", 1.0), ("PageDown", "PgDn", 1.0)]);
     c.push(key("ArrowUp", "↑", [16.25, 4.25, 1.0, 1.0]));
     row(&mut c, 15.25, 5.25, &[("ArrowLeft", "←", 1.0), ("ArrowDown", "↓", 1.0), ("ArrowRight", "→", 1.0)]);
-    // The mouse: its buttons, its wheel between them, its body for moving it, and its side buttons.
+    // The mouse: its buttons, its wheel between them, its body for moving it, and its side buttons on its left,
+    // under the thumb, Forward the nearer its front, named Mouse 4 and 5 as players call them.
     let mouse = |paths: &[&str], label: &str, rect: [f32; 4], shape: ControlShape| LayoutControl {
         paths: paths.iter().map(|p| format!("Mouse/{p}")).collect(),
         rect,
         shape,
         label: label.to_string(),
     };
-    c.push(mouse(&["Left"], "Left", [19.0, 1.25, 1.2, 2.0], ControlShape::Key));
-    c.push(mouse(&["Middle", "Scroll"], "Wheel", [20.3, 1.5, 0.6, 1.5], ControlShape::Pill));
-    c.push(mouse(&["Right"], "Right", [21.0, 1.25, 1.2, 2.0], ControlShape::Key));
-    c.push(mouse(&["Delta", "Position"], "Mouse", [19.0, 3.4, 3.2, 1.75], ControlShape::Key));
-    c.push(mouse(&["Back"], "Back", [19.0, 5.25, 1.55, 1.0], ControlShape::Key));
-    c.push(mouse(&["Forward"], "Fwd", [20.65, 5.25, 1.55, 1.0], ControlShape::Key));
-    Layout { name: "Keyboard and Mouse".into(), size: [22.2, 6.25], controls: c }
+    c.push(mouse(&["Left"], "Left", [19.8, 1.25, 1.2, 2.0], ControlShape::Key));
+    c.push(mouse(&["Middle", "Scroll"], "↕", [21.1, 1.5, 0.6, 1.5], ControlShape::Pill));
+    c.push(mouse(&["Right"], "Right", [21.8, 1.25, 1.2, 2.0], ControlShape::Key));
+    c.push(mouse(&["Delta", "Position"], "Mouse", [19.8, 3.4, 3.2, 1.75], ControlShape::Key));
+    c.push(mouse(&["Forward"], "M5", [18.95, 2.4, 0.75, 1.0], ControlShape::Key));
+    c.push(mouse(&["Back"], "M4", [18.95, 3.55, 0.75, 1.0], ControlShape::Key));
+    // The keyboard's case, and the mouse round its buttons, its side buttons standing out of its left.
+    let body = vec![part([-0.2, -0.2, 18.45, 6.65], 0.3), part([19.45, 0.95, 3.75, 5.0], 1.6)];
+    Layout { name: "Keyboard and Mouse".into(), size: [23.2, 6.25], controls: c, body }
 }
 
 /// A gamepad, its buttons named as on an Xbox pad.
@@ -164,7 +185,15 @@ pub fn gamepad() -> Layout {
         pad(&["South"], "A", [12.0, 3.9, 1.0, 1.0], ControlShape::Round),
         pad(&right, "RS", [9.5, 4.7, 2.0, 2.0], ControlShape::Stick),
     ];
-    Layout { name: "Gamepad".into(), size: [16.0, 7.1], controls: c }
+    // The body across the top, the grips down either side, and between
+    // them the lower middle the d-pad and the right stick sit on.
+    let body = vec![
+        part([0.7, 1.35, 14.6, 3.9], 1.8),
+        part([3.1, 3.6, 9.8, 3.5], 1.5),
+        part([0.2, 2.6, 4.2, 4.5], 2.0),
+        part([11.6, 2.6, 4.2, 4.5], 2.0),
+    ];
+    Layout { name: "Gamepad".into(), size: [16.0, 7.1], controls: c, body }
 }
 
 #[cfg(test)]
@@ -191,5 +220,21 @@ mod tests {
         assert_eq!(keyboard.control_of("Keyboard/Space").map(|c| c.rect[2]), Some(6.25));
         assert_eq!(keyboard.controls.iter().filter(|c| c.paths[0].starts_with("Keyboard/")).count(), 84);
         assert_eq!(gamepad().control_of("Gamepad/LeftStickUp").map(|c| c.label.as_str()), Some("LS"));
+    }
+
+    #[test]
+    fn a_pads_controls_sit_on_its_body() {
+        let pad = gamepad();
+        let on = |[x, y]: [f32; 2]| {
+            pad.body.iter().any(|p| {
+                let [px, py, pw, ph] = p.rect;
+                x >= px && x <= px + pw && y >= py && y <= py + ph
+            })
+        };
+        // The triggers stand above the body, as a pad's do.
+        for control in pad.controls.iter().filter(|c| !c.label.ends_with('T')) {
+            let [x, y, w, h] = control.rect;
+            assert!(on([x + w / 2.0, y + h / 2.0]), "{} is off the pad", control.label);
+        }
     }
 }

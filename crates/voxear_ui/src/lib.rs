@@ -70,7 +70,7 @@ pub use drag::DragSource;
 pub use draw::Shape;
 pub use icons::NAMES as ICONS;
 pub use input::{Clipboard, Key, LocalClipboard};
-pub use keymap::{KeyShape, KeyState, KeymapData, KeymapKey};
+pub use keymap::{KeyShape, KeyState, KeymapBody, KeymapData, KeymapKey, KeymapLine};
 pub use prompt::{GlyphShape, PromptGlyph};
 pub use list::{DropPlace, ItemFns, ListItems, TreeItems};
 pub use markup::LoadFile;

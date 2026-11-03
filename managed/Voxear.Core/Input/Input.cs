@@ -9,7 +9,7 @@ namespace Voxear;
 /// The game's input, as actions such as Jump and Move rather than keys, so players can rebind them and a gamepad
 /// works the same as the keyboard. The actions come from the project's <c>.inputactions</c> file, or from Voxear's
 /// own when it has none: Move, Look, Jump, Sprint, Crouch, Interact, Attack, Aim, Reload and Pause, and for menus,
-/// Navigate, Submit and Cancel.
+/// Navigate, Submit and Cancel, in a UI map that is on only while turned on and turns Player off meanwhile.
 /// <code>
 /// if (Input.Pressed("Jump")) Jump();
 /// var move = Input.Vector2("Move");
@@ -30,14 +30,24 @@ public static class Input
 		get { return NativeInput.Text(NativeInput.TextScheme) == "Gamepad" ? ControlScheme.Gamepad : ControlScheme.KeyboardMouse; }
 	}
 
-	/// <summary>The names of the maps the actions are in, such as Player and UI.</summary>
-	public static IReadOnlyList<string> Maps
+	/// <summary>The maps the actions are in, such as Player and UI, in order.</summary>
+	public static IReadOnlyList<InputMap> Maps
 	{
 		get
 		{
-			var text = NativeInput.Text(NativeInput.TextMaps);
-			return string.IsNullOrEmpty(text) ? Array.Empty<string>() : text.Split('\n');
+			var maps = new List<InputMap>();
+			foreach (var line in (NativeInput.Text(NativeInput.TextMaps) ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+			{
+				maps.Add(new InputMap(line.Split('\t')[0]));
+			}
+			return maps;
 		}
+	}
+
+	/// <summary>A map by its name, such as "UI", to turn on and off.</summary>
+	public static InputMap Map(string name)
+	{
+		return new InputMap(name);
 	}
 
 	/// <summary>Whether the action went down this frame.</summary>
@@ -99,59 +109,55 @@ public static class Input
 		return made;
 	}
 
-	/// <summary>Turns a map's actions on, as when a menu closes.</summary>
+	/// <summary>Turns a map's actions on, and those of the maps it excludes off, as when a menu closes.</summary>
 	public static void EnableMap(string map)
 	{
-		NativeInput.Change(NativeInput.ChangeMap, extra: 1, text: map);
+		Map(map).Enable();
 	}
 
 	/// <summary>Turns a map's actions off, so they read nothing, as while a menu is open.</summary>
 	public static void DisableMap(string map)
 	{
-		NativeInput.Change(NativeInput.ChangeMap, extra: 0, text: map);
+		Map(map).Disable();
 	}
 
 	/// <summary>
 	/// Waits for the player to press a control, then binds it to the action in place of the binding at
-	/// <paramref name="binding"/> (or one part of a composite, such as "up"), as a rebinding screen does. Only a
-	/// control of <paramref name="scheme"/> counts, when given. Escape gives up. Finishes with the control's path,
-	/// such as <c>Keyboard/J</c>, or null when given up. The action reads nothing meanwhile, so the key pressed does
-	/// not also act.
+	/// <paramref name="binding"/> (or one part of a composite, such as Up), as a rebinding screen does. Only a control
+	/// of <paramref name="scheme"/> counts, when given. Escape gives up. Finishes with the control, or null when given
+	/// up. The action reads nothing meanwhile, so the key pressed does not also act.
 	/// </summary>
-	public static Task<string?> Rebind(InputAction action, int binding = 0, string? part = null, ControlScheme? scheme = null)
+	public static async Task<InputControl?> Rebind(InputAction action, int binding = 0, BindingPart? part = null, ControlScheme? scheme = null)
 	{
 		var which = scheme == null ? -1 : (int)scheme.Value;
-		NativeInput.Change(NativeInput.ChangeListen, action.Id, binding, which, part ?? string.Empty);
-		return InputEvents.AwaitRebind();
+		var named = part?.ToString().ToLowerInvariant() ?? string.Empty;
+		NativeInput.Change(NativeInput.ChangeListen, action.Id, binding, which, named);
+		return InputControl.FromPath(await InputEvents.AwaitRebind());
 	}
 
 	/// <summary>
-	/// The actions a control serves, by its path, such as "Keyboard/W" or "Gamepad/LeftStick": every binding of every
-	/// action that reads it, rebound or not, in the order of the actions. A stick counts its halves and its press too,
-	/// as a key map draws them as one.
+	/// The actions a control serves: every binding of every action that reads it, rebound or not, in the order of the
+	/// actions. A stick counts its halves and its press too, as a key map draws them as one.
+	/// <code>
+	/// var uses = Input.ControlUses(Key.Space);
+	/// </code>
 	/// </summary>
-	public static IReadOnlyList<ControlUse> ControlUses(string path)
+	public static IReadOnlyList<ControlUse> ControlUses(InputControl control)
 	{
 		var uses = new List<ControlUse>();
-		foreach (var line in NativeInput.Uses(path).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+		foreach (var line in NativeInput.Uses(control.Path).Split('\n', StringSplitOptions.RemoveEmptyEntries))
 		{
 			var parts = line.Split('\t');
-			if (parts.Length < 6)
+			if (parts.Length < 8)
 			{
 				continue;
 			}
 			var binding = int.TryParse(parts[1], out var at) ? at : 0;
-			var part = parts[2].Length > 0 ? parts[2] : null;
 			var category = parts[4].Length > 0 ? parts[4] : null;
-			uses.Add(new ControlUse(Action(parts[0]), binding, part, parts[3], category, parts[5] == "1"));
+			var icon = parts[6].Length > 0 ? parts[6] : null;
+			uses.Add(new ControlUse(Action(parts[0]), binding, Part(parts[2]), parts[3], category, parts[5] == "1", icon, parts[7] == "1"));
 		}
 		return uses;
-	}
-
-	/// <summary>A control as prompts name it, by its path: "Keyboard/Q" is "A" on an AZERTY keyboard, and "Gamepad/South" is "Cross" on a PlayStation pad.</summary>
-	public static string ControlLabel(string path)
-	{
-		return NativeInput.Label(path);
 	}
 
 	/// <summary>Every one of the game's actions, in every map, in the order the input actions list them.</summary>
@@ -169,17 +175,24 @@ public static class Input
 	}
 
 	/// <summary>
-	/// The other actions of <paramref name="action"/>'s map that a control is bound to, by its path, as a controls
-	/// screen warns of when a player picks a key that is taken.
+	/// The other actions a control is bound to that can be on at once with <paramref name="action"/>, as a controls
+	/// screen warns of when a player picks a key that is taken: those of its own map, and of maps that do not exclude
+	/// it. A stick conflicts with its halves, but not with its press.
 	/// </summary>
-	public static IReadOnlyList<InputAction> Conflicts(InputAction action, string path)
+	public static IReadOnlyList<InputAction> Conflicts(InputAction action, InputControl control)
 	{
 		var found = new List<InputAction>();
-		foreach (var name in NativeInput.Conflicts(action.Id, path).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+		foreach (var name in NativeInput.Conflicts(action.Id, control.Path).Split('\n', StringSplitOptions.RemoveEmptyEntries))
 		{
-			found.Add(Action(action.Map.Length > 0 ? $"{action.Map}/{name}" : name));
+			found.Add(Action(name));
 		}
 		return found;
+	}
+
+	/// <summary>A binding's part by the name the engine gives it, such as "up", or null for none.</summary>
+	internal static BindingPart? Part(string name)
+	{
+		return Enum.TryParse<BindingPart>(name, ignoreCase: true, out var part) ? part : null;
 	}
 
 	/// <summary>The categories key maps colour actions by, from the input actions, in order.</summary>

@@ -6,13 +6,16 @@
 //! Prompts draw an action's controls as glyphs from here too (see
 //! [`prompt_glyphs`]).
 //!
-//! A key bound to actions shown is assigned, and labelled with them; one
-//! bound only to hidden actions is marked hidden, unlabelled unless hidden
-//! actions are shown; the rest are unused. Coloured by category, each
-//! assigned key takes the colour of its first action's category.
+//! A key bound to actions shown is assigned, and labelled with them, each
+//! with its icon; one bound only to hidden actions is marked hidden,
+//! unlabelled unless hidden actions are shown; the rest are unused. A key
+//! two actions that can be on at once both read is a conflict, whichever
+//! map is shown. Coloured by category, each assigned key takes the colour
+//! of its first action's category, but for a conflict, which stays marked.
+//! The device's outline is drawn behind its keys.
 
 use voxear_input::{ControlUse, Input, Scheme, layouts};
-use voxear_ui::{Color, GlyphShape, KeyShape, KeyState, KeymapData, KeymapKey, PromptGlyph};
+use voxear_ui::{Color, GlyphShape, KeyShape, KeyState, KeymapBody, KeymapData, KeymapKey, KeymapLine, PromptGlyph};
 
 /// An action's controls, by its name (`Jump` or `Player/Jump`), as a
 /// prompt draws them on the device the player used last: none for an
@@ -73,24 +76,27 @@ pub fn layout_of(scheme: Scheme) -> layouts::Layout {
 /// or pad names it, and its actions.
 pub fn keymap_data(input: &Input, scheme: Scheme, options: &KeymapOptions) -> KeymapData {
     let layout = layout_of(scheme);
-    let uses: Vec<ControlUse> =
-        input.control_uses().into_iter().filter(|u| options.map.as_ref().is_none_or(|map| *map == u.map)).collect();
+    let every = input.control_uses();
+    let uses: Vec<&ControlUse> =
+        every.iter().filter(|u| options.map.as_ref().is_none_or(|map| *map == u.map)).collect();
     let keys = layout
         .controls
         .iter()
         .map(|control| {
-            let on: Vec<&ControlUse> = uses.iter().filter(|u| control.paths.contains(&u.path)).collect();
+            let on: Vec<&ControlUse> = uses.iter().copied().filter(|u| control.paths.contains(&u.path)).collect();
             let shown: Vec<&&ControlUse> = on.iter().filter(|u| !u.hidden || options.show_hidden).collect();
+            let conflict = every.iter().any(|u| u.conflict && control.paths.contains(&u.path));
             let state = match (shown.iter().any(|u| !u.hidden), on.is_empty()) {
+                _ if conflict => KeyState::Conflict,
                 (true, _) => KeyState::Assigned,
                 (false, false) => KeyState::Hidden,
                 (false, true) => KeyState::Unused,
             };
-            let mut callout: Vec<String> = Vec::new();
+            let mut callout: Vec<KeymapLine> = Vec::new();
             for found in &shown {
                 let label = found.label();
-                if !callout.contains(&label) {
-                    callout.push(label);
+                if !callout.iter().any(|line| line.text == label) {
+                    callout.push(KeymapLine { text: label, icon: found.icon.clone() });
                 }
             }
             let color = match (options.colors, state) {
@@ -115,7 +121,8 @@ pub fn keymap_data(input: &Input, scheme: Scheme, options: &KeymapOptions) -> Ke
             }
         })
         .collect();
-    KeymapData { size: layout.size, keys }
+    let body = layout.body.iter().map(|part| KeymapBody { rect: part.rect, radius: part.radius }).collect();
+    KeymapData { size: layout.size, keys, body }
 }
 
 /// The legend for a key map coloured `colors`: each entry's name and its
@@ -131,6 +138,7 @@ pub fn legend(input: &Input, colors: KeymapColors) -> Vec<(String, Option<Color>
             }
         }
     }
+    entries.push(("Conflict".to_string(), None, KeyState::Conflict));
     entries.push(("Hidden".to_string(), None, KeyState::Hidden));
     entries.push(("Unused".to_string(), None, KeyState::Unused));
     entries
@@ -189,7 +197,10 @@ mod tests {
         input.load_actions(ACTIONS).unwrap();
         let data = keymap_data(&input, Scheme::KeyboardMouse, &KeymapOptions::default());
         let key = |face: &str| data.keys.iter().find(|k| k.label == face).unwrap().clone();
-        assert_eq!((key("W").state, key("W").callout.clone()), (KeyState::Assigned, vec!["Move (Up)".to_string()]));
+        assert_eq!(
+            (key("W").state, key("W").callout.clone()),
+            (KeyState::Assigned, vec![KeymapLine::new("Move (Up)")])
+        );
         assert_eq!((key("N").state, key("N").callout.len()), (KeyState::Hidden, 0), "hidden, unlabelled");
         assert_eq!(key("Q").state, KeyState::Unused);
         assert_eq!(key("W").color, None, "the sheets colour assigned keys");
@@ -199,14 +210,35 @@ mod tests {
         let key = |face: &str| data.keys.iter().find(|k| k.label == face).unwrap().clone();
         assert_eq!(key("W").color, Some(Color::hex(0x3fb950)));
         assert_eq!(key("Space").color, None, "no category");
-        assert_eq!(key("N").callout, ["Noclip"], "hidden actions shown when asked");
+        assert_eq!(key("N").callout, [KeymapLine::new("Noclip")], "hidden actions shown when asked");
         let legend: Vec<String> = legend(&input, KeymapColors::Categories).into_iter().map(|e| e.0).collect();
-        assert_eq!(legend, ["No category", "Movement", "Hidden", "Unused"]);
+        assert_eq!(legend, ["No category", "Movement", "Conflict", "Hidden", "Unused"]);
 
         let pad = keymap_data(&input, Scheme::Gamepad, &KeymapOptions::default());
-        let a = pad.keys.iter().find(|k| k.callout == ["Jump"]).unwrap();
+        let a = pad.keys.iter().find(|k| k.callout == [KeymapLine::new("Jump")]).unwrap();
         assert_eq!(a.label, "A");
         let other = KeymapOptions { map: Some("UI".into()), ..KeymapOptions::default() };
         assert!(keymap_data(&input, Scheme::KeyboardMouse, &other).keys.iter().all(|k| k.state == KeyState::Unused));
+    }
+
+    #[test]
+    fn a_key_two_actions_on_at_once_read_is_a_conflict() {
+        let text = "format = 1\n\n[[map]]\nname = \"Player\"\nexcludes = [\"UI\"]\n\n[[map.action]]\nname = \"Jump\"\n\
+                    icon = \"arrow-up\"\nbindings = [\"Keyboard/Space\"]\n\n[[map.action]]\nname = \"Dash\"\n\
+                    bindings = [\"Keyboard/E\"]\n\n[[map]]\nname = \"UI\"\n\n[[map.action]]\nname = \"Submit\"\n\
+                    bindings = [\"Keyboard/Space\"]\n\n[[map]]\nname = \"Debug\"\n\n[[map.action]]\nname = \"Fly\"\n\
+                    bindings = [\"Keyboard/E\"]\n";
+        let mut input = Input::without_gamepads();
+        input.load_actions(text).unwrap();
+        let data = keymap_data(&input, Scheme::KeyboardMouse, &KeymapOptions::default());
+        let key = |face: &str| data.keys.iter().find(|k| k.label == face).unwrap().clone();
+        assert_eq!(key("Space").state, KeyState::Assigned, "Player and UI are never on together");
+        assert_eq!(key("Space").callout[0].icon.as_deref(), Some("arrow-up"));
+        assert_eq!(key("E").state, KeyState::Conflict, "Debug can be on with Player");
+        let only_player = KeymapOptions { map: Some("Player".into()), ..KeymapOptions::default() };
+        let data = keymap_data(&input, Scheme::KeyboardMouse, &only_player);
+        let e = data.keys.iter().find(|k| k.label == "E").unwrap();
+        assert_eq!((e.state, e.callout.len()), (KeyState::Conflict, 1), "marked whichever map is shown");
+        assert!(!data.body.is_empty(), "the keyboard drawn behind its keys");
     }
 }

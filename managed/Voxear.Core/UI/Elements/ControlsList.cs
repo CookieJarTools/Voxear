@@ -10,7 +10,7 @@ namespace Voxear;
 /// one, then press the new key or button. A row says which other actions share a control, and Reset puts the row's
 /// bindings back.
 /// <code>
-/// var list = scroll.Add(new ControlsList { Map = "Player" });
+/// var list = scroll.Add(new ControlsList { Map = Input.Map("Player") });
 /// list.Rebound += (action, control) => Save.Write("controls", Input.SaveBindings());
 /// </code>
 /// <para>
@@ -25,7 +25,7 @@ public sealed class ControlsList : Panel
 	private static readonly ControlScheme[] Columns = [ControlScheme.KeyboardMouse, ControlScheme.Gamepad];
 
 	private bool showHidden;
-	private string? map;
+	private InputMap? map;
 
 	public ControlsList() : base("controls-list")
 	{
@@ -33,7 +33,7 @@ public sealed class ControlsList : Panel
 	}
 
 	/// <summary>Runs with the action and the control it now reads, each time the player rebinds one.</summary>
-	public event Action<InputAction, string>? Rebound;
+	public event Action<InputAction, InputControl>? Rebound;
 
 	/// <summary>Whether actions marked hidden, as debug keys, are listed too.</summary>
 	public bool ShowHidden
@@ -46,8 +46,8 @@ public sealed class ControlsList : Panel
 		}
 	}
 
-	/// <summary>Only this map's actions, by its name; null for every map's.</summary>
-	public string? Map
+	/// <summary>Only this map's actions; null for every map's.</summary>
+	public InputMap? Map
 	{
 		get { return map; }
 		set
@@ -126,20 +126,28 @@ public sealed class ControlsList : Panel
 			foreach (var control in binding.Controls)
 			{
 				AddControl(cell, binding, control);
-				conflicts.AddRange(Input.Conflicts(action, control.Path).Select(other => other.Name));
+				AddConflicts(conflicts, action, control.Control);
 			}
+		}
+	}
+
+	private static void AddConflicts(List<string> conflicts, InputAction action, InputControl? control)
+	{
+		if (control != null)
+		{
+			conflicts.AddRange(Input.Conflicts(action, control.Value).Select(other => other.Name));
 		}
 	}
 
 	private void AddControl(Panel cell, InputBinding binding, InputBindingControl control)
 	{
-		var text = control.Part == null ? control.Label : $"{Capital(control.Part)} {control.Label}";
+		var text = control.Part == null ? control.Label : $"{control.Part} {control.Label}";
 		var button = cell.Add(new Button(text));
 		button.AddClass("controls-binding");
 		button.Clicked += () => Listen(button, binding, control.Part);
 	}
 
-	private async void Listen(Button button, InputBinding binding, string? part)
+	private async void Listen(Button button, InputBinding binding, BindingPart? part)
 	{
 		button.Text = "Press a key";
 		button.AddClass("listening");
@@ -147,12 +155,7 @@ public sealed class ControlsList : Panel
 		Refresh();
 		if (control != null)
 		{
-			Rebound?.Invoke(binding.Action, control);
+			Rebound?.Invoke(binding.Action, control.Value);
 		}
-	}
-
-	private static string Capital(string word)
-	{
-		return word.Length == 0 ? word : char.ToUpperInvariant(word[0]) + word.Substring(1);
 	}
 }

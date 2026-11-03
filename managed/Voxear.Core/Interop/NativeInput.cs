@@ -85,7 +85,7 @@ internal static unsafe class NativeInput
 		return Native.IsConnected ? ByPath(path, Native.Api->InputUses) : string.Empty;
 	}
 
-	/// <summary>The other actions of an action's map bound to a control, a name a line; empty without the engine.</summary>
+	/// <summary>The other actions bound to a control that can be on at once with an action, "Map/Name" a line; empty without the engine.</summary>
 	public static string Conflicts(int action, string path)
 	{
 		if (!Native.IsConnected)

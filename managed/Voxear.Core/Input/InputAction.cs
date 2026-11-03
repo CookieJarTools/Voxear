@@ -23,14 +23,14 @@ public sealed class InputAction
 	{
 		this.id = id;
 		Name = name;
-		Map = map;
+		Map = new InputMap(map);
 	}
 
 	/// <summary>The action's name, such as Jump.</summary>
 	public string Name { get; }
 
-	/// <summary>The name of the map it is in, such as Player.</summary>
-	public string Map { get; }
+	/// <summary>The map it is in, such as Player.</summary>
+	public InputMap Map { get; }
 
 	/// <summary>Whether the game's actions have one by this name. One that does not reads nothing.</summary>
 	public bool Exists => id >= 0;
@@ -73,10 +73,10 @@ public sealed class InputAction
 	public string Prompt => NativeInput.Text(NativeInput.TextPrompt, id) ?? string.Empty;
 
 	/// <summary>
-	/// Its bindings as they are now, one a line: a control's path, or a composite's parts, such as
-	/// <c>up=Keyboard/W left=Keyboard/A down=Keyboard/S right=Keyboard/D</c>.
+	/// Its bindings as they are now, one a line, as the engine writes them: a control's path, or a composite's parts,
+	/// such as <c>up=Keyboard/W left=Keyboard/A</c>. GetBindings reads them.
 	/// </summary>
-	public IReadOnlyList<string> Bindings
+	internal IReadOnlyList<string> Bindings
 	{
 		get
 		{
@@ -90,6 +90,9 @@ public sealed class InputAction
 
 	/// <summary>Whether the input actions mark it hidden, as a debug key: controls screens leave it out.</summary>
 	public bool Hidden => Facts().Hidden;
+
+	/// <summary>The name of the icon the input actions give it, one of Voxear's, or null for none.</summary>
+	public string? Icon => Facts().Icon;
 
 	/// <summary>
 	/// Its bindings, each with its controls and what to call them, as a controls screen lists them; only those of
@@ -137,10 +140,16 @@ public sealed class InputAction
 		remove { canceled -= value; }
 	}
 
-	/// <summary>Points one of its bindings at another control, such as <c>Keyboard/J</c>; for a composite, one part of it, such as "up".</summary>
-	public bool Rebind(int binding, string control, string? part = null)
+	/// <summary>
+	/// Points one of its bindings at another control; for a composite, one part of it.
+	/// <code>
+	/// jump.Rebind(0, Key.J);
+	/// move.Rebind(0, Key.Z, BindingPart.Up);
+	/// </code>
+	/// </summary>
+	public bool Rebind(int binding, InputControl control, BindingPart? part = null)
 	{
-		return NativeInput.Change(NativeInput.ChangeRebind, id, binding, PartIndex(part), control) == 0;
+		return NativeInput.Change(NativeInput.ChangeRebind, id, binding, PartIndex(part), control.Path) == 0;
 	}
 
 	internal int Id => id;
@@ -164,16 +173,16 @@ public sealed class InputAction
 		}
 	}
 
-	internal static int PartIndex(string? part)
+	internal static int PartIndex(BindingPart? part)
 	{
 		return part switch
 		{
-			"up" => 0,
-			"left" => 1,
-			"down" => 2,
-			"right" => 3,
-			"negative" => 4,
-			"positive" => 5,
+			BindingPart.Up => 0,
+			BindingPart.Left => 1,
+			BindingPart.Down => 2,
+			BindingPart.Right => 3,
+			BindingPart.Negative => 4,
+			BindingPart.Positive => 5,
 			_ => -1,
 		};
 	}
@@ -183,16 +192,17 @@ public sealed class InputAction
 		return NativeInput.State(id);
 	}
 
-	private (string? Category, bool Hidden) Facts()
+	private (string? Category, bool Hidden, string? Icon) Facts()
 	{
 		foreach (var line in (NativeInput.Text(NativeInput.TextActions) ?? string.Empty).Split('\n'))
 		{
 			var parts = line.Split('\t');
 			if (parts.Length >= 3 && parts[0] == $"{Map}/{Name}")
 			{
-				return (parts[1].Length > 0 ? parts[1] : null, parts[2] == "1");
+				var icon = parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null;
+				return (parts[1].Length > 0 ? parts[1] : null, parts[2] == "1", icon);
 			}
 		}
-		return (null, false);
+		return (null, false, null);
 	}
 }

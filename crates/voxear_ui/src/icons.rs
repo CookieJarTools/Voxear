@@ -85,6 +85,7 @@ pub const NAMES: &[&str] = &[
     "mouse-left",
     "mouse-right",
     "mouse-middle",
+    "keyboard",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -225,6 +226,11 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "mouse-middle" => {
             &[("M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6Z", STROKE), ("M11 5.5h2v4.5h-2Z", FILL)]
         }
+        "keyboard" => &[(
+            "M4 6.5h16a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2ZM6 10h.01M9.33 10h.01M12.67 10h.01\
+             M16 10h.01M18 10h.01M7.5 13h.01M10.5 13h.01M13.5 13h.01M16.5 13h.01M8 14.5h8",
+            STROKE,
+        )],
         _ => return None,
     })
 }

@@ -94,6 +94,7 @@ fn pad(family: Family, control: &str) -> Glyph {
         "RightTrigger" => pill("RT", "R2", "ZR"),
         "Select" => pill("View", "Create", "−"),
         "Start" => pill("Menu", "Options", "+"),
+        "Mode" => Glyph::text(GlyphShape::Round, &named("Home", "PS", "Home")),
         "LeftStick" => Glyph::text(GlyphShape::Stick, "L"),
         "RightStick" => Glyph::text(GlyphShape::Stick, "R"),
         "LeftStickPress" => Glyph::text(GlyphShape::Stick, &named("LS", "L3", "L")),

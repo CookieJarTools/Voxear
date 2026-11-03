@@ -53,11 +53,13 @@ A project without actions of its own uses Voxear's:
 | | Aim | Right click | Left trigger |
 | | Reload | R | West (X, Square) |
 | | Pause | Escape | Start |
-| UI | Navigate | Arrow keys | D-pad, left stick |
+| UI (off until turned on) | Navigate | Arrow keys | D-pad, left stick |
 | | Submit | Enter | South |
 | | Cancel | Escape | East |
 
 Look reads the mouse in pixels moved this frame, and the stick from -1 to 1, so scale them apart in your camera code.
+
+The UI map excludes Player: it is off when the game starts, and turning it on for a menu turns Player off, as Menus below shows.
 
 ## Your own actions
 
@@ -91,6 +93,9 @@ bindings = ["Mouse/Right", "Gamepad/RightShoulder"]
 - A binding is a control, such as `Keyboard/Space`, or several that make one: `up`, `down`, `left` and `right` make a vector, and `negative` and `positive` a value from -1 to 1.
 - A binding's `processors` change what it reads: `deadzone(0.2, 0.9)`, `invert`, `invert_x`, `invert_y` and `scale(2)`, as in `{ path = "Gamepad/RightStick", processors = ["invert_y"] }`.
 - An action's `interaction` says when it is performed: `hold(seconds)` once it has been held that long, or `tap(seconds)` when it is let go within that long.
+- A map's `excludes` names the maps that are never on while it is, as `excludes = ["Player"]`. Turning it on turns them off, and they can share keys without conflicting.
+
+The Input Actions window writes all of this for you, controls picked from a list rather than typed (see [[Showing the Controls]]).
 
 Controls are named by device:
 
@@ -128,8 +133,10 @@ A settings screen lets players change their bindings. `Input.Rebind` waits for t
 ```csharp
 var jump = Input.Action("Jump");
 var taken = await Input.Rebind(jump, binding: 0, scheme: ControlScheme.KeyboardMouse);
-Log.Info(taken == null ? "Kept as it was" : $"Jump is now {jump.Prompt}");
+Log.Info(taken == null ? "Kept as it was" : $"Jump is now {taken.Value.Label}");
 ```
+
+To bind a control of your own choosing, give it as one of the devices' enums, never as text: `jump.Rebind(0, Key.J)`, or for a part of a composite, `move.Rebind(0, Key.Z, BindingPart.Up)`.
 
 Escape gives up. While it waits, the action reads nothing, so the key pressed does not also jump. To keep a player's bindings, save `Input.SaveBindings()` with their settings, and give it back to `Input.LoadBindings` when the game starts. `Input.ResetBindings()` puts every binding back.
 
@@ -137,7 +144,7 @@ For a whole controls screen ready to use, with the keyboard or gamepad drawn and
 
 ## Menus
 
-Turn a map off while a menu is open, so the player does not walk while choosing: `Input.DisableMap("Player")`, then `Input.EnableMap("Player")` when it closes.
+Turn the UI map on while a menu is open: `Input.Map("UI").Enable()`. Because UI excludes Player, Player turns off, so the player does not walk while choosing, and back on with `Input.Map("Player").Enable()` when the menu closes. For maps of your own that don't exclude each other, `Disable()` turns one off by itself.
 
 ## Several players on one machine
 

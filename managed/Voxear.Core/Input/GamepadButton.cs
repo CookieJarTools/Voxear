@@ -22,4 +22,6 @@ public enum GamepadButton
 	DpadDown,
 	DpadLeft,
 	DpadRight,
+	/// <summary>The button in the middle: Xbox's guide button, PlayStation's PS button, the Switch's Home.</summary>
+	Mode,
 }

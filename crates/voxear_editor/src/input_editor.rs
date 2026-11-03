@@ -2,9 +2,24 @@
 //! are made and changed, as in Unity's Input Actions window: the action
 //! maps on the left, the picked map's actions in the middle, each followed
 //! by its bindings and a composite's parts, and the picked row's
-//! properties on the right. An action has its name, type, interaction,
-//! category and whether it is hidden; a binding has its control, which
-//! Listen takes from the next key or button pressed, and its processors.
+//! properties on the right.
+//!
+//! - A map has its name and the maps it excludes, which are never on while
+//!   it is, so their controls do not conflict with its.
+//! - An action has its name, type, interaction, category, icon and whether
+//!   it is hidden. Its icon is chosen from Voxear's in a picker.
+//! - A binding has its control, chosen from a picker of every control by
+//!   device, searched as Unity's binding picker is, or taken by Listen from
+//!   the next key or button pressed; and its processors, each picked from
+//!   a dropdown with a field for each of its values, as a deadzone's Min and
+//!   Max.
+//! - The plus over the actions adds an action, or a binding, 2D vector or
+//!   1D axis to the action picked.
+//!
+//! Each row shows an icon (an action's own, or a binding's device), a
+//! binding's control by its name with its device after it, and a mark
+//! where a control conflicts with another action's that can be on at once.
+//! Rows alternate shades, to follow along.
 //!
 //! Each change is made to a copy of the file (see `input_edit`), checked as
 //! the game would read it, and handed to the editor to write and read
@@ -12,19 +27,36 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use voxear_input::{ActionKind, ActionsFile, Input, Rebound, Scheme, actions::MapData};
-use voxear_ui::{ItemFns, NodeId, Style, Ui};
+use voxear_input::{ActionKind, ActionsFile, Input, Processor, Rebound, Scheme, actions::MapData, controls};
+use voxear_ui::{ItemFns, MenuItem, NodeId, Style, Ui};
 
 use voxear_engine::keymaps;
 
 use crate::{
     columns,
-    input_edit::{self, Composite, Row},
+    input_edit::{self, Composite, Row, Shown},
 };
 
 const ROW: f32 = 22.0;
 const KINDS: [&str; 3] = ["Button", "Value", "Vector 2"];
 const INTERACTIONS: [&str; 3] = ["Press", "Hold", "Tap"];
+/// What the plus over the actions adds.
+const ADDS: [&str; 4] = ["Action", "Binding", "2D Vector", "1D Axis"];
+
+/// A picker the window asks the editor to open, under `anchor`, with what
+/// is chosen now.
+pub enum Browse {
+    Control { anchor: NodeId, now: String },
+    Icon { anchor: NodeId, now: String },
+}
+
+/// What a picker the window asked for picked.
+pub enum Picked {
+    /// A binding's control, by its path.
+    Control(String),
+    /// An action's icon, or its type's when none.
+    Icon(Option<String>),
+}
 
 /// The properties shown for the picked row, each control by what it sets.
 #[derive(Default)]
@@ -36,11 +68,26 @@ struct Properties {
     seconds: Option<NodeId>,
     category: Option<NodeId>,
     hidden: Option<NodeId>,
-    path: Option<NodeId>,
+    icon: Option<NodeId>,
+    /// Each other map's toggle, for whether the picked map excludes it.
+    excludes: Vec<(NodeId, usize)>,
+    /// The binding's control, which opens the control picker.
+    control: Option<NodeId>,
     /// The binding's control as a game's prompt draws it.
     glyph: Option<NodeId>,
     listen: Option<NodeId>,
-    processors: Option<NodeId>,
+    /// The plus that adds a processor, from a menu of their kinds.
+    add_processor: Option<NodeId>,
+    /// Each processor's dropdown, its values' fields and its remove button.
+    processors: Vec<ProcessorControls>,
+}
+
+/// One processor's controls in the properties.
+#[derive(Clone)]
+struct ProcessorControls {
+    kind: NodeId,
+    values: Vec<NodeId>,
+    remove: NodeId,
 }
 
 pub struct ActionsEditor {
@@ -49,14 +96,11 @@ pub struct ActionsEditor {
     properties: NodeId,
     add_map: NodeId,
     remove_map: NodeId,
-    add_action: NodeId,
-    add_binding: NodeId,
-    add_vector: NodeId,
-    add_axis: NodeId,
+    add: NodeId,
     remove: NodeId,
     status: NodeId,
     shown_maps: Rc<RefCell<Vec<String>>>,
-    shown_rows: Rc<RefCell<Vec<(String, usize)>>>,
+    shown_rows: Rc<RefCell<Vec<Shown>>>,
     controls: Properties,
     /// The file being edited, and the file as the game last read it.
     file: ActionsFile,
@@ -67,6 +111,8 @@ pub struct ActionsEditor {
     listening: Option<Row>,
     /// The text field last focused, to take what was typed once it is left.
     editing: Option<NodeId>,
+    browse: Option<Browse>,
+    picked: Vec<Picked>,
 }
 
 impl ActionsEditor {
@@ -111,17 +157,10 @@ impl ActionsEditor {
         ui.add_class(maps, "fill");
 
         let (middle, heading) = column(ui, panes[1], "Actions");
+        let add = ui.icon_button(heading, "plus");
+        ui.set_name(add, "input-add");
         let remove = ui.icon_button(heading, "close");
-        let adds = ui.panel(middle, Style::row());
-        ui.add_class(adds, "input-adds");
-        let add_action = ui.button(adds, "Action");
-        let add_binding = ui.button(adds, "Binding");
-        let add_vector = ui.button(adds, "2D Vector");
-        let add_axis = ui.button(adds, "1D Axis");
-        for button in [add_action, add_binding, add_vector, add_axis] {
-            ui.add_class(button, "input-add");
-        }
-        let shown_rows: Rc<RefCell<Vec<(String, usize)>>> = Rc::default();
+        let shown_rows: Rc<RefCell<Vec<Shown>>> = Rc::default();
         let texts = shown_rows.clone();
         let rows = ui.list_view(
             middle,
@@ -130,14 +169,35 @@ impl ActionsEditor {
             ItemFns {
                 make: |ui: &mut Ui, row: NodeId| {
                     ui.add_class(row, "entities-row");
+                    ui.add_class(row, "input-row");
+                    let icon = ui.icon(row, "play");
+                    ui.add_class(icon, "input-row-icon");
                     let label = ui.add_label(row, "");
                     ui.add_class(label, "entities-row-name");
+                    let detail = ui.add_label(row, "");
+                    ui.add_class(detail, "input-row-detail");
+                    let conflict = ui.icon(row, "alert");
+                    ui.add_class(conflict, "input-row-conflict");
                 },
                 bind: move |ui: &mut Ui, row: NodeId, index: usize| {
-                    let Some((text, depth)) = texts.borrow().get(index).cloned() else { return };
-                    let Some(&label) = ui.children(row).first() else { return };
-                    ui.set_text(label, &text);
-                    ui.set_inline_style(label, &format!("padding-left: {}px", 6 + depth * 16));
+                    let Some(shown) = texts.borrow().get(index).cloned() else { return };
+                    let parts = ui.children(row);
+                    let part = |class: &str| parts.iter().copied().find(|&p| ui.has_class(p, class));
+                    let (Some(icon), Some(label), Some(detail), Some(conflict)) = (
+                        part("input-row-icon"),
+                        part("entities-row-name"),
+                        part("input-row-detail"),
+                        part("input-row-conflict"),
+                    ) else {
+                        return;
+                    };
+                    ui.set_icon(icon, shown.icon);
+                    ui.set_inline_style(icon, &format!("margin-left: {}px", shown.depth * 16));
+                    ui.set_text(label, &shown.text);
+                    ui.set_text(detail, &shown.detail);
+                    ui.set_visible(conflict, shown.conflict);
+                    ui.set_class(row, "odd", index % 2 == 1);
+                    ui.set_class(row, "conflict", shown.conflict);
                 },
             },
         );
@@ -154,10 +214,7 @@ impl ActionsEditor {
             properties,
             add_map,
             remove_map,
-            add_action,
-            add_binding,
-            add_vector,
-            add_axis,
+            add,
             remove,
             status,
             shown_maps,
@@ -169,7 +226,19 @@ impl ActionsEditor {
             row: None,
             listening: None,
             editing: None,
+            browse: None,
+            picked: Vec::new(),
         }
+    }
+
+    /// The picker the window asks to open, once.
+    pub fn take_browse(&mut self) -> Option<Browse> {
+        self.browse.take()
+    }
+
+    /// What a picker the window asked for picked, taken on its next update.
+    pub fn pick(&mut self, picked: Picked) {
+        self.picked.push(picked);
     }
 
     /// Whether a binding waits for a key or button, which the editor then
@@ -197,6 +266,7 @@ impl ActionsEditor {
         // Picks first, so that a row a button adds is the one picked after.
         self.take_picks(ui);
         self.take_buttons(ui, input);
+        self.take_picked();
         self.take_properties(ui);
         if self.file == before {
             self.show_glyph(ui, input);
@@ -241,7 +311,7 @@ impl ActionsEditor {
             self.row = None;
         }
         if ui.clicked(self.remove_map) && self.map < self.file.maps.len() {
-            self.file.maps.remove(self.map);
+            input_edit::remove_map(&mut self.file, self.map);
             self.map = self.map.saturating_sub(1);
             self.row = None;
         }
@@ -249,20 +319,35 @@ impl ActionsEditor {
             return;
         }
         let action = self.row.map(Row::action);
-        let added = if ui.clicked(self.add_action) {
-            self.map_data().map(input_edit::add_action)
-        } else if ui.clicked(self.add_binding) {
-            action.and_then(|a| self.map_data().and_then(|map| input_edit::add_binding(map, a, None)))
-        } else if ui.clicked(self.add_vector) {
-            action
-                .and_then(|a| self.map_data().and_then(|map| input_edit::add_binding(map, a, Some(Composite::Vector))))
-        } else if ui.clicked(self.add_axis) {
-            action.and_then(|a| self.map_data().and_then(|map| input_edit::add_binding(map, a, Some(Composite::Axis))))
-        } else {
-            None
+        if ui.clicked(self.add) {
+            let [x, y, _, height] = ui.rect(self.add);
+            let items: Vec<MenuItem> = ADDS
+                .iter()
+                .enumerate()
+                .map(|(at, add)| MenuItem::new(add).enabled(at == 0 || action.is_some()))
+                .collect();
+            ui.open_menu(self.add, (x, y + height + 2.0), &items);
+        }
+        let composite = |at: usize| [None, None, Some(Composite::Vector), Some(Composite::Axis)][at.min(3)];
+        let added = match ui.menu_choice(self.add) {
+            Some(0) => self.map_data().map(input_edit::add_action),
+            Some(at) => {
+                action.and_then(|a| self.map_data().and_then(|map| input_edit::add_binding(map, a, composite(at))))
+            }
+            None => None,
         };
         if added.is_some() {
             self.row = added;
+        }
+        if let Some(control) = self.controls.control.filter(|&button| ui.clicked(button)) {
+            let now = self.row.and_then(|row| self.file.maps.get(self.map).and_then(|m| input_edit::path(m, row)));
+            let now = now.map(|path| input_edit::control_name(&path).0).unwrap_or_default();
+            self.browse = Some(Browse::Control { anchor: control, now });
+        }
+        if let Some(icon) = self.controls.icon.filter(|&button| ui.clicked(button)) {
+            let action = self.row.and_then(|row| self.file.maps.get(self.map)?.actions.get(row.action()));
+            let now = action.and_then(|a| a.icon.clone()).unwrap_or_default();
+            self.browse = Some(Browse::Icon { anchor: icon, now });
         }
         if ui.clicked(self.remove)
             && let (Some(row), Some(map)) = (self.row, self.file.maps.get_mut(self.map))
@@ -276,6 +361,23 @@ impl ActionsEditor {
             input.listen_for_control(scheme.filter(|path| !path.is_empty()).map(|path| Scheme::of(&path)));
             self.listening = row;
             ui.set_text(listen, "Press a Key");
+        }
+    }
+
+    /// What the pickers the window asked for picked: the binding's control,
+    /// or the action's icon.
+    fn take_picked(&mut self) {
+        let row = self.row;
+        for picked in std::mem::take(&mut self.picked) {
+            let Some((row, map)) = row.zip(self.file.maps.get_mut(self.map)) else { continue };
+            match picked {
+                Picked::Control(path) => input_edit::set_path(map, row, &path),
+                Picked::Icon(icon) => {
+                    if let Some(action) = map.actions.get_mut(row.action()) {
+                        action.icon = icon;
+                    }
+                }
+            }
         }
     }
 
@@ -301,7 +403,7 @@ impl ActionsEditor {
         let left = self.editing.filter(|&field| Some(field) != focused);
         let done = |ui: &Ui, field: Option<NodeId>| field.is_some_and(|f| ui.submitted(f) || left == Some(f));
         let c = &self.controls;
-        let (map_name, name, seconds, path, processors) = (c.map_name, c.name, c.seconds, c.path, c.processors);
+        let (map_name, name, seconds) = (c.map_name, c.name, c.seconds);
         if done(ui, map_name) {
             let text = ui.text(map_name.expect("shown"));
             input_edit::rename_map(&mut self.file, self.map, &text);
@@ -313,21 +415,55 @@ impl ActionsEditor {
                 input_edit::rename_action(map, action, &text);
             }
         }
-        if done(ui, path) {
-            let text = ui.text(path.expect("shown"));
-            if let (Some(map), Some(row)) = (self.file.maps.get_mut(self.map), self.row) {
-                input_edit::set_path(map, row, text.trim());
-            }
-        }
-        if done(ui, processors) {
-            let text = ui.text(processors.expect("shown"));
-            let list = split_calls(&text);
-            if let (Some(map), Some(row)) = (self.file.maps.get_mut(self.map), self.row) {
-                input_edit::set_processors(map, row, list);
-            }
-        }
+        let fields_done: Vec<bool> = (self.controls.processors.iter())
+            .map(|p| p.values.iter().any(|&field| done(ui, Some(field))))
+            .collect();
+        self.take_processors(ui, &fields_done);
         self.take_action_choices(ui, done(ui, seconds));
-        self.editing = focused.filter(|f| [map_name, name, seconds, path, processors].contains(&Some(*f)));
+        let excludes = self.controls.excludes.clone();
+        for (toggle, other) in excludes.into_iter().filter(|(toggle, _)| ui.changed(*toggle)) {
+            input_edit::set_exclusive(&mut self.file, self.map, other, ui.is_checked(toggle));
+        }
+        let values = self.controls.processors.iter().flat_map(|p| p.values.iter().copied().map(Some));
+        let fields: Vec<Option<NodeId>> = [map_name, name, seconds].into_iter().chain(values).collect();
+        self.editing = focused.filter(|f| fields.contains(&Some(*f)));
+    }
+
+    /// The picked binding's processors: one added from the plus's menu, a
+    /// kind picked, a value typed, or one taken away.
+    fn take_processors(&mut self, ui: &mut Ui, fields_done: &[bool]) {
+        let Some(row) = self.row.filter(|row| !matches!(row, Row::Action(_))) else { return };
+        let Some(map) = self.file.maps.get(self.map) else { return };
+        let before = input_edit::typed_processors(map, row);
+        let mut list = before.clone();
+        if let Some(add) = self.controls.add_processor {
+            if ui.clicked(add) {
+                let [x, y, _, height] = ui.rect(add);
+                let items: Vec<MenuItem> = Processor::KINDS.iter().map(|(name, _)| MenuItem::new(name)).collect();
+                ui.open_menu(add, (x, y + height + 2.0), &items);
+            }
+            if let Some(&(_, kind)) = ui.menu_choice(add).and_then(|at| Processor::KINDS.get(at)) {
+                list.push(kind);
+            }
+        }
+        let controls = self.controls.processors.clone();
+        for (at, shown) in controls.iter().enumerate().rev() {
+            if ui.changed(shown.kind) {
+                list[at] = Processor::KINDS[ui.selected_option(shown.kind).min(4)].1;
+            } else if fields_done.get(at).copied().unwrap_or(false) {
+                let typed: Vec<f32> =
+                    shown.values.iter().map(|&f| ui.text(f).trim().parse::<f32>().unwrap_or(f32::NAN)).collect();
+                list[at] = list[at].with_values(&typed);
+            }
+            if ui.clicked(shown.remove) {
+                list.remove(at);
+            }
+        }
+        if list != before
+            && let Some(map) = self.file.maps.get_mut(self.map)
+        {
+            input_edit::set_processors(map, row, list.iter().map(|p| p.to_text()).collect());
+        }
     }
 
     /// The picked action's type, interaction, category and hidden.
@@ -374,13 +510,12 @@ impl ActionsEditor {
         }
         let map = self.file.maps.get(self.map);
         let rows = map.map(input_edit::rows).unwrap_or_default();
-        let depth = |row: &Row| match row {
-            Row::Action(_) => 0,
-            Row::Binding(..) => 1,
-            Row::Part(..) => 2,
+        let conflicts = input_edit::conflicts(&self.file, self.map);
+        let shown = |(row, conflict): (&Row, &bool)| {
+            let shown = map.map(|m| input_edit::shown(m, *row)).unwrap_or_default();
+            Shown { conflict: *conflict, ..shown }
         };
-        *self.shown_rows.borrow_mut() =
-            rows.iter().map(|row| (map.map(|m| input_edit::label(m, *row)).unwrap_or_default(), depth(row))).collect();
+        *self.shown_rows.borrow_mut() = rows.iter().zip(&conflicts).map(shown).collect();
         ui.set_list_count(self.rows, rows.len());
         ui.refresh_list(self.rows);
         let picked: Vec<usize> = self.row.and_then(|row| rows.iter().position(|r| *r == row)).into_iter().collect();
@@ -404,24 +539,66 @@ impl ActionsEditor {
             row
         };
         match self.row {
-            None => {
-                let row = field(ui, "Map");
-                self.controls.map_name = Some(field_in(ui, row, &map.name));
-            }
+            None => self.show_map(ui, &map, &field),
             Some(Row::Action(index)) => self.show_action(ui, &map, index, &field),
             Some(row) => {
-                let at = field(ui, "Path");
-                let path = field_in(ui, at, &input_edit::path(&map, row).unwrap_or_default());
-                ui.set_name(path, "input-path");
-                self.controls.path = Some(path);
+                let at = field(ui, "Control");
+                let path = input_edit::path(&map, row).unwrap_or_default();
+                let named = if path.is_empty() { "None".to_string() } else { controls::describe(&path) };
+                let control = ui.button(at, &named);
+                ui.add_class(control, "input-field");
+                ui.add_class(control, "input-picker");
+                ui.set_name(control, "input-control");
+                self.controls.control = Some(control);
+                let at = field(ui, "");
                 let listen = ui.button(at, if self.listening == Some(row) { "Press a Key" } else { "Listen" });
                 self.controls.listen = Some(listen);
                 let at = field(ui, "Prompt");
                 self.controls.glyph = Some(ui.prompt(at, ""));
-                let processors = input_edit::processors(&map, row).join(", ");
                 let at = field(ui, "Processors");
-                self.controls.processors = Some(field_in(ui, at, &processors));
+                let add = ui.icon_button(at, "plus");
+                ui.set_name(add, "input-add-processor");
+                self.controls.add_processor = Some(add);
+                for processor in input_edit::typed_processors(&map, row) {
+                    // The whole width, past the labels, so a deadzone's two values fit.
+                    let at = ui.panel(self.properties, Style::row());
+                    ui.add_class(at, "inspector-row");
+                    ui.add_class(at, "input-processor-row");
+                    self.show_processor(ui, at, processor);
+                }
             }
+        }
+    }
+
+    /// A processor's kind, picked from a dropdown, a field for each of its
+    /// values with its name, and a button that takes it away.
+    fn show_processor(&mut self, ui: &mut Ui, row: NodeId, processor: Processor) {
+        let names: Vec<&str> = Processor::KINDS.iter().map(|(name, _)| *name).collect();
+        let kind = ui.dropdown(row, &names, processor.kind());
+        ui.add_class(kind, "input-processor");
+        let mut values = Vec::new();
+        for (name, value) in processor.values() {
+            let label = ui.add_label(row, name);
+            ui.add_class(label, "input-value-name");
+            let field = ui.text_field(row, &value.to_string());
+            ui.add_class(field, "input-value");
+            values.push(field);
+        }
+        let remove = ui.icon_button(row, "close");
+        self.controls.processors.push(ProcessorControls { kind, values, remove });
+    }
+
+    /// A map's name, and a toggle for each other map it may exclude.
+    fn show_map(&mut self, ui: &mut Ui, map: &MapData, field: &dyn Fn(&mut Ui, &str) -> NodeId) {
+        let row = field(ui, "Map");
+        self.controls.map_name = Some(field_in(ui, row, &map.name));
+        let others = self.file.maps.iter().enumerate().filter(|(at, _)| *at != self.map);
+        for (shown, (at, other)) in others.enumerate() {
+            let row = field(ui, if shown == 0 { "Excludes" } else { "" });
+            let excluded = self.file.exclusive(&map.name, &other.name);
+            let toggle = ui.toggle(row, &other.name, excluded);
+            ui.add_class(toggle, "checkbox");
+            self.controls.excludes.push((toggle, at));
         }
     }
 
@@ -446,6 +623,12 @@ impl ActionsEditor {
         let labels: Vec<&str> = categories.iter().map(String::as_str).collect();
         let row = field(ui, "Category");
         self.controls.category = Some(ui.dropdown(row, &labels, picked));
+        let row = field(ui, "Icon");
+        let icon = ui.icon_button(row, input_edit::action_icon(action));
+        ui.set_name(icon, "input-icon");
+        self.controls.icon = Some(icon);
+        let name = ui.add_label(row, action.icon.as_deref().unwrap_or("Default"));
+        ui.add_class(name, "input-icon-name");
         let row = field(ui, "Hidden");
         let hidden = ui.toggle(row, "", action.hidden);
         ui.add_class(hidden, "checkbox");
@@ -458,36 +641,4 @@ fn field_in(ui: &mut Ui, row: NodeId, text: &str) -> NodeId {
     let field = ui.text_field(row, text);
     ui.add_class(field, "input-field");
     field
-}
-
-/// Processors as typed, `deadzone(0.1, 0.9), invert`: split at the commas
-/// between calls, not those inside one.
-fn split_calls(text: &str) -> Vec<String> {
-    let mut calls = Vec::new();
-    let (mut depth, mut start) = (0, 0);
-    for (at, c) in text.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            ',' if depth == 0 => {
-                calls.push(text[start..at].trim().to_string());
-                start = at + 1;
-            }
-            _ => {}
-        }
-    }
-    calls.push(text[start..].trim().to_string());
-    calls.retain(|call| !call.is_empty());
-    calls
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn processors_split_between_calls() {
-        assert_eq!(split_calls("deadzone(0.1, 0.9), invert"), ["deadzone(0.1, 0.9)", "invert"]);
-        assert!(split_calls("  ").is_empty());
-    }
 }

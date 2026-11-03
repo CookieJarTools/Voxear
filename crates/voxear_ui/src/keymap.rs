@@ -4,11 +4,16 @@
 //! by sheets:
 //!
 //! - `keymap` the whole, `keymap-board` the device under its keys;
+//! - `keymap-body` each part of the device's own outline behind its keys,
+//!   over a `keymap-body-edge` a little bigger, so the parts overlap into
+//!   one shape with one edge round it;
 //! - `keymap-key` each key, with `round`, `stick` or `pill` for its shape
-//!   and `assigned`, `hidden` or `unused` for whether it is bound;
-//!   `keymap-key-label` its face;
-//! - `keymap-callout` each label, `keymap-callout-line` each action in it;
-//!   the lines to them take the callout's border colour.
+//!   and `assigned`, `hidden`, `unused` or `conflict` for whether it is
+//!   bound; `keymap-key-label` its face, its text made smaller to fit;
+//! - `keymap-callout` each label, `conflict` too for a conflicting key's,
+//!   `keymap-callout-line` each action in it, in a `keymap-callout-row`
+//!   with a `keymap-callout-icon` when the action has an icon; the lines to
+//!   them take the callout's border colour.
 //!
 //! A key's own colour, as a category's, is given with its data and wins over
 //! the sheets' (see [`KeymapKey::color`]). What is on the keys comes from
@@ -44,6 +49,30 @@ pub enum KeyState {
     Assigned,
     /// Bound only to actions that keep out of key maps.
     Hidden,
+    /// Bound to more than one action that can be on at once.
+    Conflict,
+}
+
+/// One action named beside a key, with its icon when it has one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KeymapLine {
+    pub text: String,
+    /// One of the icons ([`ICONS`](crate::ICONS)), by name.
+    pub icon: Option<String>,
+}
+
+impl KeymapLine {
+    pub fn new(text: &str) -> Self {
+        Self { text: text.to_string(), icon: None }
+    }
+}
+
+/// A part of the device's own outline, drawn behind its keys: where it is
+/// in key widths, and how round its corners are.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct KeymapBody {
+    pub rect: [f32; 4],
+    pub radius: f32,
 }
 
 /// One key of a key map.
@@ -57,7 +86,7 @@ pub struct KeymapKey {
     /// Its fill, as its actions' category's; `None` leaves it to the sheets.
     pub color: Option<Color>,
     /// The actions to name beside the device, one a line; none for no label.
-    pub callout: Vec<String>,
+    pub callout: Vec<KeymapLine>,
 }
 
 /// What a key map shows.
@@ -66,6 +95,8 @@ pub struct KeymapData {
     /// How big the device is, in its keys' units.
     pub size: [f32; 2],
     pub keys: Vec<KeymapKey>,
+    /// The device's outline behind its keys; none for no outline.
+    pub body: Vec<KeymapBody>,
 }
 
 /// A key map's elements, kept by the [`Ui`].
@@ -73,6 +104,8 @@ pub(crate) struct Keymap {
     board: TaffyNode,
     lines: TaffyNode,
     data: KeymapData,
+    /// The body's edges, then its parts, in the data's order.
+    body: Vec<TaffyNode>,
     keys: Vec<TaffyNode>,
     /// Each key's label, by the key's place, when it has one.
     callouts: Vec<(usize, TaffyNode)>,
@@ -86,6 +119,10 @@ const GAP: f32 = 14.0;
 const SPACING: f32 = 4.0;
 /// The smallest a key width is drawn, in logical pixels.
 const MIN_KEY: f32 = 18.0;
+/// How wide the body's edge is, in logical pixels.
+const EDGE: f32 = 1.5;
+/// The text on a key at its biggest and smallest, in logical pixels.
+const KEY_TEXT: (f32, f32) = (14.0, 6.5);
 
 impl Ui {
     /// A key map under `parent`, empty until [`set_keymap`](Self::set_keymap)
@@ -102,6 +139,7 @@ impl Ui {
             board: board.0,
             lines: lines.0,
             data: KeymapData::default(),
+            body: Vec::new(),
             keys: Vec::new(),
             callouts: Vec::new(),
             arranged: None,
@@ -117,9 +155,19 @@ impl Ui {
         if keymap.data == data {
             return;
         }
-        let (board, old_keys, old_callouts) = (keymap.board, keymap.keys.clone(), keymap.callouts.clone());
-        for node in old_keys.into_iter().chain(old_callouts.into_iter().map(|(_, node)| node)) {
+        let (board, old_body, old_keys) = (keymap.board, keymap.body.clone(), keymap.keys.clone());
+        let old_callouts = keymap.callouts.iter().map(|(_, node)| *node).collect::<Vec<_>>();
+        for node in old_body.into_iter().chain(old_keys).chain(old_callouts) {
             self.remove(NodeId(node));
+        }
+        // Every edge first, so that each part covers the edges inside the shape.
+        let mut body = Vec::new();
+        for class in ["keymap-body-edge", "keymap-body"] {
+            for _ in &data.body {
+                let part = self.panel(NodeId(board), Style { pickable: false, ..Style::default() });
+                self.add_class(part, class);
+                body.push(part.0);
+            }
         }
         let mut keys = Vec::new();
         let mut callouts = Vec::new();
@@ -139,6 +187,7 @@ impl Ui {
                 KeyState::Unused => "unused",
                 KeyState::Assigned => "assigned",
                 KeyState::Hidden => "hidden",
+                KeyState::Conflict => "conflict",
             };
             self.add_class(node, state);
             let face = self.add_label(node, &key.label);
@@ -149,15 +198,18 @@ impl Ui {
             }
             let callout = self.panel(map, Style::column());
             self.add_class(callout, "keymap-callout");
+            if key.state == KeyState::Conflict {
+                self.add_class(callout, "conflict");
+            }
             self.set_inline_style(callout, "position: absolute; left: 0px; top: 0px");
             for line in &key.callout {
-                let text = self.add_label(callout, line);
-                self.add_class(text, "keymap-callout-line");
+                self.callout_line(callout, line);
             }
             callouts.push((at, callout.0));
         }
         let keymap = self.keymaps.get_mut(&map.0).expect("looked up above");
-        (keymap.keys, keymap.callouts, keymap.data, keymap.arranged) = (keys.clone(), callouts, data, None);
+        (keymap.body, keymap.keys, keymap.callouts, keymap.data, keymap.arranged) =
+            (body, keys.clone(), callouts, data, None);
         // A key's own colour wins over the sheets'.
         let colors: Vec<(TaffyNode, Option<Color>)> =
             keys.iter().zip(&keymap.data.keys).map(|(&node, key)| (node, key.color)).collect();
@@ -166,6 +218,20 @@ impl Ui {
                 self.set_inline_style(NodeId(node), &format!("background-color: {}", color.css()));
             }
         }
+    }
+
+    fn callout_line(&mut self, callout: NodeId, line: &KeymapLine) {
+        let Some(icon) = &line.icon else {
+            let text = self.add_label(callout, &line.text);
+            self.add_class(text, "keymap-callout-line");
+            return;
+        };
+        let row = self.panel(callout, Style::row());
+        self.add_class(row, "keymap-callout-row");
+        let mark = self.icon(row, icon);
+        self.add_class(mark, "keymap-callout-icon");
+        let text = self.add_label(row, &line.text);
+        self.add_class(text, "keymap-callout-line");
     }
 
     /// The key of a key map clicked since the last frame, by its place in
@@ -238,13 +304,30 @@ impl Ui {
                     px(size[1] * scale)
                 ),
             );
-            let key_rects: Vec<[f32; 4]> = self.keymaps[&map].data.keys.iter().map(|k| k.rect).collect();
-            for (node, [x, y, w, h]) in keys.iter().zip(key_rects) {
+            let parts = self.keymaps[&map].data.body.clone();
+            let body = self.keymaps[&map].body.clone();
+            for (at, node) in body.iter().enumerate() {
+                let part = parts[at % parts.len()];
+                let grow = if at < parts.len() { EDGE } else { 0.0 };
+                let [x, y, w, h] = part.rect;
+                self.set_inline_style(
+                    NodeId(*node),
+                    &format!(
+                        "position: absolute; left: {}; top: {}; width: {}; height: {}; border-radius: {}",
+                        px(x * scale - grow),
+                        px(y * scale - grow),
+                        px(w * scale + grow * 2.0),
+                        px(h * scale + grow * 2.0),
+                        px(part.radius * scale + grow),
+                    ),
+                );
+            }
+            let key_data: Vec<KeymapKey> = self.keymaps[&map].data.keys.clone();
+            for (node, key) in keys.iter().zip(&key_data) {
+                let [x, y, w, h] = key.rect;
                 let inset = (scale * 0.06).max(1.0);
-                let color =
-                    self.keymaps[&map].data.keys.iter().zip(&keys).find(|(_, n)| *n == node).and_then(|(k, _)| k.color);
-                let fill = color.map(|c| format!("; background-color: {}", c.css())).unwrap_or_default();
-                let font = (scale * 0.34).clamp(8.0, 14.0);
+                let fill = key.color.map(|c| format!("; background-color: {}", c.css())).unwrap_or_default();
+                let font = fitted_text(&key.label, [w * scale - inset * 2.0, h * scale - inset * 2.0], scale);
                 self.set_inline_style(
                     NodeId(*node),
                     &format!(
@@ -276,6 +359,29 @@ impl Ui {
         }
         moved
     }
+}
+
+/// How big a key's text is drawn for it to fit inside the key, `room`
+/// logical pixels wide and high, with a key width `scale` pixels: as big as
+/// the key's size gives it, smaller for a long name, as Backspace. Text is
+/// not measured until it is laid out, so it is reckoned from how wide its
+/// letters are in Inter, by their kind.
+fn fitted_text(label: &str, [width, height]: [f32; 2], scale: f32) -> f32 {
+    let ems: f32 = label
+        .chars()
+        .map(|c| match c {
+            'i' | 'l' | 'j' | 't' | 'f' | 'r' | 'I' | '1' | '.' | ',' | ';' | ':' | '\'' | '`' | '|' | '!' => 0.32,
+            'm' | 'w' | 'M' | 'W' => 0.86,
+            c if c.is_uppercase() => 0.66,
+            c if c.is_ascii() => 0.56,
+            // Arrows and the like are as wide as a capital.
+            _ => 0.7,
+        })
+        .sum();
+    let by_size = (scale * 0.34).clamp(KEY_TEXT.1, KEY_TEXT.0);
+    let by_width = (width - 4.0).max(0.0) / ems.max(0.01);
+    let by_height = height * 0.7;
+    by_size.min(by_width).min(by_height).max(KEY_TEXT.1.min(by_size))
 }
 
 /// Where a key map's board and labels go, and the lines between.
@@ -341,17 +447,35 @@ fn arrange(data: &KeymapData, callouts: &[(usize, TaffyNode)], sizes: &[[f32; 2]
         match side {
             Side::Top | Side::Bottom => {
                 list.sort_by(|a, b| centre(*a)[0].total_cmp(&centre(*b)[0]));
-                // Each tier keeps where its last label ended, so the next goes further out when it would overlap.
-                let mut tiers: Vec<f32> = Vec::new();
-                for i in list {
-                    let [lw, lh] = sizes[i];
-                    let [cx, _] = centre(i);
-                    let left = (cx - lw / 2.0).clamp(0.0, (size[0] - lw).max(0.0));
-                    let tier = tiers.iter().position(|&end| left >= end + SPACING).unwrap_or(tiers.len());
-                    if tier == tiers.len() {
-                        tiers.push(f32::MIN);
+                // In one row when they fit across the map, each pushed along past the one before and the row
+                // moved back as far as it overflows; in tiers further out when they do not.
+                let across: f32 = list.iter().map(|&i| sizes[i][0] + SPACING).sum();
+                let mut lefts: Vec<(f32, usize)> = Vec::new();
+                if across - SPACING <= size[0] {
+                    let mut next = f32::MIN;
+                    for &i in &list {
+                        let left = (centre(i)[0] - sizes[i][0] / 2.0).max(next);
+                        next = left + sizes[i][0] + SPACING;
+                        lefts.push((left, 0));
                     }
-                    tiers[tier] = left + lw;
+                    let overflow = (next - SPACING - size[0]).max(0.0);
+                    lefts.iter_mut().for_each(|(left, _)| *left = (*left - overflow).max(0.0));
+                } else {
+                    // Each tier keeps where its last label ended, so the next goes further out when it would overlap.
+                    let mut tiers: Vec<f32> = Vec::new();
+                    for &i in &list {
+                        let lw = sizes[i][0];
+                        let left = (centre(i)[0] - lw / 2.0).clamp(0.0, (size[0] - lw).max(0.0));
+                        let tier = tiers.iter().position(|&end| left >= end + SPACING).unwrap_or(tiers.len());
+                        if tier == tiers.len() {
+                            tiers.push(f32::MIN);
+                        }
+                        tiers[tier] = left + lw;
+                        lefts.push((left, tier));
+                    }
+                }
+                for (rank, (&i, (left, tier))) in list.iter().zip(lefts).enumerate() {
+                    let [lw, lh] = sizes[i];
                     let out = GAP + tier as f32 * (tallest + SPACING);
                     let top = match side {
                         Side::Top => board_rect[1] - out - lh,
@@ -361,7 +485,9 @@ fn arrange(data: &KeymapData, callouts: &[(usize, TaffyNode)], sizes: &[[f32; 2]
                     let [kx, ky, kw, kh] = key_at(callouts[i].0);
                     let from = [kx + kw / 2.0, if side == Side::Top { ky } else { ky + kh }];
                     let to_y = if side == Side::Top { top + lh } else { top };
-                    let elbow = if side == Side::Top { to_y + SPACING } else { to_y - SPACING };
+                    // Neighbours turn at different heights, so lines pushed along beside each other stay apart.
+                    let turn = SPACING * (1 + rank % 3) as f32;
+                    let elbow = if side == Side::Top { to_y + turn } else { to_y - turn };
                     let lx = from[0].clamp(left + 4.0, (left + lw - 4.0).max(left + 4.0));
                     lines[i] = vec![from, [from[0], elbow], [lx, elbow], [lx, to_y]];
                 }

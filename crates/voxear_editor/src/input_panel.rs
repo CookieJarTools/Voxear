@@ -13,7 +13,7 @@ use voxear_engine::keymaps::{self, KeymapColors, KeymapOptions};
 use voxear_input::{Input, Scheme};
 use voxear_ui::{KeyState, NodeId, Style, Ui};
 
-use crate::input_editor::ActionsEditor;
+use crate::input_editor::{ActionsEditor, Browse, Picked};
 
 pub struct InputPanel {
     view: NodeId,
@@ -52,7 +52,7 @@ impl InputPanel {
         let bar = ui.panel(panel, Style::row());
         ui.add_class(bar, "input-bar");
         let scheme = ui.segmented(bar);
-        ui.add_segment(scheme, "Keyboard", Some("select"));
+        ui.add_segment(scheme, "Keyboard", Some("keyboard"));
         ui.add_segment(scheme, "Gamepad", Some("gamepad"));
         ui.set_name(scheme, "input-scheme");
         let map = ui.dropdown(bar, &["All Maps"], 0);
@@ -89,6 +89,16 @@ impl InputPanel {
     /// Whether the Actions view waits for a key or button for a binding.
     pub fn is_listening(&self) -> bool {
         self.editor.is_listening()
+    }
+
+    /// The picker the Actions view asks to open, once.
+    pub fn take_browse(&mut self) -> Option<Browse> {
+        self.editor.take_browse()
+    }
+
+    /// Hands the Actions view what its picker picked.
+    pub fn pick(&mut self, picked: Picked) {
+        self.editor.pick(picked);
     }
 
     /// Shows the view picked, once a frame while the window shows. Gives
@@ -149,6 +159,7 @@ impl InputPanel {
                     KeyState::Assigned => "assigned",
                     KeyState::Hidden => "hidden",
                     KeyState::Unused => "unused",
+                    KeyState::Conflict => "conflict",
                 },
             );
             if let Some(color) = color {

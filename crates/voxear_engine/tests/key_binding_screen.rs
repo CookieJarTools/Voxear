@@ -20,9 +20,9 @@ public sealed class Controls : SystemBase
 		var screen = KeyBindingScreen.Open("Controls")!;
 		screen.Scheme = ControlScheme.KeyboardMouse;
 		screen.Rebound += (action, control) => Log.Info($"rebound {action.Name} to {control}");
-		var uses = Input.ControlUses("Keyboard/Space");
+		var uses = Input.ControlUses(Key.Space);
 		Log.Info($"space: {uses.Count} {uses[0].Label} binding {uses[0].Binding}");
-		Log.Info($"W: {Input.ControlUses("Keyboard/W")[0].Label}, south is {Input.ControlLabel("Gamepad/South")}");
+		Log.Info($"W: {Input.ControlUses(Key.W)[0].Label}, south is {InputControl.Gamepad(GamepadButton.South).Label}");
 	}
 
 	protected override void Update()

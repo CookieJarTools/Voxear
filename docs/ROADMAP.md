@@ -444,6 +444,17 @@ Next in M3:
       the first frames are caught; with "wait for the editor" the build holds at startup until it is connected
     - a connection chip in each panel's bar saying what it is looking at (the editor, Play mode or a build), to
       switch between them, and a build that closes or drops leaving its last capture readable
+  - [ ] **The Inspector's Debug mode**, as Unity's, switched from the Inspector's menu, each Inspector its own:
+    - every value of a script, private and `[NonSerialized]` ones too, read-only where the Inspector would not
+      write them, with the attributes that group, hide or draw them set aside, so what is really there shows
+    - every component on the Obj, the engine's own as well (its entity, Name, Parent, World Transform, prefab
+      links and behaviour handles), and a C# component's raw fields
+    - references shown as what they hold (an asset's GUID and path, an Obj's entity and scene path) beside the
+      usual picker
+    - while playing, the live state behind the components: a body's velocity and whether it sleeps, a voice's
+      position and volume, the LOD shown, and an animation's time once there are animations
+    - for an asset, its GUID, its `.meta` and import data, and what it depends on and what uses it
+    - copy a value, or its path in the scene file, from a row's menu
   - [ ] **UI navigation**, for gamepads and keyboards, as Unity's and Unreal's, so a complicated menu works with a
     controller without the game writing any code for it:
     - automatic: up, down, left and right move to the nearest focusable element that way, by distance and by how
@@ -651,6 +662,10 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     PlayStation and Switch pads mark and colour them, in `<Prompt>` and `PromptView`
   - [x] local multiplayer pairing: `Input.Joining`, a player for each device a button is pressed on, each reading the
     actions from their own device, `Input.Players` and `PlayerJoined`
+  - [x] maps that exclude each other (`excludes`), never on together and so not conflicting; conflicts marked in key
+    maps and the Actions list; a device's outline behind its keys; icons for actions; controls picked from a
+    searchable list by device, as Unity's binding picker, and typed in C# as `InputControl`, `BindingPart` and
+    `InputMap` rather than path strings
 - Localization:
   - [x] string tables (`.strings` files) holding each key's text in every language `voxear.toml` lists, read when the
     game starts and again when one changes, and shipped with every build; in C#, `Localization.Get`, `Format` with

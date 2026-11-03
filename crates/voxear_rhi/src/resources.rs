@@ -94,6 +94,7 @@ pub struct Image {
 pub enum Retired {
     Buffer(Buffer),
     Image(Image),
+    TopLevel(crate::accel::TopLevel),
 }
 
 /// GPU memory as the allocator holds it: each live allocation's name and
@@ -200,6 +201,7 @@ impl Gpu {
         match resource {
             Retired::Buffer(buffer) => self.destroy_buffer(buffer),
             Retired::Image(image) => self.destroy_image(image),
+            Retired::TopLevel(level) => level.destroy(self),
         }
     }
 

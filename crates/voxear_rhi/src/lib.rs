@@ -5,9 +5,9 @@
 //! timeline semaphores, buffer device address, scalar layouts, indirect draw
 //! count, descriptor indexing (bindless) and wave ballots in compute shaders.
 //! That covers NVIDIA, AMD and Intel GPUs from roughly 2016 on, on Linux and
-//! Windows. Mesh shaders are turned on where the GPU has them; ray tracing is
-//! detected and reported as an optional tier.
+//! Windows. Mesh shaders and ray tracing are turned on where the GPU has them.
 
+mod accel;
 mod bindless;
 mod device;
 mod frame;
@@ -18,7 +18,8 @@ mod swapchain;
 mod timer;
 
 pub use ash::vk;
-pub use bindless::{Bindless, MAX_TEXTURES, PUSH_CONSTANT_SIZE, StorageImageId, TextureId, samplers};
+pub use accel::{AccelerationStructure, BUILD_INPUT, Instance, TopLevel, TopLevelBuild, Triangles};
+pub use bindless::{Bindless, MAX_SCENES, MAX_TEXTURES, PUSH_CONSTANT_SIZE, StorageImageId, TextureId, samplers};
 pub use device::{Gpu, GpuInfo, WindowHandles, enumerate_gpus};
 pub use frame::{Acquire, Acquired, FRAMES_IN_FLIGHT, Frame, Frames};
 pub use gpu_allocator::MemoryLocation;

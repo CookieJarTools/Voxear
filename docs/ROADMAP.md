@@ -898,6 +898,13 @@ Done so far:
   between its 70th and 95th percentiles, so sunlit parts are exposed well and shadows stay dark; moving steadily
   towards its target and easing in over the last stop and a half, at 3 stops a second towards light and 1 towards
   dark, as Unreal's does. Tested on a closed room with a doorway onto a sunlit yard.
+- **Ray-traced GI probes (DDGI), as RTXGI in Arc Raiders and The Finals:** where the GPU has ray tracing (Vulkan
+  ray queries: NVIDIA RTX 20 on, AMD RX 6000 on, Intel Arc), a bottom-level acceleration structure for each mesh
+  and a top level per view and frame. Two cascades of 32×16×32 probes trace 128 rays each when due, shading hits
+  with the sun through a shadow ray, lamps, glow and last frame's probes; each keeps 8×8 octahedral irradiance and
+  depth maps, and shading weighs probes by Chebyshev visibility, so no light passes walls. Probes inside geometry
+  are set aside and probes near surfaces moved off them. Voxels remain on GPUs without ray tracing. GPU tests: a
+  sealed box in sunlight stays black; a hidden red wall bounces. About 1.2 ms on an RTX 3070.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.
@@ -909,6 +916,9 @@ Done so far:
 
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
+- Ray-traced GI everywhere: probes traced in a compute shader against a software BVH of the scene's triangles on
+  GPUs without ray tracing, so no GPU falls back to voxels that leak; alpha-tested and two-sided materials in the
+  rays; probe rays for reflections.
 - Virtual shadow maps, and shadows for point, spot and area lights.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
 - Baked lightmapper, light probes and reflection probes.

@@ -261,7 +261,49 @@ pub struct GpuFrame {
     pub _pad5: [u32; 2],
     pub lighting: GpuLighting,
     pub gi: GpuGi,
+    pub ddgi: GpuDdgi,
 }
+
+/// Ray-traced GI's probes, as shaders find them (`Ddgi` in
+/// `shaders/common.slang`): a grid of probes round the camera in each of
+/// `DDGI_CASCADES` cascades, each probe tracing rays against the scene and
+/// keeping, in small octahedral maps, the light from each direction and how
+/// far its rays went, which keeps light from passing walls.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuDdgi {
+    /// Each cascade's lowest probe, in its probes from the world's origin,
+    /// this frame and last; w unused.
+    pub origin: [[i32; 4]; DDGI_CASCADES],
+    pub previous_origin: [[i32; 4]; DDGI_CASCADES],
+    /// The finest cascade's probe spacing, in metres.
+    pub spacing: f32,
+    /// The probes' irradiance and depth maps and their states, as textures.
+    pub irradiance: u32,
+    pub depth: u32,
+    pub probes: u32,
+    /// 1 while ray-traced GI lights the scene, in place of the voxels.
+    pub enabled: u32,
+    /// The scene's slot in `scenes`, for ray queries.
+    pub scene: u32,
+    /// Frames left in which every probe traces, as the GI starts.
+    pub warm_up: u32,
+    /// How bright the bounced light is, 1 as measured.
+    pub strength: f32,
+    /// This frame's turn of the probes' rays, a rotation's rows, so the
+    /// directions they sample change from frame to frame.
+    pub rotation: [[f32; 4]; 3],
+}
+
+/// The ray-traced GI's cascades, each `DDGI_CASCADE_SCALE` times as far apart
+/// as the one before, and the probes in each, across, up and deep.
+pub const DDGI_CASCADES: usize = 2;
+pub const DDGI_CASCADE_SCALE: f32 = 4.0;
+pub const DDGI_PROBES: [u32; 3] = [32, 16, 32];
+/// Rays each probe traces when it is due.
+pub const DDGI_RAYS: u32 = 128;
+/// Each probe's maps, texels across.
+pub const DDGI_TEXELS: u32 = 8;
 
 /// How many nested grids the voxel GI's clipmap has, each twice the last's
 /// voxel size, and how many voxels each is across.
@@ -502,6 +544,9 @@ pub struct GpuBuffers {
     /// meshlet lists: each as its draw's packed instance, and its place in
     /// the draw's LOD.
     pub meshlet_work: u64,
+    /// Every LOD's indices, three a triangle, counting from its mesh's first
+    /// vertex, for ray-traced GI to find what a ray hit.
+    pub indices: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -643,14 +688,16 @@ mod tests {
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6 + 16;
         let gi = 16 * GI_LEVELS * 2 + 32 + 32 * GI_CASCADES + 16;
+        let ddgi = size_of::<GpuDdgi>();
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + gi
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + gi + ddgi
         );
         assert_eq!(size_of::<GpuGi>(), gi);
+        assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 21 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 22 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }

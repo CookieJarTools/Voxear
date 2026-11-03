@@ -26,6 +26,9 @@ pub struct GpuInfo {
     /// Task and mesh shaders (`VK_EXT_mesh_shader`), with wave operations in
     /// task shaders, as meshlet culling's mesh shader path needs.
     pub mesh_shaders: bool,
+    /// Acceleration structures and ray queries (`VK_KHR_acceleration_structure`,
+    /// `VK_KHR_ray_query`), with acceleration structures in the bindless set:
+    /// NVIDIA RTX 20 series on, AMD RX 6000 on, Intel Arc.
     pub ray_tracing: bool,
     /// GDeflate decompression on the GPU (`VK_NV_memory_decompression`).
     pub memory_decompression: bool,
@@ -53,6 +56,9 @@ pub struct Gpu {
     /// Draws with task and mesh shaders, where the GPU has them. Set
     /// `VOXEAR_MESH_SHADERS=0` to leave them off.
     pub mesh_shader: Option<ext::mesh_shader::Device>,
+    /// Builds acceleration structures for ray queries, where the GPU can. Set
+    /// `VOXEAR_RAY_TRACING=0` to leave ray tracing off.
+    pub acceleration_structure: Option<khr::acceleration_structure::Device>,
     /// Names and labels for RenderDoc, Nsight and validation messages.
     debug_utils: Option<ext::debug_utils::Device>,
     messenger: Option<(ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
@@ -125,7 +131,9 @@ impl Gpu {
         let decompress =
             info.memory_decompression && std::env::var("VOXEAR_GPU_DECOMPRESSION").map(|v| v != "0").unwrap_or(true);
         let mesh_shaders = info.mesh_shaders && std::env::var("VOXEAR_MESH_SHADERS").map(|v| v != "0").unwrap_or(true);
-        let device = create_device(&instance, physical, queue_family, decompress, mesh_shaders)?;
+        let ray_tracing = info.ray_tracing && std::env::var("VOXEAR_RAY_TRACING").map(|v| v != "0").unwrap_or(true);
+        let optional = Optional { decompression: decompress, mesh_shaders, ray_tracing };
+        let device = create_device(&instance, physical, queue_family, optional)?;
         let queue = unsafe { device.get_device_queue(queue_family, 0) };
         let swapchain_loader = khr::swapchain::Device::new(&instance, &device);
         let allocator = Allocator::new(&AllocatorCreateDesc {
@@ -150,10 +158,14 @@ impl Gpu {
         if mesh_shaders {
             tracing::info!("mesh shaders: on");
         }
+        if ray_tracing {
+            tracing::info!("ray tracing: on");
+        }
         let gpu = Self {
             debug_utils: debug_utils.then(|| ext::debug_utils::Device::new(&instance, &device)),
             decompression: decompress.then(|| nv::memory_decompression::Device::new(&instance, &device)),
             mesh_shader: mesh_shaders.then(|| ext::mesh_shader::Device::new(&instance, &device)),
+            acceleration_structure: ray_tracing.then(|| khr::acceleration_structure::Device::new(&instance, &device)),
             entry,
             instance,
             physical,
@@ -384,7 +396,10 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
         driver: format!("{driver_name} {driver_info}").trim().to_string(),
         device_local_mb: device_local / (1024 * 1024),
         mesh_shaders: has(ext::mesh_shader::NAME) && task_waves && supports_mesh_shaders(instance, physical),
-        ray_tracing: has(khr::acceleration_structure::NAME) && has(khr::ray_query::NAME),
+        ray_tracing: has(khr::acceleration_structure::NAME)
+            && has(khr::ray_query::NAME)
+            && has(khr::deferred_host_operations::NAME)
+            && supports_ray_tracing(instance, physical),
         memory_decompression: has(nv::memory_decompression::NAME) && supports_decompression(instance, physical),
         timestamp_period: props.limits.timestamp_period,
         unsupported,
@@ -598,12 +613,30 @@ fn supports_mesh_shaders(instance: &ash::Instance, physical: vk::PhysicalDevice)
         && limits.max_mesh_work_group_invocations >= 32
 }
 
+/// Whether the GPU can build acceleration structures, query rays from any
+/// shader, and keep acceleration structures in an update-after-bind set.
+fn supports_ray_tracing(instance: &ash::Instance, physical: vk::PhysicalDevice) -> bool {
+    let mut structures = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
+    let mut queries = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
+    let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut structures).push_next(&mut queries);
+    unsafe { instance.get_physical_device_features2(physical, &mut features) };
+    structures.acceleration_structure == vk::TRUE
+        && structures.descriptor_binding_acceleration_structure_update_after_bind == vk::TRUE
+        && queries.ray_query == vk::TRUE
+}
+
+/// The optional device features a GPU has and the user has not turned off.
+struct Optional {
+    decompression: bool,
+    mesh_shaders: bool,
+    ray_tracing: bool,
+}
+
 fn create_device(
     instance: &ash::Instance,
     physical: vk::PhysicalDevice,
     queue_family: u32,
-    decompression: bool,
-    mesh_shaders: bool,
+    Optional { decompression, mesh_shaders, ray_tracing }: Optional,
 ) -> Result<ash::Device> {
     let priorities = [1.0];
     let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family).queue_priorities(&priorities)];
@@ -620,6 +653,18 @@ fn create_device(
     if mesh_shaders {
         extensions.push(ext::mesh_shader::NAME.as_ptr());
         chain = chain.push_next(&mut mesh);
+    }
+    let mut structures = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default()
+        .acceleration_structure(true)
+        .descriptor_binding_acceleration_structure_update_after_bind(true);
+    let mut queries = vk::PhysicalDeviceRayQueryFeaturesKHR::default().ray_query(true);
+    if ray_tracing {
+        extensions.extend([
+            khr::acceleration_structure::NAME.as_ptr(),
+            khr::ray_query::NAME.as_ptr(),
+            khr::deferred_host_operations::NAME.as_ptr(),
+        ]);
+        chain = chain.push_next(&mut structures).push_next(&mut queries);
     }
     let info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)

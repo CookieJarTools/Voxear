@@ -106,13 +106,18 @@ pub struct GlobalIllumination {
     pub strength: f32,
     /// The finest voxels' size, in metres; each of the three grids round the
     /// camera is 64 voxels across, the next with voxels twice the size. The
-    /// radiance cache's probes are two voxels apart, 48 across.
+    /// radiance cache's probes are two voxels apart, 48 across. With ray
+    /// tracing, the probes are two of these apart too.
     pub voxel_size: f32,
+    /// Advanced: trace the probes' rays against the scene's triangles where
+    /// the GPU has ray tracing, so no light leaks through walls; off, voxels
+    /// light the scene on every GPU.
+    pub ray_tracing: bool,
 }
 
 impl Default for GlobalIllumination {
     fn default() -> Self {
-        Self { enabled: false, strength: 1.0, voxel_size: 0.5 }
+        Self { enabled: false, strength: 1.0, voxel_size: 0.5, ray_tracing: true }
     }
 }
 

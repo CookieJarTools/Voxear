@@ -27,7 +27,7 @@
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
-    ambient_occlusion, atmosphere, gi,
+    ambient_occlusion, atmosphere, ddgi, gi,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
         LIST_SHADOW, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
@@ -105,6 +105,9 @@ pub struct Frame {
     pub voxels: Option<gi::Voxels>,
     /// The meshes each of the GI's grids draws into its voxels.
     pub voxel_draws: [Vec<gi::VoxelDraw>; crate::gpu::GI_LEVELS],
+    /// The ray-traced GI's probes, in place of the voxels, where the GPU
+    /// has ray tracing.
+    pub probes: Option<ddgi::Probes>,
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -234,6 +237,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
         // Last frame's voxels too, which reflections trace cones through.
+        images.extend(frame.probes.into_iter().flat_map(|probes| {
+            [probes.irradiance, probes.depth, probes.states].map(|image| (image, ImageAccess::Sampled))
+        }));
         images.extend(voxels.into_iter().flat_map(|voxels| {
             let images = [voxels.previous_probes, voxels.previous, voxels.previous_opacity, voxels.previous_direction];
             images.map(|image| (image, ImageAccess::Sampled))
@@ -319,6 +325,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         let size = [frame.extent.width, frame.extent.height];
         let meshes = (frame.voxel_draws.clone(), draws.index_buffer);
         gi::record(fg, (pipelines, push), voxels, (targets.hdr, targets.depth, size), targets.shadows, meshes);
+    }
+    if let Some(probes) = frame.probes {
+        ddgi::record(fg, (pipelines, push), probes);
     }
     if let Some(volume) = frame.volume {
         volumetric::record(fg, (pipelines, push), volume, targets.shadows, &[draws.clusters]);

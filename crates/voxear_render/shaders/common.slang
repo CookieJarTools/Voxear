@@ -411,6 +411,28 @@ struct Gi
 
 static const int GI_PROBES = 48;
 
+// Ray-traced GI's probes; mirrors GpuDdgi in src/gpu.rs.
+static const uint DDGI_CASCADES = 2;
+static const float DDGI_CASCADE_SCALE = 4.0;
+static const int3 DDGI_PROBES = int3(32, 16, 32);
+static const uint DDGI_RAYS = 128;
+static const uint DDGI_TEXELS = 8;
+
+struct Ddgi
+{
+    int4 origin[DDGI_CASCADES];
+    int4 previousOrigin[DDGI_CASCADES];
+    float spacing;
+    uint irradiance;
+    uint depth;
+    uint probes;
+    uint enabled;
+    uint scene;
+    uint warmUp;
+    float strength;
+    float4 rotation[3];
+};
+
 struct Frame
 {
     Mat4 viewProj;
@@ -464,6 +486,7 @@ struct Frame
     uint2 pad5;
     Lighting lighting;
     Gi gi;
+    Ddgi ddgi;
 };
 
 struct DrawCommand
@@ -527,6 +550,8 @@ struct Buffers
     // meshlet lists are: each as its draw (as drawInstances) and its place
     // in the draw's LOD.
     uint2* meshletWork;
+    // Every LOD's indices, counting from its mesh's first vertex.
+    uint* indices;
 };
 
 struct Push

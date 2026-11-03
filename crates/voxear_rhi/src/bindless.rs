@@ -1,5 +1,6 @@
 //! One global descriptor set holding every texture, storage image and
-//! sampler, indexed from shaders. Buffers need no descriptors at all: shaders
+//! sampler, indexed from shaders, and where the GPU has ray tracing, the
+//! scenes' acceleration structures. Buffers need no descriptors at all: shaders
 //! reach them through device addresses passed in push constants.
 
 use anyhow::Result;
@@ -11,6 +12,8 @@ pub const MAX_TEXTURES: u32 = 16 * 1024;
 pub const MAX_STORAGE_IMAGES: u32 = 1024;
 pub const MAX_SAMPLERS: u32 = 16;
 pub const MAX_COMPARISON_SAMPLERS: u32 = 4;
+/// Acceleration structures: one a frame in flight for each renderer's view.
+pub const MAX_SCENES: u32 = 16;
 /// The guaranteed minimum on every Vulkan device.
 pub const PUSH_CONSTANT_SIZE: u32 = 128;
 
@@ -31,6 +34,7 @@ const BINDING_TEXTURES: u32 = 0;
 const BINDING_SAMPLERS: u32 = 1;
 const BINDING_STORAGE_IMAGES: u32 = 2;
 const BINDING_COMPARISON_SAMPLERS: u32 = 3;
+const BINDING_SCENES: u32 = 4;
 
 /// Index of a sampled texture in the global array.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -77,7 +81,8 @@ pub struct Bindless {
 impl Bindless {
     pub fn new(gpu: &Gpu) -> Result<Self> {
         let device = &gpu.device;
-        let bindings = [
+        let ray_tracing = gpu.acceleration_structure.is_some();
+        let mut bindings = vec![
             vk::DescriptorSetLayoutBinding::default()
                 .binding(BINDING_TEXTURES)
                 .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
@@ -99,10 +104,19 @@ impl Bindless {
                 .descriptor_count(MAX_COMPARISON_SAMPLERS)
                 .stage_flags(vk::ShaderStageFlags::ALL),
         ];
+        if ray_tracing {
+            bindings.push(
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(BINDING_SCENES)
+                    .descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+                    .descriptor_count(MAX_SCENES)
+                    .stage_flags(vk::ShaderStageFlags::ALL),
+            );
+        }
         let flags = vk::DescriptorBindingFlags::PARTIALLY_BOUND
             | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
             | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
-        let binding_flags = [flags; 4];
+        let binding_flags = vec![flags; bindings.len()];
         let mut flags_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
         let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
             .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
@@ -118,11 +132,16 @@ impl Bindless {
                     descriptor_count: MAX_SAMPLERS + MAX_COMPARISON_SAMPLERS,
                 },
                 vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_IMAGE, descriptor_count: MAX_STORAGE_IMAGES },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
+                    descriptor_count: MAX_SCENES,
+                },
             ];
+            let sizes = &sizes[..if ray_tracing { 4 } else { 3 }];
             let pool_info = vk::DescriptorPoolCreateInfo::default()
                 .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
                 .max_sets(1)
-                .pool_sizes(&sizes);
+                .pool_sizes(sizes);
             let pool = device.create_descriptor_pool(&pool_info, None)?;
             let layouts = [layout];
             let alloc = vk::DescriptorSetAllocateInfo::default().descriptor_pool(pool).set_layouts(&layouts);
@@ -236,6 +255,22 @@ impl Bindless {
 
     pub fn remove_storage_image(&mut self, id: StorageImageId) {
         self.storage_images.free.push(id.0);
+    }
+
+    /// Puts a scene's acceleration structure in slot `index` of `scenes`,
+    /// for ray queries. Only where the GPU has ray tracing.
+    pub fn set_scene(&self, gpu: &Gpu, index: u32, scene: vk::AccelerationStructureKHR) {
+        assert!(index < MAX_SCENES, "only {MAX_SCENES} scenes");
+        let structures = [scene];
+        let mut info = vk::WriteDescriptorSetAccelerationStructureKHR::default().acceleration_structures(&structures);
+        let mut write = vk::WriteDescriptorSet::default()
+            .dst_set(self.set)
+            .dst_binding(BINDING_SCENES)
+            .dst_array_element(index)
+            .descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+            .push_next(&mut info);
+        write.descriptor_count = 1;
+        unsafe { gpu.device.update_descriptor_sets(&[write], &[]) };
     }
 
     pub fn bind(&self, gpu: &Gpu, cmd: vk::CommandBuffer, bind_point: vk::PipelineBindPoint) {

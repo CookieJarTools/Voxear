@@ -19,6 +19,7 @@ mod fbx_import;
 mod frame_debugger;
 mod gltf_import;
 mod gpu;
+mod ddgi;
 mod gi;
 mod graph;
 mod hot_reload;
@@ -53,7 +54,7 @@ use voxear_core::{profile_marker, profile_scope};
 use voxear_ecs::{Entity, World};
 use voxear_rhi::{
     Acquire, Acquired, Bindless, Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, GpuInfo, Image, ImageDesc, MemoryLocation,
-    RenderDoc, Retired, Swapchain, WindowHandles, full_mip_count, vk,
+    RenderDoc, Retired, Swapchain, TopLevel, WindowHandles, full_mip_count, vk,
 };
 
 pub use assets::AssetUsage;
@@ -1140,6 +1141,11 @@ impl Drop for Renderer {
 /// buffers for each frame in flight, which instances it saw and the LOD each
 /// had, its exposure, and last frame's motion and TAA history.
 struct View {
+    /// Which view it is, the first 0, which picks its scenes' slots.
+    number: usize,
+    /// The scene as ray queries see it, one top level a frame in flight,
+    /// made the first time a frame needs it, where ray tracing is on.
+    top_levels: Vec<Option<TopLevel>>,
     /// The output it draws into, and where in it; all of it when `None`.
     output: OutputId,
     rect: Option<[u32; 4]>,
@@ -1169,6 +1175,9 @@ struct View {
     /// voxel size, and how many frames it has run, when it had voxels this
     /// one can carry on from.
     gi_history: Option<([[i32; 4]; gpu::GI_LEVELS], [[i32; 4]; gpu::GI_CASCADES], f32, u32)>,
+    /// The ray-traced GI's origins last frame, its spacing, and how many
+    /// frames it has run, when it had probes this one can carry on from.
+    ddgi_history: Option<([[i32; 4]; gpu::DDGI_CASCADES], f32, u32)>,
     /// It has said its scene has too many meshlets to cull one by one.
     warned_meshlets: bool,
 }
@@ -1218,6 +1227,8 @@ impl View {
             }
         })?;
         Ok(Self {
+            number,
+            top_levels: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             output: OutputId::MAIN,
             rect: None,
             options: ViewOptions::default(),
@@ -1233,6 +1244,7 @@ impl View {
             atmosphere_tables: None,
             fog_history: false,
             gi_history: None,
+            ddgi_history: None,
             warned_meshlets: false,
         })
     }
@@ -1266,6 +1278,62 @@ impl View {
         for buffer in [self.visibility, self.lod_state, self.exposure] {
             frames.retire(Retired::Buffer(buffer));
         }
+        for level in self.top_levels.into_iter().flatten() {
+            frames.retire(Retired::TopLevel(level));
+        }
+    }
+
+    /// The scene's slot in the bindless set's `scenes` for frame slot `slot`,
+    /// its top level built from this frame's instances by a pass recorded
+    /// into `fg`: each instance with a bottom level, its number its place in
+    /// the instance list. `None` without ray tracing.
+    fn build_scene(
+        (top_level, number): (&mut Option<TopLevel>, usize),
+        fg: &mut FrameGraph<'_>,
+        (gpu, bindless, assets): (&Gpu, &Bindless, &Assets),
+        instances: &[gpu::GpuInstance],
+        slot: usize,
+    ) -> Result<Option<u32>> {
+        if gpu.acceleration_structure.is_none() {
+            return Ok(None);
+        }
+        let index = (number * FRAMES_IN_FLIGHT + slot) as u32;
+        if index >= voxear_rhi::MAX_SCENES {
+            return Ok(None);
+        }
+        if top_level.is_none() {
+            let level = TopLevel::new(gpu, &format!("view {number} scene {slot}"), MAX_INSTANCES as u32)?;
+            bindless.set_scene(gpu, index, level.structure.handle);
+            *top_level = Some(level);
+        }
+        let level = top_level.as_mut().expect("made above");
+        let placed: Vec<voxear_rhi::Instance> = instances
+            .iter()
+            .enumerate()
+            .filter_map(|(id, instance)| {
+                let mesh = assets.bottom_level(MeshHandle(instance.mesh))?;
+                let m = instance.model;
+                let transform = [
+                    m[0][0], m[1][0], m[2][0], m[3][0], m[0][1], m[1][1], m[2][1], m[3][1], m[0][2], m[1][2], m[2][2],
+                    m[3][2],
+                ];
+                Some(voxear_rhi::Instance { mesh, transform, id: id as u32 })
+            })
+            .collect();
+        level.write(&placed);
+        let build = level.build();
+        fg.add_pass("Scene BVH", &[], &[], move |ctx| {
+            build.record(ctx.gpu, ctx.cmd);
+            // What ray queries read after it waits for the build.
+            let barrier = [vk::MemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
+                .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)];
+            let dependency = vk::DependencyInfo::default().memory_barriers(&barrier);
+            unsafe { ctx.gpu.device.cmd_pipeline_barrier2(ctx.cmd, &dependency) };
+        });
+        Ok(Some(index))
     }
 
     fn reset_history(&mut self) {
@@ -1274,6 +1342,7 @@ impl View {
         self.atmosphere_tables = None;
         self.fog_history = false;
         self.gi_history = None;
+        self.ddgi_history = None;
         self.prev_models.clear();
         self.prev_view_proj = None;
     }
@@ -1431,7 +1500,36 @@ impl View {
             frame_data.post.reflection_texture = fg.texture(target).0;
         }
         let lit = extracted.post.global_illumination;
-        let voxels = match lit.enabled && !wireframe {
+        // Probes traced against the scene where the GPU can, in place of the voxels, which leak light.
+        let mut probes = None;
+        let previous_ddgi = self.ddgi_history.take();
+        if lit.enabled && !wireframe && lit.ray_tracing && pipelines.ddgi.is_some() {
+            let traced = &extracted.instances[..instance_count];
+            let top_level = (&mut self.top_levels[slot], self.number);
+            if let Some(scene) = Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)? {
+                let made = ddgi::Probes::new(fg, gpu, bindless)?;
+                let spacing = lit.voxel_size.clamp(0.05, 8.0) * 2.0;
+                let origin = ddgi::origins(voxear_core::math::Vec3::from(frame_data.camera_position), spacing);
+                let kept = previous_ddgi.filter(|(_, known, _)| *known == spacing);
+                let frames = kept.map_or(0, |(.., frames)| frames.saturating_add(1));
+                frame_data.ddgi = gpu::GpuDdgi {
+                    origin,
+                    previous_origin: kept.map_or(origin, |(before, ..)| before),
+                    spacing,
+                    irradiance: fg.texture(made.irradiance).0,
+                    depth: fg.texture(made.depth).0,
+                    probes: fg.texture(made.states).0,
+                    enabled: 1,
+                    scene,
+                    warm_up: ddgi::WARM_UP_FRAMES.saturating_sub(frames),
+                    strength: lit.strength.max(0.0),
+                    rotation: ddgi::rotation(setup.frame_index),
+                };
+                self.ddgi_history = Some((origin, spacing, frames));
+                probes = Some(made);
+            }
+        }
+        let voxels = match lit.enabled && !wireframe && probes.is_none() {
             true => Some(gi::Voxels::new(fg, gpu, bindless, history)?),
             false => None,
         };
@@ -1541,6 +1639,7 @@ impl View {
                 meshlet_draws: buffers.meshlet_draws.address,
                 meshlet_draw_instances: buffers.meshlet_draw_instances.address,
                 meshlet_work: buffers.meshlet_work.address,
+                indices: assets.indices.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -1599,6 +1698,7 @@ impl View {
             volume,
             voxels,
             voxel_draws,
+            probes,
         };
         passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {

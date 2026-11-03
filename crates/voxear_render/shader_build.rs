@@ -2,7 +2,8 @@
 // both compile shaders the same way.
 
 /// Shader files that are only included by others, never compiled alone.
-pub const SHADER_MODULES: &[&str] = &["atmosphere", "common", "culling", "gi", "lights", "occlusion", "shading", "volume"];
+pub const SHADER_MODULES: &[&str] =
+    &["atmosphere", "common", "culling", "ddgi_sample", "gi", "lights", "occlusion", "shading", "volume"];
 
 /// `slangc` arguments besides the input file, include path and output.
 pub const SLANG_ARGS: &[&str] = &[

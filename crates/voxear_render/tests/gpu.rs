@@ -1982,7 +1982,7 @@ fn gi_render(gi: bool) -> Option<Vec<u8>> {
     let mut post = steady_post();
     post.ambient_occlusion.enabled = false;
     post.contact_shadows.enabled = false;
-    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ..GlobalIllumination::default() };
+    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ray_tracing: false, ..Default::default() };
     world.insert_resource(post);
     // Long enough for every probe to be traced again since the voxels filled.
     run(&mut renderer, &world, &mut 0.0, 34);
@@ -2191,10 +2191,14 @@ fn a_bloom_tint_colours_the_glow_but_not_the_light() {
 /// A white floor seen from head height, looking along +Z and a little
 /// down, with a red wall standing behind the camera, out of view, lit by a
 /// sun ahead, under a dim sky so bounced light shows as it does indoors,
-/// and GI on or off.
-fn wall_behind_render(gi: bool) -> Option<Vec<u8>> {
+/// and GI on or off, from voxels or traced.
+fn wall_behind_render(gi: bool, ray_tracing: bool) -> Option<Vec<u8>> {
     use voxear_render::{GlobalIllumination, Sky};
     let mut renderer = renderer()?;
+    if ray_tracing && !renderer.gpu().ray_tracing {
+        eprintln!("skipping the ray-traced wall: this GPU has no ray tracing");
+        return None;
+    }
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.5, 0.0), Quat::from_rotation_x(0.6), Vec3::ONE)));
     let plane = renderer.primitive(Primitive::Plane).unwrap();
@@ -2211,7 +2215,7 @@ fn wall_behind_render(gi: bool) -> Option<Vec<u8>> {
     let mut post = steady_post();
     post.ambient_occlusion.enabled = false;
     post.contact_shadows.enabled = false;
-    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ..GlobalIllumination::default() };
+    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ray_tracing, ..Default::default() };
     world.insert_resource(post);
     // Long enough for every probe to be traced again since the voxels filled.
     run(&mut renderer, &world, &mut 0.0, 34);
@@ -2220,7 +2224,7 @@ fn wall_behind_render(gi: bool) -> Option<Vec<u8>> {
 
 #[test]
 fn voxel_gi_bounces_the_colour_of_a_wall_the_camera_cannot_see() {
-    let (Some(plain), Some(lit)) = (wall_behind_render(false), wall_behind_render(true)) else { return };
+    let (Some(plain), Some(lit)) = (wall_behind_render(false, false), wall_behind_render(true, false)) else { return };
     keep_image("wall behind gi off.png", &plain);
     keep_image("wall behind gi on.png", &lit);
     // The floor along the bottom of the picture, nearest the wall: how much redder than green and blue.
@@ -2443,4 +2447,69 @@ fn under_the_moon_the_sky_is_dark_with_stars_and_the_moons_disc() {
     assert!(sky(&moonlit) < sky(&sunlit) / 2.0, "the night sky is darker: {:.0} against {:.0}", sky(&moonlit), sky(&sunlit));
     let Some(gradient) = night_sky_render(SkyBody::Moon, false) else { return };
     assert!(star_count(&gradient) > 5, "and over a dark gradient sky too");
+}
+
+
+/// A closed box of walls, floor and roof, three metres inside each way,
+/// under a bright sun and sky, seen from inside, with GI on or off, traced
+/// or from voxels. Nothing outside can light the inside.
+fn sealed_box_render(gi: bool, ray_tracing: bool) -> Option<Vec<u8>> {
+    use voxear_render::{GlobalIllumination, Sky};
+    let mut renderer = renderer()?;
+    if ray_tracing && !renderer.gpu().ray_tracing {
+        eprintln!("skipping the ray-traced box: this GPU has no ray tracing");
+        return None;
+    }
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.5, -1.0), Quat::IDENTITY, Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let pale = renderer.add_material(&MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(60.0))));
+    let slab = |position: Vec3, scale: Vec3| (MeshRenderer::new(cube, pale), Transform::new(position, Quat::IDENTITY, scale));
+    world.spawn(slab(Vec3::new(0.0, 1.5, 1.75), Vec3::new(4.0, 3.0, 0.5)));
+    world.spawn(slab(Vec3::new(0.0, 1.5, -1.75), Vec3::new(4.0, 3.0, 0.5)));
+    world.spawn(slab(Vec3::new(1.75, 1.5, 0.0), Vec3::new(0.5, 3.0, 4.0)));
+    world.spawn(slab(Vec3::new(-1.75, 1.5, 0.0), Vec3::new(0.5, 3.0, 4.0)));
+    world.spawn(slab(Vec3::new(0.0, 3.25, 0.0), Vec3::new(4.0, 0.5, 4.0)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 8.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.global_illumination = GlobalIllumination { enabled: gi, voxel_size: 0.25, ray_tracing, ..Default::default() };
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 30);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn no_light_leaks_into_a_sealed_box_with_ray_traced_gi() {
+    let (Some(open_sky), Some(traced)) = (sealed_box_render(false, false), sealed_box_render(true, true)) else {
+        return;
+    };
+    keep_image("sealed box plain sky.png", &open_sky);
+    keep_image("sealed box ray traced.png", &traced);
+    let (lit, dark) = (mean_brightness(&open_sky), mean_brightness(&traced));
+    assert!(lit > 20.0, "without GI, the plain sky light reaches inside: {lit:.1}");
+    assert!(dark < 1.0, "with ray-traced GI, nothing does: {dark:.2}");
+}
+
+#[test]
+fn ray_traced_gi_bounces_the_colour_of_a_wall_the_camera_cannot_see() {
+    let (Some(plain), Some(lit)) = (wall_behind_render(false, false), wall_behind_render(true, true)) else { return };
+    keep_image("wall behind ray traced.png", &lit);
+    let redness = |pixels: &[u8]| {
+        let patch: Vec<i32> = (330..350)
+            .flat_map(|y| (200..440).map(move |x| (x, y)))
+            .map(|at| {
+                let [r, g, b] = rgb_at(pixels, at);
+                r - (g + b) / 2
+            })
+            .collect();
+        patch.iter().sum::<i32>() / patch.len() as i32
+    };
+    let (before, after) = (redness(&plain), redness(&lit));
+    assert!(after > before + 6, "the floor takes the hidden wall's red: {after} redder, from {before}");
 }

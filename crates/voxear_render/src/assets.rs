@@ -12,7 +12,8 @@ use voxear_core::math::Vec3;
 use anyhow::{Context, Result, ensure};
 use ash::nv;
 use voxear_rhi::{
-    Bindless, Buffer, FRAMES_IN_FLIGHT, Gpu, Image, ImageDesc, MemoryLocation, TextureId, Transition, mip_barrier, vk,
+    AccelerationStructure, BUILD_INPUT, Bindless, Buffer, FRAMES_IN_FLIGHT, Gpu, Image, ImageDesc, MemoryLocation,
+    TextureId, Transition, Triangles, mip_barrier, vk,
 };
 
 use crate::{
@@ -147,9 +148,10 @@ impl MeshRanges {
     }
 }
 
-#[derive(Clone, Copy)]
 enum Retiring {
     Mesh(MeshHandle),
+    /// A replaced or freed mesh's bottom level, for ray queries.
+    BottomLevel(AccelerationStructure),
     /// A replaced mesh's old space.
     Space(Space),
     Material(MaterialHandle),
@@ -180,6 +182,10 @@ pub struct Assets {
     textures: HashMap<TextureId, Image>,
     /// Freed resources and the frame from which nothing in flight uses them.
     retiring: Vec<(u64, Retiring)>,
+    /// Each mesh's bottom level, where ray tracing is on, and those replaced
+    /// since the last frame, waiting to be retired.
+    bottom_levels: HashMap<MeshHandle, AccelerationStructure>,
+    retired_levels: Vec<AccelerationStructure>,
     white: TextureId,
     primitives: HashMap<Primitive, MeshHandle>,
     pub default_material: MaterialHandle,
@@ -194,12 +200,14 @@ impl Assets {
     pub fn new(gpu: &Gpu, bindless: &mut Bindless) -> Result<Self> {
         let device_local = MemoryLocation::GpuOnly;
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        // Ray tracing builds each mesh's bottom level straight from the shared buffers.
+        let traced = if gpu.acceleration_structure.is_some() { BUILD_INPUT } else { vk::BufferUsageFlags::empty() };
         let vertices =
-            gpu.create_buffer("vertices", MAX_VERTICES * size_of::<Vertex>() as u64, storage, device_local)?;
+            gpu.create_buffer("vertices", MAX_VERTICES * size_of::<Vertex>() as u64, storage | traced, device_local)?;
         let indices = gpu.create_buffer(
             "indices",
             MAX_INDICES * 4,
-            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST | traced,
             device_local,
         )?;
         let meshes = gpu.create_buffer("meshes", MAX_MESHES * size_of::<GpuMesh>() as u64, storage, device_local)?;
@@ -229,6 +237,8 @@ impl Assets {
             most_meshlets: vec![0; MAX_MESHES as usize],
             textures: HashMap::new(),
             retiring: Vec::new(),
+            bottom_levels: HashMap::new(),
+            retired_levels: Vec::new(),
             white: TextureId(0),
             primitives: HashMap::new(),
             default_material: MaterialHandle(0),
@@ -339,7 +349,37 @@ impl Assets {
         if !mesh.vertices.is_empty() {
             self.mesh_bounds.insert(handle, (min, max));
         }
+        self.build_bottom_level(gpu, handle)
+    }
+
+    /// Builds a mesh's bottom level from its most detailed LOD, where ray
+    /// tracing is on, replacing any it had.
+    fn build_bottom_level(&mut self, gpu: &Gpu, handle: MeshHandle) -> Result<()> {
+        let Some(&ranges) = self.mesh_ranges.get(&handle) else {
+            return Ok(());
+        };
+        if gpu.acceleration_structure.is_none() || ranges.first_lod < 3 {
+            return Ok(());
+        }
+        let stride = size_of::<Vertex>() as u64;
+        let triangles = Triangles {
+            vertices: self.vertices.address + ranges.space.vertices.0 * stride,
+            stride,
+            vertex_count: ranges.space.vertices.1 as u32,
+            indices: self.indices.address + ranges.space.indices.0 * 4,
+            triangle_count: ranges.first_lod / 3,
+        };
+        let built = gpu.build_bottom_level(&format!("mesh {}", handle.0), triangles)?;
+        if let Some(old) = self.bottom_levels.insert(handle, built) {
+            self.retired_levels.push(old);
+        }
         Ok(())
+    }
+
+    /// Where a mesh's bottom level is, for an instance of it in a top level;
+    /// none without ray tracing.
+    pub fn bottom_level(&self, mesh: MeshHandle) -> Option<vk::DeviceAddress> {
+        self.bottom_levels.get(&mesh).map(|level| level.address)
     }
 
     /// A mesh's box in its own space, min and max corners.
@@ -549,6 +589,9 @@ impl Assets {
             gpu.destroy_buffer(scratch);
         }
         recorded?;
+        for (handle, _) in &meshes {
+            self.build_bottom_level(gpu, *handle)?;
+        }
         if tiled.is_some() {
             self.decompressed_on_gpu += model.payload.size();
         }
@@ -678,9 +721,17 @@ impl Assets {
         self.retiring.push((frame + FRAMES_IN_FLIGHT as u64, what));
     }
 
+    /// Retires the bottom levels replaced since the last frame, as of `frame`.
+    fn retire_levels(&mut self, frame: u64) {
+        for level in std::mem::take(&mut self.retired_levels) {
+            self.retire(frame, Retiring::BottomLevel(level));
+        }
+    }
+
     /// Gives back everything whose frames in flight have finished. Call at
     /// the start of a frame, once its slot's fence has been waited on.
     pub fn collect(&mut self, gpu: &Gpu, bindless: &mut Bindless, frame: u64) {
+        self.retire_levels(frame);
         let (ready, waiting): (Vec<_>, Vec<_>) = self.retiring.drain(..).partition(|(at, _)| *at <= frame);
         self.retiring = waiting;
         for (_, what) in ready {
@@ -690,8 +741,12 @@ impl Assets {
 
     fn reclaim(&mut self, gpu: &Gpu, bindless: &mut Bindless, what: Retiring) {
         match what {
+            Retiring::BottomLevel(level) => gpu.destroy_acceleration_structure(level),
             Retiring::Mesh(mesh) => {
                 self.mesh_bounds.remove(&mesh);
+                if let Some(level) = self.bottom_levels.remove(&mesh) {
+                    gpu.destroy_acceleration_structure(level);
+                }
                 if let Some(ranges) = self.mesh_ranges.remove(&mesh) {
                     self.free_space(ranges.space);
                     self.mesh_slots.free(mesh.0);
@@ -721,6 +776,13 @@ impl Assets {
     }
 
     pub fn destroy(self, gpu: &Gpu, bindless: &mut Bindless) {
+        let retired = self.retiring.into_iter().filter_map(|(_, what)| match what {
+            Retiring::BottomLevel(level) => Some(level),
+            _ => None,
+        });
+        for level in self.bottom_levels.into_values().chain(self.retired_levels).chain(retired) {
+            gpu.destroy_acceleration_structure(level);
+        }
         for (id, image) in self.textures {
             bindless.remove_texture(id);
             gpu.destroy_image(image);

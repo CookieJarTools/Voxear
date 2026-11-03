@@ -7,6 +7,7 @@
 
 #include "atmosphere.slang"
 #include "common.slang"
+#include "ddgi_sample.slang"
 #include "gi.slang"
 #include "lights.slang"
 #include "occlusion.slang"
@@ -177,7 +178,13 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3
     }
     // Scaled as the sky's other light is, so a night scene's floor does not mirror a day sky.
     sky *= frame->ambient;
-    if (frame->gi.texture != NO_TEXTURE)
+    if (frame->ddgi.enabled != 0)
+    {
+        // With ray-traced GI, the light arriving from the mirror direction as the probes see it: blurred, but
+        // never the sky through a wall.
+        sky = ddgiIrradiance(frame, position, direction, normal, sky);
+    }
+    else if (frame->gi.texture != NO_TEXTURE)
     {
         // With voxel GI, what stands round the surface, lit, hides the sky behind it.
         float4 voxels = giReflection(frame, position, normal, direction, roughness);
@@ -402,7 +409,12 @@ FragmentOut fragmentMain(VertexOut input)
     float up = s.normal.y * 0.5 + 0.5;
     float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
-    if (frame->gi.probeTexture != NO_TEXTURE)
+    if (frame->ddgi.enabled != 0)
+    {
+        // From the ray-traced probes, falling back to the plain sky light beyond them.
+        ambient = ddgiIrradiance(frame, input.worldPosition, s.normal, s.view, ambient);
+    }
+    else if (frame->gi.probeTexture != NO_TEXTURE)
     {
         // From the radiance cache, falling back to the plain sky light beyond it.
         ambient = giAmbient(frame, input.worldPosition, s.normal, ambient);

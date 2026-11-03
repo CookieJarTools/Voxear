@@ -11,7 +11,21 @@ Voxear works it out as the game runs. Turn it on in the scene's post-processing:
 enabled = true
 ```
 
-## How it works
+## Ray-traced or voxels
+
+On a graphics card with ray tracing (NVIDIA RTX 20 series and later, AMD RX 6000 and later, Intel Arc), Voxear traces real rays against the scene, as Arc Raiders and The Finals do. Probes round the camera each send out 128 rays; where a ray hits a surface, it takes the light that surface sends back, testing the sun with another ray, and where it misses, the sky's. Each probe also keeps how far its rays went in every direction, so a surface only takes light from the probes that can actually see it. **No light passes through walls**: a sealed room is dark however bright the sun is outside, and a room lit through a doorway is lit only by what comes through it. Probes that end up inside a wall, or too close to one, move out of it.
+
+On other cards, Voxear uses voxels instead, described below. They work everywhere, but light can leak a little through thin walls.
+
+To use voxels even where ray tracing is available:
+
+```toml
+[post.global_illumination]
+enabled = true
+ray_tracing = false
+```
+
+## How the voxels work
 
 Round the camera, Voxear keeps three grids of small boxes, called **voxels**, nested inside each other: fine near the camera, coarser farther out. Each frame it draws every mesh near the camera into them, its colour and which way it faces, so walls behind you and round the corner are there as much as those in view. Then it lights each voxel as its surface is lit: by the sun where the sun reaches it, by lamps and torches, by its own glow, and by the light bouncing round it. What the camera sees brightens the voxels it falls in too.
 
@@ -49,6 +63,10 @@ max_ev = 8.0
 Dark scenes still look dark: the darker a scene, the less exposure brightens it, and in moonlight colours fade to grey-blue, as the eye sees them (see [[Post-Processing]]).
 
 ## Cost
+
+Ray-traced bounced light costs about 1.2 milliseconds on an RTX 3070, whatever the screen size: half a millisecond tracing rays and the rest blending them into the probes.
+
+With voxels:
 
 Bounced light costs about a millisecond at 1440p on an RTX 3070: four tenths for drawing the meshes into the voxels, four tenths for the probes, and a little for lighting the voxels and for each pixel to read its probes.
 

@@ -219,9 +219,9 @@ pub struct Exposure {
     /// their nights dark when it is.
     pub min_ev: f32,
     pub max_ev: f32,
-    /// Advanced: how quickly exposure adapts, towards brighter and towards
-    /// darker scenes, easing in as an eye does: at 1 it closes most of the
-    /// gap in a second, at 2 in half a second.
+    /// Advanced: how quickly exposure adapts, in stops a second, towards
+    /// brighter and towards darker scenes, easing in over the last stop and
+    /// a half. Eyes adapt to light in seconds and to the dark far slower.
     pub speed_up: f32,
     pub speed_down: f32,
     /// How dark a dark scene stays, as an eye sees it: the darker it is,
@@ -229,6 +229,12 @@ pub struct Exposure {
     /// `max_ev` lets it brighten. 1 is as the eye sees; 0 brightens dark
     /// scenes as far as daylit ones.
     pub night: f32,
+    /// Advanced: the part of the picture's brightness exposure is set by, as
+    /// percentiles of it: the brightest 30% bar the brightest 5% by default,
+    /// so sunlit parts are exposed well and shadows stay dark, as cameras
+    /// and Unreal do. Lower both to lift shadows.
+    pub low_percent: f32,
+    pub high_percent: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -371,7 +377,17 @@ impl Default for Bloom {
 
 impl Default for Exposure {
     fn default() -> Self {
-        Self { auto: true, compensation: 0.0, min_ev: -3.0, max_ev: 1.0, speed_up: 2.0, speed_down: 1.0, night: 1.0 }
+        Self {
+            auto: true,
+            compensation: 0.0,
+            min_ev: -3.0,
+            max_ev: 1.0,
+            speed_up: 3.0,
+            speed_down: 1.0,
+            night: 1.0,
+            low_percent: 70.0,
+            high_percent: 95.0,
+        }
     }
 }
 
@@ -640,7 +656,9 @@ impl PostProcess {
             reflection_thickness: self.reflections.thickness.max(0.01),
             reflection_steps: self.reflections.steps.clamp(4, 128),
             reflection_max_roughness: self.reflections.max_roughness.clamp(0.01, 1.0),
-            _reflection_pad: [0; 3],
+            exposure_low_percent: self.exposure.low_percent.clamp(0.0, 99.0),
+            exposure_high_percent: self.exposure.high_percent.clamp(1.0, 100.0),
+            _exposure_pad: 0,
             bloom_tint: linear(self.bloom.tint),
             exposure_night: self.exposure.night.clamp(0.0, 1.0),
         }

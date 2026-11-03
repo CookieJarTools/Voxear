@@ -894,6 +894,10 @@ Done so far:
   probes four times as far apart past the fine one, so far walls and mist do not change over as the camera walks;
   voxels keep which way their light faces, so thin walls do not glow on their shaded side; exposure eases towards
   its target. About 1.1 ms at 1440p.
+- **Auto exposure as cameras do it:** a 64-bin histogram of the picture's brightness, centre-weighted, averaged
+  between its 70th and 95th percentiles, so sunlit parts are exposed well and shadows stay dark; moving steadily
+  towards its target and easing in over the last stop and a half, at 3 stops a second towards light and 1 towards
+  dark, as Unreal's does. Tested on a closed room with a doorway onto a sunlit yard.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

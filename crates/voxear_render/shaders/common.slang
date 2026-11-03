@@ -326,7 +326,10 @@ struct Post
     float reflectionThickness;
     uint reflectionSteps;
     float reflectionMaxRoughness;
-    uint3 reflectionPad;
+    // The part of auto exposure's histogram it averages, between these percentiles.
+    float exposureLowPercent;
+    float exposureHighPercent;
+    uint exposurePad;
     // Bloom's colour, multiplying its glow.
     float3 bloomTint;
     // How dark auto exposure leaves dark scenes, 0 as bright as day, 1 as the eye sees them.

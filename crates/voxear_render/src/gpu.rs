@@ -459,7 +459,11 @@ pub struct GpuPost {
     pub reflection_thickness: f32,
     pub reflection_steps: u32,
     pub reflection_max_roughness: f32,
-    pub _reflection_pad: [u32; 3],
+    /// The part of auto exposure's histogram it averages, between these
+    /// percentiles.
+    pub exposure_low_percent: f32,
+    pub exposure_high_percent: f32,
+    pub _exposure_pad: u32,
     /// Bloom's colour, linear, multiplying its glow.
     pub bloom_tint: [f32; 3],
     /// How dark auto exposure leaves dark scenes, from 0 (as bright as day)

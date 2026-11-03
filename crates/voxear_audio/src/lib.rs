@@ -26,6 +26,7 @@ mod bands;
 mod ears;
 mod mixer;
 mod output;
+mod reverb;
 mod sound;
 mod spatial;
 pub mod steam_audio;
@@ -40,6 +41,7 @@ use std::{
 };
 
 pub use mixer::{Bus, MAX_VOICES, Mixer, VoiceId, VoiceParams};
+pub use reverb::ReverbTimes;
 pub use sound::{Sound, SoundInfo, probe};
 pub use spatial::{Distance, Listener, SPEED_OF_SOUND, doppler, gains, pan};
 use voxear_core::math::Vec3;
@@ -236,6 +238,13 @@ impl Audio {
     /// band of pitch, as [`steam_audio::Acoustics`] works out.
     pub fn set_muffle(&mut self, voice: VoiceId, muffle: steam_audio::Muffle) {
         self.change(voice, Command::Muffle(voice, muffle));
+    }
+
+    /// How long the listener's room rings, for the reverb the 3D voices on
+    /// the effects bus are sent to, as [`steam_audio::RoomReverb`] works it
+    /// out; [`ReverbTimes::NONE`] for none.
+    pub fn set_reverb(&mut self, times: ReverbTimes) {
+        self.send(Command::Reverb(times));
     }
 
     /// How strongly the Doppler effect changes a 3D voice's pitch: 1 as in

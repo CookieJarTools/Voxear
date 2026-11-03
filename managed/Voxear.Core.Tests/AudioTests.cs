@@ -39,6 +39,7 @@ internal static class AudioTests
 		Check.True(source.Occlusion == SoundOcclusion.Off && source.Transmission, "walls stop nothing, and would let some through");
 		Check.Near(1f, source.OcclusionRadius);
 		Check.True(!Audio.Headphones && !Audio.HeadphonesAvailable, "no headphones without the engine");
+		Check.True(!Audio.Reverb, "nor reverb");
 		Check.True(source.Bus == AudioBus.Effects && !source.Loop, "the defaults it reads as");
 		source.Play();
 	}

@@ -303,3 +303,85 @@ fn a_wall_between_muffles_a_source_with_occlusion_on() {
     let cleared = heard(&mut game, &mut mixer);
     assert!((cleared - open).abs() < open * 0.05, "{cleared} against {open}");
 }
+
+/// A camera in a closed concrete room, ten metres across.
+const ROOM: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Main Camera"
+[obj.camera]
+fov = 60.0
+
+[[obj]]
+id = 2
+name = "East"
+position = [5.0, 0.0, 0.0]
+collider = { size = [0.5, 10.0, 10.0], acoustic = "concrete" }
+
+[[obj]]
+id = 3
+name = "West"
+position = [-5.0, 0.0, 0.0]
+collider = { size = [0.5, 10.0, 10.0], acoustic = "concrete" }
+
+[[obj]]
+id = 4
+name = "Floor"
+position = [0.0, -5.0, 0.0]
+collider = { size = [10.0, 0.5, 10.0], acoustic = "concrete" }
+
+[[obj]]
+id = 5
+name = "Ceiling"
+position = [0.0, 5.0, 0.0]
+collider = { size = [10.0, 0.5, 10.0], acoustic = "concrete" }
+
+[[obj]]
+id = 6
+name = "North"
+position = [0.0, 0.0, 5.0]
+collider = { size = [10.0, 10.0, 0.5], acoustic = "concrete" }
+
+[[obj]]
+id = 7
+name = "South"
+position = [0.0, 0.0, -5.0]
+collider = { size = [10.0, 10.0, 0.5], acoustic = "concrete" }
+"#;
+
+/// How loud the game is once a chime two metres off has ended.
+fn after_a_chime(game: &mut Game, mixer: &mut Mixer) -> f32 {
+    let reference = game.content.parse("Sounds/Chime.wav").unwrap();
+    let chime = game.content.sound(&reference).unwrap();
+    let shot = OneShot { at: Some((Vec3::new(2.0, 0.0, 0.0), Default::default())), ..OneShot::default() };
+    game.audio.play(&mut game.content, chime, shot).unwrap();
+    render(mixer, 4_096);
+    render(mixer, 2_048).iter().fold(0.0f32, |most, s| most.max(s.abs()))
+}
+
+#[test]
+fn with_reverb_on_a_sound_rings_on_in_a_closed_room() {
+    if voxear_audio::steam_audio::SteamAudio::get().is_err() {
+        return eprintln!("skipping: Steam Audio's library is not fetched");
+    }
+    let dir = project();
+    std::fs::write(dir.path().join("Scenes/Main.scene"), ROOM).unwrap();
+    let (mut game, mut mixer) = game(&dir);
+    assert!(!game.audio.reverb_on(), "off unless the project or a script turns it on");
+    assert!(after_a_chime(&mut game, &mut mixer) < 1e-6, "without reverb, nothing after it ends");
+
+    game.audio.set_reverb(true);
+    let started = std::time::Instant::now();
+    while game.audio.room().0[1] < 0.5 {
+        assert!(started.elapsed().as_secs() < 20, "the room is worked out: {:?}", game.audio.room());
+        game.tick(1.0 / 60.0, None);
+        render(&mut mixer, 512);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(after_a_chime(&mut game, &mut mixer) > 1e-4, "the room rings on: {:?}", game.audio.room());
+
+    game.audio.set_reverb(false);
+    assert_eq!(game.audio.room(), voxear_engine::audio::ReverbTimes::NONE);
+}

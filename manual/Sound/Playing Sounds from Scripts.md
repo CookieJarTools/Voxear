@@ -147,6 +147,8 @@ if (Audio.HeadphonesAvailable)
 
 Each time the game starts, Headphones starts as your project's `[audio] headphones` setting has it.
 
+`Audio.Reverb` turns the room's reverb on or off (see [[Sounds and Audio Sources]]). It starts as the project's `[audio] reverb` setting has it.
+
 ## Loading a sound by its path
 
 When a field isn't practical, load a sound by its path in the project:

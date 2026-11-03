@@ -1,17 +1,24 @@
 //! The level's walls as Steam Audio hears them: every collider that stays
 //! put, a trigger's aside, made of its acoustic material. A collider with
 //! a Rigidbody moves, and would have the walls built again every frame, so
-//! it is left out; so is everything until a source with occlusion on plays.
+//! it is left out.
 //!
 //! Boxes are their twelve triangles, spheres and capsules a few rings of
 //! them, and a Mesh collider its own mesh. The walls are built again only
 //! when one of the colliders changes, moves or goes.
+//!
+//! Steam Audio uses them twice: for what gets past them from each source
+//! with occlusion on, and, with reverb on, for how long the listener's room
+//! rings. Each starts the first time it is wanted.
 
-use std::hash::{Hash, Hasher};
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use voxear_audio::{
-    Listener,
-    steam_audio::{AcousticMaterial, AcousticMesh, Acoustics, Muffle, SourceAcoustics},
+    Listener, ReverbTimes,
+    steam_audio::{AcousticMaterial, Acoustics, Muffle, RoomReverb, SourceAcoustics, Wall},
 };
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::World;
@@ -23,38 +30,80 @@ use voxear_scene::{Destroying, Transform, WorldTransform};
 const RINGS: usize = 6;
 const AROUND: usize = 8;
 
+#[derive(Default)]
 pub(crate) struct Walls {
-    acoustics: Acoustics,
-    /// What the walls were last built from.
+    walls: Arc<[Wall]>,
+    /// What the walls were last built from, and which of those builds the
+    /// occlusion and the room have.
     built: Option<u64>,
+    occlusion: Option<(Acoustics, Option<u64>)>,
+    room: Option<(RoomReverb, Option<u64>)>,
+    /// Steam Audio is not here, which has been said.
+    missing: bool,
 }
 
 impl Walls {
-    pub fn new() -> Result<Self, String> {
-        Ok(Self { acoustics: Acoustics::new()?, built: None })
+    /// How much of each voice, by its key, reaches the listener past the
+    /// walls; none without Steam Audio.
+    pub fn hear(
+        &mut self,
+        world: &World,
+        listener: &Listener,
+        voices: &[(u64, Vec3, SourceAcoustics)],
+    ) -> Option<Vec<Muffle>> {
+        self.keep_up(world);
+        if self.occlusion.is_none() {
+            self.occlusion = self.started(Acoustics::new()).map(|acoustics| (acoustics, None));
+        }
+        let (acoustics, has) = self.occlusion.as_mut()?;
+        if *has != self.built {
+            acoustics.set_geometry(&self.walls.iter().map(Wall::mesh).collect::<Vec<_>>());
+            *has = self.built;
+        }
+        Some(acoustics.hear(listener, voices))
     }
 
-    /// How much of each voice, by its key, reaches the listener past the
-    /// level's walls, building them again first if they changed.
-    pub fn hear(&mut self, world: &World, listener: &Listener, voices: &[(u64, Vec3, SourceAcoustics)]) -> Vec<Muffle> {
+    /// How long the listener's room rings, when that has been worked out
+    /// again since the last time.
+    pub fn room(&mut self, world: &World, listener: &Listener) -> Option<ReverbTimes> {
+        self.keep_up(world);
+        if self.room.is_none() {
+            self.room = self.started(RoomReverb::start()).map(|room| (room, None));
+        }
+        let (room, has) = self.room.as_mut()?;
+        if *has != self.built {
+            room.set_walls(self.walls.clone());
+            *has = self.built;
+        }
+        room.hear_from(*listener)
+    }
+
+    /// Builds the walls again when a collider changed since the last time.
+    fn keep_up(&mut self, world: &World) {
         let colliders = still_colliders(world);
         let key = fingerprint(&colliders);
-        if self.built != Some(key) {
-            let shapes: Vec<_> =
-                colliders.iter().map(|(collider, matrix, mesh)| shape(collider, matrix, *mesh)).collect();
-            let meshes: Vec<AcousticMesh> = shapes
-                .iter()
-                .zip(&colliders)
-                .map(|((vertices, triangles), (collider, ..))| AcousticMesh {
-                    vertices,
-                    triangles,
-                    material: material(collider.acoustic),
-                })
-                .collect();
-            self.acoustics.set_geometry(&meshes);
-            self.built = Some(key);
+        if self.built == Some(key) {
+            return;
         }
-        self.acoustics.hear(listener, voices)
+        let wall = |(collider, matrix, mesh): &(Collider, Mat4, Option<&ColliderMesh>)| {
+            let (vertices, triangles) = shape(collider, matrix, *mesh);
+            Wall { vertices, triangles, material: material(collider.acoustic) }
+        };
+        self.walls = colliders.iter().map(wall).collect();
+        self.built = Some(key);
+    }
+
+    /// What Steam Audio made, or nothing, saying why the first time.
+    fn started<T>(&mut self, made: Result<T, String>) -> Option<T> {
+        match made {
+            Ok(made) => Some(made),
+            Err(_) if self.missing => None,
+            Err(error) => {
+                tracing::warn!(target: "audio", "Sounds play without occlusion or reverb: {error}");
+                self.missing = true;
+                None
+            }
+        }
     }
 }
 

@@ -14,6 +14,7 @@
 //! how much of each voice gets through them to the listener.
 
 mod acoustics;
+mod room;
 
 use std::{
     ffi::{c_char, c_void},
@@ -26,11 +27,12 @@ use libloading::Library;
 use voxear_core::math::Vec3;
 
 use crate::spatial::Listener;
-pub use acoustics::{AcousticMaterial, AcousticMesh, Acoustics, Muffle, Occlusion, SourceAcoustics};
+pub use acoustics::{AcousticMaterial, AcousticMesh, Acoustics, Muffle, Occlusion, SourceAcoustics, Wall};
 use acoustics::{
     SceneSettings, SharedInputs, SimulationInputs, SimulationOutputs, SimulationSettings, SourceSettings,
     StaticMeshSettings,
 };
+pub use room::RoomReverb;
 
 /// How many samples Steam Audio's effects take at once.
 pub const FRAME: usize = 256;
@@ -118,6 +120,7 @@ struct Api {
     simulator_set_shared_inputs: unsafe extern "C" fn(Handle, i32, *mut SharedInputs),
     simulator_commit: unsafe extern "C" fn(Handle),
     simulator_run_direct: unsafe extern "C" fn(Handle),
+    simulator_run_reflections: unsafe extern "C" fn(Handle),
     simulator_release: unsafe extern "C" fn(*mut Handle),
     source_create: unsafe extern "C" fn(Handle, *mut SourceSettings, *mut Handle) -> i32,
     source_add: unsafe extern "C" fn(Handle, Handle),
@@ -229,6 +232,7 @@ impl Api {
             simulator_set_shared_inputs: get!("iplSimulatorSetSharedInputs"),
             simulator_commit: get!("iplSimulatorCommit"),
             simulator_run_direct: get!("iplSimulatorRunDirect"),
+            simulator_run_reflections: get!("iplSimulatorRunReflections"),
             simulator_release: get!("iplSimulatorRelease"),
             source_create: get!("iplSourceCreate"),
             source_add: get!("iplSourceAdd"),

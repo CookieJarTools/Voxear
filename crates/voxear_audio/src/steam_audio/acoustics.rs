@@ -13,10 +13,20 @@ use std::{collections::HashMap, sync::Arc};
 use voxear_core::math::Vec3;
 
 use super::{Handle, IplVector3, SteamAudio, steam};
-use crate::{spatial::Listener, steam_audio::FRAME};
+use crate::{reverb::ReverbTimes, spatial::Listener, steam_audio::FRAME};
 
-/// Steam Audio's simulation: what it works out of a voice's direct sound.
+/// Steam Audio's simulations: what it works out of a voice's direct sound,
+/// and of how it reflects round the room.
 const DIRECT: i32 = 1;
+const REFLECTIONS: i32 = 1 << 1;
+const PARAMETRIC: i32 = 1;
+/// The rays a room's reverb is traced with, how many times each may
+/// bounce, and how long after a sound its reflections are followed for.
+const ROOM_RAYS: i32 = 4096;
+const ROOM_BOUNCES: i32 = 16;
+const ROOM_SECONDS: f32 = 2.0;
+/// The key of the source a room is heard from, which stands on the listener.
+const ROOM: u64 = u64::MAX;
 /// Of a voice's direct sound, whether walls stop it, and whether they let
 /// some through.
 const OCCLUSION: i32 = 1 << 3;
@@ -258,6 +268,20 @@ pub struct AcousticMesh<'a> {
     pub material: AcousticMaterial,
 }
 
+/// An [`AcousticMesh`] that owns its triangles, to hand to another thread.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wall {
+    pub vertices: Vec<Vec3>,
+    pub triangles: Vec<[u32; 3]>,
+    pub material: AcousticMaterial,
+}
+
+impl Wall {
+    pub fn mesh(&self) -> AcousticMesh<'_> {
+        AcousticMesh { vertices: &self.vertices, triangles: &self.triangles, material: self.material }
+    }
+}
+
 /// How Steam Audio tells whether a wall is in a voice's way: one ray from
 /// its middle, or rays across a sphere round it, so a voice half behind a
 /// corner is half heard.
@@ -294,13 +318,17 @@ impl Muffle {
     pub const NONE: Self = Self([1.0; 3]);
 }
 
-/// The level's walls in Steam Audio, and the voices it works out for.
+/// The level's walls in Steam Audio, and the voices it works out for: what
+/// gets past the walls to the listener, or, made with
+/// [`for_rooms`](Self::for_rooms), how long the listener's room rings.
 pub struct Acoustics {
     steam: Arc<SteamAudio>,
     scene: Handle,
     simulator: Handle,
     mesh: Handle,
     sources: HashMap<u64, Handle>,
+    /// The simulation it runs.
+    flags: i32,
 }
 
 // Steam Audio's scene and simulator are used from one thread at a time.
@@ -328,14 +356,7 @@ impl Acoustics {
     /// An empty level, with no walls yet, loading Steam Audio if it has not
     /// been.
     pub fn new() -> Result<Self, String> {
-        let steam = SteamAudio::get()?;
-        let api = &steam.api;
-        let mut scene_settings: SceneSettings = zeroed();
-        let mut scene: Handle = std::ptr::null_mut();
-        if unsafe { (api.scene_create)(steam.context, &mut scene_settings, &mut scene) } != 0 {
-            return Err("Steam Audio made no scene".into());
-        }
-        let mut settings = SimulationSettings {
+        Self::make(SimulationSettings {
             flags: DIRECT,
             max_occlusion_samples: MAX_SAMPLES,
             max_sources: crate::MAX_VOICES as i32,
@@ -343,7 +364,38 @@ impl Acoustics {
             sampling_rate: 48_000,
             frame_size: FRAME as i32,
             ..zeroed()
-        };
+        })
+    }
+
+    /// An empty level for working out how long rooms ring, which takes far
+    /// longer than what gets past the walls: tens of milliseconds, for a
+    /// thread of its own.
+    pub fn for_rooms() -> Result<Self, String> {
+        Self::make(SimulationSettings {
+            flags: REFLECTIONS,
+            reflection_type: PARAMETRIC,
+            max_rays: ROOM_RAYS,
+            diffuse_samples: 32,
+            max_duration: ROOM_SECONDS,
+            max_order: 1,
+            max_sources: 1,
+            threads: 2,
+            ray_batch_size: 1,
+            sampling_rate: 48_000,
+            frame_size: FRAME as i32,
+            ..zeroed()
+        })
+    }
+
+    fn make(mut settings: SimulationSettings) -> Result<Self, String> {
+        let steam = SteamAudio::get()?;
+        let api = &steam.api;
+        let mut scene_settings: SceneSettings = zeroed();
+        let mut scene: Handle = std::ptr::null_mut();
+        if unsafe { (api.scene_create)(steam.context, &mut scene_settings, &mut scene) } != 0 {
+            return Err("Steam Audio made no scene".into());
+        }
+        let flags = settings.flags;
         let mut simulator: Handle = std::ptr::null_mut();
         if unsafe { (api.simulator_create)(steam.context, &mut settings, &mut simulator) } != 0 {
             unsafe { (api.scene_release)(&mut scene) };
@@ -354,7 +406,7 @@ impl Acoustics {
             (api.simulator_commit)(simulator);
         }
         let mesh = std::ptr::null_mut();
-        Ok(Self { steam, scene, simulator, mesh, sources: HashMap::new() })
+        Ok(Self { steam, scene, simulator, mesh, sources: HashMap::new(), flags })
     }
 
     /// Puts these walls in place of the ones before.
@@ -447,7 +499,7 @@ impl Acoustics {
             if self.sources.contains_key(key) {
                 continue;
             }
-            let mut settings = SourceSettings { flags: DIRECT };
+            let mut settings = SourceSettings { flags: self.flags };
             let mut source: Handle = std::ptr::null_mut();
             if unsafe { (api.source_create)(self.simulator, &mut settings, &mut source) } != 0 {
                 continue;
@@ -459,6 +511,42 @@ impl Acoustics {
         if changed {
             unsafe { (api.simulator_commit)(self.simulator) };
         }
+    }
+}
+
+impl Acoustics {
+    /// How long sound lingers where the listener is, in each band, from
+    /// reflections round the walls about it. Only for one made
+    /// [`for_rooms`](Self::for_rooms).
+    pub fn room(&mut self, listener: &Listener) -> ReverbTimes {
+        let at = listener.position;
+        self.keep_sources(&[(ROOM, at, SourceAcoustics::default())]);
+        let api = &self.steam.api;
+        let mut inputs = SimulationInputs {
+            flags: REFLECTIONS,
+            source: space(at, Vec3::X, Vec3::Y, Vec3::Z),
+            reverb_scale: [1.0; 3],
+            ..zeroed()
+        };
+        let mut shared = SharedInputs {
+            listener: listener_space(listener),
+            rays: ROOM_RAYS,
+            bounces: ROOM_BOUNCES,
+            duration: ROOM_SECONDS,
+            order: 1,
+            irradiance_min_distance: 1.0,
+            ..zeroed()
+        };
+        let mut outputs: SimulationOutputs = zeroed();
+        unsafe {
+            (api.source_set_inputs)(self.sources[&ROOM], REFLECTIONS, &mut inputs);
+            (api.simulator_set_shared_inputs)(self.simulator, REFLECTIONS, &mut shared);
+            (api.simulator_run_reflections)(self.simulator);
+            (api.source_get_outputs)(self.sources[&ROOM], REFLECTIONS, &mut outputs);
+        }
+        ReverbTimes(
+            outputs.reflections.reverb_times.map(|seconds| if seconds.is_finite() { seconds.max(0.0) } else { 0.0 }),
+        )
     }
 }
 

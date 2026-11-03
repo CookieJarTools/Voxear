@@ -2536,7 +2536,12 @@ from the Project into a Scene view or the Hierarchy makes an Obj named for it wi
   changes; each frame Steam Audio's direct simulation, raycast or volumetric, gives each such source a `Muffle`, a
   volume in each of three bands, and the mixer splits the voice there with two one-pole filters. Moving colliders,
   as Steam Audio's instanced meshes, come later.)*
-- **Reflections and reverb:** real-time or baked reverb probes, with echo from real geometry.
+- **Reflections and reverb:** real-time or baked reverb probes, with echo from real geometry. *(Built so far:
+  listener-centric reverb. With `Audio.Reverb`, a `RoomReverb` thread keeps its own Steam Audio scene of the same
+  walls and runs parametric reflections from the listener every 100 ms at most, 4096 rays of 16 bounces; the RT60 in
+  each band it gives drives the mixer's own Freeverb-style stereo reverb, eight combs and four all-passes a side,
+  which the 3D voices on the effects bus are sent to in mono. Convolution reverb with echoes, and baked probes, come
+  later.)*
 - **Pathing:** sound bends around corners and through doorways.
 
 **Ray-traced audio (optional setting).** A per-project and per-quality-tier switch traces sound on the GPU instead

@@ -78,6 +78,21 @@ The walls are the level's colliders that stay put: those without a Rigidbody, an
 
 Occlusion needs Steam Audio, as headphones do (see below). Without it, walls stop nothing.
 
+## The room
+
+In a stone hall, a shout rings on for seconds. In a small room full of carpet, it stops almost at once, and out in the open there is next to no echo at all. With **reverb** on, 3D sounds on the Effects bus ring as the room the listener is in does.
+
+Steam Audio works this out from the same walls as occlusion: the level's colliders that stay put, each by its acoustic material. It traces thousands of rays from the listener round the walls a few times a second, on a thread of its own, so the reverb follows the listener from room to room. Hard materials such as Concrete, Ceramic and Glass make a room ring longer, and soft ones such as Carpet and Gravel shorter.
+
+Turn it on for the whole project in `voxear.toml`, or from a script with `Audio.Reverb` (see [[Playing Sounds from Scripts]]):
+
+```toml
+[audio]
+reverb = true
+```
+
+Music and 2D sounds are left dry, as the player hears them from nowhere in particular.
+
 ## Headphones
 
 Panned between two speakers, a 3D sound can only come from the left or the right. With headphones on, Voxear plays 3D sounds through Valve's **Steam Audio**, which gives each one the small differences in time and tone that a real head hears. A sound can then come from above, below or behind as well, and a player wearing headphones can tell where it is without looking.

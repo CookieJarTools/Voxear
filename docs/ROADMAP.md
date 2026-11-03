@@ -604,7 +604,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     `[audio] headphones`, and player builds that take the library and its licence with them
   - [x] Steam Audio occlusion and transmission: raycast or volumetric per Audio Source, through the level's still
     colliders, each with an acoustic material, in the Inspector, scene files and C#
-  - [ ] Steam Audio reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
+  - [x] reverb as the listener's room rings, from Steam Audio's reflections off the same walls, with `Audio.Reverb`
+    and `[audio] reverb`
+  - [ ] Steam Audio convolution reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
     acceleration structures exist.
   - [x] the audio debugger: each Audio Source a speaker in the Scene view, lit while it plays, and the selected one's
     min and max distances as rings

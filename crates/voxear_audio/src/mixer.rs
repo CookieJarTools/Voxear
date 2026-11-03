@@ -11,6 +11,9 @@
 //! sound at another sample rate than the output, or played at another
 //! pitch, is read between its samples.
 //!
+//! 3D voices on the effects bus are also sent to the reverb, which rings as
+//! the listener's room does, once the game says how (see `reverb`).
+//!
 //! With headphones on, 3D voices go through Steam Audio's HRTF, heard from
 //! where they are with the cues of a real head, above and behind included,
 //! rather than panned. Its HRTF is made on a thread of its own when first
@@ -27,6 +30,7 @@ use voxear_core::math::Vec3;
 use crate::{
     bands::Bands,
     ears::Ears,
+    reverb::{Reverb, ReverbTimes},
     spatial::{self, Distance, Listener},
     steam_audio::{Hrtf, Muffle},
     stream::{Frame, StreamReader},
@@ -99,6 +103,7 @@ pub(crate) enum Command {
     Velocity(VoiceId, Vec3),
     Doppler(VoiceId, f32),
     Muffle(VoiceId, Muffle),
+    Reverb(ReverbTimes),
     Bus(Bus, f32),
     Master(f32),
     Listener(Listener),
@@ -169,8 +174,11 @@ pub struct Mixer {
     making: Option<Receiver<Result<Arc<Hrtf>, String>>>,
     commands: Receiver<Command>,
     finished: SyncSender<VoiceId>,
-    /// The block being mixed, in stereo.
+    /// The block being mixed, in stereo, and what of it goes to the reverb,
+    /// in mono, once there is a room to ring.
     mix: Vec<f32>,
+    sent: Vec<f32>,
+    reverb: Option<Box<Reverb>>,
 }
 
 impl Mixer {
@@ -189,6 +197,8 @@ impl Mixer {
             commands,
             finished,
             mix: Vec::new(),
+            sent: Vec::new(),
+            reverb: None,
         }
     }
 
@@ -227,6 +237,8 @@ impl Mixer {
         self.take_hrtf();
         self.mix.clear();
         self.mix.resize(frames * 2, 0.0);
+        self.sent.clear();
+        self.sent.resize(frames, 0.0);
         let mut index = 0;
         while index < self.voices.len() {
             match self.play(index, frames) {
@@ -235,6 +247,13 @@ impl Mixer {
                     let ended = self.voices.swap_remove(index);
                     let _ = self.finished.try_send(ended.id);
                 }
+            }
+        }
+        if let Some(reverb) = &mut self.reverb {
+            for (mixed, &sent) in self.mix.as_chunks_mut::<2>().0.iter_mut().zip(&self.sent) {
+                let [left, right] = reverb.apply(sent);
+                mixed[0] += left;
+                mixed[1] += right;
             }
         }
         for (frame, mixed) in out.chunks_exact_mut(channels).zip(self.mix.as_chunks::<2>().0) {
@@ -278,6 +297,11 @@ impl Mixer {
                         voice.bands.get_or_insert_with(|| Bands::new(rate, Muffle::NONE)).set(muffle)
                     });
                 }
+                Command::Reverb(times) => match &mut self.reverb {
+                    Some(reverb) => reverb.set(times),
+                    None if times != ReverbTimes::NONE => self.reverb = Some(Reverb::new(self.sample_rate, times)),
+                    None => {}
+                },
                 Command::Bus(Bus::Music, volume) => self.music = volume,
                 Command::Bus(Bus::Effects, volume) => self.effects = volume,
                 Command::Bus(Bus::Preview, _) => {}
@@ -438,13 +462,13 @@ impl Mixer {
         let mut ended = false;
         let mut played = 0;
         let mix = &mut self.mix.as_chunks_mut::<2>().0[..frames];
-        for out in mix.iter_mut() {
+        for (out, sent) in mix.iter_mut().zip(&mut self.sent) {
             let Some(sound) = voice.read() else {
                 ended = true;
                 break;
             };
             gains = [gains[0] + per_frame[0], gains[1] + per_frame[1]];
-            let [left, right] = voice.heard(sound, gains, &listener);
+            let [left, right] = voice.heard(sound, gains, &listener, sent);
             out[0] += left;
             out[1] += right;
             played += 1;
@@ -477,12 +501,16 @@ fn drain(voice: &mut Voice, mix: &mut [[f32; 2]], listener: &Listener) -> Played
 impl Voice {
     /// One frame of the voice's sound as the listener hears it, at its
     /// left and right volumes: as it is for a 2D voice, and in mono from
-    /// where it is for a 3D one, panned or through its binaural effect.
-    fn heard(&mut self, [left, right]: [f32; 2], gains: [f32; 2], listener: &Listener) -> [f32; 2] {
+    /// where it is for a 3D one, panned or through its binaural effect. A
+    /// 3D voice on the effects bus adds itself to what goes to the reverb.
+    fn heard(&mut self, [left, right]: [f32; 2], gains: [f32; 2], listener: &Listener, sent: &mut f32) -> [f32; 2] {
         let Some((at, _)) = self.params.spatial else { return [left * gains[0], right * gains[1]] };
         let mut mono = (left + right) * 0.5;
         if let Some(bands) = &mut self.bands {
             mono = bands.apply(mono);
+        }
+        if self.params.bus == Bus::Effects {
+            *sent += mono * (gains[0] + gains[1]) * 0.5;
         }
         match &mut self.ears {
             Some(ears) => ears.hear(mono * gains[0], listener, at),

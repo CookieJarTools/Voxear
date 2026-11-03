@@ -25,25 +25,28 @@ pub struct ProjectFile {
 }
 
 /// Sound for the whole project: whether 3D sounds start out heard as
-/// through headphones, by Steam Audio's HRTF, and whether player builds
-/// take Steam Audio with them. A game's options usually let the player
-/// choose headphones, with `Audio.Headphones`.
+/// through headphones, by Steam Audio's HRTF, and ringing as the
+/// listener's room does, and whether player builds take Steam Audio with
+/// them. A game's options usually let the player choose headphones, with
+/// `Audio.Headphones`.
 ///
 /// ```toml
 /// [audio]
 /// headphones = true
+/// reverb = true
 /// steam_audio = false
 /// ```
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AudioSettings {
     pub headphones: bool,
+    pub reverb: bool,
     pub steam_audio: bool,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self { headphones: false, steam_audio: true }
+        Self { headphones: false, reverb: false, steam_audio: true }
     }
 }
 

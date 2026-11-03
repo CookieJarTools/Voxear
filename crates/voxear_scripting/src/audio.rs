@@ -123,9 +123,9 @@ impl SourceValue {
     }
 }
 
-/// Which volume: the master, over both buses, or a bus's; or whether 3D
-/// voices are heard as through headphones, and whether they can be, with
-/// Steam Audio here, as 1 or 0.
+/// Which volume: the master, over both buses, or a bus's; or, as 1 or 0,
+/// whether 3D voices are heard as through headphones, whether they can be,
+/// with Steam Audio here, and whether they ring as the listener's room does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BusValue {
     Master,
@@ -133,6 +133,7 @@ pub enum BusValue {
     Music,
     Headphones,
     SteamAudio,
+    Reverb,
 }
 
 impl BusValue {
@@ -143,6 +144,7 @@ impl BusValue {
             2 => Self::Music,
             3 => Self::Headphones,
             4 => Self::SteamAudio,
+            5 => Self::Reverb,
             _ => return None,
         })
     }

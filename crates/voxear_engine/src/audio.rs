@@ -37,7 +37,7 @@ use voxear_scripting::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, V
 use voxear_audio::steam_audio::{Muffle, Occlusion, SourceAcoustics, SteamAudio};
 
 use crate::acoustics::Walls;
-pub use voxear_audio::{Audio, Bus, Distance, Listener, Sound, SoundInfo, VoiceId, VoiceParams, probe};
+pub use voxear_audio::{Audio, Bus, Distance, Listener, ReverbTimes, Sound, SoundInfo, VoiceId, VoiceParams, probe};
 
 use crate::content::Content;
 
@@ -482,9 +482,15 @@ pub struct GameAudio {
     /// Whether 3D voices start out heard as through headphones each time
     /// the game starts, from the project's `[audio]` settings.
     pub headphones: bool,
-    /// The level's walls in Steam Audio, from the first source with
-    /// occlusion on; or why there are none, said once.
-    walls: Option<Result<Walls, String>>,
+    /// Whether 3D voices on the effects bus ring as the listener's room
+    /// does each time the game starts, from the project's `[audio]`
+    /// settings, and whether they do now.
+    pub reverb: bool,
+    reverb_on: bool,
+    /// How long the listener's room rings, as Steam Audio last said.
+    room: ReverbTimes,
+    /// The level's walls in Steam Audio, while the game runs.
+    walls: Walls,
 }
 
 impl Default for GameAudio {
@@ -503,7 +509,10 @@ impl GameAudio {
             preview: 0,
             preview_path: String::new(),
             headphones: false,
-            walls: None,
+            reverb: false,
+            reverb_on: false,
+            room: ReverbTimes::NONE,
+            walls: Walls::default(),
         }
     }
 
@@ -511,6 +520,27 @@ impl GameAudio {
     /// project's `[audio]` settings start them, whatever the last play left.
     pub fn start_game(&mut self) {
         self.audio.set_headphones(self.headphones);
+        self.set_reverb(self.reverb);
+    }
+
+    /// Whether 3D voices on the effects bus ring as the listener's room
+    /// does, as Steam Audio works out from the level's walls.
+    pub fn set_reverb(&mut self, on: bool) {
+        if self.reverb_on && !on {
+            self.audio.set_reverb(ReverbTimes::NONE);
+            self.room = ReverbTimes::NONE;
+        }
+        self.reverb_on = on;
+    }
+
+    pub fn reverb_on(&self) -> bool {
+        self.reverb_on
+    }
+
+    /// How long the listener's room rings, in seconds in each band of
+    /// pitch, as Steam Audio last worked it out; none with reverb off.
+    pub fn room(&self) -> ReverbTimes {
+        self.room
     }
 
     /// Once a frame, after the game's update: hears which voices ended, and
@@ -556,6 +586,10 @@ impl GameAudio {
         if let Some(listener) = hearing {
             self.muffle_sources(world, &listener, &found);
         }
+        if let Some(times) = hearing.filter(|_| self.reverb_on).and_then(|at| self.walls.room(world, &at)) {
+            self.audio.set_reverb(times);
+            self.room = times;
+        }
     }
 
     /// Muffles each playing 3D source with occlusion on by the walls between
@@ -572,21 +606,9 @@ impl GameAudio {
                 None => {}
             }
         }
-        if !voices.is_empty() {
-            let walls = self.walls.get_or_insert_with(Walls::new);
-            match walls {
-                Ok(walls) => {
-                    let heard = walls.hear(world, listener, &voices);
-                    let keyed = voices.iter().zip(heard).map(|((key, ..), muffle)| (Entity::from_bits(*key), muffle));
-                    muffles.extend(keyed);
-                }
-                // Said once, then left empty.
-                Err(error) if !error.is_empty() => {
-                    tracing::warn!(target: "audio", "Sounds play without occlusion: {error}");
-                    error.clear();
-                }
-                Err(_) => {}
-            }
+        if let Some(heard) = (!voices.is_empty()).then(|| self.walls.hear(world, listener, &voices)).flatten() {
+            let keyed = voices.iter().zip(heard).map(|((key, ..), muffle)| (Entity::from_bits(*key), muffle));
+            muffles.extend(keyed);
         }
         for (entity, muffle) in muffles {
             let Some(playback) = self.sources.get_mut(&entity) else { continue };
@@ -694,6 +716,8 @@ impl GameAudio {
     pub fn stop_game(&mut self) {
         self.audio.stop_game();
         self.sources.clear();
+        self.set_reverb(false);
+        self.walls = Walls::default();
         self.audio.set_master_volume(1.0);
         self.audio.set_bus_volume(Bus::Effects, 1.0);
         self.audio.set_bus_volume(Bus::Music, 1.0);
@@ -741,13 +765,22 @@ impl GameAudio {
     }
 
     fn bus_value(&mut self, bus: BusValue, set: Option<f32>) -> f32 {
+        match (bus, set) {
+            (BusValue::Reverb, Some(on)) => self.set_reverb(on != 0.0),
+            (BusValue::Reverb, None) => {}
+            _ => return self.volume_value(bus, set),
+        }
+        flag(self.reverb_on && SteamAudio::get().is_ok())
+    }
+
+    fn volume_value(&mut self, bus: BusValue, set: Option<f32>) -> f32 {
         let audio = &mut self.audio;
         match (bus, set) {
             (BusValue::Master, Some(volume)) => audio.set_master_volume(volume),
             (BusValue::Effects, Some(volume)) => audio.set_bus_volume(Bus::Effects, volume),
             (BusValue::Music, Some(volume)) => audio.set_bus_volume(Bus::Music, volume),
             (BusValue::Headphones, Some(on)) => audio.set_headphones(on != 0.0),
-            (BusValue::SteamAudio, Some(_)) | (_, None) => {}
+            (BusValue::SteamAudio | BusValue::Reverb, Some(_)) | (_, None) => {}
         }
         match bus {
             BusValue::Master => audio.master_volume(),
@@ -755,6 +788,7 @@ impl GameAudio {
             BusValue::Music => audio.bus_volume(Bus::Music),
             BusValue::Headphones => flag(audio.headphones() && SteamAudio::get().is_ok()),
             BusValue::SteamAudio => flag(SteamAudio::get().is_ok()),
+            BusValue::Reverb => flag(self.reverb_on),
         }
     }
 

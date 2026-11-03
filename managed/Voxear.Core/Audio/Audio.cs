@@ -51,6 +51,18 @@ public static class Audio
 		set { NativeAudio.SetBus(NativeAudio.BusHeadphones, value ? 1f : 0f); }
 	}
 
+	/// <summary>
+	/// Whether 3D sounds on the effects bus ring as the room the listener is in does: for seconds in a stone hall,
+	/// hardly at all in a small room of carpet, and not in the open. Steam Audio works the room out from the level's
+	/// colliders, each by its AcousticMaterial, a few times a second as the listener moves. It starts as the
+	/// project's <c>[audio] reverb</c> setting has it, and stays off without Steam Audio.
+	/// </summary>
+	public static bool Reverb
+	{
+		get { return NativeAudio.Bus(NativeAudio.BusReverb) == 1f; }
+		set { NativeAudio.SetBus(NativeAudio.BusReverb, value ? 1f : 0f); }
+	}
+
 	/// <summary>Whether Steam Audio is here for Headphones to use, so a sound options menu can leave the choice out.</summary>
 	public static bool HeadphonesAvailable
 	{

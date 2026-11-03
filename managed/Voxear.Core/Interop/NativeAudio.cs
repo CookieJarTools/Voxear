@@ -39,6 +39,7 @@ internal static unsafe class NativeAudio
 	public const int BusMusic = 2;
 	public const int BusHeadphones = 3;
 	public const int BusSteamAudio = 4;
+	public const int BusReverb = 5;
 
 	/// <summary>The engine's id for the sound at a project path or GUID, or -1 when it will not load.</summary>
 	public static int Load(string path)

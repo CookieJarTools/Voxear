@@ -113,6 +113,7 @@ impl Game {
             input: voxear_input::Input::new(),
         };
         game.audio.headphones = game.project.file.audio.headphones;
+        game.audio.reverb = game.project.file.audio.reverb;
         game.load_input_actions();
         game.load_strings();
         game.engine.world.insert_resource(game.project.layers());

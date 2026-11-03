@@ -77,6 +77,9 @@ pub struct PlayerSettings {
     /// Whether 3D sounds start out heard as through headphones.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub headphones: bool,
+    /// Whether 3D sounds start out ringing as the listener's room does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reverb: bool,
 }
 
 impl PlayerSettings {
@@ -196,7 +199,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             layers: LayerSettings { names: settings.layers.clone() },
             physics: PhysicsSettings { ignore: settings.ignore.clone() },
             localization: LocalizationSettings { languages: settings.languages.clone() },
-            audio: AudioSettings { headphones: settings.headphones, steam_audio: true },
+            audio: AudioSettings { headphones: settings.headphones, reverb: settings.reverb, steam_audio: true },
         },
     };
     let mut game = Game::with_content(project, engine, content);

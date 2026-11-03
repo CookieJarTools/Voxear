@@ -204,6 +204,7 @@ pub fn build(
         ignore: project.file.physics.ignore.clone(),
         languages: project.file.localization.languages.clone(),
         headphones: project.file.audio.headphones,
+        reverb: project.file.audio.reverb,
     };
     settings.write(&data)?;
     timed("player", stage);

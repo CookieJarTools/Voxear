@@ -152,6 +152,7 @@ pub enum Prop {
     LightCookieSize,
     LightProfile,
     LightSoftness,
+    LightShadowTint,
     VolumeShape,
     VolumeBlend,
     VolumeWeight,
@@ -290,7 +291,8 @@ impl Prop {
             | Prop::LightCookie
             | Prop::LightCookieSize
             | Prop::LightProfile
-            | Prop::LightSoftness => {
+            | Prop::LightSoftness
+            | Prop::LightShadowTint => {
                 Part::Light
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
@@ -393,6 +395,7 @@ impl Prop {
             Prop::LightCookieSize => "cookie_size",
             Prop::LightProfile => "profile",
             Prop::LightSoftness => "softness",
+            Prop::LightShadowTint => "shadow_tint",
             Prop::VolumeShape => "shape",
             Prop::VolumeBlend => "blend_distance",
             Prop::VolumeWeight => "weight",
@@ -597,7 +600,12 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 props.push(Prop::Range);
             }
             match kind {
-                LightKind::Directional => props.extend([Prop::LightSoftness, Prop::LightCookie, Prop::LightCookieSize]),
+                LightKind::Directional => props.extend([
+                    Prop::LightSoftness,
+                    Prop::LightShadowTint,
+                    Prop::LightCookie,
+                    Prop::LightCookieSize,
+                ]),
                 LightKind::Point => props.push(Prop::LightProfile),
                 LightKind::Spot => props.extend([Prop::SpotInner, Prop::SpotOuter, Prop::LightCookie, Prop::LightProfile]),
                 LightKind::Rectangle => props.extend([Prop::LightWidth, Prop::LightHeight]),
@@ -747,6 +755,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::LightCookieSize => "Cookie size",
         Prop::LightProfile => "IES profile",
         Prop::LightSoftness => "Shadow softness",
+        Prop::LightShadowTint => "Shadow tint",
         Prop::VolumeShape => "Shape",
         Prop::VolumeBlend => "Blend distance",
         Prop::VolumeWeight => "Weight",
@@ -1113,6 +1122,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightCookie => Value::Asset(guid_label(game, light()?.cookie.and_then(|t| game.content.picture_guid(t)))),
         Prop::LightCookieSize => Value::Number(light()?.cookie_size),
         Prop::LightSoftness => Value::Number(light()?.softness),
+        Prop::LightShadowTint => Value::Color(srgb(light()?.shadow_tint.to_array()).map(round3)),
         Prop::LightProfile => {
             Value::Asset(guid_label(game, light()?.profile.and_then(|t| game.content.light_profile_guid(t))))
         }
@@ -1737,6 +1747,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::LightHeight, Value::Number(n)) => with(world, entity, |light: &mut Light| light.height = n.max(0.0)),
         (Prop::LightRadius, Value::Number(n)) => with(world, entity, |light: &mut Light| light.radius = n.max(0.0)),
         (Prop::LightLength, Value::Number(n)) => with(world, entity, |light: &mut Light| light.length = n.max(0.0)),
+        (Prop::LightShadowTint, Value::Color(color)) => with(world, entity, |light: &mut Light| {
+            light.shadow_tint = Vec3::from(linear(color.map(|c| c.clamp(0.0, 1.0))));
+        }),
         (Prop::LightSoftness, Value::Number(n)) => {
             with(world, entity, |light: &mut Light| light.softness = n.clamp(0.0, 20.0))
         }

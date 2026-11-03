@@ -184,6 +184,7 @@ struct MaterialFields {
     swatches: [NodeId; 2],
     /// Each map's picture, in [`MaterialMap::ALL`]'s order, with its path.
     maps: [(Slot, Option<String>); 4],
+    foliage: NodeId,
 }
 
 /// A field naming an asset, as an Obj's references show one: its icon and
@@ -415,7 +416,7 @@ impl AssetView {
                 return Some(AssetAction::Ping(path));
             }
         }
-        let changed = fields.color.iter().chain(&fields.emissive).chain([&fields.metallic, &fields.roughness]);
+        let changed = fields.color.iter().chain(&fields.emissive).chain([&fields.metallic, &fields.roughness, &fields.foliage]);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
         }
@@ -429,6 +430,7 @@ impl AssetView {
         }
         data.metallic = read(fields.metallic, data.metallic).clamp(0.0, 1.0);
         data.roughness = read(fields.roughness, data.roughness).clamp(0.0, 1.0);
+        data.foliage = ui.is_checked(fields.foliage);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), data.clone()))
     }
 
@@ -642,8 +644,11 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> 
         show_slot(ui, slot, path.as_deref(), "Texture");
         (slot, path)
     });
+    let row = prop(ui, rows, "Foliage");
+    let foliage = ui.toggle(row, "", data.foliage);
+    ui.add_class(foliage, "checkbox");
     let swatches = [color_swatch, emission_swatch];
-    let fields = MaterialFields { data, color, metallic, roughness, emissive, swatches, maps };
+    let fields = MaterialFields { data, color, metallic, roughness, emissive, swatches, maps, foliage };
     fields.show_swatches(ui);
     Some(fields)
 }

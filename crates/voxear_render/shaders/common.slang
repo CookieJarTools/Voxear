@@ -181,6 +181,8 @@ struct Meshlet
 };
 
 static const uint MATERIAL_NORMAL_MAP = 1;
+// Lit as leaves are: wrapped, through the leaf, and with a rim (shading.slang's foliageLight).
+static const uint MATERIAL_FOLIAGE = 2;
 
 struct Material
 {
@@ -324,6 +326,9 @@ struct Post
     uint reflectionSteps;
     float reflectionMaxRoughness;
     uint3 reflectionPad;
+    // Bloom's colour, multiplying its glow.
+    float3 bloomTint;
+    uint bloomPad;
 };
 
 static const uint SKY_GRADIENT = 0;
@@ -364,6 +369,9 @@ struct Lighting
     // The tangent of half the sun's angle across, which softens its shadows; 0 for hard ones.
     float sunSoftness;
     Atmosphere atmosphere;
+    // The colour the sun's shadows take, as a share of its light; black for none.
+    float3 sunShadowTint;
+    uint lightingPad;
 };
 
 static const uint GI_LEVELS = 3;

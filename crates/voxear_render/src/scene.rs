@@ -85,6 +85,10 @@ pub struct Light {
     /// from what casts them; 0 for hard edges. The sun is about half a
     /// degree. Only the sun casts shadows yet.
     pub softness: f32,
+    /// Linear: the colour the sun's shadows take, as a share of its light,
+    /// as light through a canopy or off warm ground fills them; black, the
+    /// default, leaves them as they are.
+    pub shadow_tint: Vec3,
     /// An IES profile (see `Renderer::add_light_profile`): how bright a real
     /// fitting is in each direction, for a point or spot light.
     pub profile: Option<TextureId>,
@@ -138,6 +142,7 @@ impl Light {
             cookie: None,
             cookie_size: 10.0,
             softness: 0.5,
+            shadow_tint: Vec3::ZERO,
             profile: None,
         }
     }
@@ -396,7 +401,23 @@ pub fn extract(
     let mut lights = Vec::new();
     let mut sun_found = false;
     let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
+    let sun_look = world.resource::<crate::looks::SunLook>().copied();
     for (_, light, transform) in shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity)) {
+        // A look changes the sun's colour and strength, and gives what the light leaves at its default.
+        let looked;
+        let light = match (light.kind, sun_look) {
+            (LightKind::Directional, Some(look)) => {
+                looked = Light {
+                    color: light.color * look.tint,
+                    intensity: light.intensity * look.strength,
+                    softness: if light.softness == 0.5 { look.softness } else { light.softness },
+                    shadow_tint: if light.shadow_tint == Vec3::ZERO { look.shadow_tint } else { light.shadow_tint },
+                    ..*light
+                };
+                &looked
+            }
+            _ => light,
+        };
         let forward = transform.rotation * Vec3::Z;
         let radiance = light.color * light.intensity;
         match light.kind {
@@ -405,6 +426,7 @@ pub fn extract(
                 frame.sun_direction = vec3(forward);
                 frame.sun_color = vec3(radiance);
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
+                frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
                 if let Some(cookie) = light.cookie {
                     frame.lighting.sun_cookie = cookie.0;
                     frame.lighting.sun_cookie_size = light.cookie_size;

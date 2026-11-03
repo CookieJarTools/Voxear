@@ -24,6 +24,7 @@ mod graph;
 mod hot_reload;
 mod ies;
 mod lod;
+mod looks;
 mod lod_group;
 mod ltc;
 #[cfg(test)]
@@ -82,6 +83,7 @@ pub use previews::{
     MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
 };
 pub use ies::IesProfile;
+pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use scene::{Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyMode, ViewOptions};
 pub use voxear_rhi::TextureId;

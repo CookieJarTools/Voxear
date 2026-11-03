@@ -222,6 +222,7 @@ fn material_data(material: &FileMaterial, maps: [Option<voxear_assets::AssetGuid
         metallic_map,
         normal_map,
         emissive_map,
+        foliage: material.desc.foliage,
     }
 }
 

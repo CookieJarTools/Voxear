@@ -200,6 +200,9 @@ pub struct Bloom {
     pub intensity: f32,
     /// Advanced: 0 keeps the glow tight, 1 spreads it wide.
     pub scatter: f32,
+    /// sRGB: the glow's colour, at the same brightness; white leaves it as
+    /// the light is.
+    pub tint: [f32; 3],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -354,7 +357,7 @@ impl Default for AntiAliasing {
 
 impl Default for Bloom {
     fn default() -> Self {
-        Self { enabled: true, intensity: 0.04, scatter: 0.7 }
+        Self { enabled: true, intensity: 0.04, scatter: 0.7, tint: [1.0; 3] }
     }
 }
 
@@ -505,14 +508,21 @@ impl PostProcess {
     /// Reads a `[post]` table: the named preset (Voxear by default) with the
     /// table's settings layered on top.
     pub fn from_toml(table: &toml::Table) -> Result<Self> {
+        // A look's post-processing, or a preset's, with the table's settings on top; a preset wins over a look.
+        let look = match table.get("look") {
+            Some(toml::Value::String(name)) => Some(crate::looks::Look::of(crate::looks::LookName::parse(name)?)),
+            Some(_) => bail!("`look` must be a name such as \"storybook\""),
+            None => None,
+        };
         let preset = match table.get("preset") {
             Some(toml::Value::String(name)) => Self::preset(name)?,
             Some(_) => bail!("`preset` must be a name such as \"voxear\""),
-            None => Self::voxear(),
+            None => look.map_or_else(Self::voxear, |look| look.post),
         };
         let mut merged = toml::Table::try_from(preset)?;
         let mut overrides = table.clone();
         overrides.remove("preset");
+        overrides.remove("look");
         // A lookup table is an asset, which the engine loads and sets; it is not read here.
         if let Some(toml::Value::Table(grading)) = overrides.get_mut("grading") {
             grading.remove("lut");
@@ -623,6 +633,8 @@ impl PostProcess {
             reflection_steps: self.reflections.steps.clamp(4, 128),
             reflection_max_roughness: self.reflections.max_roughness.clamp(0.01, 1.0),
             _reflection_pad: [0; 3],
+            bloom_tint: linear(self.bloom.tint),
+            _bloom_pad: 0,
         }
     }
 }

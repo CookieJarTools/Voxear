@@ -70,6 +70,18 @@ A real sun is a disc, not a point, so shadows are sharp where things touch the g
 - Higher, up to a few degrees, gives the softer shadows of a hazy day.
 - **0** gives hard edges everywhere, and costs least.
 
+### Shadow tint
+
+In real light, shade is whatever colour the sky and the bounced light make it. Art often paints it a colour of its own instead: warm brown under trees, purple at dusk. The sun's **Shadow tint** adds that colour where the sun does not reach, in its shadows and on the sides of things turned away from it. Black, the default, adds nothing.
+
+Pick a dark, gentle colour: the tint is lit by the sun's colour and strength, so a bright one lights shade almost as much as sunlight. Some of it also shows on lit ground where the sun falls at a slant, as the light turns away.
+
+```toml
+[obj.light]
+type = "directional"
+shadow_tint = [0.42, 0.30, 0.38]
+```
+
 ### Contact shadows
 
 Where small things meet, such as a cup on a table or the feet of a chair, the shadow map is too coarse to show the shadow. **Contact shadows** fill these in, by looking a short way towards the sun from each pixel. They are on by default, and set in the scene file's post-processing:

@@ -18,7 +18,7 @@ use voxear_rhi::{
 use crate::{
     alloc::{RangeAllocator, SlotAllocator},
     cooked::{CookedModel, CookedTexture},
-    gpu::{GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_NORMAL_MAP},
+    gpu::{GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_FOLIAGE, MATERIAL_NORMAL_MAP},
     lod::{Lod, LodInfo, MAX_LODS, build_lods},
     mesh::{MeshData, Primitive, Vertex},
     meshlets::MeshMeshlets,
@@ -56,6 +56,9 @@ pub struct MaterialDesc {
     pub normal_scale: f32,
     pub emissive_texture: Option<TextureId>,
     pub alpha_cutoff: Option<f32>,
+    /// Lit as leaves are: light wrapped round, through the leaf against the
+    /// sun, and a rim of the sun's colour.
+    pub foliage: bool,
 }
 
 impl Default for MaterialDesc {
@@ -71,6 +74,7 @@ impl Default for MaterialDesc {
             normal_scale: 1.0,
             emissive_texture: None,
             alpha_cutoff: None,
+            foliage: false,
         }
     }
 }
@@ -637,7 +641,8 @@ impl Assets {
             metallic_roughness_texture: texture(desc.metallic_roughness_texture),
             normal_texture: texture(desc.normal_texture),
             emissive_texture: texture(desc.emissive_texture),
-            flags: if desc.normal_texture.is_some() { MATERIAL_NORMAL_MAP } else { 0 },
+            flags: if desc.normal_texture.is_some() { MATERIAL_NORMAL_MAP } else { 0 }
+                | if desc.foliage { MATERIAL_FOLIAGE } else { 0 },
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),
         };

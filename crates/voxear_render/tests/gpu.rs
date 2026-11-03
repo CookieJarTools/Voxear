@@ -2059,3 +2059,130 @@ fn a_polished_floor_reflects_what_stands_on_it() {
     let (red_without, red_with) = (redness(&without), redness(&with));
     assert!(red_with > red_without + 20, "the cube shows in the floor: {red_with} redder there, from {red_without}");
 }
+
+/// The lamp camera's floor under a sun 40 degrees from straight down, a
+/// tall wall's shadow falling along +X from where it ends at z = 0, with
+/// `light` as the sun and, perhaps, a look's `sun_look` over it.
+fn shadow_tint_render(light: Light, sun_look: Option<voxear_render::SunLook>) -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let wall = Transform::new(Vec3::new(0.0, 3.0, -5.0), Quat::IDENTITY, Vec3::new(0.5, 6.0, 10.0));
+    world.spawn((MeshRenderer::new(cube, material), wall));
+    let towards_sun = Vec3::new(-40f32.to_radians().sin(), 40f32.to_radians().cos(), 0.0);
+    world.spawn((light, Transform::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::Z, -towards_sun), Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    if let Some(look) = sun_look {
+        world.insert_resource(look);
+    }
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// In the wall's shadow, and out in the sun.
+const IN_SHADOW: Vec3 = Vec3::new(2.0, 0.0, -2.5);
+const IN_SUN: Vec3 = Vec3::new(2.0, 0.0, 2.5);
+
+#[test]
+fn a_shadow_tint_colours_shade_far_more_than_sunlit_ground() {
+    let plain = Light::directional(Vec3::ONE, 2.0);
+    let tinted = Light { shadow_tint: Vec3::new(0.4, 0.05, 0.3), ..plain };
+    let (Some(before), Some(after)) = (shadow_tint_render(plain, None), shadow_tint_render(tinted, None)) else {
+        return;
+    };
+    keep_image("shadow untinted.png", &before);
+    keep_image("shadow tinted.png", &after);
+    let (shade_before, shade_after) = (rgb_at(&before, floor_pixel(IN_SHADOW)), rgb_at(&after, floor_pixel(IN_SHADOW)));
+    let purpleness = |rgb: [i32; 3]| rgb[0] + rgb[2] - 2 * rgb[1];
+    assert!(purpleness(shade_after) > purpleness(shade_before) + 10, "{shade_after:?} from {shade_before:?}");
+    // The sun at an angle leaves a little of the tint on lit ground too, as the light turns away.
+    let (sun_before, sun_after) = (rgb_at(&before, floor_pixel(IN_SUN)), rgb_at(&after, floor_pixel(IN_SUN)));
+    let (in_sun, in_shade) = (purpleness(sun_after) - purpleness(sun_before), purpleness(shade_after) - purpleness(shade_before));
+    assert!(in_sun * 3 < in_shade, "the sunlit floor changes far less: {sun_after:?} from {sun_before:?}");
+}
+
+#[test]
+fn a_sun_look_colours_the_sun_and_tints_its_shadows() {
+    use voxear_render::SunLook;
+    let light = Light::directional(Vec3::ONE, 2.0);
+    let look = SunLook { tint: Vec3::new(1.0, 0.6, 0.3), strength: 1.0, softness: 0.5, shadow_tint: Vec3::new(0.0, 0.0, 0.4) };
+    let (Some(before), Some(after)) = (shadow_tint_render(light, None), shadow_tint_render(light, Some(look))) else {
+        return;
+    };
+    let warmth = |rgb: [i32; 3]| rgb[0] - rgb[2];
+    let (sun_before, sun_after) = (rgb_at(&before, floor_pixel(IN_SUN)), rgb_at(&after, floor_pixel(IN_SUN)));
+    assert!(warmth(sun_after) > warmth(sun_before) + 20, "the sun turns warm: {sun_after:?} from {sun_before:?}");
+    let (shade_before, shade_after) = (rgb_at(&before, floor_pixel(IN_SHADOW)), rgb_at(&after, floor_pixel(IN_SHADOW)));
+    assert!(warmth(shade_after) < warmth(shade_before) - 5, "and its shadows blue: {shade_after:?} from {shade_before:?}");
+}
+
+/// A thin green panel standing between the camera and a low sun, seen from
+/// its shaded side, lit as leaves are or as a plain surface.
+fn backlit_panel_render(foliage: bool) -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.0, -4.0), Quat::IDENTITY, Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let leaf = MaterialDesc { base_color: [0.2, 0.6, 0.1, 1.0], foliage, ..MaterialDesc::default() };
+    let material = renderer.add_material(&leaf).unwrap();
+    world.spawn((MeshRenderer::new(cube, material), Transform::new(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY, Vec3::new(4.0, 3.0, 0.05))));
+    // Low, ahead of the camera, behind the panel.
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.2, -1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn foliage_lets_the_sun_through_from_behind() {
+    let (Some(plain), Some(leaf)) = (backlit_panel_render(false), backlit_panel_render(true)) else { return };
+    keep_image("backlit panel.png", &plain);
+    keep_image("backlit leaf.png", &leaf);
+    let (before, after) = (rgb_at(&plain, (320, 180)), rgb_at(&leaf, (320, 180)));
+    assert!(after[1] > before[1] + 20, "the leaf glows green against the sun: {after:?} from {before:?}");
+    assert!(after[1] > after[0] && after[1] > after[2], "in its own colour: {after:?}");
+}
+
+/// A bright white sphere on black with bloom tinted `tint`.
+fn bloom_render(tint: [f32; 3]) -> Option<Vec<u8>> {
+    use voxear_render::{Bloom, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -5.0))));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let glowing = MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: [40.0; 3], ..MaterialDesc::default() };
+    let material = renderer.add_material(&glowing).unwrap();
+    world.spawn((MeshRenderer::new(sphere, material), Transform::from_position(Vec3::ZERO)));
+    world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
+    let mut post = steady_post();
+    post.bloom = Bloom { enabled: true, intensity: 0.2, tint, ..Bloom::default() };
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_bloom_tint_colours_the_glow_but_not_the_light() {
+    let (Some(white), Some(gold)) = (bloom_render([1.0; 3]), bloom_render([1.0, 0.7, 0.2])) else { return };
+    keep_image("bloom white.png", &white);
+    keep_image("bloom gold.png", &gold);
+    // Beside the sphere, where only its glow reaches.
+    let (glow_white, glow_gold) = (rgb_at(&white, (420, 180)), rgb_at(&gold, (420, 180)));
+    assert!(glow_white[0] > 5, "the glow reaches out: {glow_white:?}");
+    assert!(glow_gold[0] - glow_gold[2] > glow_white[0] - glow_white[2] + 5, "{glow_gold:?} from {glow_white:?}");
+}

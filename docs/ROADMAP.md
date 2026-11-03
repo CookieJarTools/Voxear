@@ -869,6 +869,19 @@ Done so far:
   resolution: each pixel's mirror ray marched through the depth buffer, crossings refined by halving, the colour
   taken from last frame's TAA picture where that point was. On in the Voxear Look; needs TAA. About 0.16 ms at
   1440p. GPU test: a polished floor mirrors the cube on it.
+- **Stylised shading:** a sun's shadow tint, a colour added where the sun does not reach (in shadow and on sides
+  turned from it), lit by the sun's own colour; and foliage materials, lit with wrap lighting, light through the
+  leaf against the sun (its shadow read from the leaf's sunlit side), and a rim of the sun's colour. Bloom takes a
+  tint. GPU tests: a tinted shadow, a leaf lit from behind, a gold glow.
+- **Lighting looks, as presets:** `[post] look = "soft_overcast"` or `"storybook"` sets the sky, the sun's colour,
+  strength, softness and shadow tint, and the post-processing together; the scene's own `[sky]`, its light's own
+  settings and any `[post]` setting win over the look's, and a sky from the look is left out of saves.
+  - **Soft Overcast:** the sky the main light, a weak warm sun with soft shadows, light shafts in thin blue mist,
+    bounced light, auto exposure in a narrow range, AgX with saturation 0.9, a teal-and-warm grade, low wide bloom.
+  - **Storybook:** a warm, strong sun pushed toward yellow-green against a teal sky, shadows tinted warm purple,
+    teal fog in layers, tinted ambient occlusion, gold-tinted bloom, saturation 1.15, shadows lifted toward teal
+    and highlights toward gold.
+  - Still to come for them: a dappled canopy cookie, probes, and depth of field on the near foreground.
 
 Next:
 - Virtual shadow maps, and shadows for point, spot and area lights.
@@ -878,38 +891,6 @@ Next:
 - Baked lightmapper, light probes and reflection probes.
 - Reflections: falling back to reflection probes rather than the sky, and tracing against the depth pyramid,
   for fewer misses on surfaces seen edge on.
-- Stylised shading: shadows tinted a colour, and foliage shading (wrap lighting, light through the leaves, and a
-  rim light tinted by the sun).
-- **Lighting looks, as presets.** A scene picks a look, which sets the sky, sun, shadows, fog, reflections and
-  post-processing together, and any part of it can be changed.
-  - **Soft Overcast**, the engine's default look: hazy, bright and calm, like daylight through big windows on a
-    cloudy day.
-    - The sky is the main light, cool at about 6500–8000K. The sun is weaker and warm, about 5000–5500K, giving
-      2 to 4 times the sky's light rather than 10, with soft shadows.
-    - Thin, slightly blue height fog, and volumetric fog with the sun's shadows in it, so light shafts show
-      (strong forward scattering: a Henyey-Greenstein g of about 0.6–0.75).
-    - Auto exposure with a narrow range, set for interiors, so bright windows blow out and bloom into the frame.
-    - Ambient occlusion at moderate strength, so contacts stay soft and clean; reflections on surfaces of low to
-      mid roughness by default; and GI that brings sky light indoors, without which interiors go flat and dark.
-    - A soft filmic finish: AgX or ACES with a gentle highlight rolloff, low, wide bloom with no threshold,
-      saturation around 0.9, shadows graded slightly toward teal and highlights slightly warm, and a light
-      vignette.
-  - **Storybook**, a stylised look: a warm sun breaking through a canopy into a cool forest, with rich colour and
-    soft shapes, as in It Takes Two, Kena or Ori. Art-directed rather than physically accurate.
-    - A fairly strong, warm sun, about 3500–4500K and pushed toward yellow-green, against a teal sky light: a
-      gradient with teal above and warm brown below.
-    - Shadows that are never black or grey, but tinted warm brown, olive or purple, with soft edges, and a dappled
-      canopy pattern on the sunlight.
-    - Foliage lit from inside: wrap lighting, light through the leaves, and a rim light tinted by the sun.
-    - Teal-cyan fog that separates the scene into two or three depth layers; volumetric light only faintly, if at
-      all.
-    - Stronger, tinted ambient occlusion; rough surfaces by default (0.6–0.8) with less specular.
-    - Moderate, wide, slightly warm bloom, saturation about 1.1–1.2, a gentle vignette, optional depth of field
-      on the near foreground, and grading that lifts shadows toward teal or purple and pushes highlights toward
-      gold.
-  - What they need: the voxel GI, probes, volumetric fog, soft shadows, ambient occlusion, reflections, light
-    cookies and stylised shading above. Most of their post-processing exists already (AgX, ACES, bloom with no
-    threshold, auto exposure, grading, vignette and depth of field); bloom still needs a tint.
 - **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
   Audio, with baked reverb probes as the fallback.
 - **HDR colour, end to end.** Rendering is HDR already: a float target, emissive and lights above 1, exposure and

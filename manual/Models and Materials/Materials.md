@@ -37,6 +37,16 @@ Give a material an **Emission** colour to make it glow. Emission's colour picker
 
 A glowing surface does not light up what is around it. To make a lamp that lights the room, put a Point Light beside its bulb. See [[Lights]].
 
+## Leaves and grass
+
+Turn on **Foliage** for leaves, grass and anything else thin that light shines through. Foliage takes the sun differently:
+
+- Light wraps a little way round to the side turned from the sun, so leaves never go flat and dark.
+- Seen against the sun, the leaf glows in its own colour, as sunlight through a leaf does.
+- Edges facing away from the camera catch a rim of the sun's colour.
+
+Only the sun lights foliage this way. A leaf's shaded side takes the light of its sunlit side, so a leaf in a canopy's shade stays in shade, but a leaf on its own lights up from behind.
+
 ## The material file
 
 A material is a small text file:
@@ -52,6 +62,7 @@ normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 
 - `color` is red, green and blue from 0 to 1, as a colour picker shows them.
 - `emissive` can go above 1 for a brighter glow.
+- `foliage = true` lights it as leaves are, as above.
 - `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.
 
 A model's own materials, with their pictures, can be written out as material files to edit. See [[Models]].

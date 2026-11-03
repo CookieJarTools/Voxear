@@ -67,6 +67,8 @@ pub struct GpuMeshlet {
 }
 
 pub const MATERIAL_NORMAL_MAP: u32 = 1;
+/// Lit as leaves are: wrapped, through the leaf, and with a rim.
+pub const MATERIAL_FOLIAGE: u32 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -328,6 +330,10 @@ pub struct GpuLighting {
     /// shadows (see `Light::softness`); 0 for hard ones.
     pub sun_softness: f32,
     pub atmosphere: GpuAtmosphere,
+    /// The colour the sun's shadows take, as a share of its light; black
+    /// for none.
+    pub sun_shadow_tint: [f32; 3],
+    pub _lighting_pad: u32,
 }
 
 /// A planet's atmosphere, in kilometres and per kilometre, as Hillaire's
@@ -440,6 +446,9 @@ pub struct GpuPost {
     pub reflection_steps: u32,
     pub reflection_max_roughness: f32,
     pub _reflection_pad: [u32; 3],
+    /// Bloom's colour, linear, multiplying its glow.
+    pub bloom_tint: [f32; 3],
+    pub _bloom_pad: u32,
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -610,9 +619,9 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 19;
+        let post = 16 * 20;
         let meshlets = 16;
-        let lighting = 16 * 4 + 16 * 6;
+        let lighting = 16 * 4 + 16 * 6 + 16;
         let gi = 16 * GI_LEVELS * 2 + 64 * CASCADES + 32 + 32;
         assert_eq!(
             size_of::<GpuFrame>(),

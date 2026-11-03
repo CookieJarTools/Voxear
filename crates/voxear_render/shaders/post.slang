@@ -595,7 +595,10 @@ float4 compositeFragment(PostOut input) : SV_Target
         // The upsample chain sums the levels weighted 1, scatter, scatter^2, ...
         float s = clamp(post.bloomScatter, 0.0, 0.999);
         float normalise = (1.0 - s) / (1.0 - pow(s, float(BLOOM_LEVELS)));
-        color = lerp(color, sampleLinear(push.textures.y, uv).rgb * normalise, post.bloomIntensity);
+        float3 glow = sampleLinear(push.textures.y, uv).rgb * normalise;
+        // Tinted, the glow takes the tint's colour at the same brightness, so a tint changes its colour only.
+        glow *= post.bloomTint / max(dot(post.bloomTint, LUMA), 1e-3);
+        color = lerp(color, glow, post.bloomIntensity);
     }
 
     float ev = post.autoExposure != 0 ? buffers()->exposure[0] : post.exposureCompensation;

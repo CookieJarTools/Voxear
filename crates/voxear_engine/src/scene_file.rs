@@ -57,8 +57,8 @@ use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
-    Camera, Light, LightKind, LodGroup, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer, Sky,
-    SkyMode, VolumeShape,
+    Camera, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
+    Sky, SkyMode, SunLook, VolumeShape,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -99,6 +99,10 @@ impl Default for SceneFile {
 /// The `[post]` table the current post-processing came from, so saving a
 /// scene writes back its preset and overrides rather than every setting.
 pub struct PostTable(pub toml::Table);
+
+/// The sky came from the scene's look rather than its own `[sky]`, so a
+/// save leaves it out, and changing the look changes the sky.
+pub struct SkyFromLook;
 
 /// Sky colours are sRGB, like every colour in project files.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -363,6 +367,9 @@ pub enum LightData {
         /// How wide the sun looks, in degrees, which softens its shadows.
         #[serde(default = "default_softness")]
         softness: f32,
+        /// sRGB: the colour its shadows take, as a share of its light.
+        #[serde(default, skip_serializing_if = "is_black3")]
+        shadow_tint: [f32; 3],
     },
     Point {
         #[serde(default = "white")]
@@ -446,6 +453,10 @@ fn default_cookie_size() -> f32 {
 
 fn default_softness() -> f32 {
     0.5
+}
+
+fn is_black3(colour: &[f32; 3]) -> bool {
+    colour.iter().all(|&c| c <= 0.0)
 }
 
 impl LightData {
@@ -558,6 +569,29 @@ pub fn spawn(
 /// Sets the level's sky and post-processing from a scene that has them.
 /// What a scene leaves out stays as it was.
 pub fn apply_environment(engine: &mut Engine, sky: Option<SkyData>, post: Option<&toml::Table>) -> Result<()> {
+    // A look, picked in [post], brings its sun, and its sky where the scene has none of its own.
+    let look = match post.and_then(|table| table.get("look")).and_then(|value| value.as_str()) {
+        Some(name) => Some(Look::of(LookName::parse(name)?)),
+        None => None,
+    };
+    // A scene without [post] leaves the look as it was; one with [post] and no look drops it, sky and all.
+    match (look, post) {
+        (Some(look), _) => drop(engine.world.insert_resource(look.sun)),
+        (None, Some(_)) => {
+            engine.world.remove_resource::<SunLook>();
+            if engine.world.remove_resource::<SkyFromLook>().is_some() && sky.is_none() {
+                engine.world.insert_resource(Sky::default());
+            }
+        }
+        (None, None) => {}
+    }
+    if let (Some(look), None) = (look, sky) {
+        engine.world.insert_resource(look.sky);
+        engine.world.insert_resource(SkyFromLook);
+    }
+    if sky.is_some() {
+        engine.world.remove_resource::<SkyFromLook>();
+    }
     if let Some(sky) = sky {
         engine.world.insert_resource(Sky {
             mode: match sky.mode {
@@ -664,7 +698,7 @@ pub fn capture_scene_with_ids(
         objs.push(obj);
     }
 
-    let sky = world.resource::<Sky>().map(|sky| SkyData {
+    let sky = world.resource::<Sky>().filter(|_| world.resource::<SkyFromLook>().is_none()).map(|sky| SkyData {
         mode: match sky.mode {
             SkyMode::Gradient => SkyModeData::Gradient,
             SkyMode::Atmosphere => SkyModeData::Atmosphere,
@@ -1098,8 +1132,9 @@ pub fn default_light(kind: LightKind) -> Light {
 /// need their assets loaded (see [`light_with_assets`]).
 pub(crate) fn light_component(light: &LightData) -> Light {
     match *light {
-        LightData::Directional { color, intensity, cookie_size, softness, .. } => {
-            Light { cookie_size, softness, ..Light::directional(Vec3::from(linear(color)), intensity) }
+        LightData::Directional { color, intensity, cookie_size, softness, shadow_tint, .. } => {
+            let shadow_tint = Vec3::from(linear(shadow_tint));
+            Light { cookie_size, softness, shadow_tint, ..Light::directional(Vec3::from(linear(color)), intensity) }
         }
         LightData::Point { color, intensity, range, .. } => Light::point(Vec3::from(linear(color)), intensity, range),
         LightData::Spot { color, intensity, range, inner_angle, outer_angle, .. } => {
@@ -1142,6 +1177,7 @@ fn light_data(content: &Content, light: &Light) -> LightData {
             cookie,
             cookie_size: light.cookie_size,
             softness: light.softness,
+            shadow_tint: round3(srgb(light.shadow_tint.to_array())),
         },
         LightKind::Point => LightData::Point { color, intensity, range: light.range, profile },
         LightKind::Spot => LightData::Spot {
@@ -1286,6 +1322,31 @@ mod tests {
         let air: SkyData = toml::from_str(&format!("mode = \"atmosphere\"\n{colours}")).unwrap();
         assert_eq!(air.mode, SkyModeData::Atmosphere);
         assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&air).unwrap()).unwrap(), air);
+    }
+
+    #[test]
+    fn a_look_brings_its_sun_and_its_sky_where_the_scene_has_none() {
+        let post = |text: &str| toml::from_str::<toml::Table>(text).unwrap();
+        let mut engine = Engine::new();
+        apply_environment(&mut engine, None, Some(&post("look = \"storybook\""))).unwrap();
+        let storybook = Look::of(LookName::Storybook);
+        assert_eq!(engine.world.resource::<SunLook>().copied(), Some(storybook.sun));
+        assert_eq!(engine.world.resource::<Sky>().map(|sky| sky.zenith), Some(storybook.sky.zenith));
+        assert!(engine.world.resource::<SkyFromLook>().is_some(), "so a save leaves the sky out");
+
+        apply_environment(&mut engine, None, None).unwrap();
+        assert!(engine.world.resource::<SunLook>().is_some(), "a scene without [post] keeps the look");
+
+        let own: SkyData = toml::from_str("zenith = [0.1, 0.2, 0.3]\nhorizon = [0.5, 0.5, 0.5]\nground = [0.3, 0.3, 0.3]").unwrap();
+        apply_environment(&mut engine, Some(own), Some(&post("look = \"soft_overcast\""))).unwrap();
+        assert!(engine.world.resource::<SkyFromLook>().is_none(), "the scene's own sky wins and is saved");
+        assert_eq!(engine.world.resource::<SunLook>().copied(), Some(Look::of(LookName::SoftOvercast).sun));
+
+        apply_environment(&mut engine, None, Some(&post("look = \"storybook\""))).unwrap();
+        apply_environment(&mut engine, None, Some(&post("[bloom]\nintensity = 0.1"))).unwrap();
+        assert!(engine.world.resource::<SunLook>().is_none(), "[post] without a look drops it");
+        assert_eq!(engine.world.resource::<Sky>().map(|sky| sky.zenith), Some(Sky::default().zenith));
+        assert!(apply_environment(&mut engine, None, Some(&post("look = \"gloomy\""))).is_err());
     }
 
     #[test]

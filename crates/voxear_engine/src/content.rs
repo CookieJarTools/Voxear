@@ -56,6 +56,10 @@ pub struct MaterialData {
     pub normal_map: Option<AssetGuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive_map: Option<AssetGuid>,
+    /// Lit as leaves are: light wrapped round, through the leaf against the
+    /// sun, and a rim of the sun's colour.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub foliage: bool,
 }
 
 impl Default for MaterialData {
@@ -69,6 +73,7 @@ impl Default for MaterialData {
             metallic_map: None,
             normal_map: None,
             emissive_map: None,
+            foliage: false,
         }
     }
 }
@@ -135,6 +140,7 @@ impl MaterialData {
             metallic_roughness_texture: metallic,
             normal_texture: normal,
             emissive_texture: emissive,
+            foliage: self.foliage,
             ..MaterialDesc::default()
         }
     }
@@ -143,12 +149,12 @@ impl MaterialData {
     fn key(&self) -> MaterialKey {
         let [r, g, b] = self.color.map(f32::to_bits);
         let [er, eg, eb] = self.emissive.map(f32::to_bits);
-        let values = [r, g, b, self.metallic.to_bits(), self.roughness.to_bits(), er, eg, eb];
+        let values = [r, g, b, self.metallic.to_bits(), self.roughness.to_bits(), er, eg, eb, u32::from(self.foliage)];
         (values, MaterialMap::ALL.map(|map| self.map(map)))
     }
 }
 
-type MaterialKey = ([u32; 8], [Option<AssetGuid>; 4]);
+type MaterialKey = ([u32; 9], [Option<AssetGuid>; 4]);
 
 /// What [`Content::release_unused`] freed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

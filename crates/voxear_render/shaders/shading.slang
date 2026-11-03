@@ -123,6 +123,39 @@ uint cascadeAt(Frame* frame, float3 position)
     return cascade;
 }
 
+// Foliage, lit as leaves are: light wrapped round past the side facing
+// away from the sun, so a canopy does not go black on its far side; light
+// through a leaf seen against the sun, in the leaf's own colour; and a rim
+// of the sun's colour round its edges.
+float3 foliageLight(Surface s, float3 toSun, float3 sunLight, float shadow)
+{
+    static const float WRAP = 0.5;
+    static const float THROUGH = 0.6;
+    static const float RIM = 0.25;
+    float nl = dot(s.normal, toSun);
+    float wrapped = saturate((nl + WRAP) / (1.0 + WRAP)) - saturate(nl);
+    float3 wrap = s.diffuse / PI * sunLight * wrapped;
+    // Looking towards the sun through the leaf, from its far side.
+    float against = pow(saturate(dot(-s.view, toSun)), 4.0) * saturate(0.3 - nl);
+    float3 through = s.diffuse * sunLight * against * THROUGH;
+    float rim = pow(1.0 - saturate(dot(s.normal, s.view)), 4.0) * saturate(nl + 0.5);
+    return (wrap + through + sunLight * rim * RIM) * shadow;
+}
+
+// The colour the sun's shadows take, rather than going grey: the sun's own
+// light, tinted, filling in where it does not reach, as light through a
+// canopy or off a warm ground does. Without a tint, nothing.
+float3 shadowTint(Frame* frame, Surface s, float3 toSun, float3 sunLight, float shadow)
+{
+    float3 tint = frame->lighting.sunShadowTint;
+    if (all(tint <= 0.0))
+    {
+        return 0.0;
+    }
+    float lit = saturate(dot(s.normal, toSun)) * shadow;
+    return s.diffuse / PI * sunLight * tint * (1.0 - lit);
+}
+
 // What a surface reflects of its surroundings: the sky in the mirror
 // direction, blurring towards the light from all round (`ambient`) as the
 // surface roughens, with screen-space reflections over it where they found
@@ -336,7 +369,18 @@ FragmentOut fragmentMain(VertexOut input)
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     // Through the atmosphere, the sun reddens as it sets.
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float3 color = shade(s, -frame->sunDirection, sunLight * sunCookieAt(frame, input.worldPosition)) * shadow;
+    float3 sunThrough = sunLight * sunCookieAt(frame, input.worldPosition);
+    float3 color = shade(s, -frame->sunDirection, sunThrough) * shadow;
+    if ((material.flags & MATERIAL_FOLIAGE) != 0)
+    {
+        // A leaf is thin, so its shaded side takes the light of its sunlit
+        // one: the shadow there, a little way towards the sun, rather than
+        // the leaf's own shadow on itself.
+        static const float LEAF_DEPTH = 0.15;
+        float leafShadow = sunShadow(frame, input.worldPosition - frame->sunDirection * LEAF_DEPTH, -frame->sunDirection);
+        color += foliageLight(s, -frame->sunDirection, sunThrough, leafShadow);
+    }
+    color += shadowTint(frame, s, -frame->sunDirection, sunThrough, shadow);
     float viewDepth = dot(input.worldPosition - frame->cameraPosition, frame->cameraForward);
     uint cluster = clusterAt(frame, input.position.xy, viewDepth);
     uint clusterBase = cluster * (frame->clusterMaxLights + 1);

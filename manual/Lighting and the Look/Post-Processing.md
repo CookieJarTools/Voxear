@@ -32,6 +32,28 @@ preset = "voxear"
 intensity = 0.06
 ```
 
+## Choosing a look
+
+A **look** sets the sky, the sun and the post-processing together, for a mood. Pick one in `[post]`:
+
+```toml
+[post]
+look = "storybook"
+```
+
+| Look | What it gives |
+| --- | --- |
+| `soft_overcast` | Hazy, bright and calm, like daylight through big windows on a cloudy day. The sky is the main light; the sun is weak and warm, with soft shadows and light shafts in a thin blue mist. Bounced light is on |
+| `storybook` | A warm sun breaking through a canopy into a cool forest, as in It Takes Two or Ori. A teal sky and mist, shadows tinted a warm purple, golden glow and rich colour. Bounced light is on |
+
+Whatever the scene sets itself wins over the look's:
+
+- The scene's own `[sky]` replaces the look's sky. Without one, the look's sky is used, and saving the scene leaves it out, so changing the look changes the sky too.
+- The look changes the sun's colour and strength, and gives it the look's shadow softness and shadow tint unless the light has its own.
+- Any `[post]` setting, such as `[post.bloom]`, replaces the look's.
+
+A look stands in for a preset. If a scene names both, the preset's post-processing wins, and the look still brings its sky and sun.
+
 The level uses the post-processing of its active scene (see [[Scenes and Levels]]).
 
 > [!NOTE]
@@ -71,6 +93,7 @@ To see the occlusion on its own, press F7 in a game window, or use `vox render -
 | `enabled = true` | Bright things glow |
 | `intensity = 0.04` | How much glow |
 | `scatter = 0.7` | How far it spreads |
+| `tint = [1, 1, 1]` | The glow's colour, at the same brightness. White leaves it the colour of the light; a gold gives warm highlights |
 
 **Exposure**, `[post.exposure]`
 

@@ -757,6 +757,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Sound => "sound",
             AssetKind::InputActions => "input",
             AssetKind::Strings => "strings",
+            AssetKind::Paths => "paths",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

@@ -48,6 +48,7 @@ You can also make one with the Hierarchy's **+** button and **Audio Source**, or
 | Occlusion | Off, Raycast or Volumetric: whether walls stop a 3D sound (see below) |
 | Occlusion radius | How far round a volumetric sound is heard from, in metres |
 | Transmission | Whether walls let some of the sound through, by what they are made of |
+| Pathing | Whether the sound also comes round the walls, through doorways, in a level with baked paths (see [[Sound Round Corners]]) |
 
 Audio Sources only play while the game runs. In the editor, **Pause** holds every sound the game is playing, and **Stop** silences them.
 
@@ -77,6 +78,8 @@ A radio in the next room should sound muffled, not as if it were beside you. Set
 The walls are the level's colliders that stay put: those without a Rigidbody, and not triggers. Each collider's **Acoustic material** says what it is made of, such as Brick, Wood or Glass (see [[Colliders and Rigidbodies]]). With **Transmission** on, a wall lets some of the sound through, as its material does: more of the low notes than the high, so a sound behind it is quieter and duller. With it off, a wall stops the sound altogether.
 
 Occlusion needs Steam Audio, as headphones do (see below). Without it, walls stop nothing.
+
+A wall that stops a sound stops it however close the door is. To have sounds come round walls and through doorways, bake the level's paths and turn on **Pathing**, as [[Sound Round Corners]] shows.
 
 ## The room
 

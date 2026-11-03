@@ -11,9 +11,11 @@
 //! Voxear's has +Z ahead, so a direction's Z turns over on the way in.
 //!
 //! [`Acoustics`] is the rest: the level's walls as Steam Audio's scene, and
-//! how much of each voice gets through them to the listener.
+//! how much of each voice gets through them to the listener, and comes
+//! round them along the paths [`bake_paths`] bakes.
 
 mod acoustics;
+mod paths;
 mod room;
 
 use std::{
@@ -27,11 +29,13 @@ use libloading::Library;
 use voxear_core::math::Vec3;
 
 use crate::spatial::Listener;
-pub use acoustics::{AcousticMaterial, AcousticMesh, Acoustics, Muffle, Occlusion, SourceAcoustics, Wall};
+pub use acoustics::{AcousticMaterial, AcousticMesh, Acoustics, Heard, Muffle, Occlusion, SourceAcoustics, Wall};
 use acoustics::{
     SceneSettings, SharedInputs, SimulationInputs, SimulationOutputs, SimulationSettings, SourceSettings,
     StaticMeshSettings,
 };
+pub use paths::{BakedPaths, PathProbes, bake_paths};
+use paths::{PathBakeParams, ProbeGenerationParams, Progress, SerializedSettings};
 pub use room::RoomReverb;
 
 /// How many samples Steam Audio's effects take at once.
@@ -128,6 +132,25 @@ struct Api {
     source_set_inputs: unsafe extern "C" fn(Handle, i32, *mut SimulationInputs),
     source_get_outputs: unsafe extern "C" fn(Handle, i32, *mut SimulationOutputs),
     source_release: unsafe extern "C" fn(*mut Handle),
+    simulator_add_probe_batch: unsafe extern "C" fn(Handle, Handle),
+    simulator_remove_probe_batch: unsafe extern "C" fn(Handle, Handle),
+    simulator_run_pathing: unsafe extern "C" fn(Handle),
+    probe_array_create: unsafe extern "C" fn(Handle, *mut Handle) -> i32,
+    probe_array_generate: unsafe extern "C" fn(Handle, Handle, *mut ProbeGenerationParams),
+    probe_array_count: unsafe extern "C" fn(Handle) -> i32,
+    probe_array_release: unsafe extern "C" fn(*mut Handle),
+    probe_batch_create: unsafe extern "C" fn(Handle, *mut Handle) -> i32,
+    probe_batch_add_array: unsafe extern "C" fn(Handle, Handle),
+    probe_batch_commit: unsafe extern "C" fn(Handle),
+    probe_batch_count: unsafe extern "C" fn(Handle) -> i32,
+    probe_batch_save: unsafe extern "C" fn(Handle, Handle),
+    probe_batch_load: unsafe extern "C" fn(Handle, Handle, *mut Handle) -> i32,
+    probe_batch_release: unsafe extern "C" fn(*mut Handle),
+    path_baker_bake: unsafe extern "C" fn(Handle, *mut PathBakeParams, Option<Progress>, *mut c_void),
+    serialized_create: unsafe extern "C" fn(Handle, *mut SerializedSettings, *mut Handle) -> i32,
+    serialized_size: unsafe extern "C" fn(Handle) -> usize,
+    serialized_data: unsafe extern "C" fn(Handle) -> *mut u8,
+    serialized_release: unsafe extern "C" fn(*mut Handle),
 }
 
 /// Steam Audio, loaded: its library and a context. It loads once, the first
@@ -240,6 +263,25 @@ impl Api {
             source_set_inputs: get!("iplSourceSetInputs"),
             source_get_outputs: get!("iplSourceGetOutputs"),
             source_release: get!("iplSourceRelease"),
+            simulator_add_probe_batch: get!("iplSimulatorAddProbeBatch"),
+            simulator_remove_probe_batch: get!("iplSimulatorRemoveProbeBatch"),
+            simulator_run_pathing: get!("iplSimulatorRunPathing"),
+            probe_array_create: get!("iplProbeArrayCreate"),
+            probe_array_generate: get!("iplProbeArrayGenerateProbes"),
+            probe_array_count: get!("iplProbeArrayGetNumProbes"),
+            probe_array_release: get!("iplProbeArrayRelease"),
+            probe_batch_create: get!("iplProbeBatchCreate"),
+            probe_batch_add_array: get!("iplProbeBatchAddProbeArray"),
+            probe_batch_commit: get!("iplProbeBatchCommit"),
+            probe_batch_count: get!("iplProbeBatchGetNumProbes"),
+            probe_batch_save: get!("iplProbeBatchSave"),
+            probe_batch_load: get!("iplProbeBatchLoad"),
+            probe_batch_release: get!("iplProbeBatchRelease"),
+            path_baker_bake: get!("iplPathBakerBake"),
+            serialized_create: get!("iplSerializedObjectCreate"),
+            serialized_size: get!("iplSerializedObjectGetSize"),
+            serialized_data: get!("iplSerializedObjectGetData"),
+            serialized_release: get!("iplSerializedObjectRelease"),
         })
     }
 }

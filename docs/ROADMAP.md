@@ -607,8 +607,11 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     colliders, each with an acoustic material, in the Inspector, scene files and C#
   - [x] reverb as the listener's room rings, from Steam Audio's reflections off the same walls, with `Audio.Reverb`
     and `[audio] reverb`
-  - [ ] Steam Audio convolution reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
-    acceleration structures exist.
+  - [x] Steam Audio pathing: Bake Sound Paths in the editor stands probes on the level's floors and bakes the paths
+    between them into a `.paths` file beside the level, which builds pack with it; an Audio Source with Pathing on
+    is heard round the walls along them, from the doorway's side, in the Inspector, scene files and C#
+  - [ ] Steam Audio convolution reflections. Ray-traced audio follows in M5, once the ray-tracing acceleration
+    structures exist.
   - [x] the audio debugger: each Audio Source a speaker in the Scene view, lit while it plays, and the selected one's
     min and max distances as rings
   - [x] a list of the voices playing, with their buses and volumes: the editor's Audio panel

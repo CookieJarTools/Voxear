@@ -12,13 +12,18 @@ use std::{collections::HashMap, sync::Arc};
 
 use voxear_core::math::Vec3;
 
-use super::{Handle, IplVector3, SteamAudio, steam};
+use super::{
+    Handle, IplVector3, PathProbes, SteamAudio,
+    paths::{VISIBLE_RADIUS, VISIBLE_RANGE, VISIBLE_SHARE},
+    steam,
+};
 use crate::{reverb::ReverbTimes, spatial::Listener, steam_audio::FRAME};
 
 /// Steam Audio's simulations: what it works out of a voice's direct sound,
 /// and of how it reflects round the room.
 const DIRECT: i32 = 1;
 const REFLECTIONS: i32 = 1 << 1;
+const PATHING: i32 = 1 << 2;
 const PARAMETRIC: i32 = 1;
 /// The rays a room's reverb is traced with, how many times each may
 /// bounce, and how long after a sound its reflections are followed for.
@@ -34,6 +39,9 @@ const TRANSMISSION: i32 = 1 << 4;
 /// The most rays a volumetric voice may trace, and how many it does.
 const MAX_SAMPLES: i32 = 32;
 const SAMPLES: i32 = 16;
+/// The order of the spherical harmonics a path's direction comes in: 1,
+/// four numbers, enough for which way it comes from.
+const PATH_ORDER: i32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -128,16 +136,16 @@ struct Directivity {
 }
 
 #[repr(C)]
-struct Sphere {
-    center: IplVector3,
-    radius: f32,
+pub(super) struct Sphere {
+    pub(super) center: IplVector3,
+    pub(super) radius: f32,
 }
 
 #[repr(C)]
-struct BakedDataIdentifier {
-    kind: i32,
-    variation: i32,
-    influence: Sphere,
+pub(super) struct BakedDataIdentifier {
+    pub(super) kind: i32,
+    pub(super) variation: i32,
+    pub(super) influence: Sphere,
 }
 
 #[repr(C)]
@@ -293,18 +301,20 @@ pub enum Occlusion {
 }
 
 /// How a voice meets the walls: how it is occluded, the radius of its
-/// sphere when volumetric, and whether walls in its way let some of it
-/// through, as their materials do, rather than none.
+/// sphere when volumetric, whether walls in its way let some of it
+/// through, as their materials do, rather than none, and whether it is
+/// heard round them too, along the level's baked paths.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SourceAcoustics {
     pub occlusion: Occlusion,
     pub radius: f32,
     pub transmission: bool,
+    pub pathing: bool,
 }
 
 impl Default for SourceAcoustics {
     fn default() -> Self {
-        Self { occlusion: Occlusion::Raycast, radius: 1.0, transmission: true }
+        Self { occlusion: Occlusion::Raycast, radius: 1.0, transmission: true, pathing: false }
     }
 }
 
@@ -318,17 +328,32 @@ impl Muffle {
     pub const NONE: Self = Self([1.0; 3]);
 }
 
+/// What reaches the listener of a voice: how muffled it is, and, when some
+/// of it comes round the walls along a baked path, which way it seems to
+/// come from, as a direction in the world from the listener.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Heard {
+    pub muffle: Muffle,
+    pub from: Option<Vec3>,
+}
+
+impl Heard {
+    pub const OPEN: Self = Self { muffle: Muffle::NONE, from: None };
+}
+
 /// The level's walls in Steam Audio, and the voices it works out for: what
 /// gets past the walls to the listener, or, made with
 /// [`for_rooms`](Self::for_rooms), how long the listener's room rings.
 pub struct Acoustics {
-    steam: Arc<SteamAudio>,
-    scene: Handle,
+    pub(super) steam: Arc<SteamAudio>,
+    pub(super) scene: Handle,
     simulator: Handle,
     mesh: Handle,
     sources: HashMap<u64, Handle>,
     /// The simulation it runs.
     flags: i32,
+    /// The level's baked paths, when it has them.
+    paths: Option<Arc<PathProbes>>,
 }
 
 // Steam Audio's scene and simulator are used from one thread at a time.
@@ -342,6 +367,9 @@ impl Drop for Acoustics {
                 (api.source_remove)(source, self.simulator);
                 (api.source_release)(&mut source);
             }
+            if let Some(paths) = self.paths.take() {
+                (api.simulator_remove_probe_batch)(self.simulator, paths.handle());
+            }
             if !self.mesh.is_null() {
                 (api.static_mesh_remove)(self.mesh, self.scene);
                 (api.static_mesh_release)(&mut self.mesh);
@@ -353,14 +381,16 @@ impl Drop for Acoustics {
 }
 
 impl Acoustics {
-    /// An empty level, with no walls yet, loading Steam Audio if it has not
-    /// been.
+    /// An empty level, with no walls or paths yet, loading Steam Audio if
+    /// it has not been.
     pub fn new() -> Result<Self, String> {
         Self::make(SimulationSettings {
-            flags: DIRECT,
+            flags: DIRECT | PATHING,
             max_occlusion_samples: MAX_SAMPLES,
+            max_order: PATH_ORDER,
             max_sources: crate::MAX_VOICES as i32,
             threads: 1,
+            vis_samples: 4,
             sampling_rate: 48_000,
             frame_size: FRAME as i32,
             ..zeroed()
@@ -406,7 +436,7 @@ impl Acoustics {
             (api.simulator_commit)(simulator);
         }
         let mesh = std::ptr::null_mut();
-        Ok(Self { steam, scene, simulator, mesh, sources: HashMap::new(), flags })
+        Ok(Self { steam, scene, simulator, mesh, sources: HashMap::new(), flags, paths: None })
     }
 
     /// Puts these walls in place of the ones before.
@@ -455,27 +485,60 @@ impl Acoustics {
         }
     }
 
+    /// Puts the level's baked paths in place of the ones before, or takes
+    /// them away. Only for one made with [`new`](Self::new).
+    pub fn set_paths(&mut self, paths: Option<Arc<PathProbes>>) {
+        let api = &self.steam.api;
+        unsafe {
+            if let Some(old) = self.paths.take() {
+                (api.simulator_remove_probe_batch)(self.simulator, old.handle());
+            }
+            if let Some(new) = &paths {
+                (api.simulator_add_probe_batch)(self.simulator, new.handle());
+            }
+            (api.simulator_commit)(self.simulator);
+        }
+        self.paths = paths;
+    }
+
     /// How much of each voice, by its key, from where it is, reaches the
-    /// listener past the walls, in the same order. Voices not asked of
+    /// listener past the walls, and round them along the level's paths for
+    /// voices that follow them, in the same order. Voices not asked of
     /// since the last time are let go of.
-    pub fn hear(&mut self, listener: &Listener, voices: &[(u64, Vec3, SourceAcoustics)]) -> Vec<Muffle> {
+    pub fn hear(&mut self, listener: &Listener, voices: &[(u64, Vec3, SourceAcoustics)]) -> Vec<Heard> {
         self.keep_sources(voices);
         let api = &self.steam.api;
+        let probes = self.paths.as_ref().map(|paths| paths.handle());
+        let follows = |settings: &SourceAcoustics| if settings.pathing && probes.is_some() { PATHING } else { 0 };
         for (key, at, settings) in voices {
             let mut inputs = inputs(*at, settings);
-            unsafe { (api.source_set_inputs)(self.sources[key], DIRECT, &mut inputs) };
+            if let Some(probes) = probes.filter(|_| settings.pathing) {
+                along_paths(&mut inputs, probes);
+            }
+            unsafe { (api.source_set_inputs)(self.sources[key], DIRECT | follows(settings), &mut inputs) };
         }
+        let pathing = voices.iter().fold(0, |flags, (.., settings)| flags | follows(settings));
         let mut shared = SharedInputs { listener: listener_space(listener), ..zeroed() };
         unsafe {
-            (api.simulator_set_shared_inputs)(self.simulator, DIRECT, &mut shared);
+            (api.simulator_set_shared_inputs)(self.simulator, DIRECT | pathing, &mut shared);
             (api.simulator_run_direct)(self.simulator);
+            if pathing != 0 {
+                (api.simulator_run_pathing)(self.simulator);
+            }
         }
         voices
             .iter()
-            .map(|(key, _, settings)| {
+            .map(|(key, at, settings)| {
                 let mut outputs: SimulationOutputs = zeroed();
-                unsafe { (api.source_get_outputs)(self.sources[key], DIRECT, &mut outputs) };
-                muffle(&outputs.direct, settings.transmission)
+                let mut harmonics = [0.0f32; 16];
+                outputs.pathing.spherical_harmonics = harmonics.as_mut_ptr();
+                let flags = DIRECT | follows(settings);
+                unsafe { (api.source_get_outputs)(self.sources[key], flags, &mut outputs) };
+                let through = muffle(&outputs.direct, settings.transmission);
+                match flags & PATHING {
+                    0 => Heard { muffle: through, from: None },
+                    _ => round(listener, *at, &outputs, through),
+                }
             })
             .collect()
     }
@@ -566,6 +629,50 @@ fn inputs(at: Vec3, settings: &SourceAcoustics) -> SimulationInputs {
     }
 }
 
+/// Asks Steam Audio to find a voice's path to the listener among these
+/// probes, from those that see it and the listener now: the walls are
+/// those the paths were baked round, so a path is not tested again.
+fn along_paths(inputs: &mut SimulationInputs, probes: Handle) {
+    inputs.flags |= PATHING;
+    inputs.pathing_probes = probes;
+    inputs.vis_radius = VISIBLE_RADIUS;
+    inputs.vis_threshold = VISIBLE_SHARE;
+    inputs.vis_range = VISIBLE_RANGE;
+    inputs.pathing_order = PATH_ORDER;
+}
+
+/// A voice heard through the walls and round them: of what the walls stop,
+/// the share its path brings round, added to what gets through, heard
+/// from the path's way in as much as that outweighs the sound straight
+/// through.
+fn round(listener: &Listener, at: Vec3, outputs: &SimulationOutputs, through: Muffle) -> Heard {
+    let blocked = 1.0 - outputs.direct.occlusion.clamp(0.0, 1.0);
+    let path = outputs.pathing.eq.map(|gain| if gain.is_finite() { gain.clamp(0.0, 1.0) * blocked } else { 0.0 });
+    let muffle = Muffle(std::array::from_fn(|band| (through.0[band] + path[band]).min(1.0)));
+    let mean = |bands: [f32; 3]| bands.iter().sum::<f32>() / 3.0;
+    let (round, straight) = (mean(path), mean(through.0));
+    let Some(way) = path_direction(&outputs.pathing).filter(|_| round > 1e-4) else {
+        return Heard { muffle, from: None };
+    };
+    let ahead = (at - listener.position).try_normalize().unwrap_or(way);
+    Heard { muffle, from: (way * round + ahead * straight).try_normalize() }
+}
+
+/// Which way a path comes in to the listener, from the first order of its
+/// spherical harmonics, in Voxear's world.
+fn path_direction(path: &PathEffectParams) -> Option<Vec3> {
+    if path.spherical_harmonics.is_null() {
+        return None;
+    }
+    // SAFETY: Steam Audio fills at least the four of order 1 asked for.
+    let harmonics = unsafe { std::slice::from_raw_parts(path.spherical_harmonics, 4) };
+    // In order, after the first: Y, Z and X of Ambisonics' axes, X ahead, Y left and Z up. In Steam Audio's they
+    // are -X, Y and -Z, so the way in is (-Y, Z, -X) there, and turned over into Voxear's, (-Y, Z, X).
+    let [_, y, z, x] = [harmonics[0], harmonics[1], harmonics[2], harmonics[3]];
+    let way = Vec3::new(-y, z, x);
+    way.is_finite().then(|| way.try_normalize()).flatten()
+}
+
 /// The listener's place and the ways it faces, as Steam Audio has them.
 fn listener_space(listener: &Listener) -> CoordinateSpace {
     let turn = listener.rotation;
@@ -590,6 +697,10 @@ fn muffle(direct: &DirectEffectParams, transmission: bool) -> Muffle {
 mod tests {
     use super::*;
 
+    fn muffles(heard: Vec<Heard>) -> Vec<Muffle> {
+        heard.into_iter().map(|heard| heard.muffle).collect()
+    }
+
     /// A wall across the X axis at `x`, 10 metres square.
     fn wall(x: f32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
         let vertices =
@@ -607,7 +718,7 @@ mod tests {
         let open = Vec3::new(-6.0, 0.0, 0.0);
         let settings = SourceAcoustics::default();
         let voices = [(1, behind, settings), (2, open, settings)];
-        assert_eq!(acoustics.hear(&listener, &voices), [Muffle::NONE, Muffle::NONE], "no walls yet");
+        assert_eq!(muffles(acoustics.hear(&listener, &voices)), [Muffle::NONE, Muffle::NONE], "no walls yet");
 
         let (vertices, triangles) = wall(3.0);
         acoustics.set_geometry(&[AcousticMesh {
@@ -615,16 +726,16 @@ mod tests {
             triangles: &triangles,
             material: AcousticMaterial::CONCRETE,
         }]);
-        let heard = acoustics.hear(&listener, &voices);
+        let heard = muffles(acoustics.hear(&listener, &voices));
         assert_eq!(heard[1], Muffle::NONE, "the other side is open");
         let [low, middle, high] = heard[0].0;
         assert!(low < 0.1 && high < middle && middle < low, "through concrete, the high notes least: {:?}", heard[0]);
 
         let shut = SourceAcoustics { transmission: false, ..settings };
-        assert_eq!(acoustics.hear(&listener, &[(1, behind, shut)]), [Muffle([0.0; 3])], "nothing through");
+        assert_eq!(muffles(acoustics.hear(&listener, &[(1, behind, shut)])), [Muffle([0.0; 3])], "nothing through");
 
         acoustics.set_geometry(&[]);
-        assert_eq!(acoustics.hear(&listener, &[(1, behind, settings)]), [Muffle::NONE], "the wall gone");
+        assert_eq!(muffles(acoustics.hear(&listener, &[(1, behind, settings)])), [Muffle::NONE], "the wall gone");
     }
 
     #[test]
@@ -642,9 +753,10 @@ mod tests {
         let triangles = [[0, 1, 2], [0, 2, 3]];
         let material = AcousticMaterial { transmission: [0.0; 3], ..AcousticMaterial::BRICK };
         acoustics.set_geometry(&[AcousticMesh { vertices: &vertices, triangles: &triangles, material }]);
-        let settings = SourceAcoustics { occlusion: Occlusion::Volumetric, radius: 1.0, transmission: false };
+        let settings =
+            SourceAcoustics { occlusion: Occlusion::Volumetric, radius: 1.0, transmission: false, pathing: false };
         let heard = acoustics.hear(&Listener::default(), &[(7, Vec3::new(6.0, 0.0, 0.0), settings)]);
-        let [low, ..] = heard[0].0;
+        let [low, ..] = heard[0].muffle.0;
         assert!(low > 0.1 && low < 0.9, "partly heard: {low}");
     }
 }

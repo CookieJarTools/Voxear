@@ -128,6 +128,17 @@ public readonly struct AudioSource : IEquatable<AudioSource>, IObjComponent
 		set { Set(NativeAudio.SourceTransmission, value ? 1f : 0f); }
 	}
 
+	/// <summary>
+	/// Whether, with Occlusion on, the sound also comes round the walls along the paths baked for the level, so a
+	/// source behind a wall is heard through the doorway, from the doorway's side. Off by default, and nothing
+	/// changes in a level without baked paths.
+	/// </summary>
+	public bool Pathing
+	{
+		get { return Get(NativeAudio.SourcePathing, 0f) == 1f; }
+		set { Set(NativeAudio.SourcePathing, value ? 1f : 0f); }
+	}
+
 	/// <summary>Whether it plays through the effects bus or the music bus.</summary>
 	public AudioBus Bus
 	{

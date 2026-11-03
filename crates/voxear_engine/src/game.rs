@@ -478,6 +478,9 @@ impl Game {
         {
             profile_scope!("Audio");
             let running = !self.engine.is_edit_mode();
+            if running {
+                self.audio.hear_level(self.levels.current(), &mut self.content);
+            }
             self.audio.update(&self.engine.world, &mut self.content, running, delta);
         }
         if std::mem::take(&mut self.unload_requested) {

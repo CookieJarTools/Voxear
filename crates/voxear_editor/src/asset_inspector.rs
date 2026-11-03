@@ -77,6 +77,8 @@ pub enum AssetAction {
         level: String,
         source: DragSource,
     },
+    /// Bake the sound paths of the level at this path.
+    BakePaths(String),
     /// Show where the asset at this path is in the Project panel.
     Ping(String),
     /// Play the sound at this path in the editor, or stop it.
@@ -135,6 +137,8 @@ pub struct AssetView {
     /// A sound's play button, and whether it shows that the sound plays.
     listen: Option<(Listen, bool)>,
     strings: Option<StringsFields>,
+    /// A level's Bake Paths button.
+    bake: Option<NodeId>,
 }
 
 /// A sound's play button, with its icon and its words.
@@ -272,6 +276,7 @@ impl AssetView {
             preview,
             listen: None,
             strings: None,
+            bake: None,
         };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game.content.db()),
@@ -297,7 +302,10 @@ impl AssetView {
             ItemKind::Asset(AssetKind::Ui) => code(ui, root, &file, "vui", dark),
             ItemKind::Asset(AssetKind::Prefab) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Scene) => objs(ui, root, "Objs", &file),
-            ItemKind::Asset(AssetKind::Level) => view.level = scenes(ui, root, &file, game),
+            ItemKind::Asset(AssetKind::Level) => {
+                view.level = scenes(ui, root, &file, game);
+                view.bake = Some(sound_paths(ui, root, &item.path, game));
+            }
             ItemKind::Asset(AssetKind::Strings) => {
                 let read = std::fs::read_to_string(&file).map_err(anyhow::Error::from);
                 match read.and_then(|text| StringTable::parse(&text)) {
@@ -344,6 +352,7 @@ impl AssetView {
             preview: None,
             listen: None,
             strings: None,
+            bake: None,
         })
     }
 
@@ -352,6 +361,9 @@ impl AssetView {
     pub fn update(&mut self, ui: &mut Ui) -> Option<AssetAction> {
         if self.open.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::Open(self.item.clone()));
+        }
+        if self.bake.is_some_and(|button| ui.clicked(button)) {
+            return Some(AssetAction::BakePaths(self.item.path.clone()));
         }
         if let Some((listen, playing)) = self.listen
             && ui.clicked(listen.button)
@@ -541,6 +553,23 @@ fn text_row(ui: &mut Ui, rows: NodeId, label: &str, value: &str) {
     let row = prop(ui, rows, label);
     let value = ui.add_label(row, value);
     ui.add_class(value, "value");
+}
+
+/// Whether a level's sound paths are baked, and the button that bakes
+/// them, which this returns.
+fn sound_paths(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> NodeId {
+    let rows = part(ui, root, "Sound Paths", "branch");
+    let file = game.project.root.join(voxear_engine::acoustics::paths_file(level));
+    let baked = std::fs::metadata(file).map(|meta| meta.len()).ok();
+    text_row(
+        ui,
+        rows,
+        "Paths",
+        &baked.map_or_else(|| "Not baked".to_string(), |bytes| format!("Baked · {}", size(bytes))),
+    );
+    let button = ui.button(rows, "Bake Paths");
+    ui.add_class(button, "add-component");
+    button
 }
 
 /// What a sound file holds, and the button that plays it, which this
@@ -887,6 +916,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Sound) => "Sound",
         ItemKind::Asset(AssetKind::InputActions) => "Input actions",
         ItemKind::Asset(AssetKind::Strings) => "String table",
+        ItemKind::Asset(AssetKind::Paths) => "Sound paths",
     }
 }
 
@@ -904,6 +934,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Sound) => "audio",
         ItemKind::Asset(AssetKind::InputActions) => "gamepad",
         ItemKind::Asset(AssetKind::Strings) => "globe",
+        ItemKind::Asset(AssetKind::Paths) => "branch",
     }
 }
 

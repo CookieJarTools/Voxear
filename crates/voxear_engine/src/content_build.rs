@@ -97,7 +97,8 @@ struct Needs {
     /// Assets its behaviour fields name, which load on their own.
     named: BTreeSet<AssetGuid>,
     /// Files it reads beside its own: a model's buffers and images, which
-    /// are cooked into it, or a UI document's sheets, which ship with it.
+    /// are cooked into it, or a UI document's sheets and a level's baked
+    /// paths, which ship with it.
     companions: Vec<String>,
 }
 
@@ -130,7 +131,8 @@ pub fn build_with(
     excluded.sort();
 
     // Every asset as it will ship: models cooked, everything else as written,
-    // and a UI document's sheets and a sound's import settings beside it.
+    // and a UI document's sheets, a sound's import settings and a level's
+    // baked paths beside it.
     let mut cooker = Cooker::open(root)?;
     let mut stored = HashMap::with_capacity(usage.len());
     let mut beside: HashMap<AssetGuid, Vec<(String, Vec<u8>)>> = HashMap::new();
@@ -147,8 +149,12 @@ pub fn build_with(
             let meta = format!("{}.{}", entry.path, voxear_assets::META_EXTENSION);
             beside.insert(*guid, vec![(meta.clone(), read(root, &meta)?)]);
         }
-        if matches!(entry.kind, AssetKind::Ui | AssetKind::Sound) {
-            let why = if entry.kind == AssetKind::Ui { "names" } else { "keeps its import settings in" };
+        if matches!(entry.kind, AssetKind::Ui | AssetKind::Sound | AssetKind::Level) {
+            let why = match entry.kind {
+                AssetKind::Ui => "names",
+                AssetKind::Sound => "keeps its import settings in",
+                _ => "keeps its paths in",
+            };
             let files = needs[guid].companions.iter().map(|file| {
                 let bytes = read(root, file).with_context(|| format!("{} {why} {file}", entry.path))?;
                 Ok((file.clone(), bytes))
@@ -362,6 +368,11 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             for (key, value) in &table {
                 collect(db, key == "fields", value, &mut needs);
             }
+            // A level's baked paths go with it, for its sound to follow round the walls.
+            let paths = crate::acoustics::paths_file(path);
+            if kind == AssetKind::Level && db.root().join(&paths).is_file() {
+                needs.companions.push(paths);
+            }
         }
         AssetKind::Model => {
             let bytes = read(db.root(), path)?;
@@ -378,7 +389,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
-        AssetKind::Texture | AssetKind::InputActions | AssetKind::Strings => {}
+        AssetKind::Texture | AssetKind::InputActions | AssetKind::Strings | AssetKind::Paths => {}
     }
     needs.direct.remove(&guid);
     needs.named.remove(&guid);

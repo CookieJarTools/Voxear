@@ -34,6 +34,9 @@ pub enum AssetKind {
     InputActions,
     /// A `.strings` file: a table of the game's text in each of its languages.
     Strings,
+    /// A `.paths` file: the paths sound takes round a level's walls, as
+    /// baked beside its `.level`.
+    Paths,
 }
 
 impl AssetKind {
@@ -50,6 +53,7 @@ impl AssetKind {
             "wav" | "ogg" | "flac" | "mp3" => Self::Sound,
             "inputactions" => Self::InputActions,
             "strings" => Self::Strings,
+            "paths" => Self::Paths,
             _ => return None,
         })
     }

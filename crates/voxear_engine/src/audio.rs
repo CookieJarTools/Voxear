@@ -34,7 +34,7 @@ use voxear_render::Camera;
 use voxear_scene::{Destroying, EditorOnly, Name, Transform, WorldTransform};
 use voxear_scripting::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 
-use voxear_audio::steam_audio::{Muffle, Occlusion, SourceAcoustics, SteamAudio};
+use voxear_audio::steam_audio::{Heard, Muffle, Occlusion, SourceAcoustics, SteamAudio};
 
 use crate::acoustics::Walls;
 pub use voxear_audio::{
@@ -207,11 +207,14 @@ pub struct AudioSource {
     /// the world, 0 not at all.
     pub doppler: f32,
     /// Whether walls in a 3D source's way stop its sound; the radius of the
-    /// sphere a volumetric one is heard from; and whether the walls let
-    /// some of it through, as their acoustic materials do.
+    /// sphere a volumetric one is heard from; whether the walls let some of
+    /// it through, as their acoustic materials do; and whether, in a level
+    /// with baked paths, it comes round them too, from the way its path
+    /// comes in, as through a doorway.
     pub occlusion: SoundOcclusion,
     pub occlusion_radius: f32,
     pub transmission: bool,
+    pub pathing: bool,
 }
 impl Component for AudioSource {}
 
@@ -247,7 +250,8 @@ impl AudioSource {
             (_, SoundOcclusion::Raycast) => Occlusion::Raycast,
             (_, SoundOcclusion::Volumetric) => Occlusion::Volumetric,
         };
-        Some(SourceAcoustics { occlusion, radius: self.occlusion_radius, transmission: self.transmission })
+        let (radius, transmission, pathing) = (self.occlusion_radius, self.transmission, self.pathing);
+        Some(SourceAcoustics { occlusion, radius, transmission, pathing })
     }
 }
 
@@ -288,6 +292,8 @@ pub struct AudioSourceData {
     pub occlusion_radius: f32,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub transmission: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pathing: bool,
 }
 
 impl Default for AudioSourceData {
@@ -319,6 +325,7 @@ impl AudioSourceData {
             put("occlusion", toml::Value::try_from(data.occlusion).expect("a name"));
             put("occlusion_radius", f64::from(data.occlusion_radius).into());
             put("transmission", data.transmission.into());
+            put("pathing", data.pathing.into());
             table
         };
         let mut changes = table(self);
@@ -346,6 +353,7 @@ impl From<AudioSourceData> for AudioSource {
             occlusion: data.occlusion,
             occlusion_radius: data.occlusion_radius.max(0.01),
             transmission: data.transmission,
+            pathing: data.pathing,
         }
     }
 }
@@ -375,6 +383,7 @@ pub fn audio_source_data(content: &Content, source: &AudioSource) -> AudioSource
         occlusion: source.occlusion,
         occlusion_radius: source.occlusion_radius,
         transmission: source.transmission,
+        pathing: source.pathing,
     }
 }
 
@@ -458,6 +467,9 @@ struct Playback {
     was: Option<Vec3>,
     /// The voice last muffled by the walls, and how much.
     muffled: (VoiceId, Muffle),
+    /// Which way, from the listener, its voice came round the walls last
+    /// frame, when it did.
+    round: Option<Vec3>,
 }
 
 /// What a script asks of an Audio Source.
@@ -491,8 +503,10 @@ pub struct GameAudio {
     reverb_on: bool,
     /// How long the listener's room rings, as Steam Audio last said.
     room: ReverbTimes,
-    /// The level's walls in Steam Audio, while the game runs.
+    /// The level's walls in Steam Audio, while the game runs, and whether
+    /// its paths have been read since it started.
     walls: Walls,
+    paths_read: bool,
     /// The sound each one-shot voice plays, for the Audio panel.
     shots: HashMap<VoiceId, SoundId>,
     /// The music's ducking as a script has set it so far, kept while it is
@@ -534,6 +548,7 @@ impl GameAudio {
             reverb_on: false,
             room: ReverbTimes::NONE,
             walls: Walls::default(),
+            paths_read: false,
             shots: HashMap::new(),
             ducking: Ducking::default(),
         }
@@ -602,9 +617,11 @@ impl GameAudio {
             self.audio.stop(playback.voice);
         }
         self.sources.retain(|entity, _| alive.contains(entity));
+        let ear = hearing.map(|listener| listener.position);
         for (entity, source, at) in found.iter().copied() {
             let playback = *self.sources.entry(entity).or_insert_with(|| Playback::new(&source, source.play_on_start));
-            let mut playback = self.bring_in_line(content, playback, &source, at);
+            let heard_at = playback.heard_at(at, ear);
+            let mut playback = self.bring_in_line(content, playback, &source, heard_at);
             if source.space == SoundSpace::ThreeD && playback.voice != 0 {
                 self.audio.set_velocity(playback.voice, velocity(playback.was, at, dt));
             }
@@ -621,30 +638,48 @@ impl GameAudio {
     }
 
     /// Muffles each playing 3D source with occlusion on by the walls between
-    /// it and the listener, and lets one whose occlusion went off be heard
-    /// in the open again.
+    /// it and the listener, hears one with pathing on from the way its path
+    /// round them comes in, from the next frame, and lets one whose
+    /// occlusion went off be heard in the open again.
     fn muffle_sources(&mut self, world: &World, listener: &Listener, found: &[(Entity, AudioSource, Vec3)]) {
-        let mut muffles: Vec<(Entity, Muffle)> = Vec::new();
+        let mut heard: Vec<(Entity, Heard)> = Vec::new();
         let mut voices: Vec<(u64, Vec3, SourceAcoustics)> = Vec::new();
         for (entity, source, at) in found {
             let Some(playback) = self.sources.get(entity).filter(|playback| playback.voice != 0) else { continue };
             match source.acoustics() {
                 Some(acoustics) => voices.push((entity.to_bits(), *at, acoustics)),
-                None if playback.muffled.0 == playback.voice => muffles.push((*entity, Muffle::NONE)),
+                None if playback.muffled.0 == playback.voice => heard.push((*entity, Heard::OPEN)),
                 None => {}
             }
         }
-        if let Some(heard) = (!voices.is_empty()).then(|| self.walls.hear(world, listener, &voices)).flatten() {
-            let keyed = voices.iter().zip(heard).map(|((key, ..), muffle)| (Entity::from_bits(*key), muffle));
-            muffles.extend(keyed);
+        if let Some(found) = (!voices.is_empty()).then(|| self.walls.hear(world, listener, &voices)).flatten() {
+            heard.extend(voices.iter().zip(found).map(|((key, ..), heard)| (Entity::from_bits(*key), heard)));
         }
-        for (entity, muffle) in muffles {
+        for (entity, Heard { muffle, from }) in heard {
             let Some(playback) = self.sources.get_mut(&entity) else { continue };
+            playback.round = from;
             if playback.muffled != (playback.voice, muffle) {
                 self.audio.set_muffle(playback.voice, muffle);
                 playback.muffled = (playback.voice, muffle);
             }
         }
+    }
+
+    /// Hears the level's baked paths, from the `.paths` file beside it,
+    /// when the level is another than last time. The game calls this while
+    /// it runs.
+    pub fn hear_level(&mut self, level: Option<&str>, content: &mut Content) {
+        if self.walls.level() == level && self.paths_read {
+            return;
+        }
+        let file = level.and_then(|level| content.read(&crate::acoustics::paths_file(level)).ok());
+        self.walls.set_paths(level, file);
+        self.paths_read = true;
+    }
+
+    /// Reads the level's paths again next frame, as after they were baked.
+    pub fn forget_paths(&mut self) {
+        self.paths_read = false;
     }
 
     fn bring_in_line(
@@ -777,6 +812,7 @@ impl GameAudio {
         self.sources.clear();
         self.set_reverb(false);
         self.walls = Walls::default();
+        self.paths_read = false;
         self.ducking = Ducking::default();
         self.audio.set_transition(0.0);
         self.audio.set_ducking(None);
@@ -953,6 +989,7 @@ impl GameAudio {
                 }
                 SourceValue::OcclusionRadius => source.occlusion_radius = value.max(0.01),
                 SourceValue::Transmission => source.transmission = value != 0.0,
+                SourceValue::Pathing => source.pathing = value != 0.0,
                 _ => {}
             }
         }
@@ -972,6 +1009,7 @@ impl GameAudio {
             }
             SourceValue::OcclusionRadius => source.occlusion_radius,
             SourceValue::Transmission => flag(source.transmission),
+            SourceValue::Pathing => flag(source.pathing),
             _ => 0.0,
         })
     }
@@ -1026,7 +1064,18 @@ impl GameAudio {
 impl Playback {
     fn new(source: &AudioSource, playing: bool) -> Self {
         let state = if playing { State::Playing } else { State::Stopped };
-        Self { voice: 0, state, restart: false, held: false, applied: *source, was: None, muffled: (0, Muffle::NONE) }
+        let muffled = (0, Muffle::NONE);
+        Self { voice: 0, state, restart: false, held: false, applied: *source, was: None, muffled, round: None }
+    }
+
+    /// Where its voice is heard from, for a source at `at` and a listener
+    /// at `ear`: as far away as it is, but from the way it last came round
+    /// the walls, when it did.
+    fn heard_at(&self, at: Vec3, ear: Option<Vec3>) -> Vec3 {
+        match (self.round, ear) {
+            (Some(way), Some(ear)) if self.voice != 0 => ear + way * at.distance(ear),
+            _ => at,
+        }
     }
 }
 

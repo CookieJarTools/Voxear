@@ -84,7 +84,7 @@ public sealed class Radio : Behaviour
 | `IsPlaying` | Whether it is playing |
 | `Sound`, `Volume`, `Pitch`, `Loop`, `PlayOnStart` | The settings the Inspector shows |
 | `Is3D`, `MinDistance`, `MaxDistance`, `DopplerLevel`, `Bus` | The same |
-| `Occlusion`, `OcclusionRadius`, `Transmission` | The same, with `SoundOcclusion.Off`, `Raycast` or `Volumetric` |
+| `Occlusion`, `OcclusionRadius`, `Transmission`, `Pathing` | The same, with `SoundOcclusion.Off`, `Raycast` or `Volumetric` |
 
 `Play`, `Pause` and `Stop` happen at the end of the frame, together with everything else that changes the sound. `IsPlaying` changes straight away, so you can check it on the next line.
 

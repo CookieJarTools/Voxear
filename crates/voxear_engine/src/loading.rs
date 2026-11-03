@@ -407,8 +407,13 @@ fn gather(
                 // A source model reads its own buffers and images as it is prepared.
                 AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
                 // Textures load with their models, scripts load UI documents themselves, and the
-                // game reads its input actions and string tables when it starts.
-                AssetKind::Texture | AssetKind::Ui | AssetKind::InputActions | AssetKind::Strings => false,
+                // game reads its input actions and string tables when it starts, and its sound
+                // the paths round the level's walls once it plays.
+                AssetKind::Texture
+                | AssetKind::Ui
+                | AssetKind::InputActions
+                | AssetKind::Strings
+                | AssetKind::Paths => false,
             };
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));

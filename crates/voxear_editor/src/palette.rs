@@ -410,6 +410,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Sound => ("Sound", "audio"),
                 AssetKind::InputActions => ("Input actions", "gamepad"),
                 AssetKind::Strings => ("String table", "globe"),
+                AssetKind::Paths => ("Sound paths", "branch"),
             };
             let (action, key) = match kind {
                 AssetKind::Level => (PaletteAction::OpenLevel(path.clone()), format!("level:{path}")),
@@ -446,6 +447,7 @@ fn commands(playing: bool) -> Vec<Entry> {
         ("Align With View", "Ctrl+Shift+F", "camera", Command::AlignWithView),
         ("Edit Layers", "", "layers", Command::Layers),
         ("Pseudo-localise Text", "", "globe", Command::PseudoText),
+        ("Bake Sound Paths", "", "branch", Command::BakePaths),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

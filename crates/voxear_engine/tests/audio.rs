@@ -191,6 +191,7 @@ fn scenes_save_audio_sources_and_listeners_back() {
     let (mut game, _) = game(&dir);
     let waterfall = obj(&game, "Waterfall");
     game.engine.world.insert(waterfall, AudioListener);
+    game.engine.world.get_mut::<AudioSource>(waterfall).unwrap().pathing = true;
     let entities: Vec<Entity> = game.engine.world.query_ref::<Entity>().into_iter().collect();
     let scene = scene_file::capture(&game.engine.world, &mut game.content, &entities);
     let saved = scene.objs.iter().find(|o| o.name == "Waterfall").unwrap();
@@ -201,7 +202,7 @@ fn scenes_save_audio_sources_and_listeners_back() {
     assert!(saved.audio_listener);
     let text = toml::to_string(&scene).unwrap();
     assert!(text.contains("loop = true") && !text.contains("volume"), "only what differs: {text}");
-    assert!(text.contains("doppler = 0.5"), "{text}");
+    assert!(text.contains("doppler = 0.5") && text.contains("pathing = true"), "{text}");
     assert!(text.contains("mode = \"2d\"") && text.contains("bus = \"music\""), "{text}");
 
     // It reads back the same.
@@ -243,6 +244,16 @@ fn built_content_packs_the_sounds_scenes_use_with_their_settings() {
     assert!(sound.is_streamed(), "its .meta shipped beside it");
     assert_eq!(sound.volume, 0.5);
     assert_eq!(sound.info().frames, u64::from(RATE));
+}
+
+#[test]
+fn built_content_packs_a_levels_baked_paths_beside_it() {
+    let dir = project();
+    std::fs::write(dir.path().join("Levels/Main.paths"), b"baked paths").unwrap();
+    let out = dir.path().join("Built");
+    content_build::build(dir.path(), &out, &ContentSettings::default(), &[]).unwrap();
+    let mut content = voxear_engine::Content::open_bundles(dir.path(), &out).unwrap();
+    assert_eq!(content.read("Levels/Main.paths").unwrap(), b"baked paths");
 }
 
 /// A camera, a source ten metres to its right, and a concrete wall between.
@@ -384,4 +395,78 @@ fn with_reverb_on_a_sound_rings_on_in_a_closed_room() {
 
     game.audio.set_reverb(false);
     assert_eq!(game.audio.room(), voxear_engine::audio::ReverbTimes::NONE);
+}
+
+/// A camera, looking along +Z, on a floor; a concrete wall across in front
+/// at z = 3 with a doorway to the left, from x = -6 to -4; and a source
+/// straight ahead behind the wall.
+const DOORWAY: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Main Camera"
+[obj.camera]
+fov = 60.0
+
+[[obj]]
+id = 2
+name = "Radio"
+position = [0.0, 0.0, 6.0]
+[obj.audio]
+sound = "Sounds/Tone.wav"
+loop = true
+occlusion = "raycast"
+transmission = false
+
+[[obj]]
+id = 3
+name = "Floor"
+position = [0.0, -1.75, 0.0]
+collider = { size = [20.0, 0.5, 20.0], acoustic = "concrete" }
+
+[[obj]]
+id = 4
+name = "Wall Left"
+position = [-8.0, 1.5, 3.0]
+collider = { size = [4.0, 6.0, 0.4], acoustic = "concrete" }
+
+[[obj]]
+id = 5
+name = "Wall Right"
+position = [3.0, 1.5, 3.0]
+collider = { size = [14.0, 6.0, 0.4], acoustic = "concrete" }
+"#;
+
+#[test]
+fn with_baked_paths_a_source_behind_a_wall_is_heard_through_the_doorway() {
+    if voxear_audio::steam_audio::SteamAudio::get().is_err() {
+        return eprintln!("skipping: Steam Audio's library is not fetched");
+    }
+    let dir = project();
+    std::fs::write(dir.path().join("Scenes/Main.scene"), DOORWAY).unwrap();
+    let (mut game, mut mixer) = game(&dir);
+    let radio = obj(&game, "Radio");
+    // Left and right, once it has settled.
+    let heard = |game: &mut Game, mixer: &mut Mixer| {
+        for _ in 0..4 {
+            game.tick(1.0 / 60.0, None);
+            render(mixer, 2_048);
+        }
+        let out = render(mixer, 64);
+        (out[2 * 63], out[2 * 63 + 1])
+    };
+    let (left, right) = heard(&mut game, &mut mixer);
+    assert!(left.abs() < 1e-3 && right.abs() < 1e-3, "nothing through the wall: {left}, {right}");
+
+    game.engine.world.get_mut::<AudioSource>(radio).unwrap().pathing = true;
+    let (left, right) = heard(&mut game, &mut mixer);
+    assert!(left.abs() < 1e-3 && right.abs() < 1e-3, "no paths baked yet: {left}, {right}");
+
+    let walls = voxear_engine::acoustics::walls(&game.engine.world);
+    let baked = voxear_audio::steam_audio::bake_paths(&walls, &mut |_| {}).expect("baked");
+    std::fs::write(dir.path().join(voxear_engine::acoustics::paths_file("Levels/Main.level")), baked.bytes).unwrap();
+    game.audio.forget_paths();
+    let (left, right) = heard(&mut game, &mut mixer);
+    assert!(left > 0.02 && left > right * 1.5, "round through the doorway, on the left: {left}, {right}");
 }

@@ -19,6 +19,7 @@ mod languages;
 mod level_edits;
 mod material_drops;
 mod model_materials;
+mod path_bakes;
 mod placing;
 mod play;
 mod prefab_mode;
@@ -185,6 +186,8 @@ pub(crate) enum Command {
     Layers,
     /// Show the game's text pseudo-localised, or as written.
     PseudoText,
+    /// Bake the open level's sound paths.
+    BakePaths,
 }
 
 /// How far in front of the Scene camera a new Obj goes.
@@ -270,6 +273,8 @@ pub struct Editor {
     discard_armed: Option<String>,
     /// A message for the status bar, and when it was given.
     notice: Option<(String, Instant)>,
+    /// The open level's sound paths, while they bake.
+    path_bake: Option<path_bakes::PathBake>,
     /// The panel whose window menu is open, and what each of its items does.
     window_menu: Option<(String, Vec<Option<windows::WindowAction>>)>,
     /// What the rail's drawer shows, if it is open.
@@ -542,6 +547,7 @@ impl Editor {
             unsaved: false,
             discard_armed: None,
             notice: None,
+            path_bake: None,
             window_menu: None,
             drawer: None,
             prefab: None,
@@ -854,6 +860,7 @@ impl Editor {
         self.ui.set_visible(self.nodes.game_empty, self.game_camera().is_none());
         self.mark_viewport_areas(&views);
         self.update_axis_gizmos();
+        self.finish_path_bake();
         self.update_status(renderer, delta);
         self.update_tooltip(delta);
         self.update_debug_draw(view, delta);
@@ -1029,6 +1036,7 @@ impl Editor {
             AssetAction::BrowseRemap { model, part, anchor } => self.browse_remap(&model, &part, anchor),
             AssetAction::DropRemap { model, part, source } => self.drop_remap(&model, &part, &source, renderer),
             AssetAction::ExtractMaterials(model) => self.extract_materials(&model, renderer),
+            AssetAction::BakePaths(level) => self.bake_level_paths(&level),
         }
     }
 
@@ -1753,6 +1761,7 @@ impl Editor {
             Command::Frame => self.frame(&self.selected_objs(), renderer),
             Command::Layers => self.inspect_layers(),
             Command::PseudoText => self.toggle_pseudo_text(),
+            Command::BakePaths => self.bake_paths(),
             Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {
@@ -2279,11 +2288,14 @@ impl Editor {
         let notice = self.notice.as_ref().filter(|(_, at)| at.elapsed().as_secs_f32() < NOTICE_SECONDS);
         let status = match notice {
             Some((text, _)) => text.clone(),
-            None if self.unsaved && !self.is_playing() => "Unsaved changes · Ctrl+S".to_string(),
-            None => self.play.status().to_string(),
+            None => match self.path_bake_status() {
+                Some(baking) => baking,
+                None if self.unsaved && !self.is_playing() => "Unsaved changes · Ctrl+S".to_string(),
+                None => self.play.status().to_string(),
+            },
         };
         self.ui.set_text(self.nodes.status_left, &status);
-        let busy = self.play.is_building() || self.describing.is_some();
+        let busy = self.play.is_building() || self.describing.is_some() || self.path_bake.is_some();
         self.ui.set_class(self.nodes.status_dot, "busy", busy);
         self.status.0 += 1;
         self.status.1 += delta;

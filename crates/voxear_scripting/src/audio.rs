@@ -94,6 +94,7 @@ pub enum SourceValue {
     Occlusion,
     OcclusionRadius,
     Transmission,
+    Pathing,
 }
 
 impl SourceValue {
@@ -118,6 +119,7 @@ impl SourceValue {
             16 => Self::Occlusion,
             17 => Self::OcclusionRadius,
             18 => Self::Transmission,
+            19 => Self::Pathing,
             _ => return None,
         })
     }

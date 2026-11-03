@@ -10,15 +10,20 @@
 //! Steam Audio uses them twice: for what gets past them from each source
 //! with occlusion on, and, with reverb on, for how long the listener's room
 //! rings. Each starts the first time it is wanted.
+//!
+//! The editor bakes the paths sound takes round them into a `.paths` file
+//! beside the level (see [`paths_file`]). While a level with one plays,
+//! sources with pathing on are heard round the walls along them too.
 
 use std::{
     hash::{Hash, Hasher},
     sync::Arc,
 };
 
+pub use voxear_audio::steam_audio::{BakedPaths, bake_paths};
 use voxear_audio::{
     Listener, ReverbTimes,
-    steam_audio::{AcousticMaterial, Acoustics, Muffle, RoomReverb, SourceAcoustics, Wall},
+    steam_audio::{AcousticMaterial, Acoustics, Heard, PathProbes, RoomReverb, SourceAcoustics, Wall},
 };
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::World;
@@ -38,29 +43,80 @@ pub(crate) struct Walls {
     built: Option<u64>,
     occlusion: Option<(Acoustics, Option<u64>)>,
     room: Option<(RoomReverb, Option<u64>)>,
+    /// The level whose baked paths these are, and the `.paths` file's
+    /// bytes, if it has one; the paths loaded from them, once wanted; and
+    /// whether the occlusion has them.
+    level: Option<String>,
+    paths_file: Option<Arc<[u8]>>,
+    paths: Option<Arc<PathProbes>>,
+    has_paths: bool,
     /// Steam Audio is not here, which has been said.
     missing: bool,
 }
 
 impl Walls {
+    /// The level whose paths these are, as [`set_paths`](Self::set_paths)
+    /// was last told.
+    pub fn level(&self) -> Option<&str> {
+        self.level.as_deref()
+    }
+
+    /// The open level's baked paths, from its `.paths` file, if it has one.
+    pub fn set_paths(&mut self, level: Option<&str>, file: Option<Vec<u8>>) {
+        self.level = level.map(str::to_string);
+        self.paths_file = file.map(Arc::from);
+        self.paths = None;
+        self.has_paths = false;
+        if let Some((acoustics, _)) = &mut self.occlusion {
+            acoustics.set_paths(None);
+        }
+    }
+
     /// How much of each voice, by its key, reaches the listener past the
-    /// walls; none without Steam Audio.
+    /// walls, and round them along the level's paths; none without Steam
+    /// Audio.
     pub fn hear(
         &mut self,
         world: &World,
         listener: &Listener,
         voices: &[(u64, Vec3, SourceAcoustics)],
-    ) -> Option<Vec<Muffle>> {
+    ) -> Option<Vec<Heard>> {
         self.keep_up(world);
         if self.occlusion.is_none() {
             self.occlusion = self.started(Acoustics::new()).map(|acoustics| (acoustics, None));
+        }
+        if !self.has_paths && voices.iter().any(|(.., settings)| settings.pathing) {
+            self.load_paths();
         }
         let (acoustics, has) = self.occlusion.as_mut()?;
         if *has != self.built {
             acoustics.set_geometry(&self.walls.iter().map(Wall::mesh).collect::<Vec<_>>());
             *has = self.built;
         }
+        if !self.has_paths && self.paths.is_some() {
+            acoustics.set_paths(self.paths.clone());
+            self.has_paths = true;
+        }
         Some(acoustics.hear(listener, voices))
+    }
+
+    /// Loads the paths from the level's `.paths` file the first time a
+    /// voice would follow them, saying why not when they will not load.
+    fn load_paths(&mut self) {
+        if self.paths.is_some() || self.missing {
+            return;
+        }
+        let Some(file) = self.paths_file.take() else { return };
+        match PathProbes::load(&file) {
+            Ok(paths) => {
+                tracing::info!(target: "audio", "Sound follows {} probes' paths round the walls", paths.probes());
+                self.paths = Some(paths);
+            }
+            Err(error) => {
+                let level = self.level.as_deref().unwrap_or("the level");
+                tracing::warn!(target: "audio", "{level}'s paths would not load, so sounds go without: {error}");
+            }
+        }
     }
 
     /// How long the listener's room rings, when that has been worked out
@@ -85,10 +141,6 @@ impl Walls {
         if self.built == Some(key) {
             return;
         }
-        let wall = |(collider, matrix, mesh): &(Collider, Mat4, Option<&ColliderMesh>)| {
-            let (vertices, triangles) = shape(collider, matrix, *mesh);
-            Wall { vertices, triangles, material: material(collider.acoustic) }
-        };
         self.walls = colliders.iter().map(wall).collect();
         self.built = Some(key);
     }
@@ -105,6 +157,23 @@ impl Walls {
             }
         }
     }
+}
+
+/// The walls in `world`, as Steam Audio hears them, to bake paths round.
+pub fn walls(world: &World) -> Vec<Wall> {
+    still_colliders(world).iter().map(wall).collect()
+}
+
+/// Where a level's baked paths are kept: beside it, named as it is, as
+/// `Levels/Main.level`'s in `Levels/Main.paths`.
+pub fn paths_file(level: &str) -> String {
+    let stem = level.strip_suffix(".level").unwrap_or(level);
+    format!("{stem}.paths")
+}
+
+fn wall((collider, matrix, mesh): &(Collider, Mat4, Option<&ColliderMesh>)) -> Wall {
+    let (vertices, triangles) = shape(collider, matrix, *mesh);
+    Wall { vertices, triangles, material: material(collider.acoustic) }
 }
 
 /// Steam Audio's preset for a collider's material.
@@ -207,6 +276,12 @@ fn rings(center: Vec3, radius: f32, stretch: f32) -> (Vec<Vec3>, Vec<[u32; 3]>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_levels_paths_are_kept_beside_it() {
+        assert_eq!(paths_file("Levels/Main.level"), "Levels/Main.paths");
+        assert_eq!(paths_file("Start.level"), "Start.paths");
+    }
 
     #[test]
     fn a_box_is_twelve_triangles_round_its_corners() {

@@ -38,6 +38,7 @@ internal static class AudioTests
 		Check.Near(1f, source.DopplerLevel);
 		Check.True(source.Occlusion == SoundOcclusion.Off && source.Transmission, "walls stop nothing, and would let some through");
 		Check.Near(1f, source.OcclusionRadius);
+		Check.True(!source.Pathing, "nor follows paths round them");
 		Check.True(!Audio.Headphones && !Audio.HeadphonesAvailable, "no headphones without the engine");
 		Check.True(!Audio.Reverb, "nor reverb");
 		Check.True(Audio.Ducking == null, "no ducking");

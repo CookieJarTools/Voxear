@@ -134,10 +134,12 @@ pub enum Prop {
     /// How strongly a 3D source's pitch follows its and the listener's speed.
     DopplerLevel,
     /// Whether walls stop a 3D source's sound, how far round it a
-    /// volumetric one is heard from, and whether walls let some through.
+    /// volumetric one is heard from, whether walls let some through, and
+    /// whether it comes round them along the level's baked paths.
     Occlusion,
     OcclusionRadius,
     Transmission,
+    Pathing,
     SoundBus,
     /// What a LOD Group's levels are measured by.
     LodMeasure,
@@ -233,6 +235,7 @@ impl Prop {
             | Prop::Occlusion
             | Prop::OcclusionRadius
             | Prop::Transmission
+            | Prop::Pathing
             | Prop::SoundBus => Part::Audio,
             Prop::LodMeasure | Prop::LodCull | Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => {
                 Part::LodGroup
@@ -305,6 +308,7 @@ impl Prop {
             Prop::Occlusion => "occlusion",
             Prop::OcclusionRadius => "occlusion_radius",
             Prop::Transmission => "transmission",
+            Prop::Pathing => "pathing",
             Prop::SoundBus => "bus",
             Prop::LodMeasure => "measure",
             Prop::LodCull => "cull",
@@ -443,8 +447,8 @@ pub fn specs(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
 fn occlusion_props(occlusion: SoundOcclusion) -> Vec<Prop> {
     match occlusion {
         SoundOcclusion::Off => Vec::new(),
-        SoundOcclusion::Raycast => vec![Prop::Transmission],
-        SoundOcclusion::Volumetric => vec![Prop::OcclusionRadius, Prop::Transmission],
+        SoundOcclusion::Raycast => vec![Prop::Transmission, Prop::Pathing],
+        SoundOcclusion::Volumetric => vec![Prop::OcclusionRadius, Prop::Transmission, Prop::Pathing],
     }
 }
 
@@ -587,6 +591,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::Occlusion => "Occlusion",
         Prop::OcclusionRadius => "Occlusion radius",
         Prop::Transmission => "Transmission",
+        Prop::Pathing => "Pathing",
         Prop::SoundBus => "Bus",
         Prop::LodMeasure => "Switch by",
         Prop::LodCull => "Culled",
@@ -896,6 +901,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         }
         Prop::OcclusionRadius => Value::Number(audio()?.occlusion_radius),
         Prop::Transmission => Value::Toggle(audio()?.transmission),
+        Prop::Pathing => Value::Toggle(audio()?.pathing),
         Prop::SoundBus => {
             let index = usize::from(audio()?.bus == AudioBus::Music);
             Value::Choice(index, AUDIO_BUSES.iter().map(|k| k.to_string()).collect())
@@ -1446,6 +1452,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |a: &mut AudioSource| a.occlusion_radius = n.max(0.01))
         }
         (Prop::Transmission, Value::Toggle(on)) => with(world, entity, |a: &mut AudioSource| a.transmission = on),
+        (Prop::Pathing, Value::Toggle(on)) => with(world, entity, |a: &mut AudioSource| a.pathing = on),
         (Prop::SoundBus, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
             a.bus = if index == 1 { AudioBus::Music } else { AudioBus::Effects };
         }),

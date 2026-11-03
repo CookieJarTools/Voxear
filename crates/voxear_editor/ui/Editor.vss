@@ -2815,6 +2815,13 @@ TextField.build-title:focus {
     min-width: 0px;
 }
 
+/* A behaviour's inspector stacks its elements down the section, its usual fields among them. */
+.behaviour-inspector {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+
 .field-drawer-slot > .value-input, .field-drawer-slot > .value-picker, .field-drawer-slot > .vector, .field-drawer-slot > .value,
 .field-drawer-next > .value-input, .field-drawer-next > .value-picker, .field-drawer-next > .vector, .field-drawer-next > .value {
     flex-grow: 1;

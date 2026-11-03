@@ -315,6 +315,10 @@ impl DrawnRow {
             };
             ui.set_style(built, Style::row());
             ui.add_class(built, "field-drawer");
+            // A field's drawers sit beside its label; a behaviour's inspector stacks down its section.
+            if self.whole() {
+                ui.add_class(built, "behaviour-inspector");
+            }
             self.root.get_or_insert(built);
             self.documents.push(numbers.add_document(built));
             self.last = Some(built);

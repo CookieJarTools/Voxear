@@ -6,10 +6,14 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use ash::{ext, khr, nv, vk};
-use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
+use gpu_allocator::{
+    AllocationSizes,
+    vulkan::{Allocator, AllocatorCreateDesc},
+};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 const VALIDATION_LAYER: &CStr = c"VK_LAYER_KHRONOS_validation";
+const MB: u64 = 1024 * 1024;
 
 /// What a GPU is and which optional tiers it supports.
 #[derive(Clone, Debug)]
@@ -130,7 +134,12 @@ impl Gpu {
             physical_device: physical,
             debug_settings: Default::default(),
             buffer_device_address: true,
-            allocation_sizes: Default::default(),
+            // Smaller blocks than gpu-allocator's 256 MB: a renderer that uses a
+            // little over a block's worth would otherwise hold most of a block
+            // more than it uses, and the editor and its tests run several
+            // renderers at once. A buffer or image larger than a block gets
+            // one of its own.
+            allocation_sizes: AllocationSizes::new(64 * MB, 16 * MB),
         })?;
 
         let (major, minor, patch) = info.api_version;

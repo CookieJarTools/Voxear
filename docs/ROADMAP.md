@@ -375,6 +375,19 @@ Next in M3:
     and `Changed` with each kind's own event
   - [x] list and tree views at runtime from C#, filled from code: `ListView<T>` and `TreeView<T>`, with `MakeRow`
     and `BindRow`, rows filled in the frame they show in, and the selection
+  - [ ] **UI navigation**, for gamepads and keyboards, as Unity's and Unreal's, so a complicated menu works with a
+    controller without the game writing any code for it:
+    - automatic: up, down, left and right move to the nearest focusable element that way, by distance and by how
+      well it lines up, across nested panels, into and out of scroll views (scrolled to as it is reached), lists,
+      grids and tabs, and past hidden and disabled elements
+    - per-element modes, as Unity's Selectable: automatic, horizontal or vertical only, none, or explicit, with
+      wrapping at a container's edges, and focus kept inside a popup or dialog while it is open
+    - explicit links in markup and from C# by element reference, never by name: `button.Navigation.Down = quit`
+    - Submit and Cancel from the input actions; sliders, dropdowns and toggles changed with the stick or arrows
+    - the first focused element per document and per screen, each container remembering where its focus was, and
+      the focus ring shown for the controller and the keyboard, hidden once the mouse moves
+    - events for focus in and out, and a navigation move a script can redirect or cancel
+    - an editor overlay that draws each element's navigation arrows, as Unity's Visualize button does
 - **Inspector with Odin-style attributes** (see "The Inspector and its attributes" in the architecture):
   grouping, conditions, value controls, validation, buttons and table lists, from source-generated metadata, plus
   custom drawers in C#.

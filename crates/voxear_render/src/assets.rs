@@ -2,7 +2,8 @@
 //!
 //! Every mesh lives in one shared vertex buffer and one shared index buffer,
 //! described by a mesh table, so a single indirect draw call can draw any
-//! mix of meshes. Content frees what nothing uses; the space and slots go
+//! mix of meshes. Its meshlets live in a shared meshlet table the same way,
+//! with their vertices and triangles beside it. Content frees what nothing uses; the space and slots go
 //! back to their allocators once no frame in flight can still read them.
 
 use std::collections::HashMap;
@@ -16,16 +17,23 @@ use voxear_rhi::{
 
 use crate::{
     alloc::{RangeAllocator, SlotAllocator},
-    cooked::{CookedMesh, CookedModel, CookedTexture},
-    gpu::{GpuMaterial, GpuMesh, GpuMeshLod, MATERIAL_NORMAL_MAP},
+    cooked::{CookedModel, CookedTexture},
+    gpu::{GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_NORMAL_MAP},
     lod::{Lod, LodInfo, MAX_LODS, build_lods},
     mesh::{MeshData, Primitive, Vertex},
+    meshlets::MeshMeshlets,
     payload::{Payload, tile_len},
 };
 
 const MAX_VERTICES: u64 = 2 * 1024 * 1024;
 const MAX_INDICES: u64 = 8 * 1024 * 1024;
 const MAX_MESHES: u64 = 16 * 1024;
+/// Enough for every index in meshlets of 64 triangles, half the most they hold.
+const MAX_MESHLETS: u64 = MAX_INDICES / (3 * 64);
+/// A meshlet has about half as many vertices as triangles; this allows three
+/// for every two.
+const MAX_MESHLET_VERTICES: u64 = MAX_INDICES / 2;
+const MAX_MESHLET_TRIANGLES: u64 = MAX_INDICES / 3;
 const MAX_MATERIALS: u64 = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -91,12 +99,27 @@ pub struct AssetUsage {
     pub decompressed_on_gpu: u64,
 }
 
+/// Where a mesh's data sits in the shared buffers, each as (offset, count).
+#[derive(Clone, Copy, Default)]
+struct Space {
+    vertices: (u64, u64),
+    indices: (u64, u64),
+    meshlets: (u64, u64),
+    meshlet_vertices: (u64, u64),
+    meshlet_triangles: (u64, u64),
+}
+
+impl Space {
+    fn ranges(&self) -> [(u64, u64); 5] {
+        [self.vertices, self.indices, self.meshlets, self.meshlet_vertices, self.meshlet_triangles]
+    }
+}
+
 /// Where a mesh's data sits in the shared buffers, how many indices its
 /// most detailed LOD, which comes first, has, and its bounding sphere.
 #[derive(Clone, Copy)]
 struct MeshRanges {
-    vertices: (u64, u64),
-    indices: (u64, u64),
+    space: Space,
     first_lod: u32,
     sphere: (Vec3, f32),
     /// Each LOD's triangles and error, for the editor to show.
@@ -105,9 +128,9 @@ struct MeshRanges {
 }
 
 impl MeshRanges {
-    fn new(vertices: (u64, u64), indices: (u64, u64)) -> Self {
+    fn new(space: Space) -> Self {
         let lods = [LodInfo::default(); MAX_LODS];
-        Self { vertices, indices, first_lod: 0, sphere: (Vec3::ZERO, 0.0), lods, lod_count: 0 }
+        Self { space, first_lod: 0, sphere: (Vec3::ZERO, 0.0), lods, lod_count: 0 }
     }
 
     /// Keeps what the editor shows of a mesh's LODs.
@@ -123,8 +146,8 @@ impl MeshRanges {
 #[derive(Clone, Copy)]
 enum Retiring {
     Mesh(MeshHandle),
-    /// A replaced mesh's old vertex and index space, as (offset, count).
-    Space((u64, u64), (u64, u64)),
+    /// A replaced mesh's old space.
+    Space(Space),
     Material(MaterialHandle),
     Texture(TextureId),
 }
@@ -133,9 +156,14 @@ pub struct Assets {
     pub vertices: Buffer,
     pub indices: Buffer,
     pub meshes: Buffer,
+    pub meshlets: Buffer,
+    /// Each meshlet's vertices, as indices into its mesh's.
+    pub meshlet_vertices: Buffer,
+    /// Each meshlet's triangles, three bytes into its vertices a word.
+    pub meshlet_triangles: Buffer,
     pub materials: Buffer,
-    vertex_space: RangeAllocator,
-    index_space: RangeAllocator,
+    /// Vertex, index, meshlet, meshlet vertex and meshlet triangle space.
+    space: [RangeAllocator; 5],
     mesh_slots: SlotAllocator,
     material_slots: SlotAllocator,
     mesh_ranges: HashMap<MeshHandle, MeshRanges>,
@@ -165,6 +193,12 @@ impl Assets {
             device_local,
         )?;
         let meshes = gpu.create_buffer("meshes", MAX_MESHES * size_of::<GpuMesh>() as u64, storage, device_local)?;
+        let meshlets =
+            gpu.create_buffer("meshlets", MAX_MESHLETS * size_of::<GpuMeshlet>() as u64, storage, device_local)?;
+        let meshlet_vertices =
+            gpu.create_buffer("meshlet vertices", MAX_MESHLET_VERTICES * 4, storage, device_local)?;
+        let meshlet_triangles =
+            gpu.create_buffer("meshlet triangles", MAX_MESHLET_TRIANGLES * 4, storage, device_local)?;
         let materials =
             gpu.create_buffer("materials", MAX_MATERIALS * size_of::<GpuMaterial>() as u64, storage, device_local)?;
 
@@ -172,9 +206,12 @@ impl Assets {
             vertices,
             indices,
             meshes,
+            meshlets,
+            meshlet_vertices,
+            meshlet_triangles,
             materials,
-            vertex_space: RangeAllocator::new(MAX_VERTICES),
-            index_space: RangeAllocator::new(MAX_INDICES),
+            space: [MAX_VERTICES, MAX_INDICES, MAX_MESHLETS, MAX_MESHLET_VERTICES, MAX_MESHLET_TRIANGLES]
+                .map(RangeAllocator::new),
             mesh_slots: SlotAllocator::new(MAX_MESHES as u32),
             mesh_bounds: HashMap::new(),
             material_slots: SlotAllocator::new(MAX_MATERIALS as u32),
@@ -200,9 +237,9 @@ impl Assets {
     /// Uploads a mesh whose LOD chain was built already, such as on a
     /// loading thread.
     pub fn add_mesh_with_lods(&mut self, gpu: &Gpu, mesh: &MeshData, lods: &[Lod]) -> Result<MeshHandle> {
-        let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
-        let (handle, ranges) = self.reserve_mesh(mesh.vertices.len() as u64, index_count)?;
-        self.write_mesh(gpu, handle, ranges, mesh, lods)?;
+        let meshlets = MeshMeshlets::gather(lods.iter().map(|lod| &lod.meshlets));
+        let (handle, ranges) = self.reserve_mesh(sizes(mesh, lods, &meshlets))?;
+        self.write_mesh(gpu, handle, ranges, mesh, lods, &meshlets)?;
         Ok(handle)
     }
 
@@ -219,18 +256,17 @@ impl Assets {
         frame: u64,
     ) -> Result<()> {
         let old = *self.mesh_ranges.get(&mesh).context("the mesh to replace is not loaded")?;
-        let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
-        let (vertices, indices) = self.reserve_space(data.vertices.len() as u64, index_count)?;
-        let ranges = MeshRanges::new(vertices, indices);
+        let meshlets = MeshMeshlets::gather(lods.iter().map(|lod| &lod.meshlets));
+        let ranges = MeshRanges::new(self.reserve_space(sizes(data, lods, &meshlets))?);
         self.mesh_ranges.insert(mesh, ranges);
         self.mesh_bounds.remove(&mesh);
-        self.write_mesh(gpu, mesh, ranges, data, lods)?;
-        self.retire(frame, Retiring::Space(old.vertices, old.indices));
+        self.write_mesh(gpu, mesh, ranges, data, lods, &meshlets)?;
+        self.retire(frame, Retiring::Space(old.space));
         Ok(())
     }
 
-    /// Writes a mesh's vertices, its LODs' indices and its entry, into the
-    /// space and slot reserved for it.
+    /// Writes a mesh's vertices, its LODs' indices and meshlets and its
+    /// entry, into the space and slot reserved for it.
     fn write_mesh(
         &mut self,
         gpu: &Gpu,
@@ -238,9 +274,11 @@ impl Assets {
         ranges: MeshRanges,
         mesh: &MeshData,
         lods: &[Lod],
+        meshlets: &MeshMeshlets,
     ) -> Result<()> {
         let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
-        let (vertex_offset, index_start, slot) = (ranges.vertices.0, ranges.indices.0, handle.0);
+        let space = ranges.space;
+        let (vertex_offset, index_start, slot) = (space.vertices.0, space.indices.0, handle.0);
         if let (Some(ranges), Some(lod)) = (self.mesh_ranges.get_mut(&handle), lods.first()) {
             ranges.first_lod = lod.indices.len() as u32;
             ranges.sphere = mesh.bounds();
@@ -254,26 +292,24 @@ impl Assets {
         )?;
 
         let (center, radius) = mesh.bounds();
-        let mut entry = GpuMesh {
-            vertex_offset: vertex_offset as u32,
-            lod_count: lods.len() as u32,
-            center: center.into(),
-            radius,
-            ..Default::default()
-        };
-        let mut index_offset = index_start;
-        let mut indices = Vec::with_capacity(index_count as usize);
-        for (slot, lod) in entry.lods.iter_mut().zip(lods) {
-            *slot = GpuMeshLod {
-                index_offset: index_offset as u32,
-                index_count: lod.indices.len() as u32,
-                error: lod.error,
-                _pad: 0,
-            };
-            index_offset += lod.indices.len() as u64;
-            indices.extend_from_slice(&lod.indices);
-        }
+        let lods_drawn =
+            lods.iter().zip(&meshlets.counts).map(|(lod, &count)| (lod.error, lod.indices.len() as u32, count));
+        let entry = mesh_entry(space, lods_drawn, (center, radius));
+        let indices: Vec<u32> = lods.iter().flat_map(|lod| lod.indices.iter().copied()).collect();
+        debug_assert_eq!(indices.len() as u64, index_count);
         gpu.upload_buffer(&self.indices, index_start * 4, bytemuck::cast_slice(&indices))?;
+        let meshlet_data: [(&Buffer, u64, &[u8]); 3] = [
+            (
+                &self.meshlets,
+                space.meshlets.0 * size_of::<GpuMeshlet>() as u64,
+                bytemuck::cast_slice(&meshlets.meshlets),
+            ),
+            (&self.meshlet_vertices, space.meshlet_vertices.0 * 4, bytemuck::cast_slice(&meshlets.vertices)),
+            (&self.meshlet_triangles, space.meshlet_triangles.0 * 4, bytemuck::cast_slice(&meshlets.triangles)),
+        ];
+        for (buffer, offset, bytes) in meshlet_data.into_iter().filter(|(_, _, bytes)| !bytes.is_empty()) {
+            gpu.upload_buffer(buffer, offset, bytes)?;
+        }
 
         gpu.upload_buffer(&self.meshes, u64::from(slot) * size_of::<GpuMesh>() as u64, bytemuck::bytes_of(&entry))?;
         let (min, max) = mesh.vertices.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(min, max), v| {
@@ -295,7 +331,7 @@ impl Assets {
     /// drawing it directly rather than through culling.
     pub fn first_lod(&self, mesh: MeshHandle) -> Option<(u32, u32)> {
         let ranges = self.mesh_ranges.get(&mesh)?;
-        Some((ranges.indices.0 as u32, ranges.first_lod))
+        Some((ranges.space.indices.0 as u32, ranges.first_lod))
     }
 
     /// A mesh's bounding sphere in its own space, centre and radius, for
@@ -310,27 +346,41 @@ impl Assets {
         Some(ranges.lods[..usize::from(ranges.lod_count)].to_vec())
     }
 
-    /// Takes vertex and index space and a mesh table slot, all or nothing.
-    fn reserve_mesh(&mut self, vertex_count: u64, index_count: u64) -> Result<(MeshHandle, MeshRanges)> {
-        let (vertices, indices) = self.reserve_space(vertex_count, index_count)?;
+    /// Takes space in every shared buffer and a mesh table slot, all or
+    /// nothing. `sizes` counts vertices, indices, meshlets, meshlet vertices
+    /// and meshlet triangles.
+    fn reserve_mesh(&mut self, sizes: [u64; 5]) -> Result<(MeshHandle, MeshRanges)> {
+        let space = self.reserve_space(sizes)?;
         let Some(slot) = self.mesh_slots.alloc() else {
-            self.vertex_space.free(vertices.0, vertices.1);
-            self.index_space.free(indices.0, indices.1);
+            self.free_space(space);
             anyhow::bail!("too many meshes");
         };
-        let ranges = MeshRanges::new(vertices, indices);
+        let ranges = MeshRanges::new(space);
         self.mesh_ranges.insert(MeshHandle(slot), ranges);
         Ok((MeshHandle(slot), ranges))
     }
 
-    /// Room for a mesh's vertices and indices, as (offset, count) each.
-    fn reserve_space(&mut self, vertex_count: u64, index_count: u64) -> Result<((u64, u64), (u64, u64))> {
-        let vertex_offset = self.vertex_space.alloc(vertex_count).context("out of vertex space")?;
-        let Some(index_start) = self.index_space.alloc(index_count) else {
-            self.vertex_space.free(vertex_offset, vertex_count);
-            anyhow::bail!("out of index space");
-        };
-        Ok(((vertex_offset, vertex_count), (index_start, index_count)))
+    /// Room in each shared buffer for as many as `sizes` says, all or nothing.
+    fn reserve_space(&mut self, sizes: [u64; 5]) -> Result<Space> {
+        const WHAT: [&str; 5] = ["vertex", "index", "meshlet", "meshlet vertex", "meshlet triangle"];
+        let mut ranges = [(0, 0); 5];
+        for (index, &count) in sizes.iter().enumerate() {
+            let Some(offset) = self.space[index].alloc(count) else {
+                for (allocator, &(offset, count)) in self.space.iter_mut().zip(&ranges[..index]) {
+                    allocator.free(offset, count);
+                }
+                anyhow::bail!("out of {} space", WHAT[index]);
+            };
+            ranges[index] = (offset, count);
+        }
+        let [vertices, indices, meshlets, meshlet_vertices, meshlet_triangles] = ranges;
+        Ok(Space { vertices, indices, meshlets, meshlet_vertices, meshlet_triangles })
+    }
+
+    fn free_space(&mut self, space: Space) {
+        for (allocator, (offset, count)) in self.space.iter_mut().zip(space.ranges()) {
+            allocator.free(offset, count);
+        }
     }
 
     /// Uploads a cooked model's meshes and textures with one submission. A
@@ -345,8 +395,10 @@ impl Assets {
     ) -> Result<(Vec<MeshHandle>, Vec<TextureId>)> {
         let mut meshes = Vec::with_capacity(model.meshes.len());
         for mesh in &model.meshes {
-            let index_count = mesh.lods.iter().map(|&(_, count)| u64::from(count)).sum();
-            match self.reserve_mesh(u64::from(mesh.vertices.1), index_count) {
+            let index_count = mesh.lods.iter().map(|&(_, count, _)| u64::from(count)).sum();
+            let sizes =
+                [mesh.vertices.1, mesh.meshlets.1, mesh.meshlet_vertices.1, mesh.meshlet_triangles.1].map(u64::from);
+            match self.reserve_mesh([sizes[0], index_count, sizes[1], sizes[2], sizes[3]]) {
                 Ok(reserved) => meshes.push(reserved),
                 Err(error) => {
                     meshes.into_iter().for_each(|(handle, _)| self.release_mesh(handle));
@@ -375,14 +427,18 @@ impl Assets {
             (None, Some(bytes)) => bytes,
             (None, None) => unreachable!("one or the other is set"),
         };
-        let entries: Vec<GpuMesh> =
-            model.meshes.iter().zip(&meshes).map(|(mesh, (_, ranges))| gpu_mesh(mesh, ranges)).collect();
+        let entries: Vec<GpuMesh> = model
+            .meshes
+            .iter()
+            .zip(&meshes)
+            .map(|(mesh, (_, ranges))| mesh_entry(ranges.space, mesh.lods.iter().copied(), (mesh.center, mesh.radius)))
+            .collect();
         for (mesh, (handle, _)) in model.meshes.iter().zip(&meshes) {
             let reach = Vec3::splat(mesh.radius);
             self.mesh_bounds.insert(*handle, (mesh.center - reach, mesh.center + reach));
-            if let (Some(ranges), Some(&(_, count))) = (self.mesh_ranges.get_mut(handle), mesh.lods.first()) {
+            if let (Some(ranges), Some(&(_, count, _))) = (self.mesh_ranges.get_mut(handle), mesh.lods.first()) {
                 (ranges.first_lod, ranges.sphere) = (count, (mesh.center, mesh.radius));
-                ranges.keep_lods(mesh.lods.iter().map(|&(error, count)| LodInfo { triangles: count / 3, error }));
+                ranges.keep_lods(mesh.lods.iter().map(|&(error, count, _)| LodInfo { triangles: count / 3, error }));
             }
         }
         let table = source.len().next_multiple_of(16) as u64;
@@ -412,21 +468,38 @@ impl Assets {
                 _ => staging.handle,
             };
             for ((mesh, (handle, ranges)), entry) in model.meshes.iter().zip(&meshes).zip(0u64..) {
-                let vertex = size_of::<Vertex>() as u64;
+                let (space, vertex, meshlet) =
+                    (ranges.space, size_of::<Vertex>() as u64, size_of::<GpuMeshlet>() as u64);
                 let copies = [
+                    (from, self.vertices.handle, mesh.vertices.0, space.vertices.0 * vertex, space.vertices.1 * vertex),
+                    (from, self.indices.handle, mesh.indices, space.indices.0 * 4, space.indices.1 * 4),
                     (
                         from,
-                        self.vertices.handle,
-                        mesh.vertices.0,
-                        ranges.vertices.0 * vertex,
-                        ranges.vertices.1 * vertex,
+                        self.meshlets.handle,
+                        mesh.meshlets.0,
+                        space.meshlets.0 * meshlet,
+                        space.meshlets.1 * meshlet,
                     ),
-                    (from, self.indices.handle, mesh.indices, ranges.indices.0 * 4, ranges.indices.1 * 4),
+                    (
+                        from,
+                        self.meshlet_vertices.handle,
+                        mesh.meshlet_vertices.0,
+                        space.meshlet_vertices.0 * 4,
+                        space.meshlet_vertices.1 * 4,
+                    ),
+                    (
+                        from,
+                        self.meshlet_triangles.handle,
+                        mesh.meshlet_triangles.0,
+                        space.meshlet_triangles.0 * 4,
+                        space.meshlet_triangles.1 * 4,
+                    ),
                 ];
                 let table_entry = table + entry * size_of::<GpuMesh>() as u64;
                 let slot = u64::from(handle.0) * size_of::<GpuMesh>() as u64;
                 let table_copy = (staging.handle, self.meshes.handle, table_entry, slot, size_of::<GpuMesh>() as u64);
-                for (src, dst, src_offset, dst_offset, size) in copies.into_iter().chain([table_copy]) {
+                let copies = copies.into_iter().chain([table_copy]).filter(|copy| copy.4 > 0);
+                for (src, dst, src_offset, dst_offset, size) in copies {
                     let region = vk::BufferCopy { src_offset, dst_offset, size };
                     unsafe { gpu.device.cmd_copy_buffer(cmd, src, dst, &[region]) };
                 }
@@ -471,8 +544,7 @@ impl Assets {
     fn release_mesh(&mut self, handle: MeshHandle) {
         self.mesh_bounds.remove(&handle);
         if let Some(ranges) = self.mesh_ranges.remove(&handle) {
-            self.vertex_space.free(ranges.vertices.0, ranges.vertices.1);
-            self.index_space.free(ranges.indices.0, ranges.indices.1);
+            self.free_space(ranges.space);
             self.mesh_slots.free(handle.0);
         }
     }
@@ -593,15 +665,11 @@ impl Assets {
             Retiring::Mesh(mesh) => {
                 self.mesh_bounds.remove(&mesh);
                 if let Some(ranges) = self.mesh_ranges.remove(&mesh) {
-                    self.vertex_space.free(ranges.vertices.0, ranges.vertices.1);
-                    self.index_space.free(ranges.indices.0, ranges.indices.1);
+                    self.free_space(ranges.space);
                     self.mesh_slots.free(mesh.0);
                 }
             }
-            Retiring::Space(vertices, indices) => {
-                self.vertex_space.free(vertices.0, vertices.1);
-                self.index_space.free(indices.0, indices.1);
-            }
+            Retiring::Space(space) => self.free_space(space),
             Retiring::Material(material) => self.material_slots.free(material.0),
             Retiring::Texture(texture) => {
                 if let Some(image) = self.textures.remove(&texture) {
@@ -617,8 +685,8 @@ impl Assets {
             meshes: self.mesh_slots.used(),
             materials: self.material_slots.used(),
             textures: self.textures.len() as u32,
-            vertices: self.vertex_space.used(),
-            indices: self.index_space.used(),
+            vertices: self.space[0].used(),
+            indices: self.space[1].used(),
             retiring: self.retiring.len() as u32,
             decompressed_on_gpu: self.decompressed_on_gpu,
         }
@@ -629,25 +697,37 @@ impl Assets {
             bindless.remove_texture(id);
             gpu.destroy_image(image);
         }
-        for buffer in [self.vertices, self.indices, self.meshes, self.materials] {
+        let meshlets = [self.meshlets, self.meshlet_vertices, self.meshlet_triangles];
+        for buffer in [self.vertices, self.indices, self.meshes, self.materials].into_iter().chain(meshlets) {
             gpu.destroy_buffer(buffer);
         }
     }
 }
 
-/// A cooked mesh's table entry, once its ranges are known.
-fn gpu_mesh(mesh: &CookedMesh, ranges: &MeshRanges) -> GpuMesh {
+/// How much of each shared buffer a mesh takes, as [`Assets::reserve_space`] counts.
+fn sizes(mesh: &MeshData, lods: &[Lod], meshlets: &MeshMeshlets) -> [u64; 5] {
+    let index_count = lods.iter().map(|lod| lod.indices.len()).sum::<usize>();
+    [mesh.vertices.len(), index_count, meshlets.meshlets.len(), meshlets.vertices.len(), meshlets.triangles.len()]
+        .map(|count| count as u64)
+}
+
+/// A mesh's table entry, once its space is known, from its LODs' errors,
+/// index counts and meshlet counts, finest first, and its bounding sphere.
+fn mesh_entry(space: Space, lods: impl Iterator<Item = (f32, u32, u32)>, (center, radius): (Vec3, f32)) -> GpuMesh {
     let mut entry = GpuMesh {
-        vertex_offset: ranges.vertices.0 as u32,
-        lod_count: mesh.lods.len() as u32,
-        center: mesh.center.into(),
-        radius: mesh.radius,
+        vertex_offset: space.vertices.0 as u32,
+        meshlet_vertex_offset: space.meshlet_vertices.0 as u32,
+        meshlet_triangle_offset: space.meshlet_triangles.0 as u32,
+        center: center.into(),
+        radius,
         ..Default::default()
     };
-    let mut index_offset = ranges.indices.0 as u32;
-    for (slot, &(error, index_count)) in entry.lods.iter_mut().zip(&mesh.lods) {
-        *slot = GpuMeshLod { index_offset, index_count, error, _pad: 0 };
+    let (mut index_offset, mut meshlet_offset) = (space.indices.0 as u32, space.meshlets.0 as u32);
+    for (slot, (error, index_count, meshlet_count)) in entry.lods.iter_mut().zip(lods) {
+        *slot = GpuMeshLod { index_offset, index_count, error, meshlet_offset, meshlet_count, _pad: 0 };
         index_offset += index_count;
+        meshlet_offset += meshlet_count;
+        entry.lod_count += 1;
     }
     entry
 }

@@ -78,6 +78,9 @@ struct MeshLod
     uint indexOffset;
     uint indexCount;
     float error;
+    // Its meshlets in the meshlet table, which hold its indices in turn.
+    uint meshletOffset;
+    uint meshletCount;
     uint pad;
 };
 
@@ -85,10 +88,30 @@ struct Mesh
 {
     uint vertexOffset;
     uint lodCount;
-    uint2 pad;
+    // Where its meshlets' vertices and triangles start.
+    uint meshletVertexOffset;
+    uint meshletTriangleOffset;
     float3 center;
     float radius;
     MeshLod lods[MAX_LODS];
+};
+
+// Up to 124 of a LOD's triangles, in mesh space. Its normals lie within the
+// cone around coneAxis whose half-angle has the cosine coneCutoff (1 when no
+// viewpoint sees only their backs).
+struct Meshlet
+{
+    float3 center;
+    float radius;
+    float3 coneAxis;
+    float coneCutoff;
+    // From its LOD's first index.
+    uint firstIndex;
+    // From its mesh's meshlet vertices and triangles.
+    uint vertexOffset;
+    uint triangleOffset;
+    // Vertex count in the low byte, triangle count above.
+    uint counts;
 };
 
 static const uint MATERIAL_NORMAL_MAP = 1;

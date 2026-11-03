@@ -4,7 +4,7 @@
 //!
 //! The layout is little-endian: `VXMODEL`, the format version, then meshes,
 //! textures, materials and nodes, each a count followed by its items, and
-//! last the [`Payload`]: every vertex, index and texture mip the GPU needs,
+//! last the [`Payload`]: every vertex, index, meshlet and texture mip the GPU needs,
 //! in one block that ships GDeflate-compressed and is decompressed by the
 //! GPU where it can. Meshes and textures say where their data sits in it.
 //! Changing the layout bumps [`COOKED_VERSION`]; the build cache keys on it,
@@ -16,14 +16,17 @@ use voxear_core::math::{Quat, Vec3};
 use crate::{
     assets::MaterialDesc,
     gltf_import::{PreparedMaterial, PreparedModel, PreparedNode, TextureFormat},
+    gpu::GpuMeshlet,
     mesh::{MeshTriangles, Vertex},
+    meshlets::MeshMeshlets,
     payload::Payload,
     texture_codec,
 };
 
 /// 3: the GPU data moved into one payload, GDeflate-compressed in tiles, and
-/// every texture carries its whole mip chain.
-pub const COOKED_VERSION: u32 = 3;
+/// every texture carries its whole mip chain. 4: each LOD's indices are in
+/// meshlet order, and its meshlets ship in the payload.
+pub const COOKED_VERSION: u32 = 4;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -45,8 +48,13 @@ pub(crate) struct CookedMesh {
     pub vertices: (u64, u32),
     /// Where the indices start; every LOD's follow one another.
     pub indices: u64,
-    /// Each LOD's error and index count, finest first.
-    pub lods: Vec<(f32, u32)>,
+    /// Each LOD's error, index count and meshlet count, finest first.
+    pub lods: Vec<(f32, u32, u32)>,
+    /// Where every LOD's meshlets, their vertices and their triangles start
+    /// in the payload, one LOD's after another, and how many of each.
+    pub meshlets: (u64, u32),
+    pub meshlet_vertices: (u64, u32),
+    pub meshlet_triangles: (u64, u32),
     /// Bounding sphere, worked out at cook time since the CPU may never see
     /// the vertices.
     pub center: Vec3,
@@ -80,9 +88,23 @@ impl PreparedModel {
             let vertices = (place(bytemuck::cast_slice(&mesh.vertices)), mesh.vertices.len() as u32);
             let indices: Vec<u32> = lods.iter().flat_map(|lod| lod.indices.iter().copied()).collect();
             let indices = place(bytemuck::cast_slice(&indices));
-            let lods = lods.iter().map(|lod| (lod.error, lod.indices.len() as u32)).collect();
+            let gathered = MeshMeshlets::gather(lods.iter().map(|lod| &lod.meshlets));
+            let meshlets = (place(bytemuck::cast_slice(&gathered.meshlets)), gathered.meshlets.len() as u32);
+            let meshlet_vertices = (place(bytemuck::cast_slice(&gathered.vertices)), gathered.vertices.len() as u32);
+            let meshlet_triangles = (place(bytemuck::cast_slice(&gathered.triangles)), gathered.triangles.len() as u32);
+            let counts = lods.iter().zip(&gathered.counts);
+            let lods = counts.map(|(lod, &meshlets)| (lod.error, lod.indices.len() as u32, meshlets)).collect();
             let (center, radius) = mesh.bounds();
-            meshes.push(CookedMesh { vertices, indices, lods, center, radius });
+            meshes.push(CookedMesh {
+                vertices,
+                indices,
+                lods,
+                meshlets,
+                meshlet_vertices,
+                meshlet_triangles,
+                center,
+                radius,
+            });
         }
         let mut textures = Vec::with_capacity(self.textures.len());
         for texture in &self.textures {
@@ -134,7 +156,7 @@ impl CookedModel {
         let vertices = bytes.get(start as usize..start as usize + count as usize * stride).context("a mesh's vertices")?;
         let float = |bytes: &[u8]| f32::from_le_bytes(bytes.try_into().expect("four bytes"));
         let points = vertices.chunks_exact(stride).map(|v| Vec3::new(float(&v[0..4]), float(&v[4..8]), float(&v[8..12])));
-        let finest = mesh.lods.first().map_or(0, |&(_, count)| count as usize);
+        let finest = mesh.lods.first().map_or(0, |&(_, count, _)| count as usize);
         let indices = bytes.get(mesh.indices as usize..mesh.indices as usize + finest * 4).context("a mesh's indices")?;
         let indices = indices.as_chunks::<4>().0.iter().map(|bytes| u32::from_le_bytes(*bytes)).collect();
         Ok(Some(MeshTriangles { points: points.collect(), indices }))
@@ -162,8 +184,13 @@ impl CookedModel {
             w.f32s(&mesh.center.to_array());
             w.f32(mesh.radius);
             w.u32(mesh.lods.len() as u32);
-            for &(error, count) in &mesh.lods {
+            for &(error, count, meshlets) in &mesh.lods {
                 w.f32(error);
+                w.u32(count);
+                w.u32(meshlets);
+            }
+            for (offset, count) in [mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles] {
+                w.u64(offset);
                 w.u32(count);
             }
         }
@@ -250,9 +277,20 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         let radius = r.f32()?;
         let mut lods = Vec::new();
         for _ in 0..r.u32()? {
-            lods.push((r.f32()?, r.u32()?));
+            lods.push((r.f32()?, r.u32()?, r.u32()?));
         }
-        meshes.push(CookedMesh { vertices, indices, lods, center, radius });
+        let (meshlets, meshlet_vertices, meshlet_triangles) =
+            ((r.u64()?, r.u32()?), (r.u64()?, r.u32()?), (r.u64()?, r.u32()?));
+        meshes.push(CookedMesh {
+            vertices,
+            indices,
+            lods,
+            meshlets,
+            meshlet_vertices,
+            meshlet_triangles,
+            center,
+            radius,
+        });
     }
     let mut textures = Vec::new();
     for _ in 0..r.u32()? {
@@ -321,12 +359,20 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
     let size = payload.size();
     let fits = |(offset, len): (u64, u64)| offset.checked_add(len).is_some_and(|end| end <= size);
     for mesh in &meshes {
-        let index_count: u64 = mesh.lods.iter().map(|&(_, count)| u64::from(count)).sum();
+        let index_count: u64 = mesh.lods.iter().map(|&(_, count, _)| u64::from(count)).sum();
+        let meshlet_count: u64 = mesh.lods.iter().map(|&(_, _, count)| u64::from(count)).sum();
         ensure!(
             fits((mesh.vertices.0, u64::from(mesh.vertices.1) * size_of::<Vertex>() as u64)),
             "a mesh lies outside the payload"
         );
         ensure!(fits((mesh.indices, index_count * 4)), "a mesh's indices lie outside the payload");
+        ensure!(meshlet_count == u64::from(mesh.meshlets.1), "a mesh's LODs do not add up to its meshlets");
+        ensure!(
+            fits((mesh.meshlets.0, u64::from(mesh.meshlets.1) * size_of::<GpuMeshlet>() as u64))
+                && fits((mesh.meshlet_vertices.0, u64::from(mesh.meshlet_vertices.1) * 4))
+                && fits((mesh.meshlet_triangles.0, u64::from(mesh.meshlet_triangles.1) * 4)),
+            "a mesh's meshlets lie outside the payload"
+        );
     }
     for texture in &textures {
         ensure!(
@@ -475,6 +521,12 @@ pub(crate) mod tests {
         let vertices: &[u8] = bytemuck::cast_slice(&model.meshes[0].0.vertices);
         assert_eq!(&payload[offset..offset + count * size_of::<Vertex>()], vertices);
         assert_eq!(mesh.lods[0].1, 6);
+        let lod = &model.meshes[0].1[0];
+        assert_eq!((mesh.lods[0].2, mesh.meshlets.1), (1, 1), "two triangles make one meshlet");
+        let meshlets: &[u8] = bytemuck::cast_slice(&lod.meshlets.meshlets);
+        assert_eq!(&payload[mesh.meshlets.0 as usize..][..meshlets.len()], meshlets);
+        let indices: &[u8] = bytemuck::cast_slice(&lod.indices);
+        assert_eq!(&payload[mesh.indices as usize..][..indices.len()], indices, "indices in meshlet order");
         let texture = &back.textures[0];
         assert_eq!(texture.mips.len(), 2, "the 1×1 mip was made at cook time");
         let (offset, len) = texture.mips[0];

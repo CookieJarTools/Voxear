@@ -25,6 +25,10 @@ pub struct GpuMeshLod {
     pub index_count: u32,
     /// Mesh-space distance from the original surface.
     pub error: f32,
+    /// Its meshlets' place in the meshlet table. They hold its indices in
+    /// turn from `index_offset`.
+    pub meshlet_offset: u32,
+    pub meshlet_count: u32,
     pub _pad: u32,
 }
 
@@ -33,10 +37,33 @@ pub struct GpuMeshLod {
 pub struct GpuMesh {
     pub vertex_offset: u32,
     pub lod_count: u32,
-    pub _pad: [u32; 2],
+    /// Where its meshlets' vertices and triangles start, which theirs count from.
+    pub meshlet_vertex_offset: u32,
+    pub meshlet_triangle_offset: u32,
     pub center: [f32; 3],
     pub radius: f32,
     pub lods: [GpuMeshLod; MAX_LODS],
+}
+
+/// A cluster of up to 124 of a LOD's triangles (see `meshlets`), with what
+/// culling needs to know of it, in mesh space.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuMeshlet {
+    pub center: [f32; 3],
+    pub radius: f32,
+    /// Its triangles' normals lie within a cone around this axis, whose
+    /// half-angle has the cosine `cone_cutoff`; that is 1 when they spread
+    /// too wide for any viewpoint to see only their backs.
+    pub cone_axis: [f32; 3],
+    pub cone_cutoff: f32,
+    /// Its first index, counted from its LOD's first.
+    pub first_index: u32,
+    /// Where its vertices and triangles start, counted from its mesh's.
+    pub vertex_offset: u32,
+    pub triangle_offset: u32,
+    /// Its vertex count in the low byte, and its triangle count above.
+    pub counts: u32,
 }
 
 pub const MATERIAL_NORMAL_MAP: u32 = 1;
@@ -321,7 +348,8 @@ mod tests {
 
     #[test]
     fn layouts_match_the_shaders() {
-        assert_eq!(size_of::<GpuMesh>(), 32 + 16 * MAX_LODS);
+        assert_eq!(size_of::<GpuMesh>(), 32 + 24 * MAX_LODS);
+        assert_eq!(size_of::<GpuMeshlet>(), 48);
         assert_eq!(size_of::<GpuMaterial>(), 64);
         // Three matrices, ids and flags, then where its LODs end.
         assert_eq!(size_of::<GpuInstance>(), 192 + 32);

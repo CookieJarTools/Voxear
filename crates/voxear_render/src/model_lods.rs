@@ -19,7 +19,6 @@
 
 use std::collections::HashMap;
 
-use meshopt::optimize_vertex_cache;
 use voxear_assets::ModelImport;
 use voxear_core::math::{Mat3, Mat4, Vec3};
 
@@ -115,7 +114,7 @@ fn take_lods(model: &mut PreparedModel, first: usize, pieces: &[usize]) {
         let indices: Vec<u32> = mesh.indices.iter().map(|&index| index + offset).collect();
         // Never smaller than the last, so a farther LOD is never picked before a nearer one.
         let error = lod::error_at(full, indices.len() / 3).max(lods.last().map_or(0.0, |lod: &Lod| lod.error * 1.01));
-        lods.push(Lod { indices: optimize_vertex_cache(&indices, data.vertices.len()), error });
+        lods.push(Lod::new(&indices, error, &data.vertices));
     }
     model.meshes[model.nodes[first].mesh] = (data, lods);
 }

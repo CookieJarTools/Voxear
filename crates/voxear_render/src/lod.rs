@@ -1,10 +1,14 @@
 //! Automatic levels of detail. Every LOD shares the mesh's vertices and only
 //! has its own index list, so LODs cost little memory and the GPU can switch
-//! between them per instance with no extra state.
+//! between them per instance with no extra state. Each LOD is split into
+//! meshlets as it is made (see [`meshlets`](crate::meshlets)).
 
 use meshopt::{SimplifyOptions, VertexDataAdapter, optimize_vertex_cache, simplify_with_attributes_and_locks};
 
-use crate::mesh::{MeshData, Vertex};
+use crate::{
+    mesh::{MeshData, Vertex},
+    meshlets::{self, LodMeshlets},
+};
 
 pub const MAX_LODS: usize = 6;
 
@@ -27,6 +31,17 @@ pub struct Lod {
     /// Largest distance, in mesh units, between this LOD and the original
     /// surface. The GPU projects it to pixels to pick a LOD.
     pub error: f32,
+    /// Its triangles in meshlets, which `indices` is in the order of.
+    pub meshlets: LodMeshlets,
+}
+
+impl Lod {
+    /// A LOD of `indices` into `vertices`, ordered for the vertex cache and
+    /// then split into meshlets.
+    pub fn new(indices: &[u32], error: f32, vertices: &[Vertex]) -> Self {
+        let (indices, meshlets) = meshlets::build(&optimize_vertex_cache(indices, vertices.len()), vertices);
+        Self { indices, error, meshlets }
+    }
 }
 
 /// One of a mesh's LODs, as the editor shows it.
@@ -68,7 +83,7 @@ pub fn lod_at_share(ends: &[f32], count: usize, share: f32) -> usize {
 }
 
 /// LOD 0 is the original mesh with its triangles reordered for the vertex
-/// cache; each further LOD has about half the triangles of the one before.
+/// cache and into meshlets; each further LOD has about half the triangles of the one before.
 pub fn build_lods(mesh: &MeshData) -> Vec<Lod> {
     let vertex_count = mesh.vertices.len();
     let mut lods = full_lod(mesh);
@@ -105,7 +120,7 @@ pub fn build_lods(mesh: &MeshData) -> Vec<Lod> {
         if indices.is_empty() || indices.len() as f32 > previous as f32 * (1.0 - MIN_PROGRESS) {
             break;
         }
-        lods.push(Lod { indices: optimize_vertex_cache(&indices, vertex_count), error });
+        lods.push(Lod::new(&indices, error, &mesh.vertices));
     }
     lods
 }
@@ -139,9 +154,9 @@ pub fn error_at(mesh: &MeshData, triangles: usize) -> f32 {
 }
 
 /// LOD 0 alone, the mesh in full with its triangles reordered for the
-/// vertex cache, for a mesh imported without LODs.
+/// vertex cache and into meshlets, for a mesh imported without LODs.
 pub fn full_lod(mesh: &MeshData) -> Vec<Lod> {
-    vec![Lod { indices: optimize_vertex_cache(&mesh.indices, mesh.vertices.len()), error: 0.0 }]
+    vec![Lod::new(&mesh.indices, 0.0, &mesh.vertices)]
 }
 
 #[cfg(test)]

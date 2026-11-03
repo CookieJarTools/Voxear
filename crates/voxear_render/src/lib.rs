@@ -22,6 +22,7 @@ mod lod;
 mod lod_group;
 mod mesh;
 mod mesh_tools;
+mod meshlets;
 mod model_lods;
 mod passes;
 mod payload;

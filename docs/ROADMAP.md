@@ -805,6 +805,18 @@ Done so far:
     the view's meshlets face away and are culled.
 - Still to come for it: double-sided materials, so cone culling can skip them and shadows can cull back faces
   where the material allows.
+- **Ambient occlusion (GTAO)**, as Jimenez et al. and Intel's XeGTAO work it out, from depth drawn before shading.
+  - The two-phase culling's passes draw depth first, then shade each pixel once.
+  - Ambient occlusion takes only the sky's light away, with specular occlusion for reflections; the sun and lamps
+    are untouched.
+  - At half resolution by default: each frame searches one pixel of each 2x2, and the temporal pass, at full
+    resolution, fills in the rest from what lies on the same surface.
+  - Settings in `[post.ambient_occlusion]`: radius, strength, a tint for stylised looks, quality, and
+    `full_resolution`.
+  - An AO debug view (F7, or `--debug-view ao`).
+  - On an RTX 3070 at 1440p it costs about 0.35 ms (Stress), and full resolution about three times that.
+- Still to come: the post-processing settings, AO's among them, in the editor and the C# API; today they are in a
+  scene's `[post]` section.
 
 Next:
 - Area and tube lights, IES profiles and light cookies, sky and atmosphere.
@@ -813,7 +825,6 @@ Next:
 - Upscalers (FSR built in, DLSS and XeSS optional), colour grading LUTs, and local post volumes.
 - **Real-time voxel GI** (clipmaps, then injection, gathering and the radiance cache).
 - Baked lightmapper, light probes and reflection probes.
-- Ambient occlusion (GTAO), with a strength and an optional tint.
 - Reflections: screen-space reflections, falling back to reflection probes.
 - Stylised shading: shadows tinted a colour, and foliage shading (wrap lighting, light through the leaves, and a
   rim light tinted by the sun).

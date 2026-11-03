@@ -1430,3 +1430,27 @@ fn a_tint_colours_only_occluded_light() {
         "the corner turns purple, more red and blue than green: {corner_tinted:?} from {corner_plain:?}"
     );
 }
+
+#[test]
+fn half_resolution_ambient_occlusion_looks_as_full_resolution_does() {
+    use voxear_render::AmbientOcclusion;
+    let half = AmbientOcclusion::default();
+    let full = AmbientOcclusion { full_resolution: true, ..half };
+    let view = voxear_render::DEBUG_VIEW_AMBIENT_OCCLUSION;
+    let (Some(searched), Some(filled)) =
+        (corner_render(Meshlets::Compute, full, view), corner_render(Meshlets::Compute, half, view))
+    else {
+        return;
+    };
+    keep_image("corner ao full resolution.png", &searched);
+    keep_image("corner ao half resolution.png", &filled);
+    // Over the whole picture, grey by grey, half resolution strays little on average.
+    let greys = |pixels: &[u8]| pixels.chunks_exact(4).map(|pixel| i32::from(pixel[0])).collect::<Vec<_>>();
+    let (searched_greys, filled_greys) = (greys(&searched), greys(&filled));
+    let total: i32 = searched_greys.iter().zip(&filled_greys).map(|(a, b)| (a - b).abs()).sum();
+    let mean = total as f32 / searched_greys.len() as f32;
+    assert!(mean < 3.0, "on average {mean} greys apart");
+    let corner = |pixels: &[u8]| rgb_at(pixels, corner_pixel(IN_THE_CORNER))[0];
+    assert!(corner(&searched).abs_diff(corner(&filled)) <= 12, "{} and {}", corner(&searched), corner(&filled));
+    assert!(rgb_at(&filled, corner_pixel(OPEN_FLOOR)).iter().all(|&c| c >= 250), "the open floor stays open");
+}

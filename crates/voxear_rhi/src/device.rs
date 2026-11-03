@@ -310,6 +310,14 @@ unsafe extern "system" fn log_validation(
     data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
     _user: *mut c_void,
 ) -> vk::Bool32 {
+    let id = unsafe { (*data).message_id_name_as_c_str() }.map(|m| m.to_string_lossy()).unwrap_or_default();
+    // A vertex output that the fragment shader does not read is allowed by
+    // the spec. The depth passes share the forward vertex shader with a
+    // fragment shader that reads less, and Slang drops what it does not read,
+    // so this would be said for every depth pipeline made.
+    if id.contains("OutputNotConsumed") {
+        return vk::FALSE;
+    }
     let message = unsafe { (*data).message_as_c_str() }.map(|m| m.to_string_lossy()).unwrap_or_default();
     if severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
         tracing::error!(target: "vulkan", "{message}");

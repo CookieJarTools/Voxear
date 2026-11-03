@@ -9,12 +9,19 @@
 //! then these passes run, then **Opaque (early)** and **Opaque (late)** draw
 //! the same lists again over that depth, shading each pixel once:
 //!
-//! 1. **GTAO** searches each pixel's horizons at full resolution, with
-//!    normals rebuilt from depth.
+//! 1. **GTAO** searches each pixel's horizons, with normals rebuilt from
+//!    depth.
 //! 2. **AO denoise** blurs it across the surface, not across edges.
 //! 3. **AO temporal** blends it with last frame's result, reprojected by the
 //!    camera's motion, into one of two history images. The opaque passes read
 //!    that one.
+//!
+//! Unless the settings ask for full resolution, the first two passes run at
+//! half resolution: each of their pixels stands for one pixel of its 2x2 at
+//! full resolution, a different one each frame, so four frames cover them
+//! all. The temporal pass, always at full resolution, takes each pixel's
+//! occlusion from the nearest of those that lie on its surface. That is
+//! about a quarter of the cost, and the history hides the rest.
 //!
 //! The shaders are in `shaders/ambient_occlusion.slang`, and what the opaque
 //! passes do with it in `shaders/occlusion.slang`.
@@ -39,6 +46,8 @@ pub struct Targets {
     previous: ImageId,
     /// What the opaque passes read: this frame's result.
     pub current: ImageId,
+    /// How many times the first two passes' images are halved: 0 or 1.
+    level: u32,
 }
 
 impl Targets {
@@ -50,14 +59,19 @@ impl Targets {
         bindless: &mut Bindless,
         extent: vk::Extent2D,
         history: usize,
+        full_resolution: bool,
     ) -> Result<Self> {
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
-        let full = |format| ImageDesc::new(extent.width, extent.height, format, usage);
+        let level = u32::from(!full_resolution);
+        let halved = |size: u32| size.div_ceil(1 << level);
+        let search = ImageDesc::new(halved(extent.width), halved(extent.height), AO_FORMAT, usage);
+        let full = ImageDesc::new(extent.width, extent.height, AO_HISTORY_FORMAT, usage);
         Ok(Self {
-            raw: fg.create_image(gpu, bindless, "ao", full(AO_FORMAT))?,
-            denoised: fg.create_image(gpu, bindless, "ao denoised", full(AO_FORMAT))?,
-            previous: fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], full(AO_HISTORY_FORMAT))?,
-            current: fg.history_image(gpu, bindless, HISTORY_NAMES[history], full(AO_HISTORY_FORMAT))?,
+            raw: fg.create_image(gpu, bindless, "ao", search)?,
+            denoised: fg.create_image(gpu, bindless, "ao denoised", search)?,
+            previous: fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], full)?,
+            current: fg.history_image(gpu, bindless, HISTORY_NAMES[history], full)?,
+            level,
         })
     }
 }
@@ -65,7 +79,8 @@ impl Targets {
 /// Records the three passes, reading `depth` once the depth passes drew it.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), depth: ImageId, ao: Targets) {
     let depth_texture = fg.texture(depth).0;
-    let Targets { raw, denoised, previous, current } = ao;
+    let Targets { raw, denoised, previous, current, level } = ao;
+    let push = Push { level, ..push };
 
     let gtao = Push { textures: [depth_texture, 0, 0, 0], ..push };
     let images = [(depth, ImageAccess::Sampled), (raw, ImageAccess::ColorAttachment)];

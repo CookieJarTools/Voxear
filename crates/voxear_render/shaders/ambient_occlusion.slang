@@ -4,6 +4,12 @@
 // that blends it with last frame's. The opaque passes read the result
 // (occlusion.slang). The horizon search follows Intel's XeGTAO. See
 // src/ambient_occlusion.rs for the order.
+//
+// The first two passes may run at half resolution, push.level 1. Each of
+// their pixels then stands for one full-resolution pixel of its 2x2, a
+// different one each frame, and the temporal pass, always at full
+// resolution, takes each pixel's occlusion from the nearest of them that lie
+// on its surface.
 
 #include "common.slang"
 
@@ -35,10 +41,45 @@ AoOut aoVertex(uint vertexId : SV_VertexID)
     return o;
 }
 
-float loadTexture(uint texture, int2 pixel)
+float loadIn(uint texture, int2 pixel, int2 size)
 {
-    int2 size = int2(push.frame->viewport);
     return textures[NonUniformResourceIndex(texture)].Load(int3(clamp(pixel, int2(0), size - 1), 0)).r;
+}
+
+float loadDepth(uint depthTexture, int2 pixel)
+{
+    return loadIn(depthTexture, pixel, int2(push.frame->viewport));
+}
+
+// The size of the images the first two passes write.
+int2 searchSize()
+{
+    int2 full = int2(push.frame->viewport);
+    return (full + (1 << push.level) - 1) >> push.level;
+}
+
+float loadSearch(uint texture, int2 pixel)
+{
+    return loadIn(texture, pixel, searchSize());
+}
+
+// Which pixel of each 2x2 the half-resolution passes stand for this frame:
+// the diagonal first, so two frames already cover it evenly.
+int2 searchOffset()
+{
+    if (push.level == 0)
+    {
+        return int2(0);
+    }
+    static const int2 order[4] = { int2(0, 0), int2(1, 1), int2(1, 0), int2(0, 1) };
+    return order[push.frame->frameIndex % 4];
+}
+
+// The full-resolution pixel a pixel of the first two passes stands for.
+int2 fullPixel(int2 pixel)
+{
+    int2 full = pixel * (1 << push.level) + searchOffset();
+    return clamp(full, int2(0), int2(push.frame->viewport) - 1);
 }
 
 // Where a pixel's centre lies in view space at its depth. Depth is infinite
@@ -55,7 +96,7 @@ float3 viewPosition(float2 pixel, float depth)
 
 float3 viewPositionAt(uint depthTexture, int2 pixel)
 {
-    return viewPosition(float2(pixel) + 0.5, loadTexture(depthTexture, pixel));
+    return viewPosition(float2(pixel) + 0.5, loadDepth(depthTexture, pixel));
 }
 
 // The surface's normal from its depth: across each axis, the neighbour
@@ -102,8 +143,8 @@ float4 gtaoFragment(AoOut input) : SV_Target
 {
     Frame* frame = push.frame;
     uint depthTexture = push.textures.x;
-    int2 pixel = int2(input.position.xy);
-    float depth = loadTexture(depthTexture, pixel);
+    int2 pixel = fullPixel(int2(input.position.xy));
+    float depth = loadDepth(depthTexture, pixel);
     if (depth <= 0.0)
     {
         return 1.0;
@@ -175,32 +216,37 @@ float4 gtaoFragment(AoOut input) : SV_Target
 
 // ---------------------------------------------------------------- Denoise
 
-// A 5x5 blur that only mixes pixels lying close to this pixel's plane, so
+// A 5x5 blur (3x3 at half resolution) that only mixes pixels lying close to this pixel's plane, so
 // occlusion does not bleed across edges onto surfaces in front or behind.
 // textures: x GTAO's visibility, y depth.
 [shader("fragment")]
 float4 aoDenoiseFragment(AoOut input) : SV_Target
 {
     uint depthTexture = push.textures.y;
-    int2 pixel = int2(input.position.xy);
-    float depth = loadTexture(depthTexture, pixel);
+    int2 cell = int2(input.position.xy);
+    int2 pixel = fullPixel(cell);
+    float depth = loadDepth(depthTexture, pixel);
     if (depth <= 0.0)
     {
         return 1.0;
     }
     float3 centre = viewPosition(float2(pixel) + 0.5, depth);
     float3 normal = viewNormal(depthTexture, pixel, centre);
-    float tolerance = 0.02 * centre.z;
+    // At half resolution a 3x3 covers what a 5x5 does at full, so the blur
+    // stays as wide on screen; its neighbours lie twice as far across the
+    // surface, so they may stray twice as far from its plane.
+    int reach = 2 >> push.level;
+    float tolerance = 0.02 * float(1 << push.level) * centre.z;
     float sum = 0.0;
     float weight = 0.0;
-    for (int y = -2; y <= 2; y++)
+    for (int y = -reach; y <= reach; y++)
     {
-        for (int x = -2; x <= 2; x++)
+        for (int x = -reach; x <= reach; x++)
         {
-            int2 at = pixel + int2(x, y);
-            float distance = abs(dot(viewPositionAt(depthTexture, at) - centre, normal));
+            int2 at = cell + int2(x, y);
+            float distance = abs(dot(viewPositionAt(depthTexture, fullPixel(at)) - centre, normal));
             float w = saturate(1.0 - distance / tolerance);
-            sum += loadTexture(push.textures.x, at) * w;
+            sum += loadSearch(push.textures.x, at) * w;
             weight += w;
         }
     }
@@ -208,6 +254,66 @@ float4 aoDenoiseFragment(AoOut input) : SV_Target
 }
 
 // ---------------------------------------------------------------- Temporal
+
+// This frame's denoised occlusion at a full-resolution pixel, with the range
+// of what lies around it for clamping last frame's. At full resolution that
+// is the pixel and its 3x3. At half resolution it is a blend of the four
+// searched pixels nearest it, each by how near it is and how close its depth
+// is to this pixel's, so occlusion does not cross from one surface onto the
+// next; when none of them lie on this surface, the one nearest in depth.
+float upsample(int2 pixel, float depth, out float low, out float high)
+{
+    uint denoised = push.textures.x;
+    if (push.level == 0)
+    {
+        float current = loadSearch(denoised, pixel);
+        low = current;
+        high = current;
+        for (int y = -1; y <= 1; y++)
+        {
+            for (int x = -1; x <= 1; x++)
+            {
+                float value = loadSearch(denoised, pixel + int2(x, y));
+                low = min(low, value);
+                high = max(high, value);
+            }
+        }
+        return current;
+    }
+
+    float z = viewPosition(float2(pixel) + 0.5, depth).z;
+    float tolerance = 0.05 * z;
+    int2 first = (pixel - searchOffset()) >> 1;
+    float sum = 0.0;
+    float weight = 0.0;
+    float nearest = 1.0;
+    float nearestGap = 1e30;
+    low = 1.0;
+    high = 0.0;
+    for (int y = 0; y <= 1; y++)
+    {
+        for (int x = 0; x <= 1; x++)
+        {
+            int2 cell = first + int2(x, y);
+            int2 at = fullPixel(cell);
+            float value = loadSearch(denoised, cell);
+            float gap = abs(viewPositionAt(push.textures.z, at).z - z);
+            int2 apart = abs(at - pixel);
+            float w = saturate(1.0 - gap / tolerance) / float(1 + apart.x + apart.y);
+            sum += value * w;
+            weight += w;
+            if (gap < nearestGap)
+            {
+                nearestGap = gap;
+                nearest = value;
+            }
+            low = min(low, value);
+            high = max(high, value);
+        }
+    }
+    return weight > 1e-4 ? sum / weight : nearest;
+}
+
 
 // Blends with last frame's result, found where this pixel's surface was on
 // screen then, as TAA does. Velocity is not drawn yet this early in the
@@ -220,9 +326,15 @@ float4 aoTemporalFragment(AoOut input) : SV_Target
 {
     Frame* frame = push.frame;
     int2 pixel = int2(input.position.xy);
-    float current = loadTexture(push.textures.x, pixel);
-    float depth = loadTexture(push.textures.z, pixel);
-    if (frame->post.aoReset != 0 || depth <= 0.0)
+    float depth = loadDepth(push.textures.z, pixel);
+    if (depth <= 0.0)
+    {
+        return 1.0;
+    }
+    float low;
+    float high;
+    float current = upsample(pixel, depth, low, high);
+    if (frame->post.aoReset != 0)
     {
         return current;
     }
@@ -232,17 +344,6 @@ float4 aoTemporalFragment(AoOut input) : SV_Target
     if (previous.w <= 0.0 || any(previousUv < 0.0) || any(previousUv > 1.0))
     {
         return current;
-    }
-    float low = current;
-    float high = current;
-    for (int y = -1; y <= 1; y++)
-    {
-        for (int x = -1; x <= 1; x++)
-        {
-            float value = loadTexture(push.textures.x, pixel + int2(x, y));
-            low = min(low, value);
-            high = max(high, value);
-        }
     }
     float history = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], previousUv, 0.0).r;
     return lerp(current, clamp(history, low, high), HISTORY);

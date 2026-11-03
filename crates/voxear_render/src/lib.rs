@@ -1334,7 +1334,10 @@ impl View {
 
         let history = (setup.frame_index % 2) as usize;
         let ambient_occlusion = match occluded {
-            true => Some(ambient_occlusion::Targets::new(fg, gpu, bindless, extent, history)?),
+            true => {
+                let full = extracted.post.ambient_occlusion.full_resolution;
+                Some(ambient_occlusion::Targets::new(fg, gpu, bindless, extent, history, full)?)
+            }
             false => None,
         };
 

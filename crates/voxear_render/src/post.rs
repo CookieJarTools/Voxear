@@ -84,6 +84,10 @@ pub struct AmbientOcclusion {
     /// a warm brown or a purple tints contact shadows, as stylised looks do.
     pub tint: [f32; 3],
     pub quality: AmbientOcclusionQuality,
+    /// Searches every pixel, rather than one of each 2x2 a frame with the
+    /// temporal pass filling in the rest. Sharper in fine detail, and about
+    /// four times the cost.
+    pub full_resolution: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,7 +241,14 @@ impl Default for PostProcess {
 
 impl Default for AmbientOcclusion {
     fn default() -> Self {
-        Self { enabled: true, radius: 0.75, strength: 1.0, tint: [0.0; 3], quality: AmbientOcclusionQuality::Medium }
+        Self {
+            enabled: true,
+            radius: 0.75,
+            strength: 1.0,
+            tint: [0.0; 3],
+            quality: AmbientOcclusionQuality::Medium,
+            full_resolution: false,
+        }
     }
 }
 

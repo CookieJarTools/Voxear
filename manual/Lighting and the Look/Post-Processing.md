@@ -48,6 +48,21 @@ The values shown are the Voxear Look's.
 | `mode = "taa"` | How edges are smoothed: `"taa"` blends each frame with the ones before; `"fxaa"` is simpler, smoothing each frame on its own; `"off"` turns it off |
 | `sharpness = 0.25` | Sharpens the picture again after smoothing |
 
+**Shade in corners**, `[post.ambient_occlusion]`
+
+Ambient occlusion darkens the light from the sky where surfaces close in on each other: in corners, under furniture, and where an Obj meets the floor. It only takes away the sky's light, so sunlight and lamps are not changed.
+
+| Setting | What it does |
+| --- | --- |
+| `enabled = true` | Corners and creases darken |
+| `radius = 0.75` | How far, in metres, a surface looks for what shades it |
+| `strength = 1.0` | 1 is as measured. Higher darkens more, and 0 changes nothing |
+| `tint = [0, 0, 0]` | The colour that fully shaded light takes on. Black only darkens; a warm brown or a purple gives a stylised look |
+| `quality = "medium"` | `"low"`, `"medium"`, `"high"` or `"ultra"`. Higher looks smoother and costs more |
+| `full_resolution = false` | Works out every pixel each frame. Normally a quarter of the pixels are worked out each frame, and the frames before fill in the rest. Full resolution is sharper in fine detail, and costs about three times as much |
+
+To see the occlusion on its own, press F7 in a game window, or use `vox render --debug-view ao`.
+
 **Glow**, `[post.bloom]`
 
 | Setting | What it does |

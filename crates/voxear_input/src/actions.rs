@@ -56,7 +56,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
-use crate::devices::{Devices, Scheme};
+use crate::devices::{Device, Devices, Scheme};
 
 pub const ACTIONS_FORMAT: u32 = 1;
 
@@ -359,10 +359,10 @@ impl Action {
 
     /// Reads its bindings from the devices, and moves its phases on by
     /// `dt` seconds.
-    fn update(&mut self, devices: &Devices, dt: f32) {
+    fn update(&mut self, devices: &Devices, only: Option<Device>, dt: f32) {
         let mut best = [0.0f32; 2];
         for (binding, processors) in self.data.bindings.iter().zip(&self.processors) {
-            let mut value = read(binding, devices);
+            let mut value = read(binding, devices, only);
             for processor in processors {
                 value = processor.apply(value);
             }
@@ -396,11 +396,12 @@ impl Action {
 }
 
 /// A binding's value from the devices: a control's, or a composite's.
-fn read(binding: &Binding, devices: &Devices) -> [f32; 2] {
+fn read(binding: &Binding, devices: &Devices, only: Option<Device>) -> [f32; 2] {
     let full = binding.full();
-    let one = |path: &Option<String>| path.as_deref().and_then(|path| devices.read(path)).map_or(0.0, |v| v[0]);
+    let one =
+        |path: &Option<String>| path.as_deref().and_then(|path| devices.read_from(path, only)).map_or(0.0, |v| v[0]);
     if let Some(path) = &full.path {
-        let value = devices.read(path).unwrap_or_default();
+        let value = devices.read_from(path, only).unwrap_or_default();
         // A stick gets its deadzone, unless the binding gives one.
         let stick = path.ends_with("Stick") && !full.processors.iter().any(|p| p.starts_with("deadzone"));
         return if stick { Processor::Deadzone(STICK_DEADZONE.0, STICK_DEADZONE.1).apply(value) } else { value };
@@ -450,14 +451,21 @@ impl Actions {
         self.list.iter().position(|a| a.data.name == action && map.is_none_or(|map| a.map == map))
     }
 
-    pub fn update(&mut self, devices: &Devices, dt: f32) {
+    /// Reads every action from the devices, or from one only, as a
+    /// player's are.
+    pub fn update(&mut self, devices: &Devices, only: Option<Device>, dt: f32) {
         for action in &mut self.list {
             if self.off.contains(&action.map) {
                 action.state = ActionState::default();
                 continue;
             }
-            action.update(devices, dt);
+            action.update(devices, only, dt);
         }
+    }
+
+    /// An action's state this frame.
+    pub fn state(&self, action: usize) -> ActionState {
+        self.list.get(action).map(|a| a.state).unwrap_or_default()
     }
 
     /// Lets go of every action at once, as while listening for a rebind.
@@ -544,20 +552,20 @@ mod tests {
         devices.set_key("W", true);
         devices.set_key("D", true);
         devices.set_key("Space", true);
-        actions.update(&devices, 0.016);
+        actions.update(&devices, None, 0.016);
         let [x, y] = actions.list[moves].state.value;
         assert!((x - y).abs() < 1e-6 && (x.hypot(y) - 1.0).abs() < 1e-5, "a diagonal is as long as a straight line");
         let state = actions.list[jump].state;
         assert!(state.held && state.pressed && state.performed);
-        actions.update(&devices, 0.016);
+        actions.update(&devices, None, 0.016);
         assert!(!actions.list[jump].state.pressed, "pressed only the frame it went down");
 
         devices.set_key("E", true);
-        actions.update(&devices, 0.3);
+        actions.update(&devices, None, 0.3);
         assert!(!actions.list[charge].state.performed, "not held long enough");
-        actions.update(&devices, 0.3);
+        actions.update(&devices, None, 0.3);
         assert!(actions.list[charge].state.performed, "held past half a second");
-        actions.update(&devices, 0.3);
+        actions.update(&devices, None, 0.3);
         assert!(!actions.list[charge].state.performed, "performed once until let go");
 
         let mut pad = crate::devices::Pad::default();
@@ -565,7 +573,7 @@ mod tests {
         devices.set_key("W", false);
         devices.set_key("D", false);
         devices.set_pad(0, pad);
-        actions.update(&devices, 0.016);
+        actions.update(&devices, None, 0.016);
         assert_eq!(actions.list[moves].state.value, [0.0, 0.0], "inside the stick's deadzone");
     }
 

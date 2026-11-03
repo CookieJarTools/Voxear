@@ -119,6 +119,8 @@ protected override void Start()
 
 `Input.Prompt("Jump")` says what to press for an action, in the scheme the player used last: "Space" on the keyboard, or "A" on an Xbox pad and "Cross" on a PlayStation one. It changes as soon as the player picks up the other device. `Input.SchemeChanged` tells you when, to update your on-screen prompts.
 
+To draw a prompt the way the player's device marks its buttons, use a `Prompt` element: see [[Showing the Controls]].
+
 ## Rebinding
 
 A settings screen lets players change their bindings. `Input.Rebind` waits for the next key or button pressed, and binds it:
@@ -136,6 +138,32 @@ For a whole controls screen ready to use, with the keyboard or gamepad drawn and
 ## Menus
 
 Turn a map off while a menu is open, so the player does not walk while choosing: `Input.DisableMap("Player")`, then `Input.EnableMap("Player")` when it closes.
+
+## Several players on one machine
+
+For a game several people play side by side, each with a pad of their own, turn on joining:
+
+```csharp
+Input.Joining = true;
+Input.PlayerJoined += player => Spawn(player.Index);
+```
+
+While joining is on, a button pressed on a device no one has yet makes a new player of it: a gamepad, or the keyboard and mouse together. Each player reads every action from their own device only:
+
+```csharp
+foreach (var player in Input.Players)
+{
+	if (player.Pressed("Jump"))
+	{
+		Jump(player.Index);
+	}
+	Walk(player.Index, player.Vector2("Move"));
+}
+```
+
+`Input.Players` lists them in the order they joined, each with its `Index`, its `Device` (`InputDevice.Gamepad` or `InputDevice.KeyboardMouse`), the device's name, and whether it is `Connected`. A player whose pad is unplugged stays in the list, and plays on when the same pad comes back. `player.Remove()` takes a player away, and `Input.SetMostPlayers(2)` limits how many may join; 4 can unless you say. Turn joining off once everyone is in, so a stray button press doesn't add anyone.
+
+Until anyone joins, `Input.Pressed` and the rest read every device as one, as a game for one player does. They still do once players have joined, which suits menus anyone may use.
 
 ## The devices themselves
 

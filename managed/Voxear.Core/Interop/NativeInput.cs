@@ -16,6 +16,8 @@ internal static unsafe class NativeInput
 	public const int TextName = 6;
 	public const int TextCategories = 7;
 	public const int TextActions = 8;
+	public const int TextPlayers = 9;
+	public const int TextJoined = 10;
 
 	public const int ChangeRebind = 0;
 	public const int ChangeListen = 1;
@@ -25,6 +27,9 @@ internal static unsafe class NativeInput
 	public const int ChangeMap = 5;
 	public const int ChangeCancel = 6;
 	public const int ChangeResetAction = 7;
+	public const int ChangeJoining = 8;
+	public const int ChangeRemovePlayer = 9;
+	public const int ChangeMostPlayers = 10;
 
 	/// <summary>The control bits a key or a mouse button reads as.</summary>
 	public const int ControlDown = 1;

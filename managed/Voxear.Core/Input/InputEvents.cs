@@ -45,6 +45,7 @@ internal static class InputEvents
 			Input.RaiseSchemeChanged(now);
 		}
 		scheme = now;
+		Input.RaiseJoined();
 		FinishRebind();
 	}
 

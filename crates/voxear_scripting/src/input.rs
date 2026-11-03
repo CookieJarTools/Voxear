@@ -28,6 +28,8 @@ const TEXT_REBOUND: i32 = 5;
 const TEXT_NAME: i32 = 6;
 const TEXT_CATEGORIES: i32 = 7;
 const TEXT_ACTIONS: i32 = 8;
+const TEXT_PLAYERS: i32 = 9;
+const TEXT_JOINED: i32 = 10;
 
 /// What [`input_change`] does.
 const CHANGE_REBIND: i32 = 0;
@@ -38,6 +40,38 @@ const CHANGE_RESET: i32 = 4;
 const CHANGE_MAP: i32 = 5;
 const CHANGE_CANCEL: i32 = 6;
 const CHANGE_RESET_ACTION: i32 = 7;
+const CHANGE_JOINING: i32 = 8;
+const CHANGE_REMOVE_PLAYER: i32 = 9;
+const CHANGE_MOST_PLAYERS: i32 = 10;
+
+/// An action's number as scripts give it: the action in its low 16 bits, and
+/// above them one more than the player whose reading of it they want, or 0
+/// for the game's own, every device as one.
+fn player_action(code: i32) -> (Option<usize>, voxear_input::ActionId) {
+    let code = code.max(0) as u32;
+    let player = (code >> 16) as usize;
+    (player.checked_sub(1), voxear_input::ActionId((code & 0xffff) as usize))
+}
+
+/// Every player, a line each: 1 while their device is there, the kind of
+/// device (`Keyboard` or `Gamepad`) and its name, between tabs; then a last
+/// line, 1 while joining is on.
+fn players(input: &Input) -> String {
+    let mut lines: Vec<String> = (0..input.players())
+        .map(|player| {
+            let connected = i32::from(input.player_connected(player));
+            match input.player_device(player) {
+                Some(voxear_input::Device::Pad(id)) => {
+                    let name = input.devices().pad(id).map_or("", |pad| pad.name.as_str());
+                    format!("{connected}\tGamepad\t{name}")
+                }
+                _ => format!("{connected}\tKeyboard\tKeyboard and Mouse"),
+            }
+        })
+        .collect();
+    lines.push(i32::from(input.is_joining()).to_string());
+    lines.join("\n")
+}
 
 fn with_input<T>(f: impl FnOnce(&mut Input) -> T) -> Option<T> {
     with_services(|services| services.input().map(f)).flatten()
@@ -110,7 +144,12 @@ pub(crate) unsafe extern "C" fn input_action(name: *const u8, len: i32) -> i32 {
 
 /// An action this frame, written to `out`; 0 when there is no input here.
 pub(crate) unsafe extern "C" fn input_state(action: i32, out: *mut InputActionData) -> i32 {
-    let Some(state) = with_input(|input| input.state(voxear_input::ActionId(action.max(0) as usize))) else {
+    let (player, action) = player_action(action);
+    let read = |input: &mut Input| match player {
+        Some(player) => input.player_state(player, action),
+        None => input.state(action),
+    };
+    let Some(state) = with_input(read) else {
         return 0;
     };
     let flags = i32::from(state.held)
@@ -184,6 +223,8 @@ pub(crate) unsafe extern "C" fn input_text(what: i32, action: i32, buffer: *mut 
             let lines = input.categories().iter().map(|category| format!("{}\t{}", category.name, category.color));
             Some(lines.collect::<Vec<_>>().join("\n"))
         }
+        TEXT_PLAYERS => Some(players(input)),
+        TEXT_JOINED => Some(input.joined().iter().map(usize::to_string).collect::<Vec<_>>().join("\n")),
         _ => None,
     });
     let Some(text) = text.flatten() else { return -1 };
@@ -238,6 +279,18 @@ pub(crate) unsafe extern "C" fn input_change(
             0
         }
         CHANGE_RESET_ACTION => input.reset_action(action).map_or(-1, |()| 0),
+        CHANGE_JOINING => {
+            input.set_joining(extra != 0);
+            0
+        }
+        CHANGE_REMOVE_PLAYER => {
+            input.remove_player(binding);
+            0
+        }
+        CHANGE_MOST_PLAYERS => {
+            input.set_most_players(extra.max(1) as usize);
+            0
+        }
         _ => -1,
     });
     done.unwrap_or(-2)

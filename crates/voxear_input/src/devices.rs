@@ -76,10 +76,21 @@ impl Family {
 /// axis's from -1 to 1, by their names in paths.
 #[derive(Clone, Debug, Default)]
 pub struct Pad {
+    /// Who the system says it is, the same for as long as it stays
+    /// plugged in, as a player paired with it remembers it.
+    pub id: u64,
     pub name: String,
     pub family: Family,
     pub buttons: HashMap<&'static str, f32>,
     pub axes: HashMap<&'static str, f32>,
+}
+
+/// A device a player plays with: the keyboard and mouse together, or a
+/// gamepad by its [`Pad::id`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Device {
+    KeyboardMouse,
+    Pad(u64),
 }
 
 /// The mouse this frame.
@@ -228,7 +239,18 @@ impl Devices {
     /// moves, and a value in `x` for the rest. Nothing for a path that
     /// names no control.
     pub fn read(&self, path: &str) -> Option<[f32; 2]> {
+        self.read_from(path, None)
+    }
+
+    /// A control's value as [`read`](Self::read) has it, from one device
+    /// only when `only` says: the keyboard and mouse, or one pad, as a
+    /// player paired with it reads it.
+    pub fn read_from(&self, path: &str, only: Option<Device>) -> Option<[f32; 2]> {
         let (device, control) = path.split_once('/')?;
+        let pads = |pad: &&Pad| only.is_none_or(|only| only == Device::Pad(pad.id));
+        if matches!(device, "Keyboard" | "Mouse") && only.is_some_and(|only| only != Device::KeyboardMouse) {
+            return Some([0.0; 2]);
+        }
         let one = |down: bool| Some([if down { 1.0 } else { 0.0 }, 0.0]);
         match device {
             "Keyboard" => one(self.keys.contains(control)),
@@ -238,9 +260,13 @@ impl Devices {
                 "Position" => Some(self.mouse.position),
                 _ => MOUSE_BUTTONS.contains(&control).then(|| one(self.buttons.contains(control))).flatten(),
             },
-            "Gamepad" => Some(self.pads.iter().map(|pad| pad_control(pad, control)).fold([0.0; 2], |a, b| {
-                if b[0].hypot(b[1]) > a[0].hypot(a[1]) { b } else { a }
-            })),
+            "Gamepad" => Some(
+                self.pads
+                    .iter()
+                    .filter(pads)
+                    .map(|pad| pad_control(pad, control))
+                    .fold([0.0; 2], |a, b| if b[0].hypot(b[1]) > a[0].hypot(a[1]) { b } else { a }),
+            ),
             _ => None,
         }
     }
@@ -277,6 +303,28 @@ impl Devices {
             }
         }
         None
+    }
+
+    /// A device a key, mouse button or pad button went down on this frame,
+    /// that `taken` does not hold, as a player joins with: the keyboard
+    /// and mouse, or a pad.
+    pub(crate) fn device_pressed(&self, taken: &[Device]) -> Option<Device> {
+        let free = |device: &Device| !taken.contains(device);
+        let typed = !self.keys_pressed.is_empty() || !self.buttons_pressed.is_empty();
+        if typed && free(&Device::KeyboardMouse) {
+            return Some(Device::KeyboardMouse);
+        }
+        self.pads.iter().enumerate().find_map(|(at, pad)| {
+            let before = self.pads_before.get(at);
+            let was = |name: &str| before.and_then(|b| b.get(name)).copied().unwrap_or(0.0);
+            let pressed = pad.buttons.iter().any(|(name, &value)| value >= 0.5 && was(name) < 0.5);
+            Some(Device::Pad(pad.id)).filter(|device| pressed && free(device))
+        })
+    }
+
+    /// The pad of this id, while it is plugged in.
+    pub fn pad(&self, id: u64) -> Option<&Pad> {
+        self.pads.iter().find(|pad| pad.id == id)
     }
 
     /// Whether Escape went down this frame, which gives up a rebinding.
@@ -325,7 +373,8 @@ impl Devices {
     fn relist_pads(&mut self, gilrs: &gilrs::Gilrs) {
         self.pads = gilrs
             .gamepads()
-            .map(|(_, gamepad)| Pad {
+            .map(|(id, gamepad)| Pad {
+                id: usize::from(id) as u64,
                 name: gamepad.name().to_string(),
                 family: Family::of_vendor(gamepad.vendor_id()),
                 ..Pad::default()

@@ -29,7 +29,7 @@ pub mod layouts;
 
 use anyhow::{Context, Result};
 pub use actions::{ActionKind, ActionState, ActionsFile, Binding, CategoryData};
-pub use devices::{Devices, Family, Mouse, Pad, Scheme};
+pub use devices::{Device, Devices, Family, Mouse, Pad, Scheme};
 pub use glyphs::{Glyph, GlyphShape};
 use winit::event::WindowEvent;
 
@@ -97,6 +97,32 @@ pub struct Input {
     gilrs: Option<gilrs::Gilrs>,
     listening: Option<Listening>,
     rebound: Option<Rebound>,
+    players: Players,
+}
+
+/// The players of a game played by several on one machine, each with the
+/// device they play with and their own reading of every action, and
+/// whether a press on a device no one has yet makes another player.
+#[derive(Default)]
+struct Players {
+    list: Vec<Player>,
+    joining: bool,
+    most: usize,
+    /// The players who joined this frame.
+    joined: Vec<usize>,
+    /// The actions' bindings changed since the players' were copied.
+    stale: bool,
+}
+
+struct Player {
+    device: Device,
+    actions: actions::Actions,
+}
+
+impl Players {
+    fn new() -> Self {
+        Self { most: 4, ..Self::default() }
+    }
 }
 
 impl Default for Input {
@@ -113,19 +139,27 @@ impl Input {
             .map_err(|error| tracing::info!("gamepads will not be read: {error}"))
             .ok();
         let actions = actions::Actions::parse(DEFAULT_ACTIONS).expect("Voxear's own actions read");
-        Self { devices: Devices::default(), actions, gilrs, listening: None, rebound: None }
+        Self { devices: Devices::default(), actions, gilrs, listening: None, rebound: None, players: Players::new() }
     }
 
     /// Input without gamepads, which tests and tools without a desktop use.
     pub fn without_gamepads() -> Self {
         let actions = actions::Actions::parse(DEFAULT_ACTIONS).expect("Voxear's own actions read");
-        Self { devices: Devices::default(), actions, gilrs: None, listening: None, rebound: None }
+        Self {
+            devices: Devices::default(),
+            actions,
+            gilrs: None,
+            listening: None,
+            rebound: None,
+            players: Players::new(),
+        }
     }
 
     /// Reads a project's actions from a `.inputactions` file's text, in
     /// place of those it had.
     pub fn load_actions(&mut self, text: &str) -> Result<()> {
         self.actions = actions::Actions::parse(text)?;
+        self.players.stale = true;
         Ok(())
     }
 
@@ -180,8 +214,9 @@ impl Input {
         }
         match self.listening.take() {
             Some(listening) => self.listen_frame(listening),
-            None => self.actions.update(&self.devices, dt),
+            None => self.actions.update(&self.devices, None, dt),
         }
+        self.update_players(dt);
         self.devices.end_frame();
     }
 
@@ -199,6 +234,7 @@ impl Input {
             self.rebound = Some(Rebound::To(path));
             return;
         };
+        self.players.stale = true;
         match self.actions.rebind(action.0, listening.binding, listening.part.as_deref(), &path) {
             Ok(()) => self.rebound = Some(Rebound::To(path)),
             Err(error) => {
@@ -229,6 +265,7 @@ impl Input {
 
     /// Turns a map's actions on or off, as a game does for its menus.
     pub fn set_map_enabled(&mut self, map: &str, on: bool) {
+        self.players.stale = true;
         self.actions.off.retain(|off| off != map);
         if !on {
             self.actions.off.push(map.to_string());
@@ -289,6 +326,7 @@ impl Input {
     /// Points a binding of an action, or one part of a composite binding,
     /// at a control by its path.
     pub fn rebind(&mut self, action: ActionId, binding: usize, part: Option<&str>, path: &str) -> Result<()> {
+        self.players.stale = true;
         self.actions.rebind(action.0, binding, part, path)
     }
 
@@ -347,6 +385,7 @@ impl Input {
     pub fn load_bindings(&mut self, text: &str) -> Result<()> {
         let saved: std::collections::BTreeMap<String, Vec<Binding>> =
             toml::from_str(text).context("reading saved bindings")?;
+        self.players.stale = true;
         for (name, bindings) in saved {
             let Some(found) = self.actions.find(&name) else { continue };
             let action = &mut self.actions.list[found];
@@ -371,6 +410,7 @@ impl Input {
         let file = self.actions.file.maps.iter().find(|m| m.name == map);
         let original = file.and_then(|m| m.actions.iter().find(|a| a.name == name)).context("no such action")?;
         let bindings = original.bindings.clone();
+        self.players.stale = true;
         let action = &mut self.actions.list[action.0];
         action.data.bindings = bindings;
         action.read_processors()
@@ -379,7 +419,107 @@ impl Input {
     /// Puts every binding back as the actions' file has it.
     pub fn reset_bindings(&mut self) -> Result<()> {
         self.actions = actions::Actions::of(self.actions.file.clone())?;
+        self.players.stale = true;
         Ok(())
+    }
+
+    /// Whether a key, mouse button or pad button pressed on a device no
+    /// player has makes a new player of it, as a game's "press a button to
+    /// join" screen does: up to [`set_most_players`](Self::set_most_players).
+    /// Until anyone joins, the game reads every device as one, as a game
+    /// for one player does.
+    pub fn set_joining(&mut self, on: bool) {
+        self.players.joining = on;
+    }
+
+    pub fn is_joining(&self) -> bool {
+        self.players.joining
+    }
+
+    /// The most players who may join; 4 unless set.
+    pub fn set_most_players(&mut self, most: usize) {
+        self.players.most = most.max(1);
+    }
+
+    /// How many players have joined.
+    pub fn players(&self) -> usize {
+        self.players.list.len()
+    }
+
+    /// The players who joined this frame, by number.
+    pub fn joined(&self) -> &[usize] {
+        &self.players.joined
+    }
+
+    /// Adds a player playing with `device`, as joining does, and gives
+    /// their number; one who has it already keeps it.
+    pub fn add_player(&mut self, device: Device) -> usize {
+        if let Some(at) = self.players.list.iter().position(|p| p.device == device) {
+            return at;
+        }
+        self.players.list.push(Player { device, actions: self.actions.clone() });
+        self.players.list.len() - 1
+    }
+
+    /// Takes a player away; those after them move up a number.
+    pub fn remove_player(&mut self, player: usize) {
+        if player < self.players.list.len() {
+            self.players.list.remove(player);
+        }
+    }
+
+    /// The device a player plays with.
+    pub fn player_device(&self, player: usize) -> Option<Device> {
+        self.players.list.get(player).map(|p| p.device)
+    }
+
+    /// Whether a player's device is there: the keyboard always is, a pad
+    /// while it is plugged in. A player whose pad comes back plays on.
+    pub fn player_connected(&self, player: usize) -> bool {
+        match self.player_device(player) {
+            Some(Device::Pad(id)) => self.devices.pad(id).is_some(),
+            Some(Device::KeyboardMouse) => true,
+            None => false,
+        }
+    }
+
+    /// An action this frame as one player plays it, on their device only.
+    pub fn player_state(&self, player: usize, action: ActionId) -> ActionState {
+        self.players.list.get(player).map(|p| p.actions.state(action.0)).unwrap_or_default()
+    }
+
+    /// An action's prompt as glyphs for one player's device.
+    pub fn player_glyphs(&self, player: usize, action: ActionId) -> Vec<Glyph> {
+        let (scheme, family) = match self.player_device(player) {
+            Some(Device::Pad(id)) => (Scheme::Gamepad, self.devices.pad(id).map(|pad| pad.family).unwrap_or_default()),
+            _ => (Scheme::KeyboardMouse, Family::default()),
+        };
+        let Some(binding) = self.bindings(action).iter().find(|b| b.scheme() == scheme) else { return Vec::new() };
+        let label = |key: &str| self.devices.key_label(key);
+        binding.controls().iter().map(|(_, path)| glyphs::glyph(family, path, &label)).collect()
+    }
+
+    /// Lets someone join while joining is on, and reads each player's
+    /// actions from their own device.
+    fn update_players(&mut self, dt: f32) {
+        self.players.joined.clear();
+        if self.players.stale {
+            self.players.stale = false;
+            for player in &mut self.players.list {
+                player.actions = self.actions.clone();
+            }
+        }
+        let room = self.players.list.len() < self.players.most;
+        if self.players.joining && room && self.listening.is_none() {
+            let taken: Vec<Device> = self.players.list.iter().map(|p| p.device).collect();
+            if let Some(device) = self.devices.device_pressed(&taken) {
+                let joined = self.add_player(device);
+                self.players.joined.push(joined);
+            }
+        }
+        for player in &mut self.players.list {
+            player.actions.update(&self.devices, Some(player.device), dt);
+        }
     }
 
     /// What to press for an action in the scheme used last, as a prompt
@@ -461,6 +601,47 @@ fn pad_label(family: Family, control: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pad(id: u64, south: f32) -> Pad {
+        let mut pad = Pad { id, name: format!("Pad {id}"), ..Pad::default() };
+        pad.buttons.insert("South", south);
+        pad
+    }
+
+    #[test]
+    fn players_join_with_a_device_each_and_read_only_their_own() {
+        let mut input = Input::without_gamepads();
+        let jump = input.action("Jump").unwrap();
+        input.devices_mut().set_pad(0, pad(7, 0.0));
+        input.devices_mut().set_pad(1, pad(9, 0.0));
+        input.update(0.016);
+        assert_eq!(input.players(), 0, "nobody joins before joining is on");
+
+        input.set_joining(true);
+        input.devices_mut().set_pad(1, pad(9, 1.0));
+        input.update(0.016);
+        assert_eq!((input.players(), input.joined()), (1, &[0][..]));
+        assert_eq!(input.player_device(0), Some(Device::Pad(9)));
+        assert!(input.player_state(0, jump).held, "the button that joined is held");
+
+        input.devices_mut().set_key("Space", true);
+        input.update(0.016);
+        assert_eq!(input.player_device(1), Some(Device::KeyboardMouse));
+        input.devices_mut().set_pad(1, pad(9, 0.0));
+        input.update(0.016);
+        assert!(!input.player_state(0, jump).held, "the pad's player lets go");
+        assert!(input.player_state(1, jump).held, "while the keyboard's holds Space");
+        assert!(input.state(jump).held, "and the game as one still hears both");
+        assert!(input.joined().is_empty());
+
+        input.set_most_players(2);
+        input.devices_mut().set_pad(0, pad(7, 1.0));
+        input.update(0.016);
+        assert_eq!(input.players(), 2, "no room for a third");
+        input.remove_player(0);
+        assert_eq!(input.player_device(0), Some(Device::KeyboardMouse), "the rest move up");
+        assert!(input.player_connected(0));
+    }
 
     #[test]
     fn controls_say_which_actions_they_serve_with_their_categories() {

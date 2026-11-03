@@ -230,8 +230,74 @@ public static class Input
 		NativeInput.Change(NativeInput.ChangeReset);
 	}
 
+	/// <summary>
+	/// Whether a button pressed on a device no player has yet makes a new player of it, as a "press a button to join"
+	/// screen does. Until anyone joins, the game reads every device as one, as a game for one player does.
+	/// <code>
+	/// Input.Joining = true;
+	/// Input.PlayerJoined += player => Spawn(player.Index);
+	/// </code>
+	/// </summary>
+	public static bool Joining
+	{
+		get { return PlayerLines()[^1] == "1"; }
+		set { NativeInput.Change(NativeInput.ChangeJoining, 0, 0, value ? 1 : 0); }
+	}
+
+	/// <summary>The players who have joined, in the order they did.</summary>
+	public static IReadOnlyList<InputPlayer> Players
+	{
+		get
+		{
+			var lines = PlayerLines();
+			var players = new List<InputPlayer>();
+			for (var at = 0; at < lines.Length - 1; at++)
+			{
+				var parts = lines[at].Split('\t');
+				var device = parts.Length > 1 && parts[1] == "Gamepad" ? InputDevice.Gamepad : InputDevice.KeyboardMouse;
+				players.Add(new InputPlayer(at, parts[0] == "1", device, parts.Length > 2 ? parts[2] : string.Empty));
+			}
+			return players;
+		}
+	}
+
+	/// <summary>Runs with each player who joins, at the start of the frame after.</summary>
+	public static event Action<InputPlayer>? PlayerJoined;
+
+	/// <summary>The most players who may join; 4 unless set.</summary>
+	public static void SetMostPlayers(int most)
+	{
+		NativeInput.Change(NativeInput.ChangeMostPlayers, 0, 0, most);
+	}
+
 	internal static void RaiseSchemeChanged(ControlScheme scheme)
 	{
 		SchemeChanged?.Invoke(scheme);
+	}
+
+	internal static void RaiseJoined()
+	{
+		if (PlayerJoined == null)
+		{
+			return;
+		}
+		var joined = NativeInput.Text(NativeInput.TextJoined);
+		if (string.IsNullOrEmpty(joined))
+		{
+			return;
+		}
+		var players = Players;
+		foreach (var line in joined.Split('\n'))
+		{
+			if (int.TryParse(line, out var at) && at < players.Count)
+			{
+				PlayerJoined(players[at]);
+			}
+		}
+	}
+
+	private static string[] PlayerLines()
+	{
+		return (NativeInput.Text(NativeInput.TextPlayers) ?? string.Empty).Split('\n');
 	}
 }

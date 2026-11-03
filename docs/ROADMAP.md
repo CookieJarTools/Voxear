@@ -567,7 +567,8 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     maps, actions with their bindings, and properties, saved to the `.inputactions` file as it changes
   - [x] prompt glyphs per device family: keycaps, the mouse's buttons, and each pad's face buttons as Xbox,
     PlayStation and Switch pads mark and colour them, in `<Prompt>` and `PromptView`
-  - [ ] local multiplayer pairing
+  - [x] local multiplayer pairing: `Input.Joining`, a player for each device a button is pressed on, each reading the
+    actions from their own device, `Input.Players` and `PlayerJoined`
 - Localization:
   - [x] string tables (`.strings` files) holding each key's text in every language `voxear.toml` lists, read when the
     game starts and again when one changes, and shipped with every build; in C#, `Localization.Get`, `Format` with

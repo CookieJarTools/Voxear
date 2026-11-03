@@ -18,5 +18,10 @@ internal static class ControlsScreenTests
 		Check.True(list.Children.Count(child => child.HasClass("controls-row")) == 1, "only the header row");
 		var map = new KeymapView(ControlScheme.Gamepad) { Colors = KeymapColors.Categories, Map = "Player" };
 		Check.True(map.Scheme == ControlScheme.Gamepad && map.Map == "Player", "a key map keeps what it was set");
+		var prompt = new PromptView("Jump") { Action = "Player/Crouch" };
+		Check.True(prompt.Action == "Player/Crouch", "a prompt keeps its action");
+		Check.True(!Input.Joining && Input.Players.Count == 0, "nobody has joined");
+		Input.Joining = true;
+		Input.SetMostPlayers(2);
 	}
 }

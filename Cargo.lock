@@ -3914,6 +3914,7 @@ dependencies = [
  "png",
  "raw-window-handle",
  "regex",
+ "semver",
  "serde",
  "serde_json",
  "smithay-client-toolkit",

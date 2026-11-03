@@ -3425,3 +3425,470 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 .input-legend-label {
     color: var(--vx-muted);
 }
+
+/* The Package Manager, as Unity's: the toolbar, the project's packages on the left with the progress line under
+   them, and the picked one's details on the right. The forms open under the + button, and the dialog asking before
+   code arrives covers the window. */
+.packages-panel {
+    flex-direction: column;
+    font-size: 12px;
+    /* Sized by its dock area, as the Build window is, so its forms and dialog can cover it. */
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+}
+
+.packages-add {
+    flex-direction: row;
+    align-items: center;
+    gap: 2px;
+    padding: 0px 6px;
+}
+
+.packages-add-arrow {
+    width: 12px;
+    height: 12px;
+    color: var(--vx-muted);
+}
+
+.packages-search {
+    width: 220px;
+    margin: 0px;
+}
+
+.packages-side {
+    background-color: var(--vx-bg);
+}
+
+.packages-row {
+    flex-direction: column;
+    justify-content: center;
+    align-items: stretch;
+    gap: 2px;
+}
+
+.packages-row-top {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
+.packages-row-title {
+    flex-grow: 1;
+    min-width: 0px;
+    overflow: hidden;
+    font-weight: 500;
+    color: var(--vx-text);
+}
+
+.packages-row-version {
+    flex-shrink: 0;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+/* A newer release or commit, in the accent beside the version in use. */
+.packages-row-update {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 2px;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-accent);
+}
+
+.packages-row-update > Icon {
+    width: 12px;
+    height: 12px;
+}
+
+.packages-row-line {
+    overflow: hidden;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.packages-error {
+    flex-direction: row;
+    align-items: flex-start;
+    flex-shrink: 0;
+    gap: 6px;
+    margin: 4px 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background-color: rgba(235, 87, 87, 0.12);
+    border: 1px solid rgba(235, 87, 87, 0.35);
+}
+
+.packages-error-text {
+    flex-grow: 1;
+    min-width: 0px;
+    white-space: normal;
+    color: var(--vx-x);
+}
+
+.packages-error > .icon-button {
+    width: 18px;
+    height: 18px;
+}
+
+.packages-foot {
+    flex-shrink: 0;
+    min-height: 34px;
+    justify-content: center;
+    border-top: 1px solid var(--vx-line);
+}
+
+.packages-status {
+    padding: 0px 10px;
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.packages-progress {
+    padding-top: 6px;
+}
+
+.packages-progress .build-progress-track {
+    overflow: hidden;
+}
+
+.packages-detail {
+    position: relative;
+}
+
+.packages-detail-body {
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
+    overflow: scroll;
+}
+
+.packages-head {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 6px;
+    min-height: 28px;
+}
+
+.packages-title {
+    flex-grow: 1;
+    min-width: 0px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.packages-subtitle {
+    flex-shrink: 0;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-muted);
+    margin-bottom: 6px;
+}
+
+.packages-fields {
+    flex-shrink: 0;
+    gap: 2px;
+    margin-bottom: 6px;
+}
+
+.packages-field {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+    min-height: 20px;
+}
+
+.packages-value {
+    flex-grow: 1;
+    min-width: 0px;
+    white-space: normal;
+    color: var(--vx-text-2);
+}
+
+.packages-text {
+    flex-shrink: 0;
+    white-space: normal;
+    color: var(--vx-text-2);
+}
+
+.packages-readme {
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 6px;
+    padding: 4px 10px 10px 10px;
+    border-radius: 6px;
+    background-color: var(--vx-bg);
+}
+
+/* The README's Markdown, as VoxDocs draws a page but smaller. */
+.packages-readme .md-p, .packages-readme .md-item-body {
+    white-space: normal;
+    color: var(--vx-text-2);
+    line-height: 18px;
+}
+
+.packages-readme .md-h {
+    white-space: normal;
+    color: var(--vx-text);
+    font-weight: 600;
+    margin-top: 6px;
+}
+
+.packages-readme .md-h1 {
+    font-size: 15px;
+}
+
+.packages-readme .md-h2 {
+    font-size: 13px;
+}
+
+.packages-readme .md-list {
+    gap: 3px;
+}
+
+.packages-readme .md-item {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.packages-readme .md-bullet, .packages-readme .md-number {
+    width: 14px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+    text-align: right;
+}
+
+.packages-readme .md-item-body {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+}
+
+.packages-readme .md-quote {
+    padding: 6px 10px;
+    border-radius: 6px;
+    background-color: var(--vx-field);
+}
+
+.packages-readme .md-code {
+    border-radius: 6px;
+    border: 1px solid var(--vx-line);
+    overflow: hidden;
+}
+
+.packages-readme .md-code-bar {
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+    padding: 0px 4px 0px 10px;
+}
+
+.packages-readme .md-code-language {
+    flex-grow: 1;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.packages-readme .md-code-text {
+    padding: 6px 10px;
+    font-family: mono;
+    font-size: 11px;
+    line-height: 17px;
+}
+
+.packages-readme .md-rule {
+    height: 1px;
+    background-color: var(--vx-line);
+}
+
+.packages-readme .md-image {
+    flex-direction: row;
+    gap: 6px;
+    color: var(--vx-muted);
+}
+
+.packages-heading {
+    margin-top: 8px;
+    flex-shrink: 0;
+}
+
+.packages-doc {
+    flex-shrink: 0;
+    padding-left: 8px;
+    color: var(--vx-text-2);
+}
+
+.packages-sample {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+    height: 28px;
+    padding-left: 8px;
+}
+
+.packages-sample-name {
+    flex-grow: 1;
+    min-width: 0px;
+    color: var(--vx-text-2);
+}
+
+/* Add from Git URL and Add from Registry, under the toolbar's + button. */
+.packages-popup {
+    position: absolute;
+    left: 8px;
+    top: 36px;
+    z-index: 30;
+    flex-direction: column;
+    gap: 8px;
+    width: 380px;
+    padding: 10px;
+    border-radius: 8px;
+    background-color: var(--vx-panel);
+    border: 1px solid var(--vx-line-2);
+    box-shadow: 0px 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.packages-input {
+    height: 24px;
+    padding: 0px 7px;
+    border-radius: 5px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+}
+
+.packages-popup-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
+.packages-popup-row > .packages-input {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.packages-rev {
+    width: 130px;
+    flex-shrink: 0;
+}
+
+.packages-buttons {
+    flex-direction: row;
+    justify-content: flex-end;
+    flex-shrink: 0;
+    gap: 6px;
+}
+
+.packages-registry {
+    width: 440px;
+}
+
+.packages-registry-search {
+    margin: 0px;
+}
+
+.packages-registry-list {
+    height: 240px;
+    border-radius: 6px;
+    background-color: var(--vx-bg);
+}
+
+/* The dialog before code arrives: what comes, goes and moves, and Add. */
+.packages-cover {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+    z-index: 40;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.45);
+}
+
+.packages-dialog {
+    flex-direction: column;
+    gap: 8px;
+    width: 460px;
+    max-height: 90%;
+    padding: 14px;
+    border-radius: 10px;
+    background-color: var(--vx-panel);
+    border: 1px solid var(--vx-line-2);
+    box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.packages-dialog-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.packages-dialog-hint {
+    color: var(--vx-muted);
+}
+
+.packages-dialog-lines {
+    flex-direction: column;
+    flex-shrink: 1;
+    min-height: 0px;
+    gap: 2px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: var(--vx-bg);
+    overflow: scroll;
+}
+
+.packages-dialog-line {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    height: 22px;
+    flex-shrink: 0;
+}
+
+.packages-dialog-mark {
+    width: 12px;
+    font-family: mono;
+    font-weight: 600;
+}
+
+.packages-added {
+    color: var(--vx-success);
+}
+
+.packages-removed {
+    color: var(--vx-x);
+}
+
+.packages-moved {
+    color: var(--vx-accent);
+}
+
+.packages-dialog-name {
+    flex-grow: 1;
+    min-width: 0px;
+    font-weight: 500;
+    color: var(--vx-text);
+}
+
+.packages-dialog-detail {
+    flex-shrink: 0;
+    padding-left: 20px;
+    white-space: normal;
+    font-size: 11px;
+    color: var(--vx-text-2);
+}
+
+.packages-runs-code {
+    color: var(--vx-warning);
+}

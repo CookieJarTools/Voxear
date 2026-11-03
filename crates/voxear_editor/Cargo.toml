@@ -43,6 +43,8 @@ wayland-backend = { version = "0.3", features = ["client_system"] }
 tracy = ["voxear_engine/tracy"]
 
 [dev-dependencies]
+# Versions for the Package Manager's tests.
+semver.workspace = true
 tempfile.workspace = true
 voxear_core.workspace = true
 voxear_scripting.workspace = true

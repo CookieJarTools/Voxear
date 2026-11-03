@@ -84,6 +84,7 @@ use crate::{
     memory_panel::MemoryPanel,
     object_picker::{self, Chosen, ObjectPicker, PickFor},
     objs,
+    package_manager::{PackageManager, PackagesEvent},
     palette::{Added, Keys, Palette, PaletteAction, PaletteCommand, PaletteKey, Picked, Sources},
     profiler::{self, Profiler},
     project_view::{ItemKind, ProjectEvent, ProjectItem, ProjectView},
@@ -165,6 +166,8 @@ struct Nodes {
     input_panel: NodeId,
     /// The Build window's panel.
     build_panel: NodeId,
+    /// The Package Manager's panel.
+    packages_panel: NodeId,
     /// A script field's tooltip, shown under its label.
     tooltip: NodeId,
     /// Over the window, where debug draw's texts show.
@@ -299,6 +302,7 @@ pub struct Editor {
     localization: LocalizationPanel,
     input_actions: InputPanel,
     build_window: BuildWindow,
+    packages: PackageManager,
     /// A reference field's search, and what its keys picked, done next frame.
     picker: ObjectPicker,
     /// The tooltip the pointer rests on, and for how long, in seconds.
@@ -378,6 +382,9 @@ pub struct Editor {
     describing: Option<Receiver<Result<ScriptTypes>>>,
     described_from: Option<SystemTime>,
     scripts_checked: Option<Instant>,
+    /// The scripts build and are described again once no build is under
+    /// way, whether or not a script changed, as after the packages change.
+    rebuild_scripts: bool,
 }
 
 impl Editor {
@@ -449,6 +456,7 @@ impl Editor {
             localization_panel: find(&ui, "localization-panel"),
             input_panel: find(&ui, "input-panel"),
             build_panel: find(&ui, "build-panel"),
+            packages_panel: find(&ui, "packages-panel"),
             tooltip: find(&ui, "tooltip"),
             debug_texts: find(&ui, "debug-texts"),
             status_dot: find(&ui, "status-dot"),
@@ -499,6 +507,7 @@ impl Editor {
         let input_actions = InputPanel::new(&mut ui, nodes.input_panel);
         let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
+        let packages = PackageManager::new(&mut ui, nodes.packages_panel);
         let parts = ["picker", "picker-back", "picker-title", "picker-field", "picker-list", "picker-empty"]
             .map(|name| find(&ui, name));
         let picker = ObjectPicker::new(&mut ui, parts[0], (parts[1], parts[2]), parts[3], parts[4], parts[5]);
@@ -569,6 +578,7 @@ impl Editor {
             localization,
             input_actions,
             build_window,
+            packages,
             picker,
             color_popup,
             hovered_tooltip: None,
@@ -609,6 +619,7 @@ impl Editor {
             describing: None,
             described_from: None,
             scripts_checked: None,
+            rebuild_scripts: false,
             layout_checked: Instant::now(),
         };
         editor.restore_layout();
@@ -786,6 +797,10 @@ impl Editor {
             }
         }
         self.update_input_actions();
+        {
+            profile_scope!("Package Manager");
+            self.update_packages(renderer);
+        }
         self.update_drawer();
         self.update_side_bar();
         self.update_prefab_mode(renderer);
@@ -797,6 +812,7 @@ impl Editor {
             self.ui.set_theme(&theme);
             renderer.set_clear_color(theme.base.linear_premultiplied());
             self.docs.set_dark(&mut self.ui, theme.is_dark());
+            self.packages.set_dark(theme.is_dark());
             for inspector in self.inspectors_mut() {
                 inspector.set_dark(theme.is_dark());
             }
@@ -914,6 +930,45 @@ impl Editor {
     /// The Build window, and the build it runs.
     pub fn build_window(&mut self) -> &mut BuildWindow {
         &mut self.build_window
+    }
+
+    /// The Package Manager window.
+    pub fn package_manager(&mut self) -> &mut PackageManager {
+        &mut self.packages
+    }
+
+    /// The VoxDocs panel, with the manual's, the project's and its packages'
+    /// pages.
+    pub fn docs(&self) -> &voxear_docs::VoxDocs {
+        &self.docs
+    }
+
+    /// The Package Manager's frame. Once it changes the project's packages,
+    /// their assets are mounted again, VoxDocs takes their pages, and their
+    /// scripts build with the project's, as a script changing makes them;
+    /// then the Project panel and the rest look at the files again, as after
+    /// the Project panel changes them.
+    fn update_packages(&mut self, renderer: &mut Renderer) {
+        let shown = self.shown(self.nodes.packages_panel);
+        let root = self.game.project.root.clone();
+        for event in self.packages.update(&mut self.ui, shown, &root) {
+            match event {
+                PackagesEvent::Changed(done) => {
+                    if let Err(error) = self.game.content.remount_packages() {
+                        tracing::error!("the packages' assets could not be mounted again: {error:#}");
+                    }
+                    let pages = package_docs(self.game.content.db().mounts());
+                    self.docs.set_packages(&mut self.ui, pages);
+                    self.rebuild_scripts = true;
+                    self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
+                    self.notify(&done);
+                }
+                PackagesEvent::Imported(path) => {
+                    self.project_event(ProjectEvent::Changed { select: Some(path.clone()), rename: false }, renderer);
+                    self.notify(&format!("Imported {path}"));
+                }
+            }
+        }
     }
 
     /// What the Project panel asked for: an item shown in the Inspector, a
@@ -1692,7 +1747,8 @@ impl Editor {
     /// Keeps the scripts' description as their last build: when a script
     /// changes, they build off the main thread and are described again, and
     /// the Inspector shows the new fields. A build that fails is tried again
-    /// only once a script changes again.
+    /// only once a script changes again. The packages changing builds them
+    /// too, since their scripts build with the project's.
     fn update_script_types(&mut self) {
         if let Some(describing) = &self.describing {
             match describing.try_recv() {
@@ -1717,13 +1773,14 @@ impl Editor {
             }
             return;
         }
-        if self.scripts_checked.is_some_and(|at| at.elapsed() < SCRIPTS_CHECK) {
+        let forced = std::mem::take(&mut self.rebuild_scripts);
+        if !forced && self.scripts_checked.is_some_and(|at| at.elapsed() < SCRIPTS_CHECK) {
             return;
         }
         self.scripts_checked = Some(Instant::now());
         let project = &self.game.project;
         let changed = self.described_from.is_none_or(|from| script_types::changed_since(project, from));
-        if !changed || !script_types::is_stale(project) {
+        if !forced && (!changed || !script_types::is_stale(project)) {
             return;
         }
         self.described_from = Some(SystemTime::now());

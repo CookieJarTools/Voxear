@@ -37,6 +37,9 @@
 //!   `Docs` folder (see `voxear_docs`)
 //! - the **Levels** panel, as LayerCake's window: every level and loose
 //!   scene, to open, play, or while playing, change to
+//! - the **Package Manager**, as Unity's: the project's packages with their
+//!   updates, added from Git, a folder or the registry, and asked about
+//!   first when one brings code (see `package_manager`)
 //! - a status bar: what the editor is doing, frame rate, memory and git
 //!   branch
 //! - saving with Ctrl+S, and undo and redo of every edit with Ctrl+Z and Ctrl+Y
@@ -73,6 +76,8 @@ mod lod_inspector;
 pub mod memory_panel;
 mod object_picker;
 mod objs;
+pub mod package_list;
+pub mod package_manager;
 mod palette;
 mod profiler;
 mod project_files;

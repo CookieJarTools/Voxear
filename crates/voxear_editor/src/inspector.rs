@@ -699,6 +699,21 @@ impl Inspector {
         let content = &mut game.content;
         let mut load = |src: &str| content.read_text(src).map_err(|error| format!("{error:#}"));
         let placed = self.drawers.place(ui, answers, &mut load);
+        self.put_controls(ui, game, placed);
+    }
+
+    /// Places the drawers, and the fields' own controls, that waited for a
+    /// drawer built in code to add its `NextField` as it drew.
+    pub fn place_waiting_drawers(&mut self, ui: &mut Ui, game: &mut Game) {
+        let content = &mut game.content;
+        let mut load = |src: &str| content.read_text(src).map_err(|error| format!("{error:#}"));
+        let placed = self.drawers.place_waiting(ui, &mut load);
+        self.put_controls(ui, game, placed);
+    }
+
+    /// Puts each drawn field's own control where its drawers left room for
+    /// it, or notes that they draw it alone.
+    fn put_controls(&mut self, ui: &mut Ui, game: &Game, placed: Vec<(Prop, Option<usize>, Option<NodeId>, bool)>) {
         let Some(entity) = self.shown else { return };
         for (prop, index, next, editable) in placed {
             let Some(index) = index else {
@@ -706,7 +721,10 @@ impl Inspector {
                 let Prop::Field { behaviour, .. } = &prop else { continue };
                 let Some(&(_, fields)) = self.inspected.iter().find(|(name, _)| name == behaviour) else { continue };
                 match next {
-                    Some(next) => ui.move_into(fields, next),
+                    Some(next) => {
+                        ui.move_into(fields, next);
+                        ui.set_visible(fields, true);
+                    }
                     None => ui.set_visible(fields, false),
                 }
                 continue;

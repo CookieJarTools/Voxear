@@ -4,28 +4,26 @@ namespace Voxear;
 
 /// <summary>
 /// Draws the fields marked with TAttribute whose values are T, and each item of a list marked with it:
-/// <c>class MinMaxDrawer : AttributeDrawer&lt;MinMaxAttribute, Vector2&gt;</c>. A field marked with two such attributes
-/// is drawn by both, the first written outside the second, through the "next" element of its markup.
+/// <c>class StepDrawer : AttributeDrawer&lt;StepAttribute, int&gt;</c>. Attribute is the attribute on the field. A
+/// NextField among its elements is where the field's usual control goes, or the drawer for its type. A field
+/// marked with two such attributes is drawn by both, the first written outside the second, in its NextField.
+/// <code>
+/// protected override void Build(UiElement root)
+/// {
+///     root.Add(new Button("-", () => Value -= Attribute.Step));
+///     root.Add(new NextField());
+///     root.Add(new Button("+", () => Value += Attribute.Step));
+/// }
+/// </code>
 /// </summary>
-public abstract class AttributeDrawer<TAttribute, T> : Drawer
+public abstract class AttributeDrawer<TAttribute, T> : Drawer<T>
 	where TAttribute : Attribute
 {
 	/// <summary>The attribute on the field, with what it was given.</summary>
 	public TAttribute Attribute { get; private set; } = null!;
 
-	/// <summary>
-	/// Shows the value in the elements, and gives it back as what was done to them leaves it, as ValueDrawer's
-	/// Draw does.
-	/// </summary>
-	protected abstract T Draw(T value, UiDocument ui);
-
 	internal sealed override void Attach(System.Attribute attribute)
 	{
 		Attribute = (TAttribute)attribute;
-	}
-
-	internal sealed override object? DrawValue(object? value, UiDocument ui)
-	{
-		return Draw((T)value!, ui);
 	}
 }

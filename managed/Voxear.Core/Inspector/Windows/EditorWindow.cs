@@ -1,3 +1,5 @@
+using Voxear.Interop;
+
 namespace Voxear;
 
 /// <summary>
@@ -13,7 +15,7 @@ namespace Voxear;
 ///     protected override void Build(UiElement root)
 ///     {
 ///         count = root.Add(new Label());
-///         root.Add(new Button("Swap Spinners")).Clicked += Tools.SwapSpinners;
+///         root.Add(new Button("Swap Spinners", Tools.SwapSpinners));
 ///     }
 ///
 ///     protected override void Update(UiDocument ui)
@@ -28,6 +30,7 @@ namespace Voxear;
 /// </summary>
 public abstract class EditorWindow
 {
+	private readonly UiHost host = new UiHost();
 	private UiElement? root;
 
 	/// <summary>
@@ -57,19 +60,31 @@ public abstract class EditorWindow
 	/// <summary>The markup the editor builds, an empty document when it builds in code.</summary>
 	internal string MarkupToBuild => Markup.Length > 0 ? Markup : "<vui></vui>";
 
-	/// <summary>Builds it the first time, and raises what was clicked or changed in what it built, then updates it.</summary>
+	/// <summary>
+	/// Builds it the first time, and raises what was clicked or changed in what it built, then updates it and works
+	/// out what its elements are bound to again.
+	/// </summary>
 	internal void Run(UiDocument ui)
 	{
-		if (root == null)
+		var before = host.Enter();
+		try
 		{
-			root = ui.Root;
-			Build(root);
+			if (root == null)
+			{
+				root = Native.IsConnected ? ui.Root : new Panel();
+				Build(root);
+			}
+			else
+			{
+				root.DispatchTree();
+			}
+			Update(ui);
+			host.Refresh();
 		}
-		else
+		finally
 		{
-			root.DispatchTree();
+			UiHost.Leave(before);
 		}
-		Update(ui);
 	}
 
 	internal void Close()

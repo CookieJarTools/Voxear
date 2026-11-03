@@ -4,7 +4,10 @@
 //! have started, its drawers are opened and their markup built in the slot,
 //! each inside the "next" element of the one around it, with the
 //! Inspector's own control in the innermost one's, or nowhere when a drawer
-//! has none. They are drawn when they are built, when the value changes
+//! has none. A drawer built in code adds its `NextField` (an element with
+//! the `field-drawer-next` class) as it first draws, so the drawers inside
+//! it, and the control, wait for that draw and are placed after it
+//! ([`FieldDrawers::place_waiting`]). They are drawn when they are built, when the value changes
 //! elsewhere, as on undo, and when something in them is clicked or changed.
 //! What they give back goes into the scene, as one step to undo with the
 //! rest of the frame's edits. While the drawers draw, the scripts reach
@@ -41,8 +44,16 @@ struct DrawnRow {
     /// Whether what the drawers give back goes into the scene: not for a
     /// `[ReadOnly]` field, or one disabled.
     editable: bool,
-    /// The document each drawer built became, outermost first.
+    /// The document each drawer built became, outermost first, and the
+    /// container of the one built last.
     documents: Vec<u32>,
+    last: Option<NodeId>,
+    /// The markup of each drawer, as the scripts gave it.
+    markups: Vec<String>,
+    /// How many drawers are built when the rest, and the field's own
+    /// control, wait for the last one built to add a `NextField` as it
+    /// draws; `None` once they have a place.
+    waiting: Option<usize>,
     /// The outermost drawer's container, where clicks and changes are looked for.
     root: Option<NodeId>,
     /// The value it was last drawn with, or `None` to draw it again.
@@ -123,6 +134,9 @@ impl FieldDrawers {
             label: label.to_string(),
             editable,
             documents: Vec::new(),
+            last: None,
+            markups: Vec::new(),
+            waiting: None,
             root: None,
             drawn: None,
             failed: false,
@@ -145,7 +159,7 @@ impl FieldDrawers {
 
     /// Builds each field's drawers from the markups the scripts gave, in its
     /// slot. Returns each field whose drawers were built, with its row, the
-    /// element its own control goes into, if one does, and whether it is
+    /// element its own control goes into, if one does yet, and whether it is
     /// editable. A field whose drawers could not be opened or built keeps
     /// its own control.
     pub fn place(
@@ -164,35 +178,34 @@ impl FieldDrawers {
             for child in ui.children(row.slot) {
                 ui.remove(child);
             }
-            let mut parent = Some(row.slot);
-            for (markup, drawer) in markups.iter().zip(&row.drawers) {
-                let Some(into) = parent else { break };
-                let built = match ui.load_markup(into, drawer, markup, load) {
-                    Ok(built) => built,
-                    Err(error) => {
-                        // The field keeps its own control, as if it had no drawers.
-                        tracing::error!("{drawer}'s markup: {error}");
-                        for child in ui.children(row.slot) {
-                            ui.remove(child);
-                        }
-                        (row.failed, row.root, parent) = (true, None, Some(row.slot));
-                        row.documents.clear();
-                        break;
-                    }
-                };
-                ui.set_style(built, Style::row());
-                ui.add_class(built, "field-drawer");
-                row.root.get_or_insert(built);
-                row.documents.push(self.numbers.add_document(built));
-                parent = ui.find(built, "next");
-                if let Some(next) = parent {
-                    ui.add_class(next, "field-drawer-next");
-                }
-            }
+            row.markups = markups;
+            let next = row.build(ui, &mut self.numbers, 0, row.slot, load);
             for warning in ui.take_warnings() {
                 tracing::warn!(target: "script", "{warning}");
             }
-            placed.push((row.prop.clone(), row.row, parent, row.editable));
+            placed.push((row.prop.clone(), row.row, next, row.editable));
+        }
+        placed
+    }
+
+    /// Places what waited for a drawer drawn last frame to add its
+    /// `NextField`: the drawers inside it, drawn from the next frame on, and
+    /// the field's own control, returned as [`place`](Self::place) returns
+    /// it. A drawer that adds none draws the field alone.
+    pub fn place_waiting(&mut self, ui: &mut Ui, load: &mut LoadFile) -> Vec<(Prop, Option<usize>, Option<NodeId>, bool)> {
+        let mut placed = Vec::new();
+        for &index in &self.asked {
+            let row = &mut self.rows[index];
+            let (Some(from), Some(last)) = (row.waiting, row.last) else { continue };
+            let Some(next) = next_of(ui, last).filter(|_| !row.failed) else { continue };
+            ui.add_class(next, "field-drawer-next");
+            let control = row.build(ui, &mut self.numbers, from, next, load);
+            // Drawn again with the drawers just built.
+            row.drawn = None;
+            placed.push((row.prop.clone(), row.row, control, row.editable));
+        }
+        for warning in ui.take_warnings() {
+            tracing::warn!(target: "script", "{warning}");
         }
         placed
     }
@@ -270,6 +283,63 @@ impl DrawnRow {
     fn whole(&self) -> bool {
         matches!(&self.prop, Prop::Field { path, .. } if path.is_empty())
     }
+
+    /// Builds the drawers from `from` on, the first in `into` and each other
+    /// in the next element of the one before. Returns where the field's own
+    /// control goes: the last one's next, the slot when a markup could not
+    /// be built, or nowhere yet when the drawer built last has no next, as
+    /// one built in code until it draws (see `waiting`).
+    fn build(
+        &mut self,
+        ui: &mut Ui,
+        numbers: &mut UiNumbers,
+        from: usize,
+        into: NodeId,
+        load: &mut LoadFile,
+    ) -> Option<NodeId> {
+        let mut parent = into;
+        for index in from..self.markups.len().min(self.drawers.len()) {
+            let drawer = &self.drawers[index];
+            let built = match ui.load_markup(parent, drawer, &self.markups[index], load) {
+                Ok(built) => built,
+                Err(error) => {
+                    // The field keeps its own control, as if it had no drawers.
+                    tracing::error!("{drawer}'s markup: {error}");
+                    for child in ui.children(self.slot) {
+                        ui.remove(child);
+                    }
+                    (self.failed, self.root, self.last, self.waiting) = (true, None, None, None);
+                    self.documents.clear();
+                    return Some(self.slot);
+                }
+            };
+            ui.set_style(built, Style::row());
+            ui.add_class(built, "field-drawer");
+            self.root.get_or_insert(built);
+            self.documents.push(numbers.add_document(built));
+            self.last = Some(built);
+            let Some(next) = next_of(ui, built) else {
+                self.waiting = Some(index + 1);
+                return None;
+            };
+            ui.add_class(next, "field-drawer-next");
+            parent = next;
+        }
+        self.waiting = None;
+        Some(parent)
+    }
+}
+
+/// Where a drawer's next drawer, or the field's own control, goes: its
+/// markup's element named "next", or the `NextField` its code added.
+fn next_of(ui: &Ui, built: NodeId) -> Option<NodeId> {
+    fn marked(ui: &Ui, node: NodeId) -> Option<NodeId> {
+        if ui.has_class(node, "field-drawer-next") {
+            return Some(node);
+        }
+        ui.children(node).into_iter().find_map(|child| marked(ui, child))
+    }
+    ui.find(built, "next").or_else(|| ui.children(built).into_iter().find_map(|child| marked(ui, child)))
 }
 
 /// The editor's UI as scripts' drawers, and windows written in C#, reach

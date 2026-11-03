@@ -23,8 +23,9 @@
 //! (`icon`, one of [`crate::ICONS`]), `Keymap` (a device drawn as its keys, given them from code with
 //! [`Ui::set_keymap`]) and `Image` (given a texture from code
 //! with [`Ui::set_image`]), each taking `name`, `class`
-//! (several, separated by spaces) and `style` (declarations that win over
-//! sheets). A label's or button's text is its content, or its `text`
+//! (several, separated by spaces), `style` (declarations that win over
+//! sheets) and `tooltip` (what shows when the pointer rests on it, which
+//! may be `@key` too). A label's or button's text is its content, or its `text`
 //! attribute; a button may instead hold elements, such as an icon and a label. A label's, a button's or a
 //! toggle's text written as `@menu.play` is that key's text in the game's language, and follows it when the
 //! language changes (see [`Ui::set_text_key`]); `@@` starts a text with a plain `@`. A list or tree view takes `item-height`, and gets its rows
@@ -337,6 +338,10 @@ impl Ui {
                     }
                 }
                 "text" => {}
+                "tooltip" => {
+                    let (text, key) = keyed(attribute.value());
+                    self.set_tooltip(node, &text, key);
+                }
                 other if !known.contains(&other) => {
                     builder.warnings.push(format!(
                         "{}: <{}> has no attribute '{other}'",

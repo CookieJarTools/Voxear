@@ -99,7 +99,9 @@ internal static class InspectorDrawers
 		var drawers = new List<Drawer>();
 		foreach (var name in asked.GetProperty("drawers").EnumerateArray())
 		{
-			drawers.Add(Make(name.GetString() ?? string.Empty, field, label));
+			var drawer = Make(name.GetString() ?? string.Empty, field, label);
+			drawer.ValueType = valueType;
+			drawers.Add(drawer);
 		}
 		return new DrawnField(valueType, drawers, obj);
 	}
@@ -222,7 +224,7 @@ internal static class InspectorDrawers
 	}
 
 	/// <summary>A value as a scene writes it, to tell whether the drawers changed it.</summary>
-	private static string Written(object? value, Type type)
+	internal static string Written(object? value, Type type)
 	{
 		var stream = new MemoryStream();
 		using (var json = new Utf8JsonWriter(stream))

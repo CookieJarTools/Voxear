@@ -283,9 +283,9 @@ internal static class ScriptCatalog
 			{
 				json.WriteString("title", named.Title);
 			}
-			if (named?.Icon != null)
+			if (named is { HasIcon: true })
 			{
-				json.WriteString("icon", named.Icon);
+				json.WriteString("icon", IconNames.Of(named.Icon));
 			}
 			json.WriteEndObject();
 		}

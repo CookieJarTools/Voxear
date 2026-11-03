@@ -238,6 +238,13 @@ impl Ui {
         self.pointer.hovered.contains(&node.0)
     }
 
+    /// The tooltip of the innermost element under the pointer that has one
+    /// (see [`Ui::set_tooltip`]), and that element.
+    pub fn hovered_tooltip(&self) -> Option<(String, NodeId)> {
+        let tooltip = |node: &taffy::NodeId| Some((self.tooltips.get(node)?.0.clone(), NodeId(*node)));
+        self.pointer.hovered.iter().rev().find_map(tooltip)
+    }
+
     /// Whether the primary button is held down on `node`, or on anything in
     /// it, as for dragging on an element to turn what it shows.
     pub fn is_pressed(&self, node: NodeId) -> bool {

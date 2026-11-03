@@ -64,6 +64,55 @@ internal static class DrawerTests
 		Check.True(drawn[4].TryGetProperty("error", out _), "a field that was not opened is not drawn");
 	}
 
+	[Test]
+	private static void ADrawerWrittenOnlyInBuildSavesWhatItsHandlersSet()
+	{
+		var drawer = new TestMeterDrawer { ValueType = typeof(TestMeter) };
+		var ui = new UiDocument(1);
+		var drawn = (TestMeter)drawer.Draw(new TestMeter { Current = 1, Max = 5 }, ui)!;
+		Check.True(drawn.Current == 1, "drawing alone changes nothing");
+		Check.True(drawer.Text.Text == "1 / 5", "the bound label shows the value: " + drawer.Text.Text);
+		Check.True(drawer.Refreshed.Count == 1 && drawer.Bar.Value == 1f, "Refresh runs on the first draw");
+
+		drawer.Fill.PretendClicked();
+		drawn = (TestMeter)drawer.Draw(new TestMeter { Current = 1, Max = 5 }, ui)!;
+		Check.True(drawn.Current == 5, "the handler's Value is what the drawer gives back to be saved");
+		Check.True(drawer.Text.Text == "5 / 5" && drawer.Bar.Value == 5f, "and the elements follow it");
+
+		drawn = (TestMeter)drawer.Draw(new TestMeter { Current = 2, Max = 5 }, ui)!;
+		Check.True(drawer.Refreshed.Count == 3 && drawer.Refreshed[^1] == 2, "a value changed from outside refreshes it, as undo does");
+		Check.True(drawer.Text.Text == "2 / 5", drawer.Text.Text);
+		drawer.Draw(new TestMeter { Current = 2, Max = 5 }, ui);
+		Check.True(drawer.Refreshed.Count == 3, "the same value does not refresh it again");
+
+		drawer.Bar.PretendChanged(7f);
+		drawn = (TestMeter)drawer.Draw(new TestMeter { Current = 2, Max = 5 }, ui)!;
+		Check.True(drawn.Current == 7, "a slider's handler sets it too");
+	}
+
+	[Test]
+	private static void ABehaviourInspectorsHandlersChangeItsTarget()
+	{
+		var opened = Ask(new
+		{
+			action = "open",
+			owner = 7,
+			fields = new object[] { new { type = "Voxear.Tests.TestKeep", path = new object[0], drawers = new[] { "Voxear.Tests.TestKeepInspector" }, label = "Keep" } },
+		});
+		Check.True(opened.GetProperty("fields")[0].GetProperty("markups")[0].GetString() == "<vui></vui>", "built in code");
+		var first = Ask(new { action = "draw", owner = 7, fields = new object[] { new { field = 0, documents = new[] { 1 }, value = new { floors = 2 } } } });
+		var inspector = TestKeepInspector.Last!;
+		Check.True(!first.GetProperty("fields")[0].GetProperty("changed").GetBoolean(), "drawing changes nothing");
+		Check.True(inspector.Summary.Text == "2 floors" && inspector.Refreshes == 1, inspector.Summary.Text);
+
+		inspector.Raise.PretendClicked();
+		var raised = Ask(new { action = "draw", owner = 7, fields = new object[] { new { field = 0, documents = new[] { 1 }, value = new { floors = 2 } } } });
+		var answer = raised.GetProperty("fields")[0];
+		Check.True(answer.GetProperty("changed").GetBoolean(), answer.GetRawText());
+		Check.True(answer.GetProperty("value").GetProperty("Floors").GetInt32() == 3, "only the field the handler changed: " + answer.GetRawText());
+		Check.True(inspector.Summary.Text == "3 floors" && inspector.Refreshes == 2, inspector.Summary.Text);
+	}
+
 	private static List<string> Names(JsonElement field, string name)
 	{
 		if (!field.TryGetProperty("inspector", out var inspector) || !inspector.TryGetProperty(name, out var drawers))

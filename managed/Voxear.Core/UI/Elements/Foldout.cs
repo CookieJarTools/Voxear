@@ -6,4 +6,9 @@ public class Foldout : UiElement
 	public Foldout(string title = "") : base(UiKind.Foldout, title)
 	{
 	}
+
+	/// <summary>A foldout titled with a key's text, in the game's language.</summary>
+	public Foldout(LocalizedString title) : base(UiKind.Foldout, title)
+	{
+	}
 }

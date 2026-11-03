@@ -516,6 +516,21 @@ Dropdown:focus-visible {
     color: var(--vx-text);
 }
 
+/* What an element's tooltip says, under it once the pointer rests there. */
+.tooltip {
+    position: absolute;
+    z-index: 30;
+    max-width: 280px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    pointer-events: none;
+    background-color: var(--vx-overlay);
+    border: 1px solid var(--vx-line-2);
+    box-shadow: 0px 6px 16px rgba(0, 0, 0, 0.4);
+    color: var(--vx-text);
+    font-size: 11px;
+}
+
 /* An item lifted out of a reorderable list by its handle rides over the others,
    which slide out of its way. */
 .reorder-lifted {

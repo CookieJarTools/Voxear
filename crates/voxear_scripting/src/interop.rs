@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 35;
+pub(crate) const API_VERSION: u32 = 36;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -287,6 +287,7 @@ pub(crate) struct NativeApi {
     pub input_conflicts:
         unsafe extern "C" fn(action: i32, path: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
     pub text_asset: unsafe extern "C" fn(key: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    pub ui_set_string: unsafe extern "C" fn(element: i32, which: i32, text: *const u8, len: i32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -1100,6 +1101,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         input_label: crate::input::input_label,
         input_conflicts: crate::input::input_conflicts,
         text_asset: crate::text::text_asset,
+        ui_set_string: crate::ui::ui_set_string,
     }
 }
 

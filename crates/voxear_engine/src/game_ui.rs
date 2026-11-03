@@ -15,7 +15,9 @@
 //! A label, button or toggle whose text is `@menu.play`, in a document or
 //! set from a script, shows that key's text in the game's language, and the
 //! game shows it again whenever the language or its text changes
-//! ([`GameUi::follow_language`]).
+//! ([`GameUi::follow_language`]). An element given a tooltip, in markup
+//! or by a script, shows it under itself once the pointer rests on it
+//! ([`GameUi::show_tooltip`]).
 //!
 //! The scripts' list and tree views (`ListView` and `TreeView`) are Voxear
 //! UI's own, which keep elements only for the rows on screen. What they make
@@ -36,6 +38,9 @@ use crate::{
     Content,
     keymaps::{self, KeymapColors, KeymapOptions},
 };
+
+/// How long the pointer rests on an element before its tooltip shows.
+const TOOLTIP_DELAY: f32 = 0.5;
 
 /// What a script asks of an element's class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,10 +149,11 @@ impl UiNumbers {
     pub fn ask(&self, ui: &mut Ui, element: u32, ask: UiAsk<'_>) -> UiAnswer {
         let Some(node) = self.node(element) else { return UiAnswer::None };
         match ask {
-            UiAsk::Text => return UiAnswer::Text(ui.text(node)),
+            UiAsk::Text => return UiAnswer::Text(ui.text(text_of(ui, node))),
             // `@menu.play` shows that key's text, following the language; plain text stops following one.
             UiAsk::SetText(text) => {
                 let (text, key) = voxear_ui::markup::keyed(text);
+                let node = text_of(ui, node);
                 ui.set_text(node, &text);
                 ui.set_text_key(node, key);
             }
@@ -167,10 +173,24 @@ impl UiNumbers {
             UiAsk::Value => return UiAnswer::Number(value(ui, node)),
             UiAsk::SetValue(to) => set_value(ui, node, to),
             UiAsk::SetStyle(style) => ui.set_inline_style(node, style),
+            UiAsk::SetTooltip(text) => ui.set_tooltip(node, text, None),
+            UiAsk::SetPlaceholder(text) => ui.set_placeholder(node, text),
+            UiAsk::SetOptions(options) => ui.set_options(node, &options.lines().collect::<Vec<_>>()),
             // Only the game's own UI fills lists and key maps from scripts.
             UiAsk::Items { .. } | UiAsk::Keymap { .. } | UiAsk::KeymapClicked => {}
         }
         UiAnswer::None
+    }
+}
+
+/// The element whose text is an element's own: a toggle's label, a
+/// foldout's title, or the element itself.
+fn text_of(ui: &Ui, node: NodeId) -> NodeId {
+    let title = |header: NodeId| ui.children(header).into_iter().find(|&n| ui.has_class(n, "foldout-title"));
+    match ui.kind(node) {
+        Some(Kind::Toggle) => ui.children(node).last().copied().unwrap_or(node),
+        Some(Kind::Foldout) => ui.foldout_header(node).and_then(title).unwrap_or(node),
+        _ => node,
     }
 }
 
@@ -297,6 +317,10 @@ pub struct GameUi {
     language: Option<u64>,
     /// The key maps scripts made, with the device each shows and how.
     keymaps: HashMap<NodeId, (Scheme, KeymapOptions)>,
+    /// The label tooltips show in, once one has, and the tooltip the pointer
+    /// rests on, with for how long, in seconds.
+    tooltip: Option<NodeId>,
+    rested: Option<(String, f32)>,
 }
 
 impl GameUi {
@@ -331,6 +355,45 @@ impl GameUi {
         self.ui.set_right_to_left(voxear_localization::is_right_to_left(localization.language()));
         for (node, key) in self.ui.text_keys() {
             self.ui.set_text(node, &localization.text(&key));
+        }
+        for (node, key) in self.ui.tooltip_keys() {
+            self.ui.set_tooltip(node, &localization.text(&key), Some(&key));
+        }
+        // Showing the tooltips' keys counts as binding them; they are shown already.
+        self.ui.take_text_keys_added();
+    }
+
+    /// Shows the tooltip of the element the pointer has rested on for half
+    /// a second, under it, and hides it as soon as the pointer moves off, as
+    /// the editor does. Once a frame, `delta` seconds after the last.
+    pub fn show_tooltip(&mut self, delta: f32) {
+        let Some((text, over)) = self.ui.hovered_tooltip() else {
+            self.rested = None;
+            return self.hide_tooltip();
+        };
+        let rested = match self.rested.take() {
+            Some((shown, time)) if shown == text => time + delta,
+            _ => 0.0,
+        };
+        self.rested = Some((text.clone(), rested));
+        if rested < TOOLTIP_DELAY {
+            return self.hide_tooltip();
+        }
+        let root = self.ui.root();
+        let tooltip = *self.tooltip.get_or_insert_with(|| {
+            let tooltip = self.ui.create(root, ElementKind::Label, "");
+            self.ui.add_class(tooltip, "tooltip");
+            tooltip
+        });
+        self.ui.set_text(tooltip, &text);
+        let [x, y, _, height] = self.ui.rect(over);
+        self.ui.set_inline_style(tooltip, &format!("left: {x}px; top: {}px", y + height + 4.0));
+        self.ui.set_visible(tooltip, true);
+    }
+
+    fn hide_tooltip(&mut self) {
+        if let Some(tooltip) = self.tooltip {
+            self.ui.set_visible(tooltip, false);
         }
     }
 

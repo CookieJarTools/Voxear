@@ -89,6 +89,7 @@ impl Editor {
                 for error in self.inspector.take_drawn(&mut self.game, answers) {
                     self.notify(&error);
                 }
+                self.inspector.place_waiting_drawers(&mut self.ui, &mut self.game);
             }
             Err(error) => tracing::error!("{error:#}"),
         }

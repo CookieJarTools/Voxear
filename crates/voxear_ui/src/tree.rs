@@ -293,6 +293,9 @@ pub struct Ui {
     /// [`Ui::set_text_key`]).
     text_keys: HashMap<taffy::NodeId, String>,
     text_keys_added: bool,
+    /// What shows when the pointer rests on an element, and the key it is
+    /// the text of, if any (see [`Ui::set_tooltip`]).
+    pub(crate) tooltips: HashMap<taffy::NodeId, (String, Option<String>)>,
 }
 
 impl Default for Ui {
@@ -350,6 +353,7 @@ impl Ui {
             prompts: HashMap::new(),
             text_keys: HashMap::new(),
             text_keys_added: false,
+            tooltips: HashMap::new(),
         }
         .with_theme()
     }
@@ -530,6 +534,33 @@ impl Ui {
     /// text is still to be shown.
     pub fn take_text_keys_added(&mut self) -> bool {
         std::mem::take(&mut self.text_keys_added)
+    }
+
+    /// Gives an element a tooltip, what shows when the pointer rests on it,
+    /// for whoever shows the UI to show, as the editor and a game's UI do
+    /// (see [`hovered_tooltip`](Self::hovered_tooltip)). `key` names the
+    /// string table key it is the text of, to follow the language as
+    /// [`set_text_key`](Self::set_text_key) does. Empty text and no key
+    /// take it away.
+    pub fn set_tooltip(&mut self, node: NodeId, text: &str, key: Option<&str>) {
+        if text.is_empty() && key.is_none() {
+            self.tooltips.remove(&node.0);
+            return;
+        }
+        self.tooltips.insert(node.0, (text.to_string(), key.map(str::to_string)));
+        if key.is_some() {
+            self.text_keys_added = true;
+        }
+    }
+
+    pub fn tooltip(&self, node: NodeId) -> Option<&str> {
+        self.tooltips.get(&node.0).map(|(text, _)| text.as_str())
+    }
+
+    /// Every element whose tooltip is a key's text, and the key.
+    pub fn tooltip_keys(&self) -> Vec<(NodeId, String)> {
+        let keyed = self.tooltips.iter().filter_map(|(&node, (_, key))| Some((NodeId(node), key.clone()?)));
+        keyed.collect()
     }
 
     /// Changes an element's text. Setting the same text again costs nothing,
@@ -810,6 +841,7 @@ impl Ui {
         self.forget_keymap(node.0);
         self.forget_prompt(node.0);
         self.text_keys.remove(&node.0);
+        self.tooltips.remove(&node.0);
         self.lists.retain(|&n| n != node.0);
         self.scrollers.retain(|&n| n != node.0);
         self.fields.retain(|&n| n != node.0);

@@ -11,12 +11,17 @@ namespace Voxear;
 /// var hud = UiDocument.Create();
 /// var panel = hud.Root.Add(new Panel());
 /// var score = panel.Add(new Label("0"));
-/// panel.Add(new Button("Pause")).Clicked += Pause;
+/// panel.Add(new Button("Pause", Pause));
 /// </code>
 /// <para>
 /// An element made with new lives in your code until it is added to one that is on screen; from then on it shows,
 /// and what you set on it shows at once. Its text, classes, style, visibility and value are kept while it waits.
 /// Classes are how it changes look, as in CSS: <c>health.AddClass("low")</c> with a sheet rule for <c>.low</c>.
+/// </para>
+/// <para>
+/// What it shows can also come from code that runs again by itself: <c>score.Bind(() => $"{Score}")</c> works its
+/// text out again each frame, or each time a drawer draws, and <c>title.Localize(Strings.Menu.Title)</c> shows a
+/// key's text in the game's language, following it when it changes. See UiElementExtensions.
 /// </para>
 /// </summary>
 public unsafe class UiElement
@@ -25,6 +30,7 @@ public unsafe class UiElement
 	private const int ClassAdd = 1;
 	private const int ClassToggle = 2;
 	private const int ClassHas = 3;
+	private const int StringTooltip = 0;
 
 	private readonly int kind;
 	private readonly List<UiElement> children = new List<UiElement>();
@@ -35,6 +41,13 @@ public unsafe class UiElement
 	private string? style;
 	private bool visible = true;
 	private float value;
+	private UiText tooltip;
+	private Func<string>? textFrom;
+	private bool textEachPass;
+	private Func<float>? valueFrom;
+	private ulong seenVersion;
+	private UiHost? host;
+	private (bool Changed, bool Clicked) pretended;
 
 	internal UiElement(int id)
 	{
@@ -49,6 +62,12 @@ public unsafe class UiElement
 		Id = -1;
 		this.kind = (int)kind;
 		this.text = text;
+	}
+
+	/// <summary>An element of this kind showing a key's text in the game's language, following it as it changes.</summary>
+	internal UiElement(UiKind kind, LocalizedString key) : this(kind, string.Empty)
+	{
+		Follow(new UiText(key));
 	}
 
 	/// <summary>Runs once each time it is clicked, at the start of the next frame.</summary>
@@ -82,12 +101,31 @@ public unsafe class UiElement
 	/// <summary>
 	/// A label's or a button's text. Set to "@menu.play", it shows that key's text in the game's language, and follows
 	/// the language when it changes (see Localization); set to plain text, it stops following one. "@@" starts a text
-	/// with a plain "@".
+	/// with a plain "@". Setting it also stops a Bind or Localize, so the text stays as set.
 	/// </summary>
 	public string Text
 	{
 		get { return IsShown ? ReadText() : text; }
-		set { WriteText(value); }
+		set
+		{
+			textFrom = null;
+			WriteText(value);
+		}
+	}
+
+	/// <summary>
+	/// What shows when the pointer rests on it: written out, as "Fills the bar", or a key's text, as
+	/// Strings.Hints.Fill, which follows the game's language.
+	/// </summary>
+	public UiText Tooltip
+	{
+		get { return tooltip; }
+		set
+		{
+			tooltip = value;
+			SendString(StringTooltip, value.ToString());
+			Track();
+		}
 	}
 
 	public bool Visible
@@ -127,7 +165,10 @@ public unsafe class UiElement
 
 	internal int Id { get; private set; }
 
-	internal bool HasListeners => clicked != null || changed != null;
+	internal bool HasListeners => clicked != null || changed != null || KindListens;
+
+	/// <summary>Whether something of it comes from code to be worked out again: a Bind, or a key's text.</summary>
+	private bool IsBound => textFrom != null || valueFrom != null || tooltip.IsLocalized || KindIsBound;
 
 	/// <summary>Adds an element at its end and gives it back, so it can be kept: <c>var bar = root.Add(new Slider());</c>.</summary>
 	public T Add<T>(T child) where T : UiElement
@@ -210,15 +251,142 @@ public unsafe class UiElement
 		clicked?.Invoke();
 	}
 
+	/// <summary>Counts it as clicked at the next dispatch, as if on screen, for tests.</summary>
+	internal void PretendClicked()
+	{
+		pretended.Clicked = true;
+	}
+
+	/// <summary>Gives it a value counted as changed on screen at the next dispatch, for tests.</summary>
+	internal void PretendChanged(float to)
+	{
+		WriteValue(to);
+		pretended.Changed = true;
+	}
+
+	/// <summary>Whether it was counted as changed and clicked since the last dispatch, which it forgets.</summary>
+	internal (bool Changed, bool Clicked) TakePretended()
+	{
+		var taken = pretended;
+		pretended = default;
+		return taken;
+	}
+
 	internal void RaiseChanged()
 	{
-		OnChanged();
+		RaiseKindChanged();
 		changed?.Invoke();
 	}
 
-	/// <summary>For a kind of element to raise its own event when its value changes, before Changed.</summary>
-	private protected virtual void OnChanged()
+	/// <summary>
+	/// Shows what `text` gives, now and again each time its host refreshes: each time when `eachPass`, or else when
+	/// the game's language or text changes, as for a key's.
+	/// </summary>
+	internal void BindText(Func<string> text, bool eachPass)
 	{
+		(textFrom, textEachPass) = (text, eachPass);
+		seenVersion = NativeText.Version();
+		ShowBoundText(text());
+		Track();
+	}
+
+	/// <summary>Shows a key's text, or text written out, as the element's text.</summary>
+	internal void Follow(UiText shown)
+	{
+		if (!shown.IsLocalized)
+		{
+			Text = shown.ToString();
+			return;
+		}
+		BindText(shown.ToString, eachPass: false);
+	}
+
+	/// <summary>Sets its value to what `to` gives, now and again each time its host refreshes.</summary>
+	internal void BindValue(Func<float> to)
+	{
+		valueFrom = to;
+		WriteValue(to());
+		Track();
+	}
+
+	/// <summary>Works out what is bound again, and shows it where it changed. `version` counts the game's text.</summary>
+	internal void RefreshBound(ulong version)
+	{
+		var languageChanged = version != seenVersion;
+		seenVersion = version;
+		if (textFrom != null && (textEachPass || languageChanged))
+		{
+			ShowBoundText(textFrom());
+		}
+		if (tooltip.IsLocalized && languageChanged)
+		{
+			SendString(StringTooltip, tooltip.ToString());
+		}
+		if (valueFrom != null)
+		{
+			var to = valueFrom();
+			if (to != Value)
+			{
+				WriteValue(to);
+			}
+		}
+		RefreshKind(languageChanged);
+	}
+
+	/// <summary>For a kind of element to raise its own event when its value changes, before Changed.</summary>
+	private protected virtual void RaiseKindChanged()
+	{
+	}
+
+	/// <summary>Whether a kind of element has handlers of its own events, as a toggle's Toggled.</summary>
+	private protected virtual bool KindListens => false;
+
+	/// <summary>Hears of its clicks and changes from now on, for a kind of element's own events.</summary>
+	private protected void Listen()
+	{
+		UiElements.Listen(this);
+	}
+
+	/// <summary>Whether a kind of element holds text of its own to keep up to date, as a key's placeholder.</summary>
+	private protected virtual bool KindIsBound => false;
+
+	/// <summary>For a kind of element to show its own text again, as when the game's language changed.</summary>
+	private protected virtual void RefreshKind(bool languageChanged)
+	{
+	}
+
+	/// <summary>
+	/// Joins the host keeping bound elements up to date, once it is bound: a drawer's or window's at once, the
+	/// game's once it shows, so one made and never shown is not kept; see UiHost.
+	/// </summary>
+	private protected void Track()
+	{
+		var current = UiHost.Current;
+		if (host != null || !IsBound || (!IsShown && current == UiHost.Game))
+		{
+			return;
+		}
+
+		host = current;
+		host.Track(this);
+	}
+
+	/// <summary>
+	/// Sends one of the texts an element holds besides its own: its tooltip (0), a text field's placeholder (1) or a
+	/// dropdown's options (2), one a line.
+	/// </summary>
+	private protected void SendString(int which, string sent)
+	{
+		if (!IsShown)
+		{
+			return;
+		}
+
+		var bytes = Encoding.UTF8.GetBytes(sent);
+		fixed (byte* written = bytes)
+		{
+			Native.Api->UiSetString(Id, which, written, bytes.Length);
+		}
 	}
 
 	/// <summary>For a kind of element to send what it holds besides what every element does, once it is on screen.</summary>
@@ -278,11 +446,21 @@ public unsafe class UiElement
 		{
 			WriteValue(value);
 		}
+		if (!tooltip.IsEmpty)
+		{
+			SendString(StringTooltip, tooltip.ToString());
+		}
+		// Made with its text as written, so a key's "@menu.play" is given again to be read as one.
+		if (textFrom == null && text.StartsWith('@'))
+		{
+			WriteText(text);
+		}
 		foreach (var child in children)
 		{
 			child.ShowIn(this);
 		}
 		OnShown();
+		Track();
 	}
 
 	/// <summary>Takes it off the screen, keeping what it shows, so it can show again elsewhere.</summary>
@@ -301,6 +479,8 @@ public unsafe class UiElement
 	private void Forget()
 	{
 		UiElements.Drop(this);
+		host?.Untrack(this);
+		host = null;
 		OnTakenOff();
 		Id = -1;
 		foreach (var child in children)
@@ -384,6 +564,25 @@ public unsafe class UiElement
 		fixed (byte* into = bytes)
 		{
 			Native.Api->UiSetText(Id, into, bytes.Length);
+		}
+	}
+
+	/// <summary>Shows text code worked out, as it is: one starting with "@" is not read as a key.</summary>
+	private void ShowBoundText(string shown)
+	{
+		if (shown == text)
+		{
+			return;
+		}
+
+		text = shown;
+		if (IsShown)
+		{
+			var bytes = Encoding.UTF8.GetBytes(shown.StartsWith('@') ? "@" + shown : shown);
+			fixed (byte* into = bytes)
+			{
+				Native.Api->UiSetText(Id, into, bytes.Length);
+			}
 		}
 	}
 }

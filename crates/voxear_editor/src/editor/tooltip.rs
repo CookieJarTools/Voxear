@@ -1,7 +1,8 @@
 //! Tooltips: what a script field's `[Tooltip]` says, shown under its label,
-//! and what one of the game's side bar buttons does, shown beside it, once
-//! the pointer has rested there for half a second, and gone as soon as it
-//! moves off.
+//! what one of the game's side bar buttons does, shown beside it, and the
+//! tooltip a script's drawer or window gave one of its elements, shown under
+//! it, once the pointer has rested there for half a second, and gone as soon
+//! as it moves off.
 
 use super::Editor;
 
@@ -12,7 +13,8 @@ impl Editor {
     pub(super) fn update_tooltip(&mut self, delta: f32) {
         let tooltip = self.nodes.tooltip;
         let beside = self.side_bar_tooltip();
-        let Some((text, label)) = self.inspector.hovered_tooltip(&self.ui).or(beside.clone()) else {
+        let field = self.inspector.hovered_tooltip(&self.ui).or(beside.clone());
+        let Some((text, label)) = field.or_else(|| self.ui.hovered_tooltip()) else {
             self.hovered_tooltip = None;
             self.ui.set_visible(tooltip, false);
             return;

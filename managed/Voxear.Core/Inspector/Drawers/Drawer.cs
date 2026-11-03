@@ -1,4 +1,6 @@
 using System;
+using Voxear.Interop;
+using Voxear.Scripting;
 
 namespace Voxear;
 
@@ -8,20 +10,27 @@ namespace Voxear;
 /// field keeps its label and the attributes around it, so an InfoBox above a drawn field still shows. Drawers run
 /// in edit mode; while the game plays, the field shows its own control.
 /// <para>
-/// Build the drawer's elements in code, as Unity's UI Toolkit does, by adding them to the root in Build and keeping
-/// them in fields; or describe them in Markup, which can also hold a "next" element for the Inspector's own control.
+/// Build the drawer's elements once, in Build, as Unity's UI Toolkit does: give them handlers that read and set
+/// Value, Bind what they show, and add a NextField where the field's usual control goes. Or describe them in
+/// Markup, with an element named "next" for it.
 /// </para>
 /// <code>
 /// protected override void Build(UiElement root)
 /// {
-///     bar = root.Add(new Slider(0, 100));
-///     text = root.Add(new Label());
+///     root.Add(new Label().Bind(() => $"{Value.Current} / {Value.Max}"));
+///     root.Add(new Button("Fill", () => Value = Value with { Current = Value.Max }));
 /// }
 /// </code>
+/// <para>
+/// The elements are made once and kept, and only what changes is changed after, which is why there are two steps:
+/// Build makes them, and Refresh, Bind or Draw bring them up to date when the value changes.
+/// </para>
 /// </summary>
 public abstract class Drawer
 {
+	private readonly UiHost host = new UiHost();
 	private UiElement? root;
+	private string? shown;
 
 	internal Drawer()
 	{
@@ -38,10 +47,16 @@ public abstract class Drawer
 	/// <summary>What the Inspector calls the field.</summary>
 	public string Label { get; internal set; } = string.Empty;
 
+	/// <summary>The type of the field's value, to tell whether a value changed as a scene writes it.</summary>
+	internal Type ValueType { get; set; } = typeof(object);
+
+	/// <summary>The markup the editor builds, an empty document when the drawer builds in code.</summary>
+	internal string MarkupToBuild => Markup.Length > 0 ? Markup : "<vui></vui>";
+
 	/// <summary>
-	/// Adds the elements the value is drawn with to `root`, once, before the first draw. Keep them in fields to read
-	/// and write them in Draw. A drawer built in code draws the value alone: for the Inspector's own control inside
-	/// it, use Markup with a "next" element.
+	/// Adds the elements the value is drawn with to `root`, once, before the first draw, when Value already holds
+	/// the field's value. Keep them in fields, or give them handlers and bindings as they are made. A NextField
+	/// among them is where the field's next drawer or usual control goes; without one, the drawer draws it alone.
 	/// </summary>
 	protected virtual void Build(UiElement root)
 	{
@@ -51,23 +66,61 @@ public abstract class Drawer
 	{
 	}
 
-	/// <summary>The markup the editor builds, an empty document when the drawer builds in code.</summary>
-	internal string MarkupToBuild => Markup.Length > 0 ? Markup : "<vui></vui>";
-
-	/// <summary>Builds it the first time, and raises what was clicked or changed in what it built, then draws.</summary>
+	/// <summary>
+	/// Builds it the first time, and raises what was clicked or changed in what it built, then draws, refreshes it
+	/// when the value is not the one its elements show, and works out what is bound again. Gives back the value as
+	/// the handlers and Draw leave it.
+	/// </summary>
 	internal object? Draw(object? value, UiDocument ui)
 	{
-		if (root == null)
+		var before = host.Enter();
+		try
 		{
-			root = ui.Root;
-			Build(root);
+			Take(value);
+			if (root == null)
+			{
+				root = Native.IsConnected ? ui.Root : new Panel();
+				Build(root);
+			}
+			else
+			{
+				root.DispatchTree();
+			}
+			var drawn = DrawValue(ui);
+			RefreshWhenChanged(drawn);
+			host.Refresh();
+			return drawn;
 		}
-		else
+		finally
 		{
-			root.DispatchTree();
+			UiHost.Leave(before);
 		}
-		return DrawValue(value, ui);
 	}
 
-	internal abstract object? DrawValue(object? value, UiDocument ui);
+	/// <summary>Takes the value to draw, as the field has it now, for the handlers to read and change.</summary>
+	internal abstract void Take(object? value);
+
+	/// <summary>Runs Draw, the advanced path, and gives back the value as it and the handlers leave it.</summary>
+	internal abstract object? DrawValue(UiDocument ui);
+
+	/// <summary>Runs Refresh with the value.</summary>
+	internal abstract void RefreshValue(object? value);
+
+	/// <summary>The value as a scene writes it, to tell whether it changed.</summary>
+	internal virtual string Written(object? value)
+	{
+		return InspectorDrawers.Written(value, ValueType);
+	}
+
+	private void RefreshWhenChanged(object? drawn)
+	{
+		var now = Written(drawn);
+		if (now == shown)
+		{
+			return;
+		}
+
+		shown = now;
+		RefreshValue(drawn);
+	}
 }

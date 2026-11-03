@@ -49,7 +49,10 @@ internal static unsafe class UiElements
 		}
 	}
 
-	/// <summary>Raises Clicked and Changed on each element clicked or changed since the last frame.</summary>
+	/// <summary>
+	/// Raises Clicked and Changed on each element clicked or changed since the last frame, then works out what the
+	/// game's elements are bound to again.
+	/// </summary>
 	public static void Dispatch()
 	{
 		Settle();
@@ -58,18 +61,15 @@ internal static unsafe class UiElements
 		{
 			DispatchOne(element);
 		}
+		UiHost.Game.Refresh();
 	}
 
 	/// <summary>Raises one element's Clicked and Changed, if it was clicked or changed. Each handler is guarded on its own.</summary>
 	public static void DispatchOne(UiElement element)
 	{
-		if (!element.IsShown)
-		{
-			return;
-		}
-
-		Guarded(element.WasChanged, element.RaiseChanged);
-		Guarded(element.WasClicked, element.RaiseClicked);
+		var (changed, clicked) = element.TakePretended();
+		Guarded(changed || element.WasChanged, element.RaiseChanged);
+		Guarded(clicked || element.WasClicked, element.RaiseClicked);
 	}
 
 	/// <summary>Lets go of every element and handler, as when the scripts reload.</summary>
@@ -77,6 +77,7 @@ internal static unsafe class UiElements
 	{
 		elements.Clear();
 		listening.Clear();
+		UiHost.Game.Forget();
 		UiLists.Forget();
 	}
 

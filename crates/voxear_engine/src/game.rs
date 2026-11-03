@@ -438,6 +438,7 @@ impl Game {
         }
         self.ui.follow_language(self.engine.world.resource::<Localization>());
         self.ui.follow_input(&self.input);
+        self.ui.show_tooltip(delta);
         // The UI's list and tree views have the scripts fill the rows now on screen, before the frame draws them.
         let rows = self.ui.rows_to_fill();
         if !rows.is_empty() {

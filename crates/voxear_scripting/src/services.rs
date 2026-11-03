@@ -241,6 +241,12 @@ pub enum UiAsk<'a> {
     SetValue(f32),
     /// Declarations that win over its sheets.
     SetStyle(&'a str),
+    /// What shows when the pointer rests on it; empty for nothing.
+    SetTooltip(&'a str),
+    /// What a text field shows, faded, while nothing is typed.
+    SetPlaceholder(&'a str),
+    /// A dropdown's options, one a line, keeping the one picked.
+    SetOptions(&'a str),
     /// A list view's items: how many, how tall each row is, and for a tree
     /// view, each item's id and its parent's, 0 at the top, in order.
     Items {

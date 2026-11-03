@@ -542,3 +542,37 @@ fn text_written_as_a_key_is_bound_to_it() {
     ui.remove(play);
     assert_eq!(ui.text_keys().len(), 2);
 }
+
+#[test]
+fn tooltips_belong_to_elements_and_show_for_the_one_under_the_pointer() {
+    let mut ui = Ui::new();
+    let document = load(
+        &mut ui,
+        r#"<vui>
+            <Panel name="bar" tooltip="The whole bar">
+                <Button name="fill" tooltip="Fills the bar">Fill</Button>
+                <Button name="empty">Empty</Button>
+            </Panel>
+            <Label name="coins" tooltip="@hud.coins.hint">Coins</Label>
+        </vui>"#,
+    );
+    let find = |ui: &Ui, name: &str| ui.find(document, name).unwrap();
+    let (fill, empty, coins) = (find(&ui, "fill"), find(&ui, "empty"), find(&ui, "coins"));
+    assert_eq!(ui.tooltip(fill), Some("Fills the bar"));
+    assert_eq!(ui.tooltip_keys(), vec![(coins, "hud.coins.hint".to_string())], "a key's, to follow the language");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+
+    // The innermost element under the pointer with a tooltip is the one shown, or the one it is in.
+    let at = |ui: &mut Ui, node: NodeId| {
+        let [x, y, w, h] = ui.rect(node);
+        ui.pointer_move(x + w / 2.0, y + h / 2.0);
+        ui.frame(WIDTH, HEIGHT, 1.0);
+        ui.hovered_tooltip().map(|(text, _)| text)
+    };
+    assert_eq!(at(&mut ui, fill).as_deref(), Some("Fills the bar"));
+    assert_eq!(at(&mut ui, empty).as_deref(), Some("The whole bar"));
+    ui.set_tooltip(fill, "", None);
+    assert_eq!(at(&mut ui, fill).as_deref(), Some("The whole bar"), "an empty tooltip is none");
+    ui.remove(coins);
+    assert!(ui.tooltip_keys().is_empty(), "an element gone is forgotten");
+}

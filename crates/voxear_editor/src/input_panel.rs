@@ -1,4 +1,5 @@
-//! The Input Actions window: the game's input actions as key maps, the
+//! The Input Actions window, in two views. Actions edits the project's
+//! actions (see `input_editor`). Layout shows them as key maps, the
 //! keyboard and mouse or a gamepad drawn with each bound control lit and
 //! labelled with its actions, as a game's key binding screen shows them
 //! (see `voxear_engine::keymaps`). A bar over the map picks the device, the
@@ -12,7 +13,13 @@ use voxear_engine::keymaps::{self, KeymapColors, KeymapOptions};
 use voxear_input::{Input, Scheme};
 use voxear_ui::{KeyState, NodeId, Style, Ui};
 
+use crate::input_editor::ActionsEditor;
+
 pub struct InputPanel {
+    view: NodeId,
+    actions_view: NodeId,
+    layout_view: NodeId,
+    editor: ActionsEditor,
     scheme: NodeId,
     map: NodeId,
     colors: NodeId,
@@ -27,6 +34,21 @@ pub struct InputPanel {
 
 impl InputPanel {
     pub fn new(ui: &mut Ui, panel: NodeId) -> Self {
+        let tabs = ui.panel(panel, Style::row());
+        ui.add_class(tabs, "input-bar");
+        let view = ui.segmented(tabs);
+        ui.add_segment(view, "Actions", None);
+        ui.add_segment(view, "Layout", None);
+        ui.set_name(view, "input-view");
+        let actions_view = ui.panel(panel, Style::default());
+        ui.add_class(actions_view, "fill");
+        ui.add_class(actions_view, "input-view");
+        let editor = ActionsEditor::new(ui, actions_view);
+        let layout_view = ui.panel(panel, Style::default());
+        ui.add_class(layout_view, "fill");
+        ui.add_class(layout_view, "input-view");
+        ui.set_visible(layout_view, false);
+        let panel = layout_view;
         let bar = ui.panel(panel, Style::row());
         ui.add_class(bar, "input-bar");
         let scheme = ui.segmented(bar);
@@ -48,12 +70,43 @@ impl InputPanel {
         ui.set_name(keymap, "input-keymap");
         let legend = ui.panel(panel, Style::row());
         ui.add_class(legend, "input-legend");
-        Self { scheme, map, colors, hidden, keymap, legend, maps: Vec::new(), legend_for: None }
+        Self {
+            view,
+            actions_view,
+            layout_view,
+            editor,
+            scheme,
+            map,
+            colors,
+            hidden,
+            keymap,
+            legend,
+            maps: Vec::new(),
+            legend_for: None,
+        }
     }
 
-    /// Shows the game's input as the bar picks it: once a frame while the
-    /// window shows. The key map makes its keys again only when they change.
-    pub fn update(&mut self, ui: &mut Ui, input: &Input) {
+    /// Whether the Actions view waits for a key or button for a binding.
+    pub fn is_listening(&self) -> bool {
+        self.editor.is_listening()
+    }
+
+    /// Shows the view picked, once a frame while the window shows. Gives
+    /// the actions file's new text after the Actions view changed it.
+    pub fn update(&mut self, ui: &mut Ui, input: &mut Input) -> Option<String> {
+        let actions = ui.segment(self.view) == 0;
+        ui.set_visible(self.actions_view, actions);
+        ui.set_visible(self.layout_view, !actions);
+        if actions {
+            return self.editor.update(ui, input);
+        }
+        self.show_layout(ui, input);
+        None
+    }
+
+    /// Shows the game's input as the bar picks it. The key map makes its
+    /// keys again only when they change.
+    fn show_layout(&mut self, ui: &mut Ui, input: &Input) {
         let maps = input.maps();
         if maps != self.maps {
             let picked = self.picked_map(ui);

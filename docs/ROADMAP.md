@@ -563,7 +563,8 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     view (`ControlsList`), a row an action with its keys and buttons, conflicts and Reset, as tabs or alone; built
     from `Input.Actions`, `InputAction.GetBindings`, `Input.ControlUses`, `ControlLabel`, `Conflicts`, `Categories`
     and `Rebind`, which games' own screens use too
-  - [ ] editing actions and bindings in the Input Actions window, with listening for a binding
+  - [x] editing actions and bindings in the Input Actions window, with listening for a binding: an Actions view of
+    maps, actions with their bindings, and properties, saved to the `.inputactions` file as it changes
   - [ ] prompt glyphs (icons) per device family, and local multiplayer pairing
 - Localization:
   - [x] string tables (`.strings` files) holding each key's text in every language `voxear.toml` lists, read when the

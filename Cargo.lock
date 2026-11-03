@@ -3588,6 +3588,7 @@ dependencies = [
  "gilrs",
  "serde",
  "toml",
+ "toml_edit",
  "tracing",
  "winit",
 ]

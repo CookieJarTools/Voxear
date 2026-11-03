@@ -6,7 +6,23 @@ Voxear draws the keyboard and mouse, or a gamepad, with every key your game bind
 
 ## The Input Actions window
 
-Open **Input Actions** from the Window menu or the command palette, or double-click your project's `.inputactions` file. It draws your actions as the game reads them, and redraws as soon as you save the file.
+Open **Input Actions** from the Window menu or the command palette, or double-click your project's `.inputactions` file. It has two views: **Actions**, where you make and change your actions, and **Layout**, which draws them on the devices.
+
+### Actions
+
+The Actions view is laid out as Unity's Input Actions window is, in three columns:
+
+- **Action Maps**: the maps, such as `Player` and `UI`. **+** adds one, and **×** takes the picked map away.
+- **Actions**: the picked map's actions, each followed by its bindings. A composite, such as WASD, shows each of its parts under it. **Action** adds an action, **Binding** adds a binding to the picked action, and **2D Vector** and **1D Axis** add a composite with its parts. **×** takes away the picked row.
+- **Properties**: what the picked row has. An action has its **Name**, **Type** (Button, Value or Vector 2), **Interaction** (Press, Hold or Tap, with its **Seconds**), **Category** and whether it is **Hidden**. A binding, or a part of a composite, has its **Path**, such as `Keyboard/Space`, and its **Processors**, such as `deadzone(0.1, 0.9), invert`.
+
+**Listen**, beside a binding's path, waits for the next key, mouse button or gamepad button you press, and binds it. Escape keeps the binding as it was.
+
+Every change is saved to your project's `.inputactions` file straight away, and the game reads it again. If your project has no file yet, the first change makes `Input.inputactions`, starting from Voxear's own actions. A change the game couldn't read isn't kept, and the window says why.
+
+### Layout
+
+The Layout view draws your actions as the game reads them, and redraws as soon as the file changes.
 
 - **Keyboard** and **Gamepad** pick the device.
 - The map menu shows one map's actions, such as only `Player`, or all of them.

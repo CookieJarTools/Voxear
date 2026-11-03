@@ -75,6 +75,34 @@ pub struct ActionsFile {
     pub maps: Vec<MapData>,
 }
 
+impl ActionsFile {
+    /// The file as `.inputactions` writes it, as the editor's Input Actions
+    /// window saves it: each binding on its own line.
+    pub fn to_text(&self) -> Result<String> {
+        let mut document: toml_edit::DocumentMut =
+            toml::to_string(self).context("writing the input actions")?.parse().context("reading them back")?;
+        let maps = tables(document.get_mut("map")).into_iter().flat_map(|maps| maps.iter_mut());
+        for action in maps.flat_map(|map| tables(map.get_mut("action")).into_iter().flat_map(|a| a.iter_mut())) {
+            let Some(bindings) = action.get_mut("bindings").and_then(|b| b.as_array_mut()) else { continue };
+            for binding in bindings.iter_mut() {
+                binding.decor_mut().set_prefix("\n    ");
+            }
+            bindings.set_trailing("\n");
+            bindings.set_trailing_comma(true);
+        }
+        Ok(document.to_string())
+    }
+
+    /// Checks the file as the game would read it.
+    pub fn check(&self) -> Result<()> {
+        Actions::of(self.clone()).map(drop)
+    }
+}
+
+fn tables(item: Option<&mut toml_edit::Item>) -> Option<&mut toml_edit::ArrayOfTables> {
+    item.and_then(|item| item.as_array_of_tables_mut())
+}
+
 /// A group of actions, as key maps colour them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -471,6 +499,20 @@ impl Actions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_written_out_reads_back_the_same() {
+        let text = "format = 1\n[[category]]\nname = \"Movement\"\ncolor = \"#3fb950\"\n[[map]]\nname = \"Player\"\n\
+                    [[map.action]]\nname = \"Move\"\ntype = \"vector2\"\ncategory = \"Movement\"\nbindings = [\
+                    { up = \"Keyboard/W\", down = \"Keyboard/S\", left = \"Keyboard/A\", right = \"Keyboard/D\" }, \
+                    \"Gamepad/LeftStick\"]\n[[map.action]]\nname = \"Jump\"\ninteraction = \"hold(0.5)\"\n\
+                    bindings = [\"Keyboard/Space\"]\n";
+        let file: ActionsFile = toml::from_str(text).unwrap();
+        let written = file.to_text().unwrap();
+        assert_eq!(toml::from_str::<ActionsFile>(&written).unwrap(), file, "{written}");
+        assert!(written.contains("bindings = [\n    { up = \"Keyboard/W\""), "a binding a line: {written}");
+        file.check().unwrap();
+    }
 
     const FILE: &str = r#"
         format = 1

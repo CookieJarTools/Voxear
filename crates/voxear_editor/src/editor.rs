@@ -14,6 +14,7 @@ mod drawer;
 mod framing;
 mod hierarchies;
 mod importing;
+mod input_files;
 mod inspectors;
 mod languages;
 mod level_edits;
@@ -770,10 +771,8 @@ impl Editor {
             if let Some(picked) = self.audio.update(&mut self.ui, audio_shown, &self.game) {
                 self.select(Some(picked));
             }
-            if self.shown(self.nodes.input_panel) {
-                self.input_actions.update(&mut self.ui, &self.game.input);
-            }
         }
+        self.update_input_actions();
         self.update_drawer();
         self.update_side_bar();
         self.update_prefab_mode(renderer);
@@ -1890,7 +1889,7 @@ impl Editor {
         if self.game_ui_takes(event) {
             return true;
         }
-        if self.game_input_takes(event) {
+        if self.input_listening_takes(event) || self.game_input_takes(event) {
             return true;
         }
         match event {

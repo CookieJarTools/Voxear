@@ -4027,10 +4027,14 @@ fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() 
     editor.ui.text_input("input actions");
     frame(&mut editor, &mut renderer);
     editor.palette_key(PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    // It opens on its Actions; the key maps are its Layout.
+    let view = editor.ui.find(editor.ui.root(), "input-view").expect("the Input Actions window");
+    editor.ui.set_segment(view, 1);
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
     }
-    let keymap = editor.ui.find(editor.ui.root(), "input-keymap").expect("the Input Actions window");
+    let keymap = editor.ui.find(editor.ui.root(), "input-keymap").unwrap();
     let mut keys = Vec::new();
     with_class(&editor.ui, keymap, "keymap-key", &mut keys);
     let lit = |editor: &voxear_editor::Editor, keys: &[NodeId]| {
@@ -6058,4 +6062,54 @@ fn the_audio_panel_lists_the_voices_playing() {
         .collect();
     let listed = shown.iter().any(|row| row.starts_with("One-shot") && row.contains("Effects") && row.contains("Loop"));
     assert!(listed, "{shown:?}");
+}
+
+/// The first node under `root` whose text is `text`.
+fn with_text(ui: &Ui, root: NodeId, text: &str) -> Option<NodeId> {
+    if ui.text(root) == text {
+        return Some(root);
+    }
+    ui.children(root).into_iter().find_map(|child| with_text(ui, child, text))
+}
+
+#[test]
+fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.open_dock_panel_beside(dock, "input", "scene");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let panel = editor.ui.find(editor.ui.root(), "input-panel").unwrap();
+    let file = dir.path().join("Input.inputactions");
+    assert!(!file.exists(), "Hello has no actions of its own");
+
+    let add = with_text(&editor.ui, panel, "Action").expect("an Action button");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&file).expect("the actions written to a file of the project's own");
+    assert!(text.contains("name = \"New Action\""), "{text}");
+    assert!(editor.game.input.action("New Action").is_some(), "the game reads it at once");
+
+    let binding = with_text(&editor.ui, panel, "Binding").unwrap();
+    click(&mut editor.ui, binding);
+    frame(&mut editor, &mut renderer);
+    let listen = with_text(&editor.ui, panel, "Listen").expect("the new binding's Listen button");
+    click(&mut editor.ui, listen);
+    frame(&mut editor, &mut renderer);
+    let shown: Vec<String> = texts_in(&editor.ui, panel);
+    assert!(with_text(&editor.ui, panel, "Press a Key").is_some(), "{shown:?}");
+    editor.game.input.devices_mut().set_key("K", true);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("\"Keyboard/K\""), "the key pressed is bound: {text}");
+    shot(&mut renderer, "input-actions.png");
 }

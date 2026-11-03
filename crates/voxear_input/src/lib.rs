@@ -42,7 +42,8 @@ pub struct ActionId(pub usize);
 /// a composite one, and the scheme of the control to take.
 #[derive(Clone, Debug, PartialEq)]
 struct Listening {
-    action: ActionId,
+    /// The action to rebind; none to only hear which control it is.
+    action: Option<ActionId>,
     binding: usize,
     part: Option<String>,
     scheme: Option<Scheme>,
@@ -128,6 +129,16 @@ impl Input {
 
     /// The actions as their file has them, rebound or not.
     pub fn actions_file(&self) -> ActionsFile {
+        self.file_with_bindings()
+    }
+
+    /// The actions as their file has them, before any rebinding: what the
+    /// editor's Input Actions window edits.
+    pub fn authored_file(&self) -> &ActionsFile {
+        &self.actions.file
+    }
+
+    fn file_with_bindings(&self) -> ActionsFile {
         let mut file = self.actions.file.clone();
         for map in &mut file.maps {
             for action in &mut map.actions {
@@ -182,7 +193,11 @@ impl Input {
             self.listening = Some(listening);
             return;
         };
-        match self.actions.rebind(listening.action.0, listening.binding, listening.part.as_deref(), &path) {
+        let Some(action) = listening.action else {
+            self.rebound = Some(Rebound::To(path));
+            return;
+        };
+        match self.actions.rebind(action.0, listening.binding, listening.part.as_deref(), &path) {
             Ok(()) => self.rebound = Some(Rebound::To(path)),
             Err(error) => {
                 tracing::warn!("could not rebind: {error:#}");
@@ -279,7 +294,16 @@ impl Input {
     /// bind it in place of a binding of an action, or one part of it.
     pub fn listen(&mut self, action: ActionId, binding: usize, part: Option<&str>, scheme: Option<Scheme>) {
         self.rebound = None;
-        self.listening = Some(Listening { action, binding, part: part.map(str::to_string), scheme });
+        self.listening = Some(Listening { action: Some(action), binding, part: part.map(str::to_string), scheme });
+    }
+
+    /// Listens for the next control pressed, of `scheme` when given, only
+    /// to hear which it is, as an editor binding a control does: it comes
+    /// as [`take_rebound`](Self::take_rebound)'s `To`, and no action
+    /// changes.
+    pub fn listen_for_control(&mut self, scheme: Option<Scheme>) {
+        self.rebound = None;
+        self.listening = Some(Listening { action: None, binding: 0, part: None, scheme });
     }
 
     pub fn is_listening(&self) -> bool {

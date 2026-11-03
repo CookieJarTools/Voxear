@@ -431,6 +431,15 @@ pub struct GpuPost {
     pub _lut_pad0: u32,
     pub lut_contribution: f32,
     pub _lut_pad: u32,
+    /// Screen-space reflections' image, or `NO_TEXTURE` without them; how
+    /// far rays go and how thick things count as, in metres; the steps rays
+    /// take; and the roughness past which surfaces show none.
+    pub reflection_texture: u32,
+    pub reflection_distance: f32,
+    pub reflection_thickness: f32,
+    pub reflection_steps: u32,
+    pub reflection_max_roughness: f32,
+    pub _reflection_pad: [u32; 3],
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -601,7 +610,7 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 17;
+        let post = 16 * 19;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6;
         let gi = 16 * GI_LEVELS * 2 + 64 * CASCADES + 32 + 32;

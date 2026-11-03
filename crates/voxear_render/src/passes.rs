@@ -92,6 +92,9 @@ pub struct Frame {
     /// Contact shadows' image, when they are on: like ambient occlusion,
     /// they need the depth drawn first.
     pub contact_shadows: Option<ImageId>,
+    /// Screen-space reflections' image, and last frame's finished picture
+    /// they read, when they are on; they need the depth drawn first too.
+    pub reflections: Option<(ImageId, ImageId)>,
     /// The atmosphere's tables, when the sky is the atmosphere: drawn first,
     /// and sampled by the opaque passes and the sky.
     pub atmosphere: Option<atmosphere::Tables>,
@@ -213,9 +216,10 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
 
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;
+    let reflections = frame.reflections;
     let voxels = frame.voxels;
     // Drawn as depth first, then shaded over it, for what reads the depth before shading.
-    let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some();
+    let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some();
     if let Some(atmosphere) = frame.atmosphere {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
@@ -226,6 +230,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
+        images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
         images.extend(voxels.map(|voxels| (voxels.previous_probes, ImageAccess::Sampled)));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
         images
@@ -286,6 +291,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             }
             if let Some(contact) = contact_shadows {
                 ambient_occlusion::record_contact_shadows(fg, (pipelines, push), depth, contact);
+            }
+            if let Some((target, history)) = reflections {
+                ambient_occlusion::record_reflections(fg, (pipelines, push), depth, history, target);
             }
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);

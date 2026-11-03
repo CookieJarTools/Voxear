@@ -315,6 +315,15 @@ struct Post
     uint lutPad0;
     float lutContribution;
     uint lutPad;
+    // Screen-space reflections: their image (NO_TEXTURE without them), how
+    // far rays go, how thick things count as, in metres, the steps they take,
+    // and the roughness past which surfaces show none.
+    uint reflectionTexture;
+    float reflectionDistance;
+    float reflectionThickness;
+    uint reflectionSteps;
+    float reflectionMaxRoughness;
+    uint3 reflectionPad;
 };
 
 static const uint SKY_GRADIENT = 0;

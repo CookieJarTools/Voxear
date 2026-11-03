@@ -29,6 +29,7 @@ pub struct PostProcess {
     pub ambient_occlusion: AmbientOcclusion,
     pub contact_shadows: ContactShadows,
     pub global_illumination: GlobalIllumination,
+    pub reflections: Reflections,
     pub anti_aliasing: AntiAliasing,
     pub bloom: Bloom,
     pub exposure: Exposure,
@@ -112,6 +113,30 @@ pub struct GlobalIllumination {
 impl Default for GlobalIllumination {
     fn default() -> Self {
         Self { enabled: false, strength: 1.0, voxel_size: 0.5 }
+    }
+}
+
+/// Screen-space reflections: what lies on screen, mirrored in smooth
+/// surfaces, from last frame's picture. They need TAA, whose history they
+/// read; without it, and where a ray finds nothing, surfaces reflect the sky.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Reflections {
+    pub enabled: bool,
+    /// How far rays go, in metres.
+    pub max_distance: f32,
+    /// How thick things in the depth buffer count as, in metres.
+    pub thickness: f32,
+    /// Surfaces rougher than this, from 0 to 1, show no screen-space
+    /// reflections, fading out towards it.
+    pub max_roughness: f32,
+    /// Advanced: the steps each ray takes.
+    pub steps: u32,
+}
+
+impl Default for Reflections {
+    fn default() -> Self {
+        Self { enabled: true, max_distance: 30.0, thickness: 0.3, max_roughness: 0.6, steps: 32 }
     }
 }
 
@@ -410,6 +435,7 @@ impl PostProcess {
             ambient_occlusion: AmbientOcclusion::default(),
             contact_shadows: ContactShadows::default(),
             global_illumination: GlobalIllumination::default(),
+            reflections: Reflections::default(),
             anti_aliasing: AntiAliasing::default(),
             bloom: Bloom::default(),
             // Metering for middle grey looks dull on bright days; half a stop lifts it.
@@ -459,6 +485,7 @@ impl PostProcess {
             ambient_occlusion: AmbientOcclusion { enabled: false, ..AmbientOcclusion::default() },
             contact_shadows: ContactShadows { enabled: false, ..ContactShadows::default() },
             global_illumination: GlobalIllumination { enabled: false, ..GlobalIllumination::default() },
+            reflections: Reflections { enabled: false, ..Reflections::default() },
             anti_aliasing: AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() },
             exposure: Exposure { auto: false, ..Exposure::default() },
             tonemap: Tonemap { mapper: Tonemapper::None, ..Tonemap::default() },
@@ -589,6 +616,13 @@ impl PostProcess {
             _lut_pad0: 0,
             lut_contribution: self.grading.lut_contribution.clamp(0.0, 1.0),
             _lut_pad: 0,
+            // The renderer names the image once it has made it.
+            reflection_texture: crate::gpu::NO_TEXTURE,
+            reflection_distance: self.reflections.max_distance.max(0.1),
+            reflection_thickness: self.reflections.thickness.max(0.01),
+            reflection_steps: self.reflections.steps.clamp(4, 128),
+            reflection_max_roughness: self.reflections.max_roughness.clamp(0.01, 1.0),
+            _reflection_pad: [0; 3],
         }
     }
 }

@@ -75,7 +75,7 @@ pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, Primitive, Vertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
-    GlobalIllumination,
+    GlobalIllumination, Reflections,
     Grading, Grain, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
@@ -1410,6 +1410,22 @@ impl View {
         if let Some(image) = contact_shadows {
             frame_data.post.contact_texture = fg.texture(image).0;
         }
+        // Reflections read last frame's finished picture, so they need TAA, and a frame of it to read.
+        let reflecting = extracted.post.reflections.enabled && taa && !taa_reset && !wireframe;
+        let reflections = match reflecting {
+            true => {
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                let half = |size: u32| size.div_ceil(2);
+                let desc = ImageDesc::new(half(extent.width), half(extent.height), HDR_FORMAT, usage);
+                let target = fg.create_image(gpu, bindless, "reflections", desc)?;
+                let previous = post_passes::taa_history(fg, gpu, bindless, output_extent, 1 - history)?;
+                Some((target, previous))
+            }
+            false => None,
+        };
+        if let Some((target, _)) = reflections {
+            frame_data.post.reflection_texture = fg.texture(target).0;
+        }
         let lit = extracted.post.global_illumination;
         let voxels = match lit.enabled && !wireframe {
             true => Some(gi::Voxels::new(fg, gpu, bindless, history)?),
@@ -1556,6 +1572,7 @@ impl View {
             edges,
             ambient_occlusion,
             contact_shadows,
+            reflections,
             atmosphere,
             volume,
             voxels,

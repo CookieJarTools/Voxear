@@ -864,6 +864,11 @@ Done so far:
   twelve cones from an eighth of the probes each frame, and from any the grid has just moved over, blending with
   their last value. Shading reads the eight probes round each pixel, weighted towards those it faces and away from
   those inside walls, falling back to the plain sky beyond the grid. GI went from about 0.95 ms to 0.28 ms at 1440p.
+- **Reflections:** every surface reflects the sky (or the atmosphere) in its mirror direction, blurring into the
+  ambient light as it roughens, rather than the ambient light alone. Screen-space reflections, at half
+  resolution: each pixel's mirror ray marched through the depth buffer, crossings refined by halving, the colour
+  taken from last frame's TAA picture where that point was. On in the Voxear Look; needs TAA. About 0.16 ms at
+  1440p. GPU test: a polished floor mirrors the cube on it.
 
 Next:
 - Virtual shadow maps, and shadows for point, spot and area lights.
@@ -871,7 +876,8 @@ Next:
 - Voxel GI: voxelizing the scene's geometry, so surfaces neither the camera nor the sun has seen bounce their own
   colours, and probe visibility against leaks through thin walls.
 - Baked lightmapper, light probes and reflection probes.
-- Reflections: screen-space reflections, falling back to reflection probes.
+- Reflections: falling back to reflection probes rather than the sky, and tracing against the depth pyramid,
+  for fewer misses on surfaces seen edge on.
 - Stylised shading: shadows tinted a colour, and foliage shading (wrap lighting, light through the leaves, and a
   rim light tinted by the sun).
 - **Lighting looks, as presets.** A scene picks a look, which sets the sky, sun, shadows, fog, reflections and

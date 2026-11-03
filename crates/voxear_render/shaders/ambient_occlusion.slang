@@ -402,3 +402,116 @@ float4 contactShadowFragment(AoOut input) : SV_Target
     }
     return 1.0;
 }
+
+// ---------------------------------------------------------------- Screen-space reflections
+
+// Where a point in view space lands on the screen, in pixels, as
+// viewPosition came off it.
+float2 reflectionPixel(Frame* frame, float3 point, float2 size)
+{
+    float2 ndc = point.xy / (point.z * frame->post.aoUnproject) + frame->jitter * 2.0 / size;
+    return (ndc * 0.5 + 0.5) * size;
+}
+
+// Screen-space reflections, at half resolution: from each pixel, its
+// mirror ray marched through the depth buffer, in steps that grow with
+// distance. Where it meets something, the colour there comes from last
+// frame's finished picture (TAA's history), found where that point was on
+// screen then, as this frame's is not shaded yet. Writes the colour and how
+// sure the hit is, which fades towards the screen's edges and the ray's
+// end. textures: x depth, y last frame's picture.
+[shader("fragment")]
+float4 reflectionsFragment(AoOut input) : SV_Target
+{
+    Frame* frame = push.frame;
+    uint depthTexture = push.textures.x;
+    int2 pixel = fullPixel(int2(input.position.xy));
+    float depth = loadDepth(depthTexture, pixel);
+    if (depth <= 0.0)
+    {
+        return 0.0;
+    }
+    float3 centre = viewPosition(float2(pixel) + 0.5, depth);
+    float3 normal = viewNormal(depthTexture, pixel, centre);
+    float3 ray = reflect(normalize(centre), normal);
+    // Rays back towards the camera find only what is behind it, off screen.
+    if (ray.z < -0.2)
+    {
+        return 0.0;
+    }
+    float2 size = float2(frame->viewport);
+    float pixelSpan = abs(frame->post.aoUnproject.y) * 2.0 / size.y * centre.z;
+    float3 start = centre + normal * (2.0 * pixelSpan);
+    uint steps = max(frame->post.reflectionSteps, 1);
+    float jitter = aoNoise(pixel, frame->frameIndex).y;
+    float reach = frame->post.reflectionDistance;
+    float2 hit = -1.0;
+    float travelled = 0.0;
+    float lastInFront = 0.0;
+    float lastBehind = -1.0;
+    for (uint i = 1; i <= steps; i++)
+    {
+        float t = (float(i) - jitter) / float(steps);
+        float distance = reach * t * t;
+        float3 along = start + ray * distance;
+        if (along.z <= frame->near)
+        {
+            break;
+        }
+        float2 at = reflectionPixel(frame, along, size);
+        if (any(at < 0.0) || any(at >= size))
+        {
+            break;
+        }
+        float behind = along.z - frame->near / max(loadDepth(depthTexture, int2(at)), 1e-7);
+        // Thicker the farther it has gone, as its steps are longer there. A step that has just gone from in
+        // front of the depth to behind it may have crossed a surface seen edge on, so it is refined too, and
+        // kept only if the crossing it finds lies on the surface.
+        float thickness = frame->post.reflectionThickness + distance * 0.05;
+        if (behind > 0.0 && (behind < thickness || lastBehind < 0.0))
+        {
+            // Between the last step in front and this one behind, halve the gap to find where it crossed.
+            float front = lastInFront;
+            float back = distance;
+            for (uint halving = 0; halving < 5; halving++)
+            {
+                float middle = (front + back) * 0.5;
+                float3 point = start + ray * middle;
+                float2 there = reflectionPixel(frame, point, size);
+                bool past = point.z > frame->near / max(loadDepth(depthTexture, int2(there)), 1e-7);
+                back = past ? middle : back;
+                front = past ? front : middle;
+            }
+            float3 crossing = start + ray * back;
+            float2 there = reflectionPixel(frame, crossing, size);
+            float off = crossing.z - frame->near / max(loadDepth(depthTexture, int2(there)), 1e-7);
+            // Far crossings, found from long steps, are looser.
+            if (abs(off) < thickness + back * 0.1)
+            {
+                hit = there;
+                travelled = t;
+                break;
+            }
+        }
+        lastInFront = behind < 0.0 ? distance : lastInFront;
+        lastBehind = behind;
+    }
+    if (hit.x < 0.0)
+    {
+        return 0.0;
+    }
+    // Where the point it met was last frame.
+    float2 uv = hit / size;
+    float hitDepth = loadDepth(depthTexture, int2(hit));
+    float4 world = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, hitDepth, 1.0));
+    float4 before = transform(frame->prevViewProj, float4(world.xyz / world.w, 1.0));
+    float2 previousUv = before.xy / before.w * 0.5 + 0.5;
+    if (before.w <= 0.0 || any(previousUv < 0.0) || any(previousUv > 1.0))
+    {
+        return 0.0;
+    }
+    float3 colour = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], previousUv, 0.0).rgb;
+    float2 border = min(uv, 1.0 - uv);
+    float sure = saturate(min(border.x, border.y) * 10.0) * saturate((1.0 - travelled) * 4.0);
+    return float4(colour, sure);
+}

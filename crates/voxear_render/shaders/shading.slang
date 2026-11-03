@@ -123,6 +123,37 @@ uint cascadeAt(Frame* frame, float3 position)
     return cascade;
 }
 
+// What a surface reflects of its surroundings: the sky in the mirror
+// direction, blurring towards the light from all round (`ambient`) as the
+// surface roughens, with screen-space reflections over it where they found
+// something and the surface is smooth enough to show them.
+float3 environmentReflection(Frame* frame, float2 pixel, float3 direction, float roughness, float3 ambient, bool atmosphere)
+{
+    float3 sky;
+    if (atmosphere)
+    {
+        sky = skyToward(frame, direction) * frame->sunColor;
+    }
+    else
+    {
+        float up = direction.y;
+        float3 above = lerp(frame->skyHorizon, frame->skyZenith, pow(saturate(up), 0.45));
+        float3 below = lerp(frame->skyHorizon, frame->groundColor, pow(saturate(-up), 0.35));
+        sky = up >= 0.0 ? above : below;
+    }
+    // Scaled as the sky's other light is, so a night scene's floor does not mirror a day sky.
+    sky *= frame->ambient;
+    float3 reflected = lerp(sky, ambient, saturate(roughness * 1.5));
+    if (frame->post.reflectionTexture == NO_TEXTURE)
+    {
+        return reflected;
+    }
+    float2 uv = pixel / float2(frame->viewport);
+    float4 screen = textures[NonUniformResourceIndex(frame->post.reflectionTexture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
+    float smooth = saturate(1.0 - roughness / frame->post.reflectionMaxRoughness);
+    return lerp(reflected, screen.rgb, screen.a * smooth);
+}
+
 // Where a point lies in the sun's shadow map: its cascade's tile of the
 // atlas, its place in the tile, and its depth from the sun. `found` is false
 // beyond the cascades, or without a shadow map.
@@ -328,7 +359,8 @@ FragmentOut fragmentMain(VertexOut input)
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);
-    color += ambient * (s.diffuse * occlusion.diffuse + ambientFresnel * (1.0 - s.roughness * 0.7) * occlusion.specular);
+    float3 reflected = environmentReflection(frame, input.position.xy, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere);
+    color += ambient * s.diffuse * occlusion.diffuse + reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * occlusion.specular;
 
     color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
     if (atmosphere)

@@ -109,6 +109,25 @@ pub fn record_contact_shadows(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipel
     fg.add_pass("Contact shadows", &images, &[], move |ctx| draw(ctx, pipelines.contact_shadows, &push, target));
 }
 
+/// Records screen-space reflections into `target`, an image of
+/// `HDR_FORMAT` at half the view's size, reading `depth` once the depth
+/// passes drew it and `history`, last frame's finished picture. Its shader
+/// lives beside GTAO's, as both march through the depth buffer, and like
+/// GTAO's half-resolution passes each of its pixels stands for a different
+/// pixel of its 2×2 each frame.
+pub fn record_reflections(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    depth: ImageId,
+    history: ImageId,
+    target: ImageId,
+) {
+    let push = Push { textures: [fg.texture(depth).0, fg.texture(history).0, 0, 0], level: 1, ..push };
+    let images =
+        [(depth, ImageAccess::Sampled), (history, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
+    fg.add_pass("Reflections", &images, &[], move |ctx| draw(ctx, pipelines.reflections, &push, target));
+}
+
 /// A fullscreen pass that writes every pixel of `target`.
 fn draw(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId) {
     let color = [vk::RenderingAttachmentInfo::default()

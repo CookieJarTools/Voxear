@@ -118,8 +118,8 @@ pub fn record(
     }
 
     if settings.anti_aliasing.mode == AntiAliasingMode::Taa {
-        let current = fg.history_image(gpu, bindless, HISTORY_NAMES[input.history], full(HDR_FORMAT))?;
-        let previous = fg.history_image(gpu, bindless, HISTORY_NAMES[1 - input.history], full(HDR_FORMAT))?;
+        let current = taa_history(fg, gpu, bindless, extent, input.history)?;
+        let previous = taa_history(fg, gpu, bindless, extent, 1 - input.history)?;
         let textures = [fg.texture(scene).0, fg.texture(previous).0, fg.texture(velocity).0, depth_texture];
         let push = Push { textures, ..push };
         let images = [
@@ -206,6 +206,20 @@ pub fn record(
         fg.add_pass("Finish", &images, &[], move |ctx| draw_into(ctx, pipelines.finish, &push, output, rect));
     }
     Ok(finish.then_some(composited))
+}
+
+/// One of TAA's two history images for a view of `extent`: the one a
+/// frame writes, or the other, last frame's finished picture, which
+/// screen-space reflections read before post-processing has run.
+pub fn taa_history(
+    fg: &mut FrameGraph<'_>,
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    extent: vk::Extent2D,
+    which: usize,
+) -> Result<ImageId> {
+    let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+    fg.history_image(gpu, bindless, HISTORY_NAMES[which], ImageDesc::new(extent.width, extent.height, HDR_FORMAT, usage))
 }
 
 /// The finished view blurred for UI backdrops (`backdrop-filter`): halved a

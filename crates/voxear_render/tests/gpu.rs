@@ -2014,3 +2014,48 @@ fn floor_pixel(point: Vec3) -> (u32, u32) {
     let (x, y) = (clip.x / clip.w * 0.5 + 0.5, clip.y / clip.w * 0.5 + 0.5);
     ((x * 640.0) as u32, (y * 360.0) as u32)
 }
+
+/// A polished floor with a red cube on it, seen from head height, with
+/// TAA, after enough frames that reflections have last frame's picture to
+/// read, with screen-space reflections on or off.
+fn reflection_render(on: bool) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, Reflections};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.0, 0.0), Quat::from_rotation_x(0.25), Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let polished = MaterialDesc { base_color: [0.05, 0.05, 0.05, 1.0], roughness: 0.05, ..MaterialDesc::default() };
+    let floor = renderer.add_material(&polished).unwrap();
+    let red = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, floor), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    world.spawn((MeshRenderer::new(cube, red), Transform::new(Vec3::new(0.0, 0.5, 4.0), Quat::IDENTITY, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -1.0, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Taa, sharpness: 0.0, ..AntiAliasing::default() };
+    let reflections = Reflections { enabled: on, ..Reflections::default() };
+    world.insert_resource(voxear_render::PostProcess { anti_aliasing, reflections, ..steady_post() });
+    run(&mut renderer, &world, &mut 0.0, 12);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_polished_floor_reflects_what_stands_on_it() {
+    let (Some(without), Some(with)) = (reflection_render(false), reflection_render(true)) else { return };
+    keep_image("floor without reflections.png", &without);
+    keep_image("floor with reflections.png", &with);
+    // Just below the cube's foot on screen, the floor mirrors its red front: how much redder than it is
+    // green and blue there, on average.
+    let redness = |pixels: &[u8]| {
+        let patch: Vec<i32> = (200..240)
+            .flat_map(|y| (290..350).map(move |x| (x, y)))
+            .map(|at| {
+                let [r, g, b] = rgb_at(pixels, at);
+                r - (g + b) / 2
+            })
+            .collect();
+        patch.iter().sum::<i32>() / patch.len() as i32
+    };
+    let (red_without, red_with) = (redness(&without), redness(&with));
+    assert!(red_with > red_without + 20, "the cube shows in the floor: {red_with} redder there, from {red_without}");
+}

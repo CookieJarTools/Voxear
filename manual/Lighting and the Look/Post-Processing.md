@@ -132,6 +132,25 @@ With `volumetric = true`, the mist takes its light from the sun, the sky and eve
 
 A name Voxear does not know, such as a misspelt setting, is an error, and the Console says which.
 
+## Reflections
+
+Shiny surfaces reflect what is round them. A floor polished like glass shows the things standing on it, and a chrome ball the room it is in. How much a surface reflects comes from its material: smooth ones, with a low roughness, reflect sharply, and metals most of all.
+
+Voxear reflects two things:
+
+- **The sky**, always: every surface reflects the sky in the direction it faces, blurring as it roughens.
+- **What is on screen**, with screen-space reflections: each smooth surface looks along its reflection, through the picture the camera already has, and shows what it finds. They are on in the Voxear Look, and need TAA.
+
+```toml
+[post.reflections]
+enabled = true
+max_distance = 30   # how far reflections reach, in metres
+thickness = 0.3     # how thick things count as, in metres
+max_roughness = 0.6 # surfaces rougher than this show none
+```
+
+Screen-space reflections can only show what is on screen. Look down at a puddle and the sky it would reflect is above the picture, so the puddle shows the sky's colour from the scene instead. Things just come on screen, or just behind something, can show a moment late. They cost about a sixth of a millisecond at 1440p.
+
 ## Drawing at a lower resolution
 
 Drawing every pixel of a large screen is costly. With TAA on, `render_scale` draws the scene at a share of the screen's width and height, and TAA builds the full-size picture from it: the camera is shifted by a different fraction of a pixel each frame, so over a few frames the small pictures between them cover every pixel of the big one. This is how Unreal's screen percentage and temporal upscaling work.

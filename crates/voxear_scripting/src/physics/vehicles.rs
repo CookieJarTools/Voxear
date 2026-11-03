@@ -22,6 +22,10 @@ const VEHICLE_HANDBRAKE: i32 = 211;
 const VEHICLE_SPEED: i32 = 212;
 const VEHICLE_RPM: i32 = 213;
 const VEHICLE_GEAR: i32 = 214;
+const VEHICLE_GEARS: i32 = 215;
+const VEHICLE_FIRST_GEAR: i32 = 216;
+const VEHICLE_TOP_GEAR: i32 = 217;
+const VEHICLE_ANTI_ROLL: i32 = 218;
 const WHEEL_HAS: i32 = 220;
 const WHEEL_ADD: i32 = 221;
 const WHEEL_REMOVE: i32 = 222;
@@ -34,6 +38,8 @@ const WHEEL_STEER_ANGLE: i32 = 228;
 const WHEEL_POWERED: i32 = 229;
 const WHEEL_BRAKE: i32 = 230;
 const WHEEL_HANDBRAKE: i32 = 231;
+const WHEEL_GRIP: i32 = 232;
+const WHEEL_SIDE_GRIP: i32 = 233;
 
 pub(super) fn read(world: &World, entity: Entity, what: i32) -> Option<[f32; 4]> {
     if what >= WHEEL_HAS {
@@ -57,6 +63,10 @@ pub(super) fn read(world: &World, entity: Entity, what: i32) -> Option<[f32; 4]>
         VEHICLE_SPEED => number(vehicle()?.speed),
         VEHICLE_RPM => number(vehicle()?.rpm),
         VEHICLE_GEAR => number(vehicle()?.gear as f32),
+        VEHICLE_GEARS => number(vehicle()?.gears as f32),
+        VEHICLE_FIRST_GEAR => number(vehicle()?.first_gear),
+        VEHICLE_TOP_GEAR => number(vehicle()?.top_gear),
+        VEHICLE_ANTI_ROLL => number(vehicle()?.anti_roll),
         _ => return None,
     })
 }
@@ -74,6 +84,8 @@ fn read_wheel(world: &World, entity: Entity, what: i32) -> Option<[f32; 4]> {
         WHEEL_POWERED => flag(wheel()?.powered),
         WHEEL_BRAKE => number(wheel()?.brake),
         WHEEL_HANDBRAKE => number(wheel()?.handbrake),
+        WHEEL_GRIP => number(wheel()?.grip),
+        WHEEL_SIDE_GRIP => number(wheel()?.side_grip),
         _ => return None,
     })
 }
@@ -100,6 +112,10 @@ pub(super) fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4
         VEHICLE_STEERING => change(world, entity, |v: &mut Vehicle| v.steering = n.clamp(-1.0, 1.0)),
         VEHICLE_BRAKE => change(world, entity, |v: &mut Vehicle| v.brake = n.clamp(0.0, 1.0)),
         VEHICLE_HANDBRAKE => change(world, entity, |v: &mut Vehicle| v.handbrake = n.clamp(0.0, 1.0)),
+        VEHICLE_GEARS => change(world, entity, |v: &mut Vehicle| v.gears = n.round().clamp(1.0, 10.0) as u32),
+        VEHICLE_FIRST_GEAR => change(world, entity, |v: &mut Vehicle| v.first_gear = n.max(0.1)),
+        VEHICLE_TOP_GEAR => change(world, entity, |v: &mut Vehicle| v.top_gear = n.max(0.1)),
+        VEHICLE_ANTI_ROLL => change(world, entity, |v: &mut Vehicle| v.anti_roll = n.max(0.0)),
         WHEEL_ADD => {
             if !world.has::<Wheel>(entity) {
                 world.insert(entity, Wheel::default());
@@ -116,6 +132,8 @@ pub(super) fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4
         WHEEL_POWERED => change(world, entity, |w: &mut Wheel| w.powered = on),
         WHEEL_BRAKE => change(world, entity, |w: &mut Wheel| w.brake = n.max(0.0)),
         WHEEL_HANDBRAKE => change(world, entity, |w: &mut Wheel| w.handbrake = n.max(0.0)),
+        WHEEL_GRIP => change(world, entity, |w: &mut Wheel| w.grip = n.max(0.0)),
+        WHEEL_SIDE_GRIP => change(world, entity, |w: &mut Wheel| w.side_grip = n.max(0.0)),
         _ => false,
     }
 }

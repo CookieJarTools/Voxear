@@ -74,11 +74,17 @@ pub struct WheelDesc {
     pub brake: f32,
     pub handbrake: f32,
     pub powered: bool,
+    /// How hard the tyre holds, forwards and sideways, as a share of Jolt's
+    /// own tyre: 1 as it is, 2 twice as hard.
+    pub grip: (f32, f32),
 }
 
 /// A vehicle: what drives it, its engine's most torque in Nm and its range
 /// of revolutions a minute, whether its gears change by themselves, how
-/// far it may pitch or roll in radians, and its wheels.
+/// far it may pitch or roll in radians, and its wheels; its gearbox, so
+/// many forward gears from the first's ratio to the top's (none for Jolt's
+/// own), and how stiff the anti-roll bars across its axles are, in N/m (0
+/// for none).
 #[derive(Clone, Debug, PartialEq)]
 pub struct VehicleDesc {
     pub kind: VehicleType,
@@ -87,6 +93,8 @@ pub struct VehicleDesc {
     pub automatic: bool,
     pub max_pitch_roll: f32,
     pub wheels: Vec<WheelDesc>,
+    pub gears: (u32, f32, f32),
+    pub anti_roll: f32,
 }
 
 /// How a vehicle is going: its engine's revolutions a minute, its gear (-1
@@ -615,6 +623,8 @@ impl PhysicsWorld {
                 max_brake: wheel.brake,
                 max_handbrake: wheel.handbrake,
                 powered: u32::from(wheel.powered),
+                grip: wheel.grip.0,
+                side_grip: wheel.grip.1,
             })
             .collect();
         let kind = match desc.kind {
@@ -631,6 +641,10 @@ impl PhysicsWorld {
             max_pitch_roll: desc.max_pitch_roll,
             wheel_count: wheels.len() as u32,
             wheels: wheels.as_ptr(),
+            gears: desc.gears.0,
+            first_gear: desc.gears.1,
+            top_gear: desc.gears.2,
+            anti_roll: desc.anti_roll,
         };
         let vehicle = unsafe { ffi::vx_vehicle_add(self.world, body.0, &raw) };
         (vehicle != 0).then_some(VehicleId(vehicle))
@@ -688,6 +702,15 @@ mod tests {
     /// the front two steering, all of them powered; a tank's set wider,
     /// with a tank's torque.
     fn vehicle(world: &mut PhysicsWorld, kind: VehicleType) -> (BodyId, VehicleId) {
+        tuned_vehicle(world, kind, &|_| {})
+    }
+
+    /// The same, its description changed by `tune` before it is made.
+    fn tuned_vehicle(
+        world: &mut PhysicsWorld,
+        kind: VehicleType,
+        tune: &dyn Fn(&mut VehicleDesc),
+    ) -> (BodyId, VehicleId) {
         let floor = world.box_shape(Vec3::new(200.0, 0.5, 200.0));
         world.add_body(&BodyDesc::new(floor, Motion::Static).at(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY));
         let shape = world.box_shape(Vec3::new(0.9, 0.3, 2.0));
@@ -705,19 +728,23 @@ mod tests {
             brake: 1500.0,
             handbrake: if z < 0.0 { 4000.0 } else { 0.0 },
             powered: true,
+            grip: (1.0, 1.0),
         };
         let wheels = match kind {
             VehicleType::Tank => vec![wheel(-1.2, 0.9), wheel(1.2, 0.9), wheel(-1.2, -0.9), wheel(1.2, -0.9)],
             _ => vec![wheel(-0.9, 1.4), wheel(0.9, 1.4), wheel(-0.9, -1.4), wheel(0.9, -1.4)],
         };
-        let desc = VehicleDesc {
+        let mut desc = VehicleDesc {
             kind,
             max_torque: if kind == VehicleType::Tank { 5000.0 } else { 500.0 },
             rpm: (1000.0, 6000.0),
             automatic: true,
             max_pitch_roll: std::f32::consts::PI,
             wheels,
+            gears: (5, 2.66, 0.74),
+            anti_roll: 1000.0,
         };
+        tune(&mut desc);
         (body, world.add_vehicle(body, &desc).expect("a vehicle"))
     }
 
@@ -747,6 +774,35 @@ mod tests {
         drive(&mut world, car, 1.0, 1.0, 2.0);
         let (turned, _) = world.transform(body);
         assert!(turned.x > ahead.x + 1.0, "steering right goes to +X, Voxear's right: {turned}");
+    }
+
+    #[test]
+    fn a_gearbox_and_tyres_change_how_a_car_goes() {
+        // Its speed after four seconds flat out, and the highest gear it reached.
+        let race = |tune: &dyn Fn(&mut VehicleDesc)| {
+            let mut world = PhysicsWorld::new(1024);
+            let (_, car) = tuned_vehicle(&mut world, VehicleType::Car, tune);
+            drive(&mut world, car, 0.0, 0.0, 1.0);
+            let mut top = 0;
+            for _ in 0..240 {
+                world.drive_vehicle(car, 1.0, 0.0, 0.0, 0.0);
+                world.step(1.0 / 60.0, 1);
+                top = top.max(world.vehicle_state(car).gear);
+            }
+            (world.vehicle_state(car).speed, top)
+        };
+        // Jolt changes up only while no driven wheel slips more than a tenth, which this car's tyres do in first
+        // with all four wheels driven flat out, so the gearbox is raced on tyres that grip twice as hard.
+        let grippy = |desc: &mut VehicleDesc| desc.wheels.iter_mut().for_each(|wheel| wheel.grip = (2.0, 2.0));
+        let (speed, top) = race(&grippy);
+        assert!(top >= 2, "an ordinary box changes up: {top} at {speed} m/s");
+        let (slick, _) = race(&|desc| desc.wheels.iter_mut().for_each(|wheel| wheel.grip = (0.05, 0.05)));
+        assert!(slick < speed * 0.7, "tyres with little grip spin: {slick} against {speed}");
+        let (_, only) = race(&|desc| {
+            grippy(desc);
+            desc.gears = (1, 3.0, 3.0);
+        });
+        assert_eq!(only, 1, "a box of one gear stays in it");
     }
 
     #[test]

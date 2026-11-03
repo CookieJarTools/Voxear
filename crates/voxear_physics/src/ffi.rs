@@ -81,6 +81,8 @@ pub struct VxWheelDesc {
     pub max_brake: f32,
     pub max_handbrake: f32,
     pub powered: u32,
+    pub grip: f32,
+    pub side_grip: f32,
 }
 
 #[repr(C)]
@@ -94,6 +96,10 @@ pub struct VxVehicleDesc {
     pub max_pitch_roll: f32,
     pub wheel_count: u32,
     pub wheels: *const VxWheelDesc,
+    pub gears: u32,
+    pub first_gear: f32,
+    pub top_gear: f32,
+    pub anti_roll: f32,
 }
 
 #[repr(C)]

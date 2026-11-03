@@ -722,6 +722,8 @@ struct VxWheelDesc {
 	float max_brake; // Nm
 	float max_handbrake; // Nm
 	uint32_t powered;
+	float grip; // Jolt's tyre friction, scaled, forwards
+	float side_grip; // and sideways
 };
 
 struct VxVehicleDesc {
@@ -733,6 +735,11 @@ struct VxVehicleDesc {
 	float max_pitch_roll; // radians
 	uint32_t wheel_count;
 	const VxWheelDesc *wheels;
+	// Forward gears, the first's ratio and the top's, the rest spread between; 0 for Jolt's own.
+	uint32_t gears;
+	float first_gear;
+	float top_gear;
+	float anti_roll; // N/m, between wheels side by side; 0 for none
 };
 
 struct VxVehicleState {
@@ -745,6 +752,16 @@ struct VxVehicleState {
 
 namespace {
 
+// A tyre's friction curve, scaled: grip 2 holds twice as hard at every slip.
+void scale_friction(LinearCurve &curve, float grip) {
+	if (grip <= 0.0f || grip == 1.0f) {
+		return;
+	}
+	for (LinearCurve::Point &point : curve.mPoints) {
+		point.mY *= grip;
+	}
+}
+
 void fill_wheel(WheelSettings &wheel, const VxWheelDesc &desc) {
 	wheel.mPosition = Vec3(desc.position[0], desc.position[1], desc.position[2]);
 	wheel.mRadius = desc.radius;
@@ -755,6 +772,48 @@ void fill_wheel(WheelSettings &wheel, const VxWheelDesc &desc) {
 	wheel.mSuspensionSpring.mDamping = desc.damping;
 }
 
+// A gearbox of `gears` forward gears from `first` to `top`, each ratio the
+// same step down from the one before, and a reverse a little lower than
+// first, as cars have.
+void fill_gears(VehicleTransmissionSettings &transmission, const VxVehicleDesc &desc) {
+	if (desc.gears == 0 || desc.first_gear <= 0.0f || desc.top_gear <= 0.0f) {
+		return;
+	}
+	transmission.mGearRatios.clear();
+	float step = desc.gears > 1 ? std::pow(desc.top_gear / desc.first_gear, 1.0f / float(desc.gears - 1)) : 1.0f;
+	float ratio = desc.first_gear;
+	for (uint32_t gear = 0; gear < desc.gears; ++gear) {
+		transmission.mGearRatios.push_back(ratio);
+		ratio *= step;
+	}
+	transmission.mReverseGearRatios.clear();
+	transmission.mReverseGearRatios.push_back(-desc.first_gear * 1.09f);
+}
+
+// Wheels side by side, as an axle's: each pair by where they are along the
+// body, nearer than a quarter metre, left (+X in Jolt) first.
+std::vector<std::pair<int, int>> pairs_side_by_side(const VxVehicleDesc &desc, bool powered_only) {
+	std::vector<uint32_t> wheels;
+	for (uint32_t at = 0; at < desc.wheel_count; ++at) {
+		if (!powered_only || desc.wheels[at].powered) {
+			wheels.push_back(at);
+		}
+	}
+	std::sort(wheels.begin(), wheels.end(), [&](uint32_t a, uint32_t b) { return desc.wheels[a].position[2] < desc.wheels[b].position[2]; });
+	std::vector<std::pair<int, int>> axles;
+	for (size_t at = 0; at < wheels.size(); ++at) {
+		const VxWheelDesc &wheel = desc.wheels[wheels[at]];
+		bool paired = at + 1 < wheels.size() && std::abs(desc.wheels[wheels[at + 1]].position[2] - wheel.position[2]) < 0.25f;
+		if (paired) {
+			axles.emplace_back(int(wheels[at]), int(wheels[at + 1]));
+			++at;
+		} else {
+			axles.emplace_back(int(wheels[at]), -1);
+		}
+	}
+	return axles;
+}
+
 // A car's or a motorbike's controller: powered wheels side by side share a
 // differential, each with an equal share of the engine.
 void fill_wheeled(WheeledVehicleControllerSettings &controller, const VxVehicleDesc &desc) {
@@ -762,24 +821,8 @@ void fill_wheeled(WheeledVehicleControllerSettings &controller, const VxVehicleD
 	controller.mEngine.mMinRPM = desc.min_rpm;
 	controller.mEngine.mMaxRPM = std::max(desc.max_rpm, desc.min_rpm + 1.0f);
 	controller.mTransmission.mMode = desc.automatic ? ETransmissionMode::Auto : ETransmissionMode::Manual;
-	std::vector<uint32_t> powered;
-	for (uint32_t at = 0; at < desc.wheel_count; ++at) {
-		if (desc.wheels[at].powered) {
-			powered.push_back(at);
-		}
-	}
-	std::sort(powered.begin(), powered.end(), [&](uint32_t a, uint32_t b) { return desc.wheels[a].position[2] < desc.wheels[b].position[2]; });
-	std::vector<std::pair<int, int>> axles;
-	for (size_t at = 0; at < powered.size(); ++at) {
-		const VxWheelDesc &wheel = desc.wheels[powered[at]];
-		bool paired = at + 1 < powered.size() && std::abs(desc.wheels[powered[at + 1]].position[2] - wheel.position[2]) < 0.25f;
-		if (paired) {
-			axles.emplace_back(int(powered[at]), int(powered[at + 1]));
-			++at;
-		} else {
-			axles.emplace_back(int(powered[at]), -1);
-		}
-	}
+	fill_gears(controller.mTransmission, desc);
+	std::vector<std::pair<int, int>> axles = pairs_side_by_side(desc, true);
 	for (auto [left, right] : axles) {
 		VehicleDifferentialSettings differential;
 		differential.mLeftWheel = left;
@@ -801,12 +844,25 @@ uint32_t vx_vehicle_add(VxWorld *world, uint32_t body, const VxVehicleDesc *desc
 	Body &vehicle_body = lock.GetBody();
 	VehicleConstraintSettings settings;
 	settings.mMaxPitchRollAngle = desc->max_pitch_roll;
+	// An anti-roll bar across each pair of wheels side by side, to keep the body from leaning out of a turn.
+	if (desc->anti_roll > 0.0f) {
+		for (auto [left, right] : pairs_side_by_side(*desc, false)) {
+			if (right >= 0) {
+				VehicleAntiRollBar bar;
+				bar.mLeftWheel = left;
+				bar.mRightWheel = right;
+				bar.mStiffness = desc->anti_roll;
+				settings.mAntiRollBars.push_back(bar);
+			}
+		}
+	}
 	if (desc->kind == 1) {
 		auto controller = new TrackedVehicleControllerSettings();
 		controller->mEngine.mMaxTorque = desc->max_torque;
 		controller->mEngine.mMinRPM = desc->min_rpm;
 		controller->mEngine.mMaxRPM = std::max(desc->max_rpm, desc->min_rpm + 1.0f);
 		controller->mTransmission.mMode = desc->automatic ? ETransmissionMode::Auto : ETransmissionMode::Manual;
+		fill_gears(controller->mTransmission, *desc);
 		// Jolt's left is +X, as it is right-handed; each track takes the wheels on its side.
 		for (int side = 0; side < 2; ++side) {
 			VehicleTrackSettings &track = controller->mTracks[side];
@@ -844,6 +900,8 @@ uint32_t vx_vehicle_add(VxWorld *world, uint32_t body, const VxVehicleDesc *desc
 			wheel->mMaxSteerAngle = desc->wheels[at].max_steer;
 			wheel->mMaxBrakeTorque = desc->wheels[at].max_brake;
 			wheel->mMaxHandBrakeTorque = desc->wheels[at].max_handbrake;
+			scale_friction(wheel->mLongitudinalFriction, desc->wheels[at].grip);
+			scale_friction(wheel->mLateralFriction, desc->wheels[at].side_grip);
 			if (desc->kind == 2) {
 				// A motorbike's front wheel steers about a raked fork; both lean with the bike.
 				wheel->mSteeringAxis = Vec3(0, 1, desc->wheels[at].max_steer > 0.0f ? -0.4f : 0.0f).Normalized();

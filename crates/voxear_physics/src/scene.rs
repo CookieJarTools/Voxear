@@ -283,6 +283,11 @@ impl VehicleKind {
 /// 1), `steering` (-1 left to 1 right), `brake` and `handbrake` (0 to 1),
 /// and reads its `speed` (metres a second, forward), `rpm` and `gear`
 /// (-1 reverse, 0 neutral, 1 first), none of which scene files keep.
+///
+/// Its gearbox has `gears` forward gears, from `first_gear`'s ratio down to
+/// `top_gear`'s, each the same step from the one before; `anti_roll` is the
+/// stiffness of a bar across each pair of wheels side by side, in N/m, to
+/// keep it from leaning out of turns (0 for none).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Vehicle {
@@ -298,6 +303,14 @@ pub struct Vehicle {
     /// Its gears change by themselves.
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
     pub automatic: bool,
+    #[serde(default = "gears", skip_serializing_if = "is_gears")]
+    pub gears: u32,
+    #[serde(default = "first_gear", skip_serializing_if = "is_first_gear")]
+    pub first_gear: f32,
+    #[serde(default = "top_gear", skip_serializing_if = "is_top_gear")]
+    pub top_gear: f32,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub anti_roll: f32,
     #[serde(skip)]
     pub throttle: f32,
     #[serde(skip)]
@@ -322,6 +335,10 @@ impl Default for Vehicle {
             min_rpm: min_rpm(),
             max_rpm: max_rpm(),
             automatic: true,
+            gears: gears(),
+            first_gear: first_gear(),
+            top_gear: top_gear(),
+            anti_roll: 0.0,
             throttle: 0.0,
             steering: 0.0,
             brake: 0.0,
@@ -342,6 +359,10 @@ impl Vehicle {
             min_rpm: self.min_rpm,
             max_rpm: self.max_rpm,
             automatic: self.automatic,
+            gears: self.gears,
+            first_gear: self.first_gear,
+            top_gear: self.top_gear,
+            anti_roll: self.anti_roll,
             ..Self::default()
         }
     }
@@ -354,8 +375,10 @@ impl Component for Vehicle {}
 /// and width in metres, how far its suspension travels, its spring's
 /// frequency (Hz) and damping, how far it steers (degrees; 0 for a wheel
 /// that does not), whether the engine drives it, and its brake's and hand
-/// brake's torque in Nm. While the game plays, physics turns and drops its
-/// Obj as the wheel rolls, steers and rides its suspension.
+/// brake's torque in Nm; and how hard its tyre grips, forwards and
+/// sideways, as a share of an ordinary tyre's (2 holds twice as hard, as a
+/// racing tyre; 0.3 slides, as on ice). While the game plays, physics turns
+/// and drops its Obj as the wheel rolls, steers and rides its suspension.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Wheel {
@@ -377,6 +400,10 @@ pub struct Wheel {
     pub brake: f32,
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub handbrake: f32,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub grip: f32,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub side_grip: f32,
 }
 
 impl Default for Wheel {
@@ -391,6 +418,8 @@ impl Default for Wheel {
             powered: false,
             brake: brake(),
             handbrake: 0.0,
+            grip: 1.0,
+            side_grip: 1.0,
         }
     }
 }
@@ -1118,6 +1147,31 @@ fn is_zero_f32(value: &f32) -> bool {
 
 fn is_car(kind: &VehicleKind) -> bool {
     *kind == VehicleKind::Car
+}
+
+/// A car's gearbox, as Jolt's own: five gears from 2.66 to 0.74.
+fn gears() -> u32 {
+    5
+}
+
+fn is_gears(value: &u32) -> bool {
+    *value == gears()
+}
+
+fn first_gear() -> f32 {
+    2.66
+}
+
+fn is_first_gear(value: &f32) -> bool {
+    *value == first_gear()
+}
+
+fn top_gear() -> f32 {
+    0.74
+}
+
+fn is_top_gear(value: &f32) -> bool {
+    *value == top_gear()
 }
 
 fn torque() -> f32 {

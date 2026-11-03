@@ -41,6 +41,9 @@ Select a Vehicle or a Wheel to see each wheel in the Scene view: a ring round it
 | Max torque | The most torque its engine gives, in newton-metres. 500 suits a family car, and a tank wants several thousand |
 | Min RPM, Max RPM | The range its engine revs through, in revolutions a minute |
 | Automatic | Its gears change by themselves |
+| Gears | How many forward gears its gearbox has |
+| First gear, Top gear | First gear's ratio and top gear's; the gears between are spread evenly. A higher first gear pulls away harder; a lower top gear reaches a higher top speed |
+| Anti-roll | How stiff a bar across each pair of wheels side by side is, in newtons a metre, to keep it from leaning out of turns. 0 for none, about 1000 for a car |
 
 A tank turns by running its tracks at different speeds, and on the spot by running them opposite ways. It turns best when its tracks are about as far apart as it is long.
 
@@ -56,6 +59,9 @@ A tank turns by running its tracks at different speeds, and on the spot by runni
 | Powered | The engine drives it. Two powered wheels side by side share a differential |
 | Brake | The most torque its brake holds it with, in newton-metres |
 | Handbrake | The most torque the hand brake holds it with. Usually only the back wheels have one |
+| Grip, Side grip | How hard its tyre holds, forwards and sideways, as a share of an ordinary tyre: 2 for racing tyres, 0.3 for ice |
+
+An automatic gearbox only changes up while no driven wheel is spinning. A car with a strong engine and every wheel driven can spin its tyres in first gear and stay there: give its tyres more Grip, drive only two wheels, or lower its Max torque.
 
 ## Driving from scripts
 

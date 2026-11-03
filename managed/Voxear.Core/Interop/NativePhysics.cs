@@ -98,6 +98,10 @@ internal static unsafe class NativePhysics
 	public const int VehicleSpeed = 212;
 	public const int VehicleRpm = 213;
 	public const int VehicleGear = 214;
+	public const int VehicleGears = 215;
+	public const int VehicleFirstGear = 216;
+	public const int VehicleTopGear = 217;
+	public const int VehicleAntiRoll = 218;
 
 	public const int WheelHas = 220;
 	public const int WheelAdd = 221;
@@ -111,6 +115,8 @@ internal static unsafe class NativePhysics
 	public const int WheelPowered = 229;
 	public const int WheelBrake = 230;
 	public const int WheelHandbrake = 231;
+	public const int WheelGrip = 232;
+	public const int WheelSideGrip = 233;
 
 	public const int Gravity2D = 160;
 

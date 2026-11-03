@@ -223,6 +223,10 @@ pub enum Prop {
     MinRpm,
     MaxRpm,
     Automatic,
+    Gears,
+    FirstGear,
+    TopGear,
+    AntiRoll,
     /// A Wheel's size, suspension, steering, drive and brakes.
     WheelRadius,
     WheelWidth,
@@ -233,6 +237,8 @@ pub enum Prop {
     Powered,
     WheelBrake,
     Handbrake,
+    Grip,
+    SideGrip,
     /// A script field, or a value inside one: its behaviour's type name,
     /// and the path to it from the field.
     Field {
@@ -303,7 +309,15 @@ impl Prop {
             | Prop::AngularDrag2D
             | Prop::FixedRotation
             | Prop::Continuous2D => Part::Rigidbody2D,
-            Prop::VehicleKind | Prop::MaxTorque | Prop::MinRpm | Prop::MaxRpm | Prop::Automatic => Part::Vehicle,
+            Prop::VehicleKind
+            | Prop::MaxTorque
+            | Prop::MinRpm
+            | Prop::MaxRpm
+            | Prop::Automatic
+            | Prop::Gears
+            | Prop::FirstGear
+            | Prop::TopGear
+            | Prop::AntiRoll => Part::Vehicle,
             Prop::WheelRadius
             | Prop::WheelWidth
             | Prop::Suspension
@@ -312,7 +326,9 @@ impl Prop {
             | Prop::SteerAngle
             | Prop::Powered
             | Prop::WheelBrake
-            | Prop::Handbrake => Part::Wheel,
+            | Prop::Handbrake
+            | Prop::Grip
+            | Prop::SideGrip => Part::Wheel,
             Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
         }
     }
@@ -393,6 +409,10 @@ impl Prop {
             Prop::MinRpm => "min_rpm",
             Prop::MaxRpm => "max_rpm",
             Prop::Automatic => "automatic",
+            Prop::Gears => "gears",
+            Prop::FirstGear => "first_gear",
+            Prop::TopGear => "top_gear",
+            Prop::AntiRoll => "anti_roll",
             Prop::WheelRadius => "radius",
             Prop::WheelWidth => "width",
             Prop::Suspension => "suspension",
@@ -402,6 +422,8 @@ impl Prop {
             Prop::Powered => "powered",
             Prop::WheelBrake => "brake",
             Prop::Handbrake => "handbrake",
+            Prop::Grip => "grip",
+            Prop::SideGrip => "side_grip",
             Prop::Field { path, .. } => match path.first() {
                 Some(crate::fields::Step::Key(field)) => return field.clone(),
                 _ => "",
@@ -590,7 +612,17 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::FixedRotation,
             Prop::Continuous2D,
         ],
-        Part::Vehicle => vec![Prop::VehicleKind, Prop::MaxTorque, Prop::MinRpm, Prop::MaxRpm, Prop::Automatic],
+        Part::Vehicle => vec![
+            Prop::VehicleKind,
+            Prop::MaxTorque,
+            Prop::MinRpm,
+            Prop::MaxRpm,
+            Prop::Automatic,
+            Prop::Gears,
+            Prop::FirstGear,
+            Prop::TopGear,
+            Prop::AntiRoll,
+        ],
         Part::Wheel => vec![
             Prop::WheelRadius,
             Prop::WheelWidth,
@@ -601,6 +633,8 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::Powered,
             Prop::WheelBrake,
             Prop::Handbrake,
+            Prop::Grip,
+            Prop::SideGrip,
         ],
         // Each level's Objs and a place to add another, then where it ends, which the last has only when the
         // group hides past it.
@@ -714,6 +748,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::MinRpm => "Min RPM",
         Prop::MaxRpm => "Max RPM",
         Prop::Automatic => "Automatic",
+        Prop::Gears => "Gears",
+        Prop::FirstGear => "First gear",
+        Prop::TopGear => "Top gear",
+        Prop::AntiRoll => "Anti-roll",
         Prop::WheelRadius => "Radius",
         Prop::WheelWidth => "Width",
         Prop::Suspension => "Suspension",
@@ -723,6 +761,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::Powered => "Powered",
         Prop::WheelBrake => "Brake",
         Prop::Handbrake => "Handbrake",
+        Prop::Grip => "Grip",
+        Prop::SideGrip => "Side grip",
         Prop::Field { path, .. } => {
             return match path.last() {
                 Some(Step::Key(name)) => nice_name(name),
@@ -904,6 +944,10 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::MinRpm => Value::Number(vehicle()?.min_rpm),
         Prop::MaxRpm => Value::Number(vehicle()?.max_rpm),
         Prop::Automatic => Value::Toggle(vehicle()?.automatic),
+        Prop::Gears => Value::Number(vehicle()?.gears as f32),
+        Prop::FirstGear => Value::Number(vehicle()?.first_gear),
+        Prop::TopGear => Value::Number(vehicle()?.top_gear),
+        Prop::AntiRoll => Value::Number(vehicle()?.anti_roll),
         Prop::WheelRadius => Value::Number(wheel()?.radius),
         Prop::WheelWidth => Value::Number(wheel()?.width),
         Prop::Suspension => Value::Number(wheel()?.suspension),
@@ -913,6 +957,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::Powered => Value::Toggle(wheel()?.powered),
         Prop::WheelBrake => Value::Number(wheel()?.brake),
         Prop::Handbrake => Value::Number(wheel()?.handbrake),
+        Prop::Grip => Value::Number(wheel()?.grip),
+        Prop::SideGrip => Value::Number(wheel()?.side_grip),
         Prop::ColliderShape => {
             let shape = collider()?.shape;
             let index = ColliderShape::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -1462,6 +1508,12 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::MinRpm, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.min_rpm = n.clamp(0.0, v.max_rpm)),
         (Prop::MaxRpm, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.max_rpm = n.max(v.min_rpm)),
         (Prop::Automatic, Value::Toggle(on)) => with(world, entity, |v: &mut Vehicle| v.automatic = on),
+        (Prop::Gears, Value::Number(n)) => {
+            with(world, entity, |v: &mut Vehicle| v.gears = n.round().clamp(1.0, 10.0) as u32)
+        }
+        (Prop::FirstGear, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.first_gear = n.max(0.1)),
+        (Prop::TopGear, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.top_gear = n.max(0.1)),
+        (Prop::AntiRoll, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.anti_roll = n.max(0.0)),
         (Prop::WheelRadius, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.radius = n.max(0.01)),
         (Prop::WheelWidth, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.width = n.max(0.01)),
         (Prop::Suspension, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.suspension = n.max(0.01)),
@@ -1471,6 +1523,8 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::Powered, Value::Toggle(on)) => with(world, entity, |w: &mut Wheel| w.powered = on),
         (Prop::WheelBrake, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.brake = n.max(0.0)),
         (Prop::Handbrake, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.handbrake = n.max(0.0)),
+        (Prop::Grip, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.grip = n.max(0.0)),
+        (Prop::SideGrip, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.side_grip = n.max(0.0)),
         (Prop::ColliderShape, Value::Choice(index, _)) => with(world, entity, |c: &mut Collider| {
             c.shape = ColliderShape::ALL[index.min(ColliderShape::ALL.len() - 1)];
         }),

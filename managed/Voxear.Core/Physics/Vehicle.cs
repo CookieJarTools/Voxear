@@ -65,6 +65,37 @@ public readonly struct Vehicle : IEquatable<Vehicle>, IObjComponent
 		set { Set(NativePhysics.VehicleAutomatic, value ? 1f : 0f); }
 	}
 
+	/// <summary>How many forward gears its gearbox has, each the same step down from the one before.</summary>
+	public int Gears
+	{
+		get { return (int)NativePhysics.Number(Obj, NativePhysics.VehicleGears, 5f); }
+		set { Set(NativePhysics.VehicleGears, value); }
+	}
+
+	/// <summary>First gear's ratio: higher pulls away harder but tops out sooner.</summary>
+	public float FirstGear
+	{
+		get { return NativePhysics.Number(Obj, NativePhysics.VehicleFirstGear, 2.66f); }
+		set { Set(NativePhysics.VehicleFirstGear, value); }
+	}
+
+	/// <summary>Top gear's ratio: lower reaches a higher top speed.</summary>
+	public float TopGear
+	{
+		get { return NativePhysics.Number(Obj, NativePhysics.VehicleTopGear, 0.74f); }
+		set { Set(NativePhysics.VehicleTopGear, value); }
+	}
+
+	/// <summary>
+	/// How stiff the anti-roll bars across each pair of wheels side by side are, in newtons a metre, to keep it from
+	/// leaning out of turns and rolling over: 0 for none, about 1000 for a car.
+	/// </summary>
+	public float AntiRoll
+	{
+		get { return NativePhysics.Number(Obj, NativePhysics.VehicleAntiRoll, 0f); }
+		set { Set(NativePhysics.VehicleAntiRoll, value); }
+	}
+
 	/// <summary>How far down the accelerator is, from -1 for full reverse to 1 for full ahead.</summary>
 	public float Throttle
 	{

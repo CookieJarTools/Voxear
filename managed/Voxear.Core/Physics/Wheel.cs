@@ -86,6 +86,23 @@ public readonly struct Wheel : IEquatable<Wheel>, IObjComponent
 		set { Set(NativePhysics.WheelHandbrake, value); }
 	}
 
+	/// <summary>
+	/// How hard its tyre grips forwards, under the engine and the brakes, as a share of an ordinary tyre's: 2 holds
+	/// twice as hard, as a racing tyre; 0.3 spins and slides, as on ice.
+	/// </summary>
+	public float Grip
+	{
+		get { return NativePhysics.Number(Obj, NativePhysics.WheelGrip, 1f); }
+		set { Set(NativePhysics.WheelGrip, value); }
+	}
+
+	/// <summary>How hard its tyre grips sideways, through a turn, as a share of an ordinary tyre's.</summary>
+	public float SideGrip
+	{
+		get { return NativePhysics.Number(Obj, NativePhysics.WheelSideGrip, 1f); }
+		set { Set(NativePhysics.WheelSideGrip, value); }
+	}
+
 	public void Remove()
 	{
 		NativePhysics.Set(Obj, NativePhysics.WheelRemove, Vector4.Zero);

@@ -111,6 +111,7 @@ impl PhysicsScene {
                 brake: wheel.brake.max(0.0),
                 handbrake: wheel.handbrake.max(0.0),
                 powered: wheel.powered,
+                grip: (wheel.grip.max(0.0), wheel.side_grip.max(0.0)),
             }
         });
         let kind = match key.vehicle.kind {
@@ -125,6 +126,8 @@ impl PhysicsScene {
             automatic: key.vehicle.automatic,
             max_pitch_roll: std::f32::consts::PI,
             wheels: wheels.collect(),
+            gears: (key.vehicle.gears.min(16), key.vehicle.first_gear, key.vehicle.top_gear),
+            anti_roll: key.vehicle.anti_roll.max(0.0),
         }
     }
 

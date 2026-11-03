@@ -753,7 +753,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [x] tracked vehicles (tanks), turning on the spot
   - [x] the easy path: a ready-to-drive Car from the Hierarchy's + and the palette, and `Throttle`, `Steering`,
     `Brake`, `Handbrake`, `Speed`, `Rpm` and `Gear` in C#; in the Inspector, scene files and the Scene view
-  - [ ] the advanced path: tyre friction curves, the engine's torque curve, gear ratios and anti-roll bars open to tune
+  - [x] the advanced path, first part: a gearbox of so many gears from first's ratio to top's, anti-roll bars across
+    each axle, and each tyre's grip forwards and sideways, in the Inspector, scene files and C#
+  - [ ] tyre friction curves and the engine's torque curve, once Voxear has a curve field
   - input bindings for driving, and a debug view of wheel contacts, slip and suspension
 
 ## M5 — Lighting

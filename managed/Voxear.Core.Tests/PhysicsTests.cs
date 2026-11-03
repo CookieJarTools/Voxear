@@ -55,6 +55,9 @@ internal static class PhysicsTests
 		var wheel = Obj.None.Wheel;
 		Check.True(!wheel.IsValid && !wheel.Powered && wheel.SteerAngle == 0f, "no Wheel");
 		Check.Near(0.35f, wheel.Radius);
+		Check.True(car.Gears == 5 && car.AntiRoll == 0f && wheel.Grip == 1f && wheel.SideGrip == 1f, "Jolt's own box and tyres");
+		Check.Near(2.66f, car.FirstGear);
+		Check.Near(0.74f, car.TopGear);
 	}
 
 	[Test]

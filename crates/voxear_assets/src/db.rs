@@ -48,6 +48,9 @@ pub enum AssetKind {
     /// A `.assettable` file: a table of the game's assets that differ by
     /// language, as a voice line recorded in each, a key's asset for each.
     AssetTable,
+    /// An `.ies` file: how bright a real light fitting is in each
+    /// direction, as its maker measured it, for a point or spot light.
+    LightProfile,
 }
 
 impl AssetKind {
@@ -66,6 +69,7 @@ impl AssetKind {
             "strings" => Self::Strings,
             "paths" => Self::Paths,
             "assettable" => Self::AssetTable,
+            "ies" => Self::LightProfile,
             _ => return None,
         })
     }

@@ -922,6 +922,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Strings) => "String table",
         ItemKind::Asset(AssetKind::AssetTable) => "Asset table",
         ItemKind::Asset(AssetKind::Paths) => "Sound paths",
+        ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
     }
 }
 
@@ -940,6 +941,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::InputActions) => "gamepad",
         ItemKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
         ItemKind::Asset(AssetKind::Paths) => "branch",
+        ItemKind::Asset(AssetKind::LightProfile) => "light",
     }
 }
 

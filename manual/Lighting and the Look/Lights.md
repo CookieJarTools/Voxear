@@ -31,12 +31,30 @@ Select the light, and the Inspector shows:
 | Width, Height | A rectangle's size, in metres |
 | Radius | A disc's or a tube's radius, in metres |
 | Length | A tube's length, end to end, in metres |
+| Cookie | A picture the light shines through, for a spot or directional light |
+| Cookie size | How many metres a directional light's cookie covers before it repeats |
+| IES profile | How bright a real light fitting is in each direction, for a point or spot light |
 
 An area light's intensity means the same as a point light's: from far away, straight ahead, it gives as much light as a point light of that intensity. Making the shape bigger spreads the same light over more of it, so the light softens rather than brightens.
 
 Intensity is a plain number rather than a real-world unit. New lights start at 3 for a directional light and 10 for the others, and a sun between 2 and 4 suits a daytime scene. Hello's sun is 3.2 and its lamps 6.
 
 When a light is selected, the Scene view shows its reach: the cone of a spot light, the range of a point light, or a directional light's direction. An area light shows its shape, which way it faces, and its range.
+
+## Cookies
+
+A cookie is a picture a light shines through, as light falls through a window frame or the leaves of a tree. Black in the picture blocks the light, white lets it through, and colours tint it.
+
+- On a **spot light**, the picture is stretched over the light's cone, so the whole picture shows where the light lands.
+- On a **directional light**, the picture is laid over the world from above and repeats every **Cookie size** metres. Use a soft, dappled picture for sunlight through a forest's canopy.
+
+Pick any picture in your project as a cookie. Pictures with soft edges look best, since the light shows every hard edge.
+
+## IES profiles
+
+Real light fittings are not equally bright in every direction: a downlight throws most of its light down, and a wall washer lights the wall beside it. Lamp makers publish how bright each fitting is in each direction as an **IES file** (`.ies`). Put one in your project, then pick it as a point or spot light's **IES profile**, and the light shines as the real fitting does.
+
+The profile's straight-ahead direction is the way the light faces, along its Obj's blue (Z) axis. The light's intensity still sets how bright it is overall: the profile only shapes it.
 
 ## The sun
 

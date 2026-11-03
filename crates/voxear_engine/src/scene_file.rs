@@ -266,7 +266,9 @@ pub struct CameraData {
     pub near: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// A light as a scene writes it. A `cookie` is a picture the light shines
+/// through, and a `profile` an `.ies` file, each by GUID or project path.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum LightData {
     Directional {
@@ -274,6 +276,11 @@ pub enum LightData {
         color: [f32; 3],
         #[serde(default = "default_sun")]
         intensity: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cookie: Option<String>,
+        /// How many metres the cookie covers before it repeats.
+        #[serde(default = "default_cookie_size")]
+        cookie_size: f32,
     },
     Point {
         #[serde(default = "white")]
@@ -282,6 +289,8 @@ pub enum LightData {
         intensity: f32,
         #[serde(default = "default_range")]
         range: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
     },
     Spot {
         #[serde(default = "white")]
@@ -294,6 +303,10 @@ pub enum LightData {
         inner_angle: f32,
         #[serde(default = "default_outer")]
         outer_angle: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cookie: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
     },
     /// A panel shining from its face along the Obj's +Z, `width` along +X.
     Rectangle {
@@ -343,6 +356,22 @@ fn half() -> f32 {
 
 fn default_tube_radius() -> f32 {
     0.05
+}
+
+fn default_cookie_size() -> f32 {
+    10.0
+}
+
+impl LightData {
+    /// The light's cookie and IES profile, as the scene names them.
+    pub fn assets(&self) -> (Option<&str>, Option<&str>) {
+        match self {
+            Self::Directional { cookie, .. } => (cookie.as_deref(), None),
+            Self::Point { profile, .. } => (None, profile.as_deref()),
+            Self::Spot { cookie, profile, .. } => (cookie.as_deref(), profile.as_deref()),
+            Self::Rectangle { .. } | Self::Disc { .. } | Self::Tube { .. } => (None, None),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -702,7 +731,7 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     if let Some(camera) = actual.camera.filter(|c| Some(*c) != expected.camera) {
         put("camera", toml::Value::try_from(camera)?);
     }
-    if let Some(light) = actual.light.filter(|l| Some(*l) != expected.light) {
+    if let Some(light) = actual.light.as_ref().filter(|l| Some(*l) != expected.light.as_ref()) {
         put("light", toml::Value::try_from(light)?);
     }
     if actual.renderer.is_some() && !same_renderer(content, &actual.renderer, &expected.renderer) {
@@ -921,7 +950,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
         .collect();
     obj.camera =
         world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure, near: c.near });
-    obj.light = world.get::<Light>(entity).map(light_data);
+    obj.light = world.get::<Light>(entity).map(|light| light_data(content, light));
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {
         let mesh = content.mesh_ref(r.mesh)?.to_string();
         let material = match content.material_source(r.material) {
@@ -969,14 +998,18 @@ pub fn default_light(kind: LightKind) -> Light {
         LightKind::Disc => "disc",
         LightKind::Tube => "tube",
     };
-    light_component(toml::from_str(&format!("type = \"{name}\"")).expect("every light field has a default"))
+    light_component(&toml::from_str(&format!("type = \"{name}\"")).expect("every light field has a default"))
 }
 
-pub(crate) fn light_component(light: LightData) -> Light {
-    match light {
-        LightData::Directional { color, intensity } => Light::directional(Vec3::from(linear(color)), intensity),
-        LightData::Point { color, intensity, range } => Light::point(Vec3::from(linear(color)), intensity, range),
-        LightData::Spot { color, intensity, range, inner_angle, outer_angle } => {
+/// A light as a scene describes it, without its cookie and profile, which
+/// need their assets loaded (see [`light_with_assets`]).
+pub(crate) fn light_component(light: &LightData) -> Light {
+    match *light {
+        LightData::Directional { color, intensity, cookie_size, .. } => {
+            Light { cookie_size, ..Light::directional(Vec3::from(linear(color)), intensity) }
+        }
+        LightData::Point { color, intensity, range, .. } => Light::point(Vec3::from(linear(color)), intensity, range),
+        LightData::Spot { color, intensity, range, inner_angle, outer_angle, .. } => {
             Light::spot(Vec3::from(linear(color)), intensity, range, inner_angle, outer_angle)
         }
         LightData::Rectangle { color, intensity, range, width, height } => {
@@ -991,18 +1024,35 @@ pub(crate) fn light_component(light: LightData) -> Light {
     }
 }
 
-fn light_data(light: &Light) -> LightData {
+/// A light with its cookie and IES profile loaded, as a scene names them.
+pub(crate) fn light_with_assets(content: &mut Content, renderer: &mut Renderer, data: &LightData) -> Result<Light> {
+    let mut light = light_component(data);
+    let (cookie, profile) = data.assets();
+    if let Some(cookie) = cookie {
+        light.cookie = Some(content.cookie(renderer, &content.parse(cookie)?)?);
+    }
+    if let Some(profile) = profile {
+        light.profile = Some(content.light_profile(renderer, &content.parse(profile)?)?);
+    }
+    Ok(light)
+}
+
+fn light_data(content: &Content, light: &Light) -> LightData {
     let color = round3(srgb(light.color.to_array()));
     let intensity = light.intensity;
+    let cookie = light.cookie.and_then(|texture| content.picture_guid(texture)).map(|guid| guid.to_string());
+    let profile = light.profile.and_then(|texture| content.light_profile_guid(texture)).map(|guid| guid.to_string());
     match light.kind {
-        LightKind::Directional => LightData::Directional { color, intensity },
-        LightKind::Point => LightData::Point { color, intensity, range: light.range },
+        LightKind::Directional => LightData::Directional { color, intensity, cookie, cookie_size: light.cookie_size },
+        LightKind::Point => LightData::Point { color, intensity, range: light.range, profile },
         LightKind::Spot => LightData::Spot {
             color,
             intensity,
             range: light.range,
             inner_angle: light.spot_inner_degrees,
             outer_angle: light.spot_outer_degrees,
+            cookie,
+            profile,
         },
         LightKind::Rectangle => {
             LightData::Rectangle { color, intensity, range: light.range, width: light.width, height: light.height }
@@ -1147,9 +1197,9 @@ mod tests {
             "type = \"tube\"\nlength = 1.2\nradius = 0.02\nrange = 4.0",
         ] {
             let read: LightData = toml::from_str(text).unwrap();
-            let light = light_component(read);
+            let light = light_component(&read);
             assert!(light.kind.has_shape(), "{text}");
-            assert_eq!(light_component(light_data(&light)), light, "{text}");
+            assert_eq!(toml::from_str::<LightData>(&toml::to_string(&read).unwrap()).unwrap(), read, "{text}");
         }
         let panel = default_light(LightKind::Rectangle);
         assert_eq!((panel.width, panel.height), (1.0, 1.0));

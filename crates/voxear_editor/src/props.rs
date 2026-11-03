@@ -138,6 +138,9 @@ pub enum Prop {
     LightHeight,
     LightRadius,
     LightLength,
+    LightCookie,
+    LightCookieSize,
+    LightProfile,
     FieldOfView,
     Near,
     Exposure,
@@ -268,7 +271,10 @@ impl Prop {
             | Prop::LightWidth
             | Prop::LightHeight
             | Prop::LightRadius
-            | Prop::LightLength => {
+            | Prop::LightLength
+            | Prop::LightCookie
+            | Prop::LightCookieSize
+            | Prop::LightProfile => {
                 Part::Light
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
@@ -366,6 +372,9 @@ impl Prop {
             Prop::LightHeight => "height",
             Prop::LightRadius => "radius",
             Prop::LightLength => "length",
+            Prop::LightCookie => "cookie",
+            Prop::LightCookieSize => "cookie_size",
+            Prop::LightProfile => "profile",
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
@@ -563,11 +572,12 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 props.push(Prop::Range);
             }
             match kind {
-                LightKind::Spot => props.extend([Prop::SpotInner, Prop::SpotOuter]),
+                LightKind::Directional => props.extend([Prop::LightCookie, Prop::LightCookieSize]),
+                LightKind::Point => props.push(Prop::LightProfile),
+                LightKind::Spot => props.extend([Prop::SpotInner, Prop::SpotOuter, Prop::LightCookie, Prop::LightProfile]),
                 LightKind::Rectangle => props.extend([Prop::LightWidth, Prop::LightHeight]),
                 LightKind::Disc => props.push(Prop::LightRadius),
                 LightKind::Tube => props.extend([Prop::LightLength, Prop::LightRadius]),
-                LightKind::Directional | LightKind::Point => {}
             }
             props
         }
@@ -707,6 +717,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::LightHeight => "Height",
         Prop::LightRadius => "Radius",
         Prop::LightLength => "Length",
+        Prop::LightCookie => "Cookie",
+        Prop::LightCookieSize => "Cookie size",
+        Prop::LightProfile => "IES profile",
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
@@ -1062,6 +1075,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightHeight => Value::Number(light()?.height),
         Prop::LightRadius => Value::Number(light()?.radius),
         Prop::LightLength => Value::Number(light()?.length),
+        Prop::LightCookie => Value::Asset(guid_label(game, light()?.cookie.and_then(|t| game.content.picture_guid(t)))),
+        Prop::LightCookieSize => Value::Number(light()?.cookie_size),
+        Prop::LightProfile => {
+            Value::Asset(guid_label(game, light()?.profile.and_then(|t| game.content.light_profile_guid(t))))
+        }
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
@@ -1135,7 +1153,7 @@ pub fn set(
     }
     match (prop, value) {
         // A mesh, material, sound or level's Obj kept after play comes back by its name, as its list has it.
-        (Prop::Mesh | Prop::Material | Prop::Sound, Value::Asset(label))
+        (Prop::Mesh | Prop::Material | Prop::Sound | Prop::LightCookie | Prop::LightProfile, Value::Asset(label))
         | (Prop::LodObj(..) | Prop::LodAdd(_) | Prop::JointConnected, Value::Obj(label)) => {
             let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| pick(game, renderer, types, entity, prop, &choice))
@@ -1187,6 +1205,30 @@ pub fn pick(
             };
             let Ok(material) = game.content.material(renderer, &source) else { return false };
             with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.material = material)
+        }
+        (Prop::LightCookie | Prop::LightProfile, Pick::Asset(path)) => {
+            let Some(renderer) = renderer else { return false };
+            let texture = match path {
+                None => None,
+                Some(path) => {
+                    let loaded = game.content.parse(path).and_then(|reference| match prop {
+                        Prop::LightCookie => game.content.cookie(renderer, &reference),
+                        _ => game.content.light_profile(renderer, &reference),
+                    });
+                    match loaded {
+                        Ok(texture) => Some(texture),
+                        Err(error) => {
+                            tracing::error!("{error:#}");
+                            return false;
+                        }
+                    }
+                }
+            };
+            let cookie = *prop == Prop::LightCookie;
+            with(&mut game.engine.world, entity, |light: &mut Light| match cookie {
+                true => light.cookie = texture,
+                false => light.profile = texture,
+            })
         }
         (Prop::Sound, Pick::Asset(path)) => {
             let sound = match path {
@@ -1385,6 +1427,8 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
             return fields::asset_choices(game, &kind);
         }
+        Prop::LightCookie => return fields::assets_of(game, Some(AssetKind::Texture)),
+        Prop::LightProfile => return fields::assets_of(game, Some(AssetKind::LightProfile)),
         // A level shows Objs inside the group's Obj, at any depth: those not in it already, each in another
         // level saying which, as picking it moves it here.
         // A joint holds to an Obj physics moves: every other with a Rigidbody, or the world.
@@ -1452,6 +1496,8 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Mesh => "Mesh".into(),
         Prop::Material => "Material".into(),
         Prop::Sound => "Sound".into(),
+        Prop::LightCookie => "Texture".into(),
+        Prop::LightProfile => "IES profile".into(),
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
@@ -1647,6 +1693,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::LightHeight, Value::Number(n)) => with(world, entity, |light: &mut Light| light.height = n.max(0.0)),
         (Prop::LightRadius, Value::Number(n)) => with(world, entity, |light: &mut Light| light.radius = n.max(0.0)),
         (Prop::LightLength, Value::Number(n)) => with(world, entity, |light: &mut Light| light.length = n.max(0.0)),
+        (Prop::LightCookieSize, Value::Number(n)) => {
+            with(world, entity, |light: &mut Light| light.cookie_size = n.max(0.01))
+        }
         (Prop::FieldOfView, Value::Number(n)) => {
             with(world, entity, |camera: &mut Camera| camera.fov_y_degrees = n.clamp(1.0, 179.0))
         }
@@ -1830,6 +1879,14 @@ fn put_locks(world: &mut World, entity: Entity, locks: Locks) {
         world.remove::<Locks>(entity);
     } else {
         world.insert(entity, locks);
+    }
+}
+
+/// An asset by GUID as a field shows it: its path, or "None".
+fn guid_label(game: &Game, guid: Option<voxear_assets::AssetGuid>) -> String {
+    match guid {
+        Some(guid) => game.content.db().get(guid).map_or_else(|| guid.to_string(), |e| e.path.clone()),
+        None => "None".into(),
     }
 }
 

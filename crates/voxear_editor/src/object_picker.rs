@@ -480,6 +480,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::InputActions) => "gamepad",
         Some(AssetKind::Strings | AssetKind::AssetTable) => "globe",
         Some(AssetKind::Paths) => "branch",
+        Some(AssetKind::LightProfile) => "light",
         None => "obj",
     };
     let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);

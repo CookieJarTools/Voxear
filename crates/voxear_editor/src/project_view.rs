@@ -236,6 +236,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::InputActions) => "gamepad",
                 FileKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
                 FileKind::Asset(AssetKind::Paths) => "branch",
+                FileKind::Asset(AssetKind::LightProfile) => "light",
             },
         }
     }

@@ -423,6 +423,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Strings => ("String table", "globe"),
                 AssetKind::AssetTable => ("Asset table", "globe"),
                 AssetKind::Paths => ("Sound paths", "branch"),
+                AssetKind::LightProfile => ("IES light profile", "light"),
             };
             let (action, key) = match kind {
                 AssetKind::Level => (PaletteAction::OpenLevel(path.clone()), format!("level:{path}")),

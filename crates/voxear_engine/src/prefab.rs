@@ -67,7 +67,7 @@ use crate::{
     lod_groups::LodGroupData,
     physics::{CharacterController, Collider, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
-    scene_file::{LayerRef, MaterialRef, ObjData, default_material, light_component},
+    scene_file::{LayerRef, MaterialRef, ObjData, default_material, light_component, light_with_assets},
 };
 
 pub const PREFAB_FORMAT: u32 = 1;
@@ -352,7 +352,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
         root.camera = instance.camera;
     }
     if instance.light.is_some() {
-        root.light = instance.light;
+        root.light = instance.light.clone();
     }
     if instance.renderer.is_some() {
         root.renderer = instance.renderer.clone();
@@ -655,7 +655,14 @@ pub(crate) fn resolve_obj(
     let [x, y, z] = data.rotation().map(f32::to_radians);
     // Unity applies Z, then X, then Y: R = Ry · Rx · Rz.
     let rotation = Quat::from_euler(EulerRot::YXZ, y, x, z);
-    let renderer = match (&data.renderer, renderer) {
+    let mut gpu = renderer;
+    // Without a renderer, as when only checking a scene, a light goes without its cookie and profile.
+    let light = match (&data.light, gpu.as_deref_mut()) {
+        (Some(light), Some(renderer)) => Some(light_with_assets(content, renderer, light)?),
+        (Some(light), None) => Some(light_component(light)),
+        (None, _) => None,
+    };
+    let renderer = match (&data.renderer, gpu) {
         (Some(data), Some(renderer)) => {
             let mesh = content.mesh(renderer, &content.parse(&data.mesh)?)?;
             let source = match &data.material {
@@ -681,7 +688,7 @@ pub(crate) fn resolve_obj(
         persistent: data.persistent,
         behaviours: behaviour_specs(&data.behaviours, &data.components, &data.fields)?,
         camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
-        light: data.light.map(light_component),
+        light,
         renderer,
         audio: data.audio.as_ref().map(|audio| audio_source(content, audio)).transpose()?,
         audio_listener: data.audio_listener,

@@ -21,6 +21,7 @@ mod gltf_import;
 mod gpu;
 mod graph;
 mod hot_reload;
+mod ies;
 mod lod;
 mod lod_group;
 mod ltc;
@@ -76,6 +77,7 @@ pub use post::{
 pub use previews::{
     MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
 };
+pub use ies::IesProfile;
 pub use scene::{Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyMode, ViewOptions};
 pub use voxear_rhi::TextureId;
 
@@ -653,6 +655,16 @@ impl Renderer {
     pub fn add_texture(&mut self, source: &TextureSource) -> Result<TextureId> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.add_texture(&self.gpu, &mut self.bindless, source)
+    }
+
+    /// Uploads an IES profile, baked over the sphere of directions, for a
+    /// point or spot light's `profile`.
+    pub fn add_light_profile(&mut self, profile: &IesProfile) -> Result<TextureId> {
+        let texels: Vec<u16> = profile.bake().into_iter().map(ltc::half).collect();
+        let bytes = bytemuck::cast_slice(&texels).to_vec();
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        let size = (ies::IES_WIDTH, ies::IES_HEIGHT);
+        assets.add_texture_mips(&self.gpu, &mut self.bindless, "light profile", size, vk::Format::R16_SFLOAT, &[bytes])
     }
 
     pub fn free_texture(&mut self, texture: TextureId) {

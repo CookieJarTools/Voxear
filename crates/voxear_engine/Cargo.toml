@@ -44,3 +44,4 @@ tracy = ["voxear_core/tracy"]
 [dev-dependencies]
 tempfile.workspace = true
 toml.workspace = true
+png.workspace = true

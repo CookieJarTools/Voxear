@@ -22,7 +22,7 @@ use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     CookedModel, ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
-    MeshTriangles, Primitive, Renderer, TextureId, TextureSource,
+    IesProfile, MeshTriangles, Primitive, Renderer, TextureId, TextureSource,
 };
 use voxear_scene::Destroying;
 
@@ -239,6 +239,8 @@ pub struct Content {
     remaps: HashMap<AssetGuid, MaterialRemap>,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
+    /// IES profiles uploaded for lights, by their assets.
+    light_profiles: HashMap<AssetGuid, TextureId>,
     prefabs: PrefabCache,
     sounds: SoundCache,
     /// What a world set aside still draws and plays, as the editor's edited
@@ -356,6 +358,7 @@ impl Content {
             material_sources: HashMap::new(),
             remaps: HashMap::new(),
             pictures: HashMap::new(),
+            light_profiles: HashMap::new(),
             prefabs: PrefabCache::default(),
             sounds: SoundCache::default(),
             aside: InUse::default(),
@@ -681,6 +684,38 @@ impl Content {
             }
         }
         Ok(data.desc(textures))
+    }
+
+    /// A picture asset as a light's cookie, in its colours as they look.
+    pub fn cookie(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<TextureId> {
+        let guid = reference.guid().with_context(|| format!("`{reference}` is not a picture"))?;
+        self.picture(renderer, guid, true)
+    }
+
+    /// The picture asset a texture was uploaded from.
+    pub fn picture_guid(&self, texture: TextureId) -> Option<AssetGuid> {
+        self.pictures.iter().find(|(_, known)| **known == texture).map(|((guid, _), _)| *guid)
+    }
+
+    /// An IES profile asset as a light's profile, read and uploaded on first
+    /// use.
+    pub fn light_profile(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<TextureId> {
+        let guid = reference.guid().with_context(|| format!("`{reference}` is not a light profile"))?;
+        if let Some(&texture) = self.light_profiles.get(&guid) {
+            return Ok(texture);
+        }
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::LightProfile, "{} is not an IES light profile", entry.path);
+        let path = entry.path.clone();
+        let profile = IesProfile::parse(&self.read_text(&path)?).with_context(|| format!("reading {path}"))?;
+        let texture = renderer.add_light_profile(&profile)?;
+        self.light_profiles.insert(guid, texture);
+        Ok(texture)
+    }
+
+    /// The IES profile asset a light's profile was uploaded from.
+    pub fn light_profile_guid(&self, texture: TextureId) -> Option<AssetGuid> {
+        self.light_profiles.iter().find(|(_, known)| **known == texture).map(|(guid, _)| *guid)
     }
 
     /// A picture asset as a texture, read and uploaded on first use at the

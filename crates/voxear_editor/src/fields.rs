@@ -501,6 +501,12 @@ pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
         Some("Sound") => Some(AssetKind::Sound),
         _ => None,
     };
+    assets_of(game, wanted)
+}
+
+/// The project's assets of a kind, or of every kind, by path, with nothing
+/// first.
+pub fn assets_of(game: &Game, wanted: Option<AssetKind>) -> Vec<(String, Pick)> {
     let mut paths: Vec<String> = game
         .content
         .db()

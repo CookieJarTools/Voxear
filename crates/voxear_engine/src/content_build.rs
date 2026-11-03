@@ -422,7 +422,11 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
-        AssetKind::Texture | AssetKind::InputActions | AssetKind::Strings | AssetKind::Paths => {}
+        AssetKind::Texture
+        | AssetKind::InputActions
+        | AssetKind::Strings
+        | AssetKind::Paths
+        | AssetKind::LightProfile => {}
     }
     needs.direct.remove(&guid);
     needs.named.remove(&guid);

@@ -3,6 +3,7 @@
 
 use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Component, Entity, World};
+use voxear_rhi::TextureId;
 use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use crate::{
@@ -74,6 +75,14 @@ pub struct Light {
     pub radius: f32,
     /// A tube's length, end to end, in metres.
     pub length: f32,
+    /// A picture the light shines through, as Unity's cookies: projected
+    /// over a spot light's cone, or tiled over the world by a directional
+    /// light every `cookie_size` metres. Its colours tint the light.
+    pub cookie: Option<TextureId>,
+    pub cookie_size: f32,
+    /// An IES profile (see `Renderer::add_light_profile`): how bright a real
+    /// fitting is in each direction, for a point or spot light.
+    pub profile: Option<TextureId>,
 }
 impl Component for Light {}
 
@@ -121,6 +130,9 @@ impl Light {
             height: 0.0,
             radius: 0.0,
             length: 0.0,
+            cookie: None,
+            cookie_size: 10.0,
+            profile: None,
         }
     }
 }
@@ -361,6 +373,12 @@ pub fn extract(
                 sun_found = true;
                 frame.sun_direction = vec3(forward);
                 frame.sun_color = vec3(radiance);
+                if let Some(cookie) = light.cookie {
+                    frame.lighting.sun_cookie = cookie.0;
+                    frame.lighting.sun_cookie_size = light.cookie_size;
+                    frame.lighting.sun_right = vec3(transform.rotation * Vec3::X);
+                    frame.lighting.sun_up = vec3(transform.rotation * Vec3::Y);
+                }
             }
             LightKind::Directional => {}
             _ => lights.push(gpu_light(light, transform, radiance)),
@@ -453,8 +471,11 @@ fn gpu_light(light: &Light, transform: &Transform, radiance: Vec3) -> GpuLight {
         right: vec3(transform.rotation * Vec3::X),
         cos_inner: (light.spot_inner_degrees.to_radians() * 0.5).cos(),
         size,
-        cookie: NO_TEXTURE,
-        profile: NO_TEXTURE,
+        cookie: light.cookie.filter(|_| light.kind == LightKind::Spot).map_or(NO_TEXTURE, |cookie| cookie.0),
+        profile: light
+            .profile
+            .filter(|_| matches!(light.kind, LightKind::Point | LightKind::Spot))
+            .map_or(NO_TEXTURE, |profile| profile.0),
     }
 }
 

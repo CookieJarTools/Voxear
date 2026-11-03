@@ -406,10 +406,11 @@ fn gather(
                 }
                 // A source model reads its own buffers and images as it is prepared.
                 AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
-                // Textures load with their models, scripts load UI documents themselves, and the
-                // game reads its input actions and string tables when it starts, and its sound
-                // the paths round the level's walls once it plays.
+                // Textures load with their models and lights, as light profiles do, scripts load
+                // UI documents themselves, and the game reads its input actions and string tables
+                // when it starts, and its sound the paths round the level's walls once it plays.
                 AssetKind::Texture
+                | AssetKind::LightProfile
                 | AssetKind::Ui
                 | AssetKind::InputActions
                 | AssetKind::Strings

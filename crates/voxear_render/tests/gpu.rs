@@ -1465,8 +1465,12 @@ fn lamp_camera_rotation() -> Quat {
 /// A floor at night with no light but `lights`, seen from above, and
 /// post-processing that keeps the image steady.
 fn lamp_render(lights: &[(Light, Transform)]) -> Option<Vec<u8>> {
+    lamp_render_with(renderer()?, lights)
+}
+
+/// The same, with a renderer already holding what the lights need.
+fn lamp_render_with(mut renderer: Renderer, lights: &[(Light, Transform)]) -> Option<Vec<u8>> {
     use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky};
-    let mut renderer = renderer()?;
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
     let plane = renderer.primitive(Primitive::Plane).unwrap();
@@ -1606,4 +1610,51 @@ fn the_atmosphere_is_brightest_towards_the_sun_and_reddens_as_it_sets() {
         warmth(at_sunset) > warmth(at_noon) * 1.3,
         "redder at sunset: {at_sunset:?} against {at_noon:?} at noon"
     );
+}
+
+/// A floor at night lit by `light` hanging facing down, after `prepare`
+/// gives the renderer what the light needs.
+fn hanging_light_render(prepare: impl FnOnce(&mut Renderer) -> Light, height: f32) -> Option<Vec<u8>> {
+    let mut renderer = renderer()?;
+    let light = prepare(&mut renderer);
+    let place = Transform::new(Vec3::new(0.0, height, 0.0), Quat::from_rotation_x(std::f32::consts::FRAC_PI_2), Vec3::ONE);
+    lamp_render_with(renderer, &[(light, place)])
+}
+
+#[test]
+fn a_spot_lights_cookie_shapes_its_light() {
+    let half_and_half = |renderer: &mut Renderer| {
+        // Black on the left, white on the right, at a size uploads keep as it is.
+        let rgba: Vec<u8> = (0..16 * 4).flat_map(|i| if i % 16 < 8 { [0, 0, 0, 255] } else { [255; 4] }).collect();
+        let source = voxear_render::TextureSource { name: "half", width: 16, height: 4, rgba: &rgba, srgb: false };
+        let cookie = renderer.add_texture(&source).unwrap();
+        Light { cookie: Some(cookie), ..Light::spot(Vec3::ONE, 6.0, 8.0, 50.0, 60.0) }
+    };
+    let Some(pixels) = hanging_light_render(half_and_half, 3.0) else { return };
+    keep_image("spot cookie.png", &pixels);
+    let (dark, lit) =
+        (floor_brightness(&pixels, Vec3::new(-0.8, 0.0, 0.0)), floor_brightness(&pixels, Vec3::new(0.8, 0.0, 0.0)));
+    assert!(lit > 100, "the white half shines: {lit}");
+    assert!(dark <= 6, "the black half does not: {dark}");
+}
+
+#[test]
+fn an_ies_profile_dims_a_light_where_its_fitting_is_dark() {
+    const DOWNLIGHT: &str = "IESNA:LM-63-2002\nTILT=NONE\n1 1000 1.0 7 1 1 2 0.1 0.1 0.0\n1.0 1.0 12\n\
+                             0 15 30 45 60 75 90\n0\n1000 950 800 500 200 50 0\n";
+    let profile = voxear_render::IesProfile::parse(DOWNLIGHT).unwrap();
+    let plain = |_: &mut Renderer| Light::point(Vec3::ONE, 4.0, 8.0);
+    let profiled = move |renderer: &mut Renderer| {
+        let profile = renderer.add_light_profile(&profile).unwrap();
+        Light { profile: Some(profile), ..Light::point(Vec3::ONE, 4.0, 8.0) }
+    };
+    let (Some(bare), Some(shaped)) = (hanging_light_render(plain, 1.0), hanging_light_render(profiled, 1.0)) else {
+        return;
+    };
+    keep_image("ies profile.png", &shaped);
+    let (under_bare, under_shaped) = (floor_brightness(&bare, Vec3::ZERO), floor_brightness(&shaped, Vec3::ZERO));
+    assert!(under_shaped * 10 >= under_bare * 9, "straight down it is as bright: {under_shaped} of {under_bare}");
+    let aside = Vec3::new(3.0, 0.0, 0.0);
+    let (aside_bare, aside_shaped) = (floor_brightness(&bare, aside), floor_brightness(&shaped, aside));
+    assert!(aside_shaped * 3 < aside_bare, "far to the side, the fitting is dark: {aside_shaped} of {aside_bare}");
 }

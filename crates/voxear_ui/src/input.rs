@@ -78,6 +78,8 @@ pub(crate) struct Input {
     pub changed: Vec<taffy::NodeId>,
     /// Text fields where Enter was pressed since the last frame.
     pub submitted: Vec<taffy::NodeId>,
+    /// Text fields Escape let go of since the last frame.
+    pub escaped: Vec<taffy::NodeId>,
     /// The last press: on what, when, and how many came in a row.
     pub last_press: Option<(taffy::NodeId, f32, u32)>,
     /// A text field or slider the pointer is dragging in.
@@ -98,6 +100,7 @@ impl Default for Input {
             blink_from: 0.0,
             changed: Vec::new(),
             submitted: Vec::new(),
+            escaped: Vec::new(),
             last_press: None,
             dragging: None,
             wheel_takers: std::collections::HashSet::new(),
@@ -182,6 +185,12 @@ impl Ui {
     /// Whether Enter was pressed in this text field since the last frame.
     pub fn submitted(&self, node: NodeId) -> bool {
         self.input.submitted.contains(&node.0)
+    }
+
+    /// Whether Escape let go of this text field since the last frame, as
+    /// when an inline rename is given up, rather than a click elsewhere.
+    pub fn escaped(&self, node: NodeId) -> bool {
+        self.input.escaped.contains(&node.0)
     }
 
     /// A key went down, with the modifiers last set. Returns whether the UI
@@ -342,6 +351,7 @@ impl Ui {
     pub(crate) fn clear_input_events(&mut self) {
         self.input.changed.clear();
         self.input.submitted.clear();
+        self.input.escaped.clear();
         self.input.wheeled.clear();
     }
 

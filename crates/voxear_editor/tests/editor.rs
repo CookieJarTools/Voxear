@@ -6144,6 +6144,40 @@ fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
     assert!(text.contains("name = \"New Action\""), "{text}");
     assert!(editor.game.input.action("New Action").is_some(), "the game reads it at once");
 
+    // It is renamed in its row at once, its name selected to type over; Enter keeps what is typed.
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let field = editor.ui.focused().expect("the new action's name, focused");
+    assert!(editor.ui.has_class(field, "input-row-rename") && editor.ui.text(field) == "New Action");
+    shot(&mut renderer, "input-actions-rename.png");
+    editor.ui.text_input("Jump Higher");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("name = \"Jump Higher\""), "typed over its name");
+
+    // Another, with Escape, keeps the name it was given.
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let action = menu_item(&editor.ui, "Action").unwrap();
+    click(&mut editor.ui, action);
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    let field = editor.ui.focused().expect("the second action's name, focused");
+    editor.ui.text_input("Not This");
+    editor.ui.key_down(Key::Escape);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_ne!(editor.ui.focused(), Some(field), "the rename let go");
+    let mut names = Vec::new();
+    with_class(&editor.ui, panel, "entities-row-name", &mut names);
+    let shown = |name: &str| names.iter().any(|&n| editor.ui.is_visible(n) && editor.ui.text(n) == name);
+    assert!(shown("New Action") && shown("Jump Higher"), "the rows show their names again");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("name = \"New Action\"") && !text.contains("Not This"), "{text}");
+
     click(&mut editor.ui, add);
     frame(&mut editor, &mut renderer);
     let binding = menu_item(&editor.ui, "Binding").expect("and a binding of the action picked");

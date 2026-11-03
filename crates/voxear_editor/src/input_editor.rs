@@ -14,7 +14,10 @@
 //!   a dropdown with a field for each of its values, as a deadzone's Min and
 //!   Max.
 //! - The plus over the actions adds an action, or a binding, 2D vector or
-//!   1D axis to the action picked.
+//!   1D axis to the action picked. A new action is named so no other is,
+//!   picked, and renamed in its row at once, its name selected to type
+//!   over: Enter or a click elsewhere keeps what is typed, and Escape the
+//!   name it was given.
 //!
 //! Each row shows an icon (an action's own, or a binding's device), a
 //! binding's control by its name with its device after it, and a mark
@@ -25,7 +28,10 @@
 //! the game would read it, and handed to the editor to write and read
 //! again. A change the game would not read is not kept, and says why.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use voxear_input::{ActionKind, ActionsFile, Input, Processor, Rebound, Scheme, actions::MapData, controls};
 use voxear_ui::{ItemFns, MenuItem, NodeId, Style, Ui};
@@ -82,6 +88,13 @@ struct Properties {
     processors: Vec<ProcessorControls>,
 }
 
+/// An action being renamed in its row: which, and its field once the row
+/// shows it and it has the focus.
+struct Renaming {
+    action: usize,
+    field: Option<NodeId>,
+}
+
 /// One processor's controls in the properties.
 #[derive(Clone)]
 struct ProcessorControls {
@@ -101,6 +114,12 @@ pub struct ActionsEditor {
     status: NodeId,
     shown_maps: Rc<RefCell<Vec<String>>>,
     shown_rows: Rc<RefCell<Vec<Shown>>>,
+    /// Each row made and the place it shows, as last bound, to find the row
+    /// being renamed.
+    bound_rows: Rc<RefCell<Vec<(NodeId, usize)>>>,
+    /// The place of the row renamed in place, which shows a field for it.
+    renaming_row: Rc<Cell<Option<usize>>>,
+    renaming: Option<Renaming>,
     controls: Properties,
     /// The file being edited, and the file as the game last read it.
     file: ActionsFile,
@@ -161,7 +180,9 @@ impl ActionsEditor {
         ui.set_name(add, "input-add");
         let remove = ui.icon_button(heading, "close");
         let shown_rows: Rc<RefCell<Vec<Shown>>> = Rc::default();
-        let texts = shown_rows.clone();
+        let bound_rows: Rc<RefCell<Vec<(NodeId, usize)>>> = Rc::default();
+        let renaming_row: Rc<Cell<Option<usize>>> = Rc::default();
+        let (texts, bound, renamed) = (shown_rows.clone(), bound_rows.clone(), renaming_row.clone());
         let rows = ui.list_view(
             middle,
             ROW,
@@ -174,6 +195,9 @@ impl ActionsEditor {
                     ui.add_class(icon, "input-row-icon");
                     let label = ui.add_label(row, "");
                     ui.add_class(label, "entities-row-name");
+                    let rename = ui.text_field(row, "");
+                    ui.add_class(rename, "input-row-rename");
+                    ui.set_visible(rename, false);
                     let detail = ui.add_label(row, "");
                     ui.add_class(detail, "input-row-detail");
                     let conflict = ui.icon(row, "alert");
@@ -183,9 +207,10 @@ impl ActionsEditor {
                     let Some(shown) = texts.borrow().get(index).cloned() else { return };
                     let parts = ui.children(row);
                     let part = |class: &str| parts.iter().copied().find(|&p| ui.has_class(p, class));
-                    let (Some(icon), Some(label), Some(detail), Some(conflict)) = (
+                    let (Some(icon), Some(label), Some(rename), Some(detail), Some(conflict)) = (
                         part("input-row-icon"),
                         part("entities-row-name"),
+                        part("input-row-rename"),
                         part("input-row-detail"),
                         part("input-row-conflict"),
                     ) else {
@@ -198,6 +223,15 @@ impl ActionsEditor {
                     ui.set_visible(conflict, shown.conflict);
                     ui.set_class(row, "odd", index % 2 == 1);
                     ui.set_class(row, "conflict", shown.conflict);
+                    ui.set_class(row, "unset", shown.unset);
+                    let renaming = renamed.get() == Some(index);
+                    ui.set_visible(rename, renaming);
+                    ui.set_visible(label, !renaming);
+                    let mut bound = bound.borrow_mut();
+                    match bound.iter_mut().find(|(made, _)| *made == row) {
+                        Some(found) => found.1 = index,
+                        None => bound.push((row, index)),
+                    }
                 },
             },
         );
@@ -219,6 +253,9 @@ impl ActionsEditor {
             status,
             shown_maps,
             shown_rows,
+            bound_rows,
+            renaming_row,
+            renaming: None,
             controls: Properties::default(),
             file: ActionsFile::default(),
             read: None,
@@ -266,6 +303,7 @@ impl ActionsEditor {
         // Picks first, so that a row a button adds is the one picked after.
         self.take_picks(ui);
         self.take_buttons(ui, input);
+        self.take_rename(ui);
         self.take_picked();
         self.take_properties(ui);
         if self.file == before {
@@ -330,7 +368,11 @@ impl ActionsEditor {
         }
         let composite = |at: usize| [None, None, Some(Composite::Vector), Some(Composite::Axis)][at.min(3)];
         let added = match ui.menu_choice(self.add) {
-            Some(0) => self.map_data().map(input_edit::add_action),
+            Some(0) => {
+                let added = self.map_data().map(input_edit::add_action);
+                self.renaming = added.map(|row| Renaming { action: row.action(), field: None });
+                added
+            }
             Some(at) => {
                 action.and_then(|a| self.map_data().and_then(|map| input_edit::add_binding(map, a, composite(at))))
             }
@@ -362,6 +404,58 @@ impl ActionsEditor {
             self.listening = row;
             ui.set_text(listen, "Press a Key");
         }
+    }
+
+    /// The action renamed in its row: its field shown, focused and its name
+    /// selected once its row is there, then kept as typed when Enter is
+    /// pressed or the field is left, or as it was when Escape is.
+    fn take_rename(&mut self, ui: &mut Ui) {
+        let Some(renaming) = &self.renaming else { return };
+        let action = renaming.action;
+        let rows = self.file.maps.get(self.map).map(input_edit::rows).unwrap_or_default();
+        let Some(at) = rows.iter().position(|row| *row == Row::Action(action)) else {
+            return self.end_rename(ui);
+        };
+        let Some(field) = renaming.field else {
+            if self.renaming_row.get() != Some(at) {
+                self.renaming_row.set(Some(at));
+                ui.scroll_to_index(self.rows, at);
+                ui.refresh_list(self.rows);
+                return;
+            }
+            // The row is shown once the list binds it again, a frame after it is asked to, with the list's new
+            // length, so it is scrolled to again.
+            ui.scroll_to_index(self.rows, at);
+            let bound = self.bound_rows.borrow().iter().find(|(_, index)| *index == at).map(|(row, _)| *row);
+            let field =
+                bound.and_then(|row| ui.children(row).into_iter().find(|&p| ui.has_class(p, "input-row-rename")));
+            let Some(field) = field.filter(|&field| ui.is_visible(field)) else { return };
+            let name = self.file.maps[self.map].actions.get(action).map(|a| a.name.clone()).unwrap_or_default();
+            ui.set_text(field, &name);
+            ui.focus(field);
+            // A field can take focus only once it is laid out; until then this is asked again.
+            if ui.focused() == Some(field) {
+                ui.select_all_text(field);
+                self.renaming = Some(Renaming { action, field: Some(field) });
+            }
+            return;
+        };
+        if ui.escaped(field) {
+            return self.end_rename(ui);
+        }
+        if ui.submitted(field) || ui.focused() != Some(field) {
+            let text = ui.text(field);
+            if let Some(map) = self.file.maps.get_mut(self.map) {
+                input_edit::rename_action(map, action, &text);
+            }
+            self.end_rename(ui);
+        }
+    }
+
+    fn end_rename(&mut self, ui: &mut Ui) {
+        self.renaming = None;
+        self.renaming_row.set(None);
+        ui.refresh_list(self.rows);
     }
 
     /// What the pickers the window asked for picked: the binding's control,
@@ -415,9 +509,8 @@ impl ActionsEditor {
                 input_edit::rename_action(map, action, &text);
             }
         }
-        let fields_done: Vec<bool> = (self.controls.processors.iter())
-            .map(|p| p.values.iter().any(|&field| done(ui, Some(field))))
-            .collect();
+        let fields_done: Vec<bool> =
+            (self.controls.processors.iter()).map(|p| p.values.iter().any(|&field| done(ui, Some(field)))).collect();
         self.take_processors(ui, &fields_done);
         self.take_action_choices(ui, done(ui, seconds));
         let excludes = self.controls.excludes.clone();

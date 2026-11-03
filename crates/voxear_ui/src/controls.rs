@@ -551,7 +551,10 @@ impl Ui {
                     self.input.submitted.push(field.0);
                 }
             }
-            Key::Escape => self.blur(),
+            Key::Escape => {
+                self.input.escaped.push(field.0);
+                self.blur();
+            }
             Key::Char('a') if word => self.edit(field, |d| d.select_all()),
             Key::Char(c @ ('c' | 'x')) if word => {
                 let selected = self.editing(field).and_then(|e| e.editor.selected_text().map(str::to_string));

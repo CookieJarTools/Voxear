@@ -3330,6 +3330,18 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     color: var(--vx-danger);
 }
 
+/* A binding or part not given a control yet: "None", quietly, as a placeholder. */
+.input-row.unset > .entities-row-name {
+    color: var(--vx-muted);
+}
+
+/* A new action's name, typed over in its row. */
+.input-row-rename {
+    flex-grow: 1;
+    min-width: 0px;
+    height: 20px;
+}
+
 /* The binding's control, which opens the control picker, reads as a field. */
 .input-picker {
     justify-content: flex-start;

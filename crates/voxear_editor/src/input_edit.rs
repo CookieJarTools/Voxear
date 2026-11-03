@@ -75,6 +75,8 @@ pub struct Shown {
     pub depth: usize,
     /// Another action that can be on at once reads the same control.
     pub conflict: bool,
+    /// A binding or part not given a control yet, shown as a placeholder.
+    pub unset: bool,
 }
 
 /// How a row shows: an action with its icon, a binding's control by the
@@ -120,14 +122,14 @@ fn control_row(path: &str, part: Option<&str>) -> Shown {
         Some(part) => format!("{}: {name}", capital(part)),
         None => name,
     };
-    Shown { icon: device_icon(path), text, detail: device, depth, conflict: false }
+    Shown { icon: device_icon(path), text, detail: device, depth, conflict: false, unset: path.is_empty() }
 }
 
 /// What people call a control, and its device: "Left Shift" and
-/// "Keyboard"; "No Control" for none.
+/// "Keyboard"; "None" for a binding or part not given one yet.
 pub fn control_name(path: &str) -> (String, String) {
     if path.is_empty() {
-        return ("No Control".into(), String::new());
+        return ("None".into(), String::new());
     }
     let device = path.split_once('/').map_or("", |(device, _)| device).to_string();
     let name = controls::all().into_iter().find(|c| c.path == path).map_or_else(|| path.to_string(), |c| c.name);
@@ -140,7 +142,8 @@ pub fn device_icon(path: &str) -> &'static str {
         Some("Keyboard") => "keyboard",
         Some("Mouse") => "mouse",
         Some("Gamepad") => "gamepad",
-        _ => "close",
+        // Not given a control yet.
+        _ => "more",
     }
 }
 
@@ -441,6 +444,8 @@ mod tests {
 
         let axis = add_binding(&mut map, 1, Some(Composite::Axis)).unwrap();
         assert_eq!(axis, Row::Part(1, 2, "negative"));
+        let empty = shown(&map, axis);
+        assert_eq!((empty.text.as_str(), empty.unset), ("Negative: None", true), "a part not given a control yet");
         remove(&mut map, axis);
         remove(&mut map, Row::Action(0));
         assert_eq!(map.actions.len(), 1);

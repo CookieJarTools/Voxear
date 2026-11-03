@@ -629,7 +629,8 @@ Done:
     Git does the fetching, so a developer's own credentials and SSH keys work.
   - a folder on disk, for packages being written alongside a game
   - a registry: a plain Git repository of `packages/<name>.toml` listings, for finding packages by name and
-    searching. Projects can name more under `[registries]`, and `VOXEAR_REGISTRY` sets a machine's default.
+    searching. The default registry is [CookieJarTools/VoxearPackages](https://github.com/CookieJarTools/VoxearPackages).
+    Projects can name more under `[registries]`, and `VOXEAR_REGISTRY` sets a machine's default.
 - **Resolving and locking:**
   - Versions are semantic. Ranges are resolved together with every package's own needs, and the project wins
     when it asks for a package from somewhere else. Errors name who asked for what.
@@ -654,7 +655,6 @@ Done:
   lists a tagged release in a clone of a registry.
 
 Next:
-- The default registry's repository, which `vox package add <name>` looks in.
 - Changes made outside the editor to a folder package's files, picked up and imported again as the project's are.
 - Editing a package's string tables and input actions from the editor writes into a folder package, rather than
   failing.

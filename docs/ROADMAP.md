@@ -901,6 +901,34 @@ Next:
   - HDR display output: HDR10 and scRGB swapchains with paper-white and peak-brightness settings, and tonemapping
     that targets the display
 
+## Vegetation (next, after glass)
+
+What The Vegetation Engine brings to Unity, built in: foliage that is cheap to draw in great numbers, moves with
+the wind and with what passes through it, and changes with the seasons, from one set of settings per level.
+Foliage shading (wrap lighting, light through the leaves, a rim of the sun's colour) is done, in M5.
+
+- **Drawing a lot of it:** instances placed by the thousand without an Obj each, drawn by GPU-driven indirect
+  draws after culling against the view and the depth pyramid, with per-instance colour, size and wind phase.
+  - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
+    by distance.
+  - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the
+    tree is.
+  - Shadows for foliage drawn from cheaper LODs, and none for grass beyond a distance.
+- **Wind:** a Wind Zone (direction, strength, gusts and turbulence) moving every plant in the level at once.
+  - Trunks bend from the ground, branches sway and leaves flutter, each by masks in the mesh's vertex colours
+    or worked out from height and distance from the trunk, so plants from any source move without setup.
+  - Gusts as noise moving across the level, so grass shows waves going through it.
+- **Pushing through it:** characters, vehicles and anything with a Foliage Interaction component bend grass and
+  plants out of their way, through a texture of pushes round the camera, which springs back over time.
+- **Seasons and variation:** a level-wide setting for the season (green to dry to autumn to bare to snow),
+  colour variation across a field from world-space noise, dryness, and wet or snow-covered leaves from above.
+- **Glow:** emissive masks on plants that pulse, breathe or flicker, for glowing mushrooms, bioluminescent
+  forests and fireflies, and light from them in the GI.
+- **Placing it:** a scatter brush in the editor, painting instances onto any surface with density, scale and
+  slope limits, and erasing; terrain's scatter layers (M8) use the same instances.
+- **Converting plants:** a step that prepares models from other tools (SpeedTree exports, Quixel and asset-store
+  plants) for wind and foliage shading, writing the masks the shader reads.
+
 ## M6 — Animation
 
 - GPU skinning, blend shapes, state machines, blend trees, layers and root motion.

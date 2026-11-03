@@ -425,6 +425,25 @@ Next in M3:
         where the platform has it, and Steam depots ready to upload
       - the command-line arguments a build accepts, and the ones it starts with by default
       - every setting the same from `vox build` as from the Build window, so builds on a server match the editor's
+  - [ ] **Incremental builds, kept builds, and running them from the editor:**
+    - incremental builds: scripts, content bundles and the player each rebuilt only when what they are made from
+      changed, so a build after a small change takes seconds; a clean build still on offer, and the report saying
+      what was reused
+    - builds kept, as an option per profile: each new build goes into its own versioned folder (the version and
+      build number, the profile and the date) rather than over the last, with how many to keep before the oldest
+      go
+    - a Builds list in the Build window: every kept build with its version, profile, date, size and whether it
+      succeeded, to run, show in files, compare with another, or delete
+    - running any kept build from the editor, with its log in the Console, and arguments to pass it
+  - [ ] **Debug tools that connect to builds**, so the Profiler and the other panels look into a running build as
+    they do into Play mode:
+    - **Connect**: the editor finds development builds running on this machine (and on the local network, later)
+      and lists them with their name, version and platform; picking one connects the Profiler, Console, Frame
+      Debugger, Entities panel and Audio panel to it
+    - **Launch and Connect**: runs the picked profile's latest build, or a kept one, and connects as it starts, so
+      the first frames are caught; with "wait for the editor" the build holds at startup until it is connected
+    - a connection chip in each panel's bar saying what it is looking at (the editor, Play mode or a build), to
+      switch between them, and a build that closes or drops leaving its last capture readable
   - [ ] **UI navigation**, for gamepads and keyboards, as Unity's and Unreal's, so a complicated menu works with a
     controller without the game writing any code for it:
     - automatic: up, down, left and right move to the nearest focusable element that way, by distance and by how

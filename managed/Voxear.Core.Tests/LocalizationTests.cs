@@ -19,6 +19,18 @@ internal static class LocalizationTests
 	}
 
 	[Test]
+	private static void MoneyAndAKeptTextReadWithoutTheEngine()
+	{
+		Check.True(new Money(4.99m, Currency.GBP).ToString() == "4.99 GBP", "an amount, then its code");
+		using var coins = new Localized("hud.coins", ("count", 1));
+		var heard = 0;
+		coins.Changed += _ => heard++;
+		coins.Set("count", 2);
+		Check.True(coins.Text == "hud.coins" && heard == 0, "a key is its own text, which a value does not change");
+		Check.True(((LocalizedString)"hud.coins").Observe().Text == "hud.coins", "observed from a LocalizedString");
+	}
+
+	[Test]
 	private static void ALocalizedStringFieldReadsItsKeyFromTheScene()
 	{
 		var sign = new TestSign();

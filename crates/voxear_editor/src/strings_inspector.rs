@@ -9,9 +9,13 @@
 //! Under the entries, the translators' sheet: Export CSV writes the table
 //! as a spreadsheet beside it (`Menu.csv` for `Menu.strings`), and Import
 //! CSV reads that sheet back, showing what it adds, changes and takes away
-//! before Apply keeps it, as `vox loc import` does.
+//! before Apply keeps it, as `vox loc import` does. Where the sheet is
+//! online, as a Google Sheet, its link is kept with the table, and Import
+//! from Link fetches it, away from the editor's frames, to show the same.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::mpsc};
+
+use anyhow::Result;
 
 use voxear_engine::localization::{StringEntry, StringTable, csv};
 use voxear_ui::{NodeId, Style, Ui};
@@ -46,9 +50,14 @@ struct Sheet {
     languages: Vec<String>,
     export: NodeId,
     import: NodeId,
+    /// The sheet's link, and the button that fetches it.
+    link: NodeId,
+    fetch: NodeId,
     apply: NodeId,
     report: NodeId,
     pending: Option<StringTable>,
+    /// The sheet being fetched from its link.
+    fetching: Option<mpsc::Receiver<Result<String>>>,
 }
 
 /// What changed in a table.
@@ -83,7 +92,7 @@ impl StringsFields {
         let entries = (table.entries.iter().enumerate())
             .map(|(place, entry)| entry_fields(ui, collection.items, place, entry, &columns))
             .collect();
-        let sheet = Sheet::build(ui, root, file.with_extension("csv"), columns);
+        let sheet = Sheet::build(ui, root, file.with_extension("csv"), columns, &table.sheet);
         Self { table, collection, entries, focused: None, sheet }
     }
 
@@ -163,28 +172,56 @@ impl StringsFields {
                 Err(error) => format!("Could not write {name}: {error}"),
             }));
         }
-        if ui.clicked(sheet.import) {
-            sheet.pending = None;
-            let read = std::fs::read_to_string(&sheet.file).map_err(anyhow::Error::from);
-            let report = match read.and_then(|text| csv::from_csv(&text)) {
-                Ok(new) => {
-                    let report = describe(&csv::changes(&self.table, &new));
-                    sheet.pending = (report != NOTHING).then_some(new);
-                    report
-                }
-                Err(error) => format!("{name}: {error:#}"),
-            };
-            ui.set_text(sheet.report, &report);
-            ui.set_visible(sheet.report, true);
-            ui.set_visible(sheet.apply, sheet.pending.is_some());
+        // The link is kept once it is let go of, before a click on Import from Link fetches it.
+        let link = ui.text(sheet.link).trim().to_string();
+        let linked = ui.focused() != Some(sheet.link) && link != self.table.sheet;
+        if linked {
+            self.table.sheet = link;
         }
+        if ui.clicked(sheet.import) {
+            let read = std::fs::read_to_string(&sheet.file).map_err(anyhow::Error::from);
+            self.read_sheet(ui, read, &name);
+        }
+        if ui.clicked(self.sheet.fetch) && !self.table.sheet.is_empty() {
+            let (send, receive) = mpsc::channel();
+            let link = self.table.sheet.clone();
+            std::thread::spawn(move || send.send(voxear_localization::csv::fetch(&link)));
+            self.sheet.fetching = Some(receive);
+            ui.set_text(self.sheet.report, "Fetching…");
+            ui.set_visible(self.sheet.report, true);
+        }
+        let fetched = self.sheet.fetching.as_ref().and_then(|receive| receive.try_recv().ok());
+        if let Some(fetched) = fetched {
+            self.sheet.fetching = None;
+            self.read_sheet(ui, fetched, "The sheet's link");
+        }
+        let sheet = &mut self.sheet;
         if ui.clicked(sheet.apply)
             && let Some(new) = sheet.pending.take()
         {
             self.table = new;
             return Some(StringsChange::Entries);
         }
-        None
+        linked.then_some(StringsChange::Typed)
+    }
+
+    /// Reads a sheet's text, from its file or its link, and shows what it
+    /// would add, change and take away, for Apply to keep.
+    fn read_sheet(&mut self, ui: &mut Ui, read: Result<String>, from: &str) {
+        let sheet = &mut self.sheet;
+        sheet.pending = None;
+        let report = match read.and_then(|text| csv::from_csv(&text)) {
+            Ok(mut new) => {
+                new.sheet.clone_from(&self.table.sheet);
+                let report = describe(&csv::changes(&self.table, &new));
+                sheet.pending = (report != NOTHING).then_some(new);
+                report
+            }
+            Err(error) => format!("{from}: {error:#}"),
+        };
+        ui.set_text(sheet.report, &report);
+        ui.set_visible(sheet.report, true);
+        ui.set_visible(sheet.apply, sheet.pending.is_some());
     }
 
     fn fields(&self) -> impl Iterator<Item = NodeId> + '_ {
@@ -202,7 +239,7 @@ impl StringsFields {
 const NOTHING: &str = "Nothing changes";
 
 impl Sheet {
-    fn build(ui: &mut Ui, root: NodeId, file: PathBuf, languages: Vec<String>) -> Self {
+    fn build(ui: &mut Ui, root: NodeId, file: PathBuf, languages: Vec<String>, link: &str) -> Self {
         let foldout = ui.foldout(root, "Translators' Sheet", true);
         ui.add_class(foldout, "section");
         ui.set_foldout_icon(foldout, "file");
@@ -210,12 +247,19 @@ impl Sheet {
         let row = prop(ui, rows, "CSV");
         let export = ui.button(row, "Export CSV");
         let import = ui.button(row, "Import CSV");
+        let row = prop(ui, rows, "Link");
+        let link_field = ui.text_field(row, link);
+        ui.add_class(link_field, "value-input");
+        ui.set_placeholder(link_field, "A Google Sheet or CSV link");
+        ui.set_name(link_field, "strings-link");
+        let fetch = ui.button(row, "Import from Link");
+        let row = prop(ui, rows, "");
         let apply = ui.button(row, "Apply");
         ui.set_visible(apply, false);
         let report = ui.add_label(rows, "");
         ui.add_class(report, "strings-report");
         ui.set_visible(report, false);
-        Self { file, languages, export, import, apply, report, pending: None }
+        Self { file, languages, export, import, link: link_field, fetch, apply, report, pending: None, fetching: None }
     }
 }
 

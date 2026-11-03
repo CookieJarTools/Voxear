@@ -230,6 +230,8 @@ impl Text {
 pub struct Ui {
     pub(crate) tree: TaffyTree<Element>,
     pub(crate) root: taffy::NodeId,
+    /// Laid out right to left, as the game's language reads.
+    pub(crate) rtl: bool,
     pub(crate) fonts: FontContext,
     pub(crate) layouts: LayoutContext<u16>,
     pub(crate) atlas: GlyphAtlas,
@@ -313,6 +315,7 @@ impl Ui {
         Self {
             tree,
             root,
+            rtl: false,
             fonts: FontContext::new(),
             layouts: LayoutContext::new(),
             atlas: GlyphAtlas::new(),
@@ -585,6 +588,22 @@ impl Ui {
             element.inline = inline;
             self.restyle(node.0, false);
         }
+    }
+
+    /// Lays the whole UI out right to left, as Arabic and Hebrew read, or
+    /// back: rows run from the right, left and right swap in margins,
+    /// padding, borders and places, and text starts at the right. An
+    /// element styled `direction: ltr` keeps left to right, with what is in
+    /// it, as a key map does.
+    pub fn set_right_to_left(&mut self, rtl: bool) {
+        if self.rtl != rtl {
+            self.rtl = rtl;
+            self.restyle(self.root, true);
+        }
+    }
+
+    pub fn is_right_to_left(&self) -> bool {
+        self.rtl
     }
 
     /// Styles `node` and everything in it with `sheet`. Sheets nearer an

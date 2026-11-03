@@ -783,7 +783,9 @@ DockSpace .split-column > .split-divider {
 /* Key maps: a device's keys, lit where bound, with labels round it naming
    their actions. A key's category colour, when it has one, is set on the
    key itself and wins over these. */
+/* A device is drawn as it is, whichever way the game reads. */
 .keymap {
+    direction: ltr;
     position: relative;
     flex-grow: 1;
     min-height: 0px;

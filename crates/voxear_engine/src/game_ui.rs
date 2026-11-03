@@ -319,7 +319,8 @@ impl GameUi {
 
     /// Shows each element bound to a key that key's text in the game's
     /// language: every one when the language or the text changed since the
-    /// last call, or any bound since.
+    /// last call, or any bound since. The UI is laid out right to left when
+    /// the language reads that way.
     pub fn follow_language(&mut self, localization: Option<&Localization>) {
         let Some(localization) = localization else { return };
         let added = self.ui.take_text_keys_added();
@@ -327,6 +328,7 @@ impl GameUi {
             return;
         }
         self.language = Some(localization.version());
+        self.ui.set_right_to_left(voxear_localization::is_right_to_left(localization.language()));
         for (node, key) in self.ui.text_keys() {
             self.ui.set_text(node, &localization.text(&key));
         }

@@ -10,10 +10,38 @@
 //!
 //! Reading a sheet back gives the table as the sheet has it; [`changes`]
 //! says what that adds, changes and takes away, to show before it is kept.
+//!
+//! A sheet can be read from a link too ([`fetch`], with the `fetch`
+//! feature, as the editor and `vox` have): a CSV file's, or a Google
+//! Sheet's, which [`sheet_link`] turns into its CSV export.
 
 use anyhow::{Context, Result, bail, ensure};
 
 use crate::table::{StringEntry, StringTable};
+
+/// A sheet's link as the CSV it can be read from: a Google Sheet's, as its
+/// address bar or Share gives it, is its export of that tab as CSV; any
+/// other is as it is.
+pub fn sheet_link(link: &str) -> String {
+    let link = link.trim();
+    let Some(rest) = link.split_once("docs.google.com/spreadsheets/d/").map(|(_, rest)| rest) else {
+        return link.to_string();
+    };
+    if rest.contains("/export?") || rest.contains("/pub?") {
+        return link.to_string();
+    }
+    let id = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let gid = link.split(['#', '?', '&']).find_map(|part| part.strip_prefix("gid=")).unwrap_or("0");
+    format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}")
+}
+
+/// A sheet's text, fetched from its link (see [`sheet_link`]).
+#[cfg(feature = "fetch")]
+pub fn fetch(link: &str) -> Result<String> {
+    let url = sheet_link(link);
+    let mut response = ureq::get(&url).call().with_context(|| format!("fetching {url}"))?;
+    response.body_mut().read_to_string().with_context(|| format!("reading {url}"))
+}
 
 /// The columns every sheet has before its languages.
 const FIRST: [&str; 3] = ["key", "comment", "limit"];
@@ -194,5 +222,14 @@ mod tests {
         assert_eq!(changes.changed, [("menu.play".into(), vec!["fr".to_string()])], "and its comment and limit went");
         assert_eq!(changes.removed, ["loot"]);
         assert!(super::changes(&table(), &table()).is_empty());
+    }
+
+    #[test]
+    fn a_google_sheets_link_is_read_as_its_csv() {
+        let shared = "https://docs.google.com/spreadsheets/d/1AbC_d-9/edit?usp=sharing#gid=42";
+        assert_eq!(sheet_link(shared), "https://docs.google.com/spreadsheets/d/1AbC_d-9/export?format=csv&gid=42");
+        let first = "https://docs.google.com/spreadsheets/d/1AbC_d-9/edit";
+        assert!(sheet_link(first).ends_with("/1AbC_d-9/export?format=csv&gid=0"), "the first tab");
+        assert_eq!(sheet_link(" https://example.com/menu.csv "), "https://example.com/menu.csv");
     }
 }

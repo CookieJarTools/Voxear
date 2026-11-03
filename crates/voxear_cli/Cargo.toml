@@ -23,6 +23,8 @@ path = "src/player_main.rs"
 voxear_editor.workspace = true
 voxear_core.workspace = true
 voxear_engine.workspace = true
+# Its sheets fetched from their links.
+voxear_localization = { workspace = true, features = ["fetch"] }
 voxear_rhi.workspace = true
 voxear_scripting.workspace = true
 anyhow.workspace = true

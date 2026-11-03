@@ -676,16 +676,20 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     with every build, and `Localization.Asset`, `Sound` and `Prefab` in C#
   - [x] ICU smart strings: plurals by each language's rules (ICU4X), exact numbers, select (as for gender), and numbers
     written as the language writes them
-  - [ ] dates and currencies in smart strings
+  - [x] dates and currencies in smart strings (`{when, date}`, `{when, time}`, `{price, currency}`), with `Money` and
+    `Currency` in C#
   - [x] binding through `@key` in UI markup and in an element's `Text` from a script, shown again when the language or
     the text changes
   - [x] `LocalizedString` fields, picked in the Inspector from the project's keys beside their text, saved as the key
-  - [ ] a `LocalizedText` component (once there is text in the world), and observable `Localized(key)`
+  - [x] observable text, `Localized`, following the language, its table and its values, with `Changed`; from a
+    `LocalizedString` by `Observe()`
+  - [ ] a `LocalizedText` component, once there is text in the world
   - [x] CSV export, and import from a file with what it adds, changes and takes away shown first (`vox loc export` and
     `vox loc import`)
   - [x] CSV export and import from the editor: Export CSV and Import CSV under a string table in the Inspector, with
     what it adds, changes and takes away shown before Apply
-  - [ ] CSV import from a URL
+  - [x] CSV import from a URL, a Google Sheet's link read as its CSV and kept with the table (`sheet`), in the
+    Inspector and `vox loc import`
   - [x] pseudo-localisation from the palette, accented, a third longer and in brackets, while editing and playing
   - [x] string tables edited in the Inspector: each entry's key, its text in each language and its comment, missing
     text and text past its limit marked, entries dragged into a new order
@@ -693,8 +697,11 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     renaming a key everywhere it is used
   - [x] the saved choice and Windows' languages in language detection: the language a script picks kept beside the
     saves and started in next time, and Windows' preferred UI languages
-  - [ ] the store's language (Steam's) in language detection
-  - [ ] RTL mirroring and per-locale fonts
+  - [x] the store's language (Steam's) in language detection, through the developer's own Steamworks library beside
+    the game, loaded when it is there; Voxear ships none
+  - [x] RTL mirroring: a game in a language written right to left lays its UI out that way, rows from the right,
+    sides swapped and text from the right; `direction: ltr` keeps a part as it is, as key maps do
+  - [ ] per-language fonts, once fonts are assets of a project's own
 - Audio:
   - [x] a Rust mixer on cpal: music and effects buses under a master volume, and voices that play, loop, pause and
     stop, with long music streamed

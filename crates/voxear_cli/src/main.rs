@@ -64,8 +64,9 @@ enum LocCommand {
     },
     /// Read a CSV sheet into a string table, saying what it adds, changes and takes away.
     Import {
-        /// The sheet, with a header naming `key`, `comment`, `limit` and each language's column.
-        sheet: PathBuf,
+        /// The sheet, with a header naming `key`, `comment`, `limit` and each language's column: a CSV file, or a
+        /// link to one or to a Google Sheet, which the table then keeps.
+        sheet: String,
         /// The `.strings` file it goes into.
         table: PathBuf,
         /// Keep the sheet's text; without it, only say what would change.
@@ -519,16 +520,22 @@ fn export_strings(table: &Path, out: Option<&Path>) -> Result<()> {
 
 /// Reads a sheet into a string table, or with `apply` unset, says what it
 /// would add, change and take away.
-fn import_strings(sheet: &Path, table: &Path, apply: bool) -> Result<()> {
-    let text = std::fs::read_to_string(sheet).with_context(|| format!("reading {}", sheet.display()))?;
-    let new = localization::csv::from_csv(&text).with_context(|| format!("reading {}", sheet.display()))?;
+fn import_strings(sheet: &str, table: &Path, apply: bool) -> Result<()> {
+    let linked = sheet.starts_with("https://") || sheet.starts_with("http://");
+    let text = match linked {
+        true => voxear_localization::csv::fetch(sheet)?,
+        false => std::fs::read_to_string(sheet).with_context(|| format!("reading {sheet}"))?,
+    };
+    let mut new = localization::csv::from_csv(&text).with_context(|| format!("reading {sheet}"))?;
     let old = match std::fs::read_to_string(table) {
         Ok(text) => StringTable::parse(&text).with_context(|| format!("reading {}", table.display()))?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => StringTable::default(),
         Err(error) => return Err(error).with_context(|| format!("reading {}", table.display())),
     };
+    // A sheet from a link is kept as the table's, to import from again.
+    new.sheet = if linked { sheet.to_string() } else { old.sheet.clone() };
     let changes = localization::csv::changes(&old, &new);
-    println!("{}, from {}:", table.display(), sheet.display());
+    println!("{}, from {sheet}:", table.display());
     for key in &changes.added {
         println!("  + {key}");
     }

@@ -9,18 +9,34 @@
 //!   exact number first; `#` inside is the number, written as above.
 //! - `{gender, select, female {her} male {his} other {their}}` picks by
 //!   the value itself.
+//! - `{when, date}` is a date, `2026-11-03` or with its time, written as
+//!   the language writes dates: `3 Nov 2026` in British English,
+//!   `Nov 3, 2026` in American. `{when, date, short}`, `long` and `full`
+//!   say how much of it: `03/11/2026`, `3 November 2026`, or with the day
+//!   of the week.
+//! - `{when, time}` is its time, `14:30` or `2:30 PM` as the language has
+//!   it; `{when, time, medium}` with its seconds.
+//! - `{price, currency, EUR}` is an amount of that currency, with its
+//!   symbol where the language puts it: `€12.50`, `12,50 €`. A value with
+//!   its own code, `12.5 EUR`, needs none: `{price, currency}`.
 //!
 //! The branches nest, and `other` is taken when nothing else fits. An
 //! apostrophe quotes a brace or `#` (`'{'`), and two make one (`''`). A
 //! name with no value, or a part that cannot be read, is left as written.
 
+use icu_datetime::{
+    DateTimeFormatter, fieldsets,
+    input::{Date, Time},
+};
 use icu_decimal::{DecimalFormatter, input::Decimal};
+use icu_experimental::dimension::currency::{CurrencyType, formatter::CurrencyFormatter};
 use icu_locale_core::Locale;
 use icu_plurals::{PluralCategory, PluralRules};
 
 /// The plural rules and number formatting of a language, made once for a
-/// text.
+/// text; dates and money are made as they are asked for.
 struct Rules {
+    locale: Locale,
     plurals: Option<PluralRules>,
     numbers: Option<DecimalFormatter>,
 }
@@ -31,7 +47,47 @@ impl Rules {
         Self {
             plurals: PluralRules::try_new_cardinal((&locale).into()).ok(),
             numbers: DecimalFormatter::try_new((&locale).into(), Default::default()).ok(),
+            locale,
         }
+    }
+
+    /// A date in `style` (short, medium, long or full); none when the value
+    /// is not a date.
+    fn date(&self, value: &str, style: &str) -> Option<String> {
+        let (date, _) = when(value)?;
+        let prefs = (&self.locale).into();
+        let text = match style {
+            "short" => DateTimeFormatter::try_new(prefs, fieldsets::YMD::short()).ok()?.format(&date).to_string(),
+            "long" => DateTimeFormatter::try_new(prefs, fieldsets::YMD::long()).ok()?.format(&date).to_string(),
+            "full" => DateTimeFormatter::try_new(prefs, fieldsets::YMDE::long()).ok()?.format(&date).to_string(),
+            _ => DateTimeFormatter::try_new(prefs, fieldsets::YMD::medium()).ok()?.format(&date).to_string(),
+        };
+        Some(text)
+    }
+
+    /// A time, with its seconds in the medium style; none when the value
+    /// has no time.
+    fn time(&self, value: &str, style: &str) -> Option<String> {
+        let time = when(value)?.1?;
+        let prefs = (&self.locale).into();
+        let text = match style {
+            "medium" | "long" | "full" => {
+                DateTimeFormatter::try_new(prefs, fieldsets::T::hms()).ok()?.format(&time).to_string()
+            }
+            _ => DateTimeFormatter::try_new(prefs, fieldsets::T::hm()).ok()?.format(&time).to_string(),
+        };
+        Some(text)
+    }
+
+    /// An amount of a currency, by its ISO code, given or after the amount;
+    /// none when either cannot be read.
+    fn currency(&self, value: &str, code: Option<&str>) -> Option<String> {
+        let mut words = value.split_whitespace();
+        let amount = words.next()?.parse::<Decimal>().ok()?;
+        let code = code.or(words.next())?.trim().to_ascii_lowercase();
+        let currency = CurrencyType::try_from_str(&code).ok()?;
+        let formatter = CurrencyFormatter::try_new_symbol((&self.locale).into(), currency, Default::default()).ok()?;
+        Some(formatter.format_fixed_decimal(&amount).to_string())
     }
 
     fn number(&self, value: &str) -> String {
@@ -52,6 +108,33 @@ impl Rules {
             PluralCategory::Other => "other",
         }
     }
+}
+
+/// A date, `2026-11-03`, and its time when it has one, `2026-11-03T14:30`
+/// or with seconds, as ISO 8601 writes them; a time alone, `14:30`, is on
+/// no date in particular.
+fn when(value: &str) -> Option<(Date<icu_calendar::Iso>, Option<Time>)> {
+    let value = value.trim();
+    let (day, clock) = match value.split_once(['T', ' ']) {
+        Some((day, clock)) => (day, Some(clock)),
+        None if value.contains(':') => ("2000-01-01", Some(value)),
+        None => (value, None),
+    };
+    let mut parts = day.splitn(3, '-').map(str::parse::<i32>);
+    let (year, month, date) = (parts.next()?.ok()?, parts.next()?.ok()?, parts.next()?.ok()?);
+    let date = Date::try_new_iso(year, u8::try_from(month).ok()?, u8::try_from(date).ok()?).ok()?;
+    let time = match clock {
+        Some(clock) => {
+            // Seconds, and any part of one or zone after them, are read as whole seconds.
+            let clock = clock.trim_end_matches('Z');
+            let mut parts = clock.split(':').map(|part| part.split(['.', '+', '-']).next().unwrap_or("").parse::<u8>());
+            let (hour, minute) = (parts.next()?.ok()?, parts.next()?.ok()?);
+            let second = parts.next().and_then(Result::ok).unwrap_or(0);
+            Some(Time::try_new(hour, minute, second, 0).ok()?)
+        }
+        None => None,
+    };
+    Some((date, time))
 }
 
 /// `text` with the values it names filled in, in `language`'s ways.
@@ -166,6 +249,19 @@ impl Formatter<'_> {
         // Where the branches start: past the second comma.
         let mut commas = (from..to).filter(|&i| self.chars[i] == ',');
         let branches = commas.nth(1).map(|comma| comma + 1);
+        // A style after the kind, as `short` in `{when, date, short}`.
+        let style = parts.next().map(str::trim).unwrap_or_default();
+        let written = match kind {
+            "date" => Some(self.rules.date(value, style)),
+            "time" => Some(self.rules.time(value, style)),
+            "currency" => Some(self.rules.currency(value, Some(style).filter(|code| !code.is_empty()))),
+            _ => None,
+        };
+        if let Some(written) = written {
+            let Some(text) = written else { return false };
+            out.push_str(&text);
+            return true;
+        }
         match (kind, branches) {
             ("number", _) => out.push_str(&self.rules.number(value)),
             ("plural", Some(start)) => return self.plural(start, to, value, out),
@@ -262,5 +358,25 @@ mod tests {
         );
         let nested = "{g, select, female {{n, plural, one {She has # cat} other {She has # cats}}} other {?}}";
         assert_eq!(format(nested, &[("g", "female"), ("n", "2")], "en"), "She has 2 cats");
+    }
+
+    #[test]
+    fn dates_times_and_money_are_written_as_each_language_writes_them() {
+        let when = [("when", "2026-11-03T14:30:05")];
+        assert_eq!(format("{when, date}", &when, "en-GB"), "3 Nov 2026");
+        assert_eq!(format("{when, date}", &when, "en-US"), "Nov 3, 2026");
+        assert_eq!(format("{when, date, short}", &when, "en-GB"), "03/11/2026");
+        assert_eq!(format("{when, date, long}", &when, "de"), "3. November 2026");
+        assert!(format("{when, date, full}", &when, "en-GB").starts_with("Tuesday"), "with the day of the week");
+        assert_eq!(format("{when, time}", &when, "en-GB"), "14:30");
+        assert!(format("{when, time}", &when, "en-US").starts_with("2:30"), "on a twelve-hour clock");
+        assert_eq!(format("{when, time, medium}", &when, "fr"), "14:30:05");
+        assert_eq!(format("{t, time}", &[("t", "09:05")], "en-GB"), "09:05", "a time alone");
+
+        assert_eq!(format("{p, currency, EUR}", &[("p", "12.5")], "en"), "€12.50");
+        assert_eq!(format("{p, currency}", &[("p", "1234.5 EUR")], "de"), "1.234,50\u{a0}€");
+        assert_eq!(format("{p, currency, JPY}", &[("p", "1200")], "ja"), "￥1,200");
+        assert_eq!(format("{p, currency}", &[("p", "12")], "en"), "{p, currency}", "no code, left as written");
+        assert_eq!(format("{d, date}", &[("d", "yesterday")], "en"), "{d, date}", "not a date");
     }
 }

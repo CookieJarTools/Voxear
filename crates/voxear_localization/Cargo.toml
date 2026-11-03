@@ -13,8 +13,16 @@ icu_locale_core.workspace = true
 icu_locale_fallback.workspace = true
 icu_plurals.workspace = true
 icu_decimal.workspace = true
+icu_datetime.workspace = true
+icu_calendar.workspace = true
+icu_experimental.workspace = true
+ureq = { workspace = true, optional = true }
 toml.workspace = true
 tracing.workspace = true
+
+[features]
+# Fetching a sheet from a URL, for the editor and `vox`; games do without.
+fetch = ["dep:ureq"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

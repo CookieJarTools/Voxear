@@ -67,6 +67,10 @@ fn hello_copy() -> tempfile::TempDir {
     }
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     copy(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello"), dir.path());
+    // Voxear's own actions, whatever Hello has of its own.
+    for name in ["Input.inputactions", "Input.inputactions.meta"] {
+        let _ = std::fs::remove_file(dir.path().join(name));
+    }
     dir
 }
 

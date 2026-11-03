@@ -43,6 +43,12 @@ public readonly struct LocalizedString : IEquatable<LocalizedString>
 		return IsSet ? Localization.Format(Key, values) : string.Empty;
 	}
 
+	/// <summary>Its text, kept up to date as the language changes, with Changed raised each time: see <see cref="Localized"/>.</summary>
+	public Localized Observe(params (string Name, object? Value)[] values)
+	{
+		return new Localized(this, values);
+	}
+
 	public static implicit operator LocalizedString(string key)
 	{
 		return new LocalizedString(key);

@@ -58,7 +58,13 @@ public static class Localization
 	/// A key's text with the values it names filled in: "{player} found {count} coins" takes the values named player
 	/// and count. As in ICU's MessageFormat, "{count, plural, one {# coin} other {# coins}}" picks its words by the
 	/// language's plural rules, "{g, select, female {her} other {their}}" by the value, and "{count, number}" writes a
-	/// number as the language does. A name given no value is left as it is.
+	/// number as the language does. "{when, date}" and "{when, time}" write a DateTime, DateOnly or TimeOnly as the
+	/// language does, with short, long or full after for more or less of a date; "{price, currency}" writes
+	/// <see cref="Money"/> with its currency's symbol. A name given no value is left as it is.
+	/// <code>
+	/// Localization.Format("save.when", ("when", DateTime.Now));       // "Saved 3 Nov 2026 at 14:30"
+	/// Localization.Format("shop.price", ("price", new Money(4.99m, Currency.GBP)));
+	/// </code>
 	/// </summary>
 	public static string Format(string key, params (string Name, object? Value)[] values)
 	{

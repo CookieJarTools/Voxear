@@ -84,6 +84,12 @@ icu_locale_fallback = "2.4"
 # Plural rules (one, few, many…) and numbers written as each language writes them, for localized text.
 icu_plurals = "2.4"
 icu_decimal = "2.4"
+# Dates and times, and amounts of money, written as each language writes them, for localized text.
+icu_datetime = "2.4"
+icu_calendar = "2.4"
+icu_experimental = "0.7"
+# Fetching a table's sheet from a URL, as a published Google Sheet, in the editor and `vox loc import`.
+ureq = "3.5"
 
 # Keep dependencies fast in debug builds so the engine stays usable while iterating.
 [profile.dev.package."*"]

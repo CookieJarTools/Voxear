@@ -34,6 +34,7 @@ pub mod scene_file;
 pub mod script_types;
 pub mod scripts;
 mod stats_overlay;
+pub mod steam_language;
 pub mod ui_input;
 pub mod upgrade;
 mod windowed;

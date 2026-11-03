@@ -17,6 +17,9 @@
 //! Besides `key`, an entry may have a `comment` for translators and a
 //! `limit`, the most characters its text has room for. Every other value
 //! is its text in a language, named by its code.
+//!
+//! A table may say where its translators' sheet is online, `sheet = "…"`
+//! before its entries, as a Google Sheet's link, to import it again from.
 
 use anyhow::{Context, Result, bail, ensure};
 
@@ -25,6 +28,8 @@ pub const STRINGS_FORMAT: i64 = 1;
 /// A string table, its entries in the file's order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StringTable {
+    /// Where its translators' sheet is online; empty for nowhere.
+    pub sheet: String,
     pub entries: Vec<StringEntry>,
 }
 
@@ -52,7 +57,7 @@ impl StringTable {
         let file: toml::Table = toml::from_str(text)?;
         let format = file.get("format").and_then(toml::Value::as_integer).unwrap_or(STRINGS_FORMAT);
         ensure!(format == STRINGS_FORMAT, "format {format} is newer than this Voxear reads ({STRINGS_FORMAT})");
-        if let Some(other) = file.keys().find(|key| !matches!(key.as_str(), "format" | "entry")) {
+        if let Some(other) = file.keys().find(|key| !matches!(key.as_str(), "format" | "sheet" | "entry")) {
             bail!("`{other}` is not part of a string table; each text goes in an [[entry]]");
         }
         let entries = match file.get("entry") {
@@ -60,12 +65,16 @@ impl StringTable {
             Some(toml::Value::Array(entries)) => entries.iter().enumerate().map(entry).collect::<Result<_>>()?,
             Some(_) => bail!("`entry` must be a list of [[entry]] tables"),
         };
-        Ok(Self { entries })
+        let sheet = file.get("sheet").and_then(toml::Value::as_str).unwrap_or_default().to_string();
+        Ok(Self { sheet, entries })
     }
 
     /// The table as its file has it, which [`parse`](Self::parse) reads back.
     pub fn write(&self) -> String {
         let mut out = format!("format = {STRINGS_FORMAT}\n");
+        if !self.sheet.is_empty() {
+            out.push_str(&format!("sheet = {}\n", quoted(&self.sheet)));
+        }
         for entry in &self.entries {
             out.push_str("\n[[entry]]\n");
             out.push_str(&format!("key = {}\n", quoted(&entry.key)));
@@ -130,5 +139,7 @@ mod tests {
         assert!(format!("{wrong:#}").contains("`en` should be text"), "{wrong:#}");
         assert!(StringTable::parse("[[entry]]\nen = \"Play\"\n").is_err(), "an entry needs its key");
         assert!(StringTable::parse("format = 2\n").is_err());
+        let online = "format = 1\nsheet = \"https://example.com/menu.csv\"\n";
+        assert_eq!(StringTable::parse(online).unwrap().write(), online, "where its sheet is, kept");
     }
 }

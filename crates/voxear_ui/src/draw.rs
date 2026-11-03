@@ -272,20 +272,22 @@ impl Draw<'_> {
                 // measure may not have been.
                 let width = element.text_style.wrap.then_some((inner * self.scale).ceil());
                 shaped.break_all_lines(width);
-                let alignment = match element.text_style.align {
-                    TextAlign::Start => Alignment::Start,
-                    TextAlign::Center => Alignment::Center,
-                    TextAlign::End => Alignment::End,
+                // Right to left, the start is the right, whichever way the text itself runs.
+                let rtl = element.text_style.rtl;
+                let alignment = match (element.text_style.align, rtl) {
+                    (TextAlign::Start, false) | (TextAlign::End, true) => Alignment::Left,
+                    (TextAlign::Start, true) | (TextAlign::End, false) => Alignment::Right,
+                    (TextAlign::Center, _) => Alignment::Center,
                 };
                 shaped.align(alignment, AlignmentOptions::default());
                 // Text that does not wrap is laid out at its own width, so its
                 // alignment has nothing to align it in: it is placed in its box
                 // here, and starts at the start when it does not fit.
                 let room = if width.is_none() { (inner * self.scale - shaped.width()).max(0.0) } else { 0.0 };
-                let across = match element.text_style.align {
-                    TextAlign::Start => 0.0,
-                    TextAlign::Center => (room / 2.0).round(),
-                    TextAlign::End => room.round(),
+                let across = match (element.text_style.align, rtl) {
+                    (TextAlign::Start, false) | (TextAlign::End, true) => 0.0,
+                    (TextAlign::Center, _) => (room / 2.0).round(),
+                    _ => room.round(),
                 };
                 // Centred down a box taller than the text, such as a button
                 // with a set height, as Unity's middle alignment does.

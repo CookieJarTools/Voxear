@@ -20,7 +20,8 @@
 //! which children inherit: `color`, `font-size`, `font-weight`,
 //! `font-family` (`sans` or `mono`), `line-height` (`16px` or `normal`),
 //! `text-align`, `white-space` (`normal`, or `nowrap` to keep a line
-//! whole), and for rich text `link-color`, `code-background` and
+//! whole), `direction` (`ltr`, or `rtl` to lay out right to left, as a
+//! key map keeps `ltr` in a right-to-left game), and for rich text `link-color`, `code-background` and
 //! `mark-color`.
 //!
 //! Lengths are `px` or `%`, colours are `#rgb`, `#rrggbb`, `#rrggbbaa`,
@@ -230,6 +231,7 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "color" => text.color = color(input)?,
         "link-color" => text.link_color = color(input)?,
         "white-space" => text.wrap = keyword(input, &[("normal", true), ("nowrap", false), ("pre", false)])?,
+        "direction" => text.rtl = keyword(input, &[("ltr", false), ("rtl", true)])?,
         "code-background" => text.code_background = color(input)?,
         "mark-color" => text.mark_color = color(input)?,
         "font-size" => text.size = pixels(input)?,

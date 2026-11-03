@@ -137,8 +137,9 @@ impl Game {
     }
 
     /// Reads every string table and asset table in the project, in path
-    /// order, into the world's [`Localization`]. The game starts in the language the
-    /// player's system is in, or the nearest the project has, or its own
+    /// order, into the world's [`Localization`]. The game starts in the language Steam
+    /// says it is in, when the developer ships Steamworks (see [`crate::steam_language`]),
+    /// or else the one the player's system is in, or the nearest the project has, or its own
     /// (and as it starts, in the one the player chose last, see [`start`](Self::start));
     /// read again, as when a table changed, it stays in the one it is in.
     pub fn load_strings(&mut self) {
@@ -150,8 +151,10 @@ impl Game {
             }
             None => {
                 let mut fresh = Localization::new(languages);
-                if let Some(system) = voxear_localization::system_language() {
-                    fresh.set_language(&system);
+                // The store's language first, as the player picked it for this game, then the system's.
+                let store = crate::steam_language::steam_language();
+                if let Some(wanted) = store.or_else(voxear_localization::system_language) {
+                    fresh.set_language(&wanted);
                 }
                 fresh
             }

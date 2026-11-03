@@ -82,3 +82,22 @@ fn ui_text_bound_to_a_key_follows_the_language() {
     game.tick(1.0 / 60.0, None);
     assert_eq!((game.ui.text(title).unwrap().as_str(), game.ui.text(mail).unwrap().as_str()), ("Start", "Play"));
 }
+
+#[test]
+fn a_game_in_a_language_written_right_to_left_lays_its_ui_out_that_way() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = "[project]\nname = \"Spoken\"\n\n[localization]\nlanguages = [\"en\", \"ar\"]\n";
+    let menu = "[[entry]]\nkey = \"menu.play\"\nen = \"Play\"\nar = \"العب\"\n";
+    for (path, text) in [("voxear.toml", project), ("Text/Menu.strings", menu)] {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.engine.world.resource_mut::<Localization>().unwrap().set_language("en");
+    game.tick(1.0 / 60.0, None);
+    assert!(!game.ui.ui().is_right_to_left());
+    game.engine.world.resource_mut::<Localization>().unwrap().set_language("ar");
+    game.tick(1.0 / 60.0, None);
+    assert!(game.ui.ui().is_right_to_left(), "Arabic reads right to left");
+}

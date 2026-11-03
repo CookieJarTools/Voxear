@@ -125,7 +125,7 @@ impl Ui {
         }
         let parent = above.last().and_then(|&parent| self.tree.get_node_context(parent));
         let inherited = Inherited {
-            text: parent.map_or_else(TextStyle::default, |parent| parent.text_style),
+            text: parent.map_or_else(|| TextStyle { rtl: self.rtl, ..TextStyle::default() }, |parent| parent.text_style),
             vars: parent.map_or_else(Rc::default, |parent| parent.vars.clone()),
             sheets: Rc::new(sheets),
             in_scroller: parent.is_some_and(|parent| parent.computed.overflow == Overflow::Scroll),
@@ -168,6 +168,10 @@ impl Ui {
             {
                 warnings.push(format!("{source}:{}: {message}", declaration.line));
             }
+        }
+        // Laid out the other way round in right-to-left text, as a page of Arabic is.
+        if text.rtl {
+            mirror(&mut style.layout);
         }
         // Hiding from code wins over sheets.
         if base.layout.display == Display::None {
@@ -312,4 +316,19 @@ fn matching<'a>(
         sheet.rules[rule].declarations.iter().map(move |d| (d, sheet.source.as_str()))
     });
     from_sheets.chain(inline.iter().map(|d| (d, "inline style"))).collect()
+}
+
+/// A layout the other way round: a row from the right, and left and right
+/// swapped in its margins, padding, borders and place.
+fn mirror(layout: &mut taffy::Style) {
+    use taffy::FlexDirection;
+    layout.flex_direction = match layout.flex_direction {
+        FlexDirection::Row => FlexDirection::RowReverse,
+        FlexDirection::RowReverse => FlexDirection::Row,
+        column => column,
+    };
+    std::mem::swap(&mut layout.margin.left, &mut layout.margin.right);
+    std::mem::swap(&mut layout.padding.left, &mut layout.padding.right);
+    std::mem::swap(&mut layout.border.left, &mut layout.border.right);
+    std::mem::swap(&mut layout.inset.left, &mut layout.inset.right);
 }

@@ -306,6 +306,10 @@ pub struct TextStyle {
     /// Whether lines break to fit; off, the text runs on and is clipped by
     /// whatever clips it, as in list rows.
     pub wrap: bool,
+    /// Right to left, as Arabic and Hebrew read: rows run from the right,
+    /// left and right swap in margins, padding, borders and places, and
+    /// text starts at the right. Inherited; see [`Ui::set_right_to_left`](crate::Ui::set_right_to_left).
+    pub rtl: bool,
 }
 
 /// Where lines of text sit across their element.
@@ -331,6 +335,7 @@ impl Default for TextStyle {
             code_background: Color::WHITE.with_alpha(0x18),
             mark_color: Color::hex(0xe2b340).with_alpha(0x55),
             wrap: true,
+            rtl: false,
         }
     }
 }

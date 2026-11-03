@@ -76,6 +76,7 @@ internal static unsafe class EntryPoints
 		{
 			Loading.Update();
 			InputEvents.Dispatch();
+			Localized.Dispatch();
 			SaveWrite.Update();
 			SceneState.Update();
 			UiElements.Dispatch();

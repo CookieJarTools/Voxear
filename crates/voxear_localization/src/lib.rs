@@ -334,6 +334,23 @@ fn near(language: &str) -> Vec<String> {
     near
 }
 
+/// The languages written right to left, as their codes start: Arabic,
+/// Hebrew, Persian, Urdu, Pashto, Yiddish, Dhivehi, Sorani Kurdish, Sindhi
+/// and Uyghur.
+const RIGHT_TO_LEFT: [&str; 10] = ["ar", "he", "fa", "ur", "ps", "yi", "dv", "ckb", "sd", "ug"];
+
+/// Whether a language is written right to left, by its code, as `ar-EG`;
+/// a script given with it wins, so `az-Arab` is and `ur-Latn` is not.
+pub fn is_right_to_left(code: &str) -> bool {
+    let mut parts = code.split(['-', '_']);
+    let language = parts.next().unwrap_or_default().to_ascii_lowercase();
+    match parts.find(|part| part.len() == 4).map(str::to_ascii_lowercase).as_deref() {
+        Some("arab" | "hebr" | "thaa" | "syrc" | "nkoo" | "adlm" | "rohg") => true,
+        Some(_) => false,
+        None => RIGHT_TO_LEFT.contains(&language.as_str()),
+    }
+}
+
 /// The language the player's system is in: on Windows the first of the
 /// languages the player prefers, as its settings list them; elsewhere
 /// from `LC_ALL`, `LC_MESSAGES` or `LANG`, as Linux keeps it.
@@ -382,6 +399,13 @@ mod tests {
              [[entry]]\nkey = \"loot\"\nen = \"{player} found {count} coins\"\n",
         )
         .unwrap()
+    }
+
+    #[test]
+    fn languages_written_right_to_left_are_known_by_their_codes() {
+        assert!(is_right_to_left("ar") && is_right_to_left("he-IL") && is_right_to_left("fa_IR"));
+        assert!(!is_right_to_left("en") && !is_right_to_left("arn"), "Mapudungun is not Arabic");
+        assert!(is_right_to_left("az-Arab") && !is_right_to_left("ur-Latn"), "a script given wins");
     }
 
     #[test]

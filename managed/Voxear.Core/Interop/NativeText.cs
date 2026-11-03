@@ -131,8 +131,21 @@ internal static unsafe class NativeText
 		foreach (var (name, value) in values)
 		{
 			packed.Append(name).Append('\0');
-			packed.Append(Convert.ToString(value, CultureInfo.InvariantCulture)).Append('\0');
+			packed.Append(Written(value)).Append('\0');
 		}
 		return Encoding.UTF8.GetBytes(packed.ToString());
+	}
+
+	/// <summary>A value as smart strings read it: dates and times as ISO 8601 writes them, money as its amount and code.</summary>
+	private static string? Written(object? value)
+	{
+		return value switch
+		{
+			DateTime moment => moment.ToString("yyyy-MM-dd'T'HH:mm:ss", CultureInfo.InvariantCulture),
+			DateTimeOffset moment => moment.ToString("yyyy-MM-dd'T'HH:mm:ss", CultureInfo.InvariantCulture),
+			DateOnly day => day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+			TimeOnly time => time.ToString("HH:mm:ss", CultureInfo.InvariantCulture),
+			_ => Convert.ToString(value, CultureInfo.InvariantCulture),
+		};
 	}
 }

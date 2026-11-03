@@ -85,7 +85,21 @@ public sealed class MainMenu : Behaviour
 var found = Localization.Format("loot.found", ("player", name), ("count", coins));
 ```
 
-### Plurals, choices and numbers
+### Text that keeps itself up to date
+
+Text you show for a while, such as a coin counter, should change when the player picks another language, or when you edit its table while the game runs. A `Localized` does that for you: its `Text` is always right, and `Changed` tells you the new text whenever it changes, including when you give it a new value with `Set`:
+
+```csharp
+var coins = new Localized("hud.coins", ("count", 0));
+counter.Text = coins.Text;
+coins.Changed += text => counter.Text = text;
+
+coins.Set("count", 12); // "12 coins", or "12 pièces" in French
+```
+
+A `LocalizedString` field gives one with `Observe()`. Call `Dispose()` on it once the text is no longer shown.
+
+### Plurals, choices, numbers, dates and money
 
 Languages count differently. English has "1 coin" and "2 coins", but Polish has a third form for 2 to 4, and Arabic has six. A text can hold every form, and the game picks the right one for the number and the language, as ICU's MessageFormat does:
 
@@ -99,6 +113,23 @@ pl = "{player} znalazł {count, plural, one {# monetę} few {# monety} many {# m
 - `{count, plural, …}` picks a form by the language's plural rules: `zero`, `one`, `two`, `few`, `many` and `other`. Each language uses only some of them, and `other` is used when nothing else fits. `=0` picks an exact number before the rules do. Inside a form, `#` is the number.
 - `{gender, select, female {her} male {his} other {their}}` picks a form by the value itself.
 - `{count, number}` writes a number as the language writes them: `1,234.5` in English, `1 234,5` in French.
+- `{when, date}` writes a date as the language writes them: `3 Nov 2026` in British English, `Nov 3, 2026` in American English. Add `short`, `long` or `full` for less or more of it: `03/11/2026`, `3 November 2026`, or `Tuesday 3 November 2026`.
+- `{when, time}` writes its time, `14:30` or `2:30 PM` as the language's clock goes; `{when, time, medium}` adds the seconds.
+- `{price, currency}` writes an amount of money with its currency's symbol where the language puts it: `€12.50` in English, `12,50 €` in French.
+
+From a script, give a date as a `DateTime`, `DateOnly` or `TimeOnly`, and money as a `Money`, an amount and a `Currency`:
+
+```csharp
+Localization.Format("save.when", ("when", DateTime.Now));
+Localization.Format("shop.price", ("price", new Money(4.99m, Currency.GBP)));
+```
+
+```toml
+[[entry]]
+key = "save.when"
+en = "Saved {when, date} at {when, time}"
+fr = "Enregistré le {when, date, long} à {when, time}"
+```
 
 The forms can hold more forms inside them. To write a brace or a `#` as itself, put it in apostrophes, `'{'`, and write an apostrophe as two, `''`.
 
@@ -169,13 +200,39 @@ vox loc import Menu.csv Text/Menu.strings
 
 When that is what you want, run it again with `--apply` to keep it.
 
+### A sheet online
+
+When your translators share a Google Sheet, or the sheet is published as a CSV file anywhere online, import it from its link. Paste the link into **Link** under the table's sheet in the Inspector, as your browser's address bar or **Share** gives it, and click **Import from Link**. Voxear fetches the sheet and says what it would change, as Import CSV does, for **Apply** to keep. The table keeps the link, so next time it's one click. For a Google Sheet, the tab in the link is the one read; anyone with the link must be able to view it.
+
+`vox loc import` takes a link too, and keeps it in the table:
+
+```bash
+vox loc import "https://docs.google.com/spreadsheets/d/…/edit#gid=0" Text/Menu.strings --apply
+```
+
 ## Which language the game starts in
 
 The game starts in the language the player's computer is set to, when your project has it: on Windows, the first language in their language settings, and on Linux the one the system's `LANG` names. When your project doesn't have it, the game takes the nearest language it does have, so a player in Portugal (`pt-PT`) gets `pt` when you have it. Otherwise the game is in your own language, the first you listed.
 
+A game sold on Steam starts in the language the player picked for it in their Steam library instead, when you ship Steamworks with it. Voxear doesn't include Steamworks, which you get from Valve under your own Steamworks agreement: download the Steamworks SDK from Valve's partner site, and put its redistributable library beside your game's executable, `steam_api64.dll` on Windows or `libsteam_api.so` on Linux, from the SDK's `redistributable_bin` folder. When the game starts through Steam, Voxear finds the library and asks Steam the game's language. Without it, or when Steam isn't running, nothing changes. To try it from the editor, set `VOXEAR_STEAMWORKS` to the library's path.
+
 Once a player picks a language in your game, setting `Localization.Language` from your options menu, the game remembers it beside their saves and starts in it from then on, whatever their computer is set to.
 
 A key with no text in the game's language falls back the same way: `pt-BR`, then `pt`, then your own language. A text you haven't translated yet still shows, in the language you wrote it in.
+
+## Languages written right to left
+
+Arabic, Hebrew, Persian and Urdu read from right to left, and so should your game's screens when it is in one of them. When the game's language is written right to left, its UI is laid out that way by itself: rows run from the right, a margin or padding on the left moves to the right, and text starts at the right edge. Arabic and Hebrew text is shaped and ordered as it should be in any language, with words of English inside it kept in their own order.
+
+Something that shouldn't be mirrored, such as a map, a picture with text in it, or a diagram of a gamepad, keeps its own way round with `direction: ltr` in your sheets:
+
+```css
+.minimap {
+    direction: ltr;
+}
+```
+
+The key maps in a controls screen already do. To see your screens mirrored while you make them, add Arabic or Hebrew to your project's languages and switch to it.
 
 ## Text that won't fit
 

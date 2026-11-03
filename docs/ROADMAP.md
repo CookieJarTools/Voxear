@@ -846,10 +846,16 @@ Done so far:
   distance, a weight and a priority. Where the camera is, each volume's settings blend in, lowest priority first:
   numbers and colours smoothly, switches and choices past half. In scenes, the Inspector, the Hierarchy's +
   menu and the Scene view, which draws its shape and how far it blends.
+- **Voxear's temporal upscaler:** `[post.anti_aliasing] render_scale`, as Unreal's screen percentage. The scene
+  is drawn smaller, then TAA builds each output pixel from the drawn pixels round it, weighted by where their
+  jittered samples fell, and from its clamped history; the jitter sequence lengthens as the scale drops, so the
+  samples cover every output pixel. Depth of field and motion blur now run before TAA, as in Unreal, at the drawn
+  size. On Hello at 1440p a frame takes 1.42 ms at 0.67 and 1.20 ms at 0.5, against 2.29 ms at full size.
+  `vox render --render-scale` compares them.
 
 Next:
 - Virtual shadow maps, and shadows for point, spot and area lights.
-- Upscalers (FSR built in, DLSS and XeSS optional).
+- Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
 - **Real-time voxel GI** (clipmaps, then injection, gathering and the radiance cache).
 - Baked lightmapper, light probes and reflection probes.
 - Reflections: screen-space reflections, falling back to reflection probes.

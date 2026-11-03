@@ -1915,3 +1915,48 @@ fn a_post_volume_changes_the_picture_where_the_camera_is_inside_it() {
     assert!(colourful(&within) <= 3, "inside the volume everything is grey: {}", colourful(&within));
     assert!(colourful(&beyond) > 60, "well outside it, colour is back: {}", colourful(&beyond));
 }
+
+/// The coloured cubes after enough frames for TAA to settle, drawn at
+/// `scale` of the picture's size, with TAA on or off.
+fn upscaled_render(scale: f32, taa: bool) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode};
+    let mode = if taa { AntiAliasingMode::Taa } else { AntiAliasingMode::Off };
+    let anti_aliasing = AntiAliasing { mode, sharpness: 0.0, render_scale: scale, ..AntiAliasing::default() };
+    let post = voxear_render::PostProcess { anti_aliasing, ..steady_post() };
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.6, 0.0), Quat::from_rotation_x(0.3), Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((MeshRenderer::new(plane, grey), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(60.0))));
+    for (x, colour) in [(-1.5, [0.9, 0.2, 0.2, 1.0]), (0.0, [0.2, 0.8, 0.3, 1.0]), (1.5, [0.2, 0.3, 0.9, 1.0])] {
+        let material = renderer.add_material(&MaterialDesc { base_color: colour, ..MaterialDesc::default() }).unwrap();
+        let place = Transform::new(Vec3::new(x, 0.5, 5.0), Quat::from_rotation_y(0.4), Vec3::ONE);
+        world.spawn((MeshRenderer::new(cube, material), place));
+    }
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -1.0, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 2.5), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 40);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// The average difference per channel between two pictures.
+fn mean_difference(a: &[u8], b: &[u8]) -> f32 {
+    let total: i64 = a.iter().zip(b).map(|(a, b)| (i64::from(*a) - i64::from(*b)).abs()).sum();
+    total as f32 / a.len() as f32
+}
+
+#[test]
+fn taa_upscales_a_scene_drawn_at_half_size_close_to_the_full_one() {
+    let (Some(full), Some(half)) = (upscaled_render(1.0, true), upscaled_render(0.5, true)) else { return };
+    keep_image("taa full size.png", &full);
+    keep_image("taa upscaled from half.png", &half);
+    let apart = mean_difference(&full, &half);
+    assert!(apart < 2.0, "upscaled from a quarter of the pixels, it is close: {apart} apart on average");
+
+    // Without TAA there is nothing to build the picture from, so the scale is not used.
+    let (Some(plain), Some(plain_scaled)) = (upscaled_render(1.0, false), upscaled_render(0.5, false)) else { return };
+    assert_eq!(mean_difference(&plain, &plain_scaled), 0.0, "without TAA the scene is drawn at full size");
+}

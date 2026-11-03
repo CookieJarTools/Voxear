@@ -33,7 +33,11 @@ const HISTORY_NAMES: [&str; 2] = ["taa history 0", "taa history 1"];
 pub struct PostInput {
     pub pipelines: Pipelines,
     pub push: Push,
+    /// The view's size, which post-processing after TAA works at.
     pub extent: vk::Extent2D,
+    /// The size the scene was drawn at: the view's, or less when TAA
+    /// upscales it.
+    pub render_extent: vk::Extent2D,
     pub settings: PostProcess,
     pub hdr: ImageId,
     pub velocity: ImageId,
@@ -77,6 +81,9 @@ pub fn record(
     let (hdr, velocity, depth) = (input.hdr, input.velocity, input.depth);
     let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
     let full = |format| ImageDesc::new(extent.width, extent.height, format, usage);
+    let render_extent = input.render_extent;
+    let drawn = |format| ImageDesc::new(render_extent.width, render_extent.height, format, usage);
+    let upscaling = render_extent != extent;
     let depth_texture = fg.texture(depth).0;
     let mut scene = hdr;
 
@@ -90,24 +97,10 @@ pub fn record(
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
     }
 
-    if settings.anti_aliasing.mode == AntiAliasingMode::Taa {
-        let current = fg.history_image(gpu, bindless, HISTORY_NAMES[input.history], full(HDR_FORMAT))?;
-        let previous = fg.history_image(gpu, bindless, HISTORY_NAMES[1 - input.history], full(HDR_FORMAT))?;
-        let textures = [fg.texture(hdr).0, fg.texture(previous).0, fg.texture(velocity).0, depth_texture];
-        let push = Push { textures, ..push };
-        let images = [
-            (hdr, ImageAccess::Sampled),
-            (previous, ImageAccess::Sampled),
-            (velocity, ImageAccess::Sampled),
-            (depth, ImageAccess::Sampled),
-            (current, ImageAccess::ColorAttachment),
-        ];
-        fg.add_pass("TAA", &images, &[], move |ctx| draw(ctx, pipelines.taa, &push, current, false));
-        scene = current;
-    }
-
+    // Depth of field and motion blur work on the scene as drawn, before TAA, as Unreal orders them, so
+    // when TAA upscales they work on fewer pixels and TAA smooths their noise too.
     if settings.depth_of_field.enabled {
-        let target = fg.create_image(gpu, bindless, "depth of field", full(HDR_FORMAT))?;
+        let target = fg.create_image(gpu, bindless, "depth of field", drawn(HDR_FORMAT))?;
         let push = Push { textures: [fg.texture(scene).0, depth_texture, 0, 0], ..push };
         let images =
             [(scene, ImageAccess::Sampled), (depth, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
@@ -116,12 +109,31 @@ pub fn record(
     }
 
     if settings.motion_blur.enabled && settings.motion_blur.intensity > 0.0 {
-        let target = fg.create_image(gpu, bindless, "motion blur", full(HDR_FORMAT))?;
+        let target = fg.create_image(gpu, bindless, "motion blur", drawn(HDR_FORMAT))?;
         let push = Push { textures: [fg.texture(scene).0, fg.texture(velocity).0, 0, 0], ..push };
         let images =
             [(scene, ImageAccess::Sampled), (velocity, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
         fg.add_pass("Motion blur", &images, &[], move |ctx| draw(ctx, pipelines.motion_blur, &push, target, false));
         scene = target;
+    }
+
+    if settings.anti_aliasing.mode == AntiAliasingMode::Taa {
+        let current = fg.history_image(gpu, bindless, HISTORY_NAMES[input.history], full(HDR_FORMAT))?;
+        let previous = fg.history_image(gpu, bindless, HISTORY_NAMES[1 - input.history], full(HDR_FORMAT))?;
+        let textures = [fg.texture(scene).0, fg.texture(previous).0, fg.texture(velocity).0, depth_texture];
+        let push = Push { textures, ..push };
+        let images = [
+            (scene, ImageAccess::Sampled),
+            (previous, ImageAccess::Sampled),
+            (velocity, ImageAccess::Sampled),
+            (depth, ImageAccess::Sampled),
+            (current, ImageAccess::ColorAttachment),
+        ];
+        // Upscaling, each output pixel is built from the drawn pixels round it, by where their jittered samples fell.
+        let taa = if upscaling { pipelines.taa_upscale } else { pipelines.taa };
+        let name = if upscaling { "TAA upscale" } else { "TAA" };
+        fg.add_pass(name, &images, &[], move |ctx| draw(ctx, taa, &push, current, false));
+        scene = current;
     }
 
     let bloom = settings.bloom.enabled && settings.bloom.intensity > 0.0;

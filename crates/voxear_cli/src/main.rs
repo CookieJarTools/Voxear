@@ -268,6 +268,9 @@ enum Commands {
         /// Cull meshlets with a compute pass and indirect draws even where the GPU has mesh shaders, to compare.
         #[arg(long)]
         no_mesh_shaders: bool,
+        /// Draw the scene at this share of the image's size, from 0.25 to 1, for TAA to upscale.
+        #[arg(long)]
+        render_scale: Option<f32>,
         /// Replace the scene's post-processing with a preset: `voxear`, `neutral` or `cinematic`.
         #[arg(long)]
         post: Option<String>,
@@ -379,6 +382,7 @@ fn main() -> Result<()> {
             stats,
             no_meshlet_culling,
             no_mesh_shaders,
+            render_scale,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -391,7 +395,8 @@ fn main() -> Result<()> {
             };
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
             let meshlet_culling = !no_meshlet_culling;
-            let options = ViewOptions { debug_view, post_override, meshlet_culling, ..ViewOptions::default() };
+            let options =
+                ViewOptions { debug_view, post_override, meshlet_culling, render_scale, ..ViewOptions::default() };
             let prepare = Prepare { build: !no_build, bundles, overlays };
             let shot = Shot { out, size: (width, height), frames, options, stats, mesh_shaders: !no_mesh_shaders };
             render(&project, shot, prepare, renderdoc)

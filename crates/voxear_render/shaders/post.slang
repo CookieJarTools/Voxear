@@ -31,9 +31,19 @@ float4 sampleLinear(uint texture, float2 uv)
     return textures[NonUniformResourceIndex(texture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
 }
 
+// The size of an image, as passes after TAA upscales work at the output's
+// size rather than the size the scene was drawn at.
+int2 sizeOf(uint texture)
+{
+    uint width;
+    uint height;
+    textures[NonUniformResourceIndex(texture)].GetDimensions(width, height);
+    return int2(width, height);
+}
+
 float4 load(uint texture, int2 pixel)
 {
-    int2 size = int2(push.frame->viewport);
+    int2 size = sizeOf(texture);
     return textures[NonUniformResourceIndex(texture)].Load(int3(clamp(pixel, int2(0), size - 1), 0));
 }
 
@@ -223,6 +233,71 @@ float4 taaFragment(PostOut input) : SV_Target
     float speed = length(velocity * float2(frame->viewport));
     float keep = frame->post.taaHistory * lerp(1.0, 0.8, saturate(speed / 32.0));
     return float4(expand(fromYCoCg(lerp(centre, history, keep))), 1.0);
+}
+
+// TAA that upscales: the scene drawn smaller than the output, each output
+// pixel built from the drawn pixels round it, weighted by how near their
+// samples fell this frame, jittered as they are, and from the history,
+// which holds what earlier frames' jitter found. Where no sample fell near
+// a pixel this frame, it keeps more of its history. textures: x the drawn
+// scene, y last frame's output, z velocity and w depth, both as drawn.
+[shader("fragment")]
+float4 taaUpscaleFragment(PostOut input) : SV_Target
+{
+    Frame* frame = push.frame;
+    float2 drawnSize = float2(sizeOf(push.textures.x));
+    // Where this output pixel's middle lies among the drawn pixels.
+    float2 at = input.uv * drawnSize;
+    int2 base = int2(floor(at));
+    float3 sum = 0.0;
+    float weights = 0.0;
+    float nearestWeight = 0.0;
+    float3 first = 0.0;
+    float3 second = 0.0;
+    float nearest = 0.0;
+    int2 nearestPixel = base;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            int2 pixel = base + int2(x, y);
+            float3 c = toYCoCg(compress(load(push.textures.x, pixel).rgb));
+            // Where the drawn pixel's sample fell, its jitter taken out.
+            float2 offset = float2(pixel) + 0.5 - frame->jitter - at;
+            float weight = exp(-2.29 * dot(offset, offset));
+            sum += c * weight;
+            weights += weight;
+            nearestWeight = max(nearestWeight, weight);
+            first += c;
+            second += c * c;
+            float depth = load(push.textures.w, pixel).r;
+            nearestPixel = depth > nearest ? pixel : nearestPixel;
+            nearest = max(nearest, depth);
+        }
+    }
+    float3 current = sum / max(weights, 1e-5);
+    if (frame->taaReset != 0)
+    {
+        return float4(expand(fromYCoCg(current)), 1.0);
+    }
+
+    float2 velocity = load(push.textures.z, nearestPixel).xy;
+    float2 historyUv = input.uv - velocity;
+    if (any(historyUv < 0.0) || any(historyUv > 1.0))
+    {
+        return float4(expand(fromYCoCg(current)), 1.0);
+    }
+    float3 mean = first / 9.0;
+    float3 deviation = sqrt(max(second / 9.0 - mean * mean, 0.0));
+    float2 outputSize = float2(sizeOf(push.textures.y));
+    float3 history = toYCoCg(compress(sampleHistory(push.textures.y, historyUv, outputSize)));
+    history = clipToBox(history, mean - 1.25 * deviation, mean + 1.25 * deviation);
+
+    float speed = length(velocity * outputSize);
+    float keep = frame->post.taaHistory * lerp(1.0, 0.8, saturate(speed / 32.0));
+    // A sample right on the pixel counts in full; one a pixel away, hardly.
+    float fresh = (1.0 - keep) * nearestWeight;
+    return float4(expand(fromYCoCg(lerp(history, current, fresh))), 1.0);
 }
 
 // ---------------------------------------------------------------- Depth of field

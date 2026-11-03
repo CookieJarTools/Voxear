@@ -47,6 +47,7 @@ The values shown are the Voxear Look's.
 | --- | --- |
 | `mode = "taa"` | How edges are smoothed: `"taa"` blends each frame with the ones before; `"fxaa"` is simpler, smoothing each frame on its own; `"off"` turns it off |
 | `sharpness = 0.25` | Sharpens the picture again after smoothing |
+| `render_scale = 1.0` | With `"taa"`, draws the scene smaller and builds the full picture from it, from 0.25 to 1. See below |
 
 **Shade in corners**, `[post.ambient_occlusion]`
 
@@ -130,6 +131,28 @@ With `volumetric = true`, the mist takes its light from the sun, the sky and eve
 **Colour fringes**: `chromatic_aberration = 0` sits directly in `[post]`, not in a table of its own. Small values, such as 0.15, split colours slightly at the edges of the screen, as a cheap lens does.
 
 A name Voxear does not know, such as a misspelt setting, is an error, and the Console says which.
+
+## Drawing at a lower resolution
+
+Drawing every pixel of a large screen is costly. With TAA on, `render_scale` draws the scene at a share of the screen's width and height, and TAA builds the full-size picture from it: the camera is shifted by a different fraction of a pixel each frame, so over a few frames the small pictures between them cover every pixel of the big one. This is how Unreal's screen percentage and temporal upscaling work.
+
+```toml
+[post.anti_aliasing]
+render_scale = 0.67
+```
+
+| `render_scale` | Pixels drawn | Looks |
+| --- | --- | --- |
+| 1.0 | All of them | As sharp as it gets |
+| 0.75 | Just over half | Hard to tell apart |
+| 0.67 | Under half | A little softer on fine detail |
+| 0.5 | A quarter | Softer, for slower GPUs or very large screens |
+
+Everything that works on the scene as drawn, such as lighting, shadows, ambient occlusion and fog, costs less as the scale drops. Bloom and the finishing passes still work at the screen's full size.
+
+Things moving fast, and things just come into view, have no earlier frames to build from, so they show the smaller picture for a moment. Without TAA, `render_scale` is not used.
+
+To compare, `vox render --render-scale 0.67` draws one picture at a given scale.
 
 ## Colour lookup tables
 

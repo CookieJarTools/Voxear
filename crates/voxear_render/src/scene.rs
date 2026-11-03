@@ -193,6 +193,9 @@ pub struct ExtractedFrame {
     /// The entity behind each instance, for tracking motion between frames.
     pub entities: Vec<Entity>,
     pub post: PostProcess,
+    /// The size the scene is drawn at: the view's own, or less when TAA
+    /// upscales it (see `AntiAliasing::render_scale`).
+    pub render_size: (u32, u32),
 }
 
 /// Per-view settings that are not part of the scene.
@@ -215,6 +218,9 @@ pub struct ViewOptions {
     /// the meshlets' normal cones and the depth pyramid, rather than drawn as
     /// whole LODs. On by default; off, to compare.
     pub meshlet_culling: bool,
+    /// Draws the scene at this share of the view's size, whatever its
+    /// post-processing says, as `vox render --render-scale` does.
+    pub render_scale: Option<f32>,
 }
 
 impl Default for ViewOptions {
@@ -227,6 +233,7 @@ impl Default for ViewOptions {
             camera: None,
             gizmos: true,
             meshlet_culling: true,
+            render_scale: None,
         }
     }
 }
@@ -312,9 +319,19 @@ pub fn extract(
         },
         _ => PostProcess::debug_view(),
     };
-    let jitter = match post.anti_aliasing.mode {
-        AntiAliasingMode::Taa => taa_jitter(frame_index, post.anti_aliasing.taa_jitter),
-        _ => [0.0; 2],
+    // With TAA, the scene may be drawn smaller and upscaled; LODs are still picked for the view's own size.
+    let output_height = height;
+    let taa = post.anti_aliasing.mode == AntiAliasingMode::Taa;
+    let scale = match taa {
+        true => options.render_scale.unwrap_or(post.anti_aliasing.render_scale).clamp(0.25, 1.0),
+        false => 1.0,
+    };
+    let (width, height) = render_size((width, height), scale);
+    // Each drawn pixel covers 1 / scale² of the output's, so the jitter needs as many more phases to reach them.
+    let phases = ((8.0 / (scale * scale)).ceil() as u64).clamp(8, 64);
+    let jitter = match taa {
+        true => taa_jitter(frame_index, post.anti_aliasing.taa_jitter, phases),
+        false => [0.0; 2],
     };
     // Offsetting the column that multiplies view depth shifts the image by a constant amount in NDC.
     let mut jittered_projection = projection;
@@ -331,7 +348,7 @@ pub fn extract(
         camera_position: vec3(position),
         camera_forward: vec3(rotation * Vec3::Z),
         near: camera.near,
-        lod_scale: height as f32 / (2.0 * (fov * 0.5).tan()),
+        lod_scale: output_height as f32 / (2.0 * (fov * 0.5).tan()),
         lod_threshold: options.lod_threshold,
         debug_view: options.debug_view,
         hiz_texture: NO_TEXTURE,
@@ -437,7 +454,7 @@ pub fn extract(
         .collect();
     frame.instance_count = instances.len() as u32;
 
-    ExtractedFrame { frame, instances, lights, has_sun: sun_found, entities, post }
+    ExtractedFrame { frame, instances, lights, has_sun: sun_found, entities, post, render_size: (width, height) }
 }
 
 /// Inward-facing side and near planes of an infinite perspective frustum.
@@ -460,6 +477,13 @@ fn frustum_planes(position: Vec3, rotation: Quat, fov_y: f32, aspect: f32, near:
         near_plane,
         [0.0, 0.0, 0.0, 1.0],
     ]
+}
+
+/// The size a view of `size` is drawn at, at `scale` of it, at least a
+/// pixel each way.
+pub(crate) fn render_size((width, height): (u32, u32), scale: f32) -> (u32, u32) {
+    let scaled = |value: u32| ((value as f32 * scale).round() as u32).clamp(1, value.max(1));
+    (scaled(width), scaled(height))
 }
 
 /// A local light as the shaders read it. A shape's size is halved, as they

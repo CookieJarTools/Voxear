@@ -1316,6 +1316,9 @@ impl View {
             scene::extract(world, (extent.width, extent.height), (setup.time, setup.frame_index), &self.options, &|mesh| {
                 assets.mesh_sphere(mesh)
             });
+        // The scene is drawn at its render size, which TAA upscales to the view's.
+        let output_extent = extent;
+        let extent = vk::Extent2D { width: extracted.render_size.0, height: extracted.render_size.1 };
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         self.track_motion(&mut extracted);
         let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
@@ -1527,7 +1530,8 @@ impl View {
         let post = post_passes::PostInput {
             pipelines: *pipelines,
             push,
-            extent,
+            extent: output_extent,
+            render_extent: extent,
             settings: extracted.post,
             hdr,
             velocity,
@@ -1545,7 +1549,7 @@ impl View {
         let backdrop = match finished.filter(|_| post.keep_ldr) {
             Some(view_image) => {
                 let (blurred, size) =
-                    post_passes::blur_for_backdrop(fg, gpu, bindless, (*pipelines, push), view_image, extent)?;
+                    post_passes::blur_for_backdrop(fg, gpu, bindless, (*pipelines, push), view_image, output_extent)?;
                 Some((blurred, size, view))
             }
             None => None,

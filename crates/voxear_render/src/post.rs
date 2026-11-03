@@ -135,6 +135,12 @@ pub struct AntiAliasing {
     pub taa_history: f32,
     /// Advanced: sub-pixel jitter spread, in pixels.
     pub taa_jitter: f32,
+    /// With TAA, the share of the output's width and height the scene is
+    /// drawn at, from 0.25 to 1, as Unreal's screen percentage: TAA then
+    /// upscales it, building the full picture from several frames' jittered
+    /// samples. 0.67 draws under half the pixels and costs far less, for a
+    /// little softness. Without TAA, the scene is drawn at full size.
+    pub render_scale: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -294,7 +300,7 @@ impl Default for AmbientOcclusion {
 
 impl Default for AntiAliasing {
     fn default() -> Self {
-        Self { mode: AntiAliasingMode::Taa, sharpness: 0.25, taa_history: 0.9, taa_jitter: 1.0 }
+        Self { mode: AntiAliasingMode::Taa, sharpness: 0.25, taa_history: 0.9, taa_jitter: 1.0, render_scale: 1.0 }
     }
 }
 
@@ -464,10 +470,12 @@ impl PostProcess {
     }
 }
 
-/// TAA's sub-pixel camera offset for a frame, in pixels: an eight-frame
-/// Halton (2, 3) sequence, which covers the pixel evenly in few frames.
-pub(crate) fn taa_jitter(frame_index: u64, scale: f32) -> [f32; 2] {
-    let index = frame_index % 8 + 1;
+/// TAA's sub-pixel camera offset for a frame, in pixels: a Halton (2, 3)
+/// sequence `phases` frames long, which covers the pixel evenly in few
+/// frames. Eight suit drawing at full size; upscaling needs more, as each
+/// drawn pixel covers several of the output's.
+pub(crate) fn taa_jitter(frame_index: u64, scale: f32, phases: u64) -> [f32; 2] {
+    let index = frame_index % phases.max(1) + 1;
     [(halton(index, 2) - 0.5) * scale, (halton(index, 3) - 0.5) * scale]
 }
 
@@ -645,11 +653,11 @@ mod tests {
 
     #[test]
     fn taa_jitter_covers_the_pixel_and_repeats() {
-        let offsets: Vec<[f32; 2]> = (0..8).map(|i| taa_jitter(i, 1.0)).collect();
+        let offsets: Vec<[f32; 2]> = (0..8).map(|i| taa_jitter(i, 1.0, 8)).collect();
         assert!(offsets.iter().flatten().all(|v| (-0.5..0.5).contains(v)));
         let mean = offsets.iter().fold([0.0, 0.0], |sum, o| [sum[0] + o[0] / 8.0, sum[1] + o[1] / 8.0]);
         assert!(mean[0].abs() < 0.07 && mean[1].abs() < 0.07, "centred on the pixel: {mean:?}");
-        assert_eq!(taa_jitter(8, 1.0), offsets[0]);
-        assert_eq!(taa_jitter(3, 0.5), offsets[3].map(|v| v * 0.5));
+        assert_eq!(taa_jitter(8, 1.0, 8), offsets[0]);
+        assert_eq!(taa_jitter(3, 0.5, 8), offsets[3].map(|v| v * 0.5));
     }
 }

@@ -129,6 +129,28 @@ public sealed class Sign : Behaviour
 
 The scene saves the key, so a sign placed in a level reads in whatever language the player picks. `Message.Format(("player", name))` fills in values, as `Localization.Format` does.
 
+## Assets in each language
+
+Some games need more than text translated: a voice line recorded in each language, or a sign painted with words on it. An **asset table** is a `.assettable` file, written the way a string table is, but each language names an asset instead of giving text:
+
+```toml
+format = 1
+
+[[entry]]
+key = "voice.intro"
+en = "Voices/Intro.wav"
+fr = "Voices/Intro_fr.wav"
+```
+
+A script asks for a key's asset in the game's language, and gets the nearest language's when that one has none, as text falls back:
+
+```csharp
+Audio.Play(Localization.Sound("voice.intro"));
+var sign = Localization.Prefab("sign.welcome");
+```
+
+`Localization.Asset(key)` gives the asset's reference for anything else, to load as you need. Every asset table goes into every build, with each language's assets.
+
 ## Translating in a spreadsheet
 
 Translators often work in a spreadsheet. Select a string table in the Project panel, and under its entries in the Inspector, **Export CSV** writes it as a CSV file beside it, `Menu.csv` for `Menu.strings`, with a row for each key and a column for each language, in the order your project lists them. Open it in any spreadsheet, such as LibreOffice Calc or Google Sheets, fill in the empty cells, and save it as CSV again with the same name. **Import CSV** then reads it back and says what it would change: each key it adds (`+`), changes (`~`, with the languages that changed) and takes away (`-`). **Apply** keeps it. The sheet replaces the table, so a row deleted from the sheet takes that key away.

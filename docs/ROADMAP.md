@@ -575,7 +575,8 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     `{name}` values, `Language`, `Languages` and `Changed`
   - [x] fallback chains as ICU makes them (`pt-BR`, then `pt`, then the project's own); the game starts in the system's
     language on Linux; missing keys marked `⟦key⟧` while the game is made
-  - [ ] asset tables
+  - [x] asset tables: `.assettable` files naming a key's asset in each language, falling back as text does, shipped
+    with every build, and `Localization.Asset`, `Sound` and `Prefab` in C#
   - [x] ICU smart strings: plurals by each language's rules (ICU4X), exact numbers, select (as for gender), and numbers
     written as the language writes them
   - [ ] dates and currencies in smart strings

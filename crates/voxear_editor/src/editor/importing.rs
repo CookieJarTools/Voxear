@@ -238,13 +238,14 @@ impl Editor {
         };
         // A string table or input actions edited outside the editor are read again; ones that came or went
         // are, with every change.
-        let tables = changed.iter().any(|path| path.ends_with(".strings"));
+        let tables = changed.iter().any(|path| path.ends_with(".strings") || path.ends_with(".assettable"));
         let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
         if came_or_went {
             self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
         } else {
             if tables {
                 self.game.content.forget_kind(voxear_assets::AssetKind::Strings);
+                self.game.content.forget_kind(voxear_assets::AssetKind::AssetTable);
                 self.game.load_strings();
             }
             if actions {

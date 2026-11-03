@@ -313,10 +313,16 @@ fn usage_sets(
             // A field or code naming an asset means something shipped uses it, so exclude cannot drop it.
             let needed = named.contains(&e.guid) || code_roots.iter().any(|r| r.matches(e.guid, &e.path));
             // Code loads levels, prefabs and UI documents by path, which the build cannot see, and the game
-            // reads its input actions and every string table when it starts.
+            // reads its input actions and every string and asset table when it starts, an asset table taking
+            // each language's asset with it.
             let blanket = matches!(
                 e.kind,
-                AssetKind::Level | AssetKind::Prefab | AssetKind::Ui | AssetKind::InputActions | AssetKind::Strings
+                AssetKind::Level
+                    | AssetKind::Prefab
+                    | AssetKind::Ui
+                    | AssetKind::InputActions
+                    | AssetKind::Strings
+                    | AssetKind::AssetTable
             ) || matches(&settings.include, &e.path);
             needed || (blanket && !matches(&settings.exclude, &e.path))
         })
@@ -362,7 +368,7 @@ fn remove_stale(output: &Path, catalog: &Catalog) -> Result<()> {
 fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Result<Needs> {
     let mut needs = Needs::default();
     match kind {
-        AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material => {
+        AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material | AssetKind::AssetTable => {
             let text = std::fs::read_to_string(db.root().join(path))?;
             let table: toml::Table = toml::from_str(&text)?;
             for (key, value) in &table {

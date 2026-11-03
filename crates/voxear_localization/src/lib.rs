@@ -44,6 +44,8 @@ pub struct Localization {
     chain: Vec<String>,
     /// Each key's text, by language.
     texts: HashMap<String, HashMap<String, String>>,
+    /// Each asset table key's asset, as a reference, by language.
+    assets: HashMap<String, HashMap<String, String>>,
     mark_missing: bool,
     pseudo: bool,
     /// Counts each change of language or text, for text shown from it to
@@ -60,6 +62,7 @@ impl Clone for Localization {
             language: self.language.clone(),
             chain: self.chain.clone(),
             texts: self.texts.clone(),
+            assets: self.assets.clone(),
             mark_missing: self.mark_missing,
             pseudo: self.pseudo,
             version: self.version,
@@ -89,6 +92,7 @@ impl Localization {
             language: own,
             languages,
             texts: HashMap::new(),
+            assets: HashMap::new(),
             mark_missing: true,
             pseudo: false,
             version: 0,
@@ -107,9 +111,31 @@ impl Localization {
         self.version += 1;
     }
 
-    /// Forgets every table's text, as before reading them again.
+    /// Adds an asset table's assets, over any the same keys had. An asset
+    /// table is written as a string table is (see [`StringTable`]), each
+    /// language's value a reference to its asset, by GUID or project path.
+    pub fn add_asset_table(&mut self, table: &StringTable) {
+        for entry in &table.entries {
+            let assets = self.assets.entry(entry.key.clone()).or_default();
+            for (language, reference) in &entry.texts {
+                assets.insert(normalize(language), reference.clone());
+            }
+        }
+        self.version += 1;
+    }
+
+    /// The reference to a key's asset in the game's language, or the
+    /// nearest it falls back to, as a voice line in English when it was
+    /// not recorded in Portuguese.
+    pub fn asset(&self, key: &str) -> Option<&str> {
+        let assets = self.assets.get(key)?;
+        self.chain.iter().find_map(|language| assets.get(language)).map(String::as_str)
+    }
+
+    /// Forgets every table's text and assets, as before reading them again.
     pub fn clear(&mut self) {
         self.texts.clear();
+        self.assets.clear();
         self.version += 1;
     }
 
@@ -356,6 +382,18 @@ mod tests {
              [[entry]]\nkey = \"loot\"\nen = \"{player} found {count} coins\"\n",
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_keys_asset_falls_back_as_its_text_does() {
+        let mut texts = Localization::new(&["en".into(), "pt".into(), "pt-BR".into()]);
+        let voices = "[[entry]]\nkey = \"voice.intro\"\nen = \"Sounds/Intro.wav\"\npt = \"Sounds/Intro_pt.wav\"\n";
+        texts.add_asset_table(&StringTable::parse(voices).unwrap());
+        assert_eq!(texts.asset("voice.intro"), Some("Sounds/Intro.wav"));
+        texts.set_language("pt-BR");
+        assert_eq!(texts.asset("voice.intro"), Some("Sounds/Intro_pt.wav"), "Brazil hears Portugal's recording");
+        assert_eq!(texts.asset("menu.play"), None);
+        assert!(!texts.has("voice.intro"), "an asset is not text");
     }
 
     #[test]

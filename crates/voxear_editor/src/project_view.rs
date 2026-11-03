@@ -213,7 +213,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Ui) => "panels",
                 FileKind::Asset(AssetKind::Sound) => "audio",
                 FileKind::Asset(AssetKind::InputActions) => "gamepad",
-                FileKind::Asset(AssetKind::Strings) => "globe",
+                FileKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
                 FileKind::Asset(AssetKind::Paths) => "branch",
             },
         }

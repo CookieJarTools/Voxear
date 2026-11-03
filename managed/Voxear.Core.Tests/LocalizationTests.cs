@@ -10,6 +10,7 @@ internal static class LocalizationTests
 	{
 		Check.True(Localization.Get("menu.play") == "menu.play", "the key");
 		Check.True(Localization.Format("loot.found", ("count", 3)) == "loot.found", "with values too");
+		Check.True(Localization.Asset("voice.intro") == null && Localization.Sound("voice.intro") == Sound.None, "no asset");
 		var changed = false;
 		Localization.Changed += () => changed = true;
 		Localization.Language = "fr";

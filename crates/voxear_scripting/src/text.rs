@@ -66,6 +66,17 @@ pub(crate) unsafe extern "C" fn text_languages(buffer: *mut u8, capacity: i32) -
     write(&languages.unwrap_or_else(|| "en".to_string()), buffer, capacity)
 }
 
+/// The reference to a key's asset, from the asset tables, in the game's
+/// language or the nearest it falls back to; -1 for a key no table has.
+pub(crate) unsafe extern "C" fn text_asset(key: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let key = unsafe { utf8(key, len) };
+    let found = with_world(|world| world.resource::<Localization>()?.asset(&key).map(str::to_string));
+    match found {
+        Some(reference) => write(&reference, buffer, capacity),
+        None => -1,
+    }
+}
+
 /// Counts each change of the game's language or text, for text shown from
 /// it to tell when to look again.
 pub(crate) unsafe extern "C" fn text_version() -> u64 {

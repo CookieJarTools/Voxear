@@ -64,4 +64,35 @@ public static class Localization
 	{
 		return NativeText.Get(key, values);
 	}
+
+	/// <summary>
+	/// A key's asset from the project's asset tables, .assettable files, in the game's language or the nearest that
+	/// has one: as a voice line recorded in each language, or a sign painted in each. It is a reference to load, by
+	/// GUID or project path; null when no table has the key.
+	/// <code>
+	/// var intro = Localization.Asset("voice.intro");
+	/// if (intro != null)
+	/// {
+	/// 	Audio.Play(Sound.Load(intro));
+	/// }
+	/// </code>
+	/// </summary>
+	public static string? Asset(string key)
+	{
+		return NativeText.Asset(key);
+	}
+
+	/// <summary>A key's sound from the asset tables, loaded, in the game's language: see <see cref="Asset"/>.</summary>
+	public static Sound Sound(string key)
+	{
+		var reference = Asset(key);
+		return reference == null ? Voxear.Sound.None : Voxear.Sound.Load(reference);
+	}
+
+	/// <summary>A key's prefab from the asset tables, loaded, in the game's language: see <see cref="Asset"/>.</summary>
+	public static Prefab Prefab(string key)
+	{
+		var reference = Asset(key);
+		return reference == null ? Voxear.Prefab.None : Voxear.Prefab.Load(reference);
+	}
 }

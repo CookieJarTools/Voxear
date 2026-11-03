@@ -758,6 +758,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::InputActions => "input",
             AssetKind::Strings => "strings",
             AssetKind::Paths => "paths",
+            AssetKind::AssetTable => "assets",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

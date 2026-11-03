@@ -136,8 +136,8 @@ impl Game {
         }
     }
 
-    /// Reads every string table in the project, in path order, into the
-    /// world's [`Localization`]. The game starts in the language the
+    /// Reads every string table and asset table in the project, in path
+    /// order, into the world's [`Localization`]. The game starts in the language the
     /// player's system is in, or the nearest the project has, or its own
     /// (and as it starts, in the one the player chose last, see [`start`](Self::start));
     /// read again, as when a table changed, it stays in the one it is in.
@@ -158,14 +158,17 @@ impl Game {
         };
         localization.clear();
         let db = self.content.db();
-        let mut files: Vec<(String, AssetGuid)> =
-            db.entries().filter(|entry| entry.kind == AssetKind::Strings).map(|e| (e.path.clone(), e.guid)).collect();
-        files.sort();
-        for (path, guid) in files {
-            let read = self.content.asset_text(guid, AssetKind::Strings);
-            match read.and_then(|(text, _)| StringTable::parse(&text)) {
-                Ok(table) => localization.add_table(&table),
-                Err(error) => tracing::error!("{path}: {error:#}"),
+        let tables =
+            |kind: AssetKind| db.entries().filter(move |e| e.kind == kind).map(move |e| (e.path.clone(), e.guid, kind));
+        let mut files: Vec<(String, AssetGuid, AssetKind)> =
+            tables(AssetKind::Strings).chain(tables(AssetKind::AssetTable)).collect();
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        for (path, guid, kind) in files {
+            let read = self.content.asset_text(guid, kind);
+            match (read.and_then(|(text, _)| StringTable::parse(&text)), kind) {
+                (Ok(table), AssetKind::AssetTable) => localization.add_asset_table(&table),
+                (Ok(table), _) => localization.add_table(&table),
+                (Err(error), _) => tracing::error!("{path}: {error:#}"),
             }
         }
         self.engine.world.insert_resource(localization);

@@ -17,7 +17,14 @@ fn text(game: &Game, key: &str) -> String {
 #[test]
 fn a_game_reads_every_string_table_in_its_languages() {
     let dir = tempfile::tempdir().unwrap();
-    for (path, text) in [("voxear.toml", PROJECT), ("Text/Menu.strings", MENU), ("Text/Hud.strings", HUD)] {
+    let voices = "[[entry]]\nkey = \"voice.hello\"\nen = \"Voices/Hello.wav\"\nfr = \"Voices/Bonjour.wav\"\n";
+    let files = [
+        ("voxear.toml", PROJECT),
+        ("Text/Menu.strings", MENU),
+        ("Text/Hud.strings", HUD),
+        ("Text/Voices.assettable", voices),
+    ];
+    for (path, text) in files {
         let path = dir.path().join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
@@ -26,6 +33,7 @@ fn a_game_reads_every_string_table_in_its_languages() {
     let localization = game.engine.world.resource_mut::<Localization>().unwrap();
     assert_eq!(localization.languages(), ["en", "fr"]);
     assert!(localization.set_language("fr-BE"));
+    assert_eq!(localization.asset("voice.hello"), Some("Voices/Bonjour.wav"), "asset tables are read too");
     assert_eq!(text(&game, "menu.play"), "Jouer");
     assert_eq!(text(&game, "hud.coins"), "Coins", "French falls back to English, the project's own");
 

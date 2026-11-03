@@ -468,7 +468,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Ui) => "panels",
         Some(AssetKind::Sound) => "audio",
         Some(AssetKind::InputActions) => "gamepad",
-        Some(AssetKind::Strings) => "globe",
+        Some(AssetKind::Strings | AssetKind::AssetTable) => "globe",
         Some(AssetKind::Paths) => "branch",
         None => "obj",
     };

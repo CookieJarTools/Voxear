@@ -37,6 +37,9 @@ pub enum AssetKind {
     /// A `.paths` file: the paths sound takes round a level's walls, as
     /// baked beside its `.level`.
     Paths,
+    /// A `.assettable` file: a table of the game's assets that differ by
+    /// language, as a voice line recorded in each, a key's asset for each.
+    AssetTable,
 }
 
 impl AssetKind {
@@ -54,6 +57,7 @@ impl AssetKind {
             "inputactions" => Self::InputActions,
             "strings" => Self::Strings,
             "paths" => Self::Paths,
+            "assettable" => Self::AssetTable,
             _ => return None,
         })
     }

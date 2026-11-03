@@ -67,6 +67,36 @@ internal static unsafe class NativeText
 		return Encoding.UTF8.GetString(buffer, 0, Math.Max(length, 0)).Split('\n');
 	}
 
+	/// <summary>The reference to a key's asset in the game's language, or null when no asset table has the key.</summary>
+	public static string? Asset(string key)
+	{
+		if (!Native.IsConnected)
+		{
+			return null;
+		}
+
+		var keyBytes = Encoding.UTF8.GetBytes(key);
+		var buffer = new byte[256];
+		fixed (byte* named = keyBytes, written = buffer)
+		{
+			var length = Native.Api->TextAsset(named, keyBytes.Length, written, buffer.Length);
+			if (length < 0)
+			{
+				return null;
+			}
+			if (length <= buffer.Length)
+			{
+				return Encoding.UTF8.GetString(buffer, 0, length);
+			}
+		}
+		var bigger = new byte[keyBytes.Length + 1024];
+		fixed (byte* named = keyBytes, written = bigger)
+		{
+			var length = Native.Api->TextAsset(named, keyBytes.Length, written, bigger.Length);
+			return length < 0 ? null : Encoding.UTF8.GetString(bigger, 0, Math.Min(length, bigger.Length));
+		}
+	}
+
 	/// <summary>Counts each change of the game's language or text.</summary>
 	public static ulong Version()
 	{

@@ -411,6 +411,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Sound => ("Sound", "audio"),
                 AssetKind::InputActions => ("Input actions", "gamepad"),
                 AssetKind::Strings => ("String table", "globe"),
+                AssetKind::AssetTable => ("Asset table", "globe"),
                 AssetKind::Paths => ("Sound paths", "branch"),
             };
             let (action, key) = match kind {

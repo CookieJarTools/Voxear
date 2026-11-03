@@ -413,6 +413,7 @@ fn gather(
                 | AssetKind::Ui
                 | AssetKind::InputActions
                 | AssetKind::Strings
+                | AssetKind::AssetTable
                 | AssetKind::Paths => false,
             };
             if owner == Some(guid) {

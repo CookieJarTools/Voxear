@@ -375,3 +375,16 @@ fn overlays_replace_assets_by_guid_and_add_new_ones() {
     let mut project_folder = Content::open(base.path()).unwrap();
     assert!(project_folder.mount(&overlay.path().join("Built")).is_err(), "layers need built content");
 }
+
+#[test]
+fn asset_tables_ship_with_every_languages_asset() {
+    let dir = project();
+    let table = "format = 1\n\n[[entry]]\nkey = \"sign.welcome\"\nen = \"Materials/Unused.material\"\n";
+    std::fs::create_dir_all(dir.path().join("Text")).unwrap();
+    std::fs::write(dir.path().join("Text/Signs.assettable"), table).unwrap();
+    let output = dir.path().join("Built");
+    let report = content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    let roots: Vec<String> = report.bundles.iter().flat_map(|b| b.roots.clone()).collect();
+    assert!(roots.contains(&"Text/Signs.assettable".to_string()), "the game reads every table as it starts");
+    assert!(report.excluded.is_empty(), "the asset only the table names ships: {:?}", report.excluded);
+}

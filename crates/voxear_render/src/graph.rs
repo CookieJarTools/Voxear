@@ -43,6 +43,7 @@ pub enum ImageAccess {
 /// How a pass uses a buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BufferAccess {
+    TransferRead,
     TransferWrite,
     ComputeWrite,
     ComputeRead,
@@ -98,6 +99,7 @@ impl BufferAccess {
     fn state(self) -> (vk::PipelineStageFlags2, vk::AccessFlags2) {
         use vk::{AccessFlags2 as A, PipelineStageFlags2 as S};
         match self {
+            Self::TransferRead => (S::ALL_TRANSFER, A::TRANSFER_READ),
             Self::TransferWrite => (S::ALL_TRANSFER, A::TRANSFER_WRITE),
             Self::ComputeWrite => (S::COMPUTE_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE),
             Self::ComputeRead => (S::COMPUTE_SHADER, A::SHADER_STORAGE_READ),

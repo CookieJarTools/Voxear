@@ -15,6 +15,8 @@ struct VertexOut
     nointerpolation uint lod : LOD;
     nointerpolation uint instance : INSTANCE;
     nointerpolation uint fade : FADE;
+    // What the meshlets debug view colours by.
+    nointerpolation uint cluster : CLUSTER;
     float4 currentClip : CURRENT_CLIP;
     float4 previousClip : PREVIOUS_CLIP;
 };
@@ -52,6 +54,7 @@ VertexOut vertexMain(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex)
     o.lod = lod;
     o.instance = instanceIndex;
     o.fade = fade;
+    o.cluster = push.frame->debugView == DEBUG_VIEW_MESHLETS ? drawFirstIndex(drawId) : 0;
     o.currentClip = transform(push.frame->unjitteredViewProj, world);
     o.previousClip = transform(push.frame->prevViewProj, transform(instance.prevModel, float4(v.position, 1.0)));
     return o;
@@ -228,6 +231,10 @@ FragmentOut fragmentMain(VertexOut input)
     if (frame->debugView == DEBUG_VIEW_LOD)
     {
         color = debugColor(input.lod) * (0.35 + 0.65 * shadow * saturate(dot(s.normal, -frame->sunDirection)));
+    }
+    else if (frame->debugView == DEBUG_VIEW_MESHLETS)
+    {
+        color = keyColor(input.cluster) * (0.35 + 0.65 * shadow * saturate(dot(s.normal, -frame->sunDirection)));
     }
     else if (frame->debugView == DEBUG_VIEW_CASCADES)
     {

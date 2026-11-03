@@ -34,7 +34,7 @@ pub(crate) const SHEET: &str = include_str!("../ui/StatsOverlay.vss");
 /// The labels the numbers go in, by name, in the order [`refresh`] fills them.
 ///
 /// [`refresh`]: StatsOverlay::refresh
-const VALUES: [&str; 8] = ["fps", "frame", "gpu", "draws", "shadow-draws", "culled", "lights", "exposure"];
+const VALUES: [&str; 9] = ["fps", "frame", "gpu", "draws", "shadow-draws", "culled", "meshlets", "lights", "exposure"];
 
 pub struct StatsOverlay {
     ui: Ui,
@@ -183,6 +183,7 @@ impl StatsOverlay {
             grouped(stats.drawn_early + stats.drawn_late),
             grouped(stats.shadow_draws),
             grouped(stats.frustum_culled + stats.occlusion_culled),
+            format!("{} / {}", grouped(stats.meshlets_drawn), grouped(stats.meshlets)),
             grouped(stats.cluster_max_lights),
             exposure,
         ];

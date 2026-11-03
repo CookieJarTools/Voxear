@@ -167,6 +167,9 @@ pub struct Assets {
     mesh_slots: SlotAllocator,
     material_slots: SlotAllocator,
     mesh_ranges: HashMap<MeshHandle, MeshRanges>,
+    /// The most meshlets any LOD of each mesh has, by its slot: the most one
+    /// draw of it can turn into.
+    most_meshlets: Vec<u32>,
     /// Each mesh's box in its own space, for picking: exact for meshes
     /// uploaded from their vertices, the bounding sphere's box for cooked ones.
     mesh_bounds: HashMap<MeshHandle, (Vec3, Vec3)>,
@@ -216,6 +219,7 @@ impl Assets {
             mesh_bounds: HashMap::new(),
             material_slots: SlotAllocator::new(MAX_MATERIALS as u32),
             mesh_ranges: HashMap::new(),
+            most_meshlets: vec![0; MAX_MESHES as usize],
             textures: HashMap::new(),
             retiring: Vec::new(),
             white: TextureId(0),
@@ -279,6 +283,7 @@ impl Assets {
         let index_count: u64 = lods.iter().map(|lod| lod.indices.len() as u64).sum();
         let space = ranges.space;
         let (vertex_offset, index_start, slot) = (space.vertices.0, space.indices.0, handle.0);
+        self.most_meshlets[slot as usize] = meshlets.most();
         if let (Some(ranges), Some(lod)) = (self.mesh_ranges.get_mut(&handle), lods.first()) {
             ranges.first_lod = lod.indices.len() as u32;
             ranges.sphere = mesh.bounds();
@@ -332,6 +337,12 @@ impl Assets {
     pub fn first_lod(&self, mesh: MeshHandle) -> Option<(u32, u32)> {
         let ranges = self.mesh_ranges.get(&mesh)?;
         Some((ranges.space.indices.0 as u32, ranges.first_lod))
+    }
+
+    /// The most meshlets one draw of the mesh in table slot `mesh` can turn
+    /// into: those of its LOD with the most.
+    pub fn most_meshlets(&self, mesh: u32) -> u32 {
+        self.most_meshlets.get(mesh as usize).copied().unwrap_or(0)
     }
 
     /// A mesh's bounding sphere in its own space, centre and radius, for
@@ -435,6 +446,7 @@ impl Assets {
             .collect();
         for (mesh, (handle, _)) in model.meshes.iter().zip(&meshes) {
             let reach = Vec3::splat(mesh.radius);
+            self.most_meshlets[handle.0 as usize] = mesh.lods.iter().map(|&(_, _, count)| count).max().unwrap_or(0);
             self.mesh_bounds.insert(*handle, (mesh.center - reach, mesh.center + reach));
             if let (Some(ranges), Some(&(_, count, _))) = (self.mesh_ranges.get_mut(handle), mesh.lods.first()) {
                 (ranges.first_lod, ranges.sphere) = (count, (mesh.center, mesh.radius));

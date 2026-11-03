@@ -146,6 +146,19 @@ pub const DEBUG_VIEW_UNLIT: u32 = 5;
 pub const DEBUG_VIEW_WIREFRAME: u32 = 6;
 /// The scene lit as usual, with the meshes' edges drawn faintly over it.
 pub const DEBUG_VIEW_LIT_WIREFRAME: u32 = 7;
+/// Each meshlet in a colour of its own, lit by the sun.
+pub const DEBUG_VIEW_MESHLETS: u32 = 8;
+
+/// `GpuFrame::meshlet_flags`: back-facing meshlets are culled; surviving
+/// meshlets side by side are drawn together, as one range of indices; draws
+/// are culled meshlet by meshlet.
+pub const MESHLET_CONES: u32 = 1;
+pub const MESHLET_RUNS: u32 = 2;
+pub const MESHLET_CULLING: u32 = 4;
+
+/// `Push::source`: which lists a draw pass reads.
+pub const DRAWS_INSTANCES: u32 = 0;
+pub const DRAWS_MESHLETS: u32 = 1;
 
 /// Froxel grid for clustered lighting: screen tiles by depth slices.
 pub const CLUSTER_GRID: [u32; 3] = [16, 9, 24];
@@ -212,6 +225,12 @@ pub struct GpuFrame {
     pub taa_reset: u32,
     pub frame_index: u32,
     pub post: GpuPost,
+    /// How many meshlets every instance's draw can turn into together, at
+    /// most, which lays out the meshlet lists (see [`meshlet_list`]).
+    pub meshlet_capacity: u32,
+    /// `MESHLET_CONES`, `MESHLET_RUNS` and `MESHLET_CULLING`.
+    pub meshlet_flags: u32,
+    pub _pad5: [u32; 2],
 }
 
 /// Post-processing settings as shaders read them. Mirrors `Post` in
@@ -278,6 +297,16 @@ pub struct GpuBuffers {
     pub exposure: u64,
     pub ui_quads: u64,
     pub debug_lines: u64,
+    pub meshlets: u64,
+    pub meshlet_vertices: u64,
+    pub meshlet_triangles: u64,
+    /// The meshlet lists the meshlet pass fills.
+    pub meshlet_draws: u64,
+    pub meshlet_draw_instances: u64,
+    /// The meshlets the cull queues for the meshlet pass, laid out as the
+    /// meshlet lists: each as its draw's packed instance, and its place in
+    /// the draw's LOD.
+    pub meshlet_work: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -305,6 +334,54 @@ pub const LIST_LATE: u32 = 1;
 pub const LIST_SHADOW: u32 = 2;
 pub const LIST_COUNT: u32 = LIST_SHADOW + CASCADES as u32;
 
+/// The draw count buffer holds each instance list's count at the head of a
+/// dispatch's arguments, (count, 1, 1), and a fourth word. With meshlet
+/// culling, a list's draws are not written but their meshlets queued: the
+/// first word is then how many workgroups the meshlet pass runs for them,
+/// which the CPU never reads, and the fourth how many were queued. Each
+/// meshlet list's count follows them all.
+pub const DRAW_COUNT_STRIDE: u64 = 16;
+pub const DRAW_COUNT_SIZE: u64 = LIST_COUNT as u64 * (DRAW_COUNT_STRIDE + 4);
+
+/// Where an instance list's draw count sits in the draw count buffer, in bytes.
+pub fn draw_count_offset(list: u32) -> u64 {
+    u64::from(list) * DRAW_COUNT_STRIDE
+}
+
+/// Where a meshlet list's draw count sits in the draw count buffer, in bytes.
+pub fn meshlet_count_offset(list: u32) -> u64 {
+    u64::from(LIST_COUNT) * DRAW_COUNT_STRIDE + u64::from(list) * 4
+}
+
+/// The draw count buffer as the frame starts: no draws, and the dispatches'
+/// other sizes one.
+pub fn cleared_draw_counts() -> Vec<u32> {
+    let mut words = vec![0; (DRAW_COUNT_SIZE / 4) as usize];
+    for list in 0..LIST_COUNT as usize {
+        words[list * 4 + 1..list * 4 + 3].fill(1);
+    }
+    words
+}
+
+/// A meshlet list's first entry and how many it holds, when every instance
+/// list's draws can turn into `capacity` meshlets: the main view's lists
+/// hold twice that, as a fading instance draws two LODs, and each shadow
+/// cascade's holds it once. Mirrors `meshletListBase` in the shaders.
+pub fn meshlet_list(list: u32, capacity: u32) -> (u64, u32) {
+    let capacity = u64::from(capacity);
+    let (base, held) = if list < LIST_SHADOW {
+        (u64::from(list) * 2 * capacity, 2 * capacity)
+    } else {
+        ((4 + u64::from(list - LIST_SHADOW)) * capacity, capacity)
+    };
+    (base, held as u32)
+}
+
+/// Entries in all the meshlet lists together.
+pub fn meshlet_lists_len(capacity: u32) -> u64 {
+    (4 + CASCADES as u64) * u64::from(capacity)
+}
+
 /// Counters the culling pass writes, read back a few frames later.
 pub mod stat {
     pub const TESTED: usize = 0;
@@ -319,7 +396,15 @@ pub mod stat {
     pub const FADE_DRAWS: usize = SHADOW_DRAWS + 1;
     pub const CLUSTER_MAX_LIGHTS: usize = FADE_DRAWS + 1;
     pub const CLUSTER_LIGHT_LINKS: usize = CLUSTER_MAX_LIGHTS + 1;
-    pub const COUNT: usize = CLUSTER_LIGHT_LINKS + 1;
+    /// Meshlets of the main view's draws, as the meshlet pass culled them,
+    /// and those drawn into the shadows.
+    pub const MESHLETS_TESTED: usize = CLUSTER_LIGHT_LINKS + 1;
+    pub const MESHLETS_FRUSTUM_CULLED: usize = MESHLETS_TESTED + 1;
+    pub const MESHLETS_CONE_CULLED: usize = MESHLETS_FRUSTUM_CULLED + 1;
+    pub const MESHLETS_OCCLUSION_CULLED: usize = MESHLETS_CONE_CULLED + 1;
+    pub const MESHLETS_DRAWN: usize = MESHLETS_OCCLUSION_CULLED + 1;
+    pub const MESHLETS_SHADOW_DRAWN: usize = MESHLETS_DRAWN + 1;
+    pub const COUNT: usize = MESHLETS_SHADOW_DRAWN + 1;
 }
 
 /// The frame and buffer pointers every shader reads, plus per-pass parameters.
@@ -337,7 +422,8 @@ pub struct Push {
     pub size: [u32; 2],
     /// A mip level to read.
     pub level: u32,
-    pub _pad: u32,
+    /// `DRAWS_INSTANCES` or `DRAWS_MESHLETS`, for a draw pass.
+    pub source: u32,
     /// Textures a post pass reads.
     pub textures: [u32; 4],
 }
@@ -359,10 +445,29 @@ mod tests {
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
         let post = 16 * 11;
-        assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post);
+        let meshlets = 16;
+        assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 15 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 21 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
+    }
+
+    #[test]
+    fn meshlet_lists_lie_end_to_end() {
+        let capacity = 100;
+        let mut next = 0;
+        for list in 0..LIST_COUNT {
+            let (base, held) = meshlet_list(list, capacity);
+            assert_eq!(base, next, "list {list} starts where the one before ends");
+            assert_eq!(held, if list < LIST_SHADOW { 200 } else { 100 });
+            next += u64::from(held);
+        }
+        assert_eq!(next, meshlet_lists_len(capacity));
+        let counts = cleared_draw_counts();
+        assert_eq!(counts.len() as u64 * 4, DRAW_COUNT_SIZE);
+        assert_eq!(&counts[4..8], [0, 1, 1, 0], "each list's dispatch is (count, 1, 1)");
+        assert_eq!(meshlet_count_offset(0), LIST_COUNT as u64 * 16);
+        assert!(counts[(meshlet_count_offset(0) / 4) as usize..].iter().all(|&count| count == 0));
     }
 }

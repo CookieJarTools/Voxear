@@ -8,13 +8,22 @@
 //!    hide that early missed, which also records visibility for next frame.
 //! 6. **Sky** behind everything.
 //!
+//! With meshlet culling, each cull queues its draws' meshlets rather than
+//! the draws, and a meshlet pass after it (**Shadow meshlets**, **Meshlets
+//! (early)**, **Meshlets (late)**) draws those that survive the frustum,
+//! their normal cones and, late, the depth pyramid, which the passes after
+//! it draw.
+//!
 //! Opaque and sky passes also write motion vectors. Post-processing follows,
 //! in [`post_passes`](crate::post_passes).
 
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
-    gpu::{CLUSTER_COUNT, DRAW_COMMAND_SIZE, LIST_COUNT, LIST_EARLY, LIST_LATE, LIST_SHADOW, Push, stat},
+    gpu::{
+        CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE, LIST_SHADOW, Push,
+        cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
+    },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
     shadows::{CASCADE_RESOLUTION, CASCADES},
@@ -39,11 +48,21 @@ pub struct Draws {
     pub visibility: BufferId,
     pub lod_state: BufferId,
     pub stats: BufferId,
+    /// Where the stats are copied for the CPU to read.
+    pub stats_readback: BufferId,
     pub clusters: BufferId,
+    pub meshlet_draws: BufferId,
+    pub meshlet_instances: BufferId,
+    pub meshlet_work: BufferId,
     pub draws_handle: vk::Buffer,
     pub count_handle: vk::Buffer,
     pub stats_handle: vk::Buffer,
+    pub stats_readback_handle: vk::Buffer,
     pub index_buffer: vk::Buffer,
+    pub meshlet_draws_handle: vk::Buffer,
+    /// How many meshlets the instance lists' draws can turn into, which
+    /// lays out the meshlet lists; `None` draws the instance lists whole.
+    pub meshlet_capacity: Option<u32>,
 }
 
 pub struct Frame {
@@ -62,19 +81,34 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         (draws.count, BufferAccess::ComputeWrite),
         (draws.draws, BufferAccess::ComputeWrite),
         (draws.instances, BufferAccess::ComputeWrite),
+        (draws.meshlet_work, BufferAccess::ComputeWrite),
         (draws.visibility, BufferAccess::ComputeWrite),
         (draws.lod_state, BufferAccess::ComputeWrite),
         (draws.stats, BufferAccess::ComputeWrite),
     ];
-    let drawing = [
-        (draws.draws, BufferAccess::IndirectRead),
+    // The count is read as the dispatch's size before the pass writes the meshlet lists' counts beside it.
+    let meshlet_culling = [
         (draws.count, BufferAccess::IndirectRead),
-        (draws.instances, BufferAccess::ShaderRead),
+        (draws.count, BufferAccess::ComputeWrite),
+        (draws.meshlet_work, BufferAccess::ComputeRead),
+        (draws.meshlet_draws, BufferAccess::ComputeWrite),
+        (draws.meshlet_instances, BufferAccess::ComputeWrite),
+        (draws.stats, BufferAccess::ComputeWrite),
+    ];
+    let meshlets = draws.meshlet_capacity.is_some();
+    // The lists the draw passes read, as commands and as data (the meshlets debug view reads their first indices).
+    let (list_draws, list_instances) =
+        if meshlets { (draws.meshlet_draws, draws.meshlet_instances) } else { (draws.draws, draws.instances) };
+    let drawing = [
+        (list_draws, BufferAccess::IndirectRead),
+        (draws.count, BufferAccess::IndirectRead),
+        (list_instances, BufferAccess::ShaderRead),
     ];
     let shading_buffers = [
-        (draws.draws, BufferAccess::IndirectRead),
+        (list_draws, BufferAccess::IndirectRead),
+        (list_draws, BufferAccess::ShaderRead),
         (draws.count, BufferAccess::IndirectRead),
-        (draws.instances, BufferAccess::ShaderRead),
+        (list_instances, BufferAccess::ShaderRead),
         (draws.clusters, BufferAccess::ShaderRead),
         (draws.lod_state, BufferAccess::ShaderRead),
     ];
@@ -85,7 +119,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         &[],
         &[(draws.count, BufferAccess::TransferWrite), (draws.stats, BufferAccess::TransferWrite)],
         move |ctx| unsafe {
-            ctx.gpu.device.cmd_fill_buffer(ctx.cmd, count_handle, 0, u64::from(LIST_COUNT) * 4, 0);
+            let counts = cleared_draw_counts();
+            ctx.gpu.device.cmd_update_buffer(ctx.cmd, count_handle, 0, bytemuck::cast_slice(&counts));
             ctx.gpu.device.cmd_fill_buffer(ctx.cmd, stats_handle, 0, stat::COUNT as u64 * 4, 0);
         },
     );
@@ -103,24 +138,39 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, CLUSTER_COUNT.div_ceil(64), 1, 1) };
         },
     );
-    let indirect = Indirect { draws: draws.draws_handle, count: draws.count_handle, index_buffer: draws.index_buffer };
+    let indirect = Indirect {
+        draws: draws.draws_handle,
+        count: draws.count_handle,
+        index_buffer: draws.index_buffer,
+        meshlets: draws.meshlet_capacity.map(|capacity| (draws.meshlet_draws_handle, capacity)),
+    };
+    // Draw passes read the meshlet lists when there are any.
+    let draw_push = Push { source: if meshlets { DRAWS_MESHLETS } else { DRAWS_INSTANCES }, ..push };
+    let meshlet_pass = |fg: &mut FrameGraph<'_>, name: &str, images: &[(ImageId, ImageAccess)], lists: [u32; 2]| {
+        if meshlets {
+            fg.add_pass(name, images, &meshlet_culling, move |ctx| {
+                cull_meshlets(ctx, pipelines.meshlet_cull, &push, count_handle, lists[0]..lists[1]);
+            });
+        }
+    };
 
     if let Some(atlas) = targets.shadows {
         fg.add_pass("Shadow cull", &[], &culling, move |ctx| {
             cull(ctx, pipelines.cull, &push, LIST_SHADOW, instances, CASCADES as u32);
         });
+        meshlet_pass(fg, "Shadow meshlets", &[], [LIST_SHADOW, LIST_SHADOW + CASCADES as u32]);
         fg.add_pass("Shadows", &[(atlas, ImageAccess::DepthAttachment)], &drawing, move |ctx| {
             let size = CASCADE_RESOLUTION * 2;
             let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, Some(clear_depth(1.0)));
             begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
-            bind(ctx, pipelines.shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+            bind(ctx, pipelines.shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
             for cascade in 0..CASCADES as u32 {
                 let offset = vk::Offset2D {
                     x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
                     y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
                 };
                 set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
-                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: LIST_SHADOW + cascade, ..push });
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: LIST_SHADOW + cascade, ..draw_push });
                 indirect.draw(ctx, LIST_SHADOW + cascade);
             }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
@@ -133,7 +183,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
         images
     };
-    let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..push };
+    let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..draw_push };
     let forward = if frame.wireframe { pipelines.wireframe } else { pipelines.forward };
     let (hdr, velocity, depth) = (targets.hdr, targets.velocity, targets.depth);
     let scene = SceneTargets { hdr, velocity, depth };
@@ -141,6 +191,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     fg.add_pass("Cull (early)", &[], &culling, move |ctx| {
         cull(ctx, pipelines.cull, &push, LIST_EARLY, instances, 1);
     });
+    meshlet_pass(fg, "Meshlets (early)", &[], [LIST_EARLY, LIST_LATE]);
     fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
         opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, true);
     });
@@ -161,10 +212,18 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     fg.add_pass("Cull (late)", &[(pyramid, ImageAccess::Sampled)], &culling, move |ctx| {
         cull(ctx, pipelines.cull, &push, LIST_LATE, instances, 1);
     });
+    meshlet_pass(fg, "Meshlets (late)", &[(pyramid, ImageAccess::Sampled)], [LIST_LATE, LIST_SHADOW]);
     fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
         opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, false);
     });
-    fg.sync_buffer(draws.stats, BufferAccess::HostRead);
+    // Counted in GPU memory, where the culling passes' atomics are fast, then copied out at once.
+    let (readback, stats_bytes) = (draws.stats_readback_handle, stat::COUNT as u64 * 4);
+    let copy = [(draws.stats, BufferAccess::TransferRead), (draws.stats_readback, BufferAccess::TransferWrite)];
+    fg.add_pass("Read back stats", &[], &copy, move |ctx| unsafe {
+        let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size: stats_bytes };
+        ctx.gpu.device.cmd_copy_buffer(ctx.cmd, stats_handle, readback, &[region]);
+    });
+    fg.sync_buffer(draws.stats_readback, BufferAccess::HostRead);
 
     let extent = frame.extent;
     let sky_images = [
@@ -213,19 +272,29 @@ struct Indirect {
     draws: vk::Buffer,
     count: vk::Buffer,
     index_buffer: vk::Buffer,
+    /// The meshlet lists, and the capacity they are laid out by, when the
+    /// passes draw those instead of the instance lists.
+    meshlets: Option<(vk::Buffer, u32)>,
 }
 
 impl Indirect {
     fn draw(self, ctx: &PassContext, list: u32) {
         let max = crate::MAX_INSTANCES as u32;
+        let (draws, first, count_offset, max) = match self.meshlets {
+            Some((draws, capacity)) => {
+                let (base, held) = meshlet_list(list, capacity);
+                (draws, base, meshlet_count_offset(list), held)
+            }
+            None => (self.draws, u64::from(list) * u64::from(max), draw_count_offset(list), max),
+        };
         unsafe {
             ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, self.index_buffer, 0, vk::IndexType::UINT32);
             ctx.gpu.device.cmd_draw_indexed_indirect_count(
                 ctx.cmd,
-                self.draws,
-                u64::from(list) * u64::from(max) * DRAW_COMMAND_SIZE,
+                draws,
+                first * DRAW_COMMAND_SIZE,
                 self.count,
-                u64::from(list) * 4,
+                count_offset,
                 max,
                 DRAW_COMMAND_SIZE as u32,
             );
@@ -236,6 +305,22 @@ impl Indirect {
 fn cull(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, list: u32, instances: u32, lists: u32) {
     bind(ctx, pipeline, vk::PipelineBindPoint::COMPUTE, &Push { list, ..*push });
     unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, instances.div_ceil(64).max(1), lists, 1) };
+}
+
+/// A workgroup for each round of meshlets the cull queued in each of
+/// `lists`, sized by the count the cull grew, so the CPU never reads it.
+fn cull_meshlets(
+    ctx: &PassContext,
+    pipeline: vk::Pipeline,
+    push: &Push,
+    count: vk::Buffer,
+    lists: std::ops::Range<u32>,
+) {
+    bind(ctx, pipeline, vk::PipelineBindPoint::COMPUTE, push);
+    for list in lists {
+        ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, ..*push });
+        unsafe { ctx.gpu.device.cmd_dispatch_indirect(ctx.cmd, count, draw_count_offset(list)) };
+    }
 }
 
 fn opaque(

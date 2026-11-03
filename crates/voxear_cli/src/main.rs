@@ -25,8 +25,8 @@ use voxear_engine::{
     scripts::{self, CONFIGURATION},
 };
 use voxear_render::{
-    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess,
-    Renderer, RendererSettings, ViewOptions,
+    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE,
+    DEBUG_VIEW_NORMALS, PostProcess, Renderer, RendererSettings, ViewOptions,
 };
 use voxear_scene::{Name, Transform};
 use voxear_scripting::find_dotnet;
@@ -237,9 +237,16 @@ enum Commands {
         /// Capture the final frame in RenderDoc.
         #[arg(long)]
         renderdoc: bool,
-        /// Show `lod`, shadow `cascades`, `lights` per cluster or `normals` instead of normal shading.
-        #[arg(long, value_parser = ["none", "lod", "cascades", "lights", "normals"], default_value = "none")]
+        /// Show `lod`, shadow `cascades`, `lights` per cluster, `normals` or `meshlets` instead of normal shading.
+        #[arg(
+            long,
+            value_parser = ["none", "lod", "cascades", "lights", "normals", "meshlets"],
+            default_value = "none"
+        )]
         debug_view: String,
+        /// Draw whole LODs rather than culling each draw's meshlets, to compare.
+        #[arg(long)]
+        no_meshlet_culling: bool,
         /// Replace the scene's post-processing with a preset: `voxear`, `neutral` or `cinematic`.
         #[arg(long)]
         post: Option<String>,
@@ -348,16 +355,19 @@ fn main() -> Result<()> {
             bundles,
             overlays,
             stats,
+            no_meshlet_culling,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
                 "cascades" => DEBUG_VIEW_CASCADES,
                 "lights" => DEBUG_VIEW_LIGHT_COMPLEXITY,
                 "normals" => DEBUG_VIEW_NORMALS,
+                "meshlets" => DEBUG_VIEW_MESHLETS,
                 _ => DEBUG_VIEW_NONE,
             };
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
-            let options = ViewOptions { debug_view, post_override, ..ViewOptions::default() };
+            let meshlet_culling = !no_meshlet_culling;
+            let options = ViewOptions { debug_view, post_override, meshlet_culling, ..ViewOptions::default() };
             let prepare = Prepare { build: !no_build, bundles, overlays };
             let shot = Shot { out, size: (width, height), frames, options, stats };
             render(&project, shot, prepare, renderdoc)
@@ -464,6 +474,17 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         stats.drawn_late,
         stats.shadow_draws
     );
+    if stats.meshlets > 0 {
+        println!(
+            "meshlets: {} tested · {} outside the view · {} facing away · {} occluded · {} drawn · {} in shadows",
+            stats.meshlets,
+            stats.meshlets_frustum_culled,
+            stats.meshlets_cone_culled,
+            stats.meshlets_occlusion_culled,
+            stats.meshlets_drawn,
+            stats.shadow_meshlets
+        );
+    }
     if stats.fade_draws > 0 {
         println!("LOD fades in progress: {}", stats.fade_draws);
     }

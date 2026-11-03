@@ -16,6 +16,8 @@
             <Panel class="row"><Label>Draws</Label><Label name="draws" class="value">–</Label></Panel>
             <Panel class="row"><Label>Shadow draws</Label><Label name="shadow-draws" class="value">–</Label></Panel>
             <Panel class="row"><Label>Culled</Label><Label name="culled" class="value">–</Label></Panel>
+            <!-- Meshlets drawn, of those tested. -->
+            <Panel class="row"><Label>Meshlets</Label><Label name="meshlets" class="value">–</Label></Panel>
             <Panel class="divider" />
             <Panel class="row"><Label>Lights per cluster</Label><Label name="lights" class="value">–</Label></Panel>
             <Panel class="row"><Label>Exposure</Label><Label name="exposure" class="value">–</Label></Panel>

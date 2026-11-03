@@ -3,8 +3,9 @@
 //! Each frame the world is extracted into instance, light and frame data.
 //! Compute passes cull instances against the frustum, the sun's shadow
 //! cascades and a depth pyramid (two-phase occlusion culling), and pick a
-//! LOD for each, writing indirect draws, so the CPU never decides
-//! visibility. See [`passes`] for the frame's pass order, and
+//! LOD for each, writing indirect draws; then each draw's meshlets are
+//! culled the same way, and against their normal cones, so the CPU never
+//! decides visibility. See [`passes`] for the frame's pass order, and
 //! [`post_passes`] for the post-processing after it.
 
 mod alloc;
@@ -55,8 +56,8 @@ pub use gltf_import::{
     prepare as prepare_model,
 };
 pub use gpu::{
-    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_NONE,
-    DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
+    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS,
+    DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
@@ -76,8 +77,9 @@ pub use voxear_rhi::TextureId;
 use crate::{
     assets::Assets,
     gpu::{
-        CLUSTER_COUNT, DRAW_COMMAND_SIZE, GpuBuffers, GpuFrame, GpuInstance, GpuLight, LIST_COUNT, MAX_CLUSTER_LIGHTS,
-        Mat4Cols, NO_TEXTURE, Push, stat,
+        CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAW_COUNT_SIZE, GpuBuffers, GpuFrame, GpuInstance, GpuLight, LIST_COUNT,
+        MAX_CLUSTER_LIGHTS, MESHLET_CONES, MESHLET_CULLING, MESHLET_RUNS, Mat4Cols, NO_TEXTURE, Push,
+        meshlet_lists_len, stat,
     },
     hot_reload::{ShaderSet, ShaderWatcher},
     pipelines::{DEPTH_FORMAT, HDR_FORMAT, PYRAMID_FORMAT, Pipelines, VELOCITY_FORMAT},
@@ -86,6 +88,15 @@ use crate::{
 
 const MAX_INSTANCES: u64 = 64 * 1024;
 const MAX_LIGHTS: u64 = 1024;
+/// The meshlet lists start with room for this many meshlets of each
+/// instance list's draws, and grow with the scene (see `gpu::meshlet_list`).
+const FIRST_MESHLET_CAPACITY: u32 = 4096;
+/// A view whose instances' draws could turn into more meshlets than this
+/// draws whole LODs instead. The main view's lists hold twice as many, and
+/// the meshlet pass runs a workgroup for every 32 of a list's, which stays
+/// within the 65,535 workgroups every GPU can dispatch. Its lists for one
+/// frame in flight then take 256 MB.
+const MAX_MESHLET_CAPACITY: u32 = 65_535 * 16;
 const OFFSCREEN_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 
 /// What the GPU culled and drew, read back from a recent frame.
@@ -105,6 +116,16 @@ pub struct RenderStats {
     pub cluster_max_lights: u32,
     /// Light-to-cluster assignments across the whole grid.
     pub cluster_light_links: u32,
+    /// Meshlets of the main view's draws that were tested, and of those,
+    /// how many were outside the view, facing away, hidden behind what was
+    /// drawn, and drawn. All zero with meshlet culling off.
+    pub meshlets: u32,
+    pub meshlets_frustum_culled: u32,
+    pub meshlets_cone_culled: u32,
+    pub meshlets_occlusion_culled: u32,
+    pub meshlets_drawn: u32,
+    /// Meshlets drawn into the sun's shadow cascades.
+    pub shadow_meshlets: u32,
     /// Auto exposure's adapted EV, and the scene's metered average
     /// luminance. Both stay zero while auto exposure is off.
     pub exposure_ev: f32,
@@ -126,6 +147,12 @@ impl RenderStats {
             fade_draws: counters[stat::FADE_DRAWS],
             cluster_max_lights: counters[stat::CLUSTER_MAX_LIGHTS],
             cluster_light_links: counters[stat::CLUSTER_LIGHT_LINKS],
+            meshlets: counters[stat::MESHLETS_TESTED],
+            meshlets_frustum_culled: counters[stat::MESHLETS_FRUSTUM_CULLED],
+            meshlets_cone_culled: counters[stat::MESHLETS_CONE_CULLED],
+            meshlets_occlusion_culled: counters[stat::MESHLETS_OCCLUSION_CULLED],
+            meshlets_drawn: counters[stat::MESHLETS_DRAWN],
+            shadow_meshlets: counters[stat::MESHLETS_SHADOW_DRAWN],
             exposure_ev: exposure[0],
             average_luminance: exposure[2],
         }
@@ -216,10 +243,40 @@ struct FrameBuffers {
     draws: Buffer,
     draw_count: Buffer,
     draw_instances: Buffer,
+    /// What the passes count, in GPU memory, copied to `stats_readback` at
+    /// the end of the frame for the CPU to read.
     stats: Buffer,
+    stats_readback: Buffer,
     clusters: Buffer,
     pointers: Buffer,
     debug_lines: Buffer,
+    /// The meshlet lists, made for `meshlet_capacity` (see `gpu::meshlet_list`).
+    meshlet_draws: Buffer,
+    meshlet_draw_instances: Buffer,
+    /// The meshlets the cull queues for the meshlet pass, laid out as the lists.
+    meshlet_work: Buffer,
+    meshlet_capacity: u32,
+    /// What its buffers' names start with.
+    prefix: String,
+}
+
+impl FrameBuffers {
+    /// Makes sure the meshlet lists have room for `needed`, making them
+    /// again half as large again when they do not, so a growing scene does
+    /// not make them every frame. The caller has waited for this slot's last
+    /// frame, so the old ones can go at once.
+    fn fit_meshlets(&mut self, gpu: &Gpu, slot: usize, needed: u32) -> Result<()> {
+        if needed <= self.meshlet_capacity {
+            return Ok(());
+        }
+        let capacity = needed.max(self.meshlet_capacity + self.meshlet_capacity / 2).min(MAX_MESHLET_CAPACITY);
+        let [draws, instances, work] = create_meshlet_lists(gpu, &self.prefix, slot, capacity)?;
+        gpu.destroy_buffer(std::mem::replace(&mut self.meshlet_draws, draws));
+        gpu.destroy_buffer(std::mem::replace(&mut self.meshlet_draw_instances, instances));
+        gpu.destroy_buffer(std::mem::replace(&mut self.meshlet_work, work));
+        self.meshlet_capacity = capacity;
+        Ok(())
+    }
 }
 
 pub struct Renderer {
@@ -709,7 +766,7 @@ impl Renderer {
         self.captures.finish(&self.gpu, frame.slot);
         // This slot's previous frame has finished, so its counters are final.
         let first = &self.views[0];
-        let counters = bytemuck::cast_slice(&first.buffers[frame.slot].stats.read()[..stat::COUNT * 4]);
+        let counters = bytemuck::cast_slice(&first.buffers[frame.slot].stats_readback.read()[..stat::COUNT * 4]);
         let exposure = bytemuck::cast_slice(first.exposure.read());
         self.stats = RenderStats::read(counters, exposure);
         let acquired = {
@@ -1033,6 +1090,8 @@ struct View {
     prev_view_proj: Option<Mat4Cols>,
     /// The size TAA's history was rendered at; `None` when it is stale.
     taa_history: Option<vk::Extent2D>,
+    /// It has said its scene has too many meshlets to cull one by one.
+    warned_meshlets: bool,
 }
 
 /// What every view's frame shares.
@@ -1089,6 +1148,7 @@ impl View {
             prev_entities: Vec::new(),
             prev_view_proj: None,
             taa_history: None,
+            warned_meshlets: false,
         })
     }
 
@@ -1106,9 +1166,15 @@ impl View {
                 clusters,
                 pointers,
                 debug_lines,
+                meshlet_draws,
+                meshlet_draw_instances,
+                meshlet_work,
+                stats_readback,
+                ..
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
-            for buffer in all.into_iter().chain([debug_lines]) {
+            let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
+            for buffer in all.into_iter().chain([debug_lines, stats_readback]).chain(meshlets) {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -1180,6 +1246,22 @@ impl View {
         let light_count = extracted.lights.len().min(MAX_LIGHTS as usize);
         drop(extracting);
 
+        // As many meshlets as every instance's draw could turn into, so the meshlet lists never drop any.
+        let needed: u64 =
+            extracted.instances[..instance_count].iter().map(|i| u64::from(assets.most_meshlets(i.mesh))).sum();
+        let meshlet_capacity = match self.options.meshlet_culling {
+            true if needed <= u64::from(MAX_MESHLET_CAPACITY) => {
+                self.buffers[slot].fit_meshlets(gpu, slot, needed as u32)?;
+                Some(self.buffers[slot].meshlet_capacity)
+            }
+            true => {
+                if !std::mem::replace(&mut self.warned_meshlets, true) {
+                    tracing::warn!("{needed} meshlets are too many to cull one by one; drawing whole LODs");
+                }
+                None
+            }
+            false => None,
+        };
         let buffers = &self.buffers[slot];
         let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
@@ -1220,6 +1302,12 @@ impl View {
         frame_data.delta_time = setup.delta_time;
         frame_data.frame_index = setup.frame_index as u32;
         frame_data.taa_reset = u32::from(taa_reset);
+        frame_data.meshlet_capacity = meshlet_capacity.unwrap_or(0);
+        // The wireframe view draws back faces too, and the meshlets view colours each meshlet by its own draw.
+        let cones = if self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME { 0 } else { MESHLET_CONES };
+        let runs = if self.options.debug_view == gpu::DEBUG_VIEW_MESHLETS { 0 } else { MESHLET_RUNS };
+        let culling = if meshlet_capacity.is_some() { MESHLET_CULLING } else { 0 };
+        frame_data.meshlet_flags = cones | runs | culling;
         buffers.frame.write(0, &[frame_data]);
         buffers.pointers.write(
             0,
@@ -1239,6 +1327,12 @@ impl View {
                 exposure: self.exposure.address,
                 ui_quads: setup.ui_quads,
                 debug_lines: buffers.debug_lines.address,
+                meshlets: assets.meshlets.address,
+                meshlet_vertices: assets.meshlet_vertices.address,
+                meshlet_triangles: assets.meshlet_triangles.address,
+                meshlet_draws: buffers.meshlet_draws.address,
+                meshlet_draw_instances: buffers.meshlet_draw_instances.address,
+                meshlet_work: buffers.meshlet_work.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -1268,11 +1362,18 @@ impl View {
             visibility: fg.import_buffer(&self.visibility),
             lod_state: fg.import_buffer(&self.lod_state),
             stats: fg.import_buffer(&buffers.stats),
+            stats_readback: fg.import_buffer(&buffers.stats_readback),
             clusters: fg.import_buffer(&buffers.clusters),
+            meshlet_draws: fg.import_buffer(&buffers.meshlet_draws),
+            meshlet_instances: fg.import_buffer(&buffers.meshlet_draw_instances),
+            meshlet_work: fg.import_buffer(&buffers.meshlet_work),
             draws_handle: buffers.draws.handle,
             count_handle: buffers.draw_count.handle,
             stats_handle: buffers.stats.handle,
+            stats_readback_handle: buffers.stats_readback.handle,
             index_buffer: assets.indices.handle,
+            meshlet_draws_handle: buffers.meshlet_draws.handle,
+            meshlet_capacity,
         };
         let wireframe = self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME;
         let edges = self.options.debug_view == gpu::DEBUG_VIEW_LIT_WIREFRAME;
@@ -1347,6 +1448,8 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
     let storage = vk::BufferUsageFlags::STORAGE_BUFFER;
     let indirect = storage | vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
     let lists = u64::from(LIST_COUNT);
+    let [meshlet_draws, meshlet_draw_instances, meshlet_work] =
+        create_meshlet_lists(gpu, prefix, slot, FIRST_MESHLET_CAPACITY)?;
     Ok(FrameBuffers {
         frame: gpu.create_buffer(&format!("{prefix}frame {slot}"), size_of::<GpuFrame>() as u64, storage, host)?,
         instances: gpu.create_buffer(
@@ -1369,7 +1472,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         )?,
         draw_count: gpu.create_buffer(
             &format!("{prefix}draw counts {slot}"),
-            lists * 4,
+            DRAW_COUNT_SIZE,
             indirect,
             MemoryLocation::GpuOnly,
         )?,
@@ -1382,7 +1485,13 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         stats: gpu.create_buffer(
             &format!("{prefix}stats {slot}"),
             stat::COUNT as u64 * 4,
-            storage | vk::BufferUsageFlags::TRANSFER_DST,
+            storage | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryLocation::GpuOnly,
+        )?,
+        stats_readback: gpu.create_buffer(
+            &format!("{prefix}stats readback {slot}"),
+            stat::COUNT as u64 * 4,
+            vk::BufferUsageFlags::TRANSFER_DST,
             MemoryLocation::GpuToCpu,
         )?,
         clusters: gpu.create_buffer(
@@ -1403,5 +1512,33 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
             storage,
             host,
         )?,
+        meshlet_draws,
+        meshlet_draw_instances,
+        meshlet_work,
+        meshlet_capacity: FIRST_MESHLET_CAPACITY,
+        prefix: prefix.to_string(),
     })
+}
+
+/// A view's meshlet lists for one frame in flight, for `capacity` (see
+/// `gpu::meshlet_list`): their draws, each draw's instance, and the
+/// meshlets queued for the meshlet pass.
+fn create_meshlet_lists(gpu: &Gpu, prefix: &str, slot: usize, capacity: u32) -> Result<[Buffer; 3]> {
+    let storage = vk::BufferUsageFlags::STORAGE_BUFFER;
+    let entries = meshlet_lists_len(capacity).max(1);
+    let draws = gpu.create_buffer(
+        &format!("{prefix}meshlet draws {slot}"),
+        entries * DRAW_COMMAND_SIZE,
+        storage | vk::BufferUsageFlags::INDIRECT_BUFFER,
+        MemoryLocation::GpuOnly,
+    )?;
+    let instances = gpu.create_buffer(
+        &format!("{prefix}meshlet draw instances {slot}"),
+        entries * 4,
+        storage,
+        MemoryLocation::GpuOnly,
+    )?;
+    let work =
+        gpu.create_buffer(&format!("{prefix}meshlet work {slot}"), entries * 8, storage, MemoryLocation::GpuOnly)?;
+    Ok([draws, instances, work])
 }

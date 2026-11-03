@@ -23,6 +23,43 @@ static const uint CASCADES = 4;
 static const uint LIST_EARLY = 0;
 static const uint LIST_LATE = 1;
 static const uint LIST_SHADOW = 2;
+static const uint LIST_COUNT = LIST_SHADOW + CASCADES;
+
+// Each instance list's draw count heads a dispatch's arguments (count, 1, 1).
+// With meshlet culling the list's draws are not written: its meshlets are
+// queued instead, and the first word is how many workgroups the meshlet pass
+// runs for them, without the CPU reading it back, and the fourth how many
+// were queued. Each meshlet list's count follows them all.
+static const uint DRAW_COUNT_STRIDE = 4;
+
+uint drawCountIndex(uint list)
+{
+    return list * DRAW_COUNT_STRIDE;
+}
+
+uint queuedCountIndex(uint list)
+{
+    return list * DRAW_COUNT_STRIDE + 3;
+}
+
+uint meshletCountIndex(uint list)
+{
+    return LIST_COUNT * DRAW_COUNT_STRIDE + list;
+}
+
+// Meshlet lists, one after another: the main view's two hold two draws'
+// meshlets for each instance, since a fading instance draws two LODs; each
+// shadow cascade's holds one. `capacity` is the most meshlets every
+// instance's draw could turn into together, worked out on the CPU.
+uint meshletListBase(uint list, uint capacity)
+{
+    return list < LIST_SHADOW ? list * 2 * capacity : (4 + list - LIST_SHADOW) * capacity;
+}
+
+uint meshletListCapacity(uint list, uint capacity)
+{
+    return list < LIST_SHADOW ? 2 * capacity : capacity;
+}
 
 static const uint STAT_TESTED = 0;
 static const uint STAT_FRUSTUM_CULLED = 1;
@@ -34,6 +71,12 @@ static const uint STAT_SHADOW_DRAWS = STAT_LOD + MAX_LODS;
 static const uint STAT_FADE_DRAWS = STAT_SHADOW_DRAWS + 1;
 static const uint STAT_CLUSTER_MAX_LIGHTS = STAT_FADE_DRAWS + 1;
 static const uint STAT_CLUSTER_LIGHT_LINKS = STAT_CLUSTER_MAX_LIGHTS + 1;
+static const uint STAT_MESHLETS_TESTED = STAT_CLUSTER_LIGHT_LINKS + 1;
+static const uint STAT_MESHLETS_FRUSTUM_CULLED = STAT_MESHLETS_TESTED + 1;
+static const uint STAT_MESHLETS_CONE_CULLED = STAT_MESHLETS_FRUSTUM_CULLED + 1;
+static const uint STAT_MESHLETS_OCCLUSION_CULLED = STAT_MESHLETS_CONE_CULLED + 1;
+static const uint STAT_MESHLETS_DRAWN = STAT_MESHLETS_OCCLUSION_CULLED + 1;
+static const uint STAT_MESHLETS_SHADOW_DRAWN = STAT_MESHLETS_DRAWN + 1;
 
 static const uint DEBUG_VIEW_NONE = 0;
 static const uint DEBUG_VIEW_LOD = 1;
@@ -43,6 +86,20 @@ static const uint DEBUG_VIEW_NORMALS = 4;
 static const uint DEBUG_VIEW_UNLIT = 5;
 static const uint DEBUG_VIEW_WIREFRAME = 6;
 static const uint DEBUG_VIEW_LIT_WIREFRAME = 7;
+static const uint DEBUG_VIEW_MESHLETS = 8;
+
+// Frame.meshletFlags: back-facing meshlets are culled; surviving meshlets
+// side by side are drawn together; draws are culled meshlet by meshlet.
+static const uint MESHLET_CONES = 1;
+static const uint MESHLET_RUNS = 2;
+static const uint MESHLET_CULLING = 4;
+
+// Meshlets the meshlet pass, and a task shader, take at a time.
+static const uint MESHLET_ROUND = 32;
+
+// Push.source: which lists a draw pass reads.
+static const uint DRAWS_INSTANCES = 0;
+static const uint DRAWS_MESHLETS = 1;
 
 // A draw's instance index, with its LOD and fade role packed in the top byte.
 static const uint DRAW_INSTANCE_MASK = 0xFFFFFF;
@@ -255,6 +312,11 @@ struct Frame
     uint taaReset;
     uint frameIndex;
     Post post;
+    // How many meshlets each instance list's draws can turn into, at most;
+    // the meshlet lists are laid out by it (meshletListBase).
+    uint meshletCapacity;
+    uint meshletFlags;
+    uint2 pad5;
 };
 
 struct DrawCommand
@@ -309,6 +371,15 @@ struct Buffers
     float* exposure;
     UiQuad* uiQuads;
     DebugLine* debugLines;
+    Meshlet* meshlets;
+    uint* meshletVertices;
+    uint* meshletTriangles;
+    DrawCommand* meshletDraws;
+    uint* meshletDrawInstances;
+    // The meshlets the cull queued for the meshlet pass, laid out as the
+    // meshlet lists are: each as its draw (as drawInstances) and its place
+    // in the draw's LOD.
+    uint2* meshletWork;
 };
 
 struct Push
@@ -321,7 +392,8 @@ struct Push
     uint output;
     uint2 size;
     uint level;
-    uint pad;
+    // DRAWS_INSTANCES or DRAWS_MESHLETS.
+    uint source;
     uint4 textures;
 };
 
@@ -332,12 +404,35 @@ Buffers* buffers()
     return push.buffers;
 }
 
+// A draw's instance, from the instance list or the meshlet list the pass
+// draws, with the LOD it draws and its role in a fade.
 uint drawInstance(uint drawId, out uint lod, out uint fade)
 {
-    uint packed = buffers()->drawInstances[push.list * push.maxDraws + drawId];
+    uint packed = push.source == DRAWS_MESHLETS
+        ? buffers()->meshletDrawInstances[meshletListBase(push.list, push.frame->meshletCapacity) + drawId]
+        : buffers()->drawInstances[push.list * push.maxDraws + drawId];
     lod = (packed >> DRAW_LOD_SHIFT) & 0xF;
     fade = packed & (DRAW_FADING_IN | DRAW_FADING_OUT);
     return packed & DRAW_INSTANCE_MASK;
+}
+
+// A draw's first index, which names a meshlet (or a whole LOD) for as long
+// as its mesh is loaded: the meshlets debug view colours by it.
+uint drawFirstIndex(uint drawId)
+{
+    return push.source == DRAWS_MESHLETS
+        ? buffers()->meshletDraws[meshletListBase(push.list, push.frame->meshletCapacity) + drawId].firstIndex
+        : buffers()->draws[push.list * push.maxDraws + drawId].firstIndex;
+}
+
+// A bright colour of its own for each key, for debug views.
+float3 keyColor(uint key)
+{
+    uint h = key * 2654435761u;
+    h ^= h >> 15;
+    h *= 2246822519u;
+    h ^= h >> 13;
+    return float3(uint3(h, h >> 8, h >> 16) & 0xFF) / 255.0 * 0.75 + 0.25;
 }
 
 

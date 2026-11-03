@@ -9,21 +9,12 @@
 // Each draw also picks the coarsest LOD whose error stays under a pixel. When
 // an instance's LOD changes, both LODs are drawn for a moment with
 // complementary dither patterns, so the switch fades instead of popping.
+//
+// With meshlet culling, a draw is not written but its meshlets are queued,
+// and the meshlet pass (meshletMain) after each list draws those that
+// survive the same tests, for the passes to draw instead.
 
-#include "common.slang"
-
-bool insidePlanes(float4 planes[6], float3 center, float radius)
-{
-    // Five planes: the sixth is unused (infinite far plane, or open near side).
-    for (int i = 0; i < 5; i++)
-    {
-        if (dot(planes[i].xyz, center) + planes[i].w < -radius)
-        {
-            return false;
-        }
-    }
-    return true;
-}
+#include "culling.slang"
 
 uint selectLod(Mesh mesh, float scale, float pixelsPerUnit, float threshold)
 {
@@ -67,41 +58,38 @@ uint instanceLod(Frame* frame, Instance instance, Mesh mesh, float3 center, floa
     return selectLod(mesh, scale, pixelsPerUnit, threshold * exp2(instance.lodBias));
 }
 
-// True when the sphere's screen box is entirely behind the depth pyramid.
-// With reverse-Z, larger depth is nearer, and the pyramid stores the minimum
-// (farthest) depth of each region.
-bool occluded(Frame* frame, float3 center, float radius)
+// Queues each of a draw's meshlets for the meshlet pass, and grows the
+// pass's dispatch to a workgroup for every round of them. The CPU sizes the
+// lists so they always fit; should they not, every entry the pass reads is
+// still written, as a meshlet of some draw.
+void queueMeshlets(Frame* frame, uint list, uint packed, MeshLod lod)
 {
-    float2 low = 1e9;
-    float2 high = -1e9;
-    float nearest = 0.0;
-    for (uint i = 0; i < 8; i++)
+    uint first;
+    InterlockedAdd(buffers()->drawCount[queuedCountIndex(list)], lod.meshletCount, first);
+    uint end = min(first + lod.meshletCount, meshletListCapacity(list, frame->meshletCapacity));
+    if (end <= first)
     {
-        float3 corner = center + radius * float3((i & 1) != 0 ? 1.0 : -1.0, (i & 2) != 0 ? 1.0 : -1.0, (i & 4) != 0 ? 1.0 : -1.0);
-        float4 clip = transform(frame->viewProj, float4(corner, 1.0));
-        if (clip.w <= frame->near)
-        {
-            // Crosses the near plane: too close to judge, so draw it.
-            return false;
-        }
-        float3 ndc = clip.xyz / clip.w;
-        low = min(low, ndc.xy);
-        high = max(high, ndc.xy);
-        nearest = max(nearest, ndc.z);
+        return;
     }
-    float2 uvLow = saturate(low * 0.5 + 0.5);
-    float2 uvHigh = saturate(high * 0.5 + 0.5);
-    float2 pixels = (uvHigh - uvLow) * float2(frame->hizSize);
-    // At this level the box spans at most one texel, so the 2x2 min footprint covers it.
-    float level = min(ceil(log2(max(max(pixels.x, pixels.y), 1.0))), float(frame->hizMips - 1));
-    float depth = textures[frame->hizTexture].SampleLevel(samplers[SAMPLER_MIN_REDUCTION], (uvLow + uvHigh) * 0.5, level).r;
-    return nearest < depth;
+    uint ignored;
+    InterlockedMax(buffers()->drawCount[drawCountIndex(list)], (end + MESHLET_ROUND - 1) / MESHLET_ROUND, ignored);
+    uint base = meshletListBase(list, frame->meshletCapacity);
+    for (uint i = first; i < end; i++)
+    {
+        buffers()->meshletWork[base + i] = uint2(packed, i - first);
+    }
 }
 
 void emit(uint list, uint instance, Mesh mesh, uint lod, uint fade)
 {
+    uint packed = fade | (lod << DRAW_LOD_SHIFT) | instance;
+    if ((push.frame->meshletFlags & MESHLET_CULLING) != 0)
+    {
+        queueMeshlets(push.frame, list, packed, mesh.lods[lod]);
+        return;
+    }
     uint slot;
-    InterlockedAdd(buffers()->drawCount[list], 1, slot);
+    InterlockedAdd(buffers()->drawCount[drawCountIndex(list)], 1, slot);
     if (slot >= push.maxDraws)
     {
         return;
@@ -114,7 +102,7 @@ void emit(uint list, uint instance, Mesh mesh, uint lod, uint fade)
     draw.firstInstance = 0;
     uint index = list * push.maxDraws + slot;
     buffers()->draws[index] = draw;
-    buffers()->drawInstances[index] = fade | (lod << DRAW_LOD_SHIFT) | instance;
+    buffers()->drawInstances[index] = packed;
 }
 
 void count(uint stat)
@@ -240,4 +228,86 @@ void cullMain(uint3 id : SV_DispatchThreadID)
         buffers()->lodState[id.x] = 0;
     }
     buffers()->visibility[id.x] = visible ? 1 : 0;
+}
+
+// The meshlet pass: a thread for each meshlet the cull queued, a round of
+// them to a workgroup, whatever draws they belong to, so a LOD of a few
+// meshlets leaves no lanes idle. Each meshlet that survives is drawn, and
+// runs of them side by side, from the same draw, are drawn together.
+
+// Each thread's meshlet in the round, by its draw and its place in its LOD,
+// with ~0 for its draw when it did not survive.
+groupshared uint roundDraws[MESHLET_ROUND];
+groupshared uint roundMeshlets[MESHLET_ROUND];
+
+// Writes one draw for each run of the round's surviving meshlets that lie
+// side by side in one draw's LOD. A LOD's meshlets hold its indices in turn,
+// so a run is one range of them: a draw whose meshlets all survive stays a
+// draw or two rather than one a meshlet, which would cost the GPU's front
+// end far more than culling saves. The meshlets debug view draws each
+// meshlet on its own, to colour it by its first index.
+void emitRuns(Frame* frame, uint list, uint thread, bool visible, uint2 entry, MeshLod lod)
+{
+    roundDraws[thread] = visible ? entry.x : ~0u;
+    roundMeshlets[thread] = entry.y;
+    GroupMemoryBarrierWithGroupSync();
+
+    bool runs = (frame->meshletFlags & MESHLET_RUNS) != 0;
+    uint before = max(thread, 1u) - 1;
+    bool follows = runs && thread > 0 && roundDraws[before] == entry.x && roundMeshlets[before] + 1 == entry.y;
+    bool starts = visible && !follows;
+    uint run = 1;
+    while (starts && runs && thread + run < MESHLET_ROUND && roundDraws[thread + run] == entry.x
+           && roundMeshlets[thread + run] == entry.y + run)
+    {
+        run++;
+    }
+
+    uint lanes = WaveActiveCountBits(starts);
+    uint first = 0;
+    if (WaveIsFirstLane() && lanes > 0)
+    {
+        InterlockedAdd(buffers()->drawCount[meshletCountIndex(list)], lanes, first);
+    }
+    first = WaveReadLaneFirst(first);
+    uint slot = first + WavePrefixCountBits(starts);
+    if (!starts || slot >= meshletListCapacity(list, frame->meshletCapacity))
+    {
+        return;
+    }
+    uint begin = buffers()->meshlets[lod.meshletOffset + entry.y].firstIndex;
+    uint next = entry.y + run;
+    uint end = next < lod.meshletCount ? buffers()->meshlets[lod.meshletOffset + next].firstIndex : lod.indexCount;
+    DrawCommand draw;
+    draw.indexCount = end - begin;
+    draw.instanceCount = 1;
+    draw.firstIndex = lod.indexOffset + begin;
+    draw.vertexOffset = 0;
+    draw.firstInstance = 0;
+    uint at = meshletListBase(list, frame->meshletCapacity) + slot;
+    buffers()->meshletDraws[at] = draw;
+    buffers()->meshletDrawInstances[at] = entry.x;
+}
+
+// Dispatched with the size the cull grew for list push.list.
+[shader("compute")]
+[numthreads(MESHLET_ROUND, 1, 1)]
+void meshletMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
+{
+    Frame* frame = push.frame;
+    uint list = push.list;
+    uint work = group.x * MESHLET_ROUND + thread.x;
+    bool tested = work < queuedMeshlets(frame, list);
+    uint2 entry = tested ? buffers()->meshletWork[meshletListBase(list, frame->meshletCapacity) + work] : uint2(~0u, 0);
+    uint result = MESHLET_OUTSIDE;
+    MeshLod lod = (MeshLod)0;
+    if (tested)
+    {
+        Instance instance = buffers()->instances[entry.x & DRAW_INSTANCE_MASK];
+        lod = buffers()->meshes[instance.mesh].lods[(entry.x >> DRAW_LOD_SHIFT) & 0xF];
+        Meshlet meshlet = buffers()->meshlets[lod.meshletOffset + entry.y];
+        result = cullMeshlet(frame, meshletCuller(frame, instance, list), meshlet);
+    }
+    countMeshlets(list, tested, result);
+    emitRuns(frame, list, thread.x, tested && result == MESHLET_VISIBLE, entry, lod);
 }

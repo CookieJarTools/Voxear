@@ -2,7 +2,7 @@
 // both compile shaders the same way.
 
 /// Shader files that only hold shared code and have no entry points.
-pub const SHADER_MODULES: &[&str] = &["common"];
+pub const SHADER_MODULES: &[&str] = &["common", "culling"];
 
 /// `slangc` arguments besides the input file, include path and output.
 pub const SLANG_ARGS: &[&str] = &[

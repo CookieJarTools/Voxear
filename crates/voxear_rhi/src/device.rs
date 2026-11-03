@@ -311,9 +311,14 @@ unsafe extern "system" fn log_validation(
 
 fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
     let mut driver = vk::PhysicalDeviceDriverProperties::default();
-    let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
+    let mut v11 = vk::PhysicalDeviceVulkan11Properties::default();
+    let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut driver).push_next(&mut v11);
     unsafe { instance.get_physical_device_properties2(physical, &mut properties) };
     let props = properties.properties;
+    // Culling compacts its draws a wave at a time.
+    let waves = vk::SubgroupFeatureFlags::BASIC | vk::SubgroupFeatureFlags::BALLOT;
+    let compute_waves = v11.subgroup_supported_stages.contains(vk::ShaderStageFlags::COMPUTE)
+        && v11.subgroup_supported_operations.contains(waves);
     let memory = unsafe { instance.get_physical_device_memory_properties(physical) };
     let device_local: u64 = memory
         .memory_heaps_as_slice()
@@ -336,6 +341,8 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
         Some("no swapchain support".to_string())
     } else if props.limits.timestamp_compute_and_graphics == vk::FALSE {
         Some("no GPU timestamps".to_string())
+    } else if !compute_waves {
+        Some("no subgroup ballots in compute shaders".to_string())
     } else {
         let missing = missing_features(instance, physical);
         (!missing.is_empty()).then(|| format!("missing {}", missing.join(", ")))

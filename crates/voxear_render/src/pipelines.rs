@@ -27,6 +27,8 @@ const EDGE_BIAS: (f32, f32) = (1.0, 1.0);
 pub struct Pipelines {
     pub clusters: vk::Pipeline,
     pub cull: vk::Pipeline,
+    /// Turns each instance draw into draws of its meshlets that survive culling.
+    pub meshlet_cull: vk::Pipeline,
     pub pyramid: vk::Pipeline,
     pub shadow: vk::Pipeline,
     pub forward: vk::Pipeline,
@@ -95,6 +97,7 @@ impl Pipelines {
         let pipelines = Self {
             clusters: create_compute_pipeline(gpu, layout, "Light clusters", clusters, c"clusterMain")?,
             cull: create_compute_pipeline(gpu, layout, "Cull", cull, c"cullMain")?,
+            meshlet_cull: create_compute_pipeline(gpu, layout, "Meshlets", cull, c"meshletMain")?,
             pyramid: create_compute_pipeline(gpu, layout, "Depth pyramid", pyramid, c"reduceMain")?,
             shadow: graphics(&GraphicsPipelineDesc {
                 // Single-sided geometry such as planes must still cast.
@@ -184,6 +187,7 @@ impl Pipelines {
         let all = [
             self.clusters,
             self.cull,
+            self.meshlet_cull,
             self.pyramid,
             self.shadow,
             self.forward,

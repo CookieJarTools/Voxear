@@ -9,8 +9,8 @@ use crate::{
     assets::{MaterialHandle, MeshHandle},
     lod_group::{LodCamera, LodChoices},
     gpu::{
-        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_NONE, GpuFrame, GpuInstance, GpuLight,
-        LIGHT_POINT, LIGHT_SPOT, MAX_CLUSTER_LIGHTS, NO_TEXTURE, cols, vec3,
+        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_NONE, GpuFrame, GpuInstance, GpuLight, GpuLighting,
+        LIGHT_DISC, LIGHT_POINT, LIGHT_RECTANGLE, LIGHT_SPOT, LIGHT_TUBE, MAX_CLUSTER_LIGHTS, NO_TEXTURE, SKY_GRADIENT, cols, vec3,
     },
     post::{AmbientOcclusion, AntiAliasingMode, PostProcess, taa_jitter},
     shadows::{self, CASCADES},
@@ -38,43 +38,89 @@ pub enum LightKind {
     Point,
     /// Shines along the Obj's +Z.
     Spot,
+    /// A rectangle that shines from its face along the Obj's +Z, as a window
+    /// or a panel light does: `width` along +X and `height` along +Y.
+    Rectangle,
+    /// A disc of `radius` that shines from its face along the Obj's +Z.
+    Disc,
+    /// A glowing capsule, as a fluorescent tube is: `length` along the Obj's
+    /// +X, and `radius` round it.
+    Tube,
+}
+
+impl LightKind {
+    /// Whether it shines from a shape rather than a point.
+    pub fn has_shape(self) -> bool {
+        matches!(self, Self::Rectangle | Self::Disc | Self::Tube)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Light {
     pub kind: LightKind,
     pub color: Vec3,
+    /// For a shape, what a point light of this intensity would give straight
+    /// ahead of it from far away, so changing its size does not change how
+    /// much light it gives.
     pub intensity: f32,
+    /// How far it reaches, from the nearest point of its shape.
     pub range: f32,
     pub spot_inner_degrees: f32,
     pub spot_outer_degrees: f32,
+    /// A rectangle's size, in metres.
+    pub width: f32,
+    pub height: f32,
+    /// A disc's or a tube's radius, in metres.
+    pub radius: f32,
+    /// A tube's length, end to end, in metres.
+    pub length: f32,
 }
 impl Component for Light {}
 
 impl Light {
     pub fn directional(color: Vec3, intensity: f32) -> Self {
-        Self {
-            kind: LightKind::Directional,
-            color,
-            intensity,
-            range: 0.0,
-            spot_inner_degrees: 0.0,
-            spot_outer_degrees: 0.0,
-        }
+        Self { kind: LightKind::Directional, ..Self::shaped(color, intensity, 0.0) }
     }
 
     pub fn point(color: Vec3, intensity: f32, range: f32) -> Self {
-        Self { kind: LightKind::Point, color, intensity, range, spot_inner_degrees: 0.0, spot_outer_degrees: 0.0 }
+        Self::shaped(color, intensity, range)
     }
 
     pub fn spot(color: Vec3, intensity: f32, range: f32, inner_degrees: f32, outer_degrees: f32) -> Self {
         Self {
             kind: LightKind::Spot,
+            spot_inner_degrees: inner_degrees,
+            spot_outer_degrees: outer_degrees,
+            ..Self::shaped(color, intensity, range)
+        }
+    }
+
+    pub fn rectangle(color: Vec3, intensity: f32, range: f32, width: f32, height: f32) -> Self {
+        Self { kind: LightKind::Rectangle, width, height, ..Self::shaped(color, intensity, range) }
+    }
+
+    pub fn disc(color: Vec3, intensity: f32, range: f32, radius: f32) -> Self {
+        Self { kind: LightKind::Disc, radius, ..Self::shaped(color, intensity, range) }
+    }
+
+    pub fn tube(color: Vec3, intensity: f32, range: f32, length: f32, radius: f32) -> Self {
+        Self { kind: LightKind::Tube, length, radius, ..Self::shaped(color, intensity, range) }
+    }
+
+    /// A point light with every other setting at nothing, to build the
+    /// others from.
+    fn shaped(color: Vec3, intensity: f32, range: f32) -> Self {
+        Self {
+            kind: LightKind::Point,
             color,
             intensity,
             range,
-            spot_inner_degrees: inner_degrees,
-            spot_outer_degrees: outer_degrees,
+            spot_inner_degrees: 0.0,
+            spot_outer_degrees: 0.0,
+            width: 0.0,
+            height: 0.0,
+            radius: 0.0,
+            length: 0.0,
         }
     }
 }
@@ -271,6 +317,15 @@ pub fn extract(
         ambient: sky.ambient,
         viewport: [width, height],
         inv_view_proj: cols(view_proj.inverse()),
+        lighting: GpuLighting {
+            sky: SKY_GRADIENT,
+            sun_cookie: NO_TEXTURE,
+            transmittance: NO_TEXTURE,
+            multi_scattering: NO_TEXTURE,
+            sky_view: NO_TEXTURE,
+            aerial_perspective: NO_TEXTURE,
+            ..GpuLighting::default()
+        },
         ..Default::default()
     };
 
@@ -289,16 +344,7 @@ pub fn extract(
                 frame.sun_color = vec3(radiance);
             }
             LightKind::Directional => {}
-            LightKind::Point | LightKind::Spot => lights.push(GpuLight {
-                position: vec3(transform.position),
-                range: light.range,
-                color: vec3(radiance),
-                kind: if light.kind == LightKind::Spot { LIGHT_SPOT } else { LIGHT_POINT },
-                direction: vec3(forward),
-                cos_outer: (light.spot_outer_degrees.to_radians() * 0.5).cos(),
-                cos_inner: (light.spot_inner_degrees.to_radians() * 0.5).cos(),
-                _pad: [0.0; 3],
-            }),
+            _ => lights.push(gpu_light(light, transform, radiance)),
         }
     }
     frame.light_count = lights.len() as u32;
@@ -364,6 +410,33 @@ fn frustum_planes(position: Vec3, rotation: Quat, fov_y: f32, aspect: f32, near:
         near_plane,
         [0.0, 0.0, 0.0, 1.0],
     ]
+}
+
+/// A local light as the shaders read it. A shape's size is halved, as they
+/// measure from its middle, and a disc's radius doubled into both halves,
+/// as it is drawn as a polygon of that size (see `shaders/lights.slang`).
+fn gpu_light(light: &Light, transform: &Transform, radiance: Vec3) -> GpuLight {
+    let scale = |size: f32| size.max(0.0);
+    let (kind, size) = match light.kind {
+        LightKind::Spot => (LIGHT_SPOT, [0.0; 2]),
+        LightKind::Rectangle => (LIGHT_RECTANGLE, [scale(light.width) * 0.5, scale(light.height) * 0.5]),
+        LightKind::Disc => (LIGHT_DISC, [scale(light.radius); 2]),
+        LightKind::Tube => (LIGHT_TUBE, [scale(light.length) * 0.5, scale(light.radius)]),
+        LightKind::Point | LightKind::Directional => (LIGHT_POINT, [0.0; 2]),
+    };
+    GpuLight {
+        position: vec3(transform.position),
+        range: light.range,
+        color: vec3(radiance),
+        kind,
+        direction: vec3(transform.rotation * Vec3::Z),
+        cos_outer: (light.spot_outer_degrees.to_radians() * 0.5).cos(),
+        right: vec3(transform.rotation * Vec3::X),
+        cos_inner: (light.spot_inner_degrees.to_radians() * 0.5).cos(),
+        size,
+        cookie: NO_TEXTURE,
+        profile: NO_TEXTURE,
+    }
 }
 
 #[cfg(test)]

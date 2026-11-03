@@ -220,7 +220,12 @@ static const uint INSTANCE_LOD_SCREEN = 2;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;
+static const uint LIGHT_RECTANGLE = 2;
+static const uint LIGHT_DISC = 3;
+static const uint LIGHT_TUBE = 4;
 
+// A local light; mirrors GpuLight in src/gpu.rs. Area lights shine from one
+// face along `direction`; a tube lies along `right`.
 struct Light
 {
     float3 position;
@@ -229,8 +234,12 @@ struct Light
     uint kind;
     float3 direction;
     float cosOuter;
+    float3 right;
     float cosInner;
-    float3 pad;
+    // Half width and height; a disc's radius twice; a tube's half length and radius.
+    float2 size;
+    uint cookie;
+    uint profile;
 };
 
 // Post-processing settings; mirrors GpuPost in src/gpu.rs.
@@ -287,6 +296,45 @@ struct Post
     uint aoPad;
 };
 
+static const uint SKY_GRADIENT = 0;
+static const uint SKY_ATMOSPHERE = 1;
+
+// A planet's atmosphere in kilometres; mirrors GpuAtmosphere in src/gpu.rs.
+struct Atmosphere
+{
+    float3 rayleighScattering;
+    float rayleighHeight;
+    float3 mieScattering;
+    float mieHeight;
+    float3 mieExtinction;
+    float mieG;
+    float3 ozoneAbsorption;
+    float bottomRadius;
+    float3 groundAlbedo;
+    float topRadius;
+    float sunCosRadius;
+    float aerialScale;
+    float2 pad;
+};
+
+// Area lights' tables, the sun's cookie and the sky; mirrors GpuLighting.
+struct Lighting
+{
+    uint ltcMatrix;
+    uint ltcAmplitude;
+    uint sunCookie;
+    float sunCookieSize;
+    float3 sunRight;
+    uint sky;
+    float3 sunUp;
+    uint transmittance;
+    uint multiScattering;
+    uint skyView;
+    uint aerialPerspective;
+    uint pad;
+    Atmosphere atmosphere;
+};
+
 struct Frame
 {
     Mat4 viewProj;
@@ -337,6 +385,7 @@ struct Frame
     uint meshletCapacity;
     uint meshletFlags;
     uint2 pad5;
+    Lighting lighting;
 };
 
 struct DrawCommand

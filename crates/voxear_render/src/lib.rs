@@ -22,6 +22,9 @@ mod graph;
 mod hot_reload;
 mod lod;
 mod lod_group;
+mod ltc;
+#[cfg(test)]
+mod ltc_fit;
 mod mesh;
 mod mesh_tools;
 mod meshlets;
@@ -1344,6 +1347,8 @@ impl View {
         let mut frame_data = extracted.frame;
         frame_data.post.ao_texture = ambient_occlusion.map_or(NO_TEXTURE, |ao| fg.texture(ao.current).0);
         frame_data.post.ao_reset = u32::from(ao_reset);
+        frame_data.lighting.ltc_matrix = assets.ltc[0].0;
+        frame_data.lighting.ltc_amplitude = assets.ltc[1].0;
         frame_data.instance_count = instance_count as u32;
         frame_data.light_count = light_count as u32;
         frame_data.hiz_texture = fg.texture(pyramid).0;

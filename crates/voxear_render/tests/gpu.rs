@@ -1454,3 +1454,93 @@ fn half_resolution_ambient_occlusion_looks_as_full_resolution_does() {
     assert!(corner(&searched).abs_diff(corner(&filled)) <= 12, "{} and {}", corner(&searched), corner(&filled));
     assert!(rgb_at(&filled, corner_pixel(OPEN_FLOOR)).iter().all(|&c| c >= 250), "the open floor stays open");
 }
+
+const LAMP_CAMERA: Vec3 = Vec3::new(0.0, 10.0, 0.0);
+
+/// Looking straight down, with +Z up the screen.
+fn lamp_camera_rotation() -> Quat {
+    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)
+}
+
+/// A floor at night with no light but `lights`, seen from above, and
+/// post-processing that keeps the image steady.
+fn lamp_render(lights: &[(Light, Transform)]) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    for &(light, transform) in lights {
+        world.spawn((light, transform));
+    }
+    world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// How bright the floor is at `point`, red, green and blue together.
+fn floor_brightness(pixels: &[u8], point: Vec3) -> i32 {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let view = Mat4::from_rotation_translation(lamp_camera_rotation(), LAMP_CAMERA).inverse();
+    let clip = vulkan::perspective_infinite_reverse(60f32.to_radians(), 640.0 / 360.0, 0.1) * view * point.extend(1.0);
+    let (x, y) = (clip.x / clip.w * 0.5 + 0.5, clip.y / clip.w * 0.5 + 0.5);
+    assert!((0.0..1.0).contains(&x) && (0.0..1.0).contains(&y), "{point} is in view");
+    rgb_at(pixels, ((x * 640.0) as u32, (y * 360.0) as u32)).iter().sum()
+}
+
+/// One metre up, facing down at the floor, or up away from it.
+fn hanging(facing_down: bool) -> Transform {
+    let angle = if facing_down { std::f32::consts::FRAC_PI_2 } else { -std::f32::consts::FRAC_PI_2 };
+    Transform::new(Vec3::new(0.0, 1.0, 0.0), Quat::from_rotation_x(angle), Vec3::ONE)
+}
+
+#[test]
+fn area_lights_light_what_lies_in_front_of_them_and_fade_with_distance() {
+    let warm = Vec3::new(1.0, 0.9, 0.8);
+    for light in [Light::rectangle(warm, 4.0, 6.0, 1.0, 0.5), Light::disc(warm, 4.0, 6.0, 0.4)] {
+        let (Some(down), Some(up)) = (lamp_render(&[(light, hanging(true))]), lamp_render(&[(light, hanging(false))]))
+        else {
+            return;
+        };
+        keep_image(&format!("{:?} light.png", light.kind), &down);
+        let under = floor_brightness(&down, Vec3::ZERO);
+        let near = floor_brightness(&down, Vec3::new(2.0, 0.0, 0.0));
+        let far = floor_brightness(&down, Vec3::new(4.0, 0.0, 0.0));
+        let beyond = floor_brightness(&down, Vec3::new(7.5, 0.0, 0.0));
+        assert!(under > 150, "{:?}: the floor under the light is lit: {under}", light.kind);
+        assert!(under > near && near > far, "{:?}: it fades: {under}, {near}, {far}", light.kind);
+        // Black is dithered by a step or two, so dark means no more than that.
+        assert!(beyond <= 6, "{:?}: nothing beyond its range: {beyond}", light.kind);
+        let behind = floor_brightness(&up, Vec3::ZERO);
+        assert!(behind <= 6, "{:?}: facing away, the floor is dark: {behind}", light.kind);
+    }
+}
+
+#[test]
+fn a_tube_lights_along_its_length() {
+    let tube = Light::tube(Vec3::ONE, 4.0, 6.0, 4.0, 0.05);
+    let along_x = Transform::from_position(Vec3::new(0.0, 1.0, 0.0));
+    let Some(pixels) = lamp_render(&[(tube, along_x)]) else { return };
+    keep_image("tube light.png", &pixels);
+    let middle = floor_brightness(&pixels, Vec3::ZERO);
+    let towards_end = floor_brightness(&pixels, Vec3::new(1.5, 0.0, 0.0));
+    let beside = floor_brightness(&pixels, Vec3::new(0.0, 0.0, 1.5));
+    let past_end = floor_brightness(&pixels, Vec3::new(3.5, 0.0, 0.0));
+    assert!(middle > 150, "{middle}");
+    assert!(towards_end * 10 > middle * 7, "nearly as bright along it: {towards_end} of {middle}");
+    assert!(beside < towards_end, "dimmer off to the side at the same distance from the middle: {beside}");
+    assert!(past_end < towards_end, "and past its end: {past_end}");
+
+    // A point light of the same intensity gives the same light from far off.
+    let point = Light::point(Vec3::ONE, 4.0, 6.0);
+    let Some(single) = lamp_render(&[(point, along_x)]) else { return };
+    let (tube_far, point_far) = (
+        floor_brightness(&pixels, Vec3::new(0.0, 0.0, 4.5)),
+        floor_brightness(&single, Vec3::new(0.0, 0.0, 4.5)),
+    );
+    assert!(tube_far > 0 && point_far > 0, "{tube_far} {point_far}");
+}

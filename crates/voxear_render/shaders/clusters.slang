@@ -1,8 +1,9 @@
 // Clustered lighting: one thread per froxel tests every light's sphere
 // against the froxel's view-space box and records the ones that reach it.
-// Shading then loops over a pixel's froxel instead of every light.
+// Shading then loops over a pixel's froxel instead of every light. An area
+// or tube light's sphere holds its shape and its range beyond it.
 
-#include "common.slang"
+#include "lights.slang"
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -43,7 +44,8 @@ void clusterMain(uint3 id : SV_DispatchThreadID)
         Light light = buffers()->lights[i];
         float3 center = transform(frame->view, float4(light.position, 1.0)).xyz;
         float3 offset = center - clamp(center, boxLow, boxHigh);
-        if (dot(offset, offset) <= light.range * light.range)
+        float reach = light.range + lightExtent(light);
+        if (dot(offset, offset) <= reach * reach)
         {
             buffers()->clusters[base + 1 + count] = i;
             count++;

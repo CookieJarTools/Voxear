@@ -5,7 +5,9 @@
 
 #pragma once
 
+#include "atmosphere.slang"
 #include "common.slang"
+#include "lights.slang"
 #include "occlusion.slang"
 
 struct VertexOut
@@ -90,22 +92,6 @@ void ditherLodFade(VertexOut input)
     {
         discard;
     }
-}
-
-float3 shadeLocalLight(Surface s, Light light, float3 position)
-{
-    float3 toLight = light.position - position;
-    float distanceSquared = max(dot(toLight, toLight), 1e-4);
-    toLight *= rsqrt(distanceSquared);
-    // Inverse square, smoothly windowed to zero at the range.
-    float ratio = distanceSquared / max(light.range * light.range, 1e-4);
-    float window = saturate(1.0 - ratio * ratio);
-    float attenuation = window * window / distanceSquared;
-    if (light.kind == LIGHT_SPOT)
-    {
-        attenuation *= smoothstep(light.cosOuter, light.cosInner, dot(-toLight, light.direction));
-    }
-    return shade(s, toLight, light.color * attenuation);
 }
 
 float3 surfaceNormal(VertexOut input, Material material)
@@ -209,7 +195,10 @@ FragmentOut fragmentMain(VertexOut input)
     s.f0 = lerp(float3(0.04), base.rgb, metallic);
 
     float shadow = sunShadow(frame, input.worldPosition, s.normal);
-    float3 color = shade(s, -frame->sunDirection, frame->sunColor) * shadow;
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    // Through the atmosphere, the sun reddens as it sets.
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float3 color = shade(s, -frame->sunDirection, sunLight * sunCookieAt(frame, input.worldPosition)) * shadow;
     float viewDepth = dot(input.worldPosition - frame->cameraPosition, frame->cameraForward);
     uint cluster = clusterAt(frame, input.position.xy, viewDepth);
     uint clusterBase = cluster * (frame->clusterMaxLights + 1);
@@ -222,13 +211,20 @@ FragmentOut fragmentMain(VertexOut input)
 
     // Hemisphere ambient until real GI arrives.
     float up = s.normal.y * 0.5 + 0.5;
-    float3 ambient = lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
+    float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
+        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);
     color += ambient * (s.diffuse * occlusion.diffuse + ambientFresnel * (1.0 - s.roughness * 0.7) * occlusion.specular);
 
     color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+    if (atmosphere)
+    {
+        float2 screenUv = input.position.xy / float2(frame->viewport);
+        float4 haze = aerialPerspectiveAt(frame, screenUv, length(input.worldPosition - frame->cameraPosition));
+        color = color * haze.a + haze.rgb * frame->sunColor;
+    }
 
     if (frame->debugView == DEBUG_VIEW_LOD)
     {

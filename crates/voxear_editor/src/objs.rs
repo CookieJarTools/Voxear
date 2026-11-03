@@ -26,7 +26,7 @@ use crate::project_view::AssetPart;
 
 /// What the Hierarchy's + makes, as Unity's GameObject menu: what the menu
 /// says, the new Obj's name, and the rest of its scene file entry.
-pub const NEW_OBJS: [(&str, &str, &str); 10] = [
+pub const NEW_OBJS: [(&str, &str, &str); 13] = [
     ("Empty", "Obj", ""),
     ("Cube", "Cube", "[obj.renderer]\nmesh = \"builtin:cube\""),
     ("Sphere", "Sphere", "[obj.renderer]\nmesh = \"builtin:sphere\""),
@@ -34,6 +34,9 @@ pub const NEW_OBJS: [(&str, &str, &str); 10] = [
     ("Directional Light", "Directional Light", "rotation = [50.0, -30.0, 0.0]\n[obj.light]\ntype = \"directional\""),
     ("Point Light", "Point Light", "[obj.light]\ntype = \"point\""),
     ("Spot Light", "Spot Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"spot\""),
+    ("Rectangle Light", "Rectangle Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"rectangle\""),
+    ("Disc Light", "Disc Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"disc\""),
+    ("Tube Light", "Tube Light", "[obj.light]\ntype = \"tube\""),
     ("Camera", "Camera", "[obj.camera]"),
     ("Audio Source", "Audio Source", "[obj.audio]"),
     ("Car", "Car", CAR),

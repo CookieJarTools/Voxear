@@ -29,7 +29,10 @@ use crate::fields::{self, Pick, Step};
 /// The meshes every project has, as the Mesh menu lists them first.
 const BUILTIN_MESHES: [(&str, &str); 3] =
     [("Cube", "builtin:cube"), ("Sphere", "builtin:sphere"), ("Plane", "builtin:plane")];
-const LIGHT_KINDS: [&str; 3] = ["Directional", "Point", "Spot"];
+const LIGHT_KINDS: [&str; 6] = ["Directional", "Point", "Spot", "Rectangle", "Disc", "Tube"];
+/// The light kinds in `LIGHT_KINDS`'s order.
+const LIGHT_KIND_ORDER: [LightKind; 6] =
+    [LightKind::Directional, LightKind::Point, LightKind::Spot, LightKind::Rectangle, LightKind::Disc, LightKind::Tube];
 const SOUND_SPACES: [&str; 2] = ["3D", "2D"];
 const AUDIO_BUSES: [&str; 2] = ["Effects", "Music"];
 const LOD_MEASURES: [&str; 2] = ["Screen size", "Distance"];
@@ -131,6 +134,10 @@ pub enum Prop {
     Range,
     SpotInner,
     SpotOuter,
+    LightWidth,
+    LightHeight,
+    LightRadius,
+    LightLength,
     FieldOfView,
     Near,
     Exposure,
@@ -252,7 +259,16 @@ impl Prop {
     pub fn part(&self) -> Part {
         match self {
             Prop::Mesh | Prop::Material | Prop::LodBias => Part::Renderer,
-            Prop::LightKind | Prop::LightColor | Prop::Intensity | Prop::Range | Prop::SpotInner | Prop::SpotOuter => {
+            Prop::LightKind
+            | Prop::LightColor
+            | Prop::Intensity
+            | Prop::Range
+            | Prop::SpotInner
+            | Prop::SpotOuter
+            | Prop::LightWidth
+            | Prop::LightHeight
+            | Prop::LightRadius
+            | Prop::LightLength => {
                 Part::Light
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
@@ -346,6 +362,10 @@ impl Prop {
             Prop::Range => "range",
             Prop::SpotInner => "spot_inner",
             Prop::SpotOuter => "spot_outer",
+            Prop::LightWidth => "width",
+            Prop::LightHeight => "height",
+            Prop::LightRadius => "radius",
+            Prop::LightLength => "length",
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
@@ -542,8 +562,12 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             if kind != LightKind::Directional {
                 props.push(Prop::Range);
             }
-            if kind == LightKind::Spot {
-                props.extend([Prop::SpotInner, Prop::SpotOuter]);
+            match kind {
+                LightKind::Spot => props.extend([Prop::SpotInner, Prop::SpotOuter]),
+                LightKind::Rectangle => props.extend([Prop::LightWidth, Prop::LightHeight]),
+                LightKind::Disc => props.push(Prop::LightRadius),
+                LightKind::Tube => props.extend([Prop::LightLength, Prop::LightRadius]),
+                LightKind::Directional | LightKind::Point => {}
             }
             props
         }
@@ -679,6 +703,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::Range => "Range",
         Prop::SpotInner => "Inner angle",
         Prop::SpotOuter => "Outer angle",
+        Prop::LightWidth => "Width",
+        Prop::LightHeight => "Height",
+        Prop::LightRadius => "Radius",
+        Prop::LightLength => "Length",
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
@@ -1020,11 +1048,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             })
         }
         Prop::LightKind => {
-            let index = match light()?.kind {
-                LightKind::Directional => 0,
-                LightKind::Point => 1,
-                LightKind::Spot => 2,
-            };
+            let kind = light()?.kind;
+            let index = LIGHT_KIND_ORDER.iter().position(|&known| known == kind).unwrap_or(0);
             Value::Choice(index, LIGHT_KINDS.iter().map(|k| k.to_string()).collect())
         }
         Prop::LodBias => Value::Number(world.get::<MeshRenderer>(entity)?.lod_bias),
@@ -1033,6 +1058,10 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::Range => Value::Number(light()?.range),
         Prop::SpotInner => Value::Number(light()?.spot_inner_degrees),
         Prop::SpotOuter => Value::Number(light()?.spot_outer_degrees),
+        Prop::LightWidth => Value::Number(light()?.width),
+        Prop::LightHeight => Value::Number(light()?.height),
+        Prop::LightRadius => Value::Number(light()?.radius),
+        Prop::LightLength => Value::Number(light()?.length),
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
@@ -1582,7 +1611,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             }
         }),
         (Prop::LightKind, Value::Choice(index, _)) => with(world, entity, |light: &mut Light| {
-            let kind = [LightKind::Directional, LightKind::Point, LightKind::Spot][index.min(2)];
+            let kind = LIGHT_KIND_ORDER[index.min(LIGHT_KIND_ORDER.len() - 1)];
             // What the old kind did not use starts as a new light of this kind has it.
             let fresh = default_light(kind);
             light.kind = kind;
@@ -1592,6 +1621,15 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             if light.spot_outer_degrees <= 0.0 {
                 (light.spot_inner_degrees, light.spot_outer_degrees) =
                     (fresh.spot_inner_degrees, fresh.spot_outer_degrees);
+            }
+            if light.width <= 0.0 || light.height <= 0.0 {
+                (light.width, light.height) = (fresh.width, fresh.height);
+            }
+            if light.radius <= 0.0 {
+                light.radius = fresh.radius;
+            }
+            if light.length <= 0.0 {
+                light.length = fresh.length;
             }
         }),
         (Prop::LightColor, Value::Color(color)) => {
@@ -1605,6 +1643,10 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::SpotOuter, Value::Number(n)) => {
             with(world, entity, |light: &mut Light| light.spot_outer_degrees = n.clamp(light.spot_inner_degrees, 179.0))
         }
+        (Prop::LightWidth, Value::Number(n)) => with(world, entity, |light: &mut Light| light.width = n.max(0.0)),
+        (Prop::LightHeight, Value::Number(n)) => with(world, entity, |light: &mut Light| light.height = n.max(0.0)),
+        (Prop::LightRadius, Value::Number(n)) => with(world, entity, |light: &mut Light| light.radius = n.max(0.0)),
+        (Prop::LightLength, Value::Number(n)) => with(world, entity, |light: &mut Light| light.length = n.max(0.0)),
         (Prop::FieldOfView, Value::Number(n)) => {
             with(world, entity, |camera: &mut Camera| camera.fov_y_degrees = n.clamp(1.0, 179.0))
         }

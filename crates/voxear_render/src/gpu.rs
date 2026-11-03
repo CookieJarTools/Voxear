@@ -120,19 +120,35 @@ pub const INSTANCE_LOD_SCREEN: u32 = 2;
 
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;
+/// Area lights, shining from one face along their direction.
+pub const LIGHT_RECTANGLE: u32 = 2;
+pub const LIGHT_DISC: u32 = 3;
+/// A capsule along its `right` axis.
+pub const LIGHT_TUBE: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuLight {
     pub position: [f32; 3],
+    /// How far it reaches, from its shape's surface.
     pub range: f32,
     /// Colour times intensity.
     pub color: [f32; 3],
     pub kind: u32,
+    /// Its Obj's +Z, which spot and area lights shine along.
     pub direction: [f32; 3],
     pub cos_outer: f32,
+    /// Its Obj's +X: a rectangle's width and a tube's length lie along it,
+    /// and a cookie's or profile's horizontal axis.
+    pub right: [f32; 3],
     pub cos_inner: f32,
-    pub _pad: [f32; 3],
+    /// A rectangle's half width and half height; a disc's radius twice; a
+    /// tube's half length and radius.
+    pub size: [f32; 2],
+    /// A texture projected along a spot light's cone, or `NO_TEXTURE`.
+    pub cookie: u32,
+    /// An IES profile baked over the sphere (see `ies`), or `NO_TEXTURE`.
+    pub profile: u32,
 }
 
 pub const DEBUG_VIEW_NONE: u32 = 0;
@@ -237,6 +253,63 @@ pub struct GpuFrame {
     /// `MESHLET_CONES`, `MESHLET_RUNS` and `MESHLET_CULLING`.
     pub meshlet_flags: u32,
     pub _pad5: [u32; 2],
+    pub lighting: GpuLighting,
+}
+
+/// `GpuLighting::sky`: the colours the scene gives, or the atmosphere.
+pub const SKY_GRADIENT: u32 = 0;
+#[allow(dead_code, reason = "the atmosphere is drawn once its tables are")]
+pub const SKY_ATMOSPHERE: u32 = 1;
+
+/// What area lights, cookies and the sky shade with beyond the frame's
+/// basics. Mirrors `Lighting` in `shaders/common.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuLighting {
+    /// The LTC tables (see `ltc`).
+    pub ltc_matrix: u32,
+    pub ltc_amplitude: u32,
+    /// A texture the sun's light passes through, tiled over the world every
+    /// `sun_cookie_size` metres, or `NO_TEXTURE`.
+    pub sun_cookie: u32,
+    pub sun_cookie_size: f32,
+    /// The sun's Obj's +X and +Y, which lay its cookie out.
+    pub sun_right: [f32; 3],
+    /// `SKY_GRADIENT` or `SKY_ATMOSPHERE`.
+    pub sky: u32,
+    pub sun_up: [f32; 3],
+    /// The atmosphere's lookup tables, drawn each frame (see `atmosphere`).
+    pub transmittance: u32,
+    pub multi_scattering: u32,
+    pub sky_view: u32,
+    pub aerial_perspective: u32,
+    pub _pad: u32,
+    pub atmosphere: GpuAtmosphere,
+}
+
+/// A planet's atmosphere, in kilometres and per kilometre, as Hillaire's
+/// "A Scalable and Production Ready Sky and Atmosphere Rendering
+/// Technique" (2020) models it. Mirrors `Atmosphere` in the shaders.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuAtmosphere {
+    pub rayleigh_scattering: [f32; 3],
+    pub rayleigh_height: f32,
+    pub mie_scattering: [f32; 3],
+    pub mie_height: f32,
+    pub mie_extinction: [f32; 3],
+    /// Henyey-Greenstein's g for the aerosols: how much they scatter forward.
+    pub mie_g: f32,
+    pub ozone_absorption: [f32; 3],
+    pub bottom_radius: f32,
+    pub ground_albedo: [f32; 3],
+    pub top_radius: f32,
+    /// The cosine of the sun disc's angular radius.
+    pub sun_cos_radius: f32,
+    /// Distances in the scene count as this many times as far for the haze
+    /// over them, as aerial perspective is too faint at a game's scale.
+    pub aerial_scale: f32,
+    pub _pad: [f32; 2],
 }
 
 /// Post-processing settings as shaders read them. Mirrors `Post` in
@@ -460,14 +533,19 @@ mod tests {
         assert_eq!(size_of::<GpuMaterial>(), 64);
         // Three matrices, ids and flags, then where its LODs end.
         assert_eq!(size_of::<GpuInstance>(), 192 + 32);
-        assert_eq!(size_of::<GpuLight>(), 64);
+        assert_eq!(size_of::<GpuLight>(), 80);
         // Two matrices, six planes, nine 16-byte rows, the cascades, then the
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
         let post = 16 * 14;
         let meshlets = 16;
-        assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets);
+        let lighting = 16 * 4 + 16 * 6;
+        assert_eq!(
+            size_of::<GpuFrame>(),
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting
+        );
+        assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 21 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);

@@ -343,7 +343,9 @@ fn camera_body(shapes: &mut Vec<Shape>, at: [f32; 2], color: Color) {
 }
 
 /// What a light reaches: a directional light's direction, a spot light's
-/// cone out to its range, and a point light's range as three rings.
+/// cone out to its range, and a point light's range as three rings. A
+/// shape is drawn as it is, with a rectangle's or a disc's facing as a line
+/// out of its middle, and its range as a ring round it.
 fn light_reach(shapes: &mut Vec<Shape>, camera: &ViewCamera, light: &Light, position: Vec3, rotation: Quat) {
     let color = Color::hex(REACH);
     let forward = rotation * Vec3::Z;
@@ -367,7 +369,35 @@ fn light_reach(shapes: &mut Vec<Shape>, camera: &ViewCamera, light: &Light, posi
                 polyline(shapes, camera, &ring(camera, position, axis, light.range), color);
             }
         }
+        LightKind::Rectangle => {
+            let (right, up) = (rotation * Vec3::X * (light.width * 0.5), rotation * Vec3::Y * (light.height * 0.5));
+            let corners = [position - right - up, position + right - up, position + right + up, position - right + up];
+            for (i, &corner) in corners.iter().enumerate() {
+                line(shapes, camera, corner, corners[(i + 1) % 4], color);
+            }
+            facing(shapes, camera, position, forward, light.range, color);
+        }
+        LightKind::Disc => {
+            polyline(shapes, camera, &ring(camera, position, forward, light.radius), color);
+            facing(shapes, camera, position, forward, light.range, color);
+        }
+        LightKind::Tube => {
+            let along = rotation * Vec3::X * (light.length * 0.5);
+            line(shapes, camera, position - along, position + along, color);
+            for end in [position - along, position + along] {
+                polyline(shapes, camera, &ring(camera, end, along.normalize_or_zero(), light.radius), color);
+            }
+            polyline(shapes, camera, &ring(camera, position, rotation * Vec3::Y, light.range), color);
+        }
     }
+}
+
+/// The way an area light faces, as a line out of its middle, and how far it
+/// reaches that way, as a ring.
+fn facing(shapes: &mut Vec<Shape>, camera: &ViewCamera, position: Vec3, forward: Vec3, range: f32, color: Color) {
+    let tip = position + forward * camera.world_size(position, DIRECTION);
+    line(shapes, camera, position, tip, color);
+    polyline(shapes, camera, &ring(camera, position, forward, range), color);
 }
 
 /// A camera's frustum, a few metres deep: lines from the camera to the far

@@ -181,6 +181,9 @@ pub struct Assets {
     pub default_material: MaterialHandle,
     /// Payload bytes the GPU has decompressed, so far.
     pub decompressed_on_gpu: u64,
+    /// The LTC tables area lights shade with, matrices then amplitudes (see
+    /// `ltc`).
+    pub ltc: [TextureId; 2],
 }
 
 impl Assets {
@@ -226,10 +229,18 @@ impl Assets {
             primitives: HashMap::new(),
             default_material: MaterialHandle(0),
             decompressed_on_gpu: 0,
+            ltc: [TextureId(0); 2],
         };
         let white = TextureSource { name: "white", width: 1, height: 1, rgba: &[255; 4], srgb: false };
         assets.white = assets.add_texture(gpu, bindless, &white)?;
         assets.default_material = assets.add_material(gpu, &MaterialDesc::default())?;
+        let (matrix, amplitude) = crate::ltc::encode();
+        let size = (crate::ltc::LTC_SIZE as u32, crate::ltc::LTC_SIZE as u32);
+        let format = vk::Format::R16G16B16A16_SFLOAT;
+        for (slot, (name, texels)) in [("LTC matrices", matrix), ("LTC amplitudes", amplitude)].into_iter().enumerate() {
+            let bytes = bytemuck::cast_slice(&texels).to_vec();
+            assets.ltc[slot] = assets.add_texture_mips(gpu, bindless, name, size, format, &[bytes])?;
+        }
         Ok(assets)
     }
 

@@ -276,6 +276,54 @@ pub enum LightData {
         #[serde(default = "default_outer")]
         outer_angle: f32,
     },
+    /// A panel shining from its face along the Obj's +Z, `width` along +X.
+    Rectangle {
+        #[serde(default = "white")]
+        color: [f32; 3],
+        #[serde(default = "default_lamp")]
+        intensity: f32,
+        #[serde(default = "default_range")]
+        range: f32,
+        #[serde(default = "one")]
+        width: f32,
+        #[serde(default = "one")]
+        height: f32,
+    },
+    Disc {
+        #[serde(default = "white")]
+        color: [f32; 3],
+        #[serde(default = "default_lamp")]
+        intensity: f32,
+        #[serde(default = "default_range")]
+        range: f32,
+        #[serde(default = "half")]
+        radius: f32,
+    },
+    /// A glowing capsule along the Obj's +X.
+    Tube {
+        #[serde(default = "white")]
+        color: [f32; 3],
+        #[serde(default = "default_lamp")]
+        intensity: f32,
+        #[serde(default = "default_range")]
+        range: f32,
+        #[serde(default = "one")]
+        length: f32,
+        #[serde(default = "default_tube_radius")]
+        radius: f32,
+    },
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+fn half() -> f32 {
+    0.5
+}
+
+fn default_tube_radius() -> f32 {
+    0.05
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -890,6 +938,9 @@ pub fn default_light(kind: LightKind) -> Light {
         LightKind::Directional => "directional",
         LightKind::Point => "point",
         LightKind::Spot => "spot",
+        LightKind::Rectangle => "rectangle",
+        LightKind::Disc => "disc",
+        LightKind::Tube => "tube",
     };
     light_component(toml::from_str(&format!("type = \"{name}\"")).expect("every light field has a default"))
 }
@@ -900,6 +951,15 @@ pub(crate) fn light_component(light: LightData) -> Light {
         LightData::Point { color, intensity, range } => Light::point(Vec3::from(linear(color)), intensity, range),
         LightData::Spot { color, intensity, range, inner_angle, outer_angle } => {
             Light::spot(Vec3::from(linear(color)), intensity, range, inner_angle, outer_angle)
+        }
+        LightData::Rectangle { color, intensity, range, width, height } => {
+            Light::rectangle(Vec3::from(linear(color)), intensity, range, width, height)
+        }
+        LightData::Disc { color, intensity, range, radius } => {
+            Light::disc(Vec3::from(linear(color)), intensity, range, radius)
+        }
+        LightData::Tube { color, intensity, range, length, radius } => {
+            Light::tube(Vec3::from(linear(color)), intensity, range, length, radius)
         }
     }
 }
@@ -917,6 +977,13 @@ fn light_data(light: &Light) -> LightData {
             inner_angle: light.spot_inner_degrees,
             outer_angle: light.spot_outer_degrees,
         },
+        LightKind::Rectangle => {
+            LightData::Rectangle { color, intensity, range: light.range, width: light.width, height: light.height }
+        }
+        LightKind::Disc => LightData::Disc { color, intensity, range: light.range, radius: light.radius },
+        LightKind::Tube => {
+            LightData::Tube { color, intensity, range: light.range, length: light.length, radius: light.radius }
+        }
     }
 }
 
@@ -1033,6 +1100,23 @@ fn default_outer() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn area_and_tube_lights_read_and_write_back() {
+        for text in [
+            "type = \"rectangle\"\nwidth = 2.0\nheight = 0.5",
+            "type = \"disc\"\nradius = 0.3",
+            "type = \"tube\"\nlength = 1.2\nradius = 0.02\nrange = 4.0",
+        ] {
+            let read: LightData = toml::from_str(text).unwrap();
+            let light = light_component(read);
+            assert!(light.kind.has_shape(), "{text}");
+            assert_eq!(light_component(light_data(&light)), light, "{text}");
+        }
+        let panel = default_light(LightKind::Rectangle);
+        assert_eq!((panel.width, panel.height), (1.0, 1.0));
+        assert_eq!(default_light(LightKind::Tube).radius, 0.05);
+    }
 
     #[test]
     fn a_renderers_lod_settings_are_written_only_when_set() {

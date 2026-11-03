@@ -73,6 +73,59 @@ impl ColliderShape {
     }
 }
 
+/// What a collider is made of, to sound: Steam Audio's materials, which
+/// soak up and let through more or less of a sound, a carpet soaking up
+/// much and glass letting through more than brick (see
+/// `voxear_audio::steam_audio::AcousticMaterial`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Acoustic {
+    #[default]
+    Generic,
+    Brick,
+    Concrete,
+    Ceramic,
+    Gravel,
+    Carpet,
+    Glass,
+    Plaster,
+    Wood,
+    Metal,
+    Rock,
+}
+
+impl Acoustic {
+    pub const ALL: [Self; 11] = [
+        Self::Generic,
+        Self::Brick,
+        Self::Concrete,
+        Self::Ceramic,
+        Self::Gravel,
+        Self::Carpet,
+        Self::Glass,
+        Self::Plaster,
+        Self::Wood,
+        Self::Metal,
+        Self::Rock,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Generic => "Generic",
+            Self::Brick => "Brick",
+            Self::Concrete => "Concrete",
+            Self::Ceramic => "Ceramic",
+            Self::Gravel => "Gravel",
+            Self::Carpet => "Carpet",
+            Self::Glass => "Glass",
+            Self::Plaster => "Plaster",
+            Self::Wood => "Wood",
+            Self::Metal => "Metal",
+            Self::Rock => "Rock",
+        }
+    }
+}
+
 /// A shape around an Obj that others bump into, scaled with the Obj, its
 /// middle at `center` from the Obj's origin. A box uses `size`, a sphere
 /// `radius`, and a capsule, standing up, `height` and `radius`. A mesh is
@@ -103,6 +156,9 @@ pub struct Collider {
     /// How much what hits it bounces back, from 0 to 1.
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub bounciness: f32,
+    /// What it is made of, to the sounds whose way it is in.
+    #[serde(default, skip_serializing_if = "is_generic")]
+    pub acoustic: Acoustic,
 }
 
 impl Default for Collider {
@@ -117,6 +173,7 @@ impl Default for Collider {
             trigger: false,
             friction: grip(),
             bounciness: 0.0,
+            acoustic: Acoustic::Generic,
         }
     }
 }
@@ -900,6 +957,10 @@ fn is_turn_drag(value: &f32) -> bool {
 
 fn is_zero_f32(value: &f32) -> bool {
     *value == 0.0
+}
+
+fn is_generic(acoustic: &Acoustic) -> bool {
+    *acoustic == Acoustic::Generic
 }
 
 fn is_false(value: &bool) -> bool {

@@ -244,3 +244,62 @@ fn built_content_packs_the_sounds_scenes_use_with_their_settings() {
     assert_eq!(sound.volume, 0.5);
     assert_eq!(sound.info().frames, u64::from(RATE));
 }
+
+/// A camera, a source ten metres to its right, and a concrete wall between.
+const WALLED: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Main Camera"
+[obj.camera]
+fov = 60.0
+
+[[obj]]
+id = 2
+name = "Radio"
+position = [10.0, 0.0, 0.0]
+[obj.audio]
+sound = "Sounds/Tone.wav"
+loop = true
+occlusion = "raycast"
+
+[[obj]]
+id = 3
+name = "Wall"
+position = [5.0, 0.0, 0.0]
+[obj.collider]
+size = [0.5, 10.0, 10.0]
+acoustic = "concrete"
+"#;
+
+#[test]
+fn a_wall_between_muffles_a_source_with_occlusion_on() {
+    if voxear_audio::steam_audio::SteamAudio::get().is_err() {
+        return eprintln!("skipping: Steam Audio's library is not fetched");
+    }
+    let dir = project();
+    std::fs::write(dir.path().join("Scenes/Main.scene"), WALLED).unwrap();
+    let (mut game, mut mixer) = game(&dir);
+    let radio = obj(&game, "Radio");
+    let heard = |game: &mut Game, mixer: &mut Mixer| {
+        for _ in 0..4 {
+            game.tick(1.0 / 60.0, None);
+            render(mixer, 2_048);
+        }
+        render(mixer, 64)[2 * 63 + 1]
+    };
+    let walled = heard(&mut game, &mut mixer);
+
+    let source = game.engine.world.get_mut::<AudioSource>(radio).unwrap();
+    source.occlusion = voxear_engine::audio::SoundOcclusion::Off;
+    let open = heard(&mut game, &mut mixer);
+    assert!(open > 0.01 && walled < open * 0.1, "through concrete, little gets by: {walled} of {open}");
+
+    // Back on, with the wall gone, it is heard in the open.
+    game.engine.world.get_mut::<AudioSource>(radio).unwrap().occlusion = voxear_engine::audio::SoundOcclusion::Raycast;
+    let wall = obj(&game, "Wall");
+    game.engine.world.remove::<voxear_engine::physics::Collider>(wall);
+    let cleared = heard(&mut game, &mut mixer);
+    assert!((cleared - open).abs() < open * 0.05, "{cleared} against {open}");
+}

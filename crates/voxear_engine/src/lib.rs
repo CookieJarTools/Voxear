@@ -1,6 +1,7 @@
 //! Runs Voxear: the frame loop over the ECS, the behaviour lifecycle, C#
 //! scripts, content, levels and the renderer, either in a window or headless.
 
+mod acoustics;
 pub mod audio;
 pub mod build_profile;
 mod content;

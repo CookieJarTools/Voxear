@@ -34,7 +34,9 @@ use voxear_render::Camera;
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_scripting::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 
-use voxear_audio::steam_audio::SteamAudio;
+use voxear_audio::steam_audio::{Muffle, Occlusion, SourceAcoustics, SteamAudio};
+
+use crate::acoustics::Walls;
 pub use voxear_audio::{Audio, Bus, Distance, Listener, Sound, SoundInfo, VoiceId, VoiceParams, probe};
 
 use crate::content::Content;
@@ -139,6 +141,31 @@ pub enum SoundSpace {
     TwoD,
 }
 
+/// Whether walls between a 3D source and the listener stop its sound, as
+/// Steam Audio works out from the level's colliders, and how it tells: by
+/// one ray from the source's middle, or by rays across a sphere round it,
+/// so a source half behind a corner is half heard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SoundOcclusion {
+    #[default]
+    Off,
+    Raycast,
+    Volumetric,
+}
+
+impl SoundOcclusion {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Raycast, Self::Volumetric];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Raycast => "Raycast",
+            Self::Volumetric => "Volumetric",
+        }
+    }
+}
+
 /// The bus a source plays through, under the master volume.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -177,6 +204,12 @@ pub struct AudioSource {
     /// together and falls as they part, as Unity's Doppler Level: 1 as in
     /// the world, 0 not at all.
     pub doppler: f32,
+    /// Whether walls in a 3D source's way stop its sound; the radius of the
+    /// sphere a volumetric one is heard from; and whether the walls let
+    /// some of it through, as their acoustic materials do.
+    pub occlusion: SoundOcclusion,
+    pub occlusion_radius: f32,
+    pub transmission: bool,
 }
 impl Component for AudioSource {}
 
@@ -202,6 +235,17 @@ impl AudioSource {
             doppler: self.doppler,
             ..VoiceParams::default()
         }
+    }
+
+    /// How Steam Audio is to hear a 3D source past the walls; none for a 2D
+    /// one, or with occlusion off.
+    fn acoustics(&self) -> Option<SourceAcoustics> {
+        let occlusion = match (self.space, self.occlusion) {
+            (SoundSpace::TwoD, _) | (_, SoundOcclusion::Off) => return None,
+            (_, SoundOcclusion::Raycast) => Occlusion::Raycast,
+            (_, SoundOcclusion::Volumetric) => Occlusion::Volumetric,
+        };
+        Some(SourceAcoustics { occlusion, radius: self.occlusion_radius, transmission: self.transmission })
     }
 }
 
@@ -236,6 +280,12 @@ pub struct AudioSourceData {
     pub bus: AudioBus,
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub doppler: f32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub occlusion: SoundOcclusion,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub occlusion_radius: f32,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub transmission: bool,
 }
 
 impl Default for AudioSourceData {
@@ -264,6 +314,9 @@ impl AudioSourceData {
             put("max_distance", f64::from(data.max_distance).into());
             put("bus", toml::Value::try_from(data.bus).expect("a name"));
             put("doppler", f64::from(data.doppler).into());
+            put("occlusion", toml::Value::try_from(data.occlusion).expect("a name"));
+            put("occlusion_radius", f64::from(data.occlusion_radius).into());
+            put("transmission", data.transmission.into());
             table
         };
         let mut changes = table(self);
@@ -288,6 +341,9 @@ impl From<AudioSourceData> for AudioSource {
             max_distance: data.max_distance.max(data.min_distance),
             bus: data.bus,
             doppler: data.doppler.clamp(0.0, 5.0),
+            occlusion: data.occlusion,
+            occlusion_radius: data.occlusion_radius.max(0.01),
+            transmission: data.transmission,
         }
     }
 }
@@ -314,6 +370,9 @@ pub fn audio_source_data(content: &Content, source: &AudioSource) -> AudioSource
         max_distance: source.max_distance,
         bus: source.bus,
         doppler: source.doppler,
+        occlusion: source.occlusion,
+        occlusion_radius: source.occlusion_radius,
+        transmission: source.transmission,
     }
 }
 
@@ -395,6 +454,8 @@ struct Playback {
     applied: AudioSource,
     /// Where its Obj was last frame, to tell how fast it moves.
     was: Option<Vec3>,
+    /// The voice last muffled by the walls, and how much.
+    muffled: (VoiceId, Muffle),
 }
 
 /// What a script asks of an Audio Source.
@@ -421,6 +482,9 @@ pub struct GameAudio {
     /// Whether 3D voices start out heard as through headphones each time
     /// the game starts, from the project's `[audio]` settings.
     pub headphones: bool,
+    /// The level's walls in Steam Audio, from the first source with
+    /// occlusion on; or why there are none, said once.
+    walls: Option<Result<Walls, String>>,
 }
 
 impl Default for GameAudio {
@@ -439,6 +503,7 @@ impl GameAudio {
             preview: 0,
             preview_path: String::new(),
             headphones: false,
+            walls: None,
         }
     }
 
@@ -462,11 +527,12 @@ impl GameAudio {
             return;
         }
         self.running = true;
-        if let Some(mut listener) = listener(world) {
+        let hearing = listener(world).map(|mut listener| {
             listener.velocity = velocity(self.listener_was, listener.position, dt);
             self.listener_was = Some(listener.position);
             self.audio.set_listener(listener);
-        }
+            listener
+        });
         let found: Vec<(Entity, AudioSource, Vec3)> = world
             .query_ref::<(Entity, &AudioSource, &Transform, Option<&WorldTransform>)>()
             .without::<Destroying>()
@@ -478,7 +544,7 @@ impl GameAudio {
             self.audio.stop(playback.voice);
         }
         self.sources.retain(|entity, _| alive.contains(entity));
-        for (entity, source, at) in found {
+        for (entity, source, at) in found.iter().copied() {
             let playback = *self.sources.entry(entity).or_insert_with(|| Playback::new(&source, source.play_on_start));
             let mut playback = self.bring_in_line(content, playback, &source, at);
             if source.space == SoundSpace::ThreeD && playback.voice != 0 {
@@ -486,6 +552,48 @@ impl GameAudio {
             }
             playback.was = Some(at);
             self.sources.insert(entity, playback);
+        }
+        if let Some(listener) = hearing {
+            self.muffle_sources(world, &listener, &found);
+        }
+    }
+
+    /// Muffles each playing 3D source with occlusion on by the walls between
+    /// it and the listener, and lets one whose occlusion went off be heard
+    /// in the open again.
+    fn muffle_sources(&mut self, world: &World, listener: &Listener, found: &[(Entity, AudioSource, Vec3)]) {
+        let mut muffles: Vec<(Entity, Muffle)> = Vec::new();
+        let mut voices: Vec<(u64, Vec3, SourceAcoustics)> = Vec::new();
+        for (entity, source, at) in found {
+            let Some(playback) = self.sources.get(entity).filter(|playback| playback.voice != 0) else { continue };
+            match source.acoustics() {
+                Some(acoustics) => voices.push((entity.to_bits(), *at, acoustics)),
+                None if playback.muffled.0 == playback.voice => muffles.push((*entity, Muffle::NONE)),
+                None => {}
+            }
+        }
+        if !voices.is_empty() {
+            let walls = self.walls.get_or_insert_with(Walls::new);
+            match walls {
+                Ok(walls) => {
+                    let heard = walls.hear(world, listener, &voices);
+                    let keyed = voices.iter().zip(heard).map(|((key, ..), muffle)| (Entity::from_bits(*key), muffle));
+                    muffles.extend(keyed);
+                }
+                // Said once, then left empty.
+                Err(error) if !error.is_empty() => {
+                    tracing::warn!(target: "audio", "Sounds play without occlusion: {error}");
+                    error.clear();
+                }
+                Err(_) => {}
+            }
+        }
+        for (entity, muffle) in muffles {
+            let Some(playback) = self.sources.get_mut(&entity) else { continue };
+            if playback.muffled != (playback.voice, muffle) {
+                self.audio.set_muffle(playback.voice, muffle);
+                playback.muffled = (playback.voice, muffle);
+            }
         }
     }
 
@@ -700,6 +808,11 @@ impl GameAudio {
                 SourceValue::Bus => source.bus = if value != 0.0 { AudioBus::Music } else { AudioBus::Effects },
                 SourceValue::PlayOnStart => source.play_on_start = value != 0.0,
                 SourceValue::Doppler => source.doppler = value.clamp(0.0, 5.0),
+                SourceValue::Occlusion => {
+                    source.occlusion = SoundOcclusion::ALL.get(value as usize).copied().unwrap_or_default();
+                }
+                SourceValue::OcclusionRadius => source.occlusion_radius = value.max(0.01),
+                SourceValue::Transmission => source.transmission = value != 0.0,
                 _ => {}
             }
         }
@@ -714,6 +827,11 @@ impl GameAudio {
             SourceValue::Bus => flag(source.bus == AudioBus::Music),
             SourceValue::PlayOnStart => flag(source.play_on_start),
             SourceValue::Doppler => source.doppler,
+            SourceValue::Occlusion => {
+                SoundOcclusion::ALL.iter().position(|o| *o == source.occlusion).unwrap_or(0) as f32
+            }
+            SourceValue::OcclusionRadius => source.occlusion_radius,
+            SourceValue::Transmission => flag(source.transmission),
             _ => 0.0,
         })
     }
@@ -768,7 +886,7 @@ impl GameAudio {
 impl Playback {
     fn new(source: &AudioSource, playing: bool) -> Self {
         let state = if playing { State::Playing } else { State::Stopped };
-        Self { voice: 0, state, restart: false, held: false, applied: *source, was: None }
+        Self { voice: 0, state, restart: false, held: false, applied: *source, was: None, muffled: (0, Muffle::NONE) }
     }
 }
 

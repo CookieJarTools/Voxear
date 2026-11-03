@@ -45,6 +45,9 @@ You can also make one with the Hierarchy's **+** button and **Audio Source**, or
 | Mode | 3D or 2D (see below) |
 | Min distance, Max distance | How far a 3D sound carries, in metres (see below) |
 | Doppler level | How much a 3D sound's pitch changes as it moves towards or away from the listener (see below) |
+| Occlusion | Off, Raycast or Volumetric: whether walls stop a 3D sound (see below) |
+| Occlusion radius | How far round a volumetric sound is heard from, in metres |
+| Transmission | Whether walls let some of the sound through, by what they are made of |
 
 Audio Sources only play while the game runs. In the editor, **Pause** holds every sound the game is playing, and **Stop** silences them.
 
@@ -63,6 +66,17 @@ Give a loud thing a larger min distance: a waterfall might be at full volume wit
 A 3D sound moving towards the listener sounds higher, and one moving away sounds lower, as a passing car's engine drops in pitch as it goes by. This is the Doppler effect, and it comes from how fast the sound's Obj and the listener move. **Doppler level** sets how strong it is: 1 is as in the world, 0 turns it off, and higher makes it stronger, which can help a slow game feel fast.
 
 A **2D** sound plays the same wherever the listener is. Use 2D for music, for interface sounds, and for anything the player should hear from everywhere.
+
+## Walls between
+
+A radio in the next room should sound muffled, not as if it were beside you. Set an Audio Source's **Occlusion** and Voxear asks Steam Audio whether walls stand between the sound and the listener, each frame.
+
+- **Raycast** checks one line from the middle of the sound. It is quick, but a sound turns muffled all at once as it passes behind a corner.
+- **Volumetric** checks lines across a sphere round the sound, **Occlusion radius** across, so a sound half behind a corner is half heard. Make the radius about the size of the thing making the sound.
+
+The walls are the level's colliders that stay put: those without a Rigidbody, and not triggers. Each collider's **Acoustic material** says what it is made of, such as Brick, Wood or Glass (see [[Colliders and Rigidbodies]]). With **Transmission** on, a wall lets some of the sound through, as its material does: more of the low notes than the high, so a sound behind it is quieter and duller. With it off, a wall stops the sound altogether.
+
+Occlusion needs Steam Audio, as headphones do (see below). Without it, walls stop nothing.
 
 ## Headphones
 

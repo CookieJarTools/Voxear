@@ -602,7 +602,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [ ] effects, snapshots and ducking on the buses
   - [x] Steam Audio 4.8.1, loaded when it is there: HRTF for headphones on 3D sources, `Audio.Headphones` and
     `[audio] headphones`, and player builds that take the library and its licence with them
-  - [ ] Steam Audio occlusion, reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
+  - [x] Steam Audio occlusion and transmission: raycast or volumetric per Audio Source, through the level's still
+    colliders, each with an acoustic material, in the Inspector, scene files and C#
+  - [ ] Steam Audio reflections and pathing. Ray-traced audio follows in M5, once the ray-tracing
     acceleration structures exist.
   - [x] the audio debugger: each Audio Source a speaker in the Scene view, lit while it plays, and the selected one's
     min and max distances as rings

@@ -9,8 +9,8 @@ use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
-    audio::{AudioBus, AudioListener, AudioSource, SoundSpace},
-    physics::{CharacterController, Collider, ColliderShape, Joint, JointType, Rigidbody},
+    audio::{AudioBus, AudioListener, AudioSource, SoundOcclusion, SoundSpace},
+    physics::{Acoustic, CharacterController, Collider, ColliderShape, Joint, JointType, Rigidbody},
     physics2d::{Collider2D, ColliderShape2D, Rigidbody2D},
     linear,
     prefab::Locks,
@@ -133,6 +133,11 @@ pub enum Prop {
     MaxDistance,
     /// How strongly a 3D source's pitch follows its and the listener's speed.
     DopplerLevel,
+    /// Whether walls stop a 3D source's sound, how far round it a
+    /// volumetric one is heard from, and whether walls let some through.
+    Occlusion,
+    OcclusionRadius,
+    Transmission,
     SoundBus,
     /// What a LOD Group's levels are measured by.
     LodMeasure,
@@ -157,6 +162,8 @@ pub enum Prop {
     ColliderTrigger,
     Friction,
     Bounciness,
+    /// What a collider is made of, to sound.
+    AcousticMaterial,
     /// A Rigidbody's mass, whether the game moves it, whether gravity pulls
     /// it, its drags, and whether it sweeps as it moves.
     Mass,
@@ -223,6 +230,9 @@ impl Prop {
             | Prop::MinDistance
             | Prop::MaxDistance
             | Prop::DopplerLevel
+            | Prop::Occlusion
+            | Prop::OcclusionRadius
+            | Prop::Transmission
             | Prop::SoundBus => Part::Audio,
             Prop::LodMeasure | Prop::LodCull | Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => {
                 Part::LodGroup
@@ -235,7 +245,8 @@ impl Prop {
             | Prop::ColliderConvex
             | Prop::ColliderTrigger
             | Prop::Friction
-            | Prop::Bounciness => Part::Collider,
+            | Prop::Bounciness
+            | Prop::AcousticMaterial => Part::Collider,
             Prop::Mass | Prop::Kinematic | Prop::UseGravity | Prop::Drag | Prop::AngularDrag | Prop::Continuous => {
                 Part::Rigidbody
             }
@@ -291,6 +302,9 @@ impl Prop {
             Prop::MinDistance => "min_distance",
             Prop::MaxDistance => "max_distance",
             Prop::DopplerLevel => "doppler",
+            Prop::Occlusion => "occlusion",
+            Prop::OcclusionRadius => "occlusion_radius",
+            Prop::Transmission => "transmission",
             Prop::SoundBus => "bus",
             Prop::LodMeasure => "measure",
             Prop::LodCull => "cull",
@@ -304,6 +318,7 @@ impl Prop {
             Prop::ColliderTrigger => "trigger",
             Prop::Friction => "friction",
             Prop::Bounciness => "bounciness",
+            Prop::AcousticMaterial => "acoustic",
             Prop::Mass => "mass",
             Prop::Kinematic => "kinematic",
             Prop::UseGravity => "gravity",
@@ -423,6 +438,16 @@ pub fn specs(world: &World, entity: Entity) -> Vec<BehaviourSpec> {
     specs
 }
 
+/// The rows a 3D Audio Source's occlusion shows: none with it off, and the
+/// radius only for a volumetric one.
+fn occlusion_props(occlusion: SoundOcclusion) -> Vec<Prop> {
+    match occlusion {
+        SoundOcclusion::Off => Vec::new(),
+        SoundOcclusion::Raycast => vec![Prop::Transmission],
+        SoundOcclusion::Volumetric => vec![Prop::OcclusionRadius, Prop::Transmission],
+    }
+}
+
 /// The values a component shows. A light shows only what its kind uses; a
 /// script, the fields it declares, then any others its scene sets.
 pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) -> Vec<Prop> {
@@ -444,8 +469,10 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             let mut props =
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
             props.push(Prop::SoundSpace);
-            if world.get::<AudioSource>(entity).is_none_or(|source| source.space == SoundSpace::ThreeD) {
-                props.extend([Prop::MinDistance, Prop::MaxDistance, Prop::DopplerLevel]);
+            let source = world.get::<AudioSource>(entity).copied().unwrap_or_default();
+            if source.space == SoundSpace::ThreeD {
+                props.extend([Prop::MinDistance, Prop::MaxDistance, Prop::DopplerLevel, Prop::Occlusion]);
+                props.extend(occlusion_props(source.occlusion));
             }
             props
         }
@@ -460,7 +487,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 ColliderShape::Capsule => vec![Prop::ColliderCenter, Prop::ColliderRadius, Prop::ColliderHeight],
                 ColliderShape::Mesh => vec![Prop::ColliderConvex],
             });
-            props.extend([Prop::ColliderTrigger, Prop::Friction, Prop::Bounciness]);
+            props.extend([Prop::ColliderTrigger, Prop::Friction, Prop::Bounciness, Prop::AcousticMaterial]);
             props
         }
         Part::Rigidbody => {
@@ -557,6 +584,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::MinDistance => "Min distance",
         Prop::MaxDistance => "Max distance",
         Prop::DopplerLevel => "Doppler level",
+        Prop::Occlusion => "Occlusion",
+        Prop::OcclusionRadius => "Occlusion radius",
+        Prop::Transmission => "Transmission",
         Prop::SoundBus => "Bus",
         Prop::LodMeasure => "Switch by",
         Prop::LodCull => "Culled",
@@ -574,6 +604,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::ColliderTrigger => "Is trigger",
         Prop::Friction => "Friction",
         Prop::Bounciness => "Bounciness",
+        Prop::AcousticMaterial => "Acoustic material",
         Prop::Mass => "Mass",
         Prop::Kinematic => "Is kinematic",
         Prop::UseGravity => "Use gravity",
@@ -779,6 +810,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::ColliderTrigger => Value::Toggle(collider()?.trigger),
         Prop::Friction => Value::Number(collider()?.friction),
         Prop::Bounciness => Value::Number(collider()?.bounciness),
+        Prop::AcousticMaterial => {
+            let acoustic = collider()?.acoustic;
+            let index = Acoustic::ALL.iter().position(|a| *a == acoustic).unwrap_or_default();
+            Value::Choice(index, Acoustic::ALL.iter().map(|a| a.label().to_string()).collect())
+        }
         Prop::Mass => Value::Number(body()?.mass),
         Prop::Kinematic => Value::Toggle(body()?.kinematic),
         Prop::UseGravity => Value::Toggle(body()?.gravity),
@@ -853,6 +889,13 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::MinDistance => Value::Number(audio()?.min_distance),
         Prop::MaxDistance => Value::Number(audio()?.max_distance),
         Prop::DopplerLevel => Value::Number(audio()?.doppler),
+        Prop::Occlusion => {
+            let occlusion = audio()?.occlusion;
+            let index = SoundOcclusion::ALL.iter().position(|o| *o == occlusion).unwrap_or_default();
+            Value::Choice(index, SoundOcclusion::ALL.iter().map(|o| o.label().to_string()).collect())
+        }
+        Prop::OcclusionRadius => Value::Number(audio()?.occlusion_radius),
+        Prop::Transmission => Value::Toggle(audio()?.transmission),
         Prop::SoundBus => {
             let index = usize::from(audio()?.bus == AudioBus::Music);
             Value::Choice(index, AUDIO_BUSES.iter().map(|k| k.to_string()).collect())
@@ -1310,6 +1353,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::Bounciness, Value::Number(n)) => {
             with(world, entity, |c: &mut Collider| c.bounciness = n.clamp(0.0, 1.0))
         }
+        (Prop::AcousticMaterial, Value::Choice(index, _)) => with(world, entity, |c: &mut Collider| {
+            c.acoustic = Acoustic::ALL[index.min(Acoustic::ALL.len() - 1)];
+        }),
         (Prop::Mass, Value::Number(n)) => with(world, entity, |b: &mut Rigidbody| b.mass = n.max(0.001)),
         (Prop::Kinematic, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody| b.kinematic = on),
         (Prop::UseGravity, Value::Toggle(on)) => with(world, entity, |b: &mut Rigidbody| b.gravity = on),
@@ -1393,6 +1439,13 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::DopplerLevel, Value::Number(n)) => {
             with(world, entity, |a: &mut AudioSource| a.doppler = n.clamp(0.0, 5.0))
         }
+        (Prop::Occlusion, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
+            a.occlusion = SoundOcclusion::ALL[index.min(SoundOcclusion::ALL.len() - 1)];
+        }),
+        (Prop::OcclusionRadius, Value::Number(n)) => {
+            with(world, entity, |a: &mut AudioSource| a.occlusion_radius = n.max(0.01))
+        }
+        (Prop::Transmission, Value::Toggle(on)) => with(world, entity, |a: &mut AudioSource| a.transmission = on),
         (Prop::SoundBus, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
             a.bus = if index == 1 { AudioBus::Music } else { AudioBus::Effects };
         }),

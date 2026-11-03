@@ -22,6 +22,7 @@
 //! reflections and pathing, come from it too. See the Audio section of
 //! `docs/ARCHITECTURE.md`.
 
+mod bands;
 mod ears;
 mod mixer;
 mod output;
@@ -229,6 +230,12 @@ impl Audio {
     /// How fast a 3D voice moves, in metres a second, for the Doppler effect.
     pub fn set_velocity(&mut self, voice: VoiceId, velocity: Vec3) {
         self.change(voice, Command::Velocity(voice, velocity));
+    }
+
+    /// How much of a 3D voice gets past the walls to the listener, in each
+    /// band of pitch, as [`steam_audio::Acoustics`] works out.
+    pub fn set_muffle(&mut self, voice: VoiceId, muffle: steam_audio::Muffle) {
+        self.change(voice, Command::Muffle(voice, muffle));
     }
 
     /// How strongly the Doppler effect changes a 3D voice's pitch: 1 as in

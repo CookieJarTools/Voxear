@@ -23,6 +23,7 @@ Add each one with **Add Component**, under **Physics**. Physics only runs while 
 | Is trigger | Nothing bumps into it. Instead, it notices what passes through it (see below) |
 | Friction | How much it grips what slides on it. 0 is ice, and the 0.6 it starts with suits most things |
 | Bounciness | How much things bounce off it. 0 is a sack of sand, and 1 bounces back as high as it fell from |
+| Acoustic material | What it is made of, to sound: Generic, Brick, Concrete, Ceramic, Gravel, Carpet, Glass, Plaster, Wood, Metal or Rock. Audio Sources with Occlusion on are heard through it as its material lets them (see [[Sounds and Audio Sources]]) |
 
 The Inspector shows only the settings the chosen shape uses. When you select an Obj, the Scene view outlines its collider in green.
 

@@ -9,6 +9,11 @@
 //! Steam Audio's effects work on blocks of a fixed size, [`FRAME`] samples,
 //! at the mixer's rate. Its world is right-handed, with -Z ahead, where
 //! Voxear's has +Z ahead, so a direction's Z turns over on the way in.
+//!
+//! [`Acoustics`] is the rest: the level's walls as Steam Audio's scene, and
+//! how much of each voice gets through them to the listener.
+
+mod acoustics;
 
 use std::{
     ffi::{c_char, c_void},
@@ -21,6 +26,11 @@ use libloading::Library;
 use voxear_core::math::Vec3;
 
 use crate::spatial::Listener;
+pub use acoustics::{AcousticMaterial, AcousticMesh, Acoustics, Muffle, Occlusion, SourceAcoustics};
+use acoustics::{
+    SceneSettings, SharedInputs, SimulationInputs, SimulationOutputs, SimulationSettings, SourceSettings,
+    StaticMeshSettings,
+};
 
 /// How many samples Steam Audio's effects take at once.
 pub const FRAME: usize = 256;
@@ -30,7 +40,7 @@ const VERSION: u32 = 4 << 16 | 8 << 8 | 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct IplVector3 {
+pub(crate) struct IplVector3 {
     x: f32,
     y: f32,
     z: f32,
@@ -96,6 +106,25 @@ struct Api {
     binaural_create: unsafe extern "C" fn(Handle, *mut AudioSettings, *mut BinauralSettings, *mut Handle) -> i32,
     binaural_release: unsafe extern "C" fn(*mut Handle),
     binaural_apply: unsafe extern "C" fn(Handle, *mut BinauralParams, *mut AudioBuffer, *mut AudioBuffer) -> i32,
+    scene_create: unsafe extern "C" fn(Handle, *mut SceneSettings, *mut Handle) -> i32,
+    scene_commit: unsafe extern "C" fn(Handle),
+    scene_release: unsafe extern "C" fn(*mut Handle),
+    static_mesh_create: unsafe extern "C" fn(Handle, *mut StaticMeshSettings, *mut Handle) -> i32,
+    static_mesh_add: unsafe extern "C" fn(Handle, Handle),
+    static_mesh_remove: unsafe extern "C" fn(Handle, Handle),
+    static_mesh_release: unsafe extern "C" fn(*mut Handle),
+    simulator_create: unsafe extern "C" fn(Handle, *mut SimulationSettings, *mut Handle) -> i32,
+    simulator_set_scene: unsafe extern "C" fn(Handle, Handle),
+    simulator_set_shared_inputs: unsafe extern "C" fn(Handle, i32, *mut SharedInputs),
+    simulator_commit: unsafe extern "C" fn(Handle),
+    simulator_run_direct: unsafe extern "C" fn(Handle),
+    simulator_release: unsafe extern "C" fn(*mut Handle),
+    source_create: unsafe extern "C" fn(Handle, *mut SourceSettings, *mut Handle) -> i32,
+    source_add: unsafe extern "C" fn(Handle, Handle),
+    source_remove: unsafe extern "C" fn(Handle, Handle),
+    source_set_inputs: unsafe extern "C" fn(Handle, i32, *mut SimulationInputs),
+    source_get_outputs: unsafe extern "C" fn(Handle, i32, *mut SimulationOutputs),
+    source_release: unsafe extern "C" fn(*mut Handle),
 }
 
 /// Steam Audio, loaded: its library and a context. It loads once, the first
@@ -188,6 +217,25 @@ impl Api {
             binaural_create: get!("iplBinauralEffectCreate"),
             binaural_release: get!("iplBinauralEffectRelease"),
             binaural_apply: get!("iplBinauralEffectApply"),
+            scene_create: get!("iplSceneCreate"),
+            scene_commit: get!("iplSceneCommit"),
+            scene_release: get!("iplSceneRelease"),
+            static_mesh_create: get!("iplStaticMeshCreate"),
+            static_mesh_add: get!("iplStaticMeshAdd"),
+            static_mesh_remove: get!("iplStaticMeshRemove"),
+            static_mesh_release: get!("iplStaticMeshRelease"),
+            simulator_create: get!("iplSimulatorCreate"),
+            simulator_set_scene: get!("iplSimulatorSetScene"),
+            simulator_set_shared_inputs: get!("iplSimulatorSetSharedInputs"),
+            simulator_commit: get!("iplSimulatorCommit"),
+            simulator_run_direct: get!("iplSimulatorRunDirect"),
+            simulator_release: get!("iplSimulatorRelease"),
+            source_create: get!("iplSourceCreate"),
+            source_add: get!("iplSourceAdd"),
+            source_remove: get!("iplSourceRemove"),
+            source_set_inputs: get!("iplSourceSetInputs"),
+            source_get_outputs: get!("iplSourceGetOutputs"),
+            source_release: get!("iplSourceRelease"),
         })
     }
 }
@@ -283,8 +331,12 @@ impl Binaural {
 /// the listener is ahead.
 fn direction(listener: &Listener, at: Vec3) -> IplVector3 {
     let local = listener.rotation.inverse() * (at - listener.position);
-    let local = local.try_normalize().unwrap_or(Vec3::Z);
-    IplVector3 { x: local.x, y: local.y, z: -local.z }
+    steam(local.try_normalize().unwrap_or(Vec3::Z))
+}
+
+/// A point or direction in Voxear's world as Steam Audio's has it.
+fn steam(v: Vec3) -> IplVector3 {
+    IplVector3 { x: v.x, y: v.y, z: -v.z }
 }
 
 #[cfg(test)]

@@ -2530,7 +2530,12 @@ from the Project into a Scene view or the Hierarchy makes an Obj named for it wi
   distance's volume, go in blocks of 256, and its stereo plays a block behind, playing out when the voice ends. Without
   the library, or before the HRTF is ready, 3D voices pan. Player builds copy the library beside the player with its
   licence, unless `[audio] steam_audio = false`.)*
-- **Occlusion and transmission:** sound is muffled through walls, and materials set absorption.
+- **Occlusion and transmission:** sound is muffled through walls, and materials set absorption. *(Built: from the
+  first Audio Source with occlusion on, `GameAudio` keeps Steam Audio's scene of the level's still colliders, those
+  without a Rigidbody and not triggers, each as triangles of its `Collider.acoustic` material, built again when one
+  changes; each frame Steam Audio's direct simulation, raycast or volumetric, gives each such source a `Muffle`, a
+  volume in each of three bands, and the mixer splits the voice there with two one-pole filters. Moving colliders,
+  as Steam Audio's instanced meshes, come later.)*
 - **Reflections and reverb:** real-time or baked reverb probes, with echo from real geometry.
 - **Pathing:** sound bends around corners and through doorways.
 

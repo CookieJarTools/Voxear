@@ -100,6 +100,34 @@ public readonly struct AudioSource : IEquatable<AudioSource>, IObjComponent
 		set { Set(NativeAudio.SourceDoppler, value); }
 	}
 
+	/// <summary>
+	/// Whether walls between a 3D source and the listener stop its sound, as Steam Audio works out from the level's
+	/// colliders: by one ray from its middle, or by rays across a sphere OcclusionRadius round it, so a source half
+	/// behind a corner is half heard. Off by default.
+	/// </summary>
+	public SoundOcclusion Occlusion
+	{
+		get { return (SoundOcclusion)(int)Get(NativeAudio.SourceOcclusion, 0f); }
+		set { Set(NativeAudio.SourceOcclusion, (int)value); }
+	}
+
+	/// <summary>The radius of the sphere a volumetric source is heard from, in metres.</summary>
+	public float OcclusionRadius
+	{
+		get { return Get(NativeAudio.SourceOcclusionRadius, 1f); }
+		set { Set(NativeAudio.SourceOcclusionRadius, value); }
+	}
+
+	/// <summary>
+	/// Whether walls in the way let some of the sound through, as their Collider's AcousticMaterial does, so a source
+	/// in the next room is heard quieter and duller rather than not at all. On by default.
+	/// </summary>
+	public bool Transmission
+	{
+		get { return Get(NativeAudio.SourceTransmission, 1f) == 1f; }
+		set { Set(NativeAudio.SourceTransmission, value ? 1f : 0f); }
+	}
+
 	/// <summary>Whether it plays through the effects bus or the music bus.</summary>
 	public AudioBus Bus
 	{

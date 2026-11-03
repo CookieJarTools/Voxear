@@ -93,6 +93,16 @@ public readonly struct Collider : IEquatable<Collider>, IObjComponent
 		set { Set(NativePhysics.ColliderBounciness, new Vector4(value, 0f, 0f, 0f)); }
 	}
 
+	/// <summary>
+	/// What it is made of, to sound: walls of carpet soak up more of a sound and glass lets more through than brick,
+	/// for Audio Sources with Occlusion on. A collider with a Rigidbody, or a trigger, is no wall to sound.
+	/// </summary>
+	public AcousticMaterial AcousticMaterial
+	{
+		get { return (AcousticMaterial)(int)NativePhysics.Number(Obj, NativePhysics.ColliderAcoustic, 0f); }
+		set { Set(NativePhysics.ColliderAcoustic, new Vector4((int)value, 0f, 0f, 0f)); }
+	}
+
 	/// <summary>The Rigidbody beside it, which is not valid when physics does not move its Obj.</summary>
 	public Rigidbody AttachedRigidbody => Obj.Rigidbody;
 

@@ -25,9 +25,10 @@ use std::sync::{
 use voxear_core::math::Vec3;
 
 use crate::{
+    bands::Bands,
     ears::Ears,
     spatial::{self, Distance, Listener},
-    steam_audio::Hrtf,
+    steam_audio::{Hrtf, Muffle},
     stream::{Frame, StreamReader},
 };
 
@@ -97,6 +98,7 @@ pub(crate) enum Command {
     Distance(VoiceId, Distance),
     Velocity(VoiceId, Vec3),
     Doppler(VoiceId, f32),
+    Muffle(VoiceId, Muffle),
     Bus(Bus, f32),
     Master(f32),
     Listener(Listener),
@@ -140,6 +142,9 @@ struct Voice {
     stopping: bool,
     /// Steam Audio's binaural effect, for a 3D voice with headphones on.
     ears: Option<Box<Ears>>,
+    /// How much of a 3D voice gets past the walls, once any have been in
+    /// its way.
+    bands: Option<Box<Bands>>,
     /// Its sound is over, and its binaural effect plays out what it holds.
     done: bool,
 }
@@ -266,6 +271,13 @@ impl Mixer {
                 }),
                 Command::Velocity(id, velocity) => self.with(id, |voice| voice.params.velocity = velocity),
                 Command::Doppler(id, level) => self.with(id, |voice| voice.params.doppler = level.max(0.0)),
+                Command::Muffle(id, muffle) => {
+                    let rate = self.sample_rate;
+                    // The first muffle slides in from the open, as any after slides from the last.
+                    self.with(id, |voice| {
+                        voice.bands.get_or_insert_with(|| Bands::new(rate, Muffle::NONE)).set(muffle)
+                    });
+                }
                 Command::Bus(Bus::Music, volume) => self.music = volume,
                 Command::Bus(Bus::Effects, volume) => self.effects = volume,
                 Command::Bus(Bus::Preview, _) => {}
@@ -353,6 +365,7 @@ impl Mixer {
         let hrtf = self.hrtf.as_ref().filter(|_| self.headphones && new.params.spatial.is_some());
         self.voices.push(Voice {
             ears: hrtf.and_then(Ears::new),
+            bands: None,
             done: false,
             id: new.id,
             source: new.source,
@@ -467,7 +480,10 @@ impl Voice {
     /// where it is for a 3D one, panned or through its binaural effect.
     fn heard(&mut self, [left, right]: [f32; 2], gains: [f32; 2], listener: &Listener) -> [f32; 2] {
         let Some((at, _)) = self.params.spatial else { return [left * gains[0], right * gains[1]] };
-        let mono = (left + right) * 0.5;
+        let mut mono = (left + right) * 0.5;
+        if let Some(bands) = &mut self.bands {
+            mono = bands.apply(mono);
+        }
         match &mut self.ears {
             Some(ears) => ears.hear(mono * gains[0], listener, at),
             None => [mono * gains[0], mono * gains[1]],

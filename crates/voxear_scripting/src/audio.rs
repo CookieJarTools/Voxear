@@ -91,6 +91,9 @@ pub enum SourceValue {
     Bus,
     PlayOnStart,
     Doppler,
+    Occlusion,
+    OcclusionRadius,
+    Transmission,
 }
 
 impl SourceValue {
@@ -112,6 +115,9 @@ impl SourceValue {
             13 => Self::Bus,
             14 => Self::PlayOnStart,
             15 => Self::Doppler,
+            16 => Self::Occlusion,
+            17 => Self::OcclusionRadius,
+            18 => Self::Transmission,
             _ => return None,
         })
     }

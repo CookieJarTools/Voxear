@@ -910,6 +910,14 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   - store upload straight from a profile (Steam first)
   - remote build agents for NativeAOT on other operating systems
 - Crash reporter, GPU crash diagnostics, remote attach for every debug panel, and documentation.
+- **A documentation pass** before 1.0, so the manual and the Code Reference are correct and clear:
+  - every page checked against the engine as it is: each code sample compiled, and run where it can be, by a test;
+    each setting, attribute, window and API it names checked to exist; each picture taken again from the editor
+  - every topic laid out as Unity's and Unreal's docs are: what it is and when to use it, a worked example from
+    scratch, then the reference, with the easy path first and the full control after
+  - pages read by someone new to Voxear following them step by step, and rewritten where they get stuck
+  - Docs Health in the editor holding the line after: pages older than the code they describe, samples that no
+    longer build, and APIs with no page
 - Editor RPC for `vox`, and the hook for AI tooling.
 
 ## M13 — Virtualised geometry (Nanite-style)

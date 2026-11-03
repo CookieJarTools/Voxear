@@ -296,18 +296,10 @@ void meshletMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
 {
     Frame* frame = push.frame;
     uint list = push.list;
-    uint work = group.x * MESHLET_ROUND + thread.x;
-    bool tested = work < queuedMeshlets(frame, list);
-    uint2 entry = tested ? buffers()->meshletWork[meshletListBase(list, frame->meshletCapacity) + work] : uint2(~0u, 0);
-    uint result = MESHLET_OUTSIDE;
-    MeshLod lod = (MeshLod)0;
-    if (tested)
-    {
-        Instance instance = buffers()->instances[entry.x & DRAW_INSTANCE_MASK];
-        lod = buffers()->meshes[instance.mesh].lods[(entry.x >> DRAW_LOD_SHIFT) & 0xF];
-        Meshlet meshlet = buffers()->meshlets[lod.meshletOffset + entry.y];
-        result = cullMeshlet(frame, meshletCuller(frame, instance, list), meshlet);
-    }
+    bool tested;
+    uint2 entry;
+    MeshLod lod;
+    uint result = cullQueued(frame, list, group.x * MESHLET_ROUND + thread.x, tested, entry, lod);
     countMeshlets(list, tested, result);
     emitRuns(frame, list, thread.x, tested && result == MESHLET_VISIBLE, entry, lod);
 }

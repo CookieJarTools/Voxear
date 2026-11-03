@@ -34,6 +34,9 @@ pub enum ImageAccess {
     DepthRead,
     /// Sampled from fragment or compute shaders.
     Sampled,
+    /// Sampled from fragment, compute or task shaders; only where the GPU
+    /// has task shaders.
+    SampledWithTasks,
     StorageWrite,
     TransferSrc,
     TransferDst,
@@ -49,6 +52,11 @@ pub enum BufferAccess {
     ComputeRead,
     IndirectRead,
     ShaderRead,
+    /// Read by task and mesh shaders; only where the GPU has them.
+    MeshShaderRead,
+    /// Read and written by task shaders, as culling's counters are; only
+    /// where the GPU has them.
+    TaskWrite,
     /// Read on the CPU after the frame's fence.
     HostRead,
 }
@@ -86,6 +94,11 @@ impl ImageAccess {
             Self::Sampled => {
                 (L::SHADER_READ_ONLY_OPTIMAL, S::FRAGMENT_SHADER | S::COMPUTE_SHADER, A::SHADER_SAMPLED_READ)
             }
+            Self::SampledWithTasks => (
+                L::SHADER_READ_ONLY_OPTIMAL,
+                S::FRAGMENT_SHADER | S::COMPUTE_SHADER | S::TASK_SHADER_EXT,
+                A::SHADER_SAMPLED_READ,
+            ),
             Self::StorageWrite => (L::GENERAL, S::COMPUTE_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE),
             Self::TransferSrc => (L::TRANSFER_SRC_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_READ),
             Self::TransferDst => (L::TRANSFER_DST_OPTIMAL, S::ALL_TRANSFER, A::TRANSFER_WRITE),
@@ -105,6 +118,8 @@ impl BufferAccess {
             Self::ComputeRead => (S::COMPUTE_SHADER, A::SHADER_STORAGE_READ),
             Self::IndirectRead => (S::DRAW_INDIRECT, A::INDIRECT_COMMAND_READ),
             Self::ShaderRead => (S::VERTEX_SHADER | S::FRAGMENT_SHADER | S::COMPUTE_SHADER, A::SHADER_STORAGE_READ),
+            Self::MeshShaderRead => (S::TASK_SHADER_EXT | S::MESH_SHADER_EXT, A::SHADER_STORAGE_READ),
+            Self::TaskWrite => (S::TASK_SHADER_EXT, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE),
             Self::HostRead => (S::HOST, A::HOST_READ),
         }
     }
@@ -465,7 +480,8 @@ impl<'a> FrameGraph<'a> {
             let (old, discard) = self.image_state(id);
             let mut new = access.state();
             // Images compute writes stay in GENERAL, so sampling them needs no transition.
-            if resolved[id.0].2.usage.contains(vk::ImageUsageFlags::STORAGE) && access == ImageAccess::Sampled {
+            let sampled = matches!(access, ImageAccess::Sampled | ImageAccess::SampledWithTasks);
+            if resolved[id.0].2.usage.contains(vk::ImageUsageFlags::STORAGE) && sampled {
                 new.layout = vk::ImageLayout::GENERAL;
             }
             let hazard = old.layout != new.layout || writes(old.access) || writes(new.access);

@@ -160,6 +160,31 @@ fn an_obj_new_to_its_place_in_the_list_does_not_fade_in() {
     assert_eq!(swapped.fade_draws, 0, "{swapped:?}");
 }
 
+/// How a render culls meshlets: not at all, drawing whole LODs; with a
+/// compute pass and indirect draws; or with task and mesh shaders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Meshlets {
+    Off,
+    Compute,
+    MeshShaders,
+}
+
+/// The ways meshlets are culled on this GPU.
+const CULLED: [Meshlets; 2] = [Meshlets::Compute, Meshlets::MeshShaders];
+
+/// A renderer that culls meshlets as `meshlets` says, with these view
+/// options, or none on a GPU without the mesh shaders it asks for.
+fn renderer_culling(meshlets: Meshlets, options: ViewOptions) -> Option<Renderer> {
+    let mut renderer = renderer()?;
+    renderer.set_mesh_shaders(meshlets == Meshlets::MeshShaders);
+    if meshlets == Meshlets::MeshShaders && !renderer.uses_mesh_shaders() {
+        eprintln!("skipping the mesh shader path: this GPU has no mesh shaders");
+        return None;
+    }
+    renderer.set_view_options(ViewOptions { meshlet_culling: meshlets != Meshlets::Off, ..options });
+    Some(renderer)
+}
+
 /// A sunlit floor with a wall across it, a row of spheres behind the wall, a
 /// large one in plain view, one in full detail half out of it and, with
 /// `far_caster`, one off to the side whose shadow falls in view: meshlets go
@@ -189,12 +214,11 @@ fn meshlet_scene(renderer: &mut Renderer, far_caster: bool) -> World {
     world
 }
 
-/// The scene's last frame, with or without meshlet culling, and the stats
-/// of the frame `run` reports.
-fn meshlet_render(meshlet_culling: bool, far_caster: bool) -> Option<(Vec<u8>, RenderStats)> {
-    let mut renderer = renderer()?;
+/// The scene's last frame, its meshlets culled as `meshlets` says, in a
+/// debug view, and the stats of the frame `run` reports.
+fn meshlet_render(meshlets: Meshlets, far_caster: bool, debug_view: u32) -> Option<(Vec<u8>, RenderStats)> {
+    let mut renderer = renderer_culling(meshlets, ViewOptions { debug_view, ..ViewOptions::default() })?;
     let world = meshlet_scene(&mut renderer, far_caster);
-    renderer.set_view_options(ViewOptions { meshlet_culling, ..ViewOptions::default() });
     let stats = run(&mut renderer, &world, &mut 0.0, 6);
     Some((renderer.read_pixels().unwrap().2, stats))
 }
@@ -206,64 +230,84 @@ fn differing_pixels(a: &[u8], b: &[u8]) -> usize {
 
 #[test]
 fn meshlet_culling_draws_the_same_image() {
-    let (Some((culled, stats)), Some((whole, whole_stats))) = (meshlet_render(true, true), meshlet_render(false, true))
-    else {
-        return;
-    };
-    assert_eq!(differing_pixels(&culled, &whole), 0, "{stats:?}");
-    assert!(stats.meshlets > 0 && stats.meshlets_drawn > 0, "{stats:?}");
-    assert!(stats.meshlets_drawn < stats.meshlets, "some meshlets went: {stats:?}");
-    assert_eq!(
-        stats.meshlets,
-        stats.meshlets_frustum_culled
-            + stats.meshlets_cone_culled
-            + stats.meshlets_occlusion_culled
-            + stats.meshlets_drawn,
-        "every meshlet tested is drawn or culled for one reason"
-    );
-    assert!(stats.meshlets_frustum_culled > 0, "part of a sphere lies out of view: {stats:?}");
+    let Some((whole, whole_stats)) = meshlet_render(Meshlets::Off, true, 0) else { return };
     assert_eq!(whole_stats.meshlets, 0, "without meshlet culling, nothing is counted: {whole_stats:?}");
-    assert_eq!(stats.drawn_early + stats.drawn_late, whole_stats.drawn_early + whole_stats.drawn_late);
+    let mut culled_stats = Vec::new();
+    for meshlets in CULLED {
+        let Some((culled, stats)) = meshlet_render(meshlets, true, 0) else { continue };
+        assert_eq!(differing_pixels(&culled, &whole), 0, "{meshlets:?}: {stats:?}");
+        assert!(stats.meshlets_drawn > 0 && stats.meshlets_drawn < stats.meshlets, "some go: {stats:?}");
+        assert_eq!(
+            stats.meshlets,
+            stats.meshlets_frustum_culled
+                + stats.meshlets_cone_culled
+                + stats.meshlets_occlusion_culled
+                + stats.meshlets_drawn,
+            "every meshlet tested is drawn or culled for one reason"
+        );
+        assert!(stats.meshlets_frustum_culled > 0, "part of a sphere lies out of view: {stats:?}");
+        assert_eq!(stats.drawn_early + stats.drawn_late, whole_stats.drawn_early + whole_stats.drawn_late);
+        culled_stats.push(stats);
+    }
+    if let [compute, mesh] = culled_stats[..] {
+        let counts = |s: RenderStats| {
+            [s.meshlets, s.meshlets_frustum_culled, s.meshlets_cone_culled, s.meshlets_drawn, s.shadow_meshlets]
+        };
+        assert_eq!(counts(compute), counts(mesh), "both paths cull the same meshlets");
+    }
 }
 
-/// One sphere in full detail, alone, scaled by `scale`, with or without
-/// meshlet culling, and in a debug view: its last frame and the stats `run`
+#[test]
+fn both_paths_colour_the_same_meshlets() {
+    let meshlets_view = voxear_render::DEBUG_VIEW_MESHLETS;
+    let (Some((compute, _)), Some((mesh, _))) = (
+        meshlet_render(Meshlets::Compute, false, meshlets_view),
+        meshlet_render(Meshlets::MeshShaders, false, meshlets_view),
+    ) else {
+        return;
+    };
+    assert_eq!(differing_pixels(&compute, &mesh), 0);
+}
+
+/// One sphere in full detail, alone, scaled by `scale`, its meshlets culled
+/// as `meshlets` says, in a debug view: its last frame and the stats `run`
 /// reports.
-fn lone_sphere(meshlet_culling: bool, scale: Vec3, debug_view: u32) -> Option<(Vec<u8>, RenderStats)> {
-    let mut renderer = renderer()?;
+fn lone_sphere(meshlets: Meshlets, scale: Vec3, debug_view: u32) -> Option<(Vec<u8>, RenderStats)> {
+    let mut renderer = renderer_culling(meshlets, ViewOptions { debug_view, ..ViewOptions::default() })?;
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -6.0))));
     let sphere = renderer.primitive(Primitive::Sphere).unwrap();
     let material = renderer.add_material(&MaterialDesc::default()).unwrap();
     let ball = world.spawn((MeshRenderer::new(sphere, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, scale)));
     world.get_mut::<MeshRenderer>(ball).unwrap().forced_lod = Some(0);
-    renderer.set_view_options(ViewOptions { meshlet_culling, debug_view, ..ViewOptions::default() });
     let stats = run(&mut renderer, &world, &mut 0.0, 4);
     Some((renderer.read_pixels().unwrap().2, stats))
 }
 
 #[test]
 fn meshlets_facing_away_are_culled() {
-    let Some((culled, stats)) = lone_sphere(true, Vec3::ONE, 0) else { return };
-    // Its meshlets' normals spread too wide for those around its outline to be judged, but the ones at its
-    // back face away whole.
-    assert_eq!(stats.meshlets_frustum_culled, 0, "{stats:?}");
-    assert!(stats.meshlets_cone_culled * 8 > stats.meshlets, "its back faces away: {stats:?}");
-    assert!(stats.meshlets_drawn * 2 >= stats.meshlets, "and the half facing the camera is drawn: {stats:?}");
-    let (whole, _) = lone_sphere(false, Vec3::ONE, 0).unwrap();
-    assert_eq!(differing_pixels(&culled, &whole), 0);
-
-    // Mirrored, its triangles' winding turns round on screen, so the rasterizer keeps the inside of its far
-    // half, and the cones turn round with it.
     let mirror = Vec3::new(-1.0, 1.0, 1.0);
-    let (culled, mirrored) = lone_sphere(true, mirror, 0).unwrap();
-    assert!(mirrored.meshlets_cone_culled > 0, "{mirrored:?}");
-    let (whole, _) = lone_sphere(false, mirror, 0).unwrap();
-    assert_eq!(differing_pixels(&culled, &whole), 0);
+    let Some((whole, _)) = lone_sphere(Meshlets::Off, Vec3::ONE, 0) else { return };
+    let (whole_mirrored, _) = lone_sphere(Meshlets::Off, mirror, 0).unwrap();
+    for meshlets in CULLED {
+        let Some((culled, stats)) = lone_sphere(meshlets, Vec3::ONE, 0) else { continue };
+        // Its meshlets' normals spread too wide for those around its outline to be judged, but the ones at its
+        // back face away whole.
+        assert_eq!(stats.meshlets_frustum_culled, 0, "{stats:?}");
+        assert!(stats.meshlets_cone_culled * 8 > stats.meshlets, "its back faces away: {stats:?}");
+        assert!(stats.meshlets_drawn * 2 >= stats.meshlets, "and the half facing the camera is drawn: {stats:?}");
+        assert_eq!(differing_pixels(&culled, &whole), 0, "{meshlets:?}");
 
-    // The wireframe view shows the back faces, so nothing faces away there.
-    let (_, wireframe) = lone_sphere(true, Vec3::ONE, voxear_render::DEBUG_VIEW_WIREFRAME).unwrap();
-    assert_eq!(wireframe.meshlets_cone_culled, 0, "{wireframe:?}");
+        // Mirrored, its triangles' winding turns round on screen, so the rasterizer keeps the inside of its far
+        // half, and the cones turn round with it.
+        let (culled, mirrored) = lone_sphere(meshlets, mirror, 0).unwrap();
+        assert!(mirrored.meshlets_cone_culled > 0, "{mirrored:?}");
+        assert_eq!(differing_pixels(&culled, &whole_mirrored), 0, "{meshlets:?}");
+
+        // The wireframe view shows the back faces, so nothing faces away there.
+        let (_, wireframe) = lone_sphere(meshlets, Vec3::ONE, voxear_render::DEBUG_VIEW_WIREFRAME).unwrap();
+        assert_eq!(wireframe.meshlets_cone_culled, 0, "{wireframe:?}");
+    }
 }
 
 /// A flat grid of `n` by `n` quads a unit wide, in the XY plane and facing
@@ -291,77 +335,86 @@ fn grid(n: u32) -> voxear_render::MeshData {
 
 #[test]
 fn a_draw_whose_meshlets_all_survive_draws_every_one() {
-    let render = |meshlet_culling: bool| {
-        let mut renderer = renderer()?;
+    let render = |meshlets: Meshlets| {
+        let mut renderer = renderer_culling(meshlets, ViewOptions::default())?;
         let mut world = World::new();
         world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -0.9))));
         let mesh = renderer.add_mesh(&grid(128)).unwrap();
         let material = renderer.add_material(&MaterialDesc::default()).unwrap();
         let wall = world.spawn((MeshRenderer::new(mesh, material), Transform::IDENTITY));
         world.get_mut::<MeshRenderer>(wall).unwrap().forced_lod = Some(0);
-        renderer.set_view_options(ViewOptions { meshlet_culling, ..ViewOptions::default() });
         let stats = run(&mut renderer, &world, &mut 0.0, 3);
         Some((renderer.read_pixels().unwrap().2, stats))
     };
-    let (Some((culled, stats)), Some((whole, _))) = (render(true), render(false)) else { return };
-    // Far more meshlets than one round of the meshlet pass, every one of them in view and facing it.
-    assert!(stats.meshlets > 200, "{stats:?}");
-    assert_eq!(stats.meshlets_drawn, stats.meshlets, "{stats:?}");
-    assert_eq!(differing_pixels(&culled, &whole), 0);
+    let Some((whole, _)) = render(Meshlets::Off) else { return };
+    for meshlets in CULLED {
+        let Some((culled, stats)) = render(meshlets) else { continue };
+        // Far more meshlets than one round of the meshlet pass, every one of them in view and facing it.
+        assert!(stats.meshlets > 200, "{stats:?}");
+        assert_eq!(stats.meshlets_drawn, stats.meshlets, "{stats:?}");
+        assert_eq!(differing_pixels(&culled, &whole), 0, "{meshlets:?}");
+    }
 }
 
 #[test]
 fn meshlets_newly_in_view_behind_the_wall_are_culled() {
-    let Some(mut renderer) = renderer() else { return };
-    let mut world = meshlet_scene(&mut renderer, false);
-    let mut time = 0.0;
-    run(&mut renderer, &world, &mut time, 4);
-    // A tall pillar appears half behind the wall: new this frame, it is drawn late, after the depth pyramid,
-    // which hides the meshlets of its lower half.
-    let cube = renderer.primitive(Primitive::Cube).unwrap();
-    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let pillar = Transform::new(Vec3::new(-2.0, 3.0, 3.0), Quat::IDENTITY, Vec3::new(0.5, 6.0, 0.5));
-    world.spawn((MeshRenderer::new(cube, material), pillar));
-    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
-    let ball = Transform::new(Vec3::new(-2.0, 2.5, 3.0), Quat::IDENTITY, Vec3::splat(2.5));
-    world.spawn((MeshRenderer::new(sphere, material), ball));
-    let appeared = run(&mut renderer, &world, &mut time, 1);
-    assert!(appeared.drawn_late > 0, "{appeared:?}");
-    assert!(appeared.meshlets_occlusion_culled > 0, "{appeared:?}");
+    for meshlets in CULLED {
+        let Some(mut renderer) = renderer_culling(meshlets, ViewOptions::default()) else { continue };
+        let mut world = meshlet_scene(&mut renderer, false);
+        let mut time = 0.0;
+        run(&mut renderer, &world, &mut time, 4);
+        // A tall pillar and a ball appear half behind the wall: new this frame, they are drawn late, after the
+        // depth pyramid, which hides the meshlets of their lower halves.
+        let cube = renderer.primitive(Primitive::Cube).unwrap();
+        let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+        let pillar = Transform::new(Vec3::new(-2.0, 3.0, 3.0), Quat::IDENTITY, Vec3::new(0.5, 6.0, 0.5));
+        world.spawn((MeshRenderer::new(cube, material), pillar));
+        let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+        let ball = Transform::new(Vec3::new(-2.0, 2.5, 3.0), Quat::IDENTITY, Vec3::splat(2.5));
+        world.spawn((MeshRenderer::new(sphere, material), ball));
+        let appeared = run(&mut renderer, &world, &mut time, 1);
+        assert!(appeared.drawn_late > 0, "{meshlets:?}: {appeared:?}");
+        assert!(appeared.meshlets_occlusion_culled > 0, "{meshlets:?}: {appeared:?}");
+    }
 }
 
 #[test]
 fn shadows_with_meshlet_culling_match_and_reach_from_out_of_view() {
-    let (Some((with_caster, stats)), Some((without, _))) = (meshlet_render(true, true), meshlet_render(true, false))
-    else {
-        return;
-    };
-    assert!(stats.shadow_meshlets > 0, "{stats:?}");
-    assert!(differing_pixels(&with_caster, &without) > 100, "the caster out of view still shadows the floor in it");
-    let Some((whole, _)) = meshlet_render(false, false) else { return };
-    assert_eq!(differing_pixels(&without, &whole), 0);
+    let Some((whole, _)) = meshlet_render(Meshlets::Off, false, 0) else { return };
+    for meshlets in CULLED {
+        let (Some((with_caster, stats)), Some((without, _))) =
+            (meshlet_render(meshlets, true, 0), meshlet_render(meshlets, false, 0))
+        else {
+            continue;
+        };
+        assert!(stats.shadow_meshlets > 0, "{stats:?}");
+        assert!(differing_pixels(&with_caster, &without) > 100, "the caster out of view still shadows the floor in it");
+        assert_eq!(differing_pixels(&without, &whole), 0, "{meshlets:?}");
+    }
 }
 
 #[test]
 fn the_meshlets_view_colours_each_meshlet() {
-    let Some(mut renderer) = renderer() else { return };
-    let mut world = World::new();
-    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -2.5))));
-    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
-    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let ball = world.spawn((MeshRenderer::new(sphere, material), Transform::from_position(Vec3::ZERO)));
-    world.get_mut::<MeshRenderer>(ball).unwrap().forced_lod = Some(0);
-    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_MESHLETS, ..Default::default() });
-    run(&mut renderer, &world, &mut 0.0, 3);
-    let (width, height, pixels) = renderer.read_pixels().unwrap();
-    let mut colours = std::collections::HashSet::new();
-    for y in (height / 4..height * 3 / 4).step_by(8) {
-        for x in (width / 2 - height / 4..width / 2 + height / 4).step_by(8) {
-            let i = ((y * width + x) * 4) as usize;
-            colours.insert([pixels[i], pixels[i + 1], pixels[i + 2]].map(|c| c / 16));
+    for meshlets in CULLED {
+        let options = ViewOptions { debug_view: voxear_render::DEBUG_VIEW_MESHLETS, ..Default::default() };
+        let Some(mut renderer) = renderer_culling(meshlets, options) else { continue };
+        let mut world = World::new();
+        world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -2.5))));
+        let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+        let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+        let ball = world.spawn((MeshRenderer::new(sphere, material), Transform::from_position(Vec3::ZERO)));
+        world.get_mut::<MeshRenderer>(ball).unwrap().forced_lod = Some(0);
+        run(&mut renderer, &world, &mut 0.0, 3);
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        let mut colours = std::collections::HashSet::new();
+        for y in (height / 4..height * 3 / 4).step_by(8) {
+            for x in (width / 2 - height / 4..width / 2 + height / 4).step_by(8) {
+                let i = ((y * width + x) * 4) as usize;
+                colours.insert([pixels[i], pixels[i + 1], pixels[i + 2]].map(|c| c / 16));
+            }
         }
+        assert!(colours.len() > 8, "{meshlets:?}: only {} colours across the sphere", colours.len());
     }
-    assert!(colours.len() > 8, "only {} colours across the sphere", colours.len());
 }
 
 /// A camera-facing quad, two-sided so winding never hides it, with a base

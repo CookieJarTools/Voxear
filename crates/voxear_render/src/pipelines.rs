@@ -23,6 +23,16 @@ const SHADOW_BIAS: (f32, f32) = (0.0, 1.5);
 /// reversed), so they are not lost in them.
 const EDGE_BIAS: (f32, f32) = (1.0, 1.0);
 
+/// The scene's pipelines with task and mesh shaders in place of vertex
+/// shaders, for GPUs that have them (see `shaders/meshlet_task.slang`).
+#[derive(Clone, Copy)]
+pub struct MeshPipelines {
+    pub shadow: vk::Pipeline,
+    pub forward: vk::Pipeline,
+    pub wireframe: vk::Pipeline,
+    pub edges: vk::Pipeline,
+}
+
 #[derive(Clone, Copy)]
 pub struct Pipelines {
     pub clusters: vk::Pipeline,
@@ -59,6 +69,8 @@ pub struct Pipelines {
     /// preview atlas.
     pub preview: vk::Pipeline,
     pub preview_resolve: vk::Pipeline,
+    /// Where the GPU has mesh shaders.
+    pub mesh: Option<MeshPipelines>,
 }
 
 impl Pipelines {
@@ -79,6 +91,11 @@ impl Pipelines {
             module("debug")?,
         ];
         let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview, debug] = &modules;
+        // Only a GPU with mesh shaders can load their modules.
+        let meshlets = match gpu.mesh_shader {
+            Some(_) => Some([module("meshlet_task")?, module("meshlets")?, module("meshlet_shadow")?]),
+            None => None,
+        };
 
         let graphics = |desc: &GraphicsPipelineDesc| create_graphics_pipeline(gpu, layout, desc);
         let fullscreen = |name, entry, formats, blend| {
@@ -176,8 +193,9 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Preview resolve", preview, c"resolveVertex", c"resolveFragment")
             })?,
+            mesh: meshlets.as_ref().map(|modules| mesh_pipelines(gpu, layout, modules, scene_formats)).transpose()?,
         };
-        for module in modules {
+        for module in modules.into_iter().chain(meshlets.into_iter().flatten()) {
             module.destroy(gpu);
         }
         Ok(pipelines)
@@ -210,8 +228,60 @@ impl Pipelines {
             self.preview,
             self.preview_resolve,
         ];
-        for pipeline in all {
+        let mesh = self.mesh.iter().flat_map(|m| [m.shadow, m.forward, m.wireframe, m.edges]);
+        for pipeline in all.into_iter().chain(mesh) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }
     }
+}
+
+/// The shadow, forward, wireframe and edges pipelines as `Pipelines::new`
+/// makes them, with the task shader culling meshlets and mesh shaders
+/// making them in place of the vertex shaders.
+fn mesh_pipelines(
+    gpu: &Gpu,
+    layout: vk::PipelineLayout,
+    [task, forward, shadow]: &[ShaderModule; 3],
+    scene_formats: &[vk::Format],
+) -> Result<MeshPipelines> {
+    let graphics = |desc: &GraphicsPipelineDesc| create_graphics_pipeline(gpu, layout, desc);
+    let task = (task, c"meshletTask");
+    let forward = (forward, c"forwardMesh");
+    Ok(MeshPipelines {
+        shadow: graphics(&GraphicsPipelineDesc {
+            cull: vk::CullModeFlags::NONE,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+            depth_bias: Some(SHADOW_BIAS),
+            depth_clamp: true,
+            ..GraphicsPipelineDesc::mesh("Shadows", task, (shadow, c"shadowMesh"), None)
+        })?,
+        forward: graphics(&GraphicsPipelineDesc {
+            color_formats: scene_formats,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+            ..GraphicsPipelineDesc::mesh("Opaque", task, forward, Some(c"fragmentMain"))
+        })?,
+        wireframe: graphics(&GraphicsPipelineDesc {
+            color_formats: scene_formats,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+            cull: vk::CullModeFlags::NONE,
+            polygon_mode: vk::PolygonMode::LINE,
+            ..GraphicsPipelineDesc::mesh("Wireframe", task, forward, Some(c"fragmentMain"))
+        })?,
+        edges: graphics(&GraphicsPipelineDesc {
+            color_formats: &[HDR_FORMAT],
+            depth_format: Some(DEPTH_FORMAT),
+            depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+            cull: vk::CullModeFlags::NONE,
+            polygon_mode: vk::PolygonMode::LINE,
+            blend: Blend::Alpha,
+            depth_bias: Some(EDGE_BIAS),
+            ..GraphicsPipelineDesc::mesh("Edges", task, forward, Some(c"edgeFragment"))
+        })?,
+    })
 }

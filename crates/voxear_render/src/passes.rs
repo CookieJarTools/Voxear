@@ -12,7 +12,8 @@
 //! the draws, and a meshlet pass after it (**Shadow meshlets**, **Meshlets
 //! (early)**, **Meshlets (late)**) draws those that survive the frustum,
 //! their normal cones and, late, the depth pyramid, which the passes after
-//! it draw.
+//! it draw. Where the GPU has mesh shaders, the draw passes' task shaders
+//! cull the queued meshlets instead, and there is no meshlet pass.
 //!
 //! Opaque and sky passes also write motion vectors. Post-processing follows,
 //! in [`post_passes`](crate::post_passes).
@@ -21,8 +22,8 @@ use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
     gpu::{
-        CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE, LIST_SHADOW, Push,
-        cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
+        CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
+        LIST_SHADOW, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
@@ -63,6 +64,9 @@ pub struct Draws {
     /// How many meshlets the instance lists' draws can turn into, which
     /// lays out the meshlet lists; `None` draws the instance lists whole.
     pub meshlet_capacity: Option<u32>,
+    /// With meshlet culling, draw with task and mesh shaders rather than a
+    /// meshlet pass. Only where the pipelines have them.
+    pub mesh_shaders: bool,
 }
 
 pub struct Frame {
@@ -96,22 +100,28 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         (draws.stats, BufferAccess::ComputeWrite),
     ];
     let meshlets = draws.meshlet_capacity.is_some();
-    // The lists the draw passes read, as commands and as data (the meshlets debug view reads their first indices).
+    let mesh = if meshlets && draws.mesh_shaders { frame.pipelines.mesh } else { None };
+    // The lists the draw passes read, as commands and as data (the meshlets debug view reads their first indices);
+    // or with mesh shaders, the queued meshlets their task shaders cull, counting what they cull.
     let (list_draws, list_instances) =
         if meshlets { (draws.meshlet_draws, draws.meshlet_instances) } else { (draws.draws, draws.instances) };
-    let drawing = [
-        (list_draws, BufferAccess::IndirectRead),
-        (draws.count, BufferAccess::IndirectRead),
-        (list_instances, BufferAccess::ShaderRead),
-    ];
-    let shading_buffers = [
-        (list_draws, BufferAccess::IndirectRead),
-        (list_draws, BufferAccess::ShaderRead),
-        (draws.count, BufferAccess::IndirectRead),
-        (list_instances, BufferAccess::ShaderRead),
-        (draws.clusters, BufferAccess::ShaderRead),
-        (draws.lod_state, BufferAccess::ShaderRead),
-    ];
+    let mut drawing = vec![(draws.count, BufferAccess::IndirectRead)];
+    match mesh {
+        Some(_) => drawing.extend([(draws.meshlet_work, BufferAccess::MeshShaderRead)]),
+        None => drawing.extend([
+            (list_draws, BufferAccess::IndirectRead),
+            (list_draws, BufferAccess::ShaderRead),
+            (list_instances, BufferAccess::ShaderRead),
+        ]),
+    }
+    let edge_buffers: Vec<_> = drawing
+        .iter()
+        .copied()
+        .chain([(draws.clusters, BufferAccess::ShaderRead), (draws.lod_state, BufferAccess::ShaderRead)])
+        .collect();
+    let counted = mesh.map(|_| (draws.stats, BufferAccess::TaskWrite));
+    let shading_buffers: Vec<_> = edge_buffers.iter().copied().chain(counted).collect();
+    drawing.extend(counted);
 
     let (count_handle, stats_handle) = (draws.count_handle, draws.stats_handle);
     fg.add_pass(
@@ -143,11 +153,12 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         count: draws.count_handle,
         index_buffer: draws.index_buffer,
         meshlets: draws.meshlet_capacity.map(|capacity| (draws.meshlet_draws_handle, capacity)),
+        tasks: mesh.is_some(),
     };
     // Draw passes read the meshlet lists when there are any.
     let draw_push = Push { source: if meshlets { DRAWS_MESHLETS } else { DRAWS_INSTANCES }, ..push };
     let meshlet_pass = |fg: &mut FrameGraph<'_>, name: &str, images: &[(ImageId, ImageAccess)], lists: [u32; 2]| {
-        if meshlets {
+        if meshlets && mesh.is_none() {
             fg.add_pass(name, images, &meshlet_culling, move |ctx| {
                 cull_meshlets(ctx, pipelines.meshlet_cull, &push, count_handle, lists[0]..lists[1]);
             });
@@ -163,7 +174,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             let size = CASCADE_RESOLUTION * 2;
             let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, Some(clear_depth(1.0)));
             begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
-            bind(ctx, pipelines.shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+            let shadow = mesh.map_or(pipelines.shadow, |mesh| mesh.shadow);
+            bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
             for cascade in 0..CASCADES as u32 {
                 let offset = vk::Offset2D {
                     x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
@@ -184,7 +196,12 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images
     };
     let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..draw_push };
-    let forward = if frame.wireframe { pipelines.wireframe } else { pipelines.forward };
+    let forward = match (mesh, frame.wireframe) {
+        (Some(mesh), true) => mesh.wireframe,
+        (Some(mesh), false) => mesh.forward,
+        (None, true) => pipelines.wireframe,
+        (None, false) => pipelines.forward,
+    };
     let (hdr, velocity, depth) = (targets.hdr, targets.velocity, targets.depth);
     let scene = SceneTargets { hdr, velocity, depth };
 
@@ -209,7 +226,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         },
     );
 
-    fg.add_pass("Cull (late)", &[(pyramid, ImageAccess::Sampled)], &culling, move |ctx| {
+    // With mesh shaders, the late pass's task shaders sample the pyramid too, after this pass.
+    let late_pyramid = if mesh.is_some() { ImageAccess::SampledWithTasks } else { ImageAccess::Sampled };
+    fg.add_pass("Cull (late)", &[(pyramid, late_pyramid)], &culling, move |ctx| {
         cull(ctx, pipelines.cull, &push, LIST_LATE, instances, 1);
     });
     meshlet_pass(fg, "Meshlets (late)", &[(pyramid, ImageAccess::Sampled)], [LIST_LATE, LIST_SHADOW]);
@@ -243,14 +262,17 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
 
     if frame.edges {
         let images = [(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::DepthRead)];
-        fg.add_pass("Edges", &images, &shading_buffers, move |ctx| {
+        // Task shaders cull the lists again for the edges, without counting them again.
+        let edges_push = if mesh.is_some() { Push { source: DRAWS_AGAIN, ..shading_push } } else { shading_push };
+        fg.add_pass("Edges", &images, &edge_buffers, move |ctx| {
             let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
             let depth = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL, None);
             begin_rendering(ctx, extent, &color, Some(&depth));
-            bind(ctx, pipelines.edges, vk::PipelineBindPoint::GRAPHICS, &shading_push);
+            let edges = mesh.map_or(pipelines.edges, |mesh| mesh.edges);
+            bind(ctx, edges, vk::PipelineBindPoint::GRAPHICS, &edges_push);
             // What both opaque passes drew.
             for list in [LIST_EARLY, LIST_LATE] {
-                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, ..shading_push });
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, ..edges_push });
                 indirect.draw(ctx, list);
             }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
@@ -275,10 +297,18 @@ struct Indirect {
     /// The meshlet lists, and the capacity they are laid out by, when the
     /// passes draw those instead of the instance lists.
     meshlets: Option<(vk::Buffer, u32)>,
+    /// Draw the list's queued meshlets with task and mesh shaders, a task
+    /// workgroup for each round of them, the count the cull grew.
+    tasks: bool,
 }
 
 impl Indirect {
     fn draw(self, ctx: &PassContext, list: u32) {
+        if let Some(mesh) = ctx.gpu.mesh_shader.as_ref().filter(|_| self.tasks) {
+            let stride = 3 * size_of::<u32>() as u32;
+            unsafe { mesh.cmd_draw_mesh_tasks_indirect(ctx.cmd, self.count, draw_count_offset(list), 1, stride) };
+            return;
+        }
         let max = crate::MAX_INSTANCES as u32;
         let (draws, first, count_offset, max) = match self.meshlets {
             Some((draws, capacity)) => {

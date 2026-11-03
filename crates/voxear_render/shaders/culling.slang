@@ -1,6 +1,7 @@
-// Culling tests shared by the culling passes (cull.slang) and the mesh
-// shaders (mesh.slang): spheres against planes and the depth pyramid, and
-// meshlets against those and their normal cones.
+// Culling tests shared by the culling passes (cull.slang) and the task
+// shader (meshlet_task.slang): spheres against planes and the depth pyramid,
+// and meshlets against those and their normal cones. Then what the task
+// shader hands the mesh shaders, and how they read it.
 
 #pragma once
 
@@ -142,6 +143,32 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
     return MESHLET_VISIBLE;
 }
 
+// Tests the meshlet the cull queued `work`th in a list, and says whether it
+// is drawn, or why not, with its entry (its draw and its place in the draw's
+// LOD) and the LOD. Past the last queued, `tested` is false.
+uint cullQueued(Frame* frame, uint list, uint work, out bool tested, out uint2 entry, out MeshLod lod)
+{
+    tested = work < queuedMeshlets(frame, list);
+    entry = tested ? buffers()->meshletWork[meshletListBase(list, frame->meshletCapacity) + work] : uint2(~0u, 0);
+    lod = (MeshLod)0;
+    if (!tested)
+    {
+        return MESHLET_OUTSIDE;
+    }
+    Instance instance = buffers()->instances[entry.x & DRAW_INSTANCE_MASK];
+    lod = buffers()->meshes[instance.mesh].lods[(entry.x >> DRAW_LOD_SHIFT) & 0xF];
+    Meshlet meshlet = buffers()->meshlets[lod.meshletOffset + entry.y];
+    return cullMeshlet(frame, meshletCuller(frame, instance, list), meshlet);
+}
+
+// What the task shader hands its mesh shaders: each surviving meshlet's draw
+// (as drawInstances) and its place in the draw's LOD.
+struct MeshletPayload
+{
+    uint draws[MESHLET_ROUND];
+    uint meshlets[MESHLET_ROUND];
+};
+
 // Counts a wave's meshlet results: what the main view tested, culled and
 // drew, or what a shadow cascade drew.
 void countMeshlets(uint list, bool tested, uint result)
@@ -156,4 +183,40 @@ void countMeshlets(uint list, bool tested, uint result)
     countWave(STAT_MESHLETS_CONE_CULLED, tested && result == MESHLET_BACK_FACING);
     countWave(STAT_MESHLETS_OCCLUSION_CULLED, tested && result == MESHLET_OCCLUDED);
     countWave(STAT_MESHLETS_DRAWN, tested && result == MESHLET_VISIBLE);
+}
+
+// The meshlet a mesh shader's workgroup makes, with its draw's instance, LOD
+// and role in a fade, and where its vertices and triangles start.
+struct MeshletDrawn
+{
+    uint instance;
+    uint lod;
+    uint fade;
+    Instance data;
+    MeshLod meshLod;
+    Meshlet meshlet;
+    uint vertexBase;
+    uint triangleBase;
+};
+
+MeshletDrawn meshletDrawn(MeshletPayload payload, uint group)
+{
+    uint packed = payload.draws[group];
+    MeshletDrawn drawn;
+    drawn.instance = packed & DRAW_INSTANCE_MASK;
+    drawn.lod = (packed >> DRAW_LOD_SHIFT) & 0xF;
+    drawn.fade = packed & (DRAW_FADING_IN | DRAW_FADING_OUT);
+    drawn.data = buffers()->instances[drawn.instance];
+    Mesh* mesh = &buffers()->meshes[drawn.data.mesh];
+    drawn.meshLod = mesh->lods[drawn.lod];
+    drawn.meshlet = buffers()->meshlets[drawn.meshLod.meshletOffset + payload.meshlets[group]];
+    drawn.vertexBase = mesh->meshletVertexOffset + drawn.meshlet.vertexOffset;
+    drawn.triangleBase = mesh->meshletTriangleOffset + drawn.meshlet.triangleOffset;
+    return drawn;
+}
+
+uint3 meshletTriangle(MeshletDrawn drawn, uint index)
+{
+    uint corners = buffers()->meshletTriangles[drawn.triangleBase + index];
+    return uint3(corners & 0xFF, (corners >> 8) & 0xFF, corners >> 16);
 }

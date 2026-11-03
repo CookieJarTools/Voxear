@@ -96,10 +96,16 @@ static const uint MESHLET_CULLING = 4;
 
 // Meshlets the meshlet pass, and a task shader, take at a time.
 static const uint MESHLET_ROUND = 32;
+// The most vertices and triangles a meshlet has (see src/meshlets.rs).
+static const uint MESHLET_VERTICES = 64;
+static const uint MESHLET_TRIANGLES = 124;
 
-// Push.source: which lists a draw pass reads.
+// Push.source: which lists a draw pass reads. With mesh shaders, DRAWS_AGAIN
+// draws the meshlet lists a second time, as the lit wireframe's edges,
+// without counting them in the stats again.
 static const uint DRAWS_INSTANCES = 0;
 static const uint DRAWS_MESHLETS = 1;
+static const uint DRAWS_AGAIN = 2;
 
 // A draw's instance index, with its LOD and fade role packed in the top byte.
 static const uint DRAW_INSTANCE_MASK = 0xFFFFFF;

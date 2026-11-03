@@ -37,7 +37,13 @@ pub enum Blend {
 pub struct GraphicsPipelineDesc<'a> {
     pub name: &'a str,
     pub module: &'a ShaderModule,
+    /// The vertex shader, unless `mesh_entry` is set.
     pub vertex_entry: &'a CStr,
+    /// A mesh shader, and the task shader before it if any, in place of the
+    /// vertex shader: geometry made on the GPU, with no vertex input. The
+    /// task shader may come from a module of its own.
+    pub task: Option<(&'a ShaderModule, &'a CStr)>,
+    pub mesh_entry: Option<&'a CStr>,
     pub fragment_entry: Option<&'a CStr>,
     pub color_formats: &'a [vk::Format],
     pub depth_format: Option<vk::Format>,
@@ -66,12 +72,31 @@ impl<'a> GraphicsPipelineDesc<'a> {
         }
     }
 
+    /// As [`new`](Self::new), but with a task and a mesh shader in place of
+    /// the vertex shader, and the fragment shader, from `module` with the
+    /// mesh shader, only when given.
+    pub fn mesh(
+        name: &'a str,
+        task: (&'a ShaderModule, &'a CStr),
+        (module, mesh): (&'a ShaderModule, &'a CStr),
+        fragment: Option<&'a CStr>,
+    ) -> Self {
+        Self {
+            task: Some(task),
+            mesh_entry: Some(mesh),
+            fragment_entry: fragment,
+            ..Self::new(name, module, mesh, mesh)
+        }
+    }
+
     /// Opaque, back-face culled, no depth: change the fields that differ.
     pub fn new(name: &'a str, module: &'a ShaderModule, vertex: &'a CStr, fragment: &'a CStr) -> Self {
         Self {
             name,
             module,
             vertex_entry: vertex,
+            task: None,
+            mesh_entry: None,
             fragment_entry: Some(fragment),
             color_formats: &[],
             depth_format: None,
@@ -94,12 +119,16 @@ pub fn create_graphics_pipeline(
     layout: vk::PipelineLayout,
     desc: &GraphicsPipelineDesc,
 ) -> Result<vk::Pipeline> {
-    let mut stages = vec![
-        vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::VERTEX)
-            .module(desc.module.handle)
-            .name(desc.vertex_entry),
-    ];
+    let stage =
+        |stage, name| vk::PipelineShaderStageCreateInfo::default().stage(stage).module(desc.module.handle).name(name);
+    let mut stages = match desc.mesh_entry {
+        Some(mesh) => {
+            let task =
+                desc.task.map(|(module, task)| stage(vk::ShaderStageFlags::TASK_EXT, task).module(module.handle));
+            task.into_iter().chain([stage(vk::ShaderStageFlags::MESH_EXT, mesh)]).collect()
+        }
+        None => vec![stage(vk::ShaderStageFlags::VERTEX, desc.vertex_entry)],
+    };
     if let Some(fragment) = desc.fragment_entry {
         stages.push(
             vk::PipelineShaderStageCreateInfo::default()
@@ -136,10 +165,8 @@ pub fn create_graphics_pipeline(
         .color_attachment_formats(desc.color_formats)
         .depth_attachment_format(desc.depth_format.unwrap_or(vk::Format::UNDEFINED));
 
-    let info = vk::GraphicsPipelineCreateInfo::default()
+    let mut info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&stages)
-        .vertex_input_state(&vertex_input)
-        .input_assembly_state(&assembly)
         .viewport_state(&viewport)
         .rasterization_state(&raster)
         .multisample_state(&multisample)
@@ -148,6 +175,10 @@ pub fn create_graphics_pipeline(
         .dynamic_state(&dynamic)
         .layout(layout)
         .push_next(&mut rendering);
+    // Mesh shaders make their own geometry, with no vertex input to describe.
+    if desc.mesh_entry.is_none() {
+        info = info.vertex_input_state(&vertex_input).input_assembly_state(&assembly);
+    }
     let pipeline = unsafe { gpu.device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }
         .map_err(|(_, error)| error)
         .with_context(|| format!("creating pipeline {}", desc.name))?[0];

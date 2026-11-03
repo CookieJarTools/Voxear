@@ -302,6 +302,8 @@ pub struct Renderer {
     ui_buffers: Vec<UiBuffers>,
     previews: previews::Previews,
     gpu_decompression: bool,
+    /// Meshlet culling draws with task and mesh shaders, where the GPU has them.
+    mesh_shaders: bool,
     /// What the output is cleared to outside the view, linear.
     clear: [f32; 4],
     frame_debugger: frame_debugger::FrameDebugger,
@@ -365,6 +367,7 @@ impl Renderer {
             ui_buffers,
             previews: previews::Previews::default(),
             gpu_decompression: true,
+            mesh_shaders: true,
             clear: [0.0, 0.0, 0.0, 1.0],
             frame_debugger: Default::default(),
             captures: Default::default(),
@@ -612,6 +615,19 @@ impl Renderer {
         self.gpu_decompression = enabled;
     }
 
+    /// Whether meshlet culling draws with task and mesh shaders, rather than
+    /// a compute pass and indirect draws: where the GPU has them, unless
+    /// turned off.
+    pub fn uses_mesh_shaders(&self) -> bool {
+        self.mesh_shaders && self.pipelines.mesh.is_some()
+    }
+
+    /// Turns the mesh shader path off, or back on where the GPU has it, to
+    /// compare the two. Both draw the same image.
+    pub fn set_mesh_shaders(&mut self, enabled: bool) {
+        self.mesh_shaders = enabled;
+    }
+
     /// Frees a mesh once no frame in flight still draws with it. Built-in
     /// meshes are never freed.
     pub fn free_mesh(&mut self, mesh: MeshHandle) {
@@ -798,6 +814,7 @@ impl Renderer {
             frame_debugger,
             captures,
             clear,
+            mesh_shaders,
             ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
@@ -839,7 +856,18 @@ impl Renderer {
             let keep_ldr = first && outputs[at].ui.wants_backdrop();
             let full = desc.extent();
             let ui_quads = ui.quads.address;
-            let setup = ViewSetup { time, delta_time, frame_index, full, ui_quads, clear: *clear, first, keep_ldr };
+            let mesh_shaders = *mesh_shaders;
+            let setup = ViewSetup {
+                time,
+                delta_time,
+                frame_index,
+                full,
+                ui_quads,
+                clear: *clear,
+                first,
+                keep_ldr,
+                mesh_shaders,
+            };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
             if first {
@@ -1107,6 +1135,8 @@ struct ViewSetup {
     first: bool,
     /// Keep the finished view for the UI's backdrop blur.
     keep_ldr: bool,
+    /// Meshlet culling draws with task and mesh shaders, where the pipelines have them.
+    mesh_shaders: bool,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -1374,6 +1404,7 @@ impl View {
             index_buffer: assets.indices.handle,
             meshlet_draws_handle: buffers.meshlet_draws.handle,
             meshlet_capacity,
+            mesh_shaders: setup.mesh_shaders && pipelines.mesh.is_some(),
         };
         let wireframe = self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME;
         let edges = self.options.debug_view == gpu::DEBUG_VIEW_LIT_WIREFRAME;

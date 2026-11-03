@@ -1,8 +1,8 @@
 // Shared by build.rs and the runtime shader reloader (src/hot_reload.rs), so
 // both compile shaders the same way.
 
-/// Shader files that only hold shared code and have no entry points.
-pub const SHADER_MODULES: &[&str] = &["common", "culling"];
+/// Shader files that are only included by others, never compiled alone.
+pub const SHADER_MODULES: &[&str] = &["common", "culling", "shading"];
 
 /// `slangc` arguments besides the input file, include path and output.
 pub const SLANG_ARGS: &[&str] = &[

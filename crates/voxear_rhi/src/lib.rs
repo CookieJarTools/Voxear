@@ -3,9 +3,10 @@
 //!
 //! The baseline is Vulkan 1.3 with dynamic rendering, synchronization2,
 //! timeline semaphores, buffer device address, scalar layouts, indirect draw
-//! count and descriptor indexing (bindless). That covers NVIDIA, AMD and
-//! Intel GPUs from roughly 2016 on, on Linux and Windows. Mesh shaders and
-//! ray tracing are detected and reported as optional tiers.
+//! count, descriptor indexing (bindless) and wave ballots in compute shaders.
+//! That covers NVIDIA, AMD and Intel GPUs from roughly 2016 on, on Linux and
+//! Windows. Mesh shaders are turned on where the GPU has them; ray tracing is
+//! detected and reported as an optional tier.
 
 mod bindless;
 mod device;

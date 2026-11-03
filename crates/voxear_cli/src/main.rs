@@ -247,6 +247,9 @@ enum Commands {
         /// Draw whole LODs rather than culling each draw's meshlets, to compare.
         #[arg(long)]
         no_meshlet_culling: bool,
+        /// Cull meshlets with a compute pass and indirect draws even where the GPU has mesh shaders, to compare.
+        #[arg(long)]
+        no_mesh_shaders: bool,
         /// Replace the scene's post-processing with a preset: `voxear`, `neutral` or `cinematic`.
         #[arg(long)]
         post: Option<String>,
@@ -356,6 +359,7 @@ fn main() -> Result<()> {
             overlays,
             stats,
             no_meshlet_culling,
+            no_mesh_shaders,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -369,7 +373,7 @@ fn main() -> Result<()> {
             let meshlet_culling = !no_meshlet_culling;
             let options = ViewOptions { debug_view, post_override, meshlet_culling, ..ViewOptions::default() };
             let prepare = Prepare { build: !no_build, bundles, overlays };
-            let shot = Shot { out, size: (width, height), frames, options, stats };
+            let shot = Shot { out, size: (width, height), frames, options, stats, mesh_shaders: !no_mesh_shaders };
             render(&project, shot, prepare, renderdoc)
         }
     }
@@ -425,15 +429,18 @@ struct Shot {
     options: ViewOptions,
     /// Draw the stats overlay over the image.
     stats: bool,
+    /// Cull meshlets with task and mesh shaders, where the GPU has them.
+    mesh_shaders: bool,
 }
 
 fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<()> {
-    let Shot { out, size: (width, height), frames, options, stats } = shot;
+    let Shot { out, size: (width, height), frames, options, stats, mesh_shaders } = shot;
     let project = Project::open(path)?;
     let settings = renderer_settings(&project, renderdoc);
     let mut game = start_game(project, prepare)?;
     let mut renderer = Renderer::new_offscreen(width, height, &settings)?;
     renderer.set_view_options(options);
+    renderer.set_mesh_shaders(mesh_shaders);
     game.start(Some(&mut renderer))?;
     let mut overlay = StatsOverlay::new(stats);
     let frames = frames.max(1);
@@ -475,8 +482,9 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         stats.shadow_draws
     );
     if stats.meshlets > 0 {
+        let how = if renderer.uses_mesh_shaders() { "mesh shaders" } else { "compute" };
         println!(
-            "meshlets: {} tested · {} outside the view · {} facing away · {} occluded · {} drawn · {} in shadows",
+            "meshlets ({how}): {} tested · {} out of view · {} facing away · {} occluded · {} drawn · {} in shadows",
             stats.meshlets,
             stats.meshlets_frustum_culled,
             stats.meshlets_cone_culled,

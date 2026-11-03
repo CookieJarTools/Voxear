@@ -19,6 +19,8 @@ pub struct GpuInfo {
     pub api_version: (u32, u32, u32),
     pub driver: String,
     pub device_local_mb: u64,
+    /// Task and mesh shaders (`VK_EXT_mesh_shader`), with wave operations in
+    /// task shaders, as meshlet culling's mesh shader path needs.
     pub mesh_shaders: bool,
     pub ray_tracing: bool,
     /// GDeflate decompression on the GPU (`VK_NV_memory_decompression`).
@@ -44,6 +46,9 @@ pub struct Gpu {
     /// Decompresses GDeflate on the GPU, where the driver can. Set
     /// `VOXEAR_GPU_DECOMPRESSION=0` to decompress on the CPU instead.
     pub decompression: Option<nv::memory_decompression::Device>,
+    /// Draws with task and mesh shaders, where the GPU has them. Set
+    /// `VOXEAR_MESH_SHADERS=0` to leave them off.
+    pub mesh_shader: Option<ext::mesh_shader::Device>,
     /// Names and labels for RenderDoc, Nsight and validation messages.
     debug_utils: Option<ext::debug_utils::Device>,
     messenger: Option<(ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
@@ -115,7 +120,8 @@ impl Gpu {
 
         let decompress =
             info.memory_decompression && std::env::var("VOXEAR_GPU_DECOMPRESSION").map(|v| v != "0").unwrap_or(true);
-        let device = create_device(&instance, physical, queue_family, decompress)?;
+        let mesh_shaders = info.mesh_shaders && std::env::var("VOXEAR_MESH_SHADERS").map(|v| v != "0").unwrap_or(true);
+        let device = create_device(&instance, physical, queue_family, decompress, mesh_shaders)?;
         let queue = unsafe { device.get_device_queue(queue_family, 0) };
         let swapchain_loader = khr::swapchain::Device::new(&instance, &device);
         let allocator = Allocator::new(&AllocatorCreateDesc {
@@ -132,9 +138,13 @@ impl Gpu {
         if decompress {
             tracing::info!("GPU decompression: GDeflate");
         }
+        if mesh_shaders {
+            tracing::info!("mesh shaders: on");
+        }
         let gpu = Self {
             debug_utils: debug_utils.then(|| ext::debug_utils::Device::new(&instance, &device)),
             decompression: decompress.then(|| nv::memory_decompression::Device::new(&instance, &device)),
+            mesh_shader: mesh_shaders.then(|| ext::mesh_shader::Device::new(&instance, &device)),
             entry,
             instance,
             physical,
@@ -319,6 +329,8 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
     let waves = vk::SubgroupFeatureFlags::BASIC | vk::SubgroupFeatureFlags::BALLOT;
     let compute_waves = v11.subgroup_supported_stages.contains(vk::ShaderStageFlags::COMPUTE)
         && v11.subgroup_supported_operations.contains(waves);
+    let task_waves = v11.subgroup_supported_stages.contains(vk::ShaderStageFlags::TASK_EXT)
+        && v11.subgroup_supported_operations.contains(waves);
     let memory = unsafe { instance.get_physical_device_memory_properties(physical) };
     let device_local: u64 = memory
         .memory_heaps_as_slice()
@@ -354,7 +366,7 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
         api_version: (vk::api_version_major(api), vk::api_version_minor(api), vk::api_version_patch(api)),
         driver: format!("{driver_name} {driver_info}").trim().to_string(),
         device_local_mb: device_local / (1024 * 1024),
-        mesh_shaders: has(ext::mesh_shader::NAME),
+        mesh_shaders: has(ext::mesh_shader::NAME) && task_waves && supports_mesh_shaders(instance, physical),
         ray_tracing: has(khr::acceleration_structure::NAME) && has(khr::ray_query::NAME),
         memory_decompression: has(nv::memory_decompression::NAME) && supports_decompression(instance, physical),
         timestamp_period: props.limits.timestamp_period,
@@ -546,11 +558,29 @@ fn supports_decompression(instance: &ash::Instance, physical: vk::PhysicalDevice
         && methods.decompression_methods.contains(vk::MemoryDecompressionMethodFlagsNV::GDEFLATE_1_0)
 }
 
+/// Whether the GPU has task and mesh shaders, and room in them for meshlets
+/// of 64 vertices and 124 triangles, drawn by workgroups of 32.
+fn supports_mesh_shaders(instance: &ash::Instance, physical: vk::PhysicalDevice) -> bool {
+    let mut mesh = vk::PhysicalDeviceMeshShaderFeaturesEXT::default();
+    let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut mesh);
+    unsafe { instance.get_physical_device_features2(physical, &mut features) };
+    let mut limits = vk::PhysicalDeviceMeshShaderPropertiesEXT::default();
+    let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut limits);
+    unsafe { instance.get_physical_device_properties2(physical, &mut properties) };
+    mesh.task_shader == vk::TRUE
+        && mesh.mesh_shader == vk::TRUE
+        && limits.max_mesh_output_vertices >= 64
+        && limits.max_mesh_output_primitives >= 124
+        && limits.max_task_work_group_invocations >= 32
+        && limits.max_mesh_work_group_invocations >= 32
+}
+
 fn create_device(
     instance: &ash::Instance,
     physical: vk::PhysicalDevice,
     queue_family: u32,
     decompression: bool,
+    mesh_shaders: bool,
 ) -> Result<ash::Device> {
     let priorities = [1.0];
     let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family).queue_priorities(&priorities)];
@@ -562,6 +592,11 @@ fn create_device(
     if decompression {
         extensions.push(nv::memory_decompression::NAME.as_ptr());
         chain = chain.push_next(&mut decompress);
+    }
+    let mut mesh = vk::PhysicalDeviceMeshShaderFeaturesEXT::default().task_shader(true).mesh_shader(true);
+    if mesh_shaders {
+        extensions.push(ext::mesh_shader::NAME.as_ptr());
+        chain = chain.push_next(&mut mesh);
     }
     let info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)

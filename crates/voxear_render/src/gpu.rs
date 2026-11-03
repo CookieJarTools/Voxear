@@ -156,9 +156,12 @@ pub const MESHLET_CONES: u32 = 1;
 pub const MESHLET_RUNS: u32 = 2;
 pub const MESHLET_CULLING: u32 = 4;
 
-/// `Push::source`: which lists a draw pass reads.
+/// `Push::source`: which lists a draw pass reads. With mesh shaders,
+/// `DRAWS_AGAIN` draws the meshlet lists a second time, as the lit
+/// wireframe's edges, without counting them in the stats again.
 pub const DRAWS_INSTANCES: u32 = 0;
 pub const DRAWS_MESHLETS: u32 = 1;
+pub const DRAWS_AGAIN: u32 = 2;
 
 /// Froxel grid for clustered lighting: screen tiles by depth slices.
 pub const CLUSTER_GRID: [u32; 3] = [16, 9, 24];

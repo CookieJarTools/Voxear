@@ -61,6 +61,9 @@
                 <DockPanel id="memory" title="Memory" class="dock-content">
                     <Panel name="memory-panel" class="fill frame-debugger-panel" />
                 </DockPanel>
+                <DockPanel id="audio" title="Audio" class="dock-content">
+                    <Panel name="audio-panel" class="fill frame-debugger-panel" />
+                </DockPanel>
                 <DockPanel id="input" title="Input Actions" icon="gamepad" class="dock-content">
                     <Panel name="input-panel" class="fill input-panel" />
                 </DockPanel>

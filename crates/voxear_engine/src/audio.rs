@@ -31,13 +31,15 @@ use voxear_assets::{AssetGuid, SoundImport};
 use voxear_core::math::Vec3;
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::Camera;
-use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
+use voxear_scene::{Destroying, EditorOnly, Name, Transform, WorldTransform};
 use voxear_scripting::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 
 use voxear_audio::steam_audio::{Muffle, Occlusion, SourceAcoustics, SteamAudio};
 
 use crate::acoustics::Walls;
-pub use voxear_audio::{Audio, Bus, Distance, Listener, ReverbTimes, Sound, SoundInfo, VoiceId, VoiceParams, probe};
+pub use voxear_audio::{
+    Audio, Bus, Distance, Listener, ReverbTimes, Sound, SoundInfo, VoiceId, VoiceParams, VoiceReport, probe,
+};
 
 use crate::content::Content;
 
@@ -491,6 +493,22 @@ pub struct GameAudio {
     room: ReverbTimes,
     /// The level's walls in Steam Audio, while the game runs.
     walls: Walls,
+    /// The sound each one-shot voice plays, for the Audio panel.
+    shots: HashMap<VoiceId, SoundId>,
+}
+
+/// A voice playing, as the editor's Audio panel lists it: what the mixer
+/// says of it, and where it comes from, named.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeardVoice {
+    pub report: VoiceReport,
+    /// The Audio Source's Obj, for a source's voice.
+    pub source: Option<Entity>,
+    /// The Obj's name, or what else plays it: a one-shot, or the editor's
+    /// preview of a sound.
+    pub name: String,
+    /// The sound's project path, when it is known.
+    pub sound: String,
 }
 
 impl Default for GameAudio {
@@ -513,6 +531,7 @@ impl GameAudio {
             reverb_on: false,
             room: ReverbTimes::NONE,
             walls: Walls::default(),
+            shots: HashMap::new(),
         }
     }
 
@@ -535,6 +554,11 @@ impl GameAudio {
 
     pub fn reverb_on(&self) -> bool {
         self.reverb_on
+    }
+
+    /// Where the listener was last frame, while the game runs.
+    pub fn listener_at(&self) -> Option<Vec3> {
+        self.listener_was
     }
 
     /// How long the listener's room rings, in seconds in each band of
@@ -708,7 +732,38 @@ impl GameAudio {
             spatial: shot.at,
             ..VoiceParams::default()
         };
-        Ok(self.audio.play(&loaded, params))
+        let voice = self.audio.play(&loaded, params);
+        self.shots.retain(|voice, _| self.audio.exists(*voice));
+        self.shots.insert(voice, sound_id);
+        Ok(voice)
+    }
+
+    /// Every voice the mixer is playing, named, while the Audio panel
+    /// watches (see `Audio::watch_voices`): sources' first, by name.
+    pub fn heard_voices(&self, world: &World, content: &Content) -> Vec<HeardVoice> {
+        let path = |id: Option<SoundId>| {
+            let guid = id.and_then(|id| content.sound_guid(id));
+            guid.and_then(|guid| content.db().get(guid)).map_or_else(String::new, |entry| entry.path.clone())
+        };
+        let mut heard: Vec<HeardVoice> = self
+            .audio
+            .voice_reports()
+            .into_iter()
+            .map(|report| {
+                let found = self.sources.iter().find(|(_, playback)| playback.voice == report.id);
+                let (source, name, sound) = match found {
+                    Some((&entity, playback)) => {
+                        let name = world.get::<Name>(entity).map_or_else(|| "Obj".to_string(), |name| name.0.clone());
+                        (Some(entity), name, path(playback.applied.sound))
+                    }
+                    None if report.id == self.preview => (None, "Preview".to_string(), self.preview_path.clone()),
+                    None => (None, "One-shot".to_string(), path(self.shots.get(&report.id).copied())),
+                };
+                HeardVoice { report, source, name, sound }
+            })
+            .collect();
+        heard.sort_by_key(|voice| (voice.source.is_none(), voice.name.clone(), voice.report.id));
+        heard
     }
 
     /// Stops every game voice and forgets every source, as when play stops,

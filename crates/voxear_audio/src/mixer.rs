@@ -30,6 +30,7 @@ use voxear_core::math::Vec3;
 use crate::{
     bands::Bands,
     ears::Ears,
+    report::{VoiceBoard, VoiceReport},
     reverb::{Reverb, ReverbTimes},
     spatial::{self, Distance, Listener},
     steam_audio::{Hrtf, Muffle},
@@ -179,10 +180,17 @@ pub struct Mixer {
     mix: Vec<f32>,
     sent: Vec<f32>,
     reverb: Option<Box<Reverb>>,
+    /// Where it tells the editor what it plays.
+    board: Arc<VoiceBoard>,
 }
 
 impl Mixer {
-    pub(crate) fn new(sample_rate: u32, commands: Receiver<Command>, finished: SyncSender<VoiceId>) -> Self {
+    pub(crate) fn new(
+        sample_rate: u32,
+        commands: Receiver<Command>,
+        finished: SyncSender<VoiceId>,
+        board: Arc<VoiceBoard>,
+    ) -> Self {
         Self {
             sample_rate,
             voices: Vec::with_capacity(64),
@@ -199,6 +207,7 @@ impl Mixer {
             mix: Vec::new(),
             sent: Vec::new(),
             reverb: None,
+            board,
         }
     }
 
@@ -255,6 +264,10 @@ impl Mixer {
                 mixed[0] += left;
                 mixed[1] += right;
             }
+        }
+        if self.board.watched() {
+            let game_paused = self.game_paused;
+            self.board.write(self.voices.iter().map(|voice| voice.report(game_paused)));
         }
         for (frame, mixed) in out.chunks_exact_mut(channels).zip(self.mix.as_chunks::<2>().0) {
             match frame {
@@ -499,6 +512,22 @@ fn drain(voice: &mut Voice, mix: &mut [[f32; 2]], listener: &Listener) -> Played
 }
 
 impl Voice {
+    fn report(&self, game_paused: bool) -> VoiceReport {
+        VoiceReport {
+            id: self.id,
+            bus: self.params.bus,
+            volume: self.params.volume * self.gain,
+            heard: self.gains.map_or(0.0, |[left, right]| left.max(right)),
+            pitch: self.params.pitch,
+            at: self.params.spatial.map(|(at, _)| at),
+            muffle: self.bands.as_ref().map(|bands| bands.target()),
+            binaural: self.ears.is_some(),
+            looping: self.params.looping,
+            paused: self.paused || (game_paused && self.params.bus != Bus::Preview),
+            ending: self.stopping || self.done,
+        }
+    }
+
     /// One frame of the voice's sound as the listener hears it, at its
     /// left and right volumes: as it is for a 2D voice, and in mono from
     /// where it is for a 3D one, panned or through its binaural effect. A

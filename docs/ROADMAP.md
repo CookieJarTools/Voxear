@@ -610,7 +610,7 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     acceleration structures exist.
   - [x] the audio debugger: each Audio Source a speaker in the Scene view, lit while it plays, and the selected one's
     min and max distances as rings
-  - [ ] a list of the voices playing, with their buses and volumes
+  - [x] a list of the voices playing, with their buses and volumes: the editor's Audio panel
 - Physics:
   - [x] Jolt 5.6 vendored and built behind Voxear's own C shim: shapes, static, kinematic and dynamic bodies,
     raycasts and overlaps, contacts, joints and a character controller

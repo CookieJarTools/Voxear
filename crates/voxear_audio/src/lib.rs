@@ -26,6 +26,7 @@ mod bands;
 mod ears;
 mod mixer;
 mod output;
+mod report;
 mod reverb;
 mod sound;
 mod spatial;
@@ -41,6 +42,7 @@ use std::{
 };
 
 pub use mixer::{Bus, MAX_VOICES, Mixer, VoiceId, VoiceParams};
+pub use report::VoiceReport;
 pub use reverb::ReverbTimes;
 pub use sound::{Sound, SoundInfo, probe};
 pub use spatial::{Distance, Listener, SPEED_OF_SOUND, doppler, gains, pan};
@@ -49,6 +51,7 @@ use voxear_core::math::Vec3;
 use crate::{
     mixer::{Command, NewVoice, Source},
     output::Output,
+    report::VoiceBoard,
     stream::Streamer,
 };
 
@@ -91,6 +94,7 @@ pub struct Audio {
     effects: f32,
     game_paused: bool,
     headphones: bool,
+    board: Arc<VoiceBoard>,
 }
 
 impl Default for Audio {
@@ -124,11 +128,12 @@ impl Audio {
     fn with_mode(mode: Mode, sample_rate: u32) -> Self {
         let (commands, received) = mpsc::channel();
         let (finish, finished) = mpsc::sync_channel(FINISHED);
+        let board = Arc::new(VoiceBoard::default());
         Self {
             commands,
             finished,
             mode,
-            mixer: Some(Mixer::new(sample_rate, received, finish)),
+            mixer: Some(Mixer::new(sample_rate, received, finish, board.clone())),
             output: None,
             streamer: None,
             next: 1,
@@ -138,6 +143,7 @@ impl Audio {
             effects: 1.0,
             game_paused: false,
             headphones: false,
+            board,
         }
     }
 
@@ -326,6 +332,18 @@ impl Audio {
 
     pub fn headphones(&self) -> bool {
         self.headphones
+    }
+
+    /// Has the mixer say what it plays, for [`voice_reports`](Self::voice_reports),
+    /// while `on`; it does nothing for it otherwise.
+    pub fn watch_voices(&self, on: bool) {
+        self.board.watch(on);
+    }
+
+    /// Every voice the mixer is playing, as it was at the end of its last
+    /// block, while watched; empty otherwise.
+    pub fn voice_reports(&self) -> Vec<VoiceReport> {
+        if self.board.watched() { self.board.read() } else { Vec::new() }
     }
 
     /// Holds every game voice where it is, as the editor's Pause does, or

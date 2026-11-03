@@ -2555,7 +2555,10 @@ of Steam Audio's CPU ray tracer, through Steam Audio's custom scene callbacks in
 - When the switch is off, or the GPU cannot spare the time, the same sources fall back to baked reverb probes and
   ray-cast occlusion, so games never depend on it.
 
-**Tools.** An audio debugger shows active voices, occlusion rays and paths in the viewport.
+**Tools.** An audio debugger shows active voices, occlusion rays and paths in the viewport. *(Built so far: Audio
+Sources as speakers in the Scene view, lit while they play, and the Audio panel, which lists every voice the mixer
+plays, named by `GameAudio::heard_voices`, from a list the mixer writes after each block only while the panel watches,
+and never waits for.)*
 
 ## Physics (Jolt)
 

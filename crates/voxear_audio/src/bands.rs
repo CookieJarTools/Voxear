@@ -38,6 +38,10 @@ impl Bands {
         self.target = muffle.0;
     }
 
+    pub fn target(&self) -> Muffle {
+        Muffle(self.target)
+    }
+
     pub fn apply(&mut self, sample: f32) -> f32 {
         for (now, target) in self.now.iter_mut().zip(self.target) {
             *now += (target - *now) * SLIDE;

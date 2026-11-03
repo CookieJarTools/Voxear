@@ -384,3 +384,24 @@ fn with_headphones_a_3d_voice_is_heard_through_the_hrtf_and_plays_out() {
     let out = render(&mut mixer, 10);
     assert!(close(out[0], 0.0) && out[1] > 0.0, "panned hard right: {:?}", &out[..2]);
 }
+
+#[test]
+fn a_watched_mixer_reports_its_voices() {
+    let (mut audio, mut mixer) = Audio::offline(RATE);
+    let sound = level(1.0, RATE as usize, RATE);
+    let at = Vec3::new(4.0, 0.0, 0.0);
+    audio.play(&sound, VoiceParams { volume: 0.5, looping: true, bus: Bus::Music, ..Default::default() });
+    audio.play(&sound, VoiceParams { spatial: Some((at, Distance::default())), ..Default::default() });
+    render(&mut mixer, 64);
+    assert!(audio.voice_reports().is_empty(), "nothing said while nobody watches");
+
+    audio.watch_voices(true);
+    render(&mut mixer, 64);
+    let reports = audio.voice_reports();
+    assert_eq!(reports.len(), 2);
+    let music = reports.iter().find(|r| r.bus == Bus::Music).unwrap();
+    assert!(music.looping && close(music.volume, 0.5) && close(music.heard, 0.5) && music.at.is_none());
+    let placed = reports.iter().find(|r| r.bus == Bus::Effects).unwrap();
+    assert_eq!(placed.at, Some(at));
+    assert!(placed.heard > 0.0 && placed.heard < 1.0 && !placed.paused && !placed.ending);
+}

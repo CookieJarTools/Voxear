@@ -6027,3 +6027,35 @@ fn the_level_a_level_stands_on_and_its_scenes_weights_are_set_in_the_inspector()
     frame(&mut editor, &mut renderer);
     assert!(!level("World.level").contains("stands_on"), "{}", level("World.level"));
 }
+
+#[test]
+fn the_audio_panel_lists_the_voices_playing() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    frame(&mut editor, &mut renderer);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.open_dock_panel_beside(dock, "audio", "scene");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let summary = editor.audio_panel().summary();
+    assert_eq!(editor.ui.text(summary), "0 voices");
+
+    let sound = std::sync::Arc::new(voxear_engine::audio::Sound::from_samples(vec![0.25; 48_000], 1, 48_000));
+    let params = voxear_engine::audio::VoiceParams { looping: true, ..Default::default() };
+    editor.game.audio.audio.play(&sound, params);
+    let started = std::time::Instant::now();
+    while editor.ui.text(summary) != "1 voice" {
+        assert!(started.elapsed().as_secs() < 10, "the voice is listed: {}", editor.ui.text(summary));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        frame(&mut editor, &mut renderer);
+    }
+    let mut rows = Vec::new();
+    with_class(&editor.ui, editor.audio_panel().list(), "entities-row", &mut rows);
+    let shown: Vec<String> = rows
+        .into_iter()
+        .filter(|&row| editor.ui.is_visible(row))
+        .map(|row| texts_in(&editor.ui, row).join(" "))
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    let listed = shown.iter().any(|row| row.starts_with("One-shot") && row.contains("Effects") && row.contains("Loop"));
+    assert!(listed, "{shown:?}");
+}

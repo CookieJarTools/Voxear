@@ -44,6 +44,7 @@
 
 mod asset_inspector;
 mod attributes;
+pub mod audio_panel;
 mod build_window;
 mod collection;
 mod columns;

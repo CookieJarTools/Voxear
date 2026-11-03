@@ -63,6 +63,7 @@ use voxear_ui::{DragSource, NodeId, Theme, Ui};
 
 use crate::{
     asset_inspector::AssetAction,
+    audio_panel::AudioPanel,
     build_window::BuildWindow,
     console::Console,
     entities_panel::EntitiesPanel,
@@ -155,6 +156,7 @@ struct Nodes {
     entities_panel: NodeId,
     frame_debugger_panel: NodeId,
     memory_panel: NodeId,
+    audio_panel: NodeId,
     /// The Input Actions window's panel.
     input_panel: NodeId,
     /// The Build window's panel.
@@ -285,6 +287,7 @@ pub struct Editor {
     entities: EntitiesPanel,
     frame_debugger: FrameDebuggerPanel,
     memory_profiler: MemoryPanel,
+    audio: AudioPanel,
     input_actions: InputPanel,
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
@@ -433,6 +436,7 @@ impl Editor {
             entities_panel: find(&ui, "entities-panel"),
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
             memory_panel: find(&ui, "memory-panel"),
+            audio_panel: find(&ui, "audio-panel"),
             input_panel: find(&ui, "input-panel"),
             build_panel: find(&ui, "build-panel"),
             tooltip: find(&ui, "tooltip"),
@@ -479,6 +483,7 @@ impl Editor {
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
+        let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
         let input_actions = InputPanel::new(&mut ui, nodes.input_panel);
         let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
@@ -547,6 +552,7 @@ impl Editor {
             entities,
             frame_debugger,
             memory_profiler,
+            audio,
             input_actions,
             build_window,
             picker,
@@ -754,6 +760,10 @@ impl Editor {
             self.frame_debugger.update(&mut self.ui, frames_shown, renderer);
             let memory_shown = self.shown(self.nodes.memory_panel);
             self.memory_profiler.update(&mut self.ui, memory_shown, &self.game, renderer);
+            let audio_shown = self.shown(self.nodes.audio_panel);
+            if let Some(picked) = self.audio.update(&mut self.ui, audio_shown, &self.game) {
+                self.select(Some(picked));
+            }
             if self.shown(self.nodes.input_panel) {
                 self.input_actions.update(&mut self.ui, &self.game.input);
             }
@@ -866,6 +876,11 @@ impl Editor {
     /// The Entities panel, the ECS inspector.
     pub fn memory_panel(&self) -> &MemoryPanel {
         &self.memory_profiler
+    }
+
+    /// The Audio panel, the voices the game plays.
+    pub fn audio_panel(&self) -> &AudioPanel {
+        &self.audio
     }
 
     pub fn entities_panel(&self) -> &EntitiesPanel {

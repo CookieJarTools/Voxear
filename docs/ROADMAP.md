@@ -375,6 +375,40 @@ Next in M3:
     and `Changed` with each kind's own event
   - [x] list and tree views at runtime from C#, filled from code: `ListView<T>` and `TreeView<T>`, with `MakeRow`
     and `BindRow`, rows filled in the frame they show in, and the selection
+  - [ ] **Project Settings**: a pass that exposes as much of the engine as Unity's Project Settings do, well
+    organised, so a game can be tuned for each platform and quality level without touching code:
+    - a Project Settings window with a category list down its side, a search across every setting, values changed
+      from the default marked, reset per value or per category, a tooltip and a manual link on each, and changes
+      shown live in the editor
+    - one `.toml` file per category in `ProjectSettings/`, written only where it differs from the default, so they
+      read well in version control; build profiles change them key by key, as they do now
+    - per-platform overrides (Linux and Windows now, more as platforms come), as Unity's platform tabs, and
+      per-quality-level values for anything a quality level should change
+    - **Quality**: named levels (Low, Medium, High, Ultra, and the project's own), a default per platform, chosen
+      by players at runtime; each level sets render scale and upscaler, shadows (resolution, distance,
+      cascades, softness), the LOD bias and lowest LOD shown, texture mip limit and anisotropic filtering,
+      anti-aliasing, ambient occlusion, GI, reflections and volumetrics, particle and decal budgets, and vsync
+      and the frame cap
+    - **Player**: company and product name, version, icon and splash, the window (resolution, full screen or
+      windowed, resizable, running in the background), the cursor and the display scale
+    - **Graphics**: the default lighting look, HDR output, the default tonemapper, mesh shaders or their fallback,
+      GPU decompression, and shader variants kept or stripped
+    - **Physics and Physics 2D**: gravity, the fixed step, solver iterations, sleep, default friction and
+      bounciness, body limits, and the layers and collision matrix that exist already
+    - **Time**: the fixed step, the largest frame step, and the time scale
+    - **Audio**: sample rate, buffer size, the most voices at once, default bus volumes, Doppler and the speed of
+      sound, and Steam Audio's quality (HRTF, reflection rays, baking)
+    - **Input**: the default actions, stick dead zones, default sensitivities, and input while unfocused
+    - **Scripting and compilation**: the C# language version, nullable, warnings as errors, defines per platform,
+      optimisation, trimming, and the script execution order
+    - **Content and loading**: compression, streaming and memory budgets, and default import settings per asset
+      kind
+    - **Localization**, **Saving**, **UI** (the default theme, font and scaling) and **Tags and Layers**, brought
+      in from where they are kept now
+    - C#: every setting read as a typed value (`Physics.Gravity`, `Time.FixedDelta`, `Quality.Current`), the ones
+      that may change while the game runs set from code, and quality levels picked by reference, never by name
+    - a game's own settings: a class marked `[ProjectSettings]` gets its own category in the window, saved with
+      the project and readable from code, as Unity's SettingsProvider
   - [ ] **UI navigation**, for gamepads and keyboards, as Unity's and Unreal's, so a complicated menu works with a
     controller without the game writing any code for it:
     - automatic: up, down, left and right move to the nearest focusable element that way, by distance and by how

@@ -3,13 +3,43 @@
 //! map draws them (see `voxear_ui::KeymapData`). The editor's Input Actions
 //! window and a game's own key binding screen both draw them from here.
 //!
+//! Prompts draw an action's controls as glyphs from here too (see
+//! [`prompt_glyphs`]).
+//!
 //! A key bound to actions shown is assigned, and labelled with them; one
 //! bound only to hidden actions is marked hidden, unlabelled unless hidden
 //! actions are shown; the rest are unused. Coloured by category, each
 //! assigned key takes the colour of its first action's category.
 
 use voxear_input::{ControlUse, Input, Scheme, layouts};
-use voxear_ui::{Color, KeyShape, KeyState, KeymapData, KeymapKey};
+use voxear_ui::{Color, GlyphShape, KeyShape, KeyState, KeymapData, KeymapKey, PromptGlyph};
+
+/// An action's controls, by its name (`Jump` or `Player/Jump`), as a
+/// prompt draws them on the device the player used last: none for an
+/// action there is not, or one with no binding for that device.
+pub fn prompt_glyphs(input: &Input, action: &str) -> Vec<PromptGlyph> {
+    let Some(action) = input.action(action) else { return Vec::new() };
+    input.glyphs(action).into_iter().map(prompt_glyph).collect()
+}
+
+/// A control, by its path, as a prompt draws it on the player's device.
+pub fn control_prompt_glyph(input: &Input, path: &str) -> PromptGlyph {
+    prompt_glyph(input.control_glyph(path))
+}
+
+fn prompt_glyph(glyph: voxear_input::Glyph) -> PromptGlyph {
+    use voxear_input::GlyphShape as Input;
+    let shape = match glyph.shape {
+        Input::Key => GlyphShape::Key,
+        Input::Round => GlyphShape::Round,
+        Input::Pill => GlyphShape::Pill,
+        Input::Square => GlyphShape::Square,
+        Input::Stick => GlyphShape::Stick,
+        Input::Bare => GlyphShape::Bare,
+    };
+    let color = glyph.color.map(|[r, g, b]| Color::rgb(r, g, b));
+    PromptGlyph { shape, text: glyph.text, icon: glyph.icon, color }
+}
 
 /// How keys are coloured.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -135,6 +165,23 @@ mod tests {
                            category = \"Movement\"\nbindings = [{ up = \"Keyboard/W\", down = \"Keyboard/S\" }]\n\n\
                            [[map.action]]\nname = \"Jump\"\nbindings = [\"Keyboard/Space\", \"Gamepad/South\"]\n\n\
                            [[map.action]]\nname = \"Noclip\"\nhidden = true\nbindings = [\"Keyboard/N\"]\n";
+
+    #[test]
+    fn a_prompt_draws_an_actions_controls_on_the_device_used_last() {
+        let mut input = Input::without_gamepads();
+        input.load_actions(ACTIONS).unwrap();
+        let jump = prompt_glyphs(&input, "Jump");
+        assert_eq!(jump.len(), 1);
+        assert_eq!((jump[0].shape, jump[0].text.as_str()), (GlyphShape::Key, "Space"));
+        let moves: Vec<String> = prompt_glyphs(&input, "Player/Move").into_iter().map(|g| g.text).collect();
+        assert_eq!(moves, ["W", "S"], "a composite's every part");
+        assert!(prompt_glyphs(&input, "Fly").is_empty(), "no such action");
+
+        let pad = input.glyphs_for(input.action("Jump").unwrap(), Scheme::Gamepad);
+        let south = prompt_glyph(pad[0].clone());
+        assert_eq!((south.shape, south.text.as_str()), (GlyphShape::Round, "A"));
+        assert_eq!(south.color, Some(Color::rgb(0x5d, 0xb5, 0x3a)), "an Xbox pad's green A");
+    }
 
     #[test]
     fn keys_are_assigned_hidden_or_unused_and_coloured_by_category() {

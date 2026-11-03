@@ -24,11 +24,13 @@
 
 pub mod actions;
 pub mod devices;
+pub mod glyphs;
 pub mod layouts;
 
 use anyhow::{Context, Result};
 pub use actions::{ActionKind, ActionState, ActionsFile, Binding, CategoryData};
 pub use devices::{Devices, Family, Mouse, Pad, Scheme};
+pub use glyphs::{Glyph, GlyphShape};
 use winit::event::WindowEvent;
 
 /// Voxear's own actions, for a project without any.
@@ -391,6 +393,22 @@ impl Input {
         let Some(binding) = self.bindings(action).iter().find(|b| b.scheme() == scheme) else { return String::new() };
         let labels: Vec<String> = binding.controls().iter().map(|(_, path)| self.control_label(path)).collect();
         labels.join(" ")
+    }
+
+    /// An action's prompt as glyphs, one a control, for the device used
+    /// last: see [`glyphs`].
+    pub fn glyphs(&self, action: ActionId) -> Vec<Glyph> {
+        self.glyphs_for(action, self.scheme())
+    }
+
+    pub fn glyphs_for(&self, action: ActionId, scheme: Scheme) -> Vec<Glyph> {
+        let Some(binding) = self.bindings(action).iter().find(|b| b.scheme() == scheme) else { return Vec::new() };
+        binding.controls().iter().map(|(_, path)| self.control_glyph(path)).collect()
+    }
+
+    /// A control, by its path, as a prompt draws it on the player's device.
+    pub fn control_glyph(&self, path: &str) -> Glyph {
+        glyphs::glyph(self.devices.family(), path, &|key| self.devices.key_label(key))
     }
 
     /// A control as prompts name it.

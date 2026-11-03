@@ -278,6 +278,10 @@ impl Ui {
                     let node = self.keymap(parent);
                     self.attributes(node, child, &["name", "class", "style"], builder);
                 }
+                "Prompt" => {
+                    let node = self.prompt(parent, child.attribute("action").unwrap_or_default());
+                    self.attributes(node, child, &["name", "class", "style", "action"], builder);
+                }
                 "Segmented" => {
                     let node = self.segmented(parent);
                     self.attributes(node, child, &["name", "class", "style", "value"], builder);
@@ -312,7 +316,7 @@ impl Ui {
                 }
                 other => {
                     let known = "Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, \
-                                 Icon, Image, Keymap, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style";
+                                 Icon, Image, Keymap, Prompt, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style";
                     return Err(builder.error(child, format!("unknown element <{other}>; expected {known}")));
                 }
             }

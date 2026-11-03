@@ -285,6 +285,7 @@ pub struct Ui {
     pub(crate) reorders: crate::reorder::Reorders,
     /// Key maps, by their element; see [`keymap`](crate::keymap).
     pub(crate) keymaps: HashMap<taffy::NodeId, crate::keymap::Keymap>,
+    pub(crate) prompts: HashMap<taffy::NodeId, crate::prompt::Prompt>,
     /// The elements whose text is a key's, in the language the game is in,
     /// and whether any were bound since the last look (see
     /// [`Ui::set_text_key`]).
@@ -343,6 +344,7 @@ impl Ui {
             visitors: Vec::new(),
             reorders: Default::default(),
             keymaps: HashMap::new(),
+            prompts: HashMap::new(),
             text_keys: HashMap::new(),
             text_keys_added: false,
         }
@@ -530,6 +532,10 @@ impl Ui {
     /// Changes an element's text. Setting the same text again costs nothing,
     /// so this can be called every frame.
     pub fn set_text(&mut self, node: NodeId, text: &str) {
+        // A prompt's text is the action it is for.
+        if self.is_prompt(node) {
+            return self.set_prompt_action(node, text);
+        }
         if let Some(edit) = self.editing(node) {
             if edit.editor.raw_text() != text {
                 edit.editor.set_text(text);
@@ -783,6 +789,7 @@ impl Ui {
         self.drop_targets.remove(&node.0);
         self.reorders.forget(node.0);
         self.forget_keymap(node.0);
+        self.forget_prompt(node.0);
         self.text_keys.remove(&node.0);
         self.lists.retain(|&n| n != node.0);
         self.scrollers.retain(|&n| n != node.0);

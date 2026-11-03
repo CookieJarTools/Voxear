@@ -73,6 +73,18 @@ pub const NAMES: &[&str] = &[
     "lock",
     "grip",
     "layers",
+    "pad-cross",
+    "pad-circle",
+    "pad-square",
+    "pad-triangle",
+    "arrow-up",
+    "arrow-down",
+    "arrow-left",
+    "arrow-right",
+    "mouse",
+    "mouse-left",
+    "mouse-right",
+    "mouse-middle",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -191,6 +203,28 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
              M15 5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5ZM9 14a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5Z",
             STROKE,
         )],
+        // A PlayStation pad's face buttons, for prompts.
+        "pad-cross" => &[("M7.5 7.5l9 9M16.5 7.5l-9 9", STROKE)],
+        "pad-circle" => &[("M12 6.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11Z", STROKE)],
+        "pad-square" => &[("M7 7h10v10H7Z", STROKE)],
+        "pad-triangle" => &[("M12 6l6.5 11h-13Z", STROKE)],
+        "arrow-up" => &[("M12 19V5M6 11l6-6 6 6", STROKE)],
+        "arrow-down" => &[("M12 5v14M6 13l6 6 6-6", STROKE)],
+        "arrow-left" => &[("M19 12H5M11 6l-6 6 6 6", STROKE)],
+        "arrow-right" => &[("M5 12h14M13 6l6 6-6 6", STROKE)],
+        // A mouse, and with each of its buttons filled.
+        "mouse" => &[("M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6ZM12 6.5v3", STROKE)],
+        "mouse-left" => &[
+            ("M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6ZM6 10h12M12 3v7", STROKE),
+            ("M12 3.75a5.25 5.25 0 0 0-5.25 5.25v1H12Z", FILL),
+        ],
+        "mouse-right" => &[
+            ("M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6ZM6 10h12M12 3v7", STROKE),
+            ("M12 3.75a5.25 5.25 0 0 1 5.25 5.25v1H12Z", FILL),
+        ],
+        "mouse-middle" => {
+            &[("M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6Z", STROKE), ("M11 5.5h2v4.5h-2Z", FILL)]
+        }
         _ => return None,
     })
 }

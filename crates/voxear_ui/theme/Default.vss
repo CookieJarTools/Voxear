@@ -1028,3 +1028,70 @@ DockSpace .split-column > .split-divider {
 .controls-conflict {
     color: var(--vx-warning);
 }
+
+/* Prompts: an action's controls as glyphs, as "press A to jump" shows them. Each glyph is a keycap, a round face
+   button, a pill for a shoulder or trigger, a square for the d-pad, a ring for a stick, or bare for the mouse. */
+.prompt {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+}
+
+.prompt-glyph {
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0px 6px;
+    border-radius: 5px;
+    border: 1px solid var(--vx-field-line);
+    background-color: var(--vx-field);
+    color: var(--vx-text);
+    font-size: 12px;
+}
+
+.prompt-glyph.key {
+    border-bottom-width: 3px;
+}
+
+.prompt-glyph.round {
+    width: 24px;
+    padding: 0px;
+    border-radius: 999px;
+    background-color: #24262b;
+    font-weight: 700;
+}
+
+.prompt-glyph.pill {
+    border-radius: 999px;
+    padding: 0px 8px;
+}
+
+.prompt-glyph.square {
+    width: 24px;
+    padding: 0px;
+    border-radius: 4px;
+}
+
+.prompt-glyph.stick {
+    width: 24px;
+    padding: 0px;
+    border-radius: 999px;
+    border-width: 2px;
+    background-color: transparent;
+}
+
+.prompt-glyph.bare {
+    border-width: 0px;
+    background-color: transparent;
+    padding: 0px;
+}
+
+.prompt-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.prompt-glyph.bare {
+    width: 24px;
+}

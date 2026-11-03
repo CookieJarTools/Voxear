@@ -26,11 +26,13 @@ pub enum ElementKind {
     TreeView,
     /// A device drawn as its keys, with their actions; see [`crate::keymap`].
     Keymap,
+    /// The controls of an action, its text, as glyphs; see [`crate::prompt`].
+    Prompt,
 }
 
 impl ElementKind {
     /// Every kind, in the order scripts number them.
-    pub const ALL: [ElementKind; 14] = [
+    pub const ALL: [ElementKind; 15] = [
         Self::Panel,
         Self::ScrollView,
         Self::Label,
@@ -45,6 +47,7 @@ impl ElementKind {
         Self::ListView,
         Self::TreeView,
         Self::Keymap,
+        Self::Prompt,
     ];
 
     /// The kind scripts know by this number, or none.
@@ -93,6 +96,7 @@ impl Ui {
             ElementKind::TreeView => self.add(parent, Element::new(Kind::TreeView, Style::column().scroll())),
             // Empty until its owner gives it a device and its keys.
             ElementKind::Keymap => self.keymap(parent),
+            ElementKind::Prompt => self.prompt(parent, text),
         }
     }
 }

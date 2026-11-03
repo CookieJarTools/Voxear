@@ -8,7 +8,9 @@
 //!
 //! A key map (`KeymapView`) shows the keyboard and mouse or a gamepad with
 //! each control's actions, as scripts ask, filled from the game's input at
-//! the end of each frame ([`GameUi::follow_input`]).
+//! the end of each frame ([`GameUi::follow_input`]); so does each prompt
+//! (`<Prompt action="Jump" />`, or `PromptView`) with its action's controls,
+//! as glyphs for the device the player used last.
 //!
 //! A label, button or toggle whose text is `@menu.play`, in a document or
 //! set from a script, shows that key's text in the game's language, and the
@@ -387,8 +389,12 @@ impl GameUi {
     }
 
     /// Shows each key map scripts made the game's input as they asked, as
-    /// it is now, with what was rebound. Once a frame.
+    /// it is now, with what was rebound, and each prompt its action's
+    /// controls. Once a frame.
     pub fn follow_input(&mut self, input: &Input) {
+        for (node, action) in self.ui.prompts() {
+            self.ui.set_prompt(node, keymaps::prompt_glyphs(input, &action));
+        }
         self.keymaps.retain(|node, _| self.ui.is_keymap(*node));
         let views: Vec<(NodeId, Scheme, KeymapOptions)> =
             self.keymaps.iter().map(|(node, (scheme, options))| (*node, *scheme, options.clone())).collect();

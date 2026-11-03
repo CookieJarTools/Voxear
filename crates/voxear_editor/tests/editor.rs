@@ -6111,5 +6111,20 @@ fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
     }
     let text = std::fs::read_to_string(&file).unwrap();
     assert!(text.contains("\"Keyboard/K\""), "the key pressed is bound: {text}");
+    let mut glyphs = Vec::new();
+    with_class(&editor.ui, panel, "prompt-glyph", &mut glyphs);
+    assert_eq!(glyphs.len(), 1, "the binding's prompt: a keycap");
+    assert!(editor.ui.has_class(glyphs[0], "key") && texts_in(&editor.ui, glyphs[0]) == ["K"]);
+
+    // Typed in, a pad's button is drawn as an Xbox pad marks it until a pad says otherwise.
+    let path = editor.ui.find(panel, "input-path").expect("the binding's Path field");
+    type_into(&mut editor.ui, path, "Gamepad/South");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("\"Gamepad/South\""));
+    let mut glyphs = Vec::new();
+    with_class(&editor.ui, panel, "prompt-glyph", &mut glyphs);
+    assert!(editor.ui.has_class(glyphs[0], "round") && texts_in(&editor.ui, glyphs[0]) == ["A"]);
     shot(&mut renderer, "input-actions.png");
 }

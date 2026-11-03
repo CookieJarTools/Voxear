@@ -565,7 +565,9 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
     and `Rebind`, which games' own screens use too
   - [x] editing actions and bindings in the Input Actions window, with listening for a binding: an Actions view of
     maps, actions with their bindings, and properties, saved to the `.inputactions` file as it changes
-  - [ ] prompt glyphs (icons) per device family, and local multiplayer pairing
+  - [x] prompt glyphs per device family: keycaps, the mouse's buttons, and each pad's face buttons as Xbox,
+    PlayStation and Switch pads mark and colour them, in `<Prompt>` and `PromptView`
+  - [ ] local multiplayer pairing
 - Localization:
   - [x] string tables (`.strings` files) holding each key's text in every language `voxear.toml` lists, read when the
     game starts and again when one changes, and shipped with every build; in C#, `Localization.Get`, `Format` with

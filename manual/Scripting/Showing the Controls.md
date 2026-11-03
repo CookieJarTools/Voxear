@@ -122,6 +122,25 @@ Style it in your sheets by its classes:
 
 A key's category colour is set on the key itself, so it wins over your sheets.
 
+## Prompts
+
+A prompt draws an action's controls, as games show "press A to jump". Each control is a **glyph**: a keycap for a key, the mouse with its button filled, and a gamepad's buttons as the player's own pad marks them. An Xbox pad's face buttons are lettered A, B, X and Y in green, red, blue and yellow, and a PlayStation pad's show its cross, circle, square and triangle. Shoulders and triggers are pills, the sticks are rings, and the d-pad's directions are arrows. A prompt follows the device the player used last, and rebinding, by itself.
+
+In a UI document:
+
+```xml
+<Panel class="hint">
+    <Prompt action="Jump" />
+    <Label text="Jump" />
+</Panel>
+```
+
+From a script, `new PromptView("Jump")` makes one, and its `Action` changes the action it shows. A composite shows each of its parts, so `Move` bound to WASD shows W, A, S and D.
+
+Style the glyphs in your sheets by their classes: `prompt` for the whole prompt, and `prompt-glyph` for each control, with `key`, `round`, `pill`, `square`, `stick` or `bare` for its shape. Each holds a `prompt-text` label or a `prompt-icon`.
+
+The Actions view of the Input Actions window shows a binding's glyph beside its path, so you can see what players will.
+
 ## Building your own
 
 Both ready-made views are built from the same calls, so a screen of your own can do anything they do:
@@ -133,6 +152,3 @@ Both ready-made views are built from the same calls, so a screen of your own can
 - `Input.Conflicts(action, path)` lists the other actions of the same map bound to a control.
 - `Input.Categories` lists your categories with their colours.
 - `Input.Rebind(action, binding.Index, part, scheme)` waits for a new key for a binding (see [[Reading Input]]). `action.ResetBindings()` puts one action back, and `Input.ResetBindings()` every action.
-
-> [!NOTE]
-> Controls are named in text for now, such as "Space" or "A". Button icons for each kind of gamepad come in a later version of Voxear.

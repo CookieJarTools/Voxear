@@ -15,6 +15,8 @@ use std::{cell::RefCell, rc::Rc};
 use voxear_input::{ActionKind, ActionsFile, Input, Rebound, Scheme, actions::MapData};
 use voxear_ui::{ItemFns, NodeId, Style, Ui};
 
+use voxear_engine::keymaps;
+
 use crate::{
     columns,
     input_edit::{self, Composite, Row},
@@ -35,6 +37,8 @@ struct Properties {
     category: Option<NodeId>,
     hidden: Option<NodeId>,
     path: Option<NodeId>,
+    /// The binding's control as a game's prompt draws it.
+    glyph: Option<NodeId>,
     listen: Option<NodeId>,
     processors: Option<NodeId>,
 }
@@ -195,6 +199,7 @@ impl ActionsEditor {
         self.take_buttons(ui, input);
         self.take_properties(ui);
         if self.file == before {
+            self.show_glyph(ui, input);
             return None;
         }
         if let Err(error) = self.file.check() {
@@ -205,6 +210,7 @@ impl ActionsEditor {
         }
         ui.set_text(self.status, "");
         self.show(ui);
+        self.show_glyph(ui, input);
         self.file.to_text().ok()
     }
 
@@ -348,6 +354,15 @@ impl ActionsEditor {
         }
     }
 
+    /// The picked binding's control as the game's prompts draw it on the
+    /// device the window last heard.
+    fn show_glyph(&self, ui: &mut Ui, input: &Input) {
+        let Some(glyph) = self.controls.glyph else { return };
+        let path = self.row.and_then(|row| self.file.maps.get(self.map).and_then(|map| input_edit::path(map, row)));
+        let glyphs = path.filter(|path| !path.is_empty()).map(|path| keymaps::control_prompt_glyph(input, &path));
+        ui.set_prompt(glyph, glyphs.into_iter().collect());
+    }
+
     /// Shows the maps, the picked map's rows and the picked row's properties.
     fn show(&mut self, ui: &mut Ui) {
         *self.shown_maps.borrow_mut() = self.file.maps.iter().map(|m| m.name.clone()).collect();
@@ -385,23 +400,27 @@ impl ActionsEditor {
             let row = ui.panel(properties, Style::row());
             ui.add_class(row, "inspector-row");
             let label = ui.add_label(row, label);
-            ui.add_class(label, "inspector-label");
+            ui.add_class(label, "input-property");
             row
         };
         match self.row {
             None => {
                 let row = field(ui, "Map");
-                self.controls.map_name = Some(ui.text_field(row, &map.name));
+                self.controls.map_name = Some(field_in(ui, row, &map.name));
             }
             Some(Row::Action(index)) => self.show_action(ui, &map, index, &field),
             Some(row) => {
                 let at = field(ui, "Path");
-                self.controls.path = Some(ui.text_field(at, &input_edit::path(&map, row).unwrap_or_default()));
+                let path = field_in(ui, at, &input_edit::path(&map, row).unwrap_or_default());
+                ui.set_name(path, "input-path");
+                self.controls.path = Some(path);
                 let listen = ui.button(at, if self.listening == Some(row) { "Press a Key" } else { "Listen" });
                 self.controls.listen = Some(listen);
+                let at = field(ui, "Prompt");
+                self.controls.glyph = Some(ui.prompt(at, ""));
                 let processors = input_edit::processors(&map, row).join(", ");
                 let at = field(ui, "Processors");
-                self.controls.processors = Some(ui.text_field(at, &processors));
+                self.controls.processors = Some(field_in(ui, at, &processors));
             }
         }
     }
@@ -409,7 +428,7 @@ impl ActionsEditor {
     fn show_action(&mut self, ui: &mut Ui, map: &MapData, index: usize, field: &dyn Fn(&mut Ui, &str) -> NodeId) {
         let Some(action) = map.actions.get(index) else { return };
         let row = field(ui, "Name");
-        self.controls.name = Some(ui.text_field(row, &action.name));
+        self.controls.name = Some(field_in(ui, row, &action.name));
         let row = field(ui, "Type");
         let kind = [ActionKind::Button, ActionKind::Value, ActionKind::Vector2].iter().position(|k| *k == action.kind);
         self.controls.kind = Some(ui.dropdown(row, &KINDS, kind.unwrap_or(0)));
@@ -419,7 +438,7 @@ impl ActionsEditor {
         if interaction > 0 {
             let row = field(ui, "Seconds");
             let default = if interaction == 1 { 0.4 } else { 0.2 };
-            self.controls.seconds = Some(ui.text_field(row, &seconds.unwrap_or(default).to_string()));
+            self.controls.seconds = Some(field_in(ui, row, &seconds.unwrap_or(default).to_string()));
         }
         let mut categories = vec!["None".to_string()];
         categories.extend(self.file.categories.iter().map(|c| c.name.clone()));
@@ -432,6 +451,13 @@ impl ActionsEditor {
         ui.add_class(hidden, "checkbox");
         self.controls.hidden = Some(hidden);
     }
+}
+
+/// A property's text field, taking the rest of its row.
+fn field_in(ui: &mut Ui, row: NodeId, text: &str) -> NodeId {
+    let field = ui.text_field(row, text);
+    ui.add_class(field, "input-field");
+    field
 }
 
 /// Processors as typed, `deadzone(0.1, 0.9), invert`: split at the commas

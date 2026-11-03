@@ -17,4 +17,5 @@ internal enum UiKind
 	ListView = 11,
 	TreeView = 12,
 	Keymap = 13,
+	Prompt = 14,
 }

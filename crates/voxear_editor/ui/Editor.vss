@@ -3273,6 +3273,17 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     gap: 4px;
 }
 
+.input-property {
+    width: 76px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+/* A property's text field takes the rest of its row. */
+.input-field {
+    flex-grow: 1;
+}
+
 .input-legend {
     flex-direction: row;
     flex-wrap: wrap;

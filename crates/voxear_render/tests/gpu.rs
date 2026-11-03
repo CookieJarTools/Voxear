@@ -1809,3 +1809,109 @@ fn contact_shadows_darken_the_floor_by_a_box_where_shadow_maps_do_not_reach() {
     });
     assert_eq!(lighter.count(), 0, "and lighten nothing");
 }
+
+/// A lookup table of `size`, made by `grade` from each colour it holds, in
+/// the strip `[post.grading] lut` reads.
+fn lut(size: u32, grade: impl Fn([u8; 3]) -> [u8; 3]) -> Vec<u8> {
+    let level = |value: u32| ((value * 255 + (size - 1) / 2) / (size - 1)) as u8;
+    let mut rgba = Vec::new();
+    for green in 0..size {
+        for blue in 0..size {
+            for red in 0..size {
+                let [r, g, b] = grade([level(red), level(green), level(blue)]);
+                rgba.extend([r, g, b, 255]);
+            }
+        }
+    }
+    rgba
+}
+
+/// Coloured cubes on a grey floor in daylight, with `post` and, perhaps, a
+/// lookup table and post volumes, the camera at `camera`.
+fn graded_render(
+    post: voxear_render::PostProcess,
+    table: Option<&[u8]>,
+    volumes: &[(voxear_render::PostVolume, Transform)],
+    camera: Vec3,
+) -> Option<Vec<u8>> {
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(camera, Quat::from_rotation_x(0.3), Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((MeshRenderer::new(plane, grey), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(60.0))));
+    for (x, colour) in [(-1.5, [0.9, 0.2, 0.2, 1.0]), (0.0, [0.2, 0.8, 0.3, 1.0]), (1.5, [0.2, 0.3, 0.9, 1.0])] {
+        let material = renderer.add_material(&MaterialDesc { base_color: colour, ..MaterialDesc::default() }).unwrap();
+        let place = Transform::from_position(Vec3::new(x + camera.x, 0.5, camera.z + 5.0));
+        world.spawn((MeshRenderer::new(cube, material), place));
+    }
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -1.0, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 2.5), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    for (volume, place) in volumes {
+        world.spawn((volume.clone(), *place));
+    }
+    let mut post = post;
+    post.grading.lut = table.map(|rgba| renderer.add_lut(rgba, (rgba.len() as f64 / 4.0).cbrt().round() as u32).unwrap());
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+fn steady_post() -> voxear_render::PostProcess {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess};
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() };
+    PostProcess { anti_aliasing, ..PostProcess::neutral() }
+}
+
+/// The largest difference in any channel between two pictures.
+fn largest_difference(a: &[u8], b: &[u8]) -> i32 {
+    a.iter().zip(b).map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs()).max().unwrap_or(0)
+}
+
+#[test]
+fn a_lookup_table_grades_the_picture_as_much_as_it_is_asked() {
+    let at = Vec3::new(0.0, 1.6, 0.0);
+    let neutral = lut(32, |colour| colour);
+    let reds = lut(32, |[r, g, b]| [((u32::from(r) + u32::from(g) + u32::from(b)) / 3) as u8, 0, 0]);
+    let (Some(plain), Some(through_neutral), Some(red)) = (
+        graded_render(steady_post(), None, &[], at),
+        graded_render(steady_post(), Some(&neutral), &[], at),
+        graded_render(steady_post(), Some(&reds), &[], at),
+    ) else {
+        return;
+    };
+    keep_image("graded red.png", &red);
+    let off = largest_difference(&plain, &through_neutral);
+    assert!(off <= 3, "a neutral table changes nothing but rounding: {off}");
+    let green_left = red.chunks_exact(4).map(|pixel| i32::from(pixel[1])).max().unwrap();
+    assert!(green_left <= 2, "everything is red: green reaches {green_left}");
+
+    let mut half = steady_post();
+    half.grading.lut_contribution = 0.5;
+    let Some(halfway) = graded_render(half, Some(&reds), &[], at) else { return };
+    let pixel = (320, 250);
+    let (a, b, c) = (rgb_at(&plain, pixel)[1], rgb_at(&halfway, pixel)[1], rgb_at(&red, pixel)[1]);
+    assert!(b < a && b > c, "half the table: green {b} between {a} and {c}");
+}
+
+#[test]
+fn a_post_volume_changes_the_picture_where_the_camera_is_inside_it() {
+    use voxear_render::{PostVolume, VolumeShape};
+    let grey: toml::Table = toml::from_str("grading = { saturation = 0.0 }").unwrap();
+    let volume = PostVolume { shape: VolumeShape::Box, blend_distance: 2.0, overrides: grey, ..PostVolume::default() };
+    let room = Transform::new(Vec3::new(0.0, 2.0, 0.0), Quat::IDENTITY, Vec3::new(8.0, 4.0, 8.0));
+    let (inside, outside) = (Vec3::new(0.0, 1.6, 0.0), Vec3::new(30.0, 1.6, 0.0));
+    let (Some(plain), Some(within), Some(beyond)) = (
+        graded_render(steady_post(), None, &[], inside),
+        graded_render(steady_post(), None, &[(volume.clone(), room)], inside),
+        graded_render(steady_post(), None, &[(volume, room)], outside),
+    ) else {
+        return;
+    };
+    keep_image("post volume inside.png", &within);
+    let colourful = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| i32::from(p[0].max(p[1]).max(p[2]) - p[0].min(p[1]).min(p[2]))).max().unwrap();
+    assert!(colourful(&plain) > 60, "the cubes have colour: {}", colourful(&plain));
+    assert!(colourful(&within) <= 3, "inside the volume everything is grey: {}", colourful(&within));
+    assert!(colourful(&beyond) > 60, "well outside it, colour is back: {}", colourful(&beyond));
+}

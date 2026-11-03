@@ -57,7 +57,8 @@ use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
-    Camera, Light, LightKind, LodGroup, MAX_TRANSITIONS, MeshRenderer, PostProcess, Renderer, Sky, SkyMode,
+    Camera, Light, LightKind, LodGroup, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer, Sky,
+    SkyMode, VolumeShape,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -166,6 +167,10 @@ pub struct ObjData {
     pub camera: Option<CameraData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub light: Option<LightData>,
+    /// A post volume, whose post-processing blends in as the camera comes
+    /// into it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_volume: Option<PostVolumeData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer: Option<RendererData>,
     /// An Audio Source, which plays a sound from the Obj.
@@ -223,6 +228,7 @@ impl ObjData {
             fields: BTreeMap::new(),
             camera: None,
             light: None,
+            post_volume: None,
             renderer: None,
             audio: None,
             audio_listener: false,
@@ -264,6 +270,79 @@ pub struct CameraData {
     /// How near the camera sees, in metres.
     #[serde(default = "default_near", skip_serializing_if = "is_default_near")]
     pub near: f32,
+}
+
+/// A post volume as a scene writes it:
+///
+/// ```toml
+/// [obj.post_volume]
+/// shape = "box"            # or "sphere", or "global" for everywhere
+/// blend_distance = 2.0     # metres outside it that it fades in over
+/// weight = 1.0
+/// priority = 0
+/// [obj.post_volume.post]   # what it changes, as [post] writes it
+/// bloom = { intensity = 0.2 }
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostVolumeData {
+    #[serde(default)]
+    pub shape: VolumeShapeData,
+    #[serde(default = "one_f32")]
+    pub blend_distance: f32,
+    #[serde(default = "one_f32")]
+    pub weight: f32,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub priority: i32,
+    #[serde(default)]
+    pub post: toml::Table,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VolumeShapeData {
+    Global,
+    #[default]
+    Box,
+    Sphere,
+}
+
+fn is_zero_i32(value: &i32) -> bool {
+    *value == 0
+}
+
+impl PostVolumeData {
+    pub fn component(&self) -> Result<PostVolume> {
+        let shape = match self.shape {
+            VolumeShapeData::Global => VolumeShape::Global,
+            VolumeShapeData::Box => VolumeShape::Box,
+            VolumeShapeData::Sphere => VolumeShape::Sphere,
+        };
+        let volume = PostVolume {
+            shape,
+            blend_distance: self.blend_distance,
+            weight: self.weight,
+            priority: self.priority,
+            overrides: self.post.clone(),
+        };
+        volume.check()?;
+        Ok(volume)
+    }
+
+    pub fn of(volume: &PostVolume) -> Self {
+        let shape = match volume.shape {
+            VolumeShape::Global => VolumeShapeData::Global,
+            VolumeShape::Box => VolumeShapeData::Box,
+            VolumeShape::Sphere => VolumeShapeData::Sphere,
+        };
+        Self {
+            shape,
+            blend_distance: volume.blend_distance,
+            weight: volume.weight,
+            priority: volume.priority,
+            post: volume.overrides.clone(),
+        }
+    }
 }
 
 /// A light as a scene writes it. A `cookie` is a picture the light shines
@@ -642,6 +721,9 @@ fn capture_instance(
     if root.camera.is_some() && root.camera != prefab_root.camera {
         instance.camera = root.camera;
     }
+    if root.post_volume.is_some() && root.post_volume != prefab_root.post_volume {
+        instance.post_volume = root.post_volume.clone();
+    }
     if root.light.is_some() && root.light != prefab_root.light {
         instance.light = root.light;
     }
@@ -737,6 +819,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(camera) = actual.camera.filter(|c| Some(*c) != expected.camera) {
         put("camera", toml::Value::try_from(camera)?);
+    }
+    if let Some(volume) = actual.post_volume.as_ref().filter(|v| Some(*v) != expected.post_volume.as_ref()) {
+        put("post_volume", toml::Value::try_from(volume)?);
     }
     if let Some(light) = actual.light.as_ref().filter(|l| Some(*l) != expected.light.as_ref()) {
         put("light", toml::Value::try_from(light)?);
@@ -958,6 +1043,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.camera =
         world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure, near: c.near });
     obj.light = world.get::<Light>(entity).map(|light| light_data(content, light));
+    obj.post_volume = world.get::<PostVolume>(entity).map(PostVolumeData::of);
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {
         let mesh = content.mesh_ref(r.mesh)?.to_string();
         let material = match content.material_source(r.material) {

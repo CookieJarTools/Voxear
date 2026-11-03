@@ -57,7 +57,7 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::AssetGuid;
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_render::{Camera, Light, MeshRenderer, Renderer};
+use voxear_render::{Camera, Light, MeshRenderer, PostVolume, Renderer};
 use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
 
 use crate::{
@@ -67,7 +67,7 @@ use crate::{
     lod_groups::LodGroupData,
     physics::{CharacterController, Collider, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
-    scene_file::{LayerRef, MaterialRef, ObjData, default_material, light_component, light_with_assets},
+    scene_file::{LayerRef, MaterialRef, ObjData, PostVolumeData, default_material, light_component, light_with_assets},
 };
 
 pub const PREFAB_FORMAT: u32 = 1;
@@ -354,6 +354,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     if instance.light.is_some() {
         root.light = instance.light.clone();
     }
+    if instance.post_volume.is_some() {
+        root.post_volume = instance.post_volume.clone();
+    }
     if instance.renderer.is_some() {
         root.renderer = instance.renderer.clone();
     }
@@ -399,6 +402,7 @@ pub struct TemplateObj {
     pub behaviours: Vec<BehaviourSpec>,
     pub camera: Option<Camera>,
     pub light: Option<Light>,
+    pub post_volume: Option<PostVolume>,
     pub renderer: Option<MeshRenderer>,
     pub audio: Option<AudioSource>,
     pub audio_listener: bool,
@@ -517,6 +521,9 @@ impl Template {
             }
             if let Some(light) = obj.light {
                 world.insert(entity, light);
+            }
+            if let Some(volume) = &obj.post_volume {
+                world.insert(entity, volume.clone());
             }
             if let Some(renderer) = obj.renderer {
                 world.insert(entity, renderer);
@@ -689,6 +696,7 @@ pub(crate) fn resolve_obj(
         behaviours: behaviour_specs(&data.behaviours, &data.components, &data.fields)?,
         camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
         light,
+        post_volume: data.post_volume.as_ref().map(PostVolumeData::component).transpose()?,
         renderer,
         audio: data.audio.as_ref().map(|audio| audio_source(content, audio)).transpose()?,
         audio_listener: data.audio_listener,

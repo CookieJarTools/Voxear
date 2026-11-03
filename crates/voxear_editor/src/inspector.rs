@@ -1767,6 +1767,7 @@ impl Inspector {
             (Part::Light, "Rendering"),
             (Part::Camera, "Rendering"),
             (Part::LodGroup, "Rendering"),
+            (Part::PostVolume, "Rendering"),
             (Part::Audio, "Audio"),
             (Part::Listener, "Audio"),
             (Part::Collider, "Physics"),
@@ -2435,6 +2436,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Rigidbody2D) => "rigidbody2d",
         Some(Part::Vehicle) => "vehicle",
         Some(Part::Wheel) => "wheel",
+        Some(Part::PostVolume) => "post_volume",
         Some(Part::Behaviour(name)) => return vec![ValuePath::new(&["fields", name])],
     };
     vec![ValuePath::new(&[key])]

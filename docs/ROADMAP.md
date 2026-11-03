@@ -839,10 +839,17 @@ Done so far:
   then a filter as wide as the blocker is far above, so shadows stay sharp where things touch. Screen-space contact
   shadows march a short way towards the sun from each pixel, for the small shadows the shadow map cannot hold,
   even beyond its 80 metres. On Stress at 1440p, PCSS adds about 0.11 ms and contact shadows 0.23 ms.
+- **Colour grading lookup tables:** `[post.grading] lut` names a strip of N×N squares (1024×32 or 256×16, as
+  Unreal lays them out), uploaded as it is and applied last, in sRGB, by `lut_contribution`. `vox lut neutral`
+  writes the table to grade in an image editor.
+- **Local post volumes:** a Post Volume component (global, box or sphere) with its own `[post]` overrides, a blend
+  distance, a weight and a priority. Where the camera is, each volume's settings blend in, lowest priority first:
+  numbers and colours smoothly, switches and choices past half. In scenes, the Inspector, the Hierarchy's +
+  menu and the Scene view, which draws its shape and how far it blends.
 
 Next:
 - Virtual shadow maps, and shadows for point, spot and area lights.
-- Upscalers (FSR built in, DLSS and XeSS optional), colour grading LUTs, and local post volumes.
+- Upscalers (FSR built in, DLSS and XeSS optional).
 - **Real-time voxel GI** (clipmaps, then injection, gathering and the radiance cache).
 - Baked lightmapper, light probes and reflection probes.
 - Reflections: screen-space reflections, falling back to reflection probes.

@@ -11,7 +11,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
 };
-use voxear_render::{Camera, Light, MeshRenderer};
+use voxear_render::{Camera, Light, MeshRenderer, PostVolume};
 use voxear_scene::BehaviourSpec;
 
 use super::Editor;
@@ -33,6 +33,7 @@ pub(super) enum Copied {
     Rigidbody2D(Rigidbody2D),
     Vehicle(Vehicle),
     Wheel(Wheel),
+    PostVolume(Box<PostVolume>),
     Behaviour(BehaviourSpec),
 }
 
@@ -54,6 +55,7 @@ impl Copied {
             Part::Rigidbody2D => Self::Rigidbody2D(*world.get::<Rigidbody2D>(entity)?),
             Part::Vehicle => Self::Vehicle(*world.get::<Vehicle>(entity)?),
             Part::Wheel => Self::Wheel(*world.get::<Wheel>(entity)?),
+            Part::PostVolume => Self::PostVolume(Box::new(world.get::<PostVolume>(entity)?.clone())),
             Part::Behaviour(name) => {
                 let specs = &world.get::<EditBehaviours>(entity)?.0;
                 Self::Behaviour(specs.iter().find(|spec| spec.type_name == *name)?.clone())
@@ -67,6 +69,7 @@ impl Copied {
             Self::Renderer(renderer) => drop(world.insert(entity, *renderer)),
             Self::Light(light) => drop(world.insert(entity, *light)),
             Self::Camera(camera) => drop(world.insert(entity, *camera)),
+            Self::PostVolume(volume) => drop(world.insert(entity, (**volume).clone())),
             Self::Audio(audio) => drop(world.insert(entity, **audio)),
             Self::Listener => drop(world.insert(entity, AudioListener)),
             Self::Collider(collider) => drop(world.insert(entity, *collider)),

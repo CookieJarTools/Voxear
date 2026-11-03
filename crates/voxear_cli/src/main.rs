@@ -78,6 +78,18 @@ enum LocCommand {
 }
 
 #[derive(Subcommand)]
+enum LutCommand {
+    /// Write a neutral colour lookup table, which changes nothing, to grade in an image editor.
+    Neutral {
+        /// The PNG to write.
+        out: PathBuf,
+        /// Its squares' size: 16 (256×16) or 32 (1024×32), finer.
+        #[arg(long, default_value_t = 32)]
+        size: u32,
+    },
+}
+
+#[derive(Subcommand)]
 enum Commands {
     /// Check that this machine can build and run Voxear projects.
     Doctor,
@@ -166,6 +178,11 @@ enum Commands {
     Loc {
         #[command(subcommand)]
         command: LocCommand,
+    },
+    /// Make colour lookup tables for post-processing's grading.
+    Lut {
+        #[command(subcommand)]
+        command: LutCommand,
     },
     /// Add, remove and update the project's packages, or start and publish one.
     Package {
@@ -342,6 +359,7 @@ fn main() -> Result<()> {
         Commands::Loc { command: LocCommand::Export { table, out } } => export_strings(&table, out.as_deref()),
         Commands::Loc { command: LocCommand::Import { sheet, table, apply } } => import_strings(&sheet, &table, apply),
         Commands::Package { command } => package::run(command),
+        Commands::Lut { command: LutCommand::Neutral { out, size } } => write_neutral_lut(&out, size),
         Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays, stats } => {
             let prepare = Prepare { build: !no_build, bundles, overlays };
             run(&project, headless, frames, prepare, renderdoc, stats)
@@ -603,6 +621,28 @@ fn project_of(file: &Path) -> Option<Project> {
     let file = std::path::absolute(file).ok()?;
     let root = file.ancestors().skip(1).find(|folder| folder.join(PROJECT_FILE).is_file())?;
     Project::open(root).ok()
+}
+
+/// A lookup table that leaves every colour as it is: `size` squares of
+/// `size`×`size`, blue picking the square, red across and green down, as
+/// `[post.grading] lut` reads them.
+fn write_neutral_lut(out: &Path, size: u32) -> Result<()> {
+    anyhow::ensure!((2..=64).contains(&size), "a lookup table's size should be between 2 and 64, as 16 or 32");
+    let level = |value: u32| (value * 255 + (size - 1) / 2) / (size - 1);
+    let mut rgba = Vec::with_capacity((size * size * size * 4) as usize);
+    for green in 0..size {
+        for blue in 0..size {
+            for red in 0..size {
+                rgba.extend([level(red) as u8, level(green) as u8, level(blue) as u8, 255]);
+            }
+        }
+    }
+    let file = std::fs::File::create(out).with_context(|| format!("writing {}", out.display()))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), size * size, size);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.write_header()?.write_image_data(&rgba)?;
+    println!("Wrote {} ({}×{size}). Grade it in an image editor, then name it in [post.grading] lut.", out.display(), size * size);
+    Ok(())
 }
 
 fn build_content(path: &Path) -> Result<()> {

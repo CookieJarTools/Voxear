@@ -458,6 +458,27 @@ float3 fromSrgb(float3 c)
     return select(c <= 0.04045, c / 12.92, pow((max(c, 0.0) + 0.055) / 1.055, 2.4));
 }
 
+// A colour, in sRGB, through a lookup table laid out as squares as wide as
+// it is high, side by side: blue picks the square, red runs across it and
+// green down it, black at the top left, as Unreal lays its tables out.
+// Between squares the two either side are blended.
+float3 gradeByLut(uint table, float3 color)
+{
+    uint width;
+    uint height;
+    textures[NonUniformResourceIndex(table)].GetDimensions(width, height);
+    float n = float(max(height, 2));
+    float3 scaled = color * (n - 1.0);
+    float first = floor(scaled.b);
+    float second = min(first + 1.0, n - 1.0);
+    float across = (scaled.r + 0.5) / (n * n);
+    float down = (scaled.g + 0.5) / n;
+    Texture2D lut = textures[NonUniformResourceIndex(table)];
+    float3 a = lut.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], float2(across + first / n, down), 0.0).rgb;
+    float3 b = lut.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], float2(across + second / n, down), 0.0).rgb;
+    return lerp(a, b, scaled.b - first);
+}
+
 // Breaks up banding in 8-bit output: noise of one code value, added in sRGB
 // where the steps are even.
 float3 dither(float3 color, float2 pixel, uint frameIndex)
@@ -513,6 +534,11 @@ float4 compositeFragment(PostOut input) : SV_Target
     color = tonemap(color, post);
     color = post.gain * (color + post.lift * (1.0 - color));
     color = pow(max(color, 0.0), 1.0 / max(post.gamma, 0.01));
+    if (post.lutTexture != NO_TEXTURE)
+    {
+        float3 graded = fromSrgb(gradeByLut(post.lutTexture, toSrgb(saturate(color))));
+        color = lerp(color, graded, post.lutContribution);
+    }
 
     if (post.vignette > 0.0)
     {

@@ -383,6 +383,12 @@ pub struct GpuPost {
     pub contact_length: f32,
     pub contact_thickness: f32,
     pub contact_steps: u32,
+    /// The colour grading lookup table, or `NO_TEXTURE`, and how much of it
+    /// shows; the shader reads its size from the table.
+    pub lut_texture: u32,
+    pub _lut_pad0: u32,
+    pub lut_contribution: f32,
+    pub _lut_pad: u32,
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -553,7 +559,7 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 16;
+        let post = 16 * 17;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6;
         assert_eq!(

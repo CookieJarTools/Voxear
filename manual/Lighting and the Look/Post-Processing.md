@@ -88,6 +88,8 @@ To see the occlusion on its own, press F7 in a game window, or use `vox render -
 | `contrast = 1.1`, `saturation = 1.15` | Contrast and colour strength, in `[post.tonemap]` |
 | `temperature = 0`, `tint = 0` | Warmer or cooler, greener or pinker, in `[post.grading]` |
 | `lift`, `gamma`, `gain` | Adjust the dark, middle and bright parts of the picture, each as red, green and blue, in `[post.grading]` |
+| `lut = "Looks/Warm.png"` | A colour lookup table, applied last, in `[post.grading]`. See below |
+| `lut_contribution = 1.0` | How much of the lookup table's grade shows, from 0 to 1 |
 
 **Dark corners**, `[post.vignette]`
 
@@ -128,6 +130,55 @@ With `volumetric = true`, the mist takes its light from the sun, the sky and eve
 **Colour fringes**: `chromatic_aberration = 0` sits directly in `[post]`, not in a table of its own. Small values, such as 0.15, split colours slightly at the edges of the screen, as a cheap lens does.
 
 A name Voxear does not know, such as a misspelt setting, is an error, and the Console says which.
+
+## Colour lookup tables
+
+A lookup table grades the picture's colours as an image editor would: any curve, colour balance or film look you can make in one, the game can show. To make one:
+
+1. Write a neutral table, one that changes nothing:
+
+   ```
+   vox lut neutral Looks/Neutral.png
+   ```
+
+2. Take a screenshot of your game, and grade it in an image editor such as Photoshop, Affinity Photo or GIMP, using only adjustments that change colours, not where they are: curves, levels, hue and saturation, colour balance.
+3. Apply the same adjustments to the neutral table, and save it under a new name, as a PNG.
+4. Name it in the scene:
+
+   ```toml
+   [post.grading]
+   lut = "Looks/Warm.png"
+   ```
+
+A table is a strip of squares as many wide as it is high: 1024×32, as `vox lut neutral` writes, or 256×16, as Unreal's are. Blue picks the square, red runs across it, and green down it, with black at the top left. Keep tables out of compressed import settings: Voxear reads them as they are.
+
+## Post volumes
+
+A post volume changes the post-processing in part of a level, as Unity's Volumes and Unreal's Post Process Volumes do: a cave can be darker and bluer, a hall of mirrors bloom more, while the rest of the level keeps the scene's settings.
+
+Add one with the Hierarchy's **+** button, **Post Volume**, then size it with its Obj's scale. In the Inspector:
+
+| Setting | What it does |
+| --- | --- |
+| Shape | **Box**, the Obj's cube; **Sphere**, round it; or **Global**, everywhere |
+| Blend distance | How far outside its shape, in metres, its settings start to blend in. 0 switches them on at its edge |
+| Weight | How much of its settings show at most, from 0 to 1 |
+| Priority | Where volumes overlap, the one with the highest priority wins |
+
+What the volume changes goes in the scene file, under its Obj, written as `[post]` is:
+
+```toml
+[obj.post_volume]
+shape = "box"
+blend_distance = 2.0
+
+[obj.post_volume.post]
+exposure = { compensation = -0.5 }
+grading = { temperature = -0.3, saturation = 0.8 }
+fog = { density = 0.03 }
+```
+
+As the camera comes into the volume, numbers and colours blend smoothly from the scene's settings to the volume's. Switches, such as `enabled`, and choices, such as the tonemapper, change once the camera is more than halfway into the blend. A volume cannot change the lookup table.
 
 ## The Scene view's shading
 

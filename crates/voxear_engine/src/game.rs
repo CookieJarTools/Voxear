@@ -6,7 +6,7 @@ use voxear_core::{
 };
 use voxear_ecs::{Entity, World};
 use voxear_localization::{Localization, StringTable};
-use voxear_render::{MAX_PREVIEW_SIZE, MeshHandle, MeshRenderer, PreviewId, PreviewOptions, Renderer};
+use voxear_render::{MAX_PREVIEW_SIZE, MeshHandle, MeshRenderer, PostProcess, PreviewId, PreviewOptions, Renderer};
 use voxear_scene::{Destroying, Parent, Placement, Transform};
 use voxear_scripting::{
     AssetName, AudioAsk, ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PlaySound,
@@ -26,6 +26,7 @@ use crate::{
     prefab::{ObjPath, PrefabId, Spawned},
     previews::ScriptPreviews,
     project::Project,
+    scene_file::PostTable,
     scripts::ScriptWatcher,
 };
 
@@ -54,6 +55,9 @@ pub struct Game {
     /// The keyboard, the mouse and gamepads, read as the project's input
     /// actions; whatever shows the game hands it the window's events.
     pub input: voxear_input::Input,
+    /// The lookup table the post-processing names that could not be loaded,
+    /// said once rather than every frame.
+    lut_failed: Option<String>,
 }
 
 /// The game's window as scripts see it and ask for it, through `Screen` and
@@ -111,6 +115,7 @@ impl Game {
             display: Display::default(),
             audio: GameAudio::default(),
             input: voxear_input::Input::new(),
+            lut_failed: None,
         };
         game.audio.headphones = game.project.file.audio.headphones;
         game.audio.reverb = game.project.file.audio.reverb;
@@ -408,6 +413,34 @@ impl Game {
 
     /// Runs one frame, then any level change scripts asked for. A level that
     /// fails to load is logged and the game carries on, as in Unity.
+    /// Loads the colour grading lookup table the level's post-processing
+    /// names, `[post.grading] lut`, and gives it to the settings, as they
+    /// cannot hold an asset of their own. Runs before each frame is drawn,
+    /// in the editor as well as the game, so a level's look shows as it is
+    /// edited.
+    pub fn prepare_post(&mut self, renderer: &mut Renderer) {
+        let named = self.engine.world.resource::<PostTable>().and_then(|table| {
+            let path = table.0.get("grading")?.get("lut")?.as_str()?;
+            Some(path.to_string())
+        });
+        let lut = named.and_then(|path| {
+            let loaded = self.content.parse(&path).and_then(|reference| self.content.lut(renderer, &reference));
+            match loaded {
+                Ok(texture) => Some(texture),
+                Err(error) => {
+                    if self.lut_failed.as_deref() != Some(path.as_str()) {
+                        tracing::error!("the colour lookup table {path}: {error:#}");
+                        self.lut_failed = Some(path);
+                    }
+                    None
+                }
+            }
+        });
+        if let Some(post) = self.engine.world.resource_mut::<PostProcess>() {
+            post.grading.lut = lut;
+        }
+    }
+
     pub fn tick(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
         {
             profile_scope!("Script Reload Check");
@@ -436,6 +469,9 @@ impl Game {
             };
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
+        }
+        if let Some(renderer) = renderer.as_deref_mut() {
+            self.prepare_post(renderer);
         }
         self.ui.follow_language(self.engine.world.resource::<Localization>());
         self.ui.follow_input(&self.input);

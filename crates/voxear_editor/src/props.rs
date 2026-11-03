@@ -21,7 +21,10 @@ use voxear_engine::{
     script_types::ScriptTypes,
     srgb,
 };
-use voxear_render::{Camera, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, Renderer};
+use voxear_render::{
+    Camera, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
+    VolumeShape,
+};
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
 use crate::fields::{self, Pick, Step};
@@ -34,6 +37,9 @@ const LIGHT_KINDS: [&str; 6] = ["Directional", "Point", "Spot", "Rectangle", "Di
 const LIGHT_KIND_ORDER: [LightKind; 6] =
     [LightKind::Directional, LightKind::Point, LightKind::Spot, LightKind::Rectangle, LightKind::Disc, LightKind::Tube];
 const SOUND_SPACES: [&str; 2] = ["3D", "2D"];
+const VOLUME_SHAPES: [&str; 3] = ["Global", "Box", "Sphere"];
+/// The volume shapes in `VOLUME_SHAPES`'s order.
+const VOLUME_SHAPE_ORDER: [VolumeShape; 3] = [VolumeShape::Global, VolumeShape::Box, VolumeShape::Sphere];
 const AUDIO_BUSES: [&str; 2] = ["Effects", "Music"];
 const LOD_MEASURES: [&str; 2] = ["Screen size", "Distance"];
 
@@ -54,6 +60,7 @@ pub enum Part {
     Rigidbody2D,
     Vehicle,
     Wheel,
+    PostVolume,
     /// A script, by its full type name.
     Behaviour(String),
 }
@@ -77,6 +84,7 @@ impl Part {
             Part::Rigidbody2D => "rigidbody2d".into(),
             Part::Vehicle => "vehicle".into(),
             Part::Wheel => "wheel".into(),
+            Part::PostVolume => "post_volume".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -97,6 +105,7 @@ impl Part {
             Part::Rigidbody2D => "Rigidbody 2D",
             Part::Vehicle => "Vehicle",
             Part::Wheel => "Wheel",
+            Part::PostVolume => "Post Volume",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -116,6 +125,7 @@ impl Part {
             Part::Rigidbody2D => "move",
             Part::Vehicle => "move",
             Part::Wheel => "rotate",
+            Part::PostVolume => "panels",
             Part::Behaviour(_) => "code",
         }
     }
@@ -142,6 +152,10 @@ pub enum Prop {
     LightCookieSize,
     LightProfile,
     LightSoftness,
+    VolumeShape,
+    VolumeBlend,
+    VolumeWeight,
+    VolumePriority,
     FieldOfView,
     Near,
     Exposure,
@@ -280,6 +294,7 @@ impl Prop {
                 Part::Light
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
+            Prop::VolumeShape | Prop::VolumeBlend | Prop::VolumeWeight | Prop::VolumePriority => Part::PostVolume,
             Prop::Sound
             | Prop::SoundVolume
             | Prop::Pitch
@@ -378,6 +393,10 @@ impl Prop {
             Prop::LightCookieSize => "cookie_size",
             Prop::LightProfile => "profile",
             Prop::LightSoftness => "softness",
+            Prop::VolumeShape => "shape",
+            Prop::VolumeBlend => "blend_distance",
+            Prop::VolumeWeight => "weight",
+            Prop::VolumePriority => "priority",
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
@@ -504,6 +523,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<Camera>(entity) {
         parts.push(Part::Camera);
     }
+    if world.has::<PostVolume>(entity) {
+        parts.push(Part::PostVolume);
+    }
     if world.has::<AudioSource>(entity) {
         parts.push(Part::Audio);
     }
@@ -585,6 +607,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props
         }
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure],
+        Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
         Part::Audio => {
             let mut props =
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
@@ -724,6 +747,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::LightCookieSize => "Cookie size",
         Prop::LightProfile => "IES profile",
         Prop::LightSoftness => "Shadow softness",
+        Prop::VolumeShape => "Shape",
+        Prop::VolumeBlend => "Blend distance",
+        Prop::VolumeWeight => "Weight",
+        Prop::VolumePriority => "Priority",
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
@@ -905,6 +932,9 @@ pub fn add(
         Part::Wheel => {
             world.insert(entity, Wheel::default());
         }
+        Part::PostVolume => {
+            world.insert(entity, PostVolume::default());
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -924,6 +954,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Renderer => drop(world.remove::<MeshRenderer>(entity)),
         Part::Light => drop(world.remove::<Light>(entity)),
         Part::Camera => drop(world.remove::<Camera>(entity)),
+        Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
         Part::Audio => drop(world.remove::<AudioSource>(entity)),
         Part::Listener => drop(world.remove::<AudioListener>(entity)),
         Part::LodGroup => drop(world.remove::<LodGroup>(entity)),
@@ -1085,6 +1116,14 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightProfile => {
             Value::Asset(guid_label(game, light()?.profile.and_then(|t| game.content.light_profile_guid(t))))
         }
+        Prop::VolumeShape => {
+            let shape = world.get::<PostVolume>(entity)?.shape;
+            let index = VOLUME_SHAPE_ORDER.iter().position(|&known| known == shape).unwrap_or(0);
+            Value::Choice(index, VOLUME_SHAPES.iter().map(|k| k.to_string()).collect())
+        }
+        Prop::VolumeBlend => Value::Number(world.get::<PostVolume>(entity)?.blend_distance),
+        Prop::VolumeWeight => Value::Number(world.get::<PostVolume>(entity)?.weight),
+        Prop::VolumePriority => Value::Number(world.get::<PostVolume>(entity)?.priority as f32),
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
@@ -1703,6 +1742,18 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::LightCookieSize, Value::Number(n)) => {
             with(world, entity, |light: &mut Light| light.cookie_size = n.max(0.01))
+        }
+        (Prop::VolumeShape, Value::Choice(index, _)) => with(world, entity, |volume: &mut PostVolume| {
+            volume.shape = VOLUME_SHAPE_ORDER[index.min(VOLUME_SHAPE_ORDER.len() - 1)];
+        }),
+        (Prop::VolumeBlend, Value::Number(n)) => {
+            with(world, entity, |volume: &mut PostVolume| volume.blend_distance = n.max(0.0))
+        }
+        (Prop::VolumeWeight, Value::Number(n)) => {
+            with(world, entity, |volume: &mut PostVolume| volume.weight = n.clamp(0.0, 1.0))
+        }
+        (Prop::VolumePriority, Value::Number(n)) => {
+            with(world, entity, |volume: &mut PostVolume| volume.priority = n.round() as i32)
         }
         (Prop::FieldOfView, Value::Number(n)) => {
             with(world, entity, |camera: &mut Camera| camera.fov_y_degrees = n.clamp(1.0, 179.0))

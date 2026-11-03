@@ -17,7 +17,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, ColliderMesh, ColliderShape, Joint, JointType, Vehicle, Wheel},
     physics2d::{Collider2D, ColliderShape2D},
 };
-use voxear_render::{Camera, Light, LightKind};
+use voxear_render::{Camera, Light, LightKind, PostVolume, VolumeShape};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -101,6 +101,9 @@ pub fn shapes(
     {
         colliders(&mut shapes, world, camera, entity);
     }
+    if let Some(entity) = selected {
+        post_volume(&mut shapes, world, camera, entity);
+    }
     shapes
 }
 
@@ -118,6 +121,34 @@ fn sound_reach(shapes: &mut Vec<Shape>, camera: &ViewCamera, source: &AudioSourc
 
 /// The selected Obj's Collider, where physics puts it, and its Character
 /// Controller's capsule, standing on the Obj's position.
+/// A post volume's shape: its box or sphere, and round it where its
+/// settings start to blend in, fainter. A global one has no shape to draw.
+fn post_volume(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let Some(volume) = world.get::<PostVolume>(entity) else { return };
+    let matrix = voxear_scene::world_matrix(world, entity);
+    let (scale, rotation, position) = matrix.to_scale_rotation_translation();
+    let scale = scale.abs().max(Vec3::splat(1e-4));
+    let color = Color::hex(REACH);
+    let faint = Color { a: (u16::from(color.a) * 2 / 5) as u8, ..color };
+    match volume.shape {
+        VolumeShape::Global => {}
+        VolumeShape::Box => {
+            wire_box(shapes, camera, position, rotation, scale * 0.5, color);
+            if volume.blend_distance > 0.0 {
+                wire_box(shapes, camera, position, rotation, scale * 0.5 + volume.blend_distance, faint);
+            }
+        }
+        VolumeShape::Sphere => {
+            let radius = scale.max_element() * 0.5;
+            for (reach, shade) in [(radius, color), (radius + volume.blend_distance, faint)] {
+                for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                    polyline(shapes, camera, &ring(camera, position, rotation * axis, reach), shade);
+                }
+            }
+        }
+    }
+}
+
 fn colliders(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
     let Some(transform) = world.get::<Transform>(entity) else { return };
     let (scale, rotation, position) = match world.get::<WorldTransform>(entity) {

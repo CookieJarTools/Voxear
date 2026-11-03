@@ -36,6 +36,7 @@ mod payload;
 mod pipelines;
 mod post;
 mod post_passes;
+mod post_volume;
 mod previews;
 mod scene;
 mod shadows;
@@ -79,6 +80,7 @@ pub use previews::{
     MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
 };
 pub use ies::IesProfile;
+pub use post_volume::{PostVolume, VolumeShape};
 pub use scene::{Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyMode, ViewOptions};
 pub use voxear_rhi::TextureId;
 
@@ -656,6 +658,21 @@ impl Renderer {
     pub fn add_texture(&mut self, source: &TextureSource) -> Result<TextureId> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.add_texture(&self.gpu, &mut self.bindless, source)
+    }
+
+    /// Uploads a colour grading lookup table (see `Grading::lut`) as it is:
+    /// a picture `size` × `size` squares wide and `size` high, sRGB
+    /// values, without compression or mipmaps, which would blur its colours
+    /// together.
+    pub fn add_lut(&mut self, rgba: &[u8], size: u32) -> Result<TextureId> {
+        anyhow::ensure!(
+            size >= 2 && rgba.len() == (size * size * size * 4) as usize,
+            "a lookup table {size} high should be {} wide",
+            size * size
+        );
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        let format = vk::Format::R8G8B8A8_UNORM;
+        assets.add_texture_mips(&self.gpu, &mut self.bindless, "colour lookup table", (size * size, size), format, &[rgba.to_vec()])
     }
 
     /// Uploads an IES profile, baked over the sphere of directions, for a

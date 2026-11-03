@@ -709,6 +709,8 @@ impl Editor {
                 self.draw_desktop_windows(renderer)?;
                 self.draw_game_ui(renderer, &views, size, delta)?;
             }
+            // In edit mode the game does not tick, so the level's lookup table is loaded here.
+            self.game.prepare_post(renderer);
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)
         };
         self.profiler.record(profiling::end_frame(), delta * 1000.0, renderer);

@@ -307,6 +307,12 @@ struct Post
     float contactLength;
     float contactThickness;
     uint contactSteps;
+    // The colour grading lookup table (NO_TEXTURE without one), and how much
+    // of it shows. Its size comes from the table itself.
+    uint lutTexture;
+    uint lutPad0;
+    float lutContribution;
+    uint lutPad;
 };
 
 static const uint SKY_GRADIENT = 0;

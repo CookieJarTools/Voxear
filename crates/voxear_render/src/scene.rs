@@ -299,6 +299,11 @@ pub fn extract(
     // Debug views show their colours as they are, the ambient occlusion view
     // the scene's own occlusion, on even where the scene turns it off.
     let scene_post = options.post_override.or_else(|| world.resource::<PostProcess>().copied()).unwrap_or_default();
+    // Post volumes blend in where the camera is, unless a view sets its own settings.
+    let scene_post = match options.post_override {
+        Some(_) => scene_post,
+        None => crate::post_volume::blend_volumes(world, scene_post, position),
+    };
     let post = match options.debug_view {
         DEBUG_VIEW_NONE => scene_post,
         DEBUG_VIEW_AMBIENT_OCCLUSION => PostProcess {
@@ -319,6 +324,7 @@ pub fn extract(
 
     let mut gpu_post = post.to_gpu(sky.horizon);
     gpu_post.ao_unproject = [1.0 / projection.x_axis.x, 1.0 / projection.y_axis.y];
+    gpu_post.lut_texture = post.grading.lut.map_or(NO_TEXTURE, |lut| lut.0);
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
         planes: frustum_planes(position, rotation, fov, aspect, camera.near),

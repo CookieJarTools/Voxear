@@ -241,6 +241,8 @@ pub struct Content {
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// IES profiles uploaded for lights, by their assets.
     light_profiles: HashMap<AssetGuid, TextureId>,
+    /// Colour grading lookup tables uploaded, by their pictures.
+    luts: HashMap<AssetGuid, TextureId>,
     prefabs: PrefabCache,
     sounds: SoundCache,
     /// What a world set aside still draws and plays, as the editor's edited
@@ -359,6 +361,7 @@ impl Content {
             remaps: HashMap::new(),
             pictures: HashMap::new(),
             light_profiles: HashMap::new(),
+            luts: HashMap::new(),
             prefabs: PrefabCache::default(),
             sounds: SoundCache::default(),
             aside: InUse::default(),
@@ -710,6 +713,29 @@ impl Content {
         let profile = IesProfile::parse(&self.read_text(&path)?).with_context(|| format!("reading {path}"))?;
         let texture = renderer.add_light_profile(&profile)?;
         self.light_profiles.insert(guid, texture);
+        Ok(texture)
+    }
+
+    /// A picture as a colour grading lookup table, read and uploaded as it
+    /// is, on first use: its import settings' size and compression would
+    /// change its colours.
+    pub fn lut(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<TextureId> {
+        let guid = reference.guid().with_context(|| format!("`{reference}` is not a picture"))?;
+        if let Some(&texture) = self.luts.get(&guid) {
+            return Ok(texture);
+        }
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Texture, "{} is not a picture", entry.path);
+        let path = entry.path.clone();
+        let bytes = self.read(&path)?;
+        let picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
+        let (width, height) = picture.dimensions();
+        ensure!(
+            width == height * height,
+            "{path} is {width}×{height}: a lookup table is as many squares wide as it is high, as 256×16 or 1024×32"
+        );
+        let texture = renderer.add_lut(picture.as_raw(), height)?;
+        self.luts.insert(guid, texture);
         Ok(texture)
     }
 

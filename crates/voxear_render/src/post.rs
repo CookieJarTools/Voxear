@@ -20,6 +20,7 @@
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use voxear_rhi::TextureId;
 
 /// Every post-processing setting. `Default` is the Voxear Look.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -202,6 +203,13 @@ pub struct Grading {
     pub lift: [f32; 3],
     pub gamma: [f32; 3],
     pub gain: [f32; 3],
+    /// A colour grading lookup table, applied last: a picture of N squares
+    /// of N×N side by side (see `Renderer::add_lut`). Scenes name it as
+    /// `lut = "Looks/Warm.png"`, which the engine loads and sets here.
+    #[serde(skip)]
+    pub lut: Option<TextureId>,
+    /// How much of the lookup table's grade shows, from 0 to 1.
+    pub lut_contribution: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -318,6 +326,8 @@ impl Default for Grading {
             lift: [0.0; 3],
             gamma: [1.0; 3],
             gain: [1.0; 3],
+            lut: None,
+            lut_contribution: 1.0,
         }
     }
 }
@@ -445,6 +455,10 @@ impl PostProcess {
         let mut merged = toml::Table::try_from(preset)?;
         let mut overrides = table.clone();
         overrides.remove("preset");
+        // A lookup table is an asset, which the engine loads and sets; it is not read here.
+        if let Some(toml::Value::Table(grading)) = overrides.get_mut("grading") {
+            grading.remove("lut");
+        }
         merge(&mut merged, overrides);
         toml::Value::Table(merged).try_into().context("reading [post]")
     }
@@ -537,7 +551,50 @@ impl PostProcess {
             contact_length: self.contact_shadows.length.max(0.0),
             contact_thickness: self.contact_shadows.thickness.max(0.001),
             contact_steps: self.contact_shadows.steps.clamp(1, 64),
+            // The renderer names the table once it knows it.
+            lut_texture: crate::gpu::NO_TEXTURE,
+            _lut_pad0: 0,
+            lut_contribution: self.grading.lut_contribution.clamp(0.0, 1.0),
+            _lut_pad: 0,
         }
+    }
+}
+
+impl PostProcess {
+    /// These settings with `overrides`, written as `[post]` writes them,
+    /// shown by `amount` from 0 to 1: numbers and colours in between,
+    /// switches and choices once it is more than half.
+    pub fn blended(&self, overrides: &toml::Table, amount: f32) -> Result<Self> {
+        let base = toml::Table::try_from(self)?;
+        let mut target = base.clone();
+        merge(&mut target, overrides.clone());
+        let mixed = mix(&toml::Value::Table(base), &toml::Value::Table(target), amount.clamp(0.0, 1.0));
+        let mut blended: Self = mixed.try_into().context("reading the blended settings")?;
+        // The lookup table is an asset, not a setting, so it stays as it was.
+        blended.grading.lut = self.grading.lut;
+        Ok(blended)
+    }
+}
+
+/// `from` and `to` mixed by `amount`: numbers in between, each part of a
+/// table or a list in turn, and anything else switching at half.
+fn mix(from: &toml::Value, to: &toml::Value, amount: f32) -> toml::Value {
+    use toml::Value;
+    match (from, to) {
+        (Value::Float(a), Value::Float(b)) => Value::Float(a + (b - a) * f64::from(amount)),
+        (Value::Integer(a), Value::Integer(b)) => {
+            Value::Integer((*a as f64 + (*b - *a) as f64 * f64::from(amount)).round() as i64)
+        }
+        (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
+            Value::Array(a.iter().zip(b).map(|(a, b)| mix(a, b, amount)).collect())
+        }
+        (Value::Table(a), Value::Table(b)) => Value::Table(
+            b.iter()
+                .map(|(key, to)| (key.clone(), a.get(key).map_or_else(|| to.clone(), |from| mix(from, to, amount))))
+                .collect(),
+        ),
+        _ if amount > 0.5 => to.clone(),
+        _ => from.clone(),
     }
 }
 

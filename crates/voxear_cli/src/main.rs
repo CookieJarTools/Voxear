@@ -25,8 +25,8 @@ use voxear_engine::{
     scripts::{self, CONFIGURATION},
 };
 use voxear_render::{
-    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE,
-    DEBUG_VIEW_NORMALS, PostProcess, Renderer, RendererSettings, ViewOptions,
+    DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD,
+    DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess, Renderer, RendererSettings, ViewOptions,
 };
 use voxear_scene::{Name, Transform};
 use voxear_scripting::find_dotnet;
@@ -237,10 +237,11 @@ enum Commands {
         /// Capture the final frame in RenderDoc.
         #[arg(long)]
         renderdoc: bool,
-        /// Show `lod`, shadow `cascades`, `lights` per cluster, `normals` or `meshlets` instead of normal shading.
+        /// Show `lod`, shadow `cascades`, `lights` per cluster, `normals`, `meshlets` or ambient occlusion (`ao`)
+        /// instead of normal shading.
         #[arg(
             long,
-            value_parser = ["none", "lod", "cascades", "lights", "normals", "meshlets"],
+            value_parser = ["none", "lod", "cascades", "lights", "normals", "meshlets", "ao"],
             default_value = "none"
         )]
         debug_view: String,
@@ -367,6 +368,7 @@ fn main() -> Result<()> {
                 "lights" => DEBUG_VIEW_LIGHT_COMPLEXITY,
                 "normals" => DEBUG_VIEW_NORMALS,
                 "meshlets" => DEBUG_VIEW_MESHLETS,
+                "ao" => DEBUG_VIEW_AMBIENT_OCCLUSION,
                 _ => DEBUG_VIEW_NONE,
             };
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;

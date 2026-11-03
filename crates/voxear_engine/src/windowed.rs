@@ -3,8 +3,8 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 use anyhow::{Context, Result};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use voxear_render::{
-    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE,
-    DEBUG_VIEW_NORMALS, Renderer, RendererSettings, ViewOptions,
+    DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LOD,
+    DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, Renderer, RendererSettings, ViewOptions,
 };
 use voxear_rhi::{RenderDoc, WindowHandles};
 use voxear_scripting::CursorLock;
@@ -246,8 +246,9 @@ impl App {
     }
 
     /// Development keys until the editor exists: F1 shows frame stats; F12
-    /// captures a frame in RenderDoc; F2 to F6 toggle the LOD, shadow
-    /// cascade, light complexity, normals and meshlets views.
+    /// captures a frame in RenderDoc; F2 to F7 toggle the LOD, shadow
+    /// cascade, light complexity, normals, meshlets and ambient occlusion
+    /// views.
     fn key(&mut self, key: &Key) {
         let Some(renderer) = self.renderer.as_mut().filter(|_| self.options.tools) else { return };
         let view = match key {
@@ -258,6 +259,7 @@ impl App {
             Key::Named(NamedKey::F4) => DEBUG_VIEW_LIGHT_COMPLEXITY,
             Key::Named(NamedKey::F5) => DEBUG_VIEW_NORMALS,
             Key::Named(NamedKey::F6) => DEBUG_VIEW_MESHLETS,
+            Key::Named(NamedKey::F7) => DEBUG_VIEW_AMBIENT_OCCLUSION,
             _ => return,
         };
         self.debug_view = if self.debug_view == view { DEBUG_VIEW_NONE } else { view };

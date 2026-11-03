@@ -8,6 +8,12 @@
 //!    hide that early missed, which also records visibility for next frame.
 //! 6. **Sky** behind everything.
 //!
+//! With ambient occlusion on, steps 3 and 5 draw depth alone (**Depth
+//! (early)** and **Depth (late)**); ambient occlusion's passes then work from
+//! that depth, and **Opaque (early)** and **Opaque (late)** shade the same
+//! lists over it, before the sky. See
+//! [`ambient_occlusion`](crate::ambient_occlusion).
+//!
 //! With meshlet culling, each cull queues its draws' meshlets rather than
 //! the draws, and a meshlet pass after it (**Shadow meshlets**, **Meshlets
 //! (early)**, **Meshlets (late)**) draws those that survive the frustum,
@@ -21,6 +27,7 @@
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
+    ambient_occlusion,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
         LIST_SHADOW, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
@@ -78,6 +85,9 @@ pub struct Frame {
     pub wireframe: bool,
     /// Opaque meshes' edges are drawn faintly over them, lit as usual.
     pub edges: bool,
+    /// Ambient occlusion's images, when it is on: the opaque lists are then
+    /// drawn as depth first, and shaded once it has run.
+    pub ambient_occlusion: Option<ambient_occlusion::Targets>,
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -189,10 +199,12 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         });
     }
 
+    let ambient_occlusion = frame.ambient_occlusion;
     let shading = |color: ImageAccess| {
         let mut images =
             vec![(targets.hdr, color), (targets.velocity, color), (targets.depth, ImageAccess::DepthAttachment)];
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
+        images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images
     };
     let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..draw_push };
@@ -204,14 +216,25 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     };
     let (hdr, velocity, depth) = (targets.hdr, targets.velocity, targets.depth);
     let scene = SceneTargets { hdr, velocity, depth };
+    let depth_pass = |fg: &mut FrameGraph<'_>, name: &str, list: u32| {
+        let pipeline = mesh.map_or(pipelines.depth, |mesh| mesh.depth);
+        let push = Push { list, ..draw_push };
+        fg.add_pass(name, &[(depth, ImageAccess::DepthAttachment)], &shading_buffers, move |ctx| {
+            depth_only(ctx, pipeline, &push, indirect, depth, list == LIST_EARLY);
+        });
+    };
 
     fg.add_pass("Cull (early)", &[], &culling, move |ctx| {
         cull(ctx, pipelines.cull, &push, LIST_EARLY, instances, 1);
     });
     meshlet_pass(fg, "Meshlets (early)", &[], [LIST_EARLY, LIST_LATE]);
-    fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
-        opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, true);
-    });
+    match ambient_occlusion {
+        Some(_) => depth_pass(fg, "Depth (early)", LIST_EARLY),
+        None => fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
+            let clear = Clear { color: true, depth: true };
+            opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, clear);
+        }),
+    }
 
     let pyramid = targets.pyramid;
     let pyramid_mips = targets.pyramid_mips.clone();
@@ -232,9 +255,24 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         cull(ctx, pipelines.cull, &push, LIST_LATE, instances, 1);
     });
     meshlet_pass(fg, "Meshlets (late)", &[(pyramid, ImageAccess::Sampled)], [LIST_LATE, LIST_SHADOW]);
-    fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
-        opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, false);
-    });
+    match ambient_occlusion {
+        Some(ao) => {
+            depth_pass(fg, "Depth (late)", LIST_LATE);
+            ambient_occlusion::record(fg, (pipelines, push), depth, ao);
+            // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
+            let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);
+            let again = if mesh.is_some() { Push { source: DRAWS_AGAIN, ..shading_push } } else { shading_push };
+            for (name, list) in [("Opaque (early)", LIST_EARLY), ("Opaque (late)", LIST_LATE)] {
+                let clear = Clear { color: list == LIST_EARLY, depth: false };
+                fg.add_pass(name, &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
+                    opaque(ctx, forward, &Push { list, ..again }, indirect, scene, clear);
+                });
+            }
+        }
+        None => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
+            opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, Clear::default());
+        }),
+    }
     // Counted in GPU memory, where the culling passes' atomics are fast, then copied out at once.
     let (readback, stats_bytes) = (draws.stats_readback_handle, stat::COUNT as u64 * 4);
     let copy = [(draws.stats, BufferAccess::TransferRead), (draws.stats_readback, BufferAccess::TransferWrite)];
@@ -278,6 +316,14 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
+}
+
+/// Which of the opaque passes' targets they clear first: the first pass
+/// clears colour, and depth too unless the depth passes drew it.
+#[derive(Clone, Copy, Default)]
+struct Clear {
+    color: bool,
+    depth: bool,
 }
 
 /// What the opaque passes draw into.
@@ -359,17 +405,27 @@ fn opaque(
     push: &Push,
     indirect: Indirect,
     targets: SceneTargets,
-    clear: bool,
+    clear: Clear,
 ) {
     let extent = ctx.extent(targets.hdr);
     let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
     let color = [
-        attachment(ctx.view(targets.hdr), layout, clear.then(|| clear_color([0.0; 4]))),
-        attachment(ctx.view(targets.velocity), layout, clear.then(|| clear_color([0.0; 4]))),
+        attachment(ctx.view(targets.hdr), layout, clear.color.then(|| clear_color([0.0; 4]))),
+        attachment(ctx.view(targets.velocity), layout, clear.color.then(|| clear_color([0.0; 4]))),
     ];
-    let depth =
-        attachment(ctx.view(targets.depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, clear.then(|| clear_depth(0.0)));
+    let depth_layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
+    let depth = attachment(ctx.view(targets.depth), depth_layout, clear.depth.then(|| clear_depth(0.0)));
     begin_rendering(ctx, extent, &color, Some(&depth));
+    bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
+    indirect.draw(ctx, push.list);
+    unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+}
+
+/// One opaque list as depth alone, the first clearing it.
+fn depth_only(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, indirect: Indirect, depth: ImageId, clear: bool) {
+    let target =
+        attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, clear.then(|| clear_depth(0.0)));
+    begin_rendering(ctx, ctx.extent(depth), &[], Some(&target));
     bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
     indirect.draw(ctx, push.list);
     unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };

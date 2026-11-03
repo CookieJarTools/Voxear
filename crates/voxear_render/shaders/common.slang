@@ -87,6 +87,7 @@ static const uint DEBUG_VIEW_UNLIT = 5;
 static const uint DEBUG_VIEW_WIREFRAME = 6;
 static const uint DEBUG_VIEW_LIT_WIREFRAME = 7;
 static const uint DEBUG_VIEW_MESHLETS = 8;
+static const uint DEBUG_VIEW_AMBIENT_OCCLUSION = 9;
 
 // Frame.meshletFlags: back-facing meshlets are culled; surviving meshlets
 // side by side are drawn together; draws are culled meshlet by meshlet.
@@ -271,6 +272,19 @@ struct Post
     float dofAperture;
     float dofMaxBlur;
     float motionBlur;
+    // Ambient occlusion: the tint (linear) and strength, the radius in
+    // metres, and the slices and steps GTAO searches; the image the opaque
+    // passes read, NO_TEXTURE while it is off; what turns a pixel and its
+    // view depth back into view space; and whether last frame's is stale.
+    float3 aoTint;
+    float aoStrength;
+    float aoRadius;
+    uint aoSlices;
+    uint aoSteps;
+    uint aoTexture;
+    float2 aoUnproject;
+    uint aoReset;
+    uint aoPad;
 };
 
 struct Frame

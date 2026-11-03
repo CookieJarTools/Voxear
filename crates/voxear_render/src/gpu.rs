@@ -148,6 +148,9 @@ pub const DEBUG_VIEW_WIREFRAME: u32 = 6;
 pub const DEBUG_VIEW_LIT_WIREFRAME: u32 = 7;
 /// Each meshlet in a colour of its own, lit by the sun.
 pub const DEBUG_VIEW_MESHLETS: u32 = 8;
+/// What ambient occlusion leaves of the sky's light, as the opaque passes
+/// multiply it in, tint and all.
+pub const DEBUG_VIEW_AMBIENT_OCCLUSION: u32 = 9;
 
 /// `GpuFrame::meshlet_flags`: back-facing meshlets are culled; surviving
 /// meshlets side by side are drawn together, as one range of indices; draws
@@ -277,6 +280,21 @@ pub struct GpuPost {
     pub dof_aperture: f32,
     pub dof_max_blur: f32,
     pub motion_blur: f32,
+    /// Ambient occlusion's tint (linear) and strength, its radius in metres
+    /// and the slices and steps GTAO searches.
+    pub ao_tint: [f32; 3],
+    pub ao_strength: f32,
+    pub ao_radius: f32,
+    pub ao_slices: u32,
+    pub ao_steps: u32,
+    /// The occlusion the opaque passes read, or `NO_TEXTURE` while it is off.
+    pub ao_texture: u32,
+    /// The reciprocals of the projection's x and y scales, which turn a
+    /// pixel's NDC times its view depth back into view space.
+    pub ao_unproject: [f32; 2],
+    /// Last frame's occlusion is stale (first frame, resize, just turned on).
+    pub ao_reset: u32,
+    pub _ao_pad: u32,
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -447,7 +465,7 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 11;
+        let post = 16 * 14;
         let meshlets = 16;
         assert_eq!(size_of::<GpuFrame>(), 64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets);
         assert_eq!(size_of::<GpuPost>(), post);

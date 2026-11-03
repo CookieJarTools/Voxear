@@ -9,10 +9,10 @@ use crate::{
     assets::{MaterialHandle, MeshHandle},
     lod_group::{LodCamera, LodChoices},
     gpu::{
-        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_NONE, GpuFrame, GpuInstance, GpuLight, LIGHT_POINT, LIGHT_SPOT,
-        MAX_CLUSTER_LIGHTS, NO_TEXTURE, cols, vec3,
+        CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_NONE, GpuFrame, GpuInstance, GpuLight,
+        LIGHT_POINT, LIGHT_SPOT, MAX_CLUSTER_LIGHTS, NO_TEXTURE, cols, vec3,
     },
-    post::{AntiAliasingMode, PostProcess, taa_jitter},
+    post::{AmbientOcclusion, AntiAliasingMode, PostProcess, taa_jitter},
     shadows::{self, CASCADES},
 };
 
@@ -217,11 +217,16 @@ pub fn extract(
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
     let projection = vulkan::perspective_infinite_reverse(fov, aspect, camera.near);
     let unjittered = projection * view;
-    // Debug views show their colours as they are.
-    let post = if options.debug_view != DEBUG_VIEW_NONE {
-        PostProcess::debug_view()
-    } else {
-        options.post_override.or_else(|| world.resource::<PostProcess>().copied()).unwrap_or_default()
+    // Debug views show their colours as they are, the ambient occlusion view
+    // the scene's own occlusion, on even where the scene turns it off.
+    let scene_post = options.post_override.or_else(|| world.resource::<PostProcess>().copied()).unwrap_or_default();
+    let post = match options.debug_view {
+        DEBUG_VIEW_NONE => scene_post,
+        DEBUG_VIEW_AMBIENT_OCCLUSION => PostProcess {
+            ambient_occlusion: AmbientOcclusion { enabled: true, ..scene_post.ambient_occlusion },
+            ..PostProcess::debug_view()
+        },
+        _ => PostProcess::debug_view(),
     };
     let jitter = match post.anti_aliasing.mode {
         AntiAliasingMode::Taa => taa_jitter(frame_index, post.anti_aliasing.taa_jitter),
@@ -233,6 +238,8 @@ pub fn extract(
     jittered_projection.z_axis.y += jitter[1] * 2.0 / height as f32;
     let view_proj = jittered_projection * view;
 
+    let mut gpu_post = post.to_gpu(sky.horizon);
+    gpu_post.ao_unproject = [1.0 / projection.x_axis.x, 1.0 / projection.y_axis.y];
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
         planes: frustum_planes(position, rotation, fov, aspect, camera.near),
@@ -247,7 +254,7 @@ pub fn extract(
         view: cols(view),
         unjittered_view_proj: cols(unjittered),
         jitter,
-        post: post.to_gpu(sky.horizon),
+        post: gpu_post,
         cluster_grid: CLUSTER_GRID,
         cluster_max_lights: MAX_CLUSTER_LIGHTS,
         cluster_scale: CLUSTER_GRID[2] as f32 / (CLUSTER_FAR / camera.near).ln(),

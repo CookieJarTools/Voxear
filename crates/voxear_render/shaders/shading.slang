@@ -6,6 +6,7 @@
 #pragma once
 
 #include "common.slang"
+#include "occlusion.slang"
 
 struct VertexOut
 {
@@ -224,7 +225,8 @@ FragmentOut fragmentMain(VertexOut input)
     float3 ambient = lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
-    color += ambient * (s.diffuse + ambientFresnel * (1.0 - s.roughness * 0.7));
+    Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);
+    color += ambient * (s.diffuse * occlusion.diffuse + ambientFresnel * (1.0 - s.roughness * 0.7) * occlusion.specular);
 
     color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
 
@@ -252,6 +254,10 @@ FragmentOut fragmentMain(VertexOut input)
     else if (frame->debugView == DEBUG_VIEW_UNLIT)
     {
         color = base.rgb + material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+    }
+    else if (frame->debugView == DEBUG_VIEW_AMBIENT_OCCLUSION)
+    {
+        color = occlusion.diffuse;
     }
     else if (frame->debugView == DEBUG_VIEW_WIREFRAME)
     {

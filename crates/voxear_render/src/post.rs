@@ -10,6 +10,10 @@
 //! [post.bloom]
 //! intensity = 0.08
 //!
+//! [post.ambient_occlusion]
+//! strength = 1.5
+//! tint = [0.25, 0.15, 0.1]
+//!
 //! [post.anti_aliasing]
 //! mode = "fxaa"
 //! ```
@@ -21,6 +25,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PostProcess {
+    pub ambient_occlusion: AmbientOcclusion,
     pub anti_aliasing: AntiAliasing,
     pub bloom: Bloom,
     pub exposure: Exposure,
@@ -33,6 +38,52 @@ pub struct PostProcess {
     /// Splits colours towards the screen edges, like a cheap lens. 0 is off.
     pub chromatic_aberration: f32,
     pub grain: Grain,
+}
+
+/// How hard ambient occlusion looks for what shades each pixel: how many
+/// directions (slices) it searches, and how many steps along each side of
+/// each. Every frame searches new directions, which blend over a few frames,
+/// so the lower ones are smooth once the view is still.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AmbientOcclusionQuality {
+    /// 1 slice of 4 steps.
+    Low,
+    /// 2 slices of 4 steps.
+    Medium,
+    /// 3 slices of 6 steps.
+    High,
+    /// 4 slices of 8 steps.
+    Ultra,
+}
+
+impl AmbientOcclusionQuality {
+    /// Slices, and steps along each side of each.
+    pub fn slices_and_steps(self) -> (u32, u32) {
+        match self {
+            Self::Low => (1, 4),
+            Self::Medium => (2, 4),
+            Self::High => (3, 6),
+            Self::Ultra => (4, 8),
+        }
+    }
+}
+
+/// Ground-truth ambient occlusion (GTAO): creases, corners and contacts
+/// darken, as less of the sky reaches into them. It shades only the sky's
+/// ambient light, never the sun or lamps.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AmbientOcclusion {
+    pub enabled: bool,
+    /// How far, in metres, a surface looks for what shades it.
+    pub radius: f32,
+    /// 1 is as measured; higher darkens more, 0 leaves the light alone.
+    pub strength: f32,
+    /// sRGB: the colour fully occluded light takes on. Black only darkens;
+    /// a warm brown or a purple tints contact shadows, as stylised looks do.
+    pub tint: [f32; 3],
+    pub quality: AmbientOcclusionQuality,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +235,12 @@ impl Default for PostProcess {
     }
 }
 
+impl Default for AmbientOcclusion {
+    fn default() -> Self {
+        Self { enabled: true, radius: 0.75, strength: 1.0, tint: [0.0; 3], quality: AmbientOcclusionQuality::Medium }
+    }
+}
+
 impl Default for AntiAliasing {
     fn default() -> Self {
         Self { mode: AntiAliasingMode::Taa, sharpness: 0.25, taa_history: 0.9, taa_jitter: 1.0 }
@@ -253,11 +310,12 @@ impl Default for Grain {
 }
 
 impl PostProcess {
-    /// The Voxear Look: TAA with light sharpening, soft bloom, eye adaptation
-    /// that keeps nights dark, AgX with a little punch, a soft vignette and a
-    /// touch of atmospheric fog.
+    /// The Voxear Look: ambient occlusion, TAA with light sharpening, soft
+    /// bloom, eye adaptation that keeps nights dark, AgX with a little punch,
+    /// a soft vignette and a touch of atmospheric fog.
     pub fn voxear() -> Self {
         Self {
+            ambient_occlusion: AmbientOcclusion::default(),
             anti_aliasing: AntiAliasing::default(),
             bloom: Bloom::default(),
             // Metering for middle grey looks dull on bright days; half a stop lifts it.
@@ -304,6 +362,7 @@ impl PostProcess {
     /// Everything off and no tonemapping, so debug views show raw colours.
     pub(crate) fn debug_view() -> Self {
         Self {
+            ambient_occlusion: AmbientOcclusion { enabled: false, ..AmbientOcclusion::default() },
             anti_aliasing: AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() },
             exposure: Exposure { auto: false, ..Exposure::default() },
             tonemap: Tonemap { mapper: Tonemapper::None, ..Tonemap::default() },
@@ -365,6 +424,7 @@ impl PostProcess {
             Tonemapper::None => 4,
         };
         let enabled = |on: bool, value: f32| if on { value } else { 0.0 };
+        let (slices, steps) = self.ambient_occlusion.quality.slices_and_steps();
         crate::gpu::GpuPost {
             bloom_intensity: enabled(self.bloom.enabled, self.bloom.intensity),
             sharpness: self.anti_aliasing.sharpness,
@@ -402,6 +462,16 @@ impl PostProcess {
             dof_aperture: self.depth_of_field.aperture,
             dof_max_blur: enabled(self.depth_of_field.enabled, self.depth_of_field.max_blur),
             motion_blur: enabled(self.motion_blur.enabled, self.motion_blur.intensity),
+            ao_tint: linear(self.ambient_occlusion.tint),
+            ao_strength: self.ambient_occlusion.strength.max(0.0),
+            ao_radius: self.ambient_occlusion.radius,
+            ao_slices: slices,
+            ao_steps: steps,
+            // The renderer names the image, and how to turn pixels back into view space, once it knows them.
+            ao_texture: crate::gpu::NO_TEXTURE,
+            ao_unproject: [0.0; 2],
+            ao_reset: 0,
+            _ao_pad: 0,
         }
     }
 }
@@ -435,6 +505,20 @@ mod tests {
         assert_eq!(PostProcess::from_toml(&toml::Table::new()).unwrap(), PostProcess::voxear());
         assert!(PostProcess::from_toml(&toml::from_str("preset = \"nope\"").unwrap()).is_err());
         assert!(PostProcess::from_toml(&toml::from_str("[bloom]\nglow = 1.0").unwrap()).is_err(), "typos are caught");
+    }
+
+    #[test]
+    fn ambient_occlusion_reads_its_quality_and_tint() {
+        let table = "[ambient_occlusion]\nquality = \"ultra\"\ntint = [1.0, 0.5, 0.0]\nstrength = 0.0\n";
+        let post = PostProcess::from_toml(&toml::from_str(table).unwrap()).unwrap();
+        assert_eq!(post.ambient_occlusion.quality, AmbientOcclusionQuality::Ultra);
+        assert!(post.ambient_occlusion.enabled, "on in the Voxear Look");
+        let gpu = post.to_gpu(voxear_core::math::Vec3::ONE);
+        assert_eq!((gpu.ao_slices, gpu.ao_steps), (4, 8));
+        assert!((gpu.ao_tint[1] - 0.214).abs() < 1e-3, "tints are sRGB, and shaders read them linear");
+        assert_eq!(gpu.ao_strength, 0.0);
+        assert!(PostProcess::from_toml(&toml::from_str("[ambient_occlusion]\nquality = 3").unwrap()).is_err());
+        assert!(!PostProcess::debug_view().ambient_occlusion.enabled, "debug views show surfaces as they are");
     }
 
     #[test]

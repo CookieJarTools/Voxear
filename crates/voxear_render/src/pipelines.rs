@@ -15,6 +15,11 @@ pub const BLOOM_FORMAT: vk::Format = vk::Format::B10G11R11_UFLOAT_PACK32;
 /// The tonemapped image when a finishing pass still follows. Kept at 16 bits
 /// so the finish's dither can still break up banding.
 pub const LDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
+/// Ambient occlusion within a frame: a visibility from 0 to 1.
+pub const AO_FORMAT: vk::Format = vk::Format::R8_UNORM;
+/// Its history, which blends a tenth of each frame in, so eight bits would
+/// stop short of the value it is heading for.
+pub const AO_HISTORY_FORMAT: vk::Format = vk::Format::R16_SFLOAT;
 
 /// Slope-scaled bias for shadow casters. The forward pass also offsets
 /// lookups along the normal, so this only has to remove what that misses.
@@ -29,6 +34,8 @@ const EDGE_BIAS: (f32, f32) = (1.0, 1.0);
 pub struct MeshPipelines {
     pub shadow: vk::Pipeline,
     pub forward: vk::Pipeline,
+    pub depth: vk::Pipeline,
+    pub forward_on_depth: vk::Pipeline,
     pub wireframe: vk::Pipeline,
     pub edges: vk::Pipeline,
 }
@@ -42,12 +49,22 @@ pub struct Pipelines {
     pub pyramid: vk::Pipeline,
     pub shadow: vk::Pipeline,
     pub forward: vk::Pipeline,
+    /// The opaque lists as depth alone, drawn first when ambient occlusion
+    /// is on, so it can work from the frame's whole depth.
+    pub depth: vk::Pipeline,
+    /// The forward pass over the depth already drawn: it neither writes
+    /// depth nor shades anything that depth hides.
+    pub forward_on_depth: vk::Pipeline,
     /// The forward pass's meshes as their edges, for the wireframe view.
     pub wireframe: vk::Pipeline,
     /// The meshes' edges drawn faintly over the lit scene, for the lit
     /// wireframe view.
     pub edges: vk::Pipeline,
     pub sky: vk::Pipeline,
+    /// Ambient occlusion's passes: GTAO, its denoise and its temporal blend.
+    pub gtao: vk::Pipeline,
+    pub ao_denoise: vk::Pipeline,
+    pub ao_temporal: vk::Pipeline,
     pub fog: vk::Pipeline,
     pub taa: vk::Pipeline,
     pub dof: vk::Pipeline,
@@ -89,8 +106,9 @@ impl Pipelines {
             module("ui")?,
             module("preview")?,
             module("debug")?,
+            module("ambient_occlusion")?,
         ];
-        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview, debug] = &modules;
+        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview, debug, occlusion] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
             Some(_) => Some([module("meshlet_task")?, module("meshlets")?, module("meshlet_shadow")?]),
@@ -104,6 +122,13 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 blend,
                 ..GraphicsPipelineDesc::new(name, post, c"postVertex", entry)
+            })
+        };
+        let occlusion_pass = |name, entry, format: &'static [vk::Format]| {
+            graphics(&GraphicsPipelineDesc {
+                color_formats: format,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new(name, occlusion, c"aoVertex", entry)
             })
         };
         let scene_formats = &[HDR_FORMAT, VELOCITY_FORMAT];
@@ -127,6 +152,18 @@ impl Pipelines {
                 color_formats: scene_formats,
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Opaque", forward, c"vertexMain", c"fragmentMain")
+            })?,
+            depth: graphics(&GraphicsPipelineDesc {
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Depth", forward, c"vertexMain", c"depthFragment")
+            })?,
+            forward_on_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::new("Opaque", forward, c"vertexMain", c"fragmentMain")
             })?,
@@ -156,6 +193,9 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Sky", sky, c"skyVertex", c"skyFragment")
             })?,
+            gtao: occlusion_pass("GTAO", c"gtaoFragment", &[AO_FORMAT])?,
+            ao_denoise: occlusion_pass("AO denoise", c"aoDenoiseFragment", &[AO_FORMAT])?,
+            ao_temporal: occlusion_pass("AO temporal", c"aoTemporalFragment", &[AO_HISTORY_FORMAT])?,
             fog: fullscreen("Fog", c"fogFragment", hdr, Blend::Alpha)?,
             taa: fullscreen("TAA", c"taaFragment", hdr, Blend::Opaque)?,
             dof: fullscreen("Depth of field", c"dofFragment", hdr, Blend::Opaque)?,
@@ -209,9 +249,14 @@ impl Pipelines {
             self.pyramid,
             self.shadow,
             self.forward,
+            self.depth,
+            self.forward_on_depth,
             self.wireframe,
             self.edges,
             self.sky,
+            self.gtao,
+            self.ao_denoise,
+            self.ao_temporal,
             self.fog,
             self.taa,
             self.dof,
@@ -228,14 +273,15 @@ impl Pipelines {
             self.preview,
             self.preview_resolve,
         ];
-        let mesh = self.mesh.iter().flat_map(|m| [m.shadow, m.forward, m.wireframe, m.edges]);
+        let mesh =
+            self.mesh.iter().flat_map(|m| [m.shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);
         for pipeline in all.into_iter().chain(mesh) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }
     }
 }
 
-/// The shadow, forward, wireframe and edges pipelines as `Pipelines::new`
+/// The shadow, forward, depth, wireframe and edges pipelines as `Pipelines::new`
 /// makes them, with the task shader culling meshlets and mesh shaders
 /// making them in place of the vertex shaders.
 fn mesh_pipelines(
@@ -261,6 +307,18 @@ fn mesh_pipelines(
             color_formats: scene_formats,
             depth_format: Some(DEPTH_FORMAT),
             depth_write: true,
+            depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+            ..GraphicsPipelineDesc::mesh("Opaque", task, forward, Some(c"fragmentMain"))
+        })?,
+        depth: graphics(&GraphicsPipelineDesc {
+            depth_format: Some(DEPTH_FORMAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+            ..GraphicsPipelineDesc::mesh("Depth", task, forward, Some(c"depthFragment"))
+        })?,
+        forward_on_depth: graphics(&GraphicsPipelineDesc {
+            color_formats: scene_formats,
+            depth_format: Some(DEPTH_FORMAT),
             depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
             ..GraphicsPipelineDesc::mesh("Opaque", task, forward, Some(c"fragmentMain"))
         })?,

@@ -1292,3 +1292,141 @@ fn a_full_preview_atlas_grows_and_draws_everything_again() {
     assert!(far <= 1.0 && far > 0.5, "in a bigger atlas, where 256 pixels is an eighth: {far}");
     assert!(images.iter().all(|image| image.uv[2] - image.uv[0] == 0.125), "each a 256-pixel cell of 2048");
 }
+
+/// Where the camera of [`corner_scene`] stands, looking into the corner.
+const CORNER_CAMERA: Vec3 = Vec3::new(1.5, 2.2, -2.5);
+
+fn corner_camera_rotation() -> Quat {
+    let forward = (Vec3::new(-1.0, 0.6, 2.0) - CORNER_CAMERA).normalize();
+    Quat::from_rotation_y(forward.x.atan2(forward.z)) * Quat::from_rotation_x(-forward.y.asin())
+}
+
+/// A floor lit only by the sky, with two walls meeting it in a corner at
+/// (-2, 0, 3), and post-processing that keeps the image steady: no TAA, so
+/// no jitter, and fixed exposure.
+fn corner_scene(renderer: &mut Renderer, ambient_occlusion: voxear_render::AmbientOcclusion) -> World {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess};
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(CORNER_CAMERA, corner_camera_rotation(), Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let place = |position: Vec3, scale: Vec3| Transform::new(position, Quat::IDENTITY, scale);
+    world.spawn((MeshRenderer::new(plane, material), place(Vec3::ZERO, Vec3::splat(30.0))));
+    world.spawn((MeshRenderer::new(cube, material), place(Vec3::new(0.0, 1.5, 3.25), Vec3::new(8.0, 3.0, 0.5))));
+    world.spawn((MeshRenderer::new(cube, material), place(Vec3::new(-2.25, 1.5, 0.0), Vec3::new(0.5, 3.0, 8.0))));
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { ambient_occlusion, anti_aliasing, ..PostProcess::neutral() });
+    world
+}
+
+/// The pixel `point` of the corner scene lands on.
+fn corner_pixel(point: Vec3) -> (u32, u32) {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let view = Mat4::from_rotation_translation(corner_camera_rotation(), CORNER_CAMERA).inverse();
+    let clip = vulkan::perspective_infinite_reverse(60f32.to_radians(), 640.0 / 360.0, 0.1) * view * point.extend(1.0);
+    let (x, y) = (clip.x / clip.w * 0.5 + 0.5, clip.y / clip.w * 0.5 + 0.5);
+    assert!((0.0..1.0).contains(&x) && (0.0..1.0).contains(&y), "{point} is in view");
+    ((x * 640.0) as u32, (y * 360.0) as u32)
+}
+
+/// On the floor right in the corner, and out in the open, away from the walls.
+const IN_THE_CORNER: Vec3 = Vec3::new(-1.95, 0.0, 2.95);
+const OPEN_FLOOR: Vec3 = Vec3::new(1.0, 0.0, 0.5);
+
+/// The corner scene's last frame, meshlets culled as `meshlets` says.
+fn corner_render(
+    meshlets: Meshlets,
+    ambient_occlusion: voxear_render::AmbientOcclusion,
+    debug_view: u32,
+) -> Option<Vec<u8>> {
+    let mut renderer = renderer_culling(meshlets, ViewOptions { debug_view, ..ViewOptions::default() })?;
+    let world = corner_scene(&mut renderer, ambient_occlusion);
+    run(&mut renderer, &world, &mut 0.0, 6);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// Keeps a 640×360 image as `name` when `VOXEAR_TEST_OUTPUT` names a folder.
+fn keep_image(name: &str, pixels: &[u8]) {
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+        let mut encoder = png::Encoder::new(file, 640, 360);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(pixels).unwrap();
+    }
+}
+
+fn rgb_at(pixels: &[u8], (x, y): (u32, u32)) -> [i32; 3] {
+    let i = ((y * 640 + x) * 4) as usize;
+    [pixels[i], pixels[i + 1], pixels[i + 2]].map(i32::from)
+}
+
+#[test]
+fn ambient_occlusion_darkens_a_corner_but_not_an_open_floor() {
+    use voxear_render::AmbientOcclusion;
+    let on = AmbientOcclusion::default();
+    let off = AmbientOcclusion { enabled: false, ..on };
+    let (Some(lit), Some(occluded)) =
+        (corner_render(Meshlets::Compute, off, 0), corner_render(Meshlets::Compute, on, 0))
+    else {
+        return;
+    };
+    keep_image("corner without ao.png", &lit);
+    keep_image("corner with ao.png", &occluded);
+    let brightness = |pixels: &[u8], point: Vec3| rgb_at(pixels, corner_pixel(point)).iter().sum::<i32>();
+    let (corner_lit, corner_occluded) = (brightness(&lit, IN_THE_CORNER), brightness(&occluded, IN_THE_CORNER));
+    assert!(corner_occluded * 100 < corner_lit * 85, "the corner darkens: {corner_occluded} from {corner_lit}");
+    let (open_lit, open_occluded) =
+        (rgb_at(&lit, corner_pixel(OPEN_FLOOR)), rgb_at(&occluded, corner_pixel(OPEN_FLOOR)));
+    assert!(
+        open_lit.iter().zip(open_occluded).all(|(a, b)| a.abs_diff(b) <= 2),
+        "the open floor does not: {open_occluded:?} against {open_lit:?}"
+    );
+
+    // The debug view shows what is left of the sky's light, as grey.
+    let Some(view) = corner_render(Meshlets::Compute, on, voxear_render::DEBUG_VIEW_AMBIENT_OCCLUSION) else { return };
+    keep_image("corner ao view.png", &view);
+    let (corner, open) = (rgb_at(&view, corner_pixel(IN_THE_CORNER)), rgb_at(&view, corner_pixel(OPEN_FLOOR)));
+    assert!(corner[0] == corner[1] && corner[1] == corner[2] && corner[0] < 200, "{corner:?}");
+    assert!(open.iter().all(|&c| c >= 250), "{open:?}");
+}
+
+#[test]
+fn ambient_occlusion_at_strength_0_matches_it_off() {
+    use voxear_render::AmbientOcclusion;
+    let none = AmbientOcclusion { strength: 0.0, ..AmbientOcclusion::default() };
+    let off = AmbientOcclusion { enabled: false, ..none };
+    // Every way of drawing, as each draws its depth first in its own way.
+    for meshlets in [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders] {
+        let (Some(without), Some(with)) = (corner_render(meshlets, off, 0), corner_render(meshlets, none, 0)) else {
+            continue;
+        };
+        let differing = without.iter().zip(&with).filter(|(a, b)| a != b).count();
+        assert_eq!(differing, 0, "{meshlets:?}: drawn depth first, the same image to the pixel");
+    }
+}
+
+#[test]
+fn a_tint_colours_only_occluded_light() {
+    use voxear_render::AmbientOcclusion;
+    let grey = AmbientOcclusion::default();
+    let purple = AmbientOcclusion { tint: [0.6, 0.1, 0.7], ..grey };
+    let (Some(plain), Some(tinted)) =
+        (corner_render(Meshlets::Compute, grey, 0), corner_render(Meshlets::Compute, purple, 0))
+    else {
+        return;
+    };
+    let (open_plain, open_tinted) =
+        (rgb_at(&plain, corner_pixel(OPEN_FLOOR)), rgb_at(&tinted, corner_pixel(OPEN_FLOOR)));
+    assert!(
+        open_plain.iter().zip(open_tinted).all(|(a, b)| a.abs_diff(b) <= 1),
+        "the open floor is untouched: {open_tinted:?} against {open_plain:?}"
+    );
+    let (corner_plain, corner_tinted) =
+        (rgb_at(&plain, corner_pixel(IN_THE_CORNER)), rgb_at(&tinted, corner_pixel(IN_THE_CORNER)));
+    let gained = [0, 1, 2].map(|c| corner_tinted[c] - corner_plain[c]);
+    assert!(
+        gained[0] > 4 && gained[2] > 4 && gained[1] < gained[0].min(gained[2]),
+        "the corner turns purple, more red and blue than green: {corner_tinted:?} from {corner_plain:?}"
+    );
+}

@@ -9,6 +9,7 @@
 //! [`post_passes`] for the post-processing after it.
 
 mod alloc;
+mod ambient_occlusion;
 mod assets;
 mod capture;
 mod cooked;
@@ -56,8 +57,8 @@ pub use gltf_import::{
     prepare as prepare_model,
 };
 pub use gpu::{
-    DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS,
-    DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
+    DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_LIGHT_COMPLEXITY, DEBUG_VIEW_LIT_WIREFRAME,
+    DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT, DEBUG_VIEW_WIREFRAME,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
@@ -65,8 +66,8 @@ pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodVi
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, Primitive, Vertex};
 pub use post::{
-    AntiAliasing, AntiAliasingMode, Bloom, DepthOfField, Exposure, Fog, Grading, Grain, MotionBlur, PostProcess,
-    Tonemap, Tonemapper, Vignette,
+    AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, DepthOfField, Exposure, Fog,
+    Grading, Grain, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
     MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
@@ -1118,6 +1119,8 @@ struct View {
     prev_view_proj: Option<Mat4Cols>,
     /// The size TAA's history was rendered at; `None` when it is stale.
     taa_history: Option<vk::Extent2D>,
+    /// The same for ambient occlusion's.
+    ao_history: Option<vk::Extent2D>,
     /// It has said its scene has too many meshlets to cull one by one.
     warned_meshlets: bool,
 }
@@ -1178,6 +1181,7 @@ impl View {
             prev_entities: Vec::new(),
             prev_view_proj: None,
             taa_history: None,
+            ao_history: None,
             warned_meshlets: false,
         })
     }
@@ -1215,6 +1219,7 @@ impl View {
 
     fn reset_history(&mut self) {
         self.taa_history = None;
+        self.ao_history = None;
         self.prev_models.clear();
         self.prev_view_proj = None;
     }
@@ -1273,6 +1278,11 @@ impl View {
         let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
         let taa_reset = self.taa_history != Some(extent);
         self.taa_history = taa.then_some(extent);
+        let wireframe = self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME;
+        // The wireframe draws edges where the depth passes would draw faces, so it goes without.
+        let occluded = extracted.post.ambient_occlusion.enabled && !wireframe;
+        let ao_reset = self.ao_history != Some(extent);
+        self.ao_history = occluded.then_some(extent);
         let light_count = extracted.lights.len().min(MAX_LIGHTS as usize);
         drop(extracting);
 
@@ -1322,7 +1332,15 @@ impl View {
             None
         };
 
+        let history = (setup.frame_index % 2) as usize;
+        let ambient_occlusion = match occluded {
+            true => Some(ambient_occlusion::Targets::new(fg, gpu, bindless, extent, history)?),
+            false => None,
+        };
+
         let mut frame_data = extracted.frame;
+        frame_data.post.ao_texture = ambient_occlusion.map_or(NO_TEXTURE, |ao| fg.texture(ao.current).0);
+        frame_data.post.ao_reset = u32::from(ao_reset);
         frame_data.instance_count = instance_count as u32;
         frame_data.light_count = light_count as u32;
         frame_data.hiz_texture = fg.texture(pyramid).0;
@@ -1406,7 +1424,6 @@ impl View {
             meshlet_capacity,
             mesh_shaders: setup.mesh_shaders && pipelines.mesh.is_some(),
         };
-        let wireframe = self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME;
         let edges = self.options.debug_view == gpu::DEBUG_VIEW_LIT_WIREFRAME;
         let frame_setup = passes::Frame {
             pipelines: *pipelines,
@@ -1415,6 +1432,7 @@ impl View {
             extent,
             wireframe,
             edges,
+            ambient_occlusion,
         };
         passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {
@@ -1430,7 +1448,7 @@ impl View {
             clear: setup.clear,
             clear_outside: setup.first,
             exposure: fg.import_buffer(&self.exposure),
-            history: (setup.frame_index % 2) as usize,
+            history,
             keep_ldr: setup.keep_ldr,
         };
         let finished = post_passes::record(fg, gpu, bindless, &post)?;

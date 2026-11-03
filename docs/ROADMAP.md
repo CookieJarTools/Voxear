@@ -787,9 +787,26 @@ Later:
   - [ ] tyre friction curves and the engine's torque curve, once Voxear has a curve field
   - input bindings for driving, and a debug view of wheel contacts, slip and suspension
 
-## M5 — Lighting
+## M5 — Lighting (in progress)
 
-- Per-meshlet culling (frustum, cone, Hi-Z) on mesh shaders with a compute fallback, including shadow passes.
+Done so far:
+- **Per-meshlet culling**, with mesh shaders where the GPU has them and a compute path everywhere else. Both draw
+  the same image as whole LODs, to the pixel.
+  - Each LOD is cut into meshlets of 64 vertices and 124 triangles, with a bounding sphere and a normal cone. They
+    are stored in the cooked format.
+  - Meshlets are tested against the frustum in every list (each shadow cascade against its own). The main view
+    also tests their normal cones, and the late list the depth pyramid.
+  - Neighbouring surviving meshlets draw as one range. The work list is flattened, so no GPU threads sit idle on
+    small LODs, and stats are counted in GPU memory.
+  - Counters for meshlets tested, culled and drawn appear in `vox render` and the stats overlay. A Meshlets debug
+    view (F6) colours them.
+  - `--no-mesh-shaders` and `--no-meshlet-culling` are there to compare.
+  - On an RTX 3070, mesh shaders take Stress at 1440p from 1.57 to 1.46 ms. With every sphere at full detail, 30% of
+    the view's meshlets face away and are culled.
+- Still to come for it: double-sided materials, so cone culling can skip them and shadows can cull back faces
+  where the material allows.
+
+Next:
 - Area and tube lights, IES profiles and light cookies, sky and atmosphere.
 - Volumetric fog: a froxel volume lit by every light, with the sun casting volumetric shadows, so light shafts show.
 - Soft shadows (PCSS, with a softness per light) and contact shadows, then virtual shadow maps.

@@ -80,6 +80,10 @@ impl Lock {
         }
         let file = LockFile { packages: self.packages.clone() };
         let text = format!("{HEADER}{}", toml::to_string(&file)?);
+        // Kept as it is when nothing changed, as packages.toml is.
+        if std::fs::read_to_string(&path).is_ok_and(|known| known == text) {
+            return Ok(());
+        }
         std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))
     }
 

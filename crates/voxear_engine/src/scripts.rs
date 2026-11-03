@@ -17,6 +17,7 @@ use voxear_scripting::{DotnetInstall, SaveSettings, ScriptRuntime, find_dotnet};
 
 use crate::{
     build_profile::host_platform,
+    package_scripts,
     project::{Project, core_assembly, engine_root, engine_version},
 };
 
@@ -39,8 +40,9 @@ const OUTPUT_WAIT: Duration = Duration::from_secs(5);
 /// files.
 static BUILDING: Mutex<()> = Mutex::new(());
 
-/// Builds the project's scripts, if it has any. Takes a few seconds, so the
-/// editor runs it off the main thread.
+/// Builds the project's scripts, if it has any, with its packages' scripts
+/// as assemblies of their own (see [`package_scripts`]). Takes a few
+/// seconds, so the editor runs it off the main thread.
 pub fn build(project: &Project) -> Result<()> {
     let _building = lock();
     build_unlocked(project)
@@ -105,9 +107,11 @@ pub fn build_for(project: &Project, configuration: &str, defines: &[String]) -> 
     let _building = lock();
     let Some(csproj) = project.scripts_project() else { return Ok(None) };
     let assembly = project.built_scripts_assembly(configuration).context("scripts project has no file name")?;
-    let output = BuildFolder { folder: assembly.parent().unwrap_or(&project.root), configuration };
+    let folder = assembly.parent().unwrap_or(&project.root);
     write_engine_props(project)?;
-    build_csproj(&dotnet()?, &csproj, configuration, defines, Some(output))?;
+    let packages = package_scripts::write(project)?;
+    build_csproj(&dotnet()?, &csproj, configuration, defines, Some(BuildFolder { folder, configuration }))?;
+    package_scripts::write_list(folder, &packages)?;
     Ok(Some(assembly))
 }
 
@@ -126,9 +130,12 @@ pub(crate) fn lock() -> MutexGuard<'static, ()> {
 /// [`build`], for a thread already holding [`lock`].
 pub(crate) fn build_unlocked(project: &Project) -> Result<()> {
     let Some(csproj) = project.scripts_project() else { return Ok(()) };
+    let assembly = project.scripts_assembly(CONFIGURATION).context("scripts project has no file name")?;
     write_engine_props(project)?;
+    let packages = package_scripts::write(project)?;
     let defines = built_in_defines(engine_version(), host_platform(), ScriptsFor::Editor);
-    build_csproj(&dotnet()?, &csproj, CONFIGURATION, &defines, None)
+    build_csproj(&dotnet()?, &csproj, CONFIGURATION, &defines, None)?;
+    package_scripts::write_list(assembly.parent().unwrap_or(&project.root), &packages)
 }
 
 fn write_engine_props(project: &Project) -> Result<()> {

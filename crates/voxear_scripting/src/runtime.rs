@@ -126,14 +126,16 @@ impl ScriptRuntime {
         let load = self.managed.load_game_assembly.expect("validated at start");
         let status = unsafe { load(path.as_ptr(), path.len() as i32) };
         ensure!(status == 0, "could not load game scripts from {path}");
-        self.loaded = Some((PathBuf::from(path), modified(Path::new(path))));
+        self.loaded = Some((PathBuf::from(path), built(Path::new(path))));
         Ok(())
     }
 
-    /// Whether the game scripts were built again since they were loaded.
+    /// Whether the game scripts were built again since they were loaded,
+    /// or a package's assembly was: a change to a package's script builds
+    /// only its own assembly, not the game's.
     pub fn is_out_of_date(&self) -> bool {
         let Some((path, loaded)) = &self.loaded else { return false };
-        modified(path).is_some_and(|built| loaded.is_none_or(|loaded| built > loaded))
+        built(path).is_some_and(|built| loaded.is_none_or(|loaded| built > loaded))
     }
 
     /// Loads the game scripts' new build in place of the running one, as
@@ -152,7 +154,7 @@ impl ScriptRuntime {
         let (path, _) = self.loaded.as_ref().context("the game scripts were never loaded")?;
         let path = path.clone();
         let text = path.to_str().context("assembly path is not valid UTF-8")?;
-        let built = modified(&path);
+        let built_at = built(&path);
         let reload = self.managed.reload_game_assembly.expect("validated at start");
         let handles: Vec<u32> = behaviours.iter().map(|(handle, _)| handle.0).collect();
         let enabled: Vec<u32> = behaviours.iter().map(|&(_, enabled)| u32::from(enabled)).collect();
@@ -166,7 +168,7 @@ impl ScriptRuntime {
         };
         ensure!(status != 1, "the new build of the scripts could not be loaded; the old one keeps running");
         ensure!(status == 0, "reloading the scripts failed partway; the Console has what went wrong");
-        self.loaded = Some((path, built));
+        self.loaded = Some((path, built_at));
         Ok(infos
             .into_iter()
             .map(|info| match info.flags & FLAG_GONE {
@@ -446,4 +448,25 @@ impl BehaviourHost for ScriptHost<'_> {
 /// When a file was last written.
 fn modified(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
+}
+
+/// The file a build of the scripts writes beside the game's assembly to
+/// name the assemblies of the project's packages, one file name a line,
+/// each after the ones it uses. `Voxear.Core` loads them with the game's,
+/// into the same context, and a player build ships it with them.
+pub const PACKAGE_ASSEMBLIES: &str = "Packages.txt";
+
+/// The packages' assemblies the game's assembly at `game` was built with,
+/// from the list beside it: none for a project without packages.
+pub fn package_assemblies(game: &Path) -> Vec<PathBuf> {
+    let Some(folder) = game.parent() else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(folder.join(PACKAGE_ASSEMBLIES)) else { return Vec::new() };
+    text.lines().map(str::trim).filter(|line| !line.is_empty()).map(|line| folder.join(line)).collect()
+}
+
+/// When the scripts at `game` were last built: the newest of the game's
+/// assembly and its packages'.
+fn built(game: &Path) -> Option<SystemTime> {
+    let packages = package_assemblies(game).into_iter().filter_map(|path| modified(&path));
+    modified(game).into_iter().chain(packages).max()
 }

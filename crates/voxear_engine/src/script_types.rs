@@ -525,8 +525,9 @@ pub fn cached(project: &Project) -> Option<ScriptTypes> {
     parse(&text).ok()
 }
 
-/// Whether a script, the scripts project or a string table changed since
-/// the description was written, or there is none. A project without scripts
+/// Whether a script, the scripts project, a string table, a package's
+/// script or the packages the project uses changed since the description
+/// was written, or there is none. A project without scripts
 /// never is.
 pub fn is_stale(project: &Project) -> bool {
     if project.scripts_project().is_none() {
@@ -539,8 +540,8 @@ pub fn is_stale(project: &Project) -> bool {
     }
 }
 
-/// Whether a script, the scripts project or a string table changed after
-/// `time`.
+/// Whether a script, the scripts project, a string table, a package's
+/// script or the packages the project uses changed after `time`.
 pub fn changed_since(project: &Project, time: SystemTime) -> bool {
     newest_source(project).is_some_and(|newest| newest > time)
 }
@@ -553,6 +554,12 @@ fn newest_source(project: &Project) -> Option<SystemTime> {
     }
     // The scripts' build makes the tables' keys into `Strings`.
     string_tables(&project.root, &mut sources, true);
+    // A package's scripts build with the game's, and a change to which packages the project uses changes them all.
+    for folder in crate::package_scripts::script_folders(project) {
+        source_files(&folder, &mut sources);
+    }
+    sources.push(project.root.join(crate::packages::PACKAGES_FILE));
+    sources.push(project.root.join(crate::packages::LOCK_FILE));
     sources.iter().filter_map(|path| modified(path)).max()
 }
 

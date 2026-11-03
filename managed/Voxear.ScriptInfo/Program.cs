@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -8,8 +9,9 @@ namespace Voxear.ScriptInfo;
 
 /// <summary>
 /// Writes what a built game assembly's behaviours are, as JSON, for the editor to show their fields:
-/// dotnet Voxear.ScriptInfo.dll Game.dll Behaviours.json [Code.json]. With a third path it also writes the Code
-/// Reference, the public types of the game and of Voxear.Core with their comments, for VoxDocs. It runs as a
+/// dotnet Voxear.ScriptInfo.dll Game.dll Behaviours.json [Code.json]. The assemblies of the project's packages,
+/// listed beside the game's, are described with it. With a third path it also writes the Code Reference, the public
+/// types of the game, its packages and Voxear.Core with their comments, for VoxDocs. It runs as a
 /// process of its own, so making behaviours to read the values they start with cannot touch the editor, and a
 /// crash here costs only the description.
 /// </summary>
@@ -26,12 +28,17 @@ internal static class Program
 		var assembly = Path.GetFullPath(args[0]);
 		var folder = Path.GetDirectoryName(assembly)!;
 		AssemblyLoadContext.Default.Resolving += (context, name) => Probe(context, folder, name);
-		var game = AssemblyLoadContext.Default.LoadFromAssemblyPath(assembly);
+		var scripts = new List<Assembly>();
+		foreach (var package in PackageAssemblies.Beside(assembly))
+		{
+			scripts.Add(AssemblyLoadContext.Default.LoadFromAssemblyPath(package));
+		}
+		scripts.Add(AssemblyLoadContext.Default.LoadFromAssemblyPath(assembly));
 
-		Write(args[1], ScriptCatalog.Describe(game));
+		Write(args[1], ScriptCatalog.Describe(scripts));
 		if (args.Length == 3)
 		{
-			Write(args[2], CodeReference.Describe(new[] { game, typeof(SerializeFieldAttribute).Assembly }));
+			Write(args[2], CodeReference.Describe([.. scripts, typeof(SerializeFieldAttribute).Assembly]));
 		}
 
 		return 0;

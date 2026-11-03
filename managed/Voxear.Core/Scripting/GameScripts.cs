@@ -11,8 +11,9 @@ namespace Voxear.Scripting;
 
 /// <summary>
 /// The game assemblies, loaded into one collectible context, and loaded again into a new one when they change: see
-/// Reload. They are read into memory rather than mapped from their files, so the next build can write over the
-/// files while this one runs.
+/// Reload. The game's scripts come with the assemblies of the project's packages (see PackageAssemblies), so what a
+/// package defines is found as the game's own is. They are read into memory rather than mapped from their files, so
+/// the next build can write over the files while this one runs.
 /// </summary>
 internal static class GameScripts
 {
@@ -32,13 +33,15 @@ internal static class GameScripts
 	public static void Load(string path)
 	{
 		context ??= new GameLoadContext(path);
-		assemblies.Add(LoadInto(context, path));
+		var loaded = LoadAll(context, path);
+		assemblies.AddRange(loaded);
 		Systems.Forget();
 		SceneComponentTypes.Clear();
 		BehaviourTypes.Clear();
 		BehaviourFields.Clear();
 		SaveTypes.Clear();
-		Log.Info($"Loaded game scripts from {path}");
+		var packages = loaded.Count - 1;
+		Log.Info(packages == 0 ? $"Loaded game scripts from {path}" : $"Loaded game scripts from {path}, with {packages} package assemblies");
 	}
 
 	/// <summary>
@@ -56,10 +59,10 @@ internal static class GameScripts
 	{
 		var previous = context;
 		var next = new GameLoadContext(path);
-		Assembly loaded;
+		List<Assembly> loaded;
 		try
 		{
-			loaded = LoadInto(next, path);
+			loaded = LoadAll(next, path);
 		}
 		catch (Exception exception) when (exception is IOException or BadImageFormatException)
 		{
@@ -119,6 +122,18 @@ internal static class GameScripts
 		return false;
 	}
 
+	/// <summary>The game's assembly and its packages', read into a context: the packages first, each after the ones it uses.</summary>
+	private static List<Assembly> LoadAll(AssemblyLoadContext target, string path)
+	{
+		var loaded = new List<Assembly>();
+		foreach (var package in PackageAssemblies.Beside(path))
+		{
+			loaded.Add(LoadInto(target, package));
+		}
+		loaded.Add(LoadInto(target, path));
+		return loaded;
+	}
+
 	/// <summary>Reads an assembly into a context, with its symbols when they are there so stack traces keep their lines.</summary>
 	private static Assembly LoadInto(AssemblyLoadContext target, string path)
 	{
@@ -159,11 +174,11 @@ internal static class GameScripts
 		}
 	}
 
-	private static void Swap(GameLoadContext next, Assembly loaded)
+	private static void Swap(GameLoadContext next, List<Assembly> loaded)
 	{
 		context = next;
 		assemblies.Clear();
-		assemblies.Add(loaded);
+		assemblies.AddRange(loaded);
 		BehaviourTypes.Clear();
 		BehaviourFields.Clear();
 		SceneComponentTypes.Clear();

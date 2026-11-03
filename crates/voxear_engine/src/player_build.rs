@@ -7,8 +7,8 @@
 //!    The scripts' `[ContentRoot]`s come along, so they are read from the
 //!    build just made.
 //! 3. **Player**: the player program, named after the game, with
-//!    `Voxear.Core` and the scripts in `Data/Managed` and what to run in
-//!    `Data/player.toml`.
+//!    `Voxear.Core`, the scripts and their packages' assemblies in
+//!    `Data/Managed`, and what to run in `Data/player.toml`.
 //!
 //! Then `build-report.json` records what was built and how long each stage
 //! took. Before content, every scene and prefab is checked for `[Required]`
@@ -36,7 +36,7 @@ use crate::{
     script_types,
     scripts::{self, ScriptsFor},
 };
-use voxear_scripting::{InspectorAnswer, InspectorAsk};
+use voxear_scripting::{InspectorAnswer, InspectorAsk, PACKAGE_ASSEMBLIES};
 
 /// A program beside this one, such as `vox` beside the editor or the player
 /// beside `vox`. A test runs from `deps/`, one folder down from them.
@@ -312,12 +312,16 @@ fn copy_managed(project: &Project, configuration: &str, symbols: bool, managed: 
     if symbols {
         copy(&core.with_extension("pdb"), &managed.join("Voxear.Core.pdb"))?;
     }
-    // The scripts' folder holds their own build and any library they use.
+    // The scripts' folder holds their own build, the packages' assemblies with the list of them, and any library
+    // they use.
     let built = assembly.parent().context("the scripts were built nowhere")?;
     for entry in std::fs::read_dir(built).with_context(|| format!("reading {}", built.display()))? {
         let path = entry?.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-        let ships = name.ends_with(".dll") || name.ends_with(".deps.json") || (symbols && name.ends_with(".pdb"));
+        let ships = name.ends_with(".dll")
+            || name.ends_with(".deps.json")
+            || name == PACKAGE_ASSEMBLIES
+            || (symbols && name.ends_with(".pdb"));
         if path.is_file() && ships && !name.starts_with("Voxear.Core.") {
             copy(&path, &managed.join(name))?;
         }

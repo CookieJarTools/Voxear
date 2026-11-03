@@ -20,41 +20,47 @@ internal static class ScriptCatalog
 
 	public static string Describe(Assembly assembly)
 	{
+		return Describe([assembly]);
+	}
+
+	/// <summary>Describes the game's assembly with its packages' as one, as they run together.</summary>
+	public static string Describe(IReadOnlyList<Assembly> assemblies)
+	{
 		var nested = new SortedSet<string>(StringComparer.Ordinal);
 		var types = new Dictionary<string, Type>();
-		var drawers = DrawerTable.Of(Loadable(assembly));
+		var drawers = DrawerTable.Of(Loadable(assemblies));
 		using var stream = new MemoryStream();
 		using (var json = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
 		{
 			json.WriteStartObject();
 			json.WriteStartArray("behaviours");
-			foreach (var behaviour in Behaviours(assembly))
+			foreach (var behaviour in Behaviours(assemblies))
 			{
 				WriteBehaviour(json, behaviour, types, drawers);
 			}
 			json.WriteEndArray();
 			json.WriteStartArray("components");
-			foreach (var component in Components(assembly))
+			foreach (var component in Components(assemblies))
 			{
 				WriteComponent(json, component, types, drawers);
 			}
 			json.WriteEndArray();
-			WriteSystems(json, assembly);
+			WriteSystems(json, assemblies);
 			WriteNestedTypes(json, types, nested, drawers);
-			WriteCommands(json, assembly);
-			WriteChecks(json, assembly);
-			WriteWindows(json, assembly);
-			WriteSideBar(json, assembly);
+			WriteCommands(json, assemblies);
+			WriteChecks(json, assemblies);
+			WriteWindows(json, assemblies);
+			WriteSideBar(json, assemblies);
 			json.WriteEndObject();
 		}
 		return Encoding.UTF8.GetString(stream.ToArray());
 	}
 
 	/// <summary>Every behaviour a scene can name: not abstract, and not generic.</summary>
-	private static List<Type> Behaviours(Assembly assembly)
+	private static List<Type> Behaviours(IReadOnlyList<Assembly> assemblies)
 	{
 		var found = new List<Type>();
-		foreach (var type in Loadable(assembly))
+		foreach (var type in Loadable(assemblies))
 		{
 			if (type != null && typeof(Behaviour).IsAssignableFrom(type) && !type.IsAbstract && !type.ContainsGenericParameters)
 			{
@@ -66,10 +72,10 @@ internal static class ScriptCatalog
 	}
 
 	/// <summary>Every component a scene can give an Obj: an unmanaged struct marked IComponent.</summary>
-	private static List<Type> Components(Assembly assembly)
+	private static List<Type> Components(IReadOnlyList<Assembly> assemblies)
 	{
 		var found = new List<Type>();
-		foreach (var type in Loadable(assembly))
+		foreach (var type in Loadable(assemblies))
 		{
 			if (type != null && SceneComponentTypes.IsComponent(type))
 			{
@@ -100,10 +106,10 @@ internal static class ScriptCatalog
 	}
 
 	/// <summary>Each system the engine will run: its stage and order, as the editor's Entities panel lists them.</summary>
-	private static void WriteSystems(Utf8JsonWriter json, Assembly assembly)
+	private static void WriteSystems(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)
 	{
 		var systems = new List<Type>();
-		foreach (var type in Loadable(assembly))
+		foreach (var type in Loadable(assemblies))
 		{
 			if (type != null && type.IsSubclassOf(typeof(SystemBase)) && !type.IsAbstract)
 			{
@@ -123,7 +129,17 @@ internal static class ScriptCatalog
 		json.WriteEndArray();
 	}
 
-	/// <summary>The assembly's types, leaving out any that cannot load rather than failing for all of them.</summary>
+	/// <summary>The assemblies' types, leaving out any that cannot load rather than failing for all of them.</summary>
+	private static Type?[] Loadable(IReadOnlyList<Assembly> assemblies)
+	{
+		var found = new List<Type?>();
+		foreach (var assembly in assemblies)
+		{
+			found.AddRange(Loadable(assembly));
+		}
+		return found.ToArray();
+	}
+
 	private static Type?[] Loadable(Assembly assembly)
 	{
 		try
@@ -266,10 +282,10 @@ internal static class ScriptCatalog
 
 	/// <summary>Each static method marked [Command] that takes nothing and returns nothing, as the palette runs it.</summary>
 	/// <summary>The game's editor windows, each with the title and icon its [Window] gives it, if any.</summary>
-	private static void WriteWindows(Utf8JsonWriter json, Assembly assembly)
+	private static void WriteWindows(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)
 	{
 		json.WriteStartArray("windows");
-		foreach (var type in EditorWindows.In(Loadable(assembly)))
+		foreach (var type in EditorWindows.In(Loadable(assemblies)))
 		{
 			if (typeof(SideBarItem).IsAssignableFrom(type))
 			{
@@ -296,11 +312,11 @@ internal static class ScriptCatalog
 	/// What the game adds to the editor's side bar: each [SideBarButton] method, which takes nothing and returns
 	/// nothing, with its icon, title and menu, and each SideBarItem.
 	/// </summary>
-	private static void WriteSideBar(Utf8JsonWriter json, Assembly assembly)
+	private static void WriteSideBar(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)
 	{
 		json.WriteStartObject("side_bar");
 		json.WriteStartArray("buttons");
-		foreach (var type in Loadable(assembly))
+		foreach (var type in Loadable(assemblies))
 		{
 			foreach (var method in type?.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ?? [])
 			{
@@ -324,7 +340,7 @@ internal static class ScriptCatalog
 		}
 		json.WriteEndArray();
 		json.WriteStartArray("items");
-		foreach (var type in EditorWindows.In(Loadable(assembly)))
+		foreach (var type in EditorWindows.In(Loadable(assemblies)))
 		{
 			if (typeof(SideBarItem).IsAssignableFrom(type))
 			{
@@ -335,10 +351,10 @@ internal static class ScriptCatalog
 		json.WriteEndObject();
 	}
 
-	private static void WriteCommands(Utf8JsonWriter json, Assembly assembly)
+	private static void WriteCommands(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)
 	{
 		json.WriteStartArray("commands");
-		foreach (var type in Loadable(assembly))
+		foreach (var type in Loadable(assemblies))
 		{
 			if (type == null)
 			{
@@ -369,10 +385,10 @@ internal static class ScriptCatalog
 	}
 
 	/// <summary>The <c>[DocsCheck]</c> methods, which a VoxDocs page's Action… menu lists for a guide's steps.</summary>
-	private static void WriteChecks(Utf8JsonWriter json, Assembly assembly)
+	private static void WriteChecks(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)
 	{
 		json.WriteStartArray("checks");
-		foreach (var type in Loadable(assembly))
+		foreach (var type in Loadable(assemblies))
 		{
 			if (type == null)
 			{

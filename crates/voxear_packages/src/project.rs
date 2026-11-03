@@ -114,9 +114,15 @@ impl PackagesFile {
             .is_some_and(|table| table.contains_key(name))
     }
 
+    /// Writes the file, unless it holds this already: every build of the
+    /// scripts syncs the packages, and a file written again for nothing
+    /// would look like a change to whatever watches the project.
     pub fn save(&self) -> Result<()> {
-        std::fs::write(&self.path, self.document.to_string())
-            .with_context(|| format!("writing {}", self.path.display()))
+        let text = self.document.to_string();
+        if std::fs::read_to_string(&self.path).is_ok_and(|known| known == text) {
+            return Ok(());
+        }
+        std::fs::write(&self.path, text).with_context(|| format!("writing {}", self.path.display()))
     }
 }
 

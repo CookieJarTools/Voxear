@@ -29,6 +29,12 @@
 	<PropertyGroup>
 		<VoxearProjectFolder Condition="'$(VoxearProjectFolder)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../'))</VoxearProjectFolder>
 	</PropertyGroup>
+	<!--
+		The project's packages, for the game's scripts: each package's scripts build into an assembly of its own, from a
+		project Voxear writes in .voxear/Packages, and .voxear/Packages.props has the game use them all. A package's own
+		project sets VoxearPackage, so it uses only the packages it needs.
+	-->
+	<Import Project="$(VoxearProjectFolder).voxear/Packages.props" Condition="'$(VoxearPackage)' == '' and Exists('$(VoxearProjectFolder).voxear/Packages.props')" />
 	<ItemGroup>
 		<CompilerVisibleProperty Include="RootNamespace" />
 		<VoxearStringTable Include="$(VoxearProjectFolder)**/*.strings" Exclude="$(VoxearProjectFolder)**/.*/**;$(VoxearProjectFolder)**/bin/**;$(VoxearProjectFolder)**/obj/**;$(VoxearProjectFolder)**/target/**;$(VoxearProjectFolder)**/node_modules/**;$(VoxearProjectFolder)Docs/**" />

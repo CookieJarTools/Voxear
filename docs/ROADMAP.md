@@ -889,6 +889,11 @@ Done so far:
   cubes traced with 32 cones, skipping those behind walls; reflections trace a cone through the voxels; mist is lit
   by the probes, and under the atmosphere takes its horizon's light. About 0.75 ms at 1440p. GPU tests: a wall the
   camera cannot see reddens the floor; torchlight bounces.
+- **GI without pops:** probes refreshed in a scrambled order, so light changes evenly rather than in waves; every
+  probe traced for the first frames, and exposure snapped meanwhile, so a level opens settled; a coarse cascade of
+  probes four times as far apart past the fine one, so far walls and mist do not change over as the camera walks;
+  voxels keep which way their light faces, so thin walls do not glow on their shaded side; exposure eases towards
+  its target. About 1.1 ms at 1440p.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

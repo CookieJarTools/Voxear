@@ -219,8 +219,9 @@ pub struct Exposure {
     /// their nights dark when it is.
     pub min_ev: f32,
     pub max_ev: f32,
-    /// Advanced: adaptation speed in stops per second, towards brighter and
-    /// towards darker scenes.
+    /// Advanced: how quickly exposure adapts, towards brighter and towards
+    /// darker scenes, easing in as an eye does: at 1 it closes most of the
+    /// gap in a second, at 2 in half a second.
     pub speed_up: f32,
     pub speed_down: f32,
     /// How dark a dark scene stays, as an eye sees it: the darker it is,

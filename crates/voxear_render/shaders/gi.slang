@@ -62,16 +62,24 @@ float4 giCone(Frame* frame, float3 start, float3 direction, float tanHalfAngle)
         float level = min(ceil(log2(width / smallest)), coarsest);
         float3 at = start + direction * distance;
         float4 voxel = giSample(frame, at, uint(level));
+        // A step as long as the cone is wide, so each sample covers fresh space.
+        distance += width;
+        // Most of a cone's way is through empty air, where nothing more need be looked up.
+        if (voxel.a < 1e-3)
+        {
+            continue;
+        }
         // How much the voxels block along the cone: a floor in a coarse voxel blocks a cone going down through
         // it, but little of one passing level above it.
         float3 axes = giSampleAtlas(frame, frame->gi.opacityTexture, at, uint(level)).xyz;
         float3 squared = direction * direction;
         float blocks = saturate(dot(axes, squared));
-        // What fills them, as bright as it is, over as much as blocks.
-        light += (1.0 - blocked) * voxel.rgb / max(voxel.a, 1e-3) * blocks;
+        // What fills them, as bright as it is, over as much as blocks, and only as far as its light faces back
+        // along the cone: the dark side of a wall shows none of its sunlit side's light, though both share a voxel.
+        float3 lightward = giSampleAtlas(frame, frame->gi.directionTexture, at, uint(level)).xyz;
+        float toward = length(lightward) > 1e-4 ? saturate(0.5 - 1.5 * dot(direction, normalize(lightward))) : 1.0;
+        light += (1.0 - blocked) * voxel.rgb / max(voxel.a, 1e-3) * blocks * toward;
         blocked += (1.0 - blocked) * blocks;
-        // A step as long as the cone is wide, so each sample covers fresh space.
-        distance += width;
     }
     return float4(light, blocked);
 }
@@ -109,47 +117,56 @@ float3 giSky(float3 direction, float3 skyUp, float3 skyHorizon, float3 skyDown)
 static const float GI_PROBE_WIDTH = float(GI_PROBES * GI_PROBES);
 static const int GI_PROBE_FACES = 6;
 
-int2 giProbeTexel(int3 probe, int part)
+// A probe's texel for `part`, its cube's face, in `cascade`'s band of rows.
+int2 giProbeTexel(int3 probe, int part, uint cascade)
 {
-    return int2(probe.x + probe.z * GI_PROBES, probe.y + part * GI_PROBES);
+    return int2(probe.x + probe.z * GI_PROBES, probe.y + (part + int(cascade) * GI_PROBE_FACES) * GI_PROBES);
+}
+
+// How far apart a cascade's probes are, in metres.
+float giProbeSpacing(Frame* frame, uint cascade)
+{
+    return frame->gi.probeSpacing * (cascade == 0 ? 1.0 : GI_CASCADE_SCALE);
+}
+
+// How far inside a cascade's grid a point is, in probes from its nearest
+// edge, and where it lies in the grid.
+float giInCascade(Frame* frame, uint cascade, float3 position, out float3 inGrid)
+{
+    inGrid = position / giProbeSpacing(frame, cascade) - float3(frame->gi.probePreviousOrigin[cascade].xyz) - 0.5;
+    float last = float(GI_PROBES - 1);
+    return min(min(inGrid.x, inGrid.y), min(inGrid.z, min(min(last - inGrid.x, last - inGrid.y), last - inGrid.z)));
 }
 
 // What a probe sends towards a surface facing `normal`: the faces of its
 // cube the normal turns towards, each as much as it turns that way, and
 // how open the probe is.
-float4 giProbeLight(Texture2D probes, int3 probe, float3 normal)
+float4 giProbeLight(Texture2D probes, int3 probe, uint cascade, float3 normal)
 {
     float3 squared = normal * normal;
-    float4 x = probes.Load(int3(giProbeTexel(probe, normal.x >= 0.0 ? 0 : 1), 0));
-    float4 y = probes.Load(int3(giProbeTexel(probe, normal.y >= 0.0 ? 2 : 3), 0));
-    float4 z = probes.Load(int3(giProbeTexel(probe, normal.z >= 0.0 ? 4 : 5), 0));
+    float4 x = probes.Load(int3(giProbeTexel(probe, normal.x >= 0.0 ? 0 : 1, cascade), 0));
+    float4 y = probes.Load(int3(giProbeTexel(probe, normal.y >= 0.0 ? 2 : 3, cascade), 0));
+    float4 z = probes.Load(int3(giProbeTexel(probe, normal.z >= 0.0 ? 4 : 5, cascade), 0));
     return float4(x.rgb * squared.x + y.rgb * squared.y + z.rgb * squared.z, x.a);
 }
 
 // A probe's light from all round, the average of its six faces.
-float3 giProbeAverage(Texture2D probes, int3 probe)
+float3 giProbeAverage(Texture2D probes, int3 probe, uint cascade)
 {
     float3 total = 0.0;
     for (int face = 0; face < GI_PROBE_FACES; face++)
     {
-        total += probes.Load(int3(giProbeTexel(probe, face), 0)).rgb;
+        total += probes.Load(int3(giProbeTexel(probe, face, cascade), 0)).rgb;
     }
     return total / float(GI_PROBE_FACES);
 }
 
-// The light round a point from every direction, as the probes round it
-// hold it, for fog to be lit by: dim indoors, where walls keep the sky out.
-// Beyond the grid, `fallback`, the plain sky light, fading in over its edge.
-float3 giLightAround(Frame* frame, float3 position, float3 fallback)
+// The light round a point from every direction, as one cascade's probes
+// round it hold it; beyond the cascade, `fallback`, fading in over its edge.
+float3 giLightAroundIn(Frame* frame, uint cascade, float3 position, float3 fallback)
 {
-    if (frame->gi.probeTexture == NO_TEXTURE)
-    {
-        return fallback;
-    }
-    float spacing = frame->gi.probeSpacing;
-    float3 inGrid = position / spacing - float3(frame->gi.probePreviousOrigin.xyz) - 0.5;
-    float last = float(GI_PROBES - 1);
-    float edge = min(min(inGrid.x, inGrid.y), min(inGrid.z, min(min(last - inGrid.x, last - inGrid.y), last - inGrid.z)));
+    float3 inGrid;
+    float edge = giInCascade(frame, cascade, position, inGrid);
     if (edge <= 0.0)
     {
         return fallback;
@@ -163,9 +180,22 @@ float3 giLightAround(Frame* frame, float3 position, float3 fallback)
         int3 offset = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
         int3 probe = min(base + offset, GI_PROBES - 1);
         float3 trilinear = lerp(1.0 - within, within, float3(offset));
-        total += giProbeAverage(probes, probe) * trilinear.x * trilinear.y * trilinear.z;
+        total += giProbeAverage(probes, probe, cascade) * trilinear.x * trilinear.y * trilinear.z;
     }
     return lerp(fallback, total, saturate(edge / 2.0));
+}
+
+// The light round a point from every direction, for fog to be lit by: dim
+// indoors, where walls keep the sky out. The fine cascade near the camera,
+// the coarse one past it, and beyond both `fallback`, the plain sky light.
+float3 giLightAround(Frame* frame, float3 position, float3 fallback)
+{
+    if (frame->gi.probeTexture == NO_TEXTURE)
+    {
+        return fallback;
+    }
+    float3 far = giLightAroundIn(frame, 1, position, fallback);
+    return giLightAroundIn(frame, 0, position, far);
 }
 
 // How much of the open sky's light reaches a point, from 0 deep inside to
@@ -178,19 +208,21 @@ float giOpenness(Frame* frame, float3 position, float3 openSky)
 }
 
 // The light falling on a surface from all round its normal, from the eight
-// probes round it, each counted less the more it lies behind the surface
-// and the less of it is open space, so light leaks less through walls.
-// Beyond the grid, `fallback`, the plain sky light, fading in over its edge.
-float3 giAmbient(Frame* frame, float3 position, float3 normal, float3 fallback)
+// probes of a cascade round it, each counted less the more it lies behind
+// the surface and the less of it is open space, and hardly at all with a
+// wall between, so light leaks less through walls. Beyond the cascade,
+// `fallback`, fading in over its edge.
+float3 giAmbientIn(Frame* frame, uint cascade, float3 position, float3 normal, float3 fallback)
 {
-    float spacing = frame->gi.probeSpacing;
-    float3 inGrid = (position + normal * spacing * 0.5) / spacing - float3(frame->gi.probePreviousOrigin.xyz) - 0.5;
-    float last = float(GI_PROBES - 1);
-    float edge = min(min(inGrid.x, inGrid.y), min(inGrid.z, min(min(last - inGrid.x, last - inGrid.y), last - inGrid.z)));
+    float spacing = giProbeSpacing(frame, cascade);
+    float3 inGrid;
+    float edge = giInCascade(frame, cascade, position + normal * spacing * 0.5, inGrid);
     if (edge <= 0.0)
     {
         return fallback;
     }
+    // The voxels a wall between is looked for in: as coarse as the probes are far apart.
+    uint level = cascade == 0 ? 0 : GI_LEVELS - 1;
     int3 base = int3(floor(inGrid));
     float3 within = inGrid - float3(base);
     Texture2D probes = textures[NonUniformResourceIndex(frame->gi.probeTexture)];
@@ -201,12 +233,12 @@ float3 giAmbient(Frame* frame, float3 position, float3 normal, float3 fallback)
         int3 offset = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
         int3 probe = min(base + offset, GI_PROBES - 1);
         float3 trilinear = lerp(1.0 - within, within, float3(offset));
-        float3 middle = (float3(probe + frame->gi.probePreviousOrigin.xyz) + 0.5) * spacing;
+        float3 middle = (float3(probe + frame->gi.probePreviousOrigin[cascade].xyz) + 0.5) * spacing;
         float3 towards = normalize(middle - position + 1e-4);
         float facing = (dot(towards, normal) + 1.0) * 0.5;
-        float4 light = giProbeLight(probes, probe, normal);
+        float4 light = giProbeLight(probes, probe, cascade, normal);
         // A wall between the surface and the probe, found in the voxels halfway to it, hides most of its light.
-        float between = giSample(frame, lerp(position + normal * spacing * 0.25, middle, 0.5), 0).a;
+        float between = giSample(frame, lerp(position + normal * spacing * 0.25, middle, 0.5), level).a;
         float visible = 1.0 - 0.9 * saturate(between);
         float weight = trilinear.x * trilinear.y * trilinear.z * (facing * facing + 0.2) * max(light.a, 0.05) * visible;
         total += light.rgb * weight;
@@ -214,4 +246,13 @@ float3 giAmbient(Frame* frame, float3 position, float3 normal, float3 fallback)
     }
     float3 cached = total / max(weights, 1e-5);
     return lerp(fallback, cached, saturate(edge / 2.0));
+}
+
+// The light falling on a surface from all round its normal: from the fine
+// cascade of probes near the camera, the coarse one past it, and beyond
+// both `fallback`, the plain sky light.
+float3 giAmbient(Frame* frame, float3 position, float3 normal, float3 fallback)
+{
+    float3 far = giAmbientIn(frame, 1, position, normal, fallback);
+    return giAmbientIn(frame, 0, position, normal, far);
 }

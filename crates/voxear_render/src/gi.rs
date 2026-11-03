@@ -47,7 +47,7 @@ use voxear_core::math::Vec3;
 use voxear_rhi::{Bindless, Gpu, ImageDesc, vk};
 
 use crate::{
-    gpu::{GI_LEVELS, GI_PROBES, GI_SIZE, Push},
+    gpu::{GI_CASCADE_SCALE, GI_CASCADES, GI_LEVELS, GI_PROBES, GI_SIZE, Push},
     graph::{FrameGraph, ImageAccess, ImageId},
     passes::{begin_rendering, bind},
     pipelines::Pipelines,
@@ -58,9 +58,20 @@ pub const VOXEL_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 const HISTORY_NAMES: [&str; 2] = ["gi voxels 0", "gi voxels 1"];
 const PROBE_NAMES: [&str; 2] = ["gi probes 0", "gi probes 1"];
 const OPACITY_NAMES: [&str; 2] = ["gi opacity 0", "gi opacity 1"];
+const DIRECTION_NAMES: [&str; 2] = ["gi direction 0", "gi direction 1"];
+
+/// How many frames every probe is traced each frame when the GI starts, or
+/// starts again: enough for light to bounce round and settle.
+pub const WARM_UP_FRAMES: u32 = 12;
 
 /// How far apart the probes are, in the finest voxels.
 pub const PROBE_SPACING: f32 = 2.0;
+
+/// Each cascade's lowest probe, in its own probes from the world's origin,
+/// so that the camera is in its middle; `spacing` is the finest cascade's.
+pub fn probe_origins(camera: Vec3, spacing: f32) -> [[i32; 4]; GI_CASCADES] {
+    std::array::from_fn(|cascade| probe_origin(camera, spacing * GI_CASCADE_SCALE.powi(cascade as i32)))
+}
 
 /// The probe grid's lowest probe, in probes from the world's origin, so
 /// that the camera is in its middle.
@@ -126,6 +137,10 @@ pub struct Voxels {
     /// frame's.
     pub previous_opacity: ImageId,
     pub opacity: ImageId,
+    /// Which way the voxels' light faces, as their normals weighted by how
+    /// bright each is, last frame's and this frame's.
+    pub previous_direction: ImageId,
+    pub direction: ImageId,
     pub albedo: ImageId,
     pub normals: ImageId,
     pub emissive: ImageId,
@@ -136,8 +151,9 @@ impl Voxels {
     pub fn new(fg: &mut FrameGraph<'_>, gpu: &Gpu, bindless: &mut Bindless, history: usize) -> Result<Self> {
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
         let desc = ImageDesc::new(GI_SIZE * GI_SIZE, GI_SIZE * GI_LEVELS as u32, VOXEL_FORMAT, usage);
-        // Six texels a probe, its ambient cube's faces, one above another.
-        let probe_desc = ImageDesc::new(GI_PROBES * GI_PROBES, GI_PROBES * 6, VOXEL_FORMAT, usage);
+        // Six texels a probe, its ambient cube's faces, one above another, a band of rows for each cascade.
+        let rows = GI_PROBES * 6 * GI_CASCADES as u32;
+        let probe_desc = ImageDesc::new(GI_PROBES * GI_PROBES, rows, VOXEL_FORMAT, usage);
         Ok(Self {
             previous: fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], desc)?,
             current: fg.history_image(gpu, bindless, HISTORY_NAMES[history], desc)?,
@@ -145,6 +161,8 @@ impl Voxels {
             probes: fg.history_image(gpu, bindless, PROBE_NAMES[history], probe_desc)?,
             previous_opacity: fg.history_image(gpu, bindless, OPACITY_NAMES[1 - history], desc)?,
             opacity: fg.history_image(gpu, bindless, OPACITY_NAMES[history], desc)?,
+            previous_direction: fg.history_image(gpu, bindless, DIRECTION_NAMES[1 - history], desc)?,
+            direction: fg.history_image(gpu, bindless, DIRECTION_NAMES[history], desc)?,
             albedo: fg.create_image(gpu, bindless, "gi albedo", desc)?,
             normals: fg.create_image(gpu, bindless, "gi normals", desc)?,
             emissive: fg.create_image(gpu, bindless, "gi emissive", desc)?,
@@ -167,10 +185,22 @@ pub fn record(
     shadows: Option<ImageId>,
     (draws, indices): ([Vec<VoxelDraw>; GI_LEVELS], vk::Buffer),
 ) {
-    let Voxels { previous, current, previous_probes, probes, previous_opacity, opacity, albedo, normals, emissive } =
-        voxels;
+    let Voxels {
+        previous,
+        current,
+        previous_probes,
+        probes,
+        previous_opacity,
+        opacity,
+        previous_direction,
+        direction,
+        albedo,
+        normals,
+        emissive,
+    } = voxels;
     let storage = fg.storage(current, 0).0;
     let opacity_storage = fg.storage(opacity, 0).0;
+    let direction_storage = fg.storage(direction, 0).0;
     let geometry = [fg.storage(albedo, 0).0, fg.storage(normals, 0).0, fg.storage(emissive, 0).0, 0];
     let dispatch = |width: u32, height: u32| [width.div_ceil(8), height.div_ceil(8)];
     let every_voxel = dispatch(GI_SIZE * GI_SIZE, GI_SIZE * GI_LEVELS as u32);
@@ -202,6 +232,7 @@ pub fn record(
     // Shadows are sampled as shading samples them, by cascade texels.
     let light = Push {
         textures: [geometry[0], geometry[1], geometry[2], opacity_storage],
+        texture: direction_storage,
         output: storage,
         size: [crate::shadows::CASCADE_RESOLUTION; 2],
         ..push
@@ -212,9 +243,11 @@ pub fn record(
         (emissive, ImageAccess::StorageWrite),
         (previous, ImageAccess::Sampled),
         (previous_opacity, ImageAccess::Sampled),
+        (previous_direction, ImageAccess::Sampled),
         (previous_probes, ImageAccess::Sampled),
         (current, ImageAccess::StorageWrite),
         (opacity, ImageAccess::StorageWrite),
+        (direction, ImageAccess::StorageWrite),
     ];
     images.extend(shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
     fg.add_pass("GI light", &images, &[], move |ctx| compute(ctx, pipelines.gi_light, &light, every_voxel));
@@ -231,23 +264,31 @@ pub fn record(
     fg.add_pass("GI view", &images, &[], move |ctx| compute(ctx, pipelines.gi_view, &view, groups));
 
     for level in 1..GI_LEVELS as u32 {
-        let down = Push { output: storage, level, textures: [opacity_storage, 0, 0, 0], ..push };
+        let textures = [opacity_storage, 0, 0, 0];
+        let down = Push { output: storage, level, textures, texture: direction_storage, ..push };
         let groups = dispatch(GI_SIZE * GI_SIZE, GI_SIZE);
-        let images = [(current, ImageAccess::StorageWrite), (opacity, ImageAccess::StorageWrite)];
+        let images = [
+            (current, ImageAccess::StorageWrite),
+            (opacity, ImageAccess::StorageWrite),
+            (direction, ImageAccess::StorageWrite),
+        ];
         fg.add_pass("GI downsample", &images, &[], move |ctx| {
             compute(ctx, pipelines.gi_downsample, &down, groups)
         });
     }
 
-    // The probes trace cones through last frame's finished voxels, which shading also read.
+    // The probes trace cones through last frame's finished voxels, which shading also read: all kept, then those
+    // due traced again over them.
     let cache = Push { textures: [fg.texture(previous_probes).0, 0, 0, 0], output: fg.storage(probes, 0).0, ..push };
     let images = [
         (previous, ImageAccess::Sampled),
         (previous_opacity, ImageAccess::Sampled),
+        (previous_direction, ImageAccess::Sampled),
         (previous_probes, ImageAccess::Sampled),
         (probes, ImageAccess::StorageWrite),
     ];
-    let groups = [(GI_PROBES * GI_PROBES * GI_PROBES).div_ceil(64), 1];
+    let groups = [(GI_PROBES * GI_PROBES * GI_PROBES * GI_CASCADES as u32).div_ceil(64), 1];
+    fg.add_pass("GI probes kept", &images, &[], move |ctx| compute(ctx, pipelines.gi_probes_keep, &cache, groups));
     fg.add_pass("GI probes", &images, &[], move |ctx| compute(ctx, pipelines.gi_probes, &cache, groups));
 }
 

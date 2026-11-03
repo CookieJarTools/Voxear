@@ -1,6 +1,6 @@
 // Auto exposure: meters a bloom level, an eighth of the screen across and
 // already filtered (centre-weighted average of log luminance over a 64x64
-// grid), then moves the adapted EV towards the target at the configured
+// grid), then eases the adapted EV towards the target at the configured
 // speeds. The composite pass reads the result; the stats show it too.
 
 #include "common.slang"
@@ -55,15 +55,18 @@ void exposureMain(uint3 thread : SV_GroupThreadID)
     float target = clamp(metered + post.exposureCompensation, post.exposureMin, post.exposureMax);
     float* state = buffers()->exposure;
     float current = state[0];
-    if (state[1] == 0.0)
+    // Straight to the target on the first frame, and while the bounced light is still settling as the GI starts,
+    // so a level opens at its own exposure rather than sliding into it.
+    if (state[1] == 0.0 || frame->gi.warmUp > 0)
     {
         current = target;
     }
     else
     {
-        // A lower target means the scene got brighter.
+        // Eased, as an eye adapts: quickly while far off, gently as it arrives. A lower target means the scene
+        // got brighter.
         float speed = target < current ? post.exposureSpeedUp : post.exposureSpeedDown;
-        current += clamp(target - current, -speed * frame->deltaTime, speed * frame->deltaTime);
+        current += (target - current) * (1.0 - exp(-speed * frame->deltaTime));
     }
     state[0] = current;
     state[1] = 1.0;

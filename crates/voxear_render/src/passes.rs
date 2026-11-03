@@ -235,7 +235,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
         // Last frame's voxels too, which reflections trace cones through.
         images.extend(voxels.into_iter().flat_map(|voxels| {
-            let images = [voxels.previous_probes, voxels.previous, voxels.previous_opacity];
+            let images = [voxels.previous_probes, voxels.previous, voxels.previous_opacity, voxels.previous_direction];
             images.map(|image| (image, ImageAccess::Sampled))
         }));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));

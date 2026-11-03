@@ -80,6 +80,7 @@ void giLightMain(uint3 id : SV_DispatchThreadID)
     {
         storageImagesRgba16f[push.output][texel] = 0.0;
         storageImagesRgba16f[push.textures.w][texel] = 0.0;
+        storageImagesRgba16f[push.texture][texel] = 0.0;
         return;
     }
     storageImagesRgba16f[push.textures.w][texel] = 1.0;
@@ -107,7 +108,12 @@ void giLightMain(uint3 id : SV_DispatchThreadID)
     float3 sky = atmosphere ? atmosphereAmbient(frame, up, sunLight)
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
     float3 around = frame->gi.probeTexture == NO_TEXTURE || frame->gi.reset != 0 ? sky : giAmbient(frame, middle, normal, sky);
-    storageImagesRgba16f[push.output][texel] = float4(direct + albedo.rgb * around + emissive, 1.0);
+    float3 lit = direct + albedo.rgb * around + emissive;
+    storageImagesRgba16f[push.output][texel] = float4(lit, 1.0);
+    // Which way that light goes: the way the surface faces, as bright as the light. Where a voxel holds both
+    // faces of a thin wall, the face towards the sun, where the sun reaches it.
+    float3 lightward = shadow > 0.0 && dot(normal, toSun) < 0.0 ? -normal : normal;
+    storageImagesRgba16f[push.texture][texel] = float4(lightward * dot(lit, float3(0.2126, 0.7152, 0.0722)), 0.0);
 }
 
 // One thread a voxel of grid `push.level`, from 1. Where the finer grid
@@ -133,6 +139,7 @@ void giDownsampleMain(uint3 id : SV_DispatchThreadID)
         return;
     }
     float4 total = 0.0;
+    float3 lightward = 0.0;
     float3 children[8];
     for (uint corner = 0; corner < 8; corner++)
     {
@@ -140,6 +147,7 @@ void giDownsampleMain(uint3 id : SV_DispatchThreadID)
         int2 texel = giTexel(child + offset, level - 1);
         total += storageImagesRgba16f[push.output][texel];
         children[corner] = storageImagesRgba16f[push.textures.x][texel].xyz;
+        lightward += storageImagesRgba16f[push.texture][texel].xyz;
     }
     // Corners differing by 1, 2 and 4 lie along X, Y and Z; each axis's columns are seen along that axis.
     float3 blocks = 0.0;
@@ -160,6 +168,7 @@ void giDownsampleMain(uint3 id : SV_DispatchThreadID)
     int2 texel = giTexel(voxel, level);
     storageImagesRgba16f[push.output][texel] = total / 8.0;
     storageImagesRgba16f[push.textures.x][texel] = float4(blocks, 0.0);
+    storageImagesRgba16f[push.texture][texel] = float4(lightward / 8.0, 0.0);
 }
 
 // One thread for every other pixel each way. textures: x the scene as the
@@ -207,6 +216,15 @@ void giViewMain(uint3 id : SV_DispatchThreadID)
 static const uint PROBE_CONES = 32;
 static const float PROBE_CONE_TAN = 0.4;
 
+// A probe's place in the order probes are traced in, scattered so that
+// neighbours are traced on different frames.
+uint probeHash(uint index)
+{
+    uint h = index * 747796405u + 2891336453u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    return (h >> 22u) ^ h;
+}
+
 // The cones' directions, on a Fibonacci spiral round the sphere.
 float3 probeDirection(uint index)
 {
@@ -241,40 +259,19 @@ void probeSky(Frame* frame, out float3 up, out float3 horizon, out float3 down)
     horizon = (up + down) * 0.5;
 }
 
-// One thread a probe. textures: x last frame's probes.
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void giProbesMain(uint3 id : SV_DispatchThreadID)
+// One probe of a cascade, traced afresh: 32 cones, each face of its cube
+// the cones round it, weighted by how squarely they face it, blended with
+// what it held last frame where it held anything.
+void traceProbe(Frame* frame, uint cascade, int3 slot, Texture2D last)
 {
-    Frame* frame = push.frame;
-    uint count = uint(GI_PROBES * GI_PROBES * GI_PROBES);
-    if (id.x >= count)
-    {
-        return;
-    }
-    int index = int(id.x);
-    int3 slot = int3(index % GI_PROBES, (index / GI_PROBES) % GI_PROBES, index / (GI_PROBES * GI_PROBES));
-    int3 probe = slot + frame->gi.probeOrigin.xyz;
-    int3 before = probe - frame->gi.probePreviousOrigin.xyz;
+    int3 probe = slot + frame->gi.probeOrigin[cascade].xyz;
+    int3 before = probe - frame->gi.probePreviousOrigin[cascade].xyz;
     bool known = frame->gi.reset == 0 && all(before >= 0) && all(before < GI_PROBES);
-    // A sixteenth each frame, spread through the grid.
-    bool due = (uint(index) + frame->frameIndex) % 16 == 0;
-    Texture2D last = textures[NonUniformResourceIndex(push.textures.x)];
-    if (known && !due)
-    {
-        for (int face = 0; face < GI_PROBE_FACES; face++)
-        {
-            storageImagesRgba16f[push.output][giProbeTexel(slot, face)] = last.Load(int3(giProbeTexel(before, face), 0));
-        }
-        return;
-    }
-
-    float3 middle = (float3(probe) + 0.5) * frame->gi.probeSpacing;
+    float3 middle = (float3(probe) + 0.5) * giProbeSpacing(frame, cascade);
     float3 skyUp;
     float3 skyHorizon;
     float3 skyDown;
     probeSky(frame, skyUp, skyHorizon, skyDown);
-    // Each face of the cube: the cones round it, weighted as light falls on a surface facing that way.
     float3 faces[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
     float weights[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
     for (uint i = 0; i < PROBE_CONES; i++)
@@ -285,17 +282,85 @@ void giProbesMain(uint3 id : SV_DispatchThreadID)
         [unroll]
         for (uint face = 0; face < 6; face++)
         {
-            float weight = max(dot(direction, PROBE_FACES[face]), 0.0);
+            // Squared, as an ambient cube's faces are, so light grazing a face, such as a sunlit floor seen
+            // from just above it, counts for little in the light that face sends down onto the floor.
+            float facing = max(dot(direction, PROBE_FACES[face]), 0.0);
+            float weight = facing * facing;
             faces[face] += light * weight;
             weights[face] += weight;
         }
     }
-    // How much of the probe's own voxel is open: a probe inside a wall sees only the wall.
-    float open = 1.0 - giSample(frame, middle, 0).a;
+    // How much of the probe's own voxel is open, in voxels as coarse as the probes are far apart: a probe inside a
+    // wall sees only the wall.
+    float open = 1.0 - giSample(frame, middle, cascade == 0 ? 0 : GI_LEVELS - 1).a;
     for (int face = 0; face < GI_PROBE_FACES; face++)
     {
         float4 fresh = float4(faces[face] / weights[face], open);
-        float4 kept = known ? lerp(fresh, last.Load(int3(giProbeTexel(before, face), 0)), PROBE_KEEP) : fresh;
-        storageImagesRgba16f[push.output][giProbeTexel(slot, face)] = kept;
+        float4 kept = known ? lerp(fresh, last.Load(int3(giProbeTexel(before, face, cascade), 0)), PROBE_KEEP) : fresh;
+        storageImagesRgba16f[push.output][giProbeTexel(slot, face, cascade)] = kept;
     }
+}
+
+int3 probeSlot(uint index)
+{
+    int i = int(index);
+    return int3(i % GI_PROBES, (i / GI_PROBES) % GI_PROBES, i / (GI_PROBES * GI_PROBES));
+}
+
+// One thread a probe of every cascade: last frame's light, where the probe
+// was in the grid then, kept as it was; a probe the grid has just moved
+// over is traced at once. textures: x last frame's probes.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void giProbesKeepMain(uint3 id : SV_DispatchThreadID)
+{
+    Frame* frame = push.frame;
+    uint count = uint(GI_PROBES * GI_PROBES * GI_PROBES);
+    if (id.x >= count * GI_CASCADES)
+    {
+        return;
+    }
+    uint cascade = id.x / count;
+    int3 slot = probeSlot(id.x % count);
+    int3 before = slot + frame->gi.probeOrigin[cascade].xyz - frame->gi.probePreviousOrigin[cascade].xyz;
+    Texture2D last = textures[NonUniformResourceIndex(push.textures.x)];
+    bool known = frame->gi.reset == 0 && all(before >= 0) && all(before < GI_PROBES);
+    if (!known)
+    {
+        traceProbe(frame, cascade, slot, last);
+        return;
+    }
+    for (int face = 0; face < GI_PROBE_FACES; face++)
+    {
+        int2 from = giProbeTexel(before, face, cascade);
+        storageImagesRgba16f[push.output][giProbeTexel(slot, face, cascade)] = last.Load(int3(from, 0));
+    }
+}
+
+// The probes due this frame, traced again: a sixteenth of the fine ones and
+// a thirty-second of the coarse, all of them while the GI warms up. Each
+// thread takes one, through a scrambled order of the grid, so the probes a
+// frame traces are scattered rather than in slabs, and light changes evenly,
+// while the threads that trace work side by side. textures: x last frame's
+// probes.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void giProbesTraceMain(uint3 id : SV_DispatchThreadID)
+{
+    Frame* frame = push.frame;
+    uint count = uint(GI_PROBES * GI_PROBES * GI_PROBES);
+    uint cascade = id.x / count;
+    uint turn = id.x % count;
+    uint every = frame->gi.warmUp > 0 ? 1u : (cascade == 0 ? 16u : 32u);
+    if (cascade >= GI_CASCADES || turn >= count / every)
+    {
+        return;
+    }
+    // Turns of a frame lie `every` apart in the order, and frames take each phase in turn; the order is the grid
+    // scrambled, by a step coprime to its size.
+    uint phase = (frame->frameIndex + cascade * 7u) % every;
+    uint place = turn * every + phase;
+    uint index = uint((uint64_t(place) * 7919u + 104729u) % uint64_t(count));
+    Texture2D last = textures[NonUniformResourceIndex(push.textures.x)];
+    traceProbe(frame, cascade, probeSlot(index), last);
 }

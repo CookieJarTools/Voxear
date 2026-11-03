@@ -279,10 +279,11 @@ pub struct GpuGi {
     pub previous_origin: [[i32; 4]; GI_LEVELS],
     /// The first level's voxel size, in metres.
     pub voxel_size: f32,
-    /// The voxels as a texture, or `NO_TEXTURE` without GI, and as a
-    /// storage image for the passes that fill them.
+    /// The voxels as a texture, or `NO_TEXTURE` without GI.
     pub texture: u32,
-    pub storage: u32,
+    /// Frames left in which every probe is traced, as the GI starts, so
+    /// light settles before it is seen rather than building up in steps.
+    pub warm_up: u32,
     /// 1 when the voxels are stale, as on their first frame.
     pub reset: u32,
     /// How bright the bounced light is, 1 as measured.
@@ -294,11 +295,20 @@ pub struct GpuGi {
     /// How much the voxels block along X, Y and Z, as a texture for those
     /// that trace cones (last frame's).
     pub opacity_texture: u32,
-    /// The probe grid's lowest probe, in probes from the world's origin,
+    /// Each cascade's lowest probe, in its probes from the world's origin,
     /// this frame and last frame; w unused.
-    pub probe_origin: [i32; 4],
-    pub probe_previous_origin: [i32; 4],
+    pub probe_origin: [[i32; 4]; GI_CASCADES],
+    pub probe_previous_origin: [[i32; 4]; GI_CASCADES],
+    /// Which way the voxels' light faces, last frame's, as a texture.
+    pub direction_texture: u32,
+    pub _direction_pad: [u32; 3],
 }
+
+/// The radiance cache's cascades of probes, each `GI_CASCADE_SCALE` times
+/// as far apart as the one before, so bounced light reaches far past the
+/// fine probes round the camera.
+pub const GI_CASCADES: usize = 2;
+pub const GI_CASCADE_SCALE: f32 = 4.0;
 
 /// How many probes the radiance cache's grid is across, each way.
 pub const GI_PROBES: u32 = 48;
@@ -628,7 +638,7 @@ mod tests {
         let post = 16 * 20;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6 + 16;
-        let gi = 16 * GI_LEVELS * 2 + 32 + 32;
+        let gi = 16 * GI_LEVELS * 2 + 32 + 32 * GI_CASCADES + 16;
         assert_eq!(
             size_of::<GpuFrame>(),
             64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + gi

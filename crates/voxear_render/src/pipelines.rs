@@ -96,7 +96,9 @@ pub struct Pipelines {
     pub gi_light: vk::Pipeline,
     pub gi_view: vk::Pipeline,
     pub gi_downsample: vk::Pipeline,
-    /// The radiance cache's probes, traced through the voxels.
+    /// The radiance cache's probes: last frame's kept, then those due
+    /// traced through the voxels again.
+    pub gi_probes_keep: vk::Pipeline,
     pub gi_probes: vk::Pipeline,
     /// Writes the LDR intermediate, for a finishing pass to read.
     pub composite_ldr: vk::Pipeline,
@@ -281,7 +283,8 @@ impl Pipelines {
             gi_light: create_compute_pipeline(gpu, layout, "GI light", gi_inject, c"giLightMain")?,
             gi_view: create_compute_pipeline(gpu, layout, "GI view", gi_inject, c"giViewMain")?,
             gi_downsample: create_compute_pipeline(gpu, layout, "GI downsample", gi_inject, c"giDownsampleMain")?,
-            gi_probes: create_compute_pipeline(gpu, layout, "GI probes", gi_inject, c"giProbesMain")?,
+            gi_probes_keep: create_compute_pipeline(gpu, layout, "GI probes kept", gi_inject, c"giProbesKeepMain")?,
+            gi_probes: create_compute_pipeline(gpu, layout, "GI probes", gi_inject, c"giProbesTraceMain")?,
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
@@ -358,6 +361,7 @@ impl Pipelines {
             self.gi_light,
             self.gi_view,
             self.gi_downsample,
+            self.gi_probes_keep,
             self.gi_probes,
             self.composite_ldr,
             self.composite,

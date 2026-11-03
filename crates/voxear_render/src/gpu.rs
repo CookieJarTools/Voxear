@@ -242,7 +242,8 @@ pub struct GpuFrame {
     pub lod_fade_speed: f32,
     /// Scales the sky's ambient light.
     pub ambient: f32,
-    pub _pad4: f32,
+    /// How bright the stars are.
+    pub stars: f32,
     /// The projection without TAA jitter, for motion vectors.
     pub unjittered_view_proj: Mat4Cols,
     pub prev_view_proj: Mat4Cols,
@@ -335,7 +336,8 @@ pub struct GpuLighting {
     /// The colour the sun's shadows take, as a share of its light; black
     /// for none.
     pub sun_shadow_tint: [f32; 3],
-    pub _lighting_pad: u32,
+    /// 1 when the sky's light is the moon: its disc, and a night sky.
+    pub moon: u32,
 }
 
 /// A planet's atmosphere, in kilometres and per kilometre, as Hillaire's

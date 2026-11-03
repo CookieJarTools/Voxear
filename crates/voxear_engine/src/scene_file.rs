@@ -58,7 +58,7 @@ use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    Sky, SkyMode, SunLook, VolumeShape,
+    Sky, SkyBody, SkyMode, SunLook, VolumeShape,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -117,6 +117,10 @@ pub struct SkyData {
     pub ground: [f32; 3],
     #[serde(default = "one_f32")]
     pub ambient: f32,
+    /// How bright the stars are, 1 as the night sky shows them; they show
+    /// only when the sky is dark.
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub stars: f32,
 }
 
 /// A [`SkyMode`] as scene files write it.
@@ -126,6 +130,19 @@ pub enum SkyModeData {
     #[default]
     Gradient,
     Atmosphere,
+}
+
+/// A [`SkyBody`] as scene files write it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkyBodyData {
+    #[default]
+    Sun,
+    Moon,
+}
+
+fn is_sun(body: &SkyBodyData) -> bool {
+    *body == SkyBodyData::Sun
 }
 
 fn is_gradient(mode: &SkyModeData) -> bool {
@@ -370,6 +387,9 @@ pub enum LightData {
         /// sRGB: the colour its shadows take, as a share of its light.
         #[serde(default, skip_serializing_if = "is_black3")]
         shadow_tint: [f32; 3],
+        /// What it shows as in the sky: `"sun"`, or `"moon"` for a night sky.
+        #[serde(default, skip_serializing_if = "is_sun")]
+        body: SkyBodyData,
     },
     Point {
         #[serde(default = "white")]
@@ -602,6 +622,7 @@ pub fn apply_environment(engine: &mut Engine, sky: Option<SkyData>, post: Option
             horizon: Vec3::from(linear(sky.horizon)),
             ground: Vec3::from(linear(sky.ground)),
             ambient: sky.ambient,
+            stars: sky.stars,
         });
     }
     if let Some(table) = post {
@@ -707,6 +728,7 @@ pub fn capture_scene_with_ids(
         horizon: round3(srgb(sky.horizon.to_array())),
         ground: round3(srgb(sky.ground.to_array())),
         ambient: sky.ambient,
+        stars: sky.stars,
     });
     let post = world.resource::<PostTable>().map(|table| table.0.clone());
     (SceneFile { format: SCENE_FORMAT, sky, post, objs }, ids)
@@ -1132,9 +1154,19 @@ pub fn default_light(kind: LightKind) -> Light {
 /// need their assets loaded (see [`light_with_assets`]).
 pub(crate) fn light_component(light: &LightData) -> Light {
     match *light {
-        LightData::Directional { color, intensity, cookie_size, softness, shadow_tint, .. } => {
+        LightData::Directional { color, intensity, cookie_size, softness, shadow_tint, body, .. } => {
             let shadow_tint = Vec3::from(linear(shadow_tint));
-            Light { cookie_size, softness, shadow_tint, ..Light::directional(Vec3::from(linear(color)), intensity) }
+            let body = match body {
+                SkyBodyData::Sun => SkyBody::Sun,
+                SkyBodyData::Moon => SkyBody::Moon,
+            };
+            Light {
+                cookie_size,
+                softness,
+                shadow_tint,
+                body,
+                ..Light::directional(Vec3::from(linear(color)), intensity)
+            }
         }
         LightData::Point { color, intensity, range, .. } => Light::point(Vec3::from(linear(color)), intensity, range),
         LightData::Spot { color, intensity, range, inner_angle, outer_angle, .. } => {
@@ -1178,6 +1210,10 @@ fn light_data(content: &Content, light: &Light) -> LightData {
             cookie_size: light.cookie_size,
             softness: light.softness,
             shadow_tint: round3(srgb(light.shadow_tint.to_array())),
+            body: match light.body {
+                SkyBody::Sun => SkyBodyData::Sun,
+                SkyBody::Moon => SkyBodyData::Moon,
+            },
         },
         LightKind::Point => LightData::Point { color, intensity, range: light.range, profile },
         LightKind::Spot => LightData::Spot {
@@ -1347,6 +1383,23 @@ mod tests {
         assert!(engine.world.resource::<SunLook>().is_none(), "[post] without a look drops it");
         assert_eq!(engine.world.resource::<Sky>().map(|sky| sky.zenith), Some(Sky::default().zenith));
         assert!(apply_environment(&mut engine, None, Some(&post("look = \"gloomy\""))).is_err());
+    }
+
+    #[test]
+    fn a_moon_and_the_skys_stars_read_and_write_back() {
+        let moon: LightData = toml::from_str("type = \"directional\"\nintensity = 0.15\nbody = \"moon\"").unwrap();
+        assert_eq!(light_component(&moon).body, SkyBody::Moon);
+        assert!(toml::to_string(&moon).unwrap().contains("body = \"moon\""));
+        let sun: LightData = toml::from_str("type = \"directional\"").unwrap();
+        assert_eq!(light_component(&sun).body, SkyBody::Sun);
+        assert!(!toml::to_string(&sun).unwrap().contains("body"), "the sun, as most are, is not written out");
+
+        let colours = "zenith = [0.0, 0.0, 0.1]\nhorizon = [0.0, 0.0, 0.1]\nground = [0.0, 0.0, 0.0]";
+        let plain: SkyData = toml::from_str(colours).unwrap();
+        assert_eq!(plain.stars, 1.0);
+        assert!(!toml::to_string(&plain).unwrap().contains("stars"));
+        let dim: SkyData = toml::from_str(&format!("{colours}\nstars = 0.5")).unwrap();
+        assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&dim).unwrap()).unwrap().stars, 0.5);
     }
 
     #[test]

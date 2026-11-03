@@ -86,7 +86,7 @@ pub use previews::{
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
-pub use scene::{Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyMode, ViewOptions};
+pub use scene::{Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions};
 pub use voxear_rhi::TextureId;
 
 use crate::{

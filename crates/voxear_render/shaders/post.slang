@@ -91,7 +91,7 @@ float3 fogColourToward(Frame* frame, float3 direction)
     }
     float3 level = normalize(float3(direction.x, 0.0, direction.z) + float3(0.0, 0.0, 1e-4));
     float3 tint = frame->post.fogColor / max(dot(frame->post.fogColor, LUMA), 1e-4);
-    return skyToward(frame, level) * frame->sunColor * frame->ambient * tint;
+    return skyToward(frame, level) * skyLook(frame) * frame->ambient * tint;
 }
 
 // Exponential height fog, integrated along each view ray, glowing towards the

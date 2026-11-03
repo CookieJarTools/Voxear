@@ -28,6 +28,9 @@ static const float AERIAL_KM_PER_SLICE = 4.0;
 static const float PLANET_OFFSET = 0.01;
 // How much brighter the sun's disc is than the light it gives, to show as the sun without flooding bloom.
 static const float SUN_DISC_BRIGHTNESS = 20.0;
+// How bright the sky looks under the moon, against the moon's light: games make moonlight bright enough to see
+// the scene by, far brighter than it is, and a sky lit in proportion would look like a dim day.
+static const float MOON_SKY = 0.04;
 
 float2 fromUnitToSubUvs(float2 uv, float2 size)
 {
@@ -74,6 +77,13 @@ float3 cameraInAtmosphere(Frame* frame)
 float3 towardsSun(Frame* frame)
 {
     return -frame->sunDirection;
+}
+
+// The light the sky is drawn with, as it looks rather than as it lights the
+// scene: the sun's, or under the moon a night sky's, far darker.
+float3 skyLook(Frame* frame)
+{
+    return frame->sunColor * (frame->lighting.moon != 0 ? MOON_SKY : 1.0);
 }
 
 struct Medium

@@ -93,6 +93,20 @@ pub struct Light {
     /// An IES profile (see `Renderer::add_light_profile`): how bright a real
     /// fitting is in each direction, for a point or spot light.
     pub profile: Option<TextureId>,
+    /// What a directional light is in the sky: the sun, or the moon, which
+    /// the sky draws as its disc, and under which the sky is a night sky.
+    pub body: SkyBody,
+}
+
+/// What a directional light shows as in the sky.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SkyBody {
+    /// Daylight: the sun's disc, and the sky lit as by day.
+    #[default]
+    Sun,
+    /// Moonlight: the moon's disc, and the sky as dark as at night, so the
+    /// stars show, however bright the light is made to show the scene.
+    Moon,
 }
 impl Component for Light {}
 
@@ -145,6 +159,7 @@ impl Light {
             softness: 0.5,
             shadow_tint: Vec3::ZERO,
             profile: None,
+            body: SkyBody::Sun,
         }
     }
 }
@@ -255,6 +270,9 @@ pub struct Sky {
     pub ground: Vec3,
     /// Scales the ambient light the sky gives the scene.
     pub ambient: f32,
+    /// How bright the stars are: 1 as the night sky shows them, 0 for none.
+    /// They show only when the sky is dark, as at night under the moon.
+    pub stars: f32,
 }
 
 /// What the sky is drawn as.
@@ -277,6 +295,7 @@ impl Default for Sky {
             horizon: Vec3::new(0.62, 0.72, 0.86),
             ground: Vec3::new(0.22, 0.2, 0.18),
             ambient: 1.0,
+            stars: 1.0,
         }
     }
 }
@@ -381,6 +400,7 @@ pub fn extract(
         sky_horizon: vec3(sky.horizon),
         ground_color: vec3(sky.ground),
         ambient: sky.ambient,
+        stars: sky.stars.max(0.0),
         viewport: [width, height],
         inv_view_proj: cols(view_proj.inverse()),
         // The renderer turns it on once it has made the voxels.
@@ -432,6 +452,7 @@ pub fn extract(
                 frame.sun_color = vec3(radiance);
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
                 frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
+                frame.lighting.moon = u32::from(light.body == SkyBody::Moon);
                 if let Some(cookie) = light.cookie {
                     frame.lighting.sun_cookie = cookie.0;
                     frame.lighting.sun_cookie_size = light.cookie_size;

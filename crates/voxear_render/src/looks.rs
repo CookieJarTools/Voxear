@@ -103,6 +103,7 @@ impl Look {
             horizon: linear([0.83, 0.87, 0.92]),
             ground: linear([0.5, 0.49, 0.47]),
             ambient: 1.6,
+            ..Sky::default()
         };
         // About 5200K, giving a few times the sky's light rather than ten.
         let sun = SunLook { tint: linear([1.0, 0.93, 0.83]), strength: 0.6, softness: 3.0, shadow_tint: Vec3::ZERO };
@@ -132,6 +133,7 @@ impl Look {
             horizon: linear([0.66, 0.8, 0.74]),
             ground: linear([0.45, 0.34, 0.24]),
             ambient: 1.2,
+            ..Sky::default()
         };
         // About 4000K and pushed towards yellow-green, with shadows never black but warm.
         let sun = SunLook {

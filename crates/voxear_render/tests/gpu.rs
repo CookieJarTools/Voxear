@@ -2381,3 +2381,66 @@ fn auto_exposure_keeps_midnight_darker_than_noon() {
     let (noon, midnight) = (mean_brightness(&render(TimeOfDay::Noon)), mean_brightness(&render(TimeOfDay::Midnight)));
     assert!(midnight * 3.0 < noon, "the eye adapts, but night stays night: {midnight:.0} against {noon:.0}");
 }
+
+/// The sky seen looking up at the moon or the sun 40 degrees high,
+/// under the atmosphere or a dark gradient, with auto exposure as a scene
+/// has it.
+fn night_sky_render(body: voxear_render::SkyBody, atmosphere: bool) -> Option<Vec<u8>> {
+    use voxear_render::{Sky, SkyMode};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let towards = Vec3::new(0.0, 40f32.to_radians().sin(), 40f32.to_radians().cos());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.7, 0.0), Quat::from_rotation_arc(Vec3::Z, towards), Vec3::ONE)));
+    // The moon as games make it, bright enough to see by; the sun as by day.
+    let light = match body {
+        voxear_render::SkyBody::Moon => Light { body, ..Light::directional(Vec3::new(0.6, 0.7, 1.0), 0.15) },
+        voxear_render::SkyBody::Sun => Light::directional(Vec3::ONE, 3.0),
+    };
+    world.spawn((light, Transform::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::Z, -towards), Vec3::ONE)));
+    let sky = match atmosphere {
+        true => Sky { mode: SkyMode::Atmosphere, ..Sky::default() },
+        false => Sky {
+            zenith: Vec3::new(0.002, 0.003, 0.008),
+            horizon: Vec3::new(0.004, 0.005, 0.01),
+            ground: Vec3::splat(0.002),
+            ..Sky::default()
+        },
+    };
+    world.insert_resource(sky);
+    let anti_aliasing = voxear_render::AntiAliasing { mode: voxear_render::AntiAliasingMode::Off, ..Default::default() };
+    world.insert_resource(voxear_render::PostProcess { anti_aliasing, ..Default::default() });
+    run(&mut renderer, &world, &mut 0.0, 30);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// Pixels in the picture's top third far brighter than the sky round them: stars.
+fn star_count(pixels: &[u8]) -> usize {
+    let bright = |at| rgb_at(pixels, at).iter().sum::<i32>();
+    (2..118u32)
+        .flat_map(|y| (2..638u32).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let around = (bright((x - 2, y)) + bright((x + 2, y)) + bright((x, y - 2)) + bright((x, y + 2))) / 4;
+            bright((x, y)) > around + 60 && bright((x, y)) >= bright((x + 1, y)) && bright((x, y)) >= bright((x, y + 1))
+        })
+        .count()
+}
+
+#[test]
+fn under_the_moon_the_sky_is_dark_with_stars_and_the_moons_disc() {
+    use voxear_render::SkyBody;
+    let (Some(moonlit), Some(sunlit)) = (night_sky_render(SkyBody::Moon, true), night_sky_render(SkyBody::Sun, true))
+    else {
+        return;
+    };
+    keep_image("night sky moon.png", &moonlit);
+    keep_image("night sky sun.png", &sunlit);
+    let sky = |pixels: &[u8]| mean_brightness(&pixels[..640 * 100 * 4]);
+    assert!(star_count(&moonlit) > 5, "stars show under the moon: {}", star_count(&moonlit));
+    assert_eq!(star_count(&sunlit), 0, "but not in a day sky");
+    // Looking straight at it, the moon's disc lies in the middle of the picture, far brighter than the sky.
+    let moon = rgb_at(&moonlit, (320, 180)).iter().sum::<i32>() as f32 / 3.0;
+    assert!(moon > sky(&moonlit) * 3.0 + 60.0, "the moon's disc shows: {moon:.0} against the sky's {:.0}", sky(&moonlit));
+    assert!(sky(&moonlit) < sky(&sunlit) / 2.0, "the night sky is darker: {:.0} against {:.0}", sky(&moonlit), sky(&sunlit));
+    let Some(gradient) = night_sky_render(SkyBody::Moon, false) else { return };
+    assert!(star_count(&gradient) > 5, "and over a dark gradient sky too");
+}

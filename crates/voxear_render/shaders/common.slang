@@ -373,7 +373,8 @@ struct Lighting
     Atmosphere atmosphere;
     // The colour the sun's shadows take, as a share of its light; black for none.
     float3 sunShadowTint;
-    uint lightingPad;
+    // 1 when the sky's light is the moon: its disc, and a night sky.
+    uint moon;
 };
 
 static const uint GI_LEVELS = 3;
@@ -437,7 +438,8 @@ struct Frame
     float deltaTime;
     float lodFadeSpeed;
     float ambient;
-    float pad4;
+    // How bright the stars are.
+    float stars;
     Mat4 unjitteredViewProj;
     Mat4 prevViewProj;
     float2 jitter;

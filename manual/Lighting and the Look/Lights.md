@@ -60,6 +60,8 @@ The profile's straight-ahead direction is the way the light faces, along its Obj
 
 The first directional light in the level is its **sun**. It is the only light that casts shadows, and the sky draws the sun's disc in its direction and colour. A level only uses one: any other directional lights are left out.
 
+At night, set its **Sky body** to Moon: the sky draws the moon instead, and darkens so the stars show. See [[The Sky]].
+
 Shadows reach 80 metres from the camera.
 
 ### Soft shadows

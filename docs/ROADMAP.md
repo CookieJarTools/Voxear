@@ -892,9 +892,13 @@ Done so far:
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.
+- **A night sky:** a directional light's sky body, sun or moon. Under the moon the sky is drawn as dark as a
+  night sky, however bright moonlight is made to see by, with the moon's disc and its seas; stars, scattered on a
+  grid round the sky, each show where it outshines a few hundredths of the sky behind it, so none by day and the
+  brightest first at dusk. The moon and the stars are drawn as the dark-adapted eye sees them, whatever the
+  exposure. `[sky] stars` scales them. GPU test: stars and the moon under the moon, none in a day sky.
 
 Next:
-- A night sky: stars and the moon's disc, and the atmosphere lit by moonlight as a night sky rather than a dim day.
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
 - Virtual shadow maps, and shadows for point, spot and area lights.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.

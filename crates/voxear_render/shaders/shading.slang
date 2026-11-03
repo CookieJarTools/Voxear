@@ -166,7 +166,7 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3
     float3 sky;
     if (atmosphere)
     {
-        sky = skyToward(frame, direction) * frame->sunColor;
+        sky = skyToward(frame, direction) * skyLook(frame);
     }
     else
     {
@@ -418,7 +418,7 @@ FragmentOut fragmentMain(VertexOut input)
     {
         float2 screenUv = input.position.xy / float2(frame->viewport);
         float4 haze = aerialPerspectiveAt(frame, screenUv, length(input.worldPosition - frame->cameraPosition));
-        color = color * haze.a + haze.rgb * frame->sunColor;
+        color = color * haze.a + haze.rgb * skyLook(frame);
     }
 
     if (frame->debugView == DEBUG_VIEW_LOD)

@@ -23,7 +23,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     Camera, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    VolumeShape,
+    SkyBody, VolumeShape,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -37,6 +37,9 @@ const LIGHT_KINDS: [&str; 6] = ["Directional", "Point", "Spot", "Rectangle", "Di
 const LIGHT_KIND_ORDER: [LightKind; 6] =
     [LightKind::Directional, LightKind::Point, LightKind::Spot, LightKind::Rectangle, LightKind::Disc, LightKind::Tube];
 const SOUND_SPACES: [&str; 2] = ["3D", "2D"];
+const SKY_BODIES: [&str; 2] = ["Sun", "Moon"];
+/// The sky bodies in `SKY_BODIES`'s order.
+const SKY_BODY_ORDER: [SkyBody; 2] = [SkyBody::Sun, SkyBody::Moon];
 const VOLUME_SHAPES: [&str; 3] = ["Global", "Box", "Sphere"];
 /// The volume shapes in `VOLUME_SHAPES`'s order.
 const VOLUME_SHAPE_ORDER: [VolumeShape; 3] = [VolumeShape::Global, VolumeShape::Box, VolumeShape::Sphere];
@@ -153,6 +156,7 @@ pub enum Prop {
     LightProfile,
     LightSoftness,
     LightShadowTint,
+    LightBody,
     VolumeShape,
     VolumeBlend,
     VolumeWeight,
@@ -292,7 +296,8 @@ impl Prop {
             | Prop::LightCookieSize
             | Prop::LightProfile
             | Prop::LightSoftness
-            | Prop::LightShadowTint => {
+            | Prop::LightShadowTint
+            | Prop::LightBody => {
                 Part::Light
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
@@ -396,6 +401,7 @@ impl Prop {
             Prop::LightProfile => "profile",
             Prop::LightSoftness => "softness",
             Prop::LightShadowTint => "shadow_tint",
+            Prop::LightBody => "body",
             Prop::VolumeShape => "shape",
             Prop::VolumeBlend => "blend_distance",
             Prop::VolumeWeight => "weight",
@@ -601,6 +607,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             }
             match kind {
                 LightKind::Directional => props.extend([
+                    Prop::LightBody,
                     Prop::LightSoftness,
                     Prop::LightShadowTint,
                     Prop::LightCookie,
@@ -756,6 +763,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::LightProfile => "IES profile",
         Prop::LightSoftness => "Shadow softness",
         Prop::LightShadowTint => "Shadow tint",
+        Prop::LightBody => "Sky body",
         Prop::VolumeShape => "Shape",
         Prop::VolumeBlend => "Blend distance",
         Prop::VolumeWeight => "Weight",
@@ -1123,6 +1131,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightCookieSize => Value::Number(light()?.cookie_size),
         Prop::LightSoftness => Value::Number(light()?.softness),
         Prop::LightShadowTint => Value::Color(srgb(light()?.shadow_tint.to_array()).map(round3)),
+        Prop::LightBody => {
+            let body = light()?.body;
+            let index = SKY_BODY_ORDER.iter().position(|&known| known == body).unwrap_or(0);
+            Value::Choice(index, SKY_BODIES.iter().map(|b| b.to_string()).collect())
+        }
         Prop::LightProfile => {
             Value::Asset(guid_label(game, light()?.profile.and_then(|t| game.content.light_profile_guid(t))))
         }
@@ -1749,6 +1762,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::LightLength, Value::Number(n)) => with(world, entity, |light: &mut Light| light.length = n.max(0.0)),
         (Prop::LightShadowTint, Value::Color(color)) => with(world, entity, |light: &mut Light| {
             light.shadow_tint = Vec3::from(linear(color.map(|c| c.clamp(0.0, 1.0))));
+        }),
+        (Prop::LightBody, Value::Choice(index, _)) => with(world, entity, |light: &mut Light| {
+            light.body = SKY_BODY_ORDER[index.min(SKY_BODY_ORDER.len() - 1)];
         }),
         (Prop::LightSoftness, Value::Number(n)) => {
             with(world, entity, |light: &mut Light| light.softness = n.clamp(0.0, 20.0))

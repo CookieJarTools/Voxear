@@ -35,6 +35,7 @@ use crate::{
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
     shadows::{CASCADE_RESOLUTION, CASCADES},
+    volumetric,
 };
 
 pub struct Targets {
@@ -91,6 +92,8 @@ pub struct Frame {
     /// The atmosphere's tables, when the sky is the atmosphere: drawn first,
     /// and sampled by the opaque passes and the sky.
     pub atmosphere: Option<atmosphere::Tables>,
+    /// The volumetric fog's volumes, filled once the opaque passes are done.
+    pub volume: Option<volumetric::Volume>,
 }
 
 pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
@@ -280,6 +283,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         None => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
             opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, Clear::default());
         }),
+    }
+    if let Some(volume) = frame.volume {
+        volumetric::record(fg, (pipelines, push), volume, targets.shadows, &[draws.clusters]);
     }
     // Counted in GPU memory, where the culling passes' atomics are fast, then copied out at once.
     let (readback, stats_bytes) = (draws.stats_readback_handle, stat::COUNT as u64 * 4);

@@ -1658,3 +1658,52 @@ fn an_ies_profile_dims_a_light_where_its_fitting_is_dark() {
     let (aside_bare, aside_shaped) = (floor_brightness(&bare, aside), floor_brightness(&shaped, aside));
     assert!(aside_shaped * 3 < aside_bare, "far to the side, the fitting is dark: {aside_shaped} of {aside_bare}");
 }
+
+/// Fog at head height looking out over open ground under an overhead sun,
+/// with a roof shading the left half of the view and, optionally, a lamp
+/// floating in front.
+fn fog_render(volumetric: bool, lamp: bool) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, Fog, PostProcess, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, 0.0))));
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, down, Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let roof = Transform::new(Vec3::new(-50.0, 12.0, 50.0), Quat::IDENTITY, Vec3::new(100.0, 0.5, 120.0));
+    world.spawn((MeshRenderer::new(cube, material), roof));
+    if lamp {
+        let at = Transform::from_position(Vec3::new(1.5, 1.5, 4.0));
+        world.spawn((Light::point(Vec3::new(1.0, 0.6, 0.3), 8.0, 3.0), at));
+    }
+    world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
+    let fog = Fog { volumetric, density: 0.05, height_falloff: 0.0001, ..Fog::default() };
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { fog, anti_aliasing, ..PostProcess::neutral() });
+    run(&mut renderer, &world, &mut 0.0, 8);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn volumetric_fog_is_dark_in_shadow_and_glows_round_a_lamp() {
+    let (Some(shafts), Some(lamp), Some(plain)) = (fog_render(true, false), fog_render(true, true), fog_render(false, true))
+    else {
+        return;
+    };
+    keep_image("volumetric fog.png", &shafts);
+    keep_image("volumetric fog lamp.png", &lamp);
+    keep_image("plain fog lamp.png", &plain);
+    let sum = |pixels: &[u8], at: (u32, u32)| rgb_at(pixels, at).iter().sum::<i32>();
+    // Just above the horizon, looking out under the roof and beside it.
+    let (shaded, sunlit) = (sum(&shafts, (120, 170)), sum(&shafts, (520, 170)));
+    assert!(sunlit > shaded + 30, "the sunlit fog is brighter than the fog under the roof: {sunlit} against {shaded}");
+    let (plain_left, plain_right) = (sum(&plain, (120, 170)), sum(&plain, (520, 170)));
+    assert!(plain_left.abs_diff(plain_right) <= 6, "plain fog knows nothing of shadows: {plain_left}, {plain_right}");
+
+    // The lamp lights the fog round it, which plain fog cannot.
+    let beside_lamp = |pixels: &[u8]| sum(pixels, (400, 190));
+    assert!(beside_lamp(&lamp) > beside_lamp(&shafts) + 20, "{} against {}", beside_lamp(&lamp), beside_lamp(&shafts));
+    let red_glow = rgb_at(&lamp, (400, 190))[0] - rgb_at(&shafts, (400, 190))[0];
+    assert!(red_glow > 0, "the glow takes the lamp's colour");
+}

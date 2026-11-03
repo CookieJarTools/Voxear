@@ -3,7 +3,7 @@ use voxear_rhi::{
     Bindless, Blend, Gpu, GraphicsPipelineDesc, ShaderModule, create_compute_pipeline, create_graphics_pipeline, vk,
 };
 
-use crate::{atmosphere::TABLE_FORMAT, hot_reload::ShaderSet};
+use crate::{atmosphere::TABLE_FORMAT, hot_reload::ShaderSet, volumetric::VOLUME_FORMAT};
 
 pub const HDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
@@ -66,6 +66,11 @@ pub struct Pipelines {
     pub multi_scattering: vk::Pipeline,
     pub sky_view: vk::Pipeline,
     pub aerial_perspective: vk::Pipeline,
+    /// Volumetric fog's passes: the volume, its integration, and laying it
+    /// over the scene.
+    pub volume_scatter: vk::Pipeline,
+    pub volume_integrate: vk::Pipeline,
+    pub volumetric_fog: vk::Pipeline,
     /// Ambient occlusion's passes: GTAO, its denoise and its temporal blend.
     pub gtao: vk::Pipeline,
     pub ao_denoise: vk::Pipeline,
@@ -112,8 +117,10 @@ impl Pipelines {
             module("preview")?,
             module("debug")?,
             module("ambient_occlusion")?,
+            module("volumetric")?,
         ];
-        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview, debug, occlusion] = &modules;
+        let [cull, pyramid, shadow, forward, sky, clusters, post, exposure, ui, preview, debug, occlusion, volumetric] =
+            &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
             Some(_) => Some([module("meshlet_task")?, module("meshlets")?, module("meshlet_shadow")?]),
@@ -141,6 +148,13 @@ impl Pipelines {
                 color_formats: &[TABLE_FORMAT],
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new(name, sky, c"lutVertex", entry)
+            })
+        };
+        let volume = |name, entry| {
+            graphics(&GraphicsPipelineDesc {
+                color_formats: &[VOLUME_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new(name, volumetric, c"volumeVertex", entry)
             })
         };
         let scene_formats = &[HDR_FORMAT, VELOCITY_FORMAT];
@@ -213,6 +227,9 @@ impl Pipelines {
             ao_denoise: occlusion_pass("AO denoise", c"aoDenoiseFragment", &[AO_FORMAT])?,
             ao_temporal: occlusion_pass("AO temporal", c"aoTemporalFragment", &[AO_HISTORY_FORMAT])?,
             fog: fullscreen("Fog", c"fogFragment", hdr, Blend::Alpha)?,
+            volume_scatter: volume("Fog volume", c"volumeScatterFragment")?,
+            volume_integrate: volume("Fog integration", c"volumeIntegrateFragment")?,
+            volumetric_fog: fullscreen("Volumetric fog", c"volumetricFogFragment", hdr, Blend::Premultiplied)?,
             taa: fullscreen("TAA", c"taaFragment", hdr, Blend::Opaque)?,
             dof: fullscreen("Depth of field", c"dofFragment", hdr, Blend::Opaque)?,
             motion_blur: fullscreen("Motion blur", c"motionBlurFragment", hdr, Blend::Opaque)?,
@@ -278,6 +295,9 @@ impl Pipelines {
             self.ao_denoise,
             self.ao_temporal,
             self.fog,
+            self.volume_scatter,
+            self.volume_integrate,
+            self.volumetric_fog,
             self.taa,
             self.dof,
             self.motion_blur,

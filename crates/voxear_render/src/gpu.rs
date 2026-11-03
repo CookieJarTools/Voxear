@@ -367,6 +367,14 @@ pub struct GpuPost {
     /// Last frame's occlusion is stale (first frame, resize, just turned on).
     pub ao_reset: u32,
     pub _ao_pad: u32,
+    /// Volumetric fog: Henyey-Greenstein's g for how much light the fog
+    /// scatters forward, and how far its volume reaches, in metres.
+    pub fog_anisotropy: f32,
+    pub fog_volume_far: f32,
+    /// The integrated volume, or `NO_TEXTURE` without volumetric fog.
+    pub fog_volume: u32,
+    /// 1 when the volume's history is stale, as on its first frame.
+    pub fog_volume_reset: u32,
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -537,7 +545,7 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 14;
+        let post = 16 * 15;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6;
         assert_eq!(

@@ -828,9 +828,14 @@ Done so far:
   sunset, lights the scene from its own colours and hazes what lies far off. About 0.06 ms a frame.
 - Still to come for lights: shadows from point, spot and area lights; the C# `Light` API; and the sky's settings
   in the editor rather than only the scene file.
+- **Volumetric fog:** `[post.fog] volumetric = true` lights the height fog near the camera as a 128×72×64 froxel
+  volume: the sun through its shadow cascades, so shafts show between shadows, every clustered light, and the
+  sky, with Henyey-Greenstein scattering. Each froxel is sampled at a jittered depth and blended with last frame's
+  volume, then integrated from the camera out; beyond `volumetric_distance` the plain height fog carries on. About
+  0.17 ms on an RTX 3070, whatever the screen's size. A GPU test checks the fog is dark in shadow and glows round
+  a lamp in its colour.
 
 Next:
-- Volumetric fog: a froxel volume lit by every light, with the sun casting volumetric shadows, so light shafts show.
 - Soft shadows (PCSS, with a softness per light) and contact shadows, then virtual shadow maps.
 - Upscalers (FSR built in, DLSS and XeSS optional), colour grading LUTs, and local post volumes.
 - **Real-time voxel GI** (clipmaps, then injection, gathering and the radiance cache).

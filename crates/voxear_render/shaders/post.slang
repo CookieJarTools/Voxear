@@ -5,6 +5,7 @@
 // push.textures; see src/post_passes.rs for the order.
 
 #include "common.slang"
+#include "volume.slang"
 
 static const float3 LUMA = float3(0.2126, 0.7152, 0.0722);
 static const uint BLOOM_LEVELS = 6;
@@ -43,6 +44,15 @@ float luminance(float3 color)
 
 // ---------------------------------------------------------------- Fog
 
+// The share of light exponential height fog lets through along a ray from
+// the camera, where the fog's density at the camera is `density`.
+float heightFogThrough(float density, float falloff, float3 ray)
+{
+    float rise = falloff * ray.y;
+    float heightTerm = abs(rise) > 1e-4 ? (1.0 - exp(-rise)) / rise : 1.0;
+    return exp(-density * length(ray) * heightTerm);
+}
+
 // Exponential height fog, integrated along each view ray, glowing towards the
 // sun. The sky is left alone: it already fades into the horizon.
 [shader("fragment")]
@@ -61,13 +71,48 @@ float4 fogFragment(PostOut input) : SV_Target
 
     float falloff = max(frame->post.fogHeightFalloff, 1e-4);
     float density = frame->post.fogDensity * exp(-falloff * (frame->cameraPosition.y - frame->post.fogBaseHeight));
-    float rise = falloff * ray.y;
-    float heightTerm = abs(rise) > 1e-4 ? (1.0 - exp(-rise)) / rise : 1.0;
-    float amount = 1.0 - exp(-density * distance * heightTerm);
+    float amount = 1.0 - heightFogThrough(density, falloff, ray);
 
     float glow = pow(saturate(dot(direction, -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
     float3 color = frame->post.fogColor + frame->sunColor * glow * 0.15;
     return float4(color, saturate(amount));
+}
+
+// Volumetric fog, as the volume passes (volumetric.slang) worked it out,
+// laid over the scene: what the fog adds, and the scene through it as
+// premultiplied alpha. Beyond the volume's reach, the height fog above
+// carries on from where it ends; the sky gets the volume's whole depth.
+// textures: x depth, y the integrated volume.
+[shader("fragment")]
+float4 volumetricFogFragment(PostOut input) : SV_Target
+{
+    Frame* frame = push.frame;
+    float far = frame->post.fogVolumeFar;
+    float depth = load(push.textures.x, int2(input.position.xy)).r;
+    if (depth <= 0.0)
+    {
+        float4 sky = volumeAt(push.textures.y, input.uv, far, far);
+        return float4(sky.rgb, 1.0 - sky.a);
+    }
+    float viewDepth = frame->near / depth;
+    float4 fog = volumeAt(push.textures.y, input.uv, min(viewDepth, far), far);
+    if (viewDepth <= far)
+    {
+        return float4(fog.rgb, 1.0 - fog.a);
+    }
+
+    // The height fog from the volume's far side on: its share over the whole
+    // ray, less its share over the part the volume covers.
+    float4 point = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, depth, 1.0));
+    float3 ray = point.xyz / point.w - frame->cameraPosition;
+    float falloff = max(frame->post.fogHeightFalloff, 1e-4);
+    float density = frame->post.fogDensity * exp(-falloff * (frame->cameraPosition.y - frame->post.fogBaseHeight));
+    float throughAll = heightFogThrough(density, falloff, ray);
+    float throughNear = heightFogThrough(density, falloff, ray * (far / viewDepth));
+    float beyond = 1.0 - throughAll / max(throughNear, 1e-6);
+    float glow = pow(saturate(dot(normalize(ray), -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
+    float3 beyondColor = (frame->post.fogColor + frame->sunColor * glow * 0.15) * beyond;
+    return float4(fog.rgb + fog.a * beyondColor, 1.0 - fog.a * (1.0 - beyond));
 }
 
 // ---------------------------------------------------------------- TAA

@@ -203,6 +203,15 @@ pub struct Fog {
     pub color: Option<[f32; 3]>,
     /// How strongly fog glows towards the sun.
     pub sun_glow: f32,
+    /// Lights the fog near the camera as a volume, so the sun's shadows cut
+    /// shafts through it and lamps glow in it. Beyond `volumetric_distance`
+    /// metres the fog carries on as it is without.
+    pub volumetric: bool,
+    pub volumetric_distance: f32,
+    /// How much of the light the fog scatters onward, from -1 (back towards
+    /// the light) through 0 (evenly) to 1: higher brightens the fog looking
+    /// towards a light, as haze does.
+    pub anisotropy: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -298,7 +307,17 @@ impl Default for Vignette {
 
 impl Default for Fog {
     fn default() -> Self {
-        Self { enabled: true, density: 0.004, height_falloff: 0.12, base_height: 0.0, color: None, sun_glow: 0.5 }
+        Self {
+            enabled: true,
+            density: 0.004,
+            height_falloff: 0.12,
+            base_height: 0.0,
+            color: None,
+            sun_glow: 0.5,
+            volumetric: false,
+            volumetric_distance: 64.0,
+            anisotropy: 0.6,
+        }
     }
 }
 
@@ -483,6 +502,11 @@ impl PostProcess {
             ao_unproject: [0.0; 2],
             ao_reset: 0,
             _ao_pad: 0,
+            fog_anisotropy: self.fog.anisotropy.clamp(-0.95, 0.95),
+            fog_volume_far: self.fog.volumetric_distance.max(1.0),
+            // The renderer names the volume once it has made it.
+            fog_volume: crate::gpu::NO_TEXTURE,
+            fog_volume_reset: 0,
         }
     }
 }

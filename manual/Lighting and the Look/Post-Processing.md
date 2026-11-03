@@ -106,6 +106,11 @@ To see the occlusion on its own, press F7 in a game window, or use `vox render -
 | `height_falloff = 0.12`, `base_height = 0` | It is thickest low down, thinning as it rises from this height |
 | `color` | Its colour. Unset, it is the sky's horizon colour |
 | `sun_glow = 0.5` | How much it glows looking toward the sun |
+| `volumetric = false` | Lights the mist near the camera as the scene's lights reach it: shafts of sunlight between shadows, and lamps glowing in it |
+| `volumetric_distance = 64` | How far from the camera, in metres, the mist is lit that way. Beyond it, the mist carries on as without |
+| `anisotropy = 0.6` | How much the mist scatters light onward rather than back: higher makes it brighter looking toward a light, as haze is |
+
+With `volumetric = true`, the mist takes its light from the sun, the sky and every point, spot and area light near it. Thicker mist (a higher `density`) shows the shafts more clearly. It costs about two tenths of a millisecond, whatever the screen's size.
 
 **Focus**, `[post.depth_of_field]`, off unless you turn it on
 

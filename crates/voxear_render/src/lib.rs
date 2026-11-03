@@ -41,6 +41,7 @@ mod scene;
 mod shadows;
 mod texture_codec;
 mod ui_pass;
+mod volumetric;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
 
@@ -1140,6 +1141,8 @@ struct View {
     /// The atmosphere the kept atmosphere tables were drawn for; `None` when
     /// they are stale.
     atmosphere_tables: Option<gpu::GpuAtmosphere>,
+    /// Whether last frame drew a fog volume this one can carry on from.
+    fog_history: bool,
     /// It has said its scene has too many meshlets to cull one by one.
     warned_meshlets: bool,
 }
@@ -1202,6 +1205,7 @@ impl View {
             taa_history: None,
             ao_history: None,
             atmosphere_tables: None,
+            fog_history: false,
             warned_meshlets: false,
         })
     }
@@ -1241,6 +1245,7 @@ impl View {
         self.taa_history = None;
         self.ao_history = None;
         self.atmosphere_tables = None;
+        self.fog_history = false;
         self.prev_models.clear();
         self.prev_view_proj = None;
     }
@@ -1365,6 +1370,17 @@ impl View {
         let mut frame_data = extracted.frame;
         frame_data.post.ao_texture = ambient_occlusion.map_or(NO_TEXTURE, |ao| fg.texture(ao.current).0);
         frame_data.post.ao_reset = u32::from(ao_reset);
+        let fog = extracted.post.fog;
+        let foggy = fog.enabled && fog.volumetric && fog.density > 0.0 && !wireframe;
+        let volume = match foggy {
+            true => Some(volumetric::Volume::new(fg, gpu, bindless, history)?),
+            false => None,
+        };
+        if let Some(volume) = volume {
+            frame_data.post.fog_volume = fg.texture(volume.integrated).0;
+            frame_data.post.fog_volume_reset = u32::from(!self.fog_history);
+        }
+        self.fog_history = foggy;
         frame_data.lighting.ltc_matrix = assets.ltc[0].0;
         frame_data.lighting.ltc_amplitude = assets.ltc[1].0;
         let current = (frame_data.lighting.sky == SKY_ATMOSPHERE).then_some(frame_data.lighting.atmosphere);
@@ -1474,6 +1490,7 @@ impl View {
             edges,
             ambient_occlusion,
             atmosphere,
+            volume,
         };
         passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {
@@ -1491,6 +1508,7 @@ impl View {
             exposure: fg.import_buffer(&self.exposure),
             history,
             keep_ldr: setup.keep_ldr,
+            fog_volume: volume.map(|volume| volume.integrated),
         };
         let finished = post_passes::record(fg, gpu, bindless, &post)?;
         let backdrop = match finished.filter(|_| post.keep_ldr) {

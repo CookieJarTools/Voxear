@@ -294,6 +294,12 @@ struct Post
     float2 aoUnproject;
     uint aoReset;
     uint aoPad;
+    // Volumetric fog: Henyey-Greenstein's g, how far the volume reaches, the
+    // integrated volume (NO_TEXTURE without it), and 1 when its history is stale.
+    float fogAnisotropy;
+    float fogVolumeFar;
+    uint fogVolume;
+    uint fogVolumeReset;
 };
 
 static const uint SKY_GRADIENT = 0;

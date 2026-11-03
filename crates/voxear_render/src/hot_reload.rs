@@ -24,7 +24,7 @@ pub struct ShaderSet {
 impl ShaderSet {
     /// The shaders compiled into the binary at build time.
     pub fn embedded() -> Self {
-        let embedded: [(&str, &'static [u8]); 15] = [
+        let embedded: [(&str, &'static [u8]); 16] = [
             ("cull", include_bytes!(concat!(env!("OUT_DIR"), "/cull.spv"))),
             ("pyramid", include_bytes!(concat!(env!("OUT_DIR"), "/pyramid.spv"))),
             ("shadow", include_bytes!(concat!(env!("OUT_DIR"), "/shadow.spv"))),
@@ -40,6 +40,7 @@ impl ShaderSet {
             ("meshlet_task", include_bytes!(concat!(env!("OUT_DIR"), "/meshlet_task.spv"))),
             ("meshlet_shadow", include_bytes!(concat!(env!("OUT_DIR"), "/meshlet_shadow.spv"))),
             ("ambient_occlusion", include_bytes!(concat!(env!("OUT_DIR"), "/ambient_occlusion.spv"))),
+            ("volumetric", include_bytes!(concat!(env!("OUT_DIR"), "/volumetric.spv"))),
         ];
         Self { spirv: embedded.into_iter().map(|(name, bytes)| (name.to_string(), Cow::Borrowed(bytes))).collect() }
     }

@@ -55,6 +55,9 @@ pub struct PostInput {
     /// Keep the finished view as an image of its own, for the UI's backdrop
     /// blur to read, as FXAA and sharpening need it anyway.
     pub keep_ldr: bool,
+    /// The volumetric fog's integrated volume, laid over the scene in place
+    /// of the plain height fog when there is one.
+    pub fog_volume: Option<ImageId>,
 }
 
 /// Steps the backdrop's blur halves the view's size by.
@@ -77,7 +80,11 @@ pub fn record(
     let depth_texture = fg.texture(depth).0;
     let mut scene = hdr;
 
-    if settings.fog.enabled && settings.fog.density > 0.0 {
+    if let Some(volume) = input.fog_volume {
+        let push = Push { textures: [depth_texture, fg.texture(volume).0, 0, 0], ..push };
+        let images = [(depth, ImageAccess::Sampled), (volume, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
+        fg.add_pass("Volumetric fog", &images, &[], move |ctx| draw(ctx, pipelines.volumetric_fog, &push, hdr, true));
+    } else if settings.fog.enabled && settings.fog.density > 0.0 {
         let push = Push { textures: [depth_texture, 0, 0, 0], ..push };
         let images = [(depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));

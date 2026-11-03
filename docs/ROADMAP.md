@@ -409,6 +409,22 @@ Next in M3:
       that may change while the game runs set from code, and quality levels picked by reference, never by name
     - a game's own settings: a class marked `[ProjectSettings]` gets its own category in the window, saved with
       the project and readable from code, as Unity's SettingsProvider
+    - **Build settings**, in build profiles and edited in the Build window, so each platform and release ships as
+      it needs, on top of the levels, defines, version and compression profiles have now:
+      - the target: platform and CPU architecture, the output folder and the names of the executable and its
+        data, and a clean build or one that reuses what has not changed
+      - scripts: CoreCLR or Native AOT (M12), trimming, optimisation, debug symbols kept beside the build or left
+        out, and C# defines per platform and per profile
+      - development builds: the Console and dev tools in the game, the profiler able to connect, script debugging
+        and waiting for a debugger at start, deep profiling, and extra checks, each its own switch
+      - content per platform: texture compression and the largest texture size, audio compression and sample rate,
+        mesh compression, the quality levels shipped and the shader variants they need, and what is stripped
+      - identity: the icon at each size, the splash screen and its logos, the company and product names, and the
+        version with its build number counted up by itself or taken from the git commit
+      - packaging: a plain folder, a zip, an AppImage or Flatpak on Linux and an installer on Windows, code signing
+        where the platform has it, and Steam depots ready to upload
+      - the command-line arguments a build accepts, and the ones it starts with by default
+      - every setting the same from `vox build` as from the Build window, so builds on a server match the editor's
   - [ ] **UI navigation**, for gamepads and keyboards, as Unity's and Unreal's, so a complicated menu works with a
     controller without the game writing any code for it:
     - automatic: up, down, left and right move to the nearest focusable element that way, by distance and by how

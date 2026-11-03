@@ -41,6 +41,8 @@ internal static class AudioTests
 		Check.True(!source.Pathing, "nor follows paths round them");
 		Check.True(!Audio.Headphones && !Audio.HeadphonesAvailable, "no headphones without the engine");
 		Check.True(!Audio.Reverb, "nor reverb");
+		Audio.ReverbMode = ReverbMode.Convolution;
+		Check.True(Audio.ReverbMode == ReverbMode.Parametric, "nor echoes to ring with, so parametric");
 		Check.True(Audio.Ducking == null, "no ducking");
 		Check.Near(AudioSnapshot.Open, Audio.GetLowPass(AudioBus.Music));
 		Check.Near(AudioSnapshot.Closed, Audio.GetHighPass(AudioBus.Effects));

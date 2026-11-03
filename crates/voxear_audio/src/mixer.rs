@@ -17,7 +17,10 @@
 //! transition asks for.
 //!
 //! 3D voices on the effects bus are also sent to the reverb, which rings as
-//! the listener's room does, once the game says how (see `reverb`).
+//! the listener's room does, once the game says how: for how long (see
+//! `reverb`), or with the room's echoes themselves, played through Steam
+//! Audio's convolution (see [`Convolution`]), which takes the reverb's
+//! place while it is there.
 //!
 //! With headphones on, 3D voices go through Steam Audio's HRTF, heard from
 //! where they are with the cues of a real head, above and behind included,
@@ -27,6 +30,7 @@
 
 use std::sync::{
     Arc,
+    atomic::{AtomicU32, Ordering},
     mpsc::{self, Receiver, SyncSender},
 };
 
@@ -39,7 +43,7 @@ use crate::{
     report::{VoiceBoard, VoiceReport},
     reverb::{Reverb, ReverbTimes},
     spatial::{self, Distance, Listener},
-    steam_audio::{Hrtf, Muffle},
+    steam_audio::{Convolution, Hrtf, Muffle},
     stream::{Frame, StreamReader},
 };
 
@@ -111,6 +115,9 @@ pub(crate) enum Command {
     Doppler(VoiceId, f32),
     Muffle(VoiceId, Muffle),
     Reverb(ReverbTimes),
+    /// The room's echoes to play in place of the reverb, or none, to fade
+    /// out the ones playing.
+    Echoes(Option<Box<Convolution>>),
     /// How long the volume and filter changes after it take, in seconds.
     Transition(f32),
     /// A bus's low-pass cutoff, or with `true` its high-pass one, in Hz.
@@ -174,6 +181,8 @@ enum Played {
 
 pub struct Mixer {
     sample_rate: u32,
+    /// The rate, where the game can read it, to make the room's echoes at.
+    rate: Arc<AtomicU32>,
     voices: Vec<Voice>,
     master: Slide,
     music: Slide,
@@ -197,19 +206,21 @@ pub struct Mixer {
     mix: Vec<f32>,
     sent: Vec<f32>,
     reverb: Option<Box<Reverb>>,
+    echoes: Option<Box<Convolution>>,
     /// Where it tells the editor what it plays.
     board: Arc<VoiceBoard>,
 }
 
 impl Mixer {
     pub(crate) fn new(
-        sample_rate: u32,
+        rate: Arc<AtomicU32>,
         commands: Receiver<Command>,
         finished: SyncSender<VoiceId>,
         board: Arc<VoiceBoard>,
     ) -> Self {
         Self {
-            sample_rate,
+            sample_rate: rate.load(Ordering::Relaxed).max(1),
+            rate,
             voices: Vec::with_capacity(64),
             master: Slide::at(1.0),
             music: Slide::at(1.0),
@@ -228,6 +239,7 @@ impl Mixer {
             mix: Vec::new(),
             sent: Vec::new(),
             reverb: None,
+            echoes: None,
             board,
         }
     }
@@ -239,6 +251,11 @@ impl Mixer {
     /// Sets the rate the output plays at, before the first block.
     pub(crate) fn set_sample_rate(&mut self, rate: u32) {
         self.sample_rate = rate.max(1);
+        self.rate.store(self.sample_rate, Ordering::Relaxed);
+        // Echoes made for another rate would ring too long or too short; the game makes them again.
+        if self.echoes.as_ref().is_some_and(|echoes| echoes.sample_rate() != self.sample_rate) {
+            self.echoes = None;
+        }
         if self.hrtf.as_ref().is_some_and(|hrtf| hrtf.sample_rate != self.sample_rate) {
             self.hrtf = None;
             self.give_ears();
@@ -315,6 +332,17 @@ impl Mixer {
                 mixed[1] += right;
             }
         }
+        if let Some(echoes) = &mut self.echoes {
+            let (listener, binaural) = (self.listener, self.headphones);
+            for (mixed, &sent) in effects.iter_mut().zip(&self.sent) {
+                let [left, right] = echoes.apply(sent, &listener, binaural);
+                mixed[0] += left;
+                mixed[1] += right;
+            }
+            if echoes.faded() {
+                self.echoes = None;
+            }
+        }
         self.ducker.apply(music, effects, rate);
         self.filters[0].apply(music, rate);
         self.filters[1].apply(effects, rate);
@@ -357,6 +385,7 @@ impl Mixer {
                     None if times != ReverbTimes::NONE => self.reverb = Some(Reverb::new(self.sample_rate, times)),
                     None => {}
                 },
+                Command::Echoes(echoes) => self.set_echoes(echoes),
                 Command::Transition(seconds) => self.transition = seconds.max(0.0),
                 Command::Filter(bus, high, hz) => {
                     let Some(filters) = self.filters.get_mut(bus_index(bus)) else { continue };
@@ -378,6 +407,31 @@ impl Mixer {
                 }
             }
         }
+    }
+
+    /// Plays the room's echoes in place of the reverb, which fades as they
+    /// come in, or fades out the ones playing. Echoes made for another rate
+    /// than the output's are let go, as the game makes them again.
+    fn set_echoes(&mut self, echoes: Option<Box<Convolution>>) {
+        let Some(echoes) = echoes else {
+            if let Some(playing) = &mut self.echoes {
+                playing.fade_out();
+            }
+            return;
+        };
+        if echoes.sample_rate() != self.sample_rate {
+            return;
+        }
+        if let Some(reverb) = &mut self.reverb {
+            reverb.set(ReverbTimes::NONE);
+        }
+        self.echoes = Some(echoes);
+    }
+
+    /// Whether the room's echoes are playing, by convolution, rather than
+    /// the reverb.
+    pub fn plays_echoes(&self) -> bool {
+        self.echoes.as_ref().is_some_and(|echoes| !echoes.faded())
     }
 
     fn set_headphones(&mut self, on: bool) {

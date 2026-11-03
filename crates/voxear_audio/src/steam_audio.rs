@@ -12,16 +12,19 @@
 //!
 //! [`Acoustics`] is the rest: the level's walls as Steam Audio's scene, and
 //! how much of each voice gets through them to the listener, and comes
-//! round them along the paths [`bake_paths`] bakes.
+//! round them along the paths [`bake_paths`] bakes. [`RoomReverb`] works
+//! out how the listener's room rings from the same walls, as reverb times
+//! or as the room's echoes themselves, for [`Convolution`].
 
 mod acoustics;
+mod convolution;
 mod paths;
 mod room;
 
 use std::{
     ffi::{c_char, c_void},
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use anyhow::{Context, Result, bail};
@@ -31,12 +34,14 @@ use voxear_core::math::Vec3;
 use crate::spatial::Listener;
 pub use acoustics::{AcousticMaterial, AcousticMesh, Acoustics, Heard, Muffle, Occlusion, SourceAcoustics, Wall};
 use acoustics::{
-    SceneSettings, SharedInputs, SimulationInputs, SimulationOutputs, SimulationSettings, SourceSettings,
-    StaticMeshSettings,
+    ReflectionEffectParams, SceneSettings, SharedInputs, SimulationInputs, SimulationOutputs, SimulationSettings,
+    SourceSettings, StaticMeshSettings,
 };
+pub use convolution::Convolution;
+use convolution::{AmbisonicsDecodeParams, AmbisonicsDecodeSettings, ReflectionEffectSettings};
 pub use paths::{BakedPaths, PathProbes, bake_paths};
 use paths::{PathBakeParams, ProbeGenerationParams, Progress, SerializedSettings};
-pub use room::RoomReverb;
+pub use room::{RoomHeard, RoomReverb};
 
 /// How many samples Steam Audio's effects take at once.
 pub const FRAME: usize = 256;
@@ -131,7 +136,16 @@ struct Api {
     source_remove: unsafe extern "C" fn(Handle, Handle),
     source_set_inputs: unsafe extern "C" fn(Handle, i32, *mut SimulationInputs),
     source_get_outputs: unsafe extern "C" fn(Handle, i32, *mut SimulationOutputs),
+    source_retain: unsafe extern "C" fn(Handle) -> Handle,
     source_release: unsafe extern "C" fn(*mut Handle),
+    reflection_create:
+        unsafe extern "C" fn(Handle, *mut AudioSettings, *mut ReflectionEffectSettings, *mut Handle) -> i32,
+    reflection_release: unsafe extern "C" fn(*mut Handle),
+    reflection_apply:
+        unsafe extern "C" fn(Handle, *mut ReflectionEffectParams, *mut AudioBuffer, *mut AudioBuffer, Handle) -> i32,
+    decode_create: unsafe extern "C" fn(Handle, *mut AudioSettings, *mut AmbisonicsDecodeSettings, *mut Handle) -> i32,
+    decode_release: unsafe extern "C" fn(*mut Handle),
+    decode_apply: unsafe extern "C" fn(Handle, *mut AmbisonicsDecodeParams, *mut AudioBuffer, *mut AudioBuffer) -> i32,
     simulator_add_probe_batch: unsafe extern "C" fn(Handle, Handle),
     simulator_remove_probe_batch: unsafe extern "C" fn(Handle, Handle),
     simulator_run_pathing: unsafe extern "C" fn(Handle),
@@ -183,7 +197,8 @@ pub fn file_name() -> &'static str {
 
 /// Where the library is looked for, in order: the path in
 /// `VOXEAR_STEAM_AUDIO`, beside the running program, and the copy
-/// `steam-audio/fetch.sh` fetched for this source tree.
+/// `steam-audio/fetch.sh` fetched for this source tree. `VOXEAR_STEAM_AUDIO`
+/// set to `off` has it go without, to hear a game as players without it do.
 pub fn library_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(path) = std::env::var_os("VOXEAR_STEAM_AUDIO") {
@@ -207,6 +222,9 @@ impl SteamAudio {
     }
 
     fn load() -> Result<Self> {
+        if std::env::var_os("VOXEAR_STEAM_AUDIO").is_some_and(|value| value.eq_ignore_ascii_case("off")) {
+            bail!("Steam Audio is off, as VOXEAR_STEAM_AUDIO says");
+        }
         let Some(path) = library_paths().into_iter().find(|path| path.is_file()) else {
             bail!("Steam Audio's library is not here; fetch it with crates/voxear_audio/steam-audio/fetch.sh");
         };
@@ -262,7 +280,14 @@ impl Api {
             source_remove: get!("iplSourceRemove"),
             source_set_inputs: get!("iplSourceSetInputs"),
             source_get_outputs: get!("iplSourceGetOutputs"),
+            source_retain: get!("iplSourceRetain"),
             source_release: get!("iplSourceRelease"),
+            reflection_create: get!("iplReflectionEffectCreate"),
+            reflection_release: get!("iplReflectionEffectRelease"),
+            reflection_apply: get!("iplReflectionEffectApply"),
+            decode_create: get!("iplAmbisonicsDecodeEffectCreate"),
+            decode_release: get!("iplAmbisonicsDecodeEffectRelease"),
+            decode_apply: get!("iplAmbisonicsDecodeEffectApply"),
             simulator_add_probe_batch: get!("iplSimulatorAddProbeBatch"),
             simulator_remove_probe_batch: get!("iplSimulatorRemoveProbeBatch"),
             simulator_run_pathing: get!("iplSimulatorRunPathing"),
@@ -308,7 +333,10 @@ impl Hrtf {
     /// The HRTF for a mixer at `sample_rate`, loading Steam Audio if it has
     /// not been.
     pub fn new(sample_rate: u32) -> Result<Arc<Self>, String> {
+        // Steam Audio makes one HRTF at a time, and the mixer's and the room's are made on threads of their own.
+        static MAKING: Mutex<()> = Mutex::new(());
         let steam = SteamAudio::get()?;
+        let _making = MAKING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut audio = AudioSettings { sampling_rate: sample_rate as i32, frame_size: FRAME as i32 };
         let mut settings = HrtfSettings {
             kind: 0,

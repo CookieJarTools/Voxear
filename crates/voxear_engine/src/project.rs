@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use voxear_assets::bundle::Compression;
+use voxear_audio::ReverbMode;
 
 pub const PROJECT_FILE: &str = "voxear.toml";
 /// What an engine install is, at its root: its version, channel and platform.
@@ -26,14 +27,15 @@ pub struct ProjectFile {
 
 /// Sound for the whole project: whether 3D sounds start out heard as
 /// through headphones, by Steam Audio's HRTF, and ringing as the
-/// listener's room does, and whether player builds take Steam Audio with
-/// them. A game's options usually let the player choose headphones, with
-/// `Audio.Headphones`.
+/// listener's room does, by how long it rings or by its echoes, and
+/// whether player builds take Steam Audio with them. A game's options
+/// usually let the player choose headphones, with `Audio.Headphones`.
 ///
 /// ```toml
 /// [audio]
 /// headphones = true
 /// reverb = true
+/// reverb_mode = "convolution"
 /// steam_audio = false
 /// ```
 #[derive(Debug, Deserialize)]
@@ -41,13 +43,23 @@ pub struct ProjectFile {
 pub struct AudioSettings {
     pub headphones: bool,
     pub reverb: bool,
+    #[serde(with = "ReverbModeName")]
+    pub reverb_mode: ReverbMode,
     pub steam_audio: bool,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self { headphones: false, reverb: false, steam_audio: true }
+        Self { headphones: false, reverb: false, reverb_mode: ReverbMode::Parametric, steam_audio: true }
     }
+}
+
+/// A [`ReverbMode`] as `voxear.toml` and a player's settings write it.
+#[derive(Deserialize, Serialize)]
+#[serde(remote = "ReverbMode", rename_all = "lowercase")]
+pub(crate) enum ReverbModeName {
+    Parametric,
+    Convolution,
 }
 
 /// The languages the game is in, by their codes, the one it is written in

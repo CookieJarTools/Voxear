@@ -4,7 +4,8 @@
 //! preview, with its sound, bus, volume, how loud it is heard and from how
 //! far, how much gets past the walls, and whether it is paused or ending.
 //! The line along the top counts them and says whether headphones and the
-//! room's reverb are on. Clicking a source's row selects its Obj.
+//! room's reverb are on, and how long the room rings, or that its echoes
+//! play by convolution. Clicking a source's row selects its Obj.
 
 use std::{
     cell::RefCell,
@@ -13,7 +14,10 @@ use std::{
 };
 
 use voxear_ecs::Entity;
-use voxear_engine::{Game, audio::HeardVoice};
+use voxear_engine::{
+    Game,
+    audio::{HeardVoice, ReverbMode},
+};
 use voxear_ui::{ItemFns, NodeId, Style, Ui};
 
 use crate::columns::{self, TableHeader};
@@ -136,7 +140,9 @@ impl AudioPanel {
         if game.audio.audio.headphones() {
             parts.push("Headphones".into());
         }
-        if game.audio.reverb_on() {
+        if game.audio.reverb_on() && game.audio.reverb_mode() == ReverbMode::Convolution {
+            parts.push("Convolution reverb".into());
+        } else if game.audio.reverb_on() {
             parts.push(format!("Reverb {:.1} s", game.audio.room().0[1]));
         }
         ui.set_text(self.summary, &parts.join("   "));

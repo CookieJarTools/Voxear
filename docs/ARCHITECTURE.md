@@ -2542,7 +2542,15 @@ from the Project into a Scene view or the Hierarchy makes an Obj named for it wi
   listener-centric reverb. With `Audio.Reverb`, a `RoomReverb` thread keeps its own Steam Audio scene of the same
   walls and runs parametric reflections from the listener every 100 ms at most, 4096 rays of 16 bounces; the RT60 in
   each band it gives drives the mixer's own Freeverb-style stereo reverb, eight combs and four all-passes a side,
-  which the 3D voices on the effects bus are sent to in mono. Convolution reverb with echoes, and baked probes, come
+  which the 3D voices on the effects bus are sent to in mono. With `Audio.ReverbMode` or `[audio] reverb_mode` set to
+  convolution, the thread runs convolution reflections instead, at the mixer's rate (`Audio::sample_rate`, restarted
+  when the device's changes), and hands the mixer once a `steam_audio::Convolution`: its own HRTF, a reflection
+  effect and an Ambisonics decode effect, made off the audio thread, and a retained reference to the room's source.
+  Each block of 256 the mixer reads the source's latest impulse response with `iplSourceGetOutputs`, which Steam
+  Audio triple-buffers between the simulating thread and the one reading, so only the audio thread reads it; plays
+  the send through it into first-order Ambisonics, two seconds long; and decodes that to stereo, or binaurally with
+  headphones on, as the listener faces. The convolution takes Freeverb's place, which fades as it comes in, and
+  fades itself out when reverb goes off. Echoes that will not start fall back to reverb times. Baked probes come
   later.)*
 - **Pathing:** sound bends around corners and through doorways.
 

@@ -22,14 +22,21 @@ use crate::{reverb::ReverbTimes, spatial::Listener, steam_audio::FRAME};
 /// Steam Audio's simulations: what it works out of a voice's direct sound,
 /// and of how it reflects round the room.
 const DIRECT: i32 = 1;
-const REFLECTIONS: i32 = 1 << 1;
+pub(super) const REFLECTIONS: i32 = 1 << 1;
 const PATHING: i32 = 1 << 2;
+/// How the room is heard: by its echoes themselves, an impulse response to
+/// convolve with, or by how long it rings, for a reverb to follow.
+pub(super) const CONVOLUTION: i32 = 0;
 const PARAMETRIC: i32 = 1;
 /// The rays a room's reverb is traced with, how many times each may
-/// bounce, and how long after a sound its reflections are followed for.
+/// bounce, and how long after a sound its reflections are followed for,
+/// which is as long as its echoes are.
 const ROOM_RAYS: i32 = 4096;
 const ROOM_BOUNCES: i32 = 16;
-const ROOM_SECONDS: f32 = 2.0;
+pub(super) const ROOM_SECONDS: f32 = 2.0;
+/// The order of the spherical harmonics a room's echoes come in: 1, four
+/// channels, enough for which side each comes from.
+pub(super) const ROOM_ORDER: i32 = 1;
 /// The key of the source a room is heard from, which stands on the listener.
 const ROOM: u64 = u64::MAX;
 /// Of a voice's direct sound, whether walls stop it, and whether they let
@@ -199,14 +206,14 @@ struct DirectEffectParams {
 }
 
 #[repr(C)]
-struct ReflectionEffectParams {
-    kind: i32,
-    ir: Handle,
+pub(super) struct ReflectionEffectParams {
+    pub(super) kind: i32,
+    pub(super) ir: Handle,
     reverb_times: [f32; 3],
     eq: [f32; 3],
     delay: i32,
-    channels: i32,
-    ir_size: i32,
+    pub(super) channels: i32,
+    pub(super) ir_size: i32,
     true_audio_next: Handle,
     true_audio_next_slot: i32,
 }
@@ -225,13 +232,13 @@ struct PathEffectParams {
 #[repr(C)]
 pub(super) struct SimulationOutputs {
     direct: DirectEffectParams,
-    reflections: ReflectionEffectParams,
+    pub(super) reflections: ReflectionEffectParams,
     pathing: PathEffectParams,
 }
 
 /// A struct of Steam Audio's with every field zero, null or false, as its
 /// fields Voxear leaves alone should be.
-fn zeroed<T>() -> T {
+pub(super) fn zeroed<T>() -> T {
     // SAFETY: only used for the plain C structs above, whose fields are numbers, pointers and options of functions.
     unsafe { std::mem::zeroed() }
 }
@@ -343,7 +350,8 @@ impl Heard {
 
 /// The level's walls in Steam Audio, and the voices it works out for: what
 /// gets past the walls to the listener, or, made with
-/// [`for_rooms`](Self::for_rooms), how long the listener's room rings.
+/// [`for_rooms`](Self::for_rooms), how long the listener's room rings, or,
+/// made [`for_echoes`](Self::for_echoes), the room's echoes themselves.
 pub struct Acoustics {
     pub(super) steam: Arc<SteamAudio>,
     pub(super) scene: Handle,
@@ -401,20 +409,15 @@ impl Acoustics {
     /// longer than what gets past the walls: tens of milliseconds, for a
     /// thread of its own.
     pub fn for_rooms() -> Result<Self, String> {
-        Self::make(SimulationSettings {
-            flags: REFLECTIONS,
-            reflection_type: PARAMETRIC,
-            max_rays: ROOM_RAYS,
-            diffuse_samples: 32,
-            max_duration: ROOM_SECONDS,
-            max_order: 1,
-            max_sources: 1,
-            threads: 2,
-            ray_batch_size: 1,
-            sampling_rate: 48_000,
-            frame_size: FRAME as i32,
-            ..zeroed()
-        })
+        Self::make(room_settings(PARAMETRIC, 48_000))
+    }
+
+    /// An empty level for working out a room's echoes, as an impulse
+    /// response a [`Convolution`](super::Convolution) at `sample_rate`
+    /// plays the room through: as long to work out as how long it rings,
+    /// and as much again to turn into the response.
+    pub fn for_echoes(sample_rate: u32) -> Result<Self, String> {
+        Self::make(room_settings(CONVOLUTION, sample_rate))
     }
 
     fn make(mut settings: SimulationSettings) -> Result<Self, String> {
@@ -582,6 +585,20 @@ impl Acoustics {
     /// reflections round the walls about it. Only for one made
     /// [`for_rooms`](Self::for_rooms).
     pub fn room(&mut self, listener: &Listener) -> ReverbTimes {
+        self.echo(listener);
+        let api = &self.steam.api;
+        let mut outputs: SimulationOutputs = zeroed();
+        unsafe { (api.source_get_outputs)(self.sources[&ROOM], REFLECTIONS, &mut outputs) };
+        ReverbTimes(
+            outputs.reflections.reverb_times.map(|seconds| if seconds.is_finite() { seconds.max(0.0) } else { 0.0 }),
+        )
+    }
+
+    /// Works out again the reflections round the walls about the listener,
+    /// from a sound where it stands. Made [`for_echoes`](Self::for_echoes),
+    /// the room's echoes are left for the [`Convolution`](super::Convolution)
+    /// playing them to take, on the audio's thread.
+    pub fn echo(&mut self, listener: &Listener) {
         let at = listener.position;
         self.keep_sources(&[(ROOM, at, SourceAcoustics::default())]);
         let api = &self.steam.api;
@@ -596,20 +613,41 @@ impl Acoustics {
             rays: ROOM_RAYS,
             bounces: ROOM_BOUNCES,
             duration: ROOM_SECONDS,
-            order: 1,
+            order: ROOM_ORDER,
             irradiance_min_distance: 1.0,
             ..zeroed()
         };
-        let mut outputs: SimulationOutputs = zeroed();
         unsafe {
             (api.source_set_inputs)(self.sources[&ROOM], REFLECTIONS, &mut inputs);
             (api.simulator_set_shared_inputs)(self.simulator, REFLECTIONS, &mut shared);
             (api.simulator_run_reflections)(self.simulator);
-            (api.source_get_outputs)(self.sources[&ROOM], REFLECTIONS, &mut outputs);
         }
-        ReverbTimes(
-            outputs.reflections.reverb_times.map(|seconds| if seconds.is_finite() { seconds.max(0.0) } else { 0.0 }),
-        )
+    }
+
+    /// The source a room is heard from, given to the listener's place, with
+    /// a reference of its own for whoever takes it, which they release.
+    pub(super) fn room_source(&mut self, listener: &Listener) -> Handle {
+        self.keep_sources(&[(ROOM, listener.position, SourceAcoustics::default())]);
+        unsafe { (self.steam.api.source_retain)(self.sources[&ROOM]) }
+    }
+}
+
+/// A simulator for one room's reflections, the listener's, heard as
+/// `reflection_type` has them.
+fn room_settings(reflection_type: i32, sample_rate: u32) -> SimulationSettings {
+    SimulationSettings {
+        flags: REFLECTIONS,
+        reflection_type,
+        max_rays: ROOM_RAYS,
+        diffuse_samples: 32,
+        max_duration: ROOM_SECONDS,
+        max_order: ROOM_ORDER,
+        max_sources: 1,
+        threads: 2,
+        ray_batch_size: 1,
+        sampling_rate: sample_rate as i32,
+        frame_size: FRAME as i32,
+        ..zeroed()
     }
 }
 
@@ -674,7 +712,7 @@ fn path_direction(path: &PathEffectParams) -> Option<Vec3> {
 }
 
 /// The listener's place and the ways it faces, as Steam Audio has them.
-fn listener_space(listener: &Listener) -> CoordinateSpace {
+pub(super) fn listener_space(listener: &Listener) -> CoordinateSpace {
     let turn = listener.rotation;
     space(listener.position, turn * Vec3::X, turn * Vec3::Y, turn * Vec3::Z)
 }

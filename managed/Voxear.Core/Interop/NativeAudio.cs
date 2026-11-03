@@ -50,6 +50,7 @@ internal static unsafe class NativeAudio
 	public const int BusDuckThreshold = 12;
 	public const int BusDuckAttack = 13;
 	public const int BusDuckRelease = 14;
+	public const int BusReverbMode = 15;
 
 	/// <summary>The engine's id for the sound at a project path or GUID, or -1 when it will not load.</summary>
 	public static int Load(string path)

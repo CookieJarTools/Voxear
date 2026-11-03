@@ -37,6 +37,20 @@ impl ReverbTimes {
     pub const NONE: Self = Self([0.0; 3]);
 }
 
+/// How the listener's room is heard. Parametric, the default, is this
+/// reverb following how long the room rings, which costs next to nothing.
+/// Convolution plays what is sent through the room's echoes themselves, as
+/// Steam Audio works them out (see
+/// [`steam_audio::Convolution`](crate::steam_audio::Convolution)), each
+/// from its own side and at its own time: closer to the room, for a few
+/// percent of a core more.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ReverbMode {
+    #[default]
+    Parametric,
+    Convolution,
+}
+
 struct Comb {
     line: Vec<f32>,
     at: usize,

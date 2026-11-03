@@ -114,6 +114,7 @@ impl Game {
         };
         game.audio.headphones = game.project.file.audio.headphones;
         game.audio.reverb = game.project.file.audio.reverb;
+        game.audio.reverb_mode = game.project.file.audio.reverb_mode;
         game.load_input_actions();
         game.load_strings();
         game.engine.world.insert_resource(game.project.layers());

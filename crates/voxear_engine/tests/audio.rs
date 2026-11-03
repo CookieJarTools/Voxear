@@ -7,7 +7,7 @@ use voxear_core::math::Vec3;
 use voxear_ecs::Entity;
 use voxear_engine::{
     ContentSettings, Engine, Game, Project,
-    audio::{Audio, AudioListener, AudioSource, GameAudio, OneShot, SoundSpace, SourceRequest},
+    audio::{Audio, AudioListener, AudioSource, GameAudio, OneShot, ReverbMode, SoundSpace, SourceRequest},
     content_build, scene_file,
 };
 use voxear_scene::{Name, Transform};
@@ -395,6 +395,84 @@ fn with_reverb_on_a_sound_rings_on_in_a_closed_room() {
 
     game.audio.set_reverb(false);
     assert_eq!(game.audio.room(), voxear_engine::audio::ReverbTimes::NONE);
+}
+
+#[test]
+fn with_convolution_a_sound_echoes_on_in_a_closed_room_and_parametric_takes_over_again() {
+    if voxear_audio::steam_audio::SteamAudio::get().is_err() {
+        return eprintln!("skipping: Steam Audio's library is not fetched");
+    }
+    let dir = project();
+    std::fs::write(dir.path().join("Scenes/Main.scene"), ROOM).unwrap();
+    let toml = "[project]\nname = \"Sounds\"\nstart_level = \"Levels/Main.level\"\n[audio]\nreverb = true\nreverb_mode = \"convolution\"\n";
+    std::fs::write(dir.path().join("voxear.toml"), toml).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    assert!(game.audio.reverb && game.audio.reverb_mode == ReverbMode::Convolution, "as the project says");
+    let (audio, mut mixer) = Audio::offline(RATE);
+    game.audio = GameAudio::new(audio);
+    (game.audio.reverb, game.audio.reverb_mode) = (true, ReverbMode::Convolution);
+    game.start(None).unwrap();
+    assert!(game.audio.reverb_on() && game.audio.reverb_mode() == ReverbMode::Convolution);
+
+    let started = std::time::Instant::now();
+    let echo = |game: &mut Game, mixer: &mut Mixer| loop {
+        assert!(started.elapsed().as_secs() < 30, "the room's echoes play");
+        game.tick(1.0 / 60.0, None);
+        render(mixer, 512);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        if mixer.plays_echoes() && after_a_chime(game, mixer) > 1e-4 {
+            break;
+        }
+    };
+    echo(&mut game, &mut mixer);
+    assert_eq!(game.audio.room(), voxear_engine::audio::ReverbTimes::NONE, "no reverb times, heard by its echoes");
+
+    // Off, the echoes fade out; on again, the room is worked out again and they come back.
+    game.audio.set_reverb(false);
+    game.tick(1.0 / 60.0, None);
+    render(&mut mixer, 4_096);
+    assert!(!mixer.plays_echoes());
+    game.audio.set_reverb(true);
+    echo(&mut game, &mut mixer);
+
+    game.audio.set_reverb_mode(ReverbMode::Parametric);
+    while game.audio.room().0[1] < 0.5 {
+        assert!(started.elapsed().as_secs() < 40, "the room is worked out again: {:?}", game.audio.room());
+        game.tick(1.0 / 60.0, None);
+        render(&mut mixer, 512);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!mixer.plays_echoes(), "the echoes faded out");
+    assert!(after_a_chime(&mut game, &mut mixer) > 1e-4, "the reverb rings in their place");
+}
+
+#[test]
+fn without_steam_audio_convolution_reads_parametric_and_nothing_rings() {
+    // Steam Audio loads once a process, so this runs again in a process of its own that goes without.
+    if std::env::var_os("VOXEAR_STEAM_AUDIO").is_none_or(|value| value != "off") {
+        let name = "without_steam_audio_convolution_reads_parametric_and_nothing_rings";
+        let run = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture", "--test-threads=1"])
+            .env("VOXEAR_STEAM_AUDIO", "off")
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&run.stdout);
+        assert!(run.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&run.stderr));
+        return;
+    }
+    assert!(voxear_audio::steam_audio::SteamAudio::get().is_err(), "off");
+    let dir = project();
+    std::fs::write(dir.path().join("Scenes/Main.scene"), ROOM).unwrap();
+    let (mut game, mut mixer) = game(&dir);
+    game.audio.set_reverb(true);
+    game.audio.set_reverb_mode(ReverbMode::Convolution);
+    for _ in 0..10 {
+        game.tick(1.0 / 60.0, None);
+        render(&mut mixer, 512);
+    }
+    assert_eq!(game.audio.reverb_mode(), ReverbMode::Parametric, "no echoes without Steam Audio");
+    assert!(!mixer.plays_echoes());
+    assert!(after_a_chime(&mut game, &mut mixer) < 1e-6, "and no room to ring");
 }
 
 /// A camera, looking along +Z, on a floor; a concrete wall across in front

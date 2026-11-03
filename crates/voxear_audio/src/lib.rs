@@ -38,6 +38,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc,
+        atomic::{AtomicU32, Ordering},
         mpsc::{self, Receiver, Sender},
     },
 };
@@ -45,7 +46,7 @@ use std::{
 pub use buses::{Ducking, OPEN_HIGH_PASS, OPEN_LOW_PASS};
 pub use mixer::{Bus, MAX_VOICES, Mixer, VoiceId, VoiceParams};
 pub use report::VoiceReport;
-pub use reverb::ReverbTimes;
+pub use reverb::{ReverbMode, ReverbTimes};
 pub use sound::{Sound, SoundInfo, probe};
 pub use spatial::{Distance, Listener, SPEED_OF_SOUND, doppler, gains, pan};
 use voxear_core::math::Vec3;
@@ -97,6 +98,8 @@ pub struct Audio {
     game_paused: bool,
     headphones: bool,
     board: Arc<VoiceBoard>,
+    /// The rate the mixer plays at, as it last said.
+    rate: Arc<AtomicU32>,
     /// How long volume and filter changes take, and the filters' cutoffs,
     /// low-pass then high-pass, of the music bus then the effects bus.
     transition: f32,
@@ -136,11 +139,12 @@ impl Audio {
         let (commands, received) = mpsc::channel();
         let (finish, finished) = mpsc::sync_channel(FINISHED);
         let board = Arc::new(VoiceBoard::default());
+        let rate = Arc::new(AtomicU32::new(sample_rate));
         Self {
             commands,
             finished,
             mode,
-            mixer: Some(Mixer::new(sample_rate, received, finish, board.clone())),
+            mixer: Some(Mixer::new(rate.clone(), received, finish, board.clone())),
             output: None,
             streamer: None,
             next: 1,
@@ -151,10 +155,18 @@ impl Audio {
             game_paused: false,
             headphones: false,
             board,
+            rate,
             transition: 0.0,
             filters: [[OPEN_LOW_PASS, OPEN_HIGH_PASS]; 2],
             ducking: None,
         }
+    }
+
+    /// The rate the mix plays at, in samples a second: the output device's,
+    /// once a sound has opened it. It can change when sound moves to
+    /// another device.
+    pub fn sample_rate(&self) -> u32 {
+        self.rate.load(Ordering::Relaxed)
     }
 
     /// The output device's name, once a sound has opened it. It changes
@@ -261,6 +273,15 @@ impl Audio {
     /// out; [`ReverbTimes::NONE`] for none.
     pub fn set_reverb(&mut self, times: ReverbTimes) {
         self.send(Command::Reverb(times));
+    }
+
+    /// The listener's room's echoes, for the 3D voices on the effects bus
+    /// to be played through in place of the reverb, as
+    /// [`steam_audio::RoomReverb`] gives them in [`ReverbMode::Convolution`];
+    /// `None` fades out the ones playing. Echoes made at another rate than
+    /// [`sample_rate`](Self::sample_rate) are not played.
+    pub fn set_echoes(&mut self, echoes: Option<Box<steam_audio::Convolution>>) {
+        self.send(Command::Echoes(echoes));
     }
 
     /// How strongly the Doppler effect changes a 3D voice's pitch: 1 as in

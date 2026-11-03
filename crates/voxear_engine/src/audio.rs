@@ -34,11 +34,12 @@ use voxear_render::Camera;
 use voxear_scene::{Destroying, EditorOnly, Name, Transform, WorldTransform};
 use voxear_scripting::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 
-use voxear_audio::steam_audio::{Heard, Muffle, Occlusion, SourceAcoustics, SteamAudio};
+use voxear_audio::steam_audio::{Heard, Muffle, Occlusion, RoomHeard, SourceAcoustics, SteamAudio};
 
 use crate::acoustics::Walls;
 pub use voxear_audio::{
-    Audio, Bus, Distance, Ducking, Listener, ReverbTimes, Sound, SoundInfo, VoiceId, VoiceParams, VoiceReport, probe,
+    Audio, Bus, Distance, Ducking, Listener, ReverbMode, ReverbTimes, Sound, SoundInfo, VoiceId, VoiceParams,
+    VoiceReport, probe,
 };
 
 use crate::content::Content;
@@ -501,6 +502,13 @@ pub struct GameAudio {
     /// settings, and whether they do now.
     pub reverb: bool,
     reverb_on: bool,
+    /// How the listener's room is heard each time the game starts, from
+    /// the project's `[audio]` settings, and how now; and whether its
+    /// echoes, asked for, would not start, so that it rings by its reverb
+    /// times instead.
+    pub reverb_mode: ReverbMode,
+    mode_now: ReverbMode,
+    fell_back: bool,
     /// How long the listener's room rings, as Steam Audio last said.
     room: ReverbTimes,
     /// The level's walls in Steam Audio, while the game runs, and whether
@@ -546,6 +554,9 @@ impl GameAudio {
             headphones: false,
             reverb: false,
             reverb_on: false,
+            reverb_mode: ReverbMode::Parametric,
+            mode_now: ReverbMode::Parametric,
+            fell_back: false,
             room: ReverbTimes::NONE,
             walls: Walls::default(),
             paths_read: false,
@@ -558,6 +569,7 @@ impl GameAudio {
     /// project's `[audio]` settings start them, whatever the last play left.
     pub fn start_game(&mut self) {
         self.audio.set_headphones(self.headphones);
+        self.set_reverb_mode(self.reverb_mode);
         self.set_reverb(self.reverb);
     }
 
@@ -566,6 +578,8 @@ impl GameAudio {
     pub fn set_reverb(&mut self, on: bool) {
         if self.reverb_on && !on {
             self.audio.set_reverb(ReverbTimes::NONE);
+            self.audio.set_echoes(None);
+            self.walls.forget_room();
             self.room = ReverbTimes::NONE;
         }
         self.reverb_on = on;
@@ -575,13 +589,40 @@ impl GameAudio {
         self.reverb_on
     }
 
+    /// How the room rings: by how long it does, for the mixer's own reverb,
+    /// or with its echoes, through Steam Audio's convolution. A change
+    /// works the room out again, and the reverb heard before fades as the
+    /// new one comes in.
+    pub fn set_reverb_mode(&mut self, mode: ReverbMode) {
+        if self.mode_now == mode {
+            return;
+        }
+        if self.mode_now == ReverbMode::Convolution {
+            self.audio.set_echoes(None);
+        }
+        self.mode_now = mode;
+        self.fell_back = false;
+        self.room = ReverbTimes::NONE;
+    }
+
+    /// How the room rings now: by its echoes only while they are asked for
+    /// and can be heard, with Steam Audio here; by how long it rings
+    /// otherwise.
+    pub fn reverb_mode(&self) -> ReverbMode {
+        match self.mode_now {
+            ReverbMode::Convolution if !self.fell_back && SteamAudio::get().is_ok() => ReverbMode::Convolution,
+            _ => ReverbMode::Parametric,
+        }
+    }
+
     /// Where the listener was last frame, while the game runs.
     pub fn listener_at(&self) -> Option<Vec3> {
         self.listener_was
     }
 
     /// How long the listener's room rings, in seconds in each band of
-    /// pitch, as Steam Audio last worked it out; none with reverb off.
+    /// pitch, as Steam Audio last worked it out; none with reverb off, or
+    /// heard by its echoes.
     pub fn room(&self) -> ReverbTimes {
         self.room
     }
@@ -631,9 +672,23 @@ impl GameAudio {
         if let Some(listener) = hearing {
             self.muffle_sources(world, &listener, &found);
         }
-        if let Some(times) = hearing.filter(|_| self.reverb_on).and_then(|at| self.walls.room(world, &at)) {
-            self.audio.set_reverb(times);
-            self.room = times;
+        if let Some(listener) = hearing.filter(|_| self.reverb_on) {
+            self.hear_room(world, &listener);
+        }
+    }
+
+    /// Gives the mixer how the listener's room rings, as Steam Audio last
+    /// worked it out, for the reverb mode asked for: its reverb times,
+    /// which also come when its echoes would not start, or its echoes.
+    fn hear_room(&mut self, world: &World, listener: &Listener) {
+        match self.walls.room(world, listener, self.mode_now, self.audio.sample_rate()) {
+            Some(RoomHeard::Times(times)) => {
+                self.audio.set_reverb(times);
+                self.room = times;
+                self.fell_back = self.mode_now == ReverbMode::Convolution;
+            }
+            Some(RoomHeard::Echoes(echoes)) => self.audio.set_echoes(Some(echoes)),
+            None => {}
         }
     }
 
@@ -869,14 +924,20 @@ impl GameAudio {
     fn bus_value(&mut self, bus: BusValue, set: Option<f32>) -> f32 {
         match (bus, set) {
             (BusValue::Reverb, Some(on)) => self.set_reverb(on != 0.0),
-            (BusValue::Reverb, None) => {}
+            (BusValue::ReverbMode, Some(mode)) => {
+                self.set_reverb_mode(if mode == 1.0 { ReverbMode::Convolution } else { ReverbMode::Parametric })
+            }
+            (BusValue::Reverb | BusValue::ReverbMode, None) => {}
             (
                 BusValue::Master | BusValue::Effects | BusValue::Music | BusValue::Headphones | BusValue::SteamAudio,
                 _,
             ) => return self.volume_value(bus, set),
             _ => return self.mix_value(bus, set),
         }
-        flag(self.reverb_on && SteamAudio::get().is_ok())
+        match bus {
+            BusValue::ReverbMode => flag(self.reverb_mode() == ReverbMode::Convolution),
+            _ => flag(self.reverb_on && SteamAudio::get().is_ok()),
+        }
     }
 
     fn volume_value(&mut self, bus: BusValue, set: Option<f32>) -> f32 {

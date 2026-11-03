@@ -96,6 +96,31 @@ reverb = true
 
 Music and 2D sounds are left dry, as the player hears them from nowhere in particular.
 
+## Convolution reverb
+
+The reverb above follows how long the room rings. That is cheap and suits almost every room, but it can't tell where the echoes come from. A long corridor, a hall with one far wall and a courtyard open to the sky on one side all sound alike if they ring for as long, and a small room that hardly rings sounds like no room at all.
+
+**Convolution** reverb plays the room's own echoes. Steam Audio works out how a sound made where the listener stands comes back off each wall: the near walls first, the far ones later, each from its own side. Every 3D sound on the Effects bus is then played through those echoes. A shout in a corridor flutters, the far end of a hall answers late, and the open side of a courtyard stays quiet. With headphones on, echoes come from above and behind too. Like the parametric reverb, it follows the listener from room to room, worked out a few times a second on a thread of its own.
+
+Turn it on for the whole project with reverb, in `voxear.toml`:
+
+```toml
+[audio]
+reverb = true
+reverb_mode = "convolution"
+```
+
+A script can change it with `Audio.ReverbMode` (see [[Playing Sounds from Scripts]]), for a quality choice in a sound options menu.
+
+| Reverb mode | Sounds like | Costs |
+| --- | --- | --- |
+| Parametric | How long the room rings, the same from every side | Next to nothing |
+| Convolution | The room's own echoes, each from its own side | About 2% of one core while sound plays, and about 35 MB |
+
+Use Convolution where rooms matter to the game: interiors, caves, dungeons, a level you find your way round by ear. Keep Parametric for large open levels, for slower machines, and where a smooth reverb is all you want. Convolution's echoes last two seconds, so a cathedral that rings for longer is cut short there.
+
+Convolution needs Steam Audio. If it isn't there, or its echoes won't start, the room rings the parametric way instead, and `Audio.ReverbMode` reads Parametric.
+
 ## Headphones
 
 Panned between two speakers, a 3D sound can only come from the left or the right. With headphones on, Voxear plays 3D sounds through Valve's **Steam Audio**, which gives each one the small differences in time and tone that a real head hears. A sound can then come from above, below or behind as well, and a player wearing headphones can tell where it is without looking.
@@ -108,6 +133,8 @@ headphones = true
 ```
 
 A build takes Steam Audio's library with it, about 40 MB, beside the game's program, and its licence in `Third Party/Steam Audio`. If your game never uses headphones, leave it out with `steam_audio = false` under `[audio]`. Without Steam Audio, sounds pan as they do with headphones off.
+
+To hear your game as players without Steam Audio will, start the editor with the environment variable `VOXEAR_STEAM_AUDIO` set to `off`.
 
 ## Who hears the game
 

@@ -49,6 +49,10 @@ public sealed class Noises : SystemBase
 		Audio.Headphones = true;
 		Log.Info($"headphones {Audio.Headphones}, available {Audio.HeadphonesAvailable}");
 		Audio.Headphones = false;
+
+		Audio.ReverbMode = ReverbMode.Convolution;
+		Log.Info($"reverb mode {Audio.ReverbMode}");
+		Audio.ReverbMode = ReverbMode.Parametric;
 	}
 
 	protected override void Update()
@@ -129,6 +133,7 @@ fn scripts_play_sounds_once_and_from_audio_sources() {
     said("after 22000, ducking True");
     let steam = if voxear_audio::steam_audio::SteamAudio::get().is_ok() { "True" } else { "False" };
     said(&format!("headphones {steam}, available {steam}"));
+    said(if steam == "True" { "reverb mode Convolution" } else { "reverb mode Parametric" });
 
     let world = &game.engine.world;
     let ground = world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, n)| n.0 == "Ground").unwrap().0;

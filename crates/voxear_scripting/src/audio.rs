@@ -127,7 +127,8 @@ impl SourceValue {
 
 /// Which volume: the master, over both buses, or a bus's; or, as 1 or 0,
 /// whether 3D voices are heard as through headphones, whether they can be,
-/// with Steam Audio here, and whether they ring as the listener's room does.
+/// with Steam Audio here, and whether they ring as the listener's room does,
+/// and how: 1 by its echoes, 0 by how long it rings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BusValue {
     Master,
@@ -149,6 +150,7 @@ pub enum BusValue {
     DuckThreshold,
     DuckAttack,
     DuckRelease,
+    ReverbMode,
 }
 
 impl BusValue {
@@ -169,6 +171,7 @@ impl BusValue {
             12 => Self::DuckThreshold,
             13 => Self::DuckAttack,
             14 => Self::DuckRelease,
+            15 => Self::ReverbMode,
             _ => return None,
         })
     }

@@ -149,6 +149,15 @@ Each time the game starts, Headphones starts as your project's `[audio] headphon
 
 `Audio.Reverb` turns the room's reverb on or off (see [[Sounds and Audio Sources]]). It starts as the project's `[audio] reverb` setting has it.
 
+`Audio.ReverbMode` chooses how the room rings: `ReverbMode.Parametric`, the default, follows how long it rings, and `ReverbMode.Convolution` plays the room's own echoes, for a little more of the processor. It makes a good high-quality choice in a sound options menu:
+
+```csharp
+var echoes = menu.Add(new Toggle("Room echoes", Audio.ReverbMode == ReverbMode.Convolution));
+echoes.Toggled += on => Audio.ReverbMode = on ? ReverbMode.Convolution : ReverbMode.Parametric;
+```
+
+It starts as the project's `[audio] reverb_mode` setting has it. Where the echoes can't play, as without Steam Audio, it reads `ReverbMode.Parametric`.
+
 ## Snapshots
 
 A game sounds different in different states: muffled under a pause menu, dull and distant underwater, thin over a radio. An `AudioSnapshot` holds a mix to move to: the three volumes, and a **low-pass** and a **high-pass** filter for each bus. A low-pass holds back the high notes above its cutoff, and a high-pass the low notes below its own. `Audio.TransitionTo` slides from the mix there is to a snapshot's over the time you give it:

@@ -64,6 +64,22 @@ public static class Audio
 	}
 
 	/// <summary>
+	/// How the room rings with Reverb on. Parametric, the default, follows how long the room rings. Convolution plays
+	/// sounds through the room's own echoes, as Steam Audio works them out, for about two percent of a core more. It
+	/// starts as the project's <c>[audio] reverb_mode</c> setting has it, and reads Parametric when the echoes cannot
+	/// play, as without Steam Audio, where the room rings the parametric way instead.
+	/// <code>
+	/// Audio.Reverb = true;
+	/// Audio.ReverbMode = ReverbMode.Convolution;
+	/// </code>
+	/// </summary>
+	public static ReverbMode ReverbMode
+	{
+		get { return NativeAudio.Bus(NativeAudio.BusReverbMode) == 1f ? ReverbMode.Convolution : ReverbMode.Parametric; }
+		set { NativeAudio.SetBus(NativeAudio.BusReverbMode, value == ReverbMode.Convolution ? 1f : 0f); }
+	}
+
+	/// <summary>
 	/// Holds back what is above <paramref name="hz"/> on a bus, as for sound heard underwater or through a wall, or
 	/// music muffled under a pause menu. AudioSnapshot.Open, 22000 Hz, lets everything by.
 	/// </summary>

@@ -8,8 +8,9 @@
 //! when one of the colliders changes, moves or goes.
 //!
 //! Steam Audio uses them twice: for what gets past them from each source
-//! with occlusion on, and, with reverb on, for how long the listener's room
-//! rings. Each starts the first time it is wanted.
+//! with occlusion on, and, with reverb on, for how the listener's room
+//! rings, by how long or by its echoes. Each starts the first time it is
+//! wanted.
 //!
 //! The editor bakes the paths sound takes round them into a `.paths` file
 //! beside the level (see [`paths_file`]). While a level with one plays,
@@ -22,8 +23,8 @@ use std::{
 
 pub use voxear_audio::steam_audio::{BakedPaths, bake_paths};
 use voxear_audio::{
-    Listener, ReverbTimes,
-    steam_audio::{AcousticMaterial, Acoustics, Heard, PathProbes, RoomReverb, SourceAcoustics, Wall},
+    Listener, ReverbMode,
+    steam_audio::{AcousticMaterial, Acoustics, Heard, PathProbes, RoomHeard, RoomReverb, SourceAcoustics, Wall},
 };
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::World;
@@ -119,12 +120,23 @@ impl Walls {
         }
     }
 
-    /// How long the listener's room rings, when that has been worked out
-    /// again since the last time.
-    pub fn room(&mut self, world: &World, listener: &Listener) -> Option<ReverbTimes> {
+    /// What the listener's room gives back, worked out as `mode` asks
+    /// since the last time, its echoes for a mixer at `sample_rate`. A
+    /// change of either starts the room again.
+    pub fn room(
+        &mut self,
+        world: &World,
+        listener: &Listener,
+        mode: ReverbMode,
+        sample_rate: u32,
+    ) -> Option<RoomHeard> {
         self.keep_up(world);
+        let other_rate = |room: &RoomReverb| mode == ReverbMode::Convolution && room.sample_rate() != sample_rate;
+        if self.room.as_ref().is_some_and(|(room, _)| room.mode() != mode || other_rate(room)) {
+            self.room = None;
+        }
         if self.room.is_none() {
-            self.room = self.started(RoomReverb::start()).map(|room| (room, None));
+            self.room = self.started(RoomReverb::start(mode, sample_rate)).map(|room| (room, None));
         }
         let (room, has) = self.room.as_mut()?;
         if *has != self.built {
@@ -132,6 +144,12 @@ impl Walls {
             *has = self.built;
         }
         room.hear_from(*listener)
+    }
+
+    /// Lets the room's thread go, as when reverb goes off: the echoes it
+    /// gave are faded out, and a room worked out again gives new ones.
+    pub fn forget_room(&mut self) {
+        self.room = None;
     }
 
     /// Builds the walls again when a collider changed since the last time.

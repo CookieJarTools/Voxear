@@ -77,9 +77,16 @@ pub struct PlayerSettings {
     /// Whether 3D sounds start out heard as through headphones.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub headphones: bool,
-    /// Whether 3D sounds start out ringing as the listener's room does.
+    /// Whether 3D sounds start out ringing as the listener's room does,
+    /// and how.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reverb: bool,
+    #[serde(default, with = "crate::project::ReverbModeName", skip_serializing_if = "is_parametric")]
+    pub reverb_mode: voxear_audio::ReverbMode,
+}
+
+fn is_parametric(mode: &voxear_audio::ReverbMode) -> bool {
+    *mode == voxear_audio::ReverbMode::Parametric
 }
 
 impl PlayerSettings {
@@ -199,7 +206,12 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             layers: LayerSettings { names: settings.layers.clone() },
             physics: PhysicsSettings { ignore: settings.ignore.clone() },
             localization: LocalizationSettings { languages: settings.languages.clone() },
-            audio: AudioSettings { headphones: settings.headphones, reverb: settings.reverb, steam_audio: true },
+            audio: AudioSettings {
+                headphones: settings.headphones,
+                reverb: settings.reverb,
+                reverb_mode: settings.reverb_mode,
+                steam_audio: true,
+            },
         },
     };
     let mut game = Game::with_content(project, engine, content);

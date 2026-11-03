@@ -311,7 +311,7 @@ impl AssetView {
                 match read.and_then(|text| StringTable::parse(&text)) {
                     Ok(table) => {
                         let languages = &game.project.file.localization.languages;
-                        view.strings = Some(StringsFields::build(ui, root, table, languages));
+                        view.strings = Some(StringsFields::build(ui, root, table, languages, file.clone()));
                     }
                     Err(error) => {
                         text_row(ui, rows, "Error", &format!("{error:#}"));
@@ -396,6 +396,7 @@ impl AssetView {
                     true => "A key cannot be empty".to_string(),
                     false => format!("Another entry has the key {key}"),
                 })),
+                StringsChange::Notice(notice) => Some(AssetAction::Notice(notice)),
             };
         }
         let fields = self.material.as_mut()?;

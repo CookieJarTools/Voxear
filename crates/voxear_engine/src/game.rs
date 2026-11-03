@@ -138,7 +138,8 @@ impl Game {
 
     /// Reads every string table in the project, in path order, into the
     /// world's [`Localization`]. The game starts in the language the
-    /// player's system is in, or the nearest the project has, or its own;
+    /// player's system is in, or the nearest the project has, or its own
+    /// (and as it starts, in the one the player chose last, see [`start`](Self::start));
     /// read again, as when a table changed, it stays in the one it is in.
     pub fn load_strings(&mut self) {
         let languages = &self.project.file.localization.languages;
@@ -197,6 +198,12 @@ impl Game {
     /// Loads the project's `start_level`.
     pub fn start(&mut self, renderer: Option<&mut Renderer>) -> Result<()> {
         self.audio.start_game();
+        // The language the player chose last time, kept beside the saves, over the system's.
+        if let Some(saved) = voxear_scripting::saved_language()
+            && let Some(localization) = self.engine.world.resource_mut::<Localization>()
+        {
+            localization.set_language(&saved);
+        }
         self.models = ModelWork::for_renderer(renderer.as_deref());
         let level = self
             .project

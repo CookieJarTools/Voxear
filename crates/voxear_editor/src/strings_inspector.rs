@@ -5,8 +5,15 @@
 //! language without the key's text says it is missing, and a text past the
 //! key's limit is marked too long. Entries drag into a new order, and Add
 //! Entry makes one.
+//!
+//! Under the entries, the translators' sheet: Export CSV writes the table
+//! as a spreadsheet beside it (`Menu.csv` for `Menu.strings`), and Import
+//! CSV reads that sheet back, showing what it adds, changes and takes away
+//! before Apply keeps it, as `vox loc import` does.
 
-use voxear_engine::localization::{StringEntry, StringTable};
+use std::path::PathBuf;
+
+use voxear_engine::localization::{StringEntry, StringTable, csv};
 use voxear_ui::{NodeId, Style, Ui};
 
 use crate::{
@@ -29,6 +36,19 @@ pub(crate) struct StringsFields {
     entries: Vec<EntryFields>,
     /// The field typed in last frame, to tell when it is let go of.
     focused: Option<NodeId>,
+    sheet: Sheet,
+}
+
+/// The translators' sheet beside the table, and the table it holds while
+/// its changes wait to be applied.
+struct Sheet {
+    file: PathBuf,
+    languages: Vec<String>,
+    export: NodeId,
+    import: NodeId,
+    apply: NodeId,
+    report: NodeId,
+    pending: Option<StringTable>,
 }
 
 /// What changed in a table.
@@ -39,12 +59,14 @@ pub(crate) enum StringsChange {
     Entries,
     /// A key that cannot be had, as one another entry has, put back.
     Refused(String),
+    /// Something to tell, as the sheet written.
+    Notice(String),
 }
 
 impl StringsFields {
     /// The table's entries under `root`, a field for each of `languages`
     /// and of any other language an entry has.
-    pub fn build(ui: &mut Ui, root: NodeId, table: StringTable, languages: &[String]) -> Self {
+    pub fn build(ui: &mut Ui, root: NodeId, table: StringTable, languages: &[String], file: PathBuf) -> Self {
         let mut columns = languages.to_vec();
         for (language, _) in table.entries.iter().flat_map(|entry| &entry.texts) {
             if !columns.contains(language) {
@@ -61,7 +83,8 @@ impl StringsFields {
         let entries = (table.entries.iter().enumerate())
             .map(|(place, entry)| entry_fields(ui, collection.items, place, entry, &columns))
             .collect();
-        Self { table, collection, entries, focused: None }
+        let sheet = Sheet::build(ui, root, file.with_extension("csv"), columns);
+        Self { table, collection, entries, focused: None, sheet }
     }
 
     /// The collection field's box of entries, whose slides a rebuild carries.
@@ -71,6 +94,9 @@ impl StringsFields {
 
     /// What changed this frame, written into [`table`](Self::table).
     pub fn update(&mut self, ui: &mut Ui) -> Option<StringsChange> {
+        if let Some(change) = self.update_sheet(ui) {
+            return Some(change);
+        }
         if let Some((from, to)) = collection::moved(ui, self.collection.items) {
             let entry = self.table.entries.remove(from);
             self.table.entries.insert(to.min(self.table.entries.len()), entry);
@@ -125,6 +151,42 @@ impl StringsFields {
         None
     }
 
+    /// Exports the sheet, reads it back to show what it would change, or
+    /// applies it, taking its table for this one.
+    fn update_sheet(&mut self, ui: &mut Ui) -> Option<StringsChange> {
+        let sheet = &mut self.sheet;
+        let name = sheet.file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if ui.clicked(sheet.export) {
+            let written = std::fs::write(&sheet.file, csv::to_csv(&self.table, &sheet.languages));
+            return Some(StringsChange::Notice(match written {
+                Ok(()) => format!("Written to {name}"),
+                Err(error) => format!("Could not write {name}: {error}"),
+            }));
+        }
+        if ui.clicked(sheet.import) {
+            sheet.pending = None;
+            let read = std::fs::read_to_string(&sheet.file).map_err(anyhow::Error::from);
+            let report = match read.and_then(|text| csv::from_csv(&text)) {
+                Ok(new) => {
+                    let report = describe(&csv::changes(&self.table, &new));
+                    sheet.pending = (report != NOTHING).then_some(new);
+                    report
+                }
+                Err(error) => format!("{name}: {error:#}"),
+            };
+            ui.set_text(sheet.report, &report);
+            ui.set_visible(sheet.report, true);
+            ui.set_visible(sheet.apply, sheet.pending.is_some());
+        }
+        if ui.clicked(sheet.apply)
+            && let Some(new) = sheet.pending.take()
+        {
+            self.table = new;
+            return Some(StringsChange::Entries);
+        }
+        None
+    }
+
     fn fields(&self) -> impl Iterator<Item = NodeId> + '_ {
         let each = |entry: &EntryFields| {
             [entry.key, entry.comment]
@@ -134,6 +196,44 @@ impl StringsFields {
         };
         self.entries.iter().flat_map(each)
     }
+}
+
+/// What a sheet read back says when it changes nothing.
+const NOTHING: &str = "Nothing changes";
+
+impl Sheet {
+    fn build(ui: &mut Ui, root: NodeId, file: PathBuf, languages: Vec<String>) -> Self {
+        let foldout = ui.foldout(root, "Translators' Sheet", true);
+        ui.add_class(foldout, "section");
+        ui.set_foldout_icon(foldout, "file");
+        let rows = ui.foldout_content(foldout).expect("a foldout has content");
+        let row = prop(ui, rows, "CSV");
+        let export = ui.button(row, "Export CSV");
+        let import = ui.button(row, "Import CSV");
+        let apply = ui.button(row, "Apply");
+        ui.set_visible(apply, false);
+        let report = ui.add_label(rows, "");
+        ui.add_class(report, "strings-report");
+        ui.set_visible(report, false);
+        Self { file, languages, export, import, apply, report, pending: None }
+    }
+}
+
+/// What a sheet read back would do, a line a key: `+` added, `~` changed
+/// with its languages, `-` taken away, under a count of each.
+fn describe(changes: &csv::Changes) -> String {
+    if changes.is_empty() {
+        return NOTHING.to_string();
+    }
+    let (added, changed, removed) = (changes.added.len(), changes.changed.len(), changes.removed.len());
+    let mut lines = vec![format!("{added} added, {changed} changed, {removed} removed")];
+    lines.extend(changes.added.iter().map(|key| format!("+ {key}")));
+    lines.extend(changes.changed.iter().map(|(key, languages)| match languages.is_empty() {
+        true => format!("~ {key}"),
+        false => format!("~ {key} ({})", languages.join(", ")),
+    }));
+    lines.extend(changes.removed.iter().map(|key| format!("- {key}")));
+    lines.join("\n")
 }
 
 /// An entry's item: its key, a field for each language, and its comment.

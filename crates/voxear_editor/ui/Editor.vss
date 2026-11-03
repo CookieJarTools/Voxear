@@ -3246,6 +3246,38 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     flex-shrink: 0;
 }
 
+/* What a string table's sheet read back would add, change and take away, a line a key. */
+.strings-report {
+    color: var(--vx-muted);
+    font-family: mono;
+    padding: 4px 0px;
+}
+
+/* The Localization Tables window: the search over its keys, and under the table the picked key's rename field and
+   where it is used. */
+.localization-search {
+    width: 220px;
+}
+
+.localization-details {
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--vx-line);
+    flex-shrink: 0;
+}
+
+.localization-rename {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
+.localization-usage {
+    color: var(--vx-muted);
+    font-family: mono;
+}
+
 /* The window's two views, Actions and Layout, each a column filling it. */
 .input-view {
     flex-direction: column;

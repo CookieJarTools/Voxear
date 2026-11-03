@@ -209,7 +209,7 @@ impl Editor {
 
     /// Opens the level open now again, as its file or one it stands on has
     /// changed. Nothing happens for a scene or prefab open on its own.
-    fn open_level_again(&mut self, renderer: &mut Renderer) -> Result<()> {
+    pub(super) fn open_level_again(&mut self, renderer: &mut Renderer) -> Result<()> {
         let Some(level) = self.game.levels.current().map(str::to_string) else { return Ok(()) };
         let db = self.game.content.db();
         let kind = db.guid_of(&level).and_then(|guid| db.get(guid)).map(|entry| entry.kind);

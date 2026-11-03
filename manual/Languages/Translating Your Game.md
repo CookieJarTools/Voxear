@@ -42,6 +42,14 @@ Select a table in the Project panel to edit it in the Inspector. Each entry show
 
 The editor reads your tables again whenever one changes, from the Inspector or from another program.
 
+### The Localization Tables window
+
+To see every key at once, open **Localization Tables** from the Window menu or the command palette. It lists every key of every table, a row each, with its table and its text in each of your languages. A dash marks text that is missing, and the line at the top counts the keys and the missing text.
+
+- **Search** finds keys by their name, their table or any of their text.
+- Pick a key to see where it is used: UI documents that bind to it (`@menu.play`), and scenes, prefabs, levels and scripts that name it in quotes, such as a `LocalizedString` field or `Localization.Get("menu.play")`.
+- **Rename** gives the picked key a new name in its table and everywhere it is used, then opens the level again to show the change. Save the level first, and stop playing, as renaming changes the files on disk.
+
 ## Text in UI documents
 
 In a UI document, write a key with `@` in front of it in place of a label's, a button's or a toggle's text. The element shows that key's text, and changes by itself when the game's language changes:
@@ -123,28 +131,29 @@ The scene saves the key, so a sign placed in a level reads in whatever language 
 
 ## Translating in a spreadsheet
 
-Translators often work in a spreadsheet. `vox loc export` writes a string table as a CSV file, with a row for each key and a column for each language, in the order your project lists them:
+Translators often work in a spreadsheet. Select a string table in the Project panel, and under its entries in the Inspector, **Export CSV** writes it as a CSV file beside it, `Menu.csv` for `Menu.strings`, with a row for each key and a column for each language, in the order your project lists them. Open it in any spreadsheet, such as LibreOffice Calc or Google Sheets, fill in the empty cells, and save it as CSV again with the same name. **Import CSV** then reads it back and says what it would change: each key it adds (`+`), changes (`~`, with the languages that changed) and takes away (`-`). **Apply** keeps it. The sheet replaces the table, so a row deleted from the sheet takes that key away.
+
+The same works from the command line, for a build server or a script. `vox loc export` writes the sheet:
 
 ```bash
 vox loc export Text/Menu.strings
 ```
 
-This writes `Text/Menu.csv` beside the table. Open it in any spreadsheet, such as LibreOffice Calc or Google Sheets, fill in the empty cells, and save it as CSV again. `vox loc import` then says what the sheet would change:
+`vox loc import` says what the sheet would change:
 
 ```bash
 vox loc import Menu.csv Text/Menu.strings
 ```
 
-It lists each key the sheet adds (`+`), changes (`~`, with the languages that changed) and takes away (`-`). When that is what you want, run it again with `--apply` to keep it. The sheet replaces the table, so a row deleted from the sheet takes that key away.
+When that is what you want, run it again with `--apply` to keep it.
 
 ## Which language the game starts in
 
-The game starts in the language the player's computer is set to, when your project has it. When it doesn't, the game takes the nearest language your project has, so a player in Portugal (`pt-PT`) gets `pt` when you have it. Otherwise the game is in your own language, the first you listed.
+The game starts in the language the player's computer is set to, when your project has it: on Windows, the first language in their language settings, and on Linux the one the system's `LANG` names. When your project doesn't have it, the game takes the nearest language it does have, so a player in Portugal (`pt-PT`) gets `pt` when you have it. Otherwise the game is in your own language, the first you listed.
+
+Once a player picks a language in your game, setting `Localization.Language` from your options menu, the game remembers it beside their saves and starts in it from then on, whatever their computer is set to.
 
 A key with no text in the game's language falls back the same way: `pt-BR`, then `pt`, then your own language. A text you haven't translated yet still shows, in the language you wrote it in.
-
-> [!NOTE]
-> On Windows the game starts in your own language for now. Reading Windows' language settings comes in a later version of Voxear.
 
 ## Text that won't fit
 

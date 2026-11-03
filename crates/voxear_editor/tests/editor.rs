@@ -6128,3 +6128,100 @@ fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
     assert!(editor.ui.has_class(glyphs[0], "round") && texts_in(&editor.ui, glyphs[0]) == ["A"]);
     shot(&mut renderer, "input-actions.png");
 }
+
+#[test]
+fn the_localization_tables_window_lists_finds_and_renames_keys() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let toml = dir.path().join("voxear.toml");
+    let project = std::fs::read_to_string(&toml).unwrap();
+    std::fs::write(&toml, format!("{project}\n\n[localization]\nlanguages = [\"en\", \"fr\"]\n")).unwrap();
+    let table = "format = 1\n\n[[entry]]\nkey = \"menu.play\"\nen = \"Play\"\nfr = \"Jouer\"\n\n\
+                 [[entry]]\nkey = \"menu.quit\"\nen = \"Quit\"\n";
+    std::fs::create_dir_all(dir.path().join("Text")).unwrap();
+    std::fs::write(dir.path().join("Text/Menu.strings"), table).unwrap();
+    std::fs::write(dir.path().join("Menu.vui"), "<vui>\n<Button text=\"@menu.play\" />\n</vui>\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.open_dock_panel_beside(dock, "localization", "scene");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let panel = editor.ui.find(editor.ui.root(), "localization-panel").unwrap();
+    assert!(texts_in(&editor.ui, panel).contains(&"2 keys   1 missing".to_string()), "{:?}", texts_in(&editor.ui, panel));
+    let list = editor.localization_panel().list().expect("the keys' list");
+    let rows = |editor: &voxear_editor::Editor| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, list, "entities-row", &mut rows);
+        let shown = rows.into_iter().filter(|&row| editor.ui.is_visible(row));
+        shown.map(|row| texts_in(&editor.ui, row).join(" ")).filter(|t| !t.trim().is_empty()).collect::<Vec<_>>()
+    };
+    assert!(rows(&editor).contains(&"menu.quit Menu.strings Quit —".to_string()), "{:?}", rows(&editor));
+
+    let search = editor.ui.find(panel, "localization-search").unwrap();
+    type_into(&mut editor.ui, search, "jouer");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(rows(&editor), ["menu.play Menu.strings Play Jouer"]);
+
+    editor.ui.set_selection(list, &[0]);
+    frame(&mut editor, &mut renderer);
+    let details = editor.localization_panel().details();
+    assert!(texts_in(&editor.ui, details).contains(&"Used once".to_string()), "{:?}", texts_in(&editor.ui, details));
+    shot(&mut renderer, "localization-tables.png");
+    let rename = editor.ui.find(details, "localization-rename").unwrap();
+    type_into(&mut editor.ui, rename, "menu.start");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    let ui = std::fs::read_to_string(dir.path().join("Menu.vui")).unwrap();
+    assert!(ui.contains("@menu.start"), "renamed where it is used: {ui}");
+    let table = std::fs::read_to_string(dir.path().join("Text/Menu.strings")).unwrap();
+    assert!(table.contains("key = \"menu.start\""));
+}
+
+#[test]
+fn a_string_table_goes_out_to_a_sheet_and_comes_back_from_one() {
+    use voxear_engine::localization::StringTable;
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project_file = dir.path().join("voxear.toml");
+    let text = std::fs::read_to_string(&project_file).unwrap() + "\n[localization]\nlanguages = [\"en\", \"fr\"]\n";
+    std::fs::write(&project_file, text).unwrap();
+    std::fs::write(dir.path().join("Menu.strings"), "[[entry]]\nkey = \"menu.play\"\nen = \"Play\"\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let menu = tile(&editor.ui, "Menu.strings").expect("the table in the Project panel");
+    click(&mut editor.ui, menu);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+
+    let export = with_text(&editor.ui, inspector, "Export CSV").expect("the sheet's buttons");
+    click(&mut editor.ui, export);
+    frame(&mut editor, &mut renderer);
+    let sheet = dir.path().join("Menu.csv");
+    let written = std::fs::read_to_string(&sheet).expect("the sheet beside the table");
+    assert!(written.starts_with("key,comment,limit,en,fr"), "{written}");
+
+    std::fs::write(&sheet, "key,comment,limit,en,fr\nmenu.play,,,Play,Jouer\nmenu.quit,,,Quit,Quitter\n").unwrap();
+    let import = with_text(&editor.ui, inspector, "Import CSV").unwrap();
+    click(&mut editor.ui, import);
+    frame(&mut editor, &mut renderer);
+    let shown = texts_in(&editor.ui, inspector);
+    let report = shown.iter().find(|text| text.starts_with("1 added")).expect("what the sheet would do");
+    assert!(report.contains("+ menu.quit") && report.contains("~ menu.play (fr)"), "{report}");
+    let table = StringTable::parse(&std::fs::read_to_string(dir.path().join("Menu.strings")).unwrap()).unwrap();
+    assert_eq!(table.entries.len(), 1, "nothing kept before Apply");
+
+    let apply = with_text(&editor.ui, inspector, "Apply").unwrap();
+    click(&mut editor.ui, apply);
+    frame(&mut editor, &mut renderer);
+    let table = StringTable::parse(&std::fs::read_to_string(dir.path().join("Menu.strings")).unwrap()).unwrap();
+    assert_eq!(table.entries.len(), 2);
+    assert_eq!(table.entries[0].text("fr"), Some("Jouer"));
+}

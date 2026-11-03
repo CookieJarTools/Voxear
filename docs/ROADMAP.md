@@ -585,13 +585,17 @@ share tools, systems, shaders, art and samples and add them to a project in a cl
   - [ ] a `LocalizedText` component (once there is text in the world), and observable `Localized(key)`
   - [x] CSV export, and import from a file with what it adds, changes and takes away shown first (`vox loc export` and
     `vox loc import`)
-  - [ ] CSV import from a URL, and from the editor
+  - [x] CSV export and import from the editor: Export CSV and Import CSV under a string table in the Inspector, with
+    what it adds, changes and takes away shown before Apply
+  - [ ] CSV import from a URL
   - [x] pseudo-localisation from the palette, accented, a third longer and in brackets, while editing and playing
   - [x] string tables edited in the Inspector: each entry's key, its text in each language and its comment, missing
     text and text past its limit marked, entries dragged into a new order
-  - [ ] a Localization Tables window: every table's keys against the languages, with search, find usages, and
+  - [x] a Localization Tables window: every table's keys against the languages, with search, find usages, and
     renaming a key everywhere it is used
-  - [ ] the saved choice, the store's language and Windows' languages in language detection
+  - [x] the saved choice and Windows' languages in language detection: the language a script picks kept beside the
+    saves and started in next time, and Windows' preferred UI languages
+  - [ ] the store's language (Steam's) in language detection
   - [ ] RTL mirroring and per-locale fonts
 - Audio:
   - [x] a Rust mixer on cpal: music and effects buses under a master volume, and voices that play, loop, pause and

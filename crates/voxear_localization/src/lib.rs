@@ -308,14 +308,41 @@ fn near(language: &str) -> Vec<String> {
     near
 }
 
-/// The language the player's system is in, from `LC_ALL`, `LC_MESSAGES`
-/// or `LANG`, as Linux keeps it.
+/// The language the player's system is in: on Windows the first of the
+/// languages the player prefers, as its settings list them; elsewhere
+/// from `LC_ALL`, `LC_MESSAGES` or `LANG`, as Linux keeps it.
 pub fn system_language() -> Option<String> {
+    #[cfg(windows)]
+    if let Some(preferred) = windows_language() {
+        return Some(preferred);
+    }
     ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
         .filter_map(|name| std::env::var(name).ok())
         .map(|value| normalize(&value))
         .find(|code| !code.is_empty())
+}
+
+/// The first of the languages Windows' settings list the player as
+/// preferring for its own text, as `fr-FR`.
+#[cfg(windows)]
+fn windows_language() -> Option<String> {
+    use windows_sys::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+    let (mut count, mut length) = (0u32, 0u32);
+    // SAFETY: asked first for the length, then given a buffer that long.
+    let sized =
+        unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, std::ptr::null_mut(), &mut length) };
+    if sized == 0 || length == 0 {
+        return None;
+    }
+    let mut names = vec![0u16; length as usize];
+    let read = unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, names.as_mut_ptr(), &mut length) };
+    if read == 0 {
+        return None;
+    }
+    // A list of names, each ended by a nought, the list by another.
+    let first = names.split(|&unit| unit == 0).next()?;
+    Some(normalize(&String::from_utf16_lossy(first))).filter(|code| !code.is_empty())
 }
 
 #[cfg(test)]

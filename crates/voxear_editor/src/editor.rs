@@ -80,6 +80,7 @@ use crate::{
     inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
     input_panel::InputPanel,
+    localization_panel::{LocalizationPanel, TablesAction},
     memory_panel::MemoryPanel,
     object_picker::{self, Chosen, ObjectPicker, PickFor},
     objs,
@@ -159,6 +160,7 @@ struct Nodes {
     frame_debugger_panel: NodeId,
     memory_panel: NodeId,
     audio_panel: NodeId,
+    localization_panel: NodeId,
     /// The Input Actions window's panel.
     input_panel: NodeId,
     /// The Build window's panel.
@@ -294,6 +296,7 @@ pub struct Editor {
     frame_debugger: FrameDebuggerPanel,
     memory_profiler: MemoryPanel,
     audio: AudioPanel,
+    localization: LocalizationPanel,
     input_actions: InputPanel,
     build_window: BuildWindow,
     /// A reference field's search, and what its keys picked, done next frame.
@@ -443,6 +446,7 @@ impl Editor {
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
             memory_panel: find(&ui, "memory-panel"),
             audio_panel: find(&ui, "audio-panel"),
+            localization_panel: find(&ui, "localization-panel"),
             input_panel: find(&ui, "input-panel"),
             build_panel: find(&ui, "build-panel"),
             tooltip: find(&ui, "tooltip"),
@@ -490,6 +494,7 @@ impl Editor {
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
+        let localization = LocalizationPanel::new(&mut ui, nodes.localization_panel);
         let input_actions = InputPanel::new(&mut ui, nodes.input_panel);
         let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
@@ -560,6 +565,7 @@ impl Editor {
             frame_debugger,
             memory_profiler,
             audio,
+            localization,
             input_actions,
             build_window,
             picker,
@@ -771,6 +777,12 @@ impl Editor {
             if let Some(picked) = self.audio.update(&mut self.ui, audio_shown, &self.game) {
                 self.select(Some(picked));
             }
+            let tables_shown = self.shown(self.nodes.localization_panel);
+            if let Some(TablesAction::Rename(table, old, new)) =
+                self.localization.update(&mut self.ui, tables_shown, &self.game)
+            {
+                self.rename_string_key(&table, &old, &new, renderer);
+            }
         }
         self.update_input_actions();
         self.update_drawer();
@@ -887,6 +899,11 @@ impl Editor {
     /// The Audio panel, the voices the game plays.
     pub fn audio_panel(&self) -> &AudioPanel {
         &self.audio
+    }
+
+    /// The Localization Tables window.
+    pub fn localization_panel(&self) -> &LocalizationPanel {
+        &self.localization
     }
 
     pub fn entities_panel(&self) -> &EntitiesPanel {

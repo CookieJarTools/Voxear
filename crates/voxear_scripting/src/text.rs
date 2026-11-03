@@ -51,8 +51,9 @@ pub(crate) unsafe extern "C" fn text_language(
     let code = unsafe { utf8(code, len) };
     let language = with_world(|world| {
         let localization = world.resource_mut::<Localization>()?;
-        if set != 0 {
-            localization.set_language(&code);
+        // A language the game has is kept, for the game to start in next time.
+        if set != 0 && localization.set_language(&code) {
+            crate::saves::save_language(localization.language());
         }
         Some(localization.language().to_string())
     });

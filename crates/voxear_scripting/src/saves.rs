@@ -552,6 +552,33 @@ fn report(error: SaveError) -> i32 {
     error.code()
 }
 
+/// The file beside the saves that keeps the language the player chose.
+const LANGUAGE_FILE: &str = "language.txt";
+
+/// The language the player last chose, by its code, kept beside the saves
+/// so a game starts in it again; none when they never chose one.
+pub fn saved_language() -> Option<String> {
+    read_language(&settings().folder?)
+}
+
+/// Keeps the language the player chose, for [`saved_language`].
+pub(crate) fn save_language(code: &str) {
+    let Some(folder) = settings().folder else { return };
+    if let Err(error) = write_language(&folder, code) {
+        tracing::warn!("could not keep the language chosen: {error}");
+    }
+}
+
+fn read_language(folder: &std::path::Path) -> Option<String> {
+    let code = std::fs::read_to_string(folder.join(LANGUAGE_FILE)).ok()?;
+    Some(code.trim().to_string()).filter(|code| !code.is_empty())
+}
+
+fn write_language(folder: &std::path::Path, code: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(folder)?;
+    std::fs::write(folder.join(LANGUAGE_FILE), code)
+}
+
 fn folder() -> Result<SaveFolder, SaveError> {
     settings().folder.map(SaveFolder::new).ok_or(SaveError::NoFolder)
 }
@@ -708,6 +735,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("voxear-saves-{}-{n}", std::process::id()));
         let folder = SaveFolder::new(dir.join("Saves"));
         (Scratch(dir), folder)
+    }
+
+    #[test]
+    fn the_language_chosen_is_kept_beside_the_saves() {
+        let (dir, _) = folder();
+        let saves = dir.0.join("Saves");
+        assert_eq!(read_language(&saves), None, "none chosen yet");
+        write_language(&saves, "pt-BR").unwrap();
+        assert_eq!(read_language(&saves).as_deref(), Some("pt-BR"));
     }
 
     #[test]

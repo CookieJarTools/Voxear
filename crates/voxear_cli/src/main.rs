@@ -31,6 +31,8 @@ use voxear_render::{
 use voxear_scene::{Name, Transform};
 use voxear_scripting::find_dotnet;
 
+mod package;
+
 /// Counts Rust's heap, for the memory profiler.
 #[global_allocator]
 static ALLOCATOR: voxear_core::memory::CountingAllocator = voxear_core::memory::CountingAllocator;
@@ -164,6 +166,11 @@ enum Commands {
     Loc {
         #[command(subcommand)]
         command: LocCommand,
+    },
+    /// Add, remove and update the project's packages, or start and publish one.
+    Package {
+        #[command(subcommand)]
+        command: package::PackageCommand,
     },
     /// Run a project in a window, or headless for a number of frames.
     Run {
@@ -323,6 +330,7 @@ fn main() -> Result<()> {
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
         Commands::Loc { command: LocCommand::Export { table, out } } => export_strings(&table, out.as_deref()),
         Commands::Loc { command: LocCommand::Import { sheet, table, apply } } => import_strings(&sheet, &table, apply),
+        Commands::Package { command } => package::run(command),
         Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays, stats } => {
             let prepare = Prepare { build: !no_build, bundles, overlays };
             run(&project, headless, frames, prepare, renderdoc, stats)

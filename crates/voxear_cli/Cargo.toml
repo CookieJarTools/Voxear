@@ -35,6 +35,8 @@ tracing.workspace = true
 voxear_render.workspace = true
 png.workspace = true
 voxear_assets.workspace = true
+voxear_packages.workspace = true
+semver.workspace = true
 
 [features]
 # Profiling samples as Tracy zones: `cargo build --features tracy`.

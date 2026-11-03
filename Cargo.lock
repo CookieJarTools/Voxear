@@ -3846,6 +3846,7 @@ dependencies = [
  "anyhow",
  "clap",
  "png",
+ "semver",
  "serde_json",
  "tempfile",
  "tracing",
@@ -3854,6 +3855,7 @@ dependencies = [
  "voxear_editor",
  "voxear_engine",
  "voxear_localization",
+ "voxear_packages",
  "voxear_render",
  "voxear_rhi",
  "voxear_scene",
@@ -3996,6 +3998,20 @@ dependencies = [
  "tracing",
  "ureq",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "voxear_packages"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "semver",
+ "serde",
+ "tar",
+ "tempfile",
+ "toml",
+ "toml_edit",
+ "tracing",
 ]
 
 [[package]]

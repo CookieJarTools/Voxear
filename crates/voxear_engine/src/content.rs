@@ -21,7 +21,7 @@ use voxear_assets::{
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
-    CookedModel, ImportedModel, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
+    CookedModel, ImportedModel, Leaves, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
     IesProfile, MeshTriangles, Primitive, Renderer, TextureId, TextureSource,
 };
 use voxear_scene::Destroying;
@@ -78,6 +78,10 @@ pub struct MaterialData {
     /// written, 0 for the rest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_flutter: Option<f32>,
+    /// What foliage's leaves do through the year in a level with Seasons:
+    /// fall towards winter, turn colour but stay, or stay as made.
+    #[serde(default, skip_serializing_if = "is_falling")]
+    pub leaves: Leaves,
 }
 
 impl Default for MaterialData {
@@ -96,6 +100,7 @@ impl Default for MaterialData {
             ior: default_ior(),
             wind_bend: None,
             wind_flutter: None,
+            leaves: Leaves::Fall,
         }
     }
 }
@@ -132,6 +137,10 @@ fn default_ior() -> f32 {
 
 fn is_default_ior(ior: &f32) -> bool {
     *ior == default_ior()
+}
+
+fn is_falling(leaves: &Leaves) -> bool {
+    *leaves == Leaves::Fall
 }
 
 fn is_black(color: &[f32; 3]) -> bool {
@@ -175,6 +184,7 @@ impl MaterialData {
             ior: self.ior,
             wind_bend: self.wind_bend(),
             wind_flutter: self.wind_flutter(),
+            leaves: self.leaves,
             ..MaterialDesc::default()
         }
     }
@@ -184,7 +194,7 @@ impl MaterialData {
         let [r, g, b] = self.color.map(f32::to_bits);
         let [er, eg, eb] = self.emissive.map(f32::to_bits);
         let (metallic, roughness, ior) = (self.metallic.to_bits(), self.roughness.to_bits(), self.ior.to_bits());
-        let flags = u32::from(self.foliage) | u32::from(self.glass) << 1;
+        let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2;
         let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits()];
         let values = [r, g, b, metallic, roughness, er, eg, eb, flags, ior, wind[0], wind[1]];
         (values, MaterialMap::ALL.map(|map| self.map(map)))

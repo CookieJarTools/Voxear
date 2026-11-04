@@ -2703,6 +2703,64 @@ fn foliage_bends_away_from_what_passes_through_it_and_springs_back() {
     assert!(lean(&after).abs() < 2.0, "and springs back once it has gone: {}", lean(&after));
 }
 
+/// A green leafy ball over pale ground, the sun behind it throwing its
+/// shadow towards the camera, at `time` of the year in Seasons that turn
+/// every plant together, or with no Seasons.
+fn seasons_render(time: Option<f32>, leaves: voxear_render::Leaves) -> Option<Vec<u8>> {
+    use voxear_render::{Seasons, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let looking = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.3, 1.0).normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 2.0, -5.0), looking, Vec3::ONE)));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let pale = renderer.add_material(&MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let leaf = MaterialDesc { base_color: [0.15, 0.5, 0.08, 1.0], foliage: true, leaves, ..MaterialDesc::default() };
+    let material = renderer.add_material(&leaf).unwrap();
+    world.spawn((MeshRenderer::new(sphere, material), Transform::new(Vec3::new(0.0, 1.5, 0.0), Quat::IDENTITY, Vec3::splat(2.0))));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.6, -0.8).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(time) = time {
+        world.spawn((Seasons { time_of_year: time, variation: 0.0, ..Seasons::default() }, Transform::default()));
+    }
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn leaves_turn_in_autumn_and_fall_with_their_shadow_in_winter() {
+    use voxear_render::{Leaves, Season};
+    let render = |season: Option<Season>, leaves| seasons_render(season.map(Season::time), leaves);
+    let Some(none) = render(None, Leaves::Fall) else { return };
+    let (summer, autumn) = (render(Some(Season::Summer), Leaves::Fall).unwrap(), render(Some(Season::Autumn), Leaves::Fall).unwrap());
+    let (winter, grass) = (render(Some(Season::Winter), Leaves::Fall).unwrap(), render(Some(Season::Winter), Leaves::Turn).unwrap());
+    keep_image("seasons summer.png", &summer);
+    keep_image("seasons autumn.png", &autumn);
+    keep_image("seasons winter.png", &winter);
+    keep_image("seasons winter grass.png", &grass);
+    let (ball, shadow) = ((320, 150), (320, 300));
+    let sum = |pixel: [i32; 3]| pixel.iter().sum::<i32>();
+    let difference = |a: [i32; 3], b: [i32; 3]| a.iter().zip(b).map(|(x, y)| (x - y).abs()).max().unwrap_or(0);
+    assert!(difference(rgb_at(&summer, ball), rgb_at(&none, ball)) <= 2, "summer leaves are as made");
+    let [r, g, _] = rgb_at(&summer, ball);
+    assert!(g > r, "green in summer: {:?}", rgb_at(&summer, ball));
+    let [r, g, _] = rgb_at(&autumn, ball);
+    assert!(r > g, "and orange in autumn: {:?}", rgb_at(&autumn, ball));
+    // Bare in winter: the ground shows where the ball was, and its shadow has gone with it.
+    assert!(sum(rgb_at(&winter, ball)) > sum(rgb_at(&summer, ball)) + 60, "the leaves have fallen: {:?}", rgb_at(&winter, ball));
+    if renderer().is_some_and(|r| r.uses_mesh_shaders()) {
+        let (shaded, lit) = (sum(rgb_at(&summer, shadow)), sum(rgb_at(&winter, shadow)));
+        assert!(lit > shaded + 60, "their shadow falls with them: {shaded} under leaves, {lit} bare");
+        let darkest = (200..360).flat_map(|y| (200..440).map(move |x| (x, y))).map(|p| sum(rgb_at(&winter, p))).min();
+        assert!(darkest.unwrap_or(0) > sum(rgb_at(&none, (60, 300))) - 40, "and none of it stays: {darkest:?}");
+    }
+    // Leaves that turn but stay are still there, snowy.
+    assert!(difference(rgb_at(&grass, ball), rgb_at(&winter, ball)) > 20, "grass keeps its leaves: {:?}", rgb_at(&grass, ball));
+}
+
 /// A field of small dark plants scattered over pale ground ahead of the
 /// camera, 80 metres deep, as one Foliage, drawn out to `draw` metres.
 fn foliage_render(draw: f32) -> Option<(Vec<u8>, RenderStats)> {

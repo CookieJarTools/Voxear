@@ -25,6 +25,7 @@ use crate::{
     mesh::{MeshData, Primitive, Vertex},
     meshlets::MeshMeshlets,
     payload::{Payload, tile_len},
+    seasons::Leaves,
 };
 
 const MAX_VERTICES: u64 = 2 * 1024 * 1024;
@@ -75,6 +76,9 @@ pub struct MaterialDesc {
     pub wind_bend: f32,
     /// How much its leaves flutter in the wind, along their faces.
     pub wind_flutter: f32,
+    /// What its leaves do through the year, where it is foliage and the
+    /// level has Seasons.
+    pub leaves: Leaves,
 }
 
 impl Default for MaterialDesc {
@@ -95,6 +99,7 @@ impl Default for MaterialDesc {
             ior: 1.5,
             wind_bend: 0.0,
             wind_flutter: 0.0,
+            leaves: Leaves::Fall,
         }
     }
 }
@@ -734,7 +739,8 @@ impl Assets {
             emissive_texture: texture(desc.emissive_texture),
             flags: if desc.normal_texture.is_some() { MATERIAL_NORMAL_MAP } else { 0 }
                 | if desc.foliage { MATERIAL_FOLIAGE } else { 0 }
-                | if desc.glass { MATERIAL_GLASS } else { 0 },
+                | if desc.glass { MATERIAL_GLASS } else { 0 }
+                | desc.leaves.flags(),
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),
             ior: desc.ior.max(1.0),

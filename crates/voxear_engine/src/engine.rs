@@ -8,6 +8,7 @@ use voxear_scene::{
     Lifecycle, Name, Parent, Phase, Placement, SceneComponents, Transform, propagate_transforms,
     register_obj_components,
 };
+use voxear_render::Seasons;
 use voxear_scripting::{PhysicsEventData, Reloaded, ScriptRuntime};
 
 use crate::{
@@ -435,6 +436,10 @@ impl Engine {
         // Last frame's debug draw has been seen; its shapes count down.
         voxear_core::debug_draw::advance(self.time.delta);
         self.sync_script_time(self.time.delta);
+        let year = self.world.query_ref::<&Seasons>().into_iter().next().map(|seasons| seasons.time_of_year);
+        if let Some(scripts) = self.scripts.as_mut() {
+            scripts.publish_time_of_year(year);
+        }
         if let Some(scripts) = self.scripts.as_mut() {
             profile_scope!("Script Continuations");
             scripts.update(&mut self.world);
@@ -487,6 +492,12 @@ impl Engine {
             self.world.despawn(entity);
         }
         self.run_stage("Last");
+        // The year scripts turned turns the level's first Seasons.
+        if let Some(time) = self.scripts.as_mut().and_then(ScriptRuntime::take_time_of_year)
+            && let Some(seasons) = self.world.query::<&mut Seasons>().into_iter().next()
+        {
+            seasons.time_of_year = time;
+        }
     }
 
     /// A stage's systems: the scripts' C# systems first, then the engine's,

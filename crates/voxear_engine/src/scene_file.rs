@@ -58,7 +58,7 @@ use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    Plant, Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone, scatter,
+    Plant, Seasons, Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -270,6 +270,9 @@ pub struct ObjData {
     /// A Wind Zone, blowing along the Obj's +Z over the whole level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_zone: Option<WindZone>,
+    /// Seasons, turning the level's plants through the year.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seasons: Option<Seasons>,
     /// Bends foliage out of the Obj's way as it passes through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage_interaction: Option<FoliageInteraction>,
@@ -322,6 +325,7 @@ impl ObjData {
             layer: None,
             collider: None,
             wind_zone: None,
+            seasons: None,
             foliage_interaction: None,
             foliage: None,
             rigidbody: None,
@@ -1046,6 +1050,9 @@ fn capture_instance(
     if root.wind_zone.is_some() && root.wind_zone != prefab_root.wind_zone {
         instance.wind_zone = root.wind_zone;
     }
+    if root.seasons.is_some() && root.seasons != prefab_root.seasons {
+        instance.seasons = root.seasons;
+    }
     if root.foliage_interaction.is_some() && root.foliage_interaction != prefab_root.foliage_interaction {
         instance.foliage_interaction = root.foliage_interaction;
     }
@@ -1150,6 +1157,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
         put("wind_zone", whole(&wind, &WindZone::default())?);
+    }
+    if let Some(seasons) = actual.seasons.filter(|s| Some(*s) != expected.seasons) {
+        put("seasons", whole(&seasons, &Seasons::default())?);
     }
     if let Some(push) = actual.foliage_interaction.filter(|p| Some(*p) != expected.foliage_interaction) {
         put("foliage_interaction", whole(&push, &FoliageInteraction::default())?);
@@ -1373,6 +1383,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();
+    obj.seasons = world.get::<Seasons>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.foliage = world.get::<FoliageSource>(entity).map(|source| {
         let mut data = source.0.clone();
@@ -1695,6 +1706,19 @@ mod tests {
         assert!(!toml::to_string(&plain).unwrap().contains("stars"));
         let dim: SkyData = toml::from_str(&format!("{colours}\nstars = 0.5")).unwrap();
         assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&dim).unwrap()).unwrap().stars, 0.5);
+    }
+
+    #[test]
+    fn seasons_read_and_write_back_with_each_seasons_look_and_leaves_on_materials() {
+        let text = "id = 1\nname = \"Seasons\"\n[seasons]\ntime_of_year = 2.5\n[seasons.autumn]\ncolor_amount = 0.5";
+        let obj: ObjData = toml::from_str(text).unwrap();
+        let seasons = obj.seasons.expect("the seasons are read");
+        assert_eq!((seasons.time_of_year, seasons.autumn.color_amount), (2.5, 0.5));
+        assert_eq!(seasons.autumn.leaves, Seasons::default().autumn.leaves, "the rest of autumn as it starts");
+        assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().seasons, Some(seasons));
+        let grass: MaterialData = toml::from_str("foliage = true\nleaves = \"turn\"").unwrap();
+        assert_eq!(grass.leaves, voxear_render::Leaves::Turn);
+        assert!(!toml::to_string(&MaterialData::default()).unwrap().contains("leaves"), "leaves that fall are not written");
     }
 
     #[test]

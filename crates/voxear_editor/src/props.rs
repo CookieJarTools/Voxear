@@ -23,7 +23,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    SkyBody, VolumeShape, WindZone,
+    Season, Seasons, SkyBody, VolumeShape, WindZone,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -73,6 +73,7 @@ pub enum Part {
     Wheel,
     PostVolume,
     WindZone,
+    Seasons,
     FoliageInteraction,
     Foliage,
     /// A script, by its full type name.
@@ -100,6 +101,7 @@ impl Part {
             Part::Wheel => "wheel".into(),
             Part::PostVolume => "post_volume".into(),
             Part::WindZone => "wind_zone".into(),
+            Part::Seasons => "seasons".into(),
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
             Part::Behaviour(name) => name.clone(),
@@ -124,6 +126,7 @@ impl Part {
             Part::Wheel => "Wheel",
             Part::PostVolume => "Post Volume",
             Part::WindZone => "Wind Zone",
+            Part::Seasons => "Seasons",
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
@@ -147,6 +150,7 @@ impl Part {
             Part::Wheel => "rotate",
             Part::PostVolume => "panels",
             Part::WindZone => "move",
+            Part::Seasons => "globe",
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
             Part::Behaviour(_) => "code",
@@ -189,6 +193,19 @@ pub enum Prop {
     WindGustSize,
     WindGustSpeed,
     WindTurbulence,
+    /// A Seasons' time of year, and the season it is nearest, which the
+    /// rows of a season's look below it are for.
+    TimeOfYear,
+    Season,
+    SeasonColor(Season),
+    SeasonColorAmount(Season),
+    SeasonLeaves(Season),
+    SeasonSnow(Season),
+    SeasonVariation,
+    SeasonPatchSize,
+    Dryness,
+    DryColor,
+    Wetness,
     PushRadius,
     PushStrength,
     FoliageDraw,
@@ -340,6 +357,17 @@ impl Prop {
             Prop::WindStrength | Prop::WindGusts | Prop::WindGustSize | Prop::WindGustSpeed | Prop::WindTurbulence => {
                 Part::WindZone
             }
+            Prop::TimeOfYear
+            | Prop::Season
+            | Prop::SeasonColor(_)
+            | Prop::SeasonColorAmount(_)
+            | Prop::SeasonLeaves(_)
+            | Prop::SeasonSnow(_)
+            | Prop::SeasonVariation
+            | Prop::SeasonPatchSize
+            | Prop::Dryness
+            | Prop::DryColor
+            | Prop::Wetness => Part::Seasons,
             Prop::PushRadius | Prop::PushStrength => Part::FoliageInteraction,
             Prop::FoliageDraw | Prop::FoliageFade | Prop::FoliageShadow => Part::Foliage,
             Prop::Sound
@@ -453,6 +481,16 @@ impl Prop {
             Prop::WindGustSize => "gust_size",
             Prop::WindGustSpeed => "gust_speed",
             Prop::WindTurbulence => "turbulence",
+            Prop::TimeOfYear | Prop::Season => "time_of_year",
+            Prop::SeasonColor(season) => return format!("{}.color", season_key(*season)),
+            Prop::SeasonColorAmount(season) => return format!("{}.color_amount", season_key(*season)),
+            Prop::SeasonLeaves(season) => return format!("{}.leaves", season_key(*season)),
+            Prop::SeasonSnow(season) => return format!("{}.snow", season_key(*season)),
+            Prop::SeasonVariation => "variation",
+            Prop::SeasonPatchSize => "patch_size",
+            Prop::Dryness => "dryness",
+            Prop::DryColor => "dry_color",
+            Prop::Wetness => "wetness",
             Prop::PushRadius => "radius",
             Prop::PushStrength => "strength",
             Prop::FoliageDraw => "draw_distance",
@@ -590,6 +628,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<WindZone>(entity) {
         parts.push(Part::WindZone);
     }
+    if world.has::<Seasons>(entity) {
+        parts.push(Part::Seasons);
+    }
     if world.has::<FoliageInteraction>(entity) {
         parts.push(Part::FoliageInteraction);
     }
@@ -691,6 +732,23 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
         Part::WindZone => {
             vec![Prop::WindStrength, Prop::WindGusts, Prop::WindGustSize, Prop::WindGustSpeed, Prop::WindTurbulence]
+        }
+        // The look of the season the year is nearest, under the choice of it.
+        Part::Seasons => {
+            let season = world.get::<Seasons>(entity).map_or(Season::Summer, |seasons| seasons.season());
+            vec![
+                Prop::TimeOfYear,
+                Prop::Season,
+                Prop::SeasonColor(season),
+                Prop::SeasonColorAmount(season),
+                Prop::SeasonLeaves(season),
+                Prop::SeasonSnow(season),
+                Prop::SeasonVariation,
+                Prop::SeasonPatchSize,
+                Prop::Dryness,
+                Prop::DryColor,
+                Prop::Wetness,
+            ]
         }
         Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
         Part::Foliage => vec![Prop::FoliageDraw, Prop::FoliageFade, Prop::FoliageShadow],
@@ -846,6 +904,17 @@ pub fn label(prop: &Prop) -> String {
         Prop::WindGustSize => "Gust size",
         Prop::WindGustSpeed => "Gust speed",
         Prop::WindTurbulence => "Turbulence",
+        Prop::TimeOfYear => "Time of year",
+        Prop::Season => "Season",
+        Prop::SeasonColor(_) => "Colour",
+        Prop::SeasonColorAmount(_) => "Colour amount",
+        Prop::SeasonLeaves(_) => "Leaves",
+        Prop::SeasonSnow(_) => "Snow",
+        Prop::SeasonVariation => "Variation",
+        Prop::SeasonPatchSize => "Patch size",
+        Prop::Dryness => "Dryness",
+        Prop::DryColor => "Dry colour",
+        Prop::Wetness => "Wetness",
         Prop::PushRadius => "Radius",
         Prop::PushStrength => "Strength",
         Prop::FoliageDraw => "Draw distance",
@@ -952,6 +1021,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
     match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
         (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
+        (Prop::SeasonPatchSize, _) => Some("m"),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -1049,6 +1119,9 @@ pub fn add(
         Part::WindZone => {
             world.insert(entity, WindZone::default());
         }
+        Part::Seasons => {
+            world.insert(entity, Seasons::default());
+        }
         Part::FoliageInteraction => {
             world.insert(entity, FoliageInteraction::default());
         }
@@ -1073,6 +1146,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
+        Part::Seasons => drop(world.remove::<Seasons>(entity)),
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
         Part::Foliage => {
             world.remove::<Foliage>(entity);
@@ -1267,6 +1341,20 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::WindGustSize => Value::Number(world.get::<WindZone>(entity)?.gust_size),
         Prop::WindGustSpeed => Value::Number(world.get::<WindZone>(entity)?.gust_speed),
         Prop::WindTurbulence => Value::Number(world.get::<WindZone>(entity)?.turbulence),
+        Prop::TimeOfYear => Value::Number(round3(world.get::<Seasons>(entity)?.time_of_year)),
+        Prop::Season => {
+            let season = world.get::<Seasons>(entity)?.season();
+            Value::Choice(season as usize, Season::ALL.iter().map(|s| s.name().to_string()).collect())
+        }
+        Prop::SeasonColor(season) => Value::Color(world.get::<Seasons>(entity)?.look(*season).color.map(round3)),
+        Prop::SeasonColorAmount(season) => Value::Number(world.get::<Seasons>(entity)?.look(*season).color_amount),
+        Prop::SeasonLeaves(season) => Value::Number(world.get::<Seasons>(entity)?.look(*season).leaves),
+        Prop::SeasonSnow(season) => Value::Number(world.get::<Seasons>(entity)?.look(*season).snow),
+        Prop::SeasonVariation => Value::Number(world.get::<Seasons>(entity)?.variation),
+        Prop::SeasonPatchSize => Value::Number(world.get::<Seasons>(entity)?.patch_size),
+        Prop::Dryness => Value::Number(world.get::<Seasons>(entity)?.dryness),
+        Prop::DryColor => Value::Color(world.get::<Seasons>(entity)?.dry_color.map(round3)),
+        Prop::Wetness => Value::Number(world.get::<Seasons>(entity)?.wetness),
         Prop::PushRadius => Value::Number(world.get::<FoliageInteraction>(entity)?.radius),
         Prop::PushStrength => Value::Number(world.get::<FoliageInteraction>(entity)?.strength),
         Prop::FoliageDraw => Value::Number(world.get::<Foliage>(entity)?.draw_distance),
@@ -1932,6 +2020,35 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindTurbulence, Value::Number(n)) => {
             with(world, entity, |wind: &mut WindZone| wind.turbulence = n.max(0.0))
         }
+        (Prop::TimeOfYear, Value::Number(n)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.time_of_year = n.rem_euclid(4.0))
+        }
+        (Prop::Season, Value::Choice(index, _)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.set(Season::ALL[index.min(3)]))
+        }
+        (Prop::SeasonColor(season), Value::Color(color)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.look_mut(*season).color = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::SeasonColorAmount(season), Value::Number(n)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.look_mut(*season).color_amount = n.clamp(0.0, 1.0))
+        }
+        (Prop::SeasonLeaves(season), Value::Number(n)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.look_mut(*season).leaves = n.clamp(0.0, 1.0))
+        }
+        (Prop::SeasonSnow(season), Value::Number(n)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.look_mut(*season).snow = n.clamp(0.0, 1.0))
+        }
+        (Prop::SeasonVariation, Value::Number(n)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.variation = n.clamp(0.0, 1.0))
+        }
+        (Prop::SeasonPatchSize, Value::Number(n)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.patch_size = n.max(0.1))
+        }
+        (Prop::Dryness, Value::Number(n)) => with(world, entity, |seasons: &mut Seasons| seasons.dryness = n.clamp(0.0, 1.0)),
+        (Prop::DryColor, Value::Color(color)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.dry_color = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::Wetness, Value::Number(n)) => with(world, entity, |seasons: &mut Seasons| seasons.wetness = n.clamp(0.0, 1.0)),
         (Prop::VolumePriority, Value::Number(n)) => {
             with(world, entity, |volume: &mut PostVolume| volume.priority = n.round() as i32)
         }
@@ -2129,6 +2246,16 @@ fn guid_label(game: &Game, guid: Option<voxear_assets::AssetGuid>) -> String {
     }
 }
 
+/// A season's table in a Seasons, as scene files write it.
+fn season_key(season: Season) -> &'static str {
+    match season {
+        Season::Spring => "spring",
+        Season::Summer => "summer",
+        Season::Autumn => "autumn",
+        Season::Winter => "winter",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2140,5 +2267,20 @@ mod tests {
         assert_eq!(nice_name("_speed"), "Speed");
         assert_eq!(nice_name("Level"), "Level");
         assert_eq!(nice_name("lamp2"), "Lamp 2");
+    }
+
+    #[test]
+    fn seasons_show_the_look_of_the_season_picked() {
+        let mut world = World::new();
+        let entity = world.spawn((Seasons::default(),));
+        let types = ScriptTypes::default();
+        let shown = |world: &World| props(world, entity, &Part::Seasons, &types);
+        assert!(shown(&world).contains(&Prop::SeasonColor(Season::Summer)), "summer's look, where the year starts");
+        assert!(set_component(&mut world, entity, &Prop::Season, Value::Choice(2, Vec::new())));
+        assert_eq!(world.get::<Seasons>(entity).unwrap().time_of_year, 2.0, "picking autumn turns the year to it");
+        assert!(shown(&world).contains(&Prop::SeasonLeaves(Season::Autumn)), "and shows autumn's look");
+        assert!(set_component(&mut world, entity, &Prop::SeasonColorAmount(Season::Autumn), Value::Number(0.4)));
+        assert_eq!(world.get::<Seasons>(entity).unwrap().autumn.color_amount, 0.4);
+        assert_eq!(Prop::SeasonColorAmount(Season::Autumn).lock_key(), "autumn.color_amount");
     }
 }

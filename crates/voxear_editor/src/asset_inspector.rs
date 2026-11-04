@@ -28,6 +28,7 @@
 
 use voxear_assets::{AssetDb, AssetGuid, AssetKind, MaterialRemap};
 use voxear_engine::{Game, MaterialData, MaterialMap, localization::StringTable, script_types::ScriptTypes};
+use voxear_render::Leaves;
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -187,6 +188,8 @@ struct MaterialFields {
     foliage: NodeId,
     /// How much it bends in the wind, and its leaves flutter.
     wind: [NodeId; 2],
+    /// What its leaves do through the year.
+    leaves: NodeId,
     glass: NodeId,
     ior: NodeId,
 }
@@ -420,7 +423,8 @@ impl AssetView {
                 return Some(AssetAction::Ping(path));
             }
         }
-        let changed = fields.color.iter().chain(&fields.emissive).chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.glass, &fields.ior])
+        let changed = fields.color.iter().chain(&fields.emissive)
+            .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -445,6 +449,7 @@ impl AssetView {
             data.wind_flutter = Some(read(flutter, data.wind_flutter()).clamp(0.0, 4.0));
         }
         data.foliage = foliage;
+        data.leaves = Leaves::ALL[ui.selected_option(fields.leaves).min(Leaves::ALL.len() - 1)];
         data.glass = ui.is_checked(fields.glass);
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), data.clone()))
@@ -664,12 +669,16 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> 
     let foliage = ui.toggle(row, "", data.foliage);
     ui.add_class(foliage, "checkbox");
     let wind = [one(ui, "Wind bend", data.wind_bend()), one(ui, "Leaf flutter", data.wind_flutter())];
+    let row = prop(ui, rows, "Leaves");
+    let names = Leaves::ALL.map(Leaves::name);
+    let leaves = ui.dropdown(row, &names, Leaves::ALL.iter().position(|&l| l == data.leaves).unwrap_or_default());
+    ui.add_class(leaves, "value-input");
     let row = prop(ui, rows, "Glass");
     let glass = ui.toggle(row, "", data.glass);
     ui.add_class(glass, "checkbox");
     let ior = one(ui, "IOR", data.ior);
     let swatches = [color_swatch, emission_swatch];
-    let fields = MaterialFields { data, color, metallic, roughness, emissive, swatches, maps, foliage, wind, glass, ior };
+    let fields = MaterialFields { data, color, metallic, roughness, emissive, swatches, maps, foliage, wind, leaves, glass, ior };
     fields.show_swatches(ui);
     Some(fields)
 }

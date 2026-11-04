@@ -1038,12 +1038,22 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   strongest push outwards from each pusher. `wind.slang` reads it at each vertex, blended over four cells, and
   bends the plant away from the ground up, on an arc, with or without wind. GPU test: a pole leans from a pusher
   beside it and stands again once it has gone.
-- **Seasons and variation:** a level-wide setting for the season (green to dry to autumn to bare to snow),
-  colour variation across a field from world-space noise, dryness, and wet or snow-covered leaves from above.
+- ~~**Seasons and variation:**~~ done: a Seasons component (the level's first) with `time_of_year` from 0 to 4
+  (spring, summer, autumn, winter, spring), each season's look (`color`, `color_amount`, `leaves`, `snow`),
+  `variation`, `patch_size`, `dryness` and `dry_color`, and `wetness`; defaults leave plants as made at summer.
+  `shaders/seasons.slang`: per plant, by noise at its origin, the year runs up to half a season early or late, and
+  leaves turn redder or yellower and dry in patches; a season's colour replaces the material's, keeping its
+  texture's light and dark. Leaves fall in clumps by noise over the mesh, a triangle at a time (the opaque and
+  depth passes drop it by its first corner, `leafPosition`, flat; the mesh-shader shadow pass makes it a point,
+  so shadows follow; the vertex shadow path keeps them). Plants (foliage, or anything with wind) take snow from
+  above and darken and shine when wet, in the depth pass's roughness too. Materials' `leaves`: `fall`, `turn`
+  (grass) or `stay` (pines), `MATERIAL_LEAVES_TURN`/`STAY`. Editor: Add Component, the Inspector showing the look
+  of the season the year is nearest under a Season choice, undo, copy and paste, prefabs; a Leaves choice in the
+  material Inspector. C#: `Seasons.TimeOfYear`, `Seasons.Season`, `Seasons.Exists`. Still to come: seasons in
+  the GI's rays, and snow on the ground and on what is not a plant.
 - **Glow:** emissive masks on plants that pulse, breathe or flicker, for glowing mushrooms, bioluminescent
   forests and fireflies, and light from them in the GI.
-- **Placing it:** a scatter brush in the editor, painting instances onto any surface with density, scale and
-  slope limits, and erasing; terrain's scatter layers (M8) use the same instances.
+- **Placing it:** moved to M8, Terrain, to be built with terrain's scatter layers.
 - **Converting plants:** a step that prepares models from other tools (SpeedTree exports, Quixel and asset-store
   plants) for wind and foliage shading, writing the masks the shader reads.
 
@@ -1103,6 +1113,8 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
 - Layer stack and dirty-tile compositing.
 - Stamps and brushes, then GPU erosion.
 - Auto-material and scatter layers.
+- A scatter brush in the editor (from Vegetation), painting Foliage plants onto terrain and any other surface with
+  density, scale and slope limits, and erasing; the scatter layers use the same instances.
 - Holes, collision and the runtime delta layer with its API.
 - **Built-in terrain generation** *(later)*: generators that make a terrain to start from, chosen and tuned in the
   editor or run from code, each feeding the layer stack so it can be painted and stamped over afterwards:

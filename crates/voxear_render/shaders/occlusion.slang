@@ -44,6 +44,7 @@ float depthFragment(VertexOut input) : SV_Target0
 {
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
+    dropFallenLeaves(input, material);
     if (material.alphaCutoff > 0.0)
     {
         float alpha = material.baseColor.a * sampleTexture(material.baseColorTexture, input.uv).a;
@@ -52,7 +53,12 @@ float depthFragment(VertexOut input) : SV_Target0
             discard;
         }
     }
-    return saturate(material.roughness * sampleTexture(material.metallicRoughnessTexture, input.uv).g);
+    float roughness = material.roughness * sampleTexture(material.metallicRoughnessTexture, input.uv).g;
+    // Wet or snowy plants are as rough as the opaque passes shade them.
+    float3 albedo = material.baseColor.rgb;
+    float3 origin = buffers()->instances[input.instance].model.c3.xyz;
+    seasonalSurface(push.frame, material, origin, normalize(input.normal), albedo, roughness);
+    return saturate(roughness);
 }
 
 // Whether the contact shadows pass found something between a pixel and the

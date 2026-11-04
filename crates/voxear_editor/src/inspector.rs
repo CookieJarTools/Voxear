@@ -1769,6 +1769,7 @@ impl Inspector {
             (Part::LodGroup, "Rendering"),
             (Part::PostVolume, "Rendering"),
             (Part::WindZone, "Rendering"),
+            (Part::Seasons, "Rendering"),
             (Part::FoliageInteraction, "Rendering"),
             (Part::Foliage, "Rendering"),
             (Part::Audio, "Audio"),
@@ -2411,6 +2412,11 @@ fn value_path(field: &Field) -> ValuePath {
         Prop::FieldOfView => "fov".to_string(),
         Prop::Exposure => "exposure".to_string(),
         Prop::Near => "near".to_string(),
+        // A season's look is a table of its own in the Seasons'.
+        Prop::SeasonColor(_) | Prop::SeasonColorAmount(_) | Prop::SeasonLeaves(_) | Prop::SeasonSnow(_) => {
+            path.0.extend(prop.lock_key().split('.').map(str::to_string));
+            return path;
+        }
         Prop::LodMeasure | Prop::LodCull | Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => return path,
         _ => prop.lock_key(),
     };
@@ -2441,6 +2447,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Wheel) => "wheel",
         Some(Part::PostVolume) => "post_volume",
         Some(Part::WindZone) => "wind_zone",
+        Some(Part::Seasons) => "seasons",
         Some(Part::FoliageInteraction) => "foliage_interaction",
         Some(Part::Foliage) => "foliage",
         Some(Part::Behaviour(name)) => return vec![ValuePath::new(&["fields", name])],

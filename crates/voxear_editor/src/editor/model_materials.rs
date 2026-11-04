@@ -227,6 +227,7 @@ fn material_data(material: &FileMaterial, maps: [Option<voxear_assets::AssetGuid
         ior: material.desc.ior,
         wind_bend: None,
         wind_flutter: None,
+        leaves: material.desc.leaves,
     }
 }
 

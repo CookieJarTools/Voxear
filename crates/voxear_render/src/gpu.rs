@@ -72,6 +72,10 @@ pub const MATERIAL_FOLIAGE: u32 = 2;
 /// Glass: drawn after the opaque scene, over what lies behind it, which it
 /// bends, tints and frosts, reflecting its surroundings.
 pub const MATERIAL_GLASS: u32 = 4;
+/// Leaves that turn with the seasons but never fall, and leaves that stay
+/// as made (see `seasons::Leaves`).
+pub const MATERIAL_LEAVES_TURN: u32 = 8;
+pub const MATERIAL_LEAVES_STAY: u32 = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -279,6 +283,7 @@ pub struct GpuFrame {
     pub ddgi: GpuDdgi,
     pub wind: GpuWind,
     pub pushes: GpuPushes,
+    pub seasons: GpuSeasons,
 }
 
 /// Most pushers through foliage a frame takes, the nearest the camera.
@@ -301,6 +306,26 @@ pub struct GpuPushes {
     pub origin: [i32; 2],
     pub cell: f32,
     pub count: u32,
+}
+
+/// The level's seasons, as shaders read them (`Seasons` in
+/// `shaders/common.slang`; see `seasons`). Not enabled without a Seasons.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuSeasons {
+    /// Each season's leaf colour, weighted by how far leaves turn to it, and
+    /// that amount; spring, summer, autumn and winter.
+    pub colors: [[f32; 4]; 4],
+    /// Each season's share of leaves fallen and its snow.
+    pub looks: [[f32; 4]; 4],
+    /// The colour dry leaves turn, and how much of a field dries.
+    pub dry: [f32; 4],
+    pub time: f32,
+    pub variation: f32,
+    pub patch_size: f32,
+    pub wetness: f32,
+    pub enabled: u32,
+    pub _pad: [u32; 3],
 }
 
 /// The level's wind, as shaders read it (`Wind` in `shaders/common.slang`;
@@ -705,9 +730,11 @@ mod tests {
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6 + 16;
         let ddgi = size_of::<GpuDdgi>();
+        // Four seasons' colours and looks, then the dry colour and two rows of settings.
+        let seasons = 16 * 4 * 2 + 16 + 32;
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons
         );
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);

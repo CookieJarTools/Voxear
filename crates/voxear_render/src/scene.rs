@@ -544,6 +544,11 @@ pub fn extract(
     if let Some((zone, transform)) = zones.into_iter().next() {
         frame.wind = zone.gpu(transform.rotation);
     }
+    // And the first Seasons turns all its plants.
+    let seasons = world.query_ref::<&crate::Seasons>().without::<Destroying>();
+    if let Some(seasons) = seasons.into_iter().next() {
+        frame.seasons = seasons.gpu();
+    }
 
     if sun_found {
         let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near };

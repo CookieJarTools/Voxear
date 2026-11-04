@@ -11,7 +11,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
 };
-use voxear_render::{Camera, FoliageInteraction, Light, MeshRenderer, PostVolume, WindZone};
+use voxear_render::{Camera, FoliageInteraction, Light, MeshRenderer, PostVolume, Seasons, WindZone};
 use voxear_scene::BehaviourSpec;
 
 use super::Editor;
@@ -35,6 +35,7 @@ pub(super) enum Copied {
     Wheel(Wheel),
     PostVolume(Box<PostVolume>),
     WindZone(WindZone),
+    Seasons(Box<Seasons>),
     FoliageInteraction(FoliageInteraction),
     Behaviour(BehaviourSpec),
 }
@@ -60,6 +61,7 @@ impl Copied {
             Part::Wheel => Self::Wheel(*world.get::<Wheel>(entity)?),
             Part::PostVolume => Self::PostVolume(Box::new(world.get::<PostVolume>(entity)?.clone())),
             Part::WindZone => Self::WindZone(*world.get::<WindZone>(entity)?),
+            Part::Seasons => Self::Seasons(Box::new(*world.get::<Seasons>(entity)?)),
             Part::FoliageInteraction => Self::FoliageInteraction(*world.get::<FoliageInteraction>(entity)?),
             Part::Behaviour(name) => {
                 let specs = &world.get::<EditBehaviours>(entity)?.0;
@@ -76,6 +78,7 @@ impl Copied {
             Self::Camera(camera) => drop(world.insert(entity, *camera)),
             Self::PostVolume(volume) => drop(world.insert(entity, (**volume).clone())),
             Self::WindZone(wind) => drop(world.insert(entity, *wind)),
+            Self::Seasons(seasons) => drop(world.insert(entity, **seasons)),
             Self::FoliageInteraction(push) => drop(world.insert(entity, *push)),
             Self::Audio(audio) => drop(world.insert(entity, **audio)),
             Self::Listener => drop(world.insert(entity, AudioListener)),

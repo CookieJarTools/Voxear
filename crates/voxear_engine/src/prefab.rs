@@ -57,7 +57,7 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::AssetGuid;
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_render::{Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, PostVolume, Renderer, WindZone};
+use voxear_render::{Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, PostVolume, Renderer, Seasons, WindZone};
 use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
 
 use crate::{
@@ -374,6 +374,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.collider = instance.collider.or(root.collider);
     root.wind_zone = instance.wind_zone.or(root.wind_zone);
+    root.seasons = instance.seasons.or(root.seasons);
     root.foliage_interaction = instance.foliage_interaction.or(root.foliage_interaction);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
     root.character = instance.character.or(root.character);
@@ -414,6 +415,7 @@ pub struct TemplateObj {
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
     pub wind_zone: Option<WindZone>,
+    pub seasons: Option<Seasons>,
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage, where there is a renderer to draw it, and how it was
     /// written, which few Objs have.
@@ -548,6 +550,9 @@ impl Template {
             }
             if let Some(wind) = obj.wind_zone {
                 world.insert(entity, wind);
+            }
+            if let Some(seasons) = obj.seasons {
+                world.insert(entity, seasons);
             }
             if let Some(push) = obj.foliage_interaction {
                 world.insert(entity, push);
@@ -756,6 +761,7 @@ pub(crate) fn resolve_obj(
         rigidbody: data.rigidbody,
         character: data.character,
         wind_zone: data.wind_zone,
+        seasons: data.seasons,
         foliage_interaction: data.foliage_interaction,
         layer: data.layer.clone(),
         joint: data.joint.clone(),

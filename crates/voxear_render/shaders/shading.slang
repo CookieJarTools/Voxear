@@ -10,6 +10,7 @@
 #include "ddgi_sample.slang"
 #include "lights.slang"
 #include "occlusion.slang"
+#include "seasons.slang"
 #include "wind.slang"
 
 struct VertexOut
@@ -23,6 +24,8 @@ struct VertexOut
     nointerpolation uint lod : LOD;
     nointerpolation uint instance : INSTANCE;
     nointerpolation uint fade : FADE;
+    // Where its triangle's first corner is in its mesh, for whether a leaf has fallen (seasons.slang).
+    nointerpolation float3 leafPosition : LEAF;
     // What the meshlets debug view colours by.
     nointerpolation uint cluster : CLUSTER;
     float4 currentClip : CURRENT_CLIP;
@@ -69,6 +72,7 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     o.lod = lod;
     o.instance = instanceIndex;
     o.fade = fade;
+    o.leafPosition = v.position;
     o.cluster = cluster;
     o.currentClip = transform(push.frame->unjitteredViewProj, world);
     o.previousClip = transform(push.frame->prevViewProj, previous);
@@ -113,6 +117,16 @@ void ditherLodFade(VertexOut input)
     float fade = float((buffers()->lodState[input.instance] >> 8) & 0xFFFF) / 65535.0;
     bool incoming = bayer4(uint2(input.position.xy)) < fade;
     if (incoming != ((input.fade & DRAW_FADING_IN) != 0))
+    {
+        discard;
+    }
+}
+
+// Leaves fallen with the seasons are not drawn, nor their depth.
+void dropFallenLeaves(VertexOut input, Material material)
+{
+    float3 origin = buffers()->instances[input.instance].model.c3.xyz;
+    if (leafFallen(push.frame, material, origin, input.leafPosition))
     {
         discard;
     }
@@ -381,6 +395,7 @@ float3 debugColor(uint index)
 float4 edgeFragment(VertexOut input) : SV_Target0
 {
     ditherLodFade(input);
+    dropFallenLeaves(input, buffers()->materials[input.material]);
     return float4(0.0, 0.0, 0.0, 0.35);
 }
 
@@ -419,6 +434,7 @@ FragmentOut fragmentMain(VertexOut input)
     Frame* frame = push.frame;
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
+    dropFallenLeaves(input, material);
 
     float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
     if (material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)
@@ -427,11 +443,14 @@ FragmentOut fragmentMain(VertexOut input)
     }
     float4 metalRough = sampleTexture(material.metallicRoughnessTexture, input.uv);
     float metallic = material.metallic * metalRough.b;
+    float roughness = material.roughness * metalRough.g;
+    float3 origin = buffers()->instances[input.instance].model.c3.xyz;
+    seasonalSurface(frame, material, origin, normalize(input.normal), base.rgb, roughness);
 
     Surface s;
     s.normal = surfaceNormal(input, material);
     s.view = normalize(frame->cameraPosition - input.worldPosition);
-    s.roughness = clamp(material.roughness * metalRough.g, 0.045, 1.0);
+    s.roughness = clamp(roughness, 0.045, 1.0);
     s.diffuse = base.rgb * (1.0 - metallic);
     s.f0 = lerp(float3(0.04), base.rgb, metallic);
 

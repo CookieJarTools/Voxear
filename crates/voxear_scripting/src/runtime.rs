@@ -394,6 +394,16 @@ impl ScriptRuntime {
         interop::take_lighting_requests()
     }
 
+    /// Tells scripts the level's time of year, or that it has no Seasons.
+    pub fn publish_time_of_year(&mut self, time: Option<f32>) {
+        interop::publish_time_of_year(time);
+    }
+
+    /// The time of year scripts set since the last call, if they did.
+    pub fn take_time_of_year(&mut self) -> Option<f32> {
+        interop::take_time_of_year()
+    }
+
     /// What scripts asked of loaded scenes since the last call, oldest first.
     pub fn take_scene_requests(&mut self) -> Vec<crate::SceneRequest> {
         interop::take_scene_requests()

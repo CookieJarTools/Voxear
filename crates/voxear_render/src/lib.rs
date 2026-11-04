@@ -44,6 +44,7 @@ mod post_passes;
 mod post_volume;
 mod previews;
 mod scene;
+mod seasons;
 mod shadows;
 mod texture_codec;
 mod ui_pass;
@@ -91,6 +92,7 @@ pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use foliage::{Foliage, FoliageInteraction, Plant, scatter};
+pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use wind::WindZone;
 pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,

@@ -291,6 +291,9 @@ pub(crate) struct NativeApi {
     /// `Lighting.Apply`: lights the level with lighting settings, by GUID,
     /// project path or built-in name.
     pub lighting_apply: unsafe extern "C" fn(reference: *const u8, len: i32),
+    /// `Seasons.TimeOfYear`: the level's, NaN without Seasons, and setting it.
+    pub seasons_time: unsafe extern "C" fn() -> f32,
+    pub seasons_set_time: unsafe extern "C" fn(time: f32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -402,6 +405,11 @@ thread_local! {
     static REQUESTS: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
     static LEVEL_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static LIGHTING_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// The level's time of year, as `Seasons.TimeOfYear` reads it: NaN
+    /// without Seasons. Scripts setting it change it here at once, and the
+    /// engine takes what they set after the frame.
+    static TIME_OF_YEAR: Cell<f32> = const { Cell::new(f32::NAN) };
+    static TIME_OF_YEAR_SET: Cell<Option<f32>> = const { Cell::new(None) };
     static SCENE_REQUESTS: RefCell<Vec<SceneRequest>> = const { RefCell::new(Vec::new()) };
     static OBJ_DESTROYS: RefCell<Vec<Entity>> = const { RefCell::new(Vec::new()) };
     /// Managed `CreateBehaviour` and `AddComponent`, for behaviours and
@@ -449,6 +457,14 @@ pub(crate) fn take_level_requests() -> Vec<String> {
 
 pub(crate) fn take_lighting_requests() -> Vec<String> {
     LIGHTING_REQUESTS.take()
+}
+
+pub(crate) fn publish_time_of_year(time: Option<f32>) {
+    TIME_OF_YEAR.set(time.unwrap_or(f32::NAN));
+}
+
+pub(crate) fn take_time_of_year() -> Option<f32> {
+    TIME_OF_YEAR_SET.take()
 }
 
 pub(crate) fn take_scene_requests() -> Vec<SceneRequest> {
@@ -671,6 +687,20 @@ unsafe extern "C" fn level_load(level: *const u8, len: i32) {
 unsafe extern "C" fn lighting_apply(reference: *const u8, len: i32) {
     let reference = unsafe { utf8(reference, len) }.into_owned();
     LIGHTING_REQUESTS.with_borrow_mut(|r| r.push(reference));
+}
+
+unsafe extern "C" fn seasons_time() -> f32 {
+    TIME_OF_YEAR.get()
+}
+
+unsafe extern "C" fn seasons_set_time(time: f32) {
+    if TIME_OF_YEAR.get().is_nan() {
+        tracing::warn!(target: "script", "Seasons.TimeOfYear: the level has no Seasons to turn");
+        return;
+    }
+    let time = time.rem_euclid(4.0);
+    TIME_OF_YEAR.set(time);
+    TIME_OF_YEAR_SET.set(Some(time));
 }
 
 unsafe extern "C" fn load_async(level: i32, reference: *const u8, len: i32) -> i32 {
@@ -1116,6 +1146,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         text_asset: crate::text::text_asset,
         ui_set_string: crate::ui::ui_set_string,
         lighting_apply,
+        seasons_time,
+        seasons_set_time,
     }
 }
 

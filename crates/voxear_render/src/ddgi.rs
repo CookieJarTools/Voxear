@@ -15,8 +15,9 @@
 //!
 //! 1. **Scene BVH** builds the frame's top level from the instances drawn.
 //! 2. **DDGI rays** traces 256 rays from each probe due: a quarter of the
-//!    fine probes and a sixteenth of the coarse, scattered, every probe the
-//!    grid has just moved over, and all of them while the GI warms up.
+//!    nearest cascade's probes, an eighth of the next and a sixteenth of the
+//!    farthest, scattered, every probe a grid has just moved over, and all of
+//!    them while the GI warms up.
 //! 3. **DDGI update** blends those rays into the due probes' maps.
 //!
 //! The probes stay in their slots as the camera moves: a world probe's slot
@@ -144,10 +145,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_grids_centre_on_the_camera_and_the_coarse_one_is_four_times_as_wide() {
+    fn the_grids_centre_on_the_camera_each_twice_as_wide_as_the_last() {
         let at = origins(Vec3::new(10.2, 1.7, -3.1), 1.0);
         assert_eq!(at[0], [10 - 16, 1 - 8, -4 - 16, 0]);
-        assert_eq!(at[1], [2 - 16, -8, -1 - 16, 0]);
+        assert_eq!(at[1], [5 - 16, -8, -2 - 16, 0]);
+        assert_eq!(at[2], [2 - 16, -8, -1 - 16, 0]);
     }
 
     #[test]

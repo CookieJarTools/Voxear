@@ -24,7 +24,7 @@ static const uint DDGI_TILE_ROWS = DDGI_PROBE_COUNT / DDGI_TILES_ACROSS;
 
 float ddgiSpacing(Frame* frame, uint cascade)
 {
-    return frame->ddgi.spacing * (cascade == 0 ? 1.0 : DDGI_CASCADE_SCALE);
+    return frame->ddgi.spacing * pow(DDGI_CASCADE_SCALE, float(cascade));
 }
 
 int3 ddgiSlot(int3 world)
@@ -209,34 +209,52 @@ float3 ddgiLightAroundIn(Frame* frame, uint cascade, float3 position, float3 awa
 // or a wall on the side the camera sees rather than pushing it through.
 float3 ddgiLightAround(Frame* frame, float3 position, float3 toCamera, float3 fallback)
 {
-    float fineCoverage;
-    float3 fine = ddgiLightAroundIn(frame, 0, position, toCamera, fineCoverage);
-    if (fineCoverage >= 1.0)
+    float3 lights[DDGI_CASCADES];
+    float coverages[DDGI_CASCADES];
+    uint used = 0;
+    for (uint cascade = 0; cascade < DDGI_CASCADES; cascade++)
     {
-        return fine * frame->ddgi.strength;
+        lights[cascade] = ddgiLightAroundIn(frame, cascade, position, toCamera, coverages[cascade]);
+        used = cascade + 1;
+        if (coverages[cascade] >= 1.0)
+        {
+            break;
+        }
     }
-    float coarseCoverage;
-    float3 coarse = ddgiLightAroundIn(frame, 1, position, toCamera, coarseCoverage);
-    return lerp(lerp(fallback, coarse, coarseCoverage), fine, fineCoverage) * frame->ddgi.strength;
+    float3 light = fallback;
+    for (int cascade = int(used) - 1; cascade >= 0; cascade--)
+    {
+        light = lerp(light, lights[cascade], coverages[cascade]);
+    }
+    return light * frame->ddgi.strength;
 }
 
-// The light falling on a surface from all round its normal, from the fine
-// cascade near the camera, the coarse one past it, and beyond both
-// `fallback`, the plain sky light, looked up from a little way along `away`.
+// The light falling on a surface from all round its normal, from the
+// nearest cascade that covers it, blended with the next out over its edge,
+// and beyond them all `fallback`, the plain sky light, looked up from a
+// little way along `away`.
 float3 ddgiIrradianceAlong(Frame* frame, float3 position, float3 normal, float3 away, float3 fallback)
 {
-    // The fine cascade first; the coarse one only where the fine one does not wholly cover the point, as most
-    // points near the camera are covered.
-    float fineCoverage;
-    float3 fine = ddgiIrradianceIn(frame, 0, position, normal, away, fineCoverage);
-    if (fineCoverage >= 1.0)
+    // The nearest cascade first; the next only where it does not wholly cover the point, as most points near the
+    // camera are covered.
+    float3 lights[DDGI_CASCADES];
+    float coverages[DDGI_CASCADES];
+    uint used = 0;
+    for (uint cascade = 0; cascade < DDGI_CASCADES; cascade++)
     {
-        return fine * frame->ddgi.strength;
+        lights[cascade] = ddgiIrradianceIn(frame, cascade, position, normal, away, coverages[cascade]);
+        used = cascade + 1;
+        if (coverages[cascade] >= 1.0)
+        {
+            break;
+        }
     }
-    float coarseCoverage;
-    float3 coarse = ddgiIrradianceIn(frame, 1, position, normal, away, coarseCoverage);
-    float3 far = lerp(fallback, coarse, coarseCoverage);
-    return lerp(far, fine, fineCoverage) * frame->ddgi.strength;
+    float3 light = fallback;
+    for (int cascade = int(used) - 1; cascade >= 0; cascade--)
+    {
+        light = lerp(light, lights[cascade], coverages[cascade]);
+    }
+    return light * frame->ddgi.strength;
 }
 
 // As ddgiIrradianceAlong, for a surface seen from `view` (towards the

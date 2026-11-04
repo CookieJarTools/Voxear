@@ -388,9 +388,13 @@ pub struct GpuDdgi {
 }
 
 /// The ray-traced GI's cascades, each `DDGI_CASCADE_SCALE` times as far apart
-/// as the one before, and the probes in each, across, up and deep.
-pub const DDGI_CASCADES: usize = 2;
-pub const DDGI_CASCADE_SCALE: f32 = 4.0;
+/// as the one before, and the probes in each, across, up and deep. Three,
+/// each twice the last, rather than two four times apart: with probes four
+/// metres apart past the nearest sixteen, the light of a lamp smeared down a
+/// corridor and changed before the camera's eyes as the fine probes took
+/// over; the three reach as far, to sixty-four metres.
+pub const DDGI_CASCADES: usize = 3;
+pub const DDGI_CASCADE_SCALE: f32 = 2.0;
 pub const DDGI_PROBES: [u32; 3] = [32, 16, 32];
 /// Rays each probe traces when it is due. 256 rather than 128: with half the
 /// noise in each update, lamp-lit walls no longer shimmer as the probes'

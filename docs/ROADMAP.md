@@ -900,7 +900,7 @@ Done so far:
   dark, as Unreal's does. Tested on a closed room with a doorway onto a sunlit yard.
 - **Ray-traced GI probes (DDGI), as RTXGI in Arc Raiders and The Finals:** where the GPU has ray tracing (Vulkan
   ray queries: NVIDIA RTX 20 on, AMD RX 6000 on, Intel Arc), a bottom-level acceleration structure for each mesh
-  and a top level per view and frame. Two cascades of 32×16×32 probes trace 256 rays each when due (128 until the flicker fix below), shading hits
+  and a top level per view and frame. Two cascades (three since the fix below) of 32×16×32 probes trace 256 rays each when due (128 until the flicker fix below), shading hits
   with the sun through a shadow ray, lamps, glow and last frame's probes; each keeps 8×8 octahedral irradiance and
   depth maps, and shading weighs probes by Chebyshev visibility, so no light passes walls. Probes inside geometry
   are set aside and probes near surfaces moved off them. GPU tests: a sealed box in sunlight stays black; a
@@ -1048,6 +1048,12 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   pixels flickering hard 57 to 17, the spread 0.45 to 0.36, under what GI-less frames showed at 0.9. And the
   probes' light is kept and blended raised to 1/5 (`DDGI_GAMMA`, as RTXGI does, Majercik et al. 2021), so a few
   rays that meet a bright sliver move a probe little: the spread 0.36 to 0.35, the picture 1% darker.
+- **GI that does not change as the camera walks up:** three cascades of probes, each twice as far apart as the last
+  (`DDGI_CASCADES` 3, `DDGI_CASCADE_SCALE` 2), rather than two four times apart. Past the fine grid's sixteen metres,
+  probes four metres apart smeared the neon tube's light down Sponza's corridor, and it changed before the camera as
+  the fine grid took over (a probe spacing of 2 moved the change out, which showed the cause). Shading blends from
+  the nearest covering cascade outwards; the middle one refreshes an eighth of its probes a frame. Same reach, to
+  64 m; 0.29 ms more at 1080p (rays 0.57 to 0.80 ms, update 0.38 to 0.43 ms); flicker unchanged.
 - **A model as one Obj:** a model of several parts placed in a scene is one Obj with a Model Renderer (`ModelRenderer`
   in voxear_render: shared parts, each a mesh, material and place in the Obj's space), not an Obj per part. Each part
   is an instance of its own in extraction (`Owner::part`, motion tracked per part), so culling, LODs, shadows, the

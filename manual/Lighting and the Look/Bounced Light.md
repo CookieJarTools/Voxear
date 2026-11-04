@@ -19,9 +19,9 @@ This works on every graphics card. On one with ray tracing (NVIDIA RTX 20 series
 
 ## How the probes work
 
-The probes sit in two grids round the camera: a fine one, 32 probes across, 16 high and 32 deep, and a coarse one four times as far apart that carries on past it, so far walls and the mist over them are lit as near ones are. The grids move with the camera, and probes the camera leaves behind are reused for the ground ahead.
+The probes sit in three grids round the camera, each 32 probes across, 16 high and 32 deep: a fine one, then one twice as far apart that carries on past it, and one twice as far apart again, so far walls and the mist over them are lit as near ones are. Each grid is only twice as coarse as the one inside it, so walking up to something, its light hardly changes as the finer grid takes over. The grids move with the camera, and probes the camera leaves behind are reused for the ground ahead.
 
-A few probes, scattered through the grids, trace their rays each frame: a quarter of the fine ones, which light what is near, and a sixteenth of the coarse, which light the distance. Each blends what it finds into what it had, smoothing away the noise of its rays, but takes a real change at once: when a lamp goes out or a door shuts, its bounced light goes with it within a fraction of a second rather than lingering. When a level opens, every probe traces each frame for its first few, so the light has settled by the time you see it.
+A few probes, scattered through the grids, trace their rays each frame: a quarter of the fine ones, which light what is near, an eighth of the middle grid's, and a sixteenth of the farthest, which light the distance. Each blends what it finds into what it had, smoothing away the noise of its rays, but takes a real change at once: when a lamp goes out or a door shuts, its bounced light goes with it within a fraction of a second rather than lingering. When a level opens, every probe traces each frame for its first few, so the light has settled by the time you see it.
 
 Light bounces more than once: where a ray hits a surface, the light it brings back includes what the probes round that surface found last frame. Shiny surfaces reflect the probes' light too, so a polished floor shows the warm walls round it rather than the sky through the ceiling.
 
@@ -37,7 +37,7 @@ To see the bounced light on its own, use `vox render --debug-view gi`.
 | --- | --- |
 | `enabled = false` | Bounced light on or off. Off, the sky lights everything evenly, as [[The Sky]] describes |
 | `strength = 1.0` | How bright the bounced light is. Higher gives a brighter, more stylised glow |
-| `probe_spacing = 1.0` | How far apart the fine probes are, in metres. This also sets how far round the camera light bounces: the coarse grid reaches about 64 metres each way at 1. Beyond it, the sky lights things evenly |
+| `probe_spacing = 1.0` | How far apart the fine probes are, in metres. This also sets how far round the camera light bounces: the farthest grid reaches about 64 metres each way at 1. Beyond it, the sky lights things evenly |
 
 Closer probes show finer detail, such as light through a doorway, but reach less far. Interiors suit 0.5 to 1; open landscapes 2 or more.
 

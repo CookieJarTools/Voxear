@@ -132,10 +132,10 @@ bool ddgiDue(Frame* frame, uint cascade, uint index, float state, out int3 world
     world = ddgiWorldOf(ddgiSlotOf(index), origin);
     int3 before = frame->ddgi.previousOrigin[cascade].xyz;
     fresh = frame->ddgi.warmUp > 0 || any(world < before) || any(world >= before + DDGI_PROBES);
-    // A quarter of the fine probes each frame, which light what is near and must answer a torch carried by, and
-    // a sixteenth of the coarse, which light only the distance; scattered through the grid; half as many where the
-    // rays are traced in software, and those asleep far less often still.
-    uint every = (cascade == 0 ? 4u : 16u) * (SOFTWARE_RAYS ? 2u : 1u);
+    // A quarter of the nearest cascade's probes each frame, which light what is near and must answer a torch
+    // carried by, an eighth of the next and a sixteenth of the farthest, which light only the distance; scattered
+    // through the grid; half as many where the rays are traced in software, and those asleep far less often still.
+    uint every = (4u << min(cascade, 2u)) * (SOFTWARE_RAYS ? 2u : 1u);
     every *= (state > 0.5 && state < 0.9) ? DDGI_SLEEP : 1u;
     return fresh || (ddgiHash(index + cascade * 65536u) + frame->frameIndex) % every == 0;
 }

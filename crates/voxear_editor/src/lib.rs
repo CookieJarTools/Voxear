@@ -69,6 +69,7 @@ mod inspector;
 mod layers_view;
 mod level_files;
 mod levels_panel;
+mod lighting_panel;
 pub mod localization_panel;
 mod localization_tables;
 mod live;

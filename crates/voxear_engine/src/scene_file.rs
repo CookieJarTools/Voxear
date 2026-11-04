@@ -679,10 +679,12 @@ pub fn spawn(
 }
 
 /// Sets the level's sky and post-processing from a scene that has them:
-/// its lighting settings, if it names any, with its own `[sky]` and
-/// `[post]` over them. What a scene leaves out stays as it was.
+/// the lighting settings it names, which are its lighting whole, or
+/// failing those, its own `[sky]` and `[post]`. What a scene leaves out
+/// stays as it was.
 pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> Result<()> {
     let Environment { lighting, sky, post } = environment;
+    let (sky, post) = if lighting.is_some() { (None, None) } else { (sky, post) };
     // A look, picked in [post], brings its sun, and its sky where the scene has none of its own.
     let look = match post.and_then(|table| table.get("look")).and_then(|value| value.as_str()) {
         Some(name) => Some(Look::of(LookName::parse(name)?)),
@@ -720,7 +722,6 @@ pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> R
         }
         None => {}
     }
-    // The scene's own post-processing over its lighting's.
     let mut effective = lighting.map(|(_, lit)| lit.post.clone()).unwrap_or_default();
     if let Some(table) = post {
         crate::lighting::merge(&mut effective, table);
@@ -1509,7 +1510,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scene_is_lit_by_its_lighting_with_its_own_settings_over_them() {
+    fn a_scene_that_names_lighting_is_lit_by_it_alone() {
         let file: crate::lighting::LightingFile =
             toml::from_str("look = \"golden_hour\"\n[sky]\nhaze = 2.5\n[post.bloom]\nintensity = 0.3").unwrap();
         let lit = file.resolve().unwrap();
@@ -1521,9 +1522,10 @@ mod tests {
         assert!(engine.world.resource::<SkyFromLook>().is_some(), "which a save leaves out");
         assert_eq!(engine.world.resource::<SunLook>().copied(), Some(lit.sun));
         let post = engine.world.resource::<PostProcess>().copied().unwrap();
-        assert_eq!((post.bloom.intensity, post.bloom.scatter), (0.3, 0.5), "the lighting's bloom, the scene's scatter");
+        let golden = Look::of(LookName::GoldenHour).post;
+        assert_eq!((post.bloom.intensity, post.bloom.scatter), (0.3, golden.bloom.scatter), "the lighting's alone");
         assert_eq!(engine.world.resource::<SceneLighting>().map(|l| l.0.as_str()), Some("Lighting/Dusk.lighting"));
-        assert_eq!(engine.world.resource::<PostTable>().map(|t| t.0.clone()), Some(own), "a save writes only the scene's own");
+        assert!(engine.world.resource::<PostTable>().is_none(), "the scene's own [post] waits until it names none");
     }
 
     #[test]

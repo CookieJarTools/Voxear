@@ -295,7 +295,7 @@ pub fn free_path(root: &Path, folder: &str, stem: &str, extension: &str) -> Stri
 
 /// `stem` and `extension`, with a number before the extension when the name
 /// is taken: "New Scene.scene", then "New Scene 1.scene".
-fn unique(folder: &Path, stem: &str, extension: &str) -> String {
+pub(crate) fn unique(folder: &Path, stem: &str, extension: &str) -> String {
     let free = |name: &str| !folder.join(name).exists();
     let first = format!("{stem}{extension}");
     if free(&first) {

@@ -2006,7 +2006,7 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
 /// The settings rows on screen, by their labels.
 fn shown_settings(ui: &Ui) -> Vec<String> {
     let mut rows = Vec::new();
-    with_class(ui, ui.root(), "setting", &mut rows);
+    with_class(ui, ui.find(ui.root(), "drawer-settings").unwrap(), "setting", &mut rows);
     rows.into_iter().filter(|&row| ui.is_visible(row)).map(|row| ui.text(ui.children(row)[0])).collect()
 }
 
@@ -2019,7 +2019,7 @@ fn settings_open_in_the_drawer_with_a_tab_for_each_group() {
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Settings));
     let mut tabs = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "settings-tab", &mut tabs);
+    with_class(&editor.ui, editor.ui.find(editor.ui.root(), "settings-tabs").unwrap(), "settings-tab", &mut tabs);
     let names: Vec<String> = tabs.iter().map(|&t| editor.ui.text(t)).collect();
     assert_eq!(names, ["Scene view", "Play mode", "Console", "Appearance", "Project panel"]);
     assert!(shown_settings(&editor.ui).contains(&"Snap distance".to_string()), "the first group shows");
@@ -2048,7 +2048,7 @@ fn settings_open_in_the_drawer_with_a_tab_for_each_group() {
 /// The Settings panel's row for `title`: its control.
 fn setting_control(ui: &Ui, title: &str) -> NodeId {
     let mut rows = Vec::new();
-    with_class(ui, ui.root(), "setting", &mut rows);
+    with_class(ui, ui.find(ui.root(), "drawer-settings").unwrap(), "setting", &mut rows);
     let row = rows.into_iter().find(|&row| ui.text(ui.children(row)[0]) == title).unwrap();
     ui.children(row)[1]
 }
@@ -2060,7 +2060,7 @@ fn the_theme_is_chosen_in_settings_and_colours_the_editor() {
     click(&mut editor.ui, rail);
     frame(&mut editor, &mut renderer);
     let mut tabs = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "settings-tab", &mut tabs);
+    with_class(&editor.ui, editor.ui.find(editor.ui.root(), "settings-tabs").unwrap(), "settings-tab", &mut tabs);
     let appearance = tabs.into_iter().find(|&t| editor.ui.text(t) == "Appearance").unwrap();
     click(&mut editor.ui, appearance);
     frame(&mut editor, &mut renderer);
@@ -6353,4 +6353,73 @@ fn a_new_car_has_a_vehicle_on_four_wheels() {
     assert_eq!(wheels.len(), 4);
     assert_eq!(wheels.iter().filter(|w| w.steer_angle > 0.0).count(), 2, "the front two steer");
     assert_eq!(wheels.iter().filter(|w| w.powered).count(), 2, "the back two are driven");
+}
+
+#[test]
+fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Lighting")).unwrap();
+    let dusk = dir.path().join("Lighting/Dusk.lighting");
+    std::fs::write(&dusk, "# Dusk, for the yard\nformat = 1\nlook = \"golden_hour\"\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let rail = editor.ui.find(editor.ui.root(), "rail-lighting").unwrap();
+    click(&mut editor.ui, rail);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Lighting));
+    assert_eq!(editor.lighting_shown(), None, "Hello's scenes set their own sky");
+
+    // New lighting settings made from a scene without any carry its own sky over, and the scene names them.
+    let top = editor.ui.find(editor.ui.root(), "lighting-scene").unwrap();
+    let copy = first_with(&editor.ui, top, "lighting-copy").unwrap();
+    let sky = *editor.game.engine.world.resource::<voxear_render::Sky>().unwrap();
+    click(&mut editor.ui, copy);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.lighting_shown(), Some("Lighting/New Lighting.lighting"));
+    let made = std::fs::read_to_string(dir.path().join("Lighting/New Lighting.lighting")).unwrap();
+    assert!(made.contains("[sky]"), "{made}");
+    let lit = editor.game.engine.world.resource::<voxear_render::Sky>().unwrap();
+    assert_eq!((lit.mode, lit.ambient), (sky.mode, sky.ambient), "lit as it was");
+
+    // The scene's menu: None, the three built in, then the project's.
+    let menu = first_with(&editor.ui, top, "value-choice").unwrap();
+    choose(&mut editor, &mut renderer, menu, 4);
+    assert_eq!(editor.lighting_shown(), Some("Lighting/Dusk.lighting"));
+    let haze = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<voxear_render::Sky>().unwrap().haze;
+    let golden = voxear_render::Look::of(voxear_render::LookName::GoldenHour);
+    assert_eq!(haze(&editor), golden.sky.haze, "the scene is lit by the asset");
+    assert!(editor.has_unsaved_changes(), "and names it once saved");
+
+    // A setting changed on the page is written into the asset, and lights the scene at once.
+    let field = first_with(&editor.ui, editor.lighting_row("Haze").unwrap(), "value-input").unwrap();
+    type_into(&mut editor.ui, field, "4");
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&dusk).unwrap();
+    assert!(text.starts_with("# Dusk, for the yard\n") && text.contains("haze = 4"), "{text}");
+    assert_eq!(haze(&editor), 4.0);
+    shot(&mut renderer, "lighting-page.png");
+
+    // Built-in lighting is not changed, but a copy of it can be, which the scene then names.
+    choose(&mut editor, &mut renderer, menu, 1);
+    assert_eq!(editor.lighting_shown(), Some("builtin:golden_hour"));
+    let field = first_with(&editor.ui, editor.lighting_row("Haze").unwrap(), "value-input").unwrap();
+    assert!(!editor.ui.is_enabled(field), "built-in settings are shown, not changed");
+    click(&mut editor.ui, copy);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.lighting_shown(), Some("Lighting/New Lighting 1.lighting"));
+    let made = std::fs::read_to_string(dir.path().join("Lighting/New Lighting 1.lighting")).unwrap();
+    assert!(made.contains("look = \"golden_hour\""), "{made}");
+
+    editor.save();
+    let named: Vec<Option<String>> = ["Scenes/Environment.scene", "Scenes/Day.scene"]
+        .map(|p| voxear_engine::scene_file::read(&dir.path().join(p)).unwrap().lighting)
+        .into_iter()
+        .collect();
+    assert!(named.contains(&Some("Lighting/New Lighting 1.lighting".into())), "the active scene names it: {named:?}");
 }

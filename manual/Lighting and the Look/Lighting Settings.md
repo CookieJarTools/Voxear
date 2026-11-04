@@ -2,7 +2,15 @@
 order: 6
 ---
 
-**Lighting settings** keep a level's whole lighting in one file of its own: its sky, how its sun looks, and its post-processing. Make a set once, such as a dusty evening, a grey morning or a cave, and light any scene with it, or change between them as the game runs, as for a storm rolling in. They are Voxear's version of Unity's Lighting Settings asset.
+**Lighting settings** keep a level's whole lighting in an asset of its own: its sky, how its sun looks, and its post-processing. A scene only names the lighting settings it is lit by, so you can make a set once, such as a dusty evening, a grey morning or a cave, light any scene with it, and swap one set for another in the editor or as the game runs, as for a storm rolling in. They are Voxear's version of Unity's Lighting Settings asset.
+
+## The Lighting page
+
+Click the sun on the left-hand rail to open the **Lighting** page. At its top, **Lighting** picks the settings the open scene is lit by: None, one of the built-in sets, or any lighting settings in the project. The scene names them from then on, once you save it.
+
+Below, a tab for each part of the settings shows them all: **Sky**, **Sun**, **Exposure**, **Colour**, **Bloom**, **Fog**, **Shading** and **Lens**. Each shows the value in effect, and a change is written into the lighting settings' file at once, so the scene, and every other scene lit by the same settings, changes as you type. Empty a number's field to go back to the look's value.
+
+Built-in lighting cannot be changed: click **Make a Copy** for a copy in the project's Lighting folder that the scene is then lit by. A scene lit by none has **New Lighting Settings** instead, which carries the scene's own sky and post-processing over into the new settings.
 
 ## Making lighting settings
 
@@ -30,7 +38,7 @@ intensity = 0.2
 | `[sun]` | How the level's sun looks, whatever light it is: `temperature` in kelvin and `tint` colour it, `strength` scales its intensity, `softness` widens it where the light keeps its default, and `shadow_tint` colours its shadows where the light has no tint of its own |
 | `[post]` | Post-processing, as a scene's `[post]` writes it: exposure, bloom, grading, fog and the rest (see [[Post-Processing]]). Only what you write changes |
 
-Select the file to read it in the Inspector. Edit it in your text editor: an open scene lit by it changes as soon as you save.
+Change them on the Lighting page, or in your text editor: an open scene lit by them changes as soon as you save. Select the file to read it in the Inspector.
 
 ## Lighting a scene
 
@@ -41,7 +49,7 @@ format = 1
 lighting = "Lighting/Dusk.lighting"
 ```
 
-The scene is lit by them as it loads. What the scene writes in its own `[sky]` and `[post]` still wins, so a scene can share a set and change one thing, such as a stronger bloom.
+The scene is lit by them as it loads, by them alone. A scene can also write its own `[sky]` and `[post]`, as older scenes do; those light it only while it names no lighting settings.
 
 Each look is built in as lighting settings too: `lighting = "builtin:golden_hour"`, `"builtin:storybook"` or `"builtin:soft_overcast"`.
 

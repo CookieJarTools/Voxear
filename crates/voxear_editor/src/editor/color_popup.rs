@@ -31,6 +31,9 @@ enum Target {
     PageMaterial(MaterialColor, NodeId),
     /// A colour setting, by its key.
     Setting(&'static str),
+    /// A colour of the lighting settings the Lighting page shows, by where
+    /// it is in their file.
+    Lighting(&'static [&'static str]),
 }
 
 pub(super) struct ColorPopup {
@@ -95,6 +98,10 @@ impl Editor {
             let srgb = [hex >> 16, hex >> 8, hex].map(|c| (c & 0xff) as f32 / 255.0);
             return self.open_color(Target::Setting(key), swatch, title, (PickedColor::srgb(srgb), false));
         }
+        if let Some((path, swatch, srgb)) = self.lighting_panel.color_clicked(&self.ui) {
+            let title = path.last().copied().unwrap_or("Colour").replace('_', " ");
+            return self.open_color(Target::Lighting(path), swatch, &title, (PickedColor::srgb(srgb), false));
+        }
         let Some(&(_, swatch)) = self.color_popup.open.as_ref() else { return };
         let (root, panel) = (self.ui.root(), self.color_popup.panel);
         if self.ui.is_pressed(root) && !self.ui.is_pressed(panel) && !self.ui.is_pressed(swatch) {
@@ -126,6 +133,11 @@ impl Editor {
                 let view = self.live_fields.iter_mut().find(|(at, _)| *at == place).map(|(_, view)| view);
                 if let Some(action) = view.and_then(|view| view.set_color(&mut self.ui, which, color)) {
                     self.asset_action(action, renderer);
+                }
+            }
+            Some((Target::Lighting(path), _)) => {
+                if let Some(action) = self.lighting_panel.set_color(path, color.srgb) {
+                    self.lighting_action(action, renderer);
                 }
             }
             Some((Target::Setting(key), _)) => {

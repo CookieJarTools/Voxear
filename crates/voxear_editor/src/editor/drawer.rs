@@ -1,4 +1,4 @@
-//! The rail's drawer: Levels or Settings, which open over the left of the
+//! The rail's drawer: Levels, Lighting or Settings, which open over the left of the
 //! dock from the rail's buttons, a third of the window wide. The same button,
 //! or the drawer's close button, closes it.
 
@@ -8,6 +8,7 @@ use super::Editor;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Drawer {
     Levels,
+    Lighting,
     Settings,
 }
 
@@ -16,6 +17,8 @@ impl Editor {
         let nodes = &self.nodes;
         let clicked = if self.ui.clicked(nodes.rail_levels) {
             Some(Drawer::Levels)
+        } else if self.ui.clicked(nodes.rail_lighting) {
+            Some(Drawer::Lighting)
         } else if self.ui.clicked(nodes.rail_settings) {
             Some(Drawer::Settings)
         } else {
@@ -35,15 +38,21 @@ impl Editor {
         let nodes = &self.nodes;
         self.ui.set_visible(nodes.drawer, drawer.is_some());
         self.ui.set_visible(nodes.drawer_levels, drawer == Some(Drawer::Levels));
+        self.ui.set_visible(nodes.drawer_lighting, drawer == Some(Drawer::Lighting));
         self.ui.set_visible(nodes.drawer_settings, drawer == Some(Drawer::Settings));
         self.ui.set_checked(nodes.rail_levels, drawer == Some(Drawer::Levels));
+        self.ui.set_checked(nodes.rail_lighting, drawer == Some(Drawer::Lighting));
         self.ui.set_checked(nodes.rail_settings, drawer == Some(Drawer::Settings));
         let title = match drawer {
             Some(Drawer::Levels) => "Levels",
+            Some(Drawer::Lighting) => "Lighting",
             Some(Drawer::Settings) => "Settings",
             None => "",
         };
         self.ui.set_text(nodes.drawer_title, title);
+        if drawer == Some(Drawer::Lighting) {
+            self.refresh_lighting_page();
+        }
     }
 
     /// What the drawer shows, if it is open.
@@ -56,6 +65,7 @@ impl Editor {
     pub(super) fn show_panel(&mut self, id: &str) {
         match id {
             "levels" => self.open_drawer(Some(Drawer::Levels)),
+            "lighting" => self.open_drawer(Some(Drawer::Lighting)),
             "settings" => self.open_drawer(Some(Drawer::Settings)),
             _ => self.open_panel(id),
         }

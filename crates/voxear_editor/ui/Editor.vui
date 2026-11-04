@@ -29,6 +29,7 @@
         <Panel class="body">
             <Panel class="rail">
                 <Button name="rail-levels" class="icon-button rail-button"><Icon icon="level" /></Button>
+                <Button name="rail-lighting" class="icon-button rail-button"><Icon icon="light" /></Button>
                 <!-- The game's own buttons and items, from its scripts. -->
                 <Panel name="rail-scripts" class="rail-scripts" />
                 <Panel class="spacer" />
@@ -99,7 +100,7 @@
         </Panel>
         <!-- Debug draw's texts, at the points in the 3D view they name. Under the drawer and menus. -->
         <Panel name="debug-texts" class="debug-texts" />
-        <!-- Opens from the rail over the dock's left side: Levels, or Settings. -->
+        <!-- Opens from the rail over the dock's left side: Levels, Lighting, or Settings. -->
         <Panel name="drawer" class="drawer">
             <Panel class="drawer-header">
                 <Label name="drawer-title" class="drawer-title">Levels</Label>
@@ -115,6 +116,15 @@
                     <Label name="levels-progress-text" class="level-progress-text" />
                     <Panel class="level-progress-track">
                         <Panel name="levels-progress-fill" class="level-progress-fill" />
+                    </Panel>
+                </Panel>
+            </Panel>
+            <Panel name="drawer-lighting" class="fill drawer-page">
+                <Panel class="fill settings-root">
+                    <Panel name="lighting-tabs" class="settings-tabs" />
+                    <Panel class="settings-main">
+                        <Panel name="lighting-scene" class="lighting-scene" />
+                        <ScrollView name="lighting" class="fill settings" />
                     </Panel>
                 </Panel>
             </Panel>

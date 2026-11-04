@@ -929,11 +929,17 @@ Done so far:
   lifted a little to teal and highlights to cream; warm brown shadow tint. Film grain is removed: it never helped.
 - **Lighting settings assets:** `.lighting` files (`AssetKind::Lighting`) hold a look to start from and `[sky]`,
   `[sun]` and `[post]` over it; `builtin:golden_hour` and the other looks are built-in lighting. A scene names one,
-  `lighting = "..."`, applied as it loads with the scene's own `[sky]` and `[post]` over it, and written back on
-  save. C#: `LightingSettings` asset fields and `Lighting.Apply`, which replaces the scenes' lighting until the
+  `lighting = "..."`, which lights it alone as it loads (its own `[sky]` and `[post]` only while it names none), and
+  written back on save. C#: `LightingSettings` asset fields and `Lighting.Apply`, which replaces the scenes' lighting until the
   level changes (native API 37). The Project panel's New Lighting Settings; the Inspector shows the file; an open
-  scene re-lights when its lighting file changes. Still to come: a Lighting window that edits the settings with
-  fields, and a scene's lighting picked in the editor.
+  scene re-lights when its lighting file changes.
+- **The Lighting page:** a sun on the rail opens it in the drawer, as Unity's Lighting window: the open scene's
+  lighting picked from None, the built-in sets and the project's, and a tab each for Sky, Sun, Exposure, Colour,
+  Bloom, Fog, Shading and Lens, 57 settings showing their values in effect (the look's under the file's). A change
+  is written into the asset with toml_edit, comments kept, and lights the scene at once; an emptied number goes
+  back to the look's. Built-in sets are read-only with Make a Copy; a scene with none gets New Lighting Settings,
+  carrying its own sky and post over. Colours open the colour picker. Editor test: pick an asset, change its
+  haze, copy a built-in set, and save the scene naming it.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

@@ -438,6 +438,11 @@ impl Ui {
         self.element(node).is_some_and(|e| e.states.contains(States::CHECKED))
     }
 
+    /// Whether it can be clicked and typed in: not disabled (see `set_enabled`).
+    pub fn is_enabled(&self, node: NodeId) -> bool {
+        self.element(node).is_some_and(|e| !e.states.contains(States::DISABLED))
+    }
+
     /// A text field's text, or a label's or button's.
     pub fn text(&self, node: NodeId) -> String {
         let Some(element) = self.element(node) else { return String::new() };

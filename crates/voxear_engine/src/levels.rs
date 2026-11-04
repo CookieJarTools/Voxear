@@ -454,6 +454,36 @@ impl Levels {
         scene_file::apply_environment(engine, scene_file::Environment { lighting, sky, post })
     }
 
+    /// The lighting settings the active scene names, as it names them.
+    pub fn scene_lighting(&self) -> Option<&str> {
+        let active = self.scenes.iter().find(|s| Some(s.guid) == self.active)?;
+        active.lighting.as_ref().map(|(reference, _)| reference.as_str())
+    }
+
+    /// Names other lighting settings in the active scene, or none, and
+    /// lights the level with them. The scene keeps them when it is saved.
+    pub fn set_scene_lighting(
+        &mut self,
+        engine: &mut Engine,
+        content: &mut Content,
+        reference: Option<&str>,
+    ) -> Result<()> {
+        let lighting = match reference {
+            Some(reference) => {
+                let lit = content.lighting(&content.parse(reference)?).with_context(|| format!("loading {reference}"))?;
+                Some((reference.to_string(), lit))
+            }
+            None => None,
+        };
+        let active = self.scenes.iter_mut().find(|s| Some(s.guid) == self.active).context("no scene is open")?;
+        active.lighting = lighting;
+        if active.lighting.is_none() {
+            engine.world.remove_resource::<scene_file::SceneLighting>();
+            engine.world.remove_resource::<scene_file::LightingPost>();
+        }
+        self.apply_environment(engine)
+    }
+
     /// Reads the loaded scenes' lighting settings again, and any a script
     /// applied, as after they were edited, and lights the level with them.
     pub fn refresh_lighting(&mut self, engine: &mut Engine, content: &mut Content) -> Result<()> {
@@ -483,8 +513,9 @@ impl Levels {
         let mut written = Vec::new();
         for scene in &mut self.scenes {
             let (mut captured, ids) = scene_file::capture_scene_with_ids(&engine.world, content, &scene.objs);
-            // The world's sky is the level's; each scene keeps its own.
+            // The world's sky and lighting are the level's; each scene keeps its own.
             (captured.sky, captured.post) = (scene.sky, scene.post.clone());
+            captured.lighting = scene.lighting.as_ref().map(|(reference, _)| reference.clone());
             let file = project.join(&scene.path);
             let on_disk = scene_file::read(&file).ok().and_then(|s| toml::to_string(&s).ok());
             if on_disk.is_some() && on_disk == toml::to_string(&captured).ok() {
@@ -520,7 +551,9 @@ impl Levels {
         let (current, active, wanted) = (self.current.clone(), self.active, self.wanted.clone());
         let mut copy = Levels { current, active, wanted, ..Levels::default() };
         for scene in &self.scenes {
-            let captured = scene_file::capture_scene(&edit.world, content, &scene.objs);
+            let mut captured = scene_file::capture_scene(&edit.world, content, &scene.objs);
+            (captured.sky, captured.post) = (scene.sky, scene.post.clone());
+            captured.lighting = scene.lighting.as_ref().map(|(reference, _)| reference.clone());
             let objs = scene_file::spawn(play, content, renderer.as_deref_mut(), &captured, &HashSet::new())
                 .with_context(|| format!("starting {}", scene.path))?;
             let (lighting, sky, post) = (scene.lighting.clone(), scene.sky, scene.post.clone());

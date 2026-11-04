@@ -1027,6 +1027,11 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   (A2B10G10R10: an octahedral normal, normal map and all, and roughness), as depth-rebuilt normals faceted a chrome
   ball's reflection. 0.13 ms on the Sponza demo's chrome ball at 960×540. Screen-space reflections stay for GPUs
   without ray tracing.
+- **Bounced light that goes out with its lamp:** a probe texel's blend keeps less of its last value the more its
+  light changed (`DDGI_CHANGE`, RTXGI's irradiance threshold), and far less when it fell (`DDGI_FALL`, 12 to 30%):
+  each ray's hit takes light from the probes' last values, so in a pale room the bounce fed itself and lingered for
+  seconds after its lamp went out. A grey room's bounce is gone within a third of a second; a lit room's still
+  light is within 0.1% of before, with no visible flicker.
 - **A model as one Obj:** a model of several parts placed in a scene is one Obj with a Model Renderer (`ModelRenderer`
   in voxear_render: shared parts, each a mesh, material and place in the Obj's space), not an Obj per part. Each part
   is an instance of its own in extraction (`Owner::part`, motion tracked per part), so culling, LODs, shadows, the

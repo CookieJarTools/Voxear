@@ -76,6 +76,12 @@ Hit traceScene(Frame* frame, float3 origin, float3 direction, float far, bool an
 
 // How much of a probe's last value a fresh one keeps, against noise.
 static const float DDGI_KEEP = 0.95;
+// A change in a probe's light, as a share of it, from which it keeps less of its last value, to where it
+// keeps none: under the first, the rays' own noise; over the second, the light really changed.
+static const float2 DDGI_CHANGE = float2(0.25, 0.6);
+// The same for light that falls, which bounced light keeps feeding: a little over the rays' noise is enough,
+// and not so little that the noise's dips pull the light down.
+static const float2 DDGI_FALL = float2(0.12, 0.3);
 // Rays that find the back of a surface in this share of a probe's rays put it inside something.
 static const float DDGI_INSIDE = 0.25;
 
@@ -362,6 +368,15 @@ void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID, u
     float4 lastDepth = storageImagesRgba16f[push.textures.z][texel];
     float3 freshLight = lightWeights > 0.0 ? light / lightWeights : 0.0;
     float2 freshDepth = depthWeights > 1e-3 ? depth / depthWeights : (fresh ? float2(far, far * far) : lastDepth.xy);
+    // Light that has really changed, as when a lamp goes out or a door opens, is taken at once; only the small
+    // changes of the rays' noise are smoothed away (RTXGI's irradiance threshold). Light that falls is let go of
+    // sooner still: each ray takes some light from what the probes held last, so light bounced round a room would
+    // otherwise feed itself and linger for seconds after its lamp went out, where real light dies at once.
+    float was = max(max(lastLight.r, lastLight.g), lastLight.b);
+    float now = max(max(freshLight.r, freshLight.g), freshLight.b);
+    float change = abs(now - was) / max(max(now, was), 1e-3);
+    float2 threshold = now < was ? DDGI_FALL : DDGI_CHANGE;
+    keep *= 1.0 - smoothstep(threshold.x, threshold.y, change);
     storageImagesRgba16f[push.textures.y][texel] = float4(lerp(freshLight, lastLight.rgb, keep), 1.0);
     storageImagesRgba16f[push.textures.z][texel] = float4(lerp(freshDepth, lastDepth.xy, keep), 0.0, 0.0);
     if (all(thread.xy == 0))

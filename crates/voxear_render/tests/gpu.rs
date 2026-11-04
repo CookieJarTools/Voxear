@@ -2501,6 +2501,56 @@ fn assert_sealed_box_stays_dark(bounce: Bounce, name: &str) {
     assert!(dark < 1.0, "with {bounce:?} GI, nothing does: {dark:.2}");
 }
 
+/// The sealed box's ceiling, lit only by what a lamp shining down on the
+/// floor bounces up: how bright it is with the lamp on, and how bright a
+/// third of a second after it goes out.
+fn bounce_after_lamp_goes_out(bounce: Bounce) -> Option<(f32, f32)> {
+    use voxear_render::Sky;
+    let mut renderer = bounce_renderer(bounce)?;
+    let mut world = World::new();
+    let up = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, 1.0, 0.3).normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.2, -1.0), up, Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    // A room of middling grey, as most are: light bouncing round it loses half at each wall.
+    let pale = renderer.add_material(&MaterialDesc { base_color: [0.5, 0.5, 0.5, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(60.0))));
+    let slab = |position: Vec3, scale: Vec3| (MeshRenderer::new(cube, pale), Transform::new(position, Quat::IDENTITY, scale));
+    world.spawn(slab(Vec3::new(0.0, 1.5, 1.75), Vec3::new(4.0, 3.0, 0.5)));
+    world.spawn(slab(Vec3::new(0.0, 1.5, -1.75), Vec3::new(4.0, 3.0, 0.5)));
+    world.spawn(slab(Vec3::new(1.75, 1.5, 0.0), Vec3::new(0.5, 3.0, 4.0)));
+    world.spawn(slab(Vec3::new(-1.75, 1.5, 0.0), Vec3::new(0.5, 3.0, 4.0)));
+    world.spawn(slab(Vec3::new(0.0, 3.25, 0.0), Vec3::new(4.0, 0.5, 4.0)));
+    let down = Quat::from_rotation_arc(Vec3::Z, -Vec3::Y);
+    let lamp = world.spawn((Light::spot(Vec3::ONE, 40.0, 6.0, 30.0, 50.0), Transform::new(Vec3::new(0.0, 2.9, 0.0), down, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.global_illumination = bounce_settings(bounce);
+    // Fixed, so the eye does not brighten the dark room after.
+    post.exposure.auto = false;
+    world.insert_resource(post);
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 90);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("bounce lamp on.png", &pixels);
+    let lit = mean_brightness(&pixels);
+    world.despawn(lamp);
+    run(&mut renderer, &world, &mut time, 20);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("bounce lamp off.png", &pixels);
+    let after = mean_brightness(&pixels);
+    Some((lit, after))
+}
+
+#[test]
+fn bounced_light_goes_out_soon_after_its_lamp() {
+    let Some((lit, after)) = bounce_after_lamp_goes_out(Bounce::Traced) else { return };
+    assert!(lit > 10.0, "the ceiling takes the light the floor bounces: {lit:.1}");
+    assert!(after < lit * 0.15, "a third of a second after the lamp goes out, its bounce has too: {after:.1} of {lit:.1}");
+}
+
 #[test]
 fn no_light_leaks_into_a_sealed_box_with_ray_traced_gi() {
     assert_sealed_box_stays_dark(Bounce::Traced, "sealed box ray traced.png");

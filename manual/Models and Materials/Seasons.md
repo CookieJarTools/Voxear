@@ -20,6 +20,7 @@ Add a **Seasons** to any Obj (Add Component, then Rendering). It starts at summe
 | Dryness | How much of a field dries out, in patches: 0 for none, 1 for the most |
 | Dry colour | The colour dry leaves turn |
 | Wetness | How wet plants are, after rain: darker, and shining |
+| Ground and rocks | How much of the snow and wetness also lie on everything that is not a plant: the ground, rocks, roofs. 0 keeps them on plants; 1 covers everything that faces up. It takes no account of what is overhead, so keep it for outdoor levels |
 
 **Colour**, **Colour amount** and **Snow** belong to one season: the Inspector shows the season's the year is nearest, so pick a season to set its look. The defaults:
 
@@ -49,7 +50,8 @@ color_amount = 0.9
 ## What follows the seasons
 
 - **Leaves**, materials with **Foliage** on, take each season's colour and dry out in patches. A material's **Leaves** setting says whether they do: **Turn** (the default), or **Stay** for pines and other evergreens, which stay as made. See [[Materials]].
-- **Plants**, foliage or anything else with a **Wind bend**, such as a tree's trunk, take snow and wetness.
+- **Plants**, foliage or anything else with a **Wind bend**, such as a tree's trunk, take snow and wetness; everything else takes as much as **Ground and rocks** gives it.
+- Bounced light and reflections see plants in their season's colours too.
 
 Leaves stay on through winter; bare trees are best made as a model of their own, swapped in by code for winter.
 

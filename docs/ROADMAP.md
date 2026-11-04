@@ -1063,7 +1063,8 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   (Leaves first fell a triangle at a time towards winter; it read as broken meshes, so leaves stay on.) Editor: Add
   Component, the Inspector showing the look of the season the year is nearest under a Season choice, undo, copy
   and paste, prefabs; a Leaves choice in the material Inspector. C#: `Seasons.TimeOfYear`, `Seasons.Season`,
-  `Seasons.Exists`. Still to come: seasons in the GI's rays, and snow on the ground and on what is not a plant.
+  `Seasons.Exists`. Seasons reach the GI's rays and ray-traced reflections (`ddgiShadeHit`), and `ground_cover` lays
+  the snow and wetness on what is not a plant.
 - **Glow:** emissive masks on plants that pulse, breathe or flicker, for glowing mushrooms, bioluminescent
   forests and fireflies, and light from them in the GI.
 - **Placing it:** moved to M8, Terrain, to be built with terrain's scatter layers.

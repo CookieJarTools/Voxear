@@ -159,6 +159,9 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     // Metalness as shading has it: the material's factor times its texture's blue, which glTF factors leave at 1.
     float metal = material.metallic
         * textures[NonUniformResourceIndex(material.metallicRoughnessTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).b;
+    // As the season has it, so bounced light and reflections turn with the year too.
+    float rough = material.roughness;
+    seasonalSurface(frame, material, instance.model.c3.xyz, normal, base.rgb, rough);
     float3 albedo = base.rgb * (1.0 - metal);
     float3 emissive = material.emissive
         * textures[NonUniformResourceIndex(material.emissiveTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).rgb;

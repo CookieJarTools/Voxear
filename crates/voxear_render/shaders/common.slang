@@ -421,7 +421,9 @@ struct Seasons
     float patchSize;
     float wetness;
     uint enabled;
-    uint3 pad;
+    // How much of the snow and wetness reach what is not a plant.
+    float ground;
+    uint2 pad;
 };
 
 // The sun's light where the camera is, after its way through the air, and

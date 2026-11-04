@@ -119,6 +119,10 @@ pub struct Seasons {
     pub dry_color: [f32; 3],
     /// How wet plants are, from 0 to 1: darker, and shining.
     pub wetness: f32,
+    /// How much of the snow and wetness also lie on everything that is not
+    /// a plant, the ground and rocks and roofs, from 0 for plants alone to
+    /// 1. Snow lies on what faces up, under a roof too.
+    pub ground_cover: f32,
 }
 
 impl Component for Seasons {}
@@ -136,6 +140,7 @@ impl Default for Seasons {
             dryness: 0.0,
             dry_color: [0.62, 0.52, 0.25],
             wetness: 0.0,
+            ground_cover: 0.0,
         }
     }
 }
@@ -186,6 +191,7 @@ impl Seasons {
         gpu.variation = self.variation.clamp(0.0, 1.0);
         gpu.patch_size = self.patch_size.max(0.1);
         gpu.wetness = self.wetness.clamp(0.0, 1.0);
+        gpu.ground = self.ground_cover.clamp(0.0, 1.0);
         gpu
     }
 }

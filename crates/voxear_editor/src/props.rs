@@ -210,6 +210,7 @@ pub enum Prop {
     Dryness,
     DryColor,
     Wetness,
+    GroundCover,
     PushRadius,
     PushStrength,
     FoliageDraw,
@@ -374,7 +375,8 @@ impl Prop {
             | Prop::SeasonPatchSize
             | Prop::Dryness
             | Prop::DryColor
-            | Prop::Wetness => Part::Seasons,
+            | Prop::Wetness
+            | Prop::GroundCover => Part::Seasons,
             Prop::PushRadius | Prop::PushStrength => Part::FoliageInteraction,
             Prop::FoliageDraw | Prop::FoliageFade | Prop::FoliageShadow => Part::Foliage,
             Prop::ModelAsset | Prop::ModelLodBias | Prop::ModelParts => Part::Model,
@@ -498,6 +500,7 @@ impl Prop {
             Prop::Dryness => "dryness",
             Prop::DryColor => "dry_color",
             Prop::Wetness => "wetness",
+            Prop::GroundCover => "ground_cover",
             Prop::PushRadius => "radius",
             Prop::PushStrength => "strength",
             Prop::FoliageDraw => "draw_distance",
@@ -760,6 +763,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 Prop::Dryness,
                 Prop::DryColor,
                 Prop::Wetness,
+                Prop::GroundCover,
             ]
         }
         Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
@@ -927,6 +931,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::Dryness => "Dryness",
         Prop::DryColor => "Dry colour",
         Prop::Wetness => "Wetness",
+        Prop::GroundCover => "Ground and rocks",
         Prop::PushRadius => "Radius",
         Prop::PushStrength => "Strength",
         Prop::FoliageDraw => "Draw distance",
@@ -1377,6 +1382,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::Dryness => Value::Number(world.get::<Seasons>(entity)?.dryness),
         Prop::DryColor => Value::Color(world.get::<Seasons>(entity)?.dry_color.map(round3)),
         Prop::Wetness => Value::Number(world.get::<Seasons>(entity)?.wetness),
+        Prop::GroundCover => Value::Number(world.get::<Seasons>(entity)?.ground_cover),
         Prop::PushRadius => Value::Number(world.get::<FoliageInteraction>(entity)?.radius),
         Prop::PushStrength => Value::Number(world.get::<FoliageInteraction>(entity)?.strength),
         Prop::FoliageDraw => Value::Number(world.get::<Foliage>(entity)?.draw_distance),
@@ -2090,6 +2096,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |seasons: &mut Seasons| seasons.dry_color = color.map(|c| c.clamp(0.0, 1.0)))
         }
         (Prop::Wetness, Value::Number(n)) => with(world, entity, |seasons: &mut Seasons| seasons.wetness = n.clamp(0.0, 1.0)),
+        (Prop::GroundCover, Value::Number(n)) => {
+            with(world, entity, |seasons: &mut Seasons| seasons.ground_cover = n.clamp(0.0, 1.0))
+        }
         (Prop::VolumePriority, Value::Number(n)) => {
             with(world, entity, |volume: &mut PostVolume| volume.priority = n.round() as i32)
         }

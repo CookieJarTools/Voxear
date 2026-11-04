@@ -49,16 +49,23 @@ float seasonLuminance(float3 color)
     return dot(color, float3(0.2126, 0.7152, 0.0722));
 }
 
-// A plant's colour and roughness through the year: `albedo` the material's
-// own, `normal` the surface's facing, for snow.
+// A plant's colour and roughness through the year, and the snow and
+// wetness of everything else as far as the ground takes them: `albedo` the
+// material's own, `normal` the surface's facing, for snow.
 void seasonalSurface(Frame* frame, Material material, float3 origin, float3 normal, inout float3 albedo, inout float roughness)
 {
     Seasons seasons = frame->seasons;
-    if (seasons.enabled == 0 || !isPlant(material))
+    if (seasons.enabled == 0)
     {
         return;
     }
     PlantSeason season = plantSeason(frame, origin);
+    // What is not a plant takes as much of the snow and wetness as the ground does.
+    float cover = isPlant(material) ? 1.0 : seasons.ground;
+    if (cover <= 0.0)
+    {
+        return;
+    }
     if (isLeaves(material))
     {
         // The texture's light and dark, so a season's colour keeps the leaf's veins and edges.
@@ -75,9 +82,9 @@ void seasonalSurface(Frame* frame, Material material, float3 origin, float3 norm
         albedo = lerp(albedo, seasons.dry.rgb * detail, dry);
         albedo *= 1.0 + (windNoise(patch * 5.3 + 7.0) - 0.5) * 0.4 * seasons.variation;
     }
-    albedo *= 1.0 - 0.45 * seasons.wetness;
-    roughness *= 1.0 - 0.6 * seasons.wetness;
-    float snow = season.snow * smoothstep(0.1, 0.6, normal.y);
+    albedo *= 1.0 - 0.45 * seasons.wetness * cover;
+    roughness *= 1.0 - 0.6 * seasons.wetness * cover;
+    float snow = season.snow * cover * smoothstep(0.1, 0.6, normal.y);
     albedo = lerp(albedo, float3(0.85, 0.87, 0.9), snow);
     roughness = lerp(roughness, 0.6, snow);
 }

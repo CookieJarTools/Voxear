@@ -323,7 +323,9 @@ pub struct GpuSeasons {
     pub patch_size: f32,
     pub wetness: f32,
     pub enabled: u32,
-    pub _pad: [u32; 3],
+    /// How much of the snow and wetness reach what is not a plant.
+    pub ground: f32,
+    pub _pad: [u32; 2],
 }
 
 /// The level's wind, as shaders read it (`Wind` in `shaders/common.slang`;

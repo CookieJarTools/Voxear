@@ -1027,18 +1027,6 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   (A2B10G10R10: an octahedral normal, normal map and all, and roughness), as depth-rebuilt normals faceted a chrome
   ball's reflection. 0.13 ms on the Sponza demo's chrome ball at 960×540. Screen-space reflections stay for GPUs
   without ray tracing.
-- **Bounced light that goes out with its lamp:** a probe texel's blend keeps less of its last value the more its
-  light changed (`DDGI_CHANGE`, RTXGI's irradiance threshold), and far less when it fell (`DDGI_FALL`, 12 to 30%):
-  each ray's hit takes light from the probes' last values, so in a pale room the bounce fed itself and lingered for
-  seconds after its lamp went out. A grey room's bounce is gone within a third of a second; a lit room's still
-  light is within 0.1% of before, with no visible flicker. The blend follows each texel's running change
-  (`DDGI_TREND`, kept in the light's alpha), not one frame's: in Sponza, lit by candles, a frame's rays swung past
-  the thresholds and the walls flickered (each pixel's spread over 120 still frames 1.37 levels, against 0.83
-  with a fixed blend). Only falls are taken quickly: a rise taken at once fed itself as a fall did, and the
-  corridor round the demo's neon tube surged to twice as bright for eight frames at a time. Each ray's light is
-  capped (`DDGI_RAY_MOST`, 16 by its brightest channel): the tube lit its own glass from 4 cm, and whether a
-  probe's rays met that sliver changed as they turned and as probes moved. Over 900 editor frames of the corridor
-  the metered brightness now stays within 3% (it swung fourfold), and still frames spread 0.83.
 - **A model as one Obj:** a model of several parts placed in a scene is one Obj with a Model Renderer (`ModelRenderer`
   in voxear_render: shared parts, each a mesh, material and place in the Obj's space), not an Obj per part. Each part
   is an instance of its own in extraction (`Owner::part`, motion tracked per part), so culling, LODs, shadows, the

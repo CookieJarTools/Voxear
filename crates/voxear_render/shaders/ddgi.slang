@@ -76,20 +76,6 @@ Hit traceScene(Frame* frame, float3 origin, float3 direction, float far, bool an
 
 // How much of a probe's last value a fresh one keeps, against noise.
 static const float DDGI_KEEP = 0.95;
-// A fall in a probe's light, as a share of it a frame and as its last few frames have kept it up, from which it
-// keeps less of its last value, to where it keeps none: under the first, the rays' own noise; over the second,
-// the light really fell.
-static const float2 DDGI_FALL = float2(0.12, 0.3);
-// How much of a frame's change goes into the running change a probe texel keeps. One frame's change is mostly
-// the rays' noise, which with small bright lamps about (candles) swings well past the thresholds and flickers;
-// noise up one frame is down the next, so it averages out, where light that really fell keeps falling.
-static const float DDGI_TREND = 0.3;
-// The brightest a probe's ray may find, by its brightest channel. A lamp inside or against a mesh (a neon tube in
-// its glass) lights that mesh's faces from a few centimetres, thousands of times as brightly as from a metre;
-// whether a probe's rays land on such a sliver changes as they turn and as the probe moves, and its light then
-// swung the bounce of a whole corridor to twice as bright for frames at a time. Lit and glowing surfaces are far
-// below this.
-static const float DDGI_RAY_MOST = 16.0;
 // Rays that find the back of a surface in this share of a probe's rays put it inside something.
 static const float DDGI_INSIDE = 0.25;
 
@@ -254,7 +240,6 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         bool back;
         // Textures blurred well down: a probe's light is an average over many rays anyway.
         float3 light = ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, position, direction, 3.0, back);
-        light *= min(1.0, DDGI_RAY_MOST / max(max(max(light.r, light.g), light.b), 1e-6));
         // The back of a surface, seen from inside it: no light, and marked by its distance's sign.
         result = back ? float4(0.0, 0.0, 0.0, -t) : float4(light, t);
     }
@@ -377,16 +362,7 @@ void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID, u
     float4 lastDepth = storageImagesRgba16f[push.textures.z][texel];
     float3 freshLight = lightWeights > 0.0 ? light / lightWeights : 0.0;
     float2 freshDepth = depthWeights > 1e-3 ? depth / depthWeights : (fresh ? float2(far, far * far) : lastDepth.xy);
-    // Light that has really fallen, as when a lamp goes out, is let go of at once: each ray takes some light from
-    // what the probes held last, so light bounced round a room would otherwise feed itself and linger for seconds
-    // after its lamp went out, where real light dies at once. Light that rises is smoothed as ever: taken at once,
-    // a rise fed itself the same way, and the corridor round a neon tube surged to twice as bright for frames.
-    float was = max(max(lastLight.r, lastLight.g), lastLight.b);
-    float now = max(max(freshLight.r, freshLight.g), freshLight.b);
-    float trend = lerp(fresh ? 0.0 : lastLight.a, (now - was) / max(max(now, was), 1e-3), DDGI_TREND);
-    keep *= 1.0 - smoothstep(DDGI_FALL.x, DDGI_FALL.y, -trend);
-    // The running change goes in the light's alpha, which nothing else reads.
-    storageImagesRgba16f[push.textures.y][texel] = float4(lerp(freshLight, lastLight.rgb, keep), trend);
+    storageImagesRgba16f[push.textures.y][texel] = float4(lerp(freshLight, lastLight.rgb, keep), 1.0);
     storageImagesRgba16f[push.textures.z][texel] = float4(lerp(freshDepth, lastDepth.xy, keep), 0.0, 0.0);
     if (all(thread.xy == 0))
     {

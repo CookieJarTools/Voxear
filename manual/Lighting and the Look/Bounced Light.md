@@ -21,7 +21,7 @@ This works on every graphics card. On one with ray tracing (NVIDIA RTX 20 series
 
 The probes sit in two grids round the camera: a fine one, 32 probes across, 16 high and 32 deep, and a coarse one four times as far apart that carries on past it, so far walls and the mist over them are lit as near ones are. The grids move with the camera, and probes the camera leaves behind are reused for the ground ahead.
 
-A few probes, scattered through the grids, trace their rays each frame: a quarter of the fine ones, which light what is near, and a sixteenth of the coarse, which light the distance. Each blends what it finds into what it had, smoothing away the noise of its rays, but takes a real change at once: when a lamp goes out or a door shuts, its bounced light goes with it within a fraction of a second rather than lingering. When a level opens, every probe traces each frame for its first few, so the light has settled by the time you see it.
+A few probes, scattered through the grids, trace their rays each frame: a quarter of the fine ones, which light what is near, and a sixteenth of the coarse, which light the distance. Each blends what it finds into what it had, so light changes smoothly over about a quarter of a second. When a level opens, every probe traces each frame for its first few, so the light has settled by the time you see it.
 
 Light bounces more than once: where a ray hits a surface, the light it brings back includes what the probes round that surface found last frame. Shiny surfaces reflect the probes' light too, so a polished floor shows the warm walls round it rather than the sky through the ceiling.
 

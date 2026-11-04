@@ -18,7 +18,7 @@ use voxear_engine::{
     physics2d::{Collider2D, Rigidbody2D},
     prefab::{FromPrefab, Locks, PrefabInstance},
 };
-use voxear_render::{Camera, Light, LodGroup, MeshRenderer, Renderer};
+use voxear_render::{Camera, Light, LodGroup, MeshRenderer, Renderer, WindZone};
 use voxear_scene::{Layer, Name, ScenePersistence, Transform};
 
 use crate::objs::{self, Placing, Taken};
@@ -48,6 +48,7 @@ pub struct ObjState {
     pub collider: Option<Box<Collider>>,
     pub rigidbody: Option<Box<Rigidbody>>,
     pub character: Option<Box<CharacterController>>,
+    pub wind_zone: Option<Box<WindZone>>,
     pub joint: Option<Box<Joint>>,
     pub collider2d: Option<Box<Collider2D>>,
     pub rigidbody2d: Option<Box<Rigidbody2D>>,
@@ -74,6 +75,7 @@ impl ObjState {
             collider: world.get::<Collider>(entity).copied().map(Box::new),
             rigidbody: world.get::<Rigidbody>(entity).copied().map(Box::new),
             character: world.get::<CharacterController>(entity).copied().map(Box::new),
+            wind_zone: world.get::<WindZone>(entity).copied().map(Box::new),
             joint: world.get::<Joint>(entity).copied().map(Box::new),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
             rigidbody2d: world.get::<Rigidbody2D>(entity).copied().map(Box::new),
@@ -114,6 +116,7 @@ impl ObjState {
         put(world, entity, self.collider.as_deref().copied());
         put(world, entity, self.rigidbody.as_deref().copied());
         put(world, entity, self.character.as_deref().copied());
+        put(world, entity, self.wind_zone.as_deref().copied());
         put(world, entity, self.joint.as_deref().copied());
         put(world, entity, self.collider2d.as_deref().copied());
         put(world, entity, self.rigidbody2d.as_deref().copied());

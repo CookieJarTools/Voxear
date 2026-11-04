@@ -58,7 +58,7 @@ use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    Sky, SkyBody, SkyMode, SunLook, VolumeShape,
+    Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -267,6 +267,9 @@ pub struct ObjData {
     pub collider: Option<Collider>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rigidbody: Option<Rigidbody>,
+    /// A Wind Zone, blowing along the Obj's +Z over the whole level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wind_zone: Option<WindZone>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -312,6 +315,7 @@ impl ObjData {
             audio_listener: false,
             layer: None,
             collider: None,
+            wind_zone: None,
             rigidbody: None,
             character: None,
             joint: None,
@@ -942,6 +946,9 @@ fn capture_instance(
     if root.collider.is_some() && root.collider != prefab_root.collider {
         instance.collider = root.collider;
     }
+    if root.wind_zone.is_some() && root.wind_zone != prefab_root.wind_zone {
+        instance.wind_zone = root.wind_zone;
+    }
     if root.rigidbody.is_some() && root.rigidbody != prefab_root.rigidbody {
         instance.rigidbody = root.rigidbody;
     }
@@ -1040,6 +1047,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     // Each written whole, as an override merges into the prefab's and a value left out would keep the prefab's.
     if let Some(collider) = actual.collider.filter(|c| Some(*c) != expected.collider) {
         put("collider", whole(&collider, &crate::physics::Collider::default())?);
+    }
+    if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
+        put("wind_zone", whole(&wind, &WindZone::default())?);
     }
     if let Some(body) = actual.rigidbody.filter(|b| Some(*b) != expected.rigidbody) {
         put("rigidbody", whole(&body, &crate::physics::Rigidbody::default())?);
@@ -1259,6 +1269,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.audio_listener = world.has::<AudioListener>(entity);
     obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
+    obj.wind_zone = world.get::<WindZone>(entity).copied();
     obj.rigidbody = world.get::<Rigidbody>(entity).copied();
     obj.character = world.get::<CharacterController>(entity).copied();
     obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));
@@ -1572,6 +1583,22 @@ mod tests {
         assert!(!toml::to_string(&plain).unwrap().contains("stars"));
         let dim: SkyData = toml::from_str(&format!("{colours}\nstars = 0.5")).unwrap();
         assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&dim).unwrap()).unwrap().stars, 0.5);
+    }
+
+    #[test]
+    fn a_wind_zone_reads_and_writes_back_and_foliage_moves_in_it_unless_told() {
+        let obj: ObjData = toml::from_str("id = 1\nname = \"Wind\"\n[wind_zone]\nstrength = 2.0\ngusts = 0.0").unwrap();
+        let wind = obj.wind_zone.expect("the zone is read");
+        assert_eq!((wind.strength, wind.gusts, wind.turbulence), (2.0, 0.0, WindZone::default().turbulence));
+        assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().wind_zone, Some(wind));
+
+        let leaf: MaterialData = toml::from_str("foliage = true").unwrap();
+        assert_eq!((leaf.wind_bend(), leaf.wind_flutter()), (1.0, 1.0), "foliage moves without setup");
+        let still: MaterialData = toml::from_str("foliage = true\nwind_bend = 0.0\nwind_flutter = 0.0").unwrap();
+        assert_eq!((still.wind_bend(), still.wind_flutter()), (0.0, 0.0));
+        let trunk: MaterialData = toml::from_str("wind_bend = 1.0").unwrap();
+        assert_eq!((trunk.wind_bend(), trunk.wind_flutter()), (1.0, 0.0), "a trunk bends with its leaves");
+        assert!(!toml::to_string(&MaterialData::default()).unwrap().contains("wind"), "nothing written unset");
     }
 
     #[test]

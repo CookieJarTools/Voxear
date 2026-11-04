@@ -11,7 +11,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
 };
-use voxear_render::{Camera, Light, MeshRenderer, PostVolume};
+use voxear_render::{Camera, Light, MeshRenderer, PostVolume, WindZone};
 use voxear_scene::BehaviourSpec;
 
 use super::Editor;
@@ -34,6 +34,7 @@ pub(super) enum Copied {
     Vehicle(Vehicle),
     Wheel(Wheel),
     PostVolume(Box<PostVolume>),
+    WindZone(WindZone),
     Behaviour(BehaviourSpec),
 }
 
@@ -56,6 +57,7 @@ impl Copied {
             Part::Vehicle => Self::Vehicle(*world.get::<Vehicle>(entity)?),
             Part::Wheel => Self::Wheel(*world.get::<Wheel>(entity)?),
             Part::PostVolume => Self::PostVolume(Box::new(world.get::<PostVolume>(entity)?.clone())),
+            Part::WindZone => Self::WindZone(*world.get::<WindZone>(entity)?),
             Part::Behaviour(name) => {
                 let specs = &world.get::<EditBehaviours>(entity)?.0;
                 Self::Behaviour(specs.iter().find(|spec| spec.type_name == *name)?.clone())
@@ -70,6 +72,7 @@ impl Copied {
             Self::Light(light) => drop(world.insert(entity, *light)),
             Self::Camera(camera) => drop(world.insert(entity, *camera)),
             Self::PostVolume(volume) => drop(world.insert(entity, (**volume).clone())),
+            Self::WindZone(wind) => drop(world.insert(entity, *wind)),
             Self::Audio(audio) => drop(world.insert(entity, **audio)),
             Self::Listener => drop(world.insert(entity, AudioListener)),
             Self::Collider(collider) => drop(world.insert(entity, *collider)),

@@ -2629,3 +2629,48 @@ fn rough_glass_blurs_what_lies_behind_it() {
     let (sharp, soft) = (sharpness(&clear), sharpness(&rough));
     assert!(soft * 2 < sharp, "frosted glass softens the seam: {soft} against {sharp}");
 }
+
+/// A dark pole standing against the sky in front of the camera, drawn with
+/// a material that bends in the wind, in a Wind Zone of `strength` blowing
+/// to the camera's right, or none.
+fn wind_render(strength: Option<f32>) -> Option<Vec<u8>> {
+    use voxear_render::{Sky, WindZone};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 3.0, -9.0))));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let plant = MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], wind_bend: 2.0, ..MaterialDesc::default() };
+    let dark = renderer.add_material(&plant).unwrap();
+    world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(0.0, 3.0, 0.0), Quat::IDENTITY, Vec3::new(0.3, 6.0, 0.3))));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.2, -0.7, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(strength) = strength {
+        // Steady, so the pole leans as far every frame.
+        let wind = WindZone { strength, gusts: 0.0, turbulence: 0.0, ..WindZone::default() };
+        world.spawn((wind, Transform::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::ONE)));
+    }
+    world.insert_resource(Sky::default());
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// Across row `y`, the middle of the pole: where the darkest pixels are.
+fn pole_centre(pixels: &[u8], y: u32) -> f32 {
+    let dark: Vec<u32> = (0..640).filter(|&x| rgb_at(pixels, (x, y)).iter().sum::<i32>() < 350).collect();
+    assert!(!dark.is_empty(), "the pole crosses row {y}");
+    dark.iter().sum::<u32>() as f32 / dark.len() as f32
+}
+
+#[test]
+fn plants_bend_downwind_from_the_ground_up() {
+    let (Some(still), Some(windy)) = (wind_render(None), wind_render(Some(3.0))) else { return };
+    keep_image("wind still.png", &still);
+    keep_image("wind blowing.png", &windy);
+    let (top, bottom) = (85, 260);
+    let lean = |pixels: &[u8]| pole_centre(pixels, top) - pole_centre(pixels, bottom);
+    assert!(lean(&still).abs() < 2.0, "without wind the pole stands straight: {}", lean(&still));
+    assert!(lean(&windy) > 8.0, "in the wind its top leans downwind: {}", lean(&windy));
+    // A cube has vertices only at its ends, so the foot is the row just above its base.
+    assert!((pole_centre(&windy, 282) - pole_centre(&still, 282)).abs() < 2.0, "and its foot stays put");
+}

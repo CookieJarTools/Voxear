@@ -185,6 +185,12 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     float3 center = transform(instance.model, float4(mesh.center, 1.0)).xyz;
     float scale = max(length(instance.model.c0.xyz), max(length(instance.model.c1.xyz), length(instance.model.c2.xyz)));
     float radius = mesh.radius * scale;
+    // A plant in the wind leans past its bounds by a share of its height (wind.slang), a little more in gusts.
+    Material material = buffers()->materials[instance.material];
+    if (frame->wind.strength > 0.0 && material.windBend > 0.0)
+    {
+        radius *= 1.0 + 0.1 * material.windBend * frame->wind.strength * (1.0 + frame->wind.gusts);
+    }
     uint list = push.list + id.y;
 
     if (list >= LIST_SHADOW)

@@ -90,7 +90,11 @@ pub struct GpuMaterial {
     pub alpha_cutoff: f32,
     /// Glass's index of refraction: how strongly it bends and reflects.
     pub ior: f32,
-    pub _pad: [f32; 3],
+    /// How much plants drawn with it bend in the wind from the ground up,
+    /// and how much their leaves flutter; 0 for neither.
+    pub wind_bend: f32,
+    pub wind_flutter: f32,
+    pub _pad: f32,
 }
 
 #[repr(C)]
@@ -267,6 +271,22 @@ pub struct GpuFrame {
     pub _pad5: [u32; 2],
     pub lighting: GpuLighting,
     pub ddgi: GpuDdgi,
+    pub wind: GpuWind,
+}
+
+/// The level's wind, as shaders read it (`Wind` in `shaders/common.slang`;
+/// see `wind`). Strength 0 without a Wind Zone.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuWind {
+    /// Which way it blows, level: x and z.
+    pub direction: [f32; 2],
+    pub strength: f32,
+    pub gusts: f32,
+    pub gust_size: f32,
+    pub gust_speed: f32,
+    pub turbulence: f32,
+    pub _pad: f32,
 }
 
 /// Ray-traced GI's probes, as shaders find them (`Ddgi` in
@@ -653,7 +673,7 @@ mod tests {
         let ddgi = size_of::<GpuDdgi>();
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32
         );
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);

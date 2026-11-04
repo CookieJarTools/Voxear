@@ -69,6 +69,15 @@ pub struct MaterialData {
     /// bends and reflects more.
     #[serde(default = "default_ior", skip_serializing_if = "is_default_ior")]
     pub ior: f32,
+    /// How much plants drawn with it bend in a Wind Zone's wind, from the
+    /// ground up: 1 for foliage unless written, 0 for the rest. Give a
+    /// tree's trunk the same as its leaves, so they stay on their branches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wind_bend: Option<f32>,
+    /// How much its leaves flutter in the wind: 1 for foliage unless
+    /// written, 0 for the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wind_flutter: Option<f32>,
 }
 
 impl Default for MaterialData {
@@ -85,6 +94,8 @@ impl Default for MaterialData {
             foliage: false,
             glass: false,
             ior: default_ior(),
+            wind_bend: None,
+            wind_flutter: None,
         }
     }
 }
@@ -162,6 +173,8 @@ impl MaterialData {
             foliage: self.foliage,
             glass: self.glass,
             ior: self.ior,
+            wind_bend: self.wind_bend(),
+            wind_flutter: self.wind_flutter(),
             ..MaterialDesc::default()
         }
     }
@@ -172,8 +185,20 @@ impl MaterialData {
         let [er, eg, eb] = self.emissive.map(f32::to_bits);
         let (metallic, roughness, ior) = (self.metallic.to_bits(), self.roughness.to_bits(), self.ior.to_bits());
         let flags = u32::from(self.foliage) | u32::from(self.glass) << 1;
-        let values = [r, g, b, metallic, roughness, er, eg, eb, flags, ior];
+        let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits()];
+        let values = [r, g, b, metallic, roughness, er, eg, eb, flags, ior, wind[0], wind[1]];
         (values, MaterialMap::ALL.map(|map| self.map(map)))
+    }
+
+    /// How much plants drawn with it bend in the wind: as written, or 1 for
+    /// foliage.
+    pub fn wind_bend(&self) -> f32 {
+        self.wind_bend.unwrap_or(if self.foliage { 1.0 } else { 0.0 })
+    }
+
+    /// How much its leaves flutter: as written, or 1 for foliage.
+    pub fn wind_flutter(&self) -> f32 {
+        self.wind_flutter.unwrap_or(if self.foliage { 1.0 } else { 0.0 })
     }
 
     /// Clear glass: the built-in material `builtin:glass`.
@@ -190,7 +215,7 @@ impl MaterialData {
     }
 }
 
-type MaterialKey = ([u32; 10], [Option<AssetGuid>; 4]);
+type MaterialKey = ([u32; 12], [Option<AssetGuid>; 4]);
 
 /// What [`Content::release_unused`] freed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -23,7 +23,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     Camera, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    SkyBody, VolumeShape,
+    SkyBody, VolumeShape, WindZone,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -72,6 +72,7 @@ pub enum Part {
     Vehicle,
     Wheel,
     PostVolume,
+    WindZone,
     /// A script, by its full type name.
     Behaviour(String),
 }
@@ -96,6 +97,7 @@ impl Part {
             Part::Vehicle => "vehicle".into(),
             Part::Wheel => "wheel".into(),
             Part::PostVolume => "post_volume".into(),
+            Part::WindZone => "wind_zone".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -117,6 +119,7 @@ impl Part {
             Part::Vehicle => "Vehicle",
             Part::Wheel => "Wheel",
             Part::PostVolume => "Post Volume",
+            Part::WindZone => "Wind Zone",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -137,6 +140,7 @@ impl Part {
             Part::Vehicle => "move",
             Part::Wheel => "rotate",
             Part::PostVolume => "panels",
+            Part::WindZone => "move",
             Part::Behaviour(_) => "code",
         }
     }
@@ -172,6 +176,11 @@ pub enum Prop {
     VolumeBlend,
     VolumeWeight,
     VolumePriority,
+    WindStrength,
+    WindGusts,
+    WindGustSize,
+    WindGustSpeed,
+    WindTurbulence,
     FieldOfView,
     Near,
     Exposure,
@@ -315,6 +324,9 @@ impl Prop {
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
             Prop::VolumeShape | Prop::VolumeBlend | Prop::VolumeWeight | Prop::VolumePriority => Part::PostVolume,
+            Prop::WindStrength | Prop::WindGusts | Prop::WindGustSize | Prop::WindGustSpeed | Prop::WindTurbulence => {
+                Part::WindZone
+            }
             Prop::Sound
             | Prop::SoundVolume
             | Prop::Pitch
@@ -421,6 +433,11 @@ impl Prop {
             Prop::VolumeBlend => "blend_distance",
             Prop::VolumeWeight => "weight",
             Prop::VolumePriority => "priority",
+            Prop::WindStrength => "strength",
+            Prop::WindGusts => "gusts",
+            Prop::WindGustSize => "gust_size",
+            Prop::WindGustSpeed => "gust_speed",
+            Prop::WindTurbulence => "turbulence",
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
@@ -550,6 +567,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<PostVolume>(entity) {
         parts.push(Part::PostVolume);
     }
+    if world.has::<WindZone>(entity) {
+        parts.push(Part::WindZone);
+    }
     if world.has::<AudioSource>(entity) {
         parts.push(Part::Audio);
     }
@@ -643,6 +663,9 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure],
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
+        Part::WindZone => {
+            vec![Prop::WindStrength, Prop::WindGusts, Prop::WindGustSize, Prop::WindGustSpeed, Prop::WindTurbulence]
+        }
         Part::Audio => {
             let mut props =
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
@@ -790,6 +813,11 @@ pub fn label(prop: &Prop) -> String {
         Prop::VolumeBlend => "Blend distance",
         Prop::VolumeWeight => "Weight",
         Prop::VolumePriority => "Priority",
+        Prop::WindStrength => "Strength",
+        Prop::WindGusts => "Gusts",
+        Prop::WindGustSize => "Gust size",
+        Prop::WindGustSpeed => "Gust speed",
+        Prop::WindTurbulence => "Turbulence",
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
@@ -974,6 +1002,9 @@ pub fn add(
         Part::PostVolume => {
             world.insert(entity, PostVolume::default());
         }
+        Part::WindZone => {
+            world.insert(entity, WindZone::default());
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -994,6 +1025,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Light => drop(world.remove::<Light>(entity)),
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
+        Part::WindZone => drop(world.remove::<WindZone>(entity)),
         Part::Audio => drop(world.remove::<AudioSource>(entity)),
         Part::Listener => drop(world.remove::<AudioListener>(entity)),
         Part::LodGroup => drop(world.remove::<LodGroup>(entity)),
@@ -1178,6 +1210,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::VolumeBlend => Value::Number(world.get::<PostVolume>(entity)?.blend_distance),
         Prop::VolumeWeight => Value::Number(world.get::<PostVolume>(entity)?.weight),
         Prop::VolumePriority => Value::Number(world.get::<PostVolume>(entity)?.priority as f32),
+        Prop::WindStrength => Value::Number(world.get::<WindZone>(entity)?.strength),
+        Prop::WindGusts => Value::Number(world.get::<WindZone>(entity)?.gusts),
+        Prop::WindGustSize => Value::Number(world.get::<WindZone>(entity)?.gust_size),
+        Prop::WindGustSpeed => Value::Number(world.get::<WindZone>(entity)?.gust_speed),
+        Prop::WindTurbulence => Value::Number(world.get::<WindZone>(entity)?.turbulence),
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
@@ -1819,6 +1856,13 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::VolumeWeight, Value::Number(n)) => {
             with(world, entity, |volume: &mut PostVolume| volume.weight = n.clamp(0.0, 1.0))
+        }
+        (Prop::WindStrength, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.strength = n.max(0.0)),
+        (Prop::WindGusts, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gusts = n.max(0.0)),
+        (Prop::WindGustSize, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_size = n.max(0.1)),
+        (Prop::WindGustSpeed, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_speed = n),
+        (Prop::WindTurbulence, Value::Number(n)) => {
+            with(world, entity, |wind: &mut WindZone| wind.turbulence = n.max(0.0))
         }
         (Prop::VolumePriority, Value::Number(n)) => {
             with(world, entity, |volume: &mut PostVolume| volume.priority = n.round() as i32)

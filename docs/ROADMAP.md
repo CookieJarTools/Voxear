@@ -980,10 +980,14 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the
     tree is.
   - Shadows for foliage drawn from cheaper LODs, and none for grass beyond a distance.
-- **Wind:** a Wind Zone (direction, strength, gusts and turbulence) moving every plant in the level at once.
-  - Trunks bend from the ground, branches sway and leaves flutter, each by masks in the mesh's vertex colours
-    or worked out from height and distance from the trunk, so plants from any source move without setup.
-  - Gusts as noise moving across the level, so grass shows waves going through it.
+- ~~**Wind:**~~ done: a Wind Zone component (strength, gusts, gust size and speed, turbulence) blowing along its
+  Obj's +Z over the level. `shaders/wind.slang` moves every vertex in the forward, depth, shadow and mesh-shader
+  passes, and last frame's for motion vectors: plants bend from their pivot up by height (from the mesh's
+  bounds) and lean downwind on an arc, sway at a phase of their own, and their leaves flutter along their
+  normals; gusts are two octaves of value noise drifting downwind, so a field shows waves. Materials have
+  `wind_bend` and `wind_flutter`, 1 for foliage unless written; culling widens a moving plant's sphere. Editor:
+  Wind Zone component with arrows; material inspector Wind bend and Leaf flutter. Still to come: masks from
+  vertex colours, for branch sway apart from the trunk.
 - **Pushing through it:** characters, vehicles and anything with a Foliage Interaction component bend grass and
   plants out of their way, through a texture of pushes round the camera, which springs back over time.
 - **Seasons and variation:** a level-wide setting for the season (green to dry to autumn to bare to snow),

@@ -202,7 +202,10 @@ struct Material
     float alphaCutoff;
     // Glass's index of refraction.
     float ior;
-    float3 pad;
+    // How much plants drawn with it bend in the wind, and their leaves flutter (wind.slang).
+    float windBend;
+    float windFlutter;
+    float pad;
 };
 
 struct Instance
@@ -385,6 +388,18 @@ struct Lighting
     uint moon;
 };
 
+// The level's wind; mirrors GpuWind in src/gpu.rs. Strength 0 without a Wind Zone.
+struct Wind
+{
+    float2 direction;
+    float strength;
+    float gusts;
+    float gustSize;
+    float gustSpeed;
+    float turbulence;
+    float pad;
+};
+
 // Ray-traced GI's probes; mirrors GpuDdgi in src/gpu.rs.
 static const uint DDGI_CASCADES = 2;
 static const float DDGI_CASCADE_SCALE = 4.0;
@@ -460,6 +475,7 @@ struct Frame
     uint2 pad5;
     Lighting lighting;
     Ddgi ddgi;
+    Wind wind;
 };
 
 struct DrawCommand

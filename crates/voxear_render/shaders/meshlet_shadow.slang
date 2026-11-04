@@ -3,6 +3,7 @@
 // only, as shadow.slang draws casters.
 
 #include "culling.slang"
+#include "wind.slang"
 
 struct ShadowVertex
 {
@@ -24,11 +25,17 @@ void shadowMesh(
     uint vertexCount = drawn.meshlet.counts & 0xFF;
     uint triangleCount = drawn.meshlet.counts >> 8;
     SetMeshOutputCounts(vertexCount, triangleCount);
-    uint vertexOffset = buffers()->meshes[drawn.data.mesh].vertexOffset;
+    Mesh mesh = buffers()->meshes[drawn.data.mesh];
+    uint vertexOffset = mesh.vertexOffset;
+    Material material = buffers()->materials[drawn.data.material];
+    float height = plantHeight(drawn.data, mesh);
     for (uint i = thread.x; i < vertexCount; i += MESHLET_ROUND)
     {
         Vertex v = buffers()->vertices[vertexOffset + buffers()->meshletVertices[drawn.vertexBase + i]];
         float4 world = transform(drawn.data.model, float4(v.position, 1.0));
+        Instance data = drawn.data;
+        float3 normal = normalize(data.normal0.xyz * v.normal.x + data.normal1.xyz * v.normal.y + data.normal2.xyz * v.normal.z);
+        world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, world.xyz, normal, push.frame->time);
         vertices[i].position = transform(push.frame->cascadeViewProj[push.list - LIST_SHADOW], world);
     }
     for (uint i = thread.x; i < triangleCount; i += MESHLET_ROUND)

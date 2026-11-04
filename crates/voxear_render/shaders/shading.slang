@@ -10,6 +10,7 @@
 #include "ddgi_sample.slang"
 #include "lights.slang"
 #include "occlusion.slang"
+#include "wind.slang"
 
 struct VertexOut
 {
@@ -45,8 +46,18 @@ float2 motion(float4 currentClip, float4 previousClip)
 VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, uint vertexIndex)
 {
     Instance instance = buffers()->instances[instanceIndex];
-    Vertex v = buffers()->vertices[buffers()->meshes[instance.mesh].vertexOffset + vertexIndex];
+    Mesh mesh = buffers()->meshes[instance.mesh];
+    Vertex v = buffers()->vertices[mesh.vertexOffset + vertexIndex];
     float4 world = transform(instance.model, float4(v.position, 1.0));
+    float4 previous = transform(instance.prevModel, float4(v.position, 1.0));
+    // Plants move in the wind, now and as they were a frame ago, for their motion.
+    Material material = buffers()->materials[instance.material];
+    float3 normal = normalize(instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z);
+    float height = plantHeight(instance, mesh);
+    Frame* frame = push.frame;
+    world.xyz += windOffset(frame, material, instance.model.c3.xyz, height, world.xyz, normal, frame->time);
+    float earlier = frame->time - frame->deltaTime;
+    previous.xyz += windOffset(frame, material, instance.prevModel.c3.xyz, height, previous.xyz, normal, earlier);
 
     VertexOut o;
     o.position = transform(push.frame->viewProj, world);
@@ -60,7 +71,7 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     o.fade = fade;
     o.cluster = cluster;
     o.currentClip = transform(push.frame->unjitteredViewProj, world);
-    o.previousClip = transform(push.frame->prevViewProj, transform(instance.prevModel, float4(v.position, 1.0)));
+    o.previousClip = transform(push.frame->prevViewProj, previous);
     return o;
 }
 

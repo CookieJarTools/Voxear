@@ -523,6 +523,11 @@ pub fn extract(
         }
     }
     frame.light_count = lights.len() as u32;
+    // The first Wind Zone blows over the whole level.
+    let zones = world.query_ref::<(&crate::WindZone, &Transform)>().without::<Destroying>();
+    if let Some((zone, transform)) = zones.into_iter().next() {
+        frame.wind = zone.gpu(transform.rotation);
+    }
 
     if sun_found {
         let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near };

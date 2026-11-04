@@ -225,6 +225,8 @@ fn material_data(material: &FileMaterial, maps: [Option<voxear_assets::AssetGuid
         foliage: material.desc.foliage,
         glass: material.desc.glass,
         ior: material.desc.ior,
+        wind_bend: None,
+        wind_flutter: None,
     }
 }
 

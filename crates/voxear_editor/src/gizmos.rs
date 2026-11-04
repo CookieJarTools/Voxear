@@ -17,7 +17,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, ColliderMesh, ColliderShape, Joint, JointType, Vehicle, Wheel},
     physics2d::{Collider2D, ColliderShape2D},
 };
-use voxear_render::{Camera, Light, LightKind, PostVolume, VolumeShape};
+use voxear_render::{Camera, Light, LightKind, PostVolume, VolumeShape, WindZone};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -103,8 +103,30 @@ pub fn shapes(
     }
     if let Some(entity) = selected {
         post_volume(&mut shapes, world, camera, entity);
+        wind_zone(&mut shapes, world, camera, entity);
     }
     shapes
+}
+
+/// Which way the selected Wind Zone blows: three arrows along its Obj's +Z,
+/// level, as the wind is, the longer the stronger it blows.
+fn wind_zone(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let Some(wind) = world.get::<WindZone>(entity) else { return };
+    let (_, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
+    let along = rotation * Vec3::Z;
+    let along = Vec3::new(along.x, 0.0, along.z).normalize_or(Vec3::Z);
+    let across = Vec3::new(-along.z, 0.0, along.x);
+    let size = camera.world_size(position, DIRECTION);
+    let length = size * (0.5 + wind.strength.clamp(0.0, 3.0) * 0.5);
+    let color = Color::hex(REACH);
+    for offset in [-0.35, 0.0, 0.35] {
+        let start = position + across * (size * offset) - along * (length * 0.5);
+        let tip = start + along * length;
+        line(shapes, camera, start, tip, color);
+        for side in [-1.0, 1.0] {
+            line(shapes, camera, tip, tip - along * (size * 0.15) + across * (size * 0.1 * side), color);
+        }
+    }
 }
 
 /// How far the selected Audio Source carries: a sphere of three rings at

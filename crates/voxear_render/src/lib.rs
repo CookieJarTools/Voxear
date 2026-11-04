@@ -47,6 +47,7 @@ mod shadows;
 mod texture_codec;
 mod ui_pass;
 mod volumetric;
+mod wind;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
 
@@ -88,6 +89,7 @@ pub use previews::{
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
+pub use wind::WindZone;
 pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
 };

@@ -69,6 +69,12 @@ pub struct MaterialDesc {
     /// Glass's index of refraction: 1.5 for window glass, higher bends and
     /// reflects more (1.33 water, 2.4 diamond).
     pub ior: f32,
+    /// How much a plant drawn with it bends in a Wind Zone's wind from the
+    /// ground up: 1 as a sapling does, 0 not at all. Give a tree's trunk and
+    /// leaves the same, so the leaves stay on their branches.
+    pub wind_bend: f32,
+    /// How much its leaves flutter in the wind, along their faces.
+    pub wind_flutter: f32,
 }
 
 impl Default for MaterialDesc {
@@ -87,6 +93,8 @@ impl Default for MaterialDesc {
             foliage: false,
             glass: false,
             ior: 1.5,
+            wind_bend: 0.0,
+            wind_flutter: 0.0,
         }
     }
 }
@@ -725,7 +733,9 @@ impl Assets {
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),
             ior: desc.ior.max(1.0),
-            _pad: [0.0; 3],
+            wind_bend: desc.wind_bend.max(0.0),
+            wind_flutter: desc.wind_flutter.max(0.0),
+            _pad: 0.0,
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {

@@ -185,6 +185,8 @@ struct MaterialFields {
     /// Each map's picture, in [`MaterialMap::ALL`]'s order, with its path.
     maps: [(Slot, Option<String>); 4],
     foliage: NodeId,
+    /// How much it bends in the wind, and its leaves flutter.
+    wind: [NodeId; 2],
     glass: NodeId,
     ior: NodeId,
 }
@@ -418,7 +420,8 @@ impl AssetView {
                 return Some(AssetAction::Ping(path));
             }
         }
-        let changed = fields.color.iter().chain(&fields.emissive).chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.glass, &fields.ior]);
+        let changed = fields.color.iter().chain(&fields.emissive).chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.glass, &fields.ior])
+            .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
         }
@@ -432,7 +435,16 @@ impl AssetView {
         }
         data.metallic = read(fields.metallic, data.metallic).clamp(0.0, 1.0);
         data.roughness = read(fields.roughness, data.roughness).clamp(0.0, 1.0);
-        data.foliage = ui.is_checked(fields.foliage);
+        let foliage = ui.is_checked(fields.foliage);
+        // Foliage that turns on or off brings its own wind, unless the wind was changed this frame.
+        let [bend, flutter] = fields.wind;
+        if ui.changed(bend) {
+            data.wind_bend = Some(read(bend, data.wind_bend()).clamp(0.0, 4.0));
+        }
+        if ui.changed(flutter) {
+            data.wind_flutter = Some(read(flutter, data.wind_flutter()).clamp(0.0, 4.0));
+        }
+        data.foliage = foliage;
         data.glass = ui.is_checked(fields.glass);
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), data.clone()))
@@ -651,12 +663,13 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> 
     let row = prop(ui, rows, "Foliage");
     let foliage = ui.toggle(row, "", data.foliage);
     ui.add_class(foliage, "checkbox");
+    let wind = [one(ui, "Wind bend", data.wind_bend()), one(ui, "Leaf flutter", data.wind_flutter())];
     let row = prop(ui, rows, "Glass");
     let glass = ui.toggle(row, "", data.glass);
     ui.add_class(glass, "checkbox");
     let ior = one(ui, "IOR", data.ior);
     let swatches = [color_swatch, emission_swatch];
-    let fields = MaterialFields { data, color, metallic, roughness, emissive, swatches, maps, foliage, glass, ior };
+    let fields = MaterialFields { data, color, metallic, roughness, emissive, swatches, maps, foliage, wind, glass, ior };
     fields.show_swatches(ui);
     Some(fields)
 }

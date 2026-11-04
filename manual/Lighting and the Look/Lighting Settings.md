@@ -38,7 +38,7 @@ intensity = 0.2
 | `[sun]` | How the level's sun looks, whatever light it is: `temperature` in kelvin and `tint` colour it, `strength` scales its intensity, `softness` widens it where the light keeps its default, and `shadow_tint` colours its shadows where the light has no tint of its own |
 | `[post]` | Post-processing, as a scene's `[post]` writes it: exposure, bloom, grading, fog and the rest (see [[Post-Processing]]). Only what you write changes |
 
-Change them on the Lighting page, or in your text editor: an open scene lit by them changes as soon as you save. Select the file to read it in the Inspector.
+Change them on the Lighting page, or select the file in the Project panel and change them in the Inspector, which shows the same settings in the same tabs; the open scene lit by them changes at once. A setting that does nothing as the others stand is hidden until it would: the fog's settings while there is no fog, light shafts' while there are none, the gradient sky's colours under the atmosphere, auto exposure's limits while exposure is fixed, and the tonemapper's contrast and saturation unless it is AgX. You can also change the file in your text editor: an open scene lit by it changes as soon as you save.
 
 ## Lighting a scene
 

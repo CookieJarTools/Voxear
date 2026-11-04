@@ -6423,4 +6423,39 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
         .into_iter()
         .collect();
     assert!(named.contains(&Some("Lighting/New Lighting 1.lighting".into())), "the active scene names it: {named:?}");
+
+    // Selected in the Project panel, lighting settings show every setting in the Inspector, to change in place.
+    // The copies made above were selected, which opened their folder.
+    if tile(&editor.ui, "Dusk.lighting").is_none() {
+        open_folder(&mut editor, &mut renderer, "Lighting");
+    }
+    let tile_of_dusk = tile(&editor.ui, "Dusk.lighting").expect("Dusk in the Project panel");
+    click(&mut editor.ui, tile_of_dusk);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Lighting/Dusk.lighting"));
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let mut tabs = Vec::new();
+    with_class(&editor.ui, inspector, "settings-tab", &mut tabs);
+    let fog_tab = tabs.into_iter().find(|&tab| editor.ui.text(tab) == "Fog").expect("a tab for the fog");
+    click(&mut editor.ui, fog_tab);
+    frame(&mut editor, &mut renderer);
+    let row = |editor: &voxear_editor::Editor, title: &str| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, inspector, "setting", &mut rows);
+        rows.into_iter().find(|&row| editor.ui.children(row).first().is_some_and(|&l| editor.ui.text(l) == title))
+    };
+    let density = row(&editor, "Density").expect("the fog's density");
+    assert!(editor.ui.is_visible(density), "shown while there is fog");
+    let fog = first_with(&editor.ui, row(&editor, "Fog").unwrap(), "checkbox").unwrap();
+    click(&mut editor.ui, fog);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&dusk).unwrap();
+    assert!(text.contains("[post.fog]") && text.contains("enabled = false"), "written into the file: {text}");
+    assert!(!editor.ui.is_visible(density), "a setting that does nothing without fog is hidden");
+    let mut tabs = Vec::new();
+    with_class(&editor.ui, inspector, "settings-tab", &mut tabs);
+    let checked: Vec<String> = tabs.iter().filter(|&&tab| editor.ui.is_checked(tab)).map(|&tab| editor.ui.text(tab)).collect();
+    assert_eq!(checked, ["Fog"], "only the tab shown is picked");
+    assert!(!editor.ui.is_checked(fog), "the fog's toggle shows it off");
+    shot(&mut renderer, "lighting-inspector.png");
 }

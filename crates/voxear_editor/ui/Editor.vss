@@ -408,6 +408,14 @@
     gap: 2px;
 }
 
+/* A `.lighting` asset's tabs in the Inspector: across, wrapping, as it is narrow. */
+.lighting-asset-tabs {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 4px 0px 8px 0px;
+    gap: 2px;
+}
+
 .settings-tab {
     height: 26px;
     padding: 0px 10px;

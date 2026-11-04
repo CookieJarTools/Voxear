@@ -26,6 +26,8 @@
 //! sound shows how long it is, its channels and sample rate, and a button
 //! to listen to it, which plays it outside the game's volumes.
 
+use std::path::PathBuf;
+
 use voxear_assets::{AssetDb, AssetGuid, AssetKind, MaterialRemap};
 use voxear_engine::{Game, MaterialData, MaterialMap, localization::StringTable, script_types::ScriptTypes};
 use voxear_render::Leaves;
@@ -33,6 +35,7 @@ use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
     collection,
+    lighting_panel::{ColorClicked, LightingAction, LightingFields},
     import_fields::{ImportFields, ImportSettings},
     inspector::{color_row, number, prop},
     level_files::{self, LevelEdit},
@@ -47,6 +50,8 @@ const CODE_LINES: usize = 200;
 #[derive(Clone, Debug, PartialEq)]
 pub enum AssetAction {
     Open(ProjectItem),
+    /// A setting of the lighting settings shown, written into their file.
+    Lighting(LightingAction),
     SaveMaterial(String, MaterialData),
     /// Change the scenes of the level at this path.
     EditLevel(String, LevelEdit),
@@ -140,6 +145,8 @@ pub struct AssetView {
     strings: Option<StringsFields>,
     /// A level's Bake Paths button.
     bake: Option<NodeId>,
+    /// Lighting settings' every setting, changed in their file, and that file.
+    lighting: Option<(LightingFields, PathBuf)>,
 }
 
 /// A sound's play button, with its icon and its words.
@@ -287,6 +294,7 @@ impl AssetView {
             listen: None,
             strings: None,
             bake: None,
+            lighting: None,
         };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game.content.db()),
@@ -310,7 +318,17 @@ impl AssetView {
                 code(ui, root, &file, "csharp", dark);
             }
             ItemKind::Asset(AssetKind::Ui) => code(ui, root, &file, "vui", dark),
-            ItemKind::Asset(AssetKind::AssetTable | AssetKind::Lighting) => code(ui, root, &file, "toml", dark),
+            ItemKind::Asset(AssetKind::AssetTable) => code(ui, root, &file, "toml", dark),
+            // Every setting to change in place, a tab for each group, not the file's text.
+            ItemKind::Asset(AssetKind::Lighting) => {
+                let rows = part(ui, root, "Lighting", "light");
+                let tabs = ui.panel(rows, Style::row());
+                ui.add_class(tabs, "lighting-asset-tabs");
+                let body = ui.panel(rows, Style::column());
+                let mut fields = LightingFields::new(ui, tabs, body);
+                fields.show_file(ui, &file);
+                view.lighting = Some((fields, file.clone()));
+            }
             ItemKind::Asset(AssetKind::Prefab) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Scene) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Level) => {
@@ -364,12 +382,16 @@ impl AssetView {
             listen: None,
             strings: None,
             bake: None,
+            lighting: None,
         })
     }
 
     /// What was asked of the editor this frame: Open, a material changed, a
     /// level's scenes, or a model's import settings applied.
     pub fn update(&mut self, ui: &mut Ui) -> Option<AssetAction> {
+        if let Some(action) = self.lighting.as_mut().and_then(|(fields, _)| fields.update(ui)) {
+            return Some(AssetAction::Lighting(action));
+        }
         if self.open.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::Open(self.item.clone()));
         }
@@ -527,6 +549,19 @@ impl AssetView {
     pub fn show_swatches(&self, ui: &mut Ui) {
         if let Some(fields) = &self.material {
             fields.show_swatches(ui);
+        }
+    }
+
+    /// The colour setting of lighting settings whose swatch was clicked.
+    pub fn lighting_color_clicked(&self, ui: &Ui) -> Option<ColorClicked> {
+        self.lighting.as_ref().and_then(|(fields, _)| fields.color_clicked(ui))
+    }
+
+    /// Shows lighting settings again as their file now has them, after a
+    /// change to it.
+    pub fn refresh_lighting(&mut self, ui: &mut Ui) {
+        if let Some((fields, file)) = &mut self.lighting {
+            fields.show_file(ui, file);
         }
     }
 

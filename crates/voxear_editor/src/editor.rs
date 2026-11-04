@@ -1095,6 +1095,12 @@ impl Editor {
     fn asset_action(&mut self, action: AssetAction, renderer: &mut Renderer) {
         match action {
             AssetAction::Open(item) => self.open_item(&item, renderer),
+            AssetAction::Lighting(action) => {
+                self.lighting_action(action, renderer);
+                if let Some(view) = self.inspector.asset_view() {
+                    view.refresh_lighting(&mut self.ui);
+                }
+            }
             AssetAction::SaveMaterial(path, data) => {
                 if let Err(error) = self.game.content.save_material(renderer, &path, &data) {
                     self.notify(&format!("Could not save {path}: {error:#}"));

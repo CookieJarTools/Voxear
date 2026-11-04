@@ -31,9 +31,9 @@ enum Target {
     PageMaterial(MaterialColor, NodeId),
     /// A colour setting, by its key.
     Setting(&'static str),
-    /// A colour of the lighting settings the Lighting page shows, by where
-    /// it is in their file.
-    Lighting(&'static [&'static str]),
+    /// A colour of lighting settings, as the Lighting page or a `.lighting`
+    /// asset's Inspector shows them: their file, and where it is in it.
+    Lighting(std::path::PathBuf, &'static [&'static str]),
 }
 
 pub(super) struct ColorPopup {
@@ -98,9 +98,12 @@ impl Editor {
             let srgb = [hex >> 16, hex >> 8, hex].map(|c| (c & 0xff) as f32 / 255.0);
             return self.open_color(Target::Setting(key), swatch, title, (PickedColor::srgb(srgb), false));
         }
-        if let Some((path, swatch, srgb)) = self.lighting_panel.color_clicked(&self.ui) {
-            let title = path.last().copied().unwrap_or("Colour").replace('_', " ");
-            return self.open_color(Target::Lighting(path), swatch, &title, (PickedColor::srgb(srgb), false));
+        let lighting = self.lighting_panel.color_clicked(&self.ui);
+        let clicked = lighting.or_else(|| self.inspector.asset_view().and_then(|view| view.lighting_color_clicked(&self.ui)));
+        if let Some(clicked) = clicked {
+            let title = clicked.path.last().copied().unwrap_or("Colour").replace('_', " ");
+            let target = Target::Lighting(clicked.file, clicked.path);
+            return self.open_color(target, clicked.swatch, &title, (PickedColor::srgb(clicked.srgb), false));
         }
         let Some(&(_, swatch)) = self.color_popup.open.as_ref() else { return };
         let (root, panel) = (self.ui.root(), self.color_popup.panel);
@@ -135,10 +138,9 @@ impl Editor {
                     self.asset_action(action, renderer);
                 }
             }
-            Some((Target::Lighting(path), _)) => {
-                if let Some(action) = self.lighting_panel.set_color(path, color.srgb) {
-                    self.lighting_action(action, renderer);
-                }
+            Some((Target::Lighting(file, path), _)) => {
+                let action = crate::lighting_panel::set_color(file.clone(), path, color.srgb);
+                self.lighting_action(action, renderer);
             }
             Some((Target::Setting(key), _)) => {
                 let [r, g, b] = color.srgb.map(|c| (c * 255.0).round() as u32);

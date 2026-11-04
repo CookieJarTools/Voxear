@@ -44,13 +44,34 @@ enum Kind {
     Color,
 }
 
-/// One setting: where it is in a `.lighting` file, its name, and its group.
+/// One setting: where it is in a `.lighting` file, its name, its group, and
+/// when it shows.
 struct Info {
     path: &'static [&'static str],
     title: &'static str,
     group: &'static str,
     kind: Kind,
+    /// What must hold for the setting to do anything, each a setting and
+    /// its value as the file writes it (`true` for a toggle that is on).
+    /// While any does not, the setting is hidden, so the page shows only
+    /// what changes the picture.
+    when: When,
 }
+
+type When = &'static [(&'static [&'static str], &'static str)];
+
+const ALWAYS: When = &[];
+const GRADIENT_SKY: When = &[(&["sky", "mode"], "gradient")];
+const ATMOSPHERE: When = &[(&["sky", "mode"], "atmosphere")];
+const AUTO_EXPOSURE: When = &[(&["post", "exposure", "auto"], "true")];
+const AGX: When = &[(&["post", "tonemap", "mapper"], "agx")];
+const BLOOM: When = &[(&["post", "bloom", "enabled"], "true")];
+const FOG: When = &[(&["post", "fog", "enabled"], "true")];
+const SHAFTS: When = &[(&["post", "fog", "enabled"], "true"), (&["post", "fog", "volumetric"], "true")];
+const BOUNCE: When = &[(&["post", "global_illumination", "enabled"], "true")];
+const OCCLUSION: When = &[(&["post", "ambient_occlusion", "enabled"], "true")];
+const FOCUS: When = &[(&["post", "depth_of_field", "enabled"], "true")];
+const BLUR: When = &[(&["post", "motion_blur", "enabled"], "true")];
 
 const fn number(min: f32, max: f32, unit: &'static str) -> Kind {
     Kind::Number { min, max, unit }
@@ -64,63 +85,63 @@ const TONEMAPPERS: &[(&str, &str)] =
 
 #[rustfmt::skip]
 const SETTINGS: &[Info] = &[
-    Info { path: &["look"], title: "Look", group: "Sky", kind: Kind::Choice(LOOKS) },
-    Info { path: &["sky", "mode"], title: "Mode", group: "Sky", kind: Kind::Choice(SKY_MODES) },
-    Info { path: &["sky", "zenith"], title: "Zenith", group: "Sky", kind: Kind::Color },
-    Info { path: &["sky", "horizon"], title: "Horizon", group: "Sky", kind: Kind::Color },
-    Info { path: &["sky", "ground"], title: "Ground", group: "Sky", kind: Kind::Color },
-    Info { path: &["sky", "ambient"], title: "Ambient", group: "Sky", kind: number(0.0, 8.0, "") },
-    Info { path: &["sky", "haze"], title: "Haze", group: "Sky", kind: number(0.0, 10.0, "") },
-    Info { path: &["sky", "haze_tint"], title: "Haze tint", group: "Sky", kind: Kind::Color },
-    Info { path: &["sky", "haze_glow"], title: "Haze glow", group: "Sky", kind: number(0.0, 0.95, "") },
-    Info { path: &["sky", "distance_haze"], title: "Distance haze", group: "Sky", kind: number(0.0, 100.0, "") },
-    Info { path: &["sky", "sun_size"], title: "Sun size", group: "Sky", kind: number(0.05, 20.0, "°") },
-    Info { path: &["sky", "stars"], title: "Stars", group: "Sky", kind: number(0.0, 4.0, "") },
-    Info { path: &["sun", "temperature"], title: "Temperature", group: "Sun", kind: number(1000.0, 20000.0, "K") },
-    Info { path: &["sun", "tint"], title: "Tint", group: "Sun", kind: Kind::Color },
-    Info { path: &["sun", "strength"], title: "Strength", group: "Sun", kind: number(0.0, 10.0, "×") },
-    Info { path: &["sun", "softness"], title: "Softness", group: "Sun", kind: number(0.0, 20.0, "°") },
-    Info { path: &["sun", "shadow_tint"], title: "Shadow tint", group: "Sun", kind: Kind::Color },
-    Info { path: &["post", "exposure", "auto"], title: "Auto exposure", group: "Exposure", kind: Kind::Toggle },
-    Info { path: &["post", "exposure", "compensation"], title: "Compensation", group: "Exposure", kind: number(-8.0, 8.0, "EV") },
-    Info { path: &["post", "exposure", "min_ev"], title: "Min exposure", group: "Exposure", kind: number(-16.0, 16.0, "EV") },
-    Info { path: &["post", "exposure", "max_ev"], title: "Max exposure", group: "Exposure", kind: number(-16.0, 16.0, "EV") },
-    Info { path: &["post", "exposure", "speed_up"], title: "Adapt to light", group: "Exposure", kind: number(0.0, 20.0, "EV/s") },
-    Info { path: &["post", "exposure", "speed_down"], title: "Adapt to dark", group: "Exposure", kind: number(0.0, 20.0, "EV/s") },
-    Info { path: &["post", "tonemap", "mapper"], title: "Tonemapper", group: "Colour", kind: Kind::Choice(TONEMAPPERS) },
-    Info { path: &["post", "tonemap", "contrast"], title: "Contrast", group: "Colour", kind: number(0.0, 3.0, "") },
-    Info { path: &["post", "tonemap", "saturation"], title: "Saturation", group: "Colour", kind: number(0.0, 3.0, "") },
-    Info { path: &["post", "grading", "temperature"], title: "White balance", group: "Colour", kind: number(-1.0, 1.0, "") },
-    Info { path: &["post", "grading", "tint"], title: "Green-magenta", group: "Colour", kind: number(-1.0, 1.0, "") },
-    Info { path: &["post", "grading", "contrast"], title: "Grade contrast", group: "Colour", kind: number(0.0, 3.0, "") },
-    Info { path: &["post", "grading", "saturation"], title: "Grade saturation", group: "Colour", kind: number(0.0, 3.0, "") },
-    Info { path: &["post", "vignette", "intensity"], title: "Vignette", group: "Colour", kind: number(0.0, 1.0, "") },
-    Info { path: &["post", "chromatic_aberration"], title: "Colour fringes", group: "Colour", kind: number(0.0, 1.0, "") },
-    Info { path: &["post", "bloom", "enabled"], title: "Bloom", group: "Bloom", kind: Kind::Toggle },
-    Info { path: &["post", "bloom", "intensity"], title: "Intensity", group: "Bloom", kind: number(0.0, 1.0, "") },
-    Info { path: &["post", "bloom", "scatter"], title: "Scatter", group: "Bloom", kind: number(0.0, 1.0, "") },
-    Info { path: &["post", "bloom", "tint"], title: "Tint", group: "Bloom", kind: Kind::Color },
-    Info { path: &["post", "fog", "enabled"], title: "Fog", group: "Fog", kind: Kind::Toggle },
-    Info { path: &["post", "fog", "density"], title: "Density", group: "Fog", kind: number(0.0, 1.0, "") },
-    Info { path: &["post", "fog", "height_falloff"], title: "Height falloff", group: "Fog", kind: number(0.0, 2.0, "") },
-    Info { path: &["post", "fog", "base_height"], title: "Base height", group: "Fog", kind: number(-1000.0, 1000.0, "m") },
-    Info { path: &["post", "fog", "sun_glow"], title: "Sun glow", group: "Fog", kind: number(0.0, 1.0, "") },
-    Info { path: &["post", "fog", "volumetric"], title: "Light shafts", group: "Fog", kind: Kind::Toggle },
-    Info { path: &["post", "fog", "volumetric_distance"], title: "Shaft distance", group: "Fog", kind: number(1.0, 512.0, "m") },
-    Info { path: &["post", "fog", "anisotropy"], title: "Forward glow", group: "Fog", kind: number(-0.95, 0.95, "") },
-    Info { path: &["post", "global_illumination", "enabled"], title: "Bounced light", group: "Shading", kind: Kind::Toggle },
-    Info { path: &["post", "global_illumination", "strength"], title: "Bounce strength", group: "Shading", kind: number(0.0, 4.0, "") },
-    Info { path: &["post", "global_illumination", "probe_spacing"], title: "Probe spacing", group: "Shading", kind: number(0.1, 16.0, "m") },
-    Info { path: &["post", "ambient_occlusion", "enabled"], title: "Ambient occlusion", group: "Shading", kind: Kind::Toggle },
-    Info { path: &["post", "ambient_occlusion", "radius"], title: "Occlusion radius", group: "Shading", kind: number(0.0, 8.0, "m") },
-    Info { path: &["post", "ambient_occlusion", "strength"], title: "Occlusion strength", group: "Shading", kind: number(0.0, 4.0, "") },
-    Info { path: &["post", "contact_shadows", "enabled"], title: "Contact shadows", group: "Shading", kind: Kind::Toggle },
-    Info { path: &["post", "reflections", "enabled"], title: "Reflections", group: "Shading", kind: Kind::Toggle },
-    Info { path: &["post", "depth_of_field", "enabled"], title: "Depth of field", group: "Lens", kind: Kind::Toggle },
-    Info { path: &["post", "depth_of_field", "focus_distance"], title: "Focus distance", group: "Lens", kind: number(0.0, 10000.0, "m") },
-    Info { path: &["post", "depth_of_field", "aperture"], title: "Aperture", group: "Lens", kind: number(0.5, 64.0, "f") },
-    Info { path: &["post", "motion_blur", "enabled"], title: "Motion blur", group: "Lens", kind: Kind::Toggle },
-    Info { path: &["post", "motion_blur", "intensity"], title: "Blur intensity", group: "Lens", kind: number(0.0, 1.0, "") },
+    Info { path: &["look"], title: "Look", group: "Sky", kind: Kind::Choice(LOOKS), when: ALWAYS },
+    Info { path: &["sky", "mode"], title: "Mode", group: "Sky", kind: Kind::Choice(SKY_MODES), when: ALWAYS },
+    Info { path: &["sky", "zenith"], title: "Zenith", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY },
+    Info { path: &["sky", "horizon"], title: "Horizon", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY },
+    Info { path: &["sky", "ground"], title: "Ground", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY },
+    Info { path: &["sky", "ambient"], title: "Ambient", group: "Sky", kind: number(0.0, 8.0, ""), when: ALWAYS },
+    Info { path: &["sky", "haze"], title: "Haze", group: "Sky", kind: number(0.0, 10.0, ""), when: ATMOSPHERE },
+    Info { path: &["sky", "haze_tint"], title: "Haze tint", group: "Sky", kind: Kind::Color, when: ATMOSPHERE },
+    Info { path: &["sky", "haze_glow"], title: "Haze glow", group: "Sky", kind: number(0.0, 0.95, ""), when: ATMOSPHERE },
+    Info { path: &["sky", "distance_haze"], title: "Distance haze", group: "Sky", kind: number(0.0, 100.0, ""), when: ATMOSPHERE },
+    Info { path: &["sky", "sun_size"], title: "Sun size", group: "Sky", kind: number(0.05, 20.0, "°"), when: ALWAYS },
+    Info { path: &["sky", "stars"], title: "Stars", group: "Sky", kind: number(0.0, 4.0, ""), when: ALWAYS },
+    Info { path: &["sun", "temperature"], title: "Temperature", group: "Sun", kind: number(1000.0, 20000.0, "K"), when: ALWAYS },
+    Info { path: &["sun", "tint"], title: "Tint", group: "Sun", kind: Kind::Color, when: ALWAYS },
+    Info { path: &["sun", "strength"], title: "Strength", group: "Sun", kind: number(0.0, 10.0, "×"), when: ALWAYS },
+    Info { path: &["sun", "softness"], title: "Softness", group: "Sun", kind: number(0.0, 20.0, "°"), when: ALWAYS },
+    Info { path: &["sun", "shadow_tint"], title: "Shadow tint", group: "Sun", kind: Kind::Color, when: ALWAYS },
+    Info { path: &["post", "exposure", "auto"], title: "Auto exposure", group: "Exposure", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "exposure", "compensation"], title: "Compensation", group: "Exposure", kind: number(-8.0, 8.0, "EV"), when: ALWAYS },
+    Info { path: &["post", "exposure", "min_ev"], title: "Min exposure", group: "Exposure", kind: number(-16.0, 16.0, "EV"), when: AUTO_EXPOSURE },
+    Info { path: &["post", "exposure", "max_ev"], title: "Max exposure", group: "Exposure", kind: number(-16.0, 16.0, "EV"), when: AUTO_EXPOSURE },
+    Info { path: &["post", "exposure", "speed_up"], title: "Adapt to light", group: "Exposure", kind: number(0.0, 20.0, "EV/s"), when: AUTO_EXPOSURE },
+    Info { path: &["post", "exposure", "speed_down"], title: "Adapt to dark", group: "Exposure", kind: number(0.0, 20.0, "EV/s"), when: AUTO_EXPOSURE },
+    Info { path: &["post", "tonemap", "mapper"], title: "Tonemapper", group: "Colour", kind: Kind::Choice(TONEMAPPERS), when: ALWAYS },
+    Info { path: &["post", "tonemap", "contrast"], title: "Contrast", group: "Colour", kind: number(0.0, 3.0, ""), when: AGX },
+    Info { path: &["post", "tonemap", "saturation"], title: "Saturation", group: "Colour", kind: number(0.0, 3.0, ""), when: AGX },
+    Info { path: &["post", "grading", "temperature"], title: "White balance", group: "Colour", kind: number(-1.0, 1.0, ""), when: ALWAYS },
+    Info { path: &["post", "grading", "tint"], title: "Green-magenta", group: "Colour", kind: number(-1.0, 1.0, ""), when: ALWAYS },
+    Info { path: &["post", "grading", "contrast"], title: "Grade contrast", group: "Colour", kind: number(0.0, 3.0, ""), when: ALWAYS },
+    Info { path: &["post", "grading", "saturation"], title: "Grade saturation", group: "Colour", kind: number(0.0, 3.0, ""), when: ALWAYS },
+    Info { path: &["post", "vignette", "intensity"], title: "Vignette", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS },
+    Info { path: &["post", "chromatic_aberration"], title: "Colour fringes", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS },
+    Info { path: &["post", "bloom", "enabled"], title: "Bloom", group: "Bloom", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "bloom", "intensity"], title: "Intensity", group: "Bloom", kind: number(0.0, 1.0, ""), when: BLOOM },
+    Info { path: &["post", "bloom", "scatter"], title: "Scatter", group: "Bloom", kind: number(0.0, 1.0, ""), when: BLOOM },
+    Info { path: &["post", "bloom", "tint"], title: "Tint", group: "Bloom", kind: Kind::Color, when: BLOOM },
+    Info { path: &["post", "fog", "enabled"], title: "Fog", group: "Fog", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "fog", "density"], title: "Density", group: "Fog", kind: number(0.0, 1.0, ""), when: FOG },
+    Info { path: &["post", "fog", "height_falloff"], title: "Height falloff", group: "Fog", kind: number(0.0, 2.0, ""), when: FOG },
+    Info { path: &["post", "fog", "base_height"], title: "Base height", group: "Fog", kind: number(-1000.0, 1000.0, "m"), when: FOG },
+    Info { path: &["post", "fog", "sun_glow"], title: "Sun glow", group: "Fog", kind: number(0.0, 1.0, ""), when: FOG },
+    Info { path: &["post", "fog", "volumetric"], title: "Light shafts", group: "Fog", kind: Kind::Toggle, when: FOG },
+    Info { path: &["post", "fog", "volumetric_distance"], title: "Shaft distance", group: "Fog", kind: number(1.0, 512.0, "m"), when: SHAFTS },
+    Info { path: &["post", "fog", "anisotropy"], title: "Forward glow", group: "Fog", kind: number(-0.95, 0.95, ""), when: SHAFTS },
+    Info { path: &["post", "global_illumination", "enabled"], title: "Bounced light", group: "Shading", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "global_illumination", "strength"], title: "Bounce strength", group: "Shading", kind: number(0.0, 4.0, ""), when: BOUNCE },
+    Info { path: &["post", "global_illumination", "probe_spacing"], title: "Probe spacing", group: "Shading", kind: number(0.1, 16.0, "m"), when: BOUNCE },
+    Info { path: &["post", "ambient_occlusion", "enabled"], title: "Ambient occlusion", group: "Shading", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "ambient_occlusion", "radius"], title: "Occlusion radius", group: "Shading", kind: number(0.0, 8.0, "m"), when: OCCLUSION },
+    Info { path: &["post", "ambient_occlusion", "strength"], title: "Occlusion strength", group: "Shading", kind: number(0.0, 4.0, ""), when: OCCLUSION },
+    Info { path: &["post", "contact_shadows", "enabled"], title: "Contact shadows", group: "Shading", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "reflections", "enabled"], title: "Reflections", group: "Shading", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "depth_of_field", "enabled"], title: "Depth of field", group: "Lens", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "depth_of_field", "focus_distance"], title: "Focus distance", group: "Lens", kind: number(0.0, 10000.0, "m"), when: FOCUS },
+    Info { path: &["post", "depth_of_field", "aperture"], title: "Aperture", group: "Lens", kind: number(0.5, 64.0, "f"), when: FOCUS },
+    Info { path: &["post", "motion_blur", "enabled"], title: "Motion blur", group: "Lens", kind: Kind::Toggle, when: ALWAYS },
+    Info { path: &["post", "motion_blur", "intensity"], title: "Blur intensity", group: "Lens", kind: number(0.0, 1.0, ""), when: BLUR },
 ];
 
 #[derive(Clone, Copy)]
@@ -150,6 +171,22 @@ pub enum LightingAction {
     Copy,
 }
 
+/// Two changes are the same when they write the same text: the file's values
+/// keep their own formatting, so they compare as written.
+impl PartialEq for LightingAction {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::SetScene(a), Self::SetScene(b)) => a == b,
+            (Self::Set { file, path, value }, Self::Set { file: f, path: p, value: v }) => {
+                let text = |value: &Option<toml_edit::Value>| value.as_ref().map(|v| v.to_string());
+                file == f && path == p && text(value) == text(v)
+            }
+            (Self::Copy, Self::Copy) => true,
+            _ => false,
+        }
+    }
+}
+
 pub struct LightingPanel {
     /// The scene's lighting menu, what each of its entries names, a note
     /// under it, and the button that makes a copy.
@@ -157,16 +194,9 @@ pub struct LightingPanel {
     choices: Vec<Option<String>>,
     note: NodeId,
     copy: NodeId,
-    tabs: Vec<(&'static str, NodeId)>,
-    headings: Vec<(&'static str, NodeId)>,
-    group: &'static str,
-    rows: Vec<Row>,
-    /// The lighting shown, as the scene names it, and its file when it is
-    /// the project's to change.
+    fields: LightingFields,
+    /// The lighting shown, as the scene names it.
     shown: Option<String>,
-    file: Option<PathBuf>,
-    /// Every setting as it is in effect.
-    values: toml::Table,
 }
 
 impl LightingPanel {
@@ -183,45 +213,8 @@ impl LightingPanel {
         ui.add_class(note, "lighting-note");
         let copy = ui.button(top, "Make a Copy");
         ui.add_class(copy, "lighting-copy");
-
-        let mut tabs: Vec<(&'static str, NodeId)> = Vec::new();
-        let body = ui.panel(view, Style::column());
-        ui.add_class(body, "settings-body");
-        let mut headings: Vec<(&'static str, NodeId)> = Vec::new();
-        let mut rows = Vec::new();
-        for info in SETTINGS {
-            if !tabs.iter().any(|(group, _)| *group == info.group) {
-                let tab = ui.button(tab_bar, info.group);
-                ui.add_class(tab, "settings-tab");
-                tabs.push((info.group, tab));
-                let heading = ui.add_label(body, info.group);
-                ui.add_class(heading, "settings-group");
-                headings.push((info.group, heading));
-            }
-            let row = ui.panel(body, Style::default());
-            ui.add_class(row, "prop");
-            ui.add_class(row, "setting");
-            let label = ui.add_label(row, info.title);
-            ui.add_class(label, "prop-label");
-            let control = control(ui, row, info.kind);
-            rows.push(Row { info, row, control });
-        }
-        let group = SETTINGS[0].group;
-        let mut panel = Self {
-            scene,
-            choices: vec![None],
-            note,
-            copy,
-            tabs,
-            headings,
-            group,
-            rows,
-            shown: None,
-            file: None,
-            values: toml::Table::new(),
-        };
-        panel.show_group(ui);
-        panel
+        let fields = LightingFields::new(ui, tab_bar, view);
+        Self { scene, choices: vec![None], note, copy, fields, shown: None }
     }
 
     /// Shows the active scene's lighting as it now is: the menu's choices,
@@ -262,9 +255,9 @@ impl LightingPanel {
         self.choices = choices;
 
         self.shown = current.clone();
-        self.file = current.as_deref().and_then(|reference| project_file(game, reference));
+        let file = current.as_deref().and_then(|reference| project_file(game, reference));
         let read = current.as_deref().map_or_else(|| Ok(LightingFile::default()), |reference| read(game, reference));
-        let note = match (&current, &self.file, &read) {
+        let note = match (&current, &file, &read) {
             (_, _, Err(error)) => format!("{error:#}"),
             (None, ..) => {
                 "The scene sets its own sky and post-processing. Make lighting settings to share them.".into()
@@ -274,9 +267,99 @@ impl LightingPanel {
         };
         ui.set_visible(self.note, !note.is_empty());
         ui.set_text(self.note, &note);
-        ui.set_visible(self.copy, self.file.is_none());
+        ui.set_visible(self.copy, file.is_none());
         ui.set_text(self.copy, if current.is_none() { "New Lighting Settings" } else { "Make a Copy" });
-        self.values = read.and_then(|file| effective(&file)).unwrap_or_default();
+        let values = read.and_then(|file| effective(&file)).unwrap_or_default();
+        self.fields.show(ui, file, values);
+    }
+
+    /// What was changed on the page this frame.
+    pub fn update(&mut self, ui: &mut Ui) -> Option<LightingAction> {
+        if ui.changed(self.scene) {
+            let chosen = self.choices.get(ui.selected_option(self.scene)).cloned().flatten();
+            return Some(LightingAction::SetScene(chosen));
+        }
+        if ui.clicked(self.copy) {
+            return Some(LightingAction::Copy);
+        }
+        self.fields.update(ui)
+    }
+
+    /// The colour setting whose swatch was clicked this frame.
+    pub fn color_clicked(&self, ui: &Ui) -> Option<ColorClicked> {
+        self.fields.color_clicked(ui)
+    }
+
+    /// The setting a page shows, by its title, for tests and the palette.
+    pub fn row_of(&self, title: &str) -> Option<NodeId> {
+        self.fields.row_of(title)
+    }
+
+    /// The lighting settings shown, as the scene names them.
+    pub fn shown(&self) -> Option<&str> {
+        self.shown.as_deref()
+    }
+}
+
+/// A colour setting's swatch clicked: the file and setting it is, the
+/// swatch, and its colour.
+pub struct ColorClicked {
+    pub file: PathBuf,
+    pub path: &'static [&'static str],
+    pub swatch: NodeId,
+    pub srgb: [f32; 3],
+}
+
+/// Every setting of lighting settings, a tab for each group, as the Lighting
+/// page and a `.lighting` asset's Inspector show them; changed in place
+/// when they are a file of the project's.
+pub struct LightingFields {
+    tabs: Vec<(&'static str, NodeId)>,
+    headings: Vec<(&'static str, NodeId)>,
+    group: &'static str,
+    rows: Vec<Row>,
+    /// The file shown, when it is the project's to change.
+    file: Option<PathBuf>,
+    /// Every setting as it is in effect.
+    values: toml::Table,
+}
+
+impl LightingFields {
+    /// A tab for each group into `tab_bar` and every setting into `view`.
+    pub fn new(ui: &mut Ui, tab_bar: NodeId, view: NodeId) -> Self {
+        let mut tabs: Vec<(&'static str, NodeId)> = Vec::new();
+        let body = ui.panel(view, Style::column());
+        ui.add_class(body, "settings-body");
+        let mut headings: Vec<(&'static str, NodeId)> = Vec::new();
+        let mut rows = Vec::new();
+        for info in SETTINGS {
+            if !tabs.iter().any(|(group, _)| *group == info.group) {
+                let tab = ui.button(tab_bar, info.group);
+                ui.add_class(tab, "settings-tab");
+                tabs.push((info.group, tab));
+                let heading = ui.add_label(body, info.group);
+                ui.add_class(heading, "settings-group");
+                headings.push((info.group, heading));
+            }
+            let row = ui.panel(body, Style::default());
+            ui.add_class(row, "prop");
+            ui.add_class(row, "setting");
+            let label = ui.add_label(row, info.title);
+            ui.add_class(label, "prop-label");
+            let control = control(ui, row, info.kind);
+            rows.push(Row { info, row, control });
+        }
+        let group = SETTINGS[0].group;
+        let mut fields = Self { tabs, headings, group, rows, file: None, values: toml::Table::new() };
+        fields.show_group(ui);
+        fields
+    }
+
+    /// Shows lighting settings' values, in effect, changeable when `file` is
+    /// the project's file of them.
+    pub fn show(&mut self, ui: &mut Ui, file: Option<PathBuf>, values: toml::Table) {
+        self.file = file;
+        self.values = values;
         let editable = self.file.is_some();
         for row in &self.rows {
             let node = match row.control {
@@ -285,20 +368,28 @@ impl LightingPanel {
             ui.set_enabled(node, editable);
             show(ui, row, find(&self.values, row.info.path));
         }
+        self.show_group(ui);
     }
 
-    /// What was changed on the page this frame.
+    /// Shows the project's `.lighting` file at `file`.
+    pub fn show_file(&mut self, ui: &mut Ui, file: &Path) {
+        let read = std::fs::read_to_string(file)
+            .with_context(|| format!("reading {}", file.display()))
+            .and_then(|text| toml::from_str::<LightingFile>(&text).with_context(|| format!("reading {}", file.display())));
+        match read.and_then(|lighting| effective(&lighting)) {
+            Ok(values) => self.show(ui, Some(file.to_path_buf()), values),
+            Err(error) => {
+                tracing::error!("{error:#}");
+                self.show(ui, None, toml::Table::new());
+            }
+        }
+    }
+
+    /// A setting changed this frame, as a change to make to the file.
     pub fn update(&mut self, ui: &mut Ui) -> Option<LightingAction> {
         if let Some(&(group, _)) = self.tabs.iter().find(|(_, tab)| ui.clicked(*tab)) {
             self.group = group;
             self.show_group(ui);
-        }
-        if ui.changed(self.scene) {
-            let chosen = self.choices.get(ui.selected_option(self.scene)).cloned().flatten();
-            return Some(LightingAction::SetScene(chosen));
-        }
-        if ui.clicked(self.copy) {
-            return Some(LightingAction::Copy);
         }
         let file = self.file.clone()?;
         self.rows.iter().find_map(|row| {
@@ -307,36 +398,23 @@ impl LightingPanel {
         })
     }
 
-    /// The colour setting whose swatch was clicked this frame, its swatch,
-    /// and its colour.
-    pub fn color_clicked(&self, ui: &Ui) -> Option<(&'static [&'static str], NodeId, [f32; 3])> {
-        self.file.as_ref()?;
+    /// The colour setting whose swatch was clicked this frame.
+    pub fn color_clicked(&self, ui: &Ui) -> Option<ColorClicked> {
+        let file = self.file.clone()?;
         self.rows.iter().find_map(|row| match row.control {
             Control::Color(swatch) if ui.clicked(swatch) => {
-                let color = find(&self.values, row.info.path).and_then(rgb).unwrap_or([1.0; 3]);
-                Some((row.info.path, swatch, color))
+                let srgb = find(&self.values, row.info.path).and_then(rgb).unwrap_or([1.0; 3]);
+                Some(ColorClicked { file: file.clone(), path: row.info.path, swatch, srgb })
             }
             _ => None,
         })
     }
 
-    /// A colour picked for a setting of the lighting shown, as a change to
-    /// make.
-    pub fn set_color(&self, path: &'static [&'static str], srgb: [f32; 3]) -> Option<LightingAction> {
-        let file = self.file.clone()?;
-        Some(LightingAction::Set { file, path, value: Some(color_value(srgb)) })
-    }
-
-    /// The setting a page shows, by its title, for tests and the palette.
     pub fn row_of(&self, title: &str) -> Option<NodeId> {
         self.rows.iter().find(|row| row.info.title == title).map(|row| row.row)
     }
 
-    /// The lighting settings shown, as the scene names them.
-    pub fn shown(&self) -> Option<&str> {
-        self.shown.as_deref()
-    }
-
+    /// The tab's group of settings, each only while it does anything.
     fn show_group(&mut self, ui: &mut Ui) {
         for (group, tab) in &self.tabs {
             ui.set_checked(*tab, *group == self.group);
@@ -345,9 +423,23 @@ impl LightingPanel {
             ui.set_visible(*heading, *group == self.group);
         }
         for row in &self.rows {
-            ui.set_visible(row.row, row.info.group == self.group);
+            ui.set_visible(row.row, row.info.group == self.group && applies(&self.values, row.info.when));
         }
     }
+}
+
+/// Whether every condition holds in `values`, as a file writes them.
+fn applies(values: &toml::Table, when: When) -> bool {
+    when.iter().all(|(path, wanted)| match find(values, path) {
+        Some(toml::Value::Boolean(on)) => on.to_string() == *wanted,
+        Some(toml::Value::String(text)) => text == wanted,
+        _ => false,
+    })
+}
+
+/// The change to make for a colour picked for a setting.
+pub fn set_color(file: PathBuf, path: &'static [&'static str], srgb: [f32; 3]) -> LightingAction {
+    LightingAction::Set { file, path, value: Some(color_value(srgb)) }
 }
 
 /// The project's file of lighting settings a scene names, when it is one.

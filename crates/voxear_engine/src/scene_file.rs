@@ -626,6 +626,14 @@ pub struct FoliageData {
     /// How far from the camera they cast shadows, in metres; 0 for none.
     #[serde(default = "default_shadow_distance")]
     pub shadow_distance: f32,
+    /// The colours plants are tinted between, in sRGB, in patches
+    /// `color_spread` metres across. White leaves them as made.
+    #[serde(default = "white", skip_serializing_if = "is_white")]
+    pub healthy_color: [f32; 3],
+    #[serde(default = "white", skip_serializing_if = "is_white")]
+    pub dry_color: [f32; 3],
+    #[serde(default = "default_color_spread", skip_serializing_if = "is_default_color_spread")]
+    pub color_spread: f32,
     /// Plants placed one by one: x, y and z in the Obj's space, a turn in
     /// degrees, and a size.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -633,6 +641,14 @@ pub struct FoliageData {
     /// Plants scattered over an area, besides those placed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scatter: Option<ScatterData>,
+}
+
+fn default_color_spread() -> f32 {
+    8.0
+}
+
+fn is_default_color_spread(spread: &f32) -> bool {
+    *spread == default_color_spread()
 }
 
 /// Plants scattered evenly over an area round the Obj (see
@@ -1430,6 +1446,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
         if let Some(foliage) = world.get::<Foliage>(entity) {
             (data.draw_distance, data.fade_distance, data.shadow_distance) =
                 (foliage.draw_distance, foliage.fade_distance, foliage.shadow_distance);
+            (data.healthy_color, data.dry_color, data.color_spread) =
+                (foliage.healthy_color, foliage.dry_color, foliage.color_spread);
         }
         data
     });

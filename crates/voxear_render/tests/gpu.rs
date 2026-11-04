@@ -2852,6 +2852,11 @@ fn leaves_turn_in_autumn_and_take_snow_in_winter_unless_they_stay() {
 /// A field of small dark plants scattered over pale ground ahead of the
 /// camera, 80 metres deep, as one Foliage, drawn out to `draw` metres.
 fn foliage_render(draw: f32) -> Option<(Vec<u8>, RenderStats)> {
+    foliage_tinted(draw, [0.02, 0.03, 0.02], ([1.0; 3], [1.0; 3]))
+}
+
+/// The same field, its plants `color` and tinted between two colours.
+fn foliage_tinted(draw: f32, color: [f32; 3], (healthy, dry): ([f32; 3], [f32; 3])) -> Option<(Vec<u8>, RenderStats)> {
     use voxear_render::{Foliage, Sky, scatter};
     let mut renderer = renderer()?;
     let mut world = World::new();
@@ -2860,7 +2865,8 @@ fn foliage_render(draw: f32) -> Option<(Vec<u8>, RenderStats)> {
     let plane = renderer.primitive(Primitive::Plane).unwrap();
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let pale = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.9, 0.85, 1.0], ..MaterialDesc::default() }).unwrap();
-    let dark = renderer.add_material(&MaterialDesc { base_color: [0.02, 0.03, 0.02, 1.0], ..MaterialDesc::default() }).unwrap();
+    let [r, g, b] = color;
+    let dark = renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() }).unwrap();
     world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(400.0))));
     let plants = scatter([40.0, 80.0], 4.0, 3, [0.15, 0.25]);
     assert!(plants.len() > 12_000, "a field of them: {}", plants.len());
@@ -2871,6 +2877,9 @@ fn foliage_render(draw: f32) -> Option<(Vec<u8>, RenderStats)> {
         draw_distance: draw,
         fade_distance: 3.0,
         shadow_distance: 15.0,
+        healthy_color: healthy,
+        dry_color: dry,
+        color_spread: 2.0,
     };
     world.spawn((foliage, Transform::from_position(Vec3::new(0.0, 0.1, 40.0))));
     let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.4).normalize());
@@ -2886,6 +2895,17 @@ fn dark_share(pixels: &[u8], rows: std::ops::Range<u32>) -> f32 {
     let points: Vec<(u32, u32)> = rows.flat_map(|y| (0..640).map(move |x| (x, y))).collect();
     let dark = points.iter().filter(|&&at| rgb_at(pixels, at).iter().sum::<i32>() < 150).count();
     dark as f32 / points.len() as f32
+}
+
+#[test]
+fn plants_are_tinted_between_their_healthy_and_dry_colours_in_patches() {
+    // White plants, tinted between red and blue in patches two metres across.
+    let Some((pixels, _)) = foliage_tinted(25.0, [0.9; 3], ([1.0, 0.1, 0.1], [0.1, 0.1, 1.0])) else { return };
+    keep_image("foliage tinted.png", &pixels);
+    let near: Vec<[i32; 3]> = (300..360).flat_map(|y| (0..640).step_by(4).map(move |x| (x, y))).map(|at| rgb_at(&pixels, at)).collect();
+    let reddish = near.iter().filter(|[r, _, b]| *r > *b + 40).count();
+    let bluish = near.iter().filter(|[r, _, b]| *b > *r + 40).count();
+    assert!(reddish > 50 && bluish > 50, "patches of both: {reddish} reddish, {bluish} bluish");
 }
 
 #[test]

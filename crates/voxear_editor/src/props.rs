@@ -214,6 +214,11 @@ pub enum Prop {
     PushRadius,
     PushStrength,
     FoliageDraw,
+    /// A Foliage's colours, which its plants are tinted between, and how
+    /// wide the patches are.
+    FoliageHealthy,
+    FoliageDry,
+    FoliageSpread,
     /// A Model Renderer's model, its LOD bias, and how many parts it draws.
     ModelAsset,
     ModelLodBias,
@@ -378,7 +383,12 @@ impl Prop {
             | Prop::Wetness
             | Prop::GroundCover => Part::Seasons,
             Prop::PushRadius | Prop::PushStrength => Part::FoliageInteraction,
-            Prop::FoliageDraw | Prop::FoliageFade | Prop::FoliageShadow => Part::Foliage,
+            Prop::FoliageDraw
+            | Prop::FoliageFade
+            | Prop::FoliageShadow
+            | Prop::FoliageHealthy
+            | Prop::FoliageDry
+            | Prop::FoliageSpread => Part::Foliage,
             Prop::ModelAsset | Prop::ModelLodBias | Prop::ModelParts => Part::Model,
             Prop::Sound
             | Prop::SoundVolume
@@ -504,6 +514,9 @@ impl Prop {
             Prop::PushRadius => "radius",
             Prop::PushStrength => "strength",
             Prop::FoliageDraw => "draw_distance",
+            Prop::FoliageHealthy => "healthy_color",
+            Prop::FoliageDry => "dry_color",
+            Prop::FoliageSpread => "color_spread",
             Prop::ModelAsset => "model",
             Prop::ModelLodBias => "lod_bias",
             Prop::ModelParts => "parts",
@@ -767,7 +780,14 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             ]
         }
         Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
-        Part::Foliage => vec![Prop::FoliageDraw, Prop::FoliageFade, Prop::FoliageShadow],
+        Part::Foliage => vec![
+            Prop::FoliageDraw,
+            Prop::FoliageFade,
+            Prop::FoliageShadow,
+            Prop::FoliageHealthy,
+            Prop::FoliageDry,
+            Prop::FoliageSpread,
+        ],
         Part::Model => vec![Prop::ModelAsset, Prop::ModelLodBias, Prop::ModelParts],
         Part::Audio => {
             let mut props =
@@ -935,6 +955,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::PushRadius => "Radius",
         Prop::PushStrength => "Strength",
         Prop::FoliageDraw => "Draw distance",
+        Prop::FoliageHealthy => "Healthy colour",
+        Prop::FoliageDry => "Dry colour",
+        Prop::FoliageSpread => "Colour patches",
         Prop::ModelAsset => "Model",
         Prop::ModelLodBias => "LOD bias",
         Prop::ModelParts => "Parts",
@@ -1041,7 +1064,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
     match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
         (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
-        (Prop::SeasonPatchSize, _) => Some("m"),
+        (Prop::SeasonPatchSize | Prop::FoliageSpread, _) => Some("m"),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -1386,6 +1409,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::PushRadius => Value::Number(world.get::<FoliageInteraction>(entity)?.radius),
         Prop::PushStrength => Value::Number(world.get::<FoliageInteraction>(entity)?.strength),
         Prop::FoliageDraw => Value::Number(world.get::<Foliage>(entity)?.draw_distance),
+        Prop::FoliageHealthy => Value::Color(world.get::<Foliage>(entity)?.healthy_color.map(round3)),
+        Prop::FoliageDry => Value::Color(world.get::<Foliage>(entity)?.dry_color.map(round3)),
+        Prop::FoliageSpread => Value::Number(world.get::<Foliage>(entity)?.color_spread),
         Prop::FoliageFade => Value::Number(world.get::<Foliage>(entity)?.fade_distance),
         Prop::FoliageShadow => Value::Number(world.get::<Foliage>(entity)?.shadow_distance),
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
@@ -2056,6 +2082,13 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::ModelLodBias, Value::Number(n)) => {
             with(world, entity, |model: &mut ModelRenderer| model.lod_bias = n.clamp(-4.0, 4.0))
         }
+        (Prop::FoliageHealthy, Value::Color(color)) => {
+            with(world, entity, |f: &mut Foliage| f.healthy_color = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::FoliageDry, Value::Color(color)) => {
+            with(world, entity, |f: &mut Foliage| f.dry_color = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::FoliageSpread, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.color_spread = n.max(0.1)),
         (Prop::FoliageDraw, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.draw_distance = n.max(0.0)),
         (Prop::FoliageFade, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.fade_distance = n.max(0.0)),
         (Prop::FoliageShadow, Value::Number(n)) => {

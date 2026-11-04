@@ -123,7 +123,8 @@ pub struct GpuInstance {
     /// shows down to, the first five of eight; the next LOD shows below it.
     pub lod_screen: [[f32; 4]; 2],
     /// From how far from the camera it starts to fade out, by dithering,
-    /// and how far it is gone; both 0 for never (see `foliage`).
+    /// and how far it is gone; both 0 for never (see `foliage`). z holds a
+    /// plant's tint, RGBA8 in its bits, 0 for none.
     pub fade: [f32; 4],
 }
 

@@ -705,6 +705,9 @@ pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageDat
         draw_distance: data.draw_distance.max(0.0),
         fade_distance: data.fade_distance.max(0.0),
         shadow_distance: data.shadow_distance.max(0.0),
+        healthy_color: data.healthy_color,
+        dry_color: data.dry_color,
+        color_spread: data.color_spread.max(0.1),
     };
     Ok((foliage, FoliageSource(data.clone())))
 }

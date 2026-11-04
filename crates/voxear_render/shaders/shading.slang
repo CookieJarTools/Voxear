@@ -443,6 +443,12 @@ FragmentOut fragmentMain(VertexOut input)
     {
         discard;
     }
+    // A plant's own tint, between its Foliage's healthy and dry colours.
+    uint tint = asuint(buffers()->instances[input.instance].fade.z);
+    if (tint != 0)
+    {
+        base.rgb *= float3(tint & 0xFF, (tint >> 8) & 0xFF, (tint >> 16) & 0xFF) / 255.0;
+    }
     float4 metalRough = sampleTexture(material.metallicRoughnessTexture, input.uv);
     float metallic = material.metallic * metalRough.b;
     float roughness = material.roughness * metalRough.g;

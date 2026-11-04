@@ -982,8 +982,9 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   are owned by (Obj, plant), so plants keep their LOD history and skip motion tracking. Scene files keep the
   scatter rather than its plants (`FoliageSource`), headless too. Editor: Add Component makes a starter Foliage;
   distances in the Inspector, undoable. GPU test: 12,800 plants drawn out to their draw distance and no further.
-  About 12,000 plants in the valley test: 6 ms a frame at 720p on an RTX 3070. Still to come: per-instance
-  colour, picking plants in the Scene view, and scattering onto uneven ground.
+  About 12,000 plants in the valley test: 6 ms a frame at 720p on an RTX 3070. Plants are tinted between a Foliage's `healthy_color` and `dry_color` in patches
+  `color_spread` metres across (packed RGBA8 in an instance's `fade.z`). Still to come: picking plants in the Scene
+  view, and scattering onto uneven ground.
 - **A speed pass, measured:** in the outdoor valley at 1080p on an RTX 3070, the passes added up from 8.0 to
   5.4 ms. `vox render` averages each pass over the last 60 frames and prints the frame's own GPU time, first pass
   to last (`GpuTimer::frame_ms`, `Renderer::gpu_frame_ms`), as single frames varied by a millisecond and

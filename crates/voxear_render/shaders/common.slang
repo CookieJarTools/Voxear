@@ -228,6 +228,7 @@ struct Instance
     float4 lodScreen0;
     float4 lodScreen1;
     // From how far from the camera it fades out, by dithering, and how far it is gone; y 0 for never.
+    // z: a plant's tint, RGBA8 in its bits, 0 for none.
     float4 fade;
 };
 

@@ -62,9 +62,58 @@ pub struct Foliage {
     pub fade_distance: f32,
     /// How far from the camera they cast shadows, in metres; 0 for none.
     pub shadow_distance: f32,
+    /// The colours plants are tinted between, as Unity's grass is, in
+    /// sRGB: each plant takes some of each by noise over the level, in
+    /// patches `color_spread` metres across. White leaves them as made.
+    pub healthy_color: [f32; 3],
+    pub dry_color: [f32; 3],
+    pub color_spread: f32,
 }
 
 impl Component for Foliage {}
+
+impl Foliage {
+    /// What its instances are built from besides its plants and place: its
+    /// mesh, material, distances and colours, to tell when to build again.
+    fn look(&self) -> (MeshHandle, MaterialHandle, [u32; 10]) {
+        let [a, b, c] = self.healthy_color.map(f32::to_bits);
+        let [d, e, f] = self.dry_color.map(f32::to_bits);
+        let distances = [self.draw_distance, self.fade_distance, self.shadow_distance].map(f32::to_bits);
+        let [g, h, i] = distances;
+        (self.mesh, self.material, [g, h, i, a, b, c, d, e, f, self.color_spread.to_bits()])
+    }
+
+    /// A plant's tint standing at `at` in the world, packed as the GPU
+    /// reads it (RGBA8 in an instance's `fade.z`), or 0 for none.
+    fn tint(&self, at: Vec3) -> u32 {
+        if self.healthy_color == [1.0; 3] && self.dry_color == [1.0; 3] {
+            return 0;
+        }
+        let spread = self.color_spread.max(0.1);
+        let dry = smooth_noise(at.x / spread, at.z / spread);
+        let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+        let [r, g, b] = std::array::from_fn(|i| {
+            let mixed = linear(self.healthy_color[i]) * (1.0 - dry) + linear(self.dry_color[i]) * dry;
+            (mixed.clamp(0.0, 1.0) * 255.0).round() as u32
+        });
+        r | g << 8 | b << 16 | 255 << 24
+    }
+}
+
+/// Smooth value noise from 0 to 1, varying over about one unit.
+fn smooth_noise(x: f32, z: f32) -> f32 {
+    let hash = |x: f32, z: f32| {
+        let n = (x * 127.1 + z * 311.7).sin() * 43_758.547;
+        n - n.floor()
+    };
+    let (cx, cz) = (x.floor(), z.floor());
+    let (fx, fz) = (x - cx, z - cz);
+    let (ux, uz) = (fx * fx * (3.0 - 2.0 * fx), fz * fz * (3.0 - 2.0 * fz));
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let top = lerp(hash(cx, cz), hash(cx + 1.0, cz), ux);
+    let bottom = lerp(hash(cx, cz + 1.0), hash(cx + 1.0, cz + 1.0), ux);
+    lerp(top, bottom, uz)
+}
 
 /// Where one plant grows: its place in the Obj's space, its turn about its
 /// up axis in radians, and its size.
@@ -121,7 +170,7 @@ struct Built {
     /// mesh and material and distances.
     plants: Arc<Vec<Plant>>,
     model: Mat4,
-    look: (MeshHandle, MaterialHandle, [u32; 3]),
+    look: (MeshHandle, MaterialHandle, [u32; 10]),
     chunks: Vec<Chunk>,
     instances: Vec<GpuInstance>,
     /// Each instance's plant, by its place in the Foliage's list.
@@ -155,8 +204,7 @@ impl FoliageCache {
                 || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
                 |w| w.0,
             );
-            let distances = [foliage.draw_distance, foliage.fade_distance, foliage.shadow_distance].map(f32::to_bits);
-            let look = (foliage.mesh, foliage.material, distances);
+            let look = foliage.look();
             let stale = self.built.get(&entity).is_none_or(|built| {
                 !Arc::ptr_eq(&built.plants, &foliage.plants) || built.model != model || built.look != look
             });
@@ -187,7 +235,7 @@ impl FoliageCache {
 }
 
 /// A Foliage's instances, sorted into chunks.
-fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32; 3]), bounds: (Vec3, f32)) -> Built {
+fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32; 10]), bounds: (Vec3, f32)) -> Built {
     let (mesh_centre, mesh_radius) = bounds;
     let fade = [(foliage.draw_distance - foliage.fade_distance).max(0.0), foliage.draw_distance.max(0.0), 0.0, 0.0];
     let instance = |plant: &Plant| {
@@ -198,6 +246,8 @@ fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32
         );
         let placed = model * local;
         let normal = Mat3::from_mat4(placed).inverse().transpose();
+        let tint = f32::from_bits(foliage.tint(placed.w_axis.truncate()));
+        let [near, far, ..] = fade;
         GpuInstance {
             model: placed.to_cols_array_2d(),
             prev_model: placed.to_cols_array_2d(),
@@ -207,7 +257,7 @@ fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32
             flags: 0,
             lod_bias: 0.0,
             lod_screen: [[0.0; 4]; 2],
-            fade,
+            fade: [near, far, tint, 0.0],
         }
     };
     // Each plant's chunk, by where it stands in the world.

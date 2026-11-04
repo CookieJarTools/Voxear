@@ -116,6 +116,9 @@ pub struct GpuInstance {
     /// With `INSTANCE_LOD_SCREEN`, the share of the screen's height each LOD
     /// shows down to, the first five of eight; the next LOD shows below it.
     pub lod_screen: [[f32; 4]; 2],
+    /// From how far from the camera it starts to fade out, by dithering,
+    /// and how far it is gone; both 0 for never (see `foliage`).
+    pub fade: [f32; 4],
 }
 
 /// An instance whose place in the list another Obj held last frame, so the
@@ -129,6 +132,9 @@ pub const INSTANCE_LOD_SHIFT: u32 = 8;
 /// An instance whose LODs switch where its `lod_screen` says, by how much
 /// of the screen it covers, rather than by their error.
 pub const INSTANCE_LOD_SCREEN: u32 = 2;
+
+/// An instance that casts no shadow, as grass far from the camera.
+pub const INSTANCE_NO_SHADOW: u32 = 4;
 
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;
@@ -686,7 +692,7 @@ mod tests {
         assert_eq!(size_of::<GpuMeshlet>(), 48);
         assert_eq!(size_of::<GpuMaterial>(), 80);
         // Three matrices, ids and flags, then where its LODs end.
-        assert_eq!(size_of::<GpuInstance>(), 192 + 32);
+        assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16);
         assert_eq!(size_of::<GpuLight>(), 80);
         // Two matrices, six planes, nine 16-byte rows, the cascades, then the
         // view matrix and three rows of clustering and timing.

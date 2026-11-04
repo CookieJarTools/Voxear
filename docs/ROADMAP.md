@@ -973,8 +973,17 @@ What The Vegetation Engine brings to Unity, built in: foliage that is cheap to d
 the wind and with what passes through it, and changes with the seasons, from one set of settings per level.
 Foliage shading (wrap lighting, light through the leaves, a rim of the sun's colour) is done, in M5.
 
-- **Drawing a lot of it:** instances placed by the thousand without an Obj each, drawn by GPU-driven indirect
-  draws after culling against the view and the depth pyramid, with per-instance colour, size and wind phase.
+- ~~**Drawing a lot of it:**~~ done: a Foliage component (mesh, material, plants, draw, fade and shadow distances)
+  with plants placed (`[x, y, z, turn, size]`) and scattered (`size`, `density`, `seed`, `scale`: jittered grid,
+  SplitMix64). Each view builds a Foliage's instances once, in 16 m chunks, rebuilt only when its plants' list,
+  Obj, mesh, material or distances change, and adds the chunks within draw distance to the frame's instances, so
+  GPU culling, occlusion, LODs, meshlets, wind and pushes apply as to any mesh. Instances gain `fade` (dithered
+  out by distance in every fragment pass) and `INSTANCE_NO_SHADOW` (chunks past the shadow distance). Instances
+  are owned by (Obj, plant), so plants keep their LOD history and skip motion tracking. Scene files keep the
+  scatter rather than its plants (`FoliageSource`), headless too. Editor: Add Component makes a starter Foliage;
+  distances in the Inspector, undoable. GPU test: 12,800 plants drawn out to their draw distance and no further.
+  About 12,000 plants in the valley test: 6 ms a frame at 720p on an RTX 3070. Still to come: per-instance
+  colour, picking plants in the Scene view, and scattering onto uneven ground.
   - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
     by distance.
   - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the

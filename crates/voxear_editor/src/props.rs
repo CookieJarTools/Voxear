@@ -17,12 +17,12 @@ use voxear_engine::{
     physics2d::{Collider2D, ColliderShape2D, Rigidbody2D},
     linear,
     prefab::Locks,
-    scene_file::{default_light, default_material},
+    scene_file::{FoliageData, FoliageSource, ScatterData, default_light, default_material},
     script_types::ScriptTypes,
     srgb,
 };
 use voxear_render::{
-    Camera, FoliageInteraction, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
+    Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
     SkyBody, VolumeShape, WindZone,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
@@ -74,6 +74,7 @@ pub enum Part {
     PostVolume,
     WindZone,
     FoliageInteraction,
+    Foliage,
     /// A script, by its full type name.
     Behaviour(String),
 }
@@ -100,6 +101,7 @@ impl Part {
             Part::PostVolume => "post_volume".into(),
             Part::WindZone => "wind_zone".into(),
             Part::FoliageInteraction => "foliage_interaction".into(),
+            Part::Foliage => "foliage".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -123,6 +125,7 @@ impl Part {
             Part::PostVolume => "Post Volume",
             Part::WindZone => "Wind Zone",
             Part::FoliageInteraction => "Foliage Interaction",
+            Part::Foliage => "Foliage",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -145,6 +148,7 @@ impl Part {
             Part::PostVolume => "panels",
             Part::WindZone => "move",
             Part::FoliageInteraction => "move",
+            Part::Foliage => "cube",
             Part::Behaviour(_) => "code",
         }
     }
@@ -187,6 +191,9 @@ pub enum Prop {
     WindTurbulence,
     PushRadius,
     PushStrength,
+    FoliageDraw,
+    FoliageFade,
+    FoliageShadow,
     FieldOfView,
     Near,
     Exposure,
@@ -334,6 +341,7 @@ impl Prop {
                 Part::WindZone
             }
             Prop::PushRadius | Prop::PushStrength => Part::FoliageInteraction,
+            Prop::FoliageDraw | Prop::FoliageFade | Prop::FoliageShadow => Part::Foliage,
             Prop::Sound
             | Prop::SoundVolume
             | Prop::Pitch
@@ -447,6 +455,9 @@ impl Prop {
             Prop::WindTurbulence => "turbulence",
             Prop::PushRadius => "radius",
             Prop::PushStrength => "strength",
+            Prop::FoliageDraw => "draw_distance",
+            Prop::FoliageFade => "fade_distance",
+            Prop::FoliageShadow => "shadow_distance",
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
@@ -582,6 +593,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<FoliageInteraction>(entity) {
         parts.push(Part::FoliageInteraction);
     }
+    if world.has::<Foliage>(entity) {
+        parts.push(Part::Foliage);
+    }
     if world.has::<AudioSource>(entity) {
         parts.push(Part::Audio);
     }
@@ -679,6 +693,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             vec![Prop::WindStrength, Prop::WindGusts, Prop::WindGustSize, Prop::WindGustSpeed, Prop::WindTurbulence]
         }
         Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
+        Part::Foliage => vec![Prop::FoliageDraw, Prop::FoliageFade, Prop::FoliageShadow],
         Part::Audio => {
             let mut props =
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
@@ -833,6 +848,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::WindTurbulence => "Turbulence",
         Prop::PushRadius => "Radius",
         Prop::PushStrength => "Strength",
+        Prop::FoliageDraw => "Draw distance",
+        Prop::FoliageFade => "Fade distance",
+        Prop::FoliageShadow => "Shadow distance",
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
@@ -970,6 +988,17 @@ pub fn add(
         game.engine.world.insert(entity, MeshRenderer::new(mesh, material));
         return Ok(());
     }
+    if *part == Part::Foliage {
+        // Small cubes scattered over ten metres, to swap for a plant of the project's.
+        let renderer = renderer.ok_or_else(|| anyhow::anyhow!("foliage needs the renderer"))?;
+        let scatter = ScatterData { size: [10.0, 10.0], density: 2.0, seed: 0, scale: [0.15, 0.3] };
+        let data: FoliageData = toml::from_str(&format!("mesh = \"{}\"", BUILTIN_MESHES[0].1))?;
+        let data = FoliageData { scatter: Some(scatter), ..data };
+        let (foliage, source) = voxear_engine::prefab::foliage(&mut game.content, renderer, &data)?;
+        game.engine.world.insert(entity, foliage);
+        game.engine.world.insert(entity, source);
+        return Ok(());
+    }
     if *part == Part::LodGroup {
         let group = LodGroup::of_levels(lod_levels_inside(game, entity));
         game.engine.world.insert(entity, group);
@@ -977,7 +1006,7 @@ pub fn add(
     }
     let world = &mut game.engine.world;
     match part {
-        Part::Renderer | Part::LodGroup => {}
+        Part::Renderer | Part::LodGroup | Part::Foliage => {}
         Part::Light => {
             world.insert(entity, default_light(LightKind::Point));
         }
@@ -1045,6 +1074,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
+        Part::Foliage => {
+            world.remove::<Foliage>(entity);
+            drop(world.remove::<FoliageSource>(entity));
+        }
         Part::Audio => drop(world.remove::<AudioSource>(entity)),
         Part::Listener => drop(world.remove::<AudioListener>(entity)),
         Part::LodGroup => drop(world.remove::<LodGroup>(entity)),
@@ -1236,6 +1269,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::WindTurbulence => Value::Number(world.get::<WindZone>(entity)?.turbulence),
         Prop::PushRadius => Value::Number(world.get::<FoliageInteraction>(entity)?.radius),
         Prop::PushStrength => Value::Number(world.get::<FoliageInteraction>(entity)?.strength),
+        Prop::FoliageDraw => Value::Number(world.get::<Foliage>(entity)?.draw_distance),
+        Prop::FoliageFade => Value::Number(world.get::<Foliage>(entity)?.fade_distance),
+        Prop::FoliageShadow => Value::Number(world.get::<Foliage>(entity)?.shadow_distance),
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
@@ -1882,6 +1918,11 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindGusts, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gusts = n.max(0.0)),
         (Prop::WindGustSize, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_size = n.max(0.1)),
         (Prop::WindGustSpeed, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_speed = n),
+        (Prop::FoliageDraw, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.draw_distance = n.max(0.0)),
+        (Prop::FoliageFade, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.fade_distance = n.max(0.0)),
+        (Prop::FoliageShadow, Value::Number(n)) => {
+            with(world, entity, |f: &mut Foliage| f.shadow_distance = n.max(0.0))
+        }
         (Prop::PushRadius, Value::Number(n)) => {
             with(world, entity, |push: &mut FoliageInteraction| push.radius = n.max(0.01))
         }

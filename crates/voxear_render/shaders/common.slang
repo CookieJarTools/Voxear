@@ -222,6 +222,8 @@ struct Instance
     // With INSTANCE_LOD_SCREEN, the share of the screen's height each LOD shows down to.
     float4 lodScreen0;
     float4 lodScreen1;
+    // From how far from the camera it fades out, by dithering, and how far it is gone; y 0 for never.
+    float4 fade;
 };
 
 // An instance whose place in the list another Obj held last frame.
@@ -230,6 +232,8 @@ static const uint INSTANCE_NEW = 1;
 static const uint INSTANCE_LOD_SHIFT = 8;
 // An instance whose LODs switch by how much of the screen it covers, at its lodScreen.
 static const uint INSTANCE_LOD_SCREEN = 2;
+// An instance that casts no shadow, as grass far from the camera.
+static const uint INSTANCE_NO_SHADOW = 4;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;

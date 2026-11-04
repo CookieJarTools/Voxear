@@ -1770,6 +1770,7 @@ impl Inspector {
             (Part::PostVolume, "Rendering"),
             (Part::WindZone, "Rendering"),
             (Part::FoliageInteraction, "Rendering"),
+            (Part::Foliage, "Rendering"),
             (Part::Audio, "Audio"),
             (Part::Listener, "Audio"),
             (Part::Collider, "Physics"),
@@ -2441,6 +2442,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::PostVolume) => "post_volume",
         Some(Part::WindZone) => "wind_zone",
         Some(Part::FoliageInteraction) => "foliage_interaction",
+        Some(Part::Foliage) => "foliage",
         Some(Part::Behaviour(name)) => return vec![ValuePath::new(&["fields", name])],
     };
     vec![ValuePath::new(&[key])]

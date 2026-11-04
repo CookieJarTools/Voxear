@@ -1,5 +1,17 @@
-//! Pushing through foliage: characters, vehicles and anything else with a
-//! Foliage Interaction bend grass and plants out of their way, and the
+//! Foliage in great numbers, and pushing through it.
+//!
+//! A **Foliage** component on an Obj holds one plant, its mesh and
+//! material, and every place it grows, thousands of them without an Obj
+//! each: placed by hand, or scattered over an area by density. The renderer
+//! builds each plant's instance once, in chunks `CHUNK` metres across, and
+//! each frame adds the chunks within the plants' draw distance to the
+//! frame's instances, so the GPU culls them against the view and the depth
+//! pyramid, picks their LODs, and moves them in the wind as any mesh. Near
+//! their draw distance plants fade out by dithering, and past their shadow
+//! distance they cast no shadow.
+//!
+//! **Pushing through foliage**: characters, vehicles and anything else with
+//! a Foliage Interaction bend grass and plants out of their way, and the
 //! plants spring back after them, as The Vegetation Engine's interaction
 //! does in Unity.
 //!
@@ -13,17 +25,233 @@
 //! pushes left from far away have sprung back long before the camera comes
 //! round to their cells again.
 
+use std::{collections::HashMap, ops::Range, sync::Arc};
+
 use serde::{Deserialize, Serialize};
-use voxear_core::math::Vec3;
-use voxear_ecs::Component;
+use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4};
+use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::vk;
+use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use crate::{
-    gpu::{GpuPushes, MAX_PUSHERS, PUSH_CELL, PUSH_CELLS, Push},
+    MaterialHandle, MeshHandle,
+    gpu::{GpuInstance, GpuPushes, INSTANCE_NO_SHADOW, MAX_PUSHERS, PUSH_CELL, PUSH_CELLS, Push},
     graph::{BufferAccess, BufferId, FrameGraph},
     passes::bind,
     pipelines::Pipelines,
+    scene::{ExtractedFrame, Owner},
 };
+
+/// How wide each chunk of plants is, in metres: plants are added to the
+/// frame, and cast shadows or not, a chunk at a time.
+const CHUNK: f32 = 16.0;
+
+/// One plant, many times over: a mesh and a material, and every place it
+/// grows in the Obj's space. The plants share one LOD, wind and push
+/// setting each, from their mesh and material.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Foliage {
+    pub mesh: MeshHandle,
+    pub material: MaterialHandle,
+    /// Each plant, in the Obj's space. Shared, so a frame can tell the list
+    /// is the same by its pointer alone.
+    pub plants: Arc<Vec<Plant>>,
+    /// How far from the camera plants are drawn, in metres.
+    pub draw_distance: f32,
+    /// Over how many metres short of the draw distance they fade out.
+    pub fade_distance: f32,
+    /// How far from the camera they cast shadows, in metres; 0 for none.
+    pub shadow_distance: f32,
+}
+
+impl Component for Foliage {}
+
+/// Where one plant grows: its place in the Obj's space, its turn about its
+/// up axis in radians, and its size.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Plant {
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub scale: f32,
+}
+
+/// Plants scattered over an area `size` metres across, centred on the
+/// Obj, `density` to a square metre, evenly but not in rows: one in each
+/// cell of a grid, somewhere in it, each turned its own way and sized
+/// between `scale`'s two. The same `seed` scatters them the same way.
+pub fn scatter(size: [f32; 2], density: f32, seed: u32, scale: [f32; 2]) -> Vec<Plant> {
+    let step = 1.0 / density.max(1e-4).sqrt();
+    let (across, deep) = ((size[0] / step).ceil() as u32, (size[1] / step).ceil() as u32);
+    let mut plants = Vec::with_capacity((across * deep) as usize);
+    let mut state = u64::from(seed) ^ 0x9e37_79b9_7f4a_7c15;
+    let mut next = || {
+        // SplitMix64: quick, and the same everywhere.
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        ((z ^ (z >> 31)) >> 40) as f32 / (1u64 << 24) as f32
+    };
+    for row in 0..deep {
+        for column in 0..across {
+            let x = (column as f32 + next()) * step - size[0] * 0.5;
+            let z = (row as f32 + next()) * step - size[1] * 0.5;
+            if x.abs() > size[0] * 0.5 || z.abs() > size[1] * 0.5 {
+                continue;
+            }
+            let yaw = next() * std::f32::consts::TAU;
+            let scale = scale[0] + (scale[1] - scale[0]) * next();
+            plants.push(Plant { position: [x, 0.0, z], yaw, scale });
+        }
+    }
+    plants
+}
+
+/// One chunk of a Foliage's plants: where it is, how far round it they
+/// reach, and which of the built instances are in it.
+struct Chunk {
+    centre: Vec3,
+    radius: f32,
+    plants: Range<usize>,
+}
+
+/// A Foliage's instances, built once, kept until it changes.
+struct Built {
+    /// What it was built from: the plants' list, where the Obj was, its
+    /// mesh and material and distances.
+    plants: Arc<Vec<Plant>>,
+    model: Mat4,
+    look: (MeshHandle, MaterialHandle, [u32; 3]),
+    chunks: Vec<Chunk>,
+    instances: Vec<GpuInstance>,
+    /// Each instance's plant, by its place in the Foliage's list.
+    numbers: Vec<u32>,
+}
+
+/// Every Foliage's instances, built once and added to each frame a chunk
+/// at a time.
+#[derive(Default)]
+pub(crate) struct FoliageCache {
+    built: HashMap<Entity, Built>,
+}
+
+impl FoliageCache {
+    /// Adds the plants within their draw distance of `camera` to the frame,
+    /// building the instances of any Foliage that changed. `sphere` gives a
+    /// mesh's bounding sphere.
+    pub fn gather(
+        &mut self,
+        world: &World,
+        camera: Vec3,
+        extracted: &mut ExtractedFrame,
+        sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>,
+    ) {
+        let mut seen = Vec::new();
+        let found =
+            world.query_ref::<(Entity, &Foliage, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+        for (entity, foliage, transform, placed) in found {
+            seen.push(entity);
+            let model = placed.map_or_else(
+                || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
+                |w| w.0,
+            );
+            let distances = [foliage.draw_distance, foliage.fade_distance, foliage.shadow_distance].map(f32::to_bits);
+            let look = (foliage.mesh, foliage.material, distances);
+            let stale = self.built.get(&entity).is_none_or(|built| {
+                !Arc::ptr_eq(&built.plants, &foliage.plants) || built.model != model || built.look != look
+            });
+            if stale {
+                let Some(bounds) = sphere(foliage.mesh) else { continue };
+                self.built.insert(entity, build(foliage, model, look, bounds));
+            }
+            let built = &self.built[&entity];
+            let draw = foliage.draw_distance.max(0.0);
+            for chunk in &built.chunks {
+                let near = (chunk.centre.distance(camera) - chunk.radius).max(0.0);
+                if near > draw {
+                    continue;
+                }
+                let shadowless = near > foliage.shadow_distance;
+                for index in chunk.plants.clone() {
+                    let mut instance = built.instances[index];
+                    if shadowless {
+                        instance.flags |= INSTANCE_NO_SHADOW;
+                    }
+                    extracted.instances.push(instance);
+                    extracted.entities.push(Owner { entity, plant: Some(built.numbers[index]) });
+                }
+            }
+        }
+        self.built.retain(|entity, _| seen.contains(entity));
+    }
+}
+
+/// A Foliage's instances, sorted into chunks.
+fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32; 3]), bounds: (Vec3, f32)) -> Built {
+    let (mesh_centre, mesh_radius) = bounds;
+    let fade = [(foliage.draw_distance - foliage.fade_distance).max(0.0), foliage.draw_distance.max(0.0), 0.0, 0.0];
+    let instance = |plant: &Plant| {
+        let local = Mat4::from_scale_rotation_translation(
+            Vec3::splat(plant.scale),
+            Quat::from_rotation_y(plant.yaw),
+            Vec3::from(plant.position),
+        );
+        let placed = model * local;
+        let normal = Mat3::from_mat4(placed).inverse().transpose();
+        GpuInstance {
+            model: placed.to_cols_array_2d(),
+            prev_model: placed.to_cols_array_2d(),
+            normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
+            mesh: foliage.mesh.0,
+            material: foliage.material.0,
+            flags: 0,
+            lod_bias: 0.0,
+            lod_screen: [[0.0; 4]; 2],
+            fade,
+        }
+    };
+    // Each plant's chunk, by where it stands in the world.
+    let placed: Vec<(usize, Vec3)> = foliage
+        .plants
+        .iter()
+        .enumerate()
+        .map(|(number, plant)| (number, model.transform_point3(Vec3::from(plant.position))))
+        .collect();
+    let mut keyed: Vec<((i32, i32), usize)> = placed
+        .iter()
+        .map(|&(number, at)| (((at.x / CHUNK).floor() as i32, (at.z / CHUNK).floor() as i32), number))
+        .collect();
+    keyed.sort_unstable();
+    let scale = model.to_scale_rotation_translation().0.max_element();
+    let mut built = Built {
+        plants: foliage.plants.clone(),
+        model,
+        look,
+        chunks: Vec::new(),
+        instances: Vec::with_capacity(keyed.len()),
+        numbers: Vec::with_capacity(keyed.len()),
+    };
+    for group in keyed.chunk_by(|a, b| a.0 == b.0) {
+        let start = built.instances.len();
+        let mut low = Vec3::splat(f32::MAX);
+        let mut high = Vec3::splat(f32::MIN);
+        let mut reach: f32 = 0.0;
+        for &(_, number) in group {
+            let plant = &foliage.plants[number];
+            let instance = instance(plant);
+            let centre = Mat4::from_cols_array_2d(&instance.model).transform_point3(mesh_centre);
+            reach = reach.max(mesh_radius * plant.scale * scale);
+            low = low.min(centre);
+            high = high.max(centre);
+            built.instances.push(instance);
+            built.numbers.push(number as u32);
+        }
+        let centre = (low + high) * 0.5;
+        let radius = (high - low).length() * 0.5 + reach;
+        built.chunks.push(Chunk { centre, radius, plants: start..built.instances.len() });
+    }
+    built
+}
 
 /// Something that bends foliage out of its way as it passes through:
 /// grass and plants within `radius` of the Obj lean away from it.
@@ -71,6 +299,18 @@ pub(crate) fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Pus
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scattering_covers_the_area_evenly_and_the_same_way_each_time() {
+        let plants = scatter([10.0, 20.0], 2.0, 7, [0.8, 1.2]);
+        assert!((plants.len() as f32 - 400.0).abs() < 40.0, "about two to a square metre: {}", plants.len());
+        assert!(plants.iter().all(|p| p.position[0].abs() <= 5.0 && p.position[2].abs() <= 10.0), "inside the area");
+        assert!(plants.iter().all(|p| (0.8..=1.2).contains(&p.scale)));
+        let left = plants.iter().filter(|p| p.position[0] < 0.0).count() as f32;
+        assert!((left / plants.len() as f32 - 0.5).abs() < 0.1, "spread across it, not bunched");
+        assert_eq!(plants, scatter([10.0, 20.0], 2.0, 7, [0.8, 1.2]), "the same seed, the same plants");
+        assert_ne!(plants, scatter([10.0, 20.0], 2.0, 8, [0.8, 1.2]));
+    }
 
     #[test]
     fn the_nearest_pushers_are_kept_and_the_grid_centres_on_the_camera() {

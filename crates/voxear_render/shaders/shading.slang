@@ -91,9 +91,21 @@ float bayer4(uint2 pixel)
     return (MATRIX[(pixel.y & 3) * 4 + (pixel.x & 3)] + 0.5) / 16.0;
 }
 
-// The incoming LOD covers `fade` of the pixels and the outgoing one the rest.
+// The incoming LOD covers `fade` of the pixels and the outgoing one the rest;
+// and an instance that fades out with distance, as grass does, covers less
+// and less of its pixels towards where it is gone.
 void ditherLodFade(VertexOut input)
 {
+    float4 fadeOut = buffers()->instances[input.instance].fade;
+    if (fadeOut.y > 0.0)
+    {
+        float distance = length(input.worldPosition - push.frame->cameraPosition);
+        float shown = saturate((fadeOut.y - distance) / max(fadeOut.y - fadeOut.x, 1e-3));
+        if (bayer4(uint2(input.position.xy)) >= shown)
+        {
+            discard;
+        }
+    }
     if (input.fade == 0)
     {
         return;

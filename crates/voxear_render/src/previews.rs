@@ -443,6 +443,7 @@ impl Previews {
                     flags: 0,
                     lod_bias: 0.0,
                     lod_screen: [[0.0; 4]; 2],
+                    fade: [0.0; 4],
                 });
                 draws.push((draws.len(), *lod));
             }

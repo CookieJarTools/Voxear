@@ -48,7 +48,8 @@ impl Copied {
             Part::Camera => Self::Camera(*world.get::<Camera>(entity)?),
             Part::Audio => Self::Audio(Box::new(*world.get::<AudioSource>(entity)?)),
             Part::Listener => world.has::<AudioListener>(entity).then_some(Self::Listener)?,
-            Part::LodGroup => return None,
+            // A LOD Group's levels and a Foliage's plants belong where they are.
+            Part::LodGroup | Part::Foliage => return None,
             Part::Collider => Self::Collider(*world.get::<Collider>(entity)?),
             Part::Rigidbody => Self::Rigidbody(*world.get::<Rigidbody>(entity)?),
             Part::Character => Self::Character(*world.get::<CharacterController>(entity)?),

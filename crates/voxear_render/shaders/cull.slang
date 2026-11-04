@@ -195,6 +195,10 @@ void cullMain(uint3 id : SV_DispatchThreadID)
 
     if (list >= LIST_SHADOW)
     {
+        if ((instance.flags & INSTANCE_NO_SHADOW) != 0)
+        {
+            return;
+        }
         cullShadow(frame, list - LIST_SHADOW, id.x, mesh, center, radius, scale);
         return;
     }

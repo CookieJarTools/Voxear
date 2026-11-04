@@ -57,7 +57,7 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::AssetGuid;
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_render::{Camera, FoliageInteraction, Light, MeshRenderer, PostVolume, Renderer, WindZone};
+use voxear_render::{Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, PostVolume, Renderer, WindZone};
 use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
 
 use crate::{
@@ -67,7 +67,9 @@ use crate::{
     lod_groups::LodGroupData,
     physics::{CharacterController, Collider, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
-    scene_file::{LayerRef, MaterialRef, ObjData, PostVolumeData, default_material, light_component, light_with_assets},
+    scene_file::{
+        FoliageData, FoliageSource, LayerRef, MaterialRef, ObjData, PostVolumeData, default_material, light_component, light_with_assets,
+    },
 };
 
 pub const PREFAB_FORMAT: u32 = 1;
@@ -413,6 +415,9 @@ pub struct TemplateObj {
     pub character: Option<CharacterController>,
     pub wind_zone: Option<WindZone>,
     pub foliage_interaction: Option<FoliageInteraction>,
+    /// A Foliage, where there is a renderer to draw it, and how it was
+    /// written, which few Objs have.
+    pub foliage: Option<Box<(Option<Foliage>, FoliageSource)>>,
     /// Its layer by name, found in the world it is spawned into.
     pub layer: Option<LayerRef>,
     /// Its connected Obj by path, bound to an entity when spawned.
@@ -547,6 +552,12 @@ impl Template {
             if let Some(push) = obj.foliage_interaction {
                 world.insert(entity, push);
             }
+            if let Some(foliage) = &obj.foliage {
+                if let Some(drawn) = &foliage.0 {
+                    world.insert(entity, drawn.clone());
+                }
+                world.insert(entity, foliage.1.clone());
+            }
             if let Some(body) = obj.rigidbody {
                 world.insert(entity, body);
             }
@@ -662,6 +673,32 @@ fn link_instances(world: &mut World, objs: &[TemplateObj], entities: &[Entity]) 
     }
 }
 
+/// A Foliage as a scene writes it, its mesh and material loaded and its
+/// plants placed and scattered, and how it was written, for saving.
+pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageData) -> Result<(Foliage, FoliageSource)> {
+    let mesh = content.mesh(renderer, &content.parse(&data.mesh)?)?;
+    let material = material_of(content, renderer, data.material.as_ref())?;
+    let foliage = Foliage {
+        mesh,
+        material,
+        plants: std::sync::Arc::new(data.plants()),
+        draw_distance: data.draw_distance.max(0.0),
+        fade_distance: data.fade_distance.max(0.0),
+        shadow_distance: data.shadow_distance.max(0.0),
+    };
+    Ok((foliage, FoliageSource(data.clone())))
+}
+
+/// The material a Mesh Renderer or a Foliage names, or the default one.
+fn material_of(content: &mut Content, renderer: &mut Renderer, named: Option<&MaterialRef>) -> Result<MaterialHandle> {
+    let source = match named {
+        Some(MaterialRef::Asset(reference)) => MaterialSource::Asset(content.parse(reference)?),
+        Some(MaterialRef::Inline(material)) => MaterialSource::Inline(material.clone()),
+        None => MaterialSource::Inline(default_material()),
+    };
+    content.material(renderer, &source)
+}
+
 pub(crate) fn resolve_obj(
     content: &mut Content,
     renderer: Option<&mut Renderer>,
@@ -679,15 +716,10 @@ pub(crate) fn resolve_obj(
         (Some(light), None) => Some(light_component(light)),
         (None, _) => None,
     };
-    let renderer = match (&data.renderer, gpu) {
+    let renderer = match (&data.renderer, gpu.as_deref_mut()) {
         (Some(data), Some(renderer)) => {
             let mesh = content.mesh(renderer, &content.parse(&data.mesh)?)?;
-            let source = match &data.material {
-                Some(MaterialRef::Asset(reference)) => MaterialSource::Asset(content.parse(reference)?),
-                Some(MaterialRef::Inline(material)) => MaterialSource::Inline(material.clone()),
-                None => MaterialSource::Inline(default_material()),
-            };
-            let material = content.material(renderer, &source)?;
+            let material = material_of(content, renderer, data.material.as_ref())?;
             Some(MeshRenderer {
                 lod_bias: data.lod_bias,
                 forced_lod: data.forced_lod(),
@@ -697,8 +729,18 @@ pub(crate) fn resolve_obj(
         }
         _ => None,
     };
+    // Without a renderer, as when only checking a scene, foliage is not drawn, as meshes are not, but is kept to save.
+    let foliage = match (&data.foliage, gpu) {
+        (Some(data), Some(renderer)) => {
+            let (foliage, source) = foliage(content, renderer, data)?;
+            Some(Box::new((Some(foliage), source)))
+        }
+        (Some(data), None) => Some(Box::new((None, FoliageSource(data.clone())))),
+        (None, _) => None,
+    };
     Ok(TemplateObj {
         path: obj.path.clone(),
+        foliage,
         parent,
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },
         transform: Transform::new(Vec3::from(data.position()), rotation, Vec3::from(data.scale())),

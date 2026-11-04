@@ -57,8 +57,8 @@ use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
-    Camera, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone,
+    Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
+    Plant, Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -273,6 +273,9 @@ pub struct ObjData {
     /// Bends foliage out of the Obj's way as it passes through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage_interaction: Option<FoliageInteraction>,
+    /// One plant, grown in many places without an Obj each.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foliage: Option<FoliageData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,6 +323,7 @@ impl ObjData {
             collider: None,
             wind_zone: None,
             foliage_interaction: None,
+            foliage: None,
             rigidbody: None,
             character: None,
             joint: None,
@@ -585,6 +589,95 @@ impl LightData {
         }
     }
 }
+
+/// A Foliage as a scene writes it: one plant, its mesh and material as a
+/// Mesh Renderer names them, grown in many places in the Obj's space.
+///
+/// ```toml
+/// [obj.foliage]
+/// mesh = "Models/Grass.glb#mesh0.0"
+/// material = "Materials/Grass.material"
+/// draw_distance = 60.0
+/// plants = [[1.0, 0.0, 2.0, 45.0, 1.1]]   # x, y, z, turn in degrees, size
+/// [obj.foliage.scatter]
+/// size = [40.0, 40.0]   # metres across, centred on the Obj
+/// density = 2.0         # plants to a square metre
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FoliageData {
+    pub mesh: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<MaterialRef>,
+    /// How far from the camera plants are drawn, in metres.
+    #[serde(default = "default_draw_distance")]
+    pub draw_distance: f32,
+    /// Over how many metres short of the draw distance they fade out.
+    #[serde(default = "default_fade_distance")]
+    pub fade_distance: f32,
+    /// How far from the camera they cast shadows, in metres; 0 for none.
+    #[serde(default = "default_shadow_distance")]
+    pub shadow_distance: f32,
+    /// Plants placed one by one: x, y and z in the Obj's space, a turn in
+    /// degrees, and a size.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plants: Vec<[f32; 5]>,
+    /// Plants scattered over an area, besides those placed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scatter: Option<ScatterData>,
+}
+
+/// Plants scattered evenly over an area round the Obj (see
+/// `voxear_render::scatter`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScatterData {
+    /// Metres across, along X and Z, centred on the Obj.
+    pub size: [f32; 2],
+    /// Plants to a square metre.
+    pub density: f32,
+    /// Another seed scatters them another way.
+    #[serde(default)]
+    pub seed: u32,
+    /// The smallest and largest size.
+    #[serde(default = "plain_scale")]
+    pub scale: [f32; 2],
+}
+
+fn default_draw_distance() -> f32 {
+    60.0
+}
+
+fn default_fade_distance() -> f32 {
+    10.0
+}
+
+fn default_shadow_distance() -> f32 {
+    25.0
+}
+
+fn plain_scale() -> [f32; 2] {
+    [1.0, 1.0]
+}
+
+impl FoliageData {
+    /// Every plant: those placed, then those scattered.
+    pub fn plants(&self) -> Vec<Plant> {
+        let placed = self.plants.iter().map(|&[x, y, z, turn, scale]| Plant {
+            position: [x, y, z],
+            yaw: turn.to_radians(),
+            scale,
+        });
+        let scattered = self.scatter.map(|s| scatter(s.size, s.density, s.seed, s.scale)).unwrap_or_default();
+        placed.chain(scattered).collect()
+    }
+}
+
+/// How the Obj's Foliage was written, so a save writes it back as it was:
+/// its scatter rather than every plant it made.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FoliageSource(pub FoliageData);
+impl voxear_ecs::Component for FoliageSource {}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1281,6 +1374,14 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
+    obj.foliage = world.get::<FoliageSource>(entity).map(|source| {
+        let mut data = source.0.clone();
+        if let Some(foliage) = world.get::<Foliage>(entity) {
+            (data.draw_distance, data.fade_distance, data.shadow_distance) =
+                (foliage.draw_distance, foliage.fade_distance, foliage.shadow_distance);
+        }
+        data
+    });
     obj.rigidbody = world.get::<Rigidbody>(entity).copied();
     obj.character = world.get::<CharacterController>(entity).copied();
     obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));

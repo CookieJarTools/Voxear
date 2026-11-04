@@ -90,7 +90,7 @@ pub use previews::{
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
-pub use foliage::FoliageInteraction;
+pub use foliage::{Foliage, FoliageInteraction, Plant, scatter};
 pub use wind::WindZone;
 pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
@@ -1185,7 +1185,11 @@ struct View {
     /// Last frame's model matrices and camera, for motion vectors.
     prev_models: HashMap<Entity, Mat4Cols>,
     /// Last frame's Objs in their instances' order.
-    prev_entities: Vec<Entity>,
+    prev_entities: Vec<scene::Owner>,
+    /// Every Foliage's plants, built once (see `foliage`).
+    foliage: foliage::FoliageCache,
+    /// It has said its scene has more instances than it can draw.
+    warned_instances: bool,
     prev_view_proj: Option<Mat4Cols>,
     /// The size TAA's history was rendered at; `None` when it is stale.
     taa_history: Option<vk::Extent2D>,
@@ -1265,6 +1269,8 @@ impl View {
             exposure,
             prev_models: HashMap::new(),
             prev_entities: Vec::new(),
+            foliage: foliage::FoliageCache::default(),
+            warned_instances: false,
             prev_view_proj: None,
             taa_history: None,
             ao_history: None,
@@ -1441,20 +1447,22 @@ impl View {
 
     /// Gives each instance last frame's model matrix and the frame last
     /// frame's camera, so shaders can work out how far each pixel moved.
-    /// Objs seen for the first time count as still. An Obj in a place in the
-    /// list another held last frame is marked new there.
+    /// Objs seen for the first time count as still, as plants of a Foliage
+    /// always do. An instance in a place in the list another held last frame
+    /// is marked new there.
     fn track_motion(&mut self, extracted: &mut scene::ExtractedFrame) {
-        for (index, (instance, entity)) in extracted.instances.iter_mut().zip(&extracted.entities).enumerate() {
-            if let Some(previous) = self.prev_models.get(entity) {
+        for (index, (instance, owner)) in extracted.instances.iter_mut().zip(&extracted.entities).enumerate() {
+            if let Some(previous) = self.prev_models.get(&owner.entity).filter(|_| owner.plant.is_none()) {
                 instance.prev_model = *previous;
             }
-            if self.prev_entities.get(index) != Some(entity) {
+            if self.prev_entities.get(index) != Some(owner) {
                 instance.flags |= gpu::INSTANCE_NEW;
             }
         }
         self.prev_entities.clone_from(&extracted.entities);
         self.prev_models.clear();
-        self.prev_models.extend(extracted.entities.iter().zip(&extracted.instances).map(|(e, i)| (*e, i.model)));
+        let objs = extracted.entities.iter().zip(&extracted.instances).filter(|(owner, _)| owner.plant.is_none());
+        self.prev_models.extend(objs.map(|(owner, instance)| (owner.entity, instance.model)));
         let current = extracted.frame.unjittered_view_proj;
         extracted.frame.prev_view_proj = self.prev_view_proj.replace(current).unwrap_or(current);
     }
@@ -1480,8 +1488,14 @@ impl View {
         // The scene is drawn at its render size, which TAA upscales to the view's.
         let output_extent = extent;
         let extent = vk::Extent2D { width: extracted.render_size.0, height: extracted.render_size.1 };
-        // Glass after the rest, past what culling, shadows and the GI's rays see.
+        // Every Foliage's plants within their draw distance, as instances of their own.
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
+        self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh));
+        if extracted.instances.len() > MAX_INSTANCES as usize && !std::mem::replace(&mut self.warned_instances, true) {
+            let count = extracted.instances.len();
+            tracing::warn!("{count} instances are more than the {MAX_INSTANCES} a view draws; the rest are left out");
+        }
+        // Glass after the rest, past what culling, shadows and the GI's rays see.
         let opaque = glass::sort_last(&mut extracted.instances, &mut extracted.entities, camera, assets);
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         let opaque_count = opaque.min(instance_count);

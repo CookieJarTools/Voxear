@@ -251,12 +251,20 @@ pub struct ExtractedFrame {
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
     pub has_sun: bool,
-    /// The entity behind each instance, for tracking motion between frames.
-    pub entities: Vec<Entity>,
+    /// What each instance was made from, for tracking motion between frames.
+    pub entities: Vec<Owner>,
     pub post: PostProcess,
     /// The size the scene is drawn at: the view's own, or less when TAA
     /// upscales it (see `AntiAliasing::render_scale`).
     pub render_size: (u32, u32),
+}
+
+/// What an instance was made from: its Obj, and for a plant of a Foliage,
+/// its place among the Foliage's plants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Owner {
+    pub entity: Entity,
+    pub plant: Option<u32>,
 }
 
 /// Per-view settings that are not part of the scene.
@@ -555,7 +563,7 @@ pub fn extract(
         .into_iter()
         .filter(|(entity, ..)| !lods.hidden.contains(entity))
         .map(|(entity, renderer, transform, world_transform)| {
-            entities.push(entity);
+            entities.push(Owner { entity, plant: None });
             let model = world_transform.map_or_else(
                 || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
                 |w| w.0,
@@ -570,6 +578,7 @@ pub fn extract(
                 flags: renderer.lod_bits().0,
                 lod_bias: renderer.lod_bits().1,
                 lod_screen: renderer.lod_bits().2,
+                fade: [0.0; 4],
             }
         })
         .collect();

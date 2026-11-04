@@ -93,6 +93,7 @@ pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use foliage::{Foliage, FoliageInteraction, Plant, scatter};
+pub use assets::Glow;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use wind::WindZone;

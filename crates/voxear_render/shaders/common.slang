@@ -188,6 +188,8 @@ static const uint MATERIAL_FOLIAGE = 2;
 static const uint MATERIAL_GLASS = 4;
 // Leaves that stay as made through the seasons (seasons.slang).
 static const uint MATERIAL_LEAVES_STAY = 16;
+// How its glow moves, in two bits: 0 steady, 1 pulse, 2 breathe, 3 flicker (glow.slang).
+static const uint MATERIAL_GLOW_SHIFT = 5;
 
 struct Material
 {
@@ -207,7 +209,8 @@ struct Material
     // How much plants drawn with it bend in the wind, and their leaves flutter (wind.slang).
     float windBend;
     float windFlutter;
-    float pad;
+    // How many times a second its glow goes round, when it moves (glow.slang).
+    float glowSpeed;
 };
 
 struct Instance

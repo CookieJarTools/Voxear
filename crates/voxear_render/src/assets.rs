@@ -28,6 +28,34 @@ use crate::{
     seasons::Leaves,
 };
 
+/// How a material's emission moves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Glow {
+    /// As it is set.
+    #[default]
+    Steady,
+    /// Up and down evenly, as a beacon.
+    Pulse,
+    /// Slowly in and out, resting dim between, as a glowing mushroom.
+    Breathe,
+    /// Unsteadily, as a flame or a firefly.
+    Flicker,
+}
+
+impl Glow {
+    pub const ALL: [Glow; 4] = [Glow::Steady, Glow::Pulse, Glow::Breathe, Glow::Flicker];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Glow::Steady => "Steady",
+            Glow::Pulse => "Pulse",
+            Glow::Breathe => "Breathe",
+            Glow::Flicker => "Flicker",
+        }
+    }
+}
+
 const MAX_VERTICES: u64 = 2 * 1024 * 1024;
 const MAX_INDICES: u64 = 8 * 1024 * 1024;
 const MAX_MESHES: u64 = 16 * 1024;
@@ -79,6 +107,10 @@ pub struct MaterialDesc {
     /// What its leaves do through the year, where it is foliage and the
     /// level has Seasons.
     pub leaves: Leaves,
+    /// How its emission moves: steady, or pulsing, breathing or flickering,
+    /// `glow_speed` times a second, each Obj or plant at its own moment.
+    pub glow: Glow,
+    pub glow_speed: f32,
 }
 
 impl Default for MaterialDesc {
@@ -100,6 +132,8 @@ impl Default for MaterialDesc {
             wind_bend: 0.0,
             wind_flutter: 0.0,
             leaves: Leaves::Turn,
+            glow: Glow::Steady,
+            glow_speed: 1.0,
         }
     }
 }
@@ -740,13 +774,14 @@ impl Assets {
             flags: if desc.normal_texture.is_some() { MATERIAL_NORMAL_MAP } else { 0 }
                 | if desc.foliage { MATERIAL_FOLIAGE } else { 0 }
                 | if desc.glass { MATERIAL_GLASS } else { 0 }
-                | desc.leaves.flags(),
+                | desc.leaves.flags()
+                | (desc.glow as u32) << crate::gpu::MATERIAL_GLOW_SHIFT,
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),
             ior: desc.ior.max(1.0),
             wind_bend: desc.wind_bend.max(0.0),
             wind_flutter: desc.wind_flutter.max(0.0),
-            _pad: 0.0,
+            glow_speed: desc.glow_speed.max(0.0),
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {

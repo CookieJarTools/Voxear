@@ -35,6 +35,8 @@ You can also drag a material from the Project panel straight onto an Obj in the 
 
 Give a material an **Emission** colour to make it glow. Emission's colour picker has an extra **Intensity** slider: each step up doubles the brightness. Bright emission spills a soft glow around it on screen, called **bloom**.
 
+**Glow** makes the emission move: **Pulse** rises and falls evenly, as a beacon; **Breathe** swells slowly and rests dim between, as a glowing mushroom; **Flicker** wavers unsteadily, as a flame or a firefly. **Glow speed** is how many times a second it goes round. Each Obj, and each plant of a Foliage, glows at its own moment, so a field of them never pulses as one, and the light they bounce onto what is round them rises and falls with them. In a material file, `glow = "breathe"` and `glow_speed = 0.3`.
+
 A glowing surface does not light up what is around it. To make a lamp that lights the room, put a Point Light beside its bulb. See [[Lights]].
 
 ## Leaves and grass

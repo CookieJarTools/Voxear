@@ -21,7 +21,7 @@ use voxear_assets::{
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
-    CookedModel, ImportedModel, Leaves, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
+    CookedModel, Glow, ImportedModel, Leaves, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
     IesProfile, MeshTriangles, Primitive, Renderer, TextureId, TextureSource,
 };
 use voxear_scene::Destroying;
@@ -82,6 +82,12 @@ pub struct MaterialData {
     /// turn each season's colour, or stay as made.
     #[serde(default, skip_serializing_if = "is_turning")]
     pub leaves: Leaves,
+    /// How its emission moves: `steady`, or `pulse`, `breathe` or `flicker`
+    /// `glow_speed` times a second.
+    #[serde(default, skip_serializing_if = "is_steady")]
+    pub glow: Glow,
+    #[serde(default = "default_glow_speed", skip_serializing_if = "is_default_glow_speed")]
+    pub glow_speed: f32,
 }
 
 impl Default for MaterialData {
@@ -101,6 +107,8 @@ impl Default for MaterialData {
             wind_bend: None,
             wind_flutter: None,
             leaves: Leaves::Turn,
+            glow: Glow::Steady,
+            glow_speed: default_glow_speed(),
         }
     }
 }
@@ -137,6 +145,18 @@ fn default_ior() -> f32 {
 
 fn is_default_ior(ior: &f32) -> bool {
     *ior == default_ior()
+}
+
+fn is_steady(glow: &Glow) -> bool {
+    *glow == Glow::Steady
+}
+
+fn default_glow_speed() -> f32 {
+    1.0
+}
+
+fn is_default_glow_speed(speed: &f32) -> bool {
+    *speed == default_glow_speed()
 }
 
 fn is_turning(leaves: &Leaves) -> bool {
@@ -185,6 +205,8 @@ impl MaterialData {
             wind_bend: self.wind_bend(),
             wind_flutter: self.wind_flutter(),
             leaves: self.leaves,
+            glow: self.glow,
+            glow_speed: self.glow_speed,
             ..MaterialDesc::default()
         }
     }
@@ -194,9 +216,9 @@ impl MaterialData {
         let [r, g, b] = self.color.map(f32::to_bits);
         let [er, eg, eb] = self.emissive.map(f32::to_bits);
         let (metallic, roughness, ior) = (self.metallic.to_bits(), self.roughness.to_bits(), self.ior.to_bits());
-        let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2;
-        let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits()];
-        let values = [r, g, b, metallic, roughness, er, eg, eb, flags, ior, wind[0], wind[1]];
+        let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2 | (self.glow as u32) << 3;
+        let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits(), self.glow_speed.to_bits()];
+        let values = [r, g, b, metallic, roughness, er, eg, eb, flags, ior, wind[0], wind[1], wind[2]];
         (values, MaterialMap::ALL.map(|map| self.map(map)))
     }
 
@@ -225,7 +247,7 @@ impl MaterialData {
     }
 }
 
-type MaterialKey = ([u32; 12], [Option<AssetGuid>; 4]);
+type MaterialKey = ([u32; 13], [Option<AssetGuid>; 4]);
 
 /// What [`Content::release_unused`] freed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

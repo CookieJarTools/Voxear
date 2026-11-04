@@ -30,7 +30,7 @@ use std::path::PathBuf;
 
 use voxear_assets::{AssetDb, AssetGuid, AssetKind, MaterialRemap};
 use voxear_engine::{Game, MaterialData, MaterialMap, localization::StringTable, script_types::ScriptTypes};
-use voxear_render::Leaves;
+use voxear_render::{Glow, Leaves};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -197,6 +197,9 @@ struct MaterialFields {
     wind: [NodeId; 2],
     /// What its leaves do through the year.
     leaves: NodeId,
+    /// How its emission moves, and how fast.
+    glow: NodeId,
+    glow_speed: NodeId,
     glass: NodeId,
     ior: NodeId,
 }
@@ -447,6 +450,7 @@ impl AssetView {
         }
         let changed = fields.color.iter().chain(&fields.emissive)
             .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
+            .chain([&fields.glow, &fields.glow_speed])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -472,9 +476,13 @@ impl AssetView {
         }
         data.foliage = foliage;
         data.leaves = Leaves::ALL[ui.selected_option(fields.leaves).min(Leaves::ALL.len() - 1)];
+        data.glow = Glow::ALL[ui.selected_option(fields.glow).min(Glow::ALL.len() - 1)];
+        data.glow_speed = read(fields.glow_speed, data.glow_speed).clamp(0.0, 30.0);
         data.glass = ui.is_checked(fields.glass);
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
-        Some(AssetAction::SaveMaterial(self.item.path.clone(), data.clone()))
+        let data = data.clone();
+        fields.show_what_applies(ui);
+        Some(AssetAction::SaveMaterial(self.item.path.clone(), data))
     }
 
     /// Sets the picture a map of the material shown reads, or none, and
@@ -679,6 +687,9 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> 
     let rows = part(ui, root, "Material", "material");
     let (color, color_swatch) = color_row(ui, rows, "Colour");
     let (emissive, emission_swatch) = color_row(ui, rows, "Emission");
+    let row = prop(ui, rows, "Glow");
+    let glow = ui.dropdown(row, &Glow::ALL.map(Glow::name), Glow::ALL.iter().position(|&g| g == data.glow).unwrap_or_default());
+    ui.add_class(glow, "value-input");
     let one = |ui: &mut Ui, label: &str, value: f32| {
         let row = prop(ui, rows, label);
         let field = ui.text_field(row, &number(value));
@@ -686,6 +697,7 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> 
         ui.add_class(field, "number-input");
         field
     };
+    let glow_speed = one(ui, "Glow speed", data.glow_speed);
     let (metallic, roughness) = (one(ui, "Metallic", data.metallic), one(ui, "Roughness", data.roughness));
     for (fields, values) in [(&color, data.color), (&emissive, data.emissive)] {
         for (field, value) in fields.iter().zip(values) {
@@ -713,8 +725,10 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> 
     ui.add_class(glass, "checkbox");
     let ior = one(ui, "IOR", data.ior);
     let swatches = [color_swatch, emission_swatch];
-    let fields = MaterialFields { data, color, metallic, roughness, emissive, swatches, maps, foliage, wind, leaves, glass, ior };
+    let fields =
+        MaterialFields { data, color, metallic, roughness, emissive, swatches, maps, foliage, wind, leaves, glow, glow_speed, glass, ior };
     fields.show_swatches(ui);
+    fields.show_what_applies(ui);
     Some(fields)
 }
 
@@ -767,6 +781,22 @@ impl ModelMaterials {
 }
 
 impl MaterialFields {
+    /// Hides the rows that do nothing as the material stands: glow speed
+    /// for a steady glow, leaves for what is not foliage, and the index of
+    /// refraction for what is not glass.
+    fn show_what_applies(&self, ui: &mut Ui) {
+        let rows = [
+            (self.glow_speed, self.data.glow != Glow::Steady),
+            (self.leaves, self.data.foliage),
+            (self.ior, self.data.glass),
+        ];
+        for (field, applies) in rows {
+            if let Some(row) = ui.parent(field) {
+                ui.set_visible(row, applies);
+            }
+        }
+    }
+
     /// A colour as the picker edits it: the colour as it is, the emission
     /// split into a colour and its intensity.
     fn picked(&self, which: MaterialColor) -> PickedColor {

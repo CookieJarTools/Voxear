@@ -3,7 +3,7 @@
 
 /// Shader files that are only included by others, never compiled alone.
 pub const SHADER_MODULES: &[&str] =
-    &["atmosphere", "common", "culling", "ddgi_sample", "lights", "occlusion", "seasons", "shading", "trace_software", "volume", "wind"];
+    &["atmosphere", "common", "culling", "ddgi_sample", "glow", "lights", "occlusion", "seasons", "shading", "trace_software", "volume", "wind"];
 
 /// `slangc` arguments besides the input file, include path and output.
 pub const SLANG_ARGS: &[&str] = &[

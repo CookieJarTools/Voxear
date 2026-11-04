@@ -135,10 +135,11 @@ fn a_live_materials_fields_change_it_on_the_page() {
     let mut labels = Vec::new();
     with_class(&editor.ui, places[0], "prop-label", &mut labels);
     let rows: Vec<String> = labels.iter().map(|&l| editor.ui.text(l)).collect();
-    let fields = ["Colour", "Emission", "Metallic", "Roughness", "Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Foliage", "Wind bend", "Leaf flutter", "Leaves", "Glass", "IOR"];
+    let fields = ["Colour", "Emission", "Glow", "Glow speed", "Metallic", "Roughness", "Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Foliage", "Wind bend", "Leaf flutter", "Leaves", "Glass", "IOR"];
     assert_eq!(rows, fields, "its fields, as the Inspector has them");
 
-    let roughness = editor.ui.parent(labels[3]).unwrap();
+    let roughness_label = labels.iter().copied().find(|&l| editor.ui.text(l) == "Roughness").unwrap();
+    let roughness = editor.ui.parent(roughness_label).unwrap();
     let input = editor.ui.children(roughness)[1];
     editor.ui.focus(input);
     editor.ui.set_modifiers(Modifiers { shift: false, control: true });

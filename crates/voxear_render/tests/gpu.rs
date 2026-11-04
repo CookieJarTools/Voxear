@@ -2704,6 +2704,34 @@ fn foliage_bends_away_from_what_passes_through_it_and_springs_back() {
 }
 
 #[test]
+fn a_pulsing_glow_rises_and_falls_and_a_steady_one_stays() {
+    use voxear_render::{Glow, Sky};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -5.0))));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let glowing = |glow| MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: [0.0, 2.0, 1.0], glow, glow_speed: 0.5, ..MaterialDesc::default() };
+    let pulse = renderer.add_material(&glowing(Glow::Pulse)).unwrap();
+    let steady = renderer.add_material(&glowing(Glow::Steady)).unwrap();
+    world.spawn((MeshRenderer::new(sphere, pulse), Transform::from_position(Vec3::new(-1.0, 0.0, 0.0))));
+    world.spawn((MeshRenderer::new(sphere, steady), Transform::from_position(Vec3::new(1.0, 0.0, 0.0))));
+    world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
+    world.insert_resource(steady_post());
+    let mut time = 0.0;
+    let mut seen = Vec::new();
+    // Over two seconds, one turn of the pulse, every quarter of a second.
+    for _ in 0..8 {
+        run(&mut renderer, &world, &mut time, 15);
+        let pixels = renderer.read_pixels().unwrap().2;
+        seen.push((rgb_at(&pixels, (240, 180))[1], rgb_at(&pixels, (400, 180))[1]));
+    }
+    let (pulsing, steady): (Vec<i32>, Vec<i32>) = seen.into_iter().unzip();
+    let spread = |values: &[i32]| values.iter().max().unwrap() - values.iter().min().unwrap();
+    assert!(spread(&pulsing) > 60, "the pulse rises and falls: {pulsing:?}");
+    assert!(spread(&steady) < 8, "the steady glow stays: {steady:?}");
+}
+
+#[test]
 fn one_obj_draws_a_whole_model_each_part_where_the_model_puts_it() {
     use voxear_render::{ModelPart, ModelRenderer, Sky};
     let Some(mut renderer) = renderer() else { return };

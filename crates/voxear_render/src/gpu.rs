@@ -74,6 +74,8 @@ pub const MATERIAL_FOLIAGE: u32 = 2;
 pub const MATERIAL_GLASS: u32 = 4;
 /// Leaves that stay as made through the seasons (see `seasons::Leaves`).
 pub const MATERIAL_LEAVES_STAY: u32 = 16;
+/// How its glow moves: these bits hold a `Glow` (see `glow`).
+pub const MATERIAL_GLOW_SHIFT: u32 = 5;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -96,7 +98,9 @@ pub struct GpuMaterial {
     /// and how much their leaves flutter; 0 for neither.
     pub wind_bend: f32,
     pub wind_flutter: f32,
-    pub _pad: f32,
+    /// How many times a second its glow goes round, when it moves (see
+    /// `MATERIAL_GLOW_*`).
+    pub glow_speed: f32,
 }
 
 #[repr(C)]

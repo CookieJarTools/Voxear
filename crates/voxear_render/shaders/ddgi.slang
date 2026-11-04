@@ -164,7 +164,8 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     seasonalSurface(frame, material, instance.model.c3.xyz, normal, base.rgb, rough);
     float3 albedo = base.rgb * (1.0 - metal);
     float3 emissive = material.emissive
-        * textures[NonUniformResourceIndex(material.emissiveTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).rgb;
+        * textures[NonUniformResourceIndex(material.emissiveTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).rgb
+        * glowAmount(frame, material, instance.model.c3.xyz);
 
     float3 toSun = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;

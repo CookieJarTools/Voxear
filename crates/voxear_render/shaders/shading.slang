@@ -8,6 +8,7 @@
 #include "atmosphere.slang"
 #include "common.slang"
 #include "ddgi_sample.slang"
+#include "glow.slang"
 #include "lights.slang"
 #include "occlusion.slang"
 #include "seasons.slang"
@@ -491,7 +492,7 @@ FragmentOut fragmentMain(VertexOut input)
     float3 reflected = environmentReflection(frame, input.position.xy, input.worldPosition, s.normal, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere);
     color += ambient * s.diffuse * occlusion.diffuse + reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * occlusion.specular;
 
-    color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+    color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb * glowAmount(frame, material, origin);
     if (atmosphere)
     {
         float2 screenUv = input.position.xy / float2(frame->viewport);

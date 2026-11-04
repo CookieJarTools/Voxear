@@ -1065,8 +1065,10 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   and paste, prefabs; a Leaves choice in the material Inspector. C#: `Seasons.TimeOfYear`, `Seasons.Season`,
   `Seasons.Exists`. Seasons reach the GI's rays and ray-traced reflections (`ddgiShadeHit`), and `ground_cover` lays
   the snow and wetness on what is not a plant.
-- **Glow:** emissive masks on plants that pulse, breathe or flicker, for glowing mushrooms, bioluminescent
-  forests and fireflies, and light from them in the GI.
+- ~~**Glow:**~~ done: materials' `glow` (`steady`, `pulse`, `breathe`, `flicker`) and `glow_speed` move their emission
+  (`shaders/glow.slang`, two bits of the material's flags and its spare float), each Obj or plant at its own moment by
+  where it stands; the GI's rays see the same, so the light glowing plants bounce moves with them. Fields that do
+  nothing hide in the material Inspector (glow speed, leaves, IOR).
 - **Placing it:** moved to M8, Terrain, to be built with terrain's scatter layers.
 - **Converting plants:** a step that prepares models from other tools (SpeedTree exports, Quixel and asset-store
   plants) for wind and foliage shading, writing the masks the shader reads.

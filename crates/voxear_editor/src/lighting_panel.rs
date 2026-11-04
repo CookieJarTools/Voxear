@@ -51,6 +51,9 @@ struct Info {
     /// While any does not, the setting is hidden, so the page shows only
     /// what changes the picture.
     when: When,
+    /// What it does, in plain words, shown when the pointer rests on its
+    /// name.
+    help: &'static str,
 }
 
 type When = &'static [(&'static [&'static str], &'static str)];
@@ -78,63 +81,120 @@ const TONEMAPPERS: &[(&str, &str)] =
 
 #[rustfmt::skip]
 const SETTINGS: &[Info] = &[
-    Info { path: &["look"], title: "Look", group: "Sky", kind: Kind::Look, when: ALWAYS },
-    Info { path: &["sky", "mode"], title: "Mode", group: "Sky", kind: Kind::Choice(SKY_MODES), when: ALWAYS },
-    Info { path: &["sky", "zenith"], title: "Zenith", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY },
-    Info { path: &["sky", "horizon"], title: "Horizon", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY },
-    Info { path: &["sky", "ground"], title: "Ground", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY },
-    Info { path: &["sky", "ambient"], title: "Ambient", group: "Sky", kind: number(0.0, 8.0, ""), when: ALWAYS },
-    Info { path: &["sky", "haze"], title: "Haze", group: "Sky", kind: number(0.0, 10.0, ""), when: ATMOSPHERE },
-    Info { path: &["sky", "haze_tint"], title: "Haze tint", group: "Sky", kind: Kind::Color, when: ATMOSPHERE },
-    Info { path: &["sky", "haze_glow"], title: "Haze glow", group: "Sky", kind: number(0.0, 0.95, ""), when: ATMOSPHERE },
-    Info { path: &["sky", "distance_haze"], title: "Distance haze", group: "Sky", kind: number(0.0, 100.0, ""), when: ATMOSPHERE },
-    Info { path: &["sky", "sun_size"], title: "Sun size", group: "Sky", kind: number(0.05, 20.0, "°"), when: ALWAYS },
-    Info { path: &["sky", "stars"], title: "Stars", group: "Sky", kind: number(0.0, 4.0, ""), when: ALWAYS },
-    Info { path: &["sun", "temperature"], title: "Temperature", group: "Sun", kind: number(1000.0, 20000.0, "K"), when: ALWAYS },
-    Info { path: &["sun", "tint"], title: "Tint", group: "Sun", kind: Kind::Color, when: ALWAYS },
-    Info { path: &["sun", "strength"], title: "Strength", group: "Sun", kind: number(0.0, 10.0, "×"), when: ALWAYS },
-    Info { path: &["sun", "softness"], title: "Softness", group: "Sun", kind: number(0.0, 20.0, "°"), when: ALWAYS },
-    Info { path: &["sun", "shadow_tint"], title: "Shadow tint", group: "Sun", kind: Kind::Color, when: ALWAYS },
-    Info { path: &["post", "exposure", "auto"], title: "Auto exposure", group: "Exposure", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "exposure", "compensation"], title: "Compensation", group: "Exposure", kind: number(-8.0, 8.0, "EV"), when: ALWAYS },
-    Info { path: &["post", "exposure", "min_ev"], title: "Min exposure", group: "Exposure", kind: number(-16.0, 16.0, "EV"), when: AUTO_EXPOSURE },
-    Info { path: &["post", "exposure", "max_ev"], title: "Max exposure", group: "Exposure", kind: number(-16.0, 16.0, "EV"), when: AUTO_EXPOSURE },
-    Info { path: &["post", "exposure", "speed_up"], title: "Adapt to light", group: "Exposure", kind: number(0.0, 20.0, "EV/s"), when: AUTO_EXPOSURE },
-    Info { path: &["post", "exposure", "speed_down"], title: "Adapt to dark", group: "Exposure", kind: number(0.0, 20.0, "EV/s"), when: AUTO_EXPOSURE },
-    Info { path: &["post", "tonemap", "mapper"], title: "Tonemapper", group: "Colour", kind: Kind::Choice(TONEMAPPERS), when: ALWAYS },
-    Info { path: &["post", "tonemap", "contrast"], title: "Contrast", group: "Colour", kind: number(0.0, 3.0, ""), when: AGX },
-    Info { path: &["post", "tonemap", "saturation"], title: "Saturation", group: "Colour", kind: number(0.0, 3.0, ""), when: AGX },
-    Info { path: &["post", "grading", "temperature"], title: "White balance", group: "Colour", kind: number(-1.0, 1.0, ""), when: ALWAYS },
-    Info { path: &["post", "grading", "tint"], title: "Green-magenta", group: "Colour", kind: number(-1.0, 1.0, ""), when: ALWAYS },
-    Info { path: &["post", "grading", "contrast"], title: "Grade contrast", group: "Colour", kind: number(0.0, 3.0, ""), when: ALWAYS },
-    Info { path: &["post", "grading", "saturation"], title: "Grade saturation", group: "Colour", kind: number(0.0, 3.0, ""), when: ALWAYS },
-    Info { path: &["post", "vignette", "intensity"], title: "Vignette", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS },
-    Info { path: &["post", "chromatic_aberration"], title: "Colour fringes", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS },
-    Info { path: &["post", "bloom", "enabled"], title: "Bloom", group: "Bloom", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "bloom", "intensity"], title: "Intensity", group: "Bloom", kind: number(0.0, 1.0, ""), when: BLOOM },
-    Info { path: &["post", "bloom", "scatter"], title: "Scatter", group: "Bloom", kind: number(0.0, 1.0, ""), when: BLOOM },
-    Info { path: &["post", "bloom", "tint"], title: "Tint", group: "Bloom", kind: Kind::Color, when: BLOOM },
-    Info { path: &["post", "fog", "enabled"], title: "Fog", group: "Fog", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "fog", "density"], title: "Density", group: "Fog", kind: number(0.0, 1.0, ""), when: FOG },
-    Info { path: &["post", "fog", "height_falloff"], title: "Height falloff", group: "Fog", kind: number(0.0, 2.0, ""), when: FOG },
-    Info { path: &["post", "fog", "base_height"], title: "Base height", group: "Fog", kind: number(-1000.0, 1000.0, "m"), when: FOG },
-    Info { path: &["post", "fog", "sun_glow"], title: "Sun glow", group: "Fog", kind: number(0.0, 1.0, ""), when: FOG },
-    Info { path: &["post", "fog", "volumetric"], title: "Light shafts", group: "Fog", kind: Kind::Toggle, when: FOG },
-    Info { path: &["post", "fog", "volumetric_distance"], title: "Shaft distance", group: "Fog", kind: number(1.0, 512.0, "m"), when: SHAFTS },
-    Info { path: &["post", "fog", "anisotropy"], title: "Forward glow", group: "Fog", kind: number(-0.95, 0.95, ""), when: SHAFTS },
-    Info { path: &["post", "global_illumination", "enabled"], title: "Bounced light", group: "Shading", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "global_illumination", "strength"], title: "Bounce strength", group: "Shading", kind: number(0.0, 4.0, ""), when: BOUNCE },
-    Info { path: &["post", "global_illumination", "probe_spacing"], title: "Probe spacing", group: "Shading", kind: number(0.1, 16.0, "m"), when: BOUNCE },
-    Info { path: &["post", "ambient_occlusion", "enabled"], title: "Ambient occlusion", group: "Shading", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "ambient_occlusion", "radius"], title: "Occlusion radius", group: "Shading", kind: number(0.0, 8.0, "m"), when: OCCLUSION },
-    Info { path: &["post", "ambient_occlusion", "strength"], title: "Occlusion strength", group: "Shading", kind: number(0.0, 4.0, ""), when: OCCLUSION },
-    Info { path: &["post", "contact_shadows", "enabled"], title: "Contact shadows", group: "Shading", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "reflections", "enabled"], title: "Reflections", group: "Shading", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "depth_of_field", "enabled"], title: "Depth of field", group: "Lens", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "depth_of_field", "focus_distance"], title: "Focus distance", group: "Lens", kind: number(0.0, 10000.0, "m"), when: FOCUS },
-    Info { path: &["post", "depth_of_field", "aperture"], title: "Aperture", group: "Lens", kind: number(0.5, 64.0, "f"), when: FOCUS },
-    Info { path: &["post", "motion_blur", "enabled"], title: "Motion blur", group: "Lens", kind: Kind::Toggle, when: ALWAYS },
-    Info { path: &["post", "motion_blur", "intensity"], title: "Blur intensity", group: "Lens", kind: number(0.0, 1.0, ""), when: BLUR },
+    Info { path: &["look"], title: "Look", group: "Sky", kind: Kind::Look, when: ALWAYS,
+        help: "A finished lighting style to start from. Every other setting begins at the look's value until you change it." },
+    Info { path: &["sky", "mode"], title: "Mode", group: "Sky", kind: Kind::Choice(SKY_MODES), when: ALWAYS,
+        help: "Gradient paints the sky with three colours you pick. Atmosphere works the sky out from the sun, as real air does: blue by day, orange at sunset." },
+    Info { path: &["sky", "zenith"], title: "Zenith", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY,
+        help: "The sky's colour straight overhead." },
+    Info { path: &["sky", "horizon"], title: "Horizon", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY,
+        help: "The sky's colour at the horizon, where it meets the ground." },
+    Info { path: &["sky", "ground"], title: "Ground", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY,
+        help: "The colour below the horizon, which also lights things from beneath." },
+    Info { path: &["sky", "ambient"], title: "Ambient", group: "Sky", kind: number(0.0, 8.0, ""), when: ALWAYS,
+        help: "How brightly the sky lights everything, shade included. Lower it for a darker, moodier scene." },
+    Info { path: &["sky", "haze"], title: "Haze", group: "Sky", kind: number(0.0, 10.0, ""), when: ATMOSPHERE,
+        help: "How dusty or misty the air is. More haze makes the distance fade and the sky glow round the sun." },
+    Info { path: &["sky", "haze_tint"], title: "Haze tint", group: "Sky", kind: Kind::Color, when: ATMOSPHERE,
+        help: "The colour of the haze: warm for dust, white for mist." },
+    Info { path: &["sky", "haze_glow"], title: "Haze glow", group: "Sky", kind: number(0.0, 0.95, ""), when: ATMOSPHERE,
+        help: "How tightly the haze glows round the sun. Higher makes a small bright halo; lower spreads it over the sky." },
+    Info { path: &["sky", "distance_haze"], title: "Distance haze", group: "Sky", kind: number(0.0, 100.0, ""), when: ATMOSPHERE,
+        help: "How quickly far-away things fade into the haze. Higher hides the distance sooner." },
+    Info { path: &["sky", "sun_size"], title: "Sun size", group: "Sky", kind: number(0.05, 20.0, "°"), when: ALWAYS,
+        help: "How big the sun's disc looks in the sky, in degrees." },
+    Info { path: &["sky", "stars"], title: "Stars", group: "Sky", kind: number(0.0, 4.0, ""), when: ALWAYS,
+        help: "How bright the stars are at night. 0 hides them." },
+    Info { path: &["sun", "temperature"], title: "Temperature", group: "Sun", kind: number(1000.0, 20000.0, "K"), when: ALWAYS,
+        help: "The sun's colour as a temperature, in kelvin: about 2000 K is a candle-orange sunset, 5500 K is white noon light, above 7000 K is cool and blue." },
+    Info { path: &["sun", "tint"], title: "Tint", group: "Sun", kind: Kind::Color, when: ALWAYS,
+        help: "A colour the sunlight is filtered through, on top of its temperature. White leaves it as it is." },
+    Info { path: &["sun", "strength"], title: "Strength", group: "Sun", kind: number(0.0, 10.0, "×"), when: ALWAYS,
+        help: "How bright the sun is, times its light's own intensity. 1 leaves it as set." },
+    Info { path: &["sun", "softness"], title: "Softness", group: "Sun", kind: number(0.0, 20.0, "°"), when: ALWAYS,
+        help: "How soft the sun's shadows are, as its width in degrees. 0 gives hard, crisp shadows; higher blurs their edges, as through thin cloud." },
+    Info { path: &["sun", "shadow_tint"], title: "Shadow tint", group: "Sun", kind: Kind::Color, when: ALWAYS,
+        help: "The colour shadows lean towards. Black leaves them neutral; a warm brown or cool blue gives shade a mood." },
+    Info { path: &["post", "exposure", "auto"], title: "Auto exposure", group: "Exposure", kind: Kind::Toggle, when: ALWAYS,
+        help: "Lets the camera adjust its brightness to the scene, like an eye: brighter in dark places, darker in bright ones. Off keeps it fixed." },
+    Info { path: &["post", "exposure", "compensation"], title: "Compensation", group: "Exposure", kind: number(-8.0, 8.0, "EV"), when: ALWAYS,
+        help: "Makes the whole picture brighter (positive) or darker (negative), in stops. Each stop doubles or halves the brightness." },
+    Info { path: &["post", "exposure", "min_ev"], title: "Min exposure", group: "Exposure", kind: number(-16.0, 16.0, "EV"), when: AUTO_EXPOSURE,
+        help: "The most auto exposure may darken the picture, in stops, for very bright scenes." },
+    Info { path: &["post", "exposure", "max_ev"], title: "Max exposure", group: "Exposure", kind: number(-16.0, 16.0, "EV"), when: AUTO_EXPOSURE,
+        help: "The most auto exposure may brighten the picture, in stops, for dark scenes. Raise it for rooms lit only by their windows." },
+    Info { path: &["post", "exposure", "speed_up"], title: "Adapt to light", group: "Exposure", kind: number(0.0, 20.0, "EV/s"), when: AUTO_EXPOSURE,
+        help: "How fast the eye adjusts when you walk into somewhere brighter, in stops a second." },
+    Info { path: &["post", "exposure", "speed_down"], title: "Adapt to dark", group: "Exposure", kind: number(0.0, 20.0, "EV/s"), when: AUTO_EXPOSURE,
+        help: "How fast the eye adjusts when you walk into somewhere darker, in stops a second. Eyes adjust to the dark slowly." },
+    Info { path: &["post", "tonemap", "mapper"], title: "Tonemapper", group: "Colour", kind: Kind::Choice(TONEMAPPERS), when: ALWAYS,
+        help: "How bright light is squeezed into what a screen can show. AgX keeps colours natural in bright light and is the best default; ACES is punchier, like film." },
+    Info { path: &["post", "tonemap", "contrast"], title: "Contrast", group: "Colour", kind: number(0.0, 3.0, ""), when: AGX,
+        help: "The difference between light and dark. Higher is punchier, lower is flatter. 1 is AgX's own." },
+    Info { path: &["post", "tonemap", "saturation"], title: "Saturation", group: "Colour", kind: number(0.0, 3.0, ""), when: AGX,
+        help: "How strong colours are. Higher is more vivid, lower towards grey. 1 is AgX's own." },
+    Info { path: &["post", "grading", "temperature"], title: "White balance", group: "Colour", kind: number(-1.0, 1.0, ""), when: ALWAYS,
+        help: "Shifts the whole picture warmer (orange) or cooler (blue), as a camera's white balance does." },
+    Info { path: &["post", "grading", "tint"], title: "Green-magenta", group: "Colour", kind: number(-1.0, 1.0, ""), when: ALWAYS,
+        help: "Shifts the whole picture towards green (negative) or magenta (positive)." },
+    Info { path: &["post", "grading", "contrast"], title: "Grade contrast", group: "Colour", kind: number(0.0, 3.0, ""), when: ALWAYS,
+        help: "Contrast applied in the final colour grade, after the tonemapper." },
+    Info { path: &["post", "grading", "saturation"], title: "Grade saturation", group: "Colour", kind: number(0.0, 3.0, ""), when: ALWAYS,
+        help: "Colour strength applied in the final colour grade, after the tonemapper." },
+    Info { path: &["post", "vignette", "intensity"], title: "Vignette", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "Darkens the corners of the picture, drawing the eye to the middle, as old lenses do." },
+    Info { path: &["post", "chromatic_aberration"], title: "Colour fringes", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "Splits colours slightly at the picture's edges, as a cheap lens does. Small amounts look filmic." },
+    Info { path: &["post", "bloom", "enabled"], title: "Bloom", group: "Bloom", kind: Kind::Toggle, when: ALWAYS,
+        help: "Makes bright things glow softly into what is around them: lamps, the sun, shiny highlights." },
+    Info { path: &["post", "bloom", "intensity"], title: "Intensity", group: "Bloom", kind: number(0.0, 1.0, ""), when: BLOOM,
+        help: "How much bright things glow." },
+    Info { path: &["post", "bloom", "scatter"], title: "Scatter", group: "Bloom", kind: number(0.0, 1.0, ""), when: BLOOM,
+        help: "How far the glow spreads. Low keeps it tight round the light; high spreads a wide haze." },
+    Info { path: &["post", "bloom", "tint"], title: "Tint", group: "Bloom", kind: Kind::Color, when: BLOOM,
+        help: "The colour of the glow. White keeps each light's own colour." },
+    Info { path: &["post", "fog", "enabled"], title: "Fog", group: "Fog", kind: Kind::Toggle, when: ALWAYS,
+        help: "Fills the air with fog that thickens with distance and towards the ground." },
+    Info { path: &["post", "fog", "density"], title: "Density", group: "Fog", kind: number(0.0, 1.0, ""), when: FOG,
+        help: "How thick the fog is. Small numbers go a long way: 0.01 is a light mist." },
+    Info { path: &["post", "fog", "height_falloff"], title: "Height falloff", group: "Fog", kind: number(0.0, 2.0, ""), when: FOG,
+        help: "How quickly the fog thins as it rises. Higher keeps it low to the ground." },
+    Info { path: &["post", "fog", "base_height"], title: "Base height", group: "Fog", kind: number(-1000.0, 1000.0, "m"), when: FOG,
+        help: "The height, in metres, where the fog is thickest." },
+    Info { path: &["post", "fog", "sun_glow"], title: "Sun glow", group: "Fog", kind: number(0.0, 1.0, ""), when: FOG,
+        help: "How brightly the fog glows when you look towards the sun." },
+    Info { path: &["post", "fog", "volumetric"], title: "Light shafts", group: "Fog", kind: Kind::Toggle, when: FOG,
+        help: "Lights the fog near the camera, so sunbeams and lamp glows show in the air, cut by shadows. It costs a little more." },
+    Info { path: &["post", "fog", "volumetric_distance"], title: "Shaft distance", group: "Fog", kind: number(1.0, 512.0, "m"), when: SHAFTS,
+        help: "How far from the camera light shafts reach, in metres. Beyond it the fog is plain." },
+    Info { path: &["post", "fog", "anisotropy"], title: "Forward glow", group: "Fog", kind: number(-0.95, 0.95, ""), when: SHAFTS,
+        help: "How much the fog glows looking towards a light. Higher gives brighter shafts towards the sun; 0 glows evenly every way." },
+    Info { path: &["post", "global_illumination", "enabled"], title: "Bounced light", group: "Shading", kind: Kind::Toggle, when: ALWAYS,
+        help: "Light bounces off surfaces onto others, as in real life: a sunlit floor lights the ceiling, a red wall tints what is beside it. It costs more, and looks much more natural." },
+    Info { path: &["post", "global_illumination", "strength"], title: "Bounce strength", group: "Shading", kind: number(0.0, 4.0, ""), when: BOUNCE,
+        help: "How bright the bounced light is. 1 is as physics has it." },
+    Info { path: &["post", "global_illumination", "probe_spacing"], title: "Probe spacing", group: "Shading", kind: number(0.1, 16.0, "m"), when: BOUNCE,
+        help: "How far apart, in metres, the points that measure bounced light are. Smaller catches more detail and costs more." },
+    Info { path: &["post", "ambient_occlusion", "enabled"], title: "Ambient occlusion", group: "Shading", kind: Kind::Toggle, when: ALWAYS,
+        help: "Darkens corners, cracks and where things meet, where less light reaches. It makes objects look grounded." },
+    Info { path: &["post", "ambient_occlusion", "radius"], title: "Occlusion radius", group: "Shading", kind: number(0.0, 8.0, "m"), when: OCCLUSION,
+        help: "How far, in metres, each point looks for nearby things that shade it. Larger darkens wider areas." },
+    Info { path: &["post", "ambient_occlusion", "strength"], title: "Occlusion strength", group: "Shading", kind: number(0.0, 4.0, ""), when: OCCLUSION,
+        help: "How dark the corners get." },
+    Info { path: &["post", "contact_shadows", "enabled"], title: "Contact shadows", group: "Shading", kind: Kind::Toggle, when: ALWAYS,
+        help: "Adds small, sharp shadows where things touch the ground or each other, that the sun's shadows are too coarse to show." },
+    Info { path: &["post", "reflections", "enabled"], title: "Reflections", group: "Shading", kind: Kind::Toggle, when: ALWAYS,
+        help: "Shiny surfaces reflect what is round them: polished floors, water, metal. With ray tracing they reflect everything, even what is off screen." },
+    Info { path: &["post", "depth_of_field", "enabled"], title: "Depth of field", group: "Lens", kind: Kind::Toggle, when: ALWAYS,
+        help: "Blurs what is nearer or farther than the focus distance, as a camera lens does." },
+    Info { path: &["post", "depth_of_field", "focus_distance"], title: "Focus distance", group: "Lens", kind: number(0.0, 10000.0, "m"), when: FOCUS,
+        help: "How far from the camera, in metres, things are in sharp focus." },
+    Info { path: &["post", "depth_of_field", "aperture"], title: "Aperture", group: "Lens", kind: number(0.5, 64.0, "f"), when: FOCUS,
+        help: "How much blur there is outside the focus: smaller f-numbers blur more, as on a real lens." },
+    Info { path: &["post", "motion_blur", "enabled"], title: "Motion blur", group: "Lens", kind: Kind::Toggle, when: ALWAYS,
+        help: "Blurs things as they move fast, or as the camera turns, as a film camera does." },
+    Info { path: &["post", "motion_blur", "intensity"], title: "Blur intensity", group: "Lens", kind: number(0.0, 1.0, ""), when: BLUR,
+        help: "How much moving things blur." },
 ];
 
 #[derive(Clone, Copy)]
@@ -329,6 +389,7 @@ impl LightingFields {
             if !tabs.iter().any(|(group, _)| *group == info.group) {
                 let tab = ui.button(tab_bar, info.group);
                 ui.add_class(tab, "settings-tab");
+                ui.set_tooltip(tab, group_help(info.group), None);
                 tabs.push((info.group, tab));
                 let heading = ui.add_label(body, info.group);
                 ui.add_class(heading, "settings-group");
@@ -340,6 +401,7 @@ impl LightingFields {
             let label = ui.add_label(row, info.title);
             ui.add_class(label, "prop-label");
             ui.add_class(label, "scrub");
+            ui.set_tooltip(label, info.help, None);
             let control = control(ui, row, info.kind);
             rows.push(Row { info, row, control });
         }
@@ -419,6 +481,21 @@ impl LightingFields {
         for row in &self.rows {
             ui.set_visible(row.row, row.info.group == self.group && applies(&self.values, row.info.when));
         }
+    }
+}
+
+/// What a group of settings is for, shown when the pointer rests on its tab.
+fn group_help(group: &str) -> &'static str {
+    match group {
+        "Sky" => "The sky, and the light it gives everything from all round.",
+        "Sun" => "How the sun looks: its colour, brightness and shadows. Where it shines from is the sun Obj's rotation.",
+        "Exposure" => "How bright the picture is, and how the camera adjusts to light and dark, as an eye does.",
+        "Colour" => "The colour grade: contrast, saturation, warmth and lens effects over the finished picture.",
+        "Bloom" => "The soft glow round bright lights and highlights.",
+        "Fog" => "Mist and dust in the air, and the light shafts that show in it.",
+        "Shading" => "How light settles in the scene: bounced light, shade in corners, small shadows and reflections.",
+        "Lens" => "Camera effects: focus blur and motion blur.",
+        _ => "",
     }
 }
 
@@ -713,6 +790,14 @@ mod tests {
         write_setting(&file, &["sky", "haze"], None).unwrap();
         let read: LightingFile = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(read.sky.unwrap().get("haze").is_none(), "back to the look's");
+    }
+
+    #[test]
+    fn every_setting_and_group_says_what_it_does() {
+        for info in SETTINGS {
+            assert!(info.help.len() > 20, "{} explains itself", info.title);
+            assert!(!group_help(info.group).is_empty(), "the {} tab explains itself", info.group);
+        }
     }
 
     #[test]

@@ -6474,6 +6474,8 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     };
     let density = row(&editor, "Density").expect("the fog's density");
     assert!(editor.ui.is_visible(density), "shown while there is fog");
+    let name = editor.ui.children(density)[0];
+    assert!(editor.ui.tooltip(name).is_some_and(|text| text.contains("thick")), "its name says what it does when rested on");
     let fog = first_with(&editor.ui, row(&editor, "Fog").unwrap(), "checkbox").unwrap();
     click(&mut editor.ui, fog);
     frame(&mut editor, &mut renderer);

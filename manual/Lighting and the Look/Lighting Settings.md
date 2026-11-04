@@ -8,7 +8,7 @@ order: 6
 
 Click the sun on the left-hand rail to open the **Lighting** page. At its top, **Lighting** picks the settings the open scene is lit by: None, one of the built-in sets, or any lighting settings in the project. The scene names them from then on, once you save it.
 
-Below, a tab for each part of the settings shows them all: **Sky**, **Sun**, **Exposure**, **Colour**, **Bloom**, **Fog**, **Shading** and **Lens**. Each shows the value in effect, and a change is written into the lighting settings' file at once, so the scene, and every other scene lit by the same settings, changes as you type. Empty a number's field to go back to the look's value.
+Rest the pointer on a setting's name, or on a tab, to read what it does. Below, a tab for each part of the settings shows them all: **Sky**, **Sun**, **Exposure**, **Colour**, **Bloom**, **Fog**, **Shading** and **Lens**. Each shows the value in effect, and a change is written into the lighting settings' file at once, so the scene, and every other scene lit by the same settings, changes as you type. Empty a number's field to go back to the look's value.
 
 Built-in lighting cannot be changed: click **Make a Copy** for a copy in the project's Lighting folder that the scene is then lit by. A scene lit by none has **New Lighting Settings** instead, which carries the scene's own sky and post-processing over into the new settings.
 

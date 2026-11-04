@@ -2534,6 +2534,8 @@ pub(crate) fn prop(ui: &mut Ui, rows: NodeId, label: &str) -> NodeId {
     ui.add_class(row, "prop");
     let name = ui.add_label(row, label);
     ui.add_class(name, "prop-label");
+    // Dragging the label left or right changes a number beside it, as in Unity.
+    ui.add_class(name, "scrub");
     row
 }
 

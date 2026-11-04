@@ -53,6 +53,8 @@ Hold **Ctrl** while you drag to snap: moves go in steps of the size shown in the
 
 To select several Objs, hold **Ctrl** and click each in the Scene view or the Hierarchy; Ctrl and a click on one already selected takes it out again, and **Shift** and a click in the Hierarchy selects every Obj between. You can also drag a box over the Scene view from an empty spot: everything it touches is selected, added to what was with Ctrl or Shift held. The handles sit on the Obj you selected first, and the rest move, turn and scale with it, all as one step to undo. **Delete** and **Ctrl+D** act on them all, and the Scene view outlines each one while there are several. The Inspector shows the first Obj, with how many it edits beside its name. It shows only the components every selected Obj has, and a value they hold differently shows **—**. A value you change there goes to every selected Obj, and for Position, Rotation, Scale and other values with several parts, only the part you typed in changes on each.
 
+To change a number without typing, drag left or right on its name: the pointer turns into a left-right arrow over a name that does this, and the number follows it, faster for large numbers and four times as fast with **Shift** held. A whole drag is one step to undo. It works on every number in the Inspector, the Lighting page and Settings.
+
 ## Undo and saving
 
 - **Ctrl+Z** undoes and **Ctrl+Y** redoes. A whole drag is one step.

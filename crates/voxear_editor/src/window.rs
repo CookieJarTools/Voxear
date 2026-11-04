@@ -31,7 +31,7 @@ use winit::{
     event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::PhysicalKey,
-    window::{CursorGrabMode, Window, WindowId},
+    window::{CursorGrabMode, CursorIcon, Window, WindowId},
 };
 
 use crate::editor::Editor;
@@ -61,6 +61,7 @@ pub fn run_editor(project: Project, settings: RendererSettings, log: LogCapture)
         dropping: None,
         focused: HashSet::new(),
         drawn: false,
+        scrub_cursor: false,
         last: None,
         error: None,
     };
@@ -98,6 +99,9 @@ struct App {
     focused: HashSet<WindowId>,
     /// A frame has been drawn since the windows last asked for one.
     drawn: bool,
+    /// The windows show a left-right cursor, over a number's label that
+    /// drags to change it.
+    scrub_cursor: bool,
     last: Option<Instant>,
     error: Option<anyhow::Error>,
 }
@@ -165,7 +169,16 @@ impl App {
         #[cfg(target_os = "linux")]
         self.pass_drags();
         let (Some(editor), Some(renderer)) = (&mut self.editor, &mut self.renderer) else { return Ok(()) };
-        editor.update(renderer, (size.width, size.height), scale as f32, delta)
+        editor.update(renderer, (size.width, size.height), scale as f32, delta)?;
+        let scrub = editor.ui.wants_scrub_cursor();
+        if scrub != self.scrub_cursor {
+            self.scrub_cursor = scrub;
+            let icon = if scrub { CursorIcon::EwResize } else { CursorIcon::Default };
+            for window in self.window.iter().chain(self.desktop.iter().map(|open| &open.os)) {
+                window.set_cursor(icon);
+            }
+        }
+        Ok(())
     }
 
     /// Hands the editor what drags did on Wayland, as winit hands over a

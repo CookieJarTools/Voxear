@@ -283,3 +283,42 @@ fn a_pressed_button_keeps_no_focus_ring_and_tab_shows_one() {
     assert_eq!(ui.focused(), Some(button));
     assert!(ringed(&mut ui, button), "reached with Tab, the button shows its ring");
 }
+
+#[test]
+fn dragging_a_numbers_label_changes_it_as_typing_would() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let row = ui.panel(root, Style::row().at(10.0, 10.0).width(300.0));
+    let label = ui.add_label(row, "Strength");
+    ui.add_class(label, "scrub");
+    ui.set_style(label, Style::default().width(100.0).height(20.0));
+    let field = ui.text_field(row, "1");
+    let words = ui.panel(root, Style::row().at(10.0, 60.0).width(300.0));
+    let name = ui.add_label(words, "Name");
+    ui.add_class(name, "scrub");
+    ui.set_style(name, Style::default().width(100.0).height(20.0));
+    let text = ui.text_field(words, "Rock");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+
+    let [x, y, _, h] = ui.rect(label);
+    ui.pointer_move(x + 10.0, y + h / 2.0);
+    assert!(ui.wants_scrub_cursor(), "a left-right cursor over the label");
+    ui.pointer_button(true);
+    ui.pointer_move(x + 110.0, y + h / 2.0);
+    assert_eq!(ui.text(field), "4", "a hundred pixels right of 1 is 4");
+    assert!(ui.changed(field), "read as a change, as typing is");
+    ui.pointer_move(x - 90.0, y + h / 2.0);
+    assert_eq!(ui.text(field), "-2", "and back past where it started");
+    ui.pointer_button(false);
+    assert!(!ui.is_scrubbing());
+    assert_ne!(ui.focused(), Some(field), "the field is not left focused");
+
+    // A label beside words drags nothing.
+    let [x, y, _, h] = ui.rect(name);
+    ui.pointer_move(x + 10.0, y + h / 2.0);
+    assert!(!ui.wants_scrub_cursor());
+    ui.pointer_button(true);
+    ui.pointer_move(x + 110.0, y + h / 2.0);
+    ui.pointer_button(false);
+    assert_eq!(ui.text(text), "Rock");
+}

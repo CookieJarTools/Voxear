@@ -55,6 +55,7 @@ mod reorder;
 pub mod properties;
 mod rich;
 mod scroll;
+mod scrub;
 mod selector;
 mod sheet;
 mod style;

@@ -71,6 +71,10 @@ impl Ui {
         let scale = if self.viewport.2 > 0.0 { self.viewport.2 } else { 1.0 };
         let point = (x / scale, y / scale);
         self.pointer.position = Some(point);
+        if self.is_scrubbing() {
+            self.drag_scrub(point);
+            return self.update_hover();
+        }
         if let Some((node, grab)) = self.pointer.dragging {
             self.drag_thumb(node, point.1 - grab);
         }
@@ -101,6 +105,10 @@ impl Ui {
         if !pressed && self.pointer.dragging.take().is_some() {
             return true;
         }
+        if !pressed && self.release_scrub() {
+            self.pointer_cancel();
+            return true;
+        }
         if !pressed {
             self.input.dragging = None;
             if self.release_reorder() || self.release_dock() || self.release_drag() {
@@ -125,6 +133,14 @@ impl Ui {
             && let Some(point) = self.pointer.position
             && self.press_divider(&path, point)
         {
+            return true;
+        }
+        if pressed
+            && let Some(point) = self.pointer.position
+            && self.press_scrub(&path, point)
+        {
+            self.set_states(&path, States::ACTIVE, true);
+            self.pointer.pressed = path;
             return true;
         }
         if pressed {
@@ -232,6 +248,11 @@ impl Ui {
     /// Whether the pointer is over an element that takes it.
     pub fn wants_pointer(&self) -> bool {
         !self.pointer.hovered.is_empty()
+    }
+
+    /// The innermost element under the pointer.
+    pub fn pointer_hovered(&self) -> Option<NodeId> {
+        self.pointer.hovered.last().copied().map(NodeId)
     }
 
     pub fn is_hovered(&self, node: NodeId) -> bool {

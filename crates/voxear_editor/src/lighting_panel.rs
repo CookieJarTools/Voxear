@@ -346,6 +346,7 @@ impl LightingFields {
             ui.add_class(row, "setting");
             let label = ui.add_label(row, info.title);
             ui.add_class(label, "prop-label");
+            ui.add_class(label, "scrub");
             let control = control(ui, row, info.kind);
             rows.push(Row { info, row, control });
         }

@@ -81,6 +81,7 @@ impl SettingsPanel {
             ui.add_class(row, "setting");
             let label = ui.add_label(row, info.title);
             ui.add_class(label, "prop-label");
+            ui.add_class(label, "scrub");
             let control = control(ui, row, info.kind, settings.get(info.key));
             rows.push(Row { key: info.key, title: info.title, group: info.group, row, heading, control });
         }

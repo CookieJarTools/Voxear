@@ -296,6 +296,8 @@ pub struct Ui {
     /// What shows when the pointer rests on an element, and the key it is
     /// the text of, if any (see [`Ui::set_tooltip`]).
     pub(crate) tooltips: HashMap<taffy::NodeId, (String, Option<String>)>,
+    /// A number's label being dragged to change it (see [`scrub`](crate::scrub)).
+    pub(crate) scrub: Option<crate::scrub::Scrub>,
 }
 
 impl Default for Ui {
@@ -354,6 +356,7 @@ impl Ui {
             text_keys: HashMap::new(),
             text_keys_added: false,
             tooltips: HashMap::new(),
+            scrub: None,
         }
         .with_theme()
     }
@@ -835,6 +838,7 @@ impl Ui {
         }
         let _ = self.tree.remove(node.0);
         self.pointer.forget(node.0);
+        self.forget_scrub(node.0);
         self.draggables.remove(&node.0);
         self.drop_targets.remove(&node.0);
         self.reorders.forget(node.0);

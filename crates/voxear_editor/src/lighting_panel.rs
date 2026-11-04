@@ -115,6 +115,10 @@ const SETTINGS: &[Info] = &[
         help: "How soft the sun's shadows are, as its width in degrees. 0 gives hard, crisp shadows; higher blurs their edges, as through thin cloud." },
     Info { path: &["sun", "shadow_tint"], title: "Shadow tint", group: "Sun", kind: Kind::Color, when: ALWAYS,
         help: "The colour shadows lean towards. Black leaves them neutral; a warm brown or cool blue gives shade a mood." },
+    Info { path: &["sun", "shadow_distance"], title: "Shadow distance", group: "Sun", kind: number(5.0, 1000.0, "m"), when: ALWAYS,
+        help: "How far from the camera the sun casts shadows. Nearer keeps the shadows by the camera sharper; farther shows them over a wider view, each softer." },
+    Info { path: &["sun", "shadow_split"], title: "Cascade split", group: "Sun", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "How the sun's four shadow maps share the shadow distance. Near 1, the nearest is small and very sharp and the farthest wide; near 0, they share it evenly, so far shadows are sharper and near ones softer." },
     Info { path: &["post", "exposure", "auto"], title: "Auto exposure", group: "Exposure", kind: Kind::Toggle, when: ALWAYS,
         help: "Lets the camera adjust its brightness to the scene, like an eye: brighter in dark places, darker in bright ones. Off keeps it fixed." },
     Info { path: &["post", "exposure", "compensation"], title: "Compensation", group: "Exposure", kind: number(-8.0, 8.0, "EV"), when: ALWAYS,
@@ -566,6 +570,8 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
     sun.insert("strength".into(), toml::Value::Float(f64::from(lighting.sun.strength)));
     sun.insert("softness".into(), toml::Value::Float(f64::from(lighting.sun.softness)));
     sun.insert("shadow_tint".into(), color(voxear_engine::srgb(lighting.sun.shadow_tint.to_array())));
+    sun.insert("shadow_distance".into(), toml::Value::Float(f64::from(lighting.sun.shadow_distance)));
+    sun.insert("shadow_split".into(), toml::Value::Float(f64::from(lighting.sun.shadow_split)));
     table.insert("sun".into(), toml::Value::Table(sun));
     let post = PostProcess::from_toml(&lighting.post)?;
     table.insert("post".into(), toml::Value::Table(toml::Table::try_from(post)?));

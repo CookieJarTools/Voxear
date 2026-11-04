@@ -11,10 +11,13 @@ pub const CASCADES: usize = 4;
 /// Pixels per cascade side; the atlas holds the four cascades in a 2×2 grid.
 pub const CASCADE_RESOLUTION: u32 = 2048;
 pub const ATLAS_RESOLUTION: u32 = CASCADE_RESOLUTION * 2;
-/// How far from the camera the sun casts shadows.
+/// How far from the camera the sun casts shadows, unless the lighting says
+/// (`SunLook::shadow_distance`).
 pub const SHADOW_DISTANCE: f32 = 80.0;
-/// Blend between logarithmic (1) and even (0) split spacing.
-const SPLIT_LAMBDA: f32 = 0.85;
+/// How the cascades share that distance, unless the lighting says: a blend
+/// between logarithmic spacing (1), which keeps the near cascades small and
+/// sharp, and even spacing (0), which gives the far ones more.
+pub const SHADOW_SPLIT: f32 = 0.85;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Cascade {
@@ -36,8 +39,10 @@ pub struct View {
     pub near: f32,
 }
 
-/// `light_direction` is the way the light travels.
-pub fn cascades(view: &View, light_direction: Vec3) -> [Cascade; CASCADES] {
+/// `light_direction` is the way the light travels. The cascades reach out
+/// to `distance` from the camera, split between them as `split` says (see
+/// `SHADOW_SPLIT`).
+pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -> [Cascade; CASCADES] {
     let forward = view.rotation * Vec3::Z;
     let right = view.rotation * Vec3::X;
     let up = view.rotation * Vec3::Y;
@@ -49,7 +54,7 @@ pub fn cascades(view: &View, light_direction: Vec3) -> [Cascade; CASCADES] {
 
     let mut near = view.near;
     std::array::from_fn(|i| {
-        let far = split(view.near, i + 1);
+        let far = split_at(view.near, i + 1, distance, split);
         let corners = [near, far].into_iter().flat_map(|d| {
             [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
                 .map(|(sx, sy)| view.position + forward * d + right * (sx * d * tan_h) + up * (sy * d * tan_v))
@@ -92,11 +97,13 @@ pub fn cascades(view: &View, light_direction: Vec3) -> [Cascade; CASCADES] {
 
 /// "Practical" split scheme: mostly logarithmic, so near cascades are small
 /// and sharp, with some even spacing so the far ones are not starved.
-fn split(near: f32, index: usize) -> f32 {
+fn split_at(near: f32, index: usize, distance: f32, split: f32) -> f32 {
+    let distance = distance.max(near * 2.0);
     let t = index as f32 / CASCADES as f32;
-    let log = near * (SHADOW_DISTANCE / near).powf(t);
-    let even = near + (SHADOW_DISTANCE - near) * t;
-    SPLIT_LAMBDA * log + (1.0 - SPLIT_LAMBDA) * even
+    let log = near * (distance / near).powf(t);
+    let even = near + (distance - near) * t;
+    let split = split.clamp(0.0, 1.0);
+    split * log + (1.0 - split) * even
 }
 
 #[cfg(test)]
@@ -119,7 +126,7 @@ mod tests {
 
     #[test]
     fn splits_grow_and_end_at_the_shadow_distance() {
-        let cascades = cascades(&view(), Vec3::new(0.3, -1.0, 0.4));
+        let cascades = cascades(&view(), Vec3::new(0.3, -1.0, 0.4), SHADOW_DISTANCE, SHADOW_SPLIT);
         for pair in cascades.windows(2) {
             assert!(pair[1].far > pair[0].far);
             assert!(pair[1].texel > pair[0].texel);
@@ -128,9 +135,20 @@ mod tests {
     }
 
     #[test]
+    fn the_lighting_sets_how_far_shadows_reach_and_how_the_cascades_share_it() {
+        let sun = Vec3::new(0.3, -1.0, 0.4);
+        let (near, far) = (cascades(&view(), sun, 30.0, 0.85), cascades(&view(), sun, 200.0, 0.85));
+        assert!((near[CASCADES - 1].far - 30.0).abs() < 1e-3 && (far[CASCADES - 1].far - 200.0).abs() < 1e-3);
+        assert!(near[0].texel < far[0].texel, "a shorter reach gives sharper shadows near the camera");
+        let (even, logarithmic) = (cascades(&view(), sun, 80.0, 0.0), cascades(&view(), sun, 80.0, 1.0));
+        assert!((even[0].far - 20.0).abs() < 0.1, "even splits share the distance alike: {}", even[0].far);
+        assert!(logarithmic[0].far < 1.0, "logarithmic ones keep the first cascade small: {}", logarithmic[0].far);
+    }
+
+    #[test]
     fn points_in_a_slice_land_inside_its_shadow_map() {
         let view = view();
-        let cascades = cascades(&view, Vec3::new(0.3, -1.0, 0.4));
+        let cascades = cascades(&view, Vec3::new(0.3, -1.0, 0.4), SHADOW_DISTANCE, SHADOW_SPLIT);
         let point = view.position + Vec3::Z * 3.0;
         let clip = cascades[0].view_proj * point.extend(1.0);
         assert!(clip.x.abs() < 1.0 && clip.y.abs() < 1.0, "{clip:?}");
@@ -144,9 +162,9 @@ mod tests {
     #[test]
     fn cascades_stay_still_when_the_camera_only_turns() {
         let mut a = view();
-        let first = cascades(&a, Vec3::new(0.3, -1.0, 0.4));
+        let first = cascades(&a, Vec3::new(0.3, -1.0, 0.4), SHADOW_DISTANCE, SHADOW_SPLIT);
         a.rotation = Quat::from_rotation_y(0.0001);
-        let second = cascades(&a, Vec3::new(0.3, -1.0, 0.4));
+        let second = cascades(&a, Vec3::new(0.3, -1.0, 0.4), SHADOW_DISTANCE, SHADOW_SPLIT);
         assert_eq!(first[0].texel, second[0].texel);
     }
 }

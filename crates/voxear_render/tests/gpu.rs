@@ -2120,7 +2120,14 @@ fn a_shadow_tint_colours_shade_far_more_than_sunlit_ground() {
 fn a_sun_look_colours_the_sun_and_tints_its_shadows() {
     use voxear_render::SunLook;
     let light = Light::directional(Vec3::ONE, 2.0);
-    let look = SunLook { tint: Vec3::new(1.0, 0.6, 0.3), strength: 1.0, softness: 0.5, shadow_tint: Vec3::new(0.0, 0.0, 0.4) };
+    let look = SunLook {
+        tint: Vec3::new(1.0, 0.6, 0.3),
+        strength: 1.0,
+        softness: 0.5,
+        shadow_tint: Vec3::new(0.0, 0.0, 0.4),
+        shadow_distance: voxear_render::SHADOW_DISTANCE,
+        shadow_split: voxear_render::SHADOW_SPLIT,
+    };
     let (Some(before), Some(after)) = (shadow_tint_render(light, None), shadow_tint_render(light, Some(look))) else {
         return;
     };

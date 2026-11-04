@@ -40,6 +40,7 @@ use crate::{
         Vignette,
     },
     scene::{Sky, SkyMode, temperature_color},
+    shadows::{SHADOW_DISTANCE, SHADOW_SPLIT},
 };
 
 /// A look by name.
@@ -117,6 +118,10 @@ pub struct SunLook {
     pub softness: f32,
     /// Linear, where the light has none of its own.
     pub shadow_tint: Vec3,
+    /// How far from the camera the sun casts shadows, in metres, and how
+    /// its four cascades share that (see `SHADOW_SPLIT`).
+    pub shadow_distance: f32,
+    pub shadow_split: f32,
 }
 
 /// A look's settings.
@@ -205,6 +210,8 @@ impl Look {
             strength: 1.4,
             softness: 1.0,
             shadow_tint: linear([0.12, 0.09, 0.07]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -238,7 +245,14 @@ impl Look {
             ..Sky::default()
         };
         // About 5200K, giving a few times the sky's light rather than ten.
-        let sun = SunLook { tint: linear([1.0, 0.93, 0.83]), strength: 0.6, softness: 3.0, shadow_tint: Vec3::ZERO };
+        let sun = SunLook {
+            tint: linear([1.0, 0.93, 0.83]),
+            strength: 0.6,
+            softness: 3.0,
+            shadow_tint: Vec3::ZERO,
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
+        };
         Self { post, sky, sun }
     }
 
@@ -273,6 +287,8 @@ impl Look {
             strength: 1.2,
             softness: 2.0,
             shadow_tint: linear([0.42, 0.3, 0.38]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -318,6 +334,8 @@ impl Look {
             strength: 1.3,
             softness: 1.0,
             shadow_tint: linear([0.08, 0.11, 0.07]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -366,6 +384,8 @@ impl Look {
             strength: 1.6,
             softness: 0.6,
             shadow_tint: linear([0.16, 0.1, 0.06]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -405,7 +425,14 @@ impl Look {
             ambient: 1.4,
             ..Sky::default()
         };
-        let sun = SunLook { tint: temperature_color(6800.0), strength: 0.5, softness: 4.0, shadow_tint: Vec3::ZERO };
+        let sun = SunLook {
+            tint: temperature_color(6800.0),
+            strength: 0.5,
+            softness: 4.0,
+            shadow_tint: Vec3::ZERO,
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
+        };
         Self { post, sky, sun }
     }
 
@@ -450,6 +477,8 @@ impl Look {
             strength: 1.4,
             softness: 0.8,
             shadow_tint: linear([0.08, 0.12, 0.22]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -488,7 +517,14 @@ impl Look {
             ambient: 2.0,
             ..Sky::default()
         };
-        let sun = SunLook { tint: temperature_color(7000.0), strength: 0.7, softness: 4.0, shadow_tint: Vec3::ZERO };
+        let sun = SunLook {
+            tint: temperature_color(7000.0),
+            strength: 0.7,
+            softness: 4.0,
+            shadow_tint: Vec3::ZERO,
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
+        };
         Self { post, sky, sun }
     }
 
@@ -534,6 +570,8 @@ impl Look {
             strength: 0.12,
             softness: 1.5,
             shadow_tint: linear([0.02, 0.03, 0.06]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -574,7 +612,14 @@ impl Look {
             ambient: 0.9,
             ..Sky::default()
         };
-        let sun = SunLook { tint: temperature_color(7500.0), strength: 0.25, softness: 6.0, shadow_tint: Vec3::ZERO };
+        let sun = SunLook {
+            tint: temperature_color(7500.0),
+            strength: 0.25,
+            softness: 6.0,
+            shadow_tint: Vec3::ZERO,
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
+        };
         Self { post, sky, sun }
     }
 
@@ -622,6 +667,8 @@ impl Look {
             strength: 1.0,
             softness: 1.5,
             shadow_tint: linear([0.1, 0.06, 0.04]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -666,6 +713,8 @@ impl Look {
             strength: 0.9,
             softness: 1.0,
             shadow_tint: linear([0.03, 0.07, 0.06]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -705,7 +754,14 @@ impl Look {
             ambient: 1.5,
             ..Sky::default()
         };
-        let sun = SunLook { tint: temperature_color(6500.0), strength: 0.5, softness: 3.0, shadow_tint: Vec3::ZERO };
+        let sun = SunLook {
+            tint: temperature_color(6500.0),
+            strength: 0.5,
+            softness: 3.0,
+            shadow_tint: Vec3::ZERO,
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
+        };
         Self { post, sky, sun }
     }
 
@@ -747,6 +803,8 @@ impl Look {
             strength: 1.3,
             softness: 0.8,
             shadow_tint: linear([0.06, 0.08, 0.14]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }
@@ -792,6 +850,8 @@ impl Look {
             strength: 0.18,
             softness: 1.5,
             shadow_tint: linear([0.04, 0.03, 0.09]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
         };
         Self { post, sky, sun }
     }

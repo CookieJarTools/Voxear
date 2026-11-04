@@ -88,7 +88,22 @@ The first directional light in the level is its **sun**. It is the only light th
 
 At night, set its **Sky body** to Moon: the sky draws the moon instead, and darkens so the stars show. See [[The Sky]].
 
-Shadows reach 80 metres from the camera.
+Shadows reach 80 metres from the camera, unless the scene's lighting says otherwise.
+
+### Shadow distance
+
+The sun's shadows are drawn into four shadow maps, each covering a stretch of the view from near the camera outwards. Two settings on the Lighting page's Sun tab, or in the lighting file's `[sun]`, decide how:
+
+| Setting | What it does |
+| --- | --- |
+| Shadow distance | How far from the camera the sun casts shadows, in metres, 80 by default. The same four maps cover a shorter distance more finely, so a close, indoor scene can bring it in to 30 for sharper shadows; a wide landscape can push it out to 200 or more, each shadow a little softer |
+| Cascade split | How the four maps share that distance, from 0 to 1, 0.85 by default. Near 1, the nearest map is small and very sharp and the farthest wide; near 0, they share it evenly, so shadows far off are sharper and those by the camera softer |
+
+```toml
+[sun]
+shadow_distance = 40.0
+shadow_split = 0.7
+```
 
 ### Soft shadows
 

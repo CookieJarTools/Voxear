@@ -554,7 +554,10 @@ pub fn extract(
 
     if sun_found {
         let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near };
-        let cascades = shadows::cascades(&view, Vec3::from(frame.sun_direction));
+        let (distance, split) = sun_look.map_or((shadows::SHADOW_DISTANCE, shadows::SHADOW_SPLIT), |look| {
+            (look.shadow_distance, look.shadow_split)
+        });
+        let cascades = shadows::cascades(&view, Vec3::from(frame.sun_direction), distance, split);
         for (i, cascade) in cascades.iter().enumerate().take(CASCADES) {
             frame.cascade_view_proj[i] = cols(cascade.view_proj);
             frame.cascade_planes[i] = cascade.planes;

@@ -1048,6 +1048,9 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   pixels flickering hard 57 to 17, the spread 0.45 to 0.36, under what GI-less frames showed at 0.9. And the
   probes' light is kept and blended raised to 1/5 (`DDGI_GAMMA`, as RTXGI does, Majercik et al. 2021), so a few
   rays that meet a bright sliver move a probe little: the spread 0.36 to 0.35, the picture 1% darker.
+- **Shadow distance in the lighting:** `[sun] shadow_distance` (80 m by default, 5 to 1000) and `shadow_split` (0.85,
+  0 even to 1 logarithmic) in lighting files, on `SunLook`, and on the Lighting page's Sun tab as Shadow distance
+  and Cascade split; the four cascades fit them (`shadows::cascades`). Unit tests for the cascades and the file.
 - **GI that does not change as the camera walks up:** three cascades of probes, each twice as far apart as the last
   (`DDGI_CASCADES` 3, `DDGI_CASCADE_SCALE` 2), rather than two four times apart. Past the fine grid's sixteen metres,
   probes four metres apart smeared the neon tube's light down Sponza's corridor, and it changed before the camera as

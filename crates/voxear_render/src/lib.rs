@@ -92,6 +92,7 @@ pub use previews::{
 };
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
+pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, scatter};
 pub use assets::Glow;

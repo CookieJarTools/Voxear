@@ -86,6 +86,14 @@ pub struct SunData {
     /// sRGB: the colour its shadows take, where the light has none of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadow_tint: Option<[f32; 3]>,
+    /// How far from the camera it casts shadows, in metres. Nearer keeps
+    /// the shadows by the camera sharper.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_distance: Option<f32>,
+    /// How its four shadow cascades share that distance, from 0, evenly, to
+    /// 1, the nearest small and sharp and the farthest wide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_split: Option<f32>,
 }
 
 /// Lighting settings worked out: what a scene's environment starts from.
@@ -99,7 +107,14 @@ pub struct Lighting {
 
 /// A sun look that changes nothing.
 pub fn plain_sun() -> SunLook {
-    SunLook { tint: Vec3::ONE, strength: 1.0, softness: 0.5, shadow_tint: Vec3::ZERO }
+    SunLook {
+        tint: Vec3::ONE,
+        strength: 1.0,
+        softness: 0.5,
+        shadow_tint: Vec3::ZERO,
+        shadow_distance: voxear_render::SHADOW_DISTANCE,
+        shadow_split: voxear_render::SHADOW_SPLIT,
+    }
 }
 
 impl LightingFile {
@@ -132,6 +147,8 @@ impl LightingFile {
             if let Some(shadow) = over.shadow_tint {
                 sun.shadow_tint = Vec3::from(linear(shadow));
             }
+            sun.shadow_distance = over.shadow_distance.unwrap_or(sun.shadow_distance).clamp(5.0, 1000.0);
+            sun.shadow_split = over.shadow_split.unwrap_or(sun.shadow_split).clamp(0.0, 1.0);
         }
         let mut post = toml::Table::new();
         if let Some(name) = &self.look {
@@ -181,6 +198,19 @@ mod tests {
         let builtin = LightingFile::builtin("storybook").unwrap().resolve().unwrap();
         assert_eq!(builtin.sun, Look::of(LookName::Storybook).sun);
         assert!(LightingFile::builtin("gloomy").is_err());
+    }
+
+    #[test]
+    fn the_sun_s_shadows_reach_as_far_as_the_lighting_says() {
+        let plain = LightingFile::default().resolve().unwrap().sun;
+        let defaults = (voxear_render::SHADOW_DISTANCE, voxear_render::SHADOW_SPLIT);
+        assert_eq!((plain.shadow_distance, plain.shadow_split), defaults);
+        let file: LightingFile = toml::from_str("[sun]\nshadow_distance = 40.0\nshadow_split = 0.6").unwrap();
+        let sun = file.resolve().unwrap().sun;
+        assert_eq!((sun.shadow_distance, sun.shadow_split), (40.0, 0.6));
+        let wild: LightingFile = toml::from_str("[sun]\nshadow_distance = -3.0\nshadow_split = 4.0").unwrap();
+        let sun = wild.resolve().unwrap().sun;
+        assert_eq!((sun.shadow_distance, sun.shadow_split), (5.0, 1.0), "kept to what works");
     }
 
     #[test]

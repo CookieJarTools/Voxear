@@ -132,19 +132,35 @@ void dropFallenLeaves(VertexOut input, Material material)
     }
 }
 
+// `v` at length 1, or `otherwise` where it has none to speak of (or is not
+// a number), which normalize would make NaN, and bloom then spread over
+// the whole picture.
+float3 normalizeOr(float3 v, float3 otherwise)
+{
+    float lengthSquared = dot(v, v);
+    return lengthSquared > 1e-12 ? v * rsqrt(lengthSquared) : otherwise;
+}
+
 float3 surfaceNormal(VertexOut input, Material material)
 {
-    float3 n = normalize(input.normal);
+    // Facing the camera where a mesh's own normal is missing, as where two opposite normals meet across a face.
+    float3 n = normalizeOr(input.normal, normalize(push.frame->cameraPosition - input.worldPosition));
     if ((material.flags & MATERIAL_NORMAL_MAP) == 0)
     {
         return n;
     }
-    float3 t = normalize(input.tangent.xyz - n * dot(n, input.tangent.xyz));
+    // A tangent along the normal, or none, gives the normal map no direction to bend it in.
+    float3 t = input.tangent.xyz - n * dot(n, input.tangent.xyz);
+    if (!(dot(t, t) > 1e-12))
+    {
+        return n;
+    }
+    t = normalize(t);
     float3 b = cross(n, t) * input.tangent.w;
     // Only X and Y are read: Z follows from them, which lets normal maps ship as two-channel BC5.
     float2 xy = sampleTexture(material.normalTexture, input.uv).xy * 2.0 - 1.0;
     float3 m = float3(xy * material.normalScale, sqrt(saturate(1.0 - dot(xy, xy))));
-    return normalize(t * m.x + b * m.y + n * m.z);
+    return normalizeOr(t * m.x + b * m.y + n * m.z, n);
 }
 
 static const float2 CASCADE_TILES[CASCADES] = { float2(0.0, 0.0), float2(0.5, 0.0), float2(0.0, 0.5), float2(0.5, 0.5) };
@@ -445,7 +461,7 @@ FragmentOut fragmentMain(VertexOut input)
     float metallic = material.metallic * metalRough.b;
     float roughness = material.roughness * metalRough.g;
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
-    seasonalSurface(frame, material, origin, normalize(input.normal), base.rgb, roughness);
+    seasonalSurface(frame, material, origin, normalizeOr(input.normal, float3(0.0, 1.0, 0.0)), base.rgb, roughness);
 
     Surface s;
     s.normal = surfaceNormal(input, material);

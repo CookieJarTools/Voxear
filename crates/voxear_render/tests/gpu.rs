@@ -2703,6 +2703,40 @@ fn foliage_bends_away_from_what_passes_through_it_and_springs_back() {
     assert!(lean(&after).abs() < 2.0, "and springs back once it has gone: {}", lean(&after));
 }
 
+#[test]
+fn a_mesh_without_normals_does_not_black_out_the_picture_through_bloom() {
+    use voxear_render::Sky;
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.0, -4.0))));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let pale = renderer.add_material(&MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(20.0))));
+    // A cube whose normals and tangents have been lost, as some models' seams have them.
+    let mut broken = voxear_render::MeshData::cube();
+    for vertex in &mut broken.vertices {
+        vertex.normal = [0.0; 3];
+        vertex.tangent = [0.0; 4];
+    }
+    let mesh = renderer.add_mesh(&broken).unwrap();
+    world.spawn((MeshRenderer::new(mesh, pale), Transform::from_position(Vec3::new(0.0, 1.0, 0.0))));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    let mut post = steady_post();
+    post.bloom.enabled = true;
+    post.bloom.intensity = 0.3;
+    post.bloom.scatter = 0.95;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("no normals.png", &pixels);
+    // NaN from the cube would spread over every pixel through bloom; the floor round it stays lit.
+    let floor = rgb_at(&pixels, (100, 300)).iter().sum::<i32>();
+    assert!(floor > 150, "the floor is lit, not blacked out: {floor}");
+    assert!(rgb_at(&pixels, (320, 160)).iter().sum::<i32>() > 60, "and the cube is drawn: {:?}", rgb_at(&pixels, (320, 160)));
+}
+
 /// A green leafy ball over pale ground, the sun behind it throwing its
 /// shadow towards the camera, at `time` of the year in Seasons that turn
 /// every plant together, or with no Seasons.

@@ -1,6 +1,7 @@
-// Plants moving in the level's wind (see src/wind.rs): every pass that
-// places a vertex moves it by windOffset, so a plant's shading, depth,
-// shadow and motion all move together.
+// Plants moving in the level's wind (see src/wind.rs), and pushed aside by
+// what passes through them (src/foliage.rs): every pass that places a vertex
+// moves it by windOffset, so a plant's shading, depth, shadow and motion all
+// move together.
 //
 // A plant bends from the ground up, as far as its height above its
 // instance's origin is up its whole height, so its pivot belongs at its
@@ -18,6 +19,8 @@
 static const float WIND_LEAN = 0.08;
 // How far leaves flutter at strength 1, in metres.
 static const float WIND_FLUTTER = 0.02;
+// How far a plant's tip leans away from a push of 1, as a share of its height.
+static const float PUSH_LEAN = 0.8;
 
 float windHash(float2 p)
 {
@@ -37,21 +40,68 @@ float windNoise(float2 p)
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
 }
 
+// A plant's lean as its tip moves it: on an arc, lowering as it leans, so
+// the plant keeps its length, and never further over than it is tall.
+float3 bowed(float3 offset, float height)
+{
+    float across = length(offset.xz);
+    if (across > height * 0.95)
+    {
+        offset.xz *= height * 0.95 / across;
+    }
+    offset.y -= dot(offset.xz, offset.xz) / (2.0 * height);
+    return offset;
+}
+
 // How tall a plant is: the top of its mesh's bounds above its origin, as its instance scales it.
 float plantHeight(Instance instance, Mesh mesh)
 {
     return max((mesh.center.y + mesh.radius) * length(instance.model.c1.xyz), 0.05);
 }
 
-// How far the wind moves a vertex at `world` of a plant standing at
-// `origin`, `height` tall, drawn with `material`, its normal `normal`, at
-// `time`.
+// The push through foliage at a point, from the grid round the camera,
+// blended between its four nearest cells; nothing beyond the grid.
+float2 foliagePush(Frame* frame, float3 world)
+{
+    Pushes pushes = frame->pushes;
+    float2 at = world.xz / pushes.cell - 0.5;
+    int2 low = int2(floor(at));
+    float2 within = at - float2(low);
+    float2* cells = buffers()->foliagePushes;
+    float2 total = 0.0;
+    for (uint corner = 0; corner < 4; corner++)
+    {
+        int2 cell = low + int2(corner & 1, corner >> 1);
+        int2 inGrid = cell - pushes.origin;
+        if (any(inGrid < 0) || any(inGrid >= int(PUSH_CELLS)))
+        {
+            continue;
+        }
+        int2 slot = (cell % int(PUSH_CELLS) + int(PUSH_CELLS)) % int(PUSH_CELLS);
+        float2 weights = lerp(1.0 - within, within, float2(corner & 1, corner >> 1));
+        total += cells[slot.x + slot.y * PUSH_CELLS] * weights.x * weights.y;
+    }
+    return total;
+}
+
+// How far the wind, and what pushes through foliage, move a vertex at
+// `world` of a plant standing at `origin`, `height` tall, drawn with
+// `material`, its normal `normal`, at `time`.
 float3 windOffset(Frame* frame, Material material, float3 origin, float height, float3 world, float3 normal, float time)
 {
-    Wind wind = frame->wind;
-    if (wind.strength <= 0.0 || (material.windBend <= 0.0 && material.windFlutter <= 0.0))
+    if (material.windBend <= 0.0 && material.windFlutter <= 0.0)
     {
         return 0.0;
+    }
+    float up = saturate((world.y - origin.y) / height);
+    // Pushed aside by what passes through, bending from the ground as the wind bends it.
+    // Read where each blade is, so a patch of grass parts round what passes through it.
+    float2 pushed = foliagePush(frame, world);
+    float3 offset = float3(pushed.x, 0.0, pushed.y) * (material.windBend * up * up * height * PUSH_LEAN);
+    Wind wind = frame->wind;
+    if (wind.strength <= 0.0)
+    {
+        return bowed(offset, height);
     }
     float3 along = float3(wind.direction.x, 0.0, wind.direction.y);
     float3 across = float3(-wind.direction.y, 0.0, wind.direction.x);
@@ -65,12 +115,10 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
     float rock = sin(time * 2.1 + phase * 2.3);
 
     // Bent from the ground up: nothing at the root, the most at the tip.
-    float up = saturate((world.y - origin.y) / height);
     float lean = material.windBend * up * up * height * WIND_LEAN;
-    float3 offset = along * lean * max(push + wind.turbulence * wind.strength * sway * 0.5, 0.0);
+    offset += along * lean * max(push + wind.turbulence * wind.strength * sway * 0.5, 0.0);
     offset += across * lean * wind.turbulence * wind.strength * rock * 0.35;
-    // The tip moves on an arc, lowering as it leans, so the plant keeps its length.
-    offset.y -= dot(offset.xz, offset.xz) / (2.0 * height);
+    offset = bowed(offset, height);
 
     // Leaves flutter along their faces, quickly and a little, more out at the tips.
     float flicker = dot(world, float3(3.1, 2.3, 4.7));

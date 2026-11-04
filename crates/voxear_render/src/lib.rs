@@ -17,6 +17,7 @@ mod capture;
 mod cooked;
 mod debug_pass;
 mod fbx_import;
+mod foliage;
 mod frame_debugger;
 mod glass;
 mod gltf_import;
@@ -89,6 +90,7 @@ pub use previews::{
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
+pub use foliage::FoliageInteraction;
 pub use wind::WindZone;
 pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
@@ -1176,6 +1178,8 @@ struct View {
     visibility: Buffer,
     /// Each instance's current and previous LOD and fade progress.
     lod_state: Buffer,
+    /// The grid of pushes through foliage round the camera (see `foliage`).
+    foliage_pushes: Buffer,
     /// Auto exposure's adapted EV and whether it has started.
     exposure: Buffer,
     /// Last frame's model matrices and camera, for motion vectors.
@@ -1237,11 +1241,13 @@ impl View {
             gpu.create_buffer(&named("visibility"), MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
         let lod_state =
             gpu.create_buffer(&named("lod state"), MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
+        let cells = u64::from(gpu::PUSH_CELLS * gpu::PUSH_CELLS) * 8;
+        let foliage_pushes = gpu.create_buffer(&named("foliage pushes"), cells, persistent, MemoryLocation::GpuOnly)?;
         // Host visible so the adapted exposure shows in the stats.
         let exposure = gpu.create_buffer(&named("exposure"), 16, persistent, MemoryLocation::GpuToCpu)?;
         // Nothing was visible, no LOD chosen and no exposure metered before the first frame.
         gpu.immediate(|cmd| unsafe {
-            for buffer in [&visibility, &lod_state, &exposure] {
+            for buffer in [&visibility, &lod_state, &exposure, &foliage_pushes] {
                 gpu.device.cmd_fill_buffer(cmd, buffer.handle, 0, vk::WHOLE_SIZE, 0);
             }
         })?;
@@ -1255,6 +1261,7 @@ impl View {
             buffers,
             visibility,
             lod_state,
+            foliage_pushes,
             exposure,
             prev_models: HashMap::new(),
             prev_entities: Vec::new(),
@@ -1294,7 +1301,7 @@ impl View {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
-        for buffer in [self.visibility, self.lod_state, self.exposure] {
+        for buffer in [self.visibility, self.lod_state, self.exposure, self.foliage_pushes] {
             frames.retire(Retired::Buffer(buffer));
         }
         for level in self.top_levels.into_iter().flatten() {
@@ -1699,6 +1706,7 @@ impl View {
                 bvh_table: assets.hierarchies.as_ref().map_or(0, |h| h.table.address),
                 scene_nodes: scene_hierarchy.0,
                 scene_instances: scene_hierarchy.1,
+                foliage_pushes: self.foliage_pushes.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -1727,6 +1735,7 @@ impl View {
             instances: fg.import_buffer(&buffers.draw_instances),
             visibility: fg.import_buffer(&self.visibility),
             lod_state: fg.import_buffer(&self.lod_state),
+            foliage_pushes: fg.import_buffer(&self.foliage_pushes),
             stats: fg.import_buffer(&buffers.stats),
             stats_readback: fg.import_buffer(&buffers.stats_readback),
             clusters: fg.import_buffer(&buffers.clusters),

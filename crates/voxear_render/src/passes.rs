@@ -56,6 +56,8 @@ pub struct Draws {
     pub instances: BufferId,
     pub visibility: BufferId,
     pub lod_state: BufferId,
+    /// The grid of pushes through foliage, which plants read where they stand.
+    pub foliage_pushes: BufferId,
     pub stats: BufferId,
     /// Where the stats are copied for the CPU to read.
     pub stats_readback: BufferId,
@@ -132,7 +134,13 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     // or with mesh shaders, the queued meshlets their task shaders cull, counting what they cull.
     let (list_draws, list_instances) =
         if meshlets { (draws.meshlet_draws, draws.meshlet_instances) } else { (draws.draws, draws.instances) };
+    // Every pass that places a plant's vertices reads the pushes through foliage.
+    let pushes_read = match mesh {
+        Some(_) => vec![(draws.foliage_pushes, BufferAccess::ShaderRead), (draws.foliage_pushes, BufferAccess::MeshShaderRead)],
+        None => vec![(draws.foliage_pushes, BufferAccess::ShaderRead)],
+    };
     let mut drawing = vec![(draws.count, BufferAccess::IndirectRead)];
+    drawing.extend(pushes_read.iter().copied());
     match mesh {
         Some(_) => drawing.extend([(draws.meshlet_work, BufferAccess::MeshShaderRead)]),
         None => drawing.extend([
@@ -165,6 +173,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     let push = frame.push;
     let instances = frame.instance_count;
     let pipelines = frame.pipelines;
+
+    crate::foliage::record(fg, (pipelines, push), draws.foliage_pushes);
 
     fg.add_pass(
         "Light clusters",
@@ -349,7 +359,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         let mut sampled: Vec<ImageId> = targets.shadows.into_iter().chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
         let index_buffer = draws.index_buffer;
-        let glass_targets = glass::GlassTargets { hdr, depth, sampled, clusters: draws.clusters, index_buffer };
+        let glass_targets =
+            glass::GlassTargets { hdr, depth, sampled, clusters: draws.clusters, pushes: draws.foliage_pushes, index_buffer };
         glass::record(fg, (pipelines, push), glass, glass_targets);
     }
 

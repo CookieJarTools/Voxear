@@ -2469,15 +2469,16 @@ fn the_frame_debugger_lists_the_passes_and_shows_a_picked_image() {
     let mut lists = Vec::new();
     lists_in(&editor.ui, panel, &mut lists);
     let passes = names(&editor, lists[0]);
-    assert!(passes.iter().any(|p| p == "Opaque (early)"), "{passes:?}");
+    assert!(passes.iter().any(|p| p == "Cull (early)"), "{passes:?}");
     let all: Vec<&str> = renderer.frame_passes().iter().map(|p| p.name.as_str()).collect();
     assert!(all.contains(&"Composite") && all.contains(&"UI"), "the rest further down: {all:?}");
+    // Picked by its place among every pass, as the list holds them, not only those scrolled into view.
+    let opaque = all.iter().position(|p| *p == "Opaque (early)").expect("an opaque pass");
     let summary = editor.ui.text(first_with(&editor.ui, panel, "entities-summary").unwrap());
     assert!(summary.contains("passes") && summary.contains("objects drawn"), "{summary}");
     let hint = first_with(&editor.ui, panel, "entities-hint").unwrap();
     assert!(editor.ui.text(hint).starts_with("Pick a pass"), "{}", editor.ui.text(hint));
 
-    let opaque = passes.iter().position(|p| p == "Opaque (early)").unwrap();
     editor.ui.set_selection(lists[0], &[opaque]);
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);

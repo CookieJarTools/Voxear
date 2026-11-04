@@ -523,6 +523,14 @@ pub fn extract(
         }
     }
     frame.light_count = lights.len() as u32;
+    // What pushes through foliage, the nearest the camera first.
+    let pushing = world.query_ref::<(&crate::FoliageInteraction, &Transform, Option<&WorldTransform>)>();
+    let pushers = pushing
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
+        .collect();
+    frame.pushes = crate::foliage::pushes(position, pushers);
     // The first Wind Zone blows over the whole level.
     let zones = world.query_ref::<(&crate::WindZone, &Transform)>().without::<Destroying>();
     if let Some((zone, transform)) = zones.into_iter().next() {

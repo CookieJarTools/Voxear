@@ -88,6 +88,8 @@ pub struct Pipelines {
     pub bloom_down: vk::Pipeline,
     pub bloom_up: vk::Pipeline,
     pub exposure: vk::Pipeline,
+    /// Pushes through foliage: springing back, and this frame's stamped.
+    pub foliage_push: vk::Pipeline,
     /// Glass: the copy of the picture it is drawn over, and its panes.
     pub glass_copy: vk::Pipeline,
     pub glass: vk::Pipeline,
@@ -134,6 +136,7 @@ impl Pipelines {
             module("volumetric")?,
             module("ddgi_software")?,
             module("glass")?,
+            module("foliage_push")?,
         ];
         let [
             cull,
@@ -151,6 +154,7 @@ impl Pipelines {
             volumetric,
             ddgi_software,
             glass,
+            foliage_push,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -276,6 +280,7 @@ impl Pipelines {
             bloom_up: fullscreen("Bloom up", c"bloomUpFragment", bloom, Blend::Additive)?,
             exposure: create_compute_pipeline(gpu, layout, "Exposure", exposure, c"exposureMain")?,
             glass_copy: create_compute_pipeline(gpu, layout, "Glass copy", glass, c"glassCopyMain")?,
+            foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
             glass: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
                 depth_format: Some(DEPTH_FORMAT),
@@ -365,6 +370,7 @@ impl Pipelines {
             self.bloom_up,
             self.exposure,
             self.glass_copy,
+            self.foliage_push,
             self.glass,
             self.composite_ldr,
             self.composite,

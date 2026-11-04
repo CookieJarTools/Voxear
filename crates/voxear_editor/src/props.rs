@@ -22,7 +22,7 @@ use voxear_engine::{
     srgb,
 };
 use voxear_render::{
-    Camera, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
+    Camera, FoliageInteraction, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
     SkyBody, VolumeShape, WindZone,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
@@ -73,6 +73,7 @@ pub enum Part {
     Wheel,
     PostVolume,
     WindZone,
+    FoliageInteraction,
     /// A script, by its full type name.
     Behaviour(String),
 }
@@ -98,6 +99,7 @@ impl Part {
             Part::Wheel => "wheel".into(),
             Part::PostVolume => "post_volume".into(),
             Part::WindZone => "wind_zone".into(),
+            Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -120,6 +122,7 @@ impl Part {
             Part::Wheel => "Wheel",
             Part::PostVolume => "Post Volume",
             Part::WindZone => "Wind Zone",
+            Part::FoliageInteraction => "Foliage Interaction",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -141,6 +144,7 @@ impl Part {
             Part::Wheel => "rotate",
             Part::PostVolume => "panels",
             Part::WindZone => "move",
+            Part::FoliageInteraction => "move",
             Part::Behaviour(_) => "code",
         }
     }
@@ -181,6 +185,8 @@ pub enum Prop {
     WindGustSize,
     WindGustSpeed,
     WindTurbulence,
+    PushRadius,
+    PushStrength,
     FieldOfView,
     Near,
     Exposure,
@@ -327,6 +333,7 @@ impl Prop {
             Prop::WindStrength | Prop::WindGusts | Prop::WindGustSize | Prop::WindGustSpeed | Prop::WindTurbulence => {
                 Part::WindZone
             }
+            Prop::PushRadius | Prop::PushStrength => Part::FoliageInteraction,
             Prop::Sound
             | Prop::SoundVolume
             | Prop::Pitch
@@ -438,6 +445,8 @@ impl Prop {
             Prop::WindGustSize => "gust_size",
             Prop::WindGustSpeed => "gust_speed",
             Prop::WindTurbulence => "turbulence",
+            Prop::PushRadius => "radius",
+            Prop::PushStrength => "strength",
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
@@ -570,6 +579,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<WindZone>(entity) {
         parts.push(Part::WindZone);
     }
+    if world.has::<FoliageInteraction>(entity) {
+        parts.push(Part::FoliageInteraction);
+    }
     if world.has::<AudioSource>(entity) {
         parts.push(Part::Audio);
     }
@@ -666,6 +678,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::WindZone => {
             vec![Prop::WindStrength, Prop::WindGusts, Prop::WindGustSize, Prop::WindGustSpeed, Prop::WindTurbulence]
         }
+        Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
         Part::Audio => {
             let mut props =
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
@@ -818,6 +831,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::WindGustSize => "Gust size",
         Prop::WindGustSpeed => "Gust speed",
         Prop::WindTurbulence => "Turbulence",
+        Prop::PushRadius => "Radius",
+        Prop::PushStrength => "Strength",
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
@@ -1005,6 +1020,9 @@ pub fn add(
         Part::WindZone => {
             world.insert(entity, WindZone::default());
         }
+        Part::FoliageInteraction => {
+            world.insert(entity, FoliageInteraction::default());
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -1026,6 +1044,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
+        Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
         Part::Audio => drop(world.remove::<AudioSource>(entity)),
         Part::Listener => drop(world.remove::<AudioListener>(entity)),
         Part::LodGroup => drop(world.remove::<LodGroup>(entity)),
@@ -1215,6 +1234,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::WindGustSize => Value::Number(world.get::<WindZone>(entity)?.gust_size),
         Prop::WindGustSpeed => Value::Number(world.get::<WindZone>(entity)?.gust_speed),
         Prop::WindTurbulence => Value::Number(world.get::<WindZone>(entity)?.turbulence),
+        Prop::PushRadius => Value::Number(world.get::<FoliageInteraction>(entity)?.radius),
+        Prop::PushStrength => Value::Number(world.get::<FoliageInteraction>(entity)?.strength),
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
@@ -1861,6 +1882,12 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindGusts, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gusts = n.max(0.0)),
         (Prop::WindGustSize, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_size = n.max(0.1)),
         (Prop::WindGustSpeed, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_speed = n),
+        (Prop::PushRadius, Value::Number(n)) => {
+            with(world, entity, |push: &mut FoliageInteraction| push.radius = n.max(0.01))
+        }
+        (Prop::PushStrength, Value::Number(n)) => {
+            with(world, entity, |push: &mut FoliageInteraction| push.strength = n.max(0.0))
+        }
         (Prop::WindTurbulence, Value::Number(n)) => {
             with(world, entity, |wind: &mut WindZone| wind.turbulence = n.max(0.0))
         }

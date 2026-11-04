@@ -115,13 +115,15 @@ pub struct GlassTargets {
     /// atmosphere's tables.
     pub sampled: Vec<ImageId>,
     pub clusters: BufferId,
+    /// The pushes through foliage, which the panes' vertices read too.
+    pub pushes: BufferId,
     pub index_buffer: vk::Buffer,
 }
 
 /// Records the copy and the panes over it.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), glass: Glass, targets: GlassTargets) {
     let Glass { copy, copy_texture, copy_mips, size, panes } = glass;
-    let GlassTargets { hdr, depth, sampled, clusters, index_buffer } = targets;
+    let GlassTargets { hdr, depth, sampled, clusters, pushes, index_buffer } = targets;
     let hdr_texture = fg.texture(hdr);
     let images = [(hdr, ImageAccess::Sampled), (copy, ImageAccess::StorageWrite)];
     fg.add_pass("Glass copy", &images, &[], move |ctx| {
@@ -153,7 +155,8 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), gla
     images.extend(sampled.into_iter().map(|image| (image, ImageAccess::Sampled)));
     let extent = vk::Extent2D { width: size[0], height: size[1] };
     let push = Push { texture: copy_texture.0, ..push };
-    fg.add_pass("Glass", &images, &[(clusters, BufferAccess::ShaderRead)], move |ctx| {
+    let buffers = [(clusters, BufferAccess::ShaderRead), (pushes, BufferAccess::ShaderRead)];
+    fg.add_pass("Glass", &images, &buffers, move |ctx| {
         let load = |view, layout| {
             vk::RenderingAttachmentInfo::default()
                 .image_view(view)

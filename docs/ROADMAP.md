@@ -988,8 +988,12 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   `wind_bend` and `wind_flutter`, 1 for foliage unless written; culling widens a moving plant's sphere. Editor:
   Wind Zone component with arrows; material inspector Wind bend and Leaf flutter. Still to come: masks from
   vertex colours, for branch sway apart from the trunk.
-- **Pushing through it:** characters, vehicles and anything with a Foliage Interaction component bend grass and
-  plants out of their way, through a texture of pushes round the camera, which springs back over time.
+- ~~**Pushing through it:**~~ done: a Foliage Interaction component (radius, strength). The 16 pushers nearest the
+  camera go to the frame; a persistent 128×128 grid of half-metre cells round the camera (toroidal, as the GI's
+  probes) holds a push each, and **Foliage pushes** springs every cell back (to a third in 0.8 s) and stamps the
+  strongest push outwards from each pusher. `wind.slang` reads it at each vertex, blended over four cells, and
+  bends the plant away from the ground up, on an arc, with or without wind. GPU test: a pole leans from a pusher
+  beside it and stands again once it has gone.
 - **Seasons and variation:** a level-wide setting for the season (green to dry to autumn to bare to snow),
   colour variation across a field from world-space noise, dryness, and wet or snow-covered leaves from above.
 - **Glow:** emissive masks on plants that pulse, breathe or flicker, for glowing mushrooms, bioluminescent

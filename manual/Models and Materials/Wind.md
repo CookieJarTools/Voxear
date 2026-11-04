@@ -2,7 +2,7 @@
 order: 4
 ---
 
-Plants move in the wind: trees lean and sway, their leaves flutter, and gusts sweep across a field of grass in waves. One **Wind Zone** blows over the whole level, and every plant whose material moves in the wind follows it, in its shading, its shadow and its motion blur alike.
+Plants move in the wind: trees lean and sway, their leaves flutter, and gusts sweep across a field of grass in waves. One **Wind Zone** blows over the whole level, and every plant whose material moves in the wind follows it, in its shading, its shadow and its motion blur alike. Plants also bend out of the way of a player or a vehicle passing through them, and spring back after.
 
 ## A Wind Zone
 
@@ -44,3 +44,22 @@ A tree's trunk is usually not foliage, so give it the same **Wind bend** as its 
 A plant bends from its pivot, its Obj's position, and reads its height from its mesh. Give plants their pivot at their base, as tree and grass models usually have: a plant whose pivot is in its middle bends only above it.
 
 In a material file, `wind_bend = 1.0` and `wind_flutter = 0.5`.
+
+## Pushing through foliage
+
+Add a **Foliage Interaction** to anything that should push plants aside as it passes: the player, other characters, vehicles, a rolling boulder (Add Component, then Rendering). Grass and plants round it lean away, bending from the ground up as they do in the wind, and spring back over about a second once it has gone, so a trail stays behind something running through a field.
+
+| Setting | What it does |
+| --- | --- |
+| Radius | How far round the Obj plants are pushed, in metres. About a character's width for a character, wider for a vehicle |
+| Strength | How hard: 1 bends grass well over, 0.3 just stirs it |
+
+Pushing works with or without a Wind Zone, on any plant whose material has a **Wind bend**. Plants are pushed within about 32 metres of the camera, by the 16 pushers nearest it.
+
+In a scene file:
+
+```toml
+[obj.foliage_interaction]
+radius = 0.6
+strength = 1.0
+```

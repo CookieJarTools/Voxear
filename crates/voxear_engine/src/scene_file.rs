@@ -57,7 +57,7 @@ use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
-    Camera, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
+    Camera, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
     Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone,
 };
 use voxear_scene::{
@@ -270,6 +270,9 @@ pub struct ObjData {
     /// A Wind Zone, blowing along the Obj's +Z over the whole level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_zone: Option<WindZone>,
+    /// Bends foliage out of the Obj's way as it passes through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foliage_interaction: Option<FoliageInteraction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -316,6 +319,7 @@ impl ObjData {
             layer: None,
             collider: None,
             wind_zone: None,
+            foliage_interaction: None,
             rigidbody: None,
             character: None,
             joint: None,
@@ -949,6 +953,9 @@ fn capture_instance(
     if root.wind_zone.is_some() && root.wind_zone != prefab_root.wind_zone {
         instance.wind_zone = root.wind_zone;
     }
+    if root.foliage_interaction.is_some() && root.foliage_interaction != prefab_root.foliage_interaction {
+        instance.foliage_interaction = root.foliage_interaction;
+    }
     if root.rigidbody.is_some() && root.rigidbody != prefab_root.rigidbody {
         instance.rigidbody = root.rigidbody;
     }
@@ -1050,6 +1057,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
         put("wind_zone", whole(&wind, &WindZone::default())?);
+    }
+    if let Some(push) = actual.foliage_interaction.filter(|p| Some(*p) != expected.foliage_interaction) {
+        put("foliage_interaction", whole(&push, &FoliageInteraction::default())?);
     }
     if let Some(body) = actual.rigidbody.filter(|b| Some(*b) != expected.rigidbody) {
         put("rigidbody", whole(&body, &crate::physics::Rigidbody::default())?);
@@ -1270,6 +1280,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();
+    obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.rigidbody = world.get::<Rigidbody>(entity).copied();
     obj.character = world.get::<CharacterController>(entity).copied();
     obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));
@@ -1591,6 +1602,10 @@ mod tests {
         let wind = obj.wind_zone.expect("the zone is read");
         assert_eq!((wind.strength, wind.gusts, wind.turbulence), (2.0, 0.0, WindZone::default().turbulence));
         assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().wind_zone, Some(wind));
+        let runner: ObjData = toml::from_str("id = 2\nname = \"Runner\"\n[foliage_interaction]\nradius = 1.2").unwrap();
+        let push = runner.foliage_interaction.expect("the interaction is read");
+        assert_eq!((push.radius, push.strength), (1.2, 1.0));
+        assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&runner).unwrap()).unwrap().foliage_interaction, Some(push));
 
         let leaf: MaterialData = toml::from_str("foliage = true").unwrap();
         assert_eq!((leaf.wind_bend(), leaf.wind_flutter()), (1.0, 1.0), "foliage moves without setup");

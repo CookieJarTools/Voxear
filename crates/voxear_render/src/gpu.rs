@@ -272,6 +272,29 @@ pub struct GpuFrame {
     pub lighting: GpuLighting,
     pub ddgi: GpuDdgi,
     pub wind: GpuWind,
+    pub pushes: GpuPushes,
+}
+
+/// Most pushers through foliage a frame takes, the nearest the camera.
+pub const MAX_PUSHERS: usize = 16;
+/// The grid of pushes through foliage round the camera: cells each way, and
+/// how far apart, in metres.
+pub const PUSH_CELLS: u32 = 128;
+pub const PUSH_CELL: f32 = 0.5;
+
+/// What pushes through foliage this frame, and where the grid of pushes
+/// lies (`Pushes` in `shaders/common.slang`; see `foliage`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuPushes {
+    /// Each pusher's position and radius.
+    pub pushers: [[f32; 4]; MAX_PUSHERS],
+    /// Each pusher's strength, four to a row.
+    pub strengths: [[f32; 4]; MAX_PUSHERS / 4],
+    /// The grid's lowest cell, in cells from the world's origin, x and z.
+    pub origin: [i32; 2],
+    pub cell: f32,
+    pub count: u32,
 }
 
 /// The level's wind, as shaders read it (`Wind` in `shaders/common.slang`;
@@ -530,6 +553,8 @@ pub struct GpuBuffers {
     pub bvh_table: u64,
     pub scene_nodes: u64,
     pub scene_instances: u64,
+    /// The grid of pushes through foliage, kept from frame to frame.
+    pub foliage_pushes: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -673,12 +698,12 @@ mod tests {
         let ddgi = size_of::<GpuDdgi>();
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16
         );
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 27 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 28 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }

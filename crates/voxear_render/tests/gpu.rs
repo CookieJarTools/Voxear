@@ -2674,3 +2674,31 @@ fn plants_bend_downwind_from_the_ground_up() {
     // A cube has vertices only at its ends, so the foot is the row just above its base.
     assert!((pole_centre(&windy, 282) - pole_centre(&still, 282)).abs() < 2.0, "and its foot stays put");
 }
+
+#[test]
+fn foliage_bends_away_from_what_passes_through_it_and_springs_back() {
+    use voxear_render::{FoliageInteraction, Sky};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 3.0, -9.0))));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let plant = MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], wind_bend: 1.0, ..MaterialDesc::default() };
+    let dark = renderer.add_material(&plant).unwrap();
+    let pole = Transform::new(Vec3::new(0.0, 3.0, 0.0), Quat::IDENTITY, Vec3::new(0.3, 6.0, 0.3));
+    world.spawn((MeshRenderer::new(cube, dark), pole));
+    world.insert_resource(Sky::default());
+    world.insert_resource(steady_post());
+    // Something standing just left of the pole, reaching over it, with no wind at all.
+    let pusher = world.spawn((FoliageInteraction { radius: 1.5, strength: 1.0 }, Transform::from_position(Vec3::new(-0.6, 0.0, 0.0))));
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 3);
+    let pushed = renderer.read_pixels().unwrap().2;
+    keep_image("foliage pushed.png", &pushed);
+    let lean = |pixels: &[u8]| pole_centre(pixels, 85) - pole_centre(pixels, 260);
+    assert!(lean(&pushed) > 8.0, "the pole leans away from what stands beside it: {}", lean(&pushed));
+
+    world.despawn(pusher);
+    run(&mut renderer, &world, &mut time, 300);
+    let after = renderer.read_pixels().unwrap().2;
+    assert!(lean(&after).abs() < 2.0, "and springs back once it has gone: {}", lean(&after));
+}

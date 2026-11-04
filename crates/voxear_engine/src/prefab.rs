@@ -57,7 +57,7 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::AssetGuid;
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_render::{Camera, Light, MeshRenderer, PostVolume, Renderer, WindZone};
+use voxear_render::{Camera, FoliageInteraction, Light, MeshRenderer, PostVolume, Renderer, WindZone};
 use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
 
 use crate::{
@@ -372,6 +372,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.collider = instance.collider.or(root.collider);
     root.wind_zone = instance.wind_zone.or(root.wind_zone);
+    root.foliage_interaction = instance.foliage_interaction.or(root.foliage_interaction);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
     root.character = instance.character.or(root.character);
     if instance.joint.is_some() {
@@ -411,6 +412,7 @@ pub struct TemplateObj {
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
     pub wind_zone: Option<WindZone>,
+    pub foliage_interaction: Option<FoliageInteraction>,
     /// Its layer by name, found in the world it is spawned into.
     pub layer: Option<LayerRef>,
     /// Its connected Obj by path, bound to an entity when spawned.
@@ -541,6 +543,9 @@ impl Template {
             }
             if let Some(wind) = obj.wind_zone {
                 world.insert(entity, wind);
+            }
+            if let Some(push) = obj.foliage_interaction {
+                world.insert(entity, push);
             }
             if let Some(body) = obj.rigidbody {
                 world.insert(entity, body);
@@ -709,6 +714,7 @@ pub(crate) fn resolve_obj(
         rigidbody: data.rigidbody,
         character: data.character,
         wind_zone: data.wind_zone,
+        foliage_interaction: data.foliage_interaction,
         layer: data.layer.clone(),
         joint: data.joint.clone(),
         collider2d: data.collider2d,

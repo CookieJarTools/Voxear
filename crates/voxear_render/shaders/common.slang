@@ -400,6 +400,21 @@ struct Wind
     float pad;
 };
 
+// What pushes through foliage this frame; mirrors GpuPushes in src/gpu.rs (see foliage.rs).
+static const uint MAX_PUSHERS = 16;
+static const uint PUSH_CELLS = 128;
+
+struct Pushes
+{
+    // Each pusher's position and radius, and strength, four to a row.
+    float4 pushers[MAX_PUSHERS];
+    float4 strengths[MAX_PUSHERS / 4];
+    // The grid's lowest cell, x and z.
+    int2 origin;
+    float cell;
+    uint count;
+};
+
 // Ray-traced GI's probes; mirrors GpuDdgi in src/gpu.rs.
 static const uint DDGI_CASCADES = 2;
 static const float DDGI_CASCADE_SCALE = 4.0;
@@ -476,6 +491,7 @@ struct Frame
     Lighting lighting;
     Ddgi ddgi;
     Wind wind;
+    Pushes pushes;
 };
 
 struct DrawCommand
@@ -569,6 +585,8 @@ struct Buffers
     uint2* bvhTable;
     BvhNode* sceneNodes;
     TraceInstance* sceneInstances;
+    // The grid of pushes through foliage, a push each cell.
+    float2* foliagePushes;
 };
 
 struct Push

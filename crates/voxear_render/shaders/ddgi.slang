@@ -1,6 +1,6 @@
 // Ray-traced GI's probes (ddgi_sample.slang reads them), filled each frame
 // in two compute passes, for the probes due:
-// - rays: each probe traces 128 rays against the scene's triangles, turned a
+// - rays: each probe traces 256 rays against the scene's triangles, turned a
 //   little each frame. Where a ray hits, it takes the light that surface
 //   sends back: the sun's, where a second ray finds nothing between, the
 //   lamps', its glow, and the light the probes held last frame round it, so
@@ -74,8 +74,10 @@ Hit traceScene(Frame* frame, float3 origin, float3 direction, float far, bool an
 }
 #endif
 
-// How much of a probe's last value a fresh one keeps, against noise.
-static const float DDGI_KEEP = 0.95;
+// How much of a probe's last value a fresh one keeps, against noise. At 0.95, the noise left in each update made
+// walls lit by candles and a neon tube shimmer; 0.97 and twice the rays halve that, and light that falls is let
+// go of at once all the same (DDGI_FALL).
+static const float DDGI_KEEP = 0.97;
 // A fall in a probe's light, as a share of it a frame and as its last few frames have kept it up, from which it
 // keeps less of its last value, to where it keeps none: under the first, the rays' own noise; over the second,
 // the light really fell.
@@ -226,7 +228,7 @@ float3 ddgiSky(Frame* frame, float3 direction)
 
 // One workgroup a probe, a thread a ray. push.output: the rays.
 [shader("compute")]
-[numthreads(128, 1, 1)]
+[numthreads(256, 1, 1)]
 void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
 {
     Frame* frame = push.frame;
@@ -342,7 +344,7 @@ void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID, u
     {
         return;
     }
-    // The workgroup's 64 threads read the probe's 128 rays, two each.
+    // The workgroup's 64 threads read the probe's 256 rays, four each.
     for (uint ray = flat; ray < DDGI_RAYS; ray += 64)
     {
         sharedRays[ray] = storageImagesRgba16f[push.textures.x][ddgiRayTexel(index, cascade, ray)];

@@ -900,7 +900,7 @@ Done so far:
   dark, as Unreal's does. Tested on a closed room with a doorway onto a sunlit yard.
 - **Ray-traced GI probes (DDGI), as RTXGI in Arc Raiders and The Finals:** where the GPU has ray tracing (Vulkan
   ray queries: NVIDIA RTX 20 on, AMD RX 6000 on, Intel Arc), a bottom-level acceleration structure for each mesh
-  and a top level per view and frame. Two cascades of 32×16×32 probes trace 128 rays each when due, shading hits
+  and a top level per view and frame. Two cascades of 32×16×32 probes trace 256 rays each when due (128 until the flicker fix below), shading hits
   with the sun through a shadow ray, lamps, glow and last frame's probes; each keeps 8×8 octahedral irradiance and
   depth maps, and shading weighs probes by Chebyshev visibility, so no light passes walls. Probes inside geometry
   are set aside and probes near surfaces moved off them. GPU tests: a sealed box in sunlight stays black; a
@@ -1038,7 +1038,12 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   corridor round the demo's neon tube surged to twice as bright for eight frames at a time. Each ray's light is
   capped (`DDGI_RAY_MOST`, 16 by its brightest channel): the tube lit its own glass from 4 cm, and whether a
   probe's rays met that sliver changed as they turned and as probes moved. Over 900 editor frames of the corridor
-  the metered brightness now stays within 3% (it swung fourfold), and still frames spread 0.83.
+  the metered brightness now stays within 3% (it swung fourfold), and still frames spread 0.83. Then the walls by
+  the neon tube still shimmered: the noise left in each probe update. Measured as each pixel's spread over 60 still
+  editor frames at one exposure: 0.37 without GI, 0.42 with the probes' light frozen, 0.52 at 128 rays and 0.95,
+  0.45 at 256 rays and `DDGI_KEEP` 0.97 (chosen: 0.44 ms more at 1080p; 128 rays at 0.98 gave 0.46 for nothing but
+  let new light in far slower). Probes held still, no visibility test, the smooth normal, and fog or reflections
+  off each changed nothing; the few edge pixels that flicker hardest are there without GI too.
 - **A model as one Obj:** a model of several parts placed in a scene is one Obj with a Model Renderer (`ModelRenderer`
   in voxear_render: shared parts, each a mesh, material and place in the Obj's space), not an Obj per part. Each part
   is an instance of its own in extraction (`Owner::part`, motion tracked per part), so culling, LODs, shadows, the

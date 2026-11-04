@@ -14,7 +14,7 @@
 //! Each frame:
 //!
 //! 1. **Scene BVH** builds the frame's top level from the instances drawn.
-//! 2. **DDGI rays** traces 128 rays from each probe due: a quarter of the
+//! 2. **DDGI rays** traces 256 rays from each probe due: a quarter of the
 //!    fine probes and a sixteenth of the coarse, scattered, every probe the
 //!    grid has just moved over, and all of them while the GI warms up.
 //! 3. **DDGI update** blends those rays into the due probes' maps.

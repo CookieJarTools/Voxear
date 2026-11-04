@@ -392,8 +392,10 @@ pub struct GpuDdgi {
 pub const DDGI_CASCADES: usize = 2;
 pub const DDGI_CASCADE_SCALE: f32 = 4.0;
 pub const DDGI_PROBES: [u32; 3] = [32, 16, 32];
-/// Rays each probe traces when it is due.
-pub const DDGI_RAYS: u32 = 128;
+/// Rays each probe traces when it is due. 256 rather than 128: with half the
+/// noise in each update, lamp-lit walls no longer shimmer as the probes'
+/// light settles (see `DDGI_KEEP` in ddgi.slang), for 0.44 ms at 1080p.
+pub const DDGI_RAYS: u32 = 256;
 /// Each probe's maps, texels across.
 pub const DDGI_TEXELS: u32 = 8;
 

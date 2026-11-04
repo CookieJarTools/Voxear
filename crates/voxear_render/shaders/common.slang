@@ -463,7 +463,7 @@ struct Pushes
 static const uint DDGI_CASCADES = 2;
 static const float DDGI_CASCADE_SCALE = 4.0;
 static const int3 DDGI_PROBES = int3(32, 16, 32);
-static const uint DDGI_RAYS = 128;
+static const uint DDGI_RAYS = 256;
 static const uint DDGI_TEXELS = 8;
 
 struct Ddgi

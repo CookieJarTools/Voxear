@@ -922,6 +922,11 @@ Done so far:
 - **Colour temperature on lights:** `temperature` in kelvin on every light kind, which `color` then filters, as
   Unity's Filter and Temperature; a black body's colour from Kim et al.'s Planckian locus fit, at a luminance of 1
   so only the colour changes. The light inspector's Appearance picks Colour or Filter and Temperature.
+- **Haze and a golden hour look, after Arc Raiders:** `[sky]` `haze`, `haze_tint`, `haze_glow`, `distance_haze`
+  and `sun_size` set the atmosphere's aerosols, their forward scattering, the aerial perspective's scale and the
+  sun's disc. `[post] look = "golden_hour"`: twice the haze, slightly warm, glowing tightly round the sun; thin
+  volumetric dust with strong forward scattering; a wide warm bloom; AgX with more contrast and saturation, shade
+  lifted a little to teal and highlights to cream; warm brown shadow tint. Film grain is removed: it never helped.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

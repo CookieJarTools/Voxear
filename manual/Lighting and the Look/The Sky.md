@@ -50,6 +50,27 @@ The atmosphere works out its own colours from where the sun is, so the three col
 
 Turn the sun to change the time of day. Low over the horizon it gives a sunset, and below it a dusk. The atmosphere also lights the scene: its ambient light comes from the sky's colours as they are, so a sunset level is lit warm and a midday one cool. `ambient` scales it as it does for a gradient.
 
+### Haze
+
+Air holds dust and moisture, which scatter sunlight: they make the bright glow round the sun, and they fade far hills into pale light. These settings change the haze:
+
+| Setting | What it does |
+| --- | --- |
+| `haze = 1.0` | How much haze hangs in the air: 1 as on a clear day, 2 or 3 for a hazy, dusty or golden evening, below 1 for crisp mountain air |
+| `haze_tint = [1.0, 1.0, 1.0]` | The colour the haze scatters: white for the grey of moisture, a little warmer, such as `[1.0, 0.9, 0.8]`, for dust |
+| `haze_glow = 0.8` | How much the haze glows round the sun, from 0 to 0.95: higher gives a brighter, tighter glow looking towards the sun, lower an even haze |
+| `distance_haze = 10.0` | How quickly haze builds up over distance. Real haze barely shows across a few hundred metres, so distances count as this many times as far: higher swallows the distance sooner |
+| `sun_size = 0.54` | How wide the sun's disc looks, in degrees. The real sun is about half a degree |
+
+```toml
+[sky]
+mode = "atmosphere"
+haze = 2.0
+haze_tint = [1.0, 0.94, 0.86]
+haze_glow = 0.85
+distance_haze = 16.0
+```
+
 ## Night: the moon and the stars
 
 For a night scene, make the level's directional light the **moon**: set its **Sky body** to Moon in the Inspector, or `body = "moon"` in the scene file. The sky then draws the moon's disc where the light comes from, with its darker seas, and darkens to a night sky, so the stars show. Give the moon a cool colour and a low intensity, enough to see the scene by:

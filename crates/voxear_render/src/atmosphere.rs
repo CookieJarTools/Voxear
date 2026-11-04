@@ -64,6 +64,25 @@ pub fn earth() -> GpuAtmosphere {
     }
 }
 
+/// Earth's air with a scene's sky's haze and sun.
+pub fn of_sky(sky: &crate::Sky) -> GpuAtmosphere {
+    let earth = earth();
+    let haze = sky.haze.max(0.0);
+    let tint = sky.haze_tint.max(voxear_core::math::Vec3::ZERO).to_array();
+    // As much haze dims the light passing through it whatever its tint: what a dusty haze does not scatter, it
+    // absorbs.
+    let scattering = std::array::from_fn(|c| earth.mie_scattering[c] * haze * tint[c].min(1.0));
+    let extinction = std::array::from_fn(|c| earth.mie_extinction[c] * haze);
+    GpuAtmosphere {
+        mie_scattering: scattering,
+        mie_extinction: extinction,
+        mie_g: sky.haze_glow.clamp(0.0, 0.95),
+        sun_cos_radius: (sky.sun_size.clamp(0.05, 20.0) * 0.5).to_radians().cos(),
+        aerial_scale: sky.distance_haze.max(0.0),
+        ..earth
+    }
+}
+
 /// One frame's tables.
 #[derive(Clone, Copy)]
 pub struct Tables {

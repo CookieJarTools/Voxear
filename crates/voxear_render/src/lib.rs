@@ -80,7 +80,7 @@ pub use mesh::{MeshData, MeshTriangles, Primitive, Vertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
     GlobalIllumination, Reflections,
-    Grading, Grain, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
+    Grading, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
     MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,

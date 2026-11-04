@@ -6,7 +6,7 @@
 //! 4. **Bloom down** halves the image six times. **Exposure** meters one of
 //!    those levels, then **Bloom up** adds each level onto the next larger.
 //! 5. **Composite**: exposure, bloom, white balance, grading, tonemapping,
-//!    vignette, chromatic aberration and grain.
+//!    vignette and chromatic aberration.
 //! 6. **Finish**: FXAA or sharpening, and dithering, into the output.
 //!
 //! The shaders are in `shaders/post.slang` and `shaders/exposure.slang`.

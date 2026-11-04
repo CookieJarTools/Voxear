@@ -41,7 +41,6 @@ pub struct PostProcess {
     pub motion_blur: MotionBlur,
     /// Splits colours towards the screen edges, like a cheap lens. 0 is off.
     pub chromatic_aberration: f32,
-    pub grain: Grain,
 }
 
 /// How hard ambient occlusion looks for what shades each pixel: how many
@@ -337,14 +336,6 @@ pub struct MotionBlur {
     pub intensity: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Grain {
-    pub intensity: f32,
-    /// Advanced: grain size in pixels.
-    pub size: f32,
-}
-
 impl Default for PostProcess {
     fn default() -> Self {
         Self::voxear()
@@ -448,12 +439,6 @@ impl Default for MotionBlur {
     }
 }
 
-impl Default for Grain {
-    fn default() -> Self {
-        Self { intensity: 0.0, size: 1.5 }
-    }
-}
-
 impl PostProcess {
     /// The Voxear Look: ambient occlusion, contact shadows, TAA with light sharpening, soft
     /// bloom, eye adaptation that keeps nights dark, AgX with a little punch,
@@ -475,7 +460,6 @@ impl PostProcess {
             depth_of_field: DepthOfField::default(),
             motion_blur: MotionBlur::default(),
             chromatic_aberration: 0.0,
-            grain: Grain::default(),
         }
     }
 
@@ -494,7 +478,7 @@ impl PostProcess {
     }
 
     /// A filmic camera: ACES contrast, stronger bloom and vignette, a little
-    /// grain and lens fringing, and motion blur.
+    /// lens fringing, and motion blur.
     pub fn cinematic() -> Self {
         Self {
             bloom: Bloom { intensity: 0.07, ..Bloom::default() },
@@ -502,7 +486,6 @@ impl PostProcess {
             vignette: Vignette { intensity: 0.35, ..Vignette::default() },
             motion_blur: MotionBlur { enabled: true, ..MotionBlur::default() },
             chromatic_aberration: 0.15,
-            grain: Grain { intensity: 0.05, ..Grain::default() },
             ..Self::voxear()
         }
     }
@@ -613,9 +596,9 @@ impl PostProcess {
             lift: self.grading.lift,
             vignette_roundness: self.vignette.roundness,
             gamma: self.grading.gamma,
-            grain: self.grain.intensity,
+            _pad_gamma: 0.0,
             gain: self.grading.gain,
-            grain_size: self.grain.size,
+            _pad_gain: 0.0,
             fog_color: self.fog.color.map_or(horizon.to_array(), linear),
             fog_density: enabled(self.fog.enabled, self.fog.density),
             fog_height_falloff: self.fog.height_falloff,

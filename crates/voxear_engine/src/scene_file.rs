@@ -121,6 +121,49 @@ pub struct SkyData {
     /// only when the sky is dark.
     #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
     pub stars: f32,
+    /// The atmosphere's haze, 1 as on a clear day.
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub haze: f32,
+    /// The colour the haze scatters, white for grey moisture, warmer for dust.
+    #[serde(default = "white", skip_serializing_if = "is_white")]
+    pub haze_tint: [f32; 3],
+    /// How much the haze glows round the sun, 0 to 0.95.
+    #[serde(default = "default_haze_glow", skip_serializing_if = "is_default_haze_glow")]
+    pub haze_glow: f32,
+    /// How quickly haze builds up with distance.
+    #[serde(default = "default_distance_haze", skip_serializing_if = "is_default_distance_haze")]
+    pub distance_haze: f32,
+    /// The sun's disc across the sky, in degrees.
+    #[serde(default = "default_sun_size", skip_serializing_if = "is_default_sun_size")]
+    pub sun_size: f32,
+}
+
+fn default_haze_glow() -> f32 {
+    Sky::default().haze_glow
+}
+
+fn is_default_haze_glow(glow: &f32) -> bool {
+    *glow == default_haze_glow()
+}
+
+fn default_distance_haze() -> f32 {
+    Sky::default().distance_haze
+}
+
+fn is_default_distance_haze(distance: &f32) -> bool {
+    *distance == default_distance_haze()
+}
+
+fn default_sun_size() -> f32 {
+    Sky::default().sun_size
+}
+
+fn is_default_sun_size(size: &f32) -> bool {
+    *size == default_sun_size()
+}
+
+fn is_white(color: &[f32; 3]) -> bool {
+    *color == [1.0; 3]
 }
 
 /// A [`SkyMode`] as scene files write it.
@@ -653,6 +696,11 @@ pub fn apply_environment(engine: &mut Engine, sky: Option<SkyData>, post: Option
             ground: Vec3::from(linear(sky.ground)),
             ambient: sky.ambient,
             stars: sky.stars,
+            haze: sky.haze,
+            haze_tint: Vec3::from(linear(sky.haze_tint)),
+            haze_glow: sky.haze_glow,
+            distance_haze: sky.distance_haze,
+            sun_size: sky.sun_size,
         });
     }
     if let Some(table) = post {
@@ -759,6 +807,11 @@ pub fn capture_scene_with_ids(
         ground: round3(srgb(sky.ground.to_array())),
         ambient: sky.ambient,
         stars: sky.stars,
+        haze: sky.haze,
+        haze_tint: round3(srgb(sky.haze_tint.to_array())),
+        haze_glow: sky.haze_glow,
+        distance_haze: sky.distance_haze,
+        sun_size: sky.sun_size,
     });
     let post = world.resource::<PostTable>().map(|table| table.0.clone());
     (SceneFile { format: SCENE_FORMAT, sky, post, objs }, ids)
@@ -1436,6 +1489,18 @@ mod tests {
         assert!(!toml::to_string(&plain).unwrap().contains("stars"));
         let dim: SkyData = toml::from_str(&format!("{colours}\nstars = 0.5")).unwrap();
         assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&dim).unwrap()).unwrap().stars, 0.5);
+    }
+
+    #[test]
+    fn the_skys_haze_reads_and_writes_back_and_is_left_out_unset() {
+        let colours = "zenith = [0.3, 0.5, 0.9]\nhorizon = [0.7, 0.8, 0.9]\nground = [0.4, 0.4, 0.4]";
+        let plain: SkyData = toml::from_str(colours).unwrap();
+        let written = toml::to_string(&plain).unwrap();
+        assert!(!written.contains("haze") && !written.contains("sun_size"), "{written}");
+        let hazy = "haze = 2.0\nhaze_tint = [1.0, 0.9, 0.8]\nhaze_glow = 0.9\ndistance_haze = 20.0\nsun_size = 1.0";
+        let dusty: SkyData = toml::from_str(&format!("{colours}\n{hazy}")).unwrap();
+        assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&dusty).unwrap()).unwrap(), dusty);
+        assert_eq!((dusty.haze, dusty.haze_glow, dusty.distance_haze, dusty.sun_size), (2.0, 0.9, 20.0, 1.0));
     }
 
     #[test]

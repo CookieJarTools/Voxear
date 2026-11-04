@@ -12,15 +12,21 @@
 //!   with rich colour and soft shapes, as in It Takes Two, Kena or Ori.
 //!   Art-directed rather than accurate: shadows tinted warm, teal mist that
 //!   layers the scene, tinted occlusion and golden highlights.
+//! - **Golden Hour**: a low, warm sun in thick, dusty air, as in Arc Raiders:
+//!   the haze glows round the sun and swallows the distance in warm light,
+//!   light shafts cut through it, shadows are lifted to a warm brown rather
+//!   than black, and the grade pushes highlights to cream and shade towards
+//!   teal, with a soft glare and fringing as through a real lens.
 
 use anyhow::{Result, bail};
 use voxear_core::math::Vec3;
 
 use crate::{
     post::{
-        AmbientOcclusion, Bloom, Exposure, Fog, GlobalIllumination, Grading, PostProcess, Tonemap, Tonemapper, Vignette,
+        AmbientOcclusion, Bloom, Exposure, Fog, GlobalIllumination, Grading, PostProcess, Tonemap, Tonemapper,
+        Vignette,
     },
-    scene::{Sky, SkyMode},
+    scene::{Sky, SkyMode, temperature_color},
 };
 
 /// A look by name.
@@ -28,6 +34,7 @@ use crate::{
 pub enum LookName {
     SoftOvercast,
     Storybook,
+    GoldenHour,
 }
 
 impl LookName {
@@ -35,7 +42,8 @@ impl LookName {
         Ok(match name {
             "soft_overcast" => Self::SoftOvercast,
             "storybook" => Self::Storybook,
-            _ => bail!("no look `{name}` (soft_overcast and storybook exist)"),
+            "golden_hour" => Self::GoldenHour,
+            _ => bail!("no look `{name}` (soft_overcast, storybook and golden_hour exist)"),
         })
     }
 }
@@ -74,7 +82,63 @@ impl Look {
         match name {
             LookName::SoftOvercast => Self::soft_overcast(),
             LookName::Storybook => Self::storybook(),
+            LookName::GoldenHour => Self::golden_hour(),
         }
+    }
+
+    fn golden_hour() -> Self {
+        let base = PostProcess::voxear();
+        let post = PostProcess {
+            exposure: Exposure { compensation: 0.6, max_ev: 3.0, ..base.exposure },
+            // Soft highlights that roll off to cream rather than clip, at a gentle contrast.
+            tonemap: Tonemap { mapper: Tonemapper::Agx, contrast: 1.2, saturation: 1.25 },
+            // The low sun through the air warms the light already: the grade only lifts the shade a little towards
+            // teal against it, and pushes highlights to cream.
+            grading: Grading {
+                temperature: 0.04,
+                saturation: 1.05,
+                lift: [0.004, 0.007, 0.009],
+                gain: [1.04, 1.0, 0.95],
+                ..base.grading
+            },
+            // A wide glare round the sun and bright edges.
+            bloom: Bloom { intensity: 0.16, scatter: 0.92, tint: [1.0, 0.93, 0.82], ..base.bloom },
+            vignette: Vignette { intensity: 0.28, ..base.vignette },
+            // Thick, low dust that the sun's shafts cut through, glowing towards the sun.
+            fog: Fog {
+                density: 0.005,
+                height_falloff: 0.08,
+                sun_glow: 0.9,
+                volumetric: true,
+                volumetric_distance: 96.0,
+                anisotropy: 0.75,
+                ..base.fog
+            },
+            ambient_occlusion: AmbientOcclusion { tint: [0.2, 0.12, 0.08], ..base.ambient_occlusion },
+            global_illumination: GlobalIllumination { enabled: true, strength: 1.15, ..base.global_illumination },
+            chromatic_aberration: 0.1,
+            ..base
+        };
+        let sky = Sky {
+            mode: SkyMode::Atmosphere,
+            ambient: 1.0,
+            // Dusty air: twice a clear day's haze, a little warm, glowing tightly round the sun.
+            haze: 1.5,
+            haze_tint: linear([1.0, 0.96, 0.9]),
+            haze_glow: 0.85,
+            distance_haze: 16.0,
+            sun_size: 0.8,
+            ..Sky::default()
+        };
+        // The air reddens a low sun already; a touch warmer than white keeps it golden as it climbs. Warm brown in
+        // its shadows.
+        let sun = SunLook {
+            tint: temperature_color(5000.0),
+            strength: 1.4,
+            softness: 1.0,
+            shadow_tint: linear([0.12, 0.09, 0.07]),
+        };
+        Self { post, sky, sun }
     }
 
     fn soft_overcast() -> Self {
@@ -159,5 +223,8 @@ mod tests {
         assert!(overcast.sun.strength < storybook.sun.strength, "overcast's sky is the main light");
         assert_eq!(overcast.sun.shadow_tint, Vec3::ZERO);
         assert!(storybook.sun.shadow_tint.x > 0.0, "storybook's shadows are never grey");
+        let golden = Look::of(LookName::parse("golden_hour").unwrap());
+        assert_eq!(golden.sky.mode, SkyMode::Atmosphere, "golden hour's light comes through the air");
+        assert!(golden.sky.haze > 1.0 && golden.post.fog.volumetric, "in dusty air, with light shafts");
     }
 }

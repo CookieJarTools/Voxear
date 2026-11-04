@@ -278,9 +278,9 @@ struct Post
     float3 lift;
     float vignetteRoundness;
     float3 gamma;
-    float grain;
+    float padGamma;
     float3 gain;
-    float grainSize;
+    float padGain;
     float3 fogColor;
     float fogDensity;
     float fogHeightFalloff;

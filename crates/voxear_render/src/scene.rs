@@ -313,6 +313,20 @@ pub struct Sky {
     /// How bright the stars are: 1 as the night sky shows them, 0 for none.
     /// They show only when the sky is dark, as at night under the moon.
     pub stars: f32,
+    /// The atmosphere's haze: how much dust and moisture hangs in the air,
+    /// 1 as on a clear day, more for a hazy, golden or smoggy one.
+    pub haze: f32,
+    /// Linear: the colour the haze scatters, white for moisture's grey,
+    /// warmer for dust, which takes blue out.
+    pub haze_tint: Vec3,
+    /// How much the haze glows round the sun rather than evenly, 0 to 0.95:
+    /// higher gives a brighter, tighter glow looking towards the sun.
+    pub haze_glow: f32,
+    /// How quickly haze builds up with distance over the scene: things
+    /// count as this many times as far for the haze over them.
+    pub distance_haze: f32,
+    /// The sun's disc across the sky, in degrees: half a degree as on Earth.
+    pub sun_size: f32,
 }
 
 /// What the sky is drawn as.
@@ -336,6 +350,11 @@ impl Default for Sky {
             ground: Vec3::new(0.22, 0.2, 0.18),
             ambient: 1.0,
             stars: 1.0,
+            haze: 1.0,
+            haze_tint: Vec3::ONE,
+            haze_glow: 0.8,
+            distance_haze: 10.0,
+            sun_size: 0.5357,
         }
     }
 }
@@ -448,7 +467,7 @@ pub fn extract(
                 SkyMode::Gradient => SKY_GRADIENT,
                 SkyMode::Atmosphere => SKY_ATMOSPHERE,
             },
-            atmosphere: crate::atmosphere::earth(),
+            atmosphere: crate::atmosphere::of_sky(&sky),
             sun_cookie: NO_TEXTURE,
             transmittance: NO_TEXTURE,
             multi_scattering: NO_TEXTURE,

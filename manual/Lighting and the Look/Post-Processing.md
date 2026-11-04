@@ -14,7 +14,7 @@ Set post-processing in a scene file, in a `[post]` table. Start from one of thre
 | --- | --- |
 | `voxear` | The Voxear Look, as above |
 | `neutral` | Nothing added: no glow, mist or dark corners, and a fixed exposure. Useful for checking colours |
-| `cinematic` | The Voxear Look, with more glow, film-like colour, darker corners, motion blur, colour fringes and film grain |
+| `cinematic` | The Voxear Look, with more glow, film-like colour, darker corners, motion blur and colour fringes |
 
 ```toml
 [post]
@@ -45,6 +45,7 @@ look = "storybook"
 | --- | --- |
 | `soft_overcast` | Hazy, bright and calm, like daylight through big windows on a cloudy day. The sky is the main light; the sun is weak and warm, with soft shadows and light shafts in a thin blue mist. Bounced light is on |
 | `storybook` | A warm sun breaking through a canopy into a cool forest, as in It Takes Two or Ori. A teal sky and mist, shadows tinted a warm purple, golden glow and rich colour. Bounced light is on |
+| `golden_hour` | A low, warm sun in dusty air, as in Arc Raiders. The haze glows round the sun and swallows the distance, light shafts cut through it, a wide glare spreads from the sun, and shade stays deep but never black. Bounced light is on. Point the sun low, 5 to 20 degrees up |
 
 Whatever the scene sets itself wins over the look's:
 
@@ -150,8 +151,6 @@ With `volumetric = true`, the mist takes its light from the sun, the sky and eve
 | `max_blur = 12` | The most blur, in pixels |
 
 **Movement**, `[post.motion_blur]`: `enabled = false`, and `intensity = 0.5` for how strong it is.
-
-**Film grain**, `[post.grain]`: `intensity = 0` (off) and `size = 1.5`.
 
 **Colour fringes**: `chromatic_aberration = 0` sits directly in `[post]`, not in a table of its own. Small values, such as 0.15, split colours slightly at the edges of the screen, as a cheap lens does.
 

@@ -1,6 +1,6 @@
 // Post-processing, as fullscreen passes over the HDR image:
 // fog, TAA, depth of field, motion blur, the bloom chain, the composite
-// (exposure, grading, tonemapping, vignette, lens effects, grain, dither) and
+// (exposure, grading, tonemapping, vignette, lens effects, dither) and
 // the finish (FXAA or sharpening). Each pass reads textures named in
 // push.textures; see src/post_passes.rs for the order.
 
@@ -682,12 +682,6 @@ float4 compositeFragment(PostOut input) : SV_Target
         float corner = length(float2(lerp(0.5, 0.5 * aspect, post.vignetteRoundness), 0.5));
         float shade = pow(saturate(length(d) / corner), 1.0 + 4.0 * (1.0 - post.vignetteSmoothness));
         color *= 1.0 - post.vignette * shade;
-    }
-
-    if (post.grain > 0.0)
-    {
-        float noise = hash(floor(input.position.xy / max(post.grainSize, 1.0)) + float(frame->frameIndex % 1024) * 1.618) - 0.5;
-        color += noise * post.grain * (0.25 + sqrt(luminance(color)));
     }
 
     color = saturate(color);

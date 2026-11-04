@@ -206,6 +206,9 @@ pub struct Assets {
     /// Each mesh's bottom level, where ray tracing is on, and those replaced
     /// since the last frame, waiting to be retired.
     bottom_levels: HashMap<MeshHandle, AccelerationStructure>,
+    /// Counts each bottom level built or freed, so a top level built from
+    /// the same instances knows whether what they point at changed.
+    pub bottom_level_changes: u64,
     /// Each mesh's hierarchy of triangles, where the GI's rays are traced in a
     /// compute shader.
     pub hierarchies: Option<MeshHierarchies>,
@@ -265,6 +268,7 @@ impl Assets {
             textures: HashMap::new(),
             retiring: Vec::new(),
             bottom_levels: HashMap::new(),
+            bottom_level_changes: 0,
             hierarchies: software_rays.then(|| MeshHierarchies::new(gpu, MAX_MESHES)).transpose()?,
             retired_levels: Vec::new(),
             white: TextureId(0),
@@ -402,6 +406,7 @@ impl Assets {
             triangle_count: ranges.first_lod / 3,
         };
         let built = gpu.build_bottom_level(&format!("mesh {}", handle.0), triangles)?;
+        self.bottom_level_changes += 1;
         if let Some(old) = self.bottom_levels.insert(handle, built) {
             self.retired_levels.push(old);
         }
@@ -805,6 +810,7 @@ impl Assets {
                     hierarchies.remove(mesh.0);
                 }
                 if let Some(level) = self.bottom_levels.remove(&mesh) {
+                    self.bottom_level_changes += 1;
                     gpu.destroy_acceleration_structure(level);
                 }
                 if let Some(ranges) = self.mesh_ranges.remove(&mesh) {

@@ -32,7 +32,7 @@ pub struct Triangles {
 /// One instance of a mesh in a top level: its bottom level, where it is (the
 /// first three rows of its model matrix, row by row), and the number shaders
 /// get back for it, `CommittedInstanceID`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Instance {
     pub mesh: vk::DeviceAddress,
     pub transform: [f32; 12],

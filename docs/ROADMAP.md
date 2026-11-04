@@ -1010,6 +1010,9 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   - Measured and left: GI sampling in shading is 0.46 ms at 1080p, near what eight probes a pixel cost; reading it
     at half resolution would lose normal maps' detail in shade. The depth prepass, which ambient occlusion,
     contact shadows and reflections bring, saves 0.75 ms of shading overdraw on its own.
+  - The ray tracing scene's top level is built only when its instances or the meshes' bottom levels changed since
+    that frame slot's last build (`Assets::bottom_level_changes`), so a still level skips its build and the
+    barrier after it: the valley 4.2 to 3.8 ms at 1080p.
   - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
     by distance.
   - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the

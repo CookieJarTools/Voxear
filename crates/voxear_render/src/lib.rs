@@ -1195,6 +1195,9 @@ struct View {
     /// The scene as ray queries see it, one top level a frame in flight,
     /// made the first time a frame needs it, where ray tracing is on.
     top_levels: Vec<Option<TopLevel>>,
+    /// What each slot's top level was last built from, so a frame whose
+    /// instances are the same, as most are in a still level, reuses it.
+    top_level_built: Vec<(u64, Vec<voxear_rhi::Instance>)>,
     /// Without ray tracing, the scene's hierarchy over its instances and the
     /// instances it names, one pair a frame in flight, made when first needed.
     scene_hierarchies: Vec<Option<(Buffer, Buffer)>>,
@@ -1287,6 +1290,7 @@ impl View {
         Ok(Self {
             number,
             top_levels: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
+            top_level_built: (0..FRAMES_IN_FLIGHT).map(|_| (0, Vec::new())).collect(),
             scene_hierarchies: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             output: OutputId::MAIN,
             rect: None,
@@ -1406,7 +1410,7 @@ impl View {
     /// into `fg`: each instance with a bottom level, its number its place in
     /// the instance list. `None` without ray tracing.
     fn build_scene(
-        (top_level, number): (&mut Option<TopLevel>, usize),
+        (top_level, built, number): (&mut Option<TopLevel>, &mut (u64, Vec<voxear_rhi::Instance>), usize),
         fg: &mut FrameGraph<'_>,
         (gpu, bindless, assets): (&Gpu, &Bindless, &Assets),
         instances: &[gpu::GpuInstance],
@@ -1438,7 +1442,14 @@ impl View {
                 Some(voxear_rhi::Instance { mesh, transform, id: id as u32 })
             })
             .collect();
+        // The same instances, of the same meshes' bottom levels, as this slot's top level was last built from:
+        // it stands as it is.
+        let changes = assets.bottom_level_changes;
+        if built.0 == changes && built.1 == placed && !placed.is_empty() {
+            return Ok(Some(index));
+        }
         level.write(&placed);
+        *built = (changes, placed);
         let build = level.build();
         fg.add_pass("Scene BVH", &[], &[], move |ctx| {
             build.record(ctx.gpu, ctx.cmd);
@@ -1644,7 +1655,7 @@ impl View {
                 scene_hierarchy = Self::trace_scene(hierarchy, (gpu, assets), traced, slot)?;
                 Some(0)
             } else if pipelines.ddgi.is_some() {
-                let top_level = (&mut self.top_levels[slot], self.number);
+                let top_level = (&mut self.top_levels[slot], &mut self.top_level_built[slot], self.number);
                 Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)?
             } else {
                 None

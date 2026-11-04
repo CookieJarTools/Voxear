@@ -7,7 +7,7 @@
 
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{Camera, Light, MeshRenderer, ModelRenderer, Renderer};
+use voxear_render::{Camera, Foliage, Light, MeshRenderer, ModelRenderer, Renderer};
 use voxear_scene::{Destroying, EditorOnly, Name, Parent, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -281,13 +281,27 @@ fn box_of(from: [f32; 2], to: [f32; 2]) -> [f32; 4] {
     [from[0].min(to[0]), from[1].min(to[1]), from[0].max(to[0]), from[1].max(to[1])]
 }
 
-/// The box round what an Obj draws, in its own space: its mesh's, or every
-/// part of the model it draws.
+/// The box round what an Obj draws, in its own space: its mesh's, every
+/// part of the model it draws, or every plant of its Foliage.
 pub(crate) fn drawn_bounds(world: &World, renderer: &Renderer, entity: Entity) -> Option<(Vec3, Vec3)> {
-    match world.get::<MeshRenderer>(entity) {
-        Some(mesh) => renderer.mesh_bounds(mesh.mesh),
-        None => world.get::<ModelRenderer>(entity)?.bounds(renderer),
+    if let Some(mesh) = world.get::<MeshRenderer>(entity) {
+        return renderer.mesh_bounds(mesh.mesh);
     }
+    if let Some(model) = world.get::<ModelRenderer>(entity) {
+        return model.bounds(renderer);
+    }
+    let foliage = world.get::<Foliage>(entity)?;
+    let (min, max) = renderer.mesh_bounds(foliage.mesh)?;
+    // Each plant's mesh as far as it can reach, whichever way it is turned.
+    let reach = min.abs().max(max.abs());
+    let reach = Vec3::new(reach.x.max(reach.z), reach.y, reach.x.max(reach.z));
+    let mut found: Option<(Vec3, Vec3)> = None;
+    for plant in foliage.plants.iter() {
+        let at = Vec3::from(plant.position);
+        let (low, high) = (at - reach * plant.scale, at + reach * plant.scale);
+        found = Some(found.map_or((low, high), |(a, b)| (a.min(low), b.max(high))));
+    }
+    found
 }
 
 /// The corners of an Obj's mesh's bounds in the world, or none for an Obj

@@ -18,7 +18,7 @@
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Entity, World};
 use voxear_engine::audio::AudioSource;
-use voxear_render::{Camera, Light, MeshRenderer, ModelRenderer, Renderer};
+use voxear_render::{Camera, Foliage, Light, MeshRenderer, ModelRenderer, Renderer};
 use voxear_scene::{Destroying, EditorOnly, Parent, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -186,7 +186,8 @@ pub fn pick(
             best = Some((distance, entity));
         }
     };
-    for (distance, _, entity) in mesh_hits(world, renderer, (origin, direction)) {
+    // A plant of a Foliage picks the Foliage's Obj, as grass picks a terrain.
+    for (distance, _, entity) in mesh_hits(world, renderer, (origin, direction), true) {
         consider(distance, entity);
     }
     let marked = world
@@ -224,7 +225,8 @@ pub fn surface_past(
     skip: &[Entity],
 ) -> Option<Vec3> {
     let ray = camera.ray(point);
-    let hits = mesh_hits(world, renderer, ray).into_iter().filter(|(_, _, obj)| !skip.contains(obj));
+    // Not on top of grass and plants, but on the ground among them.
+    let hits = mesh_hits(world, renderer, ray, false).into_iter().filter(|(_, _, obj)| !skip.contains(obj));
     let nearest = hits.min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((_, hit, _)) = nearest {
         return Some(hit);
@@ -235,7 +237,13 @@ pub fn surface_past(
 }
 
 /// Each mesh a ray enters, by its box: how far along the ray, where, and its Obj.
-fn mesh_hits(world: &World, renderer: &Renderer, (origin, direction): (Vec3, Vec3)) -> Vec<(f32, Vec3, Entity)> {
+/// With `plants`, each plant of a Foliage too, by its own box, for its Obj.
+fn mesh_hits(
+    world: &World,
+    renderer: &Renderer,
+    (origin, direction): (Vec3, Vec3),
+    plants: bool,
+) -> Vec<(f32, Vec3, Entity)> {
     let meshes = world
         .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
         .without::<EditorOnly>()
@@ -263,6 +271,22 @@ fn mesh_hits(world: &World, renderer: &Renderer, (origin, direction): (Vec3, Vec
         let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
         for (part, min, max) in model.part_boxes(renderer) {
             try_box(entity, obj * part, (min, max));
+        }
+    }
+    let foliage = world
+        .query_ref::<(Entity, &Foliage, &Transform, Option<&WorldTransform>)>()
+        .without::<EditorOnly>()
+        .without::<Destroying>();
+    for (entity, foliage, transform, placed) in foliage.into_iter().filter(|_| plants) {
+        let Some(bounds) = renderer.mesh_bounds(foliage.mesh) else { continue };
+        let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
+        for plant in foliage.plants.iter() {
+            let local = Mat4::from_scale_rotation_translation(
+                Vec3::splat(plant.scale),
+                Quat::from_rotation_y(plant.yaw),
+                Vec3::from(plant.position),
+            );
+            try_box(entity, obj * local, bounds);
         }
     }
     hits

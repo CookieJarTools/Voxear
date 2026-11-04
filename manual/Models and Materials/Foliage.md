@@ -48,3 +48,5 @@ A view draws up to 65,536 meshes, Objs and plants together. Plants are counted o
 
 > [!NOTE]
 > Click a Foliage's Obj in the Hierarchy to select it: clicking a plant in the Scene view does not select it yet.
+
+Clicking a plant in the Scene view selects its Foliage's Obj. Something dragged into the Scene view over plants lands on the ground among them, not on top of them.

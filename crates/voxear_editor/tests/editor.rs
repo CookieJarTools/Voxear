@@ -6540,3 +6540,37 @@ fn an_asset_field_pings_its_file_in_every_project_panel_not_locked() {
         assert_eq!(editor.pinged_in_projects()[0].as_deref(), Some("Models/Pyramid.gltf"), "{field} pings its model");
     }
 }
+
+#[test]
+fn a_plant_picks_its_foliage_and_things_dropped_land_among_plants() {
+    use voxear_editor::scene_tools::{Markers, pick, surface_at};
+    use voxear_render::{Foliage, Plant, Primitive};
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let material = renderer.add_material(&voxear_render::MaterialDesc::default()).unwrap();
+    let camera = editor.scene_camera().unwrap();
+    // A row of tall plants a few metres in front of the Scene view's camera, standing on the ground.
+    let ahead = camera.position + camera.forward * 6.0;
+    let base = Vec3::new(ahead.x, 0.0, ahead.z);
+    let plants: Vec<Plant> =
+        (-2..=2).map(|i| Plant { position: [i as f32 * 0.6, 1.0, 0.0], yaw: 0.0, scale: 0.4 }).collect();
+    let foliage = Foliage {
+        mesh: cube,
+        material,
+        plants: std::sync::Arc::new(plants),
+        draw_distance: 50.0,
+        fade_distance: 2.0,
+        shadow_distance: 10.0,
+        healthy_color: [1.0; 3],
+        dry_color: [1.0; 3],
+        color_spread: 8.0,
+    };
+    let field = editor.game.engine.world.spawn((Name("Field".into()), foliage, Transform::from_position(base)));
+    frame(&mut editor, &mut renderer);
+    let camera = editor.scene_camera().unwrap();
+    let on_plant = camera.project(base + Vec3::Y).expect("the plants are in view");
+    let markers = Markers { lights: false, cameras: false, sounds: false, colliders: false };
+    assert_eq!(pick(&editor.game.engine.world, &renderer, &camera, on_plant, markers), Some(field), "a plant picks its Foliage");
+    let landing = surface_at(&editor.game.engine.world, &renderer, &camera, on_plant).expect("somewhere to land");
+    assert!(landing.y.abs() < 0.05, "on the ground among the plants, not on top of them: {landing}");
+}

@@ -480,7 +480,7 @@
 }
 
 /* An Inspector's padlock, lit while it is locked to what it shows. */
-.inspector-lock:checked {
+.inspector-lock:checked, .panel-lock:checked {
     color: var(--vx-accent);
     background-color: var(--vx-accent-soft);
 }

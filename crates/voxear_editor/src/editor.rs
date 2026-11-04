@@ -1118,7 +1118,7 @@ impl Editor {
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
             AssetAction::BrowseStandsOn { level, anchor } => self.browse_stands_on(&level, anchor),
             AssetAction::DropStandsOn { level, source } => self.drop_stands_on(&level, &source, renderer),
-            AssetAction::Ping(path) => self.project.ping(&mut self.ui, &path),
+            AssetAction::Ping(path) => self.ping_asset(&path),
             AssetAction::Listen(path) => {
                 if let Err(error) = self.game.audio.preview(&mut self.game.content, &path) {
                     self.notify(&format!("Could not play {path}: {error:#}"));
@@ -1725,7 +1725,7 @@ impl Editor {
         if let Some(asset) = result.ping_asset {
             let db = self.game.content.db();
             let path = asset.parse().ok().and_then(|guid| db.get(guid)).map_or(asset.clone(), |e| e.path.clone());
-            self.project.ping(&mut self.ui, &path);
+            self.ping_asset(&path);
         }
     }
 
@@ -2139,6 +2139,18 @@ impl Editor {
         used
     }
 
+    /// Lights an asset for a moment in every Project panel not locked,
+    /// opening the folder it is in, as clicking a field naming it does.
+    /// `reference` is its path, or its GUID or any reference to it or to a
+    /// part of it, such as a model's mesh.
+    pub fn ping_asset(&mut self, reference: &str) {
+        let path = props::path_of(&self.game, reference).unwrap_or_else(|| reference.to_string());
+        let panels = std::iter::once(&mut self.project).chain(self.extra_projects.iter_mut().map(|extra| extra.project_mut()));
+        for project in panels.filter(|project| !project.is_locked()) {
+            project.ping(&mut self.ui, &path);
+        }
+    }
+
     /// Pings what a reference of `entity` points at, as Unity's object fields
     /// do: an Obj in the Hierarchy, or an asset in the Project panel. With
     /// `select`, an Obj is selected instead, as a double click does.
@@ -2147,18 +2159,13 @@ impl Editor {
         let target = match prop {
             Prop::Field { behaviour, path } => fields::target(world, self.inspector.types(), entity, behaviour, path),
             Prop::LodObj(..) => props::obj_target(world, entity, prop).map(fields::Target::Obj),
-            // A mesh or material by its path, when it is an asset of the project's.
-            _ => match props::get(&self.game, self.inspector.types(), entity, prop) {
-                Some(props::Value::Asset(path)) if path.contains('/') || path.contains('.') => {
-                    Some(fields::Target::Asset(path))
-                }
-                _ => None,
-            },
+            // A mesh, material or other asset of the project's, by its file.
+            _ => props::asset_path(&self.game, entity, prop).map(fields::Target::Asset),
         };
         match target {
             Some(fields::Target::Obj(obj)) if select => self.select(Some(obj)),
             Some(fields::Target::Obj(obj)) => self.ping_obj(obj),
-            Some(fields::Target::Asset(path)) => self.project.ping(&mut self.ui, &path),
+            Some(fields::Target::Asset(path)) => self.ping_asset(&path),
             None => {}
         }
     }

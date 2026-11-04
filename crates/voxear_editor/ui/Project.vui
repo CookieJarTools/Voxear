@@ -2,6 +2,7 @@
      rename bar above them. Every Project panel is built from this, the first and any opened from a window's menu. -->
 <vui>
     <Panel class="panel-actions">
+        <Button name="project-lock" class="icon-button panel-lock"><Icon icon="lock" /></Button>
         <Button class="icon-button"><Icon icon="plus" /></Button>
     </Panel>
     <SplitView name="project-split" class="fill project-split" size="200">

@@ -5,7 +5,8 @@
 //! same frame in turn: while one does, it is the editor's `project`, so what
 //! it asks (an item shown in the Inspector, a file renamed, a model opened
 //! out) goes to that one, and files that came, went or were renamed show in
-//! every one. A ping, and showing where a file is, go to the first. One
+//! every one. A ping goes to every one not locked; showing where a file is
+//! goes to the first. One
 //! opened from the menu goes for good when it closes. Each is built from
 //! Project.vui.
 
@@ -27,6 +28,12 @@ const MARKUP: &str = include_str!("../../ui/Project.vui");
 pub(super) struct ExtraProject {
     panel: String,
     project: ProjectView,
+}
+
+impl ExtraProject {
+    pub(super) fn project_mut(&mut self) -> &mut ProjectView {
+        &mut self.project
+    }
 }
 
 /// The markup every Project panel's elements are found in, built in a dock
@@ -74,6 +81,11 @@ impl Editor {
         self.extra_projects.remove(index);
         self.ui.remove_dock_panel(self.nodes.dock, panel);
         true
+    }
+
+    /// What each Project panel has lit by a ping, the first first.
+    pub fn pinged_in_projects(&self) -> Vec<Option<String>> {
+        std::iter::once(&self.project).chain(self.extra_projects.iter().map(|extra| &extra.project)).map(ProjectView::pinged).collect()
     }
 
     /// How many Project panels there are, the first included.

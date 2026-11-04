@@ -522,6 +522,10 @@ pub struct ProjectView {
     ping_left: f32,
     /// The slider for how big the tiles are, the smallest being rows.
     size: NodeId,
+    /// Its padlock, and whether it is locked: a locked panel stays on its
+    /// folder, and pings pass it by.
+    lock: NodeId,
+    locked: bool,
 }
 
 impl ProjectView {
@@ -533,6 +537,8 @@ impl ProjectView {
         let (path, count) = (find(ui, "project-path"), find(ui, "project-count"));
         let (rename_bar, rename_field) = (find(ui, "project-rename"), find(ui, "project-rename-field"));
         let size = find(ui, "project-size");
+        let lock = find(ui, "project-lock");
+        ui.set_tooltip(lock, "Lock: pings leave this panel on its folder", None);
         ui.set_visible(rename_bar, false);
         let contents = Rc::new(RefCell::new(scan(name, root, db)));
         let mounts = db.mounts().clone();
@@ -560,6 +566,8 @@ impl ProjectView {
             focus_rename: false,
             menu: None,
             ping_left: 0.0,
+            lock,
+            locked: false,
             size,
         };
         view.open(ui, 0);
@@ -570,6 +578,10 @@ impl ProjectView {
     /// is. Returns what the editor is asked to do.
     pub fn update(&mut self, ui: &mut Ui) -> Vec<ProjectEvent> {
         let mut events = Vec::new();
+        if ui.clicked(self.lock) {
+            self.locked = !self.locked;
+            ui.set_checked(self.lock, self.locked);
+        }
         // The panel picks folders itself, opening them; only another one
         // picked in the tree is shown in the Inspector.
         if ui.selection_changed(self.folder_tree)
@@ -977,6 +989,17 @@ impl ProjectView {
         }
         ui.scroll_to_index(self.files, index.checked_div(columns).unwrap_or(index));
         ui.refresh_list(self.files);
+    }
+
+    /// Whether its padlock is on, so pings pass it by.
+    pub fn is_locked(&self) -> bool {
+        self.locked
+    }
+
+    /// The file lit by a ping, while it is.
+    pub fn pinged(&self) -> Option<String> {
+        let contents = self.contents.borrow();
+        contents.pinged.and_then(|entry| contents.entry_path(entry))
     }
 
     /// Opens the folder a file is in and lights the file for a moment,

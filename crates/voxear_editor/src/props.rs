@@ -2237,6 +2237,32 @@ fn guid_label(game: &Game, guid: Option<voxear_assets::AssetGuid>) -> String {
     }
 }
 
+/// The project's file an asset reference is to: a path, a GUID, or either
+/// with a part (`Sponza.gltf#mesh0.0`), whose file is the model's.
+pub fn path_of(game: &Game, reference: &str) -> Option<String> {
+    let asset = reference.split('#').next().unwrap_or(reference);
+    let guid = game.content.parse(asset).ok().and_then(|r| r.guid())?;
+    game.content.db().get(guid).map(|entry| entry.path.clone())
+}
+
+/// The project's file a prop of `entity` names, when it names one: a mesh's
+/// model or file, a material's file, a sound, a cookie or an IES profile.
+pub fn asset_path(game: &Game, entity: Entity, prop: &Prop) -> Option<String> {
+    let world = &game.engine.world;
+    match prop {
+        Prop::Mesh => path_of(game, &game.content.mesh_ref(world.get::<MeshRenderer>(entity)?.mesh)?.to_string()),
+        Prop::Material => match game.content.material_source(world.get::<MeshRenderer>(entity)?.material)? {
+            MaterialSource::Asset(reference) => path_of(game, &reference.to_string()),
+            MaterialSource::Inline(_) => None,
+        },
+        // The rest show their file's path.
+        _ => match get(game, &ScriptTypes::default(), entity, prop)? {
+            Value::Asset(path) => game.content.db().guid_of(&path).map(|_| path),
+            _ => None,
+        },
+    }
+}
+
 /// A season's table in a Seasons, as scene files write it.
 fn season_key(season: Season) -> &'static str {
     match season {

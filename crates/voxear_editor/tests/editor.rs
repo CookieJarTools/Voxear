@@ -6466,3 +6466,54 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     assert!(!editor.ui.is_checked(fog), "the fog's toggle shows it off");
     shot(&mut renderer, "lighting-inspector.png");
 }
+
+#[test]
+fn an_asset_field_pings_its_file_in_every_project_panel_not_locked() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    for name in ["Brick", "Moss"] {
+        std::fs::write(dir.path().join(format!("Materials/{name}.material")), "color = [0.7, 0.3, 0.2]\n").unwrap();
+    }
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    editor.add_project_panel("project");
+    frame(&mut editor, &mut renderer);
+
+    // By its GUID, as a field holds it: both panels open its folder and light it.
+    let brick = editor.game.content.db().guid_of("Materials/Brick.material").unwrap();
+    editor.ping_asset(&brick.to_string());
+    frame(&mut editor, &mut renderer);
+    let both = Some("Materials/Brick.material".to_string());
+    assert_eq!(editor.pinged_in_projects(), [both.clone(), both.clone()], "lit in both Project panels");
+
+    // A locked panel stays as it is.
+    let mut locks = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "panel-lock", &mut locks);
+    assert_eq!(locks.len(), 2, "every Project panel has a padlock");
+    click(&mut editor.ui, locks[1]);
+    frame(&mut editor, &mut renderer);
+    editor.ping_asset("Materials/Moss.material");
+    frame(&mut editor, &mut renderer);
+    let pinged = editor.pinged_in_projects();
+    assert_eq!(pinged.iter().filter(|p| p.as_deref() == Some("Materials/Moss.material")).count(), 1, "{pinged:?}");
+    assert!(pinged.contains(&both), "the locked panel keeps what it showed: {pinged:?}");
+
+    // A click on an Obj's Material or Mesh field pings the model they come from, as Unity's object fields do.
+    let world = &editor.game.engine.world;
+    let pyramid = world
+        .query_ref::<(voxear_ecs::Entity, &Name, &voxear_render::MeshRenderer)>()
+        .into_iter()
+        .find(|(_, name, _)| name.0 == "Pyramid")
+        .map(|(entity, ..)| entity)
+        .expect("Hello's pyramid");
+    editor.select(Some(pyramid));
+    frame(&mut editor, &mut renderer);
+    for field in ["Material", "Mesh"] {
+        let picker = first_with(&editor.ui, prop_row(&editor.ui, field).unwrap(), "value-picker").unwrap();
+        click(&mut editor.ui, picker);
+        frame(&mut editor, &mut renderer);
+        assert_eq!(editor.pinged_in_projects()[0].as_deref(), Some("Models/Pyramid.gltf"), "{field} pings its model");
+    }
+}

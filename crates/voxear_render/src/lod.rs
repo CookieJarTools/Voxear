@@ -3,7 +3,10 @@
 //! between them per instance with no extra state. Each LOD is split into
 //! meshlets as it is made (see [`meshlets`](crate::meshlets)).
 
-use meshopt::{SimplifyOptions, VertexDataAdapter, optimize_vertex_cache, simplify_with_attributes_and_locks};
+use meshopt::{
+    SimplifyOptions, VertexDataAdapter, optimize_vertex_cache, simplify_scale, simplify_sloppy,
+    simplify_with_attributes_and_locks,
+};
 
 use crate::{
     mesh::{MeshData, Vertex},
@@ -21,6 +24,14 @@ const REDUCTION: f32 = 0.5;
 /// Stop when a step removes less than this fraction of triangles: the mesh has
 /// stopped simplifying without visible damage.
 const MIN_PROGRESS: f32 = 0.15;
+
+/// Where simplification that keeps the mesh's seams whole falls short of a
+/// LOD's target by this much, or its error grows this many times over the
+/// last LOD's, the coarse LOD is made by sloppy simplification instead,
+/// which ignores seams, as meshoptimizer advises for the coarsest LODs: a
+/// sphere's seam otherwise stops it at 512 triangles.
+const STALLED: f32 = 1.25;
+const ERROR_JUMP: f32 = 8.0;
 
 /// How strongly normals hold vertices in place, relative to position error.
 const NORMAL_WEIGHT: f32 = 0.5;
@@ -117,10 +128,24 @@ pub fn build_lods(mesh: &MeshData) -> Vec<Lod> {
             SimplifyOptions::ErrorAbsolute,
             Some(&mut error),
         );
+        let last_error = lods.last().map_or(0.0, |lod| lod.error);
+        let stalled = indices.len() as f32 > target as f32 * STALLED;
+        let jumped = last_error > 0.0 && error > last_error * ERROR_JUMP;
+        let (indices, error) = if stalled || jumped {
+            let mut sloppy_error = 0.0;
+            let sloppy = simplify_sloppy(&mesh.indices, &adapter, target, f32::MAX, Some(&mut sloppy_error));
+            // Sloppy measures its error relative to the mesh's size.
+            let sloppy_error = sloppy_error * simplify_scale(&adapter);
+            let better = !sloppy.is_empty() && (sloppy.len() < indices.len() || sloppy_error < error);
+            if better { (sloppy, sloppy_error) } else { (indices, error) }
+        } else {
+            (indices, error)
+        };
         if indices.is_empty() || indices.len() as f32 > previous as f32 * (1.0 - MIN_PROGRESS) {
             break;
         }
-        lods.push(Lod::new(&indices, error, &mesh.vertices));
+        // Each LOD at least as far off as the last, as picking a LOD by its error expects.
+        lods.push(Lod::new(&indices, error.max(last_error), &mesh.vertices));
     }
     lods
 }
@@ -164,6 +189,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_seamed_sphere_still_simplifies_to_a_few_hundred_triangles_and_less() {
+        let lods = build_lods(&MeshData::sphere(64, 32));
+        let coarsest = lods.last().unwrap().indices.len() / 3;
+        assert!(coarsest < 150, "past its seam, by sloppy simplification: {coarsest} triangles");
+        assert!(lods.windows(2).all(|pair| pair[1].error >= pair[0].error), "each LOD as far off as the last or more");
+    }
+
+    #[test]
     fn small_meshes_get_one_lod() {
         assert_eq!(build_lods(&MeshData::cube()).len(), 1);
     }
@@ -181,3 +214,4 @@ mod tests {
         assert!(lods.iter().all(|lod| lod.indices.iter().all(|&i| (i as usize) < sphere.vertices.len())));
     }
 }
+

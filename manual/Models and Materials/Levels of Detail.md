@@ -8,6 +8,8 @@ Something far away covers only a few pixels on screen, so drawing it in full det
 
 Every model gets simpler copies of its meshes when it is imported, or uses the ones it comes with (see [[Models]]). The engine picks one for each Obj every frame, by how much detail would show at that size on screen, and fades between them so the change does not pop. There is nothing to set up.
 
+Each copy has about half the triangles of the one before, down to six levels. Where a mesh's seams, such as where its texture wraps round it, stop it simplifying neatly, its last levels are simplified more roughly, ignoring the seams: they are only ever drawn small, where the seams cannot be seen, and they keep a meadow of a thousand plants from drawing each one at hundreds of triangles.
+
 Select an Obj with a **Mesh Renderer** to see its mesh's levels in the Inspector, as a bar like a LOD Group's: a part for each level, the most detailed on the left, with its triangles and where it ends as a share of the screen. The level the Scene view draws now is outlined, and the camera mark above shows how much of the screen the mesh covers from there; while the game plays, it is the game's camera.
 
 - **Click** a level to move the Scene view to where that level is drawn, looking at the Obj.

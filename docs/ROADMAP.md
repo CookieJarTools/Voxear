@@ -1001,6 +1001,15 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
     (**Sky light**, a one-thread pass) instead of five sky lookups a pixel: shading 1.64 to 1.44 ms.
   - Foliage's leaf shadow uses the hard shadow, and surfaces turned from the sun skip the shadow.
   - Fog's light from the probes finds each probe's visibility once for its looks up and down: 0.22 to 0.15 ms.
+  - LODs past a mesh's seams: where meshoptimizer's attribute-aware simplification stalls (over 1.25 times its
+    target) or its error jumps eightfold, the LOD is made by sloppy simplification instead (error scaled to
+    absolute by `simplify_scale`), each LOD's error held at least the last's. The built-in sphere now goes 4,096
+    down to 109 triangles rather than stopping at 512; the meadow's meshlets fell from 40,000 to 8,000, the depth
+    prepass 0.35 to 0.11 ms, shading 1.44 to 1.06 ms. `COOKED_VERSION` 5. The valley's frame: 3.1 ms at 720p,
+    4.2 ms at 1080p, 5.8 ms at 1440p.
+  - Measured and left: GI sampling in shading is 0.46 ms at 1080p, near what eight probes a pixel cost; reading it
+    at half resolution would lose normal maps' detail in shade. The depth prepass, which ambient occlusion,
+    contact shadows and reflections bring, saves 0.75 ms of shading overdraw on its own.
   - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
     by distance.
   - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the

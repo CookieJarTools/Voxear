@@ -25,8 +25,9 @@ use crate::{
 
 /// 3: the GPU data moved into one payload, GDeflate-compressed in tiles, and
 /// every texture carries its whole mip chain. 4: each LOD's indices are in
-/// meshlet order, and its meshlets ship in the payload.
-pub const COOKED_VERSION: u32 = 4;
+/// meshlet order, and its meshlets ship in the payload. 5: coarse LODs past
+/// a mesh's seams, by sloppy simplification (see `lod`).
+pub const COOKED_VERSION: u32 = 5;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed

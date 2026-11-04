@@ -1044,7 +1044,9 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
     by distance.
   - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the
     tree is.
-  - Shadows for foliage drawn from cheaper LODs, and none for grass beyond a distance.
+  - ~~Shadows for foliage drawn from cheaper LODs~~ done: plants (a Foliage's, or anything with a foliage material)
+    pick their shadow's LOD at four times the error (`PLANT_SHADOW_COARSER`); a Foliage's shadow distance already
+    leaves far grass without one. The valley's shadows 0.25 to 0.19 ms, their meshlets 6,700 to 3,000.
 - ~~**Wind:**~~ done: a Wind Zone component (strength, gusts, gust size and speed, turbulence) blowing along its
   Obj's +Z over the level. `shaders/wind.slang` moves every vertex in the forward, depth, shadow and mesh-shader
   passes, and last frame's for motion vectors: plants bend from their pivot up by height (from the mesh's

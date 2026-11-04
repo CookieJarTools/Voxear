@@ -158,6 +158,9 @@ void emitFading(Frame* frame, uint list, uint instance, Mesh mesh, uint selected
     count(STAT_FADE_DRAWS);
 }
 
+// How many times the error a plant's shadow may show, against its own drawing.
+static const float PLANT_SHADOW_COARSER = 4.0;
+
 void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 center, float radius, float scale)
 {
     // A caster only a few of the cascade's texels across casts no shadow anyone would see there.
@@ -182,7 +185,11 @@ void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 cen
         }
     }
     Instance drawn = buffers()->instances[instance];
-    uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, 1.0 / frame->cascadeTexel[cascade], frame->lodThreshold);
+    // A plant's shadow is soft and broken up by its leaves, so a simpler LOD casts it as well: plants of a
+    // Foliage, and anything drawn with a foliage material.
+    bool plant = drawn.fade.y > 0.0 || (buffers()->materials[drawn.material].flags & MATERIAL_FOLIAGE) != 0;
+    float threshold = frame->lodThreshold * (plant ? PLANT_SHADOW_COARSER : 1.0);
+    uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, 1.0 / frame->cascadeTexel[cascade], threshold);
     emit(LIST_SHADOW + cascade, instance, mesh, lod, 0);
     count(STAT_SHADOW_DRAWS);
 }

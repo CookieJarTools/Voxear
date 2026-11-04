@@ -912,6 +912,13 @@ Done so far:
 - **Voxel GI removed:** the ray-traced probes light every scene on every GPU, so the voxel clipmap, its radiance
   cache and their passes are gone. `[post.global_illumination] probe_spacing` (1 m) replaces `voxel_size`, and
   `ray_tracing` is gone. Fog, reflections and exposure's warm-up read the probes.
+- **Glass:** a material setting, `glass = true`, with `ior`; `builtin:glass` is clear glass in every project.
+  Glass instances are sorted after the opaque ones, past what culling, shadows and the GI's rays see, farthest
+  first. After the sky, the picture is copied into an image with seven mips, and each pane is drawn over it: what
+  lies behind, moved by the normal's tilt in view, blurred through the mips by roughness with a ring of samples,
+  tinted by the colour and dimmed by Fresnel, plus the surroundings, the sun and the lamps reflected. The editor's
+  material inspector has Glass and IOR, and the Material menu lists the built-in Glass. GPU tests: clear glass
+  shows what lies behind it, tinted glass colours it, rough glass blurs it.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

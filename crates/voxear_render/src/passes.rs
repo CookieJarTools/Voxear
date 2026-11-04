@@ -27,7 +27,7 @@
 use voxear_rhi::{StorageImageId, TextureId, vk};
 
 use crate::{
-    ambient_occlusion, atmosphere, ddgi,
+    ambient_occlusion, atmosphere, ddgi, glass,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
         LIST_SHADOW, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
@@ -100,6 +100,8 @@ pub struct Frame {
     pub atmosphere: Option<atmosphere::Tables>,
     /// The volumetric fog's volumes, filled once the opaque passes are done.
     pub volume: Option<volumetric::Volume>,
+    /// The glass in view, drawn after the sky.
+    pub glass: Option<glass::Glass>,
     /// The GI's probes, whose rays are traced once the opaque passes are
     /// done; shading reads last frame's.
     pub probes: Option<ddgi::Probes>,
@@ -342,6 +344,14 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         begin_rendering(ctx, extent, &color, Some(&depth));
         fullscreen(ctx, pipelines.sky, &push);
     });
+
+    if let Some(glass) = frame.glass.clone() {
+        let mut sampled: Vec<ImageId> = targets.shadows.into_iter().chain(tables.iter().copied()).collect();
+        sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
+        let index_buffer = draws.index_buffer;
+        let glass_targets = glass::GlassTargets { hdr, depth, sampled, clusters: draws.clusters, index_buffer };
+        glass::record(fg, (pipelines, push), glass, glass_targets);
+    }
 
     if frame.edges {
         let images = [(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::DepthRead)];

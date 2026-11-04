@@ -414,6 +414,11 @@ fn subfolders(every: &[Choice], folder: &str) -> Vec<Choice> {
     found
 }
 
+/// Whether a reference names one of the materials every project has.
+fn builtin_material(reference: &str) -> bool {
+    crate::props::BUILTIN_MATERIALS.iter().any(|(_, known)| *known == reference)
+}
+
 /// The choices as the picker lists them: an Obj with the icon the
 /// Hierarchy gives it and its scene, an asset with its kind's icon and its
 /// folder, and a built-in mesh as built in.
@@ -427,6 +432,7 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 // A key, beside its text in the language the game is in.
                 Pick::Key(Some(key)) => ("globe", key_text(game, key)),
                 Pick::Obj(Some(entity)) => obj(game, *entity),
+                Pick::Asset(Some(reference)) if builtin_material(reference) => ("material", "Built in".into()),
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => ("cube", "Built in".into()),
                 // A part of a model, as a mesh, beside the model it is in.
                 Pick::Asset(Some(reference)) if reference.contains('#') => {
@@ -440,6 +446,7 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 _ => label,
             };
             let preview = match &pick {
+                Pick::Asset(Some(reference)) if builtin_material(reference) => None,
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => Some(reference.clone()),
                 Pick::Asset(Some(path)) => {
                     let db = game.content.db();

@@ -184,6 +184,8 @@ struct Meshlet
 static const uint MATERIAL_NORMAL_MAP = 1;
 // Lit as leaves are: wrapped, through the leaf, and with a rim (shading.slang's foliageLight).
 static const uint MATERIAL_FOLIAGE = 2;
+// Glass, drawn after the opaque scene over what lies behind it (glass.slang).
+static const uint MATERIAL_GLASS = 4;
 
 struct Material
 {
@@ -198,6 +200,9 @@ struct Material
     uint flags;
     float normalScale;
     float alphaCutoff;
+    // Glass's index of refraction.
+    float ior;
+    float3 pad;
 };
 
 struct Instance

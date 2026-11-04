@@ -88,6 +88,9 @@ pub struct Pipelines {
     pub bloom_down: vk::Pipeline,
     pub bloom_up: vk::Pipeline,
     pub exposure: vk::Pipeline,
+    /// Glass: the copy of the picture it is drawn over, and its panes.
+    pub glass_copy: vk::Pipeline,
+    pub glass: vk::Pipeline,
     /// Writes the LDR intermediate, for a finishing pass to read.
     pub composite_ldr: vk::Pipeline,
     /// Writes the output directly, when nothing follows.
@@ -130,6 +133,7 @@ impl Pipelines {
             module("ambient_occlusion")?,
             module("volumetric")?,
             module("ddgi_software")?,
+            module("glass")?,
         ];
         let [
             cull,
@@ -146,6 +150,7 @@ impl Pipelines {
             occlusion,
             volumetric,
             ddgi_software,
+            glass,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -270,6 +275,13 @@ impl Pipelines {
             bloom_down: fullscreen("Bloom down", c"bloomDownFragment", bloom, Blend::Opaque)?,
             bloom_up: fullscreen("Bloom up", c"bloomUpFragment", bloom, Blend::Additive)?,
             exposure: create_compute_pipeline(gpu, layout, "Exposure", exposure, c"exposureMain")?,
+            glass_copy: create_compute_pipeline(gpu, layout, "Glass copy", glass, c"glassCopyMain")?,
+            glass: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Glass", glass, c"glassVertex", c"glassFragment")
+            })?,
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
@@ -352,6 +364,8 @@ impl Pipelines {
             self.bloom_down,
             self.bloom_up,
             self.exposure,
+            self.glass_copy,
+            self.glass,
             self.composite_ldr,
             self.composite,
             self.finish,

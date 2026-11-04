@@ -69,6 +69,9 @@ pub struct GpuMeshlet {
 pub const MATERIAL_NORMAL_MAP: u32 = 1;
 /// Lit as leaves are: wrapped, through the leaf, and with a rim.
 pub const MATERIAL_FOLIAGE: u32 = 2;
+/// Glass: drawn after the opaque scene, over what lies behind it, which it
+/// bends, tints and frosts, reflecting its surroundings.
+pub const MATERIAL_GLASS: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -85,6 +88,9 @@ pub struct GpuMaterial {
     pub normal_scale: f32,
     /// Zero for opaque; otherwise pixels below this alpha are discarded.
     pub alpha_cutoff: f32,
+    /// Glass's index of refraction: how strongly it bends and reflects.
+    pub ior: f32,
+    pub _pad: [f32; 3],
 }
 
 #[repr(C)]
@@ -633,7 +639,7 @@ mod tests {
     fn layouts_match_the_shaders() {
         assert_eq!(size_of::<GpuMesh>(), 32 + 24 * MAX_LODS);
         assert_eq!(size_of::<GpuMeshlet>(), 48);
-        assert_eq!(size_of::<GpuMaterial>(), 64);
+        assert_eq!(size_of::<GpuMaterial>(), 80);
         // Three matrices, ids and flags, then where its LODs end.
         assert_eq!(size_of::<GpuInstance>(), 192 + 32);
         assert_eq!(size_of::<GpuLight>(), 80);

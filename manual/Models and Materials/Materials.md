@@ -47,6 +47,24 @@ Turn on **Foliage** for leaves, grass and anything else thin that light shines t
 
 Only the sun lights foliage this way. A leaf's shaded side takes the light of its sunlit side, so a leaf in a canopy's shade stays in shade, but a leaf on its own lights up from behind.
 
+## Glass
+
+Turn on **Glass** for windows, bottles, lenses and anything else you see through. What lies behind glass shows through it:
+
+- The **Colour** tints it: white is clear, green is bottle glass.
+- **Roughness** frosts it: near 0 is clear, 0.5 and up blurs what lies behind to soft shapes, as frosted glass does.
+- Its surroundings and the lights reflect in it, faintly head on and strongly at a grazing angle, as real glass does.
+- A normal map ripples what you see through it, as old window glass does.
+
+Glass casts no shadow, and sunlight and bounced light pass through it, so a room behind a window is lit as if the window were open.
+
+Every project has a clear glass material built in: pick **Glass** in a Mesh Renderer's Material menu, or write `material = "builtin:glass"` in a scene.
+
+**IOR** (index of refraction) sets how strongly glass bends what lies behind it and how much it reflects: 1.5 suits window glass, 1.33 water and 2.4 diamond.
+
+> [!NOTE]
+> Glass in front of other glass does not show the glass behind it. Make each mesh's glass face outwards: you see glass only from the side its faces point to.
+
 ## The material file
 
 A material is a small text file:
@@ -63,6 +81,7 @@ normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 - `color` is red, green and blue from 0 to 1, as a colour picker shows them.
 - `emissive` can go above 1 for a brighter glow.
 - `foliage = true` lights it as leaves are, as above.
+- `glass = true` makes it glass, as above, and `ior` sets its index of refraction, 1.5 unless written.
 - `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.
 
 A model's own materials, with their pictures, can be written out as material files to edit. See [[Models]].

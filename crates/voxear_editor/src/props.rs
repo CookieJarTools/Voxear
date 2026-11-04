@@ -32,6 +32,9 @@ use crate::fields::{self, Pick, Step};
 /// The meshes every project has, as the Mesh menu lists them first.
 const BUILTIN_MESHES: [(&str, &str); 3] =
     [("Cube", "builtin:cube"), ("Sphere", "builtin:sphere"), ("Plane", "builtin:plane")];
+/// The materials every project has, as the Material menu lists them after
+/// the default.
+pub(crate) const BUILTIN_MATERIALS: [(&str, &str); 1] = [("Glass", "builtin:glass")];
 const LIGHT_KINDS: [&str; 6] = ["Directional", "Point", "Spot", "Rectangle", "Disc", "Tube"];
 /// The light kinds in `LIGHT_KINDS`'s order.
 const LIGHT_KIND_ORDER: [LightKind; 6] =
@@ -1103,8 +1106,12 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         }
         Prop::Material => {
             let source = game.content.material_source(world.get::<MeshRenderer>(entity)?.material)?;
+            let builtin = |reference: &voxear_assets::AssetRef| {
+                BUILTIN_MATERIALS.iter().find(|(_, r)| *r == reference.to_string()).map(|(label, _)| label.to_string())
+            };
             Value::Asset(match source {
                 MaterialSource::Inline(data) if *data == default_material() => "Default".into(),
+                MaterialSource::Asset(reference) if builtin(reference).is_some() => builtin(reference).unwrap_or_default(),
                 MaterialSource::Asset(reference) => reference
                     .guid()
                     .and_then(|guid| game.content.db().get(guid))
@@ -1487,6 +1494,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         }
         Prop::Material => {
             let mut found = vec![("Default".to_string(), Pick::Asset(None))];
+            found.extend(BUILTIN_MATERIALS.iter().map(|(label, r)| (label.to_string(), Pick::Asset(Some(r.to_string())))));
             found.extend(material_assets(game).into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
             return found;
         }

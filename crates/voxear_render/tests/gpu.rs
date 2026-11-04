@@ -2542,3 +2542,90 @@ fn ray_traced_gi_bounces_the_colour_of_a_wall_the_camera_cannot_see() {
 fn software_rays_bounce_the_colour_of_a_wall_the_camera_cannot_see() {
     assert_floor_takes_the_hidden_walls_red(Bounce::Software, "wall behind software rays.png");
 }
+
+/// A red wall and a blue one side by side, meeting at the middle of the
+/// picture, seen from three metres off through a glass pane of `pane`'s
+/// material standing a metre and a half in front of them, or with no pane.
+fn glass_render(pane: Option<MaterialDesc>) -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -3.0))));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let pale = renderer.add_material(&MaterialDesc { base_color: [0.6, 0.6, 0.6, 1.0], ..MaterialDesc::default() }).unwrap();
+    let red = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    let blue = renderer.add_material(&MaterialDesc { base_color: [0.05, 0.1, 0.9, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let wall = |x: f32| Transform::new(Vec3::new(x, 2.0, 0.0), Quat::IDENTITY, Vec3::new(4.0, 4.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, red), wall(-2.0)));
+    world.spawn((MeshRenderer::new(cube, blue), wall(2.0)));
+    if let Some(desc) = pane {
+        let glass = renderer.add_material(&desc).unwrap();
+        let at = Transform::new(Vec3::new(0.0, 1.5, -1.5), Quat::IDENTITY, Vec3::new(2.0, 1.5, 0.02));
+        world.spawn((MeshRenderer::new(cube, glass), at));
+    }
+    // From behind the camera and above, lighting the walls' faces.
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// The average colour of a patch of the picture, `half` pixels each way
+/// round `centre`.
+fn patch_rgb(pixels: &[u8], centre: (u32, u32), half: u32) -> [i32; 3] {
+    let points: Vec<[i32; 3]> = (centre.1 - half..=centre.1 + half)
+        .flat_map(|y| (centre.0 - half..=centre.0 + half).map(move |x| (x, y)))
+        .map(|at| rgb_at(pixels, at))
+        .collect();
+    let count = points.len() as i32;
+    [0, 1, 2].map(|c| points.iter().map(|p| p[c]).sum::<i32>() / count)
+}
+
+/// Clear glass, as the built-in material is.
+fn clear_glass() -> MaterialDesc {
+    MaterialDesc { roughness: 0.05, glass: true, ..MaterialDesc::default() }
+}
+
+#[test]
+fn clear_glass_shows_what_lies_behind_it() {
+    let (Some(open), Some(glazed)) = (glass_render(None), glass_render(Some(clear_glass()))) else { return };
+    keep_image("glass none.png", &open);
+    keep_image("glass clear.png", &glazed);
+    // Through the pane's middle, left of the seam: the red wall, much as without the pane.
+    let (before, after) = (patch_rgb(&open, (250, 180), 6), patch_rgb(&glazed, (250, 180), 6));
+    assert!(after[0] > after[1] + 60 && after[0] > after[2] + 60, "the red wall shows through: {after:?}");
+    let apart = (0..3).map(|c| (after[c] - before[c]).abs()).max().unwrap_or(0);
+    assert!(apart < 30, "and looks much as it does without the pane: {after:?} from {before:?}");
+}
+
+#[test]
+fn tinted_glass_colours_what_lies_behind_it() {
+    let green = MaterialDesc { base_color: [0.3, 1.0, 0.3, 1.0], ..clear_glass() };
+    let (Some(clear), Some(tinted)) = (glass_render(Some(clear_glass())), glass_render(Some(green))) else { return };
+    keep_image("glass green.png", &tinted);
+    let (before, after) = (patch_rgb(&clear, (250, 180), 6), patch_rgb(&tinted, (250, 180), 6));
+    assert!(after[0] * 10 < before[0] * 8, "green glass takes red out: {after:?} from {before:?}");
+    let greener = |rgb: [i32; 3]| rgb[1] - rgb[0];
+    assert!(greener(after) > greener(before) + 30, "and leaves the green: {after:?} from {before:?}");
+}
+
+#[test]
+fn rough_glass_blurs_what_lies_behind_it() {
+    let frosted = MaterialDesc { roughness: 0.6, ..clear_glass() };
+    let (Some(clear), Some(rough)) = (glass_render(Some(clear_glass())), glass_render(Some(frosted))) else { return };
+    keep_image("glass frosted.png", &rough);
+    // How sharply red turns to blue across the seam, a few pixels either side of it.
+    let sharpness = |pixels: &[u8]| {
+        let (left, right) = (patch_rgb(pixels, (312, 180), 2), patch_rgb(pixels, (328, 180), 2));
+        (left[0] - right[0]).abs() + (left[2] - right[2]).abs()
+    };
+    let (sharp, soft) = (sharpness(&clear), sharpness(&rough));
+    assert!(soft * 2 < sharp, "frosted glass softens the seam: {soft} against {sharp}");
+}

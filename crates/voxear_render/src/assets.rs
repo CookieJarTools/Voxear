@@ -20,7 +20,7 @@ use crate::{
     alloc::{RangeAllocator, SlotAllocator},
     bvh::MeshHierarchies,
     cooked::{CookedModel, CookedTexture},
-    gpu::{GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_FOLIAGE, MATERIAL_NORMAL_MAP},
+    gpu::{GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_FOLIAGE, MATERIAL_GLASS, MATERIAL_NORMAL_MAP},
     lod::{Lod, LodInfo, MAX_LODS, build_lods},
     mesh::{MeshData, Primitive, Vertex},
     meshlets::MeshMeshlets,
@@ -61,6 +61,14 @@ pub struct MaterialDesc {
     /// Lit as leaves are: light wrapped round, through the leaf against the
     /// sun, and a rim of the sun's colour.
     pub foliage: bool,
+    /// Glass: what lies behind shows through it, tinted by the base colour,
+    /// bent a little, and blurred as roughness rises, with the surroundings
+    /// reflected in it, more at grazing angles. Glass casts no shadow, and
+    /// light passes it.
+    pub glass: bool,
+    /// Glass's index of refraction: 1.5 for window glass, higher bends and
+    /// reflects more (1.33 water, 2.4 diamond).
+    pub ior: f32,
 }
 
 impl Default for MaterialDesc {
@@ -77,6 +85,8 @@ impl Default for MaterialDesc {
             emissive_texture: None,
             alpha_cutoff: None,
             foliage: false,
+            glass: false,
+            ior: 1.5,
         }
     }
 }
@@ -173,6 +183,8 @@ pub struct Assets {
     space: [RangeAllocator; 5],
     mesh_slots: SlotAllocator,
     material_slots: SlotAllocator,
+    /// The glass materials, which are drawn apart from the rest.
+    glass: Vec<MaterialHandle>,
     mesh_ranges: HashMap<MeshHandle, MeshRanges>,
     /// The most meshlets any LOD of each mesh has, by its slot: the most one
     /// draw of it can turn into.
@@ -239,6 +251,7 @@ impl Assets {
             mesh_slots: SlotAllocator::new(MAX_MESHES as u32),
             mesh_bounds: HashMap::new(),
             material_slots: SlotAllocator::new(MAX_MATERIALS as u32),
+            glass: Vec::new(),
             mesh_ranges: HashMap::new(),
             most_meshlets: vec![0; MAX_MESHES as usize],
             textures: HashMap::new(),
@@ -707,13 +720,25 @@ impl Assets {
             normal_texture: texture(desc.normal_texture),
             emissive_texture: texture(desc.emissive_texture),
             flags: if desc.normal_texture.is_some() { MATERIAL_NORMAL_MAP } else { 0 }
-                | if desc.foliage { MATERIAL_FOLIAGE } else { 0 },
+                | if desc.foliage { MATERIAL_FOLIAGE } else { 0 }
+                | if desc.glass { MATERIAL_GLASS } else { 0 },
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),
+            ior: desc.ior.max(1.0),
+            _pad: [0.0; 3],
         };
+        self.glass.retain(|&glass| glass != handle);
+        if desc.glass {
+            self.glass.push(handle);
+        }
         let offset = u64::from(slot) * size_of::<GpuMaterial>() as u64;
         gpu.upload_buffer(&self.materials, offset, bytemuck::bytes_of(&material))?;
         Ok(())
+    }
+
+    /// Whether a material is glass, drawn after the opaque scene.
+    pub fn is_glass(&self, material: MaterialHandle) -> bool {
+        self.glass.contains(&material)
     }
 
     /// Frees a mesh once frames in flight are done with it. Built-in meshes
@@ -778,7 +803,10 @@ impl Assets {
                 }
             }
             Retiring::Space(space) => self.free_space(space),
-            Retiring::Material(material) => self.material_slots.free(material.0),
+            Retiring::Material(material) => {
+                self.glass.retain(|&glass| glass != material);
+                self.material_slots.free(material.0);
+            }
             Retiring::Texture(texture) => {
                 if let Some(image) = self.textures.remove(&texture) {
                     bindless.remove_texture(texture);

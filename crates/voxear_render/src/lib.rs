@@ -18,6 +18,7 @@ mod cooked;
 mod debug_pass;
 mod fbx_import;
 mod frame_debugger;
+mod glass;
 mod gltf_import;
 mod gpu;
 mod ddgi;
@@ -1468,7 +1469,11 @@ impl View {
         // The scene is drawn at its render size, which TAA upscales to the view's.
         let output_extent = extent;
         let extent = vk::Extent2D { width: extracted.render_size.0, height: extracted.render_size.1 };
+        // Glass after the rest, past what culling, shadows and the GI's rays see.
+        let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
+        let opaque = glass::sort_last(&mut extracted.instances, &mut extracted.entities, camera, assets);
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
+        let opaque_count = opaque.min(instance_count);
         self.track_motion(&mut extracted);
         let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
         let taa_reset = self.taa_history != Some(extent);
@@ -1483,7 +1488,7 @@ impl View {
 
         // As many meshlets as every instance's draw could turn into, so the meshlet lists never drop any.
         let needed: u64 =
-            extracted.instances[..instance_count].iter().map(|i| u64::from(assets.most_meshlets(i.mesh))).sum();
+            extracted.instances[..opaque_count].iter().map(|i| u64::from(assets.most_meshlets(i.mesh))).sum();
         let meshlet_capacity = match self.options.meshlet_culling {
             true if needed <= u64::from(MAX_MESHLET_CAPACITY) => {
                 self.buffers[slot].fit_meshlets(gpu, slot, needed as u32)?;
@@ -1574,7 +1579,7 @@ impl View {
         let previous_ddgi = self.ddgi_history.take();
         let mut scene_hierarchy = (0, 0);
         if lit.enabled && !wireframe {
-            let traced = &extracted.instances[..instance_count];
+            let traced = &extracted.instances[..opaque_count];
             // Ray queries where the GPU has them; otherwise the scene's hierarchy, walked in a compute shader.
             let scene = if setup.software_rays {
                 let hierarchy = &mut self.scene_hierarchies[slot];
@@ -1609,6 +1614,14 @@ impl View {
                 probes = Some(made);
             }
         }
+        let panes = match wireframe {
+            true => Vec::new(),
+            false => glass::panes(&extracted.instances[..instance_count], opaque_count, assets),
+        };
+        let glass = match panes.is_empty() {
+            true => None,
+            false => Some(glass::Glass::new(fg, (gpu, bindless), extent, panes)?),
+        };
         let fog = extracted.post.fog;
         let foggy = fog.enabled && fog.volumetric && fog.density > 0.0 && !wireframe;
         let volume = match foggy {
@@ -1636,7 +1649,7 @@ impl View {
             frame_data.lighting.sky_view = fg.texture(tables.sky_view).0;
             frame_data.lighting.aerial_perspective = fg.texture(tables.aerial_perspective).0;
         }
-        frame_data.instance_count = instance_count as u32;
+        frame_data.instance_count = opaque_count as u32;
         frame_data.light_count = light_count as u32;
         frame_data.hiz_texture = fg.texture(pyramid).0;
         frame_data.hiz_size = [pyramid_desc.width, pyramid_desc.height];
@@ -1729,7 +1742,7 @@ impl View {
         let frame_setup = passes::Frame {
             pipelines: *pipelines,
             push,
-            instance_count: instance_count as u32,
+            instance_count: opaque_count as u32,
             extent,
             wireframe,
             edges,
@@ -1738,6 +1751,7 @@ impl View {
             reflections,
             atmosphere,
             volume,
+            glass,
             probes,
         };
         passes::record(fg, &frame_setup, &targets, &draws);

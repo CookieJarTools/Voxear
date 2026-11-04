@@ -158,10 +158,8 @@ float3 shadowTint(Frame* frame, Surface s, float3 toSun, float3 sunLight, float 
 
 // What a surface reflects of its surroundings: the sky in the mirror
 // direction, or with GI the light the probes see that way, blurring
-// towards the light from all round (`ambient`) as the surface roughens,
-// with screen-space reflections over it where they found something and the
-// surface is smooth enough to show them.
-float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere)
+// towards the light from all round (`ambient`) as the surface roughens.
+float3 surroundingsReflection(Frame* frame, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere)
 {
     float3 sky;
     if (atmosphere)
@@ -183,7 +181,14 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3
         // through a wall.
         sky = ddgiIrradiance(frame, position, direction, normal, sky);
     }
-    float3 reflected = lerp(sky, ambient, saturate(roughness * 1.5));
+    return lerp(sky, ambient, saturate(roughness * 1.5));
+}
+
+// As surroundingsReflection, with screen-space reflections over it where
+// they found something and the surface is smooth enough to show them.
+float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere)
+{
+    float3 reflected = surroundingsReflection(frame, position, normal, direction, roughness, ambient, atmosphere);
     if (frame->post.reflectionTexture == NO_TEXTURE)
     {
         return reflected;
@@ -350,6 +355,35 @@ float4 edgeFragment(VertexOut input) : SV_Target0
     return float4(0.0, 0.0, 0.0, 0.35);
 }
 
+// The light falling on a surface from all round: from the GI's probes,
+// or the hemisphere's sky light where GI is off or beyond its probes.
+float3 ambientLight(Frame* frame, float3 position, Surface s, float3 sunLight, bool atmosphere)
+{
+    float up = s.normal.y * 0.5 + 0.5;
+    float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
+        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
+    if (frame->ddgi.enabled != 0)
+    {
+        ambient = ddgiIrradiance(frame, position, s.normal, s.view, ambient);
+    }
+    return ambient;
+}
+
+// The light the lamps in a pixel's cluster send off a surface.
+float3 localLights(Frame* frame, Surface s, float3 position, float2 pixel)
+{
+    float viewDepth = dot(position - frame->cameraPosition, frame->cameraForward);
+    uint cluster = clusterAt(frame, pixel, viewDepth);
+    uint clusterBase = cluster * (frame->clusterMaxLights + 1);
+    uint clusterLights = buffers()->clusters[clusterBase];
+    float3 color = 0.0;
+    for (uint i = 0; i < clusterLights; i++)
+    {
+        color += shadeLocalLight(s, buffers()->lights[buffers()->clusters[clusterBase + 1 + i]], position);
+    }
+    return color;
+}
+
 [shader("fragment")]
 FragmentOut fragmentMain(VertexOut input)
 {
@@ -398,15 +432,7 @@ FragmentOut fragmentMain(VertexOut input)
         color += shadeLocalLight(s, buffers()->lights[light], input.worldPosition);
     }
 
-    // Hemisphere ambient, where GI is off or beyond its probes.
-    float up = s.normal.y * 0.5 + 0.5;
-    float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
-        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
-    if (frame->ddgi.enabled != 0)
-    {
-        // From the GI's probes, falling back to the plain sky light beyond them.
-        ambient = ddgiIrradiance(frame, input.worldPosition, s.normal, s.view, ambient);
-    }
+    float3 ambient = ambientLight(frame, input.worldPosition, s, sunLight, atmosphere);
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);

@@ -3045,16 +3045,17 @@ fn the_object_picker_searches_what_a_reference_can_take() {
         assert!(editor.picker_open(), "{row}");
     };
 
-    // The material: the default, then the project's, each with its folder.
+    // The material: the default, the built-in glass, then the project's, each with its folder.
     open_picker(&mut editor, &mut renderer, "Material");
     let title = editor.ui.find(editor.ui.root(), "picker-title").unwrap();
     assert_eq!(editor.ui.text(title), "Select Material");
     let offered = picker_rows(&editor.ui);
     assert_eq!(offered[0].0, "Default");
+    assert_eq!(offered[1], ("Glass".into(), "Built in".into()));
     assert!(offered.contains(&("Brick.material".into(), "Materials".into())), "{offered:?}");
     shot(&mut renderer, "object-picker.png");
     // Typed letters narrow it, the best match first, and Enter picks it.
-    editor.ui.text_input("gls");
+    editor.ui.text_input("glass.m");
     frame(&mut editor, &mut renderer);
     assert_eq!(picker_rows(&editor.ui).first().map(|(label, _)| label.as_str()), Some("Glass.material"));
     editor.picker_key(PaletteKey::Enter);

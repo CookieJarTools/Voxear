@@ -60,6 +60,15 @@ pub struct MaterialData {
     /// sun, and a rim of the sun's colour.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub foliage: bool,
+    /// Glass: what lies behind shows through, tinted by the colour, bent a
+    /// little and blurred as roughness rises, with the surroundings
+    /// reflected in it. It casts no shadow, and light passes it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub glass: bool,
+    /// Advanced: glass's index of refraction, 1.5 for window glass; higher
+    /// bends and reflects more.
+    #[serde(default = "default_ior", skip_serializing_if = "is_default_ior")]
+    pub ior: f32,
 }
 
 impl Default for MaterialData {
@@ -74,6 +83,8 @@ impl Default for MaterialData {
             normal_map: None,
             emissive_map: None,
             foliage: false,
+            glass: false,
+            ior: default_ior(),
         }
     }
 }
@@ -102,6 +113,14 @@ fn default_color() -> [f32; 3] {
 
 fn default_roughness() -> f32 {
     0.5
+}
+
+fn default_ior() -> f32 {
+    1.5
+}
+
+fn is_default_ior(ior: &f32) -> bool {
+    *ior == default_ior()
 }
 
 fn is_black(color: &[f32; 3]) -> bool {
@@ -141,6 +160,8 @@ impl MaterialData {
             normal_texture: normal,
             emissive_texture: emissive,
             foliage: self.foliage,
+            glass: self.glass,
+            ior: self.ior,
             ..MaterialDesc::default()
         }
     }
@@ -149,12 +170,27 @@ impl MaterialData {
     fn key(&self) -> MaterialKey {
         let [r, g, b] = self.color.map(f32::to_bits);
         let [er, eg, eb] = self.emissive.map(f32::to_bits);
-        let values = [r, g, b, self.metallic.to_bits(), self.roughness.to_bits(), er, eg, eb, u32::from(self.foliage)];
+        let (metallic, roughness, ior) = (self.metallic.to_bits(), self.roughness.to_bits(), self.ior.to_bits());
+        let flags = u32::from(self.foliage) | u32::from(self.glass) << 1;
+        let values = [r, g, b, metallic, roughness, er, eg, eb, flags, ior];
         (values, MaterialMap::ALL.map(|map| self.map(map)))
+    }
+
+    /// Clear glass: the built-in material `builtin:glass`.
+    pub fn glass() -> Self {
+        Self { color: [1.0; 3], roughness: 0.05, glass: true, ..Self::default() }
+    }
+
+    /// The built-in material of a name, as `builtin:glass` names one.
+    pub fn builtin(name: &str) -> Result<Self> {
+        match name {
+            "glass" => Ok(Self::glass()),
+            _ => bail!("no built-in material named `{name}` (glass exists)"),
+        }
     }
 }
 
-type MaterialKey = ([u32; 9], [Option<AssetGuid>; 4]);
+type MaterialKey = ([u32; 10], [Option<AssetGuid>; 4]);
 
 /// What [`Content::release_unused`] freed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -820,6 +856,12 @@ impl Content {
 
     fn asset_material(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<MaterialHandle> {
         if let Some(&handle) = self.asset_materials.get(reference) {
+            return Ok(handle);
+        }
+        if let AssetRef::Builtin(name) = reference {
+            let look = self.look(renderer, &MaterialData::builtin(name)?)?;
+            let handle = renderer.add_material(&look)?;
+            self.asset_materials.insert(reference.clone(), handle);
             return Ok(handle);
         }
         let guid = reference.guid().with_context(|| format!("`{reference}` is not a material"))?;

@@ -36,9 +36,11 @@ Occlusion ambientOcclusion(Frame* frame, float2 pixel, float nv, float roughness
 
 // The depth passes: the opaque lists as depth alone, discarding what the
 // opaque passes discard (LOD fades and alpha cut-outs), so their depth is
-// the same to the bit and those passes shade only what it kept.
+// the same to the bit and those passes shade only what it kept; and each
+// pixel's roughness beside it, so reflections pass over what is too rough
+// to show them.
 [shader("fragment")]
-void depthFragment(VertexOut input)
+float depthFragment(VertexOut input) : SV_Target0
 {
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
@@ -50,6 +52,7 @@ void depthFragment(VertexOut input)
             discard;
         }
     }
+    return saturate(material.roughness * sampleTexture(material.metallicRoughnessTexture, input.uv).g);
 }
 
 // Whether the contact shadows pass found something between a pixel and the

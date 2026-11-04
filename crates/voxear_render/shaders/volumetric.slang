@@ -134,14 +134,20 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
     return lerp(current, previous, VOLUME_HISTORY);
 }
 
-// textures: x this frame's scattering.
-[shader("fragment")]
-float4 volumeIntegrateFragment(VolumeOut input) : SV_Target
+// A thread a column of froxels, walking its slices front to back once and
+// writing each as it passes: the light scattered towards the camera in front
+// of it, and the share of what lies behind that still shows. textures: x
+// this frame's scattering; output, the integrated volume.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void volumeIntegrateMain(uint3 id : SV_DispatchThreadID)
 {
     Frame* frame = push.frame;
-    int2 cell;
-    int slice;
-    volumeCell(input.position.xy, cell, slice);
+    int2 cell = int2(id.xy);
+    if (any(cell >= int2(VOLUME_WIDTH, VOLUME_HEIGHT)))
+    {
+        return;
+    }
     float2 uv = (float2(cell) + 0.5) / float2(VOLUME_WIDTH, VOLUME_HEIGHT);
     float far = frame->post.fogVolumeFar;
     float3 direction = screenDirection(frame, uv);
@@ -149,7 +155,7 @@ float4 volumeIntegrateFragment(VolumeOut input) : SV_Target
 
     float3 added = 0.0;
     float transmittance = 1.0;
-    for (int i = 0; i <= slice; i++)
+    for (int i = 0; i < int(VOLUME_SLICES); i++)
     {
         float4 froxel = volumeLoad(push.textures.x, cell, i);
         float span = (volumeSliceDepth(float(i + 1), far) - volumeSliceDepth(float(i), far)) * alongRay;
@@ -158,6 +164,6 @@ float4 volumeIntegrateFragment(VolumeOut input) : SV_Target
         // The light scattered over the step, as it dims along it.
         added += transmittance * froxel.rgb * (1.0 - through) / extinction;
         transmittance *= through;
+        storageImagesRgba16f[push.output][int2(cell.x + i * int(VOLUME_WIDTH), cell.y)] = float4(added, transmittance);
     }
-    return float4(added, transmittance);
 }

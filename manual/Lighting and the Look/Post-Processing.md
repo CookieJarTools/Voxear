@@ -173,7 +173,7 @@ thickness = 0.3     # how thick things count as, in metres
 max_roughness = 0.6 # surfaces rougher than this show none
 ```
 
-Screen-space reflections can only show what is on screen. Look down at a puddle and the sky it would reflect is above the picture, so the puddle shows the sky's colour from the scene instead. Things just come on screen, or just behind something, can show a moment late. They cost about a sixth of a millisecond at 1440p.
+Screen-space reflections can only show what is on screen. Look down at a puddle and the sky it would reflect is above the picture, so the puddle shows the sky's colour from the scene instead. Things just come on screen, or just behind something, can show a moment late. Pixels rougher than `max_roughness` are passed over before any search, so a level of mostly rough ground costs about a twentieth of a millisecond at 1080p.
 
 ## Drawing at a lower resolution
 

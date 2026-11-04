@@ -1013,6 +1013,12 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   - The ray tracing scene's top level is built only when its instances or the meshes' bottom levels changed since
     that frame slot's last build (`Assets::bottom_level_changes`), so a still level skips its build and the
     barrier after it: the valley 4.2 to 3.8 ms at 1080p.
+  - The coarse GI cascade refreshes every sixteenth frame rather than every fourth: it lights only the distance,
+    where a change shows late anyway, and the fine cascade still lights what is near (a carried torch).
+  - The depth prepass writes each pixel's roughness to an R8 target, so screen-space reflections skip pixels too
+    rough to reflect without reading their material: 0.17 to 0.05 ms.
+  - Fog integration is a compute pass, a thread a column of froxels walking its 64 slices once, rather than a
+    pixel a froxel adding up every slice in front of it again: 0.11 to 0.02 ms. The valley: 3.6 ms at 1080p.
   - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
     by distance.
   - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the

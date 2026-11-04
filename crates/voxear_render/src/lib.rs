@@ -1639,6 +1639,15 @@ impl View {
         if let Some((target, _)) = reflections {
             frame_data.post.reflection_texture = fg.texture(target).0;
         }
+        // The depth passes run for these, and write each pixel's roughness beside the depth.
+        let roughness = match ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() {
+            true => {
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                let desc = ImageDesc::new(extent.width, extent.height, pipelines::ROUGHNESS_FORMAT, usage);
+                Some(fg.create_image(gpu, bindless, "roughness", desc)?)
+            }
+            false => None,
+        };
         let lit = extracted.post.global_illumination;
         // Probes whose rays are traced against the scene's triangles, so no light passes walls.
         let mut probes = None;
@@ -1821,6 +1830,7 @@ impl View {
             edges,
             ambient_occlusion,
             contact_shadows,
+            roughness,
             reflections,
             atmosphere,
             volume,

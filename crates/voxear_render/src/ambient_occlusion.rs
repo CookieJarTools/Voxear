@@ -118,13 +118,18 @@ pub fn record_contact_shadows(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipel
 pub fn record_reflections(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
-    depth: ImageId,
+    (depth, roughness): (ImageId, ImageId),
     history: ImageId,
     target: ImageId,
 ) {
-    let push = Push { textures: [fg.texture(depth).0, fg.texture(history).0, 0, 0], level: 1, ..push };
-    let images =
-        [(depth, ImageAccess::Sampled), (history, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
+    let textures = [fg.texture(depth).0, fg.texture(history).0, fg.texture(roughness).0, 0];
+    let push = Push { textures, level: 1, ..push };
+    let images = [
+        (depth, ImageAccess::Sampled),
+        (history, ImageAccess::Sampled),
+        (roughness, ImageAccess::Sampled),
+        (target, ImageAccess::ColorAttachment),
+    ];
     fg.add_pass("Reflections", &images, &[], move |ctx| draw(ctx, pipelines.reflections, &push, target));
 }
 

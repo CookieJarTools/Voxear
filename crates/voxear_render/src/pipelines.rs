@@ -17,6 +17,9 @@ pub const BLOOM_FORMAT: vk::Format = vk::Format::B10G11R11_UFLOAT_PACK32;
 pub const LDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 /// Ambient occlusion within a frame: a visibility from 0 to 1.
 pub const AO_FORMAT: vk::Format = vk::Format::R8_UNORM;
+/// Each pixel's roughness, which the depth passes write beside the depth,
+/// so reflections skip what is too rough to show them.
+pub const ROUGHNESS_FORMAT: vk::Format = vk::Format::R8_UNORM;
 /// Its history, which blends a tenth of each frame in, so eight bits would
 /// stop short of the value it is heading for.
 pub const AO_HISTORY_FORMAT: vk::Format = vk::Format::R16_SFLOAT;
@@ -224,6 +227,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque", forward, c"vertexMain", c"fragmentMain")
             })?,
             depth: graphics(&GraphicsPipelineDesc {
+                color_formats: &[ROUGHNESS_FORMAT],
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
@@ -272,7 +276,7 @@ impl Pipelines {
             reflections: occlusion_pass("Reflections", c"reflectionsFragment", &[HDR_FORMAT])?,
             fog: fullscreen("Fog", c"fogFragment", hdr, Blend::Alpha)?,
             volume_scatter: volume("Fog volume", c"volumeScatterFragment")?,
-            volume_integrate: volume("Fog integration", c"volumeIntegrateFragment")?,
+            volume_integrate: create_compute_pipeline(gpu, layout, "Fog integration", volumetric, c"volumeIntegrateMain")?,
             volumetric_fog: fullscreen("Volumetric fog", c"volumetricFogFragment", hdr, Blend::Premultiplied)?,
             taa: fullscreen("TAA", c"taaFragment", hdr, Blend::Opaque)?,
             taa_upscale: fullscreen("TAA upscale", c"taaUpscaleFragment", hdr, Blend::Opaque)?,
@@ -424,6 +428,7 @@ fn mesh_pipelines(
             ..GraphicsPipelineDesc::mesh("Opaque", task, forward, Some(c"fragmentMain"))
         })?,
         depth: graphics(&GraphicsPipelineDesc {
+            color_formats: &[ROUGHNESS_FORMAT],
             depth_format: Some(DEPTH_FORMAT),
             depth_write: true,
             depth_compare: vk::CompareOp::GREATER_OR_EQUAL,

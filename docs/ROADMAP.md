@@ -1034,7 +1034,11 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   light is within 0.1% of before, with no visible flicker. The blend follows each texel's running change
   (`DDGI_TREND`, kept in the light's alpha), not one frame's: in Sponza, lit by candles, a frame's rays swung past
   the thresholds and the walls flickered (each pixel's spread over 120 still frames 1.37 levels, against 0.83
-  with a fixed blend; now 0.86).
+  with a fixed blend). Only falls are taken quickly: a rise taken at once fed itself as a fall did, and the
+  corridor round the demo's neon tube surged to twice as bright for eight frames at a time. Each ray's light is
+  capped (`DDGI_RAY_MOST`, 16 by its brightest channel): the tube lit its own glass from 4 cm, and whether a
+  probe's rays met that sliver changed as they turned and as probes moved. Over 900 editor frames of the corridor
+  the metered brightness now stays within 3% (it swung fourfold), and still frames spread 0.83.
 - **A model as one Obj:** a model of several parts placed in a scene is one Obj with a Model Renderer (`ModelRenderer`
   in voxear_render: shared parts, each a mesh, material and place in the Obj's space), not an Obj per part. Each part
   is an instance of its own in extraction (`Owner::part`, motion tracked per part), so culling, LODs, shadows, the

@@ -53,6 +53,7 @@ use voxear_ecs::{Entity, World};
 use voxear_render::Renderer;
 use voxear_scene::{Destroying, EditorOnly, Name, Parent, ScenePersistence};
 
+use crate::lighting::Lighting;
 use crate::{content::Content, engine::Engine, prefab::ObjPath, scene_file};
 
 pub const LEVEL_FORMAT: u32 = 1;
@@ -149,7 +150,9 @@ struct LoadedScene {
     path: String,
     /// Each Obj's path in the scene file, and its entity.
     objs: Vec<(ObjPath, Entity)>,
-    /// Its sky and post-processing, for when it is the active scene.
+    /// Its lighting settings, as it names them and worked out, and its sky
+    /// and post-processing, for when it is the active scene.
+    lighting: Option<(String, Lighting)>,
     sky: Option<scene_file::SkyData>,
     post: Option<toml::Table>,
 }
@@ -173,6 +176,9 @@ pub struct Levels {
     /// The scenes the open level, or the scene opened on its own, asks for;
     /// any other open scene was opened alongside them.
     wanted: Vec<AssetGuid>,
+    /// Lighting settings a script applied, over the scenes' own, until the
+    /// level changes.
+    applied_lighting: Option<(String, Lighting)>,
 }
 
 impl Levels {
@@ -393,6 +399,10 @@ impl Levels {
             Some(guid) if !options.set_active => Some(guid),
             _ => active.filter(loaded).or(self.scenes.last().map(|s| s.guid)),
         };
+        // A new level is lit by its own scenes again.
+        if self.current.as_deref() != Some(level_path.as_str()) {
+            self.applied_lighting = None;
+        }
         self.apply_environment(engine)?;
         self.current = Some(level_path);
         Ok(change)
@@ -415,17 +425,51 @@ impl Levels {
             self.persistent.keys().filter(|(guid, _)| *guid == target.guid).map(|(_, path)| path.clone()).collect();
         let objs = scene_file::spawn(engine, content, renderer, &scene, &survivors)
             .with_context(|| format!("loading {}", target.path))?;
-        Ok(LoadedScene { guid: target.guid, path: target.path.clone(), objs, sky: scene.sky, post: scene.post })
+        let lighting = match scene.lighting {
+            Some(reference) => {
+                let lit = content.lighting(&content.parse(&reference)?).with_context(|| format!("loading {reference}"))?;
+                Some((reference, lit))
+            }
+            None => None,
+        };
+        let (sky, post) = (scene.sky, scene.post);
+        Ok(LoadedScene { guid: target.guid, path: target.path.clone(), objs, lighting, sky, post })
     }
 
     /// The sky and post-processing come from the active scene, or failing
-    /// that, the last one with any.
+    /// that, the last one with any; lighting a script applied replaces them.
     fn apply_environment(&self, engine: &mut Engine) -> Result<()> {
+        if let Some((reference, lit)) = &self.applied_lighting {
+            let lighting = Some((reference.as_str(), lit));
+            return scene_file::apply_environment(engine, scene_file::Environment { lighting, sky: None, post: None });
+        }
         let active = self.scenes.iter().find(|s| Some(s.guid) == self.active);
         let sky = active.and_then(|s| s.sky).or_else(|| self.scenes.iter().rev().find_map(|s| s.sky));
         let post =
             active.and_then(|s| s.post.as_ref()).or_else(|| self.scenes.iter().rev().find_map(|s| s.post.as_ref()));
-        scene_file::apply_environment(engine, sky, post)
+        let lighting = active
+            .and_then(|s| s.lighting.as_ref())
+            .or_else(|| self.scenes.iter().rev().find_map(|s| s.lighting.as_ref()))
+            .map(|(reference, lit)| (reference.as_str(), lit));
+        scene_file::apply_environment(engine, scene_file::Environment { lighting, sky, post })
+    }
+
+    /// Reads the loaded scenes' lighting settings again, and any a script
+    /// applied, as after they were edited, and lights the level with them.
+    pub fn refresh_lighting(&mut self, engine: &mut Engine, content: &mut Content) -> Result<()> {
+        let named = self.scenes.iter_mut().filter_map(|s| s.lighting.as_mut()).chain(self.applied_lighting.as_mut());
+        for (reference, lighting) in named {
+            *lighting = content.lighting(&content.parse(reference)?).with_context(|| format!("loading {reference}"))?;
+        }
+        self.apply_environment(engine)
+    }
+
+    /// Lights the level with other lighting settings, as `Lighting.Apply`
+    /// does, in place of its scenes' own until the level changes.
+    pub fn apply_lighting(&mut self, engine: &mut Engine, content: &mut Content, reference: &str) -> Result<()> {
+        let lighting = content.lighting(&content.parse(reference)?).with_context(|| format!("loading {reference}"))?;
+        self.applied_lighting = Some((reference.to_string(), lighting));
+        self.apply_environment(engine)
     }
 }
 
@@ -479,8 +523,8 @@ impl Levels {
             let captured = scene_file::capture_scene(&edit.world, content, &scene.objs);
             let objs = scene_file::spawn(play, content, renderer.as_deref_mut(), &captured, &HashSet::new())
                 .with_context(|| format!("starting {}", scene.path))?;
-            let (sky, post) = (scene.sky, scene.post.clone());
-            copy.scenes.push(LoadedScene { guid: scene.guid, path: scene.path.clone(), objs, sky, post });
+            let (lighting, sky, post) = (scene.lighting.clone(), scene.sky, scene.post.clone());
+            copy.scenes.push(LoadedScene { guid: scene.guid, path: scene.path.clone(), objs, lighting, sky, post });
         }
         copy.apply_environment(play)?;
         Ok(copy)

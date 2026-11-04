@@ -196,6 +196,15 @@ internal static unsafe class Native
 		}
 	}
 
+	public static void ApplyLighting(string reference)
+	{
+		var bytes = Encoding.UTF8.GetBytes(reference);
+		fixed (byte* text = bytes)
+		{
+			Api->LightingApply(text, bytes.Length);
+		}
+	}
+
 	public static void DestroyObj(ulong obj)
 	{
 		Api->ObjDestroy(obj);

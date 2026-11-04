@@ -244,6 +244,7 @@ impl Editor {
         // are, with every change.
         let tables = changed.iter().any(|path| path.ends_with(".strings") || path.ends_with(".assettable"));
         let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
+        let lighting = changed.iter().any(|path| path.ends_with(".lighting"));
         if came_or_went {
             self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
         } else {
@@ -255,6 +256,14 @@ impl Editor {
             if actions {
                 self.game.content.forget_kind(voxear_assets::AssetKind::InputActions);
                 self.game.load_input_actions();
+            }
+            // Lighting settings edited outside the editor light the open scene as they now are.
+            if lighting {
+                self.game.content.forget_kind(voxear_assets::AssetKind::Lighting);
+                let game = &mut self.game;
+                if let Err(error) = game.levels.refresh_lighting(&mut game.engine, &mut game.content) {
+                    tracing::error!("{error:#}");
+                }
             }
         }
         for model in models {

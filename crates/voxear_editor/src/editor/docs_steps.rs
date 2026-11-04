@@ -93,7 +93,7 @@ impl Editor {
             .into_iter()
             .find(|new| new.label().rsplit(' ').next().is_some_and(|word| word.eq_ignore_ascii_case(kind)))
             .with_context(|| {
-                format!("A guide cannot make a {kind}: it makes a Folder, Scene, Level, Material or Script")
+                format!("A guide cannot make a {kind}: it makes a Folder, Scene, Level, Material, Settings (lighting) or Script")
             })?;
         let root = self.game.project.root.clone();
         let namespace = super::script_namespace(&self.game.project);

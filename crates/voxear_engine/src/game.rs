@@ -26,7 +26,7 @@ use crate::{
     prefab::{ObjPath, PrefabId, Spawned},
     previews::ScriptPreviews,
     project::Project,
-    scene_file::PostTable,
+    scene_file::{LightingPost, PostTable},
     scripts::ScriptWatcher,
 };
 
@@ -419,10 +419,13 @@ impl Game {
     /// in the editor as well as the game, so a level's look shows as it is
     /// edited.
     pub fn prepare_post(&mut self, renderer: &mut Renderer) {
-        let named = self.engine.world.resource::<PostTable>().and_then(|table| {
-            let path = table.0.get("grading")?.get("lut")?.as_str()?;
-            Some(path.to_string())
-        });
+        // The scene's own, or failing that, its lighting settings'.
+        let lut_in = |table: &toml::Table| Some(table.get("grading")?.get("lut")?.as_str()?.to_string());
+        let world = &self.engine.world;
+        let named = world
+            .resource::<PostTable>()
+            .and_then(|table| lut_in(&table.0))
+            .or_else(|| world.resource::<LightingPost>().and_then(|table| lut_in(&table.0)));
         let lut = named.and_then(|path| {
             let loaded = self.content.parse(&path).and_then(|reference| self.content.lut(renderer, &reference));
             match loaded {
@@ -523,6 +526,12 @@ impl Game {
             && let Err(error) = self.load_level(&level, renderer.as_deref_mut())
         {
             tracing::error!("could not load level {level}: {error:#}");
+        }
+        let lighting = self.engine.scripts_mut().and_then(|scripts| scripts.take_lighting_requests().pop());
+        if let Some(reference) = lighting
+            && let Err(error) = self.levels.apply_lighting(&mut self.engine, &mut self.content, &reference)
+        {
+            tracing::error!(target: "script", "could not apply lighting {reference}: {error:#}");
         }
         if let Some(renderer) = renderer.as_deref_mut() {
             self.previews.finish_saves(renderer);

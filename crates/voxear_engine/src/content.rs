@@ -744,6 +744,20 @@ impl Content {
 
     /// An IES profile asset as a light's profile, read and uploaded on first
     /// use.
+    /// Lighting settings, worked out over their look: a `.lighting` asset,
+    /// read each time so edits show, or built-in lighting such as
+    /// `builtin:golden_hour`.
+    pub fn lighting(&mut self, reference: &AssetRef) -> Result<crate::lighting::Lighting> {
+        let file = match reference {
+            AssetRef::Builtin(name) => crate::lighting::LightingFile::builtin(name)?,
+            AssetRef::Asset { guid, .. } => {
+                let (text, path) = self.asset_text(*guid, AssetKind::Lighting)?;
+                toml::from_str(&text).with_context(|| format!("reading {path}"))?
+            }
+        };
+        file.resolve()
+    }
+
     pub fn light_profile(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<TextureId> {
         let guid = reference.guid().with_context(|| format!("`{reference}` is not a light profile"))?;
         if let Some(&texture) = self.light_profiles.get(&guid) {

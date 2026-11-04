@@ -305,7 +305,7 @@ impl AssetView {
                 code(ui, root, &file, "csharp", dark);
             }
             ItemKind::Asset(AssetKind::Ui) => code(ui, root, &file, "vui", dark),
-            ItemKind::Asset(AssetKind::AssetTable) => code(ui, root, &file, "toml", dark),
+            ItemKind::Asset(AssetKind::AssetTable | AssetKind::Lighting) => code(ui, root, &file, "toml", dark),
             ItemKind::Asset(AssetKind::Prefab) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Scene) => objs(ui, root, "Objs", &file),
             ItemKind::Asset(AssetKind::Level) => {
@@ -936,6 +936,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::AssetTable) => "Asset table",
         ItemKind::Asset(AssetKind::Paths) => "Sound paths",
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
+        ItemKind::Asset(AssetKind::Lighting) => "Lighting settings",
     }
 }
 
@@ -955,6 +956,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
         ItemKind::Asset(AssetKind::Paths) => "branch",
         ItemKind::Asset(AssetKind::LightProfile) => "light",
+        ItemKind::Asset(AssetKind::Lighting) => "light",
     }
 }
 

@@ -401,9 +401,12 @@ fn gather(
             }
             let entry = db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
             let read = match entry.kind {
-                AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material | AssetKind::Sound => {
-                    true
-                }
+                AssetKind::Level
+                | AssetKind::Scene
+                | AssetKind::Prefab
+                | AssetKind::Material
+                | AssetKind::Sound
+                | AssetKind::Lighting => true,
                 // A source model reads its own buffers and images as it is prepared.
                 AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
                 // Textures load with their models and lights, as light profiles do, scripts load

@@ -395,7 +395,12 @@ fn remove_stale(output: &Path, catalog: &Catalog) -> Result<()> {
 fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Result<Needs> {
     let mut needs = Needs::default();
     match kind {
-        AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::Material | AssetKind::AssetTable => {
+        AssetKind::Level
+        | AssetKind::Scene
+        | AssetKind::Prefab
+        | AssetKind::Material
+        | AssetKind::AssetTable
+        | AssetKind::Lighting => {
             let text = std::fs::read_to_string(db.file(path))?;
             let table: toml::Table = toml::from_str(&text)?;
             for (key, value) in &table {

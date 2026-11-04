@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 36;
+pub(crate) const API_VERSION: u32 = 37;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -288,6 +288,9 @@ pub(crate) struct NativeApi {
         unsafe extern "C" fn(action: i32, path: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
     pub text_asset: unsafe extern "C" fn(key: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
     pub ui_set_string: unsafe extern "C" fn(element: i32, which: i32, text: *const u8, len: i32),
+    /// `Lighting.Apply`: lights the level with lighting settings, by GUID,
+    /// project path or built-in name.
+    pub lighting_apply: unsafe extern "C" fn(reference: *const u8, len: i32),
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -398,6 +401,7 @@ thread_local! {
     static WORLD: Cell<*mut World> = const { Cell::new(ptr::null_mut()) };
     static REQUESTS: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
     static LEVEL_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static LIGHTING_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static SCENE_REQUESTS: RefCell<Vec<SceneRequest>> = const { RefCell::new(Vec::new()) };
     static OBJ_DESTROYS: RefCell<Vec<Entity>> = const { RefCell::new(Vec::new()) };
     /// Managed `CreateBehaviour` and `AddComponent`, for behaviours and
@@ -441,6 +445,10 @@ pub(crate) fn drain_requests(out: &mut Vec<Request>) {
 
 pub(crate) fn take_level_requests() -> Vec<String> {
     LEVEL_REQUESTS.take()
+}
+
+pub(crate) fn take_lighting_requests() -> Vec<String> {
+    LIGHTING_REQUESTS.take()
 }
 
 pub(crate) fn take_scene_requests() -> Vec<SceneRequest> {
@@ -658,6 +666,11 @@ unsafe extern "C" fn behaviour_destroy(handle: u32) {
 unsafe extern "C" fn level_load(level: *const u8, len: i32) {
     let level = unsafe { utf8(level, len) }.into_owned();
     LEVEL_REQUESTS.with_borrow_mut(|r| r.push(level));
+}
+
+unsafe extern "C" fn lighting_apply(reference: *const u8, len: i32) {
+    let reference = unsafe { utf8(reference, len) }.into_owned();
+    LIGHTING_REQUESTS.with_borrow_mut(|r| r.push(reference));
 }
 
 unsafe extern "C" fn load_async(level: i32, reference: *const u8, len: i32) -> i32 {
@@ -1102,6 +1115,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         input_conflicts: crate::input::input_conflicts,
         text_asset: crate::text::text_asset,
         ui_set_string: crate::ui::ui_set_string,
+        lighting_apply,
     }
 }
 

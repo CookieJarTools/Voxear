@@ -281,6 +281,7 @@ impl Engine {
         // Requests made on the way out belong to no run.
         scripts.take_obj_destroys();
         scripts.take_level_requests();
+        scripts.take_lighting_requests();
         Some(scripts)
     }
 

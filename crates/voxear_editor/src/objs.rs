@@ -535,7 +535,7 @@ pub fn take(game: &mut Game, root: Entity) -> Taken {
     for part in &mut parts {
         let objs: Vec<(ObjPath, Entity)> = part.paths.iter().map(|(path, entity, _)| (path.clone(), *entity)).collect();
         let (file, ids) = scene_file::capture_scene_with_ids(&game.engine.world, &mut game.content, &objs);
-        part.file = SceneFile { sky: None, post: None, ..file };
+        part.file = SceneFile { lighting: None, sky: None, post: None, ..file };
         // Objs no scene kept are known by the ids the file gave them.
         for (path, entity, _) in &mut part.paths {
             if let (true, Some(&id)) = (path.is_root(), ids.get(entity)) {

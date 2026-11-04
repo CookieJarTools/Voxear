@@ -388,6 +388,12 @@ impl ScriptRuntime {
         interop::take_level_requests()
     }
 
+    /// Lighting settings scripts asked to light the level with since the
+    /// last call, oldest first.
+    pub fn take_lighting_requests(&mut self) -> Vec<String> {
+        interop::take_lighting_requests()
+    }
+
     /// What scripts asked of loaded scenes since the last call, oldest first.
     pub fn take_scene_requests(&mut self) -> Vec<crate::SceneRequest> {
         interop::take_scene_requests()

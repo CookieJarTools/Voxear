@@ -68,6 +68,24 @@ pub fn move_place(mounts: &Mounts, path: &str, folder: &str) -> Result<(Place, S
     Ok((from, into.path))
 }
 
+/// New lighting settings: a look to start from, and where its settings go.
+const NEW_LIGHTING: &str = "# Voxear lighting settings. A scene names them, lighting = \"<this file>\",
+# and scripts apply them with Lighting.Apply.
+format = 1
+
+# The look to start from: golden_hour, storybook or soft_overcast. Change anything below it.
+look = \"golden_hour\"
+
+# The sky, as a scene's [sky] writes it: mode, haze, haze_tint, haze_glow, distance_haze, sun_size, ambient, stars.
+[sky]
+
+# How the sun looks: temperature (kelvin), tint, strength, softness, shadow_tint.
+[sun]
+
+# Post-processing, as a scene's [post] writes it: [post.exposure], [post.bloom], [post.grading], [post.fog] and more.
+[post]
+";
+
 /// Something the Project panel makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NewFile {
@@ -75,11 +93,13 @@ pub enum NewFile {
     Scene,
     Level,
     Material,
+    Lighting,
     Script,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 5] = [NewFile::Folder, NewFile::Scene, NewFile::Level, NewFile::Material, NewFile::Script];
+    pub const ALL: [NewFile; 6] =
+        [NewFile::Folder, NewFile::Scene, NewFile::Level, NewFile::Material, NewFile::Lighting, NewFile::Script];
 
     /// As the menu offers it.
     pub fn label(self) -> &'static str {
@@ -88,6 +108,7 @@ impl NewFile {
             NewFile::Scene => "New Scene",
             NewFile::Level => "New Level",
             NewFile::Material => "New Material",
+            NewFile::Lighting => "New Lighting Settings",
             NewFile::Script => "New C# Script",
         }
     }
@@ -100,6 +121,7 @@ impl NewFile {
             NewFile::Scene => ("New Scene", ".scene"),
             NewFile::Level => ("New Level", ".level"),
             NewFile::Material => ("New Material", ".material"),
+            NewFile::Lighting => ("New Lighting", ".lighting"),
             NewFile::Script => ("NewBehaviour", ".cs"),
         }
     }
@@ -117,6 +139,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Scene => std::fs::write(&file, "# Voxear scene\nformat = 1\n"),
         NewFile::Level => std::fs::write(&file, "# Voxear level: list its scenes as [[scene]] tables.\nformat = 1\n"),
         NewFile::Material => std::fs::write(&file, "color = [0.8, 0.8, 0.8]\nmetallic = 0.0\nroughness = 0.5\n"),
+        NewFile::Lighting => std::fs::write(&file, NEW_LIGHTING),
         NewFile::Script => std::fs::write(&file, script(namespace, &name[..name.len() - extension.len()])),
     }
     .with_context(|| format!("making {}", file.display()))?;
@@ -340,6 +363,17 @@ fn stem(name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_lighting_settings_start_from_golden_hour_and_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = create(dir.path(), "", NewFile::Lighting, "Game").unwrap();
+        assert_eq!(path, "New Lighting.lighting");
+        let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+        let file: voxear_engine::lighting::LightingFile = toml::from_str(&text).unwrap();
+        assert_eq!(file.look.as_deref(), Some("golden_hour"));
+        file.resolve().unwrap();
+    }
 
     #[test]
     fn files_are_made_renamed_copied_and_trashed_with_their_meta() {

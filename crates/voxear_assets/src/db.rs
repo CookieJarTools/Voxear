@@ -51,6 +51,9 @@ pub enum AssetKind {
     /// An `.ies` file: how bright a real light fitting is in each
     /// direction, as its maker measured it, for a point or spot light.
     LightProfile,
+    /// A `.lighting` file: a scene's lighting settings, its sky, how its sun
+    /// looks and its post-processing, which scenes name and code applies.
+    Lighting,
 }
 
 impl AssetKind {
@@ -70,6 +73,7 @@ impl AssetKind {
             "paths" => Self::Paths,
             "assettable" => Self::AssetTable,
             "ies" => Self::LightProfile,
+            "lighting" => Self::Lighting,
             _ => return None,
         })
     }

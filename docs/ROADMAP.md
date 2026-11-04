@@ -927,6 +927,13 @@ Done so far:
   sun's disc. `[post] look = "golden_hour"`: twice the haze, slightly warm, glowing tightly round the sun; thin
   volumetric dust with strong forward scattering; a wide warm bloom; AgX with more contrast and saturation, shade
   lifted a little to teal and highlights to cream; warm brown shadow tint. Film grain is removed: it never helped.
+- **Lighting settings assets:** `.lighting` files (`AssetKind::Lighting`) hold a look to start from and `[sky]`,
+  `[sun]` and `[post]` over it; `builtin:golden_hour` and the other looks are built-in lighting. A scene names one,
+  `lighting = "..."`, applied as it loads with the scene's own `[sky]` and `[post]` over it, and written back on
+  save. C#: `LightingSettings` asset fields and `Lighting.Apply`, which replaces the scenes' lighting until the
+  level changes (native API 37). The Project panel's New Lighting Settings; the Inspector shows the file; an open
+  scene re-lights when its lighting file changes. Still to come: a Lighting window that edits the settings with
+  fields, and a scene's lighting picked in the editor.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

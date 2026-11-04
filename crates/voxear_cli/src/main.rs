@@ -879,6 +879,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Paths => "paths",
             AssetKind::AssetTable => "assets",
             AssetKind::LightProfile => "ies",
+            AssetKind::Lighting => "lighting",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

@@ -126,4 +126,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, int> InputConflicts;
 	public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> TextAsset;
 	public delegate* unmanaged[Cdecl]<int, int, byte*, int, void> UiSetString;
+	public delegate* unmanaged[Cdecl]<byte*, int, void> LightingApply;
 }

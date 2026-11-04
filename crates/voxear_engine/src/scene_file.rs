@@ -65,6 +65,7 @@ use voxear_scene::{
 };
 
 use crate::{
+    lighting::Lighting,
     audio::{AudioListener, AudioSource, AudioSourceData, audio_source_data},
     content::{Content, MaterialData, MaterialSource, linear, srgb},
     engine::{EditBehaviours, Engine},
@@ -81,6 +82,10 @@ pub const SCENE_FORMAT: u32 = 1;
 #[serde(deny_unknown_fields)]
 pub struct SceneFile {
     pub format: u32,
+    /// The lighting settings it is lit by: a `.lighting` asset, by GUID or
+    /// project path, or built-in lighting such as `builtin:golden_hour`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lighting: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sky: Option<SkyData>,
     /// A preset and the settings that differ from it, kept as written.
@@ -92,7 +97,7 @@ pub struct SceneFile {
 
 impl Default for SceneFile {
     fn default() -> Self {
-        Self { format: SCENE_FORMAT, sky: None, post: None, objs: Vec::new() }
+        Self { format: SCENE_FORMAT, lighting: None, sky: None, post: None, objs: Vec::new() }
     }
 }
 
@@ -100,9 +105,18 @@ impl Default for SceneFile {
 /// scene writes back its preset and overrides rather than every setting.
 pub struct PostTable(pub toml::Table);
 
-/// The sky came from the scene's look rather than its own `[sky]`, so a
-/// save leaves it out, and changing the look changes the sky.
+/// The sky came from the scene's look or lighting rather than its own
+/// `[sky]`, so a save leaves it out, and changing the look changes the sky.
 pub struct SkyFromLook;
+
+/// The lighting settings the scene names, as it names them, so a save
+/// writes them back.
+pub struct SceneLighting(pub String);
+
+/// The post-processing of the scene's lighting settings, beneath the
+/// scene's own `[post]`, for what reads assets from it (its colour
+/// lookup table).
+pub struct LightingPost(pub toml::Table);
 
 /// Sky colours are sRGB, like every colour in project files.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -652,62 +666,121 @@ pub fn spawn(
     scene: &SceneFile,
     skip: &HashSet<ObjPath>,
 ) -> Result<Vec<(ObjPath, Entity)>> {
-    apply_environment(engine, scene.sky, scene.post.as_ref())?;
+    let lighting = match &scene.lighting {
+        Some(reference) => Some((reference.as_str(), content.lighting(&content.parse(reference)?)?)),
+        None => None,
+    };
+    let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
+    apply_environment(engine, Environment { lighting, sky: scene.sky, post: scene.post.as_ref() })?;
     let objs = without(prefab::expand(content, &scene.objs)?, skip);
     let template = Template::resolve(content, renderer, &objs)?;
     let entities = engine.spawn_template(&template, None, None)?;
     Ok(template.objs.iter().map(|o| o.path.clone()).zip(entities).collect())
 }
 
-/// Sets the level's sky and post-processing from a scene that has them.
-/// What a scene leaves out stays as it was.
-pub fn apply_environment(engine: &mut Engine, sky: Option<SkyData>, post: Option<&toml::Table>) -> Result<()> {
+/// Sets the level's sky and post-processing from a scene that has them:
+/// its lighting settings, if it names any, with its own `[sky]` and
+/// `[post]` over them. What a scene leaves out stays as it was.
+pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> Result<()> {
+    let Environment { lighting, sky, post } = environment;
     // A look, picked in [post], brings its sun, and its sky where the scene has none of its own.
     let look = match post.and_then(|table| table.get("look")).and_then(|value| value.as_str()) {
         Some(name) => Some(Look::of(LookName::parse(name)?)),
         None => None,
     };
-    // A scene without [post] leaves the look as it was; one with [post] and no look drops it, sky and all.
-    match (look, post) {
-        (Some(look), _) => drop(engine.world.insert_resource(look.sun)),
-        (None, Some(_)) => {
+    let base_sky = look.map(|look| look.sky).or_else(|| lighting.map(|(_, lit)| lit.sky));
+    let sun = look.map(|look| look.sun).or_else(|| lighting.map(|(_, lit)| lit.sun));
+    // A scene without lighting or [post] leaves the look as it was; one with either and no look drops it, sky and all.
+    match (sun, lighting.is_some() || post.is_some()) {
+        (Some(sun), _) => drop(engine.world.insert_resource(sun)),
+        (None, true) => {
             engine.world.remove_resource::<SunLook>();
             if engine.world.remove_resource::<SkyFromLook>().is_some() && sky.is_none() {
                 engine.world.insert_resource(Sky::default());
             }
         }
-        (None, None) => {}
+        (None, false) => {}
     }
-    if let (Some(look), None) = (look, sky) {
-        engine.world.insert_resource(look.sky);
+    if let (Some(base), None) = (base_sky, sky) {
+        engine.world.insert_resource(base);
         engine.world.insert_resource(SkyFromLook);
     }
-    if sky.is_some() {
-        engine.world.remove_resource::<SkyFromLook>();
-    }
     if let Some(sky) = sky {
-        engine.world.insert_resource(Sky {
-            mode: match sky.mode {
-                SkyModeData::Gradient => SkyMode::Gradient,
-                SkyModeData::Atmosphere => SkyMode::Atmosphere,
-            },
-            zenith: Vec3::from(linear(sky.zenith)),
-            horizon: Vec3::from(linear(sky.horizon)),
-            ground: Vec3::from(linear(sky.ground)),
-            ambient: sky.ambient,
-            stars: sky.stars,
-            haze: sky.haze,
-            haze_tint: Vec3::from(linear(sky.haze_tint)),
-            haze_glow: sky.haze_glow,
-            distance_haze: sky.distance_haze,
-            sun_size: sky.sun_size,
-        });
+        engine.world.remove_resource::<SkyFromLook>();
+        engine.world.insert_resource(sky_from_data(&sky));
     }
+    match lighting {
+        Some((reference, lit)) => {
+            engine.world.insert_resource(SceneLighting(reference.to_string()));
+            engine.world.insert_resource(LightingPost(lit.post.clone()));
+        }
+        None if post.is_some() => {
+            engine.world.remove_resource::<SceneLighting>();
+            engine.world.remove_resource::<LightingPost>();
+        }
+        None => {}
+    }
+    // The scene's own post-processing over its lighting's.
+    let mut effective = lighting.map(|(_, lit)| lit.post.clone()).unwrap_or_default();
     if let Some(table) = post {
-        engine.world.insert_resource(PostProcess::from_toml(table)?);
+        crate::lighting::merge(&mut effective, table);
         engine.world.insert_resource(PostTable(table.clone()));
+    } else if lighting.is_some() {
+        engine.world.remove_resource::<PostTable>();
+    }
+    if lighting.is_some() || post.is_some() {
+        engine.world.insert_resource(PostProcess::from_toml(&effective)?);
     }
     Ok(())
+}
+
+/// What a scene sets its environment from: its lighting settings, as the
+/// scene names them and worked out, and its own `[sky]` and `[post]`.
+#[derive(Clone, Copy, Default)]
+pub struct Environment<'a> {
+    pub lighting: Option<(&'a str, &'a Lighting)>,
+    pub sky: Option<SkyData>,
+    pub post: Option<&'a toml::Table>,
+}
+
+/// The sky as a scene file writes it, in sRGB.
+pub fn sky_data(sky: &Sky) -> SkyData {
+    SkyData {
+        mode: match sky.mode {
+            SkyMode::Gradient => SkyModeData::Gradient,
+            SkyMode::Atmosphere => SkyModeData::Atmosphere,
+        },
+        zenith: round3(srgb(sky.zenith.to_array())),
+        horizon: round3(srgb(sky.horizon.to_array())),
+        ground: round3(srgb(sky.ground.to_array())),
+        ambient: sky.ambient,
+        stars: sky.stars,
+        haze: sky.haze,
+        haze_tint: round3(srgb(sky.haze_tint.to_array())),
+        haze_glow: sky.haze_glow,
+        distance_haze: sky.distance_haze,
+        sun_size: sky.sun_size,
+    }
+}
+
+/// The sky a scene file describes, in linear colour.
+pub fn sky_from_data(sky: &SkyData) -> Sky {
+    Sky {
+        mode: match sky.mode {
+            SkyModeData::Gradient => SkyMode::Gradient,
+            SkyModeData::Atmosphere => SkyMode::Atmosphere,
+        },
+        zenith: Vec3::from(linear(sky.zenith)),
+        horizon: Vec3::from(linear(sky.horizon)),
+        ground: Vec3::from(linear(sky.ground)),
+        ambient: sky.ambient,
+        stars: sky.stars,
+        haze: sky.haze,
+        haze_tint: Vec3::from(linear(sky.haze_tint)),
+        haze_glow: sky.haze_glow,
+        distance_haze: sky.distance_haze,
+        sun_size: sky.sun_size,
+    }
 }
 
 /// Leaves out the Objs in `skip` and everything parented under them.
@@ -797,24 +870,10 @@ pub fn capture_scene_with_ids(
         objs.push(obj);
     }
 
-    let sky = world.resource::<Sky>().filter(|_| world.resource::<SkyFromLook>().is_none()).map(|sky| SkyData {
-        mode: match sky.mode {
-            SkyMode::Gradient => SkyModeData::Gradient,
-            SkyMode::Atmosphere => SkyModeData::Atmosphere,
-        },
-        zenith: round3(srgb(sky.zenith.to_array())),
-        horizon: round3(srgb(sky.horizon.to_array())),
-        ground: round3(srgb(sky.ground.to_array())),
-        ambient: sky.ambient,
-        stars: sky.stars,
-        haze: sky.haze,
-        haze_tint: round3(srgb(sky.haze_tint.to_array())),
-        haze_glow: sky.haze_glow,
-        distance_haze: sky.distance_haze,
-        sun_size: sky.sun_size,
-    });
+    let sky = world.resource::<Sky>().filter(|_| world.resource::<SkyFromLook>().is_none()).map(sky_data);
     let post = world.resource::<PostTable>().map(|table| table.0.clone());
-    (SceneFile { format: SCENE_FORMAT, sky, post, objs }, ids)
+    let lighting = world.resource::<SceneLighting>().map(|lighting| lighting.0.clone());
+    (SceneFile { format: SCENE_FORMAT, lighting, sky, post, objs }, ids)
 }
 
 /// An instance of `guid` whose root was captured as `root`, with everything
@@ -1450,28 +1509,50 @@ mod tests {
     }
 
     #[test]
+    fn a_scene_is_lit_by_its_lighting_with_its_own_settings_over_them() {
+        let file: crate::lighting::LightingFile =
+            toml::from_str("look = \"golden_hour\"\n[sky]\nhaze = 2.5\n[post.bloom]\nintensity = 0.3").unwrap();
+        let lit = file.resolve().unwrap();
+        let mut engine = Engine::new();
+        let own: toml::Table = toml::from_str("[bloom]\nscatter = 0.5").unwrap();
+        let environment = Environment { lighting: Some(("Lighting/Dusk.lighting", &lit)), sky: None, post: Some(&own) };
+        apply_environment(&mut engine, environment).unwrap();
+        assert_eq!(engine.world.resource::<Sky>().map(|sky| sky.haze), Some(2.5), "the lighting's sky");
+        assert!(engine.world.resource::<SkyFromLook>().is_some(), "which a save leaves out");
+        assert_eq!(engine.world.resource::<SunLook>().copied(), Some(lit.sun));
+        let post = engine.world.resource::<PostProcess>().copied().unwrap();
+        assert_eq!((post.bloom.intensity, post.bloom.scatter), (0.3, 0.5), "the lighting's bloom, the scene's scatter");
+        assert_eq!(engine.world.resource::<SceneLighting>().map(|l| l.0.as_str()), Some("Lighting/Dusk.lighting"));
+        assert_eq!(engine.world.resource::<PostTable>().map(|t| t.0.clone()), Some(own), "a save writes only the scene's own");
+    }
+
+    #[test]
     fn a_look_brings_its_sun_and_its_sky_where_the_scene_has_none() {
         let post = |text: &str| toml::from_str::<toml::Table>(text).unwrap();
+        let apply = |engine: &mut Engine, sky: Option<SkyData>, text: Option<&str>| {
+            let table = text.map(post);
+            apply_environment(engine, Environment { lighting: None, sky, post: table.as_ref() })
+        };
         let mut engine = Engine::new();
-        apply_environment(&mut engine, None, Some(&post("look = \"storybook\""))).unwrap();
+        apply(&mut engine, None, Some("look = \"storybook\"")).unwrap();
         let storybook = Look::of(LookName::Storybook);
         assert_eq!(engine.world.resource::<SunLook>().copied(), Some(storybook.sun));
         assert_eq!(engine.world.resource::<Sky>().map(|sky| sky.zenith), Some(storybook.sky.zenith));
         assert!(engine.world.resource::<SkyFromLook>().is_some(), "so a save leaves the sky out");
 
-        apply_environment(&mut engine, None, None).unwrap();
+        apply(&mut engine, None, None).unwrap();
         assert!(engine.world.resource::<SunLook>().is_some(), "a scene without [post] keeps the look");
 
         let own: SkyData = toml::from_str("zenith = [0.1, 0.2, 0.3]\nhorizon = [0.5, 0.5, 0.5]\nground = [0.3, 0.3, 0.3]").unwrap();
-        apply_environment(&mut engine, Some(own), Some(&post("look = \"soft_overcast\""))).unwrap();
+        apply(&mut engine, Some(own), Some("look = \"soft_overcast\"")).unwrap();
         assert!(engine.world.resource::<SkyFromLook>().is_none(), "the scene's own sky wins and is saved");
         assert_eq!(engine.world.resource::<SunLook>().copied(), Some(Look::of(LookName::SoftOvercast).sun));
 
-        apply_environment(&mut engine, None, Some(&post("look = \"storybook\""))).unwrap();
-        apply_environment(&mut engine, None, Some(&post("[bloom]\nintensity = 0.1"))).unwrap();
+        apply(&mut engine, None, Some("look = \"storybook\"")).unwrap();
+        apply(&mut engine, None, Some("[bloom]\nintensity = 0.1")).unwrap();
         assert!(engine.world.resource::<SunLook>().is_none(), "[post] without a look drops it");
         assert_eq!(engine.world.resource::<Sky>().map(|sky| sky.zenith), Some(Sky::default().zenith));
-        assert!(apply_environment(&mut engine, None, Some(&post("look = \"gloomy\""))).is_err());
+        assert!(apply(&mut engine, None, Some("look = \"gloomy\"")).is_err());
     }
 
     #[test]

@@ -465,6 +465,20 @@ static const float DDGI_CASCADE_SCALE = 4.0;
 static const int3 DDGI_PROBES = int3(32, 16, 32);
 static const uint DDGI_RAYS = 256;
 static const uint DDGI_TEXELS = 8;
+// The probes' light is kept and blended raised to 1/DDGI_GAMMA, as RTXGI keeps it (Majercik et al. 2021): one
+// frame's few rays that meet a bright sliver, a candle's flame or a neon tube's glass, then move a probe a little,
+// where blended as light they moved it a lot, and lamp-lit walls shimmered with it.
+static const float DDGI_GAMMA = 5.0;
+
+float3 ddgiEncode(float3 light)
+{
+    return pow(max(light, 0.0), 1.0 / DDGI_GAMMA);
+}
+
+float3 ddgiDecode(float3 kept)
+{
+    return pow(max(kept, 0.0), DDGI_GAMMA);
+}
 
 struct Ddgi
 {

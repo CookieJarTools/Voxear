@@ -383,12 +383,13 @@ void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID, u
     // what the probes held last, so light bounced round a room would otherwise feed itself and linger for seconds
     // after its lamp went out, where real light dies at once. Light that rises is smoothed as ever: taken at once,
     // a rise fed itself the same way, and the corridor round a neon tube surged to twice as bright for frames.
-    float was = max(max(lastLight.r, lastLight.g), lastLight.b);
+    float3 lastLinear = ddgiDecode(lastLight.rgb);
+    float was = max(max(lastLinear.r, lastLinear.g), lastLinear.b);
     float now = max(max(freshLight.r, freshLight.g), freshLight.b);
     float trend = lerp(fresh ? 0.0 : lastLight.a, (now - was) / max(max(now, was), 1e-3), DDGI_TREND);
     keep *= 1.0 - smoothstep(DDGI_FALL.x, DDGI_FALL.y, -trend);
     // The running change goes in the light's alpha, which nothing else reads.
-    storageImagesRgba16f[push.textures.y][texel] = float4(lerp(freshLight, lastLight.rgb, keep), trend);
+    storageImagesRgba16f[push.textures.y][texel] = float4(lerp(ddgiEncode(freshLight), lastLight.rgb, keep), trend);
     storageImagesRgba16f[push.textures.z][texel] = float4(lerp(freshDepth, lastDepth.xy, keep), 0.0, 0.0);
     if (all(thread.xy == 0))
     {

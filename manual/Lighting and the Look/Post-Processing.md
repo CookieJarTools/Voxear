@@ -94,6 +94,7 @@ The values shown are the Voxear Look's.
 | --- | --- |
 | `mode = "taa"` | How edges are smoothed: `"taa"` blends each frame with the ones before; `"fxaa"` is simpler, smoothing each frame on its own; `"off"` turns it off |
 | `sharpness = 0.25` | Sharpens the picture again after smoothing |
+| `taa_history = 0.97` | With `"taa"`, how much of the frames before each frame keeps, from 0.8 to 0.97. Lower reacts faster to what moves but lets fine detail shimmer |
 | `render_scale = 1.0` | With `"taa"`, draws the scene smaller and builds the full picture from it, from 0.25 to 1. See below |
 
 **Shade in corners**, `[post.ambient_occlusion]`

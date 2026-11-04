@@ -1043,7 +1043,11 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   editor frames at one exposure: 0.37 without GI, 0.42 with the probes' light frozen, 0.52 at 128 rays and 0.95,
   0.45 at 256 rays and `DDGI_KEEP` 0.97 (chosen: 0.44 ms more at 1080p; 128 rays at 0.98 gave 0.46 for nothing but
   let new light in far slower). Probes held still, no visibility test, the smooth normal, and fog or reflections
-  off each changed nothing; the few edge pixels that flicker hardest are there without GI too.
+  off each changed nothing; the few edge pixels that flicker hardest are there without GI too. Those went with TAA
+  keeping more of last frame by default (`taa_history` 0.9 to 0.97, eased off as before where things move fast):
+  pixels flickering hard 57 to 17, the spread 0.45 to 0.36, under what GI-less frames showed at 0.9. And the
+  probes' light is kept and blended raised to 1/5 (`DDGI_GAMMA`, as RTXGI does, Majercik et al. 2021), so a few
+  rays that meet a bright sliver move a probe little: the spread 0.36 to 0.35, the picture 1% darker.
 - **A model as one Obj:** a model of several parts placed in a scene is one Obj with a Model Renderer (`ModelRenderer`
   in voxear_render: shared parts, each a mesh, material and place in the Obj's space), not an Obj per part. Each part
   is an instance of its own in extraction (`Owner::part`, motion tracked per part), so culling, LODs, shadows, the

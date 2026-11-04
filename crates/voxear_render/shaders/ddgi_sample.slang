@@ -144,7 +144,7 @@ float3 ddgiIrradianceIn(Frame* frame, uint cascade, float3 position, float3 norm
         }
         float3 trilinear = lerp(1.0 - within, within, float3(offset));
         weight *= trilinear.x * trilinear.y * trilinear.z;
-        total += ddgiMap(frame->ddgi.irradiance, irradianceSize, tile, normal).rgb * weight;
+        total += ddgiDecode(ddgiMap(frame->ddgi.irradiance, irradianceSize, tile, normal).rgb) * weight;
         weights += weight;
     }
     // Where the probes round a point can hardly see it, their light is not stretched to fill in: a point no probe
@@ -195,8 +195,8 @@ float3 ddgiLightAroundIn(Frame* frame, uint cascade, float3 position, float3 awa
         float seen = distance > moments.x ? variance / (variance + (distance - moments.x) * (distance - moments.x)) : 1.0;
         float3 trilinear = lerp(1.0 - within, within, float3(offset));
         float weight = max(seen * seen * seen, 1e-4) * trilinear.x * trilinear.y * trilinear.z;
-        float3 above = ddgiMap(frame->ddgi.irradiance, size, tile, up).rgb;
-        float3 below = ddgiMap(frame->ddgi.irradiance, size, tile, -up).rgb;
+        float3 above = ddgiDecode(ddgiMap(frame->ddgi.irradiance, size, tile, up).rgb);
+        float3 below = ddgiDecode(ddgiMap(frame->ddgi.irradiance, size, tile, -up).rgb);
         total += (above + below) * 0.5 * weight;
         weights += weight;
     }

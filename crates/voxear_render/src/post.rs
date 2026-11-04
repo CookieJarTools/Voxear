@@ -179,7 +179,9 @@ pub struct AntiAliasing {
     /// Contrast-adaptive sharpening after anti-aliasing, 0 to 1.
     pub sharpness: f32,
     /// Advanced: how much of last frame TAA keeps, 0.8 to 0.97. Higher is
-    /// smoother and slower to react.
+    /// smoother and slower to react; it keeps a fifth less where things
+    /// move fast. 0.97 by default: at 0.9, fine detail lit by bounced light
+    /// (brick, ivy, the rims of arches) shimmered from frame to frame.
     pub taa_history: f32,
     /// Advanced: sub-pixel jitter spread, in pixels.
     pub taa_jitter: f32,
@@ -357,7 +359,7 @@ impl Default for AmbientOcclusion {
 
 impl Default for AntiAliasing {
     fn default() -> Self {
-        Self { mode: AntiAliasingMode::Taa, sharpness: 0.25, taa_history: 0.9, taa_jitter: 1.0, render_scale: 1.0 }
+        Self { mode: AntiAliasingMode::Taa, sharpness: 0.25, taa_history: 0.97, taa_jitter: 1.0, render_scale: 1.0 }
     }
 }
 

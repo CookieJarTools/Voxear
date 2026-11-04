@@ -17,6 +17,7 @@
 
 #include "shading.slang"
 #include "ddgi_sample.slang"
+#include "ambient_occlusion.slang"
 
 #ifndef SOFTWARE_RAYS
 #define SOFTWARE_RAYS 0
@@ -136,7 +137,7 @@ bool ddgiBlocked(Frame* frame, float3 origin, float3 direction, float far)
 // The light a surface sends back along a ray that hit it, where it hit, and
 // whether the ray found the surface's back, as from inside something.
 float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
-    float3 position, float3 direction, out bool back)
+    float3 position, float3 direction, float mip, out bool back)
 {
     Instance instance = buffers()->instances[id];
     Mesh mesh = buffers()->meshes[instance.mesh];
@@ -154,13 +155,13 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     float2 uv = a.uv * weights.x + b.uv * weights.y + c.uv * weights.z;
     Material material = buffers()->materials[instance.material];
     float4 base = material.baseColor
-        * textures[NonUniformResourceIndex(material.baseColorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 3.0);
+        * textures[NonUniformResourceIndex(material.baseColorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip);
     // Metalness as shading has it: the material's factor times its texture's blue, which glTF factors leave at 1.
     float metal = material.metallic
-        * textures[NonUniformResourceIndex(material.metallicRoughnessTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 3.0).b;
+        * textures[NonUniformResourceIndex(material.metallicRoughnessTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).b;
     float3 albedo = base.rgb * (1.0 - metal);
     float3 emissive = material.emissive
-        * textures[NonUniformResourceIndex(material.emissiveTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 3.0).rgb;
+        * textures[NonUniformResourceIndex(material.emissiveTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).rgb;
 
     float3 toSun = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
@@ -233,7 +234,8 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         float t = hit.t;
         float3 position = origin + direction * t;
         bool back;
-        float3 light = ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, position, direction, back);
+        // Textures blurred well down: a probe's light is an average over many rays anyway.
+        float3 light = ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, position, direction, 3.0, back);
         // The back of a surface, seen from inside it: no light, and marked by its distance's sign.
         result = back ? float4(0.0, 0.0, 0.0, -t) : float4(light, t);
     }
@@ -362,4 +364,63 @@ void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID, u
     {
         storageImagesRgba16f[push.textures.w][tile] = ddgiRelocate(frame, cascade, tile, fresh);
     }
+}
+
+// ---------------------------------------------------------------- Ray-traced reflections
+
+// The farthest a reflection's ray looks, in metres, before it takes the sky.
+static const float REFLECTION_REACH = 500.0;
+
+// Where a pixel is in the world, from its depth.
+float3 worldPositionAt(uint depthTexture, int2 pixel)
+{
+    Frame* frame = push.frame;
+    float2 uv = (float2(pixel) + 0.5) / float2(frame->viewport);
+    float4 world = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, loadDepth(depthTexture, pixel), 1.0));
+    return world.xyz / world.w;
+}
+
+// Reflections by tracing the scene's triangles, as the GI's rays do, where
+// the GI has them: from each pixel smooth enough to reflect, at half
+// resolution, its mirror ray into the scene; the surface it meets is lit
+// as the GI's rays light theirs, or where it meets nothing, the sky shows.
+// Unlike screen-space reflections, they show what is off screen, behind the
+// camera and behind other things: a chrome ball mirrors the whole room.
+// Writes the colour and 1, as sure as can be. textures: x depth, z the
+// surface: normal and roughness.
+[shader("fragment")]
+float4 rayReflectionsFragment(AoOut input) : SV_Target
+{
+    Frame* frame = push.frame;
+    uint depthTexture = push.textures.x;
+    int2 pixel = fullPixel(int2(input.position.xy));
+    float depth = loadDepth(depthTexture, pixel);
+    float4 surface = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(pixel, 0));
+    float roughness = surface.b;
+    if (depth <= 0.0 || roughness >= frame->post.reflectionMaxRoughness)
+    {
+        return 0.0;
+    }
+    // The surface's own normal, normal map and all, as the depth passes kept it.
+    float3 position = worldPositionAt(depthTexture, pixel);
+    float3 eye = frame->cameraPosition;
+    float3 view = normalizeOr(eye - position, -frame->cameraForward);
+    float3 normal = octDecode(surface.rg * 2.0 - 1.0);
+    normal = dot(normal, view) < 0.0 ? -normal : normal;
+    float3 centre = float3(0.0, 0.0, dot(position - eye, frame->cameraForward));
+    float3 direction = reflect(-view, normal);
+    // Off the surface by a little more the farther away it is, as its depth is less sure there.
+    float3 origin = position + normal * (0.01 + 0.002 * centre.z);
+    Hit hit = traceScene(frame, origin, direction, REFLECTION_REACH, false);
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    if (!hit.found)
+    {
+        return float4(surroundingsReflection(frame, position, normal, direction, 0.0, 0.0, atmosphere), 1.0);
+    }
+    bool back;
+    // Sharper textures near, blurrier far, about as the reflection shows them.
+    float mip = clamp(log2(1.0 + hit.t * 0.5), 0.0, 4.0);
+    float3 at = origin + direction * hit.t;
+    float3 light = ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, at, direction, mip, back);
+    return float4(back ? 0.0 : light, 1.0);
 }

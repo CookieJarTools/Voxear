@@ -4,8 +4,8 @@ using Voxear.Interop;
 namespace Voxear;
 
 /// <summary>
-/// The level's seasons: where its Seasons component has the year, which turns its plants' leaves, drops them towards
-/// winter and lays snow on them. Set a season outright, or move the time of year a little each frame to turn the year
+/// The level's seasons: where its Seasons component has the year, which turns its plants' leaves and lays
+/// snow on them in winter. Set a season outright, or move the time of year a little each frame to turn the year
 /// as the game plays. Without a Seasons in the level, setting them does nothing and says so in the Console.
 /// <code>
 /// protected override void Update()

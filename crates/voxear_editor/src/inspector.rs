@@ -2413,7 +2413,7 @@ fn value_path(field: &Field) -> ValuePath {
         Prop::Exposure => "exposure".to_string(),
         Prop::Near => "near".to_string(),
         // A season's look is a table of its own in the Seasons'.
-        Prop::SeasonColor(_) | Prop::SeasonColorAmount(_) | Prop::SeasonLeaves(_) | Prop::SeasonSnow(_) => {
+        Prop::SeasonColor(_) | Prop::SeasonColorAmount(_) | Prop::SeasonSnow(_) => {
             path.0.extend(prop.lock_key().split('.').map(str::to_string));
             return path;
         }

@@ -3,14 +3,11 @@
 //! The shader is `shaders/seasons.slang`.
 //!
 //! Leaves (materials marked foliage) take each season's colour, keeping their
-//! texture's light and dark, and fall towards winter; every plant (foliage,
-//! or a material that moves in the wind, such as bark) takes snow on what
-//! faces up and darkens and shines when wet. Plants across a field turn a
-//! little earlier or later than each other, and patches of them dry out, by
-//! noise over the level, so a field is never one flat colour.
-//!
-//! Leaves fall a triangle at a time, so their shadows go with them where the
-//! GPU has mesh shaders; on others, shadows keep their leaves.
+//! texture's light and dark; every plant (foliage, or a material that moves
+//! in the wind, such as bark) takes snow on what faces up and darkens and
+//! shines when wet. Plants across a field turn a little earlier or later
+//! than each other, and patches of them dry out, by noise over the level, so
+//! a field is never one flat colour.
 
 use serde::{Deserialize, Serialize};
 use voxear_ecs::Component;
@@ -49,22 +46,18 @@ impl Season {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Leaves {
-    /// They turn each season's colour and fall towards winter, as a broadleaf
-    /// tree's do.
+    /// They turn each season's colour, as most plants' do.
     #[default]
-    Fall,
-    /// They turn each season's colour but stay, as grass and hedges do.
     Turn,
     /// They stay as made all year, as a pine's needles do.
     Stay,
 }
 
 impl Leaves {
-    pub const ALL: [Leaves; 3] = [Leaves::Fall, Leaves::Turn, Leaves::Stay];
+    pub const ALL: [Leaves; 2] = [Leaves::Turn, Leaves::Stay];
 
     pub fn name(self) -> &'static str {
         match self {
-            Leaves::Fall => "Fall",
             Leaves::Turn => "Turn",
             Leaves::Stay => "Stay",
         }
@@ -73,8 +66,7 @@ impl Leaves {
     /// The material flags shaders read it by.
     pub(crate) fn flags(self) -> u32 {
         match self {
-            Leaves::Fall => 0,
-            Leaves::Turn => crate::gpu::MATERIAL_LEAVES_TURN,
+            Leaves::Turn => 0,
             Leaves::Stay => crate::gpu::MATERIAL_LEAVES_STAY,
         }
     }
@@ -89,15 +81,13 @@ pub struct SeasonLook {
     pub color: [f32; 3],
     /// How far leaves turn to `color`, from 0 for their own colour to 1.
     pub color_amount: f32,
-    /// How many leaves are on the plants, from 1 for all to 0 for bare.
-    pub leaves: f32,
     /// How much snow lies on plants, on what faces up, from 0 to 1.
     pub snow: f32,
 }
 
 impl Default for SeasonLook {
     fn default() -> Self {
-        Self { color: [0.3, 0.5, 0.15], color_amount: 0.0, leaves: 1.0, snow: 0.0 }
+        Self { color: [0.3, 0.5, 0.15], color_amount: 0.0, snow: 0.0 }
     }
 }
 
@@ -137,10 +127,10 @@ impl Default for Seasons {
     fn default() -> Self {
         Self {
             time_of_year: Season::Summer.time(),
-            spring: SeasonLook { color: [0.45, 0.68, 0.2], color_amount: 0.35, leaves: 1.0, snow: 0.0 },
-            summer: SeasonLook { color: [0.3, 0.5, 0.15], color_amount: 0.0, leaves: 1.0, snow: 0.0 },
-            autumn: SeasonLook { color: [0.8, 0.45, 0.14], color_amount: 0.8, leaves: 1.0, snow: 0.0 },
-            winter: SeasonLook { color: [0.42, 0.3, 0.18], color_amount: 0.9, leaves: 0.0, snow: 0.6 },
+            spring: SeasonLook { color: [0.45, 0.68, 0.2], color_amount: 0.35, snow: 0.0 },
+            summer: SeasonLook { color: [0.3, 0.5, 0.15], color_amount: 0.0, snow: 0.0 },
+            autumn: SeasonLook { color: [0.8, 0.45, 0.14], color_amount: 0.8, snow: 0.0 },
+            winter: SeasonLook { color: [0.42, 0.3, 0.18], color_amount: 0.9, snow: 0.6 },
             variation: 0.5,
             patch_size: 25.0,
             dryness: 0.0,
@@ -188,7 +178,7 @@ impl Seasons {
             // Weighted by how far leaves turn, so blending two seasons blends what they show.
             let [r, g, b] = linear(look.color).map(|c| c * amount);
             gpu.colors[i] = [r, g, b, amount];
-            gpu.looks[i] = [1.0 - look.leaves.clamp(0.0, 1.0), look.snow.clamp(0.0, 1.0), 0.0, 0.0];
+            gpu.looks[i] = [0.0, look.snow.clamp(0.0, 1.0), 0.0, 0.0];
         }
         let [r, g, b] = linear(self.dry_color);
         gpu.dry = [r, g, b, self.dryness.clamp(0.0, 1.0)];
@@ -224,11 +214,10 @@ mod tests {
     }
 
     #[test]
-    fn winter_is_bare_and_snowy_and_summer_as_made() {
+    fn winter_is_snowy_and_summer_as_made() {
         let gpu = Seasons::default().gpu();
         assert_eq!(gpu.enabled, 1);
         assert_eq!(gpu.colors[1][3], 0.0, "summer leaves keep their own colour");
-        assert_eq!(gpu.looks[3][0], 1.0, "every leaf has fallen in winter");
         assert!(gpu.looks[3][1] > 0.0);
     }
 }

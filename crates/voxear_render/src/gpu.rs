@@ -72,9 +72,7 @@ pub const MATERIAL_FOLIAGE: u32 = 2;
 /// Glass: drawn after the opaque scene, over what lies behind it, which it
 /// bends, tints and frosts, reflecting its surroundings.
 pub const MATERIAL_GLASS: u32 = 4;
-/// Leaves that turn with the seasons but never fall, and leaves that stay
-/// as made (see `seasons::Leaves`).
-pub const MATERIAL_LEAVES_TURN: u32 = 8;
+/// Leaves that stay as made through the seasons (see `seasons::Leaves`).
 pub const MATERIAL_LEAVES_STAY: u32 = 16;
 
 #[repr(C)]
@@ -316,7 +314,7 @@ pub struct GpuSeasons {
     /// Each season's leaf colour, weighted by how far leaves turn to it, and
     /// that amount; spring, summer, autumn and winter.
     pub colors: [[f32; 4]; 4],
-    /// Each season's share of leaves fallen and its snow.
+    /// Each season's snow, in y.
     pub looks: [[f32; 4]; 4],
     /// The colour dry leaves turn, and how much of a field dries.
     pub dry: [f32; 4],

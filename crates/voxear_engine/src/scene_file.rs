@@ -1714,11 +1714,11 @@ mod tests {
         let obj: ObjData = toml::from_str(text).unwrap();
         let seasons = obj.seasons.expect("the seasons are read");
         assert_eq!((seasons.time_of_year, seasons.autumn.color_amount), (2.5, 0.5));
-        assert_eq!(seasons.autumn.leaves, Seasons::default().autumn.leaves, "the rest of autumn as it starts");
+        assert_eq!(seasons.autumn.snow, Seasons::default().autumn.snow, "the rest of autumn as it starts");
         assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().seasons, Some(seasons));
-        let grass: MaterialData = toml::from_str("foliage = true\nleaves = \"turn\"").unwrap();
-        assert_eq!(grass.leaves, voxear_render::Leaves::Turn);
-        assert!(!toml::to_string(&MaterialData::default()).unwrap().contains("leaves"), "leaves that fall are not written");
+        let pine: MaterialData = toml::from_str("foliage = true\nleaves = \"stay\"").unwrap();
+        assert_eq!(pine.leaves, voxear_render::Leaves::Stay);
+        assert!(!toml::to_string(&MaterialData::default()).unwrap().contains("leaves"), "leaves that turn are not written");
     }
 
     #[test]

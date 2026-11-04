@@ -199,7 +199,6 @@ pub enum Prop {
     Season,
     SeasonColor(Season),
     SeasonColorAmount(Season),
-    SeasonLeaves(Season),
     SeasonSnow(Season),
     SeasonVariation,
     SeasonPatchSize,
@@ -361,7 +360,6 @@ impl Prop {
             | Prop::Season
             | Prop::SeasonColor(_)
             | Prop::SeasonColorAmount(_)
-            | Prop::SeasonLeaves(_)
             | Prop::SeasonSnow(_)
             | Prop::SeasonVariation
             | Prop::SeasonPatchSize
@@ -484,7 +482,6 @@ impl Prop {
             Prop::TimeOfYear | Prop::Season => "time_of_year",
             Prop::SeasonColor(season) => return format!("{}.color", season_key(*season)),
             Prop::SeasonColorAmount(season) => return format!("{}.color_amount", season_key(*season)),
-            Prop::SeasonLeaves(season) => return format!("{}.leaves", season_key(*season)),
             Prop::SeasonSnow(season) => return format!("{}.snow", season_key(*season)),
             Prop::SeasonVariation => "variation",
             Prop::SeasonPatchSize => "patch_size",
@@ -741,7 +738,6 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 Prop::Season,
                 Prop::SeasonColor(season),
                 Prop::SeasonColorAmount(season),
-                Prop::SeasonLeaves(season),
                 Prop::SeasonSnow(season),
                 Prop::SeasonVariation,
                 Prop::SeasonPatchSize,
@@ -908,7 +904,6 @@ pub fn label(prop: &Prop) -> String {
         Prop::Season => "Season",
         Prop::SeasonColor(_) => "Colour",
         Prop::SeasonColorAmount(_) => "Colour amount",
-        Prop::SeasonLeaves(_) => "Leaves",
         Prop::SeasonSnow(_) => "Snow",
         Prop::SeasonVariation => "Variation",
         Prop::SeasonPatchSize => "Patch size",
@@ -1348,7 +1343,6 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         }
         Prop::SeasonColor(season) => Value::Color(world.get::<Seasons>(entity)?.look(*season).color.map(round3)),
         Prop::SeasonColorAmount(season) => Value::Number(world.get::<Seasons>(entity)?.look(*season).color_amount),
-        Prop::SeasonLeaves(season) => Value::Number(world.get::<Seasons>(entity)?.look(*season).leaves),
         Prop::SeasonSnow(season) => Value::Number(world.get::<Seasons>(entity)?.look(*season).snow),
         Prop::SeasonVariation => Value::Number(world.get::<Seasons>(entity)?.variation),
         Prop::SeasonPatchSize => Value::Number(world.get::<Seasons>(entity)?.patch_size),
@@ -2032,9 +2026,6 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::SeasonColorAmount(season), Value::Number(n)) => {
             with(world, entity, |seasons: &mut Seasons| seasons.look_mut(*season).color_amount = n.clamp(0.0, 1.0))
         }
-        (Prop::SeasonLeaves(season), Value::Number(n)) => {
-            with(world, entity, |seasons: &mut Seasons| seasons.look_mut(*season).leaves = n.clamp(0.0, 1.0))
-        }
         (Prop::SeasonSnow(season), Value::Number(n)) => {
             with(world, entity, |seasons: &mut Seasons| seasons.look_mut(*season).snow = n.clamp(0.0, 1.0))
         }
@@ -2278,7 +2269,7 @@ mod tests {
         assert!(shown(&world).contains(&Prop::SeasonColor(Season::Summer)), "summer's look, where the year starts");
         assert!(set_component(&mut world, entity, &Prop::Season, Value::Choice(2, Vec::new())));
         assert_eq!(world.get::<Seasons>(entity).unwrap().time_of_year, 2.0, "picking autumn turns the year to it");
-        assert!(shown(&world).contains(&Prop::SeasonLeaves(Season::Autumn)), "and shows autumn's look");
+        assert!(shown(&world).contains(&Prop::SeasonSnow(Season::Autumn)), "and shows autumn's look");
         assert!(set_component(&mut world, entity, &Prop::SeasonColorAmount(Season::Autumn), Value::Number(0.4)));
         assert_eq!(world.get::<Seasons>(entity).unwrap().autumn.color_amount, 0.4);
         assert_eq!(Prop::SeasonColorAmount(Season::Autumn).lock_key(), "autumn.color_amount");

@@ -99,7 +99,7 @@ impl Default for MaterialDesc {
             ior: 1.5,
             wind_bend: 0.0,
             wind_flutter: 0.0,
-            leaves: Leaves::Fall,
+            leaves: Leaves::Turn,
         }
     }
 }

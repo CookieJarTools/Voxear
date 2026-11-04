@@ -1019,6 +1019,15 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
     rough to reflect without reading their material: 0.17 to 0.05 ms.
   - Fog integration is a compute pass, a thread a column of froxels walking its 64 slices once, rather than a
     pixel a froxel adding up every slice in front of it again: 0.11 to 0.02 ms. The valley: 3.6 ms at 1080p.
+- **Ray-traced reflections:** where the GPU has ray tracing and the GI traces its scene, the reflections pass traces
+  each smooth pixel's mirror ray through the GI's top level (`rayReflectionsFragment` in `shaders/ddgi.slang`, half
+  resolution, built only with the hardware variant) and lights what it meets as the GI's rays do, textures at a mip
+  by distance; misses take the sky. The depth passes' R8 roughness target became `SURFACE_FORMAT`
+  (A2B10G10R10: an octahedral normal, normal map and all, and roughness), as depth-rebuilt normals faceted a chrome
+  ball's reflection. 0.13 ms on the Sponza demo's chrome ball at 960×540. Screen-space reflections stay for GPUs
+  without ray tracing.
+- **No NaN from a missing normal:** `normalizeOr` in `shading.slang`; a zero-length normal or tangent (some of
+  Sponza's window frames, vases and plants) made NaN that bloom spread over the whole picture.
   - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
     by distance.
   - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the
@@ -1039,18 +1048,16 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   bends the plant away from the ground up, on an arc, with or without wind. GPU test: a pole leans from a pusher
   beside it and stands again once it has gone.
 - ~~**Seasons and variation:**~~ done: a Seasons component (the level's first) with `time_of_year` from 0 to 4
-  (spring, summer, autumn, winter, spring), each season's look (`color`, `color_amount`, `leaves`, `snow`),
-  `variation`, `patch_size`, `dryness` and `dry_color`, and `wetness`; defaults leave plants as made at summer.
+  (spring, summer, autumn, winter, spring), each season's look (`color`, `color_amount`, `snow`), `variation`,
+  `patch_size`, `dryness` and `dry_color`, and `wetness`; defaults leave plants as made at summer.
   `shaders/seasons.slang`: per plant, by noise at its origin, the year runs up to half a season early or late, and
   leaves turn redder or yellower and dry in patches; a season's colour replaces the material's, keeping its
-  texture's light and dark. Leaves fall in clumps by noise over the mesh, a triangle at a time (the opaque and
-  depth passes drop it by its first corner, `leafPosition`, flat; the mesh-shader shadow pass makes it a point,
-  so shadows follow; the vertex shadow path keeps them). Plants (foliage, or anything with wind) take snow from
-  above and darken and shine when wet, in the depth pass's roughness too. Materials' `leaves`: `fall`, `turn`
-  (grass) or `stay` (pines), `MATERIAL_LEAVES_TURN`/`STAY`. Editor: Add Component, the Inspector showing the look
-  of the season the year is nearest under a Season choice, undo, copy and paste, prefabs; a Leaves choice in the
-  material Inspector. C#: `Seasons.TimeOfYear`, `Seasons.Season`, `Seasons.Exists`. Still to come: seasons in
-  the GI's rays, and snow on the ground and on what is not a plant.
+  texture's light and dark. Plants (foliage, or anything with wind) take snow from above and darken and shine when
+  wet, in the depth pass's roughness too. Materials' `leaves`: `turn` or `stay` (pines), `MATERIAL_LEAVES_STAY`.
+  (Leaves first fell a triangle at a time towards winter; it read as broken meshes, so leaves stay on.) Editor: Add
+  Component, the Inspector showing the look of the season the year is nearest under a Season choice, undo, copy
+  and paste, prefabs; a Leaves choice in the material Inspector. C#: `Seasons.TimeOfYear`, `Seasons.Season`,
+  `Seasons.Exists`. Still to come: seasons in the GI's rays, and snow on the ground and on what is not a plant.
 - **Glow:** emissive masks on plants that pulse, breathe or flicker, for glowing mushrooms, bioluminescent
   forests and fireflies, and light from them in the GI.
 - **Placing it:** moved to M8, Terrain, to be built with terrain's scatter layers.

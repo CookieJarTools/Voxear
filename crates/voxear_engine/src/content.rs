@@ -79,8 +79,8 @@ pub struct MaterialData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_flutter: Option<f32>,
     /// What foliage's leaves do through the year in a level with Seasons:
-    /// fall towards winter, turn colour but stay, or stay as made.
-    #[serde(default, skip_serializing_if = "is_falling")]
+    /// turn each season's colour, or stay as made.
+    #[serde(default, skip_serializing_if = "is_turning")]
     pub leaves: Leaves,
 }
 
@@ -100,7 +100,7 @@ impl Default for MaterialData {
             ior: default_ior(),
             wind_bend: None,
             wind_flutter: None,
-            leaves: Leaves::Fall,
+            leaves: Leaves::Turn,
         }
     }
 }
@@ -139,8 +139,8 @@ fn is_default_ior(ior: &f32) -> bool {
     *ior == default_ior()
 }
 
-fn is_falling(leaves: &Leaves) -> bool {
-    *leaves == Leaves::Fall
+fn is_turning(leaves: &Leaves) -> bool {
+    *leaves == Leaves::Turn
 }
 
 fn is_black(color: &[f32; 3]) -> bool {

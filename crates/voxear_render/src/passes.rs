@@ -94,9 +94,10 @@ pub struct Frame {
     /// Contact shadows' image, when they are on: like ambient occlusion,
     /// they need the depth drawn first.
     pub contact_shadows: Option<ImageId>,
-    /// Each pixel's roughness, which the depth passes write when they run
-    /// (whenever ambient occlusion, contact shadows or reflections are on).
-    pub roughness: Option<ImageId>,
+    /// Each pixel's normal and roughness, which the depth passes write when
+    /// they run (whenever ambient occlusion, contact shadows or reflections
+    /// are on).
+    pub surface: Option<ImageId>,
     /// Screen-space reflections' image, and last frame's finished picture
     /// they read, when they are on; they need the depth drawn first too.
     pub reflections: Option<(ImageId, ImageId)>,
@@ -264,10 +265,10 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     let depth_pass = |fg: &mut FrameGraph<'_>, name: &str, list: u32| {
         let pipeline = mesh.map_or(pipelines.depth, |mesh| mesh.depth);
         let push = Push { list, ..draw_push };
-        let roughness = frame.roughness.expect("the depth passes' roughness");
-        let images = [(depth, ImageAccess::DepthAttachment), (roughness, ImageAccess::ColorAttachment)];
+        let surface = frame.surface.expect("the depth passes' surface");
+        let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
         fg.add_pass(name, &images, &shading_buffers, move |ctx| {
-            depth_only(ctx, pipeline, &push, indirect, (depth, roughness), list == LIST_EARLY);
+            depth_only(ctx, pipeline, &push, indirect, (depth, surface), list == LIST_EARLY);
         });
     };
 
@@ -312,8 +313,9 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
                 ambient_occlusion::record_contact_shadows(fg, (pipelines, push), depth, contact);
             }
             if let Some((target, history)) = reflections {
-                let roughness = frame.roughness.expect("the depth passes' roughness");
-                ambient_occlusion::record_reflections(fg, (pipelines, push), (depth, roughness), history, target);
+                let surface = frame.surface.expect("the depth passes' surface");
+                let images = (depth, surface);
+                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, frame.probes);
             }
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);
@@ -499,14 +501,14 @@ fn depth_only(
     pipeline: vk::Pipeline,
     push: &Push,
     indirect: Indirect,
-    (depth, roughness): (ImageId, ImageId),
+    (depth, surface): (ImageId, ImageId),
     clear: bool,
 ) {
     let target =
         attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, clear.then(|| clear_depth(0.0)));
     // Where nothing is drawn, the sky, as rough as can be, so reflections pass it over.
     let rough = [attachment(
-        ctx.view(roughness),
+        ctx.view(surface),
         vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         clear.then(|| clear_color([1.0; 4])),
     )];

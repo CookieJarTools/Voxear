@@ -30,6 +30,7 @@ use anyhow::Result;
 use voxear_rhi::{Bindless, Gpu, ImageDesc, vk};
 
 use crate::{
+    ddgi::Probes,
     gpu::Push,
     graph::{FrameGraph, ImageAccess, ImageId, PassContext},
     passes::{begin_rendering, fullscreen},
@@ -115,22 +116,35 @@ pub fn record_contact_shadows(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipel
 /// lives beside GTAO's, as both march through the depth buffer, and like
 /// GTAO's half-resolution passes each of its pixels stands for a different
 /// pixel of its 2×2 each frame.
+///
+/// Given the GI's probes traced by the GPU's rays, it traces each pixel's
+/// mirror ray through the GI's scene instead (`ray_reflections`), lighting
+/// what it meets as the GI's rays do, by the probes.
 pub fn record_reflections(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
-    (depth, roughness): (ImageId, ImageId),
+    (depth, surface): (ImageId, ImageId),
     history: ImageId,
     target: ImageId,
+    probes: Option<Probes>,
 ) {
-    let textures = [fg.texture(depth).0, fg.texture(history).0, fg.texture(roughness).0, 0];
+    let textures = [fg.texture(depth).0, fg.texture(history).0, fg.texture(surface).0, 0];
     let push = Push { textures, level: 1, ..push };
-    let images = [
+    let mut images = vec![
         (depth, ImageAccess::Sampled),
         (history, ImageAccess::Sampled),
-        (roughness, ImageAccess::Sampled),
+        (surface, ImageAccess::Sampled),
         (target, ImageAccess::ColorAttachment),
     ];
-    fg.add_pass("Reflections", &images, &[], move |ctx| draw(ctx, pipelines.reflections, &push, target));
+    let traced = probes.filter(|probes| !probes.software).zip(pipelines.ray_reflections);
+    let pipeline = match traced {
+        Some((Probes { irradiance, depth, states, .. }, pipeline)) => {
+            images.extend([irradiance, depth, states].map(|probe| (probe, ImageAccess::Sampled)));
+            pipeline
+        }
+        None => pipelines.reflections,
+    };
+    fg.add_pass("Reflections", &images, &[], move |ctx| draw(ctx, pipeline, &push, target));
 }
 
 /// A fullscreen pass that writes every pixel of `target`.

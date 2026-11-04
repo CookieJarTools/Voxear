@@ -17,9 +17,12 @@ pub const BLOOM_FORMAT: vk::Format = vk::Format::B10G11R11_UFLOAT_PACK32;
 pub const LDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 /// Ambient occlusion within a frame: a visibility from 0 to 1.
 pub const AO_FORMAT: vk::Format = vk::Format::R8_UNORM;
-/// Each pixel's roughness, which the depth passes write beside the depth,
-/// so reflections skip what is too rough to show them.
-pub const ROUGHNESS_FORMAT: vk::Format = vk::Format::R8_UNORM;
+/// Each pixel's normal, folded flat (octahedral) in red and green, and its
+/// roughness in blue, which the depth passes write beside the depth, so
+/// reflections skip what is too rough to show them and trace from the
+/// surface's own smooth normal. Ten bits each, as eight would facet a
+/// mirror's reflection.
+pub const SURFACE_FORMAT: vk::Format = vk::Format::A2B10G10R10_UNORM_PACK32;
 /// Its history, which blends a tenth of each frame in, so eight bits would
 /// stop short of the value it is heading for.
 pub const AO_HISTORY_FORMAT: vk::Format = vk::Format::R16_SFLOAT;
@@ -119,6 +122,9 @@ pub struct Pipelines {
     /// The same, tracing rays through hierarchies in a compute shader, for
     /// GPUs without ray tracing.
     pub ddgi_software: [vk::Pipeline; 2],
+    /// Reflections by the GPU's rays, through the GI's scene, where the GPU
+    /// has ray tracing (`rayReflectionsFragment` in `shaders/ddgi.slang`).
+    pub ray_reflections: Option<vk::Pipeline>,
 }
 
 impl Pipelines {
@@ -227,7 +233,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque", forward, c"vertexMain", c"fragmentMain")
             })?,
             depth: graphics(&GraphicsPipelineDesc {
-                color_formats: &[ROUGHNESS_FORMAT],
+                color_formats: &[SURFACE_FORMAT],
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
@@ -329,6 +335,14 @@ impl Pipelines {
                 create_compute_pipeline(gpu, layout, "DDGI rays", ddgi_software, c"ddgiRaysMain")?,
                 create_compute_pipeline(gpu, layout, "DDGI update", ddgi_software, c"ddgiUpdateMain")?,
             ],
+            ray_reflections: match &ddgi {
+                Some(module) => Some(graphics(&GraphicsPipelineDesc {
+                    color_formats: &[HDR_FORMAT],
+                    cull: vk::CullModeFlags::NONE,
+                    ..GraphicsPipelineDesc::new("Reflections", module, c"aoVertex", c"rayReflectionsFragment")
+                })?),
+                None => None,
+            },
             ddgi: match &ddgi {
                 Some(module) => Some([
                     create_compute_pipeline(gpu, layout, "DDGI rays", module, c"ddgiRaysMain")?,
@@ -391,7 +405,7 @@ impl Pipelines {
         ];
         let mesh =
             self.mesh.iter().flat_map(|m| [m.shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);
-        let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software);
+        let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software).chain(self.ray_reflections);
         for pipeline in all.into_iter().chain(mesh).chain(traced) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }
@@ -428,7 +442,7 @@ fn mesh_pipelines(
             ..GraphicsPipelineDesc::mesh("Opaque", task, forward, Some(c"fragmentMain"))
         })?,
         depth: graphics(&GraphicsPipelineDesc {
-            color_formats: &[ROUGHNESS_FORMAT],
+            color_formats: &[SURFACE_FORMAT],
             depth_format: Some(DEPTH_FORMAT),
             depth_write: true,
             depth_compare: vk::CompareOp::GREATER_OR_EQUAL,

@@ -3,7 +3,6 @@
 // only, as shadow.slang draws casters.
 
 #include "culling.slang"
-#include "seasons.slang"
 #include "wind.slang"
 
 struct ShadowVertex
@@ -39,18 +38,8 @@ void shadowMesh(
         world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, world.xyz, normal, push.frame->time);
         vertices[i].position = transform(push.frame->cascadeViewProj[push.list - LIST_SHADOW], world);
     }
-    // Leaves fallen with the seasons cast no shadow: their triangles are
-    // made into points, which draw nothing, by the same corner the opaque
-    // passes drop them by.
-    bool leaves = isLeaves(material) && push.frame->seasons.enabled != 0;
     for (uint i = thread.x; i < triangleCount; i += MESHLET_ROUND)
     {
-        uint3 triangle = meshletTriangle(drawn, i);
-        if (leaves)
-        {
-            float3 corner = buffers()->vertices[vertexOffset + buffers()->meshletVertices[drawn.vertexBase + triangle.x]].position;
-            triangle = leafFallen(push.frame, material, drawn.data.model.c3.xyz, corner) ? uint3(0, 0, 0) : triangle;
-        }
-        triangles[i] = triangle;
+        triangles[i] = meshletTriangle(drawn, i);
     }
 }

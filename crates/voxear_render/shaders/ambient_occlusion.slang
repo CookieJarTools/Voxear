@@ -421,7 +421,7 @@ float2 reflectionPixel(Frame* frame, float3 point, float2 size)
 // sure the hit is, which fades towards the screen's edges and the ray's
 // end. A pixel too rough to show a reflection, as the depth passes wrote
 // its roughness, traces nothing. textures: x depth, y last frame's
-// picture, z roughness.
+// picture, z the surface: normal and roughness.
 [shader("fragment")]
 float4 reflectionsFragment(AoOut input) : SV_Target
 {
@@ -429,7 +429,7 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     uint depthTexture = push.textures.x;
     int2 pixel = fullPixel(int2(input.position.xy));
     float depth = loadDepth(depthTexture, pixel);
-    float roughness = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(pixel, 0)).r;
+    float roughness = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(pixel, 0)).b;
     if (depth <= 0.0 || roughness >= frame->post.reflectionMaxRoughness)
     {
         return 0.0;

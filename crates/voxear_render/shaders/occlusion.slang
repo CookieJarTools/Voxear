@@ -37,14 +37,14 @@ Occlusion ambientOcclusion(Frame* frame, float2 pixel, float nv, float roughness
 // The depth passes: the opaque lists as depth alone, discarding what the
 // opaque passes discard (LOD fades and alpha cut-outs), so their depth is
 // the same to the bit and those passes shade only what it kept; and each
-// pixel's roughness beside it, so reflections pass over what is too rough
-// to show them.
+// pixel's normal, folded flat, and roughness beside it, so reflections pass
+// over what is too rough to show them and trace from the surface's own
+// smooth normal (SURFACE_FORMAT in src/pipelines.rs).
 [shader("fragment")]
-float depthFragment(VertexOut input) : SV_Target0
+float4 depthFragment(VertexOut input) : SV_Target0
 {
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
-    dropFallenLeaves(input, material);
     if (material.alphaCutoff > 0.0)
     {
         float alpha = material.baseColor.a * sampleTexture(material.baseColorTexture, input.uv).a;
@@ -58,7 +58,7 @@ float depthFragment(VertexOut input) : SV_Target0
     float3 albedo = material.baseColor.rgb;
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(push.frame, material, origin, normalizeOr(input.normal, float3(0.0, 1.0, 0.0)), albedo, roughness);
-    return saturate(roughness);
+    return float4(octEncode(surfaceNormal(input, material)) * 0.5 + 0.5, saturate(roughness), 1.0);
 }
 
 // Whether the contact shadows pass found something between a pixel and the

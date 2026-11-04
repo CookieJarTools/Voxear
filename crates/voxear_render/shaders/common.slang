@@ -186,8 +186,7 @@ static const uint MATERIAL_NORMAL_MAP = 1;
 static const uint MATERIAL_FOLIAGE = 2;
 // Glass, drawn after the opaque scene over what lies behind it (glass.slang).
 static const uint MATERIAL_GLASS = 4;
-// Leaves that turn with the seasons but never fall, and leaves that stay as made (seasons.slang).
-static const uint MATERIAL_LEAVES_TURN = 8;
+// Leaves that stay as made through the seasons (seasons.slang).
 static const uint MATERIAL_LEAVES_STAY = 16;
 
 struct Material
@@ -413,7 +412,7 @@ struct Seasons
     // Each season's leaf colour, weighted by how far leaves turn to it, and that amount;
     // spring, summer, autumn and winter.
     float4 colors[4];
-    // Each season's share of leaves fallen, and its snow.
+    // Each season's snow, in y.
     float4 looks[4];
     // The colour dry leaves turn, and how much of a field dries.
     float4 dry;

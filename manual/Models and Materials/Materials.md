@@ -47,7 +47,7 @@ Turn on **Foliage** for leaves, grass and anything else thin that light shines t
 
 Only the sun lights foliage this way. A leaf's shaded side takes the light of its sunlit side, so a leaf in a canopy's shade stays in shade, but a leaf on its own lights up from behind.
 
-In a level with [[Seasons]], **Leaves** says what foliage does through the year: **Fall** turns each season's colour and drops towards winter, as a broadleaf tree does; **Turn** turns colour but stays, as grass and hedges do; **Stay** stays as made, as a pine does. In a material file, `leaves = "turn"` or `leaves = "stay"`.
+In a level with [[Seasons]], **Leaves** says what foliage does through the year: **Turn** takes each season's colour, and **Stay** stays as made, as a pine does. In a material file, `leaves = "stay"`.
 
 ## Glass
 

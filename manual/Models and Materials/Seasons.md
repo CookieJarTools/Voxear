@@ -2,7 +2,7 @@
 order: 6
 ---
 
-Plants change with the year: fresh green in spring, as made in summer, red and gold in autumn, bare and snowy in winter. One **Seasons** turns every plant in the level together, and each plant a little earlier or later than its neighbours, so a wood in autumn has green, yellow and red trees side by side, and its leaves thin out unevenly before winter.
+Plants change with the year: fresh green in spring, as made in summer, red and gold in autumn, brown and snowy in winter. One **Seasons** turns every plant in the level together, and each plant a little earlier or later than its neighbours, so a wood in autumn has green, yellow and red trees side by side.
 
 ## A Seasons
 
@@ -14,7 +14,6 @@ Add a **Seasons** to any Obj (Add Component, then Rendering). It starts at summe
 | Season | The season the year is nearest. Pick one to turn the year to it |
 | Colour | The colour leaves turn this season. The leaves' texture keeps its light and dark under it |
 | Colour amount | How far leaves turn to that colour: 0 for their own colour, 1 for all the way |
-| Leaves | How many leaves are on the plants: 1 for all, 0 for bare |
 | Snow | How much snow lies on plants, on what faces up |
 | Variation | How unevenly plants follow the year: 0 for all together, 1 for up to half a season early or late. Plants' shades differ more as it rises |
 | Patch size | How wide the patches of plants that turn together, and dry together, are, in metres |
@@ -22,14 +21,14 @@ Add a **Seasons** to any Obj (Add Component, then Rendering). It starts at summe
 | Dry colour | The colour dry leaves turn |
 | Wetness | How wet plants are, after rain: darker, and shining |
 
-**Colour**, **Colour amount**, **Leaves** and **Snow** belong to one season: the Inspector shows the season's the year is nearest, so pick a season to set its look. The defaults:
+**Colour**, **Colour amount** and **Snow** belong to one season: the Inspector shows the season's the year is nearest, so pick a season to set its look. The defaults:
 
-| Season | Colour | Colour amount | Leaves | Snow |
-| --- | --- | --- | --- | --- |
-| Spring | Fresh green | 0.35 | 1 | 0 |
-| Summer | Leaves as made | 0 | 1 | 0 |
-| Autumn | Orange | 0.8 | 1 | 0 |
-| Winter | Brown | 0.9 | 0 | 0.6 |
+| Season | Colour | Colour amount | Snow |
+| --- | --- | --- | --- |
+| Spring | Fresh green | 0.35 | 0 |
+| Summer | Leaves as made | 0 | 0 |
+| Autumn | Orange | 0.8 | 0 |
+| Winter | Brown | 0.9 | 0.6 |
 
 Only the level's first Seasons is used. Without one, plants stay as made.
 
@@ -49,10 +48,10 @@ color_amount = 0.9
 
 ## What follows the seasons
 
-- **Leaves**, materials with **Foliage** on, take each season's colour, dry out in patches and fall. A material's **Leaves** setting says which of those it does: **Fall** (the default) for broadleaf trees, **Turn** for grass and hedges, which turn colour but stay, and **Stay** for pines, which stay as made. See [[Materials]].
+- **Leaves**, materials with **Foliage** on, take each season's colour and dry out in patches. A material's **Leaves** setting says whether they do: **Turn** (the default), or **Stay** for pines and other evergreens, which stay as made. See [[Materials]].
 - **Plants**, foliage or anything else with a **Wind bend**, such as a tree's trunk, take snow and wetness.
 
-Leaves fall in clumps, triangle by triangle, so a canopy thins out rather than fading. Their shadows go with them where the graphics card has mesh shaders; on older cards, a bare tree's shadow keeps its leaves.
+Leaves stay on through winter; bare trees are best made as a model of their own, swapped in by code for winter.
 
 A whole plant turns together, by where it stands, so a tree is never half one season and half another.
 

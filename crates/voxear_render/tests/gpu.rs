@@ -2765,17 +2765,17 @@ fn seasons_render(time: Option<f32>, leaves: voxear_render::Leaves) -> Option<Ve
 }
 
 #[test]
-fn leaves_turn_in_autumn_and_fall_with_their_shadow_in_winter() {
+fn leaves_turn_in_autumn_and_take_snow_in_winter_unless_they_stay() {
     use voxear_render::{Leaves, Season};
     let render = |season: Option<Season>, leaves| seasons_render(season.map(Season::time), leaves);
-    let Some(none) = render(None, Leaves::Fall) else { return };
-    let (summer, autumn) = (render(Some(Season::Summer), Leaves::Fall).unwrap(), render(Some(Season::Autumn), Leaves::Fall).unwrap());
-    let (winter, grass) = (render(Some(Season::Winter), Leaves::Fall).unwrap(), render(Some(Season::Winter), Leaves::Turn).unwrap());
+    let Some(none) = render(None, Leaves::Turn) else { return };
+    let (summer, autumn) = (render(Some(Season::Summer), Leaves::Turn).unwrap(), render(Some(Season::Autumn), Leaves::Turn).unwrap());
+    let (winter, pine) = (render(Some(Season::Winter), Leaves::Turn).unwrap(), render(Some(Season::Winter), Leaves::Stay).unwrap());
     keep_image("seasons summer.png", &summer);
     keep_image("seasons autumn.png", &autumn);
     keep_image("seasons winter.png", &winter);
-    keep_image("seasons winter grass.png", &grass);
-    let (ball, shadow) = ((320, 150), (320, 300));
+    keep_image("seasons winter pine.png", &pine);
+    let (ball, top, shadow) = ((320, 150), (320, 62), (320, 300));
     let sum = |pixel: [i32; 3]| pixel.iter().sum::<i32>();
     let difference = |a: [i32; 3], b: [i32; 3]| a.iter().zip(b).map(|(x, y)| (x - y).abs()).max().unwrap_or(0);
     assert!(difference(rgb_at(&summer, ball), rgb_at(&none, ball)) <= 2, "summer leaves are as made");
@@ -2783,16 +2783,12 @@ fn leaves_turn_in_autumn_and_fall_with_their_shadow_in_winter() {
     assert!(g > r, "green in summer: {:?}", rgb_at(&summer, ball));
     let [r, g, _] = rgb_at(&autumn, ball);
     assert!(r > g, "and orange in autumn: {:?}", rgb_at(&autumn, ball));
-    // Bare in winter: the ground shows where the ball was, and its shadow has gone with it.
-    assert!(sum(rgb_at(&winter, ball)) > sum(rgb_at(&summer, ball)) + 60, "the leaves have fallen: {:?}", rgb_at(&winter, ball));
-    if renderer().is_some_and(|r| r.uses_mesh_shaders()) {
-        let (shaded, lit) = (sum(rgb_at(&summer, shadow)), sum(rgb_at(&winter, shadow)));
-        assert!(lit > shaded + 60, "their shadow falls with them: {shaded} under leaves, {lit} bare");
-        let darkest = (200..360).flat_map(|y| (200..440).map(move |x| (x, y))).map(|p| sum(rgb_at(&winter, p))).min();
-        assert!(darkest.unwrap_or(0) > sum(rgb_at(&none, (60, 300))) - 40, "and none of it stays: {darkest:?}");
-    }
-    // Leaves that turn but stay are still there, snowy.
-    assert!(difference(rgb_at(&grass, ball), rgb_at(&winter, ball)) > 20, "grass keeps its leaves: {:?}", rgb_at(&grass, ball));
+    // Winter: snow on top, and the leaves all still there, shadow and all.
+    assert!(sum(rgb_at(&winter, top)) > sum(rgb_at(&summer, top)) + 60, "snow on top in winter: {:?}", rgb_at(&winter, top));
+    assert!((sum(rgb_at(&winter, shadow)) - sum(rgb_at(&summer, shadow))).abs() < 30, "the leaves stay on, shadow and all");
+    // A pine's needles stay green under their snow.
+    let [r, g, _] = rgb_at(&pine, ball);
+    assert!(g > r, "a pine stays green: {:?}", rgb_at(&pine, ball));
 }
 
 /// A field of small dark plants scattered over pale ground ahead of the

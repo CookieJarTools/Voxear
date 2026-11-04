@@ -1,5 +1,5 @@
-// Seasons for plants (src/seasons.rs): leaves take each season's colour and
-// fall towards winter, and plants take snow from above and darken when wet.
+// Seasons for plants (src/seasons.rs): leaves take each season's colour,
+// and plants take snow from above and darken when wet.
 // Each plant turns a little earlier or later than its neighbours, and
 // patches dry out, by noise over the level at its origin, so a whole plant
 // changes together.
@@ -8,9 +8,6 @@
 
 #include "common.slang"
 #include "wind.slang"
-
-// How many cells of noise a mesh unit has, for which leaves fall together.
-static const float LEAF_CLUMPS = 3.0;
 
 bool isLeaves(Material material)
 {
@@ -24,12 +21,10 @@ bool isPlant(Material material)
 }
 
 // What a plant shows of the year: its leaves' colour, weighted by how far
-// they turn to it, and that amount; and how many leaves have fallen and its
-// snow.
+// they turn to it, and that amount; and its snow.
 struct PlantSeason
 {
     float4 color;
-    float fallen;
     float snow;
 };
 
@@ -45,31 +40,8 @@ PlantSeason plantSeason(Frame* frame, float3 origin)
     float along = smoothstep(0.0, 1.0, time - float(from));
     PlantSeason season;
     season.color = lerp(seasons.colors[from], seasons.colors[to], along);
-    float2 look = lerp(seasons.looks[from].xy, seasons.looks[to].xy, along);
-    season.fallen = look.x;
-    season.snow = look.y;
+    season.snow = lerp(seasons.looks[from].y, seasons.looks[to].y, along);
     return season;
-}
-
-// Whether a leaf has fallen: a triangle of leaves whose first corner sits
-// at `meshPosition` in its mesh, on a plant standing at `origin`. Leaves
-// fall in clumps, by noise over the mesh, each plant its own.
-bool leafFallen(Frame* frame, Material material, float3 origin, float3 meshPosition)
-{
-    if (frame->seasons.enabled == 0 || !isLeaves(material) || (material.flags & (MATERIAL_LEAVES_TURN | MATERIAL_LEAVES_STAY)) != 0)
-    {
-        return false;
-    }
-    // Eased, so the last few leaves go together rather than linger.
-    float fallen = smoothstep(0.0, 1.0, plantSeason(frame, origin).fallen);
-    if (fallen <= 0.0)
-    {
-        return false;
-    }
-    float3 p = meshPosition * LEAF_CLUMPS + origin;
-    float clump = lerp(windNoise(p.xy + p.z * 7.31), windNoise(p.zy * 1.37 + p.x * 3.17 + 19.0), 0.5);
-    // The noise rarely reaches its ends, so it is spread to cover all leaves at either end; all fallen is bare.
-    return saturate((clump - 0.2) / 0.6) <= fallen;
 }
 
 float seasonLuminance(float3 color)

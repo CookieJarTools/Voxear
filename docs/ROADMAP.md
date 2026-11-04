@@ -1031,7 +1031,10 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   light changed (`DDGI_CHANGE`, RTXGI's irradiance threshold), and far less when it fell (`DDGI_FALL`, 12 to 30%):
   each ray's hit takes light from the probes' last values, so in a pale room the bounce fed itself and lingered for
   seconds after its lamp went out. A grey room's bounce is gone within a third of a second; a lit room's still
-  light is within 0.1% of before, with no visible flicker.
+  light is within 0.1% of before, with no visible flicker. The blend follows each texel's running change
+  (`DDGI_TREND`, kept in the light's alpha), not one frame's: in Sponza, lit by candles, a frame's rays swung past
+  the thresholds and the walls flickered (each pixel's spread over 120 still frames 1.37 levels, against 0.83
+  with a fixed blend; now 0.86).
 - **A model as one Obj:** a model of several parts placed in a scene is one Obj with a Model Renderer (`ModelRenderer`
   in voxear_render: shared parts, each a mesh, material and place in the Obj's space), not an Obj per part. Each part
   is an instance of its own in extraction (`Owner::part`, motion tracked per part), so culling, LODs, shadows, the

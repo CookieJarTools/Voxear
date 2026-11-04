@@ -4898,7 +4898,7 @@ fn a_model_dragged_from_the_project_places_objs_drawing_it() {
     assert_eq!(text.matches(&format!("mesh = \"{guid}#mesh0.0\"")).count(), 3, "Hello's and the two placed:\n{text}");
     assert_eq!(text.matches(&format!("material = \"{guid}#material0\"")).count(), 3, "{text}");
 
-    // A model of two parts: an Obj named for it, with one inside for each part, where the model puts it.
+    // A model of two parts: one Obj named for it, drawing every part where the model puts it, not an Obj each.
     let from = centre(&editor.ui, tile(&editor.ui, "Pair.gltf").unwrap());
     let to = centre(&editor.ui, hierarchy_row(&editor.ui, "Day").unwrap());
     drag_between(&mut editor, &mut renderer, from, to);
@@ -4910,13 +4910,34 @@ fn a_model_dragged_from_the_project_places_objs_drawing_it() {
     assert_eq!(parts.len(), 2);
     assert_eq!(parts[0].1.x, -parts[1].1.x, "side by side");
     let world = &editor.game.engine.world;
-    assert!(world.get::<voxear_render::MeshRenderer>(pair).is_none(), "which draws nothing itself");
-    for (name, position) in parts {
-        let part = obj(&editor, &name).unwrap();
+    let drawn = world.get::<voxear_render::ModelRenderer>(pair).expect("a Model Renderer");
+    assert_eq!(drawn.parts.len(), 2, "both parts");
+    assert!(world.get::<voxear_render::MeshRenderer>(pair).is_none());
+    assert!(parts.iter().all(|(name, _)| obj(&editor, name).is_none()), "and no Obj for either");
+    assert!(prop_row(&editor.ui, "Parts").is_some(), "the Inspector shows the Model Renderer");
+    editor.save();
+    let text = std::fs::read_to_string(dir.path().join("Scenes/Day.scene")).unwrap();
+    assert!(text.contains(&format!("[obj.model]\nmodel = \"{guid}\"")), "saved naming the model:\n{text}");
+
+    // Unpacked from its Inspector, it is an Obj inside it for each part, where the model puts it, as one step.
+    let header = section_header(&editor.ui, "Model Renderer").unwrap();
+    context_click(&mut editor.ui, header);
+    frame(&mut editor, &mut renderer);
+    let unpack = menu_item(&editor.ui, "Unpack to Objs").expect("the Model Renderer's menu unpacks it");
+    click(&mut editor.ui, unpack);
+    frame(&mut editor, &mut renderer);
+    let world = &editor.game.engine.world;
+    assert!(world.get::<voxear_render::ModelRenderer>(pair).is_none(), "which draws nothing itself now");
+    for (name, position) in &parts {
+        let part = obj(&editor, name).unwrap();
         assert_eq!(world.get::<voxear_scene::Parent>(part).map(|p| p.0), Some(pair));
-        assert_eq!(world.get::<Transform>(part).unwrap().position, position, "{name}");
+        assert_eq!(world.get::<Transform>(part).unwrap().position, *position, "{name}");
         assert!(world.get::<voxear_render::MeshRenderer>(part).is_some());
     }
+    editor.undo(&mut renderer);
+    let world = &editor.game.engine.world;
+    assert!(world.get::<voxear_render::ModelRenderer>(pair).is_some(), "undo draws it whole again");
+    assert!(parts.iter().all(|(name, _)| obj(&editor, name).is_none()), "without its parts' Objs");
 }
 
 #[test]

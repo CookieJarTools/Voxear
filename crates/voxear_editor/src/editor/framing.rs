@@ -15,7 +15,7 @@ use voxear_engine::{
     prefab::{FromPrefab, PrefabInstance},
     prefab_overrides,
 };
-use voxear_render::{Camera, MeshRenderer, Renderer};
+use voxear_render::{Camera, Renderer};
 use voxear_scene::{Name, Parent, Transform};
 
 use super::Editor;
@@ -133,8 +133,7 @@ fn bounds(game: &voxear_engine::Game, renderer: &Renderer, objs: &[Entity]) -> O
         objs.iter().flat_map(|&obj| std::iter::once(obj).chain(props::descendants(game, obj))).collect();
     let (mut low, mut high) = (Vec3::MAX, Vec3::MIN);
     for &entity in &all {
-        let Some((min, max)) = world.get::<MeshRenderer>(entity).and_then(|drawn| renderer.mesh_bounds(drawn.mesh))
-        else {
+        let Some((min, max)) = super::selection::drawn_bounds(world, renderer, entity) else {
             continue;
         };
         let matrix = voxear_scene::world_matrix(world, entity);

@@ -57,7 +57,10 @@ use serde::{Deserialize, Serialize};
 use voxear_assets::AssetGuid;
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_render::{Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, PostVolume, Renderer, Seasons, WindZone};
+use voxear_render::{
+    Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, ModelPart, ModelRenderer, PostVolume, Renderer, Seasons,
+    WindZone,
+};
 use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
 
 use crate::{
@@ -68,7 +71,7 @@ use crate::{
     physics::{CharacterController, Collider, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
     scene_file::{
-        FoliageData, FoliageSource, LayerRef, MaterialRef, ObjData, PostVolumeData, default_material, light_component, light_with_assets,
+        FoliageData, FoliageSource, LayerRef, MaterialRef, ModelData, ModelSource, ObjData, PostVolumeData, default_material, light_component, light_with_assets,
     },
 };
 
@@ -374,6 +377,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.collider = instance.collider.or(root.collider);
     root.wind_zone = instance.wind_zone.or(root.wind_zone);
+    if instance.model.is_some() {
+        root.model.clone_from(&instance.model);
+    }
     root.seasons = instance.seasons.or(root.seasons);
     root.foliage_interaction = instance.foliage_interaction.or(root.foliage_interaction);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
@@ -420,6 +426,9 @@ pub struct TemplateObj {
     /// A Foliage, where there is a renderer to draw it, and how it was
     /// written, which few Objs have.
     pub foliage: Option<Box<(Option<Foliage>, FoliageSource)>>,
+    /// A whole model it draws, where there is a renderer to draw it, and how
+    /// it was written.
+    pub model: Option<Box<(Option<ModelRenderer>, ModelSource)>>,
     /// Its layer by name, found in the world it is spawned into.
     pub layer: Option<LayerRef>,
     /// Its connected Obj by path, bound to an entity when spawned.
@@ -563,6 +572,12 @@ impl Template {
                 }
                 world.insert(entity, foliage.1.clone());
             }
+            if let Some(model) = &obj.model {
+                if let Some(drawn) = &model.0 {
+                    world.insert(entity, drawn.clone());
+                }
+                world.insert(entity, model.1.clone());
+            }
             if let Some(body) = obj.rigidbody {
                 world.insert(entity, body);
             }
@@ -694,6 +709,23 @@ pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageDat
     Ok((foliage, FoliageSource(data.clone())))
 }
 
+/// A Model Renderer drawing every part of the model `data` names, loading
+/// it, each part where the model puts it.
+pub fn model_renderer(content: &mut Content, renderer: &mut Renderer, data: &ModelData) -> Result<ModelRenderer> {
+    let guid = content.parse(&data.model)?.guid().with_context(|| format!("{} is not a model asset", data.model))?;
+    Ok(ModelRenderer { lod_bias: data.lod_bias, ..ModelRenderer::new(model_parts(content.model(renderer, guid)?)) })
+}
+
+/// A loaded model's parts as a Model Renderer draws them.
+pub fn model_parts(nodes: &[voxear_render::ImportedNode]) -> Vec<ModelPart> {
+    let part = |node: &voxear_render::ImportedNode| ModelPart {
+        mesh: node.mesh,
+        material: node.material,
+        transform: voxear_core::math::Mat4::from_scale_rotation_translation(node.scale, node.rotation, node.position),
+    };
+    nodes.iter().map(part).collect()
+}
+
 /// The material a Mesh Renderer or a Foliage names, or the default one.
 fn material_of(content: &mut Content, renderer: &mut Renderer, named: Option<&MaterialRef>) -> Result<MaterialHandle> {
     let source = match named {
@@ -735,7 +767,7 @@ pub(crate) fn resolve_obj(
         _ => None,
     };
     // Without a renderer, as when only checking a scene, foliage is not drawn, as meshes are not, but is kept to save.
-    let foliage = match (&data.foliage, gpu) {
+    let foliage = match (&data.foliage, gpu.as_deref_mut()) {
         (Some(data), Some(renderer)) => {
             let (foliage, source) = foliage(content, renderer, data)?;
             Some(Box::new((Some(foliage), source)))
@@ -743,9 +775,15 @@ pub(crate) fn resolve_obj(
         (Some(data), None) => Some(Box::new((None, FoliageSource(data.clone())))),
         (None, _) => None,
     };
+    let model = match (&data.model, gpu) {
+        (Some(data), Some(renderer)) => Some(Box::new((Some(model_renderer(content, renderer, data)?), ModelSource(data.clone())))),
+        (Some(data), None) => Some(Box::new((None, ModelSource(data.clone())))),
+        (None, _) => None,
+    };
     Ok(TemplateObj {
         path: obj.path.clone(),
         foliage,
+        model,
         parent,
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },
         transform: Transform::new(Vec3::from(data.position()), rotation, Vec3::from(data.scale())),

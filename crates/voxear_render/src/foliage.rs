@@ -178,7 +178,7 @@ impl FoliageCache {
                         instance.flags |= INSTANCE_NO_SHADOW;
                     }
                     extracted.instances.push(instance);
-                    extracted.entities.push(Owner { entity, plant: Some(built.numbers[index]) });
+                    extracted.entities.push(Owner { entity, plant: Some(built.numbers[index]), part: None });
                 }
             }
         }

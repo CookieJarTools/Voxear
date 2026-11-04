@@ -169,6 +169,8 @@ pub enum RowAction {
     /// The same for every value the whole instance changes.
     RevertAll,
     ApplyAll,
+    /// Turn the model a Model Renderer draws whole into an Obj for each part.
+    UnpackModel,
     /// Copy a component's values, or paste those copied over it or onto
     /// the Obj as a new component.
     CopyComponent(Part),
@@ -530,6 +532,10 @@ impl Inspector {
         if self.prefab_mode {
             let label = if locked { "Unlock for Designers" } else { "Lock for Designers" };
             items.push((MenuItem::new(label), Some(RowAction::Lock(part.clone(), !locked))));
+            items.push((MenuItem::separator(), None));
+        }
+        if *part == Part::Model {
+            items.push((MenuItem::new("Unpack to Objs").enabled(!playing && !fixed), Some(RowAction::UnpackModel)));
             items.push((MenuItem::separator(), None));
         }
         let removable = !(playing && matches!(part, Part::Behaviour(_))) && !fixed;
@@ -2450,6 +2456,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Seasons) => "seasons",
         Some(Part::FoliageInteraction) => "foliage_interaction",
         Some(Part::Foliage) => "foliage",
+        Some(Part::Model) => "model",
         Some(Part::Behaviour(name)) => return vec![ValuePath::new(&["fields", name])],
     };
     vec![ValuePath::new(&[key])]

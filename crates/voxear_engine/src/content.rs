@@ -343,6 +343,14 @@ impl InUse {
             used.meshes.insert(renderer.mesh);
             used.materials.insert(renderer.material);
         }
+        for model in world.query_ref::<&voxear_render::ModelRenderer>().without::<Destroying>() {
+            used.meshes.extend(model.parts.iter().map(|part| part.mesh));
+            used.materials.extend(model.parts.iter().map(|part| part.material));
+        }
+        for foliage in world.query_ref::<&voxear_render::Foliage>().without::<Destroying>() {
+            used.meshes.insert(foliage.mesh);
+            used.materials.insert(foliage.material);
+        }
         used.prefabs = world.query_ref::<&PrefabInstance>().without::<Destroying>().into_iter().map(|p| p.0).collect();
         let heard = world.query_ref::<&AudioSource>().without::<Destroying>().into_iter().filter_map(|s| s.sound);
         used.sounds = heard.collect();

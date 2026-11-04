@@ -1467,6 +1467,23 @@ impl Editor {
         }
     }
 
+    /// Turns the model an Obj draws whole into an Obj for each part, as one
+    /// step to undo.
+    fn unpack_model(&mut self, entity: Entity, renderer: &mut Renderer) {
+        let Some(before) = ObjState::of(&self.game.engine.world, entity) else { return };
+        match crate::objs::unpack_model(&mut self.game, renderer, entity) {
+            Ok(parts) => {
+                let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
+                let mut edits = vec![Edit::Changed { entity, before, after }];
+                edits.extend(parts.into_iter().map(|part| Edit::Exists { root: part, taken: None }));
+                self.history.record_step(Edit::Group(edits));
+                self.unsaved = true;
+                self.refresh_hierarchies();
+            }
+            Err(error) => tracing::error!("could not unpack the model: {error:#}"),
+        }
+    }
+
     /// Lets go of a handle; the drag is one step to undo.
     fn end_drag(&mut self) {
         if let Some(entity) = self.field_handles.end().or_else(|| self.script_handles.end()) {
@@ -1590,6 +1607,7 @@ impl Editor {
             RowAction::ApplyAll => return self.apply_instance(entity, renderer),
             RowAction::RevertAll => return self.revert_instance(entity, renderer),
             RowAction::CopyComponent(part) => return self.copy_component(entity, part),
+            RowAction::UnpackModel => return self.unpack_model(entity, renderer),
             _ => {}
         }
         if let RowAction::Keep(field) = action {
@@ -1642,7 +1660,7 @@ impl Editor {
             RowAction::ShowToDesigners(prop, shown) => {
                 props::show_to_designers(&mut self.game.engine.world, entity, &prop, shown);
             }
-            RowAction::ViewLod(_) | RowAction::BrowseComponents(_) => {}
+            RowAction::ViewLod(_) | RowAction::BrowseComponents(_) | RowAction::UnpackModel => {}
             RowAction::ForceLod(lod) => {
                 props::set_forced_lod(&mut self.game.engine.world, entity, lod);
             }

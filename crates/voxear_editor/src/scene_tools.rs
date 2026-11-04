@@ -18,7 +18,7 @@
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Entity, World};
 use voxear_engine::audio::AudioSource;
-use voxear_render::{Camera, Light, MeshRenderer, Renderer};
+use voxear_render::{Camera, Light, MeshRenderer, ModelRenderer, Renderer};
 use voxear_scene::{Destroying, EditorOnly, Parent, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -241,14 +241,28 @@ fn mesh_hits(world: &World, renderer: &Renderer, (origin, direction): (Vec3, Vec
         .without::<EditorOnly>()
         .without::<Destroying>();
     let mut hits = Vec::new();
-    for (entity, renderer_of, transform, placed) in meshes {
-        let Some((min, max)) = renderer.mesh_bounds(renderer_of.mesh) else { continue };
-        let matrix = placed.map_or_else(|| transform.matrix(), |w| w.0);
+    let mut try_box = |entity: Entity, matrix: Mat4, (min, max): (Vec3, Vec3)| {
         let inverse = matrix.inverse();
         let (local_origin, local_direction) = (inverse.transform_point3(origin), inverse.transform_vector3(direction));
         if let Some(t) = enter_box(local_origin, local_direction, min, max) {
             let hit = matrix.transform_point3(local_origin + local_direction * t);
             hits.push((hit.distance(origin), hit, entity));
+        }
+    };
+    for (entity, renderer_of, transform, placed) in meshes {
+        let Some(bounds) = renderer.mesh_bounds(renderer_of.mesh) else { continue };
+        try_box(entity, placed.map_or_else(|| transform.matrix(), |w| w.0), bounds);
+    }
+    // A model drawn whole is hit by each of its parts' boxes, not the box round them all, which would take in
+    // everything inside a building.
+    let models = world
+        .query_ref::<(Entity, &ModelRenderer, &Transform, Option<&WorldTransform>)>()
+        .without::<EditorOnly>()
+        .without::<Destroying>();
+    for (entity, model, transform, placed) in models {
+        let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
+        for (part, min, max) in model.part_boxes(renderer) {
+            try_box(entity, obj * part, (min, max));
         }
     }
     hits

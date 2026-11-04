@@ -259,12 +259,14 @@ pub struct ExtractedFrame {
     pub render_size: (u32, u32),
 }
 
-/// What an instance was made from: its Obj, and for a plant of a Foliage,
-/// its place among the Foliage's plants.
+/// What an instance was made from: its Obj, for a plant of a Foliage its
+/// place among the Foliage's plants, and for a part of a Model Renderer
+/// which part.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Owner {
     pub entity: Entity,
     pub plant: Option<u32>,
+    pub part: Option<u32>,
 }
 
 /// Per-view settings that are not part of the scene.
@@ -568,7 +570,7 @@ pub fn extract(
         .into_iter()
         .filter(|(entity, ..)| !lods.hidden.contains(entity))
         .map(|(entity, renderer, transform, world_transform)| {
-            entities.push(Owner { entity, plant: None });
+            entities.push(Owner { entity, plant: None, part: None });
             let model = world_transform.map_or_else(
                 || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
                 |w| w.0,
@@ -587,6 +589,36 @@ pub fn extract(
             }
         })
         .collect();
+    let mut instances = instances;
+    // Each part of a model an Obj draws whole, where the model puts it.
+    let models = world.query_ref::<(Entity, &crate::ModelRenderer, &Transform, Option<&WorldTransform>)>();
+    for (entity, drawn, transform, world_transform) in models.without::<Destroying>() {
+        if lods.hidden.contains(&entity) {
+            continue;
+        }
+        let obj = world_transform.map_or_else(
+            || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
+            |w| w.0,
+        );
+        let lod = MeshRenderer { lod_bias: drawn.lod_bias, ..MeshRenderer::new(MeshHandle(0), MaterialHandle(0)) };
+        let (flags, lod_bias, lod_screen) = lod.lod_bits();
+        for (index, part) in drawn.parts.iter().enumerate() {
+            entities.push(Owner { entity, plant: None, part: Some(index as u32) });
+            let model = obj * part.transform;
+            let normal = Mat3::from_mat4(model).inverse().transpose();
+            instances.push(GpuInstance {
+                model: cols(model),
+                prev_model: cols(model),
+                normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
+                mesh: part.mesh.0,
+                material: part.material.0,
+                flags,
+                lod_bias,
+                lod_screen,
+                fade: [0.0; 4],
+            });
+        }
+    }
     frame.instance_count = instances.len() as u32;
 
     ExtractedFrame { frame, instances, lights, has_sun: sun_found, entities, post, render_size: (width, height) }

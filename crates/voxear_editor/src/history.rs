@@ -17,9 +17,9 @@ use voxear_engine::{
     physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
     prefab::{FromPrefab, Locks, PrefabInstance},
-    scene_file::FoliageSource,
+    scene_file::{FoliageSource, ModelSource},
 };
-use voxear_render::{Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, Renderer, Seasons, WindZone};
+use voxear_render::{Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Renderer, Seasons, WindZone};
 use voxear_scene::{Layer, Name, ScenePersistence, Transform};
 
 use crate::objs::{self, Placing, Taken};
@@ -54,6 +54,8 @@ pub struct ObjState {
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage and how it was written; its plants are shared, not copied.
     pub foliage: Option<Box<(Foliage, FoliageSource)>>,
+    /// A Model Renderer and how it was written; its parts are shared.
+    pub model: Option<Box<(ModelRenderer, ModelSource)>>,
     pub joint: Option<Box<Joint>>,
     pub collider2d: Option<Box<Collider2D>>,
     pub rigidbody2d: Option<Box<Rigidbody2D>>,
@@ -87,6 +89,11 @@ impl ObjState {
                 .get::<Foliage>(entity)
                 .cloned()
                 .zip(world.get::<FoliageSource>(entity).cloned())
+                .map(Box::new),
+            model: world
+                .get::<ModelRenderer>(entity)
+                .cloned()
+                .zip(world.get::<ModelSource>(entity).cloned())
                 .map(Box::new),
             joint: world.get::<Joint>(entity).copied().map(Box::new),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
@@ -133,6 +140,8 @@ impl ObjState {
         put(world, entity, self.foliage_interaction);
         put(world, entity, self.foliage.as_deref().map(|(foliage, _)| foliage.clone()));
         put(world, entity, self.foliage.as_deref().map(|(_, source)| source.clone()));
+        put(world, entity, self.model.as_deref().map(|(drawn, _)| drawn.clone()));
+        put(world, entity, self.model.as_deref().map(|(_, source)| source.clone()));
         put(world, entity, self.joint.as_deref().copied());
         put(world, entity, self.collider2d.as_deref().copied());
         put(world, entity, self.rigidbody2d.as_deref().copied());

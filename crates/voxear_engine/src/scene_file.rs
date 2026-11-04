@@ -251,6 +251,9 @@ pub struct ObjData {
     pub post_volume: Option<PostVolumeData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer: Option<RendererData>,
+    /// A whole model drawn by the Obj, each part where the model puts it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelData>,
     /// An Audio Source, which plays a sound from the Obj.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioSourceData>,
@@ -320,6 +323,7 @@ impl ObjData {
             light: None,
             post_volume: None,
             renderer: None,
+            model: None,
             audio: None,
             audio_listener: false,
             layer: None,
@@ -676,6 +680,32 @@ impl FoliageData {
         placed.chain(scattered).collect()
     }
 }
+
+/// A whole model drawn by one Obj, as a scene writes it:
+///
+/// ```toml
+/// [obj.model]
+/// model = "fdfa941753cd46a487317019a970cbc2"  # Models/Sponza/Sponza.gltf
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelData {
+    /// The model, by GUID or project path.
+    pub model: String,
+    /// As a Mesh Renderer's, shifting which LOD each part draws.
+    #[serde(default, skip_serializing_if = "is_no_bias")]
+    pub lod_bias: f32,
+}
+
+fn is_no_bias(bias: &f32) -> bool {
+    *bias == 0.0
+}
+
+/// How the Obj's model was written, kept beside its Model Renderer so a save
+/// writes it back, and kept alone where nothing draws, as headless.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelSource(pub ModelData);
+impl voxear_ecs::Component for ModelSource {}
 
 /// How the Obj's Foliage was written, so a save writes it back as it was:
 /// its scatter rather than every plant it made.
@@ -1050,6 +1080,9 @@ fn capture_instance(
     if root.wind_zone.is_some() && root.wind_zone != prefab_root.wind_zone {
         instance.wind_zone = root.wind_zone;
     }
+    if root.model.is_some() && root.model != prefab_root.model {
+        instance.model.clone_from(&root.model);
+    }
     if root.seasons.is_some() && root.seasons != prefab_root.seasons {
         instance.seasons = root.seasons;
     }
@@ -1154,6 +1187,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     // Each written whole, as an override merges into the prefab's and a value left out would keep the prefab's.
     if let Some(collider) = actual.collider.filter(|c| Some(*c) != expected.collider) {
         put("collider", whole(&collider, &crate::physics::Collider::default())?);
+    }
+    if let Some(model) = actual.model.as_ref().filter(|m| Some(*m) != expected.model.as_ref()) {
+        put("model", toml::Value::try_from(model)?);
     }
     if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
         put("wind_zone", whole(&wind, &WindZone::default())?);
@@ -1385,6 +1421,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.wind_zone = world.get::<WindZone>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
+    obj.model = world.get::<ModelSource>(entity).map(|source| {
+        let lod_bias = world.get::<voxear_render::ModelRenderer>(entity).map_or(source.0.lod_bias, |drawn| drawn.lod_bias);
+        ModelData { lod_bias, ..source.0.clone() }
+    });
     obj.foliage = world.get::<FoliageSource>(entity).map(|source| {
         let mut data = source.0.clone();
         if let Some(foliage) = world.get::<Foliage>(entity) {

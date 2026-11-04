@@ -31,7 +31,16 @@ A model made for Unreal, as many from asset stores are, often carries collision 
 
 Drag the model from the Project panel into the Scene view. As in Unity, it shows there as soon as the pointer is over the view, following it so you see where it will go, and lands where you let go: where the pointer meets the ground, or on top of whatever is under the pointer. Drag it off the view to change your mind. You can also drag it onto the Hierarchy: let go on an Obj to put the model inside that Obj, or on a scene's name to put it in that scene. Press Ctrl+Z to take it away again.
 
-The new Obj is named after the model, and has a **Mesh Renderer** that draws the model with its own material. A model made of several parts becomes an Obj with an Obj inside it for each part.
+The new Obj is named after the model. A model of one part gets a **Mesh Renderer** that draws it with its own material. A model of several parts, such as a whole building, stays one Obj too: its **Model Renderer** draws every part where the model puts it, each with the model's material for it, so the Hierarchy shows one Obj however many parts it has. Each part is still culled, given its LOD and shadowed on its own, and clicking any part in the Scene view selects the Obj.
+
+The Model Renderer shows the **Model** it draws, its **LOD bias** (as a Mesh Renderer's) and how many **Parts** it has. To move, hide or change one part on its own, open the Model Renderer's menu (the **⋯** on its header, or a right-click) and pick **Unpack to Objs**: the Obj then has an Obj inside it for each part, each with a Mesh Renderer, where the model puts it. Ctrl+Z packs it back up.
+
+In a scene file:
+
+```toml
+[obj.model]
+model = "fdfa941753cd46a487317019a970cbc2"  # Models/Sponza/Sponza.gltf
+```
 
 If you will use the model many times with the same settings, make it a prefab and place that instead. See [[Prefabs]].
 
@@ -71,7 +80,7 @@ material = "Models/Pyramid.gltf#material0"
 ```
 
 - `id` must be a number no other Obj in the file uses.
-- `#mesh0.0` is the first part of the first mesh in the model; `#mesh1.0` the first part of the second, and so on. A model made of several parts needs an Obj for each.
+- `#mesh0.0` is the first part of the first mesh in the model; `#mesh1.0` the first part of the second, and so on. A Mesh Renderer draws one part; a Model Renderer draws them all.
 - `#material0` is the model's first material. Leave `material` out and the model is drawn plain grey.
 
 If you write it by hand, save the file and open the level again. When the editor saves the scene, it writes the model's ID (from its `.meta` file) in place of its path, so the link survives the model being renamed.
@@ -91,7 +100,7 @@ Select a model in the Project panel, and the Inspector shows its **Import Settin
 | **Make LODs** | Whether the simpler copies for far away are made. Turn it off for a model that must always be drawn in full. |
 | **Import materials** | Whether the model is drawn with its own materials. Turned off, each part is drawn plain grey, and fields that name one of its materials still work. A material listed under **Materials** with a material file of its own is drawn with that either way. |
 
-Everything that draws the model shows the change at once. A part of the model placed in an open scene moves to where the model now puts it, unless you have moved it since. In scenes that are not open, the parts stay where they were.
+Everything that draws the model shows the change at once. A part of the model placed in an open scene moves to where the model now puts it, unless you have moved it since. A Model Renderer always draws the parts where the model now puts them. In scenes that are not open, the parts stay where they were.
 
 The settings are kept in the model's `.meta` file, beside its ID, so keep the two files together when you move or copy the model. Only settings you changed are written:
 

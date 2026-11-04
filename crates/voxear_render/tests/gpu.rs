@@ -2704,6 +2704,36 @@ fn foliage_bends_away_from_what_passes_through_it_and_springs_back() {
 }
 
 #[test]
+fn one_obj_draws_a_whole_model_each_part_where_the_model_puts_it() {
+    use voxear_render::{ModelPart, ModelRenderer, Sky};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -6.0))));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let red = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    let green = renderer.add_material(&MaterialDesc { base_color: [0.05, 0.9, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    let part = |material, x: f32| ModelPart { mesh: cube, material, transform: voxear_core::math::Mat4::from_translation(Vec3::new(x, 0.0, 0.0)) };
+    // Half again as large, so its parts sit a half again as far apart.
+    let model = world.spawn((ModelRenderer::new(vec![part(red, -1.0), part(green, 1.0)]), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(1.5))));
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, Quat::from_rotation_x(0.5), Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("model renderer.png", &pixels);
+    let (left, right) = (rgb_at(&pixels, (210, 180)), rgb_at(&pixels, (430, 180)));
+    assert!(left[0] > left[1] * 2, "the red part on the left: {left:?}");
+    assert!(right[1] > right[0] + 60, "the green part on the right: {right:?}");
+    let [r, g, _] = rgb_at(&pixels, (320, 180));
+    assert!((r - g).abs() < 40, "the sky in the gap between them, neither part: {:?}", rgb_at(&pixels, (320, 180)));
+    let stats = renderer.stats();
+    assert_eq!(stats.instances, 2, "each part an instance");
+    world.despawn(model);
+    run(&mut renderer, &world, &mut 0.0, 1);
+    assert_eq!(renderer.stats().instances, 0);
+}
+
+#[test]
 fn a_mesh_without_normals_does_not_black_out_the_picture_through_bloom() {
     use voxear_render::Sky;
     let Some(mut renderer) = renderer() else { return };

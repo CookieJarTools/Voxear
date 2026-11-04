@@ -17,13 +17,13 @@ use voxear_engine::{
     physics2d::{Collider2D, ColliderShape2D, Rigidbody2D},
     linear,
     prefab::Locks,
-    scene_file::{FoliageData, FoliageSource, ScatterData, default_light, default_material},
+    scene_file::{FoliageData, FoliageSource, ModelData, ModelSource, ScatterData, default_light, default_material},
     script_types::ScriptTypes,
     srgb,
 };
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    Season, Seasons, SkyBody, VolumeShape, WindZone,
+    ModelRenderer, Season, Seasons, SkyBody, VolumeShape, WindZone,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -76,6 +76,8 @@ pub enum Part {
     Seasons,
     FoliageInteraction,
     Foliage,
+    /// A Model Renderer: a whole model drawn by the Obj.
+    Model,
     /// A script, by its full type name.
     Behaviour(String),
 }
@@ -104,6 +106,7 @@ impl Part {
             Part::Seasons => "seasons".into(),
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
+            Part::Model => "model".into(),
             Part::Behaviour(name) => name.clone(),
         }
     }
@@ -129,6 +132,7 @@ impl Part {
             Part::Seasons => "Seasons",
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
+            Part::Model => "Model Renderer",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
     }
@@ -153,6 +157,7 @@ impl Part {
             Part::Seasons => "globe",
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
+            Part::Model => "box",
             Part::Behaviour(_) => "code",
         }
     }
@@ -208,6 +213,10 @@ pub enum Prop {
     PushRadius,
     PushStrength,
     FoliageDraw,
+    /// A Model Renderer's model, its LOD bias, and how many parts it draws.
+    ModelAsset,
+    ModelLodBias,
+    ModelParts,
     FoliageFade,
     FoliageShadow,
     FieldOfView,
@@ -368,6 +377,7 @@ impl Prop {
             | Prop::Wetness => Part::Seasons,
             Prop::PushRadius | Prop::PushStrength => Part::FoliageInteraction,
             Prop::FoliageDraw | Prop::FoliageFade | Prop::FoliageShadow => Part::Foliage,
+            Prop::ModelAsset | Prop::ModelLodBias | Prop::ModelParts => Part::Model,
             Prop::Sound
             | Prop::SoundVolume
             | Prop::Pitch
@@ -491,6 +501,9 @@ impl Prop {
             Prop::PushRadius => "radius",
             Prop::PushStrength => "strength",
             Prop::FoliageDraw => "draw_distance",
+            Prop::ModelAsset => "model",
+            Prop::ModelLodBias => "lod_bias",
+            Prop::ModelParts => "parts",
             Prop::FoliageFade => "fade_distance",
             Prop::FoliageShadow => "shadow_distance",
             Prop::FieldOfView => "fov",
@@ -634,6 +647,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<Foliage>(entity) {
         parts.push(Part::Foliage);
     }
+    if world.has::<ModelSource>(entity) {
+        parts.push(Part::Model);
+    }
     if world.has::<AudioSource>(entity) {
         parts.push(Part::Audio);
     }
@@ -748,6 +764,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
         Part::Foliage => vec![Prop::FoliageDraw, Prop::FoliageFade, Prop::FoliageShadow],
+        Part::Model => vec![Prop::ModelAsset, Prop::ModelLodBias, Prop::ModelParts],
         Part::Audio => {
             let mut props =
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
@@ -913,6 +930,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::PushRadius => "Radius",
         Prop::PushStrength => "Strength",
         Prop::FoliageDraw => "Draw distance",
+        Prop::ModelAsset => "Model",
+        Prop::ModelLodBias => "LOD bias",
+        Prop::ModelParts => "Parts",
         Prop::FoliageFade => "Fade distance",
         Prop::FoliageShadow => "Shadow distance",
         Prop::FieldOfView => "Field of view",
@@ -1071,7 +1091,8 @@ pub fn add(
     }
     let world = &mut game.engine.world;
     match part {
-        Part::Renderer | Part::LodGroup | Part::Foliage => {}
+        // A model is placed from the Project panel, so Add Component does not offer one.
+        Part::Renderer | Part::LodGroup | Part::Foliage | Part::Model => {}
         Part::Light => {
             world.insert(entity, default_light(LightKind::Point));
         }
@@ -1146,6 +1167,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Foliage => {
             world.remove::<Foliage>(entity);
             drop(world.remove::<FoliageSource>(entity));
+        }
+        Part::Model => {
+            world.remove::<ModelRenderer>(entity);
+            drop(world.remove::<ModelSource>(entity));
         }
         Part::Audio => drop(world.remove::<AudioSource>(entity)),
         Part::Listener => drop(world.remove::<AudioListener>(entity)),
@@ -1313,6 +1338,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightLength => Value::Number(light()?.length),
         Prop::LightCookie => Value::Asset(guid_label(game, light()?.cookie.and_then(|t| game.content.picture_guid(t)))),
         Prop::LightCookieSize => Value::Number(light()?.cookie_size),
+        Prop::ModelAsset => Value::Asset(path_of(game, &world.get::<ModelSource>(entity)?.0.model)?),
+        Prop::ModelLodBias => Value::Number(world.get::<ModelRenderer>(entity)?.lod_bias),
+        Prop::ModelParts => Value::Fixed(world.get::<ModelRenderer>(entity)?.parts.len().to_string()),
         Prop::LightSoftness => Value::Number(light()?.softness),
         Prop::LightShadowTint => Value::Color(srgb(light()?.shadow_tint.to_array()).map(round3)),
         Prop::LightBody => {
@@ -1467,6 +1495,24 @@ pub fn pick(
                 return false;
             };
             with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.mesh = mesh)
+        }
+        (Prop::ModelAsset, Pick::Asset(Some(path))) => {
+            let Some(renderer) = renderer else { return false };
+            let Some(source) = game.engine.world.get::<ModelSource>(entity).cloned() else { return false };
+            let data = ModelData { model: path.clone(), ..source.0 };
+            match voxear_engine::prefab::model_renderer(&mut game.content, renderer, &data) {
+                Ok(drawn) => {
+                    let world = &mut game.engine.world;
+                    let lod_bias = world.get::<ModelRenderer>(entity).map_or(0.0, |r| r.lod_bias);
+                    world.insert(entity, ModelRenderer { lod_bias, ..drawn });
+                    world.insert(entity, ModelSource(data));
+                    true
+                }
+                Err(error) => {
+                    tracing::error!("{error:#}");
+                    false
+                }
+            }
         }
         (Prop::Material, Pick::Asset(path)) => {
             let Some(renderer) = renderer else { return false };
@@ -1704,6 +1750,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         }
         Prop::LightCookie => return fields::assets_of(game, Some(AssetKind::Texture)),
         Prop::LightProfile => return fields::assets_of(game, Some(AssetKind::LightProfile)),
+        Prop::ModelAsset => return fields::assets_of(game, Some(AssetKind::Model)),
         // A level shows Objs inside the group's Obj, at any depth: those not in it already, each in another
         // level saying which, as picking it moves it here.
         // A joint holds to an Obj physics moves: every other with a Rigidbody, or the world.
@@ -2000,6 +2047,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindGusts, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gusts = n.max(0.0)),
         (Prop::WindGustSize, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_size = n.max(0.1)),
         (Prop::WindGustSpeed, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_speed = n),
+        (Prop::ModelLodBias, Value::Number(n)) => {
+            with(world, entity, |model: &mut ModelRenderer| model.lod_bias = n.clamp(-4.0, 4.0))
+        }
         (Prop::FoliageDraw, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.draw_distance = n.max(0.0)),
         (Prop::FoliageFade, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.fade_distance = n.max(0.0)),
         (Prop::FoliageShadow, Value::Number(n)) => {

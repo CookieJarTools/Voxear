@@ -268,6 +268,15 @@ impl Game {
                 }
             }
         }
+        // Objs drawing the whole model draw its parts as they are now, where they now sit.
+        if let Some(nodes) = self.content.loaded_model(guid) {
+            let parts: std::sync::Arc<[voxear_render::ModelPart]> = crate::prefab::model_parts(nodes).into();
+            for (source, drawn) in self.engine.world.query::<(&crate::scene_file::ModelSource, &mut voxear_render::ModelRenderer)>() {
+                if self.content.parse(&source.0.model).ok().and_then(|r| r.guid()) == Some(guid) {
+                    drawn.parts = parts.clone();
+                }
+            }
+        }
         let world = &mut self.engine.world;
         let mut placed = Vec::new();
         for (entity, renderer, transform) in world.query_ref::<(Entity, &MeshRenderer, &Transform)>() {

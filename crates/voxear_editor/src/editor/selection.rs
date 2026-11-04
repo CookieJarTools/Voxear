@@ -7,7 +7,7 @@
 
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{Camera, Light, MeshRenderer, Renderer};
+use voxear_render::{Camera, Light, MeshRenderer, ModelRenderer, Renderer};
 use voxear_scene::{Destroying, EditorOnly, Name, Parent, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -281,11 +281,19 @@ fn box_of(from: [f32; 2], to: [f32; 2]) -> [f32; 4] {
     [from[0].min(to[0]), from[1].min(to[1]), from[0].max(to[0]), from[1].max(to[1])]
 }
 
+/// The box round what an Obj draws, in its own space: its mesh's, or every
+/// part of the model it draws.
+pub(crate) fn drawn_bounds(world: &World, renderer: &Renderer, entity: Entity) -> Option<(Vec3, Vec3)> {
+    match world.get::<MeshRenderer>(entity) {
+        Some(mesh) => renderer.mesh_bounds(mesh.mesh),
+        None => world.get::<ModelRenderer>(entity)?.bounds(renderer),
+    }
+}
+
 /// The corners of an Obj's mesh's bounds in the world, or none for an Obj
 /// without a mesh.
 fn bounds_corners(world: &World, renderer: &Renderer, entity: Entity) -> Option<[Vec3; 8]> {
-    let mesh = world.get::<MeshRenderer>(entity)?;
-    let (min, max) = renderer.mesh_bounds(mesh.mesh)?;
+    let (min, max) = drawn_bounds(world, renderer, entity)?;
     let matrix = world.get::<WorldTransform>(entity).map(|w| w.0)?;
     Some(std::array::from_fn(|at| {
         let pick = |bit: usize, low: f32, high: f32| if at & bit == 0 { low } else { high };
@@ -320,7 +328,7 @@ fn objs_in_box(world: &World, renderer: &Renderer, camera: &ViewCamera, from: [f
     let [left, top, right, bottom] = box_of(from, to);
     let overlaps = |[x0, y0, x1, y1]: [f32; 4]| x0 <= right && x1 >= left && y0 <= bottom && y1 >= top;
     let shown =
-        |entity| world.has::<MeshRenderer>(entity) || world.has::<Light>(entity) || world.has::<Camera>(entity);
+        |entity| drawn_bounds(world, renderer, entity).is_some() || world.has::<Light>(entity) || world.has::<Camera>(entity);
     world
         .query_ref::<(Entity, &Name, &Transform)>()
         .without::<EditorOnly>()

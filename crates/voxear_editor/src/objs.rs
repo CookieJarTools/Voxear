@@ -17,7 +17,7 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game, ObjPath, Tracked,
     prefab::{PREFAB_FORMAT, PrefabFile},
-    scene_file::{self, SceneFile},
+    scene_file::{self, ModelSource, SceneFile},
 };
 use voxear_render::{LodGroup, Renderer};
 use voxear_scene::{Destroying, Name, Parent, Transform};
@@ -272,11 +272,12 @@ pub fn place_prefab(
     Ok(made)
 }
 
-/// Places the model at `path` (from the project's folder) as Objs drawing
-/// it, where [`place_prefab`] places an instance and offset as it is: one
-/// Obj when the model is one part, or else one named for the model with an
-/// Obj inside for each part, where the model puts it. Each part is drawn
-/// with the model's own material for it. Returns the top one.
+/// Places the model at `path` (from the project's folder) as one Obj named
+/// for it, where [`place_prefab`] places an instance and offset as it is:
+/// with a Mesh Renderer when the model is one part, or else a Model
+/// Renderer drawing every part where the model puts it, rather than an Obj
+/// for each ([`unpack_model`] makes those). Each part is drawn with the
+/// model's own material for it. Returns the Obj.
 pub fn place_model(
     game: &mut Game,
     renderer: &mut Renderer,
@@ -304,11 +305,8 @@ pub fn place_model(
         placed.push((1, part.transform));
     } else {
         text += &model_obj(path, 1, name, None, None);
-        for (id, part) in (2..).zip(&parts) {
-            let part_name = if part.name.is_empty() { name } else { &part.name };
-            text += &model_obj(path, id, part_name, Some(1), Some(part));
-            placed.push((id, part.transform));
-        }
+        let model = toml::Value::String(guid.to_string());
+        text += &format!("[obj.model]\nmodel = {model}  # {path}\n");
     }
     let file = scene_file::parse(&text, path)?;
     let spawned = scene_file::spawn(&mut game.engine, &mut game.content, Some(renderer), &file, &HashSet::new())?;
@@ -323,6 +321,45 @@ pub fn place_model(
     let made = spawned.iter().find(|(at, _)| *at == ObjPath::new(1)).map(|(_, e)| *e);
     let made = made.context("the model's Obj was made")?;
     settle(world, made, parent, position);
+    Ok(made)
+}
+
+/// Turns the whole model an Obj draws into an Obj inside it for each part,
+/// where the model puts it, each with a Mesh Renderer drawing the part with
+/// the model's material for it, as placing a model once did: for moving,
+/// hiding or changing a part on its own. The Obj keeps everything else.
+/// Returns the parts' Objs.
+pub fn unpack_model(game: &mut Game, renderer: &mut Renderer, entity: Entity) -> Result<Vec<Entity>> {
+    let source = game.engine.world.get::<ModelSource>(entity).cloned().context("it draws no model")?;
+    let guid = game.content.parse(&source.0.model)?.guid().with_context(|| format!("{} is no model", source.0.model))?;
+    let path = game.content.db().get(guid).map(|entry| entry.path.clone()).context("the model is not in the project")?;
+    let parts: Vec<ModelPart> = (game.content.model(renderer, guid)?.iter())
+        .map(|node| ModelPart {
+            name: node.name.clone(),
+            transform: Transform::new(node.position, node.rotation, node.scale),
+            mesh: node.mesh_part.clone(),
+            material: node.material_part.clone(),
+        })
+        .collect();
+    let name = stem(&path);
+    let mut text = String::from("format = 1\n");
+    for (id, part) in (1..).zip(&parts) {
+        text += &model_obj(&path, id, if part.name.is_empty() { name } else { &part.name }, None, Some(part));
+    }
+    let file = scene_file::parse(&text, &path)?;
+    let spawned = scene_file::spawn(&mut game.engine, &mut game.content, Some(renderer), &file, &HashSet::new())?;
+    game.levels.track_new(game.levels.scene_of(entity), &spawned);
+    let world = &mut game.engine.world;
+    let mut made = Vec::new();
+    for (id, part) in (1..).zip(&parts) {
+        if let Some((_, part_obj)) = spawned.iter().find(|(at, _)| *at == ObjPath::new(id)) {
+            world.insert(*part_obj, part.transform);
+            world.insert(*part_obj, Parent(entity));
+            made.push(*part_obj);
+        }
+    }
+    world.remove::<voxear_render::ModelRenderer>(entity);
+    world.remove::<ModelSource>(entity);
     Ok(made)
 }
 

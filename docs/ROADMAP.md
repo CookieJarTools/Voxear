@@ -1026,6 +1026,12 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   (A2B10G10R10: an octahedral normal, normal map and all, and roughness), as depth-rebuilt normals faceted a chrome
   ball's reflection. 0.13 ms on the Sponza demo's chrome ball at 960×540. Screen-space reflections stay for GPUs
   without ray tracing.
+- **A model as one Obj:** a model of several parts placed in a scene is one Obj with a Model Renderer (`ModelRenderer`
+  in voxear_render: shared parts, each a mesh, material and place in the Obj's space), not an Obj per part. Each part
+  is an instance of its own in extraction (`Owner::part`, motion tracked per part), so culling, LODs, shadows, the
+  GI's rays and reflections take it as any mesh; picking tries each part's box. Scene files write `[obj.model]`
+  (`ModelData`, kept as `ModelSource`); a reimport rebuilds the parts; in-use counting keeps its meshes, and Foliage's.
+  Inspector: Model (picks another model), LOD bias, Parts, and **Unpack to Objs** in its menu, one undo step.
 - **No NaN from a missing normal:** `normalizeOr` in `shading.slang`; a zero-length normal or tangent (some of
   Sponza's window frames, vases and plants) made NaN that bloom spread over the whole picture.
   - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out

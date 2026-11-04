@@ -36,6 +36,7 @@ mod mesh;
 mod mesh_tools;
 mod meshlets;
 mod model_lods;
+mod model_renderer;
 mod passes;
 mod payload;
 mod pipelines;
@@ -55,7 +56,7 @@ use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
 
 use anyhow::{Result, ensure};
 use voxear_core::{profile_marker, profile_scope};
-use voxear_ecs::{Entity, World};
+use voxear_ecs::World;
 use voxear_rhi::{
     Acquire, Acquired, Bindless, Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, GpuInfo, Image, ImageDesc, MemoryLocation,
     RenderDoc, Retired, Swapchain, TopLevel, WindowHandles, full_mip_count, vk,
@@ -92,6 +93,7 @@ pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use foliage::{Foliage, FoliageInteraction, Plant, scatter};
+pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use wind::WindZone;
 pub use scene::{
@@ -1217,7 +1219,7 @@ struct View {
     /// Auto exposure's adapted EV and whether it has started.
     exposure: Buffer,
     /// Last frame's model matrices and camera, for motion vectors.
-    prev_models: HashMap<Entity, Mat4Cols>,
+    prev_models: HashMap<scene::Owner, Mat4Cols>,
     /// Last frame's Objs in their instances' order.
     prev_entities: Vec<scene::Owner>,
     /// Every Foliage's plants, built once (see `foliage`).
@@ -1495,7 +1497,7 @@ impl View {
     /// is marked new there.
     fn track_motion(&mut self, extracted: &mut scene::ExtractedFrame) {
         for (index, (instance, owner)) in extracted.instances.iter_mut().zip(&extracted.entities).enumerate() {
-            if let Some(previous) = self.prev_models.get(&owner.entity).filter(|_| owner.plant.is_none()) {
+            if let Some(previous) = self.prev_models.get(owner).filter(|_| owner.plant.is_none()) {
                 instance.prev_model = *previous;
             }
             if self.prev_entities.get(index) != Some(owner) {
@@ -1505,7 +1507,7 @@ impl View {
         self.prev_entities.clone_from(&extracted.entities);
         self.prev_models.clear();
         let objs = extracted.entities.iter().zip(&extracted.instances).filter(|(owner, _)| owner.plant.is_none());
-        self.prev_models.extend(objs.map(|(owner, instance)| (owner.entity, instance.model)));
+        self.prev_models.extend(objs.map(|(owner, instance)| (*owner, instance.model)));
         let current = extracted.frame.unjittered_view_proj;
         extracted.frame.prev_view_proj = self.prev_view_proj.replace(current).unwrap_or(current);
     }

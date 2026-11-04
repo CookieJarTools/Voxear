@@ -919,6 +919,9 @@ Done so far:
   tinted by the colour and dimmed by Fresnel, plus the surroundings, the sun and the lamps reflected. The editor's
   material inspector has Glass and IOR, and the Material menu lists the built-in Glass. GPU tests: clear glass
   shows what lies behind it, tinted glass colours it, rough glass blurs it.
+- **Colour temperature on lights:** `temperature` in kelvin on every light kind, which `color` then filters, as
+  Unity's Filter and Temperature; a black body's colour from Kim et al.'s Planckian locus fit, at a luminance of 1
+  so only the colour changes. The light inspector's Appearance picks Colour or Filter and Temperature.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

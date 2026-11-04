@@ -24,7 +24,9 @@ Select the light, and the Inspector shows:
 | Setting | What it does |
 | --- | --- |
 | Type | Directional, Point, Spot, Rectangle, Disc or Tube. You can change it at any time |
-| Colour | The light's colour |
+| Appearance | **Colour**, to give the light a colour of its own, or **Filter and Temperature**, to light in the colour of a temperature, which Colour then tints |
+| Colour | The light's colour, or with a temperature, a filter over it: white leaves the temperature's colour as it is |
+| Temperature | With Filter and Temperature, the light's colour temperature in kelvin, as below |
 | Intensity | How bright it is |
 | Range | How far the light reaches, in metres, from the nearest point of its shape. It fades out smoothly by then |
 | Inner angle, Outer angle | A spot light's cone, in degrees: full brightness inside the inner angle, fading to nothing at the outer |
@@ -34,6 +36,30 @@ Select the light, and the Inspector shows:
 | Cookie | A picture the light shines through, for a spot or directional light |
 | Cookie size | How many metres a directional light's cookie covers before it repeats |
 | IES profile | How bright a real light fitting is in each direction, for a point or spot light |
+
+## Colour temperature
+
+Real lights are coloured by how hot they burn: a candle flame is orange, a household bulb warm white, the noon sun white and the light from a clear sky blue. Give a light a **temperature** instead of picking its colour, and it lights in that colour. The temperature changes only the colour, never how bright the light is.
+
+| Temperature | Looks like |
+| --- | --- |
+| 1900 K | A candle, or firelight |
+| 2700 K | A household bulb |
+| 3200 K | A halogen lamp, or the sun an hour before sunset |
+| 4000 K | A cool white tube |
+| 5500 K | The midday sun |
+| 6500 K | Daylight under a light overcast |
+| 10000 K | The blue light of a clear sky, or shade on a sunny day |
+
+In a scene file:
+
+```toml
+[obj.light]
+type = "point"
+temperature = 1900
+```
+
+With a temperature, `color` filters it, as a gel over a lamp does: `color = [1.0, 0.8, 0.8]` with 6500 K gives a pinkish daylight.
 
 An area light's intensity means the same as a point light's: from far away, straight ahead, it gives as much light as a point light of that intensity. Making the shape bigger spreads the same light over more of it, so the light softens rather than brightens.
 

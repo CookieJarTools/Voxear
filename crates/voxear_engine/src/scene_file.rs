@@ -376,6 +376,9 @@ pub enum LightData {
         color: [f32; 3],
         #[serde(default = "default_sun")]
         intensity: f32,
+        /// The colour of a light this hot, in kelvin, which `color` then filters.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cookie: Option<String>,
         /// How many metres the cookie covers before it repeats.
@@ -396,6 +399,9 @@ pub enum LightData {
         color: [f32; 3],
         #[serde(default = "default_lamp")]
         intensity: f32,
+        /// The colour of a light this hot, in kelvin, which `color` then filters.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -406,6 +412,9 @@ pub enum LightData {
         color: [f32; 3],
         #[serde(default = "default_lamp")]
         intensity: f32,
+        /// The colour of a light this hot, in kelvin, which `color` then filters.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
         #[serde(default = "default_inner")]
@@ -423,6 +432,9 @@ pub enum LightData {
         color: [f32; 3],
         #[serde(default = "default_lamp")]
         intensity: f32,
+        /// The colour of a light this hot, in kelvin, which `color` then filters.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
         #[serde(default = "one")]
@@ -435,6 +447,9 @@ pub enum LightData {
         color: [f32; 3],
         #[serde(default = "default_lamp")]
         intensity: f32,
+        /// The colour of a light this hot, in kelvin, which `color` then filters.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
         #[serde(default = "half")]
@@ -446,6 +461,9 @@ pub enum LightData {
         color: [f32; 3],
         #[serde(default = "default_lamp")]
         intensity: f32,
+        /// The colour of a light this hot, in kelvin, which `color` then filters.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
         #[serde(default = "one")]
@@ -480,6 +498,18 @@ fn is_black3(colour: &[f32; 3]) -> bool {
 }
 
 impl LightData {
+    /// The light's colour temperature, in kelvin, whichever kind it is.
+    pub fn temperature(&self) -> Option<f32> {
+        match *self {
+            Self::Directional { temperature, .. }
+            | Self::Point { temperature, .. }
+            | Self::Spot { temperature, .. }
+            | Self::Rectangle { temperature, .. }
+            | Self::Disc { temperature, .. }
+            | Self::Tube { temperature, .. } => temperature,
+        }
+    }
+
     /// The light's cookie and IES profile, as the scene names them.
     pub fn assets(&self) -> (Option<&str>, Option<&str>) {
         match self {
@@ -1152,8 +1182,8 @@ pub fn default_light(kind: LightKind) -> Light {
 
 /// A light as a scene describes it, without its cookie and profile, which
 /// need their assets loaded (see [`light_with_assets`]).
-pub(crate) fn light_component(light: &LightData) -> Light {
-    match *light {
+pub(crate) fn light_component(data: &LightData) -> Light {
+    let light = match *data {
         LightData::Directional { color, intensity, cookie_size, softness, shadow_tint, body, .. } => {
             let shadow_tint = Vec3::from(linear(shadow_tint));
             let body = match body {
@@ -1172,16 +1202,17 @@ pub(crate) fn light_component(light: &LightData) -> Light {
         LightData::Spot { color, intensity, range, inner_angle, outer_angle, .. } => {
             Light::spot(Vec3::from(linear(color)), intensity, range, inner_angle, outer_angle)
         }
-        LightData::Rectangle { color, intensity, range, width, height } => {
+        LightData::Rectangle { color, intensity, range, width, height, .. } => {
             Light::rectangle(Vec3::from(linear(color)), intensity, range, width, height)
         }
-        LightData::Disc { color, intensity, range, radius } => {
+        LightData::Disc { color, intensity, range, radius, .. } => {
             Light::disc(Vec3::from(linear(color)), intensity, range, radius)
         }
-        LightData::Tube { color, intensity, range, length, radius } => {
+        LightData::Tube { color, intensity, range, length, radius, .. } => {
             Light::tube(Vec3::from(linear(color)), intensity, range, length, radius)
         }
-    }
+    };
+    Light { temperature: data.temperature(), ..light }
 }
 
 /// A light with its cookie and IES profile loaded, as a scene names them.
@@ -1200,12 +1231,14 @@ pub(crate) fn light_with_assets(content: &mut Content, renderer: &mut Renderer, 
 fn light_data(content: &Content, light: &Light) -> LightData {
     let color = round3(srgb(light.color.to_array()));
     let intensity = light.intensity;
+    let temperature = light.temperature;
     let cookie = light.cookie.and_then(|texture| content.picture_guid(texture)).map(|guid| guid.to_string());
     let profile = light.profile.and_then(|texture| content.light_profile_guid(texture)).map(|guid| guid.to_string());
     match light.kind {
         LightKind::Directional => LightData::Directional {
             color,
             intensity,
+            temperature,
             cookie,
             cookie_size: light.cookie_size,
             softness: light.softness,
@@ -1215,10 +1248,11 @@ fn light_data(content: &Content, light: &Light) -> LightData {
                 SkyBody::Moon => SkyBodyData::Moon,
             },
         },
-        LightKind::Point => LightData::Point { color, intensity, range: light.range, profile },
+        LightKind::Point => LightData::Point { color, intensity, temperature, range: light.range, profile },
         LightKind::Spot => LightData::Spot {
             color,
             intensity,
+            temperature,
             range: light.range,
             inner_angle: light.spot_inner_degrees,
             outer_angle: light.spot_outer_degrees,
@@ -1226,11 +1260,13 @@ fn light_data(content: &Content, light: &Light) -> LightData {
             profile,
         },
         LightKind::Rectangle => {
-            LightData::Rectangle { color, intensity, range: light.range, width: light.width, height: light.height }
+            let (width, height) = (light.width, light.height);
+            LightData::Rectangle { color, intensity, temperature, range: light.range, width, height }
         }
-        LightKind::Disc => LightData::Disc { color, intensity, range: light.range, radius: light.radius },
+        LightKind::Disc => LightData::Disc { color, intensity, temperature, range: light.range, radius: light.radius },
         LightKind::Tube => {
-            LightData::Tube { color, intensity, range: light.range, length: light.length, radius: light.radius }
+            let (length, radius) = (light.length, light.radius);
+            LightData::Tube { color, intensity, temperature, range: light.range, length, radius }
         }
     }
 }
@@ -1400,6 +1436,19 @@ mod tests {
         assert!(!toml::to_string(&plain).unwrap().contains("stars"));
         let dim: SkyData = toml::from_str(&format!("{colours}\nstars = 0.5")).unwrap();
         assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&dim).unwrap()).unwrap().stars, 0.5);
+    }
+
+    #[test]
+    fn a_lights_temperature_reads_and_writes_back_and_is_left_out_unset() {
+        let candle: LightData = toml::from_str("type = \"point\"\ntemperature = 1900.0").unwrap();
+        assert_eq!(light_component(&candle).temperature, Some(1900.0));
+        assert_eq!(toml::from_str::<LightData>(&toml::to_string(&candle).unwrap()).unwrap(), candle);
+        let plain: LightData = toml::from_str("type = \"spot\"").unwrap();
+        assert_eq!(light_component(&plain).temperature, None);
+        assert!(!toml::to_string(&plain).unwrap().contains("temperature"));
+        let lit = Light { temperature: Some(1900.0), ..default_light(LightKind::Point) };
+        let warm = lit.light_color();
+        assert!(warm.x > warm.z * 3.0, "a candle lights orange: {warm}");
     }
 
     #[test]

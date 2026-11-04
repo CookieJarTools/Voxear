@@ -60,7 +60,15 @@ impl LightKind {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Light {
     pub kind: LightKind,
+    /// Linear. With a `temperature`, a filter over the colour of that
+    /// temperature: white leaves it as it is.
     pub color: Vec3,
+    /// The colour of a light this hot, in kelvin, as Unity's Filter and
+    /// Temperature: 1900 a candle, 2700 a household bulb, 4000 moonlight's
+    /// look, 5500 the midday sun, 6500 daylight, 10000 a clear blue sky.
+    /// Its brightness stays the same as it changes. `None` lights in `color`
+    /// alone.
+    pub temperature: Option<f32>,
     /// For a shape, what a point light of this intensity would give straight
     /// ahead of it from far away, so changing its size does not change how
     /// much light it gives.
@@ -111,6 +119,12 @@ pub enum SkyBody {
 impl Component for Light {}
 
 impl Light {
+    /// The colour it lights in, linear: its colour, filtering its
+    /// temperature's when it has one.
+    pub fn light_color(&self) -> Vec3 {
+        self.temperature.map_or(self.color, |kelvin| self.color * temperature_color(kelvin))
+    }
+
     pub fn directional(color: Vec3, intensity: f32) -> Self {
         Self { kind: LightKind::Directional, ..Self::shaped(color, intensity, 0.0) }
     }
@@ -146,6 +160,7 @@ impl Light {
         Self {
             kind: LightKind::Point,
             color,
+            temperature: None,
             intensity,
             range,
             spot_inner_degrees: 0.0,
@@ -162,6 +177,31 @@ impl Light {
             body: SkyBody::Sun,
         }
     }
+}
+
+/// The linear colour of a black body at `kelvin`, as lights of that
+/// temperature shine, scaled to a luminance of 1 so only its colour
+/// changes: orange at 1900, about white at 6500, blue past it. From Kim et
+/// al.'s fit of the Planckian locus, held to 1667 to 25000 kelvin.
+pub fn temperature_color(kelvin: f32) -> Vec3 {
+    let t = f64::from(kelvin.clamp(1667.0, 25000.0));
+    let (t2, t3) = (t * t, t * t * t);
+    let x = match t {
+        t if t <= 4000.0 => -0.2661239e9 / t3 - 0.2343589e6 / t2 + 0.8776956e3 / t + 0.179910,
+        _ => -3.0258469e9 / t3 + 2.1070379e6 / t2 + 0.2226347e3 / t + 0.240390,
+    };
+    let (x2, x3) = (x * x, x * x * x);
+    let y = match t {
+        t if t <= 2222.0 => -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683,
+        t if t <= 4000.0 => -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867,
+        _ => 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483,
+    };
+    // CIE XYZ at a luminance of 1, into linear sRGB.
+    let (big_x, big_z) = (x / y, (1.0 - x - y) / y);
+    let r = 3.2406 * big_x - 1.5372 - 0.4986 * big_z;
+    let g = -0.9689 * big_x + 1.8758 + 0.0415 * big_z;
+    let b = 0.0557 * big_x - 0.2040 + 1.0570 * big_z;
+    Vec3::new(r as f32, g as f32, b as f32).max(Vec3::ZERO)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -431,7 +471,8 @@ pub fn extract(
         let light = match (light.kind, sun_look) {
             (LightKind::Directional, Some(look)) => {
                 looked = Light {
-                    color: light.color * look.tint,
+                    color: light.light_color() * look.tint,
+                    temperature: None,
                     intensity: light.intensity * look.strength,
                     softness: if light.softness == 0.5 { look.softness } else { light.softness },
                     shadow_tint: if light.shadow_tint == Vec3::ZERO { look.shadow_tint } else { light.shadow_tint },
@@ -442,7 +483,7 @@ pub fn extract(
             _ => light,
         };
         let forward = transform.rotation * Vec3::Z;
-        let radiance = light.color * light.intensity;
+        let radiance = light.light_color() * light.intensity;
         match light.kind {
             LightKind::Directional if !sun_found => {
                 sun_found = true;
@@ -566,6 +607,23 @@ fn gpu_light(light: &Light, transform: &Transform, radiance: Vec3) -> GpuLight {
 
 #[cfg(test)]
 mod tests {
+    use super::temperature_color;
+
+    #[test]
+    fn a_candle_is_orange_daylight_white_and_a_blue_sky_blue() {
+        let luminance = |c: voxear_core::math::Vec3| 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
+        let candle = temperature_color(1900.0);
+        assert!(candle.x > candle.y * 1.5 && candle.y > candle.z * 2.0, "a candle is orange: {candle}");
+        let daylight = temperature_color(6500.0);
+        assert!((daylight - voxear_core::math::Vec3::ONE).abs().max_element() < 0.06, "daylight is white: {daylight}");
+        let sky = temperature_color(10000.0);
+        assert!(sky.z > sky.x * 1.3, "a clear sky is blue: {sky}");
+        for kelvin in [1900.0, 2700.0, 6500.0, 10000.0] {
+            let bright = luminance(temperature_color(kelvin));
+            assert!((bright - 1.0).abs() < 0.02, "only the colour changes, not the brightness: {bright} at {kelvin}");
+        }
+    }
+
     use super::*;
 
     fn inside(planes: &[[f32; 4]; 6], point: Vec3, radius: f32) -> bool {

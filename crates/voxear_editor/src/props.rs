@@ -35,6 +35,11 @@ const BUILTIN_MESHES: [(&str, &str); 3] =
 /// The materials every project has, as the Material menu lists them after
 /// the default.
 pub(crate) const BUILTIN_MATERIALS: [(&str, &str); 1] = [("Glass", "builtin:glass")];
+/// How a light's colour is set: as it is, or as a filter over a colour
+/// temperature, as Unity's Light Appearance.
+const LIGHT_APPEARANCES: [&str; 2] = ["Colour", "Filter and Temperature"];
+/// The temperature a light starts at when it turns to one: daylight's.
+const DAYLIGHT_KELVIN: f32 = 6500.0;
 const LIGHT_KINDS: [&str; 6] = ["Directional", "Point", "Spot", "Rectangle", "Disc", "Tube"];
 /// The light kinds in `LIGHT_KINDS`'s order.
 const LIGHT_KIND_ORDER: [LightKind; 6] =
@@ -145,7 +150,10 @@ pub enum Prop {
     /// How soon a Mesh Renderer switches to simpler LODs.
     LodBias,
     LightKind,
+    /// Whether a light's colour is its own, or a filter over a temperature.
+    LightAppearance,
     LightColor,
+    LightTemperature,
     Intensity,
     Range,
     SpotInner,
@@ -286,6 +294,8 @@ impl Prop {
         match self {
             Prop::Mesh | Prop::Material | Prop::LodBias => Part::Renderer,
             Prop::LightKind
+            | Prop::LightAppearance
+            | Prop::LightTemperature
             | Prop::LightColor
             | Prop::Intensity
             | Prop::Range
@@ -390,7 +400,9 @@ impl Prop {
             Prop::Material => "material",
             Prop::LodBias => "lod_bias",
             Prop::LightKind => "type",
+            Prop::LightAppearance => "appearance",
             Prop::LightColor => "color",
+            Prop::LightTemperature => "temperature",
             Prop::Intensity => "intensity",
             Prop::Range => "range",
             Prop::SpotInner => "spot_inner",
@@ -604,7 +616,12 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::Renderer => vec![Prop::Mesh, Prop::Material, Prop::LodBias],
         Part::Light => {
             let kind = world.get::<Light>(entity).map_or(LightKind::Point, |l| l.kind);
-            let mut props = vec![Prop::LightKind, Prop::LightColor, Prop::Intensity];
+            let temperature = world.get::<Light>(entity).and_then(|l| l.temperature).is_some();
+            let mut props = vec![Prop::LightKind, Prop::LightAppearance, Prop::LightColor];
+            if temperature {
+                props.push(Prop::LightTemperature);
+            }
+            props.push(Prop::Intensity);
             if kind != LightKind::Directional {
                 props.push(Prop::Range);
             }
@@ -752,7 +769,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::Material => "Material",
         Prop::LodBias => "LOD Bias",
         Prop::LightKind => "Type",
+        Prop::LightAppearance => "Appearance",
         Prop::LightColor => "Colour",
+        Prop::LightTemperature => "Temperature",
         Prop::Intensity => "Intensity",
         Prop::Range => "Range",
         Prop::SpotInner => "Inner angle",
@@ -1126,6 +1145,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         }
         Prop::LodBias => Value::Number(world.get::<MeshRenderer>(entity)?.lod_bias),
         Prop::LightColor => Value::Color(srgb(light()?.color.to_array()).map(round3)),
+        Prop::LightAppearance => {
+            let index = usize::from(light()?.temperature.is_some());
+            Value::Choice(index, LIGHT_APPEARANCES.iter().map(|a| a.to_string()).collect())
+        }
+        Prop::LightTemperature => Value::Number(light()?.temperature?),
         Prop::Intensity => Value::Number(light()?.intensity),
         Prop::Range => Value::Number(light()?.range),
         Prop::SpotInner => Value::Number(light()?.spot_inner_degrees),
@@ -1755,6 +1779,13 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }),
         (Prop::LightColor, Value::Color(color)) => {
             with(world, entity, |light: &mut Light| light.color = Vec3::from(linear(color.map(|c| c.clamp(0.0, 1.0)))))
+        }
+        (Prop::LightAppearance, Value::Choice(index, _)) => with(world, entity, |light: &mut Light| {
+            // Daylight to start from, which leaves the colour as it was.
+            light.temperature = (index == 1).then(|| light.temperature.unwrap_or(DAYLIGHT_KELVIN));
+        }),
+        (Prop::LightTemperature, Value::Number(n)) => {
+            with(world, entity, |light: &mut Light| light.temperature = Some(n.clamp(1000.0, 20000.0)))
         }
         (Prop::Intensity, Value::Number(n)) => with(world, entity, |light: &mut Light| light.intensity = n.max(0.0)),
         (Prop::Range, Value::Number(n)) => with(world, entity, |light: &mut Light| light.range = n.max(0.0)),

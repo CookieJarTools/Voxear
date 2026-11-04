@@ -57,7 +57,7 @@ float4 depthFragment(VertexOut input) : SV_Target0
     // Wet or snowy plants are as rough as the opaque passes shade them.
     float3 albedo = material.baseColor.rgb;
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
-    seasonalSurface(push.frame, material, origin, normalizeOr(input.normal, float3(0.0, 1.0, 0.0)), albedo, roughness);
+    seasonalSurface(push.frame, material, origin, shapeNormal(input, material), albedo, roughness);
     return float4(octEncode(surfaceNormal(input, material)) * 0.5 + 0.5, saturate(roughness), 1.0);
 }
 

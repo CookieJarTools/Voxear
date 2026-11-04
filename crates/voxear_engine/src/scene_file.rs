@@ -634,6 +634,12 @@ pub struct FoliageData {
     pub dry_color: [f32; 3],
     #[serde(default = "default_color_spread", skip_serializing_if = "is_default_color_spread")]
     pub color_spread: f32,
+    /// Whether far plants are drawn as impostors: `auto`, `off`, or `from`
+    /// `impostor_distance` metres.
+    #[serde(default, skip_serializing_if = "is_auto_impostors")]
+    pub impostors: voxear_render::Impostors,
+    #[serde(default = "default_impostor_distance", skip_serializing_if = "is_default_impostor_distance")]
+    pub impostor_distance: f32,
     /// Plants placed one by one: x, y and z in the Obj's space, a turn in
     /// degrees, and a size.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -649,6 +655,18 @@ fn default_color_spread() -> f32 {
 
 fn is_default_color_spread(spread: &f32) -> bool {
     *spread == default_color_spread()
+}
+
+fn is_auto_impostors(impostors: &voxear_render::Impostors) -> bool {
+    *impostors == voxear_render::Impostors::Auto
+}
+
+fn default_impostor_distance() -> f32 {
+    60.0
+}
+
+fn is_default_impostor_distance(distance: &f32) -> bool {
+    *distance == default_impostor_distance()
 }
 
 /// Plants scattered evenly over an area round the Obj (see
@@ -1448,6 +1466,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
                 (foliage.draw_distance, foliage.fade_distance, foliage.shadow_distance);
             (data.healthy_color, data.dry_color, data.color_spread) =
                 (foliage.healthy_color, foliage.dry_color, foliage.color_spread);
+            (data.impostors, data.impostor_distance) = (foliage.impostors, foliage.impostor_distance);
         }
         data
     });

@@ -9,13 +9,28 @@ use voxear_core::math::Vec3;
 /// The engine-wide vertex. Shaders pull it from a buffer by index, so the
 /// layout matches `Vertex` in `shaders/common.slang`.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
     /// xyz along +u; w is the bitangent sign.
     pub tangent: [f32; 4],
+    /// How the wind moves it, 0 to 255 each (see `shaders/wind.slang`): how
+    /// much its leaf flutters, its own phase, and how far its branch sways
+    /// apart from the trunk; the fourth is unused. `NO_WIND_MASKS` leaves
+    /// the plant to bend as one.
+    pub wind: [u8; 4],
+}
+
+/// Wind masks that leave a vertex moving as a plant without any does: its
+/// leaves fluttering, in phase with the plant, and no branch sway.
+pub const NO_WIND_MASKS: [u8; 4] = [255, 0, 0, 0];
+
+impl Default for Vertex {
+    fn default() -> Self {
+        Self { position: [0.0; 3], normal: [0.0; 3], uv: [0.0; 2], tangent: [0.0; 4], wind: NO_WIND_MASKS }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -104,6 +119,7 @@ impl MeshData {
                     normal: normal.into(),
                     uv: [u, v],
                     tangent: [tangent.x, tangent.y, tangent.z, 1.0],
+                    wind: NO_WIND_MASKS,
                 });
             }
         }
@@ -131,6 +147,7 @@ impl MeshData {
                 normal: normal.into(),
                 uv: [(s + 1.0) * 0.5, (1.0 - t) * 0.5],
                 tangent: [right.x, right.y, right.z, 1.0],
+                wind: NO_WIND_MASKS,
             });
         }
         self.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);

@@ -37,6 +37,7 @@ mod mesh_tools;
 mod meshlets;
 mod model_lods;
 mod model_renderer;
+mod impostors;
 mod passes;
 mod payload;
 mod pipelines;
@@ -80,7 +81,7 @@ pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, Ren
 pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
-pub use mesh::{MeshData, MeshTriangles, Primitive, Vertex};
+pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
     GlobalIllumination, Reflections,
@@ -92,8 +93,9 @@ pub use previews::{
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
 pub use post_volume::{PostVolume, VolumeShape};
-pub use foliage::{Foliage, FoliageInteraction, Plant, scatter};
+pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, scatter};
 pub use assets::Glow;
+pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use wind::WindZone;
@@ -341,6 +343,8 @@ pub struct Renderer {
     stats: RenderStats,
     ui_buffers: Vec<UiBuffers>,
     previews: previews::Previews,
+    /// Plants' impostors waiting to be baked, and what bakes drew from.
+    impostor_bakes: impostors::Bakes,
     gpu_decompression: bool,
     /// Meshlet culling draws with task and mesh shaders, where the GPU has them.
     mesh_shaders: bool,
@@ -411,6 +415,7 @@ impl Renderer {
             stats: RenderStats::default(),
             ui_buffers,
             previews: previews::Previews::default(),
+            impostor_bakes: impostors::Bakes::default(),
             gpu_decompression: true,
             mesh_shaders: true,
             clear: [0.0, 0.0, 0.0, 1.0],
@@ -868,6 +873,8 @@ impl Renderer {
         // This slot's previous frame has finished, and with it every frame that could use what was freed before it.
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
+        // Impostors asked for last frame are made, to bake before this frame's views draw them.
+        self.impostor_bakes.prepare(assets, &self.gpu, &mut self.bindless)?;
         self.captures.finish(&self.gpu, frame.slot);
         // This slot's previous frame has finished, so its counters are final.
         let first = &self.views[0];
@@ -903,6 +910,7 @@ impl Renderer {
             outputs,
             ui_buffers,
             previews,
+            impostor_bakes,
             frame_debugger,
             captures,
             clear,
@@ -913,6 +921,7 @@ impl Renderer {
         let assets = assets.as_ref().expect("assets live until drop");
         let timings = if frame_debugger.on { graph.timings().to_vec() } else { Vec::new() };
         let mut fg = graph.begin(gpu, frame.slot);
+        impostor_bakes.record(&mut fg, pipelines, assets, gpu, bindless)?;
         // Each output drawn this frame, as the graph knows it.
         let images: Vec<Option<(ImageId, ImageDesc)>> = outputs
             .iter()
@@ -1171,7 +1180,8 @@ impl Drop for Renderer {
         for view in std::mem::take(&mut self.views) {
             view.retire(&mut self.frames);
         }
-        for buffer in self.previews.take_buffers().into_iter().chain(self.captures.take_buffers()) {
+        let baked = self.impostor_bakes.take_buffers();
+        for buffer in self.previews.take_buffers().into_iter().chain(self.captures.take_buffers()).chain(baked) {
             self.frames.retire(Retired::Buffer(buffer));
         }
         for buffers in self.ui_buffers.drain(..) {
@@ -1380,6 +1390,7 @@ impl View {
         let traced: Vec<_> = instances
             .iter()
             .enumerate()
+            .filter(|(_, instance)| instance.flags & gpu::INSTANCE_IMPOSTOR == 0)
             .filter_map(|(id, instance)| {
                 let (low, high) = assets.mesh_bounds(MeshHandle(instance.mesh))?;
                 let model = Mat4::from_cols_array_2d(&instance.model);
@@ -1536,7 +1547,7 @@ impl View {
         let extent = vk::Extent2D { width: extracted.render_size.0, height: extracted.render_size.1 };
         // Every Foliage's plants within their draw distance, as instances of their own.
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
-        self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh));
+        self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
         if extracted.instances.len() > MAX_INSTANCES as usize && !std::mem::replace(&mut self.warned_instances, true) {
             let count = extracted.instances.len();
             tracing::warn!("{count} instances are more than the {MAX_INSTANCES} a view draws; the rest are left out");

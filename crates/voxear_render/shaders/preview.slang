@@ -74,6 +74,33 @@ float4 previewFragment(PreviewOut input) : SV_Target
     return float4(color, 1.0);
 }
 
+struct ImpostorPicture
+{
+    float4 color : SV_Target0;
+    float4 normal : SV_Target1;
+};
+
+// A plant pictured for its impostor (src/impostors.rs): its colour, unlit,
+// with its cut-out, and its normal in its own space, as 0 to 1, facing the
+// picture's camera where a leaf is seen from behind.
+[shader("fragment")]
+ImpostorPicture impostorBakeFragment(PreviewOut input)
+{
+    Frame* frame = push.frame;
+    Material material = buffers()->materials[input.material];
+    float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
+    if (material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)
+    {
+        discard;
+    }
+    float3 n = normalize(input.normal);
+    n = dot(n, -frame->cameraForward) < 0.0 ? -n : n;
+    ImpostorPicture o;
+    o.color = float4(base.rgb, 1.0);
+    o.normal = float4(n * 0.5 + 0.5, 1.0);
+    return o;
+}
+
 [shader("vertex")]
 float4 resolveVertex(uint vertexId : SV_VertexID) : SV_Position
 {

@@ -111,6 +111,9 @@ pub struct MaterialDesc {
     /// `glow_speed` times a second, each Obj or plant at its own moment.
     pub glow: Glow,
     pub glow_speed: f32,
+    /// A plant's impostor, whose base colour and normal textures are its
+    /// atlas, its normals in the plant's own space (see `impostors`).
+    pub impostor: bool,
 }
 
 impl Default for MaterialDesc {
@@ -134,6 +137,7 @@ impl Default for MaterialDesc {
             leaves: Leaves::Turn,
             glow: Glow::Steady,
             glow_speed: 1.0,
+            impostor: false,
         }
     }
 }
@@ -260,6 +264,10 @@ pub struct Assets {
     /// The LTC tables area lights shade with, matrices then amplitudes (see
     /// `ltc`).
     pub ltc: [TextureId; 2],
+    /// Plants' impostors, baked and asked for (see `impostors`).
+    pub impostors: crate::impostors::ImpostorTable,
+    /// Materials drawn as leaves are, so an impostor of a plant is too.
+    foliage_materials: std::collections::HashSet<MaterialHandle>,
 }
 
 impl Assets {
@@ -314,6 +322,8 @@ impl Assets {
             primitives: HashMap::new(),
             default_material: MaterialHandle(0),
             decompressed_on_gpu: 0,
+            impostors: Default::default(),
+            foliage_materials: Default::default(),
             ltc: [TextureId(0); 2],
         };
         let white = TextureSource { name: "white", width: 1, height: 1, rgba: &[255; 4], srgb: false };
@@ -750,6 +760,16 @@ impl Assets {
         Ok(id)
     }
 
+    /// Keeps an image a texture was made of, to free with the rest.
+    pub(crate) fn keep_texture(&mut self, id: TextureId, image: Image) {
+        self.textures.insert(id, image);
+    }
+
+    /// Whether a material is drawn as leaves are.
+    pub fn is_foliage(&self, material: MaterialHandle) -> bool {
+        self.foliage_materials.contains(&material)
+    }
+
     pub fn add_material(&mut self, gpu: &Gpu, desc: &MaterialDesc) -> Result<MaterialHandle> {
         let slot = self.material_slots.alloc().context("too many materials")?;
         let handle = MaterialHandle(slot);
@@ -761,6 +781,11 @@ impl Assets {
     /// drawn on changes from the next frame.
     pub fn set_material(&mut self, gpu: &Gpu, handle: MaterialHandle, desc: &MaterialDesc) -> Result<()> {
         let slot = handle.0;
+        if desc.foliage {
+            self.foliage_materials.insert(handle);
+        } else {
+            self.foliage_materials.remove(&handle);
+        }
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
         let material = GpuMaterial {
             base_color: desc.base_color,
@@ -775,6 +800,7 @@ impl Assets {
                 | if desc.foliage { MATERIAL_FOLIAGE } else { 0 }
                 | if desc.glass { MATERIAL_GLASS } else { 0 }
                 | desc.leaves.flags()
+                | if desc.impostor { crate::gpu::MATERIAL_IMPOSTOR } else { 0 }
                 | (desc.glow as u32) << crate::gpu::MATERIAL_GLOW_SHIFT,
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),

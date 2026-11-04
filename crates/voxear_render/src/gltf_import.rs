@@ -540,6 +540,7 @@ impl Preparer {
         let normals: Vec<[f32; 3]> = reader.read_normals().map(|n| n.collect()).unwrap_or_default();
         let uvs: Vec<[f32; 2]> = reader.read_tex_coords(0).map(|t| t.into_f32().collect()).unwrap_or_default();
         let tangents: Vec<[f32; 4]> = reader.read_tangents().map(|t| t.collect()).unwrap_or_default();
+        let colors: Vec<[u8; 4]> = reader.read_colors(0).map(|c| c.into_rgba_u8().collect()).unwrap_or_default();
         let indices: Vec<u32> = match reader.read_indices() {
             Some(indices) => indices.into_u32().collect(),
             None => (0..positions.len() as u32).collect(),
@@ -553,11 +554,12 @@ impl Preparer {
                 normal: normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
                 uv: uvs.get(i).copied().unwrap_or_default(),
                 tangent: tangents.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 1.0]),
+                wind: colors.get(i).copied().unwrap_or(crate::mesh::NO_WIND_MASKS),
             })
             .collect();
         let mut data = MeshData { vertices, indices };
         data.mirror_x();
-        let file = FromFile { normals: !normals.is_empty(), tangents: !tangents.is_empty() };
+        let file = FromFile { normals: !normals.is_empty(), tangents: !tangents.is_empty(), colors: !colors.is_empty() };
         self.model.meshes.push(mesh_tools::finish(data, &self.settings, self.size, file));
         let index = self.model.meshes.len() - 1;
         self.meshes.insert(key, index);

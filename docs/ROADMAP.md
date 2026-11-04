@@ -967,7 +967,7 @@ Next:
   - HDR display output: HDR10 and scRGB swapchains with paper-white and peak-brightness settings, and tonemapping
     that targets the display
 
-## Vegetation (next, after glass)
+## Vegetation ✅ (done)
 
 What The Vegetation Engine brings to Unity, built in: foliage that is cheap to draw in great numbers, moves with
 the wind and with what passes through it, and changes with the seasons, from one set of settings per level.
@@ -984,7 +984,7 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   distances in the Inspector, undoable. GPU test: 12,800 plants drawn out to their draw distance and no further.
   About 12,000 plants in the valley test: 6 ms a frame at 720p on an RTX 3070. Plants are tinted between a Foliage's `healthy_color` and `dry_color` in patches
   `color_spread` metres across (packed RGBA8 in an instance's `fade.z`). Clicking a plant in the Scene view picks its Foliage
-  (each plant's box); placing passes plants by. Still to come: scattering onto uneven ground.
+  (each plant's box); placing passes plants by. Scattering onto uneven ground moved to M8, with the scatter brush.
 - **A speed pass, measured:** in the outdoor valley at 1080p on an RTX 3070, the passes added up from 8.0 to
   5.4 ms. `vox render` averages each pass over the last 60 frames and prints the frame's own GPU time, first pass
   to last (`GpuTimer::frame_ms`, `Renderer::gpu_frame_ms`), as single frames varied by a millisecond and
@@ -1040,10 +1040,17 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   Inspector: Model (picks another model), LOD bias, Parts, and **Unpack to Objs** in its menu, one undo step.
 - **No NaN from a missing normal:** `normalizeOr` in `shading.slang`; a zero-length normal or tangent (some of
   Sponza's window frames, vases and plants) made NaN that bloom spread over the whole picture.
-  - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
-    by distance.
-  - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the
-    tree is.
+- ~~**Cheaper far away:**~~ done.
+  - ~~LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
+    by distance~~ done: `ditherLodFade` in `shading.slang`, and a Foliage's fade distance.
+  - ~~Impostors for far trees~~ done: the first time a Foliage's plants are far enough, `impostors.rs` bakes the
+    plant's LOD0 into a 1024² atlas of 8×8 hemi-octahedral pictures (colour, and normals in the plant's space),
+    each an orthographic view of its bounding sphere, and makes a material of it (`MATERIAL_IMPOSTOR`). Past the
+    distance a plant's instance becomes one on a two-sided quad (`INSTANCE_IMPOSTOR`, no shadow, left out of the
+    GI's rays) that `shaders/impostor.slang` turns to the picture taken from nearest the camera's side, lit by its
+    baked normals with the plant's tint and seasons. Foliage's `impostors`: `auto` (plants 2 m across or larger,
+    from 40 m or a third of the draw distance), `off`, or `from` `impostor_distance`; Inspector, scene files. GPU
+    test: a leaning spire and its impostor cover the same pixels, lit alike.
   - ~~Shadows for foliage drawn from cheaper LODs~~ done: plants (a Foliage's, or anything with a foliage material)
     pick their shadow's LOD at four times the error (`PLANT_SHADOW_COARSER`); a Foliage's shadow distance already
     leaves far grass without one. The valley's shadows 0.25 to 0.19 ms, their meshlets 6,700 to 3,000.
@@ -1053,8 +1060,8 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   bounds) and lean downwind on an arc, sway at a phase of their own, and their leaves flutter along their
   normals; gusts are two octaves of value noise drifting downwind, so a field shows waves. Materials have
   `wind_bend` and `wind_flutter`, 1 for foliage unless written; culling widens a moving plant's sphere. Editor:
-  Wind Zone component with arrows; material inspector Wind bend and Leaf flutter. Still to come: masks from
-  vertex colours, for branch sway apart from the trunk.
+  Wind Zone component with arrows; material inspector Wind bend and Leaf flutter. Masks for branch sway apart
+  from the trunk came with converting plants, below.
 - ~~**Pushing through it:**~~ done: a Foliage Interaction component (radius, strength). The 16 pushers nearest the
   camera go to the frame; a persistent 128×128 grid of half-metre cells round the camera (toroidal, as the GI's
   probes) holds a push each, and **Foliage pushes** springs every cell back (to a third in 0.8 s) and stamps the
@@ -1078,8 +1085,16 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   where it stands; the GI's rays see the same, so the light glowing plants bounce moves with them. Fields that do
   nothing hide in the material Inspector (glow speed, leaves, IOR).
 - **Placing it:** moved to M8, Terrain, to be built with terrain's scatter layers.
-- **Converting plants:** a step that prepares models from other tools (SpeedTree exports, Quixel and asset-store
-  plants) for wind and foliage shading, writing the masks the shader reads.
+- ~~**Converting plants:**~~ done: `Vertex` gains `wind` (four bytes: leaf flutter, phase, branch sway, unused;
+  `NO_WIND_MASKS` moves a plant as before), so 52 bytes, `COOKED_VERSION` 6. A model's Import Settings choose
+  **Wind masks** (`ModelImport::wind_masks`): none, from vertex colours (glTF `COLOR_0`, FBX vertex colours;
+  CryEngine and Unreal's red flutter, green phase, blue branch), or generated from the shape
+  (`mesh_tools::generate_wind_masks`: pieces joined by triangles or shared positions; those under a fifth of the
+  plant's size, not the widest, are leaves that flutter at a phase of their own and sway with the branch they hang
+  from, by their centre's reach from the trunk; the rest sway by their own reach, eased in, without flutter).
+  `wind.slang` scales flutter by the mask, offsets phases, and sways branches downwind and bobbing
+  (`WIND_BRANCH`). Unit tests for generation and the settings; GPU test: a pole's masked top sways further
+  downwind, its foot still. The foliage shading's needs (normals, foliage materials) were already met by import.
 
 ## M6 — Animation
 
@@ -1138,7 +1153,8 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
 - Stamps and brushes, then GPU erosion.
 - Auto-material and scatter layers.
 - A scatter brush in the editor (from Vegetation), painting Foliage plants onto terrain and any other surface with
-  density, scale and slope limits, and erasing; the scatter layers use the same instances.
+  density, scale and slope limits, and erasing; the scatter layers use the same instances. Foliage's own scatter
+  onto uneven ground (from Vegetation): each plant dropped onto what is under it, and tilted to its slope.
 - Holes, collision and the runtime delta layer with its API.
 - **Built-in terrain generation** *(later)*: generators that make a terrain to start from, chosen and tuned in the
   editor or run from code, each feeding the layer stack so it can be painted and stamped over afterwards:

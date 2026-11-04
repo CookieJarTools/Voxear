@@ -208,7 +208,7 @@ impl Preparer {
             let triangles = ufbx::triangulate_face(&mut corners, mesh, mesh.faces[face as usize]) as usize;
             for &corner in &corners[..triangles * 3] {
                 let vertex = vertex(mesh, corner as usize);
-                let index = *seen.entry(bytemuck::cast::<Vertex, [u32; 12]>(vertex)).or_insert_with(|| {
+                let index = *seen.entry(bytemuck::cast::<Vertex, [u32; size_of::<Vertex>() / 4]>(vertex)).or_insert_with(|| {
                     vertices.push(vertex);
                     vertices.len() as u32 - 1
                 });
@@ -220,6 +220,7 @@ impl Preparer {
         let file = FromFile {
             normals: mesh.vertex_normal.exists,
             tangents: mesh.vertex_tangent.exists && mesh.vertex_bitangent.exists,
+            colors: mesh.vertex_color.exists,
         };
         self.model.meshes.push(mesh_tools::finish(data, &self.settings, self.size, file));
         let index = self.model.meshes.len() - 1;
@@ -332,7 +333,15 @@ fn vertex(mesh: &ufbx::Mesh, corner: usize) -> Vertex {
         }
         false => [1.0, 0.0, 0.0, 1.0],
     };
-    Vertex { position, normal, uv, tangent }
+    // Its colour, as wind masks if the settings read them so.
+    let wind = match mesh.vertex_color.exists {
+        true => {
+            let c = mesh.vertex_color[corner];
+            [c.x, c.y, c.z, c.w].map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+        }
+        false => crate::mesh::NO_WIND_MASKS,
+    };
+    Vertex { position, normal, uv, tangent, wind }
 }
 
 /// A map's colour, or white when a texture replaces it, or `none` when it

@@ -99,6 +99,7 @@ Select a model in the Project panel, and the Inspector shows its **Import Settin
 | **Use its own LODs** | For a model whose meshes come with LODs of their own, named `_LOD0`, `_LOD1` and on: whether it is drawn with those. Turned off, the engine makes them from the first, as **Make LODs** says. |
 | **Make LODs** | Whether the simpler copies for far away are made. Turn it off for a model that must always be drawn in full. |
 | **Import materials** | Whether the model is drawn with its own materials. Turned off, each part is drawn plain grey, and fields that name one of its materials still work. A material listed under **Materials** with a material file of its own is drawn with that either way. |
+| **Wind masks** | For plants: what says how each part moves in the wind (see [[Wind]]). **None** bends the whole plant as one. **From vertex colours** reads masks painted in the model's vertex colours. **Generate** works them out from the plant's shape. |
 
 Everything that draws the model shows the change at once. A part of the model placed in an open scene moves to where the model now puts it, unless you have moved it since. A Model Renderer always draws the parts where the model now puts them. In scenes that are not open, the parts stay where they were.
 

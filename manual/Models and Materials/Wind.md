@@ -45,6 +45,18 @@ A plant bends from its pivot, its Obj's position, and reads its height from its 
 
 In a material file, `wind_bend = 1.0` and `wind_flutter = 0.5`.
 
+## Plants from other tools
+
+Without more to go by, a plant bends as one piece and its leaves flutter all over, trunk too. A tree's branches can sway on their own, and only its leaves flutter, when its model has **wind masks**. Set them in the model's Import Settings, under **Wind masks**:
+
+| Choice | What it does |
+| --- | --- |
+| None | The whole plant bends as one. The model's vertex colours are not read |
+| From vertex colours | Masks painted in the model's vertex colours, as CryEngine's and Unreal's plants have them: **red** where leaves flutter, **green** a phase of each leaf's or branch's own, so neighbours move out of step, and **blue** how far a branch sways apart from the trunk |
+| Generate | Worked out from the plant's shape, for plants made without masks, as SpeedTree exports and Quixel plants usually are. Each separate piece small beside the whole plant is a leaf or a card of leaves: it flutters, at its own phase, and sways with the branch it hangs from. Everything sways more the further out from the trunk it reaches, and the trunk itself does not flutter |
+
+A branch's sway rides on the plant's own bend, downwind and bobbing up and down, and is as large as the material's **Wind bend** makes it.
+
 ## Pushing through foliage
 
 Add a **Foliage Interaction** to anything that should push plants aside as it passes: the player, other characters, vehicles, a rolling boulder (Add Component, then Rendering). Grass and plants round it lean away, bending from the ground up as they do in the wind, and spring back over about a second once it has gone, so a trail stays behind something running through a field.

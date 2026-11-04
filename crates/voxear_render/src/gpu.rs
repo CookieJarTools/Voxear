@@ -76,6 +76,9 @@ pub const MATERIAL_GLASS: u32 = 4;
 pub const MATERIAL_LEAVES_STAY: u32 = 16;
 /// How its glow moves: these bits hold a `Glow` (see `glow`).
 pub const MATERIAL_GLOW_SHIFT: u32 = 5;
+/// A plant's impostor, its emission the sphere its atlas was pictured in
+/// and its normal scale that sphere's radius (see `impostors`).
+pub const MATERIAL_IMPOSTOR: u32 = 128;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -142,6 +145,11 @@ pub const INSTANCE_LOD_SCREEN: u32 = 2;
 
 /// An instance that casts no shadow, as grass far from the camera.
 pub const INSTANCE_NO_SHADOW: u32 = 4;
+
+/// A plant's impostor: its quad turns to the camera and shows the picture
+/// of the plant from nearest that side (impostor.slang). Rays pass through
+/// it, as they would through a flat card.
+pub const INSTANCE_IMPOSTOR: u32 = 16;
 
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;

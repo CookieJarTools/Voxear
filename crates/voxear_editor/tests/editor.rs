@@ -1157,6 +1157,7 @@ fn a_models_import_settings_apply_where_it_is_drawn() {
     frame(&mut editor, &mut renderer);
     assert_eq!(height(&renderer), before, "nothing changes before Apply");
     let apply = editor.ui.find(editor.ui.root(), "import-apply").unwrap();
+    scroll_to(&mut editor, &mut renderer, apply);
     click(&mut editor.ui, apply);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
@@ -1174,6 +1175,7 @@ fn a_models_import_settings_apply_where_it_is_drawn() {
     type_into(&mut editor.ui, scale, "5");
     frame(&mut editor, &mut renderer);
     let revert = editor.ui.find(editor.ui.root(), "import-revert").unwrap();
+    scroll_to(&mut editor, &mut renderer, revert);
     click(&mut editor.ui, revert);
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.ui.text(scale), "2");
@@ -6564,6 +6566,8 @@ fn a_plant_picks_its_foliage_and_things_dropped_land_among_plants() {
         healthy_color: [1.0; 3],
         dry_color: [1.0; 3],
         color_spread: 8.0,
+        impostors: voxear_render::Impostors::Auto,
+        impostor_distance: 60.0,
     };
     let field = editor.game.engine.world.spawn((Name("Field".into()), foliage, Transform::from_position(base)));
     frame(&mut editor, &mut renderer);

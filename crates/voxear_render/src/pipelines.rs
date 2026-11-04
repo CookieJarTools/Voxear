@@ -115,6 +115,9 @@ pub struct Pipelines {
     /// preview atlas.
     pub preview: vk::Pipeline,
     pub preview_resolve: vk::Pipeline,
+    /// A plant drawn into each picture of its impostor's atlas: its colour
+    /// and its normals (see `impostors`).
+    pub impostor_bake: vk::Pipeline,
     /// Where the GPU has mesh shaders.
     pub mesh: Option<MeshPipelines>,
     /// Ray-traced GI's rays and update passes, where the GPU has ray tracing.
@@ -325,6 +328,15 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Preview", preview, c"previewVertex", c"previewFragment")
             })?,
+            impostor_bake: graphics(&GraphicsPipelineDesc {
+                color_formats: &[crate::impostors::IMPOSTOR_COLOR_FORMAT, crate::impostors::IMPOSTOR_NORMAL_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                // Leaves show from either side.
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Impostor bake", preview, c"previewVertex", c"impostorBakeFragment")
+            })?,
             preview_resolve: graphics(&GraphicsPipelineDesc {
                 color_formats: &[crate::previews::PREVIEW_FORMAT],
                 cull: vk::CullModeFlags::NONE,
@@ -402,6 +414,7 @@ impl Pipelines {
             self.debug,
             self.preview,
             self.preview_resolve,
+            self.impostor_bake,
         ];
         let mesh =
             self.mesh.iter().flat_map(|m| [m.shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);

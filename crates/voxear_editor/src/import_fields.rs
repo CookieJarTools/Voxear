@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use voxear_assets::{ModelImport, Normals, SoundImport, SoundLoad, Tangents, TextureImport, Units};
+use voxear_assets::{ModelImport, Normals, SoundImport, SoundLoad, Tangents, TextureImport, Units, WindMasks};
 use voxear_ui::{NodeId, Style, Ui};
 
 use crate::inspector::{number, prop};
@@ -67,6 +67,7 @@ pub struct ModelFields {
     lods: NodeId,
     own_lods: NodeId,
     materials: NodeId,
+    wind_masks: NodeId,
     buttons: Buttons,
 }
 
@@ -85,6 +86,7 @@ impl ModelFields {
             own_lods: toggle(ui, rows, "Use its own LODs"),
             lods: toggle(ui, rows, "Make LODs"),
             materials: toggle(ui, rows, "Import materials"),
+            wind_masks: choice(ui, rows, "Wind masks", &WindMasks::ALL.map(WindMasks::name)),
             buttons: Buttons::new(ui, rows),
         };
         fields.show(ui, &applied);
@@ -102,6 +104,8 @@ impl ModelFields {
         ui.set_checked(self.lods, settings.lods);
         ui.set_checked(self.own_lods, settings.own_lods);
         ui.set_checked(self.materials, settings.materials);
+        let wind_masks = WindMasks::ALL.iter().position(|&masks| masks == settings.wind_masks).unwrap_or(0);
+        ui.set_selected_option(self.wind_masks, wind_masks);
         self.enable(ui, settings);
     }
 
@@ -122,6 +126,7 @@ impl ModelFields {
             lods: ui.is_checked(self.lods),
             own_lods: ui.is_checked(self.own_lods),
             materials: ui.is_checked(self.materials),
+            wind_masks: WindMasks::ALL.get(ui.selected_option(self.wind_masks)).copied().unwrap_or_default(),
         }
     }
 

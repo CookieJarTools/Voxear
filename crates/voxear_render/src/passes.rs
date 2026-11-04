@@ -618,7 +618,7 @@ pub(crate) fn begin_rendering_rect(
     set_viewport(ctx, rect.offset, rect.extent);
 }
 
-fn set_viewport(ctx: &PassContext, offset: vk::Offset2D, extent: vk::Extent2D) {
+pub(crate) fn set_viewport(ctx: &PassContext, offset: vk::Offset2D, extent: vk::Extent2D) {
     let viewport = vk::Viewport {
         x: offset.x as f32,
         y: offset.y as f32,

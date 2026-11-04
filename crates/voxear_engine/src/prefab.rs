@@ -708,6 +708,8 @@ pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageDat
         healthy_color: data.healthy_color,
         dry_color: data.dry_color,
         color_spread: data.color_spread.max(0.1),
+        impostors: data.impostors,
+        impostor_distance: data.impostor_distance.max(0.0),
     };
     Ok((foliage, FoliageSource(data.clone())))
 }

@@ -104,7 +104,9 @@ MeshletCuller meshletCuller(Frame* frame, Instance instance, uint list)
     culler.model = instance.model;
     culler.scale = scale;
     culler.facing = dot(cross(x, y), z) < 0.0 ? -1.0 : 1.0;
-    culler.cones = list < LIST_SHADOW && (frame->meshletFlags & MESHLET_CONES) != 0 && uniform;
+    // An impostor's quad turns to the camera in its vertex shader, so it faces no way its cone could tell.
+    bool turns = (instance.flags & INSTANCE_IMPOSTOR) != 0;
+    culler.cones = list < LIST_SHADOW && (frame->meshletFlags & MESHLET_CONES) != 0 && uniform && !turns;
     culler.list = list;
     return culler;
 }

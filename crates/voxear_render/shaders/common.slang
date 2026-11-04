@@ -138,6 +138,8 @@ struct Vertex
     float3 normal;
     float2 uv;
     float4 tangent;
+    // How the wind moves it, a byte each: leaf flutter, its own phase, branch sway (wind.slang).
+    uint wind;
 };
 
 struct MeshLod
@@ -190,6 +192,8 @@ static const uint MATERIAL_GLASS = 4;
 static const uint MATERIAL_LEAVES_STAY = 16;
 // How its glow moves, in two bits: 0 steady, 1 pulse, 2 breathe, 3 flicker (glow.slang).
 static const uint MATERIAL_GLOW_SHIFT = 5;
+// A plant's impostor, its base colour and normal textures its atlas (impostor.slang).
+static const uint MATERIAL_IMPOSTOR = 128;
 
 struct Material
 {
@@ -240,6 +244,8 @@ static const uint INSTANCE_LOD_SHIFT = 8;
 static const uint INSTANCE_LOD_SCREEN = 2;
 // An instance that casts no shadow, as grass far from the camera.
 static const uint INSTANCE_NO_SHADOW = 4;
+// A plant's impostor, its quad turned to the camera (impostor.slang).
+static const uint INSTANCE_IMPOSTOR = 16;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;
@@ -683,6 +689,15 @@ float3 keyColor(uint key)
     return float3(uint3(h, h >> 8, h >> 16) & 0xFF) / 255.0 * 0.75 + 0.25;
 }
 
+
+// `v` at length 1, or `otherwise` where it has none to speak of (or is not
+// a number), which normalize would make NaN, and bloom then spread over
+// the whole picture.
+float3 normalizeOr(float3 v, float3 otherwise)
+{
+    float lengthSquared = dot(v, v);
+    return lengthSquared > 1e-12 ? v * rsqrt(lengthSquared) : otherwise;
+}
 
 float4 sampleTexture(uint index, float2 uv)
 {

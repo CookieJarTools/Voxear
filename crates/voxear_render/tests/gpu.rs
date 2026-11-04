@@ -325,6 +325,7 @@ fn grid(n: u32) -> voxear_render::MeshData {
                 normal: [0.0, 0.0, -1.0],
                 uv: [x as f32 / n as f32, y as f32 / n as f32],
                 tangent: [1.0, 0.0, 0.0, 1.0],
+                ..voxear_render::Vertex::default()
             });
         }
     }
@@ -2930,6 +2931,8 @@ fn foliage_tinted(draw: f32, color: [f32; 3], (healthy, dry): ([f32; 3], [f32; 3
         healthy_color: healthy,
         dry_color: dry,
         color_spread: 2.0,
+        impostors: voxear_render::Impostors::Auto,
+        impostor_distance: 60.0,
     };
     world.spawn((foliage, Transform::from_position(Vec3::new(0.0, 0.1, 40.0))));
     let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.4).normalize());
@@ -2972,4 +2975,127 @@ fn foliage_draws_thousands_of_plants_out_to_its_draw_distance() {
     let drawn = stats.drawn_early + stats.drawn_late;
     assert!(stats.instances > 1000 && drawn > 1000, "drawn as instances: {} of {}", drawn, stats.instances);
     assert!(stats.instances < 8000, "only those within their draw distance: {}", stats.instances);
+}
+
+/// A spire leaning to one side, so a picture of it upside down or turned
+/// the wrong way shows: a square base two metres across, its tip a metre
+/// over to +X and three up.
+fn leaning_spire() -> voxear_render::MeshData {
+    let mut mesh = voxear_render::MeshData::default();
+    let tip = Vec3::new(1.0, 3.0, 0.0);
+    let base = [Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 0.0, -1.0), Vec3::new(1.0, 0.0, 1.0), Vec3::new(-1.0, 0.0, 1.0)];
+    for side in 0..4 {
+        let (a, b) = (base[side], base[(side + 1) % 4]);
+        let normal = (tip - a).cross(b - a).normalize();
+        let at = mesh.vertices.len() as u32;
+        for corner in [a, b, tip] {
+            mesh.vertices.push(voxear_render::Vertex {
+                position: corner.to_array(),
+                normal: normal.to_array(),
+                uv: [0.5, 0.5],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+                ..voxear_render::Vertex::default()
+            });
+        }
+        mesh.indices.extend([at, at + 2, at + 1]);
+    }
+    mesh
+}
+
+/// One spire, red, as a Foliage's single plant turned a quarter round, 18
+/// metres in front of the camera, drawn as itself or as its impostor.
+fn spire_render(impostors: voxear_render::Impostors) -> Option<Vec<u8>> {
+    use voxear_render::{Foliage, Plant, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -18.0))));
+    let spire = renderer.add_mesh(&leaning_spire()).unwrap();
+    let red = renderer.add_material(&MaterialDesc { base_color: [0.8, 0.05, 0.03, 1.0], ..MaterialDesc::default() }).unwrap();
+    let plants = vec![Plant { position: [0.0, 0.0, 0.0], yaw: 90.0, scale: 1.0 }];
+    let foliage = Foliage {
+        mesh: spire,
+        material: red,
+        plants: std::sync::Arc::new(plants),
+        draw_distance: 100.0,
+        fade_distance: 2.0,
+        shadow_distance: 0.0,
+        healthy_color: [1.0; 3],
+        dry_color: [1.0; 3],
+        color_spread: 8.0,
+        impostors,
+        impostor_distance: 5.0,
+    };
+    // The Obj turned too, so the impostor follows the plant's turn and its Obj's together.
+    world.spawn((foliage, Transform::new(Vec3::ZERO, Quat::from_rotation_y(0.6), Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.4).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    world.insert_resource(steady_post());
+    // The first frame asks for the impostor, the next bakes it, and those after draw it.
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn far_plants_are_drawn_as_impostors_that_look_like_them() {
+    use voxear_render::Impostors;
+    let Some(mesh) = spire_render(Impostors::Off) else { return };
+    let impostor = spire_render(Impostors::From).unwrap();
+    keep_image("impostor mesh.png", &mesh);
+    keep_image("impostor picture.png", &impostor);
+    let red = |pixels: &[u8]| -> Vec<bool> {
+        pixels.chunks(4).map(|p| i32::from(p[0]) > i32::from(p[1]) + 40 && i32::from(p[0]) > i32::from(p[2]) + 40).collect()
+    };
+    let (seen, pictured) = (red(&mesh), red(&impostor));
+    let both = seen.iter().zip(&pictured).filter(|(a, b)| **a && **b).count();
+    let either = seen.iter().zip(&pictured).filter(|(a, b)| **a || **b).count();
+    let covered = seen.iter().filter(|a| **a).count();
+    assert!(covered > 500, "the spire is in view: {covered} pixels");
+    assert_ne!(mesh, impostor, "the impostor is drawn, not the mesh");
+    // The same shape, the right way up and round, give or take the picture's angle and its pixels.
+    let overlap = both as f32 / either.max(1) as f32;
+    assert!(overlap > 0.8, "the impostor covers what the spire does: {overlap:.2} of {covered} pixels");
+    // And lit much as it is: the average red within it.
+    let average = |pixels: &[u8], mask: &[bool]| {
+        let (sum, n) = pixels.chunks(4).zip(mask).filter(|(_, m)| **m).fold((0u32, 0u32), |(s, n), (p, _)| (s + u32::from(p[0]), n + 1));
+        sum as f32 / n.max(1) as f32
+    };
+    let (lit, pictured_lit) = (average(&mesh, &seen), average(&impostor, &pictured));
+    assert!((lit - pictured_lit).abs() < 30.0, "lit alike: {lit:.0} and {pictured_lit:.0}");
+}
+
+/// The pole of `wind_render` in a steady wind, its top's vertices given wind
+/// masks `top` and its foot's none.
+fn masked_pole_render(top: [u8; 4]) -> Option<Vec<u8>> {
+    use voxear_render::{MeshData, Sky, WindZone};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 3.0, -9.0))));
+    let mut pole = MeshData::primitive(Primitive::Cube);
+    for vertex in pole.vertices.iter_mut().filter(|vertex| vertex.position[1] > 0.0) {
+        vertex.wind = top;
+    }
+    let pole = renderer.add_mesh(&pole).unwrap();
+    let plant = MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], wind_bend: 1.0, ..MaterialDesc::default() };
+    let dark = renderer.add_material(&plant).unwrap();
+    world.spawn((MeshRenderer::new(pole, dark), Transform::new(Vec3::new(0.0, 3.0, 0.0), Quat::IDENTITY, Vec3::new(0.3, 6.0, 0.3))));
+    let wind = WindZone { strength: 2.0, gusts: 0.0, turbulence: 0.0, ..WindZone::default() };
+    world.spawn((wind, Transform::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn wind_masks_sway_branches_further_than_the_trunk() {
+    let Some(plain) = masked_pole_render(voxear_render::NO_WIND_MASKS) else { return };
+    let branch = masked_pole_render([0, 0, 255, 0]).unwrap();
+    keep_image("wind masks plain.png", &plain);
+    keep_image("wind masks branch.png", &branch);
+    let (top, bottom) = (85, 260);
+    let lean = |pixels: &[u8]| pole_centre(pixels, top) - pole_centre(pixels, bottom);
+    assert!(lean(&plain) > 4.0, "the pole leans in the wind: {}", lean(&plain));
+    assert!(lean(&branch) > lean(&plain) + 4.0, "a branch sways further downwind: {} and {}", lean(&branch), lean(&plain));
+    assert!((pole_centre(&branch, 282) - pole_centre(&plain, 282)).abs() < 2.0, "and the trunk's foot stays put");
 }

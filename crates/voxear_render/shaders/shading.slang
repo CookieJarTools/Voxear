@@ -9,6 +9,7 @@
 #include "common.slang"
 #include "ddgi_sample.slang"
 #include "glow.slang"
+#include "impostor.slang"
 #include "lights.slang"
 #include "occlusion.slang"
 #include "seasons.slang"
@@ -50,6 +51,10 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     Instance instance = buffers()->instances[instanceIndex];
     Mesh mesh = buffers()->meshes[instance.mesh];
     Vertex v = buffers()->vertices[mesh.vertexOffset + vertexIndex];
+    if (isImpostor(instance))
+    {
+        return impostorVertex(instance, instanceIndex, v.position.xy, cluster);
+    }
     float4 world = transform(instance.model, float4(v.position, 1.0));
     float4 previous = transform(instance.prevModel, float4(v.position, 1.0));
     // Plants move in the wind, now and as they were a frame ago, for their motion.
@@ -57,9 +62,9 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     float3 normal = normalize(instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z);
     float height = plantHeight(instance, mesh);
     Frame* frame = push.frame;
-    world.xyz += windOffset(frame, material, instance.model.c3.xyz, height, world.xyz, normal, frame->time);
+    world.xyz += windOffset(frame, material, instance.model.c3.xyz, height, world.xyz, normal, v.wind, frame->time);
     float earlier = frame->time - frame->deltaTime;
-    previous.xyz += windOffset(frame, material, instance.prevModel.c3.xyz, height, previous.xyz, normal, earlier);
+    previous.xyz += windOffset(frame, material, instance.prevModel.c3.xyz, height, previous.xyz, normal, v.wind, earlier);
 
     VertexOut o;
     o.position = transform(push.frame->viewProj, world);
@@ -74,6 +79,28 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     o.cluster = cluster;
     o.currentClip = transform(push.frame->unjitteredViewProj, world);
     o.previousClip = transform(push.frame->prevViewProj, previous);
+    return o;
+}
+
+// A corner of a plant's impostor, turned to the camera. Far off, it does
+// not sway in the wind; and it moves on screen as the camera does.
+VertexOut impostorVertex(Instance instance, uint instanceIndex, float2 corner, uint cluster)
+{
+    Frame* frame = push.frame;
+    ImpostorCorner c = impostorCorner(instance, frame->cameraPosition, corner);
+    VertexOut o;
+    o.position = transform(frame->viewProj, float4(c.world, 1.0));
+    o.worldPosition = c.world;
+    o.normal = c.facing;
+    o.tangent = 0.0;
+    o.uv = c.uv;
+    o.material = instance.material;
+    o.lod = 0;
+    o.instance = instanceIndex;
+    o.fade = 0;
+    o.cluster = cluster;
+    o.currentClip = transform(frame->unjitteredViewProj, float4(c.world, 1.0));
+    o.previousClip = transform(frame->prevViewProj, float4(c.world, 1.0));
     return o;
 }
 
@@ -120,19 +147,14 @@ void ditherLodFade(VertexOut input)
     }
 }
 
-// `v` at length 1, or `otherwise` where it has none to speak of (or is not
-// a number), which normalize would make NaN, and bloom then spread over
-// the whole picture.
-float3 normalizeOr(float3 v, float3 otherwise)
-{
-    float lengthSquared = dot(v, v);
-    return lengthSquared > 1e-12 ? v * rsqrt(lengthSquared) : otherwise;
-}
-
 float3 surfaceNormal(VertexOut input, Material material)
 {
     // Facing the camera where a mesh's own normal is missing, as where two opposite normals meet across a face.
     float3 n = normalizeOr(input.normal, normalize(push.frame->cameraPosition - input.worldPosition));
+    if ((material.flags & MATERIAL_IMPOSTOR) != 0)
+    {
+        return impostorNormal(buffers()->instances[input.instance], material, input.uv, n);
+    }
     if ((material.flags & MATERIAL_NORMAL_MAP) == 0)
     {
         return n;
@@ -149,6 +171,18 @@ float3 surfaceNormal(VertexOut input, Material material)
     float2 xy = sampleTexture(material.normalTexture, input.uv).xy * 2.0 - 1.0;
     float3 m = float3(xy * material.normalScale, sqrt(saturate(1.0 - dot(xy, xy))));
     return normalizeOr(t * m.x + b * m.y + n * m.z, n);
+}
+
+// Which way a surface faces before its normal map, for where snow settles:
+// its own normal, or for an impostor, the plant's as pictured, since its
+// quad faces the camera.
+float3 shapeNormal(VertexOut input, Material material)
+{
+    if ((material.flags & MATERIAL_IMPOSTOR) != 0)
+    {
+        return surfaceNormal(input, material);
+    }
+    return normalizeOr(input.normal, float3(0.0, 1.0, 0.0));
 }
 
 static const float2 CASCADE_TILES[CASCADES] = { float2(0.0, 0.0), float2(0.5, 0.0), float2(0.0, 0.5), float2(0.5, 0.5) };
@@ -453,7 +487,7 @@ FragmentOut fragmentMain(VertexOut input)
     float metallic = material.metallic * metalRough.b;
     float roughness = material.roughness * metalRough.g;
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
-    seasonalSurface(frame, material, origin, normalizeOr(input.normal, float3(0.0, 1.0, 0.0)), base.rgb, roughness);
+    seasonalSurface(frame, material, origin, shapeNormal(input, material), base.rgb, roughness);
 
     Surface s;
     s.normal = surfaceNormal(input, material);

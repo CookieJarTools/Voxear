@@ -49,6 +49,9 @@ pub struct ModelImport {
     /// in the default material, and the parts' material references still
     /// work.
     pub materials: bool,
+    /// Where a plant's wind masks come from, which say how its leaves
+    /// flutter and its branches sway apart from its trunk.
+    pub wind_masks: WindMasks,
 }
 
 impl Default for ModelImport {
@@ -62,6 +65,7 @@ impl Default for ModelImport {
             lods: true,
             own_lods: true,
             materials: true,
+            wind_masks: WindMasks::None,
         }
     }
 }
@@ -347,6 +351,38 @@ pub enum Tangents {
     Import,
     /// Calculated from the normals and UVs.
     Calculate,
+}
+
+/// Where a model's wind masks come from: what makes a plant from another
+/// tool move as one made for Voxear does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindMasks {
+    /// None: the whole plant bends in the wind as one, its leaves flutter
+    /// everywhere, and its vertex colours are not read.
+    #[default]
+    None,
+    /// Its vertex colours, painted as CryEngine's and Unreal's plants are:
+    /// red where leaves flutter, green each leaf's or branch's own phase,
+    /// blue how far a branch sways apart from the trunk.
+    Colors,
+    /// Worked out from its shape: separate pieces small beside the plant
+    /// (leaf cards, as SpeedTree and Quixel plants have) flutter, each at
+    /// its own phase, and everything sways more the further out from the
+    /// trunk it is.
+    Generate,
+}
+
+impl WindMasks {
+    pub const ALL: [WindMasks; 3] = [WindMasks::None, WindMasks::Colors, WindMasks::Generate];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            WindMasks::None => "None",
+            WindMasks::Colors => "From vertex colours",
+            WindMasks::Generate => "Generate",
+        }
+    }
 }
 
 /// The `.meta` file of the asset at `asset`.

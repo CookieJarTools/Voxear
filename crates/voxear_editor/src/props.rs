@@ -22,7 +22,7 @@ use voxear_engine::{
     srgb,
 };
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
+    Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
     ModelRenderer, Season, Seasons, SkyBody, VolumeShape, WindZone,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
@@ -225,6 +225,9 @@ pub enum Prop {
     ModelParts,
     FoliageFade,
     FoliageShadow,
+    /// Whether far plants are impostors, and from how far when it says.
+    FoliageImpostors,
+    FoliageImpostorDistance,
     FieldOfView,
     Near,
     Exposure,
@@ -388,7 +391,9 @@ impl Prop {
             | Prop::FoliageShadow
             | Prop::FoliageHealthy
             | Prop::FoliageDry
-            | Prop::FoliageSpread => Part::Foliage,
+            | Prop::FoliageSpread
+            | Prop::FoliageImpostors
+            | Prop::FoliageImpostorDistance => Part::Foliage,
             Prop::ModelAsset | Prop::ModelLodBias | Prop::ModelParts => Part::Model,
             Prop::Sound
             | Prop::SoundVolume
@@ -522,6 +527,8 @@ impl Prop {
             Prop::ModelParts => "parts",
             Prop::FoliageFade => "fade_distance",
             Prop::FoliageShadow => "shadow_distance",
+            Prop::FoliageImpostors => "impostors",
+            Prop::FoliageImpostorDistance => "impostor_distance",
             Prop::FieldOfView => "fov",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
@@ -780,14 +787,14 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             ]
         }
         Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
-        Part::Foliage => vec![
-            Prop::FoliageDraw,
-            Prop::FoliageFade,
-            Prop::FoliageShadow,
-            Prop::FoliageHealthy,
-            Prop::FoliageDry,
-            Prop::FoliageSpread,
-        ],
+        Part::Foliage => {
+            let mut props = vec![Prop::FoliageDraw, Prop::FoliageFade, Prop::FoliageShadow, Prop::FoliageImpostors];
+            if world.get::<Foliage>(entity).is_some_and(|f| f.impostors == Impostors::From) {
+                props.push(Prop::FoliageImpostorDistance);
+            }
+            props.extend([Prop::FoliageHealthy, Prop::FoliageDry, Prop::FoliageSpread]);
+            props
+        }
         Part::Model => vec![Prop::ModelAsset, Prop::ModelLodBias, Prop::ModelParts],
         Part::Audio => {
             let mut props =
@@ -963,6 +970,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::ModelParts => "Parts",
         Prop::FoliageFade => "Fade distance",
         Prop::FoliageShadow => "Shadow distance",
+        Prop::FoliageImpostors => "Impostors",
+        Prop::FoliageImpostorDistance => "Impostors from",
         Prop::FieldOfView => "Field of view",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
@@ -1064,7 +1073,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
     match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
         (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
-        (Prop::SeasonPatchSize | Prop::FoliageSpread, _) => Some("m"),
+        (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance, _) => Some("m"),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -1414,6 +1423,12 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::FoliageSpread => Value::Number(world.get::<Foliage>(entity)?.color_spread),
         Prop::FoliageFade => Value::Number(world.get::<Foliage>(entity)?.fade_distance),
         Prop::FoliageShadow => Value::Number(world.get::<Foliage>(entity)?.shadow_distance),
+        Prop::FoliageImpostors => {
+            let impostors = world.get::<Foliage>(entity)?.impostors;
+            let index = Impostors::ALL.iter().position(|i| *i == impostors).unwrap_or(0);
+            Value::Choice(index, Impostors::ALL.iter().map(|i| i.name().to_string()).collect())
+        }
+        Prop::FoliageImpostorDistance => Value::Number(world.get::<Foliage>(entity)?.impostor_distance),
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
@@ -2091,6 +2106,13 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::FoliageSpread, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.color_spread = n.max(0.1)),
         (Prop::FoliageDraw, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.draw_distance = n.max(0.0)),
         (Prop::FoliageFade, Value::Number(n)) => with(world, entity, |f: &mut Foliage| f.fade_distance = n.max(0.0)),
+        (Prop::FoliageImpostors, Value::Choice(index, _)) => {
+            let impostors = Impostors::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |f: &mut Foliage| f.impostors = impostors)
+        }
+        (Prop::FoliageImpostorDistance, Value::Number(n)) => {
+            with(world, entity, |f: &mut Foliage| f.impostor_distance = n.max(0.0))
+        }
         (Prop::FoliageShadow, Value::Number(n)) => {
             with(world, entity, |f: &mut Foliage| f.shadow_distance = n.max(0.0))
         }
@@ -2391,5 +2413,33 @@ mod tests {
         assert!(set_component(&mut world, entity, &Prop::SeasonColorAmount(Season::Autumn), Value::Number(0.4)));
         assert_eq!(world.get::<Seasons>(entity).unwrap().autumn.color_amount, 0.4);
         assert_eq!(Prop::SeasonColorAmount(Season::Autumn).lock_key(), "autumn.color_amount");
+    }
+
+    #[test]
+    fn a_foliages_impostor_distance_shows_only_when_it_is_its_own() {
+        let mut world = World::new();
+        let foliage = Foliage {
+            mesh: voxear_render::MeshHandle(0),
+            material: voxear_render::MaterialHandle(0),
+            plants: Default::default(),
+            draw_distance: 200.0,
+            fade_distance: 5.0,
+            shadow_distance: 30.0,
+            healthy_color: [1.0; 3],
+            dry_color: [1.0; 3],
+            color_spread: 8.0,
+            impostors: Impostors::Auto,
+            impostor_distance: 60.0,
+        };
+        let entity = world.spawn((foliage,));
+        let types = ScriptTypes::default();
+        let shown = |world: &World| props(world, entity, &Part::Foliage, &types);
+        assert!(shown(&world).contains(&Prop::FoliageImpostors));
+        assert!(!shown(&world).contains(&Prop::FoliageImpostorDistance), "Auto chooses its own distance");
+        assert!(set_component(&mut world, entity, &Prop::FoliageImpostors, Value::Choice(2, Vec::new())));
+        assert_eq!(world.get::<Foliage>(entity).unwrap().impostors, Impostors::From);
+        assert!(shown(&world).contains(&Prop::FoliageImpostorDistance), "From distance shows the distance");
+        assert!(set_component(&mut world, entity, &Prop::FoliageImpostorDistance, Value::Number(-4.0)));
+        assert_eq!(world.get::<Foliage>(entity).unwrap().impostor_distance, 0.0, "never nearer than the camera");
     }
 }

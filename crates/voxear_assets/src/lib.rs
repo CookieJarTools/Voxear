@@ -26,7 +26,9 @@ mod reference;
 
 pub use db::{AssetDb, AssetEntry, AssetKind, META_EXTENSION, ScanReport};
 pub use guid::AssetGuid;
-pub use import::{MaterialRemap, ModelImport, Normals, SoundImport, SoundLoad, Tangents, TextureImport, Units, meta_path};
+pub use import::{
+    MaterialRemap, ModelImport, Normals, SoundImport, SoundLoad, Tangents, TextureImport, Units, WindMasks, meta_path,
+};
 pub use mount::{Access, Mount, Mounts, PACKAGES_FOLDER, PackageMount};
 pub use reader::{AssetReader, FolderReader};
 pub use reference::AssetRef;

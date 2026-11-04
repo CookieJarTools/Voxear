@@ -10,6 +10,12 @@
 // leaves flutter along their own faces. Gusts are noise drifting downwind
 // across the level, so neighbouring plants move together and a field shows
 // waves going through it.
+//
+// A plant's vertices can say more (wind masks: see Vertex in src/mesh.rs,
+// read from its vertex colours or worked out at import): how much each
+// flutters, so a trunk stays still while its leaves move; a phase of its
+// own, so neighbouring leaves and branches move out of step; and how far
+// its branch sways apart from the trunk, bobbing as well as leaning.
 
 #pragma once
 
@@ -21,6 +27,8 @@ static const float WIND_LEAN = 0.08;
 static const float WIND_FLUTTER = 0.02;
 // How far a plant's tip leans away from a push of 1, as a share of its height.
 static const float PUSH_LEAN = 0.8;
+// How far a branch sways at strength 1, as a share of the plant's height.
+static const float WIND_BRANCH = 0.05;
 
 float windHash(float2 p)
 {
@@ -86,8 +94,8 @@ float2 foliagePush(Frame* frame, float3 world)
 
 // How far the wind, and what pushes through foliage, move a vertex at
 // `world` of a plant standing at `origin`, `height` tall, drawn with
-// `material`, its normal `normal`, at `time`.
-float3 windOffset(Frame* frame, Material material, float3 origin, float height, float3 world, float3 normal, float time)
+// `material`, its normal `normal` and its wind masks `masks`, at `time`.
+float3 windOffset(Frame* frame, Material material, float3 origin, float height, float3 world, float3 normal, uint masks, float time)
 {
     if (material.windBend <= 0.0 && material.windFlutter <= 0.0)
     {
@@ -120,9 +128,17 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
     offset += across * lean * wind.turbulence * wind.strength * rock * 0.35;
     offset = bowed(offset, height);
 
+    float flutters = float(masks & 0xFF) / 255.0;
+    float own = float((masks >> 8) & 0xFF) / 255.0 * 6.2831;
+    float branch = float((masks >> 16) & 0xFF) / 255.0;
+    // A branch sways at its own pace on top of the plant's lean, downwind and bobbing up and down.
+    float swing = sin(time * 2.4 + phase + own) * 0.6 + sin(time * 3.9 + (phase + own) * 1.3) * 0.4;
+    float reach = branch * material.windBend * height * WIND_BRANCH * max(push, 0.0);
+    offset += (along * (0.6 + 0.4 * swing) + float3(0.0, 0.5 * swing, 0.0)) * reach;
+
     // Leaves flutter along their faces, quickly and a little, more out at the tips.
-    float flicker = dot(world, float3(3.1, 2.3, 4.7));
+    float flicker = dot(world, float3(3.1, 2.3, 4.7)) + own;
     float flutter = sin(time * 13.0 + flicker) * 0.6 + sin(time * 21.0 + flicker * 1.7) * 0.4;
-    offset += normal * flutter * material.windFlutter * WIND_FLUTTER * max(push, 0.0) * (0.3 + 0.7 * up);
+    offset += normal * flutter * flutters * material.windFlutter * WIND_FLUTTER * max(push, 0.0) * (0.3 + 0.7 * up);
     return offset;
 }

@@ -35,7 +35,7 @@ use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use crate::{
     MaterialHandle, MeshHandle,
-    gpu::{GpuInstance, GpuPushes, INSTANCE_NO_SHADOW, MAX_PUSHERS, PUSH_CELL, PUSH_CELLS, Push},
+    gpu::{GpuInstance, GpuPushes, INSTANCE_IMPOSTOR, INSTANCE_NO_SHADOW, MAX_PUSHERS, PUSH_CELL, PUSH_CELLS, Push},
     graph::{BufferAccess, BufferId, FrameGraph},
     passes::bind,
     pipelines::Pipelines,
@@ -68,11 +68,62 @@ pub struct Foliage {
     pub healthy_color: [f32; 3],
     pub dry_color: [f32; 3],
     pub color_spread: f32,
+    /// Whether its far plants are drawn as impostors, flat pictures of them
+    /// that turn to face the camera (see `impostors`), and from how far, in
+    /// metres, when it says so.
+    pub impostors: Impostors,
+    pub impostor_distance: f32,
 }
 
 impl Component for Foliage {}
 
+/// When a Foliage's plants are drawn as impostors.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Impostors {
+    /// As the engine chooses: for plants as large as trees, past a third of
+    /// the draw distance, and never for grass.
+    #[default]
+    Auto,
+    /// Never: always the plant's own mesh.
+    Off,
+    /// From the Foliage's `impostor_distance`.
+    From,
+}
+
+impl Impostors {
+    pub const ALL: [Impostors; 3] = [Impostors::Auto, Impostors::Off, Impostors::From];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Impostors::Auto => "Auto",
+            Impostors::Off => "Off",
+            Impostors::From => "From distance",
+        }
+    }
+}
+
+/// How large a plant must be across, in metres, before the engine gives it
+/// impostors of its own accord, and the nearest it draws them from.
+const AUTO_IMPOSTOR_SIZE: f32 = 2.0;
+const AUTO_IMPOSTOR_DISTANCE: f32 = 40.0;
+
 impl Foliage {
+    /// From how far its plants are impostors, if at all: as it says, or
+    /// where the engine chooses, plants `AUTO_IMPOSTOR_SIZE` across or more
+    /// from `AUTO_IMPOSTOR_DISTANCE` or past a third of the draw distance.
+    fn impostors_from(&self, mesh_radius: f32) -> Option<f32> {
+        match self.impostors {
+            Impostors::Off => None,
+            Impostors::From => Some(self.impostor_distance.max(0.0)),
+            Impostors::Auto => {
+                let typical = self.plants.iter().map(|plant| plant.scale).sum::<f32>() / self.plants.len().max(1) as f32;
+                (mesh_radius * 2.0 * typical >= AUTO_IMPOSTOR_SIZE)
+                    .then(|| AUTO_IMPOSTOR_DISTANCE.max(self.draw_distance / 3.0))
+            }
+        }
+    }
+
     /// What its instances are built from besides its plants and place: its
     /// mesh, material, distances and colours, to tell when to build again.
     fn look(&self) -> (MeshHandle, MaterialHandle, [u32; 10]) {
@@ -175,6 +226,12 @@ struct Built {
     instances: Vec<GpuInstance>,
     /// Each instance's plant, by its place in the Foliage's list.
     numbers: Vec<u32>,
+    /// Each plant's impostor, in the same order, when it has one baked, and
+    /// how far from the camera it takes over.
+    impostors: Vec<GpuInstance>,
+    impostor_from: f32,
+    /// The impostor it was built with, to build again once one is baked.
+    impostor: Option<crate::Impostor>,
 }
 
 /// Every Foliage's instances, built once and added to each frame a chunk
@@ -194,6 +251,7 @@ impl FoliageCache {
         camera: Vec3,
         extracted: &mut ExtractedFrame,
         sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>,
+        impostors: &crate::impostors::ImpostorTable,
     ) {
         let mut seen = Vec::new();
         let found =
@@ -205,12 +263,22 @@ impl FoliageCache {
                 |w| w.0,
             );
             let look = foliage.look();
+            let Some(bounds) = sphere(foliage.mesh) else { continue };
+            let impostor_from = foliage.impostors_from(bounds.1);
+            let impostor = match (impostor_from, impostors.quad) {
+                (Some(_), quad) => impostors.get_or_ask(foliage.mesh, foliage.material).zip(quad),
+                (None, _) => None,
+            };
             let stale = self.built.get(&entity).is_none_or(|built| {
-                !Arc::ptr_eq(&built.plants, &foliage.plants) || built.model != model || built.look != look
+                !Arc::ptr_eq(&built.plants, &foliage.plants)
+                    || built.model != model
+                    || built.look != look
+                    || built.impostor != impostor.map(|(i, _)| i)
+                    || built.impostor_from != impostor_from.unwrap_or(f32::MAX)
             });
             if stale {
-                let Some(bounds) = sphere(foliage.mesh) else { continue };
-                self.built.insert(entity, build(foliage, model, look, bounds));
+                let made = build(foliage, model, look, bounds, impostor, impostor_from.unwrap_or(f32::MAX));
+                self.built.insert(entity, made);
             }
             let built = &self.built[&entity];
             let draw = foliage.draw_distance.max(0.0);
@@ -220,8 +288,17 @@ impl FoliageCache {
                     continue;
                 }
                 let shadowless = near > foliage.shadow_distance;
+                let far = chunk.centre.distance(camera) + chunk.radius;
+                // Where the whole chunk is nearer than impostors start, no plant needs looking at on its own.
+                let mixed = !built.impostors.is_empty() && far > built.impostor_from;
                 for index in chunk.plants.clone() {
                     let mut instance = built.instances[index];
+                    if mixed {
+                        let at = Vec3::new(instance.model[3][0], instance.model[3][1], instance.model[3][2]);
+                        if at.distance(camera) > built.impostor_from {
+                            instance = built.impostors[index];
+                        }
+                    }
                     if shadowless {
                         instance.flags |= INSTANCE_NO_SHADOW;
                     }
@@ -235,7 +312,14 @@ impl FoliageCache {
 }
 
 /// A Foliage's instances, sorted into chunks.
-fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32; 10]), bounds: (Vec3, f32)) -> Built {
+fn build(
+    foliage: &Foliage,
+    model: Mat4,
+    look: (MeshHandle, MaterialHandle, [u32; 10]),
+    bounds: (Vec3, f32),
+    impostor: Option<(crate::Impostor, MeshHandle)>,
+    impostor_from: f32,
+) -> Built {
     let (mesh_centre, mesh_radius) = bounds;
     let fade = [(foliage.draw_distance - foliage.fade_distance).max(0.0), foliage.draw_distance.max(0.0), 0.0, 0.0];
     let instance = |plant: &Plant| {
@@ -280,6 +364,9 @@ fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32
         chunks: Vec::new(),
         instances: Vec::with_capacity(keyed.len()),
         numbers: Vec::with_capacity(keyed.len()),
+        impostors: Vec::new(),
+        impostor_from,
+        impostor: impostor.map(|(i, _)| i),
     };
     for group in keyed.chunk_by(|a, b| a.0 == b.0) {
         let start = built.instances.len();
@@ -293,6 +380,9 @@ fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32
             reach = reach.max(mesh_radius * plant.scale * scale);
             low = low.min(centre);
             high = high.max(centre);
+            if let Some((impostor, quad)) = impostor {
+                built.impostors.push(impostor_instance(&instance, impostor, quad));
+            }
             built.instances.push(instance);
             built.numbers.push(number as u32);
         }
@@ -301,6 +391,28 @@ fn build(foliage: &Foliage, model: Mat4, look: (MeshHandle, MaterialHandle, [u32
         built.chunks.push(Chunk { centre, radius, plants: start..built.instances.len() });
     }
     built
+}
+
+/// A plant's impostor in place of its mesh: the quad, sized to the sphere
+/// its atlas pictured it in, there in the world, still turned as the plant
+/// is so the impostor shows the side of it that faces the camera, and with
+/// no shadow, as impostors are far off.
+fn impostor_instance(plant: &GpuInstance, impostor: crate::Impostor, quad: MeshHandle) -> GpuInstance {
+    let placed = Mat4::from_cols_array_2d(&plant.model);
+    let (scale, rotation, _) = placed.to_scale_rotation_translation();
+    let centre = placed.transform_point3(impostor.centre);
+    let size = impostor.radius * scale.max_element();
+    let model = Mat4::from_scale_rotation_translation(Vec3::splat(size), rotation, centre);
+    let normal = Mat3::from_mat4(model).inverse().transpose();
+    GpuInstance {
+        model: model.to_cols_array_2d(),
+        prev_model: model.to_cols_array_2d(),
+        normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
+        mesh: quad.0,
+        material: impostor.material.0,
+        flags: plant.flags | INSTANCE_NO_SHADOW | INSTANCE_IMPOSTOR,
+        ..*plant
+    }
 }
 
 /// Something that bends foliage out of its way as it passes through:

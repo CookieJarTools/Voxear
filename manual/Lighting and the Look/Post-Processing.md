@@ -47,6 +47,30 @@ look = "storybook"
 | `storybook` | A warm sun breaking through a canopy into a cool forest, as in It Takes Two or Ori. A teal sky and mist, shadows tinted a warm purple, golden glow and rich colour. Bounced light is on |
 | `golden_hour` | A low, warm sun in dusty air, as in Arc Raiders. The haze glows round the sun and swallows the distance, light shafts cut through it, a wide glare spreads from the sun, and shade stays deep but never black. Bounced light is on. Point the sun low, 5 to 20 degrees up |
 
+Seven looks are after the places of Arc Raiders:
+
+| Look | What it gives |
+| --- | --- |
+| `overgrown_dam` | Humid green-gold haze over lush ruins, a soft warm sun, light shafts through the greenery |
+| `sand_buried_city` | A harsh sun in thick orange dust that swallows the distance, bleached highlights and warm shade |
+| `rusted_spaceport` | Flat, cool industrial overcast: a weak sun, grey-teal mist, muted colour and firm contrast |
+| `cold_mountain_pass` | A crisp, warm sun over blue haze in the valleys, with cool blue shadows |
+| `snowbound_peak` | White, cold and bright: a pale sky as the main light, thick white mist, soft shadows |
+| `night_raid` | A faint blue moon under stars, thin dark mist that lamps glow in. Light the level with lamps |
+| `electrical_storm` | A dark green-grey sky, heavy air and hard contrast, as a storm closes in |
+
+Five are after the places of Hogwarts Legacy:
+
+| Look | What it gives |
+| --- | --- |
+| `candlelit_castle` | Warm window light and dust in dark halls, deep shadows, candlelight glowing. Light the halls with warm lamps |
+| `dark_forest` | Teal gloom and thick mist, cut by light shafts where the sun breaks through |
+| `snowy_village` | Soft, cold winter light, pale mist, and warm windows that glow against it |
+| `highland_summer` | Bright, rich and painterly: a clear sky, saturated colour and soft distance |
+| `enchanted_night` | A violet moonlit sky full of stars, with a dreamy glow round every light |
+
+A look sets how the sun looks, not where it is: turn the level's sun to suit, low for the dusty looks and high for the bright ones. The night looks make the sun a faint moon.
+
 Whatever the scene sets itself wins over the look's:
 
 - The scene's own `[sky]` replaces the look's sky. Without one, the look's sky is used, and saving the scene leaves it out, so changing the look changes the sky too.

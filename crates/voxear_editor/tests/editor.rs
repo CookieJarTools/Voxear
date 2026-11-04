@@ -6388,9 +6388,16 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     let lit = editor.game.engine.world.resource::<voxear_render::Sky>().unwrap();
     assert_eq!((lit.mode, lit.ambient), (sky.mode, sky.ambient), "lit as it was");
 
-    // The scene's menu: None, the three built in, then the project's.
+    // The scene's menu: None, every look built in, then the project's.
     let menu = first_with(&editor.ui, top, "value-choice").unwrap();
-    choose(&mut editor, &mut renderer, menu, 4);
+    // Far down a long menu: picked with the keys, as its option may be below the window's edge.
+    editor.ui.focus(menu);
+    let dusk_at = 1 + voxear_render::LookName::ALL.len();
+    while editor.ui.selected_option(menu) != dusk_at {
+        let key = if editor.ui.selected_option(menu) > dusk_at { Key::Up } else { Key::Down };
+        editor.ui.key_down(key);
+    }
+    frame(&mut editor, &mut renderer);
     assert_eq!(editor.lighting_shown(), Some("Lighting/Dusk.lighting"));
     let haze = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<voxear_render::Sky>().unwrap().haze;
     let golden = voxear_render::Look::of(voxear_render::LookName::GoldenHour);

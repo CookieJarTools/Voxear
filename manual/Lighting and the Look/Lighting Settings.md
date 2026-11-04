@@ -33,7 +33,7 @@ intensity = 0.2
 
 | Part | What it holds |
 | --- | --- |
-| `look` | A built-in look to start from: `golden_hour`, `storybook` or `soft_overcast` (see [[Post-Processing]]). Leave it out to start from the plain defaults |
+| `look` | A built-in look to start from, such as `golden_hour`, `night_raid` or `candlelit_castle`: every one is listed in [[Post-Processing]]. Leave it out to start from the plain defaults |
 | `[sky]` | The sky, as a scene's `[sky]` writes it: its mode, colours, haze, sun size and stars (see [[The Sky]]). Only what you write changes |
 | `[sun]` | How the level's sun looks, whatever light it is: `temperature` in kelvin and `tint` colour it, `strength` scales its intensity, `softness` widens it where the light keeps its default, and `shadow_tint` colours its shadows where the light has no tint of its own |
 | `[post]` | Post-processing, as a scene's `[post]` writes it: exposure, bloom, grading, fog and the rest (see [[Post-Processing]]). Only what you write changes |
@@ -51,7 +51,7 @@ lighting = "Lighting/Dusk.lighting"
 
 The scene is lit by them as it loads, by them alone. A scene can also write its own `[sky]` and `[post]`, as older scenes do; those light it only while it names no lighting settings.
 
-Each look is built in as lighting settings too: `lighting = "builtin:golden_hour"`, `"builtin:storybook"` or `"builtin:soft_overcast"`.
+Each look is built in as lighting settings too, as `builtin:` and its name: `lighting = "builtin:golden_hour"`, `"builtin:dark_forest"` and so on. The Lighting page's menu lists them all.
 
 ## Changing the lighting from a script
 
@@ -69,4 +69,4 @@ public sealed class StormTrigger : Behaviour
 }
 ```
 
-Applied settings replace the scenes' own lighting, sky and post-processing and all, from the next frame until the level changes. The built-in ones are there as `LightingSettings.GoldenHour`, `LightingSettings.Storybook` and `LightingSettings.SoftOvercast`. Settings that cannot be read are reported in the Console, and the lighting stays as it was.
+Applied settings replace the scenes' own lighting, sky and post-processing and all, from the next frame until the level changes. The built-in ones are there by name, such as `LightingSettings.GoldenHour`, `LightingSettings.NightRaid` and `LightingSettings.CandlelitCastle`. Settings that cannot be read are reported in the Console, and the lighting stays as it was.

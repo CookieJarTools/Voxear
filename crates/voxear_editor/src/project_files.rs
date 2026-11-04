@@ -73,7 +73,8 @@ const NEW_LIGHTING: &str = "# Voxear lighting settings. A scene names them, ligh
 # and scripts apply them with Lighting.Apply.
 format = 1
 
-# The look to start from: golden_hour, storybook or soft_overcast. Change anything below it.
+# The look to start from, one of the built-in looks (the Lighting page lists them), such as golden_hour,
+# night_raid or candlelit_castle. Change anything below it.
 look = \"golden_hour\"
 
 # The sky, as a scene's [sky] writes it: mode, haze, haze_tint, haze_glow, distance_haze, sun_size, ambient, stars.

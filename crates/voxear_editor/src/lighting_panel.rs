@@ -18,15 +18,8 @@ use voxear_engine::{
     lighting::LightingFile,
     scene_file::{PostTable, SkyFromLook, SkyModeData, sky_data},
 };
-use voxear_render::{PostProcess, Sky};
+use voxear_render::{LookName, PostProcess, Sky};
 use voxear_ui::{Color, NodeId, Style, Ui};
-
-/// The built-in lighting, as the scene's menu lists it after None.
-const BUILTIN: [(&str, &str); 3] = [
-    ("Golden Hour", "builtin:golden_hour"),
-    ("Storybook", "builtin:storybook"),
-    ("Soft Overcast", "builtin:soft_overcast"),
-];
 
 /// What a setting is edited with.
 #[derive(Clone, Copy)]
@@ -35,6 +28,8 @@ enum Kind {
     /// One of these, each as the menu shows it and as the file writes it;
     /// an empty value takes the setting out of the file.
     Choice(&'static [(&'static str, &'static str)]),
+    /// None, or one of the built-in looks (`LookName::ALL`).
+    Look,
     Number {
         min: f32,
         max: f32,
@@ -77,15 +72,13 @@ const fn number(min: f32, max: f32, unit: &'static str) -> Kind {
     Kind::Number { min, max, unit }
 }
 
-const LOOKS: &[(&str, &str)] =
-    &[("None", ""), ("Golden Hour", "golden_hour"), ("Storybook", "storybook"), ("Soft Overcast", "soft_overcast")];
 const SKY_MODES: &[(&str, &str)] = &[("Gradient", "gradient"), ("Atmosphere", "atmosphere")];
 const TONEMAPPERS: &[(&str, &str)] =
     &[("AgX", "agx"), ("ACES", "aces"), ("Neutral", "neutral"), ("Reinhard", "reinhard"), ("None", "none")];
 
 #[rustfmt::skip]
 const SETTINGS: &[Info] = &[
-    Info { path: &["look"], title: "Look", group: "Sky", kind: Kind::Choice(LOOKS), when: ALWAYS },
+    Info { path: &["look"], title: "Look", group: "Sky", kind: Kind::Look, when: ALWAYS },
     Info { path: &["sky", "mode"], title: "Mode", group: "Sky", kind: Kind::Choice(SKY_MODES), when: ALWAYS },
     Info { path: &["sky", "zenith"], title: "Zenith", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY },
     Info { path: &["sky", "horizon"], title: "Horizon", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY },
@@ -224,9 +217,9 @@ impl LightingPanel {
         let current = game.levels.scene_lighting().map(str::to_string);
         let mut labels = vec!["None".to_string()];
         let mut choices = vec![None];
-        for (label, reference) in BUILTIN {
-            labels.push(label.to_string());
-            choices.push(Some(reference.to_string()));
+        for (_, key, title) in LookName::ALL {
+            labels.push(title.to_string());
+            choices.push(Some(format!("builtin:{key}")));
         }
         for (label, pick) in crate::fields::assets_of(game, Some(AssetKind::Lighting)) {
             if let crate::fields::Pick::Asset(Some(path)) = pick {
@@ -550,6 +543,12 @@ fn control(ui: &mut Ui, row: NodeId, kind: Kind) -> Control {
             ui.add_class(dropdown, "value-choice");
             Control::Choice(dropdown)
         }
+        Kind::Look => {
+            let labels: Vec<&str> = std::iter::once("None").chain(LookName::ALL.iter().map(|(.., title)| *title)).collect();
+            let dropdown = ui.dropdown(row, &labels, 0);
+            ui.add_class(dropdown, "value-choice");
+            Control::Choice(dropdown)
+        }
         Kind::Number { unit, .. } => {
             let holder = ui.panel(row, Style::row());
             ui.add_class(holder, "prop-value");
@@ -577,6 +576,11 @@ fn read_control(ui: &Ui, row: &Row) -> Option<Option<toml_edit::Value>> {
             let (_, value) = options.get(ui.selected_option(dropdown))?;
             Some((!value.is_empty()).then(|| (*value).into()))
         }
+        // None, the first, takes the look out of the file.
+        (Control::Choice(dropdown), Kind::Look) if ui.changed(dropdown) => match ui.selected_option(dropdown) {
+            0 => Some(None),
+            index => LookName::ALL.get(index - 1).map(|(_, key, _)| Some((*key).into())),
+        },
         (Control::Number(field), Kind::Number { min, max, .. }) if ui.changed(field) => {
             let text = ui.text(field);
             let text = text.trim();
@@ -602,6 +606,13 @@ fn show(ui: &mut Ui, row: &Row, value: Option<&toml::Value>) {
         (Control::Choice(dropdown), Kind::Choice(options)) => {
             let written = value.and_then(toml::Value::as_str).unwrap_or("");
             let index = options.iter().position(|(_, v)| *v == written).unwrap_or(0);
+            if ui.selected_option(dropdown) != index {
+                ui.set_selected_option(dropdown, index);
+            }
+        }
+        (Control::Choice(dropdown), Kind::Look) => {
+            let written = value.and_then(toml::Value::as_str).unwrap_or("");
+            let index = LookName::ALL.iter().position(|(_, key, _)| *key == written).map_or(0, |at| at + 1);
             if ui.selected_option(dropdown) != index {
                 ui.set_selected_option(dropdown, index);
             }

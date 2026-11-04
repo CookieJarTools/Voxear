@@ -27,6 +27,42 @@ public readonly struct LightingSettings : IEquatable<LightingSettings>, IAsset<L
 	/// <summary>The built-in Soft Overcast lighting: hazy, bright and calm.</summary>
 	public static readonly LightingSettings SoftOvercast = new("builtin:soft_overcast");
 
+	/// <summary>The built-in Overgrown Dam lighting: humid green-gold haze over lush ruins.</summary>
+	public static readonly LightingSettings OvergrownDam = new("builtin:overgrown_dam");
+
+	/// <summary>The built-in Sand-Buried City lighting: a harsh sun in thick orange dust.</summary>
+	public static readonly LightingSettings SandBuriedCity = new("builtin:sand_buried_city");
+
+	/// <summary>The built-in Rusted Spaceport lighting: flat, cool industrial overcast.</summary>
+	public static readonly LightingSettings RustedSpaceport = new("builtin:rusted_spaceport");
+
+	/// <summary>The built-in Cold Mountain Pass lighting: a crisp sun over blue valley haze.</summary>
+	public static readonly LightingSettings ColdMountainPass = new("builtin:cold_mountain_pass");
+
+	/// <summary>The built-in Snowbound Peak lighting: white, cold and bright.</summary>
+	public static readonly LightingSettings SnowboundPeak = new("builtin:snowbound_peak");
+
+	/// <summary>The built-in Night Raid lighting: moonlight and lamps in thin mist.</summary>
+	public static readonly LightingSettings NightRaid = new("builtin:night_raid");
+
+	/// <summary>The built-in Electrical Storm lighting: a dark green-grey sky and heavy air.</summary>
+	public static readonly LightingSettings ElectricalStorm = new("builtin:electrical_storm");
+
+	/// <summary>The built-in Candlelit Castle lighting: warm window light and dust in dark halls.</summary>
+	public static readonly LightingSettings CandlelitCastle = new("builtin:candlelit_castle");
+
+	/// <summary>The built-in Dark Forest lighting: teal gloom cut by light shafts.</summary>
+	public static readonly LightingSettings DarkForest = new("builtin:dark_forest");
+
+	/// <summary>The built-in Snowy Village lighting: soft winter light, with warm windows glowing.</summary>
+	public static readonly LightingSettings SnowyVillage = new("builtin:snowy_village");
+
+	/// <summary>The built-in Highland Summer lighting: bright, rich and painterly.</summary>
+	public static readonly LightingSettings HighlandSummer = new("builtin:highland_summer");
+
+	/// <summary>The built-in Enchanted Night lighting: a violet moonlit sky full of stars.</summary>
+	public static readonly LightingSettings EnchantedNight = new("builtin:enchanted_night");
+
 	private readonly string? reference;
 
 	private LightingSettings(string reference)

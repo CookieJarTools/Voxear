@@ -54,7 +54,9 @@ Dark scenes still look dark: the darker a scene, the less exposure brightens it,
 
 ## Cost
 
-Bounced light costs about 1.3 milliseconds on an RTX 3070 in the Sponza palace, whatever the screen size: a tenth building the scene for the rays, six tenths tracing them, and the rest blending them into the probes. Traced in a compute shader, it costs about 3 milliseconds there: 2.2 tracing and 0.9 blending.
+Bounced light costs about 0.7 milliseconds on an RTX 3070 in an outdoor valley of trees and thousands of plants, whatever the screen size: a tenth building the scene for the rays, a third tracing them, and three tenths blending them into the probes, with a little more for each pixel to read the probes. Traced in a compute shader, the rays cost about 1.7 milliseconds there.
+
+Most probes out of doors float in open air, with nothing within a probe's spacing of them. They light only the mist, so they **sleep**: they trace eight times less often than probes near surfaces, which saves most of the work in open places. Plants of a [[Foliage]] are left out of the rays: thousands of small swaying meshes would cost far more to trace than they change the bounced light.
 
 > [!NOTE]
 > Rays see every surface as solid, so leaves cut out of a card block light as the whole card would.

@@ -140,6 +140,18 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), tab
     fg.add_pass("Aerial perspective", &images, &[], move |ctx| {
         draw(ctx, pipelines.aerial_perspective, &push, aerial_perspective);
     });
+    // The sun's light and the sky's, once, for every pixel after to share rather than each look them up.
+    fg.add_pass("Sky light", &sampled(&[transmittance, multi_scattering, sky_view]), &[], move |ctx| {
+        crate::passes::bind(ctx, pipelines.sky_light, vk::PipelineBindPoint::COMPUTE, &push);
+        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, 1, 1, 1) };
+        // Read by many passes after this, shading, the GI's rays and the fog among them: one barrier for them all.
+        let barrier = [vk::MemoryBarrier2::default()
+            .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+            .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_READ)];
+        unsafe { ctx.gpu.device.cmd_pipeline_barrier2(ctx.cmd, &vk::DependencyInfo::default().memory_barriers(&barrier)) };
+    });
 }
 
 /// A fullscreen pass that writes every texel of `target`.

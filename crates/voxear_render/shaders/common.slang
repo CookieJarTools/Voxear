@@ -404,6 +404,14 @@ struct Wind
     float pad;
 };
 
+// The sun's light where the camera is, after its way through the air, and
+// the sky's light from all round, worked out once a frame (atmosphere.slang).
+struct SkyLight
+{
+    float4 sun;
+    float4 sky;
+};
+
 // What pushes through foliage this frame; mirrors GpuPushes in src/gpu.rs (see foliage.rs).
 static const uint MAX_PUSHERS = 16;
 static const uint PUSH_CELLS = 128;
@@ -591,6 +599,8 @@ struct Buffers
     TraceInstance* sceneInstances;
     // The grid of pushes through foliage, a push each cell.
     float2* foliagePushes;
+    // Under the atmosphere, the sun's light and the sky's, once a frame (atmosphere.slang's SkyLight); else null.
+    SkyLight* skyLight;
 };
 
 struct Push

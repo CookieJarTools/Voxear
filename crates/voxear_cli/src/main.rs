@@ -481,6 +481,38 @@ struct Shot {
     software_rays: bool,
 }
 
+/// How many of a render's last frames its timings are averaged over.
+const TIMED_FRAMES: u64 = 60;
+
+/// Each pass's GPU time added up over frames, by its place in the frame,
+/// as passes such as Bloom down come several times.
+#[derive(Default)]
+struct TimingAverage {
+    passes: Vec<(String, f32)>,
+    frames: u32,
+}
+
+impl TimingAverage {
+    fn add(&mut self, timings: &[(String, f32)]) {
+        let same = self.passes.len() == timings.len()
+            && self.passes.iter().zip(timings).all(|((name, _), (pass, _))| name == pass);
+        if !same {
+            // The frame's passes changed, as when an effect turned on: count from this frame.
+            self.passes = timings.iter().map(|(name, _)| (name.clone(), 0.0)).collect();
+            self.frames = 0;
+        }
+        for ((_, total), (_, ms)) in self.passes.iter_mut().zip(timings) {
+            *total += ms;
+        }
+        self.frames += 1;
+    }
+
+    fn average(&self) -> Vec<(String, f32)> {
+        let frames = self.frames.max(1) as f32;
+        self.passes.iter().map(|(name, total)| (name.clone(), total / frames)).collect()
+    }
+}
+
 fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<()> {
     let Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders, software_rays } = shot;
     let project = Project::open(path)?;
@@ -492,6 +524,9 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     game.start(Some(&mut renderer))?;
     let mut overlay = StatsOverlay::new(stats);
     let frames = frames.max(1);
+    // Each pass's time over the last frames, averaged, as one frame's alone varies by a lot.
+    let mut timed = TimingAverage::default();
+    let mut frame_gpu = Vec::new();
     for frame in 1..=frames {
         game.tick(1.0 / 60.0, Some(&mut renderer));
         if stats {
@@ -505,6 +540,10 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
             renderer.start_capture();
         }
         renderer.render(&game.engine.world, game.engine.time().elapsed as f32)?;
+        if frame + TIMED_FRAMES > frames {
+            timed.add(renderer.timings());
+            frame_gpu.push(renderer.gpu_frame_ms());
+        }
         if capture && let Some(path) = renderer.end_capture() {
             println!("RenderDoc capture: {}", path.display());
         }
@@ -517,11 +556,15 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     let (width, height, pixels) = renderer.read_pixels()?;
     write_png(&out, width, height, &pixels)?;
     println!("wrote {} ({width}×{height}) on {}", out.display(), renderer.gpu().name);
-    let total: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
-    for (pass, ms) in renderer.timings() {
+    let passes = timed.average();
+    let total: f32 = passes.iter().map(|(_, ms)| ms).sum();
+    println!("GPU time, averaged over the last {} frames:", timed.frames);
+    for (pass, ms) in &passes {
         println!("  {pass:<16} {ms:>7.3} ms");
     }
-    println!("  {:<16} {total:>7.3} ms", "total");
+    println!("  {:<16} {total:>7.3} ms", "passes added");
+    let frame_ms = frame_gpu.iter().sum::<f32>() / frame_gpu.len().max(1) as f32;
+    println!("  {:<16} {frame_ms:>7.3} ms", "frame");
 
     let stats = renderer.stats();
     println!(

@@ -178,6 +178,12 @@ impl RenderGraph {
         self.timer.results()
     }
 
+    /// The last measured frame's GPU time, first pass to last, which its
+    /// passes' times added up are not, as passes overlap and wait.
+    pub fn frame_ms(&self) -> f32 {
+        self.timer.frame_ms()
+    }
+
     pub fn destroy(&mut self, gpu: &Gpu, bindless: &mut Bindless) {
         for (_, transient) in self.transients.drain() {
             release(gpu, bindless, transient);

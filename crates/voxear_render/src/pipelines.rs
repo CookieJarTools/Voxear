@@ -88,6 +88,8 @@ pub struct Pipelines {
     pub bloom_down: vk::Pipeline,
     pub bloom_up: vk::Pipeline,
     pub exposure: vk::Pipeline,
+    /// The sun's light and the sky's, once a frame under the atmosphere.
+    pub sky_light: vk::Pipeline,
     /// Pushes through foliage: springing back, and this frame's stamped.
     pub foliage_push: vk::Pipeline,
     /// Glass: the copy of the picture it is drawn over, and its panes.
@@ -281,6 +283,7 @@ impl Pipelines {
             exposure: create_compute_pipeline(gpu, layout, "Exposure", exposure, c"exposureMain")?,
             glass_copy: create_compute_pipeline(gpu, layout, "Glass copy", glass, c"glassCopyMain")?,
             foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
+            sky_light: create_compute_pipeline(gpu, layout, "Sky light", sky, c"skyLightMain")?,
             glass: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
                 depth_format: Some(DEPTH_FORMAT),
@@ -371,6 +374,7 @@ impl Pipelines {
             self.exposure,
             self.glass_copy,
             self.foliage_push,
+            self.sky_light,
             self.glass,
             self.composite_ldr,
             self.composite,

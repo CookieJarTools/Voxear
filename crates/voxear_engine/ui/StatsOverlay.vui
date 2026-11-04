@@ -8,7 +8,8 @@
         <Panel class="body">
             <Panel class="divider" />
             <Panel class="row"><Label>Frame rate</Label><Label name="fps" class="value accent">–</Label></Panel>
-            <Panel class="row"><Label>Frame</Label><Label name="frame" class="value">–</Label></Panel>
+            <!-- What the CPU spent on a frame, less its waits for the GPU and the display. -->
+            <Panel class="row"><Label>CPU</Label><Label name="frame" class="value">–</Label></Panel>
             <Panel class="row"><Label>GPU</Label><Label name="gpu" class="value">–</Label></Panel>
             <!-- The last few seconds of frame times, under a line at 60 frames a second. -->
             <Panel name="graph" class="graph" />

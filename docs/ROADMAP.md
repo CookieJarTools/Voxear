@@ -984,6 +984,23 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   distances in the Inspector, undoable. GPU test: 12,800 plants drawn out to their draw distance and no further.
   About 12,000 plants in the valley test: 6 ms a frame at 720p on an RTX 3070. Still to come: per-instance
   colour, picking plants in the Scene view, and scattering onto uneven ground.
+- **A speed pass, measured:** in the outdoor valley at 1080p on an RTX 3070, the passes added up from 8.0 to
+  5.4 ms. `vox render` averages each pass over the last 60 frames and prints the frame's own GPU time, first pass
+  to last (`GpuTimer::frame_ms`, `Renderer::gpu_frame_ms`), as single frames varied by a millisecond and
+  passes overlap; the stats overlay's CPU line is the frame less its waits for the GPU and the display
+  (`Renderer::waited_ms`), not the time between frames, which vsync pins at 16.7 ms. Then:
+  - GI probes with nothing within a spacing **sleep** (DDGI's probe states, Majercik et al. 2021): traced eight
+    times less often; the update fell from 0.86 to 0.29 ms. (Reading the rays through shared memory in the
+    update made its loop five times slower on the RTX 3070, so only relocation does.)
+  - Shading reads the coarse GI cascade only where the fine one does not wholly cover a point, each probe's
+    state once, and no GI reflection on surfaces rough enough to reflect only the ambient: 2.7 to 1.8 ms.
+  - Plants of a Foliage are left out of the GI's rays: rays 0.79 to 0.36 ms, the scene's build 0.21 to 0.10.
+  - Shadows: casters under a metre across draw only into the cascades they stand in or border, as their
+    shadows are short; casters under two texels of a cascade not at all. 0.94 to 0.30 ms.
+  - Under the atmosphere, the sun's light through the air and the sky's ambient are worked out once a frame
+    (**Sky light**, a one-thread pass) instead of five sky lookups a pixel: shading 1.64 to 1.44 ms.
+  - Foliage's leaf shadow uses the hard shadow, and surfaces turned from the sun skip the shadow.
+  - Fog's light from the probes finds each probe's visibility once for its looks up and down: 0.22 to 0.15 ms.
   - LODs that fade into each other by dithering rather than popping, and grass and small plants that fade out
     by distance.
   - Impostors for far trees: octahedral pictures baked from the tree, turning to face the camera, lit as the

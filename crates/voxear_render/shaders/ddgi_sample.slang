@@ -58,10 +58,9 @@ int2 ddgiTile(uint index, uint cascade)
 // been moved off the surfaces round it (its state's xyz, in spacings).
 float3 ddgiProbePosition(Frame* frame, uint cascade, int3 world)
 {
-    float spacing = ddgiSpacing(frame, cascade);
     int2 tile = ddgiTile(ddgiIndex(ddgiSlot(world)), cascade);
     float3 moved = textures[NonUniformResourceIndex(frame->ddgi.probes)].Load(int3(tile, 0)).xyz;
-    return (float3(world) + 0.5 + moved) * spacing;
+    return (float3(world) + 0.5 + moved) * ddgiSpacing(frame, cascade);
 }
 
 float2 octEncode(float3 n)
@@ -90,9 +89,10 @@ float4 ddgiMap(uint atlas, uint2 size, int2 tile, float3 direction)
 }
 
 // The light falling on a surface facing `normal` at `position`, looked up
-// from a little way off it along `away`, from one cascade's probes; beyond
-// the cascade, `fallback`, fading in over its edge.
-float3 ddgiIrradianceIn(Frame* frame, uint cascade, float3 position, float3 normal, float3 away, float3 fallback)
+// from a little way off it along `away`, from one cascade's probes, and how
+// fully the cascade covers the point: 1 inside it, falling to 0 over its
+// edge, where the next cascade out takes over.
+float3 ddgiIrradianceIn(Frame* frame, uint cascade, float3 position, float3 normal, float3 away, out float coverage)
 {
     float spacing = ddgiSpacing(frame, cascade);
     float3 biased = position + away * spacing * 0.45;
@@ -100,9 +100,10 @@ float3 ddgiIrradianceIn(Frame* frame, uint cascade, float3 position, float3 norm
     float3 last = float3(DDGI_PROBES - 1);
     float3 inside = min(inGrid, last - inGrid);
     float edge = min(inside.x, min(inside.y, inside.z));
+    coverage = saturate(edge / 2.0);
     if (edge <= 0.0)
     {
-        return fallback;
+        return 0.0;
     }
     int3 base = int3(floor(inGrid));
     float3 within = inGrid - float3(base);
@@ -117,11 +118,12 @@ float3 ddgiIrradianceIn(Frame* frame, uint cascade, float3 position, float3 norm
         uint index = ddgiIndex(ddgiSlot(world));
         int2 tile = ddgiTile(index, cascade);
         // Probes inside walls see only the wall's inside, and give nothing.
-        if (states.Load(int3(tile, 0)).w < 0.5)
+        float4 state = states.Load(int3(tile, 0));
+        if (state.w < 0.5)
         {
             continue;
         }
-        float3 probe = ddgiProbePosition(frame, cascade, world);
+        float3 probe = (float3(world) + 0.5 + state.xyz) * spacing;
         float3 towards = normalize(probe - position);
         float facing = (dot(towards, normal) + 1.0) * 0.5;
         float weight = facing * facing + 0.2;
@@ -147,8 +149,58 @@ float3 ddgiIrradianceIn(Frame* frame, uint cascade, float3 position, float3 norm
     }
     // Where the probes round a point can hardly see it, their light is not stretched to fill in: a point no probe
     // sees is dark, not lit by the sky or by probes beyond a wall.
-    float3 cached = total / max(weights, DDGI_MIN_WEIGHT);
-    return lerp(fallback, cached, saturate(edge / 2.0));
+    return total / max(weights, DDGI_MIN_WEIGHT);
+}
+
+// The light round a point in one cascade, for fog: the light falling from
+// above and from below, averaged, from the probes that can see the point,
+// and how fully the cascade covers it. Fog scatters light every way, so a
+// probe counts as far as it sees the point, whichever way it lies, and each
+// probe's visibility is found once for both of its looks.
+float3 ddgiLightAroundIn(Frame* frame, uint cascade, float3 position, float3 away, out float coverage)
+{
+    float spacing = ddgiSpacing(frame, cascade);
+    float3 biased = position + away * spacing * 0.45;
+    float3 inGrid = biased / spacing - float3(frame->ddgi.origin[cascade].xyz) - 0.5;
+    float3 last = float3(DDGI_PROBES - 1);
+    float3 inside = min(inGrid, last - inGrid);
+    float edge = min(inside.x, min(inside.y, inside.z));
+    coverage = saturate(edge / 2.0);
+    if (edge <= 0.0)
+    {
+        return 0.0;
+    }
+    int3 base = int3(floor(inGrid));
+    float3 within = inGrid - float3(base);
+    uint2 size = uint2(DDGI_TILES_ACROSS * DDGI_TEXELS, DDGI_TILE_ROWS * DDGI_CASCADES * DDGI_TEXELS);
+    Texture2D states = textures[NonUniformResourceIndex(frame->ddgi.probes)];
+    float3 up = float3(0.0, 1.0, 0.0);
+    float3 total = 0.0;
+    float weights = 0.0;
+    for (uint corner = 0; corner < 8; corner++)
+    {
+        int3 offset = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+        int3 world = min(base + offset, DDGI_PROBES - 1) + frame->ddgi.origin[cascade].xyz;
+        int2 tile = ddgiTile(ddgiIndex(ddgiSlot(world)), cascade);
+        float4 state = states.Load(int3(tile, 0));
+        if (state.w < 0.5)
+        {
+            continue;
+        }
+        float3 probe = (float3(world) + 0.5 + state.xyz) * spacing;
+        float3 towards = biased - probe;
+        float distance = length(towards);
+        float2 moments = ddgiMap(frame->ddgi.depth, size, tile, towards / max(distance, 1e-4)).xy;
+        float variance = abs(moments.x * moments.x - moments.y);
+        float seen = distance > moments.x ? variance / (variance + (distance - moments.x) * (distance - moments.x)) : 1.0;
+        float3 trilinear = lerp(1.0 - within, within, float3(offset));
+        float weight = max(seen * seen * seen, 1e-4) * trilinear.x * trilinear.y * trilinear.z;
+        float3 above = ddgiMap(frame->ddgi.irradiance, size, tile, up).rgb;
+        float3 below = ddgiMap(frame->ddgi.irradiance, size, tile, -up).rgb;
+        total += (above + below) * 0.5 * weight;
+        weights += weight;
+    }
+    return total / max(weights, DDGI_MIN_WEIGHT);
 }
 
 // The light round a point from every direction, for fog to be lit by: the
@@ -157,10 +209,15 @@ float3 ddgiIrradianceIn(Frame* frame, uint cascade, float3 position, float3 norm
 // or a wall on the side the camera sees rather than pushing it through.
 float3 ddgiLightAround(Frame* frame, float3 position, float3 toCamera, float3 fallback)
 {
-    float3 up = float3(0.0, 1.0, 0.0);
-    float3 above = ddgiIrradianceAlong(frame, position, up, toCamera, fallback);
-    float3 below = ddgiIrradianceAlong(frame, position, -up, toCamera, fallback);
-    return (above + below) * 0.5;
+    float fineCoverage;
+    float3 fine = ddgiLightAroundIn(frame, 0, position, toCamera, fineCoverage);
+    if (fineCoverage >= 1.0)
+    {
+        return fine * frame->ddgi.strength;
+    }
+    float coarseCoverage;
+    float3 coarse = ddgiLightAroundIn(frame, 1, position, toCamera, coarseCoverage);
+    return lerp(lerp(fallback, coarse, coarseCoverage), fine, fineCoverage) * frame->ddgi.strength;
 }
 
 // The light falling on a surface from all round its normal, from the fine
@@ -168,8 +225,18 @@ float3 ddgiLightAround(Frame* frame, float3 position, float3 toCamera, float3 fa
 // `fallback`, the plain sky light, looked up from a little way along `away`.
 float3 ddgiIrradianceAlong(Frame* frame, float3 position, float3 normal, float3 away, float3 fallback)
 {
-    float3 far = ddgiIrradianceIn(frame, 1, position, normal, away, fallback);
-    return ddgiIrradianceIn(frame, 0, position, normal, away, far) * frame->ddgi.strength;
+    // The fine cascade first; the coarse one only where the fine one does not wholly cover the point, as most
+    // points near the camera are covered.
+    float fineCoverage;
+    float3 fine = ddgiIrradianceIn(frame, 0, position, normal, away, fineCoverage);
+    if (fineCoverage >= 1.0)
+    {
+        return fine * frame->ddgi.strength;
+    }
+    float coarseCoverage;
+    float3 coarse = ddgiIrradianceIn(frame, 1, position, normal, away, coarseCoverage);
+    float3 far = lerp(fallback, coarse, coarseCoverage);
+    return lerp(far, fine, fineCoverage) * frame->ddgi.strength;
 }
 
 // As ddgiIrradianceAlong, for a surface seen from `view` (towards the

@@ -47,6 +47,9 @@ pub struct StatsOverlay {
     values: Vec<NodeId>,
     frames: u32,
     seconds: f32,
+    /// The time the frames since the last refresh spent waiting on the GPU
+    /// and the display, in milliseconds, which the CPU's time leaves out.
+    waited_ms: f32,
     /// Debug draw's texts, under the stats and the console.
     debug_texts: DebugTexts,
 }
@@ -78,6 +81,7 @@ impl StatsOverlay {
             values,
             frames: 0,
             seconds: 0.0,
+            waited_ms: 0.0,
             debug_texts,
         }
     }
@@ -136,6 +140,7 @@ impl StatsOverlay {
         self.handle_clicks();
         self.frames += 1;
         self.seconds += delta;
+        self.waited_ms += renderer.waited_ms();
         if self.times.len() == GRAPHED {
             self.times.pop_front();
         }
@@ -171,13 +176,14 @@ impl StatsOverlay {
     /// Shows the numbers now, averaged over the frames since the last time.
     pub fn refresh(&mut self, renderer: &Renderer) {
         let (frames, seconds) = (self.frames.max(1) as f32, self.seconds.max(1e-6));
-        let gpu_ms: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
+        let gpu_ms = renderer.gpu_frame_ms();
         let stats = renderer.stats();
         let exposure =
             if stats.average_luminance > 0.0 { format!("{:+.1} EV", stats.exposure_ev) } else { "fixed".into() };
         let texts = [
             format!("{:.0} fps", frames / seconds),
-            format!("{:.2} ms", seconds * 1000.0 / frames),
+            // The frame's time less its waits: at a capped frame rate, the time between frames says nothing.
+            format!("{:.2} ms", ((seconds * 1000.0 - self.waited_ms) / frames).max(0.0)),
             // Adding zero turns a rounding's -0.00 into 0.00.
             format!("{:.2} ms", gpu_ms.max(0.0) + 0.0),
             grouped(stats.drawn_early + stats.drawn_late),
@@ -190,7 +196,7 @@ impl StatsOverlay {
         for (node, text) in self.values.iter().zip(&texts) {
             self.ui.set_text(*node, text);
         }
-        (self.frames, self.seconds) = (0, 0.0);
+        (self.frames, self.seconds, self.waited_ms) = (0, 0.0, 0.0);
     }
 
     /// Hands the renderer the overlay for an output of `width` by `height`

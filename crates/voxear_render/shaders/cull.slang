@@ -160,9 +160,26 @@ void emitFading(Frame* frame, uint list, uint instance, Mesh mesh, uint selected
 
 void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 center, float radius, float scale)
 {
-    if (!insidePlanes(frame->cascadePlanes[cascade], center, radius))
+    // A caster only a few of the cascade's texels across casts no shadow anyone would see there.
+    static const float SMALLEST_TEXELS = 2.0;
+    if (!insidePlanes(frame->cascadePlanes[cascade], center, radius) || radius < frame->cascadeTexel[cascade] * SMALLEST_TEXELS)
     {
         return;
+    }
+    // A small caster's shadow is short, so it falls only on what is round it, which shading finds in the
+    // cascade the caster stands in, or the next one over where it stands near their border. Drawing grass into
+    // every cascade it overlaps, as large casters must be, would draw each tuft three or four times.
+    static const float SMALL = 1.0;
+    static const float SHADOW_REACH = 4.0;
+    if (radius < SMALL)
+    {
+        float depth = dot(center - frame->cameraPosition, frame->cameraForward);
+        float nearest = cascade == 0 ? 0.0 : frame->cascadeFar[cascade - 1];
+        float reach = radius * SHADOW_REACH;
+        if (depth + reach < nearest || depth - reach > frame->cascadeFar[cascade])
+        {
+            return;
+        }
     }
     Instance drawn = buffers()->instances[instance];
     uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, 1.0 / frame->cascadeTexel[cascade], frame->lodThreshold);

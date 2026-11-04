@@ -561,6 +561,9 @@ pub struct GpuBuffers {
     pub scene_instances: u64,
     /// The grid of pushes through foliage, kept from frame to frame.
     pub foliage_pushes: u64,
+    /// Under the atmosphere, the sun's light and the sky's, worked out once
+    /// a frame; 0 otherwise.
+    pub sky_light: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -709,7 +712,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 28 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 29 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }

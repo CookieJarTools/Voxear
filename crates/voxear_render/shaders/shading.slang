@@ -184,6 +184,12 @@ float3 shadowTint(Frame* frame, Surface s, float3 toSun, float3 sunLight, float 
 // towards the light from all round (`ambient`) as the surface roughens.
 float3 surroundingsReflection(Frame* frame, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere)
 {
+    // A surface this rough reflects the light from all round alone, so nothing more need be looked up.
+    float blur = saturate(roughness * 1.5);
+    if (blur >= 1.0)
+    {
+        return ambient;
+    }
     float3 sky;
     if (atmosphere)
     {
@@ -204,7 +210,7 @@ float3 surroundingsReflection(Frame* frame, float3 position, float3 normal, floa
         // through a wall.
         sky = ddgiIrradiance(frame, position, direction, normal, sky);
     }
-    return lerp(sky, ambient, saturate(roughness * 1.5));
+    return lerp(sky, ambient, blur);
 }
 
 // As surroundingsReflection, with screen-space reflections over it where
@@ -429,7 +435,9 @@ FragmentOut fragmentMain(VertexOut input)
     s.diffuse = base.rgb * (1.0 - metallic);
     s.f0 = lerp(float3(0.04), base.rgb, metallic);
 
-    float shadow = min(sunShadow(frame, input.worldPosition, s.normal), contactShadow(frame, input.position.xy));
+    // A surface turned from the sun takes none of its light, shadow or not, so its shadow is not looked for.
+    bool facingSun = dot(s.normal, -frame->sunDirection) > 0.0;
+    float shadow = facingSun ? min(sunShadow(frame, input.worldPosition, s.normal), contactShadow(frame, input.position.xy)) : 0.0;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     // Through the atmosphere, the sun reddens as it sets.
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
@@ -441,7 +449,8 @@ FragmentOut fragmentMain(VertexOut input)
         // one: the shadow there, a little way towards the sun, rather than
         // the leaf's own shadow on itself.
         static const float LEAF_DEPTH = 0.15;
-        float leafShadow = sunShadow(frame, input.worldPosition - frame->sunDirection * LEAF_DEPTH, -frame->sunDirection);
+        // Light through a leaf is soft already, so its shadow need not be: the hard one costs one look, not 28.
+        float leafShadow = sunShadowHard(frame, input.worldPosition - frame->sunDirection * LEAF_DEPTH, -frame->sunDirection);
         color += foliageLight(s, -frame->sunDirection, sunThrough, leafShadow);
     }
     color += shadowTint(frame, s, -frame->sunDirection, sunThrough, shadow);

@@ -276,6 +276,9 @@ struct FrameBuffers {
     clusters: Buffer,
     pointers: Buffer,
     debug_lines: Buffer,
+    /// The sun's light and the sky's, worked out once a frame under the
+    /// atmosphere (see `atmosphere::record`).
+    sky_light: Buffer,
     /// The meshlet lists, made for `meshlet_capacity` (see `gpu::meshlet_list`).
     meshlet_draws: Buffer,
     meshlet_draw_instances: Buffer,
@@ -327,6 +330,9 @@ pub struct Renderer {
     views: Vec<View>,
     frame_index: u64,
     last_time: Option<f32>,
+    /// How long the last frame waited, in milliseconds: for its slot's
+    /// previous frame on the GPU, and for the display to take an image.
+    waited_ms: f32,
     stats: RenderStats,
     ui_buffers: Vec<UiBuffers>,
     previews: previews::Previews,
@@ -396,6 +402,7 @@ impl Renderer {
             views: vec![first],
             frame_index: 0,
             last_time: None,
+            waited_ms: 0.0,
             stats: RenderStats::default(),
             ui_buffers,
             previews: previews::Previews::default(),
@@ -412,8 +419,25 @@ impl Renderer {
     }
 
     /// GPU milliseconds per pass from the latest completed frame.
+    /// How long the last frame waited, in milliseconds: for the GPU to
+    /// finish an earlier frame and for the display to take an image, as
+    /// vsync paces the frames. A frame's time less this is what the CPU
+    /// spent on it.
+    pub fn waited_ms(&self) -> f32 {
+        self.waited_ms
+    }
+
+    /// Each pass's GPU time from a recent frame, in milliseconds. Passes
+    /// overlap and wait for the ones before them, so a light one can read as
+    /// heavy, and added up they are not the frame's time (see `gpu_frame_ms`).
     pub fn timings(&self) -> &[(String, f32)] {
         self.graph.timings()
+    }
+
+    /// A recent frame's GPU time, in milliseconds, from its first pass's
+    /// start to its last's end.
+    pub fn gpu_frame_ms(&self) -> f32 {
+        self.graph.frame_ms()
     }
 
     /// Culling and LOD counts from a recent frame.
@@ -830,10 +854,12 @@ impl Renderer {
             return Ok(());
         }
 
+        let waiting = std::time::Instant::now();
         let frame = {
             profile_scope!("Wait for GPU");
             self.frames.begin(&self.gpu)?
         };
+        let mut waited = waiting.elapsed();
         // This slot's previous frame has finished, and with it every frame that could use what was freed before it.
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
@@ -846,7 +872,10 @@ impl Renderer {
         let acquired = {
             // Acquiring the next image waits for the display, as vsync paces the frames.
             profile_scope!("Wait for Display");
+            let waiting = std::time::Instant::now();
             let acquired = self.acquire_images(&mut drawn)?;
+            waited += waiting.elapsed();
+            self.waited_ms = waited.as_secs_f32() * 1000.0;
             if !drawn.contains(&true) {
                 return Ok(());
             }
@@ -1295,6 +1324,7 @@ impl View {
                 clusters,
                 pointers,
                 debug_lines,
+                sky_light,
                 meshlet_draws,
                 meshlet_draw_instances,
                 meshlet_work,
@@ -1303,7 +1333,7 @@ impl View {
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
-            for buffer in all.into_iter().chain([debug_lines, stats_readback]).chain(meshlets) {
+            for buffer in all.into_iter().chain([debug_lines, sky_light, stats_readback]).chain(meshlets) {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -1604,7 +1634,10 @@ impl View {
         let previous_ddgi = self.ddgi_history.take();
         let mut scene_hierarchy = (0, 0);
         if lit.enabled && !wireframe {
-            let traced = &extracted.instances[..opaque_count];
+            // Plants of a Foliage come after the Objs; the rays leave them out, as thousands of small moving
+            // meshes cost far more to trace than they change the bounced light.
+            let objs = extracted.entities[..opaque_count].iter().position(|owner| owner.plant.is_some());
+            let traced = &extracted.instances[..objs.unwrap_or(opaque_count)];
             // Ray queries where the GPU has them; otherwise the scene's hierarchy, walked in a compute shader.
             let scene = if setup.software_rays {
                 let hierarchy = &mut self.scene_hierarchies[slot];
@@ -1721,6 +1754,8 @@ impl View {
                 scene_nodes: scene_hierarchy.0,
                 scene_instances: scene_hierarchy.1,
                 foliage_pushes: self.foliage_pushes.address,
+                // Only under the atmosphere, which works it out.
+                sky_light: if atmosphere.is_some() { buffers.sky_light.address } else { 0 },
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -1910,6 +1945,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
             storage,
             host,
         )?,
+        sky_light: gpu.create_buffer(&format!("{prefix}sky light {slot}"), 32, storage, MemoryLocation::GpuOnly)?,
         meshlet_draws,
         meshlet_draw_instances,
         meshlet_work,

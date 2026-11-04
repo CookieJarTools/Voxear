@@ -99,17 +99,26 @@ uint ddgiHash(uint index)
     return (h >> 22u) ^ h;
 }
 
+// A probe's state, in its w: inside something, so it is never used; asleep,
+// with nothing within a spacing of it, so it lights only the air round it
+// (the mist) and is traced far less often; or awake, lighting surfaces.
+static const float DDGI_ASLEEP = 0.75;
+// How many times less often a sleeping probe traces than an awake one.
+static const uint DDGI_SLEEP = 8;
+
 // Whether a probe traces this frame, and whether it is new to the grid, as
-// the grid has just moved over it, with nothing kept from before.
-bool ddgiDue(Frame* frame, uint cascade, uint index, out int3 world, out bool fresh)
+// the grid has just moved over it, with nothing kept from before. `state` is
+// its state's w.
+bool ddgiDue(Frame* frame, uint cascade, uint index, float state, out int3 world, out bool fresh)
 {
     int3 origin = frame->ddgi.origin[cascade].xyz;
     world = ddgiWorldOf(ddgiSlotOf(index), origin);
     int3 before = frame->ddgi.previousOrigin[cascade].xyz;
     fresh = frame->ddgi.warmUp > 0 || any(world < before) || any(world >= before + DDGI_PROBES);
     // A quarter of the fine probes each frame and an eighth of the coarse, scattered through the grid; half as
-    // many where the rays are traced in software.
+    // many where the rays are traced in software, and those asleep far less often still.
     uint every = (cascade == 0 ? 4u : 8u) * (SOFTWARE_RAYS ? 2u : 1u);
+    every *= (state > 0.5 && state < 0.9) ? DDGI_SLEEP : 1u;
     return fresh || (ddgiHash(index + cascade * 65536u) + frame->frameIndex) % every == 0;
 }
 
@@ -205,7 +214,8 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     uint index = group.x % DDGI_PROBE_COUNT;
     int3 world;
     bool fresh;
-    if (cascade >= DDGI_CASCADES || !ddgiDue(frame, cascade, index, world, fresh))
+    float state = textures[NonUniformResourceIndex(frame->ddgi.probes)].Load(int3(ddgiTile(index, cascade), 0)).w;
+    if (cascade >= DDGI_CASCADES || !ddgiDue(frame, cascade, index, state, world, fresh))
     {
         return;
     }
@@ -229,12 +239,19 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     storageImagesRgba16f[push.output][ddgiRayTexel(index, cascade, thread.x)] = result;
 }
 
+// The probe's rays and their directions, read once by the whole workgroup
+// for the one thread that moves the probe, which reads every ray. The
+// texels' threads read the rays themselves: from shared memory the loop
+// over them ran five times slower on an RTX 3070.
+groupshared float4 sharedRays[DDGI_RAYS];
+groupshared float3 sharedDirections[DDGI_RAYS];
+
 // A probe's new state: where it has moved to, in spacings from its cell's
-// middle, and whether it lights anything. A probe too near a surface moves
+// middle, and whether it is inside something, asleep or awake. A probe too near a surface moves
 // away from it, so it does not sit on a roof or in a wall's face and see
 // both sides; one inside something moves out through the nearest back it
 // sees; and one still inside after that is set aside (DDGI's relocation).
-float4 ddgiRelocate(Frame* frame, uint cascade, uint index, int2 tile, bool fresh)
+float4 ddgiRelocate(Frame* frame, uint cascade, int2 tile, bool fresh)
 {
     // Nearer than this to a surface, in spacings, a probe moves away; it moves at most this far from its middle.
     static const float NEAREST = 0.3;
@@ -248,8 +265,8 @@ float4 ddgiRelocate(Frame* frame, uint cascade, uint index, int2 tile, bool fres
     uint backs = 0;
     for (uint ray = 0; ray < DDGI_RAYS; ray++)
     {
-        float reach = storageImagesRgba16f[push.textures.x][ddgiRayTexel(index, cascade, ray)].a / spacing;
-        float3 direction = ddgiRayDirection(frame, ray);
+        float reach = sharedRays[ray].a / spacing;
+        float3 direction = sharedDirections[ray];
         if (reach < 0.0)
         {
             backs++;
@@ -276,7 +293,9 @@ float4 ddgiRelocate(Frame* frame, uint cascade, uint index, int2 tile, bool fres
         moved -= towardsFront * (NEAREST - nearestFront);
     }
     moved = clamp(moved, -FARTHEST, FARTHEST);
-    return float4(moved, inside ? 0.0 : 1.0);
+    // Nothing within a spacing: it lights no surface, only the air, and sleeps.
+    float state = inside ? 0.0 : (nearestFront > 1.0 && backs == 0 ? DDGI_ASLEEP : 1.0);
+    return float4(moved, state);
 }
 
 // One workgroup a probe, a thread a texel of its maps. push.textures: x the
@@ -284,17 +303,30 @@ float4 ddgiRelocate(Frame* frame, uint cascade, uint index, int2 tile, bool fres
 // as storage images.
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
+void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID, uint flat : SV_GroupIndex)
 {
     Frame* frame = push.frame;
     uint cascade = group.x / DDGI_PROBE_COUNT;
     uint index = group.x % DDGI_PROBE_COUNT;
     int3 world;
     bool fresh;
-    if (cascade >= DDGI_CASCADES || !ddgiDue(frame, cascade, index, world, fresh))
+    if (cascade >= DDGI_CASCADES)
     {
         return;
     }
+    int2 tile = ddgiTile(index, cascade);
+    float state = storageImagesRgba16f[push.textures.w][tile].w;
+    if (!ddgiDue(frame, cascade, index, state, world, fresh))
+    {
+        return;
+    }
+    // The workgroup's 64 threads read the probe's 128 rays, two each.
+    for (uint ray = flat; ray < DDGI_RAYS; ray += 64)
+    {
+        sharedRays[ray] = storageImagesRgba16f[push.textures.x][ddgiRayTexel(index, cascade, ray)];
+        sharedDirections[ray] = ddgiRayDirection(frame, ray);
+    }
+    GroupMemoryBarrierWithGroupSync();
     float3 direction = octDecode((float2(thread.xy) + 0.5) / float(DDGI_TEXELS) * 2.0 - 1.0);
     float far = ddgiSpacing(frame, cascade) * 1.5;
     float3 light = 0.0;
@@ -317,7 +349,6 @@ void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         depthWeights += sharp;
         backs += found.a < 0.0 ? 1u : 0u;
     }
-    int2 tile = ddgiTile(index, cascade);
     int2 texel = tile * int(DDGI_TEXELS) + int2(thread.xy);
     float keep = fresh ? 0.0 : DDGI_KEEP;
     float4 lastLight = storageImagesRgba16f[push.textures.y][texel];
@@ -328,6 +359,6 @@ void ddgiUpdateMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     storageImagesRgba16f[push.textures.z][texel] = float4(lerp(freshDepth, lastDepth.xy, keep), 0.0, 0.0);
     if (all(thread.xy == 0))
     {
-        storageImagesRgba16f[push.textures.w][tile] = ddgiRelocate(frame, cascade, index, tile, fresh);
+        storageImagesRgba16f[push.textures.w][tile] = ddgiRelocate(frame, cascade, tile, fresh);
     }
 }

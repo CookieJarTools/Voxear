@@ -331,3 +331,15 @@ float4 aerialPerspectiveFragment(LutOut input) : SV_Target0
     float transmittance = dot(scattered.transmittance, float3(1.0 / 3.0));
     return float4(scattered.luminance, 1.0 - transmittance);
 }
+
+// The sun's light where the camera is and the sky's from all round, for this
+// frame, worked out once from the tables for every pixel to share.
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void skyLightMain()
+{
+    Frame* frame = push.frame;
+    SkyLight* light = buffers()->skyLight;
+    light->sun = float4(sunThroughAtmosphereNow(frame), 0.0);
+    light->sky = float4(skyAroundNow(frame), 0.0);
+}

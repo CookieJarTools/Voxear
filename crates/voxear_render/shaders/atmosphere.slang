@@ -321,12 +321,35 @@ float3 skyToward(Frame* frame, float3 direction)
     return textures[frame->lighting.skyView].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0).rgb;
 }
 
-// The sun's light where the camera is, after its way through the air.
-float3 sunThroughAtmosphere(Frame* frame)
+// The sun's light where the camera is, after its way through the air,
+// worked out from the transmittance table.
+float3 sunThroughAtmosphereNow(Frame* frame)
 {
     float3 origin = cameraInAtmosphere(frame);
     float height = length(origin);
     return frame->sunColor * transmittanceToSpace(frame->lighting, height, dot(towardsSun(frame), origin / height));
+}
+
+// The sky's light from all round, without the ground's: straight up and at
+// the horizon all round, worked out from the sky view table.
+float3 skyAroundNow(Frame* frame)
+{
+    float3 zenith = skyToward(frame, float3(0.0, 1.0, 0.0));
+    float3 horizon = 0.0;
+    for (uint i = 0; i < 4; i++)
+    {
+        float around = float(i) * 0.5 * PI;
+        horizon += skyToward(frame, normalize(float3(cos(around), 0.15, sin(around)))) * 0.25;
+    }
+    return lerp(horizon, zenith, 0.5) * frame->sunColor;
+}
+
+// The sun's light where the camera is, after its way through the air: as
+// the frame worked it out once, which every pixel shares.
+float3 sunThroughAtmosphere(Frame* frame)
+{
+    SkyLight* light = buffers()->skyLight;
+    return light != nullptr ? light->sun.rgb : sunThroughAtmosphereNow(frame);
 }
 
 // The aerial perspective table's depth, in slices, at a distance.
@@ -362,14 +385,8 @@ float4 aerialPerspectiveAt(Frame* frame, float2 screenUv, float metres)
 // at the horizon all round, and the ground as the sun and sky light it.
 float3 atmosphereAmbient(Frame* frame, float up, float3 sunLight)
 {
-    float3 zenith = skyToward(frame, float3(0.0, 1.0, 0.0));
-    float3 horizon = 0.0;
-    for (uint i = 0; i < 4; i++)
-    {
-        float around = float(i) * 0.5 * PI;
-        horizon += skyToward(frame, normalize(float3(cos(around), 0.15, sin(around)))) * 0.25;
-    }
-    float3 sky = lerp(horizon, zenith, 0.5) * frame->sunColor;
+    SkyLight* light = buffers()->skyLight;
+    float3 sky = light != nullptr ? light->sky.rgb : skyAroundNow(frame);
     float3 albedo = frame->lighting.atmosphere.groundAlbedo;
     float3 ground = albedo * (sunLight * saturate(towardsSun(frame).y) / PI + sky);
     return lerp(ground, sky, up) * frame->ambient;

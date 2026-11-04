@@ -12,9 +12,16 @@ struct SlotQueries {
 
 /// GPU time per named scope, measured with timestamp queries. Results arrive
 /// a few frames late, once the slot that recorded them comes round again.
+///
+/// A scope runs from when the GPU starts its commands to when they finish.
+/// The GPU can start a scope's commands while the last's still run, and a
+/// scope after a barrier counts the wait for the work before it, so a light
+/// pass after a heavy one can read as heavy, and the scopes added up are not
+/// the frame's time. That is from the first scope's start to the last's end.
 pub struct GpuTimer {
     slots: Vec<SlotQueries>,
     results: Vec<(String, f32)>,
+    frame_ms: f32,
     period_ns: f32,
 }
 
@@ -28,7 +35,7 @@ impl GpuTimer {
             unsafe { gpu.device.reset_query_pool(pool, 0, MAX_SCOPES * 2) };
             queries.push(SlotQueries { pool, names: Vec::new() });
         }
-        Ok(Self { slots: queries, results: Vec::new(), period_ns: gpu.info.timestamp_period })
+        Ok(Self { slots: queries, results: Vec::new(), frame_ms: 0.0, period_ns: gpu.info.timestamp_period })
     }
 
     /// Collects the slot's previous results and resets it. Call after the
@@ -51,6 +58,9 @@ impl GpuTimer {
                         (name.clone(), ticks as f32 * self.period_ns / 1_000_000.0)
                     })
                     .collect();
+                let first = stamps.iter().step_by(2).copied().min().unwrap_or(0);
+                let last = stamps.iter().skip(1).step_by(2).copied().max().unwrap_or(0);
+                self.frame_ms = last.saturating_sub(first) as f32 * self.period_ns / 1_000_000.0;
             }
             unsafe { gpu.device.reset_query_pool(queries.pool, 0, count * 2) };
         }
@@ -79,6 +89,12 @@ impl GpuTimer {
     /// Milliseconds per scope from the most recent completed frame.
     pub fn results(&self) -> &[(String, f32)] {
         &self.results
+    }
+
+    /// The most recent completed frame's GPU time, in milliseconds: from its
+    /// first scope's start to its last's end.
+    pub fn frame_ms(&self) -> f32 {
+        self.frame_ms
     }
 
     pub fn destroy(&mut self, gpu: &Gpu) {

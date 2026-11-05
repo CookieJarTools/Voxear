@@ -3172,6 +3172,7 @@ fn assets_show_previews_in_the_project_fields_picker_and_inspector() {
     frame(&mut editor, &mut renderer);
     editor.ui.pointer_move(x + w / 2.0 + 40.0, y + h / 2.0 + 10.0);
     frame(&mut editor, &mut renderer);
+    assert!(editor.ui.is_visible(image), "still shown while it turns, not blank until let go");
     editor.ui.pointer_button(false);
     frame(&mut editor, &mut renderer);
     let turn = editor.inspector_preview_turn().unwrap();

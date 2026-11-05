@@ -228,7 +228,9 @@ impl Previews {
         id
     }
 
-    /// Changes what a preview shows or how, to draw it again.
+    /// Changes what a preview shows or how, to draw it again. What it showed
+    /// stays in its cell until then: hidden while it waited, a preview being
+    /// turned by a drag, drawn again each frame, showed black until let go.
     pub fn set(&mut self, id: PreviewId, parts: Option<Vec<PreviewPart>>, options: PreviewOptions) {
         let Some(preview) = self.previews.get_mut(&id) else { return };
         if let Some(parts) = parts {
@@ -236,9 +238,9 @@ impl Previews {
         }
         if preview.cell.is_some_and(|cell| cell.size != cell_size(options.size)) {
             self.cells.free(preview.cell.take().expect("checked"));
+            preview.drawn = false;
         }
         preview.options = options;
-        preview.drawn = false;
         if !self.queue.contains(&id) {
             self.queue.push_back(id);
         }

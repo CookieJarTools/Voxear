@@ -67,7 +67,8 @@ pub(crate) struct OceanBuffers {
     pub stream_points: Vec<Buffer>,
     /// The sea the spectrum is of.
     sea: Option<SeaState>,
-    /// Its waves' significant height, in metres.
+    /// Its waves' significant height, in metres, at the height their winds
+    /// raise them (before `SeaState::scale`).
     wave_height: f32,
     /// Which set of wave images this frame writes.
     parity: bool,
@@ -143,15 +144,22 @@ impl OceanBuffers {
         (slices, draws)
     }
 
-    /// Writes the spectrum of `sea`, when it is not the one written already.
+    /// Writes the spectrum of `sea`'s waves, when it is not the one written
+    /// already: their height and choppiness are applied as they move, so
+    /// changing only those writes nothing. Each cascade's on a thread of its
+    /// own.
     fn prepare(&mut self, gpu: &Gpu, sea: &SeaState) {
+        let sea = &sea.waves();
         if self.sea.as_ref() == Some(sea) {
             return;
         }
+        let spectra: Vec<Vec<Complex>> = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..CASCADES).map(|cascade| scope.spawn(move || ocean::initial_spectrum(sea, cascade, N))).collect();
+            jobs.into_iter().map(|job| job.join().expect("a cascade's spectrum")).collect()
+        });
         let mut waves = Vec::with_capacity(CASCADES * N * N);
         let mut energy = 0.0;
-        for cascade in 0..CASCADES {
-            let spectrum = ocean::initial_spectrum(sea, cascade, N);
+        for spectrum in &spectra {
             for at in 0..N * N {
                 let (n, m) = (at % N, at / N);
                 let h = spectrum[at];
@@ -324,7 +332,8 @@ impl Water {
             });
             sea || pool
         };
-        if near(1.0 + buffers.wave_height) {
+        let wave_height = buffers.wave_height * sea.scale as f32;
+        if near(1.0 + wave_height) {
             buffers.under_until = time + 4.0;
         }
         let under = time < buffers.under_until;
@@ -345,7 +354,7 @@ impl Water {
             foam: (ocean.foam * ocean.weather.foam()).max(0.0),
             absorb,
             choppiness: sea.choppiness,
-            wave_height: buffers.wave_height,
+            wave_height,
             enabled: u32::from(found.is_some()),
             time: f64::from(time).rem_euclid(ocean::REPEAT_SECONDS) as f32,
             pools: bodies.pools,
@@ -360,7 +369,7 @@ impl Water {
             floor_depth: fg.texture(floor_depth).0,
             features: ocean.features(),
             dry_mask: dry.as_ref().map_or(u32::MAX, |(mask, _)| fg.texture(*mask).0),
-            _pad: 0,
+            wave_scale: sea.scale as f32,
         };
         Ok(Self {
             displacement,

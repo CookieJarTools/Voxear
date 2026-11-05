@@ -407,7 +407,9 @@ pub struct GpuOcean {
     /// Where the Dry Areas shaped as meshes start and end along each
     /// pixel's view (`water::record_dry_mask`), or `u32::MAX` for none.
     pub dry_mask: u32,
-    pub _pad: u32,
+    /// How much higher every wave is than its spectrum, applied as the waves
+    /// move (`SeaState::scale`).
+    pub wave_scale: f32,
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in

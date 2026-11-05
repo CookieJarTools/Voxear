@@ -231,6 +231,15 @@ pub struct SeaState {
     pub scale: f64,
 }
 
+impl SeaState {
+    /// The waves alone, at the height their winds raise them and unpinched:
+    /// what the spectrum is made from, so a sea that differs from another
+    /// only in its waves' height or choppiness needs no spectrum of its own.
+    pub fn waves(&self) -> Self {
+        Self { choppiness: 0.0, scale: 1.0, ..*self }
+    }
+}
+
 impl Ocean {
     /// The sea its weather makes, its wind along `rotation`'s +Z.
     pub fn sea_state(&self, rotation: Quat) -> SeaState {
@@ -303,16 +312,18 @@ fn jonswap(omega: f64, waves: &Waves) -> f64 {
     alpha * g * g / omega.powi(5) * (-1.25 * (peak / omega).powi(4)).exp() * waves.gamma.powf(r)
 }
 
-/// `cos^2s` of half the angle from the wind, normalised to 1 over the
-/// circle.
-fn spreading(theta: f64, s: f64) -> f64 {
+/// The area under `cos^2s` of half the angle round the circle, which
+/// [`spreading`] divides by so it adds up to 1.
+fn spread_area(s: f64) -> f64 {
     const STEPS: usize = 256;
-    let shape = |t: f64| (t * 0.5).cos().abs().powf(2.0 * s);
-    let area: f64 =
-        (0..STEPS).map(|i| shape(-std::f64::consts::PI + (i as f64 + 0.5) * std::f64::consts::TAU / STEPS as f64)).sum::<f64>()
-            * std::f64::consts::TAU
-            / STEPS as f64;
-    shape(theta) / area
+    let step = std::f64::consts::TAU / STEPS as f64;
+    (0..STEPS).map(|i| ((-std::f64::consts::PI + (i as f64 + 0.5) * step) * 0.5).cos().abs().powf(2.0 * s)).sum::<f64>() * step
+}
+
+/// `cos^2s` of half the angle from the wind, over `area`, its
+/// [`spread_area`].
+fn spreading(theta: f64, s: f64, area: f64) -> f64 {
+    (theta * 0.5).cos().abs().powf(2.0 * s) / area
 }
 
 /// The lowest wave number cascade `cascade` holds; the next cascade's
@@ -385,7 +396,7 @@ fn uniforms(cascade: usize, n: i32, m: i32) -> (f64, f64) {
 /// starts: a random height, normal in each part, scaled by how much energy
 /// the sea has at its wave number and direction. Nothing outside the
 /// cascade's band.
-pub fn initial_wave(sea: &SeaState, cascade: usize, n: i32, m: i32) -> Complex {
+fn initial_wave(sea: &SeaState, areas: [f64; 2], cascade: usize, n: i32, m: i32) -> Complex {
     let size = f64::from(CASCADE_SIZES[cascade]);
     let dk = std::f64::consts::TAU / size;
     let (kx, kz) = (f64::from(n) * dk, f64::from(m) * dk);
@@ -396,9 +407,9 @@ pub fn initial_wave(sea: &SeaState, cascade: usize, n: i32, m: i32) -> Complex {
     let omega = (GRAVITY * k).sqrt();
     let theta = kz.atan2(kx) - sea.direction[1].atan2(sea.direction[0]);
     let theta = (theta + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-    let energy = |waves: &Waves| jonswap(omega, waves) * spreading(theta, waves.spread);
+    let energy = |waves: &Waves, area: f64| jonswap(omega, waves) * spreading(theta, waves.spread, area);
     // From frequency to wave number: dω/dk is g / 2ω in deep water, and a polar cell of the grid is k wide.
-    let density = (energy(&sea.swell) + energy(&sea.wind)) * GRAVITY / (2.0 * omega) / k;
+    let density = (energy(&sea.swell, areas[0]) + energy(&sea.wind, areas[1])) * GRAVITY / (2.0 * omega) / k;
     // Ripples shorter than a few centimetres are gone, as the FFT cannot hold them without aliasing.
     let damping = (-k * k * 0.01 * 0.01).exp();
     // A quarter: half for each of the wave's two random parts, and half again as each wave is summed with its
@@ -416,11 +427,12 @@ pub fn initial_wave(sea: &SeaState, cascade: usize, n: i32, m: i32) -> Complex {
 /// Nyquist row and column are left empty, as they have no partner wave.
 pub fn initial_spectrum(sea: &SeaState, cascade: usize, resolution: usize) -> Vec<Complex> {
     let half = resolution as i32 / 2;
+    let areas = [spread_area(sea.swell.spread), spread_area(sea.wind.spread)];
     let mut out = vec![Complex::ZERO; resolution * resolution];
     for m in -half + 1..half {
         for n in -half + 1..half {
             let at = index(n, resolution) + index(m, resolution) * resolution;
-            out[at] = initial_wave(sea, cascade, n, m);
+            out[at] = initial_wave(sea, areas, cascade, n, m);
         }
     }
     out
@@ -544,7 +556,9 @@ impl Displacement {
 }
 
 /// The sea's long waves on the CPU, for how high it is at a point: the two
-/// longest cascades at 64×64, moved on to a moment.
+/// longest cascades at 64×64, moved on to a moment. Their spectrum is made
+/// from the sea's waves alone; their height and choppiness are applied as
+/// they move, so changing those is quick.
 pub struct OceanSampler {
     sea: SeaState,
     level: f32,
@@ -555,10 +569,24 @@ pub struct OceanSampler {
 
 impl OceanSampler {
     pub fn new(sea: SeaState, level: f32) -> Self {
-        let initial = (0..QUERY_CASCADES).map(|c| initial_spectrum(&sea, c, QUERY_RESOLUTION)).collect();
+        let initial = (0..QUERY_CASCADES).map(|c| initial_spectrum(&sea.waves(), c, QUERY_RESOLUTION)).collect();
         let mut sampler = Self { sea, level, initial, surfaces: Vec::new(), time: f64::NAN };
         sampler.set_time(0.0);
         sampler
+    }
+
+    /// Makes it `sea`'s, its spectrum made again only if `sea`'s waves are
+    /// not the ones it has.
+    pub fn set_sea(&mut self, sea: SeaState) {
+        if sea == self.sea {
+            return;
+        }
+        if sea.waves() != self.sea.waves() {
+            self.initial = (0..QUERY_CASCADES).map(|c| initial_spectrum(&sea.waves(), c, QUERY_RESOLUTION)).collect();
+        }
+        self.sea = sea;
+        let time = std::mem::replace(&mut self.time, f64::NAN);
+        self.set_time(if time.is_nan() { 0.0 } else { time });
     }
 
     pub fn sea(&self) -> &SeaState {
@@ -580,9 +608,13 @@ impl OceanSampler {
             return;
         }
         self.time = time;
-        let chop = self.sea.choppiness;
+        let (chop, scale) = (self.sea.choppiness, self.sea.scale as f32);
         self.surfaces = (0..QUERY_CASCADES)
-            .map(|c| displacement(&self.initial[c], QUERY_RESOLUTION, c, time, chop))
+            .map(|c| {
+                let mut surface = displacement(&self.initial[c], QUERY_RESOLUTION, c, time, chop);
+                surface.moved.iter_mut().for_each(|moved| *moved = moved.map(|d| d * scale));
+                surface
+            })
             .collect();
     }
 
@@ -705,6 +737,22 @@ mod tests {
         let peak = d.at(0.0, 0.0)[1];
         let past = d.at(CASCADE_SIZES[1] / 64.0 * 2.0, 0.0);
         assert!(peak > 0.0 && past[0] < 0.0, "peak {peak}, the water past it moved {}", past[0]);
+    }
+
+    #[test]
+    fn taller_or_choppier_waves_need_no_new_spectrum_and_match_one_made_so() {
+        let sea = Ocean::default().sea_state(Quat::IDENTITY);
+        let taller = SeaState { scale: 1.7, choppiness: sea.choppiness * 0.5, ..sea };
+        assert_eq!(sea.waves(), taller.waves());
+        let mut changed = OceanSampler::new(sea, 0.0);
+        changed.set_time(12.5);
+        changed.set_sea(taller);
+        let mut made = OceanSampler::new(taller, 0.0);
+        made.set_time(12.5);
+        for (x, z) in [(0.0, 0.0), (13.0, -40.0), (-250.0, 77.0)] {
+            let (a, b) = (changed.height_over(x, z, 1e4), made.height_over(x, z, 1e4));
+            assert!((a - b).abs() < 1e-4, "{a} against {b}");
+        }
     }
 
     #[test]

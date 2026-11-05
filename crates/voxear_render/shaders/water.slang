@@ -191,13 +191,15 @@ void oceanColumnsMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
     }
     inverseFft(local.x);
     float chop = frame->ocean.choppiness;
+    // The spectrum is the waves at the height their winds raise them; how much higher they are is applied here.
+    float scale = frame->ocean.waveScale;
     for (uint e = 0; e < 2; e++)
     {
         uint z = local.x + e * 128;
-        float2 a = oceanRow[0][z];
-        float2 b = oceanRow[1][z];
-        float2 c = oceanRow[2][z];
-        float2 d = oceanRow[3][z];
+        float2 a = oceanRow[0][z] * scale;
+        float2 b = oceanRow[1][z] * scale;
+        float2 c = oceanRow[2][z] * scale;
+        float2 d = oceanRow[3][z] * scale;
         float3 moved = float3(a.x * chop, a.y, b.x * chop);
         float dxdx = c.y * chop;
         float dzdz = d.x * chop;

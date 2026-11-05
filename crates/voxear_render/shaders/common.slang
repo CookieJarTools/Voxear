@@ -344,7 +344,8 @@ struct Ocean
     // Where the Dry Areas shaped as meshes start and end along each pixel's view (water.slang's dryMeshFragment), or
     // NO_TEXTURE.
     uint dryMask;
-    uint pad;
+    // How much higher every wave is than its spectrum (src/ocean.rs's SeaState::scale).
+    float waveScale;
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,

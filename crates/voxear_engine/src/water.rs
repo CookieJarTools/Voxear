@@ -98,8 +98,12 @@ pub fn update(world: &mut World, time: f64) {
         return;
     };
     query.shores = shores;
+    // A change of only the waves' height or choppiness keeps the spectrum it has.
     if query.made_for != Some(sea) {
-        query.sampler = Some(OceanSampler::new(sea, level));
+        match query.sampler.as_mut() {
+            Some(sampler) => sampler.set_sea(sea),
+            None => query.sampler = Some(OceanSampler::new(sea, level)),
+        }
         query.made_for = Some(sea);
     }
     let sampler = query.sampler.as_mut().expect("made above");

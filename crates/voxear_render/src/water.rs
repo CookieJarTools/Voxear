@@ -58,6 +58,8 @@ pub(crate) struct OceanBuffers {
     parity: bool,
     /// Where last frame's foam's first texel was, if there was any.
     foam_origin: Option<[f32; 2]>,
+    /// Whether the lens's wetness has a frame before this one.
+    lens_kept: bool,
 }
 
 impl OceanBuffers {
@@ -74,7 +76,7 @@ impl OceanBuffers {
         let stream_points = (0..slots)
             .map(|slot| gpu.create_buffer(&named(&format!("stream points {slot}")), size, usage, MemoryLocation::CpuToGpu))
             .collect::<Result<_>>()?;
-        Ok(Self { spectrum, fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None })
+        Ok(Self { spectrum, fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None, lens_kept: false })
     }
 
     pub fn into_buffers(self) -> Vec<Buffer> {
@@ -130,6 +132,9 @@ pub struct Water {
     /// The foam round the camera: this frame's, last frame's, and where last
     /// frame's first texel was (NaN for none).
     foam: (ImageId, ImageId, [f32; 2]),
+    /// How wet the camera's lens is: this frame's, last frame's, and
+    /// whether there was a last frame's.
+    lens: (ImageId, ImageId, bool),
     /// Whether the sea is drawn, how many Pools, how many points each
     /// Stream has, and how many Dry Areas.
     sea: bool,
@@ -164,6 +169,10 @@ impl Water {
         let foam_desc = ImageDesc::new(FOAM_TEXELS, FOAM_TEXELS, vk::Format::R32_SFLOAT, usage);
         let (foam_a, foam_b) = (fg.history_image(gpu, bindless, "ocean foam a", foam_desc)?, fg.history_image(gpu, bindless, "ocean foam b", foam_desc)?);
         let (foam_now, foam_then) = if buffers.parity { (foam_a, foam_b) } else { (foam_b, foam_a) };
+        let lens_desc = ImageDesc::new(1, 1, vk::Format::R32_SFLOAT, usage);
+        let (lens_a, lens_b) = (fg.history_image(gpu, bindless, "lens wetness a", lens_desc)?, fg.history_image(gpu, bindless, "lens wetness b", lens_desc)?);
+        let (lens_now, lens_then) = if buffers.parity { (lens_a, lens_b) } else { (lens_b, lens_a) };
+        let lens_kept = std::mem::replace(&mut buffers.lens_kept, true);
         let mut wave = |name: &str, cascade: usize, set: bool| {
             let set = if set { "a" } else { "b" };
             fg.history_image(gpu, bindless, &format!("ocean {name} {cascade} {set}"), desc)
@@ -231,6 +240,7 @@ impl Water {
             depth_copy,
             second,
             foam: (foam_now, foam_then, previous_origin),
+            lens: (lens_now, lens_then, lens_kept),
             size: [extent.width, extent.height],
             frame,
             sea: found.is_some(),
@@ -281,7 +291,7 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, size, sea, pools, streams, dries, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, size, sea, pools, streams, dries, .. } = water;
     let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
         images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
     };
@@ -354,20 +364,36 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         let draws = Draws { sea: false, pools, streams, walls: (0, pools) };
         record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), draws);
     }
-    // Under water, where the view starts under it: what it shows dimmed and the water's light over it.
-    let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
+    // How wet the lens is: soaked under water, drying once out.
+    let (lens_now, lens_then, lens_kept) = lens;
+    let lens_storage = fg.storage(lens_now, 0);
+    let (lens_now_texture, lens_then_texture) = (fg.texture(lens_now), fg.texture(lens_then));
+    let mut lens_images = vec![(lens_now, ImageAccess::StorageWrite), (lens_then, ImageAccess::Sampled)];
+    lens_images.extend(layer.waves.iter().map(|&image| (image, ImageAccess::Sampled)));
+    fg.add_pass("Lens wetness", &lens_images, &[], move |ctx| {
+        let push = Push { output: lens_storage.0, textures: [lens_then_texture.0, u32::from(!lens_kept), 0, 0], ..push };
+        bind(ctx, pipelines.lens_wetness, vk::PipelineBindPoint::COMPUTE, &push);
+        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, 1, 1, 1) };
+    });
+    // Under water, across the waterline and through drops on the lens: over a copy of the picture with the water
+    // in it, to bend and blur.
+    crate::glass::record_copy(fg, (pipelines, push), (hdr, copy, copy_texture), &copy_mips, size);
+    let mut images = vec![
+        (hdr, ImageAccess::ColorAttachment),
+        (copy, ImageAccess::Sampled),
+        (depth, ImageAccess::Sampled),
+        (lens_now, ImageAccess::Sampled),
+    ];
     images.extend(layer.waves.iter().map(|&image| (image, ImageAccess::Sampled)));
     images.extend(layer.sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
     let depth_texture = fg.texture(depth);
-    let push = Push { textures: [depth_texture.0, 0, 0, 0], ..push };
+    let push = Push { texture: copy_texture.0, textures: [depth_texture.0, lens_now_texture.0, 0, 0], ..push };
     let extent = vk::Extent2D { width: size[0], height: size[1] };
     fg.add_pass("Under water", &images, &[], move |ctx| {
         let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
         begin_rendering(ctx, extent, &color, None);
-        for pipeline in [pipelines.underwater_dim, pipelines.underwater_glow] {
-            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
-        }
+        bind(ctx, pipelines.underwater, vk::PipelineBindPoint::GRAPHICS, &push);
+        unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
 }

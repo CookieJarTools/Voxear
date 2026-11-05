@@ -3709,6 +3709,36 @@ fn up_close_the_sea_has_ripples_finer_than_its_waves() {
     assert!(detail > 1.4, "ripples up close: {detail}");
 }
 
+#[test]
+fn half_in_the_water_the_view_splits_at_the_waterline() {
+    use voxear_render::{Pool, Sky};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // Two centimetres under a still pool, looking along it: the near plane crosses the surface above its middle.
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, -0.02, 0.0))));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.2, -0.75, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -8.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
+    world.spawn((Pool { size: [60.0, 60.0], depth: 9.0, ..Pool::default() }, Transform::from_position(Vec3::new(0.0, 0.0, 10.0))));
+    run(&mut renderer, &world, &mut 30.0, 10);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("half in.png", &pixels);
+    // Above the waterline the sky, as it is; below it, the water's colour over everything.
+    let sky = patch_rgb(&pixels, (320, 40), 4);
+    let under = patch_rgb(&pixels, (320, 300), 4);
+    assert!(under[1] > under[0] + 15 && (sky[1] - sky[0]).abs() < 15, "sky {sky:?} over water {under:?}");
+    // The meniscus: a dark line across the view between them.
+    let line = (60..200u32).find(|&y| {
+        let [r, g, b] = rgb_at(&pixels, (320, y));
+        r + g + b < (sky[0] + sky[1] + sky[2]) / 2
+    });
+    assert!(line.is_some_and(|y| y < 180), "a dark line above the middle: {line:?}");
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

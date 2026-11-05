@@ -119,8 +119,8 @@ pub struct Pipelines {
     pub water_stream: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
-    pub underwater_dim: vk::Pipeline,
-    pub underwater_glow: vk::Pipeline,
+    pub underwater: vk::Pipeline,
+    pub lens_wetness: vk::Pipeline,
     /// Panes into the glass shadow atlas (`glass::record_shadows`).
     pub glass_shadow: vk::Pipeline,
     pub glass_shadow_mip: vk::Pipeline,
@@ -365,18 +365,12 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Walls of water", water, c"wallVertex", c"wallFragment")
             })?,
-            underwater_dim: graphics(&GraphicsPipelineDesc {
+            underwater: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
                 cull: vk::CullModeFlags::NONE,
-                blend: Blend::Filter,
-                ..GraphicsPipelineDesc::new("Under water", water, c"underwaterVertex", c"underwaterDimFragment")
+                ..GraphicsPipelineDesc::new("Under water", water, c"underwaterVertex", c"underwaterFragment")
             })?,
-            underwater_glow: graphics(&GraphicsPipelineDesc {
-                color_formats: hdr,
-                cull: vk::CullModeFlags::NONE,
-                blend: Blend::Additive,
-                ..GraphicsPipelineDesc::new("Water's light", water, c"underwaterVertex", c"underwaterGlowFragment")
-            })?,
+            lens_wetness: create_compute_pipeline(gpu, layout, "Lens wetness", water, c"lensWetnessMain")?,
             // Tested against the depth in its fragment shader, which reads it.
             glass: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -505,8 +499,8 @@ impl Pipelines {
             self.water_pool,
             self.water_stream,
             self.water_wall,
-            self.underwater_dim,
-            self.underwater_glow,
+            self.underwater,
+            self.lens_wetness,
             self.composite_ldr,
             self.composite,
             self.finish,

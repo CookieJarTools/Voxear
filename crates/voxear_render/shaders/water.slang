@@ -1,11 +1,10 @@
 // The sea (src/ocean.rs, src/water.rs). Its waves are an FFT of an ocean
-// spectrum, as Sea of Thieves makes its sea: four cascades, each moved on
-// in time and summed by an inverse FFT along its rows then its columns
-// (oceanRowsMain, oceanColumnsMain), into how far the water at each point
-// is moved, how much it folds at a crest, and its slopes, with mips
-// (oceanMipMain). The surface is a grid of rings round the camera, each
-// twice as coarse as the one inside it (waterVertex), lit as Sea of Thieves
-// and Atlas light theirs (waterFragment).
+// spectrum: six cascades, each moved on in time and summed by an inverse
+// FFT along its rows then its columns (oceanRowsMain, oceanColumnsMain),
+// into how far the water at each point is moved, how much it folds at a
+// crest, and its slopes, with mips (oceanMipMain). The surface is a grid of
+// rings round the camera, each twice as coarse as the one inside it
+// (waterVertex), lit in waterFragment.
 
 #include "glass.slang"
 
@@ -200,7 +199,7 @@ void oceanMipMain(uint3 id : SV_DispatchThreadID)
 }
 
 // The foam round the camera: a square of FOAM_TEXELS a side, FOAM_TEXEL
-// metres each, kept from frame to frame (as Crest's and Atlas's).
+// metres each, kept from frame to frame.
 static const uint FOAM_TEXELS = 512;
 static const float FOAM_TEXEL = 0.5;
 
@@ -456,7 +455,7 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
 }
 
 // A cascade's image at `uv` through a cubic B-spline over its 4×4 nearest
-// texels, made of four bilinear reads (Sigg and Hadwiger, GPU Gems 2): smooth
+// texels, made of four bilinear reads: smooth
 // in value and slope, so a texel's edges do not show however near it is.
 float4 smoothSample(Texture2D image, float2 uv)
 {
@@ -509,7 +508,7 @@ void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2
         }
         float share = cascadeShare(c, swell) * weight;
         slope += s.xy * share;
-        // The slopes the mips averaged away, too small to see here, as roughness (Atlas). Magnified, filtering
+        // The slopes the mips averaged away, too small to see here, as roughness. Magnified, filtering
         // the squares apart from the slopes would make roughness of nothing, so it starts only as texels shrink
         // under a pixel.
         float2 squares = lerp(s.xy * s.xy, s.zw, saturate(0.25 * log2(max(footprint, 1.0))));
@@ -647,7 +646,7 @@ FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 d
 // waves and lost a colour at a time with depth (push.texture the picture
 // behind it with mips, push.textures.y the depth behind it); the water's
 // own colour, deep blue lit by the sky, and teal where light comes through
-// the thin top of a wave (Sea of Thieves' blend, with Atlas's scatter); the
+// the thin top of a wave; the
 // sky and the sun reflected, sharp as water's 2%, the sun's glints as rough
 // as the waves too small to see make it; and foam where the crests fold.
 [shader("fragment")]
@@ -675,7 +674,7 @@ FragmentOut waterFragment(WaterOut input)
     float variance = 0.0;
     float folded = 1.0;
     float3 moved = 0.0;
-    // A Stream's ripples drift down it (two-phase flow, after Vlachos): two sets, each carried along for a period
+    // A Stream's ripples drift down it in two phases: two sets, each carried along for a period
     // and then started again, half a period apart, each faded out as it starts again.
     float2 flow = input.stream.xy;
     float phase = frac(frame->ocean.time / FLOW_PERIOD);
@@ -695,8 +694,12 @@ FragmentOut waterFragment(WaterOut input)
     }
     float3 n = normalize(float3(-slope.x, 0.0, -slope.y) + input.up);
     float3 v = normalize(frame->cameraPosition - input.world);
-    // From under the water the surface shows its underside; from the air, a wave above the camera its front.
-    if (cameraUnderwater(frame))
+    // From under the water the surface shows its underside; from the air, a wave above the camera its front. Which
+    // it is goes by where this pixel's view starts, so with the camera half in, each half sees its own side.
+    float3 near;
+    float level;
+    float3 absorbed;
+    if (waterlineAt(frame, input.position.xy, near, level, absorbed) < 0.0)
     {
         return fromBelow(frame, input, n, v, deep, scatter, absorb);
     }
@@ -705,7 +708,7 @@ FragmentOut waterFragment(WaterOut input)
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float shadow = sunShadow(frame, input.world, float3(0.0, 1.0, 0.0));
     // Rougher where the surface's normal turns fast across a pixel, so glints there spread rather than sparkle a
-    // pixel at a time (Tokuyoshi and Kaplanyan's specular anti-aliasing).
+    // pixel at a time.
     float3 nx = ddx(n);
     float3 ny = ddy(n);
     float turning = min(2.0 * 0.159 * (dot(nx, nx) + dot(ny, ny)), 0.18);
@@ -717,7 +720,7 @@ FragmentOut waterFragment(WaterOut input)
     s.roughness = clamp(sqrt(alpha), 0.03, 1.0);
     s.diffuse = 0.0;
     s.f0 = 0.02;
-    // Fresnel over the roughness's spread of slopes (Atlas), so a rough sea's horizon is not over-bright.
+    // Fresnel over the roughness's spread of slopes, so a rough sea's horizon is not over-bright.
     float nv = saturate(dot(n, v));
     float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0 * exp(-2.69 * alpha)) / (1.0 + 22.7 * pow(alpha, 1.5));
     float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
@@ -727,15 +730,15 @@ FragmentOut waterFragment(WaterOut input)
     sunSurface.roughness = max(s.roughness, 0.08);
     float3 glints = shade(sunSurface, l, sunLight) * shadow;
 
-    // The water's own colour (Sea of Thieves, Atlas): deep blue lit by the sky, and the scatter colour where the
+    // The water's own colour: deep blue lit by the sky, and the scatter colour where the
     // sun shines through the thin top of a wave towards the eye.
     float height = max(frame->ocean.waveHeight * max(waves, 0.2), 0.05);
-    // Sea of Thieves' wave-peak mask: where the waves pinch the water most sideways, the crests are thinnest and
+    // Where the waves pinch the water most sideways, the crests are thinnest and
     // let most light through; a little on every high wave too. A Stream's ripples have no crests to glow.
     float pinched = saturate(length(moved.xz) / (height * 0.35));
     float crest = stream ? 0.0 : max(pinched * pinched, saturate(moved.y / (height * 0.5)) * 0.5);
     float towards = pow(saturate(dot(l, -v)), 4.0) * pow(saturate(0.5 - 0.5 * dot(l, n)), 3.0);
-    // Sea of Thieves' crests glow through: strongly towards the sun, and a little from every side on a wave's top.
+    // Crests glow through: strongly towards the sun, and a little from every side on a wave's top.
     float3 throughWave = (3.0 * crest * towards + 0.12 * crest * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
     float3 body = deep * ambient + throughWave;
 
@@ -874,7 +877,7 @@ float lavaNoise(float2 p)
 }
 
 // `up` tilted by how `height` changes across the pixel at `world` (a
-// surface gradient, after Mikkelsen), for bumps no mesh has.
+// surface gradient), for bumps no mesh has.
 float3 bumped(float3 world, float3 up, float height)
 {
     float3 dx = ddx(world);
@@ -1186,52 +1189,85 @@ UnderOut underwaterVertex(uint id : SV_VertexID)
 
 // The water a pixel's view starts in: whether the camera's near plane there
 // is under it, as the camera half in the sea is under it below the
-// waterline; how much of what the pixel shows comes through the water as
-// far as it, and the water's own light over that far; and how near the
-// near plane is to the surface, for the waterline's dark meniscus.
+// waterline; how far above the waterline the near plane there is, in
+// metres; how much of what the pixel shows comes through the water as far
+// as it, and the water's own light over that far.
 struct Under
 {
     bool under;
+    float line;
     float3 through;
     float3 glow;
-    float meniscus;
+    // Which way the pixel looks, how far it sees, and the water's surface over the near plane and its colours.
+    float3 view;
+    float distance;
+    float surface;
+    float3 absorb;
+    float3 scatter;
 };
+
+// How far above the water's surface the near plane is at `pixel`, in
+// metres, negative under it; `near` is that point of the near plane, and
+// `surface` and `absorb` the water's height over it and how it absorbs.
+// Very large where there is no water. For the sea, the height of the water
+// the waves moved there, found by undoing their sideways pinch, so the
+// waterline rises and falls as each wave does.
+float waterlineAt(Frame* frame, float2 pixel, out float3 near, out float surface, out float3 absorb)
+{
+    float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
+    float4 nearH = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
+    near = nearH.xyz / nearH.w;
+    if (!waterSurface(frame, near, surface, absorb))
+    {
+        return 1e3;
+    }
+    if (frame->ocean.enabled != 0 && surface == frame->ocean.level)
+    {
+        float2 rest = near.xz;
+        for (uint i = 0; i < 3; i++)
+        {
+            rest = near.xz - oceanMoved(frame, rest, 0.05, false).xz;
+        }
+        surface += oceanMoved(frame, rest, 0.05, false).y;
+    }
+    return near.y - surface;
+}
 
 Under underwaterAt(Frame* frame, float2 pixel)
 {
     Under u;
     u.under = false;
+    u.line = 1e3;
     u.through = 1.0;
     u.glow = 0.0;
-    u.meniscus = 0.0;
+    u.distance = 1e4;
+    u.surface = -1e9;
+    u.absorb = 0.0;
+    u.scatter = 0.0;
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
-    float4 nearH = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
-    float3 near = nearH.xyz / nearH.w;
+    float3 near;
     float surface;
     float3 absorb;
-    if (!waterSurface(frame, near, surface, absorb))
+    u.line = waterlineAt(frame, pixel, near, surface, absorb);
+    u.view = normalize(near - frame->cameraPosition);
+    if (u.line >= 1e3)
     {
         return u;
     }
-    // Its waves too, for the sea, so the waterline rises and falls with them.
-    if (frame->ocean.enabled != 0 && surface == frame->ocean.level)
-    {
-        surface += oceanMoved(frame, near.xz, 0.05, false).y;
-    }
-    u.meniscus = saturate(1.0 - abs(near.y - surface) / 0.015);
-    if (near.y >= surface)
+    u.surface = surface;
+    u.absorb = absorb;
+    if (u.line >= 0.0)
     {
         return u;
     }
     u.under = true;
     float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(pixel), 0)).r;
-    float distance = 1e4;
     if (depth > 0.0)
     {
         float4 farH = transform(frame->invViewProj, float4(ndc, depth, 1.0));
-        distance = length(farH.xyz / farH.w - frame->cameraPosition);
+        u.distance = length(farH.xyz / farH.w - frame->cameraPosition);
     }
-    u.through = exp(-absorb * distance);
+    u.through = exp(-absorb * u.distance);
     // The water's own colours: a Pool's, or the sea's.
     float3 deep = frame->ocean.deep;
     float3 scatter = frame->ocean.scatter;
@@ -1245,6 +1281,7 @@ Under underwaterAt(Frame* frame, float2 pixel)
             scatter = pool.scatter;
         }
     }
+    u.scatter = scatter;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     Surface s;
@@ -1254,36 +1291,137 @@ Under underwaterAt(Frame* frame, float2 pixel)
     s.diffuse = 0.0;
     s.f0 = 0.02;
     float3 ambient = ambientLight(frame, near, s, sunLight, atmosphere);
-    // Darker the deeper the camera; brighter looking towards the sun, as light scatters forwards.
+    // Darker the deeper the camera, and darker looking down than up towards the light; brighter towards the sun,
+    // as light scatters forwards.
     float3 dim = exp(-absorb * max(surface - near.y, 0.0) * 0.5);
-    float3 view = normalize(near - frame->cameraPosition);
-    float forward = pow(saturate(dot(view, -frame->sunDirection)), 4.0);
-    float3 own = deep * ambient + scatter * sunLight * (0.03 + 0.12 * forward);
+    float up = 0.45 + 0.55 * saturate(u.view.y * 0.5 + 0.5);
+    float forward = pow(saturate(dot(u.view, -frame->sunDirection)), 4.0);
+    float3 own = (deep * ambient * up + scatter * sunLight * (0.03 + 0.12 * forward));
     u.glow = own * dim * (1.0 - u.through);
     return u;
 }
 
-// Dims what the view shows under water by the water it comes through,
-// colour by colour (blended as a filter), and darkens the waterline.
-[shader("fragment")]
-float4 underwaterDimFragment(UnderOut input) : SV_Target0
+// Sunlight through the water along the pixel's view, as rays: the sun's
+// shadow marched in a dozen steps as far as 30 m, each step's light focused
+// into streaks by the waves over it, as caustics are, and dimmed by the
+// water it has come down through and then across to the eye, scattered
+// mostly onwards (Henyey–Greenstein).
+float3 lightShafts(Frame* frame, Under u, float2 pixel)
 {
-    Under u = underwaterAt(push.frame, input.position.xy);
-    if (!u.under && u.meniscus <= 0.0)
+    static const uint STEPS = 12;
+    float reach = min(u.distance, 30.0);
+    // A different start each frame and pixel, for the TAA to smooth.
+    float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))) + frac(frame->time * 7.31));
+    float3 down = refract(frame->sunDirection, float3(0.0, 1.0, 0.0), 1.0 / 1.33);
+    float3 total = 0.0;
+    for (uint i = 0; i < STEPS; i++)
     {
-        discard;
+        float t = (float(i) + jitter) / float(STEPS) * reach;
+        float3 p = frame->cameraPosition + u.view * t;
+        float below = u.surface - p.y;
+        if (below <= 0.0)
+        {
+            continue;
+        }
+        float2 surfaced = p.xz - down.xz / max(-down.y, 0.2) * below;
+        float web = causticWeb(surfaced * 0.35, frame->time * 0.6);
+        float lit = sunShadow(frame, p, float3(0.0, 1.0, 0.0));
+        total += lit * (0.3 + 0.7 * web) * exp(-u.absorb * (t + below));
     }
-    return float4(u.through * (1.0 - u.meniscus * 0.75), 1.0);
+    total *= reach / float(STEPS);
+    float g = 0.6;
+    float cosine = dot(u.view, -down);
+    float phase = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * cosine, 1e-4), 1.5));
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    return total * phase * u.scatter * sunLight * 0.35;
 }
 
-// Adds the water's own light over what the view shows under water.
-[shader("fragment")]
-float4 underwaterGlowFragment(UnderOut input) : SV_Target0
+// Drops on the lens just out of the water: a scatter of them, more and
+// larger the wetter it is, each a little lens that bends the view through
+// it and slides slowly down; how far to look aside through them, in uv,
+// and how much of the pixel a drop covers.
+float2 lensDrops(Frame* frame, float2 uv, float wet, out float covered)
 {
-    Under u = underwaterAt(push.frame, input.position.xy);
-    if (!u.under)
+    covered = 0.0;
+    float2 offset = 0.0;
+    float aspect = float(frame->viewport.x) / float(frame->viewport.y);
+    for (uint layer = 0; layer < 2; layer++)
+    {
+        float across = layer == 0 ? 7.0 : 15.0;
+        float2 p = uv * float2(aspect, 1.0) * across;
+        float2 cell = floor(p);
+        float2 r = cellPoint(cell + float(layer) * 31.7);
+        // Only some cells have a drop, fewer as the lens dries.
+        if (r.y > wet * 0.45)
+        {
+            continue;
+        }
+        float slid = frac(r.x * 3.7 + frame->time * (0.04 + 0.08 * r.y));
+        float2 centre = float2(0.25 + 0.5 * r.x, 0.2 + 0.6 * slid);
+        float radius = (0.06 + 0.22 * pow(frac(r.x * 13.1), 2.0)) * saturate(wet * 1.5);
+        float2 d = frac(p) - centre;
+        float inside = 1.0 - smoothstep(radius * 0.8, radius, length(d));
+        // Through a drop the view is turned about, as through a small round lens.
+        offset -= d / float2(aspect, 1.0) / across * 1.6 * inside;
+        covered = max(covered, inside);
+    }
+    return offset;
+}
+
+// The view under water and across the waterline, over a copy of the
+// picture (push.texture, with mips): under the surface, what the view shows
+// dimmed by the water it comes through colour by colour, red first, the
+// water's own light over it and the sun's rays through it; at the
+// waterline, a band a few pixels wide that bends and blurs what is behind
+// it as the water's edge on the lens does, a dark line along the meniscus
+// and a bright rim over it; and just out of the water, drops on the lens
+// (push.textures.y, how wet it is). Pixels with none of these keep what
+// they had. push.textures.x is the depth.
+[shader("fragment")]
+float4 underwaterFragment(UnderOut input) : SV_Target0
+{
+    Frame* frame = push.frame;
+    float2 pixel = input.position.xy;
+    float2 uv = pixel / float2(frame->viewport);
+    Under u = underwaterAt(frame, pixel);
+    // How many pixels above the waterline this one is, negative under it.
+    float above = u.line / max(fwidth(u.line), 1e-7);
+    float band = 1.0 - saturate(abs(above) / 10.0);
+    float wet = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(0, 0, 0)).r;
+    float lens = cameraUnderwater(frame) ? 0.0 : wet;
+    if (!u.under && band <= 0.0 && lens <= 0.01)
     {
         discard;
     }
-    return float4(u.glow, 1.0);
+    float covered;
+    float2 offset = lens > 0.01 ? lensDrops(frame, uv, lens, covered) : 0.0;
+    float2 texel = 1.0 / float2(frame->viewport);
+    // The water's edge on the lens: what is behind pulled towards the line, swaying along it.
+    offset += float2(sin(pixel.x * 0.06 + frame->time * 3.0) * 1.5, -sign(above) * 5.0) * band * texel;
+    float blur = band * 1.5 + pow(lens, 6.0) * 3.0 + (u.under ? 0.5 : 0.0);
+    float3 color = glassBehind(push.texture, uv + offset, blur);
+    if (u.under)
+    {
+        color = color * u.through + u.glow + lightShafts(frame, u, pixel);
+    }
+    // The meniscus: a dark line where the water meets the lens, and the bright rim of its curve over it.
+    float line = 1.0 - smoothstep(0.5, 2.0, abs(above));
+    float rim = smoothstep(1.0, 2.5, above) * (1.0 - smoothstep(2.5, 6.0, above));
+    color = color * (1.0 - 0.6 * line) + rim * (color * 0.3 + 0.02);
+    return float4(color, 1.0);
+}
+
+// How wet the camera's lens is: 1 under water, then drying over a couple of
+// seconds once out, from last frame's (push.textures.x; push.textures.y is
+// 1 on the first frame, when there is none), into the 1×1 storage image
+// push.output.
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void lensWetnessMain(uint3 id : SV_DispatchThreadID)
+{
+    Frame* frame = push.frame;
+    float before = push.textures.y != 0 ? 0.0 : textures[NonUniformResourceIndex(push.textures.x)].Load(int3(0, 0, 0)).r;
+    float now = cameraUnderwater(frame) ? 1.0 : before * exp(-frame->deltaTime / 1.2);
+    storageImagesR32f[push.output][uint2(0, 0)] = saturate(now);
 }

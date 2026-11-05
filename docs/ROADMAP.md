@@ -1075,6 +1075,9 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   or had it in their way, and dark smudges spaced like the probe grid moved over it as the camera did. The same
   held where a traced reflection lands: its probe light is looked up straight out from the surface it met, not back
   along the ray towards the ball (`ddgiShadeHit`'s `fromProbe`; a probe's own rays still look back towards it).
+  And up to half the roughness past which reflections stop, a surface shows the traced or screen-space reflection
+  alone, fading to its surroundings only over the rest: a chrome ball (roughness 0.05 of 0.6) took 8% of the
+  surroundings' blotchier probe light, enough for a dark smudge over its reflected curtain.
 - **GI that does not change as the camera walks up:** three cascades of probes, each twice as far apart as the last
   (`DDGI_CASCADES` 3, `DDGI_CASCADE_SCALE` 2), rather than two four times apart. Past the fine grid's sixteen metres,
   probes four metres apart smeared the neon tube's light down Sponza's corridor, and it changed before the camera as

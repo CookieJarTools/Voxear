@@ -279,8 +279,11 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3
     }
     float2 uv = pixel / float2(frame->viewport);
     float4 screen = textures[NonUniformResourceIndex(frame->post.reflectionTexture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
-    float smooth = saturate(1.0 - roughness / frame->post.reflectionMaxRoughness);
-    return lerp(reflected, screen.rgb, screen.a * smooth);
+    // Up to half the roughness past which they stop, the reflection found on screen or by rays alone; fading to
+    // the surroundings over the rest. Blended in all the way down, a little of the surroundings' blotchier light
+    // showed through a chrome ball's mirror as dark smudges.
+    float smooth = saturate(2.0 - 2.0 * roughness / frame->post.reflectionMaxRoughness);
+    return lerp(reflected, screen.rgb, saturate(screen.a) * smooth);
 }
 
 // Where a point lies in the sun's shadow map: its cascade's tile of the

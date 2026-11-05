@@ -391,7 +391,11 @@ pub struct GpuOcean {
     pub foam_texture: u32,
     pub foam_origin: [f32; 2],
     pub streams: u32,
-    pub _pad: [u32; 3],
+    /// The sea floor round the camera (see `water`): its depth image, and
+    /// each slice's corner, size and whether it is drawn.
+    pub floor_texture: u32,
+    pub _pad: [u32; 2],
+    pub floor: [[f32; 4]; 4],
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in
@@ -916,9 +920,9 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 192
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 256
         );
-        assert_eq!(size_of::<GpuOcean>(), 192);
+        assert_eq!(size_of::<GpuOcean>(), 256);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);

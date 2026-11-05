@@ -194,6 +194,27 @@ pub fn frequency(k: f64) -> f64 {
 /// Water's surface tension over its density, in m³/s².
 const SURFACE_TENSION: f64 = 7.4e-5;
 
+/// Water deeper than this, in metres, is deep to every wave.
+pub const SHALLOWS_DEPTH: f32 = 40.0;
+
+/// How much of cascade `cascade`'s waves water `depth` metres deep keeps: a
+/// wave feels the bottom once the water is shallower than half its length,
+/// and dies away towards the shore, the long swell first. As `shallowWeight`
+/// in `shaders/water.slang`.
+pub fn shallow_weight(cascade: usize, depth: f32) -> f32 {
+    let length = CASCADE_SIZES[cascade] * 0.1;
+    let felt = (2.0 * depth.max(0.0) / length).min(1.0);
+    let felt = felt + (1.0 - felt) * (depth / SHALLOWS_DEPTH).clamp(0.0, 1.0);
+    1.0 - 0.9 * (1.0 - felt)
+}
+
+/// How much the waves move water sideways where it is `depth` metres deep:
+/// not at all at the very edge, so they cannot draw it up the shore. As
+/// `sidewaysWeight` in `shaders/water.slang`.
+pub fn sideways_weight(depth: f32) -> f32 {
+    depth.clamp(0.0, 1.0)
+}
+
 /// JONSWAP's energy at angular frequency `omega`.
 fn jonswap(omega: f64, waves: &Waves) -> f64 {
     if omega <= 0.0 {
@@ -490,37 +511,52 @@ impl OceanSampler {
             .collect();
     }
 
-    /// How far the long waves move the water resting at `x`, `z`.
-    fn moved(&self, x: f32, z: f32) -> [f32; 3] {
+    /// How far the long waves move the water resting at `x`, `z`, where
+    /// the sea is `depth` metres deep.
+    fn moved(&self, x: f32, z: f32, depth: f32) -> [f32; 3] {
         let mut total = [0.0; 3];
-        for surface in &self.surfaces {
+        for (cascade, surface) in self.surfaces.iter().enumerate() {
             let d = surface.at(x, z);
+            let weight = shallow_weight(cascade, depth);
             for i in 0..3 {
-                total[i] += d[i];
+                total[i] += d[i] * weight;
             }
         }
-        total
+        let sideways = sideways_weight(depth);
+        [total[0] * sideways, total[1], total[2] * sideways]
     }
 
-    /// How high the sea is above `x`, `z`, in the world: the water resting
-    /// where the waves moved it from is found by stepping back three times,
-    /// as the waves move water across as well as up.
+    /// How high the sea is above `x`, `z`, in the world, out of sight of
+    /// land: the water resting where the waves moved it from is found by
+    /// stepping back three times, as the waves move water across as well
+    /// as up.
     pub fn height_at(&self, x: f32, z: f32) -> f32 {
+        self.height_over(x, z, f32::INFINITY)
+    }
+
+    /// As `height_at`, where the sea is `depth` metres deep, its waves
+    /// dying away in the shallows.
+    pub fn height_over(&self, x: f32, z: f32, depth: f32) -> f32 {
         let (mut rx, mut rz) = (x, z);
         for _ in 0..3 {
-            let d = self.moved(rx, rz);
+            let d = self.moved(rx, rz, depth);
             rx = x - d[0];
             rz = z - d[2];
         }
-        self.level + self.moved(rx, rz)[1]
+        self.level + self.moved(rx, rz, depth)[1]
     }
 
     /// The way the sea faces at `x`, `z`, from its height a little either
     /// side.
     pub fn normal_at(&self, x: f32, z: f32) -> Vec3 {
+        self.normal_over(x, z, f32::INFINITY)
+    }
+
+    /// As `normal_at`, where the sea is `depth` metres deep.
+    pub fn normal_over(&self, x: f32, z: f32, depth: f32) -> Vec3 {
         let e = 0.25;
-        let dx = self.height_at(x + e, z) - self.height_at(x - e, z);
-        let dz = self.height_at(x, z + e) - self.height_at(x, z - e);
+        let dx = self.height_over(x + e, z, depth) - self.height_over(x - e, z, depth);
+        let dz = self.height_over(x, z + e, depth) - self.height_over(x, z - e, depth);
         Vec3::new(-dx, 2.0 * e, -dz).normalize()
     }
 }
@@ -597,11 +633,22 @@ mod tests {
     }
 
     #[test]
+    fn waves_die_away_in_shallow_water_the_longest_first() {
+        assert_eq!(shallow_weight(0, 100.0), 1.0, "deep water keeps them all");
+        assert!(shallow_weight(0, 5.0) < 0.3 && shallow_weight(3, 5.0) > 0.99, "five metres stops the swell, not the chop");
+        assert!((shallow_weight(2, 0.0) - 0.1).abs() < 1e-6, "a tenth at the water's edge");
+        assert_eq!(sideways_weight(0.0), 0.0);
+        let sea = OceanSampler::new(stormy(), 0.0);
+        let (deep, shallow) = (sea.height_over(30.0, 40.0, 1e4).abs(), sea.height_over(30.0, 40.0, 0.5).abs());
+        assert!(shallow < deep * 0.5 + 0.01, "the same place, shallower: {shallow} against {deep}");
+    }
+
+    #[test]
     fn the_sea_is_as_high_where_asked_as_its_waves_put_it() {
         let mut sampler = OceanSampler::new(stormy(), 2.0);
         sampler.set_time(30.0);
         // Where the water resting at (40, 10) was moved to, the height is that water's.
-        let d = sampler.moved(40.0, 10.0);
+        let d = sampler.moved(40.0, 10.0, f32::INFINITY);
         let height = sampler.height_at(40.0 + d[0], 10.0 + d[2]);
         assert!((height - (2.0 + d[1])).abs() < 0.05, "{height} against {}", 2.0 + d[1]);
         let normal = sampler.normal_at(40.0, 10.0);

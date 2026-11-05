@@ -11,15 +11,16 @@
 //! frame's are there for motion vectors.
 
 use anyhow::Result;
-use voxear_core::math::Quat;
+use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_rhi::{Bindless, Buffer, Gpu, ImageDesc, MemoryLocation, StorageImageId, TextureId, vk};
 
 use crate::{
-    gpu::{GpuOcean, GpuStreamPoint, GpuWaterBody, Push},
+    assets::Assets,
+    gpu::{GpuInstance, GpuOcean, GpuStreamPoint, GpuWaterBody, Push},
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId},
     ocean::{self, CASCADES, CASCADE_SIZES, Complex, GPU_RESOLUTION as N, Ocean, SeaState},
     water_bodies::{MAX_STREAM_POINTS, MAX_WATER_BODIES},
-    passes::{attachment, begin_rendering, bind},
+    passes::{attachment, begin_rendering, bind, set_viewport},
     pipelines::{HDR_FORMAT, Pipelines},
 };
 
@@ -36,6 +37,17 @@ const RINGS: u32 = 12;
 const POOL_QUADS: u32 = 64;
 /// How many quads across a Stream, as `STREAM_ACROSS` in `shaders/water.slang`.
 const STREAM_ACROSS: u32 = 8;
+/// The sea floor round the camera, seen from straight above: this many
+/// slices, each this many texels a side, the first this many metres across
+/// and each twice the last, its heights kept within this many metres of
+/// the sea's level; as `FLOOR_*` in `shaders/water.slang`. The slices share
+/// one depth image, two a side.
+const FLOOR_SLICES: usize = 4;
+const FLOOR_TEXELS: u32 = 256;
+const FLOOR_FIRST: f32 = 64.0;
+/// How many frames each slice goes before it is drawn again even if it has
+/// not moved, so ground moved in the editor shows up.
+const FLOOR_REFRESH: u32 = 120;
 /// The foam round the camera: this many texels a side, this many metres
 /// each, as `FOAM_TEXELS` and `FOAM_TEXEL` in `shaders/water.slang`.
 const FOAM_TEXELS: u32 = 512;
@@ -60,6 +72,11 @@ pub(crate) struct OceanBuffers {
     foam_origin: Option<[f32; 2]>,
     /// Whether the lens's wetness has a frame before this one.
     lens_kept: bool,
+    /// Where each slice of the sea floor was last drawn round, the sea's
+    /// level then, and frames since the first.
+    floor_origins: [Option<[f32; 2]>; FLOOR_SLICES],
+    floor_level: Option<f32>,
+    floor_frames: u32,
 }
 
 impl OceanBuffers {
@@ -76,7 +93,7 @@ impl OceanBuffers {
         let stream_points = (0..slots)
             .map(|slot| gpu.create_buffer(&named(&format!("stream points {slot}")), size, usage, MemoryLocation::CpuToGpu))
             .collect::<Result<_>>()?;
-        Ok(Self { spectrum, fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None, lens_kept: false })
+        Ok(Self { spectrum, fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None, lens_kept: false, floor_origins: [None; FLOOR_SLICES], floor_level: None, floor_frames: 0 })
     }
 
     pub fn into_buffers(self) -> Vec<Buffer> {
@@ -84,6 +101,34 @@ impl OceanBuffers {
         buffers.extend(self.bodies);
         buffers.extend(self.stream_points);
         buffers
+    }
+
+    /// Where each slice of the sea floor lies round `camera`, as the shaders
+    /// read them (corner x and z, size, and 1), and which to draw this
+    /// frame with what stands in them: those that moved with the camera, or
+    /// whose turn it is to be drawn again, or all of them when the sea's
+    /// level changed.
+    fn floor_slices(&mut self, camera: Vec3, level: f32, ground: &[Ground]) -> ([[f32; 4]; FLOOR_SLICES], Vec<(u32, Vec<Ground>)>) {
+        let moved_level = self.floor_level != Some(level);
+        self.floor_level = Some(level);
+        self.floor_frames = self.floor_frames.wrapping_add(1);
+        let mut slices = [[0.0; 4]; FLOOR_SLICES];
+        let mut draws = Vec::new();
+        for (slice, kept) in self.floor_origins.iter_mut().enumerate() {
+            let size = FLOOR_FIRST * (1 << slice) as f32;
+            let texel = size / FLOOR_TEXELS as f32;
+            let origin = [(camera.x / texel).floor() * texel - size * 0.5, (camera.z / texel).floor() * texel - size * 0.5];
+            let due = self.floor_frames % FLOOR_REFRESH == slice as u32 * FLOOR_REFRESH / FLOOR_SLICES as u32;
+            if *kept != Some(origin) || moved_level || due {
+                *kept = Some(origin);
+                let inside = |g: &&Ground| {
+                    g.high.x >= origin[0] && g.low.x <= origin[0] + size && g.high.z >= origin[1] && g.low.z <= origin[1] + size
+                };
+                draws.push((slice as u32, ground.iter().filter(inside).copied().collect()));
+            }
+            slices[slice] = [origin[0], origin[1], size, 1.0];
+        }
+        (slices, draws)
     }
 
     /// Writes the spectrum of `sea`, when it is not the one written already.
@@ -135,6 +180,9 @@ pub struct Water {
     /// How wet the camera's lens is: this frame's, last frame's, and
     /// whether there was a last frame's.
     lens: (ImageId, ImageId, bool),
+    /// The sea floor, and the slices drawn into it this frame, with what
+    /// stands in each.
+    floor: (ImageId, Vec<(u32, Vec<Ground>)>),
     /// Whether the sea is drawn, how many Pools, how many points each
     /// Stream has, and how many Dry Areas.
     sea: bool,
@@ -155,6 +203,7 @@ impl Water {
         (buffers, slot): (&mut OceanBuffers, usize),
         (found, bodies): (Option<(Ocean, f32, Quat)>, &WaterBodies),
         (extent, time, camera): (vk::Extent2D, f32, voxear_core::math::Vec3),
+        ground: &[Ground],
     ) -> Result<Self> {
         let (ocean, level, rotation) = found.unwrap_or((Ocean::default(), 0.0, Quat::IDENTITY));
         let ocean = &ocean;
@@ -173,6 +222,10 @@ impl Water {
         let (lens_a, lens_b) = (fg.history_image(gpu, bindless, "lens wetness a", lens_desc)?, fg.history_image(gpu, bindless, "lens wetness b", lens_desc)?);
         let (lens_now, lens_then) = if buffers.parity { (lens_a, lens_b) } else { (lens_b, lens_a) };
         let lens_kept = std::mem::replace(&mut buffers.lens_kept, true);
+        let floor_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+        let floor_desc = ImageDesc::new(FLOOR_TEXELS * 2, FLOOR_TEXELS * 2, crate::pipelines::DEPTH_FORMAT, floor_usage);
+        let floor_image = fg.history_image(gpu, bindless, "sea floor", floor_desc)?;
+        let (floor, floor_draws) = buffers.floor_slices(camera, level, ground);
         let mut wave = |name: &str, cascade: usize, set: bool| {
             let set = if set { "a" } else { "b" };
             fg.history_image(gpu, bindless, &format!("ocean {name} {cascade} {set}"), desc)
@@ -227,7 +280,9 @@ impl Water {
             foam_texture: fg.texture(foam_now).0,
             foam_origin,
             streams: bodies.streams.len() as u32,
-            _pad: [0; 3],
+            floor_texture: fg.texture(floor_image).0,
+            _pad: [0; 2],
+            floor,
         };
         Ok(Self {
             displacement,
@@ -241,6 +296,7 @@ impl Water {
             second,
             foam: (foam_now, foam_then, previous_origin),
             lens: (lens_now, lens_then, lens_kept),
+            floor: (floor_image, floor_draws),
             size: [extent.width, extent.height],
             frame,
             sea: found.is_some(),
@@ -249,6 +305,39 @@ impl Water {
             dries: bodies.dries(),
         })
     }
+}
+
+/// What the sea floor is drawn from: an opaque instance standing still, where
+/// its first LOD's indices are, and its box in the world.
+#[derive(Clone, Copy, Debug)]
+pub struct Ground {
+    instance: u32,
+    first_index: u32,
+    index_count: u32,
+    low: Vec3,
+    high: Vec3,
+}
+
+/// The instances that are ground under the water: all of `instances` but
+/// what moved since last frame, as a boat or a floating crate does.
+pub fn ground(instances: &[GpuInstance], assets: &Assets) -> Vec<Ground> {
+    instances
+        .iter()
+        .enumerate()
+        .filter(|(_, instance)| instance.model == instance.prev_model)
+        .filter_map(|(index, instance)| {
+            let mesh = crate::MeshHandle(instance.mesh);
+            let (first_index, index_count) = assets.first_lod(mesh)?;
+            let (min, max) = assets.mesh_bounds(mesh)?;
+            let model = Mat4::from_cols_array_2d(&instance.model);
+            let corners = (0..8).map(|i| {
+                let pick = |bit: usize, a: f32, b: f32| if i & bit == 0 { a } else { b };
+                model.transform_point3(Vec3::new(pick(1, min.x, max.x), pick(2, min.y, max.y), pick(4, min.z, max.z)))
+            });
+            let (low, high) = corners.fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(lo, hi), c| (lo.min(c), hi.max(c)));
+            Some(Ground { instance: index as u32, first_index, index_count, low, high })
+        })
+        .collect()
 }
 
 /// This frame's Pools, Streams and then Dry Areas, the nearest the camera
@@ -273,6 +362,8 @@ pub struct WaterTargets {
     pub hdr: ImageId,
     pub velocity: ImageId,
     pub depth: ImageId,
+    /// Every mesh's indices, for drawing the sea floor.
+    pub index_buffer: vk::Buffer,
     /// What shading reads: the shadow atlas, the GI's probes and the
     /// atmosphere's tables.
     pub sampled: Vec<ImageId>,
@@ -291,7 +382,35 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, size, sea, pools, streams, dries, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, size, sea, pools, streams, dries, .. } = water;
+    let (floor_image, floor_draws) = floor;
+    let WaterTargets { hdr, velocity, depth, index_buffer, sampled } = targets;
+    // The ground under the water, from straight above, into the slices that moved or are due.
+    if !floor_draws.is_empty() {
+        fg.add_pass("Sea floor", &[(floor_image, ImageAccess::DepthAttachment)], &[], move |ctx| {
+            let depth = attachment(ctx.view(floor_image), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+            let side = vk::Extent2D { width: FLOOR_TEXELS * 2, height: FLOOR_TEXELS * 2 };
+            begin_rendering(ctx, side, &[], Some(&depth));
+            bind(ctx, pipelines.sea_floor, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, index_buffer, 0, vk::IndexType::UINT32) };
+            for (slice, items) in &floor_draws {
+                let offset = vk::Offset2D { x: (slice % 2 * FLOOR_TEXELS) as i32, y: (slice / 2 * FLOOR_TEXELS) as i32 };
+                let extent = vk::Extent2D { width: FLOOR_TEXELS, height: FLOOR_TEXELS };
+                set_viewport(ctx, offset, extent);
+                // Nothing there until something is drawn: far below the sea.
+                let clear = vk::ClearAttachment::default()
+                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                    .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 } });
+                let rect = vk::ClearRect { rect: vk::Rect2D { offset, extent }, base_array_layer: 0, layer_count: 1 };
+                unsafe { ctx.gpu.device.cmd_clear_attachments(ctx.cmd, &[clear], &[rect]) };
+                for g in items {
+                    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: g.instance, level: *slice, ..push });
+                    unsafe { ctx.gpu.device.cmd_draw_indexed(ctx.cmd, g.index_count, 1, g.first_index, 0, 0) };
+                }
+            }
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
     let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
         images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
     };
@@ -341,7 +460,8 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
     let (foam_now, foam_then, previous_origin) = foam;
     let foam_storage = fg.storage(foam_now, 0);
     let foam_then_texture = fg.texture(foam_then);
-    let mut foam_images = vec![(foam_now, ImageAccess::StorageWrite), (foam_then, ImageAccess::Sampled)];
+    let mut foam_images =
+        vec![(foam_now, ImageAccess::StorageWrite), (foam_then, ImageAccess::Sampled), (floor_image, ImageAccess::Sampled)];
     foam_images.extend(displacement.iter().map(|&image| (image, ImageAccess::Sampled)));
     fg.add_pass("Ocean foam", &foam_images, &[], move |ctx| {
         let [x, z] = previous_origin.map(f32::to_bits);
@@ -350,9 +470,8 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, FOAM_TEXELS / 8, FOAM_TEXELS / 8, 1) };
     });
 
-    let WaterTargets { hdr, velocity, depth, sampled } = targets;
     let mut waves: Vec<ImageId> = displacement.iter().chain(&slopes).chain(&previous).copied().collect();
-    waves.push(foam_now);
+    waves.extend([foam_now, floor_image]);
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;

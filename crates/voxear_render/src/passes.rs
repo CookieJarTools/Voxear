@@ -417,7 +417,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
-        let water_targets = crate::water::WaterTargets { hdr, velocity, depth, sampled };
+        let index_buffer = draws.index_buffer;
+        let water_targets = crate::water::WaterTargets { hdr, velocity, depth, index_buffer, sampled };
         crate::water::record(fg, (pipelines, push), water, water_targets);
     }
 

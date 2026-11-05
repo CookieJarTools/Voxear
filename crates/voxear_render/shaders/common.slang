@@ -329,7 +329,11 @@ struct Ocean
     uint foamTexture;
     float2 foamOrigin;
     uint streams;
-    uint3 pad;
+    // The sea floor round the camera (water.slang's floorVertex): its depth image, and each slice's corner, size and
+    // whether it is drawn.
+    uint floorTexture;
+    uint2 pad;
+    float4 floor[4];
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,

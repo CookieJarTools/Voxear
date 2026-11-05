@@ -123,12 +123,29 @@ pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
     if dry {
         return None;
     }
-    sample_wet(world, at)
+    sample_wet(world, world.resource::<PhysicsScene>(), at)
+}
+
+/// How deep the sea is under `at`: from `level` down to the first collider
+/// under it that is not floating, by a ray from above the waves; deep where
+/// there is none, or physics has not started.
+fn sea_depth(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Vec3) -> f32 {
+    let Some(physics) = physics else { return f32::INFINITY };
+    let mut from = Vec3::new(at.x, level + 50.0, at.z);
+    for _ in 0..4 {
+        let Some(hit) = physics.raycast(from, Vec3::NEG_Y, 400.0, u32::MAX, false) else { return f32::INFINITY };
+        if !world.get::<Rigidbody>(hit.obj).is_some_and(|body| !body.kinematic) {
+            return level - hit.point.y;
+        }
+        // Under a floating thing: past it to what is below.
+        from = hit.point - Vec3::Y * 0.05;
+    }
+    f32::INFINITY
 }
 
 /// The water at `at` as if there were no Dry Areas: what a hull, which is
-/// one, floats on.
-fn sample_wet(world: &World, at: Vec3) -> Option<WaterPoint> {
+/// one, floats on. The sea's waves die away where it is shallow.
+fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option<WaterPoint> {
     let pools = world.query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>();
     let pool = pools.into_iter().find_map(|(pool, t, w)| {
         let (position, rotation) = placed(t, w);
@@ -143,8 +160,9 @@ fn sample_wet(world: &World, at: Vec3) -> Option<WaterPoint> {
         return Some(WaterPoint { height, normal: Vec3::Y, flow });
     }
     let sampler = query.sampler.as_ref()?;
-    let height = sampler.height_at(at.x, at.z);
-    Some(WaterPoint { height, normal: sampler.normal_at(at.x, at.z), flow: Vec3::ZERO })
+    let depth = sea_depth(world, physics, sampler.level(), at);
+    let height = sampler.height_over(at.x, at.z, depth);
+    Some(WaterPoint { height, normal: sampler.normal_over(at.x, at.z, depth), flow: Vec3::ZERO })
 }
 
 /// The water at a point as scripts take it: height, normal and flow.
@@ -208,7 +226,7 @@ pub fn float(world: &World, physics: &mut PhysicsScene) {
             for j in 0..COLUMNS {
                 let spot = |k: usize| (k as f32 + 0.5) / COLUMNS as f32 * 2.0 - 1.0;
                 let at = to_world.transform_point3(middle + Vec3::new(reach.x * spot(i), 0.0, reach.z * spot(j)));
-                let Some(water) = sample_wet(world, at) else { continue };
+                let Some(water) = sample_wet(world, Some(&*physics), at) else { continue };
                 let under = ((water.height - (at.y - tall * 0.5)) / tall).clamp(0.0, 1.0);
                 if under <= 0.0 {
                     continue;
@@ -297,6 +315,24 @@ mod tests {
         assert!(at(floating).y.abs() < 0.08, "half under, its middle at the surface: {}", at(floating));
         assert!(at(floating).x.abs() < 0.1 && at(floating).z.abs() < 0.1, "still water, still crate: {}", at(floating));
         assert!(at(drifting).z > 20.0 && at(drifting).y.abs() < 0.2, "carried down the stream: {}", at(drifting));
+    }
+
+    #[test]
+    fn the_sea_calms_over_a_shallow_bank() {
+        let mut world = World::new();
+        world.spawn((Ocean { weather: voxear_render::Weather::Stormy, ..Ocean::default() }, Transform::default()));
+        // A bank a metre under the surface, on the left.
+        let bank = Collider { size: [40.0, 2.0, 40.0], ..Collider::default() };
+        world.spawn((bank, Transform::from_position(Vec3::new(-30.0, -2.0, 0.0))));
+        let mut physics = PhysicsScene::new();
+        update(&mut world, 12.0);
+        voxear_scene::propagate_transforms(&mut world);
+        physics.step(&mut world, 1.0 / 60.0);
+        let swing = |x: f32| {
+            (0..40).map(|i| sample_wet(&world, Some(&physics), Vec3::new(x, 0.0, i as f32 * 0.4 - 8.0)).unwrap().height.abs()).fold(0.0f32, f32::max)
+        };
+        let (shallow, open) = (swing(-30.0), swing(40.0));
+        assert!(shallow < open * 0.4, "waves over the bank {shallow}, in open water {open}");
     }
 
     #[test]

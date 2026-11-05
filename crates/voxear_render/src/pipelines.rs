@@ -117,6 +117,7 @@ pub struct Pipelines {
     pub water: vk::Pipeline,
     pub water_pool: vk::Pipeline,
     pub water_stream: vk::Pipeline,
+    pub sea_floor: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
     pub underwater: vk::Pipeline,
@@ -349,6 +350,12 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Pools", water, c"poolVertex", c"waterFragment")
             })?,
+            // Higher ground over lower: the depth is the height.
+            sea_floor: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::depth_only("Sea floor", water, c"floorVertex", DEPTH_FORMAT)
+            })?,
             water_stream: graphics(&GraphicsPipelineDesc {
                 color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
                 depth_format: Some(DEPTH_FORMAT),
@@ -498,6 +505,7 @@ impl Pipelines {
             self.water,
             self.water_pool,
             self.water_stream,
+            self.sea_floor,
             self.water_wall,
             self.underwater,
             self.lens_wetness,

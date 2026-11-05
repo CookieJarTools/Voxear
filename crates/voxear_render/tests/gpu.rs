@@ -3739,6 +3739,35 @@ fn half_in_the_water_the_view_splits_at_the_waterline() {
     assert!(line.is_some_and(|y| y < 180), "a dark line above the middle: {line:?}");
 }
 
+#[test]
+fn a_stormy_sea_calms_and_stops_at_the_beach() {
+    use voxear_render::{Ocean, Sky, Weather};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let eye = Vec3::new(-6.0, 4.0, -10.0);
+    let look = Quat::from_rotation_arc(Vec3::Z, (Vec3::new(0.0, 0.0, 14.0) - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.7, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    // A beach rising one in ten from under the sea, the shore at z = 10.
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    let tilt = 0.1f32.atan();
+    let beach = Transform::new(Vec3::new(0.0, -1.0, 10.0 - 10.0), Quat::from_rotation_x(-tilt), Vec3::new(200.0, 2.0, 200.0));
+    world.spawn((MeshRenderer::new(cube, sand), beach));
+    world.spawn((Ocean { weather: Weather::Stormy, ..Ocean::default() }, Transform::default()));
+    run(&mut renderer, &world, &mut 30.0, 20);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("beach.png", &pixels);
+    // A metre up the beach, ten centimetres above the sea: sand, where a storm's waves would wash over it.
+    let shore = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 0.1, 11.0)), 2);
+    assert!(shore[0] > shore[2] + 15, "sand above the waterline: {shore:?}");
+    let sea = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(4.0, 0.0, -2.0)), 3);
+    assert!(sea[2] > sea[0] || sea.iter().all(|&c| c > 150), "water out at sea: {sea:?}");
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

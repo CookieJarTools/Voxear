@@ -43,6 +43,7 @@ use crate::{
     inspector::{color_row, number, prop},
     level_files::{self, LevelEdit},
     project_view::{ItemKind, ProjectItem},
+    shader_fields::{ShaderEdit, ShaderFields},
     strings_inspector::{StringsChange, StringsFields},
 };
 
@@ -130,6 +131,16 @@ pub enum AssetAction {
     /// Write the model's materials out as `.material` assets, and draw it
     /// with them.
     ExtractMaterials(String),
+    /// Open the object picker under `anchor` for the custom shader the
+    /// material at this path is drawn with.
+    BrowseShader { material: String, anchor: NodeId },
+    /// Something was dragged onto a material's Shader field.
+    DropShader { material: String, source: DragSource },
+    /// Open the object picker under `anchor` for a picture property of the
+    /// material at this path's custom shader.
+    BrowseShaderPicture { material: String, property: String, anchor: NodeId },
+    /// Something was dragged onto a material's picture property.
+    DropShaderPicture { material: String, property: String, source: DragSource },
     /// Write a string table to the file at this path, and when its entries
     /// came, went or moved, show it again.
     SaveStrings {
@@ -158,6 +169,8 @@ pub struct AssetView {
     bake: Option<NodeId>,
     /// Lighting settings' every setting, changed in their file, and that file.
     lighting: Option<(LightingFields, PathBuf)>,
+    /// A shader's state, compiled or not, and the state it shows.
+    shader_state: Option<(NodeId, voxear_render::CustomShaderState)>,
     /// A scene's lighting: the lighting settings it names, and theirs.
     scene_lighting: Option<LightingPanel>,
 }
@@ -215,16 +228,18 @@ struct MaterialFields {
     glow_speed: NodeId,
     glass: NodeId,
     ior: NodeId,
+    /// Its custom shader and the shader's properties.
+    shader: ShaderFields,
 }
 
 /// A field naming an asset, as an Obj's references show one: its icon and
 /// name, which ping the asset, and an arrow for the object picker.
 #[derive(Clone, Copy)]
-struct Slot {
-    field: NodeId,
-    arrow: NodeId,
-    icon: NodeId,
-    label: NodeId,
+pub(crate) struct Slot {
+    pub field: NodeId,
+    pub arrow: NodeId,
+    pub icon: NodeId,
+    pub label: NodeId,
 }
 
 /// A model's materials, each with the `.material` it draws with instead of
@@ -244,6 +259,8 @@ struct ModelMaterials {
 pub enum MaterialColor {
     Base,
     Emission,
+    /// A colour property of its custom shader, by its place.
+    Property(usize),
 }
 
 impl AssetView {
@@ -312,9 +329,10 @@ impl AssetView {
             bake: None,
             lighting: None,
             scene_lighting: None,
+            shader_state: None,
         };
         match item.kind {
-            ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game.content.db()),
+            ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game),
             ItemKind::Asset(AssetKind::Model) => {
                 let rows = part(ui, root, "Import Settings", "box");
                 view.import = Some(ImportFields::model(ui, rows, &meta));
@@ -335,6 +353,10 @@ impl AssetView {
                 code(ui, root, &file, "csharp", dark);
             }
             ItemKind::Asset(AssetKind::Ui) => code(ui, root, &file, "vui", dark),
+            ItemKind::Asset(AssetKind::Shader) => {
+                view.shader_state = shader(ui, root, game, &item.path);
+                code(ui, root, &file, "slang", dark);
+            }
             ItemKind::Asset(AssetKind::AssetTable) => code(ui, root, &file, "toml", dark),
             // Every setting to change in place, a tab for each group, not the file's text.
             ItemKind::Asset(AssetKind::Lighting) => {
@@ -391,7 +413,7 @@ impl AssetView {
         if item.kind != ItemKind::Asset(AssetKind::Material) {
             return None;
         }
-        let material = material(ui, root, &game.content.db().file(&item.path), game.content.db())?;
+        let material = material(ui, root, &game.content.db().file(&item.path), game)?;
         Some(Self {
             item: item.clone(),
             open: None,
@@ -405,6 +427,7 @@ impl AssetView {
             bake: None,
             lighting: None,
             scene_lighting: None,
+            shader_state: None,
         })
     }
 
@@ -458,6 +481,20 @@ impl AssetView {
             };
         }
         let fields = self.material.as_mut()?;
+        let material = self.item.path.clone();
+        match fields.shader.update(ui, &mut fields.data) {
+            Some(ShaderEdit::BrowseShader(anchor)) => return Some(AssetAction::BrowseShader { material, anchor }),
+            Some(ShaderEdit::DropShader(source)) => return Some(AssetAction::DropShader { material, source }),
+            Some(ShaderEdit::Ping(path)) => return Some(AssetAction::Ping(path)),
+            Some(ShaderEdit::BrowsePicture { property, anchor }) => {
+                return Some(AssetAction::BrowseShaderPicture { material, property, anchor });
+            }
+            Some(ShaderEdit::DropPicture { property, source }) => {
+                return Some(AssetAction::DropShaderPicture { material, property, source });
+            }
+            Some(ShaderEdit::Changed) => return Some(AssetAction::SaveMaterial(material, fields.data.clone())),
+            None => {}
+        }
         for (map, (slot, path)) in MaterialMap::ALL.into_iter().zip(&fields.maps) {
             let material = self.item.path.clone();
             if let Some(source) = ui.dropped_onto(slot.field) {
@@ -562,6 +599,9 @@ impl AssetView {
     /// colour as the picker shows it.
     pub fn color_clicked(&self, ui: &Ui) -> Option<(MaterialColor, NodeId, PickedColor)> {
         let fields = self.material.as_ref()?;
+        if let Some((at, swatch, color)) = fields.shader.color_clicked(ui, &fields.data) {
+            return Some((MaterialColor::Property(at), swatch, color));
+        }
         let which = [MaterialColor::Base, MaterialColor::Emission];
         let (which, swatch) = which.into_iter().zip(fields.swatches).find(|&(_, swatch)| ui.clicked(swatch))?;
         Some((which, swatch, fields.picked(which)))
@@ -574,6 +614,10 @@ impl AssetView {
         let (values, targets) = match which {
             MaterialColor::Base => (color.srgb, &mut fields.data.color),
             MaterialColor::Emission => (color.to_linear(), &mut fields.data.emissive),
+            MaterialColor::Property(at) => {
+                fields.shader.set_color(ui, at, color, &mut fields.data);
+                return Some(AssetAction::SaveMaterial(self.item.path.clone(), fields.data.clone()));
+            }
         };
         *targets = values;
         let shown = if which == MaterialColor::Base { fields.color } else { fields.emissive };
@@ -606,6 +650,31 @@ impl AssetView {
         if let Some(panel) = &mut self.scene_lighting {
             show_scene_lighting(ui, panel, game, &self.item.path);
         }
+    }
+
+    /// Shows whether the project's shaders compiled, and if not, the error
+    /// where it is this shader's.
+    pub fn show_shader_state(&mut self, ui: &mut Ui, state: &voxear_render::CustomShaderState) {
+        let path = self.item.path.clone();
+        let Some((label, shown)) = &mut self.shader_state else { return };
+        if shown == state {
+            return;
+        }
+        *shown = state.clone();
+        use voxear_render::CustomShaderState;
+        let text = match state {
+            CustomShaderState::None | CustomShaderState::Ready => "Compiled".to_string(),
+            CustomShaderState::Compiling => "Compiling…".to_string(),
+            // Slang names the file and line of each error; another shader's errors are its own.
+            CustomShaderState::Failed(error) if error.contains(&path) => {
+                let lines: Vec<&str> = error.lines().filter(|line| !line.trim().is_empty()).take(8).collect();
+                lines.join("\n")
+            }
+            CustomShaderState::Failed(_) => "Another shader does not compile".to_string(),
+        };
+        ui.set_text(*label, &text);
+        let failed = matches!(state, CustomShaderState::Failed(error) if error.contains(&path));
+        ui.set_class(*label, "shader-error", failed);
     }
 
     /// Shows on a sound's button whether it is playing now: the editor plays
@@ -645,7 +714,7 @@ fn header(ui: &mut Ui, root: NodeId, item: &ProjectItem) {
 }
 
 /// A section, headed by its icon and title, returning where its rows go.
-fn part(ui: &mut Ui, root: NodeId, title: &str, icon: &str) -> NodeId {
+pub(crate) fn part(ui: &mut Ui, root: NodeId, title: &str, icon: &str) -> NodeId {
     let line = ui.panel(root, Style::default());
     ui.add_class(line, "divider");
     let foldout = ui.foldout(root, title, true);
@@ -716,10 +785,13 @@ fn length(seconds: f64) -> String {
 }
 
 /// A material's values, to edit.
-fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> Option<MaterialFields> {
+fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Option<MaterialFields> {
     let text = std::fs::read_to_string(file).ok()?;
     let data: MaterialData = toml::from_str(&text).ok()?;
+    let db = game.content.db();
     let rows = part(ui, root, "Material", "material");
+    // Built once the material's own rows are, so its section follows theirs; the Shader field goes first.
+    let shader_row = ui.panel(rows, Style::column());
     let (color, color_swatch) = color_row(ui, rows, "Colour");
     let (emissive, emission_swatch) = color_row(ui, rows, "Emission");
     let row = prop(ui, rows, "Glow");
@@ -760,15 +832,31 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, db: &AssetDb) -> 
     ui.add_class(glass, "checkbox");
     let ior = one(ui, "IOR", data.ior);
     let swatches = [color_swatch, emission_swatch];
-    let fields =
-        MaterialFields { data, color, metallic, roughness, emissive, swatches, maps, foliage, wind, leaves, glow, glow_speed, glass, ior };
+    let shader = ShaderFields::build(ui, (shader_row, root), &data, game.content.shaders(), db);
+    let fields = MaterialFields {
+        data,
+        color,
+        metallic,
+        roughness,
+        emissive,
+        swatches,
+        maps,
+        foliage,
+        wind,
+        leaves,
+        glow,
+        glow_speed,
+        glass,
+        ior,
+        shader,
+    };
     fields.show_swatches(ui);
     fields.show_what_applies(ui);
     Some(fields)
 }
 
 /// A row with a field naming an asset.
-fn slot(ui: &mut Ui, rows: NodeId, label: &str, icon: &str) -> Slot {
+pub(crate) fn slot(ui: &mut Ui, rows: NodeId, label: &str, icon: &str) -> Slot {
     let row = prop(ui, rows, label);
     let field = ui.panel(row, Style::row());
     ui.add_class(field, "value-picker");
@@ -783,7 +871,7 @@ fn slot(ui: &mut Ui, rows: NodeId, label: &str, icon: &str) -> Slot {
 }
 
 /// Shows the asset at `path` in a slot by its name, or none of `kind`.
-fn show_slot(ui: &mut Ui, slot: Slot, path: Option<&str>, kind: &str) {
+pub(crate) fn show_slot(ui: &mut Ui, slot: Slot, path: Option<&str>, kind: &str) {
     let name = path.map(|path| path.rsplit('/').next().unwrap_or(path));
     let name = name.map(|name| name.rsplit_once('.').map_or(name, |(stem, _)| stem));
     ui.set_text(slot.label, &name.map_or_else(|| format!("None ({kind})"), str::to_string));
@@ -836,8 +924,8 @@ impl MaterialFields {
     /// split into a colour and its intensity.
     fn picked(&self, which: MaterialColor) -> PickedColor {
         match which {
-            MaterialColor::Base => PickedColor::srgb(self.data.color),
             MaterialColor::Emission => PickedColor::from_linear(self.data.emissive),
+            MaterialColor::Base | MaterialColor::Property(_) => PickedColor::srgb(self.data.color),
         }
     }
 
@@ -921,6 +1009,59 @@ fn show_scene_lighting(ui: &mut Ui, panel: &mut LightingPanel, game: &Game, path
         Err(error) => (None, Err(error)),
     };
     panel.show_scene(ui, game, current, own);
+}
+
+/// A shader's name, functions and properties, as it declares them, and its
+/// state, which the editor fills in; or why it does not read. Returns the
+/// state's label.
+fn shader(ui: &mut Ui, root: NodeId, game: &Game, path: &str) -> Option<(NodeId, voxear_render::CustomShaderState)> {
+    let found = game.content.shaders().shaders.iter().find(|shader| shader.path == path)?;
+    let rows = part(ui, root, "Shader", "shader");
+    let info = match &found.info {
+        Ok(info) => info,
+        Err(error) => {
+            text_row(ui, rows, "Error", error);
+            return None;
+        }
+    };
+    text_row(ui, rows, "Name", &info.name);
+    let mut does = Vec::new();
+    if info.unlit {
+        does.push("Unlit");
+    }
+    for (has, name) in [(info.surface, "Surface"), (info.vertex, "Vertex"), (info.light, "Light")] {
+        if has {
+            does.push(name);
+        }
+    }
+    text_row(ui, rows, "Functions", &does.join(", "));
+    let row = prop(ui, rows, "State");
+    let label = ui.add_label(row, "");
+    ui.add_class(label, "value");
+    if !info.properties.is_empty() {
+        let rows = part(ui, root, "Properties", "shader");
+        for property in &info.properties {
+            text_row(ui, rows, &property.name, &kind_label(property.kind));
+        }
+    }
+    // Never a state the renderer has, so the first frame shows its own.
+    Some((label, voxear_render::CustomShaderState::Failed(String::new())))
+}
+
+/// A property's kind as the shader's Inspector names it.
+fn kind_label(kind: voxear_engine::shaders::PropertyKind) -> String {
+    use voxear_engine::shaders::PropertyKind;
+    match kind {
+        PropertyKind::Float => "Number",
+        PropertyKind::Float2 => "Vector 2",
+        PropertyKind::Float3 => "Vector 3",
+        PropertyKind::Float4 => "Vector 4",
+        PropertyKind::Color { alpha: false } => "Colour",
+        PropertyKind::Color { alpha: true } => "Colour and alpha",
+        PropertyKind::Toggle => "Toggle",
+        PropertyKind::Picture => "Picture",
+    }
+    .to_string()
 }
 
 /// The level a level stands on, and its own scenes, to change.

@@ -20,6 +20,7 @@ mod languages;
 mod lighting;
 mod level_edits;
 mod material_drops;
+mod material_shaders;
 mod model_materials;
 mod model_parts;
 mod path_bakes;
@@ -866,6 +867,7 @@ impl Editor {
             let listening = self.game.audio.previewing().map(str::to_string);
             if let Some(view) = self.inspector.asset_view() {
                 view.show_listening(&mut self.ui, listening.as_deref());
+                view.show_shader_state(&mut self.ui, renderer.custom_shaders());
             }
         }
         {
@@ -1019,6 +1021,8 @@ impl Editor {
                 self.game.load_input_actions();
                 self.game.content.forget_kind(voxear_assets::AssetKind::Strings);
                 self.game.load_strings();
+                // A shader may have come or gone, which numbers the rest afresh.
+                self.game.apply_custom_shaders(renderer);
                 self.files_seen();
                 // Files moved or went, so previews are made again for the paths they have now.
                 self.asset_previews.clear(renderer);
@@ -1088,6 +1092,14 @@ impl Editor {
 
     /// Shows an item of the Project panel in the Inspector, in place of the
     /// Obj selected, as selecting one in Unity's Project window does.
+    /// Shows the asset at `path` in the Inspector, as selecting it in the
+    /// Project panel does. False for a path the project does not have.
+    pub fn inspect_path(&mut self, path: &str) -> bool {
+        let Some(item) = self.project.item(path) else { return false };
+        self.inspect_asset(&item);
+        true
+    }
+
     fn inspect_asset(&mut self, item: &ProjectItem) {
         self.select(None);
         self.inspector.show_asset(&mut self.ui, &self.game, item);
@@ -1140,6 +1152,14 @@ impl Editor {
             }
             AssetAction::StopListening => self.game.audio.stop_preview(),
             AssetAction::BrowseMap { material, map, anchor } => self.browse_material_map(&material, map, anchor),
+            AssetAction::BrowseShader { material, anchor } => self.browse_material_shader(&material, anchor),
+            AssetAction::DropShader { material, source } => self.drop_material_shader(&material, &source, renderer),
+            AssetAction::BrowseShaderPicture { material, property, anchor } => {
+                self.browse_shader_picture(&material, &property, anchor);
+            }
+            AssetAction::DropShaderPicture { material, property, source } => {
+                self.drop_shader_picture(&material, &property, &source, renderer);
+            }
             AssetAction::DropMap { material, map, source } => {
                 self.drop_material_map(&material, map, &source, renderer);
             }
@@ -2235,6 +2255,12 @@ impl Editor {
                     self.pick_material_map(&material, map, &pick, renderer);
                 }
                 (PickFor::Remap { model, part }, Chosen::Value(pick)) => self.pick_remap(&model, &part, &pick, renderer),
+                (PickFor::MaterialShader { material }, Chosen::Value(pick)) => {
+                    self.pick_material_shader(&material, &pick, renderer);
+                }
+                (PickFor::ShaderPicture { material, property }, Chosen::Value(pick)) => {
+                    self.pick_shader_picture(&material, &property, &pick, renderer);
+                }
                 (PickFor::PartMaterial { owner, node }, Chosen::Value(pick)) if alive(owner) => {
                     self.pick_part_material(owner, node, &pick, renderer);
                 }

@@ -95,12 +95,22 @@ pub enum NewFile {
     Level,
     Material,
     Lighting,
+    Shader,
+    UnlitShader,
     Script,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 6] =
-        [NewFile::Folder, NewFile::Scene, NewFile::Level, NewFile::Material, NewFile::Lighting, NewFile::Script];
+    pub const ALL: [NewFile; 8] = [
+        NewFile::Folder,
+        NewFile::Scene,
+        NewFile::Level,
+        NewFile::Material,
+        NewFile::Lighting,
+        NewFile::Shader,
+        NewFile::UnlitShader,
+        NewFile::Script,
+    ];
 
     /// As the menu offers it.
     pub fn label(self) -> &'static str {
@@ -110,6 +120,8 @@ impl NewFile {
             NewFile::Level => "New Level",
             NewFile::Material => "New Material",
             NewFile::Lighting => "New Lighting Settings",
+            NewFile::Shader => "New Shader",
+            NewFile::UnlitShader => "New Unlit Shader",
             NewFile::Script => "New C# Script",
         }
     }
@@ -123,6 +135,8 @@ impl NewFile {
             NewFile::Level => ("New Level", ".level"),
             NewFile::Material => ("New Material", ".material"),
             NewFile::Lighting => ("New Lighting", ".lighting"),
+            NewFile::Shader => ("New Shader", ".shader"),
+            NewFile::UnlitShader => ("New Unlit Shader", ".shader"),
             NewFile::Script => ("NewBehaviour", ".cs"),
         }
     }
@@ -141,11 +155,73 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Level => std::fs::write(&file, "# Voxear level: list its scenes as [[scene]] tables.\nformat = 1\n"),
         NewFile::Material => std::fs::write(&file, "color = [0.8, 0.8, 0.8]\nmetallic = 0.0\nroughness = 0.5\n"),
         NewFile::Lighting => std::fs::write(&file, NEW_LIGHTING),
+        NewFile::Shader => std::fs::write(&file, shader(NEW_SHADER, &name[..name.len() - extension.len()])),
+        NewFile::UnlitShader => std::fs::write(&file, shader(NEW_UNLIT_SHADER, &name[..name.len() - extension.len()])),
         NewFile::Script => std::fs::write(&file, script(namespace, &name[..name.len() - extension.len()])),
     }
     .with_context(|| format!("making {}", file.display()))?;
     Ok(path)
 }
+
+/// A new shader, its struct named for its file: the file's name without
+/// what a name in code cannot have.
+fn shader(template: &str, name: &str) -> String {
+    let named: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+    let named = if named.starts_with(|c: char| c.is_ascii_alphabetic()) { named } else { format!("Shader{named}") };
+    template.replace("NAME", &named)
+}
+
+/// What a new shader starts as: a lit surface with a tint, a gloss and a
+/// pattern, and a vertex and a light function to uncomment.
+const NEW_SHADER: &str = r#"// A custom shader. Materials pick it as their Shader, and set its properties in their
+// Inspector. The Manual's Custom Shaders page says everything a shader can do.
+
+struct NAME
+{
+    [Property, Color] float3 tint = float3(1.0, 1.0, 1.0);
+    [Property, Range(0, 1), Tooltip("How glossy it is: 1 is a mirror")] float gloss = 0.5;
+    [Property] Picture pattern;
+}
+
+// The surface, which starts as the material's own colour, normal, metallic, roughness and emission.
+void surface(NAME shader, SurfaceInput input, inout SurfaceOutput surface)
+{
+    surface.color *= shader.tint * shader.pattern.sample(input.uv).rgb;
+    surface.roughness = 1.0 - shader.gloss;
+}
+
+// Uncomment to move vertices: how far, in metres, in the world. Say how far at most with
+// [MaxOffset(metres)] on the struct.
+// float3 vertex(NAME shader, VertexInput input)
+// {
+//     return float3(0.0, sin(input.time * 2.0 + input.position.x) * 0.1, 0.0);
+// }
+
+// Uncomment to light it your own way: the light from the sun or a lamp, as it falls on the surface.
+// float3 light(NAME shader, LightInput light, SurfaceOutput surface)
+// {
+//     float lit = dot(surface.normal, light.direction) > 0.2 ? 1.0 : 0.3;
+//     return surface.color * light.color * lit;
+// }
+"#;
+
+/// What a new unlit shader starts as: a colour and how bright it is.
+const NEW_UNLIT_SHADER: &str = r#"// An unlit shader: drawn as its colour, the same in light and in shadow, as a screen,
+// a glow or a sky. Materials pick it as their Shader.
+
+[Unlit]
+struct NAME
+{
+    [Property, Color] float3 color = float3(1.0, 1.0, 1.0);
+    [Property, Range(0, 20)] float brightness = 1.0;
+}
+
+void surface(NAME shader, SurfaceInput input, inout SurfaceOutput surface)
+{
+    surface.color = shader.color * shader.brightness;
+    surface.emission = 0.0;
+}
+"#;
 
 /// Renames a file or folder in place, with its `.meta`, and returns its new
 /// path. A file keeps its extension, and a script's class follows its name.

@@ -41,6 +41,16 @@ const CSHARP: &[&str] = &[
     "while", "with", "yield",
 ];
 
+/// Words Slang and HLSL keep for themselves, their built-in types among them,
+/// and the types a Voxear shader is written with.
+#[rustfmt::skip]
+const SLANG: &[&str] = &[
+    "bool", "break", "case", "const", "continue", "default", "discard", "do", "else", "false", "float", "float2",
+    "float3", "float4", "float2x2", "float3x3", "float4x4", "for", "half", "if", "import", "in", "inout", "int",
+    "int2", "int3", "int4", "namespace", "out", "return", "static", "struct", "switch", "true", "uint", "uint2",
+    "uint3", "uint4", "void", "while", "Picture", "SurfaceInput", "SurfaceOutput", "VertexInput", "LightInput",
+];
+
 /// Words Rust keeps for itself, its built-in types among them.
 #[rustfmt::skip]
 const RUST: &[&str] = &[
@@ -62,6 +72,7 @@ pub fn highlight(language: &str, code: &str) -> Vec<(Range<usize>, Kind)> {
     match language.to_ascii_lowercase().as_str() {
         "csharp" | "cs" | "c#" => c_like(code, CSHARP, true),
         "rust" | "rs" => c_like(code, RUST, false),
+        "slang" | "hlsl" | "shader" => c_like(code, SLANG, false),
         "toml" => toml(code),
         "json" => json(code),
         "xml" | "vui" | "html" => markup(code),

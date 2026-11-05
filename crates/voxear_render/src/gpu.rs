@@ -108,7 +108,10 @@ pub struct GpuMaterial {
     /// project's (`project_shaders.slang`), or `STANDARD_SHADER`; its
     /// properties are its `MATERIAL_PROPERTIES` in `material_properties`.
     pub shader: u32,
-    pub _pad: [u32; 3],
+    /// How far its custom shader's vertex function may move a vertex, in
+    /// metres, which culling allows for.
+    pub max_offset: f32,
+    pub _pad: [u32; 2],
 }
 
 /// A material drawn with the standard shader, not a custom one.

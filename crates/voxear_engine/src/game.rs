@@ -149,6 +149,28 @@ impl Game {
     /// or else the one the player's system is in, or the nearest the project has, or its own
     /// (and as it starts, in the one the player chose last, see [`start`](Self::start));
     /// read again, as when a table changed, it stays in the one it is in.
+    /// Reads the project's custom shaders and has the renderer compile them
+    /// into its own, on a thread of their own, and draws the materials that
+    /// use them with them. Nothing to compile for a project without any.
+    pub fn apply_custom_shaders(&mut self, renderer: &mut Renderer) {
+        self.content.read_shaders();
+        let registry = self.content.shaders();
+        for shader in &registry.shaders {
+            if let Err(error) = &shader.info {
+                tracing::error!("the shader {}: {error}", shader.path);
+            }
+        }
+        // A project that never had shaders keeps the renderer's own, uncompiled.
+        let had = *renderer.custom_shaders() != voxear_render::CustomShaderState::None;
+        if registry.shaders.is_empty() && !had {
+            return;
+        }
+        renderer.set_custom_shaders(crate::shaders::dispatch_code(registry));
+        if let Err(error) = self.content.refresh_shaded_materials(renderer) {
+            tracing::error!("{error:#}");
+        }
+    }
+
     pub fn load_strings(&mut self) {
         let languages = &self.project.file.localization.languages;
         let mut localization = match self.engine.world.remove_resource::<Localization>() {
@@ -209,8 +231,12 @@ impl Game {
     }
 
     /// Loads the project's `start_level`.
-    pub fn start(&mut self, renderer: Option<&mut Renderer>) -> Result<()> {
+    pub fn start(&mut self, mut renderer: Option<&mut Renderer>) -> Result<()> {
         self.audio.start_game();
+        // The project's shaders first, so its materials are uploaded with them.
+        if let Some(renderer) = renderer.as_deref_mut() {
+            self.apply_custom_shaders(renderer);
+        }
         // The language the player chose last time, kept beside the saves, over the system's.
         if let Some(saved) = voxear_scripting::saved_language()
             && let Some(localization) = self.engine.world.resource_mut::<Localization>()

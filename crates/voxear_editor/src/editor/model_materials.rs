@@ -230,6 +230,7 @@ fn material_data(material: &FileMaterial, maps: [Option<voxear_assets::AssetGuid
         leaves: material.desc.leaves,
         glow: material.desc.glow,
         glow_speed: material.desc.glow_speed,
+        ..MaterialData::default()
     }
 }
 

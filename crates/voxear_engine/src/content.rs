@@ -657,6 +657,31 @@ impl Content {
         &self.shaders
     }
 
+    /// Uploads again every loaded material asset that names a custom
+    /// shader, as after the project's shaders changed: their numbers,
+    /// properties and defaults may have.
+    pub fn refresh_shaded_materials(&mut self, renderer: &mut Renderer) -> Result<()> {
+        let loaded: Vec<(AssetGuid, MaterialHandle)> = self
+            .asset_materials
+            .iter()
+            .filter_map(|(reference, handle)| match reference {
+                AssetRef::Asset { guid, part: None } => Some((*guid, *handle)),
+                _ => None,
+            })
+            .collect();
+        for (guid, handle) in loaded {
+            if self.db.get(guid).map(|entry| entry.kind) != Some(AssetKind::Material) {
+                continue;
+            }
+            let data = self.material_data(guid)?;
+            if data.shader.is_some() {
+                let look = self.look(renderer, &data)?;
+                renderer.update_material(handle, &look)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Mounts the project's packages again, as they are after its
     /// `packages.toml` changed, and looks at every asset again. What is
     /// loaded already stays as it was.
@@ -853,6 +878,7 @@ impl Content {
         let found = data.shader.and_then(|guid| self.shaders.get(guid)).map(|(number, info)| (number, info.clone()));
         if let Some((number, info)) = found {
             desc.shader = number;
+            desc.max_offset = info.max_offset;
             for (slot, property) in desc.properties.iter_mut().zip(&info.properties) {
                 *slot = match data.properties.get(&property.name) {
                     Some(value) => self.property_values(renderer, value, property.kind)?,

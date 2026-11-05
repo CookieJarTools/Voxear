@@ -57,6 +57,7 @@ pub const NAMES: &[&str] = &[
     "level",
     "scene",
     "material",
+    "shader",
     "texture",
     "eye",
     "transform",

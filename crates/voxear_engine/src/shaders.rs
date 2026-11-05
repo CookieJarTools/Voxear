@@ -384,7 +384,7 @@ pub fn dispatch_code(registry: &ShaderRegistry) -> String {
     }
     let calls = |wanted: fn(&ShaderInfo) -> bool, call: &dyn Fn(u32) -> String| -> String {
         let mut cases = String::new();
-        for (shader, info) in shaders.iter().filter(|(_, info)| wanted(info)) {
+        for (shader, _) in shaders.iter().filter(|(_, info)| wanted(info)) {
             cases += &format!("    case {}:\n        {}\n", shader.number, call(shader.number));
         }
         cases

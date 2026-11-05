@@ -124,6 +124,9 @@ pub struct MaterialDesc {
     /// `float4`, in the order the shader declares them.
     pub shader: u32,
     pub properties: [[f32; 4]; MATERIAL_PROPERTIES],
+    /// How far its custom shader's vertex function may move a vertex, in
+    /// metres, which culling allows for.
+    pub max_offset: f32,
 }
 
 impl Default for MaterialDesc {
@@ -150,6 +153,7 @@ impl Default for MaterialDesc {
             impostor: false,
             shader: STANDARD_SHADER,
             properties: [[0.0; 4]; MATERIAL_PROPERTIES],
+            max_offset: 0.0,
         }
     }
 }
@@ -865,7 +869,8 @@ impl Assets {
             wind_flutter: desc.wind_flutter.max(0.0),
             glow_speed: desc.glow_speed.max(0.0),
             shader: desc.shader,
-            _pad: [0; 3],
+            max_offset: desc.max_offset.max(0.0),
+            _pad: [0; 2],
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {

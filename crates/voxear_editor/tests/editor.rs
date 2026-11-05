@@ -6625,6 +6625,65 @@ fn a_click_picks_the_mesh_it_meets_not_a_box_round_the_camera() {
 }
 
 #[test]
+fn a_material_picks_a_custom_shader_and_edits_its_properties() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Shaders")).unwrap();
+    let shader = "struct Tinted\n{\n    [Property, Color] float3 tint = float3(1.0, 0.5, 0.2);\n    \
+                  [Property, Range(0, 2)] float strength = 1.0;\n}\n\n\
+                  void surface(Tinted tinted, SurfaceInput input, inout SurfaceOutput surface)\n{\n    \
+                  surface.color *= tinted.tint * tinted.strength;\n}\n";
+    std::fs::write(dir.path().join("Shaders/Tinted.shader"), shader).unwrap();
+    let guid = "5a1d0000000000000000000000000001";
+    std::fs::write(dir.path().join("Shaders/Tinted.shader.meta"), format!("guid = \"{guid}\"\n")).unwrap();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    std::fs::write(dir.path().join("Materials/Rust.material"), format!("shader = \"{guid}\"\n")).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    // The project's shaders compile on a thread of their own as it opens.
+    for _ in 0..600 {
+        frame(&mut editor, &mut renderer);
+        if *renderer.custom_shaders() != voxear_render::CustomShaderState::Compiling {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(*renderer.custom_shaders(), voxear_render::CustomShaderState::Ready);
+    frame(&mut editor, &mut renderer);
+
+    // The shader's own Inspector: its functions, properties and that it compiled.
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let texts = |editor: &voxear_editor::Editor| {
+        let mut values = Vec::new();
+        with_class(&editor.ui, inspector, "value", &mut values);
+        values.into_iter().map(|v| editor.ui.text(v)).collect::<Vec<String>>()
+    };
+    open_folder(&mut editor, &mut renderer, "Shaders");
+    let tinted = tile(&editor.ui, "Tinted.shader").expect("the shader's tile");
+    click(&mut editor.ui, tinted);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let shown = texts(&editor);
+    assert!(shown.iter().any(|t| t == "Tinted") && shown.iter().any(|t| t == "Surface"), "{shown:?}");
+    assert!(shown.iter().any(|t| t == "Compiled"), "{shown:?}");
+
+    // The material's Inspector: its Shader, and the shader's properties, whose edits go into its file.
+    assert!(editor.inspect_path("Materials/Rust.material"), "the material is in the project");
+    frame(&mut editor, &mut renderer);
+    let label = first_with(&editor.ui, prop_row(&editor.ui, "Shader").unwrap(), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(label), "Tinted");
+    let row = prop_row(&editor.ui, "Strength").expect("its property");
+    let strength = first_with(&editor.ui, row, "value-input").unwrap();
+    assert_eq!(editor.ui.text(strength), "1");
+    type_into(&mut editor.ui, strength, "1.5");
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(dir.path().join("Materials/Rust.material")).unwrap();
+    assert!(text.contains("strength = 1.5"), "written into the material: {text}");
+    assert!(!text.contains("tint"), "a property at its default is left out: {text}");
+    assert!(prop_row(&editor.ui, "Tint").is_some(), "a colour property, with its swatch");
+}
+
+#[test]
 fn a_scenes_inspector_shows_its_lighting_to_change() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
     let dir = hello_copy();

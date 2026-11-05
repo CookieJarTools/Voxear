@@ -3962,3 +3962,11 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 .packages-runs-code {
     color: var(--vx-warning);
 }
+
+/* A shader's compile error, in its Inspector: Slang's lines, naming the file and line. */
+.shader-error {
+    color: var(--vx-danger);
+    font-family: mono;
+    font-size: 11px;
+    white-space: pre-wrap;
+}

@@ -245,6 +245,7 @@ impl Editor {
         let tables = changed.iter().any(|path| path.ends_with(".strings") || path.ends_with(".assettable"));
         let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
         let lighting = changed.iter().any(|path| path.ends_with(".lighting"));
+        let shaders = changed.iter().any(|path| path.ends_with(".shader"));
         if came_or_went {
             self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
         } else {
@@ -256,6 +257,10 @@ impl Editor {
             if actions {
                 self.game.content.forget_kind(voxear_assets::AssetKind::InputActions);
                 self.game.load_input_actions();
+            }
+            // A shader saved from a code editor compiles again, and its materials draw with it.
+            if shaders {
+                self.game.apply_custom_shaders(renderer);
             }
             // Lighting settings edited outside the editor light the open scene as they now are.
             if lighting {

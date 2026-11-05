@@ -89,6 +89,10 @@ pub enum PickFor {
     /// A part of the model an Obj draws whole, by its node, for the material
     /// it draws with.
     PartMaterial { owner: Entity, node: u32 },
+    /// The material at this path, for the custom shader it is drawn with.
+    MaterialShader { material: String },
+    /// A picture property of the custom shader of the material at this path.
+    ShaderPicture { material: String, property: String },
     /// The control of the binding picked in the Input Actions window.
     InputControl,
     /// The icon of the action picked in the Input Actions window.

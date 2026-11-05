@@ -221,7 +221,10 @@ struct Material
     // Its custom shader's number, or STANDARD_SHADER; its properties are
     // MATERIAL_PROPERTIES float4s of Buffers' materialProperties.
     uint shader;
-    uint3 pad;
+    // How far its custom shader's vertex function may move a vertex, in
+    // metres, which culling allows for.
+    float maxOffset;
+    uint2 pad;
 };
 
 static const uint STANDARD_SHADER = 0;

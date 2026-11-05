@@ -4269,12 +4269,20 @@ fn tables_pages_and_palettes_show_lists_and_colours() {
     frame(&mut editor, &mut renderer);
     assert_eq!(labels(&editor), ["0", "1", "2"], "the first page");
 
-    // An item's label drags it onto another, which moves it there, as a step to undo.
+    // An item's grip drags it onto another, which moves it there, as a step to undo.
     let scores = |editor: &voxear_editor::Editor| -> Vec<i64> {
         field(editor, "scores").unwrap().as_array().unwrap().iter().filter_map(toml::Value::as_integer).collect()
     };
-    let handle = editor.ui.children(prop_row(&editor.ui, "0").unwrap())[0];
-    let third = prop_row(&editor.ui, "2").unwrap();
+    let item_of = |ui: &Ui, row: NodeId| {
+        let mut at = Some(row);
+        while let Some(node) = at.filter(|&node| !ui.has_class(node, "collection-item")) {
+            at = ui.parent(node);
+        }
+        at.expect("a list's item")
+    };
+    let first = item_of(&editor.ui, prop_row(&editor.ui, "0").unwrap());
+    let handle = first_with(&editor.ui, first, "collection-grip").expect("its grip");
+    let third = item_of(&editor.ui, prop_row(&editor.ui, "2").unwrap());
     drag(&mut editor.ui, handle, third);
     frame(&mut editor, &mut renderer);
     assert_eq!(scores(&editor), [20, 30, 10, 40, 50, 60, 70], "the first score moved to the third place");
@@ -4293,6 +4301,7 @@ fn tables_pages_and_palettes_show_lists_and_colours() {
     let mut swatches = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "attr-palette-swatch", &mut swatches);
     assert_eq!(swatches.len(), 2);
+    scroll_to(&mut editor, &mut renderer, swatches[1]);
     click(&mut editor.ui, swatches[1]);
     frame(&mut editor, &mut renderer);
     let tint = field(&editor, "tint").unwrap();

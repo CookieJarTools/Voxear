@@ -135,7 +135,7 @@ fn a_live_materials_fields_change_it_on_the_page() {
     let mut labels = Vec::new();
     with_class(&editor.ui, places[0], "prop-label", &mut labels);
     let rows: Vec<String> = labels.iter().map(|&l| editor.ui.text(l)).collect();
-    let fields = ["Colour", "Emission", "Glow", "Glow speed", "Metallic", "Roughness", "Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Foliage", "Wind bend", "Leaf flutter", "Leaves", "Glass", "IOR"];
+    let fields = ["Shader", "Colour", "Emission", "Glow", "Glow speed", "Metallic", "Roughness", "Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Foliage", "Wind bend", "Leaf flutter", "Leaves", "Glass", "IOR"];
     assert_eq!(rows, fields, "its fields, as the Inspector has them");
 
     let roughness_label = labels.iter().copied().find(|&l| editor.ui.text(l) == "Roughness").unwrap();
@@ -157,7 +157,8 @@ fn a_live_materials_fields_change_it_on_the_page() {
     with_class(&editor.ui, root, "md-live-fields", &mut places);
     let mut labels = Vec::new();
     with_class(&editor.ui, places[0], "prop-label", &mut labels);
-    let colour = editor.ui.parent(labels[0]).unwrap();
+    let colour_label = labels.iter().copied().find(|&l| editor.ui.text(l) == "Colour").unwrap();
+    let colour = editor.ui.parent(colour_label).unwrap();
     let mut swatches = Vec::new();
     with_class(&editor.ui, colour, "swatch", &mut swatches);
     let [x, y, w, h] = editor.ui.rect(swatches[0]);

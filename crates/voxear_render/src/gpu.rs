@@ -417,6 +417,8 @@ pub struct GpuWaterBody {
     pub absorb: [f32; 3],
     /// A Pool's liquid: water or lava.
     pub liquid: u32,
+    /// Lava's: how many seconds it takes to crust over, and how brightly it glows.
+    pub lava: [f32; 4],
 }
 
 /// A place along a Stream (see `water_bodies`), as `StreamPoint` in
@@ -430,7 +432,9 @@ pub struct GpuStreamPoint {
     pub tangent: [f32; 3],
     pub speed: f32,
     pub foam: f32,
-    pub _pad: [f32; 3],
+    /// How long what flows there has taken to come from the Stream's start, in seconds.
+    pub age: f32,
+    pub _pad: [f32; 2],
 }
 
 /// Most pushers through foliage a frame takes, the nearest the camera.
@@ -916,7 +920,7 @@ mod tests {
         );
         assert_eq!(size_of::<GpuOcean>(), 160);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
-        assert_eq!(size_of::<GpuWaterBody>(), 192);
+        assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);

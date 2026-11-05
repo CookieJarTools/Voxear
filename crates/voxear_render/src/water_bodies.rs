@@ -91,6 +91,10 @@ pub struct Pool {
     pub clarity: [f32; 3],
     /// How murky it is: 1 as Clarity says, more to see less far into it.
     pub murk: f32,
+    /// Lava's: how many seconds its surface takes to crust over, and how
+    /// brightly it glows.
+    pub cooling: f32,
+    pub glow: f32,
 }
 
 impl Component for Pool {}
@@ -106,6 +110,8 @@ impl Default for Pool {
             scatter: [0.15, 0.6, 0.5],
             clarity: [0.75, 0.93, 0.9],
             murk: 1.0,
+            cooling: 20.0,
+            glow: 1.0,
         }
     }
 }
@@ -170,6 +176,7 @@ impl Pool {
             waves: self.waves.max(0.0),
             absorb: linear(self.clarity).map(|t| -t.max(1e-3).ln() * self.murk.max(0.0)),
             liquid: self.liquid as u32,
+            lava: [self.cooling.max(0.1), self.glow.max(0.0), 0.0, 0.0],
         }
     }
 
@@ -224,6 +231,10 @@ pub struct Stream {
     pub clarity: [f32; 3],
     /// How murky it is: 1 as Clarity says, more to see less far into it.
     pub murk: f32,
+    /// Lava's: how many seconds it runs before it crusts over, and how
+    /// brightly it glows.
+    pub cooling: f32,
+    pub glow: f32,
 }
 
 impl Component for Stream {}
@@ -239,6 +250,8 @@ impl Default for Stream {
             scatter: [0.2, 0.55, 0.45],
             clarity: [0.9, 0.96, 0.95],
             murk: 1.0,
+            cooling: 20.0,
+            glow: 1.0,
         }
     }
 }
@@ -247,8 +260,9 @@ impl Default for Stream {
 const FOAM_CARRIED: f32 = 6.0;
 
 /// A place along a Stream, in the world: where its surface is in the
-/// middle, which way it runs, how wide it is, how fast it flows there and
-/// how much it foams.
+/// middle, which way it runs, how wide it is, how fast it flows there, how
+/// much it foams, and how long what flows there has taken to come from its
+/// start, in seconds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StreamPoint {
     pub position: Vec3,
@@ -256,10 +270,13 @@ pub struct StreamPoint {
     pub width: f32,
     pub speed: f32,
     pub foam: f32,
+    pub age: f32,
 }
 
-/// How rough a river's bed is, in Manning's formula: a natural channel's.
+/// How rough a river's bed is, in Manning's formula: a natural channel's;
+/// and lava's, as thick as it is, running a dozen times slower.
 const MANNING_ROUGHNESS: f32 = 0.05;
+const LAVA_ROUGHNESS: f32 = 0.6;
 
 impl Stream {
     /// Its points along `path`, placed by `to_world` (its Obj's matrix).
@@ -277,17 +294,25 @@ impl Stream {
                 let level = Vec3::new(s.tangent.x, 0.0, s.tangent.z).length().max(1e-3);
                 let slope = (-s.tangent.y / level).max(0.0);
                 // Manning: v = R^(2/3) S^(1/2) / n, the hydraulic radius as deep as a wide river is.
-                let downhill = self.depth.max(0.01).powf(2.0 / 3.0) * slope.sqrt() / MANNING_ROUGHNESS;
+                let lava = self.liquid == Liquid::Lava;
+                let roughness = if lava { LAVA_ROUGHNESS } else { MANNING_ROUGHNESS };
+                let downhill = self.depth.max(0.01).powf(2.0 / 3.0) * slope.sqrt() / roughness;
                 let rapids = self.rapids.max(1e-3);
                 StreamPoint {
                     position: s.position,
                     tangent: s.tangent,
                     width: s.width.max(0.05),
                     speed: self.speed.max(0.0).max(downhill).min(20.0),
-                    foam: ((slope - rapids) / rapids).clamp(0.0, 1.0),
+                    foam: if lava { 0.0 } else { ((slope - rapids) / rapids).clamp(0.0, 1.0) },
+                    age: 0.0,
                 }
             })
             .collect();
+        // How long the middle of it takes to come this far.
+        for i in 1..points.len() {
+            let run = points[i].position.distance(points[i - 1].position);
+            points[i].age = points[i - 1].age + run / ((points[i].speed + points[i - 1].speed) * 0.5).max(0.02);
+        }
         // White water churns on past the foot of the rapids, fading as it goes.
         for i in 1..points.len() {
             let fade = (-points[i].position.distance(points[i - 1].position) / FOAM_CARRIED).exp();
@@ -309,6 +334,7 @@ impl Stream {
             waves: 0.0,
             absorb: linear(self.clarity).map(|t| -t.max(1e-3).ln() * self.murk.max(0.0)),
             liquid: self.liquid as u32,
+            lava: [self.cooling.max(0.1), self.glow.max(0.0), 0.0, 0.0],
         }
     }
 }
@@ -321,7 +347,8 @@ impl StreamPoint {
             tangent: self.tangent.to_array(),
             speed: self.speed,
             foam: self.foam,
-            _pad: [0.0; 3],
+            age: self.age,
+            _pad: [0.0; 2],
         }
     }
 }
@@ -384,6 +411,10 @@ mod tests {
         assert!((at(10.0).speed - 1.0).abs() < 1e-3, "level, its own speed: {}", at(10.0).speed);
         assert!(at(25.0).speed > 2.0 && at(25.0).foam == 0.0, "downhill at 1 in 10: {:?}", at(25.0));
         assert!(at(10.0).foam == 0.0 && at(19.0).foam == 0.0, "no white water above the rapids");
+        assert!((at(10.0).age - 10.0).abs() < 0.5, "ten metres at a metre a second: {}", at(10.0).age);
+        let lava = Stream { liquid: Liquid::Lava, ..Stream::default() }.points(&path, Mat4::IDENTITY);
+        let steep = lava.iter().find(|p| (p.position.z - 36.0).abs() < 0.6).unwrap();
+        assert!(steep.speed < at(36.0).speed / 5.0 && steep.foam == 0.0, "lava runs slower, and never white: {steep:?}");
         assert!(at(36.0).speed > at(25.0).speed && at(36.0).foam > 0.5, "steeper, rapids: {:?}", at(36.0));
         let (height, middle) = stream_over(&points, 1.0, Vec3::new(0.0, -0.5, 10.0)).expect("over it");
         assert!(height.abs() < 0.1 && (middle.length() - 1.0).abs() < 0.02 && middle.z > 0.99, "{height} {middle}");

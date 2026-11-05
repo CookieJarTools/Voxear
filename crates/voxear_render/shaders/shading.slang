@@ -576,7 +576,8 @@ bool waterSurface(Frame* frame, float3 world, out float surface, out float3 abso
     {
         WaterBody pool = buffers()->waterBodies[i];
         float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
-        if (all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -pool.size.y)
+        // Lava is no water to be under.
+        if (pool.liquid == LIQUID_WATER && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -pool.size.y)
         {
             surface = pool.toWorld.c3.y;
             absorb = pool.absorb;

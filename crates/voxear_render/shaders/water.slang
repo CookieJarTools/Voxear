@@ -290,6 +290,9 @@ struct WaterOut
     float4 stream : STREAM;
     // Which way is up from the water's surface before its ripples: a Stream's as its bed slopes.
     float3 up : UP;
+    // A Stream's: how long what flows there has taken to come from its start, in seconds; and how far across it,
+    // from -1 at one bank to 1 at the other.
+    float2 lava : LAVA;
 };
 
 float2 cascadeUv(Frame* frame, uint cascade, float2 rest)
@@ -364,6 +367,7 @@ WaterOut waterVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
     o.body = SEA;
     o.stream = 0.0;
+    o.lava = 0.0;
     o.up = float3(0.0, 1.0, 0.0);
     return o;
 }
@@ -380,6 +384,7 @@ WaterOut nothing()
     o.previousClip = o.position;
     o.body = SEA;
     o.stream = 0.0;
+    o.lava = 0.0;
     o.up = float3(0.0, 1.0, 0.0);
     return o;
 }
@@ -397,8 +402,10 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     float2 across = (float2(grid) / float(POOL_QUADS) - 0.5) * body.size.xz;
     float3 flat = transform(body.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
     float spacing = max(body.size.x, body.size.z) / float(POOL_QUADS);
-    float3 world = flat + oceanMoved(frame, flat.xz, spacing, false, body.waves);
-    float3 before = flat + oceanMoved(frame, flat.xz, spacing, true, body.waves);
+    // Lava is too thick for waves.
+    float wet = body.liquid == LIQUID_LAVA ? 0.0 : 1.0;
+    float3 world = flat + oceanMoved(frame, flat.xz, spacing, false, body.waves) * wet;
+    float3 before = flat + oceanMoved(frame, flat.xz, spacing, true, body.waves) * wet;
     WaterOut o;
     o.position = transform(frame->viewProj, float4(world, 1.0));
     o.world = world;
@@ -407,6 +414,7 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
     o.body = pool;
     o.stream = 0.0;
+    o.lava = 0.0;
     o.up = float3(0.0, 1.0, 0.0);
     return o;
 }
@@ -438,6 +446,7 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
     o.body = push.list;
     o.stream = float4(flow, p.foam, float(min(grid.y, push.level - 1 - grid.y)));
     o.up = normalize(cross(p.tangent, right));
+    o.lava = float2(p.age, across);
     return o;
 }
 
@@ -602,6 +611,10 @@ FragmentOut waterFragment(WaterOut input)
     bool sea = input.body == SEA;
     WaterBody pool = buffers()->waterBodies[sea ? 0 : input.body];
     bool stream = !sea && pool.kind == WATER_STREAM;
+    if (!sea && pool.liquid == LIQUID_LAVA)
+    {
+        return lavaFragment(frame, input, pool, stream);
+    }
     // A Pool has the sea's waves as much as it says, and its own colours.
     float waves = sea ? 1.0 : pool.waves;
     float3 deep = sea ? frame->ocean.deep : pool.deep;
@@ -725,6 +738,191 @@ FragmentOut waterFragment(WaterOut input)
     return o;
 }
 
+// ---------------------------------------------------------------- Lava
+
+// The light of something as hot as `kelvin`, by Planck's law at red's,
+// green's and blue's wavelengths: 1 in red at 1400 K, where it is orange;
+// yellow and far brighter hotter; dull red, and dimming fast, as it cools.
+float3 blackbody(float kelvin)
+{
+    static const float3 wavelength = float3(610e-9, 550e-9, 465e-9);
+    float3 shorter = pow(wavelength / 610e-9, 5.0);
+    float3 planck = 1.0 / (shorter * (exp(1.4388e-2 / (wavelength * max(kelvin, 300.0))) - 1.0));
+    return planck * (exp(1.4388e-2 / (610e-9 * 1400.0)) - 1.0);
+}
+
+float2 cellPoint(float2 cell)
+{
+    return frac(sin(float2(dot(cell, float2(127.1, 311.7)), dot(cell, float2(269.5, 183.3)))) * 43758.5453);
+}
+
+// How far `p` is from the nearest edge between a scatter of cells a unit
+// wide (x), and which cell it is in, from 0 to 1 (y).
+float2 cellEdge(float2 p)
+{
+    float2 n = floor(p);
+    float2 f = frac(p);
+    float2 nearest = 0.0;
+    float2 nearestCell = 0.0;
+    float best = 8.0;
+    for (int j = -1; j <= 1; j++)
+    {
+        for (int i = -1; i <= 1; i++)
+        {
+            float2 g = float2(i, j);
+            float2 r = g + cellPoint(n + g) - f;
+            float d = dot(r, r);
+            if (d < best)
+            {
+                best = d;
+                nearest = r;
+                nearestCell = n + g;
+            }
+        }
+    }
+    // Half way to each neighbour, across the line between them.
+    float edge = 8.0;
+    for (int j = -2; j <= 2; j++)
+    {
+        for (int i = -2; i <= 2; i++)
+        {
+            float2 g = nearestCell - n + float2(i, j);
+            float2 r = g + cellPoint(n + g) - f;
+            float2 between = r - nearest;
+            if (dot(between, between) > 1e-5)
+            {
+                edge = min(edge, dot(0.5 * (nearest + r), normalize(between)));
+            }
+        }
+    }
+    return float2(edge, cellPoint(nearestCell).x);
+}
+
+// Smooth noise from 0 to 1, a unit across.
+float lavaNoise(float2 p)
+{
+    float2 n = floor(p);
+    float2 f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = cellPoint(n).x;
+    float b = cellPoint(n + float2(1, 0)).x;
+    float c = cellPoint(n + float2(0, 1)).x;
+    float d = cellPoint(n + float2(1, 1)).x;
+    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
+// `up` tilted by how `height` changes across the pixel at `world` (a
+// surface gradient, after Mikkelsen), for bumps no mesh has.
+float3 bumped(float3 world, float3 up, float height)
+{
+    float3 dx = ddx(world);
+    float3 dy = ddy(world);
+    float3 r1 = cross(dy, up);
+    float3 r2 = cross(up, dx);
+    float det = dot(dx, r1);
+    float3 gradient = (det < 0.0 ? -1.0 : 1.0) * (ddx(height) * r1 + ddy(height) * r2);
+    return normalize(max(abs(det), 1e-10) * up - gradient);
+}
+
+// Lava's surface (`body` a Pool or, with `stream`, a Stream of it): molten
+// where it is fresh, glowing by its temperature; crusting over as it
+// cools, in plates carried along with it, cracked open where the molten
+// lava under them shows through, the cracks narrowing as it cools; along a
+// Stream, its skin pushed into ropes across it as it slows, bowed
+// downstream as the middle runs faster than the banks (pahoehoe). A Pool is
+// a lake of it, its plates drifting as it turns over. Under the sea it
+// crusts over at once. Opaque, lit as dark glassy rock where it has
+// crusted.
+FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stream)
+{
+    float cooling = body.lava.x;
+    float glow = body.lava.y;
+    float t = frame->time;
+    float2 p = input.rest;
+    float age;
+    float2 plate;
+    float plateSize;
+    // How far behind the middle the ropes are at the banks, in seconds.
+    float bow = 0.0;
+    if (stream)
+    {
+        float across = input.lava.y;
+        // Its banks crust over first, as they are thinner and slower, into levees either side of a molten middle.
+        age = input.lava.x / (0.5 + 0.5 * (1.0 - across * across));
+        float2 along = input.stream.xy / max(length(input.stream.xy), 1e-4);
+        // Its crust rides along as one plug with its middle, so its plates are where they are by when the lava
+        // there set out, in seconds: as many a metre as it is slow, pushed together where it slows.
+        plate = float2(t - input.lava.x, dot(p, float2(-along.y, along.x)));
+        plateSize = 1.2;
+        bow = 1.2 * across * across;
+    }
+    else
+    {
+        // A lake: its plates drifting, its surface turning over in places.
+        plate = p + float2(sin(t * 0.05), cos(t * 0.043)) * 3.0 + float2(t * 0.02, 0.0);
+        age = cooling * (0.5 + 1.2 * lavaNoise(p * 0.08 + t * 0.01));
+        plateSize = 3.0;
+    }
+    if (frame->ocean.enabled != 0 && input.world.y < frame->ocean.level)
+    {
+        age = cooling * 4.0;
+    }
+    float cooled = age / cooling;
+    float crust = smoothstep(0.15, 0.7, cooled);
+    // Plates as irregular as torn crust is: their shapes bent by noise, their cracks wider in places.
+    float2 scaled = plate / plateSize;
+    scaled += (float2(lavaNoise(scaled * 0.7), lavaNoise(scaled * 0.7 + 17.0)) - 0.5) * 0.8;
+    float2 cell = cellEdge(scaled);
+    float crackWidth = (0.12 * (1.0 - saturate(cooled / 3.0)) + 0.015) * (0.4 + 1.2 * lavaNoise(scaled * 1.3 + 5.0));
+    float crack = 1.0 - smoothstep(crackWidth * 0.5, crackWidth, cell.x);
+    float skin = crust * (1.0 - crack);
+    // Pahoehoe's ropes: the skin folded while it is still soft, before it sets, hotter in their troughs.
+    float soft = smoothstep(0.1, 0.4, cooled) * (1.0 - smoothstep(1.5, 3.0, cooled));
+    float ropes = stream ? sin(6.2832 * (plate.x + bow) / 0.7 + 3.0 * lavaNoise(p * 0.4)) * soft : 0.0;
+
+    // Hottest inside, and in the middle of a crack; its skin cooling fast once it forms, the tops of its ropes
+    // first, in patches.
+    float molten = 1440.0 - 70.0 * saturate(cooled * 0.5) - 60.0 * lavaNoise(plate * 1.7) - 180.0 * saturate(cell.x / max(crackWidth, 1e-3)) * crust;
+    float patches = lavaNoise(p * 2.3) * 120.0;
+    float skinKelvin = lerp(1230.0, 420.0, saturate((cooled - 0.15) * 1.2)) - 90.0 * max(ropes, 0.0) + 160.0 * max(-ropes, 0.0) - patches;
+    float3 emitted = blackbody(lerp(molten, skinKelvin, skin)) * glow * 4.0;
+
+    float rough = lavaNoise(p * 7.0) * 0.5 + lavaNoise(p * 19.0) * 0.25;
+    float height = ropes * 0.06 * skin + (cell.x * 0.12 + rough * 0.03) * crust;
+    float3 n = bumped(input.world, input.up, height);
+    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 l = -frame->sunDirection;
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float shadow = sunShadow(frame, input.world, n);
+    Surface s;
+    s.normal = n;
+    s.view = v;
+    // Basalt nearly black, its fresh skin glassy.
+    s.diffuse = lerp(0.03, 0.06, cell.y) * skin;
+    s.f0 = 0.04;
+    s.roughness = lerp(0.7, 0.3, skin * (1.0 - saturate(cooled - 1.0)));
+    float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
+    float fresnel = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, v)), 5.0);
+    float3 reflected = surroundingsReflection(frame, input.world, n, reflect(-v, n), s.roughness, ambient, atmosphere);
+    float3 color = s.diffuse * ambient + shade(s, l, sunLight) * shadow + fresnel * reflected * skin + emitted;
+
+    float2 pixel = input.position.xy;
+    if (stream)
+    {
+        color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(input.stream.w / 2.0));
+    }
+    if (atmosphere)
+    {
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
+        color = color * haze.a + haze.rgb * skyLook(frame);
+    }
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
+}
+
 // ---------------------------------------------------------------- Walls of water
 
 struct WallOut
@@ -806,9 +1004,36 @@ float wallSurface(Frame* frame, WaterBody water, float3 world)
 {
     if (water.kind == WATER_POOL)
     {
-        return water.toWorld.c3.y + oceanMoved(frame, world.xz, 0.25, false, water.waves).y;
+        float wet = water.liquid == LIQUID_LAVA ? 0.0 : 1.0;
+        return water.toWorld.c3.y + oceanMoved(frame, world.xz, 0.25, false, water.waves).y * wet;
     }
     return frame->ocean.level + oceanMoved(frame, world.xz, 0.25, false).y;
+}
+
+// A lava Pool's side: dark rock in plates, cracked, the cracks glowing the
+// hotter the deeper they are, as its outside has cooled and its inside has not.
+FragmentOut lavaWall(Frame* frame, WallOut input, WaterBody lava, float below)
+{
+    float2 across = float2(dot(input.world.xz, float2(input.normal.z, -input.normal.x)), input.world.y);
+    float2 cell = cellEdge(across / 0.9);
+    float crack = 1.0 - smoothstep(0.02, 0.05, cell.x);
+    float kelvin = lerp(600.0, 1350.0, saturate(below / max(lava.size.y, 0.1) + 0.3));
+    float3 emitted = blackbody(kelvin) * crack * lava.lava.y * 4.0;
+    float3 v = normalize(frame->cameraPosition - input.world);
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    Surface s;
+    s.normal = bumped(input.world, input.normal, cell.x * 0.15);
+    s.view = v;
+    s.diffuse = lerp(0.03, 0.06, cell.y);
+    s.f0 = 0.04;
+    s.roughness = 0.7;
+    float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
+    float3 color = s.diffuse * ambient + shade(s, -frame->sunDirection, sunLight) * sunShadow(frame, input.world, s.normal) + emitted;
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
 }
 
 // The water a wall holds, seen from the side: what lies in it and behind
@@ -832,6 +1057,10 @@ FragmentOut wallFragment(WallOut input)
     if (input.world.y > surface || (!pool && frame->ocean.enabled == 0))
     {
         discard;
+    }
+    if (pool && water.liquid == LIQUID_LAVA)
+    {
+        return lavaWall(frame, input, water, surface - input.world.y);
     }
     float3 deep = pool ? water.deep : frame->ocean.deep;
     float3 scatter = pool ? water.scatter : frame->ocean.scatter;
@@ -947,7 +1176,7 @@ Under underwaterAt(Frame* frame, float2 pixel)
     {
         WaterBody pool = buffers()->waterBodies[i];
         float3 local = transform(pool.toLocal, float4(near, 1.0)).xyz;
-        if (all(abs(local.xz) <= pool.size.xz * 0.5) && local.y < 0.0 && local.y > -pool.size.y)
+        if (pool.liquid == LIQUID_WATER && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y < 0.0 && local.y > -pool.size.y)
         {
             deep = pool.deep;
             scatter = pool.scatter;

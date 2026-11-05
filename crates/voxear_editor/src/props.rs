@@ -244,6 +244,9 @@ pub enum Prop {
     PoolScatter,
     PoolClarity,
     PoolMurk,
+    /// Lava's: how long it takes to crust over, and how brightly it glows.
+    PoolCooling,
+    PoolGlow,
     /// A Path's points, edited in the Scene view, and whether it loops.
     PathPoints,
     PathClosed,
@@ -257,6 +260,8 @@ pub enum Prop {
     StreamScatter,
     StreamClarity,
     StreamMurk,
+    StreamCooling,
+    StreamGlow,
     /// A Dry Area's shape, and its size as that shape has it.
     DryShape,
     DrySize,
@@ -458,7 +463,9 @@ impl Prop {
             | Prop::PoolDeep
             | Prop::PoolScatter
             | Prop::PoolClarity
-            | Prop::PoolMurk => Part::Pool,
+            | Prop::PoolMurk
+            | Prop::PoolCooling
+            | Prop::PoolGlow => Part::Pool,
             Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight => Part::DryArea,
             Prop::PathPoints | Prop::PathClosed => Part::Path,
             Prop::StreamLiquid
@@ -468,7 +475,9 @@ impl Prop {
             | Prop::StreamDeep
             | Prop::StreamScatter
             | Prop::StreamClarity
-            | Prop::StreamMurk => Part::Stream,
+            | Prop::StreamMurk
+            | Prop::StreamCooling
+            | Prop::StreamGlow => Part::Stream,
             Prop::TimeOfYear
             | Prop::Season
             | Prop::SeasonColor(_)
@@ -622,6 +631,8 @@ impl Prop {
             Prop::PoolScatter => "scatter",
             Prop::PoolClarity => "clarity",
             Prop::PoolMurk => "murk",
+            Prop::PoolCooling | Prop::StreamCooling => "cooling",
+            Prop::PoolGlow | Prop::StreamGlow => "glow",
             Prop::PathPoints => "points",
             Prop::PathClosed => "closed",
             Prop::StreamLiquid => "liquid",
@@ -930,12 +941,13 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             ]);
             props
         }
-        // Water's colours only for water.
+        // Water's colours only for water, lava's cooling only for lava.
         Part::Pool => {
             let water = world.get::<Pool>(entity).is_some_and(|pool| pool.liquid == Liquid::Water);
             let mut props = vec![Prop::PoolSize, Prop::PoolDepth, Prop::PoolLiquid];
-            if water {
-                props.extend([Prop::PoolWaves, Prop::PoolDeep, Prop::PoolScatter, Prop::PoolClarity, Prop::PoolMurk]);
+            match water {
+                true => props.extend([Prop::PoolWaves, Prop::PoolDeep, Prop::PoolScatter, Prop::PoolClarity, Prop::PoolMurk]),
+                false => props.extend([Prop::PoolCooling, Prop::PoolGlow]),
             }
             props
         }
@@ -943,8 +955,9 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::Stream => {
             let water = world.get::<Stream>(entity).is_some_and(|stream| stream.liquid == Liquid::Water);
             let mut props = vec![Prop::StreamLiquid, Prop::StreamDepth, Prop::StreamSpeed];
-            if water {
-                props.extend([Prop::StreamRapids, Prop::StreamDeep, Prop::StreamScatter, Prop::StreamClarity, Prop::StreamMurk]);
+            match water {
+                true => props.extend([Prop::StreamRapids, Prop::StreamDeep, Prop::StreamScatter, Prop::StreamClarity, Prop::StreamMurk]),
+                false => props.extend([Prop::StreamCooling, Prop::StreamGlow]),
             }
             props
         }
@@ -1154,6 +1167,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::PoolScatter => "Scatter",
         Prop::PoolClarity => "Clarity",
         Prop::PoolMurk => "Murk",
+        Prop::PoolCooling | Prop::StreamCooling => "Cooling",
+        Prop::PoolGlow | Prop::StreamGlow => "Glow",
         Prop::PathPoints => "Points",
         Prop::PathClosed => "Closed",
         Prop::StreamLiquid => "Liquid",
@@ -1674,6 +1689,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::PoolScatter => Value::Color(world.get::<Pool>(entity)?.scatter.map(round3)),
         Prop::PoolClarity => Value::Color(world.get::<Pool>(entity)?.clarity.map(round3)),
         Prop::PoolMurk => Value::Number(world.get::<Pool>(entity)?.murk),
+        Prop::PoolCooling => Value::Number(world.get::<Pool>(entity)?.cooling),
+        Prop::PoolGlow => Value::Number(world.get::<Pool>(entity)?.glow),
         Prop::PathPoints => Value::Fixed(world.get::<voxear_scene::Path>(entity)?.points.len().to_string()),
         Prop::PathClosed => Value::Toggle(world.get::<voxear_scene::Path>(entity)?.closed),
         Prop::StreamLiquid => {
@@ -1688,6 +1705,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::StreamScatter => Value::Color(world.get::<Stream>(entity)?.scatter.map(round3)),
         Prop::StreamClarity => Value::Color(world.get::<Stream>(entity)?.clarity.map(round3)),
         Prop::StreamMurk => Value::Number(world.get::<Stream>(entity)?.murk),
+        Prop::StreamCooling => Value::Number(world.get::<Stream>(entity)?.cooling),
+        Prop::StreamGlow => Value::Number(world.get::<Stream>(entity)?.glow),
         Prop::DryShape => {
             let shape = world.get::<DryArea>(entity)?.shape;
             let index = DryShape::ALL.iter().position(|s| *s == shape).unwrap_or(0);
@@ -2458,6 +2477,8 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |p: &mut Pool| p.clarity = color.map(|c| c.clamp(0.0, 1.0)))
         }
         (Prop::PoolMurk, Value::Number(n)) => with(world, entity, |p: &mut Pool| p.murk = n.clamp(0.0, 20.0)),
+        (Prop::PoolCooling, Value::Number(n)) => with(world, entity, |p: &mut Pool| p.cooling = n.clamp(0.1, 3600.0)),
+        (Prop::PoolGlow, Value::Number(n)) => with(world, entity, |p: &mut Pool| p.glow = n.clamp(0.0, 20.0)),
         (Prop::PathClosed, Value::Toggle(on)) => with(world, entity, |p: &mut voxear_scene::Path| p.closed = on),
         (Prop::StreamLiquid, Value::Choice(index, _)) => {
             let liquid = Liquid::ALL.get(index).copied().unwrap_or_default();
@@ -2474,6 +2495,8 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |s: &mut Stream| s.clarity = color.map(|c| c.clamp(0.0, 1.0)))
         }
         (Prop::StreamMurk, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.murk = n.clamp(0.0, 20.0)),
+        (Prop::StreamCooling, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.cooling = n.clamp(0.1, 3600.0)),
+        (Prop::StreamGlow, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.glow = n.clamp(0.0, 20.0)),
         (Prop::DryShape, Value::Choice(index, _)) => {
             let shape = DryShape::ALL.get(index).copied().unwrap_or_default();
             with(world, entity, |d: &mut DryArea| d.shape = shape)

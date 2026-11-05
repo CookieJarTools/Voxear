@@ -3634,6 +3634,48 @@ fn a_stream_runs_along_its_path_and_breaks_white_where_it_runs_steep() {
     assert!(changed > 16, "its ripples move: {changed} of 64 pixels changed");
 }
 
+#[test]
+fn lava_glows_where_it_sets_out_crusts_over_as_it_runs_and_a_lake_of_it_cracks() {
+    use voxear_render::{Liquid, Pool, Sky, Stream};
+    use voxear_scene::{Path, PathPoint};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let eye = Vec3::new(0.0, 12.0, -8.0);
+    let look = Quat::from_rotation_arc(Vec3::Z, (Vec3::new(0.0, 0.0, 15.0) - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    // Dusk, so the glow shows.
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.4, -0.3, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 0.3), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let rock = MaterialDesc { base_color: [0.12, 0.11, 0.1, 1.0], roughness: 0.8, ..MaterialDesc::default() };
+    let rock = renderer.add_material(&rock).unwrap();
+    world.spawn((MeshRenderer::new(plane, rock), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(200.0))));
+    // Level, at a metre a second: as many seconds old as metres from where it sets out, crusted over after ten.
+    let point = |z: f32| PathPoint { position: [0.0, 0.3, z], width: 4.0 };
+    let path = Path { points: vec![point(0.0), point(20.0), point(40.0)], closed: false };
+    world.spawn((Stream { liquid: Liquid::Lava, cooling: 10.0, ..Stream::default() }, path, Transform::default()));
+    let lake = Pool { liquid: Liquid::Lava, size: [6.0, 6.0], depth: 0.5, ..Pool::default() };
+    world.spawn((lake, Transform::from_position(Vec3::new(8.0, 0.2, 14.0))));
+    run(&mut renderer, &world, &mut 100.0, 10);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("lava.png", &pixels);
+    let fresh = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 0.3, 3.5)), 3);
+    assert!(fresh[0] > 150 && fresh[0] > fresh[1] + 50 && fresh[1] > fresh[2], "molten orange where it sets out: {fresh:?}");
+    let old = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 0.3, 30.0)), 4);
+    assert!((old[0] - old[2]) * 4 < fresh[0] - fresh[2], "crusted over, its glow gone, thirty metres on: {old:?}");
+    // The lake: dark plates, and molten lava glowing between them.
+    let (centre, corner) = (on_screen(eye, look, Vec3::new(8.0, 0.2, 14.0)), on_screen(eye, look, Vec3::new(10.0, 0.2, 16.0)));
+    let reach = centre.0.abs_diff(corner.0).max(centre.1.abs_diff(corner.1)).max(4);
+    let area: Vec<[i32; 3]> = (centre.1 - reach..centre.1 + reach)
+        .flat_map(|y| (centre.0 - reach..centre.0 + reach).map(move |x| (x, y)))
+        .map(|at| rgb_at(&pixels, at))
+        .collect();
+    let glowing = area.iter().filter(|c| c[0] > 120 && c[0] > c[2] + 60).count();
+    let dark = area.iter().filter(|c| c[0] < 50).count();
+    assert!(glowing * 20 > area.len() && dark * 4 > area.len(), "plates and cracks: {glowing} glowing, {dark} dark of {}", area.len());
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

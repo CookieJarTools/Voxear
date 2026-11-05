@@ -340,7 +340,9 @@ struct StreamPoint
     float3 tangent;
     float speed;
     float foam;
-    float3 pad;
+    // How long what flows there has taken to come from the Stream's start, in seconds.
+    float age;
+    float2 pad;
 };
 
 // A Pool or a Dry Area (src/water_bodies.rs, GpuWaterBody): where it is, a Pool's footprint (x, z) or a Dry
@@ -350,6 +352,9 @@ struct StreamPoint
 static const uint WATER_POOL = 1;
 static const uint WATER_DRY = 2;
 static const uint WATER_STREAM = 3;
+// What fills a Pool or a Stream (Liquid in src/water_bodies.rs).
+static const uint LIQUID_WATER = 0;
+static const uint LIQUID_LAVA = 1;
 static const uint DRY_BOX = 0;
 static const uint DRY_SPHERE = 1;
 static const uint DRY_CAPSULE = 2;
@@ -365,6 +370,8 @@ struct WaterBody
     float waves;
     float3 absorb;
     uint liquid;
+    // Lava's: how many seconds it takes to crust over (x), and how brightly it glows (y).
+    float4 lava;
 };
 
 struct LocalShadows

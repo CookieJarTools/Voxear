@@ -553,6 +553,23 @@ impl Displacement {
         let bottom = lerp3(get(x0, z0 + 1.0), get(x0 + 1.0, z0 + 1.0), tx);
         lerp3(top, bottom, tz)
     }
+
+    /// As [`Displacement::at`], read smoothly through its 4×4 nearest
+    /// points (Catmull-Rom), so a wave only a few points long keeps its
+    /// crest rather than being cut flat between them.
+    pub fn smooth_at(&self, x: f32, z: f32) -> [f32; 3] {
+        let n = self.resolution;
+        let (fx, fz) = (x / self.size * n as f32, z / self.size * n as f32);
+        let (x0, z0) = (fx.floor(), fz.floor());
+        let (tx, tz) = (fx - x0, fz - z0);
+        let wrap = |v: f32| (v as i64).rem_euclid(n as i64) as usize;
+        let get = |x: f32, z: f32| self.moved[wrap(z) * n + wrap(x)];
+        let curve = |p: [f32; 4], t: f32| {
+            p[1] + 0.5 * t * (p[2] - p[0] + t * (2.0 * p[0] - 5.0 * p[1] + 4.0 * p[2] - p[3] + t * (3.0 * (p[1] - p[2]) + p[3] - p[0])))
+        };
+        let steps = [-1.0, 0.0, 1.0, 2.0];
+        [0, 1, 2].map(|i| curve(steps.map(|dz| curve(steps.map(|dx| get(x0 + dx, z0 + dz)[i]), tx)), tz))
+    }
 }
 
 /// The sea's long waves on the CPU, for how high it is at a point: the two
@@ -565,12 +582,16 @@ pub struct OceanSampler {
     initial: Vec<Vec<Complex>>,
     surfaces: Vec<Displacement>,
     time: f64,
+    /// The surfaces the time before, and how many seconds before, for how
+    /// fast the water moves.
+    previous: Vec<Displacement>,
+    step: f64,
 }
 
 impl OceanSampler {
     pub fn new(sea: SeaState, level: f32) -> Self {
         let initial = (0..QUERY_CASCADES).map(|c| initial_spectrum(&sea.waves(), c, QUERY_RESOLUTION)).collect();
-        let mut sampler = Self { sea, level, initial, surfaces: Vec::new(), time: f64::NAN };
+        let mut sampler = Self { sea, level, initial, surfaces: Vec::new(), time: f64::NAN, previous: Vec::new(), step: 0.0 };
         sampler.set_time(0.0);
         sampler
     }
@@ -587,6 +608,8 @@ impl OceanSampler {
         self.sea = sea;
         let time = std::mem::replace(&mut self.time, f64::NAN);
         self.set_time(if time.is_nan() { 0.0 } else { time });
+        // Changed waves are no motion of the water's own.
+        self.previous.clear();
     }
 
     pub fn sea(&self) -> &SeaState {
@@ -607,23 +630,34 @@ impl OceanSampler {
         if time == self.time {
             return;
         }
-        self.time = time;
+        let before = std::mem::replace(&mut self.time, time);
         let (chop, scale) = (self.sea.choppiness, self.sea.scale as f32);
-        self.surfaces = (0..QUERY_CASCADES)
+        let surfaces = (0..QUERY_CASCADES)
             .map(|c| {
                 let mut surface = displacement(&self.initial[c], QUERY_RESOLUTION, c, time, chop);
                 surface.moved.iter_mut().for_each(|moved| *moved = moved.map(|d| d * scale));
                 surface
             })
             .collect();
+        // Only a short step forward tells how fast the water moves.
+        let step = time - before;
+        self.previous = std::mem::replace(&mut self.surfaces, surfaces);
+        self.step = step;
+        if !(step > 0.0 && step < 0.5) {
+            self.previous.clear();
+        }
     }
 
     /// How far the long waves move the water resting at `x`, `z`, where
     /// the sea is `depth` metres deep.
     fn moved(&self, x: f32, z: f32, depth: f32) -> [f32; 3] {
+        Self::moved_in(&self.surfaces, x, z, depth)
+    }
+
+    fn moved_in(surfaces: &[Displacement], x: f32, z: f32, depth: f32) -> [f32; 3] {
         let mut total = [0.0; 3];
-        for (cascade, surface) in self.surfaces.iter().enumerate() {
-            let d = surface.at(x, z);
+        for (cascade, surface) in surfaces.iter().enumerate() {
+            let d = surface.smooth_at(x, z);
             let weight = shallow_weight(cascade, depth);
             for i in 0..3 {
                 total[i] += d[i] * weight;
@@ -644,13 +678,34 @@ impl OceanSampler {
     /// As `height_at`, where the sea is `depth` metres deep, its waves
     /// dying away in the shallows.
     pub fn height_over(&self, x: f32, z: f32, depth: f32) -> f32 {
+        let (rx, rz) = self.resting(x, z, depth);
+        self.level + self.moved(rx, rz, depth)[1]
+    }
+
+    /// Where the water at the surface over `x`, `z` rests, the waves' sideways
+    /// movement undone by stepping back three times.
+    fn resting(&self, x: f32, z: f32, depth: f32) -> (f32, f32) {
         let (mut rx, mut rz) = (x, z);
         for _ in 0..3 {
             let d = self.moved(rx, rz, depth);
             rx = x - d[0];
             rz = z - d[2];
         }
-        self.level + self.moved(rx, rz, depth)[1]
+        (rx, rz)
+    }
+
+    /// How fast the water at the surface over `x`, `z` moves as the waves
+    /// carry it round, in metres a second: up a wave's front and down its
+    /// back, forwards on its crest and back in its trough. Still until it has
+    /// moved on once.
+    pub fn velocity_over(&self, x: f32, z: f32, depth: f32) -> Vec3 {
+        if self.previous.is_empty() {
+            return Vec3::ZERO;
+        }
+        let (rx, rz) = self.resting(x, z, depth);
+        let (now, before) = (self.moved(rx, rz, depth), Self::moved_in(&self.previous, rx, rz, depth));
+        let step = self.step as f32;
+        Vec3::new(now[0] - before[0], now[1] - before[1], now[2] - before[2]) / step
     }
 
     /// The way the sea faces at `x`, `z`, from its height a little either

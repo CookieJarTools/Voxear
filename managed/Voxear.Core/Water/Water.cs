@@ -53,7 +53,10 @@ public static unsafe class Water
 		return TrySample(position, out var water) ? water.Normal : Vector3.UnitY;
 	}
 
-	/// <summary>How fast the water flows at <paramref name="position"/>, in metres a second.</summary>
+	/// <summary>
+	/// How fast the water flows at <paramref name="position"/>, in metres a second: a Stream's current, or on the sea
+	/// the water carried round by its waves, up a wave's front and down its back.
+	/// </summary>
 	public static Vector3 FlowAt(Vector3 position)
 	{
 		return TrySample(position, out var water) ? water.Flow : Vector3.Zero;

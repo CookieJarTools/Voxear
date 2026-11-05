@@ -188,7 +188,8 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
     let sampler = query.sampler.as_ref()?;
     let depth = if query.shores { sea_depth(world, physics, sampler.level(), at) } else { f32::INFINITY };
     let height = sampler.height_over(at.x, at.z, depth);
-    Some(WaterPoint { height, normal: sampler.normal_over(at.x, at.z, depth), flow: Vec3::ZERO })
+    // On the sea, the water flows as its waves carry it round, so what floats is slowed against that, not held back.
+    Some(WaterPoint { height, normal: sampler.normal_over(at.x, at.z, depth), flow: sampler.velocity_over(at.x, at.z, depth) })
 }
 
 /// The water at a point as scripts take it: height, normal and flow.
@@ -341,6 +342,32 @@ mod tests {
         assert!(at(floating).y.abs() < 0.08, "half under, its middle at the surface: {}", at(floating));
         assert!(at(floating).x.abs() < 0.1 && at(floating).z.abs() < 0.1, "still water, still crate: {}", at(floating));
         assert!(at(drifting).z > 20.0 && at(drifting).y.abs() < 0.2, "carried down the stream: {}", at(drifting));
+    }
+
+    #[test]
+    fn a_crate_rides_a_stormy_sea_up_and_down_its_waves() {
+        let mut world = World::new();
+        world.spawn((Ocean { weather: voxear_render::Weather::Stormy, ..Ocean::default() }, Transform::default()));
+        let floating = crate_over(&mut world, Vec3::new(0.0, 1.0, 0.0));
+        let mut physics = PhysicsScene::new();
+        let dt = 1.0 / 60.0;
+        let (mut off, mut rise, mut count) = (0.0f32, 0.0f32, 0);
+        for step in 0..(20.0 / dt) as usize {
+            update(&mut world, f64::from(step as f32 * dt));
+            voxear_scene::propagate_transforms(&mut world);
+            float(&world, &mut physics);
+            physics.step(&mut world, dt);
+            // Once settled: how far its middle is from the surface it floats on, against how far that surface moves.
+            if step as f32 * dt > 5.0 {
+                let at = world.get::<Transform>(floating).unwrap().position;
+                let water = sample(&world, at).unwrap().height;
+                off += (at.y - water).powi(2);
+                rise += water.powi(2);
+                count += 1;
+            }
+        }
+        let (off, rise) = ((off / count as f32).sqrt(), (rise / count as f32).sqrt());
+        assert!(off < rise * 0.25, "its middle {off} m from the surface, which moves {rise} m");
     }
 
     #[test]

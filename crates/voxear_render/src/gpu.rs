@@ -394,7 +394,9 @@ pub struct GpuOcean {
     /// The sea floor round the camera (see `water`): its depth image, and
     /// each slice's corner, size and whether it is drawn.
     pub floor_texture: u32,
-    pub _pad: [u32; 2],
+    /// The tiling pattern foam is made of (see `water`).
+    pub foam_pattern: u32,
+    pub _pad: u32,
     pub floor: [[f32; 4]; 4],
 }
 

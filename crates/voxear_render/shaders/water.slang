@@ -233,20 +233,39 @@ float4 floorVertex(uint vertexId : SV_VertexID) : SV_Position
     return float4((world.xz - slice.xy) / slice.z * 2.0 - 1.0, floorDepth(frame, world.y), 1.0);
 }
 
+// How high the ground is at `uv` across slice `slice` of the sea floor,
+// read smoothly so its outline does not step from texel to texel; as deep
+// as the floor reaches where nothing stands.
+float floorSliceHeight(Frame* frame, uint slice, float2 uv)
+{
+    float2 tile = float2(float(slice % 2), float(slice / 2));
+    Texture2D floor = textures[NonUniformResourceIndex(frame->ocean.floorTexture)];
+    float d = smoothSample(floor, (tile + uv) * 0.5, float(FLOOR_TEXELS * 2)).r;
+    return frame->ocean.level - FLOOR_REACH + d * 2.0 * FLOOR_REACH;
+}
+
 // How high the ground is under `xz`, from the finest slice of the sea floor
-// that reaches it; far below the sea where none does, or nothing stands.
+// that reaches it, fading into the next one out towards its edge so no
+// seam shows where they meet; very far down beyond them all.
 float floorHeight(Frame* frame, float2 xz)
 {
     for (uint i = 0; i < FLOOR_SLICES; i++)
     {
         float4 slice = frame->ocean.floor[i];
         float2 uv = (xz - slice.xy) / slice.z;
-        if (slice.w > 0.0 && all(uv > 0.01) && all(uv < 0.99))
+        if (slice.w <= 0.0 || any(uv < 0.02) || any(uv > 0.98))
         {
-            float2 tile = float2(float(i % 2), float(i / 2));
-            float d = textures[NonUniformResourceIndex(frame->ocean.floorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], (tile + uv) * 0.5, 0.0).r;
-            return d > 0.0 ? frame->ocean.level - FLOOR_REACH + d * 2.0 * FLOOR_REACH : -1e9;
+            continue;
         }
+        float height = floorSliceHeight(frame, i, uv);
+        float edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+        float fade = saturate((0.15 - edge) / 0.12);
+        if (fade > 0.0 && i + 1 < FLOOR_SLICES && frame->ocean.floor[i + 1].w > 0.0)
+        {
+            float4 next = frame->ocean.floor[i + 1];
+            height = lerp(height, floorSliceHeight(frame, i + 1, (xz - next.xy) / next.z), fade);
+        }
+        return height;
     }
     return -1e9;
 }
@@ -285,6 +304,104 @@ float shoreFoam(Frame* frame, float depth, float2 xz)
     float rolling = 0.5 + 0.5 * sin(depth * 7.0 + frame->time * 1.4 + along);
     float surf = smoothstep(0.55, 0.95, rolling) * saturate(1.0 - depth / 2.5) * saturate(depth / 0.15);
     return max(edge, surf * 0.85);
+}
+
+// ---------------------------------------------------------------- Foam's pattern
+
+// The tiling pattern foam is made of: this many texels a side, covering
+// this many metres of water.
+static const uint FOAM_PATTERN = 512;
+static const float FOAM_PATTERN_SIZE = 6.0;
+
+// The nearest and second nearest of a scatter of points a unit apart round
+// `p`, repeating every `period` units: how far the nearest is, and how much
+// further the second is (small along the edges between cells).
+float2 tiledCells(float2 p, float period)
+{
+    float2 n = floor(p);
+    float2 f = frac(p);
+    float first = 8.0;
+    float second = 8.0;
+    for (int j = -1; j <= 1; j++)
+    {
+        for (int i = -1; i <= 1; i++)
+        {
+            float2 g = float2(i, j);
+            float2 cell = n + g;
+            float2 r = g + cellPoint(cell - floor(cell / period) * period) - f;
+            float d = dot(r, r);
+            if (d < first)
+            {
+                second = first;
+                first = d;
+            }
+            else if (d < second)
+            {
+                second = d;
+            }
+        }
+    }
+    return float2(sqrt(first), sqrt(second) - sqrt(first));
+}
+
+// Smooth noise from 0 to 1 over `p`, repeating every `period` units.
+float tiledNoise(float2 p, float period)
+{
+    float2 n = floor(p);
+    float2 f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float corner[4];
+    for (uint i = 0; i < 4; i++)
+    {
+        float2 at = n + float2(float(i & 1), float(i >> 1));
+        corner[i] = cellPoint(at - floor(at / period) * period).x;
+    }
+    return lerp(lerp(corner[0], corner[1], f.x), lerp(corner[2], corner[3], f.x), f.y);
+}
+
+// Noise in three octaves over `p`, repeating every `period` units.
+float tiledBillows(float2 p, float period)
+{
+    return tiledNoise(p, period) * 0.5 + tiledNoise(p * 2.0, period * 2.0) * 0.3 + tiledNoise(p * 4.0, period * 4.0) * 0.2;
+}
+
+// One texel of foam's pattern (storage image push.output): in red, its froth,
+// highest along the threads between bubbles, three sizes of them, and where
+// they clump, lowest in the holes where bubbles have burst, spread evenly
+// from 0 to 1 so as much foam shows as there is; in green, soft round
+// bubbles, for under the surface.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void foamPatternMain(uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = (float2(id.xy) + 0.5) / float(FOAM_PATTERN);
+    // Bent, so its cells are as uneven as a froth's.
+    float2 bent = uv + (float2(tiledBillows(uv * 5.0, 5.0), tiledBillows(uv * 5.0 + 0.5, 5.0)) - 0.5) * 0.06;
+    float2 large = tiledCells(bent * 9.0, 9.0);
+    float2 small = tiledCells(bent * 23.0 + 0.3, 23.0);
+    float2 tiny = tiledCells(bent * 51.0 + 0.7, 51.0);
+    float clumps = tiledBillows(uv * 4.0, 4.0);
+    float threads = (1.0 - smoothstep(0.0, 0.3, large.y)) * 0.45 + (1.0 - smoothstep(0.0, 0.15, small.y)) * 0.35
+        + (1.0 - smoothstep(0.0, 0.1, tiny.y)) * 0.2;
+    float raw = threads * (0.55 + 0.45 * smoothstep(0.0, 0.35, small.x)) * (0.25 + 1.1 * pow(clumps, 1.5));
+    float froth = 1.0 - exp(-raw * 5.27);
+    float2 round = tiledCells(uv * 14.0 + 0.37, 14.0);
+    float bubbles = (1.0 - smoothstep(0.1, 0.45, round.x)) * (0.5 + 0.5 * tiledNoise(uv * 9.0, 9.0));
+    storageImagesRgba16f[push.output][id.xy] = float4(froth, bubbles, 0.0, 1.0);
+}
+
+// Foam's pattern over the water resting at `rest`: two sizes of it laid
+// over each other, so it does not visibly repeat, filtered by distance; at
+// least `blur` mips softer.
+float2 foamPatternAt(Frame* frame, float2 rest, float blur = 0.0)
+{
+    Texture2D pattern = textures[NonUniformResourceIndex(frame->ocean.foamPattern)];
+    SamplerState repeat = samplers[SAMPLER_LINEAR_REPEAT];
+    float2 a = rest / FOAM_PATTERN_SIZE;
+    float2 b = rest / (FOAM_PATTERN_SIZE * 2.7) + 0.31;
+    float2 near = blur > 0.0 ? pattern.SampleLevel(repeat, a, blur).xy : pattern.Sample(repeat, a).xy;
+    float2 far = blur > 0.0 ? pattern.SampleLevel(repeat, b, blur).xy : pattern.Sample(repeat, b).xy;
+    return near * 0.65 + far * 0.35;
 }
 
 // How much foam a crest breaking at `rest` leaves behind: only where the
@@ -546,12 +663,13 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
     return o;
 }
 
-// A cascade's image at `uv` through a cubic B-spline over its 4×4 nearest
-// texels, made of four bilinear reads: smooth
-// in value and slope, so a texel's edges do not show however near it is.
-float4 smoothSample(Texture2D image, float2 uv)
+// An image `texels` across (a cascade's, unless told) at `uv` through a
+// cubic B-spline over its 4×4 nearest texels, made of four bilinear reads:
+// smooth in value and slope, so a texel's edges do not show however near
+// it is.
+float4 smoothSample(Texture2D image, float2 uv, float texels = float(OCEAN_N))
 {
-    float2 texel = uv * float(OCEAN_N) - 0.5;
+    float2 texel = uv * texels - 0.5;
     float2 f = frac(texel);
     float2 i = floor(texel);
     float2 f2 = f * f;
@@ -563,8 +681,8 @@ float4 smoothSample(Texture2D image, float2 uv)
     float2 s0 = w0 + w1;
     float2 s1 = w2 + w3;
     // Each pair of texels as one bilinear read between them, at their centres' weighted middle.
-    float2 p0 = (i - 1.0 + w1 / s0 + 0.5) / float(OCEAN_N);
-    float2 p1 = (i + 1.0 + w3 / s1 + 0.5) / float(OCEAN_N);
+    float2 p0 = (i - 1.0 + w1 / s0 + 0.5) / texels;
+    float2 p1 = (i + 1.0 + w3 / s1 + 0.5) / texels;
     SamplerState linear = samplers[SAMPLER_LINEAR_REPEAT];
     return s0.y * (s0.x * image.SampleLevel(linear, float2(p0.x, p0.y), 0.0) + s1.x * image.SampleLevel(linear, float2(p1.x, p0.y), 0.0))
          + s1.y * (s0.x * image.SampleLevel(linear, float2(p0.x, p1.y), 0.0) + s1.x * image.SampleLevel(linear, float2(p1.x, p1.y), 0.0));
@@ -610,12 +728,6 @@ void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2
     }
 }
 
-// Foam's bubbles at `rest`: small in the middle of each.
-float laceAt(float2 rest, float3 moved)
-{
-    return waterCells(rest * 1.3 + moved.xz * 0.5) * 0.7 + waterCells(rest * 4.1) * 0.3;
-}
-
 // How far a view from `world` away from the camera (along -`v`) goes
 // through Pool `pool`'s water before it leaves its box: out of its sides or
 // its bottom.
@@ -657,26 +769,6 @@ bool keptDry(Frame* frame, float3 world, uint body)
         }
     }
     return false;
-}
-
-// The distance to the nearest of a scatter of points, a cell a unit wide:
-// small in the middle of foam's bubbles.
-float waterCells(float2 p)
-{
-    float2 n = floor(p);
-    float2 f = frac(p);
-    float nearest = 8.0;
-    for (int j = -1; j <= 1; j++)
-    {
-        for (int i = -1; i <= 1; i++)
-        {
-            float2 g = float2(i, j);
-            float2 o = frac(sin(float2(dot(n + g, float2(127.1, 311.7)), dot(n + g, float2(269.5, 183.3)))) * 43758.5453);
-            float2 r = g + o - f;
-            nearest = min(nearest, dot(r, r));
-        }
-    }
-    return sqrt(nearest);
 }
 
 // Whether the camera is under the water's surface over it: the sea's, waves
@@ -854,39 +946,45 @@ FragmentOut waterFragment(WaterOut input)
     // As sharp as clear water shows what is under it, blurring only where it is deep or rough.
     float blur = sqrt(s.roughness) * 1.2 + log2(1.0 + thickness * 0.12);
     float3 behind = thickness < 1e3 ? glassBehind(push.texture, pixel / float2(frame->viewport) - bend, blur) : 0.0;
-    float3 under = behind * through + body * (1.0 - through);
-    float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
-    // Thinning to nothing where it meets the ground, rather than ending in a hard bright edge.
-    color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));
-
-    // Foam where a crest folds over, and where the water thins at a shore, in bubbles drifting with the waves.
-    // Only where the water folds hard does a crest break: a calm sea's gentle folding stays clear.
+    // How much foam there is: where a crest folds over, and where the water thins at a shore. Only where the water
+    // folds hard does a crest break: a calm sea's gentle folding stays clear.
     float threshold = 0.4 + 0.45 * frame->ocean.foam;
     float breaking = frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
     // Foam where the water over the ground is shallow, by its true depth under the moving surface, so it surges up
     // the shore with each wave; by how far the view goes through it where the ground is not known.
     float shore = ground > -1e8 ? shoreFoam(frame, input.world.y - ground, input.world.xz) : saturate(1.0 - thickness / 0.6);
-    // Foam's finer bubbles faded to their average where they are smaller than a pixel, so they do not shimmer.
-    float bubbles = saturate(length(fwidth(rest)) * 8.0 - 0.5);
-    float lace = lerp(laceAt(rest, moved), 0.4, bubbles);
+    // What breaking crests left, carried with the water (the sea's only).
+    float trail = sea ? keptFoam(frame, rest) : 0.0;
+    // Where on the foam's pattern: riding the waves; down a Stream, drawn out along it and carried with it.
+    float pattern = foamPatternAt(frame, rest + moved.xz * 0.3).x;
+    float2 bubbleAt = rest - v.xz / max(v.y, 0.2) * 0.25;
     if (stream)
     {
-        // A Stream's foam where it runs steep, and in lines drawn out along it the faster it runs, carried down it
-        // as its ripples are.
         float speed = length(flow);
         float2 along = flow / max(speed, 1e-4);
         float2 across = float2(-along.y, along.x);
-        float2 a = float2(dot(restA, along) * 0.25, dot(restA, across));
-        float2 b = float2(dot(restB, along) * 0.25, dot(restB, across));
+        float2 a = float2(dot(restA, along) * 0.35, dot(restA, across));
+        float2 b = float2(dot(restB, along) * 0.35, dot(restB, across));
         breaking = max(input.stream.z, 0.3 * saturate(speed / 4.0));
-        lace = lerp(lerp(laceAt(a, 0.0), laceAt(b, 0.0), blend), 0.4, bubbles);
+        pattern = lerp(foamPatternAt(frame, a).x, foamPatternAt(frame, b).x, blend);
     }
-    // What breaking crests left, carried with the water, streaked thin as it spreads (the sea's only).
-    float trail = sea ? keptFoam(frame, rest) : 0.0;
-    // Foam's edge never sharper than a pixel or two, whatever distance it is seen from.
-    float froth = max(max(breaking, shore), trail * 1.2) * 1.4 - lace;
-    float foam = smoothstep(0.0, max(1.0 / 6.0, fwidth(froth) * 1.5), froth);
-    float3 foamLit = 0.85 * (ambient + sunLight * shadow * saturate(dot(n, l)) / PI);
+    float coverage = saturate(max(max(breaking, shore), trail * 1.2));
+    // Bubbles a hand's breadth under the foam, seen through the water, a pale turquoise.
+    float bubbles = saturate(coverage * 1.6) * foamPatternAt(frame, bubbleAt, 3.0).y;
+    float3 bubbleLit = (scatter * 0.6 + 0.2) * (ambient + sunLight * shadow * 0.25);
+    float3 under = behind * through + body * (1.0 - through) + bubbleLit * bubbles * 0.5;
+    float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
+    // Thinning to nothing where it meets the ground, rather than ending in a hard bright edge.
+    color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));
+    // The foam itself: as much of the pattern as there is foam, its thickest froth first, so a little foam is a
+    // lace of its densest threads and the most, white water, is all of it. Its edge never sharper than a pixel or two.
+    float edge = max(0.3, fwidth(pattern) * 1.5);
+    float from = 1.0 - coverage * 1.6;
+    float foam = smoothstep(from, from + edge, pattern) * saturate(coverage * 4.0);
+    // Lit as a rough white surface with a little relief, light wrapping round its bubbles.
+    float3 foamNormal = bumped(input.world, n, pattern * 0.03);
+    float wrapped = saturate((dot(foamNormal, l) + 0.4) / 1.4);
+    float3 foamLit = 0.9 * (ambient + sunLight * shadow * wrapped / PI);
     color = lerp(color, foamLit, foam);
     // A Stream fades in over its first two points and out over its last two.
     if (stream)

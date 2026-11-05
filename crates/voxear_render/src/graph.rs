@@ -390,6 +390,15 @@ impl<'a> FrameGraph<'a> {
         Ok(ImageId(self.images.len() - 1))
     }
 
+    /// Whether a graph-owned image has not been used yet, as a kept one has
+    /// not in the frame it is made: for what is drawn into it only once.
+    pub fn is_new(&self, id: ImageId) -> bool {
+        match &self.images[id.0] {
+            GraphImage::Transient { name, .. } => self.graph.transients[name].state == UNTOUCHED,
+            GraphImage::Imported { .. } => false,
+        }
+    }
+
     /// The bindless index for sampling a graph-owned image.
     pub fn texture(&self, id: ImageId) -> TextureId {
         match &self.images[id.0] {

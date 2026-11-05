@@ -52,6 +52,9 @@ const FLOOR_REFRESH: u32 = 120;
 /// each, as `FOAM_TEXELS` and `FOAM_TEXEL` in `shaders/water.slang`.
 const FOAM_TEXELS: u32 = 512;
 const FOAM_TEXEL: f32 = 0.5;
+/// The tiling pattern foam is made of, this many texels a side, as
+/// `FOAM_PATTERN` in `shaders/water.slang`; made once, with mips.
+const FOAM_PATTERN: u32 = 512;
 
 /// A view's sea: its spectrum, written when the sea changes, and the FFT's
 /// rows.
@@ -183,6 +186,8 @@ pub struct Water {
     /// The sea floor, and the slices drawn into it this frame, with what
     /// stands in each.
     floor: (ImageId, Vec<(u32, Vec<Ground>)>),
+    /// The pattern foam is made of, and whether it is to be made this frame.
+    pattern: (ImageId, bool),
     /// Whether the sea is drawn, how many Pools, how many points each
     /// Stream has, and how many Dry Areas.
     sea: bool,
@@ -226,6 +231,9 @@ impl Water {
         let floor_desc = ImageDesc::new(FLOOR_TEXELS * 2, FLOOR_TEXELS * 2, crate::pipelines::DEPTH_FORMAT, floor_usage);
         let floor_image = fg.history_image(gpu, bindless, "sea floor", floor_desc)?;
         let (floor, floor_draws) = buffers.floor_slices(camera, level, ground);
+        let pattern_desc = ImageDesc::new(FOAM_PATTERN, FOAM_PATTERN, WAVE_FORMAT, usage).with_mips();
+        let pattern = fg.history_image(gpu, bindless, "foam pattern", pattern_desc)?;
+        let pattern_new = fg.is_new(pattern);
         let mut wave = |name: &str, cascade: usize, set: bool| {
             let set = if set { "a" } else { "b" };
             fg.history_image(gpu, bindless, &format!("ocean {name} {cascade} {set}"), desc)
@@ -281,7 +289,8 @@ impl Water {
             foam_origin,
             streams: bodies.streams.len() as u32,
             floor_texture: fg.texture(floor_image).0,
-            _pad: [0; 2],
+            foam_pattern: fg.texture(pattern).0,
+            _pad: 0,
             floor,
         };
         Ok(Self {
@@ -297,6 +306,7 @@ impl Water {
             foam: (foam_now, foam_then, previous_origin),
             lens: (lens_now, lens_then, lens_kept),
             floor: (floor_image, floor_draws),
+            pattern: (pattern, pattern_new),
             size: [extent.width, extent.height],
             frame,
             sea: found.is_some(),
@@ -305,6 +315,11 @@ impl Water {
             dries: bodies.dries(),
         })
     }
+}
+
+/// How many mips the foam pattern has, down to one texel.
+fn pattern_desc_mips() -> usize {
+    (32 - FOAM_PATTERN.leading_zeros()) as usize
 }
 
 /// What the sea floor is drawn from: an opaque instance standing still, where
@@ -382,8 +397,26 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, size, sea, pools, streams, dries, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, pattern, size, sea, pools, streams, dries, .. } = water;
     let (floor_image, floor_draws) = floor;
+    // The pattern foam is made of, once, with its mips.
+    let (pattern, pattern_new) = pattern;
+    if pattern_new {
+        let mips: Vec<StorageImageId> = (0..pattern_desc_mips()).map(|mip| fg.storage(pattern, mip)).collect();
+        let texture = fg.texture(pattern);
+        fg.add_pass("Foam pattern", &[(pattern, ImageAccess::StorageWrite)], &[], move |ctx| {
+            let push = Push { output: mips[0].0, ..push };
+            bind(ctx, pipelines.foam_pattern, vk::PipelineBindPoint::COMPUTE, &push);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, FOAM_PATTERN / 8, FOAM_PATTERN / 8, 1) };
+            for mip in 1..mips.len() as u32 {
+                compute_barrier(ctx);
+                let side = (FOAM_PATTERN >> mip).max(1);
+                let push = Push { texture: texture.0, level: mip - 1, output: mips[mip as usize].0, size: [side, side], ..push };
+                bind(ctx, pipelines.ocean_mip, vk::PipelineBindPoint::COMPUTE, &push);
+                unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, side.div_ceil(8), side.div_ceil(8), 1) };
+            }
+        });
+    }
     let WaterTargets { hdr, velocity, depth, index_buffer, sampled } = targets;
     // The ground under the water, from straight above, into the slices that moved or are due.
     if !floor_draws.is_empty() {
@@ -471,7 +504,7 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
     });
 
     let mut waves: Vec<ImageId> = displacement.iter().chain(&slopes).chain(&previous).copied().collect();
-    waves.extend([foam_now, floor_image]);
+    waves.extend([foam_now, floor_image, pattern]);
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;

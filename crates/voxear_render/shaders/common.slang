@@ -332,7 +332,9 @@ struct Ocean
     // The sea floor round the camera (water.slang's floorVertex): its depth image, and each slice's corner, size and
     // whether it is drawn.
     uint floorTexture;
-    uint2 pad;
+    // The tiling pattern foam is made of (water.slang's foamPatternMain).
+    uint foamPattern;
+    uint pad;
     float4 floor[4];
 };
 

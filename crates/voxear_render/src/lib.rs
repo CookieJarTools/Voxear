@@ -754,6 +754,18 @@ impl Renderer {
         self.assets.as_ref()?.mesh_bounds(mesh)
     }
 
+    /// A mesh's finest triangles in its own space, for picking: read back
+    /// from the GPU the first time, which waits for it, and kept.
+    pub fn mesh_triangles(&self, mesh: MeshHandle) -> Option<std::sync::Arc<MeshTriangles>> {
+        match self.assets.as_ref()?.mesh_triangles(&self.gpu, mesh) {
+            Ok(triangles) => triangles,
+            Err(error) => {
+                tracing::error!("reading back mesh {}: {error:#}", mesh.0);
+                None
+            }
+        }
+    }
+
     /// A mesh's bounding sphere in its own space, centre and radius.
     pub fn mesh_sphere(&self, mesh: MeshHandle) -> Option<(voxear_core::math::Vec3, f32)> {
         self.assets.as_ref()?.mesh_sphere(mesh)

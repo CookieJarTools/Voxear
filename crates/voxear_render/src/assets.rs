@@ -6,6 +6,8 @@
 //! with their vertices and triangles beside it. Content frees what nothing uses; the space and slots go
 //! back to their allocators once no frame in flight can still read them.
 
+use std::sync::Arc;
+
 use std::collections::HashMap;
 use voxear_core::math::Vec3;
 
@@ -22,7 +24,7 @@ use crate::{
     cooked::{CookedModel, CookedTexture},
     gpu::{GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_FOLIAGE, MATERIAL_GLASS, MATERIAL_NORMAL_MAP},
     lod::{Lod, LodInfo, MAX_LODS, build_lods},
-    mesh::{MeshData, Primitive, Vertex},
+    mesh::{MeshData, MeshTriangles, Primitive, Vertex},
     meshlets::MeshMeshlets,
     payload::{Payload, tile_len},
     seasons::Leaves,
@@ -245,6 +247,8 @@ pub struct Assets {
     /// Each mesh's box in its own space, for picking: exact for meshes
     /// uploaded from their vertices, the bounding sphere's box for cooked ones.
     mesh_bounds: HashMap<MeshHandle, (Vec3, Vec3)>,
+    /// Meshes' finest triangles read back for picking, kept once read.
+    triangles: std::sync::Mutex<HashMap<MeshHandle, Arc<MeshTriangles>>>,
     textures: HashMap<TextureId, Image>,
     /// Freed resources and the frame from which nothing in flight uses them.
     retiring: Vec<(u64, Retiring)>,
@@ -280,12 +284,18 @@ impl Assets {
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
         // Ray tracing builds each mesh's bottom level straight from the shared buffers.
         let traced = if gpu.acceleration_structure.is_some() { BUILD_INPUT } else { vk::BufferUsageFlags::empty() };
-        let vertices =
-            gpu.create_buffer("vertices", MAX_VERTICES * size_of::<Vertex>() as u64, storage | traced, device_local)?;
+        // Read back for the editor's picking (`mesh_triangles`).
+        let read = vk::BufferUsageFlags::TRANSFER_SRC;
+        let vertices = gpu.create_buffer(
+            "vertices",
+            MAX_VERTICES * size_of::<Vertex>() as u64,
+            storage | traced | read,
+            device_local,
+        )?;
         let indices = gpu.create_buffer(
             "indices",
             MAX_INDICES * 4,
-            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST | traced,
+            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST | traced | read,
             device_local,
         )?;
         let meshes = gpu.create_buffer("meshes", MAX_MESHES * size_of::<GpuMesh>() as u64, storage, device_local)?;
@@ -310,6 +320,7 @@ impl Assets {
                 .map(RangeAllocator::new),
             mesh_slots: SlotAllocator::new(MAX_MESHES as u32),
             mesh_bounds: HashMap::new(),
+            triangles: std::sync::Mutex::new(HashMap::new()),
             material_slots: SlotAllocator::new(MAX_MATERIALS as u32),
             glass: Vec::new(),
             cut_out: Vec::new(),
@@ -373,6 +384,7 @@ impl Assets {
         let ranges = MeshRanges::new(self.reserve_space(sizes(data, lods, &meshlets))?);
         self.mesh_ranges.insert(mesh, ranges);
         self.mesh_bounds.remove(&mesh);
+        self.forget_triangles(mesh);
         self.write_mesh(gpu, mesh, ranges, data, lods, &meshlets)?;
         self.retire(frame, Retiring::Space(old.space));
         Ok(())
@@ -474,6 +486,31 @@ impl Assets {
     /// A mesh's box in its own space, min and max corners.
     pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<(Vec3, Vec3)> {
         self.mesh_bounds.get(&mesh).copied()
+    }
+
+    /// A mesh's finest triangles in its own space, read back from the GPU
+    /// the first time they are asked for, as a cooked mesh's never pass
+    /// through the CPU whole. For the editor's picking.
+    pub fn mesh_triangles(&self, gpu: &Gpu, mesh: MeshHandle) -> Result<Option<Arc<MeshTriangles>>> {
+        if let Some(kept) = self.triangles.lock().unwrap_or_else(|p| p.into_inner()).get(&mesh) {
+            return Ok(Some(kept.clone()));
+        }
+        let Some(ranges) = self.mesh_ranges.get(&mesh) else { return Ok(None) };
+        let stride = size_of::<Vertex>() as u64;
+        let (start, count) = ranges.space.vertices;
+        let bytes = gpu.read_buffer(&self.vertices, start * stride, count * stride)?;
+        let vertices: Vec<Vertex> = bytemuck::pod_collect_to_vec(&bytes);
+        let bytes = gpu.read_buffer(&self.indices, ranges.space.indices.0 * 4, u64::from(ranges.first_lod) * 4)?;
+        let triangles = Arc::new(MeshTriangles {
+            points: vertices.iter().map(|v| Vec3::from(v.position)).collect(),
+            indices: bytemuck::pod_collect_to_vec(&bytes),
+        });
+        self.triangles.lock().unwrap_or_else(|p| p.into_inner()).insert(mesh, triangles.clone());
+        Ok(Some(triangles))
+    }
+
+    fn forget_triangles(&self, mesh: MeshHandle) {
+        self.triangles.lock().unwrap_or_else(|p| p.into_inner()).remove(&mesh);
     }
 
     /// The first index and index count of a mesh's most detailed LOD, for
@@ -713,6 +750,7 @@ impl Assets {
     /// no frame has drawn yet.
     fn release_mesh(&mut self, handle: MeshHandle) {
         self.mesh_bounds.remove(&handle);
+        self.forget_triangles(handle);
         if let Some(ranges) = self.mesh_ranges.remove(&handle) {
             self.free_space(ranges.space);
             self.mesh_slots.free(handle.0);
@@ -886,6 +924,7 @@ impl Assets {
             Retiring::BottomLevel(level) => gpu.destroy_acceleration_structure(level),
             Retiring::Mesh(mesh) => {
                 self.mesh_bounds.remove(&mesh);
+                self.forget_triangles(mesh);
                 if let Some(hierarchies) = &mut self.hierarchies {
                     hierarchies.remove(mesh.0);
                 }

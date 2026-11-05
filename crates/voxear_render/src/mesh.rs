@@ -39,12 +39,40 @@ pub struct MeshData {
     pub indices: Vec<u32>,
 }
 
-/// A mesh's triangles, for physics: its points, and three indices a
-/// triangle, at its full detail.
+/// A mesh's triangles, for physics and the editor's picking: its points,
+/// and three indices a triangle, at its full detail.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MeshTriangles {
     pub points: Vec<Vec3>,
     pub indices: Vec<u32>,
+}
+
+impl MeshTriangles {
+    /// How far along a ray, in the mesh's own space, it first meets one of
+    /// the triangles, from either side (Möller-Trumbore).
+    pub fn first_hit(&self, origin: Vec3, direction: Vec3) -> Option<f32> {
+        let mut nearest: Option<f32> = None;
+        for triangle in self.indices.chunks_exact(3) {
+            let corner = |i: usize| self.points.get(triangle[i] as usize).copied();
+            let (Some(a), Some(b), Some(c)) = (corner(0), corner(1), corner(2)) else { continue };
+            let (ab, ac) = (b - a, c - a);
+            let p = direction.cross(ac);
+            let det = ab.dot(p);
+            if det.abs() < 1e-12 {
+                continue;
+            }
+            let inverse = 1.0 / det;
+            let s = origin - a;
+            let u = s.dot(p) * inverse;
+            let q = s.cross(ab);
+            let v = direction.dot(q) * inverse;
+            let t = ac.dot(q) * inverse;
+            if u >= 0.0 && v >= 0.0 && u + v <= 1.0 && t > 0.0 && nearest.is_none_or(|n| t < n) {
+                nearest = Some(t);
+            }
+        }
+        nearest
+    }
 }
 
 impl MeshData {

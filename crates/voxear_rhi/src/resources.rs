@@ -345,6 +345,27 @@ impl Gpu {
 
     /// Copies an image's first mip into a host-visible buffer and returns its
     /// bytes. For screenshots and tests.
+    /// Reads `size` bytes of a buffer made with `TRANSFER_SRC`, from
+    /// `offset`, once what was submitted before has written them; waits for
+    /// the GPU.
+    pub fn read_buffer(&self, buffer: &Buffer, offset: u64, size: u64) -> Result<Vec<u8>> {
+        let usage = vk::BufferUsageFlags::TRANSFER_DST;
+        let readback = self.create_buffer("readback", size, usage, MemoryLocation::GpuToCpu)?;
+        self.immediate(|cmd| unsafe {
+            let written = vk::MemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                .dst_access_mask(vk::AccessFlags2::TRANSFER_READ);
+            self.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[written]));
+            let region = vk::BufferCopy { src_offset: offset, dst_offset: 0, size };
+            self.device.cmd_copy_buffer(cmd, buffer.handle, readback.handle, &[region]);
+        })?;
+        let bytes = readback.read()[..size as usize].to_vec();
+        self.destroy_buffer(readback);
+        Ok(bytes)
+    }
+
     pub fn read_image(&self, image: vk::Image, desc: ImageDesc, layout: vk::ImageLayout) -> Result<Vec<u8>> {
         let bytes = u64::from(desc.width) * u64::from(desc.height) * 4;
         let readback =

@@ -18,7 +18,7 @@
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Entity, World};
 use voxear_engine::audio::AudioSource;
-use voxear_render::{Camera, Foliage, Light, MeshRenderer, ModelRenderer, Renderer};
+use voxear_render::{Camera, Foliage, Light, MeshHandle, MeshRenderer, ModelRenderer, Renderer};
 use voxear_scene::{Destroying, EditorOnly, Parent, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -170,7 +170,7 @@ impl Markers {
 }
 
 /// The Obj under a point in the Scene view: the nearest mesh the ray
-/// enters, by its box, or a light, camera or Audio Source whose marker shows
+/// meets, or a light, camera or Audio Source whose marker shows
 /// close by.
 pub fn pick(
     world: &World,
@@ -208,8 +208,8 @@ pub fn pick(
     best.map(|(_, entity)| entity)
 }
 
-/// Where the ray through a point in the Scene view first meets a mesh, by
-/// its box, or else the ground, the plane through the origin facing up, if
+/// Where the ray through a point in the Scene view first meets a mesh, or
+/// else the ground, the plane through the origin facing up, if
 /// that is in front and not too near the horizon to place things on.
 pub fn surface_at(world: &World, renderer: &Renderer, camera: &ViewCamera, point: [f32; 2]) -> Option<Vec3> {
     surface_past(world, renderer, camera, point, &[])
@@ -236,7 +236,9 @@ pub fn surface_past(
     (along > 0.0 && along < GROUND_REACH).then_some(ground)
 }
 
-/// Each mesh a ray enters, by its box: how far along the ray, where, and its Obj.
+/// Each mesh a ray meets: how far along the ray, where, and its Obj. A ray
+/// that enters a mesh's box is tried against its triangles, as a box alone
+/// let a building's parts, which the camera stands inside, take every click.
 /// With `plants`, each plant of a Foliage too, by its own box, for its Obj.
 fn mesh_hits(
     world: &World,
@@ -249,17 +251,23 @@ fn mesh_hits(
         .without::<EditorOnly>()
         .without::<Destroying>();
     let mut hits = Vec::new();
-    let mut try_box = |entity: Entity, matrix: Mat4, (min, max): (Vec3, Vec3)| {
+    let mut try_box = |entity: Entity, matrix: Mat4, (min, max): (Vec3, Vec3), mesh: Option<MeshHandle>| {
         let inverse = matrix.inverse();
         let (local_origin, local_direction) = (inverse.transform_point3(origin), inverse.transform_vector3(direction));
-        if let Some(t) = enter_box(local_origin, local_direction, min, max) {
-            let hit = matrix.transform_point3(local_origin + local_direction * t);
-            hits.push((hit.distance(origin), hit, entity));
-        }
+        let Some(t) = enter_box(local_origin, local_direction, min, max) else { return };
+        let t = match mesh.and_then(|mesh| renderer.mesh_triangles(mesh)) {
+            Some(triangles) => match triangles.first_hit(local_origin, local_direction) {
+                Some(t) => t,
+                None => return,
+            },
+            None => t,
+        };
+        let hit = matrix.transform_point3(local_origin + local_direction * t);
+        hits.push((hit.distance(origin), hit, entity));
     };
     for (entity, renderer_of, transform, placed) in meshes {
         let Some(bounds) = renderer.mesh_bounds(renderer_of.mesh) else { continue };
-        try_box(entity, placed.map_or_else(|| transform.matrix(), |w| w.0), bounds);
+        try_box(entity, placed.map_or_else(|| transform.matrix(), |w| w.0), bounds, Some(renderer_of.mesh));
     }
     // A model drawn whole is hit by each of its parts' boxes, not the box round them all, which would take in
     // everything inside a building.
@@ -269,8 +277,9 @@ fn mesh_hits(
         .without::<Destroying>();
     for (entity, model, transform, placed) in models {
         let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
-        for (part, min, max) in model.part_boxes(renderer) {
-            try_box(entity, obj * part, (min, max));
+        for part in model.parts.iter() {
+            let Some(bounds) = renderer.mesh_bounds(part.mesh) else { continue };
+            try_box(entity, obj * part.transform, bounds, Some(part.mesh));
         }
     }
     let foliage = world
@@ -286,7 +295,7 @@ fn mesh_hits(
                 Quat::from_rotation_y(plant.yaw),
                 Vec3::from(plant.position),
             );
-            try_box(entity, obj * local, bounds);
+            try_box(entity, obj * local, bounds, None);
         }
     }
     hits

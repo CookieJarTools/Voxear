@@ -6498,6 +6498,39 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
 }
 
 #[test]
+fn a_click_picks_the_mesh_it_meets_not_a_box_round_the_camera() {
+    use voxear_core::math::Quat;
+    use voxear_render::{MeshRenderer, Primitive};
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let camera = editor.scene_camera().unwrap();
+    let viewport = editor.ui.find(editor.ui.root(), "viewport").unwrap();
+    let [x, y, w, h] = editor.ui.rect(viewport);
+    let middle = [x + w * 0.5, y + h * 0.5];
+    let (eye, ahead) = camera.ray(middle);
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let material = renderer.add_material(&voxear_render::MaterialDesc::default()).unwrap();
+    let world = &mut editor.game.engine.world;
+    // A room round the camera, as a building's parts are round it in Sponza, and a ball in front.
+    let around = Transform::new(eye, Quat::IDENTITY, Vec3::splat(60.0));
+    let room = world.spawn((MeshRenderer::new(sphere, material), around));
+    let at = eye + ahead * 5.0;
+    let ball = world.spawn((MeshRenderer::new(sphere, material), Transform::new(at, Quat::IDENTITY, Vec3::ONE)));
+    frame(&mut editor, &mut renderer);
+    let markers = voxear_editor::scene_tools::Markers::NONE;
+    let pick = |editor: &voxear_editor::Editor, renderer: &Renderer, point| {
+        voxear_editor::scene_tools::pick(&editor.game.engine.world, renderer, &camera, point, markers)
+    };
+    assert_eq!(pick(&editor, &renderer, middle), Some(ball), "the ball, not the room the camera stands in");
+    // Inside the ball's box, but past its round edge: whatever is behind it, Hello's own Objs or the room.
+    let right = ahead.cross(Vec3::Y).normalize();
+    let up = right.cross(ahead);
+    let corner = camera.project(at + (right + up) * 0.45).unwrap();
+    let behind = pick(&editor, &renderer, corner);
+    assert!(behind.is_some() && behind != Some(ball), "a click past the ball's edge goes by it: {behind:?}");
+    assert_ne!(pick(&editor, &renderer, middle), Some(room));
+}
+
+#[test]
 fn a_scenes_inspector_shows_its_lighting_to_change() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
     let dir = hello_copy();

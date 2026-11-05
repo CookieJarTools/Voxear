@@ -3676,6 +3676,39 @@ fn lava_glows_where_it_sets_out_crusts_over_as_it_runs_and_a_lake_of_it_cracks()
     assert!(glowing * 20 > area.len() && dark * 4 > area.len(), "plates and cracks: {glowing} glowing, {dark} dark of {}", area.len());
 }
 
+#[test]
+fn up_close_the_sea_has_ripples_finer_than_its_waves() {
+    use voxear_render::{Ocean, Sky};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // Two metres over the water, looking down into the sun's glints.
+    let look = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.6, 1.0).normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 2.0, 0.0), look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.4, -1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    world.spawn((Ocean::default(), Transform::default()));
+    run(&mut renderer, &world, &mut 30.0, 20);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("sea up close.png", &pixels);
+    // How much each pixel differs from the next across the lower half: ripples a few pixels wide make it large,
+    // the waves' long smooth swells small.
+    let grey = |at: (u32, u32)| {
+        let [r, g, b] = rgb_at(&pixels, at);
+        (r + g + b) / 3
+    };
+    let (mut total, mut count) = (0, 0);
+    for y in 200..340u32 {
+        for x in 40..600u32 {
+            total += (grey((x + 1, y)) - grey((x, y))).abs();
+            count += 1;
+        }
+    }
+    // About 2.2 with the ripple cascades, 0.7 without them.
+    let detail = total as f32 / count as f32;
+    assert!(detail > 1.4, "ripples up close: {detail}");
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

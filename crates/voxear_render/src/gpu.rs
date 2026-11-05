@@ -364,11 +364,11 @@ pub struct GpuFrame {
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuOcean {
     /// Each cascade's tile, in metres.
-    pub sizes: [f32; 4],
+    pub sizes: [f32; crate::ocean::CASCADES],
     /// Each cascade's movement and folding, its slopes, and last frame's movement.
-    pub displacement: [u32; 4],
-    pub slopes: [u32; 4],
-    pub previous: [u32; 4],
+    pub displacement: [u32; crate::ocean::CASCADES],
+    pub slopes: [u32; crate::ocean::CASCADES],
+    pub previous: [u32; crate::ocean::CASCADES],
     /// Linear colours.
     pub deep: [f32; 3],
     pub level: f32,
@@ -916,9 +916,9 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 160
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 192
         );
-        assert_eq!(size_of::<GpuOcean>(), 160);
+        assert_eq!(size_of::<GpuOcean>(), 192);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);

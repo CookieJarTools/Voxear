@@ -11,7 +11,9 @@
 
 // The cascades' resolution and how many there are (OCEAN_CASCADES in src/ocean.rs).
 static const uint OCEAN_N = 256;
-static const uint OCEAN_CASCADES = 4;
+static const uint OCEAN_CASCADES = 6;
+// The cascades whose folding breaks into foam: the ripples' never does.
+static const uint OCEAN_BREAKING_CASCADES = 4;
 // The sea's grid: rings of this many quads across, the first this many metres apart, each twice the last.
 static const uint WATER_QUADS = 64;
 static const uint WATER_RINGS = 12;
@@ -75,12 +77,13 @@ int frequencyOf(uint i)
     return i < OCEAN_N / 2 ? int(i) : int(i) - int(OCEAN_N);
 }
 
-// A wave number's frequency in deep water, rounded to a whole number of
-// turns in OCEAN_REPEAT, as the CPU's (ocean::frequency).
+// A wave number's frequency in deep water, by gravity and, for ripples,
+// surface tension, rounded to a whole number of turns in OCEAN_REPEAT, as
+// the CPU's (ocean::frequency).
 float waveFrequency(float k)
 {
     float step = 6.2831853 / OCEAN_REPEAT;
-    return floor(sqrt(GRAVITY * k) / step) * step;
+    return floor(sqrt(GRAVITY * k + 7.4e-5 * k * k * k) / step) * step;
 }
 
 // Row push.list of cascade push.level: each wave moved on to now, as its
@@ -210,7 +213,7 @@ float breakingAt(Frame* frame, float2 rest)
     for (uint c = 0; c < OCEAN_CASCADES; c++)
     {
         float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), 1.0);
-        folded += d.w - 1.0;
+        folded += c < OCEAN_BREAKING_CASCADES ? d.w - 1.0 : 0.0;
     }
     float threshold = 0.1 + 0.45 * frame->ocean.foam;
     return frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
@@ -506,9 +509,12 @@ void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2
         }
         float share = cascadeShare(c, swell) * weight;
         slope += s.xy * share;
-        // The slopes the mips averaged away, too small to see here, as roughness (Atlas).
-        variance += (max(s.z - s.x * s.x, 0.0) + max(s.w - s.y * s.y, 0.0)) * share * share;
-        folded += (d.w - 1.0) * share;
+        // The slopes the mips averaged away, too small to see here, as roughness (Atlas). Magnified, filtering
+        // the squares apart from the slopes would make roughness of nothing, so it starts only as texels shrink
+        // under a pixel.
+        float2 squares = lerp(s.xy * s.xy, s.zw, saturate(0.25 * log2(max(footprint, 1.0))));
+        variance += (max(squares.x - s.x * s.x, 0.0) + max(squares.y - s.y * s.y, 0.0)) * share * share;
+        folded += c < OCEAN_BREAKING_CASCADES ? (d.w - 1.0) * share : 0.0;
         moved += d.xyz * share;
     }
 }
@@ -711,8 +717,9 @@ FragmentOut waterFragment(WaterOut input)
     s.roughness = clamp(sqrt(alpha), 0.03, 1.0);
     s.diffuse = 0.0;
     s.f0 = 0.02;
+    // Fresnel over the roughness's spread of slopes (Atlas), so a rough sea's horizon is not over-bright.
     float nv = saturate(dot(n, v));
-    float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
+    float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0 * exp(-2.69 * alpha)) / (1.0 + 22.7 * pow(alpha, 1.5));
     float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
     float3 reflected = surroundingsReflection(frame, input.world, n, reflect(-v, n), s.roughness, ambient, atmosphere);
     // The sun, a little rougher than the water so its disc shows as a streak of glints rather than a point.
@@ -723,11 +730,13 @@ FragmentOut waterFragment(WaterOut input)
     // The water's own colour (Sea of Thieves, Atlas): deep blue lit by the sky, and the scatter colour where the
     // sun shines through the thin top of a wave towards the eye.
     float height = max(frame->ocean.waveHeight * max(waves, 0.2), 0.05);
-    // A Stream's ripples have no crests for light to come through.
-    float crest = stream ? 0.0 : saturate(moved.y / (height * 0.5)) + saturate(length(moved.xz) / height) * 0.5;
+    // Sea of Thieves' wave-peak mask: where the waves pinch the water most sideways, the crests are thinnest and
+    // let most light through; a little on every high wave too. A Stream's ripples have no crests to glow.
+    float pinched = saturate(length(moved.xz) / (height * 0.35));
+    float crest = stream ? 0.0 : max(pinched * pinched, saturate(moved.y / (height * 0.5)) * 0.5);
     float towards = pow(saturate(dot(l, -v)), 4.0) * pow(saturate(0.5 - 0.5 * dot(l, n)), 3.0);
     // Sea of Thieves' crests glow through: strongly towards the sun, and a little from every side on a wave's top.
-    float3 throughWave = (3.0 * crest * towards + 0.25 * crest * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
+    float3 throughWave = (3.0 * crest * towards + 0.12 * crest * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
     float3 body = deep * ambient + throughWave;
 
     // What lies under it: how far through the water, bent by the waves, and dimmed a colour at a time.

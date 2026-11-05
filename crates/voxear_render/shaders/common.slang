@@ -308,10 +308,11 @@ static const uint GLASS_LOCAL_TILE = 128;
 // significant height) and the time its waves are at, which repeats.
 struct Ocean
 {
-    float4 sizes;
-    uint4 displacement;
-    uint4 slopes;
-    uint4 previous;
+    // Each cascade's tile, in metres, and its images (OCEAN_CASCADES of them, src/ocean.rs's CASCADES).
+    float sizes[6];
+    uint displacement[6];
+    uint slopes[6];
+    uint previous[6];
     float3 deep;
     float level;
     float3 scatter;

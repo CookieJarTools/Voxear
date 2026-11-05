@@ -20,9 +20,11 @@ use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::Component;
 
 /// How many cascades of waves the sea has, from the longest.
-pub const CASCADES: usize = 4;
+pub const CASCADES: usize = 6;
 /// Each cascade's tile, in metres: coprime, so their repeats never line up.
-pub const CASCADE_SIZES: [f32; CASCADES] = [1031.0, 257.0, 61.0, 17.0];
+/// The last two hold the ripples, down to a centimetre, so the water is
+/// crisp however near it is seen.
+pub const CASCADE_SIZES: [f32; CASCADES] = [1031.0, 257.0, 61.0, 17.0, 4.3, 1.13];
 /// The GPU's cascades are this many waves across.
 pub const GPU_RESOLUTION: usize = 256;
 /// The CPU's copy, of the two longest cascades, for height queries.
@@ -182,11 +184,16 @@ impl Ocean {
 }
 
 /// How fast deep water carries a wave of wave number `k`, in radians a
-/// second, rounded to a whole number of turns in [`REPEAT_SECONDS`].
+/// second, rounded to a whole number of turns in [`REPEAT_SECONDS`]: by
+/// gravity, and for ripples of a few centimetres by surface tension too,
+/// which hurries them.
 pub fn frequency(k: f64) -> f64 {
     let step = std::f64::consts::TAU / REPEAT_SECONDS;
-    ((GRAVITY * k).sqrt() / step).floor() * step
+    ((GRAVITY * k + SURFACE_TENSION * k * k * k).sqrt() / step).floor() * step
 }
+
+/// Water's surface tension over its density, in m³/s².
+const SURFACE_TENSION: f64 = 7.4e-5;
 
 /// JONSWAP's energy at angular frequency `omega` (Hasselmann et al. 1973,
 /// as Horvath, "Empirical Directional Wave Spectra", 2015, gives it).

@@ -1093,6 +1093,8 @@ impl Ui {
             }
             None
         });
+        // A drag whose release never came (heard by something else) is over, its ghost and preview with it.
+        self.take_dock_drag();
         let shown_in = self.pointer_window;
         let drag = |dock, panel, window| DockDrag {
             dock,
@@ -1290,10 +1292,7 @@ impl Ui {
     /// preview showed and is used up; a press that never moved is left to be
     /// the tab's click.
     pub(crate) fn release_dock(&mut self) -> bool {
-        let Some(drag) = self.dock_drag.take() else { return false };
-        for node in [drag.ghost, drag.preview].into_iter().flatten() {
-            self.remove(NodeId(node));
-        }
+        let Some(drag) = self.take_dock_drag() else { return false };
         if !drag.dragging {
             return false;
         }
@@ -1347,6 +1346,15 @@ impl Ui {
         self.rebuild_dock(dock);
         self.mark_changed(dock);
         true
+    }
+
+    /// Ends the press or drag on a tab, taking its ghost and preview away.
+    pub(crate) fn take_dock_drag(&mut self) -> Option<DockDrag> {
+        let drag = self.dock_drag.take()?;
+        for node in [drag.ghost, drag.preview].into_iter().flatten() {
+            self.remove(NodeId(node));
+        }
+        Some(drag)
     }
 
     /// Half an area's width or height, for a split off its edge.

@@ -131,6 +131,39 @@ fn dragging_a_tab_to_an_edge_splits_the_area() {
     assert!(layout.contains("[scene], [project])"), "project split off the scene's right edge: {layout}");
 }
 
+/// A drag whose release something else heard, as the game's UI over a
+/// playing Game view did, leaves no ghost or preview behind once the next
+/// press or a cancel ends it, and the UI says it holds the press until then.
+#[test]
+fn a_tab_drag_that_never_hears_its_release_leaves_nothing_behind() {
+    let (mut ui, dock) = editor();
+    let scene = centre(&ui, tab(&ui, dock, "Scene"));
+    let lifted = |ui: &Ui| ["dock-ghost", "dock-preview"].map(|class| with_class(ui, ui.root(), class).is_some());
+    assert!(!ui.holds_press());
+    ui.pointer_move(scene.0, scene.1);
+    ui.pointer_button(true);
+    ui.pointer_move(scene.0 + 40.0, scene.1 + 120.0);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(lifted(&ui), [true, true]);
+    assert!(ui.holds_press(), "its release is the UI's, wherever it comes");
+
+    // Pressed again with no release between: the old drag ends where it was.
+    ui.pointer_button(true);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(lifted(&ui), [false, false]);
+    ui.pointer_button(false);
+    assert_eq!(ui.dock_layout(dock), "row(240, [hierarchy, project], column(380, [scene], [inspector]))");
+
+    // Cancelled mid-drag, as when the desktop takes the press over.
+    ui.pointer_move(scene.0, scene.1);
+    ui.pointer_button(true);
+    ui.pointer_move(scene.0 + 40.0, scene.1 + 120.0);
+    ui.cancel_press();
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(lifted(&ui), [false, false]);
+    assert!(!ui.holds_press());
+}
+
 #[test]
 fn a_tab_pressed_without_moving_is_a_click() {
     let (mut ui, dock) = editor();

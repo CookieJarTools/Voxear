@@ -208,6 +208,11 @@ impl Ui {
         true
     }
 
+    /// Whether an item is pressed, lifted or about to be.
+    pub(crate) fn reorder_pressed(&self) -> bool {
+        self.reorders.lift.is_some()
+    }
+
     /// Lets go of a pressed item: once it lifted, the move is reported and
     /// every item eases from where it is drawn to its place in the new
     /// order. True when it had lifted, as the release is then used up.

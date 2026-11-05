@@ -220,8 +220,19 @@ impl Ui {
     /// desktop took the press over to move a window.
     pub fn cancel_press(&mut self) {
         self.pointer_cancel();
-        self.dock_drag = None;
+        self.take_dock_drag();
         self.pointer.dragging = None;
+    }
+
+    /// Whether a press of this UI's is held: on one of its elements, or a
+    /// drag it started. Its release is this UI's, wherever the pointer is.
+    pub fn holds_press(&self) -> bool {
+        !self.pointer.pressed.is_empty()
+            || self.pointer.dragging.is_some()
+            || self.scrub.is_some()
+            || self.reorder_pressed()
+            || self.drag.is_some()
+            || self.dock_drag.is_some()
     }
 
     /// Forgets the press in progress, so letting go is no click: for a press

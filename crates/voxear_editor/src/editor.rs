@@ -2281,6 +2281,13 @@ impl Editor {
         if pointing && self.ui.window_of(self.nodes.game_viewport) != self.ui.pointer_window() {
             return false;
         }
+        // A press the editor's UI holds, as a tab being dragged, lets go there even over the game's UI.
+        // Taken by the game's instead, a tab let go over the playing Game view stayed dragged for good.
+        if matches!(event, WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. })
+            && self.ui.holds_press()
+        {
+            return false;
+        }
         let [x, y, w, h] = self.ui.rect(self.nodes.game_viewport).map(|v| v * self.scale);
         let ui = self.game.ui.ui();
         match event {

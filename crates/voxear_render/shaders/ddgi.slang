@@ -444,14 +444,16 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
     float3 origin = position + normal * (0.01 + 0.002 * centre.z);
     Hit hit = traceScene(frame, origin, direction, REFLECTION_REACH, false);
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    // Alpha is 1 and how far the ray went, so Reflections temporal finds last frame's reflection where what it
+    // shows was then, not where the mirror was; screen-space reflections write at most 1 there.
     if (!hit.found)
     {
-        return float4(surroundingsReflection(frame, position, normal, direction, 0.0, 0.0, atmosphere), 1.0);
+        return float4(surroundingsReflection(frame, position, normal, direction, 0.0, 0.0, atmosphere), 1.0 + REFLECTION_REACH);
     }
     bool back;
     // Sharper textures near, blurrier far, about as the reflection shows them.
     float mip = clamp(log2(1.0 + hit.t * 0.5), 0.0, 4.0);
     float3 at = origin + direction * hit.t;
     float3 light = ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, at, direction, mip, back);
-    return float4(back ? 0.0 : light, 1.0);
+    return float4(back ? 0.0 : light, 1.0 + hit.t);
 }

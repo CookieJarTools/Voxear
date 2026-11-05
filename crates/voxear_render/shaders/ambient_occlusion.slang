@@ -397,8 +397,13 @@ float4 reflectionUpsample(int2 pixel, float depth, out float4 low, out float4 hi
 }
 
 // Blends the half-resolution reflections into last frame's, found where
-// this pixel's surface was on screen then, as the occlusion's temporal pass
-// does, at full resolution, for shading to read. Without it each frame's
+// what this pixel reflects was on screen then, at full resolution, for
+// shading to read. A mirror's reflection moves as the thing reflected,
+// seen as far behind the mirror as the ray went to it, not as the mirror's
+// surface: looked up where the surface was, a moving camera blended in the
+// wrong part of last frame's and the chrome ball showed patches. Where no
+// ray was traced (screen-space reflections, whose alpha stays at 1 or under)
+// it is looked up where the surface was. Without it each frame's
 // reflection differed with the pixel it was traced from, more than TAA's
 // clamp lets through, and a curved mirror showed dots that cycled with
 // TAA's jitter. textures: x the reflections, y last frame's result, z depth,
@@ -421,7 +426,11 @@ float4 reflectionsTemporalFragment(AoOut input) : SV_Target
         return current;
     }
     float4 world = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, depth, 1.0));
-    float4 previous = transform(frame->prevViewProj, float4(world.xyz / world.w, 1.0));
+    float3 surface = world.xyz / world.w;
+    float reach = max(current.a - 1.0, 0.0);
+    float3 toSurface = surface - frame->cameraPosition;
+    float3 seen = reach > 0.0 ? frame->cameraPosition + toSurface * (1.0 + reach / max(length(toSurface), 1e-4)) : surface;
+    float4 previous = transform(frame->prevViewProj, float4(seen, 1.0));
     float2 previousUv = previous.xy / previous.w * 0.5 + 0.5;
     if (previous.w <= 0.0 || any(previousUv < 0.0) || any(previousUv > 1.0))
     {

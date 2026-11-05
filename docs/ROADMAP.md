@@ -1057,7 +1057,10 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   **Reflections temporal** (`ambient_occlusion::Reflections`, `reflectionsTemporalFragment`) now blends them over
   frames at full resolution, reprojected by the camera's motion and clamped to the four traced pixels nearest, as
   the occlusion's temporal pass does; shading reads that. Ball pixels cycling with the jitter 108 to 3 (2 without
-  reflections; tracing at full resolution instead gave 5 for 0.6 ms); 0.12 ms at 1080p.
+  reflections; tracing at full resolution instead gave 5 for 0.6 ms); 0.12 ms at 1080p. Traced reflections write
+  1 plus their ray's length in alpha (screen-space ones stay at 1 or under, and shading reads it saturated), and
+  the history is looked up where what the mirror shows was a frame ago, that far behind it, not where the mirror
+  was: looked up by the surface, a moving camera broke the chrome ball's reflection into half-resolution patches.
 - **GI that does not change as the camera walks up:** three cascades of probes, each twice as far apart as the last
   (`DDGI_CASCADES` 3, `DDGI_CASCADE_SCALE` 2), rather than two four times apart. Past the fine grid's sixteen metres,
   probes four metres apart smeared the neon tube's light down Sponza's corridor, and it changed before the camera as

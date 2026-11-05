@@ -29,11 +29,32 @@ Under **Custom**, the sea is two seas at once, as a real one is: a **Swell** rai
 | Clarity | What a metre of water lets through, by colour: what lies under the water shows through it, bluer and darker the deeper it is |
 | Murk | How far you see into the water: 1 as Clarity says, more for murkier water |
 
+## Quality
+
+The sea's costlier looks can each be turned off, on the Ocean in the Inspector or from code with `Water.Features`, for slower machines or a simpler style. All are on to start with.
+
+| Setting | What it does |
+| --- | --- |
+| Shores | Waves calm in shallow water, the sea stops at the land, and surf breaks along the shore |
+| Foam Trails | Foam stays where crests broke and where surf ran, drifting and ageing into lace |
+| 3D Foam | Foam near the camera stands up off the water, its bubbles shading each other |
+| Light Bending | What lies under the water shows shifted by the waves, as light bends going into it |
+| Light Shafts | Shafts of sunlight under the water |
+| Wet Lens | Drops on the camera's lens after it comes up out of the water |
+| Fine Ripples | The finest waves, from a few centimetres to a metre long |
+
+```csharp
+// On a low quality setting: no foam standing up off the water, and no light shafts under it.
+Water.Features &= ~(WaterFeatures.Foam3D | WaterFeatures.LightShafts);
+```
+
 ## How the sea moves
 
 The waves are hundreds of thousands of real ocean waves of every length, from a centimetre to a kilometre, added up on the graphics card each frame by a fast Fourier transform, in six sizes laid over each other so no pattern repeats. The surface round the camera is a fine grid near it that grows coarser with distance, so the waves are sharp at your feet and the sea still reaches the horizon.
 
-Where a crest folds over, it breaks into foam. The foam stays where the crest broke while the wave runs on, streaking down its back and fading over a couple of seconds. Only the big breakers leave trails; small waves' white is gone as they pass. Where the sea thins over a shore, it laps white too.
+Where a crest folds over, it breaks into foam. The foam stays where the crest broke while the wave runs on, streaking down its back, then thins into lace and fades over several seconds. Only the big breakers leave trails; small waves' white is gone as they pass.
+
+Over the ground under the sea, the waves feel the bottom and calm, the longest first, gradually over a few metres where the ground drops away. Near the shore they break as surf once the water is not much deeper than they are tall, and the surf runs up the beach and drains back. Round rocks the water surges white with each wave.
 
 The waves are worked out the same on every machine, and the game can ask how high the sea is anywhere (see [[Floating Objects]]), so a boat rides the waves you see, alike for every player.
 

@@ -399,6 +399,12 @@ pub struct GpuOcean {
     /// Which way the wind blows, as an angle from +X towards +Z, in radians.
     pub wind: f32,
     pub floor: [[f32; 4]; 4],
+    /// How deep the sea is round each texel of the sea floor, blurred over
+    /// a few metres, for how much its waves calm (see `water`).
+    pub floor_depth: u32,
+    /// Which of its costlier looks are on (`ocean::features`).
+    pub features: u32,
+    pub _pad: [u32; 2],
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in
@@ -923,9 +929,9 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 256
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 272
         );
-        assert_eq!(size_of::<GpuOcean>(), 256);
+        assert_eq!(size_of::<GpuOcean>(), 272);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);

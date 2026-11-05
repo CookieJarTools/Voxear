@@ -404,6 +404,18 @@ impl ScriptRuntime {
         interop::take_time_of_year()
     }
 
+    /// Tells scripts which of the sea's costlier looks are on, or that the
+    /// level has no Ocean.
+    pub fn publish_water_features(&mut self, features: Option<u32>) {
+        interop::publish_water_features(features);
+    }
+
+    /// The sea's looks scripts turned on and off since the last call, if they
+    /// did.
+    pub fn take_water_features(&mut self) -> Option<u32> {
+        interop::take_water_features()
+    }
+
     /// What scripts asked of loaded scenes since the last call, oldest first.
     pub fn take_scene_requests(&mut self) -> Vec<crate::SceneRequest> {
         interop::take_scene_requests()

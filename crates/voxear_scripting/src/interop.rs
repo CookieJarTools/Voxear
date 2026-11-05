@@ -297,6 +297,10 @@ pub(crate) struct NativeApi {
     /// `Water`: the water at a point, its surface's height, the way it faces
     /// and its flow, seven numbers; 0 where there is none.
     pub water_sample: unsafe extern "C" fn(at: *const [f32; 3], out: *mut [f32; 7]) -> i32,
+    /// `Water.Features`: which of the sea's costlier looks are on, as bits,
+    /// -1 without an Ocean, and setting them.
+    pub water_features: unsafe extern "C" fn() -> i32,
+    pub water_set_features: unsafe extern "C" fn(features: i32),
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -438,6 +442,11 @@ thread_local! {
     /// engine takes what they set after the frame.
     static TIME_OF_YEAR: Cell<f32> = const { Cell::new(f32::NAN) };
     static TIME_OF_YEAR_SET: Cell<Option<f32>> = const { Cell::new(None) };
+    /// Which of the sea's costlier looks are on, as `Water.Features` reads
+    /// them: none without an Ocean. Scripts setting them change them here at
+    /// once, and the engine takes what they set after the frame.
+    static WATER_FEATURES: Cell<Option<u32>> = const { Cell::new(None) };
+    static WATER_FEATURES_SET: Cell<Option<u32>> = const { Cell::new(None) };
     static SCENE_REQUESTS: RefCell<Vec<SceneRequest>> = const { RefCell::new(Vec::new()) };
     static OBJ_DESTROYS: RefCell<Vec<Entity>> = const { RefCell::new(Vec::new()) };
     /// Managed `CreateBehaviour` and `AddComponent`, for behaviours and
@@ -493,6 +502,14 @@ pub(crate) fn publish_time_of_year(time: Option<f32>) {
 
 pub(crate) fn take_time_of_year() -> Option<f32> {
     TIME_OF_YEAR_SET.take()
+}
+
+pub(crate) fn publish_water_features(features: Option<u32>) {
+    WATER_FEATURES.set(features);
+}
+
+pub(crate) fn take_water_features() -> Option<u32> {
+    WATER_FEATURES_SET.take()
 }
 
 pub(crate) fn take_scene_requests() -> Vec<SceneRequest> {
@@ -719,6 +736,20 @@ unsafe extern "C" fn lighting_apply(reference: *const u8, len: i32) {
 
 unsafe extern "C" fn seasons_time() -> f32 {
     TIME_OF_YEAR.get()
+}
+
+unsafe extern "C" fn water_features() -> i32 {
+    WATER_FEATURES.get().map_or(-1, |features| features as i32)
+}
+
+unsafe extern "C" fn water_set_features(features: i32) {
+    if WATER_FEATURES.get().is_none() {
+        tracing::warn!(target: "script", "Water.Features: the level has no Ocean");
+        return;
+    }
+    let features = features.max(0) as u32;
+    WATER_FEATURES.set(Some(features));
+    WATER_FEATURES_SET.set(Some(features));
 }
 
 unsafe extern "C" fn seasons_set_time(time: f32) {
@@ -1177,6 +1208,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         seasons_time,
         seasons_set_time,
         water_sample,
+        water_features,
+        water_set_features,
     }
 }
 

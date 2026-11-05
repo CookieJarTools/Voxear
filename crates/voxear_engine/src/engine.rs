@@ -439,8 +439,10 @@ impl Engine {
         // The sea's long waves, where scripts and floating Objs ask about them.
         crate::water::update(&mut self.world, self.time.elapsed);
         let year = self.world.query_ref::<&Seasons>().into_iter().next().map(|seasons| seasons.time_of_year);
+        let features = self.world.query_ref::<&voxear_render::Ocean>().into_iter().next().map(|ocean| ocean.features());
         if let Some(scripts) = self.scripts.as_mut() {
             scripts.publish_time_of_year(year);
+            scripts.publish_water_features(features);
         }
         if let Some(scripts) = self.scripts.as_mut() {
             profile_scope!("Script Continuations");
@@ -499,6 +501,12 @@ impl Engine {
             && let Some(seasons) = self.world.query::<&mut Seasons>().into_iter().next()
         {
             seasons.time_of_year = time;
+        }
+        // The sea's looks scripts turned on and off turn the level's first Ocean's.
+        if let Some(features) = self.scripts.as_mut().and_then(ScriptRuntime::take_water_features)
+            && let Some(ocean) = self.world.query::<&mut voxear_render::Ocean>().into_iter().next()
+        {
+            ocean.set_features(features);
         }
     }
 

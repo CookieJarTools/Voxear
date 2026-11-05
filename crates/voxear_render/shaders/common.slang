@@ -337,6 +337,11 @@ struct Ocean
     // Which way the wind blows, as an angle from +x towards +z, in radians.
     float wind;
     float4 floor[4];
+    // How deep the sea is round each texel of the sea floor, blurred (water.slang's floorDepthMain), and which of its
+    // costlier looks are on (src/ocean.rs's features).
+    uint floorDepth;
+    uint features;
+    uint2 pad;
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,

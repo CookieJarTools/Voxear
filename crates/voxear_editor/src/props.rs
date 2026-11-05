@@ -240,6 +240,14 @@ pub enum Prop {
     OceanFoam,
     OceanClarity,
     OceanMurk,
+    /// An Ocean's costlier looks, each turned on or off.
+    OceanShores,
+    OceanFoamTrails,
+    OceanFoam3d,
+    OceanLightBending,
+    OceanLightShafts,
+    OceanWetLens,
+    OceanFineRipples,
     /// A Pool's footprint and liquid, its waves, and its water's colours.
     PoolSize,
     PoolDepth,
@@ -465,7 +473,14 @@ impl Prop {
             | Prop::OceanScatter
             | Prop::OceanFoam
             | Prop::OceanClarity
-            | Prop::OceanMurk => Part::Ocean,
+            | Prop::OceanMurk
+            | Prop::OceanShores
+            | Prop::OceanFoamTrails
+            | Prop::OceanFoam3d
+            | Prop::OceanLightBending
+            | Prop::OceanLightShafts
+            | Prop::OceanWetLens
+            | Prop::OceanFineRipples => Part::Ocean,
             Prop::PoolSize
             | Prop::PoolDepth
             | Prop::PoolLiquid
@@ -634,6 +649,13 @@ impl Prop {
             Prop::OceanFoam => "foam",
             Prop::OceanClarity => "clarity",
             Prop::OceanMurk => "murk",
+            Prop::OceanShores => "shores",
+            Prop::OceanFoamTrails => "foam_trails",
+            Prop::OceanFoam3d => "foam_3d",
+            Prop::OceanLightBending => "light_bending",
+            Prop::OceanLightShafts => "light_shafts",
+            Prop::OceanWetLens => "wet_lens",
+            Prop::OceanFineRipples => "fine_ripples",
             Prop::PoolSize => "size",
             Prop::PoolDepth => "depth",
             Prop::PoolLiquid => "liquid",
@@ -955,6 +977,13 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 Prop::OceanFoam,
                 Prop::OceanClarity,
                 Prop::OceanMurk,
+                Prop::OceanShores,
+                Prop::OceanFoamTrails,
+                Prop::OceanFoam3d,
+                Prop::OceanLightBending,
+                Prop::OceanLightShafts,
+                Prop::OceanWetLens,
+                Prop::OceanFineRipples,
             ]);
             props
         }
@@ -1177,6 +1206,13 @@ pub fn label(prop: &Prop) -> String {
         Prop::OceanFoam => "Foam",
         Prop::OceanClarity => "Clarity",
         Prop::OceanMurk => "Murk",
+        Prop::OceanShores => "Shores",
+        Prop::OceanFoamTrails => "Foam Trails",
+        Prop::OceanFoam3d => "3D Foam",
+        Prop::OceanLightBending => "Light Bending",
+        Prop::OceanLightShafts => "Light Shafts",
+        Prop::OceanWetLens => "Wet Lens",
+        Prop::OceanFineRipples => "Fine Ripples",
         Prop::PoolSize => "Size",
         Prop::PoolDepth => "Depth",
         Prop::PoolLiquid => "Liquid",
@@ -1709,6 +1745,13 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::OceanFoam => Value::Number(world.get::<Ocean>(entity)?.foam),
         Prop::OceanClarity => Value::Color(world.get::<Ocean>(entity)?.clarity.map(round3)),
         Prop::OceanMurk => Value::Number(world.get::<Ocean>(entity)?.murk),
+        Prop::OceanShores => Value::Toggle(world.get::<Ocean>(entity)?.shores),
+        Prop::OceanFoamTrails => Value::Toggle(world.get::<Ocean>(entity)?.foam_trails),
+        Prop::OceanFoam3d => Value::Toggle(world.get::<Ocean>(entity)?.foam_3d),
+        Prop::OceanLightBending => Value::Toggle(world.get::<Ocean>(entity)?.light_bending),
+        Prop::OceanLightShafts => Value::Toggle(world.get::<Ocean>(entity)?.light_shafts),
+        Prop::OceanWetLens => Value::Toggle(world.get::<Ocean>(entity)?.wet_lens),
+        Prop::OceanFineRipples => Value::Toggle(world.get::<Ocean>(entity)?.fine_ripples),
         Prop::PoolSize => Value::Vector(world.get::<Pool>(entity)?.size.to_vec()),
         Prop::PoolDepth => Value::Number(world.get::<Pool>(entity)?.depth),
         Prop::PoolLiquid => {
@@ -2495,6 +2538,13 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |o: &mut Ocean| o.clarity = color.map(|c| c.clamp(0.0, 1.0)))
         }
         (Prop::OceanMurk, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.murk = n.clamp(0.0, 20.0)),
+        (Prop::OceanShores, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.shores = on),
+        (Prop::OceanFoamTrails, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.foam_trails = on),
+        (Prop::OceanFoam3d, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.foam_3d = on),
+        (Prop::OceanLightBending, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.light_bending = on),
+        (Prop::OceanLightShafts, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.light_shafts = on),
+        (Prop::OceanWetLens, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.wet_lens = on),
+        (Prop::OceanFineRipples, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.fine_ripples = on),
         (Prop::PoolSize, Value::Vector(v)) if v.len() == 2 => {
             with(world, entity, |p: &mut Pool| p.size = [v[0].max(0.1), v[1].max(0.1)])
         }

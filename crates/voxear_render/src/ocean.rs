@@ -105,6 +105,74 @@ pub struct Ocean {
     pub clarity: [f32; 3],
     /// How murky it is: 1 as Clarity says, more to see less far into it.
     pub murk: f32,
+    /// Waves calming in shallow water, the sea stopping at the land, and its
+    /// surf: the ground under the sea is captured round the camera.
+    pub shores: bool,
+    /// Foam kept from frame to frame: trails behind breaking crests, and surf
+    /// that drifts and ages into lace.
+    pub foam_trails: bool,
+    /// Foam standing up off the water near the camera, its bubbles shading
+    /// each other.
+    pub foam_3d: bool,
+    /// Light bending as it goes into the water, so what is under it shows
+    /// shifted by the waves.
+    pub light_bending: bool,
+    /// Shafts of sunlight seen from under the water.
+    pub light_shafts: bool,
+    /// Drops on the camera's lens after it comes up out of the water.
+    pub wet_lens: bool,
+    /// The two finest bands of waves, ripples from a few centimetres to a
+    /// metre long.
+    pub fine_ripples: bool,
+}
+
+/// The costlier parts of an Ocean's look as bits, as `OCEAN_*` in
+/// `shaders/water.slang` and `WaterFeatures` in C#.
+pub mod features {
+    pub const SHORES: u32 = 1 << 0;
+    pub const FOAM_TRAILS: u32 = 1 << 1;
+    pub const FOAM_3D: u32 = 1 << 2;
+    pub const LIGHT_BENDING: u32 = 1 << 3;
+    pub const LIGHT_SHAFTS: u32 = 1 << 4;
+    pub const WET_LENS: u32 = 1 << 5;
+    pub const FINE_RIPPLES: u32 = 1 << 6;
+    pub const ALL: u32 = (1 << 7) - 1;
+}
+
+impl Ocean {
+    /// Which of its costlier looks are on, as [`features`] bits.
+    pub fn features(&self) -> u32 {
+        [
+            (self.shores, features::SHORES),
+            (self.foam_trails, features::FOAM_TRAILS),
+            (self.foam_3d, features::FOAM_3D),
+            (self.light_bending, features::LIGHT_BENDING),
+            (self.light_shafts, features::LIGHT_SHAFTS),
+            (self.wet_lens, features::WET_LENS),
+            (self.fine_ripples, features::FINE_RIPPLES),
+        ]
+        .into_iter()
+        .filter(|(on, _)| *on)
+        .fold(0, |bits, (_, bit)| bits | bit)
+    }
+
+    /// Turns its costlier looks on and off by [`features`] bits.
+    pub fn set_features(&mut self, bits: u32) {
+        let on = |bit: u32| bits & bit != 0;
+        self.shores = on(features::SHORES);
+        self.foam_trails = on(features::FOAM_TRAILS);
+        self.foam_3d = on(features::FOAM_3D);
+        self.light_bending = on(features::LIGHT_BENDING);
+        self.light_shafts = on(features::LIGHT_SHAFTS);
+        self.wet_lens = on(features::WET_LENS);
+        self.fine_ripples = on(features::FINE_RIPPLES);
+    }
+
+    /// How many of the cascades are worked out: all but the two finest
+    /// without Fine Ripples.
+    pub fn cascades(&self) -> usize {
+        if self.fine_ripples { CASCADES } else { CASCADES - 2 }
+    }
 }
 
 impl Component for Ocean {}
@@ -125,6 +193,13 @@ impl Default for Ocean {
             foam: 0.5,
             clarity: [0.82, 0.97, 0.98],
             murk: 1.0,
+            shores: true,
+            foam_trails: true,
+            foam_3d: true,
+            light_bending: true,
+            light_shafts: true,
+            wet_lens: true,
+            fine_ripples: true,
         }
     }
 }

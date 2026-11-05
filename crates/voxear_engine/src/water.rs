@@ -17,7 +17,7 @@ use voxear_physics::{
     Push,
     scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
 };
-use voxear_render::{DryArea, Ocean, OceanSampler, Pool, SeaState, Stream, StreamPoint, stream_over};
+use voxear_render::{DryArea, Ocean, OceanSampler, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
 
 /// Floats its Obj on the sea, Pools and Streams. It needs a Rigidbody and a
@@ -55,6 +55,8 @@ pub struct WaterQuery {
     made_for: Option<SeaState>,
     /// Each Stream's points, in the world, and how deep it is.
     streams: Vec<(Vec<StreamPoint>, f32)>,
+    /// Whether the sea's waves calm in shallow water (the Ocean's Shores).
+    shores: bool,
 }
 
 /// The water at a point: how high its surface is above it, the way that
@@ -78,7 +80,7 @@ pub fn update(world: &mut World, time: f64) {
                 let (_, rotation, position) = w.0.to_scale_rotation_translation();
                 (rotation, position)
             });
-            (ocean.sea_state(rotation), position.y)
+            (ocean.sea_state(rotation), position.y, ocean.shores)
         },
     );
     let streams: Vec<(Vec<StreamPoint>, f32)> = world
@@ -91,10 +93,11 @@ pub fn update(world: &mut World, time: f64) {
     }
     let query = world.resource_mut::<WaterQuery>().expect("inserted above");
     query.streams = streams;
-    let Some((sea, level)) = first else {
+    let Some((sea, level, shores)) = first else {
         (query.sampler, query.made_for) = (None, None);
         return;
     };
+    query.shores = shores;
     if query.made_for != Some(sea) {
         query.sampler = Some(OceanSampler::new(sea, level));
         query.made_for = Some(sea);
@@ -127,14 +130,19 @@ pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
 }
 
 /// How deep the sea is round `at` for how much its waves die away there:
-/// the deepest within a couple of metres, so a rock or post standing in
-/// deep water does not calm the waves round it as a beach would (as
-/// `seaDepth` in the water shader).
+/// its depth averaged over a few metres, so the waves calm gradually where
+/// the ground drops away and a rock or post in deep water barely calms them
+/// (as the shaders' blurred sea floor depth, `floorDepthMain`).
 fn sea_depth(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Vec3) -> f32 {
-    [Vec3::ZERO, Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z]
-        .into_iter()
-        .map(|side| depth_under(world, physics, level, at + side * 2.0))
-        .fold(f32::NEG_INFINITY, f32::max)
+    let around = (0..8).map(|i| {
+        let angle = i as f32 * std::f32::consts::FRAC_PI_4;
+        at + Vec3::new(angle.cos(), 0.0, angle.sin()) * 4.0
+    });
+    let depths: Vec<f32> = std::iter::once(at)
+        .chain(around)
+        .map(|point| depth_under(world, physics, level, point).clamp(0.0, ocean::SHALLOWS_DEPTH))
+        .collect();
+    depths.iter().sum::<f32>() / depths.len() as f32
 }
 
 /// How deep the sea is under `at`: from `level` down to the first collider
@@ -171,7 +179,7 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
         return Some(WaterPoint { height, normal: Vec3::Y, flow });
     }
     let sampler = query.sampler.as_ref()?;
-    let depth = sea_depth(world, physics, sampler.level(), at);
+    let depth = if query.shores { sea_depth(world, physics, sampler.level(), at) } else { f32::INFINITY };
     let height = sampler.height_over(at.x, at.z, depth);
     Some(WaterPoint { height, normal: sampler.normal_over(at.x, at.z, depth), flow: Vec3::ZERO })
 }

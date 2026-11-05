@@ -22,6 +22,25 @@ public static unsafe class Water
 	/// <summary>Whether there is water at the middle of the world, as there is wherever the level has a sea.</summary>
 	public static bool Exists => TrySample(Vector3.Zero, out _);
 
+	/// <summary>
+	/// Which of the sea's costlier looks are on, as the Ocean's Quality settings in the Inspector: turn some off on
+	/// slower machines. <see cref="WaterFeatures.None"/> where the level has no Ocean, and setting them there does
+	/// nothing. A change shows from the next frame.
+	/// <code>
+	/// // On a low quality setting: no foam standing up off the water, and no light shafts under it.
+	/// Water.Features &amp;= ~(WaterFeatures.Foam3D | WaterFeatures.LightShafts);
+	/// </code>
+	/// </summary>
+	public static WaterFeatures Features
+	{
+		get
+		{
+			var features = Native.Api->WaterFeatures();
+			return features < 0 ? WaterFeatures.None : (WaterFeatures)features;
+		}
+		set => Native.Api->WaterSetFeatures((int)value);
+	}
+
 	/// <summary>How high the water's surface is above or below <paramref name="position"/>, in the world.</summary>
 	public static float HeightAt(Vector3 position)
 	{

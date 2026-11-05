@@ -130,4 +130,6 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<float> SeasonsTime;
 	public delegate* unmanaged[Cdecl]<float, void> SeasonsSetTime;
 	public delegate* unmanaged[Cdecl]<Vector3*, float*, int> WaterSample;
+	public delegate* unmanaged[Cdecl]<int> WaterFeatures;
+	public delegate* unmanaged[Cdecl]<int, void> WaterSetFeatures;
 }

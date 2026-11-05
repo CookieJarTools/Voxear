@@ -1081,6 +1081,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Paths) => "Sound paths",
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
         ItemKind::Asset(AssetKind::Lighting) => "Lighting settings",
+        ItemKind::Asset(AssetKind::Shader) => "Shader",
     }
 }
 
@@ -1101,6 +1102,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Paths) => "branch",
         ItemKind::Asset(AssetKind::LightProfile) => "light",
         ItemKind::Asset(AssetKind::Lighting) => "light",
+        ItemKind::Asset(AssetKind::Shader) => "shader",
     }
 }
 

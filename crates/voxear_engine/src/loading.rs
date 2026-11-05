@@ -412,8 +412,10 @@ fn gather(
                 // Textures load with their models and lights, as light profiles do, scripts load
                 // UI documents themselves, and the game reads its input actions and string tables
                 // when it starts, and its sound the paths round the level's walls once it plays.
+                // Shaders are compiled into the renderer's own before anything loads.
                 AssetKind::Texture
                 | AssetKind::LightProfile
+                | AssetKind::Shader
                 | AssetKind::Ui
                 | AssetKind::InputActions
                 | AssetKind::Strings

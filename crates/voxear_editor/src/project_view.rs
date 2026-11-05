@@ -237,6 +237,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
                 FileKind::Asset(AssetKind::Paths) => "branch",
                 FileKind::Asset(AssetKind::LightProfile) => "light",
+                FileKind::Asset(AssetKind::Shader) => "shader",
                 FileKind::Asset(AssetKind::Lighting) => "light",
             },
         }

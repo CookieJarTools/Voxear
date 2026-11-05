@@ -37,6 +37,7 @@ pub mod remote_console;
 pub mod scene_file;
 pub mod script_types;
 pub mod scripts;
+pub mod shaders;
 mod stats_overlay;
 pub mod steam_language;
 pub mod ui_input;

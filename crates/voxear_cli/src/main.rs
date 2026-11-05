@@ -923,6 +923,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::AssetTable => "assets",
             AssetKind::LightProfile => "ies",
             AssetKind::Lighting => "lighting",
+            AssetKind::Shader => "shader",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

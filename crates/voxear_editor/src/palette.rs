@@ -424,6 +424,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::AssetTable => ("Asset table", "globe"),
                 AssetKind::Paths => ("Sound paths", "branch"),
                 AssetKind::LightProfile => ("IES light profile", "light"),
+                AssetKind::Shader => ("Shader", "shader"),
                 AssetKind::Lighting => ("Lighting settings", "light"),
             };
             let (action, key) = match kind {

@@ -1229,7 +1229,25 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
 
 ## M7 — Materials and particles
 
-- Shader Graph with previews and sub-graphs, plus material variants.
+- **Custom shaders (in progress).** A `.shader` asset (`AssetKind::Shader`) in Slang: a struct of `[Property]`
+  fields (numbers, vectors, `[Color]` colours, toggles, `Picture`s), each with a default, and any of:
+  - `surface(props, input, inout output)`: colour, normal, metallic, roughness, emission, alpha (clip);
+  - `vertex(props, input)`: an offset for each vertex, with `[MaxOffset]` widening culling bounds;
+  - `light(props, light, surface)`: the light a surface takes from the sun and each lamp, in place of the
+    standard BRDF;
+  - `[Unlit]` on the struct: only the surface's colour and emission, as they are.
+
+  A material picks its **Shader** (Standard, or a project shader) and keeps its properties in the `.material` file;
+  the material Inspector shows them as fields. On the GPU a material has a shader number and an offset into a
+  buffer of property `float4`s; the project's shaders are compiled into the main shaders as one generated `switch`
+  on the shader number (`custom_shaders.slang`), so the GPU-driven culling and draw lists are unchanged and only
+  materials using a custom shader pay for it. The editor compiles with the Slang compiler shipped beside it
+  (`SLANGC`, then `slang/` next to the executable, then `PATH`), recompiling when a shader is saved; game builds
+  precompile them. Steps: shader assets and properties; material shader and properties on the GPU; the generated
+  dispatch and compiling; the surface, vertex, unlit and lighting hooks; the editor (shader Inspector with errors,
+  material fields, New Shader templates); Slang and the engine's shader sources in the engine install and game
+  builds; docs and tests.
+- Shader Graph with previews and sub-graphs, plus material variants, writing custom shaders.
 - Particles:
   - the IR compiler and the stateless fast path
   - the preset gallery

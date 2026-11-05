@@ -431,7 +431,8 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::InputActions
         | AssetKind::Strings
         | AssetKind::Paths
-        | AssetKind::LightProfile => {}
+        | AssetKind::LightProfile
+        | AssetKind::Shader => {}
     }
     needs.direct.remove(&guid);
     needs.named.remove(&guid);

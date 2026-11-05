@@ -165,6 +165,11 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "level" => &[("M12 3.5l8.5 4.25L12 12 3.5 7.75ZM3.5 12L12 16.25 20.5 12M3.5 16.25L12 20.5l8.5-4.25", STROKE)],
         "scene" => &[("M3.5 6.5l5.5-3 6 3 5.5-3v14l-5.5 3-6-3-5.5 3ZM9 3.5v14M15 6.5v14", STROKE)],
         "material" => &[("M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17ZM7.5 10a5 5 0 0 1 4-3.5", STROKE)],
+        // A shader: a sphere with its code's brackets.
+        "shader" => &[(
+            "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17ZM10 9.5l-2.5 2.5 2.5 2.5M14 9.5l2.5 2.5-2.5 2.5",
+            STROKE,
+        )],
         "texture" => &[(
             "M4 5h16v14H4ZM4 15.5l4.5-4.5 4 4 2-2 5.5 5.5M14.5 9a1.25 1.25 0 1 0 2.5 0a1.25 1.25 0 1 0-2.5 0Z",
             STROKE,

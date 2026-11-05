@@ -54,6 +54,10 @@ pub enum AssetKind {
     /// A `.lighting` file: a scene's lighting settings, its sky, how its sun
     /// looks and its post-processing, which scenes name and code applies.
     Lighting,
+    /// A `.shader` file: a custom shader in Slang, its properties and how it
+    /// works out a surface, moves vertices or takes light, which materials
+    /// pick.
+    Shader,
 }
 
 impl AssetKind {
@@ -74,6 +78,7 @@ impl AssetKind {
             "assettable" => Self::AssetTable,
             "ies" => Self::LightProfile,
             "lighting" => Self::Lighting,
+            "shader" => Self::Shader,
             _ => return None,
         })
     }

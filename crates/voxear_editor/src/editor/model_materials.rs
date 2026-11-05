@@ -193,7 +193,7 @@ impl Editor {
     }
 
     /// The project's assets of `kind` for the object picker, after None.
-    fn asset_choices(&self, kind: AssetKind) -> Vec<object_picker::Choice> {
+    pub(super) fn asset_choices(&self, kind: AssetKind) -> Vec<object_picker::Choice> {
         let db = self.game.content.db();
         let mut paths: Vec<String> = db.entries().filter(|e| e.kind == kind).map(|e| e.path.clone()).collect();
         paths.sort();

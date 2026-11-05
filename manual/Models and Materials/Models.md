@@ -35,7 +35,16 @@ The new Obj is named after the model. A model of one part gets a **Mesh Renderer
 
 The Model Renderer shows the **Model** it draws, its **LOD bias** (as a Mesh Renderer's) and how many **Parts** it has. To move, hide or change one part on its own, open the Model Renderer's menu (the **⋯** on its header, or a right-click) and pick **Unpack to Objs**: the Obj then has an Obj inside it for each part, each with a Mesh Renderer, where the model puts it. Ctrl+Z packs it back up.
 
-In the Hierarchy, a model's Obj has a button of its own at the right of its row, apart from its arrow: click it to list the model's parts under it, greyed, by the names the model gives them. They belong to the model rather than being Objs, so clicking one selects the model's Obj, and they cannot be dragged elsewhere. Right-click the Obj or one of its parts for **Unpack to Objs** there too.
+In the Hierarchy, a model's Obj has a button of its own at the right of its row, apart from its arrow: click it to list the model's parts under it, greyed, by the names the model gives them. Where many parts share a name, as in a model whose every node is called `mesh`, each shows its material's name after it.
+
+Click a part to see it in the Inspector, on its own:
+
+- **Transform**: where the part sits in the model. Type a new position, rotation or scale to move it.
+- **Material**: what it draws with, the model's own greyed until you pick or drop a material file.
+- **Revert** puts the part back as the model has it.
+- **Add Component** takes the part out into an Obj of its own inside the model's, where it was, and selects it, ready for components. The other parts stay drawn as one.
+
+What you change is kept on the Obj, saved with the scene, and one step to undo; the model itself is not changed, so other Objs drawing it stay as they were. The parts cannot be dragged elsewhere. Right-click the Obj or one of its parts for **Unpack to Objs**, which makes every part an Obj, each where you moved it and with the material you gave it.
 
 In a scene file:
 

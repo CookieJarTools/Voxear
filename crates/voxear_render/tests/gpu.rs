@@ -3048,7 +3048,12 @@ fn one_obj_draws_a_whole_model_each_part_where_the_model_puts_it() {
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let red = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
     let green = renderer.add_material(&MaterialDesc { base_color: [0.05, 0.9, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
-    let part = |material, x: f32| ModelPart { mesh: cube, material, transform: voxear_core::math::Mat4::from_translation(Vec3::new(x, 0.0, 0.0)) };
+    let part = |material, x: f32| ModelPart {
+        mesh: cube,
+        material,
+        transform: voxear_core::math::Mat4::from_translation(Vec3::new(x, 0.0, 0.0)),
+        node: 0,
+    };
     // Half again as large, so its parts sit a half again as far apart.
     let model = world.spawn((ModelRenderer::new(vec![part(red, -1.0), part(green, 1.0)]), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(1.5))));
     world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, Quat::from_rotation_x(0.5), Vec3::ONE)));

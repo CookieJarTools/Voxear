@@ -54,7 +54,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetGuid, AssetRef};
-use voxear_core::math::{EulerRot, Vec3};
+use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
@@ -742,11 +742,16 @@ impl FoliageData {
     }
 }
 
-/// A whole model drawn by one Obj, as a scene writes it:
+/// A whole model drawn by one Obj, as a scene writes it, with the parts
+/// this Obj changes:
 ///
 /// ```toml
 /// [obj.model]
 /// model = "fdfa941753cd46a487317019a970cbc2"  # Models/Sponza/Sponza.gltf
+///
+/// [[obj.model.part]]
+/// node = 12
+/// material = "Materials/Brass.material"
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -756,6 +761,76 @@ pub struct ModelData {
     /// As a Mesh Renderer's, shifting which LOD each part draws.
     #[serde(default, skip_serializing_if = "is_no_bias")]
     pub lod_bias: f32,
+    /// The parts this Obj changes from the model, each by its node.
+    #[serde(default, rename = "part", skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartData>,
+}
+
+/// What an Obj changes of one part of the model it draws: where the part
+/// sits in the model, as the node's own position, rotation in degrees and
+/// scale, and the material it draws with, each only when changed; or that
+/// an Obj of its own draws it now, so the model leaves it out.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartData {
+    /// Which of the model's nodes, in its order.
+    pub node: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<[f32; 3]>,
+    /// A material asset, by GUID or project path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apart: bool,
+}
+
+impl ModelData {
+    /// What this Obj changes of the model's node `node`, if anything.
+    pub fn part(&self, node: u32) -> Option<&PartData> {
+        self.parts.iter().find(|part| part.node == node)
+    }
+
+    /// What this Obj changes of node `node`, made empty if it changes
+    /// nothing of it yet. Empty changes are left out when written.
+    pub fn part_mut(&mut self, node: u32) -> &mut PartData {
+        let at = match self.parts.iter().position(|part| part.node == node) {
+            Some(at) => at,
+            None => {
+                self.parts.push(PartData { node, ..PartData::default() });
+                self.parts.sort_by_key(|part| part.node);
+                self.parts.iter().position(|part| part.node == node).expect("just put in")
+            }
+        };
+        &mut self.parts[at]
+    }
+
+    /// Leaves out the parts this Obj no longer changes.
+    pub fn tidy_parts(&mut self) {
+        self.parts.retain(|part| part.changes());
+    }
+}
+
+impl PartData {
+    pub fn changes(&self) -> bool {
+        let PartData { node: _, position, rotation, scale, material, apart } = self;
+        position.is_some() || rotation.is_some() || scale.is_some() || material.is_some() || *apart
+    }
+
+    /// Where the part sits in the model, as changed, over where the model
+    /// puts it.
+    pub fn transform(&self, (position, rotation, scale): (Vec3, Quat, Vec3)) -> (Vec3, Quat, Vec3) {
+        let euler =
+            |[x, y, z]: [f32; 3]| Quat::from_euler(EulerRot::YXZ, y.to_radians(), x.to_radians(), z.to_radians());
+        (
+            self.position.map_or(position, Vec3::from),
+            self.rotation.map_or(rotation, euler),
+            self.scale.map_or(scale, Vec3::from),
+        )
+    }
 }
 
 fn is_no_bias(bias: &f32) -> bool {
@@ -1880,6 +1955,23 @@ mod tests {
         let lit = Light { temperature: Some(1900.0), ..default_light(LightKind::Point) };
         let warm = lit.light_color();
         assert!(warm.x > warm.z * 3.0, "a candle lights orange: {warm}");
+    }
+
+    #[test]
+    fn a_models_part_changes_read_and_write_back_and_go_when_they_change_nothing() {
+        let text = "model = \"Models/Pair.gltf\"\n\n[[part]]\nnode = 1\nposition = [-3.0, 0.0, 0.0]\n\
+                    material = \"Materials/Brass.material\"\n\n[[part]]\nnode = 0\napart = true\n";
+        let mut data: ModelData = toml::from_str(text).unwrap();
+        assert_eq!(data.part(1).and_then(|part| part.position), Some([-3.0, 0.0, 0.0]));
+        assert!(data.part(0).is_some_and(|part| part.apart));
+        assert_eq!(toml::from_str::<ModelData>(&toml::to_string(&data).unwrap()).unwrap(), data);
+        let placed = (Vec3::new(1.0, 2.0, 3.0), Quat::IDENTITY, Vec3::ONE);
+        assert_eq!(data.part(1).unwrap().transform(placed).0, Vec3::new(-3.0, 0.0, 0.0), "moved where it says");
+        assert_eq!(data.part(1).unwrap().transform(placed).2, Vec3::ONE, "and the rest as the model has it");
+        *data.part_mut(1) = PartData { node: 1, ..PartData::default() };
+        data.part_mut(2);
+        data.tidy_parts();
+        assert_eq!(data.parts.len(), 1, "a part changed in nothing is left out: {data:?}");
     }
 
     #[test]

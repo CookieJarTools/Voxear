@@ -80,6 +80,7 @@ mod objs;
 pub mod package_list;
 pub mod package_manager;
 mod palette;
+mod part_inspector;
 mod profiler;
 mod project_files;
 mod project_view;

@@ -605,6 +605,17 @@
     background-color: var(--vx-selected);
 }
 
+/* Under a model's part's name in the Inspector: the Obj it is part of. */
+.part-of {
+    font-size: 11px;
+    color: var(--vx-muted);
+    margin-top: 2px;
+}
+
+.part-buttons {
+    justify-content: flex-end;
+}
+
 /* A model's part, listed under its Obj: the model's, not an Obj of its own. */
 .model-part > .row-name, .model-part > .row-icon {
     color: var(--vx-muted);

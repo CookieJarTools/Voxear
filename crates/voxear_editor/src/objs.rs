@@ -17,7 +17,7 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game, ObjPath, Tracked,
     prefab::{PREFAB_FORMAT, PrefabFile},
-    scene_file::{self, ModelSource, SceneFile},
+    scene_file::{self, ModelSource, PartData, SceneFile},
 };
 use voxear_render::{LodGroup, Renderer};
 use voxear_scene::{Destroying, Name, Parent, Transform};
@@ -292,7 +292,7 @@ pub fn place_model(
             name: node.name.clone(),
             transform: Transform::new(node.position, node.rotation, node.scale),
             mesh: node.mesh_part.clone(),
-            material: node.material_part.clone(),
+            material: node.material_part.as_ref().map(|material| format!("{path}#{material}")),
         })
         .collect();
     ensure!(!parts.is_empty(), "{path} has nothing to draw");
@@ -331,15 +331,12 @@ pub fn place_model(
 /// Returns the parts' Objs.
 pub fn unpack_model(game: &mut Game, renderer: &mut Renderer, entity: Entity) -> Result<Vec<Entity>> {
     let source = game.engine.world.get::<ModelSource>(entity).cloned().context("it draws no model")?;
-    let guid = game.content.parse(&source.0.model)?.guid().with_context(|| format!("{} is no model", source.0.model))?;
-    let path = game.content.db().get(guid).map(|entry| entry.path.clone()).context("the model is not in the project")?;
-    let parts: Vec<ModelPart> = (game.content.model(renderer, guid)?.iter())
-        .map(|node| ModelPart {
-            name: node.name.clone(),
-            transform: Transform::new(node.position, node.rotation, node.scale),
-            mesh: node.mesh_part.clone(),
-            material: node.material_part.clone(),
-        })
+    let (path, nodes) = model_nodes(game, renderer, &source)?;
+    // As this Obj changed them; those drawn by Objs of their own already stay so.
+    let parts: Vec<ModelPart> = (0u32..)
+        .zip(&nodes)
+        .filter(|(node, _)| !source.0.part(*node).is_some_and(|part| part.apart))
+        .map(|(node, part)| model_part(&path, part, source.0.part(node)))
         .collect();
     let name = stem(&path);
     let mut text = String::from("format = 1\n");
@@ -360,6 +357,70 @@ pub fn unpack_model(game: &mut Game, renderer: &mut Renderer, entity: Entity) ->
     }
     world.remove::<voxear_render::ModelRenderer>(entity);
     world.remove::<ModelSource>(entity);
+    Ok(made)
+}
+
+/// The path of the model an Obj draws whole, and its nodes, loading it.
+fn model_nodes(
+    game: &mut Game,
+    renderer: &mut Renderer,
+    source: &ModelSource,
+) -> Result<(String, Vec<voxear_render::ImportedNode>)> {
+    let guid = game.content.parse(&source.0.model)?.guid().with_context(|| format!("{} is no model", source.0.model))?;
+    let path = game.content.db().get(guid).map(|entry| entry.path.clone()).context("the model is not in the project")?;
+    Ok((path, game.content.model(renderer, guid)?.to_vec()))
+}
+
+/// A node of the model at `path` as placing it needs, as `changed` changes
+/// it.
+fn model_part(path: &str, node: &voxear_render::ImportedNode, changed: Option<&PartData>) -> ModelPart {
+    let placed = (node.position, node.rotation, node.scale);
+    let (position, rotation, scale) = changed.map_or(placed, |changed| changed.transform(placed));
+    let own = node.material_part.as_ref().map(|material| format!("{path}#{material}"));
+    ModelPart {
+        name: node.name.clone(),
+        transform: Transform::new(position, rotation, scale),
+        mesh: node.mesh_part.clone(),
+        material: changed.and_then(|changed| changed.material.clone()).or(own),
+    }
+}
+
+/// Changes one part of the model an Obj draws whole, as `change` says, and
+/// draws the model again.
+pub fn change_part(
+    game: &mut Game,
+    renderer: &mut Renderer,
+    entity: Entity,
+    node: u32,
+    change: impl FnOnce(&mut PartData),
+) -> Result<()> {
+    let mut source = game.engine.world.get::<ModelSource>(entity).cloned().context("it draws no model")?;
+    change(source.0.part_mut(node));
+    source.0.tidy_parts();
+    let drawn = voxear_engine::prefab::model_renderer(&mut game.content, renderer, &source.0)?;
+    let world = &mut game.engine.world;
+    world.insert(entity, drawn);
+    world.insert(entity, source);
+    Ok(())
+}
+
+/// Takes one part out of the model an Obj draws whole into an Obj of its
+/// own inside it, drawing what it drew where it was, to change and add
+/// components to on its own. Returns the new Obj.
+pub fn split_part(game: &mut Game, renderer: &mut Renderer, entity: Entity, node: u32) -> Result<Entity> {
+    let source = game.engine.world.get::<ModelSource>(entity).cloned().context("it draws no model")?;
+    let (path, nodes) = model_nodes(game, renderer, &source)?;
+    let at = nodes.get(node as usize).context("the model has no such part")?;
+    let part = model_part(&path, at, source.0.part(node));
+    let name = if part.name.is_empty() { stem(&path).to_string() } else { part.name.clone() };
+    let text = format!("format = 1\n{}", model_obj(&path, 1, &name, None, Some(&part)));
+    let file = scene_file::parse(&text, &path)?;
+    let spawned = scene_file::spawn(&mut game.engine, &mut game.content, Some(renderer), &file, &HashSet::new())?;
+    game.levels.track_new(game.levels.scene_of(entity), &spawned);
+    let made = spawned.first().map(|(_, made)| *made).context("the part's Obj was made")?;
+    game.engine.world.insert(made, part.transform);
+    game.engine.world.insert(made, Parent(entity));
+    change_part(game, renderer, entity, node, |changed| changed.apart = true)?;
     Ok(made)
 }
 
@@ -428,7 +489,7 @@ pub fn model_parts(game: &mut Game, renderer: &mut Renderer, path: &str) -> Vec<
 }
 
 /// A part of a model, as placing it needs: its name, where the model puts
-/// it, and its mesh and material in the model.
+/// it, its mesh in the model, and its material, the model's or another.
 struct ModelPart {
     name: String,
     transform: Transform,
@@ -446,7 +507,7 @@ fn model_obj(path: &str, id: u32, name: &str, parent: Option<u32>, part: Option<
     if let Some(part) = part {
         entry += &format!("[obj.renderer]\nmesh = {}\n", string(&format!("{path}#{}", part.mesh)));
         if let Some(material) = &part.material {
-            entry += &format!("material = {}\n", string(&format!("{path}#{material}")));
+            entry += &format!("material = {}\n", string(material));
         }
     }
     entry

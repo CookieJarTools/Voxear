@@ -86,6 +86,9 @@ pub enum PickFor {
     MaterialMap { material: String, map: voxear_engine::MaterialMap },
     /// A material of the model at this path, for the `.material` it draws with.
     Remap { model: String, part: String },
+    /// A part of the model an Obj draws whole, by its node, for the material
+    /// it draws with.
+    PartMaterial { owner: Entity, node: u32 },
     /// The control of the binding picked in the Input Actions window.
     InputControl,
     /// The icon of the action picked in the Input Actions window.

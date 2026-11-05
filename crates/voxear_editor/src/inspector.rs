@@ -48,6 +48,7 @@ use crate::{
     layers_view::{LayersEdit, LayersView},
     lod_inspector::{GroupLods, LodEdge, LodEye, MeshLods},
     object_picker::{Choice, Chosen},
+    part_inspector::{PartAction, PartView},
     project_view::ProjectItem,
     props::{self, Part, Prop, Value},
 };
@@ -303,6 +304,8 @@ pub struct Inspector {
     menu: Option<(NodeId, Vec<Option<RowAction>>)>,
     /// What is selected in the Project panel, when that is what it shows.
     asset: Option<AssetView>,
+    /// A part of a model an Obj draws whole, when that is what it shows.
+    part: Option<PartView>,
     /// The project's layers, when that is what it shows.
     layers: Option<LayersView>,
     /// Add Layer… was picked from the Layer menu, for the editor to show
@@ -399,6 +402,7 @@ impl Inspector {
             prefab_mode: false,
             menu: None,
             asset: None,
+            part: None,
             layers: None,
             wants_layers: false,
             conditions: Vec::new(),
@@ -788,6 +792,7 @@ impl Inspector {
     /// Shows what is selected in the Project panel instead of an Obj.
     pub fn show_asset(&mut self, ui: &mut Ui, game: &Game, item: &ProjectItem) {
         self.shown = None;
+        self.part = None;
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -795,10 +800,36 @@ impl Inspector {
         self.asset = Some(AssetView::build(ui, self.root, item, game, &self.types, self.dark));
     }
 
+    /// Shows one part of the model `owner` draws whole, node `node`, in place
+    /// of the Obj (see `part_inspector`). Shows the Obj when it has no such
+    /// part.
+    pub fn show_part(&mut self, ui: &mut Ui, game: &Game, owner: Entity, node: u32, playing: bool) {
+        let Some(view) = PartView::build(ui, self.root, game, owner, node) else {
+            return self.show(ui, game, Some(owner), playing);
+        };
+        self.shown = Some(owner);
+        (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
+        self.headers.clear();
+        self.rows.clear();
+        (self.asset, self.layers) = (None, None);
+        self.part = Some(view);
+    }
+
+    /// The model's part shown, by its Obj and node, when it shows one.
+    pub fn shown_part(&self) -> Option<(Entity, u32)> {
+        self.part.as_ref().map(PartView::part)
+    }
+
+    /// What the model's part shown asks of the editor this frame.
+    pub fn update_part(&mut self, ui: &mut Ui) -> Option<PartAction> {
+        self.part.as_mut()?.update(ui)
+    }
+
     /// Shows the project's layers, and which collide, in place of an Obj,
     /// as Unity's Tags and Layers does (see `layers_view`).
     pub fn show_layers(&mut self, ui: &mut Ui, layers: &Layers) {
         self.shown = None;
+        self.part = None;
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -850,6 +881,7 @@ impl Inspector {
     pub fn show(&mut self, ui: &mut Ui, game: &Game, entity: Option<Entity>, playing: bool) {
         self.asset = None;
         self.layers = None;
+        self.part = None;
         for child in ui.children(self.root) {
             ui.remove(child);
         }
@@ -1374,6 +1406,10 @@ impl Inspector {
         playing: bool,
     ) -> Option<Edit> {
         let entity = self.shown?;
+        // A model's part is changed through its actions (`update_part`).
+        if self.part.is_some() {
+            return None;
+        }
         let Some(&transform) = game.engine.world.get::<Transform>(entity) else {
             self.show(ui, game, None, playing);
             return None;

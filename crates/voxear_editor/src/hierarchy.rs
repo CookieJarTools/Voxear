@@ -65,11 +65,16 @@ fn is_header(item: u64) -> bool {
 }
 
 /// A model's part is an item of its own too, with the top bit set, which a
-/// live entity's never has: its Obj's index, then its place in the model.
+/// live entity's never has: its Obj's index, then its node in the model.
 const PART: u64 = 1 << 63;
+const NODE_BITS: u64 = 20;
 
-fn part_item(owner: Entity, part: usize) -> u64 {
-    PART | (u64::from(owner.index()) << 20) | part as u64
+fn part_item(owner: Entity, node: u32) -> u64 {
+    PART | (u64::from(owner.index()) << NODE_BITS) | u64::from(node)
+}
+
+fn node_of(item: u64) -> u32 {
+    (item & ((1 << NODE_BITS) - 1)) as u32
 }
 
 fn is_part(item: u64) -> bool {
@@ -435,6 +440,23 @@ impl Hierarchy {
         objs
     }
 
+    /// The model's part selected, by its Obj and node, when a part is what
+    /// is selected.
+    pub fn selected_part(&self, ui: &Ui) -> Option<(Entity, u32)> {
+        let item = ui.selected_items(self.tree).first().copied().filter(|&item| is_part(item))?;
+        Some((self.shown.borrow().owners.get(&item).copied()?, node_of(item)))
+    }
+
+    /// Selects a model's part, by its Obj and node, when its row is listed,
+    /// and otherwise its Obj.
+    pub fn select_part(&mut self, ui: &mut Ui, world: &World, (owner, node): (Entity, u32)) {
+        self.open_to(ui, world, owner);
+        ui.set_expanded(self.tree, owner.to_bits(), true);
+        if !ui.select_item(self.tree, part_item(owner, node)) {
+            ui.select_item(self.tree, owner.to_bits());
+        }
+    }
+
     /// The Obj an item is: none for a scene's header, and its model's Obj
     /// for a model's part.
     fn obj_of(&self, item: u64) -> Option<Entity> {
@@ -614,10 +636,10 @@ fn snapshot(
     for owner in listed {
         let Some(model) = world.get::<ModelRenderer>(owner) else { continue };
         let names = part_names(content, model);
-        for index in 0..model.parts.len() {
-            let item = part_item(owner, index);
-            let name = names.get(index).filter(|name| !name.is_empty()).cloned();
-            let name = name.unwrap_or_else(|| format!("Part {}", index + 1));
+        for part in model.parts.iter() {
+            let item = part_item(owner, part.node);
+            let name = names.get(part.node as usize).filter(|name| !name.is_empty()).cloned();
+            let name = name.unwrap_or_else(|| format!("Part {}", part.node + 1));
             let row = Row { name, icon: "box", header: false, badge: "", prefab: None, model: None, part: true };
             snapshot.rows.insert(item, row);
             snapshot.owners.insert(item, owner);
@@ -627,15 +649,26 @@ fn snapshot(
     snapshot
 }
 
-/// The names a model gives its parts, as a Model Renderer draws one for
-/// each of its nodes, in order; none when it is not loaded.
-fn part_names(content: &Content, model: &ModelRenderer) -> Vec<String> {
+/// The names a model gives its nodes, in order; none when it is not
+/// loaded. A name many nodes share, as a model whose every node is `mesh`,
+/// is told apart by each node's material's name.
+pub(crate) fn part_names(content: &Content, model: &ModelRenderer) -> Vec<String> {
     let guid = model.parts.first().and_then(|part| content.mesh_ref(part.mesh)).and_then(|mesh| mesh.guid());
-    let nodes = guid.and_then(|guid| content.loaded_model(guid)).unwrap_or_default();
-    match nodes.len() == model.parts.len() {
-        true => nodes.iter().map(|node| node.name.clone()).collect(),
-        false => Vec::new(),
-    }
+    let Some(guid) = guid else { return Vec::new() };
+    let nodes = content.loaded_model(guid).unwrap_or_default();
+    let materials = content.loaded_model_materials(guid).unwrap_or_default();
+    let shared = |name: &str| nodes.iter().filter(|node| node.name == name).count() > 1;
+    nodes
+        .iter()
+        .map(|node| {
+            let material = node.material_part.as_ref().and_then(|part| materials.iter().find(|(p, _)| p == part));
+            match material.map(|(_, name)| name.as_str()).filter(|name| !name.is_empty()) {
+                Some(material) if node.name.is_empty() => material.to_string(),
+                Some(material) if shared(&node.name) => format!("{} · {material}", node.name),
+                _ => node.name.clone(),
+            }
+        })
+        .collect()
 }
 
 /// A file's name without its folder or extension.

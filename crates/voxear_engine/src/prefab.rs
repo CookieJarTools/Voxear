@@ -715,20 +715,39 @@ pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageDat
 }
 
 /// A Model Renderer drawing every part of the model `data` names, loading
-/// it, each part where the model puts it.
+/// it, each part where the model puts it, as `data` changes it.
 pub fn model_renderer(content: &mut Content, renderer: &mut Renderer, data: &ModelData) -> Result<ModelRenderer> {
     let guid = content.parse(&data.model)?.guid().with_context(|| format!("{} is not a model asset", data.model))?;
-    Ok(ModelRenderer { lod_bias: data.lod_bias, ..ModelRenderer::new(model_parts(content.model(renderer, guid)?)) })
+    let nodes = content.model(renderer, guid)?.to_vec();
+    let parts = model_parts(content, renderer, &nodes, data)?;
+    Ok(ModelRenderer { lod_bias: data.lod_bias, ..ModelRenderer::new(parts) })
 }
 
-/// A loaded model's parts as a Model Renderer draws them.
-pub fn model_parts(nodes: &[voxear_render::ImportedNode]) -> Vec<ModelPart> {
-    let part = |node: &voxear_render::ImportedNode| ModelPart {
-        mesh: node.mesh,
-        material: node.material,
-        transform: voxear_core::math::Mat4::from_scale_rotation_translation(node.scale, node.rotation, node.position),
-    };
-    nodes.iter().map(part).collect()
+/// A loaded model's parts as a Model Renderer draws them, as `data`
+/// changes them: moved, drawn with another material, or left out where an
+/// Obj of their own draws them.
+pub fn model_parts(
+    content: &mut Content,
+    renderer: &mut Renderer,
+    nodes: &[voxear_render::ImportedNode],
+    data: &ModelData,
+) -> Result<Vec<ModelPart>> {
+    let mut parts = Vec::with_capacity(nodes.len());
+    for (node, part) in (0u32..).zip(nodes) {
+        let changed = data.part(node);
+        if changed.is_some_and(|changed| changed.apart) {
+            continue;
+        }
+        let placed = (part.position, part.rotation, part.scale);
+        let (position, rotation, scale) = changed.map_or(placed, |changed| changed.transform(placed));
+        let material = match changed.and_then(|changed| changed.material.as_deref()) {
+            Some(reference) => content.material(renderer, &MaterialSource::Asset(content.parse(reference)?))?,
+            None => part.material,
+        };
+        let transform = voxear_core::math::Mat4::from_scale_rotation_translation(scale, rotation, position);
+        parts.push(ModelPart { mesh: part.mesh, material, transform, node });
+    }
+    Ok(parts)
 }
 
 /// The material a Mesh Renderer or a Foliage names, or the default one.

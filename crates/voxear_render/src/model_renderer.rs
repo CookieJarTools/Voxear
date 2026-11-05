@@ -11,13 +11,14 @@ use voxear_ecs::Component;
 
 use crate::{MaterialHandle, MeshHandle, Renderer};
 
-/// One part of a model: its mesh, its material, and where it sits in the
-/// model, which is the Obj's space.
+/// One part of a model: its mesh, its material, where it sits in the
+/// model, which is the Obj's space, and which of the model's nodes it is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelPart {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
     pub transform: Mat4,
+    pub node: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -8,7 +8,7 @@
 //! do. One opened from the menu goes for good when it closes. Each is built
 //! from Hierarchy.vui.
 
-use voxear_ecs::Entity;
+use voxear_ecs::{Entity, World};
 use voxear_render::Renderer;
 use voxear_ui::{DragSource, NodeId, Ui};
 
@@ -117,6 +117,8 @@ impl Editor {
             self.select_in_other_hierarchies(selected);
             self.show_selection(selected);
         }
+        // A model's part selects its Obj, and the Inspectors show the part.
+        self.selected_part = self.hierarchy.selected_part(&self.ui);
     }
 
     /// Shows several Objs selected in every Hierarchy.
@@ -135,21 +137,19 @@ impl Editor {
 
     /// Shows the selection in every Hierarchy.
     pub(super) fn select_in_hierarchies(&mut self, selected: Option<Entity>) {
-        match selected {
-            Some(entity) => self.hierarchy.select(&mut self.ui, &self.game.engine.world, entity),
-            None => self.hierarchy.clear(&mut self.ui),
-        }
+        let part = self.selected_part.filter(|(owner, _)| Some(*owner) == selected);
+        let (ui, world) = (&mut self.ui, &self.game.engine.world);
+        show_in(&mut self.hierarchy, ui, world, selected, part);
         self.select_in_other_hierarchies(selected);
     }
 
-    /// Shows the selection in every Hierarchy but the editor's `hierarchy`.
+    /// Shows the selection in every Hierarchy but the editor's `hierarchy`:
+    /// the model's part picked, while its Obj is the one selected.
     pub(super) fn select_in_other_hierarchies(&mut self, selected: Option<Entity>) {
+        let part = self.selected_part.filter(|(owner, _)| Some(*owner) == selected);
         let (ui, world) = (&mut self.ui, &self.game.engine.world);
         for extra in &mut self.extra_hierarchies {
-            match selected {
-                Some(entity) => extra.hierarchy.select(ui, world, entity),
-                None => extra.hierarchy.clear(ui),
-            }
+            show_in(&mut extra.hierarchy, ui, world, selected, part);
         }
     }
 
@@ -191,5 +191,21 @@ impl Editor {
         for hierarchy in std::iter::once(&self.hierarchy).chain(extras) {
             hierarchy.take_drops(&mut self.ui, take);
         }
+    }
+}
+
+/// Selects an Obj in a Hierarchy, or a part of the model it draws, or
+/// nothing.
+fn show_in(
+    hierarchy: &mut Hierarchy,
+    ui: &mut Ui,
+    world: &World,
+    selected: Option<Entity>,
+    part: Option<(Entity, u32)>,
+) {
+    match (selected, part) {
+        (Some(_), Some(part)) => hierarchy.select_part(ui, world, part),
+        (Some(entity), None) => hierarchy.select(ui, world, entity),
+        (None, _) => hierarchy.clear(ui),
     }
 }

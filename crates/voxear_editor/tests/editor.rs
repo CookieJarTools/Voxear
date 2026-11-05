@@ -4956,10 +4956,60 @@ fn a_model_dragged_from_the_project_places_objs_drawing_it() {
     editor.select(None);
     click(&mut editor.ui, left);
     frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
     assert_eq!(editor.selected(), Some(pair), "a part selects its model's Obj");
+
+    // The Inspector shows the part: where it sits, typed to move it, kept on the Obj and one step to undo.
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let names: Vec<String> = {
+        let mut found = Vec::new();
+        with_class(&editor.ui, inspector, "asset-name", &mut found);
+        found.into_iter().map(|n| editor.ui.text(n)).collect()
+    };
+    assert_eq!(names, ["Left"], "the part's own Inspector");
+    assert_eq!(editor.inspected_part(), Some((pair, 0)));
+    let x = first_with(&editor.ui, prop_row(&editor.ui, "Position").unwrap(), "axis-input").unwrap();
+    type_into(&mut editor.ui, x, "-3");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    let moved = |editor: &voxear_editor::Editor| {
+        let drawn = editor.game.engine.world.get::<voxear_render::ModelRenderer>(pair).unwrap();
+        drawn.parts.iter().find(|part| part.node == 0).map(|part| part.transform.w_axis.x)
+    };
+    assert_eq!(moved(&editor), Some(-3.0), "the part moves");
+    let source = editor.game.engine.world.get::<voxear_engine::scene_file::ModelSource>(pair).unwrap();
+    assert_eq!(source.0.part(0).and_then(|part| part.position).map(|p| p[0]), Some(-3.0), "kept on the Obj");
+    editor.undo(&mut renderer);
+    assert_eq!(moved(&editor), Some(parts[0].1.x), "one step to undo");
+    editor.redo(&mut renderer);
+    assert_eq!(moved(&editor), Some(-3.0));
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspected_part(), Some((pair, 0)), "still showing the part through undo and redo");
+
+    // Add Component takes the part out into an Obj of its own inside the model's, where it was; the rest stay one.
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, inspector, "add-component", &mut buttons);
+    let add = buttons.into_iter().find(|&b| editor.ui.text(b) == "Add Component").expect("Add Component on a part");
+    scroll_to(&mut editor, &mut renderer, add);
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let taken = obj(&editor, "Left").expect("an Obj for the part");
+    let world = &editor.game.engine.world;
+    assert_eq!(world.get::<voxear_scene::Parent>(taken).map(|p| p.0), Some(pair));
+    assert_eq!(world.get::<Transform>(taken).unwrap().position.x, -3.0, "where it was moved to");
+    assert!(world.get::<voxear_render::MeshRenderer>(taken).is_some());
+    assert_eq!(world.get::<voxear_render::ModelRenderer>(pair).unwrap().parts.len(), 1, "the other stays drawn whole");
+    assert_eq!(editor.selected(), Some(taken), "selected, ready for components");
+    editor.undo(&mut renderer);
+    assert!(obj(&editor, "Left").is_none(), "one step to undo");
+    assert_eq!(editor.game.engine.world.get::<voxear_render::ModelRenderer>(pair).unwrap().parts.len(), 2);
+    assert!(hierarchy_row(&editor.ui, "Left").is_some(), "listed again as a part");
 
     // The Model Renderer's menu in the Inspector unpacks it, and so does a part's in the Hierarchy: an Obj inside
     // it for each part, where the model puts it, as one step.
+    editor.select(Some(pair));
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspected_part(), None, "the Obj selected shows the Obj");
     let header = section_header(&editor.ui, "Model Renderer").unwrap();
     context_click(&mut editor.ui, header);
     frame(&mut editor, &mut renderer);
@@ -4977,7 +5027,9 @@ fn a_model_dragged_from_the_project_places_objs_drawing_it() {
     for (name, position) in &parts {
         let part = obj(&editor, name).unwrap();
         assert_eq!(world.get::<voxear_scene::Parent>(part).map(|p| p.0), Some(pair));
-        assert_eq!(world.get::<Transform>(part).unwrap().position, *position, "{name}");
+        // Left was moved on the Obj, and stays where it was moved to.
+        let wanted = if name == "Left" { Vec3::new(-3.0, position.y, position.z) } else { *position };
+        assert_eq!(world.get::<Transform>(part).unwrap().position, wanted, "{name}");
         assert!(world.get::<voxear_render::MeshRenderer>(part).is_some());
     }
     editor.undo(&mut renderer);

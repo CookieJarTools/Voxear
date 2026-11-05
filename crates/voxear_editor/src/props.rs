@@ -1552,7 +1552,8 @@ pub fn pick(
         (Prop::ModelAsset, Pick::Asset(Some(path))) => {
             let Some(renderer) = renderer else { return false };
             let Some(source) = game.engine.world.get::<ModelSource>(entity).cloned() else { return false };
-            let data = ModelData { model: path.clone(), ..source.0 };
+            // Another model's nodes are other parts, so what this Obj changed of the last one goes.
+            let data = ModelData { model: path.clone(), parts: Vec::new(), ..source.0 };
             match voxear_engine::prefab::model_renderer(&mut game.content, renderer, &data) {
                 Ok(drawn) => {
                     let world = &mut game.engine.world;

@@ -42,6 +42,7 @@ pub struct ImportedModel {
 
 /// One drawable piece of the imported scene, with its transform relative to
 /// the model's root.
+#[derive(Clone, Debug)]
 pub struct ImportedNode {
     pub name: String,
     pub position: Vec3,

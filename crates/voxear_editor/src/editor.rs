@@ -21,6 +21,7 @@ mod lighting;
 mod level_edits;
 mod material_drops;
 mod model_materials;
+mod model_parts;
 mod path_bakes;
 mod placing;
 mod play;
@@ -334,6 +335,9 @@ pub struct Editor {
     /// The Obj selected, which every Inspector not locked shows: the active
     /// one when several are (see `selection`).
     selection: Option<Entity>,
+    /// A part of the model the selected Obj draws whole, by its node, when
+    /// that is what the Hierarchy has selected, for the Inspectors to show.
+    selected_part: Option<(Entity, u32)>,
     /// The other Objs selected with it, a box being dragged over the Scene
     /// view, and where the others were as the handles began a drag.
     others: Vec<Entity>,
@@ -602,6 +606,7 @@ impl Editor {
             game_focused: false,
             material_preview: None,
             selection: None,
+            selected_part: None,
             others: Vec::new(),
             marquee: None,
             followers: None,
@@ -639,6 +644,13 @@ impl Editor {
 
     /// Selects an Obj, as a click in the Hierarchy does, or nothing.
     pub fn select(&mut self, entity: Option<Entity>) {
+        self.selected_part = None;
+        self.reselect(entity);
+    }
+
+    /// Selects `entity` as [`select`](Self::select) does, but keeps a model's
+    /// part picked while it is that part's Obj, as an undo does.
+    fn reselect(&mut self, entity: Option<Entity>) {
         self.others.clear();
         // An Obj made this frame is in the Hierarchies once they have looked again.
         self.refresh_hierarchies();
@@ -649,6 +661,12 @@ impl Editor {
     /// The Obj selected, as the Inspector shows it.
     pub fn selected(&self) -> Option<Entity> {
         self.selection
+    }
+
+    /// The model's part the first Inspector shows, by its Obj and node, when
+    /// it shows one.
+    pub fn inspected_part(&self) -> Option<(Entity, u32)> {
+        self.inspector.shown_part()
     }
 
     /// The Scene view's camera over its rectangle, when the Scene view is
@@ -1898,7 +1916,7 @@ impl Editor {
                 };
                 match step {
                     Some(selected) => {
-                        self.select(selected);
+                        self.reselect(selected);
                         self.unsaved = true;
                     }
                     None => self.notify(if command == Command::Undo { "Nothing to undo" } else { "Nothing to redo" }),
@@ -2217,6 +2235,9 @@ impl Editor {
                     self.pick_material_map(&material, map, &pick, renderer);
                 }
                 (PickFor::Remap { model, part }, Chosen::Value(pick)) => self.pick_remap(&model, &part, &pick, renderer),
+                (PickFor::PartMaterial { owner, node }, Chosen::Value(pick)) if alive(owner) => {
+                    self.pick_part_material(owner, node, &pick, renderer);
+                }
                 (PickFor::AddComponent(entity), Chosen::Component(part)) if alive(entity) => {
                     self.row_action_on(entity, RowAction::Add(part), renderer);
                 }

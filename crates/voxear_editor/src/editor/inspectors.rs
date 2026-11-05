@@ -96,9 +96,18 @@ impl Editor {
     /// answers its menus.
     fn inspector_frame(&mut self, renderer: &mut Renderer, playing: bool) {
         let unlocked = self.inspector.update_lock(&mut self.ui) && !self.inspector.is_locked();
-        if (unlocked || !self.inspector.is_locked()) && self.inspector.shown() != self.selected() {
+        let following = unlocked || !self.inspector.is_locked();
+        // A model's part picked in the Hierarchy shows in place of its Obj.
+        let part = self.selected_part.filter(|(owner, _)| Some(*owner) == self.selected());
+        if following && (self.inspector.shown() != self.selected() || self.inspector.shown_part() != part) {
             let selected = self.selected();
-            self.inspector.show(&mut self.ui, &self.game, selected, playing);
+            match part {
+                Some((owner, node)) => self.inspector.show_part(&mut self.ui, &self.game, owner, node, playing),
+                None => self.inspector.show(&mut self.ui, &self.game, selected, playing),
+            }
+        }
+        if let Some(action) = self.inspector.update_part(&mut self.ui) {
+            self.part_action(action, renderer);
         }
         // An Inspector not locked edits every Obj selected, shown on the active one.
         let others = if self.inspector.is_locked() { Vec::new() } else { self.others.clone() };
@@ -190,14 +199,19 @@ impl Editor {
     /// Shows the selection in every Inspector not locked.
     pub(super) fn show_selection(&mut self, entity: Option<Entity>) {
         self.selection = entity;
+        // A part stays picked while its Obj does, as through an undo.
+        if self.selected_part.is_some_and(|(owner, _)| Some(owner) != entity) {
+            self.selected_part = None;
+        }
         // The active Obj is not among the others, and with nothing active nothing else is selected.
         self.others.retain(|&other| entity.is_some() && Some(other) != entity);
-        let playing = self.is_playing();
+        let (playing, part) = (self.is_playing(), self.selected_part);
         let (ui, game) = (&mut self.ui, &self.game);
         let extras = self.extra_inspectors.iter_mut().map(|extra| &mut extra.inspector);
-        for inspector in std::iter::once(&mut self.inspector).chain(extras) {
-            if !inspector.is_locked() {
-                inspector.show(ui, game, entity, playing);
+        for inspector in std::iter::once(&mut self.inspector).chain(extras).filter(|inspector| !inspector.is_locked()) {
+            match part {
+                Some((owner, node)) => inspector.show_part(ui, game, owner, node, playing),
+                None => inspector.show(ui, game, entity, playing),
             }
         }
     }

@@ -28,6 +28,7 @@ mod hot_reload;
 mod ies;
 mod lod;
 mod looks;
+pub mod ocean;
 mod lod_group;
 mod ltc;
 #[cfg(test)]
@@ -51,6 +52,7 @@ mod shadows;
 mod texture_codec;
 mod ui_pass;
 mod volumetric;
+mod water;
 mod wind;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
@@ -100,6 +102,7 @@ pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use wind::WindZone;
+pub use ocean::{Ocean, OceanSampler, SeaState, Weather};
 pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
 };
@@ -1347,6 +1350,8 @@ struct View {
     atmosphere_tables: Option<gpu::GpuAtmosphere>,
     /// Whether last frame drew a fog volume this one can carry on from.
     fog_history: bool,
+    /// The sea's spectrum and FFT rows (see `water`).
+    ocean: water::OceanBuffers,
     /// The ray-traced GI's origins last frame, its spacing, and how many
     /// frames it has run, when it had probes this one can carry on from.
     ddgi_history: Option<([[i32; 4]; gpu::DDGI_CASCADES], f32, u32)>,
@@ -1425,6 +1430,7 @@ impl View {
             ao_history: None,
             atmosphere_tables: None,
             fog_history: false,
+            ocean: water::OceanBuffers::new(gpu, &named)?,
             ddgi_history: None,
             warned_meshlets: false,
         })
@@ -1458,6 +1464,9 @@ impl View {
             }
         }
         for buffer in [self.visibility, self.lod_state, self.exposure, self.foliage_pushes] {
+            frames.retire(Retired::Buffer(buffer));
+        }
+        for buffer in self.ocean.into_buffers() {
             frames.retire(Retired::Buffer(buffer));
         }
         for level in self.top_levels.into_iter().flatten() {
@@ -1839,6 +1848,14 @@ impl View {
         if let Some((maps, _)) = &glass_shadows {
             frame_data.glass_shadow = maps.frame_field(fg);
         }
+        // The first Ocean's sea, its waves moved on to now.
+        let water = match (extracted.ocean, wireframe) {
+            (Some(sea), false) => Some(water::Water::new(fg, (gpu, bindless), &mut self.ocean, (&sea.0, sea.1, sea.2), (extent, setup.time))?),
+            _ => None,
+        };
+        if let Some(water) = &water {
+            frame_data.ocean = water.frame;
+        }
         let glass = match panes.is_empty() {
             true => None,
             false => Some(glass::Glass::new(fg, (gpu, bindless), extent, panes)?),
@@ -1921,6 +1938,8 @@ impl View {
                 // Only under the atmosphere, which works it out.
                 sky_light: if atmosphere.is_some() { buffers.sky_light.address } else { 0 },
                 material_properties: assets.material_properties.address,
+                ocean_spectrum: self.ocean.spectrum.address,
+                ocean_fft: self.ocean.fft.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -1981,6 +2000,7 @@ impl View {
             reflections,
             atmosphere,
             volume,
+            water,
             glass,
             probes,
         };

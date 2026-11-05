@@ -58,7 +58,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    Plant, Seasons, Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone, scatter,
+    Ocean, Plant, Seasons, Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -273,6 +273,9 @@ pub struct ObjData {
     /// A Wind Zone, blowing along the Obj's +Z over the whole level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_zone: Option<WindZone>,
+    /// An Ocean, the sea filling the level at the Obj's height.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocean: Option<Ocean>,
     /// Seasons, turning the level's plants through the year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seasons: Option<Seasons>,
@@ -329,6 +332,7 @@ impl ObjData {
             layer: None,
             collider: None,
             wind_zone: None,
+            ocean: None,
             seasons: None,
             foliage_interaction: None,
             foliage: None,
@@ -1216,6 +1220,9 @@ fn capture_instance(
     if root.wind_zone.is_some() && root.wind_zone != prefab_root.wind_zone {
         instance.wind_zone = root.wind_zone;
     }
+    if root.ocean.is_some() && root.ocean != prefab_root.ocean {
+        instance.ocean = root.ocean;
+    }
     if root.model.is_some() && root.model != prefab_root.model {
         instance.model.clone_from(&root.model);
     }
@@ -1329,6 +1336,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
         put("wind_zone", whole(&wind, &WindZone::default())?);
+    }
+    if let Some(ocean) = actual.ocean.filter(|o| Some(*o) != expected.ocean) {
+        put("ocean", whole(&ocean, &Ocean::default())?);
     }
     if let Some(seasons) = actual.seasons.filter(|s| Some(*s) != expected.seasons) {
         put("seasons", whole(&seasons, &Seasons::default())?);
@@ -1555,6 +1565,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();
+    obj.ocean = world.get::<Ocean>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.model = world.get::<ModelSource>(entity).map(|source| {
@@ -1910,6 +1921,15 @@ mod tests {
         let pine: MaterialData = toml::from_str("foliage = true\nleaves = \"stay\"").unwrap();
         assert_eq!(pine.leaves, voxear_render::Leaves::Stay);
         assert!(!toml::to_string(&MaterialData::default()).unwrap().contains("leaves"), "leaves that turn are not written");
+    }
+
+    #[test]
+    fn an_ocean_reads_and_writes_back() {
+        let obj: ObjData = toml::from_str("id = 1\nname = \"Sea\"\n[ocean]\nweather = \"stormy\"\nfoam = 0.8").unwrap();
+        let ocean = obj.ocean.expect("the sea is read");
+        assert_eq!((ocean.weather, ocean.foam), (voxear_render::Weather::Stormy, 0.8));
+        assert_eq!(ocean.choppiness, Ocean::default().choppiness, "the rest as they start");
+        assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().ocean, Some(ocean));
     }
 
     #[test]

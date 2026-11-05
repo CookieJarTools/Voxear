@@ -436,6 +436,8 @@ impl Engine {
         // Last frame's debug draw has been seen; its shapes count down.
         voxear_core::debug_draw::advance(self.time.delta);
         self.sync_script_time(self.time.delta);
+        // The sea's long waves, where scripts and floating Objs ask about them.
+        crate::water::update(&mut self.world, self.time.elapsed);
         let year = self.world.query_ref::<&Seasons>().into_iter().next().map(|seasons| seasons.time_of_year);
         if let Some(scripts) = self.scripts.as_mut() {
             scripts.publish_time_of_year(year);

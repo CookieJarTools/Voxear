@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 37;
+pub(crate) const API_VERSION: u32 = 38;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -294,6 +294,34 @@ pub(crate) struct NativeApi {
     /// `Seasons.TimeOfYear`: the level's, NaN without Seasons, and setting it.
     pub seasons_time: unsafe extern "C" fn() -> f32,
     pub seasons_set_time: unsafe extern "C" fn(time: f32),
+    /// `Water`: the water at a point, its surface's height, the way it faces
+    /// and its flow, seven numbers; 0 where there is none.
+    pub water_sample: unsafe extern "C" fn(at: *const [f32; 3], out: *mut [f32; 7]) -> i32,
+}
+
+/// What answers scripts' questions about water: the engine's, set when it
+/// starts (voxear_scripting cannot see the renderer's sea itself).
+pub type WaterSampler = fn(&World, [f32; 3]) -> Option<[f32; 7]>;
+static WATER: std::sync::OnceLock<WaterSampler> = std::sync::OnceLock::new();
+
+/// Sets what answers `Water` in scripts; the first set is kept.
+pub fn set_water_sampler(sampler: WaterSampler) {
+    let _ = WATER.set(sampler);
+}
+
+unsafe extern "C" fn water_sample(at: *const [f32; 3], out: *mut [f32; 7]) -> i32 {
+    if at.is_null() || out.is_null() {
+        return 0;
+    }
+    let at = unsafe { *at };
+    let found = WATER.get().and_then(|sampler| with_world(|world| sampler(world, at)));
+    match found {
+        Some(values) => {
+            unsafe { *out = values };
+            1
+        }
+        None => 0,
+    }
 }
 
 /// `behaviours_adopt` state bits, set by `Activation` in Voxear.Core.
@@ -1148,6 +1176,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         lighting_apply,
         seasons_time,
         seasons_set_time,
+        water_sample,
     }
 }
 

@@ -112,6 +112,8 @@ pub struct Frame {
     pub atmosphere: Option<atmosphere::Tables>,
     /// The volumetric fog's volumes, filled once the opaque passes are done.
     pub volume: Option<volumetric::Volume>,
+    /// The sea, drawn after the sky and before glass.
+    pub water: Option<crate::water::Water>,
     /// The glass in view, drawn after the sky.
     pub glass: Option<glass::Glass>,
     /// The GI's probes, whose rays are traced once the opaque passes are
@@ -411,6 +413,14 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         fullscreen(ctx, pipelines.sky, &push);
     });
 
+    if let Some(water) = frame.water.clone() {
+        let mut sampled: Vec<ImageId> =
+            targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
+        sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
+        let water_targets = crate::water::WaterTargets { hdr, velocity, depth, sampled };
+        crate::water::record(fg, (pipelines, push), water, water_targets);
+    }
+
     if let Some(glass) = frame.glass.clone() {
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
@@ -615,7 +625,7 @@ fn clear_depth(depth: f32) -> vk::ClearValue {
 }
 
 /// A rendering attachment that clears when given a value and loads otherwise.
-fn attachment(
+pub(crate) fn attachment(
     view: vk::ImageView,
     layout: vk::ImageLayout,
     clear: Option<vk::ClearValue>,

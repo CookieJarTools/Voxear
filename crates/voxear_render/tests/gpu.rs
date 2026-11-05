@@ -3550,3 +3550,43 @@ fn wind_masks_sway_branches_further_than_the_trunk() {
     assert!(lean(&branch) > lean(&plain) + 4.0, "a branch sways further downwind: {} and {}", lean(&branch), lean(&plain));
     assert!((pole_centre(&branch, 282) - pole_centre(&plain, 282)).abs() < 2.0, "and the trunk's foot stays put");
 }
+
+/// The sea in `weather`, seen from four metres up, the sun low ahead.
+fn ocean_render(weather: voxear_render::Weather) -> Option<Vec<u8>> {
+    use voxear_render::{Ocean, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let look = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.08, 1.0).normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 4.0, 0.0), look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.35, -1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    world.spawn((Ocean { weather, ..Ocean::default() }, Transform::new(Vec3::ZERO, Quat::from_rotation_y(0.4), Vec3::ONE)));
+    let mut time = 40.0;
+    run(&mut renderer, &world, &mut time, 20);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn the_sea_is_blue_water_and_a_storm_breaks_into_whitecaps() {
+    use voxear_render::Weather;
+    let Some(calm) = ocean_render(Weather::Calm) else { return };
+    keep_image("ocean calm.png", &calm);
+    let stormy = ocean_render(Weather::Stormy).unwrap();
+    keep_image("ocean stormy.png", &stormy);
+    // Below the horizon, away from the sun's path: water, its blue over its red.
+    let water = patch_rgb(&calm, (560, 320), 6);
+    assert!(water[2] > water[0] + 15, "the sea is blue: {water:?}");
+    // Whitecaps: bright, nearly grey pixels below the horizon, out of the sun's glitter on the left.
+    let foam = |pixels: &[u8]| {
+        (220..360u32)
+            .flat_map(|y| (400..640u32).map(move |x| (x, y)))
+            .filter(|&at| {
+                let [r, g, b] = rgb_at(pixels, at);
+                r > 95 && (b - r).abs() < 40 && (g - r).abs() < 40
+            })
+            .count()
+    };
+    let (calm_foam, storm_foam) = (foam(&calm), foam(&stormy));
+    assert!(storm_foam > calm_foam * 2 + 50, "a storm's whitecaps: {storm_foam} pixels against {calm_foam} when calm");
+}

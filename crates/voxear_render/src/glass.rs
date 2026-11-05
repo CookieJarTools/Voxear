@@ -318,7 +318,7 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), gla
 
 /// Records a copy of the picture so far, and its mips, for glass to be
 /// drawn over.
-fn record_copy(
+pub(crate) fn record_copy(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     (hdr, copy, copy_texture): (ImageId, ImageId, TextureId),

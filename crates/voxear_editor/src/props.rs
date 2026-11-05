@@ -23,7 +23,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    ModelRenderer, Season, Seasons, SkyBody, VolumeShape, WindZone,
+    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindZone,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -73,6 +73,7 @@ pub enum Part {
     Wheel,
     PostVolume,
     WindZone,
+    Ocean,
     Seasons,
     FoliageInteraction,
     Foliage,
@@ -103,6 +104,7 @@ impl Part {
             Part::Wheel => "wheel".into(),
             Part::PostVolume => "post_volume".into(),
             Part::WindZone => "wind_zone".into(),
+            Part::Ocean => "ocean".into(),
             Part::Seasons => "seasons".into(),
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
@@ -129,6 +131,7 @@ impl Part {
             Part::Wheel => "Wheel",
             Part::PostVolume => "Post Volume",
             Part::WindZone => "Wind Zone",
+            Part::Ocean => "Ocean",
             Part::Seasons => "Seasons",
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
@@ -154,6 +157,7 @@ impl Part {
             Part::Wheel => "rotate",
             Part::PostVolume => "panels",
             Part::WindZone => "move",
+            Part::Ocean => "globe",
             Part::Seasons => "globe",
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
@@ -200,6 +204,19 @@ pub enum Prop {
     WindGustSize,
     WindGustSpeed,
     WindTurbulence,
+    /// An Ocean's weather, and for Custom weather its swell and wind; its
+    /// crests, colours and foam.
+    OceanWeather,
+    OceanSwellWind,
+    OceanSwellFetch,
+    OceanWind,
+    OceanFetch,
+    OceanChoppiness,
+    OceanDeep,
+    OceanScatter,
+    OceanFoam,
+    OceanClarity,
+    OceanMurk,
     /// A Seasons' time of year, and the season it is nearest, which the
     /// rows of a season's look below it are for.
     TimeOfYear,
@@ -377,6 +394,17 @@ impl Prop {
             Prop::WindStrength | Prop::WindGusts | Prop::WindGustSize | Prop::WindGustSpeed | Prop::WindTurbulence => {
                 Part::WindZone
             }
+            Prop::OceanWeather
+            | Prop::OceanSwellWind
+            | Prop::OceanSwellFetch
+            | Prop::OceanWind
+            | Prop::OceanFetch
+            | Prop::OceanChoppiness
+            | Prop::OceanDeep
+            | Prop::OceanScatter
+            | Prop::OceanFoam
+            | Prop::OceanClarity
+            | Prop::OceanMurk => Part::Ocean,
             Prop::TimeOfYear
             | Prop::Season
             | Prop::SeasonColor(_)
@@ -510,6 +538,17 @@ impl Prop {
             Prop::WindGustSize => "gust_size",
             Prop::WindGustSpeed => "gust_speed",
             Prop::WindTurbulence => "turbulence",
+            Prop::OceanWeather => "weather",
+            Prop::OceanSwellWind => "swell_wind",
+            Prop::OceanSwellFetch => "swell_fetch",
+            Prop::OceanWind => "wind",
+            Prop::OceanFetch => "fetch",
+            Prop::OceanChoppiness => "choppiness",
+            Prop::OceanDeep => "deep",
+            Prop::OceanScatter => "scatter",
+            Prop::OceanFoam => "foam",
+            Prop::OceanClarity => "clarity",
+            Prop::OceanMurk => "murk",
             Prop::TimeOfYear | Prop::Season => "time_of_year",
             Prop::SeasonColor(season) => return format!("{}.color", season_key(*season)),
             Prop::SeasonColorAmount(season) => return format!("{}.color_amount", season_key(*season)),
@@ -665,6 +704,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<WindZone>(entity) {
         parts.push(Part::WindZone);
     }
+    if world.has::<Ocean>(entity) {
+        parts.push(Part::Ocean);
+    }
     if world.has::<Seasons>(entity) {
         parts.push(Part::Seasons);
     }
@@ -772,6 +814,23 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
         Part::WindZone => {
             vec![Prop::WindStrength, Prop::WindGusts, Prop::WindGustSize, Prop::WindGustSpeed, Prop::WindTurbulence]
+        }
+        // The swell and wind only for Custom weather: the others set their own.
+        Part::Ocean => {
+            let custom = world.get::<Ocean>(entity).is_some_and(|ocean| ocean.weather == Weather::Custom);
+            let mut props = vec![Prop::OceanWeather];
+            if custom {
+                props.extend([Prop::OceanSwellWind, Prop::OceanSwellFetch, Prop::OceanWind, Prop::OceanFetch]);
+            }
+            props.extend([
+                Prop::OceanChoppiness,
+                Prop::OceanDeep,
+                Prop::OceanScatter,
+                Prop::OceanFoam,
+                Prop::OceanClarity,
+                Prop::OceanMurk,
+            ]);
+            props
         }
         // The look of the season the year is nearest, under the choice of it.
         Part::Seasons => {
@@ -953,6 +1012,17 @@ pub fn label(prop: &Prop) -> String {
         Prop::WindGustSize => "Gust size",
         Prop::WindGustSpeed => "Gust speed",
         Prop::WindTurbulence => "Turbulence",
+        Prop::OceanWeather => "Weather",
+        Prop::OceanSwellWind => "Swell wind",
+        Prop::OceanSwellFetch => "Swell fetch",
+        Prop::OceanWind => "Wind",
+        Prop::OceanFetch => "Fetch",
+        Prop::OceanChoppiness => "Choppiness",
+        Prop::OceanDeep => "Deep",
+        Prop::OceanScatter => "Scatter",
+        Prop::OceanFoam => "Foam",
+        Prop::OceanClarity => "Clarity",
+        Prop::OceanMurk => "Murk",
         Prop::TimeOfYear => "Time of year",
         Prop::Season => "Season",
         Prop::SeasonColor(_) => "Colour",
@@ -1177,6 +1247,9 @@ pub fn add(
         Part::WindZone => {
             world.insert(entity, WindZone::default());
         }
+        Part::Ocean => {
+            world.insert(entity, Ocean::default());
+        }
         Part::Seasons => {
             world.insert(entity, Seasons::default());
         }
@@ -1204,6 +1277,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
+        Part::Ocean => drop(world.remove::<Ocean>(entity)),
         Part::Seasons => drop(world.remove::<Seasons>(entity)),
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
         Part::Foliage => {
@@ -1407,6 +1481,21 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::WindGustSize => Value::Number(world.get::<WindZone>(entity)?.gust_size),
         Prop::WindGustSpeed => Value::Number(world.get::<WindZone>(entity)?.gust_speed),
         Prop::WindTurbulence => Value::Number(world.get::<WindZone>(entity)?.turbulence),
+        Prop::OceanWeather => {
+            let weather = world.get::<Ocean>(entity)?.weather;
+            let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
+            Value::Choice(index, Weather::ALL.iter().map(|w| w.name().to_string()).collect())
+        }
+        Prop::OceanSwellWind => Value::Number(world.get::<Ocean>(entity)?.swell_wind),
+        Prop::OceanSwellFetch => Value::Number(world.get::<Ocean>(entity)?.swell_fetch),
+        Prop::OceanWind => Value::Number(world.get::<Ocean>(entity)?.wind),
+        Prop::OceanFetch => Value::Number(world.get::<Ocean>(entity)?.fetch),
+        Prop::OceanChoppiness => Value::Number(world.get::<Ocean>(entity)?.choppiness),
+        Prop::OceanDeep => Value::Color(world.get::<Ocean>(entity)?.deep.map(round3)),
+        Prop::OceanScatter => Value::Color(world.get::<Ocean>(entity)?.scatter.map(round3)),
+        Prop::OceanFoam => Value::Number(world.get::<Ocean>(entity)?.foam),
+        Prop::OceanClarity => Value::Color(world.get::<Ocean>(entity)?.clarity.map(round3)),
+        Prop::OceanMurk => Value::Number(world.get::<Ocean>(entity)?.murk),
         Prop::TimeOfYear => Value::Number(round3(world.get::<Seasons>(entity)?.time_of_year)),
         Prop::Season => {
             let season = world.get::<Seasons>(entity)?.season();
@@ -2133,6 +2222,24 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindTurbulence, Value::Number(n)) => {
             with(world, entity, |wind: &mut WindZone| wind.turbulence = n.max(0.0))
         }
+        (Prop::OceanWeather, Value::Choice(index, _)) => {
+            let weather = Weather::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |ocean: &mut Ocean| ocean.weather = weather)
+        }
+        (Prop::OceanSwellWind, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.swell_wind = n.clamp(0.1, 40.0)),
+        (Prop::OceanSwellFetch, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.swell_fetch = n.clamp(0.1, 2000.0)),
+        (Prop::OceanWind, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.wind = n.clamp(0.1, 40.0)),
+        (Prop::OceanFetch, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.fetch = n.clamp(0.1, 2000.0)),
+        (Prop::OceanChoppiness, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.choppiness = n.clamp(0.0, 1.5)),
+        (Prop::OceanDeep, Value::Color(color)) => with(world, entity, |o: &mut Ocean| o.deep = color.map(|c| c.clamp(0.0, 1.0))),
+        (Prop::OceanScatter, Value::Color(color)) => {
+            with(world, entity, |o: &mut Ocean| o.scatter = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::OceanFoam, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.foam = n.clamp(0.0, 1.0)),
+        (Prop::OceanClarity, Value::Color(color)) => {
+            with(world, entity, |o: &mut Ocean| o.clarity = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::OceanMurk, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.murk = n.clamp(0.0, 20.0)),
         (Prop::TimeOfYear, Value::Number(n)) => {
             with(world, entity, |seasons: &mut Seasons| seasons.time_of_year = n.rem_euclid(4.0))
         }

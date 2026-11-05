@@ -42,6 +42,7 @@ mod stats_overlay;
 pub mod steam_language;
 pub mod ui_input;
 pub mod upgrade;
+pub mod water;
 mod windowed;
 
 pub use content::{

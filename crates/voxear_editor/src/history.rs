@@ -19,7 +19,9 @@ use voxear_engine::{
     prefab::{FromPrefab, Locks, PrefabInstance},
     scene_file::{FoliageSource, ModelSource},
 };
-use voxear_render::{Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Renderer, Seasons, WindZone};
+use voxear_render::{
+    Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Ocean, Renderer, Seasons, WindZone,
+};
 use voxear_scene::{Layer, Name, ScenePersistence, Transform};
 
 use crate::objs::{self, Placing, Taken};
@@ -50,6 +52,7 @@ pub struct ObjState {
     pub rigidbody: Option<Box<Rigidbody>>,
     pub character: Option<Box<CharacterController>>,
     pub wind_zone: Option<Box<WindZone>>,
+    pub ocean: Option<Box<Ocean>>,
     pub seasons: Option<Box<Seasons>>,
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage and how it was written; its plants are shared, not copied.
@@ -83,6 +86,7 @@ impl ObjState {
             rigidbody: world.get::<Rigidbody>(entity).copied().map(Box::new),
             character: world.get::<CharacterController>(entity).copied().map(Box::new),
             wind_zone: world.get::<WindZone>(entity).copied().map(Box::new),
+            ocean: world.get::<Ocean>(entity).copied().map(Box::new),
             seasons: world.get::<Seasons>(entity).copied().map(Box::new),
             foliage_interaction: world.get::<FoliageInteraction>(entity).copied(),
             foliage: world
@@ -136,6 +140,7 @@ impl ObjState {
         put(world, entity, self.rigidbody.as_deref().copied());
         put(world, entity, self.character.as_deref().copied());
         put(world, entity, self.wind_zone.as_deref().copied());
+        put(world, entity, self.ocean.as_deref().copied());
         put(world, entity, self.seasons.as_deref().copied());
         put(world, entity, self.foliage_interaction);
         put(world, entity, self.foliage.as_deref().map(|(foliage, _)| foliage.clone()));

@@ -58,8 +58,8 @@ use voxear_assets::AssetGuid;
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, ModelPart, ModelRenderer, PostVolume, Renderer, Seasons,
-    WindZone,
+    Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, ModelPart, ModelRenderer, Ocean, PostVolume, Renderer,
+    Seasons, WindZone,
 };
 use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
 
@@ -377,6 +377,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.collider = instance.collider.or(root.collider);
     root.wind_zone = instance.wind_zone.or(root.wind_zone);
+    root.ocean = instance.ocean.or(root.ocean);
     if instance.model.is_some() {
         root.model.clone_from(&instance.model);
     }
@@ -421,6 +422,7 @@ pub struct TemplateObj {
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
     pub wind_zone: Option<WindZone>,
+    pub ocean: Option<Ocean>,
     pub seasons: Option<Seasons>,
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage, where there is a renderer to draw it, and how it was
@@ -559,6 +561,9 @@ impl Template {
             }
             if let Some(wind) = obj.wind_zone {
                 world.insert(entity, wind);
+            }
+            if let Some(ocean) = obj.ocean {
+                world.insert(entity, ocean);
             }
             if let Some(seasons) = obj.seasons {
                 world.insert(entity, seasons);
@@ -823,6 +828,7 @@ pub(crate) fn resolve_obj(
         rigidbody: data.rigidbody,
         character: data.character,
         wind_zone: data.wind_zone,
+        ocean: data.ocean,
         seasons: data.seasons,
         foliage_interaction: data.foliage_interaction,
         layer: data.layer.clone(),

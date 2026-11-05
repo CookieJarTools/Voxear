@@ -31,7 +31,7 @@ pub struct ShaderSet {
 impl ShaderSet {
     /// The shaders compiled into the binary at build time.
     pub fn embedded() -> Self {
-        let embedded: [(&str, &'static [u8]); 20] = [
+        let embedded: [(&str, &'static [u8]); 21] = [
             ("cull", include_bytes!(concat!(env!("OUT_DIR"), "/cull.spv"))),
             ("pyramid", include_bytes!(concat!(env!("OUT_DIR"), "/pyramid.spv"))),
             ("shadow", include_bytes!(concat!(env!("OUT_DIR"), "/shadow.spv"))),
@@ -52,6 +52,7 @@ impl ShaderSet {
             ("ddgi_software", include_bytes!(concat!(env!("OUT_DIR"), "/ddgi_software.spv"))),
             ("glass", include_bytes!(concat!(env!("OUT_DIR"), "/glass.spv"))),
             ("foliage_push", include_bytes!(concat!(env!("OUT_DIR"), "/foliage_push.spv"))),
+            ("water", include_bytes!(concat!(env!("OUT_DIR"), "/water.spv"))),
         ];
         Self { spirv: embedded.into_iter().map(|(name, bytes)| (name.to_string(), Cow::Borrowed(bytes))).collect() }
     }

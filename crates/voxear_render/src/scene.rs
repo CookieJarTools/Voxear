@@ -268,6 +268,8 @@ pub struct ExtractedFrame {
     /// The size the scene is drawn at: the view's own, or less when TAA
     /// upscales it (see `AntiAliasing::render_scale`).
     pub render_size: (u32, u32),
+    /// The first Ocean, its Obj's height and turn.
+    pub ocean: Option<(crate::Ocean, f32, Quat)>,
 }
 
 /// What an instance was made from: its Obj, for a plant of a Foliage its
@@ -566,6 +568,14 @@ pub fn extract(
     if let Some((zone, transform)) = zones.into_iter().next() {
         frame.wind = zone.gpu(transform.rotation);
     }
+    // The first Ocean is the sea, at its Obj's height.
+    let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+    let ocean = seas.into_iter().next().map(|(ocean, transform, at)| {
+        let (_, rotation, position) = at.map_or((Vec3::ONE, transform.rotation, transform.position), |w| {
+            w.0.to_scale_rotation_translation()
+        });
+        (*ocean, position.y, rotation)
+    });
     // And the first Seasons turns all its plants.
     let seasons = world.query_ref::<&crate::Seasons>().without::<Destroying>();
     if let Some(seasons) = seasons.into_iter().next() {
@@ -653,6 +663,7 @@ pub fn extract(
         entities,
         post,
         render_size: (width, height),
+        ocean,
     }
 }
 

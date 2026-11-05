@@ -356,6 +356,33 @@ pub struct GpuFrame {
     pub pushes: GpuPushes,
     pub seasons: GpuSeasons,
     pub local_shadows: GpuLocalShadows,
+    pub ocean: GpuOcean,
+}
+
+/// The sea, as `Ocean` in `shaders/common.slang` (see `ocean`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuOcean {
+    /// Each cascade's tile, in metres.
+    pub sizes: [f32; 4],
+    /// Each cascade's movement and folding, its slopes, and last frame's movement.
+    pub displacement: [u32; 4],
+    pub slopes: [u32; 4],
+    pub previous: [u32; 4],
+    /// Linear colours.
+    pub deep: [f32; 3],
+    pub level: f32,
+    pub scatter: [f32; 3],
+    pub foam: f32,
+    /// How much of each colour is lost through a metre of water.
+    pub absorb: [f32; 3],
+    pub choppiness: f32,
+    /// The waves' significant height, in metres.
+    pub wave_height: f32,
+    pub enabled: u32,
+    /// The time the waves are at, in seconds, repeating every `ocean::REPEAT_SECONDS`.
+    pub time: f32,
+    pub _pad: f32,
 }
 
 /// Most pushers through foliage a frame takes, the nearest the camera.
@@ -678,6 +705,9 @@ pub struct GpuBuffers {
     /// Each material's custom shader's properties, `MATERIAL_PROPERTIES`
     /// `float4`s a material, by its slot.
     pub material_properties: u64,
+    /// The sea's spectrum, and its FFT's rows (see `water`).
+    pub ocean_spectrum: u64,
+    pub ocean_fft: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -830,12 +860,13 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 128
         );
+        assert_eq!(size_of::<GpuOcean>(), 128);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 30 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 32 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }

@@ -107,6 +107,13 @@ pub struct Pipelines {
     /// Glass: the copy of the picture it is drawn over, and its panes.
     pub glass_copy: vk::Pipeline,
     pub glass: vk::Pipeline,
+    /// The sea's waves: the FFT's rows and columns, their mips, the depth
+    /// it is drawn over, and its surface (see `water`).
+    pub ocean_rows: vk::Pipeline,
+    pub ocean_columns: vk::Pipeline,
+    pub ocean_mip: vk::Pipeline,
+    pub water_depth_copy: vk::Pipeline,
+    pub water: vk::Pipeline,
     /// Panes into the glass shadow atlas (`glass::record_shadows`).
     pub glass_shadow: vk::Pipeline,
     pub glass_shadow_mip: vk::Pipeline,
@@ -160,6 +167,7 @@ impl Pipelines {
             module("ddgi_software")?,
             module("glass")?,
             module("foliage_push")?,
+            module("water")?,
         ];
         let [
             cull,
@@ -178,6 +186,7 @@ impl Pipelines {
             ddgi_software,
             glass,
             foliage_push,
+            water,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -312,6 +321,18 @@ impl Pipelines {
             glass_shadow_mip: create_compute_pipeline(gpu, layout, "Glass shadow mips", glass, c"glassShadowMipMain")?,
             foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
             sky_light: create_compute_pipeline(gpu, layout, "Sky light", sky, c"skyLightMain")?,
+            ocean_rows: create_compute_pipeline(gpu, layout, "Ocean rows", water, c"oceanRowsMain")?,
+            ocean_columns: create_compute_pipeline(gpu, layout, "Ocean columns", water, c"oceanColumnsMain")?,
+            ocean_mip: create_compute_pipeline(gpu, layout, "Ocean mips", water, c"oceanMipMain")?,
+            water_depth_copy: create_compute_pipeline(gpu, layout, "Water depth copy", water, c"waterDepthCopyMain")?,
+            water: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Water", water, c"waterVertex", c"waterFragment")
+            })?,
             // Tested against the depth in its fragment shader, which reads it.
             glass: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,

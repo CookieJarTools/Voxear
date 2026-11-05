@@ -302,6 +302,28 @@ static const uint2 LOCAL_SHADOW_ATLAS = uint2(4096, 3072);
 static const uint2 GLASS_SHADOW_ATLAS = uint2(1024, 1792);
 static const uint GLASS_SUN_SIZE = 1024;
 static const uint GLASS_LOCAL_TILE = 128;
+// The sea (src/ocean.rs, GpuOcean): its cascades' tiles in metres, their images (each point's movement and
+// how it folds; its slopes and their squares; last frame's movement), its colours, linear, and how fast each
+// colour is lost through it, a metre; its level, how sharp its crests are, how high its waves run (their
+// significant height) and the time its waves are at, which repeats.
+struct Ocean
+{
+    float4 sizes;
+    uint4 displacement;
+    uint4 slopes;
+    uint4 previous;
+    float3 deep;
+    float level;
+    float3 scatter;
+    float foam;
+    float3 absorb;
+    float choppiness;
+    float waveHeight;
+    uint enabled;
+    float time;
+    float pad;
+};
+
 struct LocalShadows
 {
     Mat4 viewProj[LOCAL_SHADOW_VIEWS];
@@ -598,6 +620,7 @@ struct Frame
     Pushes pushes;
     Seasons seasons;
     LocalShadows localShadows;
+    Ocean ocean;
 };
 
 // The projection a shadow draw puts its vertices through: a cascade's, or
@@ -704,6 +727,9 @@ struct Buffers
     SkyLight* skyLight;
     // Each material's custom shader's properties, MATERIAL_PROPERTIES a material.
     float4* materialProperties;
+    // The sea's spectrum, each wave's h0(k) and h0*(-k), N×N a cascade; and its FFT's rows, four fields each.
+    float4* oceanSpectrum;
+    float2* oceanFft;
 };
 
 struct Push

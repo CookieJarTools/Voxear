@@ -411,6 +411,19 @@ float3 worldPositionAt(uint depthTexture, int2 pixel)
     return world.xyz / world.w;
 }
 
+// How near a reflection's ray may meet the inside of the surface it left
+// before it is taken for having started a hair inside it, in metres.
+static const float REFLECTION_SELF = 0.05;
+
+// The light a reflection's ray finds where `hit` stopped it.
+float3 ddgiShadeReflected(Frame* frame, Hit hit, float3 origin, float3 direction, out bool back)
+{
+    // Sharper textures near, blurrier far, about as the reflection shows them.
+    float mip = clamp(log2(1.0 + hit.t * 0.5), 0.0, 4.0);
+    float3 at = origin + direction * hit.t;
+    return ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, at, direction, mip, back);
+}
+
 // Reflections by tracing the scene's triangles, as the GI's rays do, where
 // the GI has them: from each pixel smooth enough to reflect, at full
 // resolution, its mirror ray into the scene; the surface it meets is lit
@@ -444,14 +457,25 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
     float3 origin = position + normal * (0.01 + 0.002 * centre.z);
     Hit hit = traceScene(frame, origin, direction, REFLECTION_REACH, false);
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    bool back = false;
+    float3 light = 0.0;
+    if (hit.found)
+    {
+        light = ddgiShadeReflected(frame, hit, origin, direction, back);
+        // Close by and from behind, the ray started a hair inside the surface it leaves, as at a ball's rim where
+        // depth is least sure, and met its inside: on past it.
+        if (back && hit.t < REFLECTION_SELF)
+        {
+            origin += direction * (hit.t + 0.01);
+            hit = traceScene(frame, origin, direction, REFLECTION_REACH, false);
+            light = hit.found ? ddgiShadeReflected(frame, hit, origin, direction, back) : 0.0;
+        }
+    }
     if (!hit.found)
     {
         return float4(surroundingsReflection(frame, position, normal, direction, 0.0, 0.0, atmosphere), 1.0);
     }
-    bool back;
-    // Sharper textures near, blurrier far, about as the reflection shows them.
-    float mip = clamp(log2(1.0 + hit.t * 0.5), 0.0, 4.0);
-    float3 at = origin + direction * hit.t;
-    float3 light = ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, at, direction, mip, back);
-    return float4(back ? 0.0 : light, 1.0);
+    // The back of anything else shows lit as its front: a curtain or a card of ivy is a sheet, not the outside of
+    // something, and black there left dark patches all over a chrome ball.
+    return float4(light, 1.0);
 }

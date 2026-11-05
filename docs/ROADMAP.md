@@ -1057,7 +1057,11 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   of its pixels, 2 without reflections). Blending them over frames at full resolution (reprojected by the surface,
   then by the reflected point, as far behind the mirror as the ray went) cut that to 3 but, moving, the reflection
   still broke into blocks and smears. Now every pixel traces its own ray (`level` 0): 5 such pixels still, crisp
-  moving; 0.98 ms at 1080p in the Sponza demo, against 0.36 ms at half resolution.
+  moving; 0.98 ms at 1080p in the Sponza demo, against 0.36 ms at half resolution. A reflection that meets the
+  back of something shows it lit as its front, as the GI's rays already light it, rather than black: curtains and
+  cards of ivy are sheets, and black there left dark patches over the chrome ball (thousands of pixels a frame, found
+  by painting them magenta). One that meets the inside of the surface it left, within 5 cm (`REFLECTION_SELF`), as
+  from a coarse LOD's facet just inside the full one the rays are traced against, carries on past it.
 - **GI that does not change as the camera walks up:** three cascades of probes, each twice as far apart as the last
   (`DDGI_CASCADES` 3, `DDGI_CASCADE_SCALE` 2), rather than two four times apart. Past the fine grid's sixteen metres,
   probes four metres apart smeared the neon tube's light down Sponza's corridor, and it changed before the camera as

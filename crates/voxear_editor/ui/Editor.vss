@@ -1331,6 +1331,11 @@
     font-size: 11px;
 }
 
+/* A model's material slot drawing with the model's own material, not a .material asset. */
+.picker-embedded .picker-label {
+    color: var(--vx-muted);
+}
+
 /* A reference's arrow, which opens the menu to pick another; the rest of the field pings what it points at. */
 .picker-arrow {
     flex-shrink: 0;

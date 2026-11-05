@@ -1114,8 +1114,8 @@ fn a_model_opens_out_to_its_parts_and_a_field_takes_one() {
         .map(|part| editor.ui.text(editor.ui.children(part)[1]))
         .collect();
     assert!(
-        names.len() >= 2 && names.last().map(String::as_str) == Some("Material 1"),
-        "its meshes, then its material: {names:?}"
+        names.len() >= 2 && names.last().map(String::as_str) == Some("Checker"),
+        "its meshes, then its material, by its name: {names:?}"
     );
     assert_eq!(editor.selected(), None, "opening it out selects nothing");
 
@@ -5752,10 +5752,12 @@ fn a_models_materials_extract_into_material_assets_it_draws_with() {
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
     }
-    // The model's Materials list its one material, by its name, drawn with the file's.
+    // The model's Materials list its one material, by its name, drawn with the file's own, which the field
+    // shows by name too, as the model's.
     let row = prop_row(&editor.ui, "Checker").expect("the Pyramid's material, by name");
     let label = first_with(&editor.ui, row, "picker-label").unwrap();
-    assert_eq!(editor.ui.text(label), "None (Material)");
+    assert_eq!(editor.ui.text(label), "Checker");
+    assert!(first_with(&editor.ui, row, "picker-embedded").is_some(), "marked as the model's own");
 
     let mut buttons = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "add-component", &mut buttons);
@@ -5781,6 +5783,7 @@ fn a_models_materials_extract_into_material_assets_it_draws_with() {
     assert_eq!(editor.game.content.material_remap(model).and_then(|r| r.get("material0")), Some(checker));
     let row = prop_row(&editor.ui, "Checker").unwrap();
     assert_eq!(editor.ui.text(first_with(&editor.ui, row, "picker-label").unwrap()), "Checker");
+    assert!(first_with(&editor.ui, row, "picker-embedded").is_none(), "now the extracted asset");
 
     // The extracted material's colour map is a field, emptied from the object picker.
     let folder = dir.path().join("Models/Pyramid Materials");

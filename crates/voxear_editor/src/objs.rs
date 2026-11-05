@@ -415,8 +415,12 @@ pub fn model_parts(game: &mut Game, renderer: &mut Renderer, path: &str) -> Vec<
             materials.push(material.clone());
         }
     }
+    let named = game.content.loaded_model_materials(guid).unwrap_or_default();
     let materials = materials.iter().enumerate().map(|(index, material)| AssetPart {
-        name: format!("Material {}", index + 1),
+        name: named
+            .iter()
+            .find(|(part, name)| part == material && !name.is_empty())
+            .map_or_else(|| format!("Material {}", index + 1), |(_, name)| name.clone()),
         icon: "material",
         reference: Some(format!("{path}#{material}")),
     });

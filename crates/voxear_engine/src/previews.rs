@@ -49,6 +49,12 @@ pub fn preview_parts(content: &mut Content, renderer: &mut Renderer, reference: 
     };
     let kind = content.db().get(guid).map(|entry| entry.kind).with_context(|| format!("no asset `{reference}`"))?;
     match kind {
+        // A model's own material, on a sphere as a material asset shows.
+        AssetKind::Model if part.as_deref().is_some_and(|part| part.starts_with("material")) => {
+            let mesh = renderer.primitive(Primitive::Sphere)?;
+            let material = content.material(renderer, &MaterialSource::Asset(parsed.clone()))?;
+            Ok(vec![PreviewPart { mesh, material, transform: Mat4::IDENTITY }])
+        }
         AssetKind::Model if part.is_some() => {
             let mesh = content.mesh(renderer, &parsed)?;
             let material = default(content, renderer)?;

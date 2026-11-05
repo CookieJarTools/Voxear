@@ -27,7 +27,7 @@ use crate::{
 /// every texture carries its whole mip chain. 4: each LOD's indices are in
 /// meshlet order, and its meshlets ship in the payload. 5: coarse LODs past
 /// a mesh's seams, by sloppy simplification (see `lod`).
-pub const COOKED_VERSION: u32 = 6;
+pub const COOKED_VERSION: u32 = 7;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -213,6 +213,7 @@ impl CookedModel {
             for texture in [material.base_color, material.metallic_roughness, material.normal, material.emissive] {
                 w.option(texture.map(|t| t as u32));
             }
+            w.str(&material.name);
         }
         w.u32(self.nodes.len() as u32);
         for node in &self.nodes {
@@ -318,7 +319,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         };
         let mut texture = || r.option().map(|t| t.map(|t| t as usize));
         let (base_color, metallic_roughness, normal, emissive) = (texture()?, texture()?, texture()?, texture()?);
-        let name = String::new();
+        let name = r.str()?;
         materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
     }
     let mut nodes = Vec::new();
@@ -490,7 +491,8 @@ pub(crate) mod tests {
               ],
               "images": [{{ "uri": "{}" }}],
               "textures": [{{ "source": 0 }}],
-              "materials": [{{ "pbrMetallicRoughness": {{ "baseColorTexture": {{ "index": 0 }}, "roughnessFactor": 0.25 }} }}],
+              "materials": [{{ "name": "Painted",
+                "pbrMetallicRoughness": {{ "baseColorTexture": {{ "index": 0 }}, "roughnessFactor": 0.25 }} }}],
               "meshes": [{{ "primitives": [{{ "attributes": {{ "POSITION": 0 }}, "indices": 1, "material": 0 }}] }}],
               "nodes": [{{ "name": "Quad", "mesh": 0, "translation": [1, 2, 3] }}],
               "scenes": [{{ "nodes": [0] }}]
@@ -529,6 +531,7 @@ pub(crate) mod tests {
         assert!(texture.mips.iter().all(|(offset, _)| offset % 16 == 0), "mips start on a block");
         assert_eq!(back.materials[0].desc.roughness, 0.25);
         assert_eq!(back.materials[0].base_color, Some(0));
+        assert_eq!(back.materials[0].name, "Painted", "its name kept");
         let node = &back.nodes[0];
         assert_eq!((node.name.as_str(), node.mesh_part.as_str()), ("Quad", "mesh0.0"));
         assert_eq!(node.material_part.as_deref(), Some("material0"));

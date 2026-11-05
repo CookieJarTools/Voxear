@@ -52,9 +52,9 @@ Drag a mesh onto a Mesh Renderer's **Mesh** in the Inspector to draw that mesh, 
 
 ## A model's materials
 
-Select a model in the Project panel, and the Inspector lists its **Materials** by the names the file gives them, as Unity's model importer does. Beside each is the material file it is drawn with in its place, or **None (Material)** for the file's own. Pick a material file from the field's arrow, or drag one onto it, and everything drawing the model shows it at once.
+Select a model in the Project panel, and the Inspector lists its **Materials** by the names the file gives them, as Unity's model importer does. Beside each is what it is drawn with: the model's own material, shown greyed by its name, or a material file picked in its place. Pick a material file from the field's arrow, or drag one onto it, and everything drawing the model shows it at once.
 
-A model's own materials cannot be changed, as they live inside its file. To edit them, click **Extract Materials**. Voxear writes each one out as a material file, in a folder beside the model named after it, such as `Models/Gate Materials`, and draws the model with them. Pictures packed inside the model's file are written out beside them as `.png` files; pictures kept beside the model stay where they are. Then select a material in that folder to change it. See [[Materials]].
+A model's own materials also show inside it in the Project panel, by name, each with a preview, after its meshes: open the model with the arrow on its tile. They cannot be changed, as they live inside its file. To edit them, click **Extract Materials**. Voxear writes each one out as a material file, in a folder beside the model named after it, such as `Models/Gate Materials`, and draws the model with them. Pictures packed inside the model's file are written out beside them as `.png` files; pictures kept beside the model stay where they are. Then select a material in that folder to change it. See [[Materials]].
 
 The choices are kept in the model's `.meta` file, each material by its part, with the material file's ID:
 

@@ -46,6 +46,11 @@ use crate::{
     strings_inspector::{StringsChange, StringsFields},
 };
 
+/// What a model's material slot says, when the pointer rests on it, while it
+/// draws with the model's own material.
+const EMBEDDED_TIP: &str =
+    "The model's own material. Pick or drop a .material to draw with it instead, or Extract Materials.";
+
 /// How many lines of a file's code the Inspector shows.
 const CODE_LINES: usize = 200;
 
@@ -531,8 +536,17 @@ impl AssetView {
             let label = if name.is_empty() { format!("Material {number}") } else { name.clone() };
             let path = remap.get(part).and_then(|guid| db.get(guid)).map(|entry| entry.path.clone());
             let slot = slot(ui, remaps.rows, &label, "material");
-            show_slot(ui, slot, path.as_deref(), "Material");
-            remaps.parts.push((part.clone(), slot, path));
+            match &path {
+                Some(path) => show_slot(ui, slot, Some(path), "Material"),
+                // The model's own material, until a `.material` takes its place.
+                None => {
+                    ui.set_text(slot.label, &label);
+                    ui.add_class(slot.field, "picker-embedded");
+                    ui.set_tooltip(slot.field, EMBEDDED_TIP, None);
+                }
+            }
+            let ping = path.clone().unwrap_or_else(|| self.item.path.clone());
+            remaps.parts.push((part.clone(), slot, Some(ping)));
         }
         if materials.is_empty() {
             text_row(ui, remaps.rows, "Materials", "None");

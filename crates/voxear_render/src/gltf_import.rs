@@ -36,7 +36,7 @@ pub struct ImportedModel {
     pub nodes: Vec<ImportedNode>,
     pub textures: Vec<TextureId>,
     /// Each material part, `material<index>`, with its name in the file, in
-    /// the order the parts first draw. A cooked model's have no names.
+    /// the order the parts first draw.
     pub materials: Vec<(String, String)>,
 }
 

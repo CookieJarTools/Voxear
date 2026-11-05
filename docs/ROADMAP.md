@@ -1051,16 +1051,13 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
 - **Shadow distance in the lighting:** `[sun] shadow_distance` (80 m by default, 5 to 1000) and `shadow_split` (0.85,
   0 even to 1 logarithmic) in lighting files, on `SunLook`, and on the Lighting page's Sun tab as Shadow distance
   and Cascade split; the four cascades fit them (`shadows::cascades`). Unit tests for the cascades and the file.
-- **Reflections that settle when the camera stops:** the half-resolution reflections pass traces each 2×2 from a
-  different one of its pixels each frame, as GTAO does, but nothing blended them, so a curved mirror's reflection
-  changed every frame by more than TAA's clamp lets through and the chrome ball showed dots cycling with the jitter.
-  **Reflections temporal** (`ambient_occlusion::Reflections`, `reflectionsTemporalFragment`) now blends them over
-  frames at full resolution, reprojected by the camera's motion and clamped to the four traced pixels nearest, as
-  the occlusion's temporal pass does; shading reads that. Ball pixels cycling with the jitter 108 to 3 (2 without
-  reflections; tracing at full resolution instead gave 5 for 0.6 ms); 0.12 ms at 1080p. Traced reflections write
-  1 plus their ray's length in alpha (screen-space ones stay at 1 or under, and shading reads it saturated), and
-  the history is looked up where what the mirror shows was a frame ago, that far behind it, not where the mirror
-  was: looked up by the surface, a moving camera broke the chrome ball's reflection into half-resolution patches.
+- **Reflections at full resolution:** the reflections pass traced half resolution, each 2×2 from a different one of
+  its pixels each frame, as GTAO does, but nothing blended them, so a curved mirror's reflection changed every frame by
+  more than TAA's clamp lets through: the chrome ball showed dots cycling with the jitter when the camera stopped (108
+  of its pixels, 2 without reflections). Blending them over frames at full resolution (reprojected by the surface,
+  then by the reflected point, as far behind the mirror as the ray went) cut that to 3 but, moving, the reflection
+  still broke into blocks and smears. Now every pixel traces its own ray (`level` 0): 5 such pixels still, crisp
+  moving; 0.98 ms at 1080p in the Sponza demo, against 0.36 ms at half resolution.
 - **GI that does not change as the camera walks up:** three cascades of probes, each twice as far apart as the last
   (`DDGI_CASCADES` 3, `DDGI_CASCADE_SCALE` 2), rather than two four times apart. Past the fine grid's sixteen metres,
   probes four metres apart smeared the neon tube's light down Sponza's corridor, and it changed before the camera as

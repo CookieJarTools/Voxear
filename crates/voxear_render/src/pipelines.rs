@@ -85,8 +85,6 @@ pub struct Pipelines {
     pub contact_shadows: vk::Pipeline,
     /// Screen-space reflections' march through the depth buffer.
     pub reflections: vk::Pipeline,
-    /// Reflections blended over frames, at full resolution.
-    pub reflections_temporal: vk::Pipeline,
     pub fog: vk::Pipeline,
     pub taa: vk::Pipeline,
     /// TAA that builds the output from a scene drawn smaller.
@@ -285,7 +283,6 @@ impl Pipelines {
             ao_temporal: occlusion_pass("AO temporal", c"aoTemporalFragment", &[AO_HISTORY_FORMAT])?,
             contact_shadows: occlusion_pass("Contact shadows", c"contactShadowFragment", &[AO_FORMAT])?,
             reflections: occlusion_pass("Reflections", c"reflectionsFragment", &[HDR_FORMAT])?,
-            reflections_temporal: occlusion_pass("Reflections temporal", c"reflectionsTemporalFragment", &[HDR_FORMAT])?,
             fog: fullscreen("Fog", c"fogFragment", hdr, Blend::Alpha)?,
             volume_scatter: volume("Fog volume", c"volumeScatterFragment")?,
             volume_integrate: create_compute_pipeline(gpu, layout, "Fog integration", volumetric, c"volumeIntegrateMain")?,
@@ -394,7 +391,6 @@ impl Pipelines {
             self.ao_temporal,
             self.contact_shadows,
             self.reflections,
-            self.reflections_temporal,
             self.fog,
             self.volume_scatter,
             self.volume_integrate,

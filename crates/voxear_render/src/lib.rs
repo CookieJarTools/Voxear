@@ -1241,9 +1241,8 @@ struct View {
     prev_view_proj: Option<Mat4Cols>,
     /// The size TAA's history was rendered at; `None` when it is stale.
     taa_history: Option<vk::Extent2D>,
-    /// The same for ambient occlusion's, and for reflections'.
+    /// The same for ambient occlusion's.
     ao_history: Option<vk::Extent2D>,
-    reflection_history: Option<vk::Extent2D>,
     /// The atmosphere the kept atmosphere tables were drawn for; `None` when
     /// they are stale.
     atmosphere_tables: Option<gpu::GpuAtmosphere>,
@@ -1324,7 +1323,6 @@ impl View {
             prev_view_proj: None,
             taa_history: None,
             ao_history: None,
-            reflection_history: None,
             atmosphere_tables: None,
             fog_history: false,
             ddgi_history: None,
@@ -1487,7 +1485,6 @@ impl View {
     fn reset_history(&mut self) {
         self.taa_history = None;
         self.ao_history = None;
-        self.reflection_history = None;
         self.atmosphere_tables = None;
         self.fog_history = false;
         self.ddgi_history = None;
@@ -1645,18 +1642,19 @@ impl View {
         }
         // Reflections read last frame's finished picture, so they need TAA, and a frame of it to read.
         let reflecting = extracted.post.reflections.enabled && taa && !taa_reset && !wireframe;
-        let reflection_reset = self.reflection_history != Some(extent);
-        self.reflection_history = reflecting.then_some(extent);
         let reflections = match reflecting {
             true => {
-                let picture = post_passes::taa_history(fg, gpu, bindless, output_extent, 1 - history)?;
-                let made = (picture, history);
-                Some(ambient_occlusion::Reflections::new(fg, gpu, bindless, extent, made, reflection_reset)?)
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                // At full resolution: see `ambient_occlusion::record_reflections`.
+                let desc = ImageDesc::new(extent.width, extent.height, HDR_FORMAT, usage);
+                let target = fg.create_image(gpu, bindless, "reflections", desc)?;
+                let previous = post_passes::taa_history(fg, gpu, bindless, output_extent, 1 - history)?;
+                Some((target, previous))
             }
             false => None,
         };
-        if let Some(reflections) = reflections {
-            frame_data.post.reflection_texture = fg.texture(reflections.current).0;
+        if let Some((target, _)) = reflections {
+            frame_data.post.reflection_texture = fg.texture(target).0;
         }
         // The depth passes run for these, and write each pixel's normal and roughness beside the depth.
         let surface = match ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() {

@@ -349,97 +349,6 @@ float4 aoTemporalFragment(AoOut input) : SV_Target
     return lerp(current, clamp(history, low, high), HISTORY);
 }
 
-// ---------------------------------------------------------------- Reflections over time
-
-// How much of last frame's reflection a pixel keeps: the half-resolution
-// pass traces each pixel's 2x2 from a different one of its pixels each
-// frame, which this blends into the whole of it over a few frames.
-static const float REFLECTION_HISTORY = 0.9;
-
-// The reflections pass's image at a full-resolution pixel, as upsample has
-// it for occlusion: the four traced pixels nearest, each by how near it is
-// and how close its depth is to this pixel's, or the nearest in depth; with
-// the range they span, for clamping last frame's.
-float4 reflectionUpsample(int2 pixel, float depth, out float4 low, out float4 high)
-{
-    uint traced = push.textures.x;
-    int2 size = searchSize();
-    float z = viewPosition(float2(pixel) + 0.5, depth).z;
-    float tolerance = 0.05 * z;
-    int2 first = (pixel - searchOffset()) >> 1;
-    float4 sum = 0.0;
-    float weight = 0.0;
-    float4 nearest = 0.0;
-    float nearestGap = 1e30;
-    low = 1e30;
-    high = -1e30;
-    for (int y = 0; y <= 1; y++)
-    {
-        for (int x = 0; x <= 1; x++)
-        {
-            int2 cell = clamp(first + int2(x, y), int2(0), size - 1);
-            float4 value = textures[NonUniformResourceIndex(traced)].Load(int3(cell, 0));
-            float gap = abs(viewPositionAt(push.textures.z, fullPixel(cell)).z - z);
-            int2 apart = abs(fullPixel(cell) - pixel);
-            float w = saturate(1.0 - gap / tolerance) / float(1 + apart.x + apart.y);
-            sum += value * w;
-            weight += w;
-            if (gap < nearestGap)
-            {
-                nearestGap = gap;
-                nearest = value;
-            }
-            low = min(low, value);
-            high = max(high, value);
-        }
-    }
-    return weight > 1e-4 ? sum / weight : nearest;
-}
-
-// Blends the half-resolution reflections into last frame's, found where
-// what this pixel reflects was on screen then, at full resolution, for
-// shading to read. A mirror's reflection moves as the thing reflected,
-// seen as far behind the mirror as the ray went to it, not as the mirror's
-// surface: looked up where the surface was, a moving camera blended in the
-// wrong part of last frame's and the chrome ball showed patches. Where no
-// ray was traced (screen-space reflections, whose alpha stays at 1 or under)
-// it is looked up where the surface was. Without it each frame's
-// reflection differed with the pixel it was traced from, more than TAA's
-// clamp lets through, and a curved mirror showed dots that cycled with
-// TAA's jitter. textures: x the reflections, y last frame's result, z depth,
-// w 1 to start afresh.
-[shader("fragment")]
-float4 reflectionsTemporalFragment(AoOut input) : SV_Target
-{
-    Frame* frame = push.frame;
-    int2 pixel = int2(input.position.xy);
-    float depth = loadDepth(push.textures.z, pixel);
-    if (depth <= 0.0)
-    {
-        return 0.0;
-    }
-    float4 low;
-    float4 high;
-    float4 current = reflectionUpsample(pixel, depth, low, high);
-    if (push.textures.w != 0)
-    {
-        return current;
-    }
-    float4 world = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, depth, 1.0));
-    float3 surface = world.xyz / world.w;
-    float reach = max(current.a - 1.0, 0.0);
-    float3 toSurface = surface - frame->cameraPosition;
-    float3 seen = reach > 0.0 ? frame->cameraPosition + toSurface * (1.0 + reach / max(length(toSurface), 1e-4)) : surface;
-    float4 previous = transform(frame->prevViewProj, float4(seen, 1.0));
-    float2 previousUv = previous.xy / previous.w * 0.5 + 0.5;
-    if (previous.w <= 0.0 || any(previousUv < 0.0) || any(previousUv > 1.0))
-    {
-        return current;
-    }
-    float4 history = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], previousUv, 0.0);
-    return lerp(current, clamp(history, low, high), REFLECTION_HISTORY);
-}
-
 // ---------------------------------------------------------------- Contact shadows
 
 // Contact shadows: from each pixel, a short march towards the sun through
@@ -504,7 +413,7 @@ float2 reflectionPixel(Frame* frame, float3 point, float2 size)
     return (ndc * 0.5 + 0.5) * size;
 }
 
-// Screen-space reflections, at half resolution: from each pixel, its
+// Screen-space reflections, at full resolution: from each pixel, its
 // mirror ray marched through the depth buffer, in steps that grow with
 // distance. Where it meets something, the colour there comes from last
 // frame's finished picture (TAA's history), found where that point was on

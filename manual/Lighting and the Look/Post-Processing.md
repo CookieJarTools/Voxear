@@ -200,7 +200,7 @@ max_roughness = 0.6 # surfaces rougher than this show none
 
 Where the graphics card has ray tracing and [[Bounced Light]] is on, reflections trace real rays through the scene instead, from each surface's own normal: a chrome ball mirrors the whole room, behind the camera too, and what it shows is lit as the bounced light lights it. Without ray tracing, reflections are screen-space, and can only show what is on screen: look down at a puddle and the sky it would reflect is above the picture, so the puddle shows the sky's colour from the scene instead, and things just come on screen, or just behind something, can show a moment late. Pixels rougher than `max_roughness` are passed over before any search, so a level of mostly rough ground costs about a twentieth of a millisecond at 1080p.
 
-Reflections are traced at half the screen's resolution, each frame from a different pixel of each block of four, and blended over a few frames into the whole picture. A still view settles to a sharp, steady reflection; a fast-moving one can look a little soft for a moment.
+Reflections are traced for every pixel on screen, so a mirror stays sharp and steady whether the camera moves or stands still.
 
 ## Drawing at a lower resolution
 

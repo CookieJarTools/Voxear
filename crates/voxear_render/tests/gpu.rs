@@ -3618,8 +3618,9 @@ fn a_dry_area_keeps_the_sea_out_and_a_pool_holds_water_above_it() {
     let rock = renderer.add_material(&rock).unwrap();
     world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
     world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
+    // Down past the floor, so the hole is dry to the sand.
     let hole = Vec3::new(-4.0, 0.0, 6.0);
-    world.spawn((DryArea { size: [3.0, 4.0, 7.0], ..DryArea::default() }, Transform::from_position(hole)));
+    world.spawn((DryArea { size: [3.0, 8.0, 7.0], ..DryArea::default() }, Transform::from_position(hole)));
     // A block standing two metres out of the sea, a pool a metre deep on top of it.
     world.spawn((MeshRenderer::new(cube, rock), Transform::new(Vec3::new(5.0, -1.0, 8.0), Quat::IDENTITY, Vec3::new(8.0, 4.0, 8.0))));
     let pond = Vec3::new(5.0, 2.0, 8.0);
@@ -3627,9 +3628,12 @@ fn a_dry_area_keeps_the_sea_out_and_a_pool_holds_water_above_it() {
     run(&mut renderer, &world, &mut 10.0, 20);
     let pixels = renderer.read_pixels().unwrap().2;
     keep_image("water bodies.png", &pixels);
-    // The sand three metres down shows through the middle of the hole, warm, where the sea is blue round it.
-    let floor = patch_rgb(&pixels, on_screen(eye, look, hole), 3);
+    // The sand three metres down at the hole's far end, seen past its open top, warm where the sea is blue.
+    let floor = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(-4.0, -3.0, 9.0)), 2);
     assert!(floor[0] > floor[2] + 8, "the sand at the bottom of the dry hole: {floor:?}");
+    // Its far face a wall of water, the sea standing beyond it.
+    let wall = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(-4.0, -1.0, 9.5)), 2);
+    assert!(wall[1] > wall[0] + 15, "a wall of water at the hole's far end: {wall:?}");
     let sea = patch_rgb(&pixels, on_screen(eye, look, hole + Vec3::new(4.0, 0.0, -1.0)), 3);
     assert!(sea[2] > sea[0], "the sea beside it: {sea:?}");
     // On the block, the pool's water: greener and bluer than the grey rock round it.

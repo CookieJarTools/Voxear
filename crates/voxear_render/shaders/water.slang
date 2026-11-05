@@ -492,3 +492,133 @@ FragmentOut waterFragment(WaterOut input)
     o.velocity = motion(input.currentClip, input.previousClip);
     return o;
 }
+
+// ---------------------------------------------------------------- Walls of water
+
+struct WallOut
+{
+    float4 position : SV_Position;
+    float3 world : POSITION;
+    // The face's normal, out of the body's box.
+    float3 normal : NORMAL;
+    float4 currentClip : CURRENT_CLIP;
+    float4 previousClip : PREVIOUS_CLIP;
+    nointerpolation uint body : BODY;
+};
+
+// A corner of a face of body `body`'s box: a Dry Area's box, whose inside
+// faces show the water round it, as a parted sea's walls; or a Pool's,
+// from just over its surface down a long way, the ground hiding what is
+// under it, whose outside faces show the water in it from the side.
+[shader("vertex")]
+WallOut wallVertex(uint vertexId : SV_VertexID, uint body : SV_InstanceID)
+{
+    Frame* frame = push.frame;
+    // Each face's normal and two edges, then its two triangles' corners.
+    static const float3 normals[6] = { float3(1, 0, 0), float3(-1, 0, 0), float3(0, 1, 0), float3(0, -1, 0), float3(0, 0, 1), float3(0, 0, -1) };
+    static const float3 us[6] = { float3(0, 0, 1), float3(0, 0, -1), float3(1, 0, 0), float3(1, 0, 0), float3(-1, 0, 0), float3(1, 0, 0) };
+    static const float2 corners[6] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(-1, 1), float2(1, -1), float2(1, 1) };
+    WaterBody water = buffers()->waterBodies[body];
+    uint face = vertexId / 6;
+    float3 n = normals[face];
+    float3 u = us[face];
+    float3 v = cross(n, u);
+    float2 c = corners[vertexId % 6];
+    float3 local = n + u * c.x + v * c.y;
+    float3 half;
+    float3 centre;
+    if (water.kind == WATER_POOL)
+    {
+        // From a little over its surface, past its highest ripples, a hundred metres down.
+        half = float3(water.size.x * 0.5, 50.5, water.size.z * 0.5);
+        centre = float3(0.0, -50.0, 0.0);
+    }
+    else
+    {
+        half = water.size * 0.5;
+        centre = 0.0;
+    }
+    float3 world = transform(water.toWorld, float4(centre + local * half, 1.0)).xyz;
+    WallOut o;
+    o.position = transform(frame->viewProj, float4(world, 1.0));
+    o.world = world;
+    o.normal = normalize(transform(water.toWorld, float4(n, 0.0)).xyz);
+    o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
+    o.previousClip = transform(frame->prevViewProj, float4(world, 1.0));
+    o.body = body;
+    return o;
+}
+
+// How high the water a wall holds stands above `world`: a Pool's surface,
+// with its share of the sea's small waves, or the sea's round a Dry Area.
+float wallSurface(Frame* frame, WaterBody water, float3 world)
+{
+    if (water.kind == WATER_POOL)
+    {
+        return water.toWorld.c3.y + oceanMoved(frame, world.xz, 0.25, false).y * water.waves;
+    }
+    return frame->ocean.level + oceanMoved(frame, world.xz, 0.25, false).y;
+}
+
+// The water a wall holds, seen from the side: what lies in it and behind
+// it, through as much water as lies between, lost a colour at a time, and
+// the water's own colour, lit by the sky and darker the deeper it is; a
+// bright line where it meets its surface.
+[shader("fragment")]
+FragmentOut wallFragment(WallOut input)
+{
+    Frame* frame = push.frame;
+    WaterBody water = buffers()->waterBodies[input.body];
+    float3 v = normalize(frame->cameraPosition - input.world);
+    bool facing = dot(input.normal, v) > 0.0;
+    // A Dry Area shows its far walls from inside it; a Pool its near walls from outside it.
+    bool pool = water.kind == WATER_POOL;
+    if (pool != facing)
+    {
+        discard;
+    }
+    float surface = wallSurface(frame, water, input.world);
+    if (input.world.y > surface || (!pool && frame->ocean.enabled == 0))
+    {
+        discard;
+    }
+    float3 deep = pool ? water.deep : frame->ocean.deep;
+    float3 scatter = pool ? water.scatter : frame->ocean.scatter;
+    float3 absorb = pool ? water.absorb : frame->ocean.absorb;
+
+    float2 pixel = input.position.xy;
+    float behindDepth = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
+    float wallDepth = frame->near / max(input.position.z, 1e-7);
+    float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
+    float along = max(dot(-v, frame->cameraForward), 0.05);
+    float thickness = max(sceneDepth - wallDepth, 0.0) / along;
+    float3 through = exp(-absorb * thickness);
+    float3 behind = thickness < 1e3 ? glassBehind(push.texture, pixel / float2(frame->viewport), log2(1.0 + thickness * 0.3)) : 0.0;
+
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    Surface s;
+    s.normal = float3(0.0, 1.0, 0.0);
+    s.view = v;
+    s.roughness = 1.0;
+    s.diffuse = 0.0;
+    s.f0 = 0.02;
+    float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
+    // Light from above, dimmed by the water it came down through.
+    float below = max(surface - input.world.y, 0.0);
+    float3 reaching = exp(-absorb * below);
+    float3 body = (deep * ambient + scatter * sunLight * 0.05) * (0.35 + 0.65 * reaching);
+    float3 color = behind * through + body * (1.0 - through);
+    // The water's edge against its surface, bright and frothy.
+    float rim = saturate(1.0 - below / 0.06);
+    color = lerp(color, ambient * 0.9 + sunLight * 0.1, rim * 0.7);
+    if (atmosphere)
+    {
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
+        color = color * haze.a + haze.rgb * skyLook(frame);
+    }
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
+}

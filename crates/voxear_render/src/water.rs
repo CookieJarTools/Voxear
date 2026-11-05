@@ -109,9 +109,11 @@ pub struct Water {
     depth_copy: ImageId,
     size: [u32; 2],
     pub frame: GpuOcean,
-    /// Whether the sea is drawn, and how many Pools.
+    /// Whether the sea is drawn, how many Pools, and how many bodies in
+    /// all, each with walls of water.
     sea: bool,
     pools: u32,
+    bodies: u32,
 }
 
 impl Water {
@@ -189,6 +191,7 @@ impl Water {
             frame,
             sea: found.is_some(),
             pools: bodies.pools,
+            bodies: bodies.bodies.len() as u32,
         })
     }
 }
@@ -224,7 +227,7 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, size, sea, pools, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, size, sea, pools, bodies, .. } = water;
     let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
         images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
     };
@@ -307,6 +310,11 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         if pools > 0 {
             bind(ctx, pipelines.water_pool, vk::PipelineBindPoint::GRAPHICS, &push);
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, POOL_QUADS * POOL_QUADS * 6, pools, 0, 0) };
+        }
+        // Each body's walls of water: six faces of its box.
+        if bodies > 0 {
+            bind(ctx, pipelines.water_wall, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 36, bodies, 0, 0) };
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });

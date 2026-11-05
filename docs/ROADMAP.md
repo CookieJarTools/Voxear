@@ -455,6 +455,15 @@ Next in M3:
       position and volume, the LOD shown, and an animation's time once there are animations
     - for an asset, its GUID, its `.meta` and import data, and what it depends on and what uses it
     - copy a value, or its path in the scene file, from a row's menu
+  - [ ] **Finding a setting by what it does**, for when its name is not known: one search over every setting the
+    editor has (Project Settings, the Lighting panel, the Settings drawer, Preferences, the Inspector's components
+    and import settings) that matches rough words against each setting's name, group, tooltip and description,
+    and words that mean the same (shimmer, sparkle, flicker), not only the name:
+    - in the palette (Ctrl+K) and in each settings window's own search, ranked by how well each matched, with the
+      words it matched marked and the line of the tooltip that matched shown under the name
+    - picking one opens its page or panel, scrolls to it and flashes its row, and selects what it belongs to
+      where it is on an Obj or asset
+    - settings hidden for now, as those of a feature turned off, still found, saying what turns them on
   - [ ] **UI navigation**, for gamepads and keyboards, as Unity's and Unreal's, so a complicated menu works with a
     controller without the game writing any code for it:
     - automatic: up, down, left and right move to the nearest focusable element that way, by distance and by how

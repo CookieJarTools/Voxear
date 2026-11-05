@@ -816,6 +816,10 @@ Done so far:
     `full_resolution`.
   - An AO debug view (F7, or `--debug-view ao`).
   - On an RTX 3070 at 1440p it costs about 0.35 ms (Stress), and full resolution about three times that.
+- **Specular anti-aliasing** (Kaplanyan and Tokuyoshi): a shiny surface is drawn rougher where its normal turns a
+  lot from one pixel to the next, as over a normal map's fine bumps, so its highlights and reflections do not
+  sparkle as the camera moves. `specular_smoothing` in `[post.anti_aliasing]`, 0.5 by default, is Shimmer
+  reduction in the Lighting panel. The depth passes write the same roughness, so reflections fade there too.
 - Still to come: the post-processing settings, AO's among them, in the editor and the C# API; today they are in a
   scene's `[post]` section.
 - **Area and tube lights:** rectangle and disc lights shaded by linearly transformed cosines (Heitz et al. 2016,

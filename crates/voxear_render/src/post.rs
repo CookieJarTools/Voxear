@@ -191,6 +191,11 @@ pub struct AntiAliasing {
     /// samples. 0.67 draws under half the pixels and costs far less, for a
     /// little softness. Without TAA, the scene is drawn at full size.
     pub render_scale: f32,
+    /// Specular anti-aliasing, 0 to 1: shiny surfaces are drawn a little
+    /// rougher where their normals turn a lot from one pixel to the next, as
+    /// over a normal map's fine bumps, so their highlights and reflections
+    /// do not sparkle as the camera moves. 0.5 by default; 0 turns it off.
+    pub specular_smoothing: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -359,7 +364,14 @@ impl Default for AmbientOcclusion {
 
 impl Default for AntiAliasing {
     fn default() -> Self {
-        Self { mode: AntiAliasingMode::Taa, sharpness: 0.25, taa_history: 0.97, taa_jitter: 1.0, render_scale: 1.0 }
+        Self {
+            mode: AntiAliasingMode::Taa,
+            sharpness: 0.25,
+            taa_history: 0.97,
+            taa_jitter: 1.0,
+            render_scale: 1.0,
+            specular_smoothing: 0.5,
+        }
     }
 }
 
@@ -620,7 +632,7 @@ impl PostProcess {
             ao_texture: crate::gpu::NO_TEXTURE,
             ao_unproject: [0.0; 2],
             ao_reset: 0,
-            _ao_pad: 0,
+            specular_smoothing: self.anti_aliasing.specular_smoothing.clamp(0.0, 1.0),
             fog_anisotropy: self.fog.anisotropy.clamp(-0.95, 0.95),
             fog_volume_far: self.fog.volumetric_distance.max(1.0),
             // The renderer names the volume once it has made it.

@@ -1046,7 +1046,7 @@ the section back as it was written, preset and overrides, not every resolved val
 
 | Group | Settings |
 | --- | --- |
-| `anti_aliasing` | `mode` (`taa`, `fxaa`, `off`), `sharpness` 0.25, `taa_history` 0.9, `taa_jitter` 1.0 |
+| `anti_aliasing` | `mode` (`taa`, `fxaa`, `off`), `sharpness` 0.25, `taa_history` 0.97, `taa_jitter` 1.0, `specular_smoothing` 0.5 (specular anti-aliasing, 0 off) |
 | `bloom` | `enabled`, `intensity` 0.04, `scatter` 0.7 |
 | `exposure` | `auto`, `compensation` +0.5, `min_ev` −3, `max_ev` +1, `speed_up` 2, `speed_down` 1 (EV per second) |
 | `tonemap` | `mapper` (`agx`, `aces`, `neutral` for Khronos PBR Neutral, `reinhard`, `none`), `contrast` 1.1, `saturation` 1.15 |

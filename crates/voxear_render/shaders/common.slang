@@ -322,7 +322,8 @@ struct Post
     uint aoTexture;
     float2 aoUnproject;
     uint aoReset;
-    uint aoPad;
+    // How much specular anti-aliasing roughens shiny surfaces whose normals turn fast across a pixel, 0 for none.
+    float specularSmoothing;
     // Volumetric fog: Henyey-Greenstein's g, how far the volume reaches, the
     // integrated volume (NO_TEXTURE without it), and 1 when its history is stale.
     float fogAnisotropy;

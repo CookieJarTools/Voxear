@@ -189,6 +189,8 @@ const SETTINGS: &[Info] = &[
         help: "Adds small, sharp shadows where things touch the ground or each other, that the sun's shadows are too coarse to show." },
     Info { path: &["post", "reflections", "enabled"], title: "Reflections", group: "Shading", kind: Kind::Toggle, when: ALWAYS,
         help: "Shiny surfaces reflect what is round them: polished floors, water, metal. With ray tracing they reflect everything, even what is off screen." },
+    Info { path: &["post", "anti_aliasing", "specular_smoothing"], title: "Shimmer reduction", group: "Shading", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "Calms the sparkle of shiny, finely bumpy surfaces, such as embroidery or worn metal, as the camera moves, by drawing them a little less glossy where their bumps are smaller than a pixel. 0 turns it off." },
     Info { path: &["post", "depth_of_field", "enabled"], title: "Depth of field", group: "Lens", kind: Kind::Toggle, when: ALWAYS,
         help: "Blurs what is nearer or farther than the focus distance, as a camera lens does." },
     Info { path: &["post", "depth_of_field", "focus_distance"], title: "Focus distance", group: "Lens", kind: number(0.0, 10000.0, "m"), when: FOCUS,

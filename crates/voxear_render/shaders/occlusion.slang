@@ -58,7 +58,10 @@ float4 depthFragment(VertexOut input) : SV_Target0
     float3 albedo = material.baseColor.rgb;
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(push.frame, material, origin, shapeNormal(input, material), albedo, roughness);
-    return float4(octEncode(surfaceNormal(input, material)) * 0.5 + 0.5, saturate(roughness), 1.0);
+    // As rough as shading draws it, so reflections fade from bumpy shiny detail just as its highlights do.
+    float3 normal = surfaceNormal(input, material);
+    roughness = smoothedRoughness(push.frame, normal, roughness);
+    return float4(octEncode(normal) * 0.5 + 0.5, saturate(roughness), 1.0);
 }
 
 // Whether the contact shadows pass found something between a pixel and the

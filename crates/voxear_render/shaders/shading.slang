@@ -147,6 +147,21 @@ void ditherLodFade(VertexOut input)
     }
 }
 
+// Specular anti-aliasing, as Kaplanyan and Tokuyoshi work it out: where the normal turns a lot from one pixel to
+// the next, as over a normal map's fine bumps, the surface is drawn rougher by the spread of normals the pixel
+// covers. Mirror-smooth there, a highlight or reflection lands on one pixel one frame and its neighbour the next,
+// and the gold embroidery on Sponza's banners sparkled as the camera moved. Scaled by the lighting's setting,
+// up to the variance they suggest at 0.5; capped, so no surface gets rougher than about 0.42 from it.
+float smoothedRoughness(Frame* frame, float3 normal, float roughness)
+{
+    float strength = frame->post.specularSmoothing;
+    float3 dx = ddx(normal);
+    float3 dy = ddy(normal);
+    float variance = 0.5 * strength * (dot(dx, dx) + dot(dy, dy));
+    float alpha = roughness * roughness;
+    return sqrt(saturate(alpha + min(2.0 * variance, 0.18)));
+}
+
 float3 surfaceNormal(VertexOut input, Material material)
 {
     // Facing the camera where a mesh's own normal is missing, as where two opposite normals meet across a face.
@@ -501,7 +516,7 @@ FragmentOut fragmentMain(VertexOut input)
     Surface s;
     s.normal = surfaceNormal(input, material);
     s.view = normalize(frame->cameraPosition - input.worldPosition);
-    s.roughness = clamp(roughness, 0.045, 1.0);
+    s.roughness = clamp(smoothedRoughness(frame, s.normal, roughness), 0.045, 1.0);
     s.diffuse = base.rgb * (1.0 - metallic);
     s.f0 = lerp(float3(0.04), base.rgb, metallic);
 

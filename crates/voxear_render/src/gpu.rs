@@ -520,7 +520,9 @@ pub struct GpuPost {
     pub ao_unproject: [f32; 2],
     /// Last frame's occlusion is stale (first frame, resize, just turned on).
     pub ao_reset: u32,
-    pub _ao_pad: u32,
+    /// How much shiny surfaces whose normals turn fast across a pixel are
+    /// roughened, against shimmer: `AntiAliasing::specular_smoothing`.
+    pub specular_smoothing: f32,
     /// Volumetric fog: Henyey-Greenstein's g for how much light the fog
     /// scatters forward, and how far its volume reaches, in metres.
     pub fog_anisotropy: f32,
